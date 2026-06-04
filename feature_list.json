@@ -1,0 +1,130 @@
+{
+  "project": "TokenShare",
+  "stage": "startup",
+  "source_documents": [
+    "Doc/TechnicalDocument/2026-06-03-tokenshare-protocol-technical-design.md",
+    "Doc/TechnicalDocument/2026-06-02-tokenshare-protocol-kernel-revised-draft.md"
+  ],
+  "active_feature": "feat-002",
+  "features": [
+    {
+      "id": "feat-001",
+      "name": "Repository Harness and Baseline Verification",
+      "description": "Create the startup harness, define the current project scope, and make the empty/early repository restartable for agent-assisted development.",
+      "dependencies": [],
+      "status": "done",
+      "done_criteria": [
+        "AGENTS.md, feature_list.json, progress.md, session-handoff.md, init.sh, and init.ps1 exist",
+        "Baseline verifier runs without requiring application code",
+        "Current objective and first implementation phase are explicit"
+      ],
+      "evidence": "2026-06-04: Created startup harness files. Verification passed with powershell -ExecutionPolicy Bypass -File init.ps1. Structural harness validation passed with Overall 100/100."
+    },
+    {
+      "id": "feat-002",
+      "name": "Phase 1 - Protocol Base Objects and Storage",
+      "description": "Implement TaskSpec, TaskUnit, TaskRelation, ClientRecord, ArtifactRef, ArtifactStore, LedgerEvent, JSONL EventLedger, and base ProtocolConfig.",
+      "dependencies": [
+        "feat-001"
+      ],
+      "status": "in-progress",
+      "done_criteria": [
+        "Root task can be registered",
+        "Root input artifact can be saved and content-hash checked",
+        "Event ledger can append and read events"
+      ],
+      "evidence": ""
+    },
+    {
+      "id": "feat-003",
+      "name": "Phase 2 - Task Graph, State Machines, and Scheduling",
+      "description": "Implement TaskGraph, TaskUnit state transitions, Lease and Attempt state machines, Scheduler, and LeaseManager.",
+      "dependencies": [
+        "feat-002"
+      ],
+      "status": "not-started",
+      "done_criteria": [
+        "Ready nodes can be scheduled",
+        "Expired leases return tasks to Ready when retry policy permits",
+        "All state transitions are written to the event ledger"
+      ],
+      "evidence": ""
+    },
+    {
+      "id": "feat-004",
+      "name": "Phase 3 - Plugin and Executor Contracts",
+      "description": "Implement PluginRegistry, ExecutorRegistry, ExecutionRequest, ExecutionSubmission, MockAIExecutor, and deterministic executor boundary.",
+      "dependencies": [
+        "feat-003"
+      ],
+      "status": "not-started",
+      "done_criteria": [
+        "Plugin versions are fixed during a run",
+        "Executors receive a unified request and return a unified submission",
+        "AI-style path can persist PromptPackage and RawModelOutput references"
+      ],
+      "evidence": ""
+    },
+    {
+      "id": "feat-005",
+      "name": "Phase 4 - Verification, Canonical Output, and Expansion",
+      "description": "Implement common data checks, plugin-domain verification orchestration, first_verified_bundle selection, ExpansionDecision, and atomic graph updates.",
+      "dependencies": [
+        "feat-004"
+      ],
+      "status": "not-started",
+      "done_criteria": [
+        "Only one canonical output bundle can bind per TaskUnit",
+        "expand creates child nodes and dependency edges atomically",
+        "Invalid expansion does not mutate the task graph"
+      ],
+      "evidence": ""
+    },
+    {
+      "id": "feat-006",
+      "name": "Phase 5 - Merge, Contribution, and Sandbox Settlement",
+      "description": "Implement plugin merge orchestration, ContributionRecord state machine, SettlementEngine, sandbox reward formula, and subtree pruning.",
+      "dependencies": [
+        "feat-005"
+      ],
+      "status": "not-started",
+      "done_criteria": [
+        "Canonical child outputs can merge into parent output",
+        "Intermediate contribution can settle after downstream success",
+        "Root completion generates exactly one sandbox settlement"
+      ],
+      "evidence": ""
+    },
+    {
+      "id": "feat-007",
+      "name": "Phase 6 - Experiments, Fault Simulation, and Metrics",
+      "description": "Implement factorization plugin, Lean stub plugin, SimulationProfile, SimulationWrapper, ExperimentRunner, and MetricsCollector.",
+      "dependencies": [
+        "feat-006"
+      ],
+      "status": "not-started",
+      "done_criteria": [
+        "Factorization experiment completes end to end",
+        "Lean stub completes one direct proof path and one decomposition path",
+        "Five fault profiles produce expected recovery behavior",
+        "Metrics report is generated"
+      ],
+      "evidence": ""
+    },
+    {
+      "id": "feat-008",
+      "name": "Phase 7 - Replay and Audit",
+      "description": "Implement state replay, audit replay, replay consistency checks, and no-double-settlement verification.",
+      "dependencies": [
+        "feat-007"
+      ],
+      "status": "not-started",
+      "done_criteria": [
+        "Final state can be rebuilt from JSONL events",
+        "Replay does not call AI or executor code",
+        "Replay does not produce duplicate SettlementRecord entries"
+      ],
+      "evidence": ""
+    }
+  ]
+}
