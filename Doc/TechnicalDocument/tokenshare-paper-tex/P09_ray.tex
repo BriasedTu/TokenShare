@@ -1,0 +1,2155 @@
+% Options for packages loaded elsewhere
+\PassOptionsToPackage{unicode}{hyperref}
+\PassOptionsToPackage{hyphens}{url}
+\documentclass[
+]{article}
+\usepackage{xcolor}
+\usepackage{amsmath,amssymb}
+\setcounter{secnumdepth}{-\maxdimen} % remove section numbering
+\usepackage{iftex}
+\ifPDFTeX
+  \usepackage[T1]{fontenc}
+  \usepackage[utf8]{inputenc}
+  \usepackage{textcomp} % provide euro and other symbols
+\else % if luatex or xetex
+  \usepackage{unicode-math} % this also loads fontspec
+  \defaultfontfeatures{Scale=MatchLowercase}
+  \defaultfontfeatures[\rmfamily]{Ligatures=TeX,Scale=1}
+\fi
+\usepackage{lmodern}
+\ifPDFTeX\else
+  % xetex/luatex font selection
+\fi
+% Use upquote if available, for straight quotes in verbatim environments
+\IfFileExists{upquote.sty}{\usepackage{upquote}}{}
+\IfFileExists{microtype.sty}{% use microtype if available
+  \usepackage[]{microtype}
+  \UseMicrotypeSet[protrusion]{basicmath} % disable protrusion for tt fonts
+}{}
+\makeatletter
+\@ifundefined{KOMAClassName}{% if non-KOMA class
+  \IfFileExists{parskip.sty}{%
+    \usepackage{parskip}
+  }{% else
+    \setlength{\parindent}{0pt}
+    \setlength{\parskip}{6pt plus 2pt minus 1pt}}
+}{% if KOMA class
+  \KOMAoptions{parskip=half}}
+\makeatother
+\usepackage{color}
+\usepackage{fancyvrb}
+\newcommand{\VerbBar}{|}
+\newcommand{\VERB}{\Verb[commandchars=\\\{\}]}
+\DefineVerbatimEnvironment{Highlighting}{Verbatim}{commandchars=\\\{\}}
+% Add ',fontsize=\small' for more characters per line
+\newenvironment{Shaded}{}{}
+\newcommand{\AlertTok}[1]{\textcolor[rgb]{1.00,0.00,0.00}{\textbf{#1}}}
+\newcommand{\AnnotationTok}[1]{\textcolor[rgb]{0.38,0.63,0.69}{\textbf{\textit{#1}}}}
+\newcommand{\AttributeTok}[1]{\textcolor[rgb]{0.49,0.56,0.16}{#1}}
+\newcommand{\BaseNTok}[1]{\textcolor[rgb]{0.25,0.63,0.44}{#1}}
+\newcommand{\BuiltInTok}[1]{\textcolor[rgb]{0.00,0.50,0.00}{#1}}
+\newcommand{\CharTok}[1]{\textcolor[rgb]{0.25,0.44,0.63}{#1}}
+\newcommand{\CommentTok}[1]{\textcolor[rgb]{0.38,0.63,0.69}{\textit{#1}}}
+\newcommand{\CommentVarTok}[1]{\textcolor[rgb]{0.38,0.63,0.69}{\textbf{\textit{#1}}}}
+\newcommand{\ConstantTok}[1]{\textcolor[rgb]{0.53,0.00,0.00}{#1}}
+\newcommand{\ControlFlowTok}[1]{\textcolor[rgb]{0.00,0.44,0.13}{\textbf{#1}}}
+\newcommand{\DataTypeTok}[1]{\textcolor[rgb]{0.56,0.13,0.00}{#1}}
+\newcommand{\DecValTok}[1]{\textcolor[rgb]{0.25,0.63,0.44}{#1}}
+\newcommand{\DocumentationTok}[1]{\textcolor[rgb]{0.73,0.13,0.13}{\textit{#1}}}
+\newcommand{\ErrorTok}[1]{\textcolor[rgb]{1.00,0.00,0.00}{\textbf{#1}}}
+\newcommand{\ExtensionTok}[1]{#1}
+\newcommand{\FloatTok}[1]{\textcolor[rgb]{0.25,0.63,0.44}{#1}}
+\newcommand{\FunctionTok}[1]{\textcolor[rgb]{0.02,0.16,0.49}{#1}}
+\newcommand{\ImportTok}[1]{\textcolor[rgb]{0.00,0.50,0.00}{\textbf{#1}}}
+\newcommand{\InformationTok}[1]{\textcolor[rgb]{0.38,0.63,0.69}{\textbf{\textit{#1}}}}
+\newcommand{\KeywordTok}[1]{\textcolor[rgb]{0.00,0.44,0.13}{\textbf{#1}}}
+\newcommand{\NormalTok}[1]{#1}
+\newcommand{\OperatorTok}[1]{\textcolor[rgb]{0.40,0.40,0.40}{#1}}
+\newcommand{\OtherTok}[1]{\textcolor[rgb]{0.00,0.44,0.13}{#1}}
+\newcommand{\PreprocessorTok}[1]{\textcolor[rgb]{0.74,0.48,0.00}{#1}}
+\newcommand{\RegionMarkerTok}[1]{#1}
+\newcommand{\SpecialCharTok}[1]{\textcolor[rgb]{0.25,0.44,0.63}{#1}}
+\newcommand{\SpecialStringTok}[1]{\textcolor[rgb]{0.73,0.40,0.53}{#1}}
+\newcommand{\StringTok}[1]{\textcolor[rgb]{0.25,0.44,0.63}{#1}}
+\newcommand{\VariableTok}[1]{\textcolor[rgb]{0.10,0.09,0.49}{#1}}
+\newcommand{\VerbatimStringTok}[1]{\textcolor[rgb]{0.25,0.44,0.63}{#1}}
+\newcommand{\WarningTok}[1]{\textcolor[rgb]{0.38,0.63,0.69}{\textbf{\textit{#1}}}}
+\usepackage{longtable,booktabs,array}
+\newcounter{none} % for unnumbered tables
+\usepackage{calc} % for calculating minipage widths
+% Correct order of tables after \paragraph or \subparagraph
+\usepackage{etoolbox}
+\makeatletter
+\patchcmd\longtable{\par}{\if@noskipsec\mbox{}\fi\par}{}{}
+\makeatother
+% Allow footnotes in longtable head/foot
+\IfFileExists{footnotehyper.sty}{\usepackage{footnotehyper}}{\usepackage{footnote}}
+\makesavenoteenv{longtable}
+\setlength{\emergencystretch}{3em} % prevent overfull lines
+\providecommand{\tightlist}{%
+  \setlength{\itemsep}{0pt}\setlength{\parskip}{0pt}}
+\usepackage{bookmark}
+\IfFileExists{xurl.sty}{\usepackage{xurl}}{} % add URL line breaks if available
+\urlstyle{same}
+\hypersetup{
+  hidelinks,
+  pdfcreator={LaTeX via pandoc}}
+
+\author{}
+\date{}
+
+\begin{document}
+
+\textit{[Image omitted: images/d3d8b821daec3e2e0c83d6c64b6477d2fcdfb88e9fd669608a0d57dcba07406f.jpg]}
+
+\section{usenix®}\label{usenix}
+
+THE ADVANCED
+
+COMPUTING SYSTEMS
+
+ASSOCIATION
+
+\section{Ray: A Distributed Framework for Emerging AI
+Applications}\label{ray-a-distributed-framework-for-emerging-ai-applications}
+
+Philipp Moritz, Robert Nishihara, Stephanie Wang, Alexey Tumanov,
+Richard Liaw, Eric Liang, Melih Elibol, Zongheng Yang, William Paul,
+Michael I. Jordan, and Ion Stoica, UC Berkeley
+
+https://www.usenix.org/conference/osdi18/presentation/nishihara
+
+This paper is included in the Proceedings of the 13th USENIX Symposium
+on Operating Systems Design and Implementation (OSDI '18).
+
+October 8--10, 2018 • Carlsbad, CA, USA
+
+ISBN 978-1-939133-08-3
+
+Open access to the Proceedings of the 13th USENIX Symposium on Operating
+Systems Design and Implementation is sponsored by USENIX.
+
+\section{Ray: A Distributed Framework for Emerging AI
+Applications}\label{ray-a-distributed-framework-for-emerging-ai-applications-1}
+
+Philipp Moritz*, Robert Nishihara*, Stephanie Wang, Alexey Tumanov,
+Richard Liaw, Eric Liang, Melih Elibol, Zongheng Yang, William Paul,
+Michael I. Jordan, Ion Stoica University of California, Berkeley
+
+\section{Abstract}\label{abstract}
+
+The next generation of AI applications will continuously interact with
+the environment and learn from these interactions. These applications
+impose new and demanding systems requirements, both in terms of
+performance and flexibility. In this paper, we consider these
+requirements and present Ray---a distributed system to address them. Ray
+implements a unified interface that can express both task-parallel and
+actor-based computations, supported by a single dynamic execution
+engine. To meet the performance requirements, Ray employs a distributed
+scheduler and a distributed and fault-tolerant store to manage the
+system's control state. In our experiments, we demonstrate scaling
+beyond 1.8 million tasks per second and better performance than existing
+specialized systems for several challenging reinforcement learning
+applications.
+
+\section{1 Introduction}\label{introduction}
+
+Over the past two decades, many organizations have been collecting---and
+aiming to exploit---ever-growing quantities of data. This has led to the
+development of a plethora of frameworks for distributed data analysis,
+including batch {[}20, 64, 28{]}, streaming {[}15, 39, 31{]}, and graph
+{[}34, 35, 24{]} processing systems. The success of these frameworks has
+made it possible for organizations to analyze large data sets as a core
+part of their business or scientific strategy, and has ushered in the
+age of ``Big Data.''
+
+More recently, the scope of data-focused applications has expanded to
+encompass more complex artificial intelligence (AI) or machine learning
+(ML) techniques {[}30{]}. The paradigm case is that of supervised
+learning, where data points are accompanied by labels, and where the
+workhorse technology for mapping data points to labels is provided by
+deep neural networks. The complexity of these deep networks has led to
+another flurry of frameworks that focus on the training of deep neural
+networks and their use in prediction. These frameworks often leverage
+specialized hardware (e.g., GPUs and TPUs), with the goal of reducing
+training time in a batch setting. Examples include TensorFlow {[}7{]},
+MXNet {[}18{]}, and PyTorch {[}46{]}.
+
+The promise of AI is, however, far broader than classical supervised
+learning. Emerging AI applications must increasingly operate in dynamic
+environments, react to changes in the environment, and take sequences of
+actions to accomplish long-term goals {[}8, 43{]}. They must aim not
+only to exploit the data gathered, but also to explore the space of
+possible actions. These broader requirements are naturally framed within
+the paradigm of reinforcement learning (RL). RL deals with learning to
+operate continuously within an uncertain environment based on delayed
+and limited feedback {[}56{]}. RL-based systems have already yielded
+remarkable results, such as Google's AlphaGo beating a human world
+champion {[}54{]}, and are beginning to find their way into dialogue
+systems, UAVs {[}42{]}, and robotic manipulation {[}25, 60{]}.
+
+The central goal of an RL application is to learn a policy---a mapping
+from the state of the environment to a choice of action---that yields
+effective performance over time, e.g., winning a game or piloting a
+drone. Finding effective policies in large-scale applications requires
+three main capabilities. First, RL methods often rely on simulation to
+evaluate policies. Simulations make it possible to explore many
+different choices of action sequences and to learn about the long-term
+consequences of those choices. Second, like their supervised learning
+counterparts, RL algorithms need to perform distributed training to
+improve the policy based on data generated through simulations or
+interactions with the physical environment. Third, policies are intended
+to provide solutions to control problems, and thus it is necessary to
+serve the policy in interactive closed-loop and open-loop control
+scenarios.
+
+These characteristics drive new systems requirements: a system for RL
+must support fine-grained computations (e.g., rendering actions in
+milliseconds when interacting with the real world, and performing vast
+numbers of sim-
+
+ulations), must support heterogeneity both in time (e.g., a simulation
+may take milliseconds or hours) and in resource usage (e.g., GPUs for
+training and CPUs for simulations), and must support dynamic execution,
+as results of simulations or interactions with the environment can
+change future computations. Thus, we need a dynamic computation
+framework that handles millions of heterogeneous tasks per second at
+millisecond-level latencies.
+
+Existing frameworks that have been developed for Big Data workloads or
+for supervised learning workloads fall short of satisfying these new
+requirements for RL. Bulk-synchronous parallel systems such as MapReduce
+{[}20{]}, Apache Spark {[}64{]}, and Dryad {[}28{]} do not support
+fine-grained simulation or policy serving. Task-parallel systems such as
+CIEL {[}40{]} and Dask {[}48{]} provide little support for distributed
+training and serving. The same is true for streaming systems such as
+Naiad {[}39{]} and Storm {[}31{]}. Distributed deep-learning frameworks
+such as TensorFlow {[}7{]} and MXNet {[}18{]} do not naturally support
+simulation and serving. Finally, model-serving systems such as
+TensorFlow Serving {[}6{]} and Clipper {[}19{]} support neither training
+nor simulation.
+
+While in principle one could develop an end-to-end solution by stitching
+together several existing systems (e.g., Horovod {[}53{]} for
+distributed training, Clipper {[}19{]} for serving, and CIEL {[}40{]}
+for simulation), in practice this approach is untenable due to the tight
+coupling of these components within applications. As a result,
+researchers and practitioners today build one-off systems for
+specialized RL applications {[}58, 41, 54, 44, 49, 5{]}. This approach
+imposes a massive systems engineering burden on the development of
+distributed applications by essentially pushing standard systems
+challenges like scheduling, fault tolerance, and data movement onto each
+application.
+
+In this paper, we propose Ray, a general-purpose cluster-computing
+framework that enables simulation, training, and serving for RL
+applications. The requirements of these workloads range from lightweight
+and stateless computations, such as for simulation, to long-running and
+stateful computations, such as for training. To satisfy these
+requirements, Ray implements a unified interface that can express both
+task-parallel and actor-based computations. Tasks enable Ray to
+efficiently and dynamically load balance simulations, process large
+inputs and state spaces (e.g., images, video), and recover from
+failures. In contrast, actors enable Ray to efficiently support stateful
+computations, such as model training, and expose shared mutable state to
+clients, (e.g., a parameter server). Ray implements the actor and the
+task abstractions on top of a single dynamic execution engine that is
+highly scalable and fault tolerant.
+
+To meet the performance requirements, Ray distributes two components
+that are typically centralized in existing frameworks {[}64, 28, 40{]}:
+(1) the task scheduler and (2) a metadata store which maintains the
+computation lineage and a directory for data objects. This allows Ray to
+schedule millions of tasks per second with millisecond-level latencies.
+Furthermore, Ray provides lineage-based fault tolerance for tasks and
+actors, and replication-based fault tolerance for the metadata store.
+
+\textit{[Image omitted: images/9bcab303d552167943db871c3b8febcf7320127759d9cf39adc9e4110b5070c3.jpg]}
+
+flowchart
+
+\begin{Shaded}
+\begin{Highlighting}[]
+\NormalTok{graph TD}
+\NormalTok{    A["Training Policy improvement (e.g., SGD)"] {-}{-}\textgreater{}|policy| B["Serving Policy evaluation"]}
+\NormalTok{    B {-}{-}\textgreater{}|action (a\_i)| C["Simulation"]}
+\NormalTok{    C {-}{-}\textgreater{}|state (s\_\{i+1\}) (observation)| B}
+\NormalTok{    B {-}{-}\textgreater{}|reward (r\_\{i+1\})| C}
+\NormalTok{    C {-}{-}\textgreater{}|trajectory: s\_0, (s\_1, r\_1), ..., (s\_n, r\_n)| A}
+\NormalTok{    style A fill:\#f9f,stroke:\#333}
+\NormalTok{    style B fill:\#ccf,stroke:\#333}
+\NormalTok{    style C fill:\#cfc,stroke:\#333}
+\end{Highlighting}
+\end{Shaded}
+
+Figure 1: Example of an RL system.
+
+While Ray supports serving, training, and simulation in the context of
+RL applications, this does not mean that it should be viewed as a
+replacement for systems that provide solutions for these workloads in
+other contexts. In particular, Ray does not aim to substitute for
+serving systems like Clipper {[}19{]} and TensorFlow Serving {[}6{]}, as
+these systems address a broader set of challenges in deploying models,
+including model management, testing, and model composition. Similarly,
+despite its flexibility, Ray is not a substitute for generic
+data-parallel frameworks, such as Spark {[}64{]}, as it currently lacks
+the rich functionality and APIs (e.g., straggler mitigation, query
+optimization) that these frameworks provide.
+
+We make the following contributions:
+
+\begin{itemize}
+\tightlist
+\item
+  We design and build the first distributed framework that unifies
+  training, simulation, and serving---necessary components of emerging
+  RL applications.\\
+\item
+  To support these workloads, we unify the actor and task-parallel
+  abstractions on top of a dynamic task execution engine.\\
+\item
+  To achieve scalability and fault tolerance, we propose a system design
+  principle in which control state is stored in a sharded metadata store
+  and all other system components are stateless.\\
+\item
+  To achieve scalability, we propose a bottom-up distributed scheduling
+  strategy.
+\end{itemize}
+
+\section{2 Motivation and
+Requirements}\label{motivation-and-requirements}
+
+We begin by considering the basic components of an RL system and
+fleshing out the key requirements for Ray. As shown in Figure 1, in an
+RL setting, an agent interacts repeatedly with the environment. The goal
+of the agent is to learn a policy that maximizes a reward. A policy is
+
+\begin{Shaded}
+\begin{Highlighting}[]
+\OperatorTok{//}\NormalTok{ evaluate policy by interacting }\ControlFlowTok{with}\NormalTok{ env. (e.g., simulator)}
+\NormalTok{rollout(policy, environment):}
+\NormalTok{trajectory }\OperatorTok{=}\NormalTok{ []}
+\NormalTok{state }\OperatorTok{=}\NormalTok{ environment.initial\_state()}
+\ControlFlowTok{while}\NormalTok{ (}\KeywordTok{not}\NormalTok{ environment.has\_terminated()):}
+\NormalTok{    action }\OperatorTok{=}\NormalTok{ policy.compute(state) }\OperatorTok{//}\NormalTok{ Serving}
+\NormalTok{    state, reward }\OperatorTok{=}\NormalTok{ environment.step(action) }\OperatorTok{//}\NormalTok{ Simulation}
+\NormalTok{    trajectory.append(state, reward)}
+\ControlFlowTok{return}\NormalTok{ trajectory }
+\end{Highlighting}
+\end{Shaded}
+
+\begin{Shaded}
+\begin{Highlighting}[]
+\OperatorTok{//}\NormalTok{ improve policy iteratively until it converges}
+\NormalTok{train\_policy(environment):}
+\NormalTok{    policy }\OperatorTok{=}\NormalTok{ initial\_policy()}
+    \ControlFlowTok{while}\NormalTok{ (policy has }\KeywordTok{not}\NormalTok{ converged):}
+\NormalTok{    trajectories }\OperatorTok{=}\NormalTok{ []}
+    \ControlFlowTok{for}\NormalTok{ i }\ImportTok{from} \DecValTok{1}\NormalTok{ to k:}
+    \OperatorTok{//}\NormalTok{ evaluate policy by generating k rollouts}
+\NormalTok{    trajectories.append(rollout(policy, environment))}
+    \OperatorTok{//}\NormalTok{ improve policy}
+\NormalTok{    policy }\OperatorTok{=}\NormalTok{ policy.update(trajectories) }\OperatorTok{//}\NormalTok{ Training}
+\ControlFlowTok{return}\NormalTok{ policy }
+\end{Highlighting}
+\end{Shaded}
+
+Figure 2: Typical RL pseudocode for learning a policy.
+
+a mapping from the state of the environment to a choice of action. The
+precise definitions of environment, agent, state, action, and reward are
+application-specific.
+
+To learn a policy, an agent typically employs a two-step process: (1)
+policy evaluation and (2) policy improvement. To evaluate the policy,
+the agent interacts with the environment (e.g., with a simulation of the
+environment) to generate trajectories, where a trajectory consists of a
+sequence of (state, reward) tuples produced by the current policy. Then,
+the agent uses these trajectories to improve the policy; i.e., to update
+the policy in the direction of the gradient that maximizes the reward.
+Figure 2 shows an example of the pseudocode used by an agent to learn a
+policy. This pseudocode evaluates the policy by invoking
+rollout(environment, policy) to generate trajectories. train\_policy()
+then uses these trajectories to improve the current policy via
+policy.update(trajectories). This process repeats until the policy
+converges.
+
+Thus, a framework for RL applications must provide efficient support for
+training, serving, and simulation (Figure 1). Next, we briefly describe
+these workloads.
+
+Training typically involves running stochastic gradient descent (SGD),
+often in a distributed setting, to update the policy. Distributed SGD
+typically relies on an allreduce aggregation step or a parameter server
+{[}32{]}.
+
+Serving uses the trained policy to render an action based on the current
+state of the environment. A serving system aims to minimize latency, and
+maximize the number of decisions per second. To scale, load is typically
+balanced across multiple nodes serving the policy.
+
+Finally, most existing RL applications use simulations to evaluate the
+policy---current RL algorithms are not sample-efficient enough to rely
+solely on data obtained from interactions with the physical world. These
+simulations vary widely in complexity. They might take a few ms (e.g.,
+simulate a move in a chess game) to minutes (e.g., simulate a realistic
+environment for a self-driving car).
+
+In contrast with supervised learning, in which training and serving can
+be handled separately by different systems, in RL all three of these
+workloads are tightly coupled in a single application, with stringent
+latency requirements between them. Currently, no framework supports this
+coupling of workloads. In theory, multiple specialized frameworks could
+be stitched together to provide the overall capabilities, but in
+practice, the resulting data movement and latency between systems is
+prohibitive in the context of RL. As a result, researchers and
+practitioners have been building their own one-off systems.
+
+This state of affairs calls for the development of new distributed
+frameworks for RL that can efficiently support training, serving, and
+simulation. In particular, such a framework should satisfy the following
+requirements:
+
+Fine-grained, heterogeneous computations. The duration of a computation
+can range from milliseconds (e.g., taking an action) to hours (e.g.,
+training a complex policy). Additionally, training often requires
+heterogeneous hardware (e.g., CPUs, GPUs, or TPUs).
+
+Flexible computation model. RL applications require both stateless and
+stateful computations. Stateless computations can be executed on any
+node in the system, which makes it easy to achieve load balancing and
+movement of computation to data, if needed. Thus stateless computations
+are a good fit for fine-grained simulation and data processing, such as
+extracting features from images or videos. In contrast stateful
+computations are a good fit for implementing parameter servers,
+performing repeated computation on GPU-backed data, or running
+third-party simulators that do not expose their state.
+
+Dynamic execution. Several components of RL applications require dynamic
+execution, as the order in which computations finish is not always known
+in advance (e.g., the order in which simulations finish), and the
+results of a computation can determine future computations (e.g., the
+results of a simulation will determine whether we need to perform more
+simulations).
+
+We make two final comments. First, to achieve high utilization in large
+clusters, such a framework must handle millions of tasks per second.*
+Second, such a framework is not intended for implementing deep neural
+networks or complex simulators from scratch. Instead, it should enable
+seamless integration with existing simulators {[}13, 11, 59{]} and deep
+learning frameworks {[}7, 18, 46, 29{]}.
+
+Name
+
+Description
+
+futures = f.remote(args)
+
+Execute function f remotely. f.remote() can take objects or futures as
+inputs and returns one or more futures. This is non-blocking.
+
+objects = ray.get(futures)
+
+Return the values associated with one or more futures. This is blocking.
+
+ready\_futures = ray.wait(futures, k, timeout)
+
+Return the futures whose corresponding tasks have completed as soon as
+either k have completed or the timeout expires.
+
+actor = Class.remote(args)futures = actor.method.remote(args)
+
+Instantiate class Class as a remote actor, and return a handle to it.
+Call a method on the remote actor and return one or more futures. Both
+are non-blocking.
+
+Table 1: Ray API
+
+\section{3 Programming and Computation
+Model}\label{programming-and-computation-model}
+
+Ray implements a dynamic task graph computation model, i.e., it models
+an application as a graph of dependent tasks that evolves during
+execution. On top of this model, Ray provides both an actor and a
+task-parallel programming abstraction. This unification differentiates
+Ray from related systems like CIEL, which only provides a task-parallel
+abstraction, and from Orleans {[}14{]} or Akka {[}1{]}, which primarily
+provide an actor abstraction.
+
+\section{3.1 Programming Model}\label{programming-model}
+
+Tasks. A task represents the execution of a remote function on a
+stateless worker. When a remote function is invoked, a future
+representing the result of the task is returned immediately. Futures can
+be retrieved using ray.get() and passed as arguments into other remote
+functions without waiting for their result. This allows the user to
+express parallelism while capturing data dependencies. Table 1 shows
+Ray's API.
+
+Remote functions operate on immutable objects and are expected to be
+stateless and side-effect free: their outputs are determined solely by
+their inputs. This implies idempotence, which simplifies fault tolerance
+through function re-execution on failure.
+
+Actors. An actor represents a stateful computation. Each actor exposes
+methods that can be invoked remotely and are executed serially. A method
+execution is similar to a task, in that it executes remotely and returns
+a future, but differs in that it executes on a stateful worker. A handle
+to an actor can be passed to other actors or tasks, making it possible
+for them to invoke methods on that actor.
+
+Tasks (stateless)
+
+Actors (stateful)
+
+Fine-grained load balancing
+
+Coarse-grained load balancing
+
+Support for object locality
+
+Poor locality support
+
+High overhead for small updates
+
+Low overhead for small updates
+
+Efficient failure handling
+
+Overhead from checkpointing
+
+Table 2: Tasks vs.~actors tradeoffs.
+
+Table 2 summarizes the properties of tasks and actors. Tasks enable
+fine-grained load balancing through leveraging load-aware scheduling at
+task granularity, input data locality, as each task can be scheduled on
+the node storing its inputs, and low recovery overhead, as there is no
+need to checkpoint and recover intermediate state. In contrast, actors
+provide much more efficient fine-grained updates, as these updates are
+performed on internal rather than external state, which typically
+requires serialization and deserialization. For example, actors can be
+used to implement parameter servers {[}32{]} and GPU-based iterative
+computations (e.g., training). In addition, actors can be used to wrap
+third-party simulators and other opaque handles that are hard to
+serialize.
+
+To satisfy the requirements for heterogeneity and flexibility (Section
+2), we augment the API in three ways. First, to handle concurrent tasks
+with heterogeneous durations, we introduce ray.wait(), which waits for
+the first k available results, instead of waiting for all results like
+ray.get(). Second, to handle resource-heterogeneous tasks, we enable
+developers to specify resource requirements so that the Ray scheduler
+can efficiently manage resources. Third, to improve flexibility, we
+enable nested remote functions, meaning that remote functions can invoke
+other remote functions. This is also critical for achieving high
+scalability (Section 4), as it enables multiple processes to invoke
+remote functions in a distributed fashion.
+
+\section{3.2 Computation Model}\label{computation-model}
+
+Ray employs a dynamic task graph computation model {[}21{]}, in which
+the execution of both remote functions and actor methods is
+automatically triggered by the system when their inputs become
+available. In this section, we describe how the computation graph
+(Figure 4) is constructed from a user program (Figure 3). This program
+uses the API in Table 1 to implement the pseudocode from Figure 2.
+
+Ignoring actors first, there are two types of nodes in a computation
+graph: data objects and remote function invocations, or tasks. There are
+also two types of edges: data edges and control edges. Data edges
+capture the de-
+
+\begin{Shaded}
+\begin{Highlighting}[]
+\AttributeTok{@ray.remote}
+\KeywordTok{def}\NormalTok{ create\_policy():}
+    \CommentTok{\# Initialize the policy randomly.}
+    \ControlFlowTok{return}\NormalTok{ policy}
+
+\AttributeTok{@ray.remote}\NormalTok{(num\_gpus}\OperatorTok{=}\DecValTok{1}\NormalTok{)}
+\KeywordTok{class}\NormalTok{ Simulator(}\BuiltInTok{object}\NormalTok{):}
+    \KeywordTok{def} \FunctionTok{\_\_init\_\_}\NormalTok{(}\VariableTok{self}\NormalTok{):}
+    \CommentTok{\# Initialize the environment.}
+    \VariableTok{self}\NormalTok{.env }\OperatorTok{=}\NormalTok{ Environment()}
+    \KeywordTok{def}\NormalTok{ rollout(}\VariableTok{self}\NormalTok{, policy, num\_steps):}
+\NormalTok{    observations }\OperatorTok{=}\NormalTok{ []}
+\NormalTok{    observation }\OperatorTok{=} \VariableTok{self}\NormalTok{.env.current\_state()}
+    \ControlFlowTok{for}\NormalTok{ \_ }\KeywordTok{in} \BuiltInTok{range}\NormalTok{(num\_steps):}
+\NormalTok{    action }\OperatorTok{=}\NormalTok{ policy(observation)}
+\NormalTok{    observation }\OperatorTok{=} \VariableTok{self}\NormalTok{.env.step(action)}
+\NormalTok{    observations.append(observation)}
+    \ControlFlowTok{return}\NormalTok{ observations}
+
+\AttributeTok{@ray.remote}\NormalTok{(num\_gpus}\OperatorTok{=}\DecValTok{2}\NormalTok{)}
+\KeywordTok{def}\NormalTok{ update\_policy(policy, }\OperatorTok{*}\NormalTok{rollouts):}
+    \CommentTok{\# Update the policy.}
+    \ControlFlowTok{return}\NormalTok{ policy}
+
+\AttributeTok{@ray.remote}
+\KeywordTok{def}\NormalTok{ train\_policy():}
+    \CommentTok{\# Create a policy.}
+\NormalTok{    policy\_id }\OperatorTok{=}\NormalTok{ create\_policy.remote()}
+    \CommentTok{\# Create 10 actors.}
+\NormalTok{    simulators }\OperatorTok{=}\NormalTok{ [Simulator.remote() }\ControlFlowTok{for}\NormalTok{ \_ }\KeywordTok{in} \BuiltInTok{range}\NormalTok{(}\DecValTok{10}\NormalTok{)]}
+    \CommentTok{\# Do 100 steps of training.}
+    \ControlFlowTok{for}\NormalTok{ \_ }\KeywordTok{in} \BuiltInTok{range}\NormalTok{(}\DecValTok{100}\NormalTok{):}
+    \CommentTok{\# Perform one rollout on each actor.}
+\NormalTok{    rollout\_ids }\OperatorTok{=}\NormalTok{ [s. rollout.remote(policy\_id)}
+    \ControlFlowTok{for}\NormalTok{ s }\KeywordTok{in}\NormalTok{ simulators]}
+    \CommentTok{\# Update the policy with the rollouts.}
+\NormalTok{    policy\_id }\OperatorTok{=}\NormalTok{ update\_policy.remote(policy\_id, }\OperatorTok{*}\NormalTok{rollouts\_ids)}
+    \ControlFlowTok{return}\NormalTok{ ray.get(policy\_id) }
+\end{Highlighting}
+\end{Shaded}
+
+Figure 3: Python code implementing the example in Figure 2 in Ray. Note
+that @ray.remote indicates remote functions and actors. Invocations of
+remote functions and actor methods return futures, which can be passed
+to subsequent remote functions or actor methods to encode task
+dependencies. Each actor has an environment object self.env shared
+between all of its methods.
+
+pendencies between data objects and tasks. More precisely, if data
+object D is an output of task T, we add a data edge from T to D.
+Similarly, if D is an input to T, we add a data edge from D to T.
+Control edges capture the computation dependencies that result from
+nested remote functions (Section 3.1): if task \(T_{1}\) invokes task
+\(T_{2}\) , then we add a control edge from \(T_{1}\) to \(T_{2}\) .
+
+Actor method invocations are also represented as nodes in the
+computation graph. They are identical to tasks with one key difference.
+To capture the state dependency across subsequent method invocations on
+the same actor, we add a third type of edge: a stateful edge. If method
+\(M_{j}\) is called right after method \(M_{i}\) on the same actor, then
+we add a stateful edge from \(M_{i}\) to \(M_{j}\) . Thus, all
+
+\textit{[Image omitted: images/d924aac294cc9551361a30d6513d531c8f3272b538cfe80033e5e4c133bd5c92.jpg]}
+
+flowchart
+
+Policy management flowchart showing interactions between simulator,
+rollout, policy, and update policy components
+
+Figure 4: The task graph corresponding to an invocation of
+train\_policy.remote() in Figure 3. Remote function calls and the actor
+method calls correspond to tasks in the task graph. The figure shows two
+actors. The method invocations for each actor (the tasks labeled
+\(A_{1i}\) and \(A_{2i}\) ) have stateful edges between them indicating
+that they share the mutable actor state. There are control edges from
+train\_policy to the tasks that it invokes. To train multiple policies
+in parallel, we could call train\_policy.remote() multiple times.
+
+methods invoked on the same actor object form a chain that is connected
+by stateful edges (Figure 4). This chain captures the order in which
+these methods were invoked.
+
+Stateful edges help us embed actors in an otherwise stateless task
+graph, as they capture the implicit data dependency between successive
+method invocations sharing the internal state of an actor. Stateful
+edges also enable us to maintain lineage. As in other dataflow systems
+{[}64{]}, we track data lineage to enable reconstruction. By explicitly
+including stateful edges in the lineage graph, we can easily reconstruct
+lost data, whether produced by remote functions or actor methods
+(Section 4.2.3).
+
+\section{4 Architecture}\label{architecture}
+
+Ray's architecture comprises (1) an application layer implementing the
+API, and (2) a system layer providing high scalability and fault
+tolerance.
+
+\section{4.1 Application Layer}\label{application-layer}
+
+The application layer consists of three types of processes:
+
+\begin{itemize}
+\tightlist
+\item
+  Driver: A process executing the user program.\\
+\item
+  Worker: A stateless process that executes tasks (remote functions)
+  invoked by a driver or another
+\end{itemize}
+
+\textit{[Image omitted: images/f3c36cc953eb1881f3b8237baaeae80e0af8816e2fc8cd96fedc66a519549b39.jpg]}
+
+flowchart
+
+\begin{Shaded}
+\begin{Highlighting}[]
+\NormalTok{graph TD}
+\NormalTok{    subgraph App Layer}
+\NormalTok{        A["Driver"] {-}{-}\textgreater{} B["Object Store"]}
+\NormalTok{        C["Worker"] {-}{-}\textgreater{} B}
+\NormalTok{        B {-}{-}\textgreater{} D["Local Scheduler"]}
+\NormalTok{    end}
+\NormalTok{    subgraph System Layer}
+\NormalTok{        E["Global Scheduler"] {-}{-}\textgreater{} F["Global Control Store (GCS)"]}
+\NormalTok{        F {-}{-}\textgreater{} G["Object Table"]}
+\NormalTok{        F {-}{-}\textgreater{} H["Task Table"]}
+\NormalTok{        F {-}{-}\textgreater{} I["Function Table"]}
+\NormalTok{        F {-}{-}\textgreater{} J["Event Logs"]}
+\NormalTok{    end}
+\NormalTok{    subgraph Node Layer}
+\NormalTok{        K["Actor"] {-}{-}\textgreater{} L["Object Store"]}
+\NormalTok{        M["Driver"] {-}{-}\textgreater{} L}
+\NormalTok{        L {-}{-}\textgreater{} N["Local Scheduler"]}
+\NormalTok{    end}
+\NormalTok{    subgraph Node Layer}
+\NormalTok{        O["Worker"] {-}{-}\textgreater{} P["Object Store"]}
+\NormalTok{        Q["Worker"] {-}{-}\textgreater{} P}
+\NormalTok{        P {-}{-}\textgreater{} R["Local Scheduler"]}
+\NormalTok{    end}
+\NormalTok{    subgraph System Layer}
+\NormalTok{        S["Web UI"] {-}{-}\textgreater{} T["Debugging Tools"]}
+\NormalTok{        U["Profiling Tools"] {-}{-}\textgreater{} V["Error Diagnosis"]}
+\NormalTok{    end}
+\NormalTok{    A {-}{-}\textgreater{} K}
+\NormalTok{    C {-}{-}\textgreater{} K}
+\NormalTok{    B {-}{-}\textgreater{} K}
+\NormalTok{    L {-}{-}\textgreater{} K}
+\NormalTok{    N {-}{-}\textgreater{} K}
+\NormalTok{    P {-}{-}\textgreater{} K}
+\NormalTok{    R {-}{-}\textgreater{} K}
+\NormalTok{    S {-}{-}\textgreater{} K}
+\NormalTok{    T {-}{-}\textgreater{} K}
+\NormalTok{    U {-}{-}\textgreater{} K}
+\NormalTok{    V {-}{-}\textgreater{} K}
+\NormalTok{    W["Error Diagnosis"] {-}{-}\textgreater{} T}
+\NormalTok{    X["Error Diagnosis"] {-}{-}\textgreater{} U}
+\NormalTok{    Y["Error Diagnosis"] {-}{-}\textgreater{} V}
+\NormalTok{    Z["Error Diagnosis"] {-}{-}\textgreater{} W}
+\end{Highlighting}
+\end{Shaded}
+
+Figure 5: Ray's architecture consists of two parts: an application layer
+and a system layer. The application layer implements the API and the
+computation model described in Section 3, the system layer implements
+task scheduling and data management to satisfy the performance and
+fault-tolerance requirements.
+
+worker. Workers are started automatically and assigned tasks by the
+system layer. When a remote function is declared, the function is
+automatically published to all workers. A worker executes tasks
+serially, with no local state maintained across tasks.
+
+- Actor: A stateful process that executes, when invoked, only the
+methods it exposes. Unlike a worker, an actor is explicitly instantiated
+by a worker or a driver. Like workers, actors execute methods serially,
+except that each method depends on the state resulting from the previous
+method execution.
+
+\section{4.2 System Layer}\label{system-layer}
+
+The system layer consists of three major components: a global control
+store, a distributed scheduler, and a distributed object store. All
+components are horizontally scalable and fault-tolerant.
+
+\section{4.2.1 Global Control Store
+(GCS)}\label{global-control-store-gcs}
+
+The global control store (GCS) maintains the entire control state of the
+system, and it is a unique feature of our design. At its core, GCS is a
+key-value store with pub-sub functionality. We use sharding to achieve
+scale, and per-shard chain replication {[}61{]} to provide fault
+tolerance. The primary reason for the GCS and its design is to maintain
+fault tolerance and low latency for a system that can dynamically spawn
+millions of tasks per second.
+
+Fault tolerance in case of node failure requires a solution to maintain
+lineage information. Existing lineage-based solutions {[}64, 63, 40,
+28{]} focus on coarse-grained parallelism and can therefore use a single
+node (e.g., master, driver) to store the lineage without impacting
+performance. However, this design is not scalable for a fine-grained and
+dynamic workload like simulation. Therefore, we decouple the durable
+lineage storage from the other system components, allowing each to scale
+independently.
+
+Maintaining low latency requires minimizing overheads in task
+scheduling, which involves choosing where to execute, and subsequently
+task dispatch, which involves retrieving remote inputs from other nodes.
+Many existing dataflow systems {[}64, 40, 48{]} couple these by storing
+object locations and sizes in a centralized scheduler, a natural design
+when the scheduler is not a bottleneck. However, the scale and
+granularity that Ray targets requires keeping the centralized scheduler
+off the critical path. Involving the scheduler in each object transfer
+is prohibitively expensive for primitives important to distributed
+training like allreduce, which is both communication-intensive and
+latency-sensitive. Therefore, we store the object metadata in the GCS
+rather than in the scheduler, fully decoupling task dispatch from task
+scheduling.
+
+In summary, the GCS significantly simplifies Ray's overall design, as it
+enables every component in the system to be stateless. This not only
+simplifies support for fault tolerance (i.e., on failure, components
+simply restart and read the lineage from the GCS), but also makes it
+easy to scale the distributed object store and scheduler independently,
+as all components share the needed state via the GCS. An added benefit
+is the easy development of debugging, profiling, and visualization
+tools.
+
+\section{4.2.2 Bottom-Up Distributed
+Scheduler}\label{bottom-up-distributed-scheduler}
+
+As discussed in Section 2, Ray needs to dynamically schedule millions of
+tasks per second, tasks which may take as little as a few milliseconds.
+None of the cluster schedulers we are aware of meet these requirements.
+Most cluster computing frameworks, such as Spark {[}64{]}, CIEL
+{[}40{]}, and Dryad {[}28{]} implement a centralized scheduler, which
+can provide locality but at latencies in the tens of ms. Distributed
+schedulers such as work stealing {[}12{]}, Sparrow {[}45{]} and Canary
+{[}47{]} can achieve high scale, but they either don't consider data
+locality {[}12{]}, or assume tasks belong to independent jobs {[}45{]},
+or assume the computation graph is known {[}47{]}.
+
+To satisfy the above requirements, we design a two-level hierarchical
+scheduler consisting of a global scheduler and per-node local
+schedulers. To avoid overloading the global scheduler, the tasks created
+at a node are submitted first to the node's local scheduler. A local
+scheduler schedules tasks locally unless the node is overloaded (i.e.,
+its local task queue exceeds a predefined threshold), or it cannot
+satisfy a task's requirements (e.g., lacks a GPU). If a local scheduler
+decides not to schedule a task locally, it forwards it to the global
+scheduler. Since this scheduler attempts to schedule tasks locally first
+(i.e., at the leaves of the scheduling hierarchy), we call it a
+bottom-up scheduler.
+
+\textit{[Image omitted: images/084a3459ad3f2a84e1c531c8b7dbb02c39d674f8a6227bd335631725f2fb1d2b.jpg]}
+
+flowchart
+
+\begin{Shaded}
+\begin{Highlighting}[]
+\NormalTok{graph TD}
+\NormalTok{    subgraph Node 1}
+\NormalTok{        Driver {-}{-}\textgreater{} LocalScheduler}
+\NormalTok{        Worker1 {-}{-}\textgreater{} LocalScheduler}
+\NormalTok{        Worker2 {-}{-}\textgreater{} LocalScheduler}
+\NormalTok{        WorkerN {-}{-}\textgreater{} LocalScheduler}
+\NormalTok{    end}
+
+\NormalTok{    subgraph Node N}
+\NormalTok{        Worker1 {-}{-}\textgreater{} LocalScheduler}
+\NormalTok{        Worker2 {-}{-}\textgreater{} LocalScheduler}
+\NormalTok{        WorkerN {-}{-}\textgreater{} LocalScheduler}
+\NormalTok{    end}
+
+\NormalTok{    LocalScheduler {-}{-}\textgreater{} GlobalScheduler}
+\NormalTok{    LocalScheduler {-}{-}\textgreater{} GlobalControlState}
+\NormalTok{    GlobalControlState {-}{-}\textgreater{} GlobalScheduler}
+\NormalTok{    GlobalScheduler {-}{-}\textgreater{} SubmitTasks}
+\NormalTok{    GlobalControlState {-}{-}\textgreater{} ScheduleTasks}
+\NormalTok{    GlobalControlState {-}{-}\textgreater{} LoadInfo}
+\NormalTok{    GlobalControlState {-}{-}\textgreater{} Info}
+\NormalTok{    style Node 1 fill:\#f9f,stroke:\#333}
+\NormalTok{    style Node N fill:\#f9f,stroke:\#333}
+\NormalTok{    style Node 1 fill:\#ccf,stroke:\#333}
+\NormalTok{    style Node N fill:\#ccf,stroke:\#333}
+\end{Highlighting}
+\end{Shaded}
+
+Figure 6: Bottom-up distributed scheduler. Tasks are submitted
+bottom-up, from drivers and workers to a local scheduler and forwarded
+to the global scheduler only if needed (Section 4.2.2). The thickness of
+each arrow is proportional to its request rate.
+
+The global scheduler considers each node's load and task's constraints
+to make scheduling decisions. More precisely, the global scheduler
+identifies the set of nodes that have enough resources of the type
+requested by the task, and of these nodes selects the node which
+provides the lowest estimated waiting time. At a given node, this time
+is the sum of (i) the estimated time the task will be queued at that
+node (i.e., task queue size times average task execution), and (ii) the
+estimated transfer time of task's remote inputs (i.e., total size of
+remote inputs divided by average bandwidth). The global scheduler gets
+the queue size at each node and the node resource availability via
+heartbeats, and the location of the task's inputs and their sizes from
+GCS. Furthermore, the global scheduler computes the average task
+execution and the average transfer bandwidth using simple exponential
+averaging. If the global scheduler becomes a bottleneck, we can
+instantiate more replicas all sharing the same information via GCS. This
+makes our scheduler architecture highly scalable.
+
+\section{4.2.3 In-Memory Distributed Object
+Store}\label{in-memory-distributed-object-store}
+
+To minimize task latency, we implement an in-memory distributed storage
+system to store the inputs and outputs of every task, or stateless
+computation. On each node, we implement the object store via shared
+memory. This allows zero-copy data sharing between tasks running on the
+same node. As a data format, we use Apache Arrow {[}2{]}.
+
+If a task's inputs are not local, the inputs are replicated to the local
+object store before execution. Also, a task writes its outputs to the
+local object store. Replication eliminates the potential bottleneck due
+to hot data objects and minimizes task execution time as a task only
+reads/writes data from/to the local memory. This increases throughput
+for computation-bound workloads, a profile shared by many AI
+applications. For low latency, we keep objects entirely in memory and
+evict them as needed to disk using an LRU policy.
+
+As with existing cluster computing frameworks, such as Spark {[}64{]},
+and Dryad {[}28{]}, the object store is limited to immutable data. This
+obviates the need for complex consistency protocols (as objects are not
+updated), and simplifies support for fault tolerance. In the case of
+node failure, Ray recovers any needed objects through lineage
+re-execution. The lineage stored in the GCS tracks both stateless tasks
+and stateful actors during initial execution; we use the former to
+reconstruct objects in the store.
+
+For simplicity, our object store does not support distributed objects,
+i.e., each object fits on a single node. Distributed objects like large
+matrices or trees can be implemented at the application level as
+collections of futures.
+
+\section{4.2.4 Implementation}\label{implementation}
+
+Ray is an active open source project \(^{†}\) developed at the
+University of California, Berkeley. Ray fully integrates with the Python
+environment and is easy to install by simply running pip install ray.
+The implementation comprises \(\approx\) 40K lines of code (LoC), 72\%
+in C++ for the system layer, 28\% in Python for the application layer.
+The GCS uses one Redis {[}50{]} key-value store per shard, with entirely
+single-key operations. GCS tables are sharded by object and task IDs to
+scale, and every shard is chain-replicated {[}61{]} for fault tolerance.
+We implement both the local and global schedulers as event-driven,
+single-threaded processes. Internally, local schedulers maintain cached
+state for local object metadata, tasks waiting for inputs, and tasks
+ready for dispatch to a worker. To transfer large objects between
+different object stores, we stripe the object across multiple TCP
+connections.
+
+\section{4.3 Putting Everything
+Together}\label{putting-everything-together}
+
+Figure 7 illustrates how Ray works end-to-end with a simple example that
+adds two objects a and b, which could be scalars or matrices, and
+returns result c.~The remote function add() is automatically registered
+with the GCS upon initialization and distributed to every worker in the
+system (step 0 in Figure 7a).
+
+Figure 7a shows the step-by-step operations triggered by a driver
+invoking add.remote(a, b), where a and b are stored on nodes N1 and N2,
+respectively. The driver submits add(a, b) to the local scheduler (step
+1), which forwards it to a global scheduler (step 2). \(^{\ddagger}\)
+Next, the global scheduler looks up the locations of add(a, b)'s
+arguments in the GCS (step 3) and decides to schedule the task on node
+N2, which stores argument b (step 4). The local scheduler at node N2
+checks whether the local object store contains add(a, b)'s arguments
+(step 5). Since the
+
+\textit{[Image omitted: images/bd2cc3e349470b131dabad825f431befe3931ed0b576f712a356618591f96410.jpg]}
+
+flowchart
+
+System architecture flowchart showing data flow between Driver, Function
+Table, Worker, and Global Control Store (GCS) components with address
+and return flags.
+
+\begin{enumerate}
+\def\labelenumi{(\alph{enumi})}
+\tightlist
+\item
+  Executing a task remotely\\
+  \textit{[Image omitted: images/46c79bc5e2f35e0ca7bb712bf579f9d25e605d32fe16aa55d1034acfab17a0c2.jpg]}
+\end{enumerate}
+
+flowchart
+
+System architecture flowchart showing data flow between Driver, Global
+Control Store (GCS), Function Table, Object Table, and Worker components
+with labeled nodes and edges.
+
+\begin{enumerate}
+\def\labelenumi{(\alph{enumi})}
+\setcounter{enumi}{1}
+\tightlist
+\item
+  Returning the result of a remote task\\
+  Figure 7: An end-to-end example that adds a and b and returns c.~Solid
+  lines are data plane operations and dotted lines are control plane
+  operations. (a) The function add() is registered with the GCS by node
+  1 (N1), invoked on N1, and executed on N2. (b) N1 gets add()'s result
+  using ray.get(). The Object Table entry for c is created in step 4 and
+  updated in step 6 after c is copied to N1.
+\end{enumerate}
+
+local store doesn't have object \(a\) , it looks up \(a\) 's location in
+the GCS (step 6). Learning that \(a\) is stored at \(N1\) , \(N2\) 's
+object store replicates it locally (step 7). As all arguments of
+\(\mathbf{add}()\) are now stored locally, the local scheduler invokes
+\(\mathbf{add}()\) at a local worker (step 8), which accesses the
+arguments via shared memory (step 9).
+
+Figure 7b shows the step-by-step operations triggered by the execution
+of ray.get() at N1, and of add() at N2, respectively. Upon
+ray.get(idc)'s invocation, the driver checks the local object store for
+the value c, using the future idc returned by add() (step 1). Since the
+local object store doesn't store c, it looks up its location in the GCS.
+At this time, there is no entry for c, as c has not been created yet. As
+a result, N1's object store registers a callback with the Object Table
+to be triggered when c's entry has been created (step 2). Meanwhile, at
+N2, add() completes its execution, stores the result c in the local
+object store (step 3), which in turn adds c's entry to the GCS (step 4).
+As a result, the GCS triggers a callback to N1's object store with c's
+entry (step 5). Next, N1 replicates c from N2 (step 6), and returns c to
+ray.get() (step 7), which finally completes the task.
+
+While this example involves a large number of RPCs, in many cases this
+number is much smaller, as most tasks are scheduled locally, and the GCS
+replies are cached by the global and local schedulers.
+
+\textit{[Image omitted: images/8d715de7a0cdee4d60fee60c3aac3f87107b90df6dc63a5338bf1513784c492c.jpg]}
+
+bar
+
+{\def\LTcaptype{none} % do not increment counter
+\begin{longtable}[]{@{}lll@{}}
+\toprule\noalign{}
+Object size & Locality Aware & Unaware \\
+\midrule\noalign{}
+\endhead
+\bottomrule\noalign{}
+\endlastfoot
+100KB & 0.0001 & 0.0001 \\
+1MB & 0.0001 & 0.0003 \\
+10MB & 0.0001 & 0.003 \\
+100MB & 0.0001 & 0.03 \\
+\end{longtable}
+}
+
+\begin{enumerate}
+\def\labelenumi{(\alph{enumi})}
+\tightlist
+\item
+  Ray locality scheduling
+\end{enumerate}
+
+\textit{[Image omitted: images/9ec0de3a56c340def8de507a542f6e062afa6dddf396e14d94eb50a3832ac494.jpg]}
+
+bar
+
+{\def\LTcaptype{none} % do not increment counter
+\begin{longtable}[]{@{}ll@{}}
+\toprule\noalign{}
+number of nodes & Millions of tasks/s \\
+\midrule\noalign{}
+\endhead
+\bottomrule\noalign{}
+\endlastfoot
+10 & 0.1 \\
+20 & 0.3 \\
+30 & 0.5 \\
+40 & 0.7 \\
+50 & 0.9 \\
+60 & 1.1 \\
+100 & 1.6 \\
+\end{longtable}
+}
+
+\begin{enumerate}
+\def\labelenumi{(\alph{enumi})}
+\setcounter{enumi}{1}
+\tightlist
+\item
+  Ray scalability\\
+  Figure 8: (a) Tasks leverage locality-aware placement. 1000 tasks with
+  a random object dependency are scheduled onto one of two nodes. With
+  locality-aware policy, task latency remains independent of the size of
+  task inputs instead of growing by 1-2 orders of magnitude. (b)
+  Near-linear scalability leveraging the GCS and bottom-up distributed
+  scheduler. Ray reaches 1 million tasks per second throughput with 60
+  nodes. \(x \in \{70, 80, 90\}\) omitted due to cost.
+\end{enumerate}
+
+\section{5 Evaluation}\label{evaluation}
+
+In our evaluation, we study the following questions:
+
+\begin{enumerate}
+\def\labelenumi{\arabic{enumi}.}
+\tightlist
+\item
+  How well does Ray meet the latency, scalability, and fault tolerance
+  requirements listed in Section 2? (Section 5.1)\\
+\item
+  What overheads are imposed on distributed primitives (e.g., allreduce)
+  written using Ray's API? (Section 5.1)\\
+\item
+  In the context of RL workloads, how does Ray compare against
+  specialized systems for training, serving, and simulation? (Section
+  5.2)\\
+\item
+  What advantages does Ray provide for RL applications, compared to
+  custom systems? (Section 5.3)
+\end{enumerate}
+
+All experiments were run on Amazon Web Services. Unless otherwise
+stated, we use m4.16xlarge CPU instances and p3.16xlarge GPU instances.
+
+\section{5.1 Microbenchmarks}\label{microbenchmarks}
+
+Locality-aware task placement. Fine-grain load balancing and
+locality-aware placement are primary benefits of tasks in Ray. Actors,
+once placed, are unable to move their computation to large remote
+objects, while tasks can. In Figure 8a, tasks placed without data
+locality awareness (as is the case for actor methods), suffer 1-2 orders
+of magnitude latency increase at 10-100MB input data sizes. Ray unifies
+tasks and actors through the shared object store, allowing developers to
+use tasks for e.g., expensive postprocessing on output produced by
+simulation actors.
+
+End-to-end scalability. One of the key benefits of
+
+\textit{[Image omitted: images/b4c1baaed8e2575824aa8678457645a5ed71af5d77ffba2fbe9b19f5782f5d9a.jpg]}
+
+bar\_line
+
+{\def\LTcaptype{none} % do not increment counter
+\begin{longtable}[]{@{}lll@{}}
+\toprule\noalign{}
+object size & IOPS & throughput (GB/s) \\
+\midrule\noalign{}
+\endhead
+\bottomrule\noalign{}
+\endlastfoot
+1KB & 18000 & 0 \\
+10KB & 17000 & 0 \\
+100KB & 11000 & 1 \\
+1MB & 2000 & 2 \\
+10MB & 11000 & 9 \\
+100MB & 17000 & 14 \\
+1GB & 18000 & 15 \\
+\end{longtable}
+}
+
+Figure 9: Object store write throughput and IOPS. From a single client,
+throughput exceeds 15GB/s (red) for large objects and 18K IOPS (cyan)
+for small objects on a 16 core instance (m4.4xlarge). It uses 8 threads
+to copy objects larger than 0.5MB and 1 thread for small objects. Bar
+plots report throughput with 1, 2, 4, 8, 16 threads. Results are
+averaged over 5 runs.
+
+the Global Control Store (GCS) and the bottom-up distributed scheduler
+is the ability to horizontally scale the system to support a high
+throughput of fine-grained tasks, while maintaining fault tolerance and
+low-latency task scheduling. In Figure 8b, we evaluate this ability on
+an embarrassingly parallel workload of empty tasks, increasing the
+cluster size on the x-axis. We observe near-perfect linearity in
+progressively increasing task throughput. Ray exceeds 1 million tasks
+per second throughput at 60 nodes and continues to scale linearly beyond
+1.8 million tasks per second at 100 nodes. The rightmost datapoint shows
+that Ray can process 100 million tasks in less than a minute (54s), with
+minimum variability. As expected, increasing task duration reduces
+throughput proportionally to mean task duration, but the overall
+scalability remains linear. While many realistic workloads may exhibit
+more limited scalability due to object dependencies and inherent limits
+to application parallelism, this demonstrates the scalability of our
+overall architecture under high load.
+
+Object store performance. To evaluate the performance of the object
+store (Section 4.2.3), we track two metrics: IOPS (for small objects)
+and write throughput (for large objects). In Figure 9, the write
+throughput from a single client exceeds 15GB/s as object size increases.
+For larger objects, memcpy dominates object creation time. For smaller
+objects, the main overheads are in serialization and IPC between the
+client and object store.
+
+GCS fault tolerance. To maintain low latency while providing strong
+consistency and fault tolerance, we build a lightweight chain
+replication {[}61{]} layer on top of Redis. Figure 10a simulates
+recording Ray tasks to and reading tasks from the GCS, where keys are 25
+bytes and values are 512 bytes. The client sends requests as fast as it
+can, having at most one in-flight request at a time. Failures are
+reported to the chain master either from the client (having received
+explicit errors, or timeouts despite retries) or from any server in the
+chain (having received explicit errors). Overall, reconfigurations
+caused a maximum client-observed delay of under 30ms (this includes both
+failure detection and recovery delays).
+
+\textit{[Image omitted: images/ec3f6dcdbeb402d883a8933af3ba5d502bd4e89639114da28288d7aa88e6cdf9.jpg]}
+
+line
+
+{\def\LTcaptype{none} % do not increment counter
+\begin{longtable}[]{@{}llll@{}}
+\toprule\noalign{}
+Time since start (s) & write (μs) & read (μs) & node dead (μs) \\
+\midrule\noalign{}
+\endhead
+\bottomrule\noalign{}
+\endlastfoot
+0 & \textasciitilde500 & \textasciitilde200 & - \\
+1 & \textasciitilde500 & \textasciitilde200 & - \\
+2 & \textasciitilde500 & \textasciitilde200 & - \\
+3 & \textasciitilde500 & \textasciitilde200 & - \\
+4 & \textasciitilde500 & \textasciitilde200 & - \\
+5 & \textasciitilde10000 & \textasciitilde10000 &
+\textasciitilde10000 \\
+6 & \textasciitilde500 & \textasciitilde200 & - \\
+7 & \textasciitilde500 & \textasciitilde200 & - \\
+8 & \textasciitilde500 & \textasciitilde200 & - \\
+9 & \textasciitilde500 & \textasciitilde200 & - \\
+10 & \textasciitilde500 & \textasciitilde200 & - \\
+\end{longtable}
+}
+
+\begin{enumerate}
+\def\labelenumi{(\alph{enumi})}
+\tightlist
+\item
+  A timeline for GCS read and write latencies as viewed from a client
+  submitting tasks. The chain starts with 2 replicas. We manually
+  trigger reconfiguration as follows. At \(t \approx 4.2s\) , a chain
+  member is killed; immediately after, a new chain member joins,
+  initiates state transfer, and restores the chain to 2-way replication.
+  The maximum client-observed latency is under 30ms despite
+  reconfigurations.\\
+  \textit{[Image omitted: images/c64994a936c32a39d8b691257ba5bbcd4ad62ef55f206484e59de2a132cbdb05.jpg]}
+\end{enumerate}
+
+line
+
+{\def\LTcaptype{none} % do not increment counter
+\begin{longtable}[]{@{}
+  >{\raggedright\arraybackslash}p{(\linewidth - 4\tabcolsep) * \real{0.3492}}
+  >{\raggedright\arraybackslash}p{(\linewidth - 4\tabcolsep) * \real{0.3492}}
+  >{\raggedright\arraybackslash}p{(\linewidth - 4\tabcolsep) * \real{0.3016}}@{}}
+\toprule\noalign{}
+\begin{minipage}[b]{\linewidth}\raggedright
+Elapsed Time (seconds)
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+Ray, no GCS flush (MB)
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+Ray, GCS flush (MB)
+\end{minipage} \\
+\midrule\noalign{}
+\endhead
+\bottomrule\noalign{}
+\endlastfoot
+0 & 0 & 0 \\
+5000 & 8000 & 0 \\
+60000 & 8000 & 0 \\
+\end{longtable}
+}
+
+\begin{enumerate}
+\def\labelenumi{(\alph{enumi})}
+\setcounter{enumi}{1}
+\tightlist
+\item
+  The Ray GCS maintains a constant memory footprint with GCS flushing.
+  Without GCS flushing, the memory footprint reaches a maximum capacity
+  and the workload fails to complete within a predetermined duration
+  (indicated by the red cross).\\
+  Figure 10: Ray GCS fault tolerance and flushing.
+\end{enumerate}
+
+GCS flushing. Ray is equipped to periodically flush the contents of GCS
+to disk. In Figure 10b we submit 50 million empty tasks sequentially and
+monitor GCS memory consumption. As expected, it grows linearly with the
+number of tasks tracked and eventually reaches the memory capacity of
+the system. At that point, the system becomes stalled and the workload
+fails to finish within a reasonable amount of time. With periodic GCS
+flushing, we achieve two goals. First, the memory footprint is capped at
+a user-configurable level (in the microbenchmark we employ an aggressive
+strategy where consumed memory is kept as low as possible). Second, the
+flushing mechanism provides a natural way to snapshot lineage to disk
+for long-running Ray applications.
+
+Recovering from task failures. In Figure 11a, we
+
+\textit{[Image omitted: images/bf23b95e69314f66f2108f7707a9f6045a4bf38b6962cc62720d82f25ce2a081.jpg]}
+
+bar\_line
+
+{\def\LTcaptype{none} % do not increment counter
+\begin{longtable}[]{@{}lll@{}}
+\toprule\noalign{}
+Time since start (s) & Throughput (tasks/s) & Number of nodes \\
+\midrule\noalign{}
+\endhead
+\bottomrule\noalign{}
+\endlastfoot
+0 & 2000 & 60 \\
+50 & 1000 & 20 \\
+100 & 500 & 10 \\
+150 & 500 & 10 \\
+200 & 500 & 10 \\
+250 & 2000 & 60 \\
+\end{longtable}
+}
+
+\begin{enumerate}
+\def\labelenumi{(\alph{enumi})}
+\tightlist
+\item
+  Task reconstruction\\
+  \textit{[Image omitted: images/aaeb2a17cae1576dac2a05cb169142551df6c9fe6df37a6ea0995e1654cfe4e2.jpg]}
+\end{enumerate}
+
+line
+
+{\def\LTcaptype{none} % do not increment counter
+\begin{longtable}[]{@{}
+  >{\raggedright\arraybackslash}p{(\linewidth - 6\tabcolsep) * \real{0.2985}}
+  >{\raggedright\arraybackslash}p{(\linewidth - 6\tabcolsep) * \real{0.2090}}
+  >{\raggedright\arraybackslash}p{(\linewidth - 6\tabcolsep) * \real{0.2537}}
+  >{\raggedright\arraybackslash}p{(\linewidth - 6\tabcolsep) * \real{0.2388}}@{}}
+\toprule\noalign{}
+\begin{minipage}[b]{\linewidth}\raggedright
+Time since start (s)
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+Original tasks
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+Re-executed tasks
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+Checkpoint tasks
+\end{minipage} \\
+\midrule\noalign{}
+\endhead
+\bottomrule\noalign{}
+\endlastfoot
+0 & 400 & 0 & 400 \\
+100 & 400 & 0 & 400 \\
+200 & 400 & 0 & 400 \\
+300 & 300 & 0 & 300 \\
+400 & 300 & 0 & 300 \\
+500 & 300 & 0 & 300 \\
+600 & 300 & 0 & 300 \\
+\end{longtable}
+}
+
+\begin{enumerate}
+\def\labelenumi{(\alph{enumi})}
+\setcounter{enumi}{1}
+\tightlist
+\item
+  Actor reconstruction\\
+  Figure 11: Ray fault-tolerance. (a) Ray reconstructs lost task
+  dependencies as nodes are removed (dotted line), and recovers to
+  original throughput when nodes are added back. Each task is 100ms and
+  depends on an object generated by a previously submitted task. (b)
+  Actors are reconstructed from their last checkpoint. At t = 200s, we
+  kill 2 of the 10 nodes, causing 400 of the 2000 actors in the cluster
+  to be recovered on the remaining nodes (t = 200--270s).
+\end{enumerate}
+
+demonstrate Ray's ability to transparently recover from worker node
+failures and elastically scale, using the durable GCS lineage storage.
+The workload, run on m4.xlarge instances, consists of linear chains of
+100ms tasks submitted by the driver. As nodes are removed (at 25s, 50s,
+100s), the local schedulers reconstruct previous results in the chain in
+order to continue execution. Overall per-node throughput remains stable
+throughout.
+
+Recovering from actor failures. By encoding actor method calls as
+stateful edges directly in the dependency graph, we can reuse the same
+object reconstruction mechanism as in Figure 11a to provide transparent
+fault tolerance for stateful computation. Ray additionally leverages
+user-defined checkpoint functions to bound the reconstruction time for
+actors (Figure 11b). With minimal overhead, checkpointing enables only
+500 methods to be re-executed, versus 10k re-executions without
+checkpointing. In the future, we hope to further reduce actor
+reconstruction time, e.g., by allowing users to annotate methods that do
+not mutate state.
+
+Allreduce. Allreduce is a distributed communication primitive important
+to many machine learning workloads. Here, we evaluate whether Ray can
+natively support a ring allreduce {[}57{]} implementation with low
+enough overhead to match existing implementations {[}53{]}. We find that
+Ray completes allreduce across 16 nodes on 100MB in \textasciitilde200ms
+and 1GB in \textasciitilde1200ms, surprisingly outperforming OpenMPI
+(v1.10), a popular MPI implementation, by 1.5× and 2× respectively
+(Figure 12a). We attribute Ray's performance to its use of multiple
+threads for network transfers, taking full advantage of the 25Gbps
+connection between nodes on AWS, whereas OpenMPI sequentially sends and
+receives data on a single thread {[}22{]}. For smaller objects, OpenMPI
+outperforms Ray by switching to a lower overhead algorithm, an
+optimization we plan to implement in the future.
+
+\textit{[Image omitted: images/bb5eeef50f37ef0209e03dee567d6fcd55ea9584718b18895fa122db0ae69a56.jpg]}
+
+bar
+
+{\def\LTcaptype{none} % do not increment counter
+\begin{longtable}[]{@{}llll@{}}
+\toprule\noalign{}
+Object size & OpenMPI & Ray* & Ray \\
+\midrule\noalign{}
+\endhead
+\bottomrule\noalign{}
+\endlastfoot
+10MB & 30 & 100 & 100 \\
+100MB & 300 & 200 & 150 \\
+1GB & 3000 & 2000 & 1000 \\
+\end{longtable}
+}
+
+\begin{enumerate}
+\def\labelenumi{(\alph{enumi})}
+\tightlist
+\item
+  Ray vs OpenMPI
+\end{enumerate}
+
+\textit{[Image omitted: images/a29f97552f5e0a1c0ee35c01bf80d43dbc26fa73f09811c0f889d0e958f79ae0.jpg]}
+
+bar
+
+{\def\LTcaptype{none} % do not increment counter
+\begin{longtable}[]{@{}ll@{}}
+\toprule\noalign{}
+Added scheduler latency (ms) & Iteration time (milliseconds) \\
+\midrule\noalign{}
+\endhead
+\bottomrule\noalign{}
+\endlastfoot
++0 & 200 \\
++1 & 250 \\
++5 & 350 \\
++10 & 550 \\
+\end{longtable}
+}
+
+\begin{enumerate}
+\def\labelenumi{(\alph{enumi})}
+\setcounter{enumi}{1}
+\tightlist
+\item
+  Ray scheduler ablation\\
+  Figure 12: (a) Mean execution time of allreduce on 16 m4.16xl nodes.
+  Each worker runs on a distinct node. Ray* restricts Ray to 1 thread
+  for sending and 1 thread for receiving. (b) Ray's low-latency
+  scheduling is critical for allreduce.
+\end{enumerate}
+
+Ray's scheduler performance is critical to implementing primitives such
+as allreduce. In Figure 12b, we inject artificial task execution delays
+and show that performance drops nearly \(2 \times\) with just a few ms
+of extra latency. Systems with centralized schedulers like Spark and
+CIEL typically have scheduler overheads in the tens of milliseconds
+{[}62, 38{]}, making such workloads impractical. Scheduler throughput
+also becomes a bottleneck since the number of tasks required by ring
+reduce scales quadratically with the number of participants.
+
+\section{5.2 Building blocks}\label{building-blocks}
+
+End-to-end applications (e.g., AlphaGo {[}54{]}) require a tight
+coupling of training, serving, and simulation. In this section, we
+isolate each of these workloads to a setting that illustrates a typical
+RL application's requirements. Due to a flexible programming model
+targeted to RL, and a system designed to support this programming model,
+Ray matches and sometimes exceeds the performance of dedicated systems
+for these individual workloads.
+
+\textit{[Image omitted: images/42fe127874ee7f037a85071da592d2711d035203f384803c49d5c3a80acd8a2f.jpg]}
+
+bar
+
+{\def\LTcaptype{none} % do not increment counter
+\begin{longtable}[]{@{}llll@{}}
+\toprule\noalign{}
+Num GPUs (V100) & Horovod + TF & Distributed TF & Ray + TF \\
+\midrule\noalign{}
+\endhead
+\bottomrule\noalign{}
+\endlastfoot
+4 & 800 & 800 & 800 \\
+8 & 1600 & 1600 & 1600 \\
+16 & 1600 & 2000 & 1800 \\
+32 & 3000 & 3800 & 3200 \\
+64 & 6000 & 6800 & 6000 \\
+\end{longtable}
+}
+
+Figure 13: Images per second reached when distributing the training of a
+ResNet-101 TensorFlow model (from the official TF benchmark). All
+experiments were run on p3.16xl instances connected by 25Gbps Ethernet,
+and workers allocated 4 GPUs per node as done in Horovod {[}53{]}. We
+note some measurement deviations from previously reported, likely due to
+hardware differences and recent TensorFlow performance improvements. We
+used OpenMPI 3.0, TF 1.8, and NCCL2 for all runs.
+
+\section{5.2.1 Distributed Training}\label{distributed-training}
+
+We implement data-parallel synchronous SGD leveraging the Ray actor
+abstraction to represent model replicas. Model weights are synchronized
+via allreduce (5.1) or parameter server, both implemented on top of the
+Ray API.
+
+In Figure 13, we evaluate the performance of the Ray (synchronous)
+parameter-server SGD implementation against state-of-the-art
+implementations {[}53{]}, using the same TensorFlow model and synthetic
+data generator for each experiment. We compare only against
+TensorFlow-based systems to accurately measure the overhead imposed by
+Ray, rather than differences between the deep learning frameworks
+themselves. In each iteration, model replica actors compute gradients in
+parallel, send the gradients to a sharded parameter server, then read
+the summed gradients from the parameter server for the next iteration.
+
+Figure 13 shows that Ray matches the performance of Horovod and is
+within 10\% of distributed TensorFlow (in distributed\_replicated mode).
+This is due to the ability to express the same application-level
+optimizations found in these specialized systems in Ray's
+general-purpose API. A key optimization is the pipelining of gradient
+computation, transfer, and summation within a single iteration. To
+overlap GPU computation with network transfer, we use a custom
+TensorFlow operator to write tensors directly to Ray's object store.
+
+\section{5.2.2 Serving}\label{serving}
+
+Model serving is an important component of end-to-end applications. Ray
+focuses primarily on the embedded serving of models to simulators
+running within the same dynamic task graph (e.g., within an RL
+application on Ray). In contrast, systems like Clipper {[}19{]} focus on
+serving predictions to external clients.
+
+In this setting, low latency is critical for achieving high utilization.
+To show this, in Table 3 we compare the server throughput achieved using
+a Ray actor to serve a policy versus using the open source Clipper
+system over REST. Here, both client and server processes are colocated
+on the same machine (a p3.8xlarge instance). This is often the case for
+RL applications but not for the general web serving workloads addressed
+by systems like Clipper. Due to its low-overhead serialization and
+shared memory abstractions, Ray achieves an order of magnitude higher
+throughput for a small fully connected policy model that takes in a
+large input and is also faster on a more expensive residual network
+policy model, similar to one used in AlphaGo Zero, that takes smaller
+input.
+
+System
+
+Small Input
+
+Larger Input
+
+Clipper
+
+4400 ± 15 states/sec
+
+290 ± 1.3 states/sec
+
+Ray
+
+6200 ± 21 states/sec
+
+6900 ± 150 states/sec
+
+Table 3: Throughput comparisons for Clipper {[}19{]}, a dedicated
+serving system, and Ray for two embedded serving workloads. We use a
+residual network and a small fully connected network, taking 10ms and
+5ms to evaluate, respectively. The server is queried by clients that
+each send states of size 4KB and 100KB respectively in batches of 64.
+
+\section{5.2.3 Simulation}\label{simulation}
+
+Simulators used in RL produce results with variable lengths
+(``timesteps'') that, due to the tight loop with training, must be used
+as soon as they are available. The task heterogeneity and timeliness
+requirements make simulations hard to support efficiently in BSP-style
+systems. To demonstrate, we compare (1) an MPI implementation that
+submits 3n parallel simulation runs on n cores in 3 rounds, with a
+global barrier between rounds \(^{§}\) , to (2) a Ray program that
+issues the same 3n tasks while concurrently gathering simulation results
+back to the driver. Table 4 shows that both systems scale well, yet Ray
+achieves up to \(1.8\times\) throughput. This motivates a programming
+model that can dynamically spawn and collect the results of fine-grained
+simulation tasks.
+
+System, programming model
+
+1 CPU
+
+16 CPUs
+
+256 CPUs
+
+MPI, bulk synchronous
+
+22.6K
+
+208K
+
+2.16M
+
+Ray, asynchronous tasks
+
+22.3K
+
+290K
+
+4.03M
+
+Table 4: Timesteps per second for the Pendulum-v0 simulator in OpenAI
+Gym {[}13{]}. Ray allows for better utilization when running
+heterogeneous simulations at scale.
+
+\section{5.3 RL Applications}\label{rl-applications}
+
+Without a system that can tightly couple the training, simulation, and
+serving steps, reinforcement learning algorithms today are implemented
+as one-off solutions that make it difficult to incorporate optimizations
+that, for example, require a different computation structure or that
+utilize different architectures. Consequently, with implementations of
+two representative reinforcement learning applications in Ray, we are
+able to match and even outperform custom systems built specifically for
+these algorithms. The primary reason is the flexibility of Ray's
+programming model, which can express application-level optimizations
+that would require substantial engineering effort to port to
+custom-built systems, but are transparently supported by Ray's dynamic
+task graph execution engine.
+
+\section{5.3.1 Evolution Strategies}\label{evolution-strategies}
+
+To evaluate Ray on large-scale RL workloads, we implement the evolution
+strategies (ES) algorithm and compare to the reference implementation
+{[}49{]}---a system specially built for this algorithm that relies on
+Redis for messaging and low-level multiprocessing libraries for
+data-sharing. The algorithm periodically broadcasts a new policy to a
+pool of workers and aggregates the results of roughly 10000 tasks (each
+performing 10 to 1000 simulation steps).
+
+As shown in Figure 14a, an implementation on Ray scales to 8192 cores.
+Doubling the cores available yields an average completion time speedup
+of 1.6×. Conversely, the special-purpose system fails to complete at
+2048 cores, where the work in the system exceeds the processing capacity
+of the application driver. To avoid this issue, the Ray implementation
+uses an aggregation tree of actors, reaching a median time of 3.7
+minutes, more than twice as fast as the best published result (10
+minutes).
+
+Initial parallelization of a serial implementation using Ray required
+modifying only 7 lines of code. Performance improvement through
+hierarchical aggregation was easy to realize with Ray's support for
+nested tasks and actors. In contrast, the reference implementation had
+several hundred lines of code dedicated to a protocol for communicating
+tasks and data between workers, and would require further engineering to
+support optimizations like hierarchical aggregation.
+
+\section{5.3.2 Proximal Policy
+Optimization}\label{proximal-policy-optimization}
+
+We implement Proximal Policy Optimization (PPO) {[}51{]} in Ray and
+compare to a highly-optimized reference implementation {[}5{]} that uses
+OpenMPI communication primitives. The algorithm is an asynchronous
+scatter-gather, where new tasks are assigned to simulation actors as
+they return rollouts to the driver. Tasks are submitted until 320000
+simulation steps are collected (each task produces between 10 and 1000
+steps). The policy update performs 20 steps of SGD with a batch size of
+32768. The model parameters in this example are roughly 350KB. These
+experiments were run using p2.16xlarge (GPU) and m4.16xlarge (high CPU)
+instances.
+
+\textit{[Image omitted: images/d9869482612dddd7bda9dd5f94b813172369ce21fc7eeb4a22125627e3c2d277.jpg]}
+
+bar
+
+{\def\LTcaptype{none} % do not increment counter
+\begin{longtable}[]{@{}lll@{}}
+\toprule\noalign{}
+Number of CPUs & Reference ES & Ray ES \\
+\midrule\noalign{}
+\endhead
+\bottomrule\noalign{}
+\endlastfoot
+256 & 65 & 40 \\
+1024 & 35 & 25 \\
+8192 & 15 & 10 \\
+\end{longtable}
+}
+
+\begin{enumerate}
+\def\labelenumi{(\alph{enumi})}
+\tightlist
+\item
+  Evolution Strategies
+\end{enumerate}
+
+\textit{[Image omitted: images/e2244a7933723590dd66fd899ec1e754cab007c09ac180fae93c7112f03802bb.jpg]}
+
+bar
+
+{\def\LTcaptype{none} % do not increment counter
+\begin{longtable}[]{@{}lll@{}}
+\toprule\noalign{}
+CPUs x GPUs & MPI PPO & Ray PPO \\
+\midrule\noalign{}
+\endhead
+\bottomrule\noalign{}
+\endlastfoot
+8x1 & 500 & 380 \\
+64x8 & 150 & 100 \\
+512x64 & 50 & 30 \\
+\end{longtable}
+}
+
+\begin{enumerate}
+\def\labelenumi{(\alph{enumi})}
+\setcounter{enumi}{1}
+\tightlist
+\item
+  PPO\\
+  Figure 14: Time to reach a score of 6000 in the Humanoid-v1 task
+  {[}13{]}. (a) The Ray ES implementation scales well to 8192 cores and
+  achieves a median time of 3.7 minutes, over twice as fast as the best
+  published result. The special-purpose system failed to run beyond 1024
+  cores. ES is faster than PPO on this benchmark, but shows greater
+  runtime variance. (b) The Ray PPO implementation outperforms a
+  specialized MPI implementation {[}5{]} with fewer GPUs, at a fraction
+  of the cost. The MPI implementation required 1 GPU for every 8 CPUs,
+  whereas the Ray version required at most 8 GPUs (and never more than 1
+  GPU per 8 CPUs).
+\end{enumerate}
+
+As shown in Figure 14b, the Ray implementation outperforms the optimized
+MPI implementation in all experiments, while using a fraction of the
+GPUs. The reason is that Ray is heterogeneity-aware and allows the user
+to utilize asymmetric architectures by expressing resource requirements
+at the granularity of a task or actor. The Ray implementation can then
+leverage TensorFlow's single-process multi-GPU support and can pin
+objects in GPU memory when possible. This optimization cannot be easily
+ported to MPI due to the need to asynchronously gather rollouts to a
+single GPU process. Indeed, {[}5{]} includes two custom implementations
+of PPO, one using MPI for large clusters and one that is optimized for
+GPUs but that is restricted to a single node. Ray allows for an
+implementation suitable for both scenarios.
+
+Ray's ability to handle resource heterogeneity also decreased PPO's cost
+by a factor of 4.5 {[}4{]}, since CPU-only tasks can be scheduled on
+cheaper high-CPU instances. In contrast, MPI applications often exhibit
+symmetric architectures, in which all processes run the same code and
+require identical resources, in this case preventing the use of CPU-only
+machines for scale-out. Furthermore, the MPI implementation requires
+on-demand instances since it does not transparently handle failure.
+Assuming \(4 \times\) cheaper spot instances, Ray's fault tolerance and
+resource-aware scheduling together cut costs by \(18 \times\) .
+
+\section{6 Related Work}\label{related-work}
+
+Dynamic task graphs. Ray is closely related to CIEL {[}40{]} and Dask
+{[}48{]}. All three support dynamic task graphs with nested tasks and
+implement the futures abstraction. CIEL also provides lineage-based
+fault tolerance, while Dask, like Ray, fully integrates with Python.
+However, Ray differs in two aspects that have important performance
+consequences. First, Ray extends the task model with an actor
+abstraction. This is necessary for efficient stateful computation in
+distributed training and serving, to keep the model data collocated with
+the computation. Second, Ray employs a fully distributed and decoupled
+control plane and scheduler, instead of relying on a single master
+storing all metadata. This is critical for efficiently supporting
+primitives like allreduce without system modification. At peak
+performance for 100MB on 16 nodes, allreduce on Ray (Section 5.1)
+submits 32 rounds of 16 tasks in 200ms. Meanwhile, Dask reports a
+maximum scheduler throughput of 3k tasks/s on 512 cores {[}3{]}. With a
+centralized scheduler, each round of allreduce would then incur a
+minimum of \(\sim\) 5ms of scheduling delay, translating to up to 2×
+worse completion time (Figure 12b). Even with a decentralized scheduler,
+coupling the control plane information with the scheduler leaves the
+latter on the critical path for data transfer, adding an extra roundtrip
+to every round of allreduce.
+
+Dataflow systems. Popular dataflow systems, such as MapReduce {[}20{]},
+Spark {[}65{]}, and Dryad {[}28{]} have widespread adoption for
+analytics and ML workloads, but their computation model is too
+restrictive for a fine-grained and dynamic simulation workload. Spark
+and MapReduce implement the BSP execution model, which assumes that
+tasks within the same stage perform the same computation and take
+roughly the same amount of time. Dryad relaxes this restriction but
+lacks support for dynamic task graphs. Furthermore, none of these
+systems provide an actor abstraction, nor implement a distributed
+scalable control plane and scheduler. Finally, Naiad {[}39{]} is a
+dataflow system that provides improved scalability for some workloads,
+but only supports static task graphs.
+
+Machine learning frameworks. TensorFlow {[}7{]} and MXNet {[}18{]}
+target deep learning workloads and efficiently leverage both CPUs and
+GPUs. While they achieve great performance for training workloads
+consisting of static DAGs of linear algebra operations, they have
+limited support for the more general computation required to tightly
+couple training with simulation and embedded serving. TensorFlow Fold
+{[}33{]} provides some support for dynamic task graphs, as well as MXNet
+through its internal C++ APIs, but neither fully supports the ability to
+modify the DAG during execution in response to task progress, task
+completion times, or faults. TensorFlow and MXNet in principle achieve
+generality by allowing the programmer to simulate low-level
+message-passing and synchronization primitives, but the pitfalls and
+user experience in this case are similar to those of MPI. OpenMPI
+{[}22{]} can achieve high performance, but it is relatively hard to
+program as it requires explicit coordination to handle heterogeneous and
+dynamic task graphs. Furthermore, it forces the programmer to explicitly
+handle fault tolerance.
+
+Actor systems. Orleans {[}14{]} and Akka {[}1{]} are two actor
+frameworks well suited to developing highly available and concurrent
+distributed systems. However, compared to Ray, they provide less support
+for recovery from data loss. To recover stateful actors, the Orleans
+developer must explicitly checkpoint actor state and intermediate
+responses. Stateless actors in Orleans can be replicated for scale-out,
+and could therefore act as tasks, but unlike in Ray, they have no
+lineage. Similarly, while Akka explicitly supports persisting actor
+state across failures, it does not provide efficient fault tolerance for
+stateless computation (i.e., tasks). For message delivery, Orleans
+provides at-least-once and Akka provides at-most-once semantics. In
+contrast, Ray provides transparent fault tolerance and exactly-once
+semantics, as each method call is logged in the GCS and both arguments
+and results are immutable. We find that in practice these limitations do
+not affect the performance of our applications. Erlang {[}10{]} and C++
+Actor Framework {[}17{]}, two other actor-based systems, have similarly
+limited support for fault tolerance.
+
+Global control store and scheduling. The concept of logically
+centralizing the control plane has been previously proposed in software
+defined networks (SDNs) {[}16{]}, distributed file systems (e.g., GFS
+{[}23{]}), resource management (e.g., Omega {[}52{]}), and distributed
+frameworks (e.g., MapReduce {[}20{]}, BOOM {[}9{]}), to name a few. Ray
+draws inspiration from these pioneering efforts, but provides
+significant improvements. In contrast with SDNs, BOOM, and GFS, Ray
+decouples the storage of the control plane information (e.g., GCS) from
+the logic implementation (e.g., schedulers). This allows both storage
+and computation layers to scale independently, which is key to achieving
+our scalability targets. Omega uses a distributed architecture in which
+schedulers coordinate via globally shared state. To this architecture,
+Ray adds global schedulers to balance load across local schedulers, and
+targets ms-level, not second-level, task scheduling.
+
+Ray implements a unique distributed bottom-up scheduler that is
+horizontally scalable, and can handle dynamically constructed task
+graphs. Unlike Ray, most existing cluster computing systems {[}20, 64,
+40{]} use a centralized scheduler architecture. While Sparrow {[}45{]}
+is decentralized, its schedulers make independent decisions, limiting
+the possible scheduling policies, and all tasks of a job are handled by
+the same global scheduler. Mesos {[}26{]} implements a two-level
+hierarchical scheduler, but its top-level scheduler manages frameworks,
+not individual tasks.
+
+Canary {[}47{]} achieves impressive performance by having each scheduler
+instance handle a portion of the task graph, but does not handle dynamic
+computation graphs.
+
+Cilk {[}12{]} is a parallel programming language whose work-stealing
+scheduler achieves provably efficient load-balancing for dynamic task
+graphs. However, with no central coordinator like Ray's global
+scheduler, this fully parallel design is also difficult to extend to
+support data locality and resource heterogeneity in a distributed
+setting.
+
+\section{7 Discussion and Experiences}\label{discussion-and-experiences}
+
+Building Ray has been a long journey. It started two years ago with a
+Spark library to perform distributed training and simulations. However,
+the relative inflexibility of the BSP model, the high per-task overhead,
+and the lack of an actor abstraction led us to develop a new system.
+Since we released Ray roughly one year ago, several hundreds of people
+have used it and several companies are running it in production. Here we
+discuss our experience developing and using Ray, and some early user
+feedback.
+
+API. In designing the API, we have emphasized minimalism. Initially we
+started with a basic task abstraction. Later, we added the wait()
+primitive to accommodate rollouts with heterogeneous durations and the
+actor abstraction to accommodate third-party simulators and amortize the
+overhead of expensive initializations. While the resulting API is
+relatively low-level, it has proven both powerful and simple to use. We
+have already used this API to implement many state-of-the-art RL
+algorithms on top of Ray, including A3C {[}36{]}, PPO {[}51{]}, DQN
+{[}37{]}, ES {[}49{]}, DDPG {[}55{]}, and Ape-X {[}27{]}. In most cases
+it took us just a few tens of lines of code to port these algorithms to
+Ray. Based on early user feedback, we are considering enhancing the API
+to include higher level primitives and libraries, which could also
+inform scheduling decisions.
+
+Limitations. Given the workload generality, specialized optimizations
+are hard. For example, we must make scheduling decisions without full
+knowledge of the computation graph. Scheduling optimizations in Ray
+might require more complex runtime profiling. In addition, storing
+lineage for each task requires the implementation of garbage collection
+policies to bound storage costs in the GCS, a feature we are actively
+developing.
+
+Fault tolerance. We are often asked if fault tolerance is really needed
+for AI applications. After all, due to the statistical nature of many AI
+algorithms, one could simply ignore failed rollouts. Based on our
+experience, our answer is ``yes''. First, the ability to ignore failures
+makes applications much easier to write and reason about. Second, our
+particular implementation of fault tolerance via deterministic replay
+dramatically simplifies debugging as it allows us to easily reproduce
+most errors. This is particularly important since, due to their
+stochasticity, AI algorithms are notoriously hard to debug. Third, fault
+tolerance helps save money since it allows us to run on cheap resources
+like spot instances on AWS. Of course, this comes at the price of some
+overhead. However, we found this overhead to be minimal for our target
+workloads.
+
+GCS and Horizontal Scalability. The GCS dramatically simplified Ray
+development and debugging. It enabled us to query the entire system
+state while debugging Ray itself, instead of having to manually expose
+internal component state. In addition, the GCS is also the backend for
+our timeline visualization tool, used for application-level debugging.
+
+The GCS was also instrumental to Ray's horizontal scalability. In
+Section 5, we were able to scale by adding more shards whenever the GCS
+became a bottleneck. The GCS also enabled the global scheduler to scale
+by simply adding more replicas. Due to these advantages, we believe that
+centralizing control state will be a key design component of future
+distributed systems.
+
+\section{8 Conclusion}\label{conclusion}
+
+No general-purpose system today can efficiently support the tight loop
+of training, serving, and simulation. To express these core building
+blocks and meet the demands of emerging AI applications, Ray unifies
+task-parallel and actor programming models in a single dynamic task
+graph and employs a scalable architecture enabled by the global control
+store and a bottom-up distributed scheduler. The programming
+flexibility, high throughput, and low latencies simultaneously achieved
+by this architecture is particularly important for emerging artificial
+intelligence workloads, which produce tasks diverse in their resource
+requirements, duration, and functionality. Our evaluation demonstrates
+linear scalability up to 1.8 million tasks per second, transparent fault
+tolerance, and substantial performance improvements on several
+contemporary RL workloads. Thus, Ray provides a powerful combination of
+flexibility, performance, and ease of use for the development of future
+AI applications.
+
+\section{9 Acknowledgments}\label{acknowledgments}
+
+This research is supported in part by NSF CISE Expeditions Award
+CCF-1730628 and gifts from Alibaba, Amazon Web Services, Ant Financial,
+Arm, CapitalOne, Ericsson, Facebook, Google, Huawei, Intel, Microsoft,
+Scotiabank, Splunk and VMware as well as by NSF grant DGE-1106400. We
+are grateful to our anonymous reviewers and our shepherd, Miguel Castro,
+for thoughtful feedback, which helped improve the quality of this paper.
+
+\section{References}\label{references}
+
+{[}1{]} Akka. https://akka.io/.\\
+{[}2{]} Apache Arrow. https://arrow.apache.org/.\\
+{[}3{]} Dask Benchmarks.
+http://matthewrocklin.com/blog/work/2017/07/03/scaling.\\
+{[}4{]} EC2 Instance Pricing.
+https://aws.amazon.com/ec2/pricing/on-demand/.\\
+{[}5{]} OpenAI Baselines: high-quality implementations of reinforcement
+learning algorithms. https://github.com/openai/baselines.\\
+{[}6{]} TensorFlow Serving. https://www.tensorflow.org/serving/.\\
+{[}7{]} ABADI, M., BARHAM, P., CHEN, J., CHEN, Z., DAVIS, A., DEAN, J.,
+DEVIN, M., GHEMAWAT, S., IRVING, G., ISARD, M., ET AL. TensorFlow: A
+system for large-scale machine learning. In Proceedings of the 12th
+USENIX Symposium on Operating Systems Design and Implementation (OSDI).
+Savannah, Georgia, USA (2016).\\
+{[}8{]} AGARWAL, A., BIRD, S., COZOWICZ, M., HOANG, L., LANGFORD, J.,
+LEE, S., LI, J., MELAMED, D., OSHRI, G., RIBAS, O., SEN, S., AND
+SLIVKINS, A. A multiworld testing decision service. arXiv preprint
+arXiv:1606.03966 (2016).\\
+{[}9{]} ALVARO, P., CONDIE, T., CONWAY, N., ELMELEEGY, K., HELLERSTEIN,
+J. M., AND SEARS, R. BOOM Analytics: exploring data-centric, declarative
+programming for the cloud. In Proceedings of the 5th European conference
+on Computer systems (2010), ACM, pp.~223--236.\\
+{[}10{]} ARMSTRONG, J., VIRDING, R., WIKSTRÖM, C., AND WILLIAMS, M.
+Concurrent programming in ERLANG.\\
+{[}11{]} BEATTIE, C., LEIBO, J. Z., TEPLYASHIN, D., WARD, T.,
+WAINWRIGHT, M., KÜTTLER, H., LEFRANCQ, A., GREEN, S., VALDÉS, V., SADIK,
+A., ET AL. DeepMind Lab. arXiv preprint arXiv:1612.03801 (2016).\\
+{[}12{]} BLUMOFE, R. D., AND LEISERSON, C. E. Scheduling multithreaded
+computations by work stealing. J. ACM 46, 5 (Sept.~1999), 720--748.\\
+{[}13{]} BROCKMAN, G., CHEUNG, V., PETTERSSON, L., SCHNEIDER, J.,
+SCHULMAN, J., TANG, J., AND ZAREMBA, W. OpenAI gym. arXiv preprint
+arXiv:1606.01540 (2016).\\
+{[}14{]} BYKOV, S., GELLER, A., KLIOT, G., LARUS, J. R., PANDYA, R., AND
+THELIN, J. Orleans: Cloud computing for everyone. In Proceedings of the
+2nd ACM Symposium on Cloud Computing (2011), ACM, p.~16.\\
+{[}15{]} CARBONE, P., EWEN, S., FÓRA, G., HARIDI, S., RICHTER, S., AND
+TZOUMAS, K. State management in Apache Flink: Consistent stateful
+distributed stream processing. Proc. VLDB Endow. 10, 12 (Aug.~2017),
+1718--1729.\\
+{[}16{]} CASADO, M., FREEDMAN, M. J., PETTIT, J., LUO, J., MCKEOWN, N.,
+AND SHENKER, S. Ethane: Taking control of the enterprise. SIGCOMM
+Comput. Commun. Rev.~37, 4 (Aug.~2007), 1--12.\\
+{[}17{]} CHAROUSSET, D., SCHMIDT, T. C., HIESGEN, R., AND WÄHLISCH, M.
+Native actors: A scalable software platform for distributed,
+heterogeneous environments. In Proceedings of the 2013 workshop on
+Programming based on actors, agents, and decentralized control (2013),
+ACM, pp.~87--96.
+
+{[}18{]} CHEN, T., LI, M., LI, Y., LIN, M., WANG, N., WANG, M., XIAO,
+T., XU, B., ZHANG, C., AND ZHANG, Z. MXNet: A flexible and efficient
+machine learning library for heterogeneous distributed systems. In NIPS
+Workshop on Machine Learning Systems (LearningSys'16) (2016).\\
+{[}19{]} CRANKSHAW, D., WANG, X., ZHOU, G., FRANKLIN, M. J., GONZALEZ,
+J. E., AND STOICA, I. Clipper: A low-latency online prediction serving
+system. In 14th USENIX Symposium on Networked Systems Design and
+Implementation (NSDI 17) (Boston, MA, 2017), USENIX Association,
+pp.~613--627.\\
+{[}20{]} DEAN, J., AND GHEMAWAT, S. MapReduce: Simplified data
+processing on large clusters. Commun. ACM 51, 1 (Jan.~2008), 107--113.\\
+{[}21{]} DENNIS, J. B., AND MISUNAS, D. P. A preliminary architecture
+for a basic data-flow processor. In Proceedings of the 2Nd Annual
+Symposium on Computer Architecture (New York, NY, USA, 1975), ISCA `75,
+ACM, pp.~126--132.\\
+{[}22{]} GABRIEL, E., FAGG, G. E., BOSILCA, G., ANGSKUN, T., DONGARRA,
+J. J., SQUYRES, J. M., SAHAY, V., KAMBADUR, P., BARRETT, B., LUMSDAINE,
+A., CASTAIN, R. H., DANIEL, D. J., GRAHAM, R. L., AND WOODALL, T. S.
+Open MPI: Goals, concept, and design of a next generation MPI
+implementation. In Proceedings, 11th European PVM/MPI Users' Group
+Meeting (Budapest, Hungary, September 2004), pp.~97--104.\\
+{[}23{]} GHEMAWAT, S., GOBIOFF, H., AND LEUNG, S.-T. The Google file
+system. 29--43.\\
+{[}24{]} GONZALEZ, J. E., XIN, R. S., DAVE, A., CRANKSHAW, D., FRANKLIN,
+M. J., AND STOICA, I. GraphX: Graph processing in a distributed dataflow
+framework. In Proceedings of the 11th USENIX Conference on Operating
+Systems Design and Implementation (Berkeley, CA, USA, 2014), OSDI'14,
+USENIX Association, pp.~599--613.\\
+{[}25{]} GU*, S., HOLLY*, E., LILLICRAP, T., AND LEVINE, S. Deep
+reinforcement learning for robotic manipulation with asynchronous
+off-policy updates. In IEEE International Conference on Robotics and
+Automation (ICRA 2017) (2017).\\
+{[}26{]} HINDMAN, B., KONWINSKI, A., ZAHARIA, M., GHODSI, A., JOSEPH, A.
+D., KATZ, R., SHENKER, S., AND STOICA, I. Mesos: A platform for
+fine-grained resource sharing in the data center. In Proceedings of the
+8th USENIX Conference on Networked Systems Design and Implementation
+(Berkeley, CA, USA, 2011), NSDI'11, USENIX Association, pp.~295--308.\\
+{[}27{]} HORGAN, D., QUAN, J., BUDDEN, D., BARTH-MARON, G., HESSEL, M.,
+VAN HASSELT, H., AND SILVER, D. Distributed prioritized experience
+replay. International Conference on Learning Representations (2018).\\
+{[}28{]} ISARD, M., BUDIU, M., YU, Y., BIRRELL, A., AND FETTERLY, D.
+Dryad: Distributed data-parallel programs from sequential building
+blocks. In Proceedings of the 2nd ACM SIGOPS/EuroSys European Conference
+on Computer Systems 2007 (New York, NY, USA, 2007), EuroSys '07, ACM,
+pp.~59--72.\\
+{[}29{]} JIA, Y., SHELHAMER, E., DONAHUE, J., KARAYEV, S., LONG, J.,
+GIRSHICK, R., GUADARRAMA, S., AND DARRELL, T. Caffe: Convolutional
+architecture for fast feature embedding. arXiv preprint arXiv:1408.5093
+(2014).\\
+{[}30{]} JORDAN, M. I., AND MITCHELL, T. M. Machine learning: Trends,
+perspectives, and prospects. Science 349, 6245 (2015), 255--260.
+
+{[}31{]} LEIBIUSKY, J., EISBRUCH, G., AND SIMONASSI, D. Getting Started
+with Storm. O'Reilly Media, Inc., 2012.\\
+{[}32{]} LI, M., ANDERSEN, D. G., PARK, J. W., SMOLA, A. J., AHMED, A.,
+JOSIFOVSKI, V., LONG, J., SHEKITA, E. J., AND SU, B.-Y. Scaling
+distributed machine learning with the parameter server. In Proceedings
+of the 11th USENIX Conference on Operating Systems Design and
+Implementation (Berkeley, CA, USA, 2014), OSDI'14, pp.~583--598.\\
+{[}33{]} LOOKS, M., HERRESHOFF, M., HUTCHINS, D., AND NORVIG, P. Deep
+learning with dynamic computation graphs. arXiv preprint
+arXiv:1702.02181 (2017).\\
+{[}34{]} LOW, Y., GONZALEZ, J., KYROLA, A., BICKSON, D., GUESTRIN, C.,
+AND HELLERSTEIN, J. GraphLab: A new framework for parallel machine
+learning. In Proceedings of the Twenty-Sixth Conference on Uncertainty
+in Artificial Intelligence (Arlington, Virginia, United States, 2010),
+UAI'10, pp.~340--349.\\
+{[}35{]} MALEWICZ, G., AUSTERN, M. H., BIK, A. J., DEHNERT, J. C., HORN,
+I., LEISER, N., AND CZAJKOWSKI, G. Pregel: A system for large-scale
+graph processing. In Proceedings of the 2010 ACM SIGMOD International
+Conference on Management of Data (New York, NY, USA, 2010), SIGMOD '10,
+ACM, pp.~135--146.\\
+{[}36{]} MNIH, V., BADIA, A. P., MIRZA, M., GRAVES, A., LILLICRAP, T.
+P., HARLEY, T., SILVER, D., AND KAVUKCUOGLU, K. Asynchronous methods for
+deep reinforcement learning. In International Conference on Machine
+Learning (2016).\\
+{[}37{]} MNIH, V., KAVUKCUOGLU, K., SILVER, D., RUSU, A. A., VENESS, J.,
+BELLEMARE, M. G., GRAVES, A., RIEDMILLER, M., FIDJELAND, A. K.,
+OSTROVSKI, G., ET AL. Human-level control through deep reinforcement
+learning. Nature 518, 7540 (2015), 529--533.\\
+{[}38{]} MURRAY, D. A Distributed Execution Engine Supporting
+Data-dependent Control Flow. University of Cambridge, 2012.\\
+{[}39{]} MURRAY, D. G., MCSHERRY, F., ISAACS, R., ISARD, M., BARHAM, P.,
+AND ABADI, M. Naiad: A timely dataflow system. In Proceedings of the
+Twenty-Fourth ACM Symposium on Operating Systems Principles (New York,
+NY, USA, 2013), SOSP '13, ACM, pp.~439--455.\\
+{[}40{]} MURRAY, D. G., SCHWARZKOPF, M., SMOWTON, C., SMITH, S.,
+MADHAVAPEDDY, A., AND HAND, S. CIEL: A universal execution engine for
+distributed data-flow computing. In Proceedings of the 8th USENIX
+Conference on Networked Systems Design and Implementation (Berkeley, CA,
+USA, 2011), NSDI'11, USENIX Association, pp.~113--126.\\
+{[}41{]} NAIR, A., SRINIVASAN, P., BLACKWELL, S., ALCICEK, C., FEARON,
+R., MARIA, A. D., PANNEERSHELVAM, V., SULEYMAN, M., BEATTIE, C.,
+PETERSEN, S., LEGG, S., MNIH, V., KAVUKCUOGLU, K., AND SILVER, D.
+Massively parallel methods for deep reinforcement learning, 2015.\\
+{[}42{]} NG, A., COATES, A., DIEL, M., GANAPATHI, V., SCHULTE, J., TSE,
+B., BERGER, E., AND LIANG, E. Autonomous inverted helicopter flight via
+reinforcement learning. Experimental Robotics IX (2006), 363--372.\\
+{[}43{]} NISHIHARA, R., MORITZ, P., WANG, S., TUMANOV, A., PAUL, W.,
+SCHLEIER-SMITH, J., LIAW, R., NIKNAMI, M., JORDAN, M. I., AND STOICA, I.
+Real-time machine learning: The missing pieces. In Workshop on Hot
+Topics in Operating Systems (2017).\\
+{[}44{]} OPENAI. OpenAI Dota 2 1v1 bot.
+https://openai.com/the-international/, 2017.
+
+{[}45{]} OUSTERHOUT, K., WENDELL, P., ZAHARIA, M., AND STOICA, I.
+Sparrow: Distributed, low latency scheduling. In Proceedings of the
+Twenty-Fourth ACM Symposium on Operating Systems Principles (New York,
+NY, USA, 2013), SOSP '13, ACM, pp.~69--84.\\
+{[}46{]} PASZKE, A., GROSS, S., CHINTALA, S., CHANAN, G., YANG, E.,
+DEVITO, Z., LIN, Z., DESMAISON, A., ANTIGA, L., AND LERER, A. Automatic
+differentiation in PyTorch.\\
+{[}47{]} QU, H., MASHAYEKHI, O., TEREI, D., AND LEVIS, P. Canary: A
+scheduling architecture for high performance cloud computing. arXiv
+preprint arXiv:1602.01412 (2016).\\
+{[}48{]} ROCKLIN, M. Dask: Parallel computation with blocked algorithms
+and task scheduling. In Proceedings of the 14th Python in Science
+Conference (2015), K. Huff and J. Bergstra, Eds., pp.~130 - 136.\\
+{[}49{]} SALIMANS, T., HO, J., CHEN, X., AND SUTSKEVER, I. Evolution
+strategies as a scalable alternative to reinforcement learning. arXiv
+preprint arXiv:1703.03864 (2017).\\
+{[}50{]} SANFILIPPO, S. Redis: An open source, in-memory data structure
+store. https://redis.io/, 2009.\\
+{[}51{]} SCHULMAN, J., WOLSKI, F., DHARIWAL, P., RADFORD, A., AND
+KLIMOV, O. Proximal policy optimization algorithms. arXiv preprint
+arXiv:1707.06347 (2017).\\
+{[}52{]} SCHWARZKOPF, M., KONWINSKI, A., ABD-EL-MALEK, M., AND WILKES,
+J. Omega: Flexible, scalable schedulers for large compute clusters. In
+Proceedings of the 8th ACM European Conference on Computer Systems (New
+York, NY, USA, 2013), EuroSys '13, ACM, pp.~351--364.\\
+{[}53{]} SERGEEV, A., AND DEL BALSO, M. Horovod: fast and easy
+distributed deep learning in tensorflow. arXiv preprint arXiv:1802.05799
+(2018).\\
+{[}54{]} SILVER, D., HUANG, A., MADDISON, C. J., GUEZ, A., SIFRE, L.,
+VAN DEN DRIESSCHE, G., SCHRITTWIESER, J., ANTONOGLOU, I.,
+PANNEERSHELVAM, V., LANCTOT, M., ET AL. Mastering the game of Go with
+deep neural networks and tree search. Nature 529, 7587 (2016),
+484--489.\\
+{[}55{]} SILVER, D., LEVER, G., HEESS, N., DEGRIS, T., WIERSTRA, D., AND
+RIEDMILLER, M. Deterministic policy gradient algorithms. In ICML
+(2014).\\
+{[}56{]} SUTTON, R. S., AND BARTO, A. G. Reinforcement Learning: An
+Introduction. MIT press Cambridge, 1998.\\
+{[}57{]} THAKUR, R., RABENSEIFNER, R., AND GROPP, W. Optimization of
+collective communication operations in MPICH. The International Journal
+of High Performance Computing Applications 19, 1 (2005), 49--66.\\
+{[}58{]} TIAN, Y., GONG, Q., SHANG, W., WU, Y., AND ZITNICK, C. L. ELF:
+An extensive, lightweight and flexible research platform for real-time
+strategy games. Advances in Neural Information Processing Systems (NIPS)
+(2017).\\
+{[}59{]} TODOROV, E., EREZ, T., AND TASSA, Y. Mujoco: A physics engine
+for model-based control. In Intelligent Robots and Systems (IROS), 2012
+IEEE/RSJ International Conference on (2012), IEEE, pp.~5026--5033.
+
+{[}60{]} VAN DEN BERG, J., MILLER, S., DUCKWORTH, D., HU, H., WAN, A.,
+FU, X.-Y., GOLDBERG, K., AND ABBEEL, P. Superhuman performance of
+surgical tasks by robots using iterative learning from human-guided
+demonstrations. In Robotics and Automation (ICRA), 2010 IEEE
+International Conference on (2010), IEEE, pp.~2074--2081.\\
+{[}61{]} VAN RENESSE, R., AND SCHNEIDER, F. B. Chain replication for
+supporting high throughput and availability. In Proceedings of the 6th
+Conference on Symposium on Opearting Systems Design \& Implementation -
+Volume 6 (Berkeley, CA, USA, 2004), OSDI'04, USENIX Association.\\
+{[}62{]} VENKATARAMAN, S., PANDA, A., OUSTERHOUT, K., GHODSI, A.,
+ARMBRUST, M., RECHT, B., FRANKLIN, M., AND STOICA, I. Drizzle: Fast and
+adaptable stream processing at scale. In Proceedings of the Twenty-Sixth
+ACM Symposium on Operating Systems Principles (2017), SOSP '17, ACM.\\
+{[}63{]} WHITE, T. Hadoop: The Definitive Guide. O'Reilly Media, Inc.,
+2012.\\
+{[}64{]} ZAHARIA, M., CHOWDHURY, M., DAS, T., DAVE, A., MA, J.,
+MCCAULEY, M., FRANKLIN, M. J., SHENKER, S., AND STOICA, I. Resilient
+distributed datasets: A fault-tolerant abstraction for in-memory cluster
+computing. In Proceedings of the 9th USENIX conference on Networked
+Systems Design and Implementation (2012), USENIX Association,
+pp.~2--2.\\
+{[}65{]} ZAHARIA, M., XIN, R. S., WENDELL, P., DAS, T., ARMBRUST, M.,
+DAVE, A., MENG, X., ROSEN, J., VENKATARAMAN, S., FRANKLIN, M. J.,
+GHODSI, A., GONZALEZ, J., SHENKER, S., AND STOICA, I. Apache Spark: A
+unified engine for big data processing. Commun. ACM 59, 11 (Oct.~2016),
+56--65.
+
+\end{document}

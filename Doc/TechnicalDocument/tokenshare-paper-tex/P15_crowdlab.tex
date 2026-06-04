@@ -1,0 +1,2764 @@
+% Options for packages loaded elsewhere
+\PassOptionsToPackage{unicode}{hyperref}
+\PassOptionsToPackage{hyphens}{url}
+\documentclass[
+]{article}
+\usepackage{xcolor}
+\usepackage{amsmath,amssymb}
+\setcounter{secnumdepth}{-\maxdimen} % remove section numbering
+\usepackage{iftex}
+\ifPDFTeX
+  \usepackage[T1]{fontenc}
+  \usepackage[utf8]{inputenc}
+  \usepackage{textcomp} % provide euro and other symbols
+\else % if luatex or xetex
+  \usepackage{unicode-math} % this also loads fontspec
+  \defaultfontfeatures{Scale=MatchLowercase}
+  \defaultfontfeatures[\rmfamily]{Ligatures=TeX,Scale=1}
+\fi
+\usepackage{lmodern}
+\ifPDFTeX\else
+  % xetex/luatex font selection
+\fi
+% Use upquote if available, for straight quotes in verbatim environments
+\IfFileExists{upquote.sty}{\usepackage{upquote}}{}
+\IfFileExists{microtype.sty}{% use microtype if available
+  \usepackage[]{microtype}
+  \UseMicrotypeSet[protrusion]{basicmath} % disable protrusion for tt fonts
+}{}
+\makeatletter
+\@ifundefined{KOMAClassName}{% if non-KOMA class
+  \IfFileExists{parskip.sty}{%
+    \usepackage{parskip}
+  }{% else
+    \setlength{\parindent}{0pt}
+    \setlength{\parskip}{6pt plus 2pt minus 1pt}}
+}{% if KOMA class
+  \KOMAoptions{parskip=half}}
+\makeatother
+\usepackage{longtable,booktabs,array}
+\newcounter{none} % for unnumbered tables
+\usepackage{calc} % for calculating minipage widths
+% Correct order of tables after \paragraph or \subparagraph
+\usepackage{etoolbox}
+\makeatletter
+\patchcmd\longtable{\par}{\if@noskipsec\mbox{}\fi\par}{}{}
+\makeatother
+% Allow footnotes in longtable head/foot
+\IfFileExists{footnotehyper.sty}{\usepackage{footnotehyper}}{\usepackage{footnote}}
+\makesavenoteenv{longtable}
+\setlength{\emergencystretch}{3em} % prevent overfull lines
+\providecommand{\tightlist}{%
+  \setlength{\itemsep}{0pt}\setlength{\parskip}{0pt}}
+\usepackage{bookmark}
+\IfFileExists{xurl.sty}{\usepackage{xurl}}{} % add URL line breaks if available
+\urlstyle{same}
+\hypersetup{
+  hidelinks,
+  pdfcreator={LaTeX via pandoc}}
+
+\author{}
+\date{}
+
+\begin{document}
+
+\section{CROWDLAB: Supervised learning to infer consensus labels and
+quality scores for data with multiple
+annotators}\label{crowdlab-supervised-learning-to-infer-consensus-labels-and-quality-scores-for-data-with-multiple-annotators}
+
+Hui Wen Goh \(^{1}\) Ulyana Tkachenko \(^{1}\) Jonas Mueller \(^{1}\)
+
+\section{Abstract}\label{abstract}
+
+Real-world data for classification is often labeled by multiple
+annotators. For analyzing such data, we introduce CROWDLAB, a
+straightforward approach to utilize any trained classifier to estimate:
+(1) A consensus label for each example that aggregates the available
+annotations; (2) A confidence score for how likely each consensus label
+is correct; (3) A rating for each annotator quantifying the overall
+correctness of their labels. Existing algorithms to estimate related
+quantities in crowdsourcing often rely on sophisticated generative
+models with iterative inference. CROWDLAB instead uses a straightforward
+weighted ensemble. Existing algorithms often rely solely on annotator
+statistics, ignoring the features of the examples from which the
+annotations derive. CROWDLAB utilizes any classifier model trained on
+these features, and can thus better generalize between examples with
+similar features. On real-world multi-annotator image data, our proposed
+method provides superior estimates for (1)-(3) than existing algorithms
+like Dawid-Skene/GLAD.
+
+\section{1. Introduction}\label{introduction}
+
+Training data for multiclass classification are often labeled by
+multiple annotators, with some redundancy between annotators to ensure
+high-quality labels. Such settings have been studied in crowdsourcing
+research (Monarch, 2021b; Paun et al., 2018). There it is often assumed
+that many annotators have labeled each example (Carpenter, 2008; Khetan
+et al., 2018), but this can be prohibitively expensive. This paper
+considers general settings where each example in the dataset is merely
+labeled by at least one annotator, and each annotator labels many
+examples (but still only a subset of the dataset). Each annotation
+corresponds to the selection of one class \(y \in \{1, \ldots, K\}\)
+which the annotator believes to be most appropriate for this example.
+
+Certain classification models can be trained in a special manner to
+account for the multiple labels per example (Nguyen et al., 2014;
+Peterson et al., 2019), but this is rarely done in practical
+applications. A common approach is to aggregate the labels for each
+example into a single consensus label, e.g.~via majority-vote or
+statistical crowdsourcing algorithms (Dawid and Skene, 1979). Any
+classifier can then be trained on these consensus labels via
+off-the-shelf code.
+
+Here we propose a method \(^{1}\) that leverages any already-trained
+classifier to: (1) establish accurate consensus labels, (2) estimate
+their quality, and (3) estimate the quality of each annotator (Monarch,
+2021c). The latter two aims help us determine which data is least
+trustworthy and should perhaps be verified via additional annotation
+(Bernhardt et al., 2022). CROWDLAB (Classifier Refinement Of
+croWD-sourced LABels) is based on a straightforward weighted ensemble of
+the classifier predictions and individual annotations. Weights are
+assigned according to the (estimated) trustworthiness of each annotator
+relative to the trained classifier. CROWDLAB is easy to
+implement/understand, computationally efficient (non-iterative), and
+extremely flexible. It works with any classifier and training procedure,
+as well as any classification dataset (including those containing
+examples only labeled by one annotator).
+
+Motivations. Illustrating how many real-world multi-annotator datasets
+look, Figure 1 shows a disparity in annotator quality as well as many
+examples whose consensus label will be incorrect if we rely on majority
+vote (nonetheless often done in practice due to its straightforward
+appeal). Unsurprisingly, consensus labels are more likely to be
+incorrect for those examples with fewer annotations. An effective method
+to estimate consensus label quality should properly account for the
+number of annotations an example has received, as well as the quality of
+the annotators who selected these labels. Many of the examples whose
+consensus label is wrong merely have a single annotation, which provides
+little information. Using a trained classifier can help us better
+generalize to such examples to estimate their labels' quality
+(especially if the data contain other examples with similar feature
+values). When incorporating a classifier, we
+
+\textit{[Image omitted: images/09f254b5eb907d4145fe4b136b38fdd4f88aef51224660aa2ab675152b7ca208.jpg]}
+
+boxplot
+
+{\def\LTcaptype{none} % do not increment counter
+\begin{longtable}[]{@{}ll@{}}
+\toprule\noalign{}
+Annotator Accuracy & Value \\
+\midrule\noalign{}
+\endhead
+\bottomrule\noalign{}
+\endlastfoot
+Min & 0.1 \\
+Q1 & 0.2 \\
+Median & 0.9 \\
+Q3 & 0.85 \\
+Max & 1.0 \\
+\end{longtable}
+}
+
+\textit{[Image omitted: images/b98b48d344addb196d72336f6a587e709edd06838d34f808ad0ce4bc129526c2.jpg]}
+
+boxplot
+
+{\def\LTcaptype{none} % do not increment counter
+\begin{longtable}[]{@{}ll@{}}
+\toprule\noalign{}
+Consensus label accuracy & Number of annotations for example \\
+\midrule\noalign{}
+\endhead
+\bottomrule\noalign{}
+\endlastfoot
+Correct & 10 \\
+Correct & 9 \\
+Correct & 8 \\
+Correct & 7 \\
+Correct & 6 \\
+Correct & 5 \\
+Correct & 4 \\
+Correct & 3 \\
+Correct & 2 \\
+Correct & 1 \\
+Correct & 0 \\
+Wrong & 7 \\
+Wrong & 6 \\
+Wrong & 5 \\
+Wrong & 4 \\
+Wrong & 3 \\
+Wrong & 2 \\
+Wrong & 1 \\
+Wrong & 0 \\
+\end{longtable}
+}
+
+Figure 1. Statistics of our Hardest dataset, which has images annotated
+by many actual humans. (a) Distribution over annotators showing the
+overall accuracy of each annotator's chosen labels. (b) Distribution
+over examples showing the number of annotations per example, grouped by
+whether the majority-vote consensus label is correct or not. Accuracy is
+measured against underlying ground-truth labels.
+
+also wish to account for the accuracy and confidence of its estimates.
+CROWDLAB offers a straightforward way to appropriately account for all
+of these factors.
+
+\section{2. Methods}\label{methods}
+
+Consider a dataset sampled from (feature, class label) pairs \((X,Y)\)
+that is comprised of: n examples, K classes, and m annotators in total.
+We first establish some notation to formally describe our setting:
+\(|J|\) denotes the cardinality of set \(J,1(\cdot)\) is an indicator
+function emitting 1 if its condition is True and 0 otherwise, and
+\([n]=\{1,2,\ldots,n\}\) indexes examples in the dataset. \(X_{i}\)
+denotes the features of the ith example, which belongs to one class
+\(Y_{i}\in[K]\) . This true class is unknown to us. For \(j\in[m]\) :
+\(A_{j}\) denotes the jth annotator, and \(Y_{ij}\in[K]\) is the class
+this annotator chose for \(X_{i}\) . \(Y_{ij}=\varnothing\) if \(A_{j}\)
+did not label this particular example. Each example receives at most m
+annotations, with many examples receiving fewer. \(\hat{Y}_{i}\) denotes
+the consensus label for example i, representing our best estimate of its
+true class \(Y_{i}\) . \(I_{j}:=\{i\in[n]:Y_{ij}\neq\varnothing\}\)
+denotes the subset of examples labeled by \(A_{j}\) . We assume each
+annotator has labeled multiple examples, i.e.~\(|I_{j}|>1\) .
+\(J_{i}:=\{j\in[m]:Y_{ij}\neq\varnothing\}\) denotes the subset of
+annotators that labeled \(X_{i}\) . Some examples may only be labeled by
+a single annotator.
+
+We assume some classifier model \(\mathcal{M}\) has been trained to
+predict the given labels based on feature values. CROWD-LAB can be used
+with any type of classifier \(\mathcal{M}\) (and training procedure), as
+long as it outputs predicted class probabilities
+\(\widehat{p}_{\mathcal{M}}(Y \mid X) \in \mathbb{R}^K\) estimating the
+likelihood that example \(X\) belongs to each class \(k\) . To avoid
+overfit predictions, we fit \(\mathcal{M}\) via cross-validation. This
+provides held-out predictions
+\(\widehat{p}_{\mathcal{M}}(Y_i \mid X_i)\) for each example in the
+dataset (from a copy of \(\mathcal{M}\) which never saw \(X_i\) during
+training). In our experiments, we simply train \(\mathcal{M}\) on
+consensus labels derived via majority vote. But one could train the
+classifier on any other set of consensus labels or even on the
+individual labels from each annotator (simply duplicating
+multiply-annotated examples in the training set). All methods considered
+here that use \(\mathcal{M}\) will benefit from improvements in the
+classifier's predictive accuracy. However CROWDLAB is the only method
+that explicitly accounts for shortcomings of the classifier's
+predictions (inevitable due to estimation error).
+
+\section{2.1. Scoring Consensus
+Quality}\label{scoring-consensus-quality}
+
+We first outline methods to estimate our confidence that a given
+consensus label for each example is correct. These quality estimates
+\(q_{i} \in [0, 1]\) may be applied to any given label no matter which
+method was used to establish consensus. Once we can estimate the quality
+of any one label for each example, we estimate the best consensus label
+under each method as the class with the highest consensus quality score.
+This class can be identified efficiently for CROWDLAB. CROWDLAB combines
+the complementary strengths of two basic estimators that we discuss
+first.
+
+Agreement (Monarch, 2021b). The fraction of annotators who agree with
+consensus label (does not use a classifier).
+
+\[
+q _ {i} = \frac {1}{| \mathcal {J} _ {i} |} \sum_ {j \in \mathcal {J} _ {i}} \mathbb {1} \left(Y _ {i j} = \widehat {Y} _ {i}\right) \tag {1}
+\]
+
+Final consensus labels can be established via majority vote.
+
+Label Quality Score (Kuan and Mueller, 2022). Instead of relying on the
+annotators, one can rely on the classifier model via methods used to
+evaluate labels in standard (singly-labeled) classification datasets.
+This approach ignores information from individual annotators when
+computing consensus quality:
+\(q_{i} = L(\widehat{Y}_{i}, \widehat{p}_{\mathcal{M}}(Y_{i} \mid X_{i}))\)
+.
+
+Here \(L(Y, \hat{p}) \in [0, 1]\) is a label quality score which
+quantifies our confidence that a particular label \(Y \in [K]\) is
+correct for example X, given model-prediction \(\hat{p} \in R^{K}\)
+estimating the likelihood that X belongs to each class. Our work uses
+self-confidence as the label quality score:
+\(L(Y, p) = \hat{p}(Y \mid X)\) . This simply represents the
+model-estimated probability that the example belongs to its labeled
+class. Kuan and Mueller (2022); Northcutt et al.~(2021b) found this to
+be effective for scoring label errors in singly-labeled data based on
+classifier predictions.
+
+CROWDLAB (Classifier Refinement Of croWDsourced LABels). The
+aforementioned approaches fail to consider both annotators and
+classifier. Treating these as different predictors of an example's true
+label, we take inspiration from prediction competitions where weighted
+ensembling of predictors produces accurate and calibrated predictions.
+CROWDLAB also employs the same label quality score for each consensus
+label, but applies it to a different class probability vector which
+modifies the prediction output by our classifier to account for the
+individual annotations for an example:
+\(q_i = L(\hat{Y}_i, \hat{p}_{\text{CR}}(Y_i \mid X_i, \{Y_{ij}\}))\) .
+
+We estimate these class probabilities by means of a weighted ensemble
+aggregation (Fakoor et al., 2021):
+
+\[
+\widehat {p} _ {\mathrm{CR}} (Y _ {i} \mid X _ {i}, \{Y _ {i j} \}) =
+\]
+
+\[
+\frac {w _ {\mathcal {M}} \cdot \widehat {p} _ {\mathcal {M}} (Y _ {i} \mid X _ {i}) + \sum_ {j \in \mathcal {J} _ {i}} w _ {j} \cdot \widehat {p} _ {\mathcal {A} _ {j}} (Y _ {i} \mid \{Y _ {i j} \})}{w _ {\mathcal {M}} + \sum_ {j \in \mathcal {J} _ {i}} w _ {j}}
+\]
+
+Here \(\widehat{p}_{M} \in R^{K}\) is the probability of each class
+predicted by our classifier, \(\widehat{p}_{A_{j}} \in R^{K}\) is a
+similar likelihood vector treating each annotator's label as a
+probabilistic ``prediction'', and \(w_{j}, w_{M} \in R\) are weights to
+account for the (estimated) relative trustworthiness of each annotator
+and our classifier. Our estimation procedure for these weights ensures
+\(w_{M}\) is smaller if our classifier was poorly trained and \(w_{j}\)
+is smaller for the annotators who give less accurate labels overall.
+
+To present the remaining details, we first define a likelihood parameter
+P as the average annotator agreement, across examples with more than one
+annotation. P estimates the probability that an arbitrary annotator's
+label will match the majority-vote consensus label for an arbitrary
+example.
+
+\[
+P = \frac {1}{| \mathcal {I} _ {+} |} \sum_ {i \in \mathcal {I} _ {+}} \frac {1}{| \mathcal {J} _ {i} |} \sum_ {j \in \mathcal {J} _ {i}} \mathbb {1} (Y _ {i j} = \hat {Y} _ {i})
+\]
+
+where \(I_{+} := \{i \in [n] : |J_{i}| > 1\}\) (2)
+
+We then simply define our per annotator predicted class probability
+vector used in (2.1) to be:
+
+\[
+\widehat {p} _ {\mathcal {A} _ {j}} \left(Y _ {i} = k \mid \left\{Y _ {i j} \right\}\right) = \left\{ \begin{array}{l l} P & \text { when } Y _ {i j} = k \\ \frac {1 - P}{K - 1} & \text { when } Y _ {i j} \neq k \end{array} \right. \tag {3}
+\]
+
+This likelihood is shared across annotators and only involves a single
+parameter P, easily estimated from limited data. P is a simple estimate
+of the accuracy of labels from a typical annotator. Note that including
+singly-annotated examples in (2) would bias P. This likelihood
+facilitates comparing classifier outputs against outputs from the
+typical annotator.
+
+Now we detail how to estimate the trustworthiness weights
+\(w_{j}, w_{M}\) . Let \(s_{j}\) represent annotator j's agreement with
+other annotators who labeled the same examples:
+
+\[
+s _ {j} = \frac {\sum_ {i \in \mathcal {I} _ {j}} \sum_ {\ell \in \mathcal {J} _ {i} , \ell \neq j} \mathbb {1} \left(Y _ {i j} = Y _ {i \ell}\right)}{\sum_ {i \in \mathcal {I} _ {j}} \left(\left| \mathcal {J} _ {i} \right| - 1\right)} \tag {4}
+\]
+
+Let \(A_{\mathcal{M}}\) be the (empirical) accuracy of our classifier
+with respect to the majority-vote consensus labels over the examples
+with more than one annotation:
+
+\[
+A _ {\mathcal {M}} = \frac {1}{| \mathcal {I} _ {+} |} \sum_ {i \in \mathcal {I} _ {+}} \mathbb {1} \left(Y _ {i, \mathcal {M}} = \hat {Y} _ {i}\right) \tag {5}
+\]
+
+Here
+\(Y_{i,\mathcal{M}} := \arg \max_{k} \widehat{p}_{\mathcal{M}}(Y_{i} = k \mid X_{i}) \in [K]\)
+is the class predicted by our model for \(X_{i}\) . \(A_{M}\) and
+\(s_{j}\) from (4) are analogous accuracy estimates for our classifier
+and individual annotators. Both are computed with only the
+multiply-annotated examples, since majority-vote consensus labels are
+more reliable for this subset.
+
+Before defining the trustworthiness weights, we normalize these accuracy
+estimates with respect to a baseline that puts them on a meaningful
+scale. This baseline is based on the estimated accuracy
+\(A_{\mathrm{MLC}}\) of always predicting the overall most labeled class
+across all examples' annotations
+\(Y_{\mathrm{MLC}} := \arg \max_k \sum_{ij} \mathbb{1}(Y_{ij} = k)\) ,
+i.e.~the class selected the most by the annotators across all examples.
+This accuracy is also estimated on only the subset of examples that have
+more than one annotator, \(\mathcal{I}_+\) defined in (2).
+
+\[
+A _ {\mathrm{MLC}} = \frac {1}{| \mathcal {I} _ {+} |} \sum_ {i \in \mathcal {I} _ {+}} \mathbb {1} \left(Y _ {\mathrm{MLC}} = \widehat {Y} _ {i}\right) \tag {6}
+\]
+
+Adopting this most-labeled-class-accuracy as a baseline, we compute
+normalized versions of our estimates for: each annotator's agreement
+with other annotators and the adjusted accuracy of the model.
+
+\[
+w _ {j} = 1 - \frac {1 - s _ {j}}{1 - A _ {\mathrm{MLC}}} \tag {7}
+\]
+
+\[
+w _ {\mathcal {M}} = \left(1 - \frac {1 - A _ {\mathcal {M}}}{1 - A _ {\mathrm{MLC}}}\right) \cdot \sqrt {\frac {1}{n} \sum_ {i} | \mathcal {J} _ {i} |} \tag {8}
+\]
+
+CROWDLAB uses \(w_{j}\) and \(w_{M}\) to weight our annotators and
+classifier model in its weighted ensemble of predictors. Each
+trustworthiness weight can thus be understood as 1 minus the (estimated)
+relative error of the corresponding predictor. Such normalized-error
+based weighting is commonly employed to combine predictors in model
+averaging.
+
+\section{2.2. Scoring Annotator
+Quality}\label{scoring-annotator-quality}
+
+Beyond estimating consensus labels and their quality, we consider
+ranking which annotators provide the best/worst labels. Here are methods
+to get an overall quality score \(a_{j} \in [0, 1]\) summarizing each
+annotator's accuracy/skill.
+
+Agreement (Monarch, 2021b). A simple score is the empirical accuracy of
+each annotator's labels with respect to majority-vote consensus labels.
+Examples with one annotation are not considered in this calculation to
+reduce bias.
+
+\[
+a _ {j} = \frac {1}{| \mathcal {I} _ {j , +} |} \sum_ {i \in \mathcal {I} _ {j, +}} \mathbb {1} (Y _ {i j} = \widehat {Y} _ {i})
+\]
+
+where \(I_{j,+} := I_j \cap I_+ = \{i \in I_j : |J_i| > 1\}\) (9)
+
+Label Quality Score (Kuan and Mueller, 2022). Agreement scores rate
+annotators solely based on labeling statistics. We can also rely on our
+classifier predictions \(\hat{p}_{M}\) to rate the average quality of
+all labels provided by one annotator.
+
+\[
+a _ {j} = \frac {1}{\left| \mathcal {I} _ {j} \right|} \sum_ {i \in \mathcal {I} _ {j}} L \left(Y _ {i j}, \widehat {p} _ {\mathcal {M}} \left(Y _ {i} \mid X _ {i}\right)\right) \tag {10}
+\]
+
+CROWDLAB. Our method takes into account both the label quality score of
+each annotator's labels (computed based on our classifier), as well as
+the agreement between each annotator's label and the CROWDLAB consensus
+label. As in (10), we estimate an average label quality score of labels
+given by each annotator, but here using estimated class probabilities
+\(\hat{p}_{\mathrm{CR}}\) from CROWDLAB in Sec. 2.1:
+
+\[
+Q _ {j} = \frac {1}{| \mathcal {I} _ {j} |} \sum_ {i \in \mathcal {I} _ {j}} L \left(Y _ {i j}, \hat {p} _ {\mathrm{CR}} \left(Y _ {i} \mid X _ {i}, \left\{Y _ {i j} \right\}\right)\right) \tag {11}
+\]
+
+Next, we compute each annotator's agreement with consensus among
+examples with over one annotation.
+
+\[
+A _ {j} = \frac {1}{\left| \mathcal {I} _ {j , +} \right|} \sum_ {i \in \mathcal {I} _ {j, +}} \mathbb {1} \left(Y _ {i j} = \widehat {Y} _ {i}\right) \tag {12}
+\]
+
+Here \(I_{j,+}\) is defined in (9) and the consensus labels
+\(\widehat{Y}_{i}\) are established via the CROWDLAB method from Sec.
+2.1. Since CROWDLAB is an effective method to estimate consensus labels
+\(\widehat{Y}_{i}\) , one might wonder why \(A_{j}\) alone from (12)
+does not produce the best estimate of annotator quality. One reason is
+that \(A_{j}\) fails to account for our confidence in each consensus
+label and how individual annotators deviate from consensus. If two
+annotators exhibit the same overall rate of agreement with the consensus
+labels, we should favor the annotator whose deviations from consensus
+are predicted to be likely classes by the classifier and tend to occur
+for examples with lower consensus quality score.
+
+Therefore we base CROWDLAB's annotator quality score on a weighted
+average between \(A_{j}\) and \(Q_{j}\) . Using the model/annotator
+weights \(w_{M}, w_{j}\) computed by CROWD-LAB in (7) and (8)), we find
+a single aggregate weight to compare all annotators against the
+classifier.
+
+\[
+\bar {w} = \frac {w _ {\mathcal {M}}}{w _ {\mathcal {M}} + w _ {0}}
+\]
+
+where
+\(w_{0}=\frac{1}{nm}\sum_{i=1}^{n}\sum_{j=1}^{m}w_{j}\cdot|\mathcal{J}_{i}|\)
+(13)
+
+Here \(\bar{w}\) is shared across all annotators. It represents the
+(estimated) relative trustworthiness of our classifier against the
+average annotator. A quality score for each annotator is finally
+computed via a weighted average of: the label quality score and the
+annotator agreement with consensus labels:
+
+\[
+a _ {j} = \bar {w} Q _ {j} + (1 - \bar {w}) A _ {j} \tag {14}
+\]
+
+\section{3. Related Work}\label{related-work}
+
+Prior work for estimating (1)-(3) from multi-annotator datasets has
+fallen into two camps. The first camp relies on statistical generative
+models that only account for the observed annotator statistics
+(Carpenter, 2008). Like CROWDLAB, the second camp of approaches also
+models feature-label relationships, but does so via linear models (Jin
+et al., 2017), autoencoders (Liu et al., 2021a), or classifiers fit to
+soft labels in an iterative manner (Raykar et al., 2010; Khetan et al.,
+2018; Rodrigues and Pereira, 2018; Platanios et al., 2020; Liu et al.,
+2021a). These methods cannot utilize an arbitrary classifier (trained
+via any procedure), and they are more specialized and complex than
+CROWDLAB. Due to this complexity, approaches from the former camp remain
+much more popular in practical applications (Toloka).
+
+The following sections describe existing baseline methods to estimate
+consensus/annotator quality that our subsequent experiments compare
+CROWDLAB against. We focus our comparison on approaches which are
+either: commonly used in practice, or able to utilize any classifier to
+produce better estimates (rather than approaches that are restricted to
+a specific type of model or non-standard training procedure).
+
+\section{3.1. Baseline Consensus Quality
+Scores}\label{baseline-consensus-quality-scores}
+
+Dawid-Skene (Dawid and Skene, 1979). This Bayesian method specifies a
+generative model of the dataset annotations. It employs iterative
+expectation-maximization (EM) to estimate each annotator's error rates
+in a class-specific manner. A key estimate in this approach is
+\(\widehat{p}_{\mathrm{DS}}(Y_{i} \mid \{Y_{ij}\})\) , the posterior
+probability vector of the true class \(Y_{i}\) for the ith example,
+given the dataset annotations \(\{Y_{ij}\}\) .
+
+Define \(\pi_{k,\ell}^{(j)}\) as the probability that annotator \(j\)
+labels an example as class \(\ell\) when the true label of that example
+is \(k\) . This individual class confusion matrix for each annotator
+
+serves as the likelihood function of the Dawid-Skene generative model.
+The Dawid-Skene posterior distribution for a particular example is
+computed by taking product of each annotator's likelihood and some prior
+distribution \(\pi_{prior}\) .
+
+\[
+\widehat {p} _ {\mathrm{DS}} \left(Y _ {i} \mid \left\{Y _ {i j} \right\}\right) \propto \pi_ {\text { prior }} \cdot \prod_ {j \in \mathcal {J} _ {i}} \pi_ {k, Y _ {i j}} ^ {(j)} \tag {15}
+\]
+
+Our work follows conventional practice taking the prior to be the
+(empirical) marginal distribution of given labels over the full dataset.
+A natural consensus quality score is the label quality score of the
+consensus label under the Dawid-Skene posterior class probabilities:
+\(q_{i} = L(\widehat{Y}_{i}, \widehat{p}_{\mathrm{DS}}(Y_{i} \mid \{Y_{ij}\}))\)
+.
+
+GLAD (Generative model of Labels, Abilities and Difficulties) (Whitehill
+et al., 2009). Specifying a more complex generative model of dataset
+annotations than Dawid-Skene, this Bayesian approach also employs
+iterative EM steps. GLAD additionally infers \(\alpha\) , the expertise
+of each annotator and \(\beta\) , the difficulty of each example. GLAD's
+likelihood is based on the following probability that an annotator
+chooses the same class as the consensus label:
+
+\[
+p \left(Y _ {i j} = \widehat {Y} _ {i} \mid \alpha_ {j}, \beta_ {i}\right) = \frac {1}{1 + e ^ {- \alpha_ {j} \beta_ {i}}} \tag {16}
+\]
+
+Like Dawid-Skene, GLAD uses the data likelihood to estimate the
+posterior probability of the true class \(Y_{i}\) for the ith example:
+\(\widehat{p}_{\mathrm{G}}(Y_{i} \mid \{Y_{ij}\})\) . Here we use the
+same standard prior as for Dawid-Skene. Again a consensus quality score
+can naturally be obtained via the label quality score computed with
+respect to the GLAD posterior class probabilities:
+\(q_{i} = L(\widehat{Y}_{i}, \widehat{p}_{\mathrm{G}}(Y_{i} \mid \{Y_{ij}\}))\)
+.
+
+While other Bayesian annotation models exist (Kara et al., 2015; Hovy et
+al., 2013; Carpenter, 2008), Dawid-Skene and GLAD are often used in
+practice (Toloka; Monarch, 2021c) and perform strongly in empirical
+benchmarks (Sheshadri and Lease, 2013; Paun et al., 2018; Sinha et al.,
+2018).
+
+Dawid-Skene with Model (Monarch, 2021a). Although very popular, the
+Dawid-Skene and GLAD methods do not utilize a classifier at all. Thus
+they struggle with sparsely labeled examples. A straightforward
+adaptation of these methods to incorporate a classifier is to produce
+class predictions for each example (predict hard labels rather than
+probability vectors), and treat these predicted labels as if they were
+the outputs from an additional annotator (Monarch, 2021a). Because
+methods like Dawid-Skene and GLAD automatically adjust for estimated
+annotator quality, they should theoretically account for the
+classifier's strengths/weaknesses.
+
+We augment Dawid-Skene in this way by: adding the model's predicted
+labels as an additional annotator (for every example), and then
+computing consensus quality scores using the same Dawid-Skene method
+described above. The resulting posterior is now a function of the
+example's feature values as well (since classifier predictions depend on
+\(X_{i}\) ). GLAD with Model (Monarch, 2021a). We follow the same
+approach to adapt GLAD to leverage the classifier: First add the model's
+predicted label for each example as labels from one additional
+annotator, and then compute the consensus quality score using the GLAD
+method described above. Jin et al.~(2017) proposed a different extension
+of GLAD to account for feature information, but their approach does not
+accommodate arbitrary classifiers (eg. not suitable for images).
+
+Empirical Bayes. While the previous two methods do not account for the
+classifier's confidence in its individual predictions, we consider an
+alternative adaptation of Dawid-Skene that does. This method treats the
+model's prediction as a per-example prior distribution and the
+annotators' labels as observations to compute
+\(\widehat{p}_{\mathrm{EB}}(Y_i \mid X_i, \{Y_{ij}\})\) , the posterior
+probability of the true class \(Y_i\) for the \(i\) th example, given
+the dataset annotations \(\{Y_{ij}\}\) and an example-specific prior
+based on the feature values \(X_i\) . The likelihood function for each
+annotator is defined by the class confusion matrix estimated via the
+Dawid-Skene algorithm. Using the classifier-derived prior distribution
+and likelihoods, we can compute an Empirical Bayes posterior in the same
+way outlined for Dawid-Skene:
+
+\[
+\widehat {p} _ {\mathrm{EB}} \left(Y _ {i} \mid X _ {i}, \left\{Y _ {i j} \right\}\right) \propto \widehat {p} _ {\mathcal {M}} \left(Y _ {i} \mid X _ {i}\right) \cdot \prod_ {j \in \mathcal {J} _ {i}} \pi_ {k, Y _ {i j}} ^ {(j)} \tag {17}
+\]
+
+and compute a consensus quality score in the same manner:
+\(q_{i} = L(\hat{Y}_{i}, \hat{p}_{\mathrm{EB}}(Y_{i} \mid X_{i}, \{Y_{ij}\}))\)
+.
+
+Some have considered iterative variants of this hybrid
+generative/discriminative approach, in which the classifier is retrained
+to fit the resulting posterior and the above process is repeated with
+the new classifier (Raykar et al., 2010; Khetan et al., 2018; Rodrigues
+and Pereira, 2018; Platanios et al., 2020). This however requires a
+classifier that can be iteratively trained over many rounds and also fit
+to soft labels, rather than a standard classification model.
+
+Active Label Cleaning (Bernhardt et al., 2022). Also utilizing a trained
+classifier, this recently proposed method scores multi-annotator
+consensus quality by subtracting the cross-entropy between classifier
+predicted probabilities and individual annotations by the entropy of the
+former.
+
+\[
+\begin{array}{l} q _ {i} = - \sum_ {k = 1} ^ {K} \widehat {p} _ {\text { emp }} \left(Y _ {i} = k \mid \left\{Y _ {i j} \right\} _ {j \in \mathcal {J} _ {i}}\right) \cdot \log \widehat {p} _ {\mathcal {M}, i, k} \\ - \left(- \sum_ {k = 1} ^ {K} \hat {p} _ {\mathcal {M}, i, k} \cdot \log \hat {p} _ {\mathcal {M}, i, k}\right) \tag {18} \\ \end{array}
+\]
+
+Here we abbreviate
+\(\widehat{p}_{\mathcal{M},i,k} := \widehat{p}_{\mathcal{M}}(Y_i = k \mid X_i)\)
+, and
+\(\widehat{p}_{\mathrm{emp}}(Y_i = k \mid \{Y_{ij}\}_{j \in \mathcal{J}_i})\)
+is the overall empirical distribution of class labels amongst the
+annotations for a particular example. Like CROWDLAB, this approach
+accounts for classifier confidence and all individual annotations. It
+lacks CROWDLAB's ability to adjust for how trustworthy the individual
+annotators and classifier are.
+
+\section{3.2. Baseline Annotator Quality
+Scores}\label{baseline-annotator-quality-scores}
+
+Dawid-Skene (Dawid and Skene, 1979). We follow the conventional use of
+Dawid-Skene to rate a particular annotator via the probability that they
+agree with the true label. This is directly estimated for each possible
+true label as part of the per-annotator class confusion matrix used by
+the Dawid-Skene method (see Sec. 3.1). Thus one can score each annotator
+using the trace of their confusion matrix.
+
+\[
+a _ {j} = \frac {1}{K} \sum_ {k = 1} ^ {K} \pi_ {k, k} ^ {(j)} \tag {19}
+\]
+
+GLAD (Whitehill et al., 2009). Expertise of each annotator as estimated
+by GLAD method (see Sec. 3.1): \(a_{j} = \alpha_{j}\) .
+
+Dawid-Skene with Model (Monarch, 2021a). Add the classifier's predicted
+labels as an additional annotator (who labeled every example). Then
+score each real annotator's quality using the Dawid-Skene method above.
+
+GLAD with Model (Monarch, 2021a). Add the classifier's predicted labels
+as an additional annotator (who labeled every example). Then score each
+real annotator's quality using the GLAD method above.
+
+\section{4. Why CROWDLAB can produce better estimates than other
+methods}\label{why-crowdlab-can-produce-better-estimates-than-other-methods}
+
+\begin{itemize}
+\tightlist
+\item
+  In settings with few (or only one) labels for an example, the
+  agreement/Dawid-Skene/GLAD scores become unreliable (Paun et al.,
+  2018). CROWDLAB can utilize additional information provided by a
+  classifier that may be able to generalize to this example (especially
+  if other dataset examples with similar feature values have more
+  trustworthy consensus labels, e.g.~if they received more
+  annotations).\\
+\item
+  For examples that received a large number of annotations, CROWDLAB
+  assigns less relative weight to the classifier predictions and its
+  consensus quality score converges toward the observed annotator
+  agreement. This quantity becomes more reliable when based on a large
+  number of annotations (Paun et al., 2018), in which case relying on
+  other sources of information becomes unnecessary. For examples where
+  all annotations agree, an increase in the number of such annotations
+  will typically correspond to an increased CROWDLAB consensus score.
+  The Label Quality Score alone fails to exhibit this desirable
+  property.\\
+\item
+  CROWDLAB uses weighted ensembling to combine annotations and
+  classifier outputs. Countless prediction competitions have proven this
+  to be among the most accurate/calibrated ways to combine different
+  predictors.\\
+  • Methods like Dawid-Skene estimate \(K \times K\) confusion
+\end{itemize}
+
+matrices per annotator, which may be statistically challenging when some
+annotators provide few labels (Paun et al., 2018). CROWDLAB merely
+estimates a single likelihood parameter P shared across all
+classes/annotators in (3) as well as a single per annotator statistic
+\(w_{j}\) . Both can be better estimated from a limited number of
+observations.
+
+- Generative-based methods like Dawid-Skene or GLAD are iterative
+algorithms, with high computational costs when their convergence is slow
+(Sinha et al., 2018; Stephens, 2000). CROWDLAB does not require
+iterative updates and is deterministic (for a given classifier).
+
+\section{5. Experiments}\label{experiments}
+
+Datasets. To evaluate various methods, we employ real-world
+multi-annotator data with naturally occurring label errors. We run three
+benchmarks based on different subsets of the CIFAR-10H data (Peterson et
+al., 2019) which we call: Hardest, Uniform, Complete (see Appendix A.1
+for details and Appendix B and C for additional results). CIFAR-10H
+contains multiple labels for images in the CIFAR-10 test set (Krizhevsky
+and Hinton, 2009), obtained from a large set of new human annotators. As
+a source of ground truth labels, we simply use the corresponding labels
+for each image from the original CIFAR-10 dataset (Krizhevsky and
+Hinton, 2009). Northcutt et al.~(2021a) found the original CIFAR-10
+labels to contain few errors in verification studies, and they have been
+adopted as ground truth labels in other research as well (Kuan and
+Mueller, 2022).
+
+Models. To study how methods perform across different types of
+classifiers with varying accuracy, we applied every method twice, once
+using a ResNet-18 classifier (He et al., 2016) and another time with a
+Swin Transformer model (Liu et al., 2021b). Both classifiers are trained
+on the same data (majority-vote consensus labels) in the same manner.
+Here the Swin Transformer represents a high quality model, whereas
+ResNet-18 represents a less accurate model (that is still commonly used
+in practice).
+
+Metrics. To measure each of our three previously stated estimation
+tasks, we employ the following metrics:
+
+\begin{enumerate}
+\def\labelenumi{\arabic{enumi}.}
+\tightlist
+\item
+  To evaluate how well methods can estimate consensus labels from
+  multiply-annotated data, we measure the accuracy of the inferred
+  consensus label for each example against its ground truth label.\\
+\item
+  To evaluate how well methods can estimate the quality of each given
+  consensus label, we compare estimated quality score \(q_{i}\) for each
+  example against a binary target indicating whether or not the
+  consensus label matches the ground truth label. If our goal is to
+\end{enumerate}
+
+use the quality scores to flag those examples whose consensus label is
+currently incorrect, this is a form of information retrieval (Kuan and
+Mueller, 2022). Thus our consensus quality scores are evaluated via
+precision/recall metrics: AUROC, AUPRC, and Lift at various cutoffs
+(which is directly proportional to Precision@T). To focus our evaluation
+purely on the estimation of label quality, throughout this section, we
+use each method to estimate quality scores for a single set of consensus
+labels established via majority vote. We always score the same of
+consensus labels here because our above evaluation already quantifies
+how good the consensus labels are from different methods, and we do not
+want this to confound our evaluation of how well different methods can
+estimate label quality.
+
+\begin{enumerate}
+\def\labelenumi{\arabic{enumi}.}
+\setcounter{enumi}{2}
+\tightlist
+\item
+  To evaluate how well methods can estimate the quality of each
+  annotator, we measure the Spearman correlation between \(a_j\) and
+  \(\mathrm{ACC}_j\) over all annotators \(j\) , where: \(a_j\) denotes
+  our estimated annotator quality score (Sec. 2.2) and
+  \(\mathrm{ACC}_j\) denotes the accuracy of the \(j\) -th annotator's
+  chosen labels with respect to the ground truth labels (considering
+  only the subset of examples labeled by annotator \(j\) ). A method
+  that achieves high Spearman correlation must produce annotator quality
+  scores that are lower for those annotators whose labels tend to be
+  wrong the most often.
+\end{enumerate}
+
+\section{6. Results}\label{results}
+
+Figures 2, S1, S2, and Tables 1, S2, S3 demonstrate that CROWDLAB
+overall performs the best across our evaluations for consensus and
+annotator quality scores, and also typically produces the most accurate
+consensus labels. For most methods considered in this paper, all
+evaluation metrics improve when used with the Swin Transformer
+vs.~ResNet-18 model. This illustrates how a better classifier can be
+utilized to get more improvement in consensus labels and
+consensus/annotator quality estimates. Effective methods for
+multi-annotator analysis must remain compatible with future innovations
+in classifier technology.
+
+Considering only classifier predictions and consensus labels (rather
+than individual annotator information), the Label Quality Score also
+effectively estimates consensus quality when we have an accurate model
+(Swin Transformer). Predictions from a strong classifier suffice to
+estimate label quality without additional information provided by
+individual annotators (Kuan and Mueller, 2022). However Label Quality
+Score performs worse than other methods with a lower accuracy classifier
+(ResNet-18). This demonstrates the value of accounting for the
+individual annotations and overall model accuracy in CROWDLAB, which
+performs well relative to other methods regardless of the classifier's
+accuracy. Treating the classifier as an additional annotator for the
+Dawid-Skene and GLAD methods improves their performance, but not enough
+to match CROWDLAB, which better accounts for the classifier's
+confidence. While the Empirical Bayes method also accounts for
+classifier confidence to augment Dawid-Skene, it similarly unable to
+match CROWDLAB, demonstrating why our method considers how much to weigh
+the model based on its estimated trustworthiness relative to the
+annotators.
+
+In Appendix E, we also compare CROWDLAB against a variant of our method
+which lacks the per-annotator quality estimation (i.e.~all annotator
+weights \(w_{j}\) are equal). Empirically, this variant underperforms as
+it estimates too little information about the annotators. On another
+Uniform dataset in which there are 1-5 annotations for each example
+occurring with equal frequencies, CROWDLAB is able to produce better
+estimates for tasks (1)-(3) than the other methods considered here
+(results in Appendix B). On another Complete dataset with many more (
+\(\sim 50\) ) annotations per example, such that simple annotator
+agreement and majority vote produce highly accurate estimates, CROWDLAB
+retains its strong performance compared to other methods (results in
+Appendix C). In Appendix D, we run all methods with an unrealistically
+accurate classifier on all datasets. This setting favors the Label
+Quality Score, but we find that CROWDLAB still outperforms the other
+methods. This breadth of settings highlights the utility of CROWDLAB
+across a wide range of applications involving fair/stellar classifier
+models and varying numbers of data annotations.
+
+\section{7. Discussion}\label{discussion}
+
+Unlike other ways to utilize classifiers with crowdsourcing algorithms,
+CROWDLAB considers a model's estimated confidence and how accurate it is
+relative to individual annotators. Methods such as Dawid-Skene (or GLAD)
+with Model account for the model predictions, but fail adjust for model
+confidence and accuracy which is properly done by CROWDLAB. Our proposed
+methodology is compatible with any classifier and training strategy,
+ensuring its out-of-the-box performance will improve as new models and
+training tricks are invented. This is vital as classifier technology
+continues to improve, and ensures CROWDLAB can be applied to diverse
+data (image, text, tabular, audio, etc).
+
+The efficacy of CROWDLAB depends on being able to train a performant
+classifier, unlike generative models of annotator statistics.
+Fortunately, training good classifiers is easy with modern AutoML
+(Erickson et al., 2020) and techniques for calibration, data
+augmentation, and transfer learning (Thulasidasan et al., 2019). As with
+most classification projects, CROWDLAB users should remain wary of
+overconfident model predictions with limited ability to generalize,
+which may lead to overly optimistic estimates of quality. Ensuring
+predictions are out-of-sample helps mitigate this.
+
+\textit{[Image omitted: images/9844346172f843876aaead0d79802d4658c3aefe3cec22f13a9e02a16a36bc49.jpg]}
+
+bar
+
+AUROC for Consensus Quality Score \textbar{} Method \textbar{} AUROC
+(Blue) \textbar{} AUROC (Orange) \textbar{} \textbar{} :--- \textbar{}
+:--- \textbar{} :--- \textbar{} \textbar{} Agreement \textbar{} 0.68
+\textbar{} 0.67 \textbar{} \textbar{} Dawid-Skene \textbar{} 0.75
+\textbar{} 0.74 \textbar{} \textbar{} GLAD \textbar{} 0.88 \textbar{}
+0.88 \textbar{} \textbar{} Dawid-Skene with Model \textbar{} 0.87
+\textbar{} 0.89 \textbar{} \textbar{} GLAD with Model \textbar{} 0.92
+\textbar{} 0.93 \textbar{} \textbar{} Empirical Bayes \textbar{} 0.91
+\textbar{} 0.93 \textbar{} \textbar{} Active Label Cleaning \textbar{}
+0.81 \textbar{} 0.86 \textbar{} \textbar{} Label Quality Score
+\textbar{} 0.90 \textbar{} 0.94 \textbar{} \textbar{} CROWDLAB
+\textbar{} 0.94 \textbar{} 0.96 \textbar{}
+
+\textit{[Image omitted: images/198d6ee0addc074e9694203b7d106f8e0822e964442e53c26c1d9d64b9b68c33.jpg]}
+
+bar
+
+AUPRC for Consensus Quality Score \textbar{} Method \textbar{} AUPRC
+\textbar{} \textbar{} :--- \textbar{} :--- \textbar{} \textbar{}
+Agreement \textbar{} 0.15 \textbar{} \textbar{} Dawid-Skene \textbar{}
+0.37 \textbar{} \textbar{} GLAD \textbar{} 0.51 \textbar{} \textbar{}
+Dawid-Skene with Model \textbar{} 0.28 \textbar{} \textbar{} GLAD with
+Model \textbar{} 0.40 \textbar{} \textbar{} Empirical Bayes \textbar{}
+0.36 \textbar{} \textbar{} Active Label Cleaning \textbar{} 0.32
+\textbar{} \textbar{} Label Quality Score \textbar{} 0.45 \textbar{}
+\textbar{} CROWDLAB \textbar{} 0.54 \textbar{}
+
+\textit{[Image omitted: images/89b34891adaad8894241433d174d1536891eb6af8817b8069873723f3e8c2c34.jpg]}
+
+bar
+
+Spearman Correlation for Annotator Quality \textbar{} Method \textbar{}
+Spearman Correlation (Blue) \textbar{} Spearman Correlation (Orange)
+\textbar{} \textbar{} :--- \textbar{} :--- \textbar{} :--- \textbar{}
+\textbar{} Agreement \textbar{} 0.69 \textbar{} 0.71 \textbar{}
+\textbar{} Dawid-Skene \textbar{} 0.59 \textbar{} 0.60 \textbar{}
+\textbar{} GLAD \textbar{} 0.65 \textbar{} 0.64 \textbar{} \textbar{}
+Dawid-Skene with Model \textbar{} 0.66 \textbar{} 0.72 \textbar{}
+\textbar{} GLAD with Model \textbar{} 0.69 \textbar{} 0.72 \textbar{}
+\textbar{} Label Quality Score \textbar{} 0.51 \textbar{} 0.68
+\textbar{} \textbar{} CROWDLAB \textbar{} 0.72 \textbar{} 0.75
+\textbar{}
+
+\textit{[Image omitted: images/a7be3752e39936d051d638e73dae35cf379ccdf4f75c9ec5c640994cc602d98d.jpg]}
+
+bar
+
+Consensus Label Accuracy \textbar{} Model \textbar{} Accuracy \textbar{}
+\textbar{} :--- \textbar{} :--- \textbar{} \textbar{} Majority Vote
+(Agreement) \textbar{} 0.958 \textbar{} \textbar{} Dawid-Skene
+\textbar{} 0.945 \textbar{} \textbar{} GLAD \textbar{} 0.945 \textbar{}
+\textbar{} Dawid-Skene with Model \textbar{} 0.965 \textbar{} \textbar{}
+GLAD with Model \textbar{} 0.959 \textbar{} \textbar{} CROWDLAB
+\textbar{} 0.971 \textbar{}
+
+\textit{[Image omitted: images/253f1cb93205c4746e6e60839a62e9fb3d7c730cacff2a87cfaa4987f8e316d8.jpg]}\\
+Figure 2. Benchmarking methods to estimate consensus labels, their
+quality, and annotator quality on the Hardest multi-annotator dataset.
+
+Model
+
+Method
+
+Lift @ 10
+
+Lift @ 50
+
+Lift @ 100
+
+Lift @ 300
+
+Lift @ 500
+
+ResNet-18
+
+Agreement
+
+4.87
+
+5.84
+
+6.33
+
+5.27
+
+4.72
+
+ResNet-18
+
+Dawid-Skene
+
+12.89
+
+11.79
+
+13.26
+
+10.74
+
+8.51
+
+ResNet-18
+
+GLAD
+
+14.6
+
+15.69
+
+15.88
+
+13.93
+
+9.96
+
+ResNet-18
+
+Dawid-Skene with Model
+
+12.54
+
+11.47
+
+8.6
+
+5.56
+
+5.09
+
+ResNet-18
+
+GLAD with Model
+
+14.67
+
+13.69
+
+14.43
+
+11.25
+
+10.81
+
+ResNet-18
+
+Empirical Bayes
+
+12.17
+
+12.17
+
+11.68
+
+11.11
+
+10.27
+
+ResNet-18
+
+Active Label Cleaning
+
+17.03
+
+19.95
+
+16.3
+
+10.22
+
+7.88
+
+ResNet-18
+
+Label Quality Score
+
+19.46
+
+21.41
+
+19.22
+
+13.38
+
+10.22
+
+ResNet-18
+
+CROWDLAB
+
+24.33
+
+22.38
+
+17.76
+
+14.27
+
+11.82
+
+Swin
+
+Agreement
+
+2.51
+
+6.03
+
+6.28
+
+4.86
+
+4.17
+
+Swin
+
+Dawid-Skene
+
+12.89
+
+14.36
+
+14.55
+
+10.99
+
+8.66
+
+Swin
+
+GLAD
+
+14.6
+
+15.69
+
+15.88
+
+14.11
+
+10.04
+
+Swin
+
+Dawid-Skene with Model
+
+14.16
+
+16.43
+
+12.46
+
+9.16
+
+7.99
+
+Swin
+
+GLAD with Model
+
+8.7
+
+17.39
+
+17.1
+
+15.36
+
+11.71
+
+Swin
+
+Empirical Bayes
+
+12.56
+
+9.55
+
+11.06
+
+11.81
+
+11.76
+
+Swin
+
+Active Label Cleaning
+
+25.13
+
+22.11
+
+21.36
+
+12.81
+
+9.25
+
+Swin
+
+Label Quality Score
+
+25.13
+
+22.61
+
+21.86
+
+16.92
+
+12.81
+
+Swin
+
+CROWDLAB
+
+25.13
+
+24.62
+
+20.85
+
+17.76
+
+13.82
+
+Table 1. Evaluating the precision of various consensus quality scoring
+methods on the Hardest dataset. Directly proportional to Precision@T,
+Lift@T reports what fraction of the top-T ranked consensus labels are
+actually incorrect, normalized by the fraction of incorrect consensus
+labels expected for a random set of examples.
+
+\section{References}\label{references}
+
+M. Bernhardt, D. C. Castro, R. Tanno, A. Schwaighofer, K. C. Tezcan, M.
+Monteiro, S. Bannur, M. P. Lungren, A. Nori, B. Glocker, et al.~Active
+label cleaning for improved dataset quality under resource constraints.
+Nature communications, 13(1):1--11, 2022.\\
+B. Carpenter. Multilevel bayesian models of categorical data annotation.
+2008.\\
+J. Davis and M. Goadrich. The relationship between precision-recall and
+ROC curves. In International Conference on Machine learning, pages
+233--240, 2006.\\
+A. P. Dawid and A. M. Skene. Maximum likelihood estimation of observer
+error-rates using the EM algorithm. Journal of the Royal Statistical
+Society. Series C (Applied Statistics), 28(1):20--28, 1979.\\
+N. Erickson, J. Mueller, A. Shirkov, H. Zhang, P. Larroy, M. Li, and A.
+Smola. AutoGluon-Tabular: Robust and accurate AutoML for structured
+data. arXiv preprint arXiv:2003.06505, 2020.\\
+R. Fakoor, T. Kim, J. Mueller, A. J. Smola, and R. J. Tibshirani.
+Flexible model aggregation for quantile regression. arXiv preprint
+arXiv:2103.00083, 2021.\\
+K. He, X. Zhang, S. Ren, and J. Sun. Deep residual learning for image
+recognition. In Proceedings of the IEEE Conference on Computer Vision
+and Pattern Recognition, 2016.\\
+Hivemind and Cloudfactory. Crowd vs.~managed team: A study on quality
+data processing at scale. URL
+https://go.cloudfactory.com/hubfs/02-Contents/3-Reports/Crowd-vs-Managed-Team-Hivemind-Study.pdf.\\
+D. Hovy, T. Berg-Kirkpatrick, A. Vaswani, and E. Hovy. Learning whom to
+trust with MACE. In Proceedings of the 2013 Conference of the North
+American Chapter of the Association for Computational Linguistics: Human
+Language Technologies, 2013.\\
+Y. Jin, M. Carman, D. Kim, and L. Xie. Leveraging side information to
+improve label quality control in crowdsourcing. In Fifth AAAI Conference
+on Human Computation and Crowdsourcing, 2017.\\
+Y. E. Kara, G. Genc, O. Aran, and L. Akarun. Modeling annotator
+behaviors for crowd labeling. Neurocomputing, 160:141--156, 2015.\\
+D. Karger, S. Oh, and D. Shah. Iterative learning for reliable
+crowdsourcing systems. Advances in Neural Information Processing
+Systems, 2011.
+
+A. Khetan, Z. C. Lipton, and A. Anandkumar. Learning from noisy
+singly-labeled data. In International Conference on Learning
+Representations, 2018.\\
+A. Krizhevsky and G. Hinton. Learning multiple layers of features from
+tiny images. Master's thesis, Department of Computer Science, University
+of Toronto, 2009.\\
+J. Kuan and J. Mueller. Model-agnostic label quality scoring to detect
+real-world label errors. In ICML DataPerf Workshop, 2022.\\
+Y. Liu, W. Zhang, and Y. Yu. Aggregating crowd wisdom with side
+information via a clustering-based label-aware autoencoder. In
+Proceedings of the Twenty-Ninth International Conference on
+International Joint Conferences on Artificial Intelligence, pages
+1542--1548, 2021a.\\
+Z. Liu, Y. Lin, Y. Cao, H. Hu, Y. Wei, Z. Zhang, S. Lin, and B. Guo.
+Swin transformer: Hierarchical vision transformer using shifted windows.
+In Proceedings of the IEEE/CVF International Conference on Computer
+Vision, 2021b.\\
+R. Monarch. Treating model predictions as a single annotator. In
+Human-in-the-loop machine learning. Manning Publications, 2021a.\\
+R. Monarch. Human-in-the-loop machine learning. Manning Publications,
+2021b.\\
+R. Monarch. Quality control for data annotation. In Human-in-the-loop
+machine learning. Manning Publications, 2021c.\\
+Q. Nguyen, H. Valizadegan, and M. Hauskrecht. Learning classification
+models with soft-label information. Journal of the American Medical
+Informatics Association, 21(3):501--508, 2014.\\
+C. G. Northcutt, A. Athalye, and J. Mueller. Pervasive label errors in
+test sets destabilize machine learning benchmarks. In Proceedings of the
+35th Conference on Neural Information Processing Systems Track on
+Datasets and Benchmarks, December 2021a.\\
+C. G. Northcutt, L. Jiang, and I. L. Chuang. Confident learning:
+Estimating uncertainty in dataset labels. Journal of Artificial
+Intelligence Research, 70:1373--1411, 2021b.\\
+S. Paun, B. Carpenter, J. Chamberlain, D. Hovy, U. Kruschwitz, and M.
+Poesio. Comparing Bayesian models of annotation. Transactions of the
+Association for Computational Linguistics, 6:571--585, 2018.\\
+J. C. Peterson, R. M. Battleday, T. L. Griffiths, and O. Russakovsky.
+Human uncertainty makes classification more robust. In Proceedings of
+the IEEE/CVF International Conference on Computer Vision, 2019.
+
+E. A. Platanios, M. Al-Shedivat, E. Xing, and T. Mitchell. Learning from
+imperfect annotations. arXiv preprint arXiv:2004.03473, 2020.\\
+V. C. Raykar, S. Yu, L. H. Zhao, G. H. Valadez, C. Florin, L. Bogoni,
+and L. Moy. Learning from crowds. Journal of Machine Learning Research,
+11(4), 2010.\\
+F. Rodrigues and F. Pereira. Deep learning from crowds. In Proceedings
+of the AAAI conference on artificial intelligence, 2018.\\
+A. Sheshadri and M. Lease. Square: A benchmark for research on computing
+crowd consensus. In First AAAI conference on human computation and
+crowdsourcing, 2013.\\
+V. B. Sinha, S. Rao, and V. N. Balasubramanian. Fast Dawid-Skene: A fast
+vote aggregation scheme for sentiment classification. arXiv preprint
+arXiv:1803.02781, 2018.
+
+M. Stephens. Dealing with label switching in mixture models. Journal of
+the Royal Statistical Society: Series B (Statistical Methodology),
+62(4):795--809, 2000.\\
+S. Thulasidasan, G. Chennupati, J. A. Bilmes, T. Bhattacharya, and S.
+Michalak. On mixup training: Improved calibration and predictive
+uncertainty for deep neural networks. Advances in Neural Information
+Processing Systems, 32, 2019.\\
+Toloka. Crowd-kit: Computational quality control for crowdsourcing. URL
+https://toloka.ai/en/docs/crowd-kit.\\
+J. Whitehill, T.-f.~Wu, J. Bergsma, J. Movellan, and P. Ruvolo. Whose
+vote should count more: Optimal integration of labels from labelers of
+unknown expertise. In Advances in Neural Information Processing Systems,
+2009.
+
+\section{Appendix -- CROWDLAB: Supervised learning to infer consensus
+labels and quality scores for data with multiple
+annotators}\label{appendix-crowdlab-supervised-learning-to-infer-consensus-labels-and-quality-scores-for-data-with-multiple-annotators}
+
+\section{A. Experiment Details}\label{a.-experiment-details}
+
+Our experiments employ two of the most currently popular architectures
+for image classification, which are intended to be representative of
+different types of models one might use in practice. Training of the
+Swin Transformer and ResNet classifiers was done as by Kuan and Mueller
+(2022), using 5-fold cross-validation starting with ImageNet-pretrained
+weights fine-tuned in each fold via AutoML (Erickson et al., 2020). When
+establishing consensus labels via majority vote, we break ties for an
+example by favoring the class which was annotated more often overall
+across the dataset. We do not evaluate annotator quality scores from the
+Active Label Cleaning method because rating annotators was left as
+future work in the paper of Bernhardt et al.~(2022). Annotator quality
+estimates from the Empirical Bayes approach match those from Dawid-Skene
+and are also omitted from our plots.
+
+Note that all metrics discussed in Section 5 are for evaluation purposes
+only, and would not be computable in real applications of our
+methodology due to a lack of ground truth labels. For evaluating
+consensus quality scores, AUROC measures how well these scores are able
+to differentiate correct and incorrect consensus labels. AUPRC accounts
+for the precision/recall of the consensus quality scores in flagging an
+incorrect consensus label, in a manner that is more sensitive to
+proportion of errors in the majority-vote consensus label errors than
+AUROC (Davis and Goadrich, 2006). The Lift at T metric measures how much
+more likely we are to encounter an incorrect consensus label among the
+top T ranked examples that have the worst consensus quality score.
+Although our evaluation of consensus quality estimation is applied to
+majority-vote consensus labels in Section 5, each method could be used
+to estimate the quality of consensus labels derived via another
+approach.
+
+\section{A.1. Datasets}\label{a.1.-datasets}
+
+The original CIFAR-10 dataset (Krizhevsky and Hinton, 2009) is fairly
+easy to label (Northcutt et al., 2021a). Thus annotator agreement on the
+complete CIFAR-10H data (Peterson et al., 2019) is unrealistically high
+for a representative multi-annotator benchmark. The images are not only
+easy to label, but there is also an uncommonly large number of
+annotators ( \(\sim\) 50) per image in CIFAR-10H. Labeling budgets are
+typically too small to have so many annotators review each example.
+Hence our primary benchmark uses a subset of the CIFAR-10H annotations.
+This subset starts with the 25 worst annotators and then incrementally
+add annotators from worst to best (based on their accuracy
+vs.~ground-truth labels) until each of the 10,000 examples have at least
+1 annotation (resulting in a dataset with 511 annotators in total).
+During this process, we restricted the selection of each new annotator
+to add to the current subset to only those which labeled at least one
+example also labeled by one of the annotators in the current subset. We
+call this variation of CIFAR-10H the Hardest dataset benchmarked in this
+paper, and believe it is more representative of real-world data labeling
+applications, where the proportion of label errors tends to be far
+higher than in CIFAR-10H and the number of annotators far lower
+(Hivemind and Cloudfactory).
+
+To ensure the robustness of our conclusions, we also evaluated all
+methods on two other datasets: a Uniform subset of CIFAR-10H (only
+considering some randomly chosen annotators such that each example has
+between 1-5 annotations with an equal number of examples receiving 1
+annotation, 2 annotations, etc.), and the complete CIFAR-10H dataset
+(with all annotator labels, which is far more than typically collected
+in most applications). Results for these other datasets are in Appendix
+B and C, and are based on separate classifier models trained for each
+dataset. In all cases, we only consider images from the test set of
+CIFAR-10 (here treated as multiply-labeled training data), since these
+are the only images labeled by many annotators in CIFAR-10H.
+
+Labels predicted by
+
+Accuracy (w.r.t. ground truth labels)
+
+ResNet-18
+
+0.879
+
+Swin Transformer
+
+0.940
+
+Swin Transformer trained with true labels
+
+0.948
+
+Annotator (Average)
+
+0.909
+
+Table S1. Classification accuracy for the Hardest dataset achieved by
+various predictors: ResNet-18 and Swin Transformer classifiers trained
+on majority-vote consensus labels (i.e.~the models used in the benchmark
+results of Figure 2), Swin Transformer trained on true labels, which
+represents an unrealistically good classifier (see Appendix D), as well
+as the average annotator in the dataset.
+
+\section{B. Results for Uniform
+Dataset}\label{b.-results-for-uniform-dataset}
+
+To evaluate our methods in another setting, we construct a different
+subset of CIFAR10-H and re-run our benchmark on this new dataset. In
+this Uniform dataset, each example now has between 1 to 5 labels, where
+the number of labels per example are uniformly distributed. This dataset
+contains 421 annotators and 10,000 examples. Here the annotators are
+just randomly selected from the CIFAR10-H pool, and are thus higher
+quality than in the Hardest dataset. The following results demonstrate
+that CROWDLAB is also the best method overall for this Uniform dataset.
+
+\textit{[Image omitted: images/592b8550c9a8f017ce5357e5dff7cee5f45989c777b50628fed9cd72986e2dbb.jpg]}
+
+bar
+
+AUROC for Consensus Quality Score \textbar{} Method \textbar{} AUROC
+(Blue) \textbar{} AUROC (Orange) \textbar{} \textbar{} :--- \textbar{}
+:--- \textbar{} :--- \textbar{} \textbar{} Agreement \textbar{} 0.69
+\textbar{} 0.67 \textbar{} \textbar{} Dawid-Skene \textbar{} 0.69
+\textbar{} 0.69 \textbar{} \textbar{} GLAD \textbar{} 0.88 \textbar{}
+0.87 \textbar{} \textbar{} Dawid-Skene with Model \textbar{} 0.89
+\textbar{} 0.90 \textbar{} \textbar{} GLAD with Model \textbar{} 0.93
+\textbar{} 0.94 \textbar{} \textbar{} Empirical Bayes \textbar{} 0.93
+\textbar{} 0.93 \textbar{} \textbar{} Active Label Cleaning \textbar{}
+0.81 \textbar{} 0.84 \textbar{} \textbar{} Label Quality Score
+\textbar{} 0.90 \textbar{} 0.92 \textbar{} \textbar{} CROWDLAB
+\textbar{} 0.95 \textbar{} 0.96 \textbar{}
+
+\textit{[Image omitted: images/63a4ab58ea29fc0ff85606e3c1c1755d4f593569d817ef75edfde7a506d9bc43.jpg]}
+
+bar
+
+AUPRC for Consensus Quality Score \textbar{} Method \textbar{} AUPRC
+(Blue) \textbar{} AUPRC (Orange) \textbar{} \textbar{} :--- \textbar{}
+:--- \textbar{} :--- \textbar{} \textbar{} Agreement \textbar{} 0.13
+\textbar{} 0.10 \textbar{} \textbar{} Dawid-Skene \textbar{} 0.29
+\textbar{} 0.29 \textbar{} \textbar{} GLAD \textbar{} 0.35 \textbar{}
+0.37 \textbar{} \textbar{} Dawid-Skene with Model \textbar{} 0.20
+\textbar{} 0.25 \textbar{} \textbar{} GLAD with Model \textbar{} 0.30
+\textbar{} 0.38 \textbar{} \textbar{} Empirical Bayes \textbar{} 0.28
+\textbar{} 0.28 \textbar{} \textbar{} Active Label Cleaning \textbar{}
+0.23 \textbar{} 0.33 \textbar{} \textbar{} Label Quality Score
+\textbar{} 0.31 \textbar{} 0.45 \textbar{} \textbar{} CROWDLAB
+\textbar{} 0.47 \textbar{} 0.55 \textbar{}
+
+\textit{[Image omitted: images/95b193b1357be9225db34381a188b8f404a016a54e551e04836ea1b26b526bb9.jpg]}
+
+bar
+
+Spearman Correlation for Annotator Quality \textbar{} Annotator Quality
+\textbar{} Spearman Correlation (Blue) \textbar{} Spearman Correlation
+(Orange) \textbar{} \textbar{} :--- \textbar{} :--- \textbar{} :---
+\textbar{} \textbar{} Agreement \textbar{} 0.82 \textbar{} 0.83
+\textbar{} \textbar{} Dawid-Skene \textbar{} 0.76 \textbar{} 0.76
+\textbar{} \textbar{} GLAD \textbar{} 0.76 \textbar{} 0.76 \textbar{}
+\textbar{} Dawid-Skene with Model \textbar{} 0.75 \textbar{} 0.79
+\textbar{} \textbar{} GLAD with Model \textbar{} 0.79 \textbar{} 0.81
+\textbar{} \textbar{} Label Quality Score \textbar{} 0.47 \textbar{}
+0.63 \textbar{} \textbar{} CROWDLAB \textbar{} 0.82 \textbar{} 0.84
+\textbar{}
+
+\textit{[Image omitted: images/c8586c294b09406da92b782c913d428fe9f9244b3451b39f0cea0f70ab4108e3.jpg]}
+
+bar
+
+Consensus Label Accuracy \textbar{} Model \textbar{} Accuracy \textbar{}
+\textbar{} :--- \textbar{} :--- \textbar{} \textbar{} Majority Vote
+(Agreement) \textbar{} 0.976 \textbar{} \textbar{} Dawid-Skene
+\textbar{} 0.971 \textbar{} \textbar{} GLAD \textbar{} 0.971 \textbar{}
+\textbar{} Dawid-Skene with Model \textbar{} 0.961 \textbar{} \textbar{}
+GLAD with Model \textbar{} 0.978 \textbar{} \textbar{} CROWDLAB
+\textbar{} 0.981 \textbar{}
+
+ResNet-18 Swin Transformer
+
+Figure S1. Benchmarking methods to estimate consensus labels, their
+quality, and annotator quality on the Uniform dataset.
+
+Model
+
+Quality Method
+
+Lift @ 10
+
+Lift @ 50
+
+Lift @ 100
+
+Lift @ 300
+
+Lift @ 500
+
+ResNet-18
+
+Agreement
+
+21.19
+
+11.86
+
+9.75
+
+9.04
+
+7.12
+
+ResNet-18
+
+Dawid-Skene
+
+31.69
+
+24.65
+
+19.01
+
+12.09
+
+8.52
+
+ResNet-18
+
+GLAD
+
+31.69
+
+22.54
+
+25.7
+
+13.03
+
+9.23
+
+ResNet-18
+
+Dawid-Skene with Model
+
+10.34
+
+11.37
+
+7.24
+
+5.43
+
+4.86
+
+ResNet-18
+
+GLAD with Model
+
+17.54
+
+18.42
+
+15.79
+
+13.01
+
+12.72
+
+ResNet-18
+
+Empirical Bayes
+
+12.71
+
+20.34
+
+18.22
+
+13.98
+
+11.44
+
+ResNet-18
+
+Active Label Cleaning
+
+33.9
+
+24.58
+
+16.1
+
+10.03
+
+7.88
+
+ResNet-18
+
+Label Quality Score
+
+33.9
+
+26.27
+
+22.46
+
+12.43
+
+9.75
+
+ResNet-18
+
+CROWDLAB
+
+42.37
+
+33.05
+
+27.97
+
+16.95
+
+13.81
+
+Swin
+
+Agreement
+
+8.89
+
+8.0
+
+7.56
+
+7.85
+
+6.49
+
+Swin
+
+Dawid-Skene
+
+28.17
+
+27.46
+
+20.07
+
+11.74
+
+8.45
+
+Swin
+
+GLAD
+
+35.21
+
+25.35
+
+27.11
+
+13.03
+
+9.23
+
+Swin
+
+Dawid-Skene with Model
+
+33.33
+
+16.3
+
+12.22
+
+8.89
+
+8.15
+
+Swin
+
+GLAD with Model
+
+23.47
+
+23.47
+
+23.0
+
+19.87
+
+14.74
+
+Swin
+
+Empirical Bayes
+
+13.33
+
+17.78
+
+17.78
+
+14.96
+
+12.44
+
+Swin
+
+Active Label Cleaning
+
+44.44
+
+30.22
+
+24.0
+
+14.07
+
+10.13
+
+Swin
+
+Label Quality Score
+
+35.56
+
+32.89
+
+29.33
+
+18.67
+
+13.6
+
+Swin
+
+CROWDLAB
+
+40.0
+
+35.56
+
+32.0
+
+21.19
+
+15.2
+
+Table S2. Evaluating the precision of various consensus quality scoring
+methods on the Uniform dataset. Lift@T is directly proportional to
+Precision@T, and reports what fraction of the top-T ranked consensus
+labels are actually incorrect normalized by the fraction of incorrect
+consensus labels expected for a random set of examples.
+
+\section{C. Results for Complete
+Dataset}\label{c.-results-for-complete-dataset}
+
+We also evaluate our methods on the full original CIFAR-10H dataset
+(Peterson et al., 2019). This Complete dataset contains 2571 annotators
+where each annotator labels 200 examples, such that each of the 10,000
+images has approximately 50 annotations. The Complete dataset has by far
+the highest number of annotations per example out of all the datasets
+considered in this paper. Far less annotations per example are available
+in most real-world multi-annotator datasets due to limited labeling
+budgets.
+
+With so many annotations per example, basic annotator agreement methods
+are highly effective. CROWDLAB works similarly well, highlighting its
+adaptive nature across different datasets with few vs.~many annotations
+per example. Even in this Complete dataset where majority-vote consensus
+labels should be extremely accurate, CROWDLAB consensus labels are even
+more accurate (regardless whether a Swin Transformer or ResNet-18 model
+is used to augment the annotators).
+
+Even though CROWDLAB is straightforward and only estimates one parameter
+per annotator ( \(w_j\) ) and two others in total ( \(P\) and
+\(w_{\mathcal{M}}\) ), it performs well on this annotation-rich dataset.
+This indicates CROWDLAB is not too simple, given that methods which
+estimate many more parameters like Dawid-Skene and GLAD do not perform
+better on this Complete dataset, even though there is no shortage of
+annotations to learn from. CROWDLAB's fewer number of parameters entail
+a key advantage for most datasets which have fewer annotations, and do
+not cause it to lag behind richer generative methods like
+Dawid-Skene/GLAD in this setting with unusually many annotations.
+
+\textit{[Image omitted: images/1264dc1cf4d2a56d68997ce3a070789d3eb4d597dd11f3ab67775194530a479d.jpg]}
+
+bar
+
+AUROC for Consensus Quality Score \textbar{} Method \textbar{} Blue Bar
+\textbar{} Orange Bar \textbar{} \textbar{} :--- \textbar{} :---
+\textbar{} :--- \textbar{} \textbar{} Agreement \textbar{} 0.96
+\textbar{} 0.96 \textbar{} \textbar{} Dawid-Skene \textbar{} 0.96
+\textbar{} 0.96 \textbar{} \textbar{} GLAD \textbar{} 0.76 \textbar{}
+0.76 \textbar{} \textbar{} Dawid-Skene with Model \textbar{} 0.96
+\textbar{} 0.96 \textbar{} \textbar{} GLAD with Model \textbar{} 0.76
+\textbar{} 0.76 \textbar{} \textbar{} Empirical Bayes \textbar{} 0.96
+\textbar{} 0.96 \textbar{} \textbar{} Active Label Cleaning \textbar{}
+0.79 \textbar{} 0.73 \textbar{} \textbar{} Label Quality Score
+\textbar{} 0.88 \textbar{} 0.94 \textbar{} \textbar{} CROWDLAB
+\textbar{} 0.96 \textbar{} 0.96 \textbar{}
+
+\textit{[Image omitted: images/9d58318f7b30f7582383ab5bbe881f30efd6408a7cc64c8cabbbca28865c63e5.jpg]}
+
+bar
+
+AUPRC for Consensus Quality Score \textbar{} Method \textbar{} AUPRC
+(Blue) \textbar{} AUPRC (Orange) \textbar{} \textbar{} :--- \textbar{}
+:--- \textbar{} :--- \textbar{} \textbar{} Agreement \textbar{} 0.26
+\textbar{} 0.25 \textbar{} \textbar{} Dawid-Skene \textbar{} 0.22
+\textbar{} 0.23 \textbar{} \textbar{} GLAD \textbar{} 0.35 \textbar{}
+0.36 \textbar{} \textbar{} Dawid-Skene with Model \textbar{} 0.21
+\textbar{} 0.20 \textbar{} \textbar{} GLAD with Model \textbar{} 0.29
+\textbar{} 0.25 \textbar{} \textbar{} Empirical Bayes \textbar{} 0.34
+\textbar{} 0.32 \textbar{} \textbar{} Active Label Cleaning \textbar{}
+0.04 \textbar{} 0.03 \textbar{} \textbar{} Label Quality Score
+\textbar{} 0.10 \textbar{} 0.11 \textbar{} \textbar{} CROWDLAB
+\textbar{} 0.31 \textbar{} 0.37 \textbar{}
+
+\textit{[Image omitted: images/6779d30565cdb0477bfb4ae6c8c493e6d1ea2275fb994102d27d945637f3cf16.jpg]}
+
+bar
+
+{\def\LTcaptype{none} % do not increment counter
+\begin{longtable}[]{@{}
+  >{\raggedright\arraybackslash}p{(\linewidth - 4\tabcolsep) * \real{0.2329}}
+  >{\raggedright\arraybackslash}p{(\linewidth - 4\tabcolsep) * \real{0.3699}}
+  >{\raggedright\arraybackslash}p{(\linewidth - 4\tabcolsep) * \real{0.3973}}@{}}
+\toprule\noalign{}
+\begin{minipage}[b]{\linewidth}\raggedright
+Annotator Quality
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+Spearman Correlation (Blue)
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+Spearman Correlation (Orange)
+\end{minipage} \\
+\midrule\noalign{}
+\endhead
+\bottomrule\noalign{}
+\endlastfoot
+Agreement & 0.95 & 0.95 \\
+Dawid-Skene & 0.96 & 0.96 \\
+GLAD & 0.88 & 0.88 \\
+Dawid-Skene with Model & 0.96 & 0.96 \\
+GLAD with Model & 0.88 & 0.88 \\
+Label Quality Score & 0.58 & 0.72 \\
+CROWDLAB & 0.96 & 0.96 \\
+\end{longtable}
+}
+
+\textit{[Image omitted: images/766bb417c17aa4df7fa0a2ea74ddc2de2f3faf92027718ab571f057019733277.jpg]}
+
+bar
+
+Consensus Label Accuracy \textbar{} Method \textbar{} Accuracy
+\textbar{} \textbar{} :--- \textbar{} :--- \textbar{} \textbar{}
+Majority Vote (Agreement) \textbar{} 0.992 \textbar{} \textbar{}
+Dawid-Skene \textbar{} 0.993 \textbar{} \textbar{} GLAD \textbar{} 0.992
+\textbar{} \textbar{} Dawid-Skene with Model \textbar{} 0.993 \textbar{}
+\textbar{} GLAD with Model \textbar{} 0.993 \textbar{} \textbar{}
+CROWDLAB \textbar{} 0.993 \textbar{}
+
+\textit{[Image omitted: images/a8be9b0c69b5cfbb2682013117c042b196965c6a78061c2f65afd5ef3a85d3e5.jpg]}\\
+Figure S2. Benchmarking methods to estimate consensus labels, their
+quality, and annotator quality on the Complete dataset.
+
+Model
+
+Quality Method
+
+Lift @ 10
+
+Lift @ 50
+
+Lift @ 100
+
+Lift @ 300
+
+Lift @ 500
+
+ResNet-18
+
+Agreement
+
+25.97
+
+33.77
+
+44.16
+
+26.41
+
+17.92
+
+ResNet-18
+
+Dawid-Skene
+
+27.4
+
+41.1
+
+39.73
+
+25.57
+
+17.81
+
+ResNet-18
+
+GLAD
+
+89.74
+
+66.67
+
+47.44
+
+18.38
+
+11.03
+
+ResNet-18
+
+Dawid-Skene with Model
+
+28.17
+
+36.62
+
+38.03
+
+26.29
+
+17.75
+
+ResNet-18
+
+GLAD with Model
+
+53.33
+
+61.33
+
+46.67
+
+17.78
+
+10.67
+
+ResNet-18
+
+Empirical Bayes
+
+77.92
+
+49.35
+
+44.16
+
+26.84
+
+18.18
+
+ResNet-18
+
+Active Label Cleaning
+
+0.0
+
+10.39
+
+12.99
+
+8.66
+
+8.83
+
+ResNet-18
+
+Label Quality Score
+
+38.96
+
+20.78
+
+19.48
+
+13.42
+
+9.09
+
+ResNet-18
+
+CROWDLAB
+
+38.96
+
+49.35
+
+44.16
+
+27.71
+
+18.44
+
+Swin
+
+Agreement
+
+26.32
+
+34.21
+
+43.42
+
+26.32
+
+17.89
+
+Swin
+
+Dawid-Skene
+
+41.1
+
+41.1
+
+39.73
+
+25.57
+
+17.81
+
+Swin
+
+GLAD
+
+89.74
+
+66.67
+
+47.44
+
+18.38
+
+11.03
+
+Swin
+
+Dawid-Skene with Model
+
+14.93
+
+38.81
+
+37.31
+
+25.87
+
+17.61
+
+Swin
+
+GLAD with Model
+
+28.17
+
+53.52
+
+46.48
+
+17.37
+
+10.42
+
+Swin
+
+Empirical Bayes
+
+78.95
+
+50.0
+
+42.11
+
+26.32
+
+17.89
+
+Swin
+
+Active Label Cleaning
+
+0.0
+
+0.0
+
+5.26
+
+7.46
+
+6.84
+
+Swin
+
+Label Quality Score
+
+26.32
+
+21.05
+
+21.05
+
+17.11
+
+13.68
+
+Swin
+
+CROWDLAB
+
+65.79
+
+65.79
+
+48.68
+
+28.07
+
+18.68
+
+Table S3. Evaluating the precision of various consensus quality scoring
+methods on the Complete dataset. Lift@T is directly proportional to
+Precision@T, and reports what fraction of the top-T ranked consensus
+labels are actually incorrect normalized by the fraction of incorrect
+consensus labels expected for a random set of examples.
+
+\section{D. Model Trained on True CIFAR-10
+Labels}\label{d.-model-trained-on-true-cifar-10-labels}
+
+In this section, we investigate how the methods perform when utilizing a
+highly accurate model. We obtain such a model by training a Swin
+Transformer on the ground truth labels rather than consensus labels
+estimated from the given annotations (this would not be possible in real
+applications). All benchmark results presented in this section are with
+respect to this unrealistically good classifier.
+
+\textit{[Image omitted: images/610bf3cbef530b932ecaba96903ed33e67aa6a8e345a05ba912545eefba3df9f.jpg]}
+
+bar
+
+AUROC for Consensus Quality Score \textbar{} Method \textbar{} AUROC
+(Green) \textbar{} AUROC (Orange) \textbar{} AUROC (Blue) \textbar{}
+\textbar{} :--- \textbar{} :--- \textbar{} :--- \textbar{} :---
+\textbar{} \textbar{} Agreement \textbar{} 0.96 \textbar{} 0.68
+\textbar{} 0.65 \textbar{} \textbar{} Dawid-Skene \textbar{} 0.96
+\textbar{} 0.70 \textbar{} 0.75 \textbar{} \textbar{} GLAD \textbar{}
+0.96 \textbar{} 0.88 \textbar{} 0.88 \textbar{} \textbar{} Dawid-Skene
+with Model \textbar{} 0.96 \textbar{} 0.91 \textbar{} 0.91 \textbar{}
+\textbar{} GLAD with Model \textbar{} 0.96 \textbar{} 0.75 \textbar{}
+0.93 \textbar{} \textbar{} Empirical Bayes \textbar{} 0.96 \textbar{}
+0.94 \textbar{} 0.94 \textbar{} \textbar{} Active Label Cleaning
+\textbar{} 0.94 \textbar{} 0.87 \textbar{} 0.89 \textbar{} \textbar{}
+Label Quality Score \textbar{} 0.96 \textbar{} 0.94 \textbar{} 0.94
+\textbar{} \textbar{} CROWDLAB \textbar{} 0.96 \textbar{} 0.96
+\textbar{} 0.96 \textbar{}
+
+\textit{[Image omitted: images/bb52f2f797027ec16084a8224fc1af58262835e03050996f8ad82bb038fa53e4.jpg]}
+
+bar
+
+AUPRC for Consensus Quality Score \textbar{} Method \textbar{} AUPRC
+(Blue) \textbar{} AUPRC (Orange) \textbar{} AUPRC (Green) \textbar{}
+\textbar{} :--- \textbar{} :--- \textbar{} :--- \textbar{} :---
+\textbar{} \textbar{} Agreement \textbar{} 0.1 \textbar{} 0.1 \textbar{}
+0.28 \textbar{} \textbar{} Dawid-Skene \textbar{} 0.42 \textbar{} 0.29
+\textbar{} 0.23 \textbar{} \textbar{} GLAD \textbar{} 0.53 \textbar{}
+0.35 \textbar{} 0.35 \textbar{} \textbar{} Dawid-Skene with Model
+\textbar{} 0.32 \textbar{} 0.28 \textbar{} 0.23 \textbar{} \textbar{}
+GLAD with Model \textbar{} 0.44 \textbar{} 0.40 \textbar{} 0.29
+\textbar{} \textbar{} Empirical Bayes \textbar{} 0.40 \textbar{} 0.35
+\textbar{} 0.36 \textbar{} \textbar{} Active Label Cleaning \textbar{}
+0.56 \textbar{} 0.44 \textbar{} 0.1 \textbar{} \textbar{} Label Quality
+Score \textbar{} 0.70 \textbar{} 0.57 \textbar{} 0.22 \textbar{}
+\textbar{} CROWDLAB \textbar{} 0.70 \textbar{} 0.58 \textbar{} 0.37
+\textbar{}
+
+\textit{[Image omitted: images/c18e96e2dc22ae9e93a6a466b457fa457dd100838c03c4df5b495cca065f5cea.jpg]}
+
+bar
+
+{\def\LTcaptype{none} % do not increment counter
+\begin{longtable}[]{@{}llll@{}}
+\toprule\noalign{}
+Annotator Quality & Blue Bar & Orange Bar & Green Bar \\
+\midrule\noalign{}
+\endhead
+\bottomrule\noalign{}
+\endlastfoot
+Agreement & 0.72 & 0.83 & 0.95 \\
+Dawid-Skene & 0.60 & 0.75 & 0.96 \\
+GLAD & 0.65 & 0.75 & 0.87 \\
+Dawid-Skene with Model & 0.72 & 0.78 & 0.96 \\
+GLAD with Model & 0.72 & 0.80 & 0.87 \\
+Label Quality Score & 0.67 & 0.63 & 0.74 \\
+CROWDLAB & 0.77 & 0.84 & 0.95 \\
+\end{longtable}
+}
+
+\textit{[Image omitted: images/4c817018b7200f53358979bbb4516d97b2de8d6cf0a0dccd1d9a6da50d5959ec.jpg]}
+
+bar
+
+Consensus Label Accuracy \textbar{} Method \textbar{} Blue Bar
+\textbar{} Orange Bar \textbar{} Green Bar \textbar{} \textbar{} :---
+\textbar{} :--- \textbar{} :--- \textbar{} :--- \textbar{} \textbar{}
+Majority Vote (Agreement) \textbar{} 0.96 \textbar{} 0.975 \textbar{}
+0.99 \textbar{} \textbar{} Dawid-Skene \textbar{} 0.945 \textbar{} 0.97
+\textbar{} 0.99 \textbar{} \textbar{} GLAD \textbar{} 0.945 \textbar{}
+0.97 \textbar{} 0.99 \textbar{} \textbar{} Dawid-Skene with Model
+\textbar{} 0.965 \textbar{} 0.97 \textbar{} 0.99 \textbar{} \textbar{}
+GLAD with Model \textbar{} 0.965 \textbar{} 0.975 \textbar{} 0.99
+\textbar{} \textbar{} CROWDLAB \textbar{} 0.97 \textbar{} 0.98
+\textbar{} 0.99 \textbar{}
+
+Hardest Uniform Complete
+
+Figure S3. Benchmarking multi-annotator methods that utilize an
+unrealistically good classifier fit to true labels for each dataset.
+
+Quality Method
+
+Lift @ 10
+
+Lift @ 50
+
+Lift @ 100
+
+Lift @ 300
+
+Lift @ 500
+
+Agreement
+
+2.65
+
+3.18
+
+3.98
+
+4.16
+
+3.77
+
+Dawid-Skene
+
+14.73
+
+15.47
+
+15.1
+
+11.48
+
+8.95
+
+GLAD
+
+14.6
+
+15.69
+
+16.24
+
+14.6
+
+10.07
+
+Dawid-Skene with Model
+
+24.02
+
+18.62
+
+15.02
+
+10.11
+
+9.13
+
+GLAD with Model
+
+19.11
+
+21.66
+
+20.06
+
+16.45
+
+11.97
+
+Empirical Bayes
+
+5.31
+
+7.43
+
+10.34
+
+12.73
+
+12.84
+
+Active Label Cleaning
+
+23.87
+
+25.46
+
+25.2
+
+16.18
+
+11.03
+
+Label Quality Score
+
+23.87
+
+24.93
+
+24.93
+
+20.07
+
+14.64
+
+CROWDLAB
+
+26.53
+
+25.99
+
+24.14
+
+19.19
+
+14.8
+
+Table S4. Evaluating the lift (i.e.~precision) of various consensus
+quality scoring methods on the Hardest dataset, here employing our
+unrealistically good classifier trained with true labels.
+
+Quality Method
+
+Lift @ 10
+
+Lift @ 50
+
+Lift @ 100
+
+Lift @ 300
+
+Lift @ 500
+
+Agreement
+
+8.93
+
+10.71
+
+8.48
+
+7.44
+
+6.34
+
+Dawid-Skene
+
+28.17
+
+25.35
+
+20.42
+
+12.21
+
+8.73
+
+GLAD
+
+31.69
+
+24.65
+
+27.82
+
+13.03
+
+9.23
+
+Dawid-Skene with Model
+
+31.01
+
+19.38
+
+14.73
+
+9.95
+
+9.69
+
+GLAD with Model
+
+13.95
+
+25.12
+
+23.72
+
+20.78
+
+15.44
+
+Empirical Bayes
+
+13.39
+
+19.64
+
+20.98
+
+19.05
+
+14.38
+
+Active Label Cleaning
+
+40.18
+
+39.29
+
+32.14
+
+17.11
+
+11.34
+
+Label Quality Score
+
+40.18
+
+40.18
+
+36.16
+
+19.79
+
+14.38
+
+CROWDLAB
+
+44.64
+
+33.04
+
+34.38
+
+22.32
+
+15.98
+
+Table S5. Evaluating the lift (i.e.~precision) of various consensus
+quality scoring methods on the Uniform dataset, here employing our
+unrealistically good classifier trained with true labels.
+
+Quality Method
+
+Lift @ 10
+
+Lift @ 50
+
+Lift @ 100
+
+Lift @ 300
+
+Lift @ 500
+
+Agreement
+
+25.64
+
+35.9
+
+43.59
+
+26.5
+
+17.95
+
+Dawid-Skene
+
+27.4
+
+38.36
+
+39.73
+
+25.57
+
+17.81
+
+GLAD
+
+89.74
+
+66.67
+
+47.44
+
+18.38
+
+11.28
+
+Dawid-Skene with Model
+
+42.86
+
+40.0
+
+38.57
+
+26.67
+
+17.71
+
+GLAD with Model
+
+40.54
+
+54.05
+
+45.95
+
+17.12
+
+10.54
+
+Empirical Bayes
+
+89.74
+
+48.72
+
+44.87
+
+26.92
+
+18.21
+
+Active Label Cleaning
+
+38.46
+
+23.08
+
+19.23
+
+14.53
+
+11.54
+
+Label Quality Score
+
+64.1
+
+51.28
+
+38.46
+
+18.38
+
+12.56
+
+CROWDLAB
+
+89.74
+
+61.54
+
+42.31
+
+26.92
+
+18.46
+
+Table S6. Evaluating the lift (i.e.~precision) of various consensus
+quality scoring methods on the Complete dataset, here employing our
+unrealistically good classifier trained with true labels.
+
+\section{E. Variant of our Method Without Per Annotator
+Weights}\label{e.-variant-of-our-method-without-per-annotator-weights}
+
+Here we present results for a simpler variant of CROWDLAB that we also
+explored, henceforth called No Perannotator Weights. The two approaches
+are overall the same, except while CROWDLAB considers each annotator
+individually and assigns them a separate weight \(w_{j}\) , No
+Perannotator Weights aggregates all the annotators and treats them as
+one ``average annotator'' to be weighed against the classifier model.
+Details of the No Perannotator Weights approach are presented below.
+
+\section{E.1. Consensus Quality
+Method}\label{e.1.-consensus-quality-method}
+
+Just as in CROWDLAB, we estimate the quality of consensus labels via the
+label quality score based on estimated class probabilities. In the No
+Perannotator Weights variant, these probabilities are computed via a
+slightly different weighted average:
+
+\[
+\hat {p} _ {\mathrm{NPW}} \left(Y _ {i} \mid X _ {i}, \left\{Y _ {i j} \right\}\right) = \frac {w _ {\mathcal {M}} \cdot \hat {p} _ {\mathcal {M}} \left(Y _ {i} \mid X _ {i}\right) + w _ {\mathcal {A}} \cdot \hat {p} _ {\mathcal {A}} \left(Y _ {i} \mid \left\{Y _ {i j} \right\}\right)}{w _ {\mathcal {M}} + w _ {\mathcal {A}}} \tag {20}
+\]
+
+where \(w_{M} = w \cdot \frac{1}{n} \sum_{i} \sqrt{|\mathcal{J}_{i}|}\)
+, \(w_{A} = (1 - w) \cdot \sqrt{|\mathcal{J}_{i}|}\) are one weight for
+the model and one weight applied to all annotators. Both depend on w,
+whose definition follows a similar strategy as used in CROWDLAB for
+individual annotators, but here applied to their aggregate output.
+
+First let's recall these quantities from Sec. 2.1: \(s_j\) represents
+annotator \(j\) 's agreement with other annotators who labeled the same
+examples and is defined in (4), \(A_j\) represents the accuracy of each
+annotator's labels with respect to the majority-vote consensus label for
+examples with more than one annotation and is defined in (12). In this
+variant, we compute an average annotator accuracy \(\bar{A}\) by taking
+the average of each annotator's accuracy weighted simply by the number
+of examples each annotator labeled (rather than their estimated
+trustworthiness).
+
+\[
+\bar {A} = \frac {\sum_ {j} A _ {j} \cdot | \mathcal {I} _ {j} |}{\sum_ {j} | \mathcal {I} _ {j} |}
+\]
+
+Let \(A_{\mathcal{M}}\) represent the accuracy of the model with respect
+to the majority-vote consensus labels among examples with more than one
+annotation, as defined in (5). We then choose our weight
+\(w = A_{\mathcal{M}} / (A_{\mathcal{M}} + \bar{A})\) to balance model
+accuracy vs.~that of the average annotator.
+
+While CROWDLAB uses a separate class likelihood vector for each
+annotator, this variant only considers their aggregate class likelihood
+
+\[
+\widehat {p} _ {\mathcal {A}} (Y _ {i} = k \mid \{Y _ {i j} \}) = \frac {1}{| \mathcal {J} _ {i} |} \sum_ {j \in \mathcal {J} _ {i}} P _ {j} \quad \text {where} P _ {j} = \left\{ \begin{array}{l l} s _ {j} & \text {when} Y _ {i j} = k \\ \frac {1 - s _ {j}}{K - 1} & \text {when} Y _ {i j} \neq k \end{array} \right.
+\]
+
+\section{E.2. Annotator Quality
+Method}\label{e.2.-annotator-quality-method}
+
+In the No Perannotator Weights variant, we score the quality of each
+annotator via:
+
+\[
+a _ {j} = w \cdot Q _ {j} + (1 - w) \cdot A _ {j}
+\]
+
+Here \(Q_{j}\) the average label quality score of labels given by each
+annotator, computed via (11) as in CROWDLAB, but here based on class
+probabilities \(\widehat{p}_{NPW}\) estimated using No Perannotator
+Weights defined in (20) in place of \(\widehat{p}_{CR}\) . \(A_{j}\) and
+w are defined as above in Sec. E.1.
+
+\section{E.3. Benchmarking CROWDLAB with/without per annotator
+weights}\label{e.3.-benchmarking-crowdlab-withwithout-per-annotator-weights}
+
+Ignoring the strengths and weakness of each individual annotator when
+aggregating them is overall detrimental to CROWDLAB. However the
+performance reduction due to this modification is surprisingly small,
+given how important accounting for annotators' relative quality is
+stated to be in the crowdsourcing literature (Hovy et al., 2013; Karger
+et al., 2011; Kara et al., 2015; Dawid and Skene, 1979; Whitehill et
+al., 2009). Rather the key aspects behind the success of CROWDLAB are
+its careful consideration of: how much to trust the classifier model
+vs.~the aggregate annotations along with how many annotations were
+provided for each example. Studying additional variants of CROWDLAB with
+either of these two pieces removed produced very poor results in our
+benchmarks.
+
+\textit{[Image omitted: images/2f454e21e6aff302cc71bcf708a90f85f4aa61cf58e55a7e5dcaa41da8c56da8.jpg]}\\
+Figure S4. Benchmarking CROWDLAB with/without per annotator weights on
+the Hardest dataset.
+
+Model
+
+Quality Method
+
+Lift @ 10
+
+Lift @ 50
+
+Lift @ 100
+
+Lift @ 300
+
+Lift @ 500
+
+ResNet-18
+
+No Perannotator Weights
+
+24.33
+
+21.9
+
+18.25
+
+13.95
+
+11.92
+
+ResNet-18
+
+CROWDLAB
+
+24.33
+
+22.38
+
+17.76
+
+14.27
+
+11.82
+
+Swin
+
+No Perannotator Weights
+
+25.13
+
+23.62
+
+20.85
+
+17.84
+
+14.02
+
+Swin
+
+CROWDLAB
+
+25.13
+
+24.62
+
+20.85
+
+17.76
+
+13.82
+
+Table S7. Evaluating the precision of CROWDLAB consensus quality scores
+with/without per annotator weights on the Hardest dataset. Lift@T is
+directly proportional to Precision@T, and reports what fraction of the
+top-T ranked consensus labels are actually incorrect, normalized by the
+fraction of incorrect consensus labels expected for a random set of
+examples.
+
+\end{document}

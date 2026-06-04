@@ -1,0 +1,2056 @@
+% Options for packages loaded elsewhere
+\PassOptionsToPackage{unicode}{hyperref}
+\PassOptionsToPackage{hyphens}{url}
+\documentclass[
+]{article}
+\usepackage{xcolor}
+\usepackage{amsmath,amssymb}
+\setcounter{secnumdepth}{-\maxdimen} % remove section numbering
+\usepackage{iftex}
+\ifPDFTeX
+  \usepackage[T1]{fontenc}
+  \usepackage[utf8]{inputenc}
+  \usepackage{textcomp} % provide euro and other symbols
+\else % if luatex or xetex
+  \usepackage{unicode-math} % this also loads fontspec
+  \defaultfontfeatures{Scale=MatchLowercase}
+  \defaultfontfeatures[\rmfamily]{Ligatures=TeX,Scale=1}
+\fi
+\usepackage{lmodern}
+\ifPDFTeX\else
+  % xetex/luatex font selection
+\fi
+% Use upquote if available, for straight quotes in verbatim environments
+\IfFileExists{upquote.sty}{\usepackage{upquote}}{}
+\IfFileExists{microtype.sty}{% use microtype if available
+  \usepackage[]{microtype}
+  \UseMicrotypeSet[protrusion]{basicmath} % disable protrusion for tt fonts
+}{}
+\makeatletter
+\@ifundefined{KOMAClassName}{% if non-KOMA class
+  \IfFileExists{parskip.sty}{%
+    \usepackage{parskip}
+  }{% else
+    \setlength{\parindent}{0pt}
+    \setlength{\parskip}{6pt plus 2pt minus 1pt}}
+}{% if KOMA class
+  \KOMAoptions{parskip=half}}
+\makeatother
+\usepackage{color}
+\usepackage{fancyvrb}
+\newcommand{\VerbBar}{|}
+\newcommand{\VERB}{\Verb[commandchars=\\\{\}]}
+\DefineVerbatimEnvironment{Highlighting}{Verbatim}{commandchars=\\\{\}}
+% Add ',fontsize=\small' for more characters per line
+\newenvironment{Shaded}{}{}
+\newcommand{\AlertTok}[1]{\textcolor[rgb]{1.00,0.00,0.00}{\textbf{#1}}}
+\newcommand{\AnnotationTok}[1]{\textcolor[rgb]{0.38,0.63,0.69}{\textbf{\textit{#1}}}}
+\newcommand{\AttributeTok}[1]{\textcolor[rgb]{0.49,0.56,0.16}{#1}}
+\newcommand{\BaseNTok}[1]{\textcolor[rgb]{0.25,0.63,0.44}{#1}}
+\newcommand{\BuiltInTok}[1]{\textcolor[rgb]{0.00,0.50,0.00}{#1}}
+\newcommand{\CharTok}[1]{\textcolor[rgb]{0.25,0.44,0.63}{#1}}
+\newcommand{\CommentTok}[1]{\textcolor[rgb]{0.38,0.63,0.69}{\textit{#1}}}
+\newcommand{\CommentVarTok}[1]{\textcolor[rgb]{0.38,0.63,0.69}{\textbf{\textit{#1}}}}
+\newcommand{\ConstantTok}[1]{\textcolor[rgb]{0.53,0.00,0.00}{#1}}
+\newcommand{\ControlFlowTok}[1]{\textcolor[rgb]{0.00,0.44,0.13}{\textbf{#1}}}
+\newcommand{\DataTypeTok}[1]{\textcolor[rgb]{0.56,0.13,0.00}{#1}}
+\newcommand{\DecValTok}[1]{\textcolor[rgb]{0.25,0.63,0.44}{#1}}
+\newcommand{\DocumentationTok}[1]{\textcolor[rgb]{0.73,0.13,0.13}{\textit{#1}}}
+\newcommand{\ErrorTok}[1]{\textcolor[rgb]{1.00,0.00,0.00}{\textbf{#1}}}
+\newcommand{\ExtensionTok}[1]{#1}
+\newcommand{\FloatTok}[1]{\textcolor[rgb]{0.25,0.63,0.44}{#1}}
+\newcommand{\FunctionTok}[1]{\textcolor[rgb]{0.02,0.16,0.49}{#1}}
+\newcommand{\ImportTok}[1]{\textcolor[rgb]{0.00,0.50,0.00}{\textbf{#1}}}
+\newcommand{\InformationTok}[1]{\textcolor[rgb]{0.38,0.63,0.69}{\textbf{\textit{#1}}}}
+\newcommand{\KeywordTok}[1]{\textcolor[rgb]{0.00,0.44,0.13}{\textbf{#1}}}
+\newcommand{\NormalTok}[1]{#1}
+\newcommand{\OperatorTok}[1]{\textcolor[rgb]{0.40,0.40,0.40}{#1}}
+\newcommand{\OtherTok}[1]{\textcolor[rgb]{0.00,0.44,0.13}{#1}}
+\newcommand{\PreprocessorTok}[1]{\textcolor[rgb]{0.74,0.48,0.00}{#1}}
+\newcommand{\RegionMarkerTok}[1]{#1}
+\newcommand{\SpecialCharTok}[1]{\textcolor[rgb]{0.25,0.44,0.63}{#1}}
+\newcommand{\SpecialStringTok}[1]{\textcolor[rgb]{0.73,0.40,0.53}{#1}}
+\newcommand{\StringTok}[1]{\textcolor[rgb]{0.25,0.44,0.63}{#1}}
+\newcommand{\VariableTok}[1]{\textcolor[rgb]{0.10,0.09,0.49}{#1}}
+\newcommand{\VerbatimStringTok}[1]{\textcolor[rgb]{0.25,0.44,0.63}{#1}}
+\newcommand{\WarningTok}[1]{\textcolor[rgb]{0.38,0.63,0.69}{\textbf{\textit{#1}}}}
+\usepackage{longtable,booktabs,array}
+\newcounter{none} % for unnumbered tables
+\usepackage{calc} % for calculating minipage widths
+% Correct order of tables after \paragraph or \subparagraph
+\usepackage{etoolbox}
+\makeatletter
+\patchcmd\longtable{\par}{\if@noskipsec\mbox{}\fi\par}{}{}
+\makeatother
+% Allow footnotes in longtable head/foot
+\IfFileExists{footnotehyper.sty}{\usepackage{footnotehyper}}{\usepackage{footnote}}
+\makesavenoteenv{longtable}
+\setlength{\emergencystretch}{3em} % prevent overfull lines
+\providecommand{\tightlist}{%
+  \setlength{\itemsep}{0pt}\setlength{\parskip}{0pt}}
+\usepackage{bookmark}
+\IfFileExists{xurl.sty}{\usepackage{xurl}}{} % add URL line breaks if available
+\urlstyle{same}
+\hypersetup{
+  hidelinks,
+  pdfcreator={LaTeX via pandoc}}
+
+\author{}
+\date{}
+
+\begin{document}
+
+\section{The Lean Mathematical
+Library}\label{the-lean-mathematical-library}
+
+The mathlib Community*
+
+\section{Abstract}\label{abstract}
+
+This paper describes mathlib, a community-driven effort to build a
+unified library of mathematics formalized in the Lean proof assistant.
+Among proof assistant libraries, it is distinguished by its dependently
+typed foundations, focus on classical mathematics, extensive hierarchy
+of structures, use of large- and small-scale automation, and distributed
+organization. We explain the architecture and design decisions of the
+library and the social organization that has led to its development.
+
+CCS Concepts • Mathematics of computing → Mathematical software; •
+Security and privacy → Logic and verification.
+
+Keywords Lean, mathlib, formal library, formal proof
+
+\section{ACM Reference Format:}\label{acm-reference-format}
+
+The mathlib Community. 2020. The Lean Mathematical Library. In
+Proceedings of the 9th ACM SIGPLAN International Conference on Certified
+Programs and Proofs (CPP '20), January 20--21, 2020, New Orleans, LA,
+USA. ACM, New York, NY, USA, 15 pages.
+https://doi.org/10.1145/3372885.3373824
+
+\section{1 Introduction}\label{introduction}
+
+Since the first mechanized proof-checking systems were released, there
+has been continual effort to develop libraries of formal definitions and
+proofs. Every major system has at least one library that can serve as a
+base for further formalizations. The contents, organizations, and
+purposes of these libraries vary considerably. Some are small, static
+cores bundled with the system itself; some are sprawling repositories
+that solicit contributions like a journal; some focus on a narrow
+subject area, while others are more broad-minded in their topics.
+
+*This paper describes a community effort with 73 contributors, listed in
+the acknowledgments. Rather than attributing authorship to a subset, we
+have decided to release this paper under a collective pseudonym.
+
+Permission to make digital or hard copies of all or part of this work
+for personal or classroom use is granted without fee provided that
+copies are not made or distributed for profit or commercial advantage
+and that copies bear this notice and the full citation on the first
+page. Copyrights for components of this work owned by others than the
+author(s) must be honored. Abstracting with credit is permitted. To copy
+otherwise, or republish, to post on servers or to redistribute to lists,
+requires prior specific permission and/or a fee. Request permissions
+from permissions@acm.org. CPP '20, January 20--21, 2020, New Orleans,
+LA, USA
+
+© 2020 Copyright held by the owner/author(s). Publication rights
+licensed to ACM.
+
+ACM ISBN 978-1-4503-7097-4/20/01\ldots\$15.00
+
+https://doi.org/10.1145/3372885.3373824
+
+This paper describes mathlib, a formal library developed for the Lean
+proof assistant {[}20{]}. As a community-driven effort with dozens of
+contributors, there is no central organization to mathlib; it has arisen
+from the desires of its users to develop a repository of formal
+mathematical proofs. We are certainly not the first to profess this goal
+{[}1{]}, nor is our library particularly large in comparison to others.
+However, its organizational structure, focus on classical mathematics,
+and inclusion of automation distinguish it in the space of proof
+assistant libraries. We aim here to explain our design decisions and the
+ways in which mathlib has been put to use.
+
+In contrast to most modern proof assistant libraries, many of the
+contributors to mathlib have an academic background in pure mathematics.
+This has significantly influenced the contents and direction of the
+library. It is a goal of many in the community to support the
+formalization of modern, research-level mathematics, and various
+projects discussed in Section 7.2 suggest that we are approaching this
+point.
+
+\section{1.1 A History of mathlib and Lean
+3}\label{a-history-of-mathlib-and-lean-3}
+
+The Lean project was started by Leonardo de Moura in 2013 {[}20{]}. Its
+most recent version, Lean 3, was released in early 2017 {[}22{]}. A new
+version is under development {[}57{]}. In the summer of 2017, much of
+the core library for Lean was factored out of the system repository.
+This code became the base for mathlib. The project was initially led by
+Mario Carneiro and Johannes Hölzl at Carnegie Mellon University, and
+attracted a growing number of users, who were drawn by the system
+documentation {[}5{]}, the library's focus on classical mathematics, and
+the real-time chat on Zulip.
+
+Over the two years since the split, mathlib has grown from 15k to 140k
+lines of code (LOC), excluding blank lines and comments. Contributions
+have been made by 73 people and are managed by a team of 11 maintainers.
+It is the de facto standard library for both programming and proving in
+Lean 3. The surrounding community has developed infrastructure,
+promotional materials, and university courses based on mathlib.
+
+\section{2 Lean}\label{lean}
+
+Like Coq, Lean uses a system of dependent types based on the calculus of
+inductive constructions (CIC) {[}52{]}. Lean has a noncumulative
+hierarchy of universes Prop, Type, Type 1, Type 2, Type 3 \ldots{} The
+bottom universe Prop is impredicative, meaning that quantification of a
+Prop over a larger type is a Prop, and proof-irrelevant, meaning that
+all proofs of the same proposition are definitionally (or judgmentally)
+equal.
+
+Lean adds two axioms to the type theory. The first axiom, classical.
+choice, produces a term of type T from a (propositional) proof that T is
+nonempty. This is a type-theoretic statement that implies the
+set-theoretic axiom of choice. The second axiom, propext, states that a
+bi-implication between two propositions implies that these propositions
+are equal.
+
+Lean also extends the CIC with quotient types. Given an equivalence
+relation on a type, the quotient type identifies related terms. This
+feature allows us to work with equality of objects in the quotient and
+removes the need for setoids.
+
+A key feature of Lean 3 is its metaprogramming framework {[}22{]}. This
+allows users to write tactics, commands, and other tools for
+manipulating the Lean environment directly in the language of Lean
+itself. In mathlib, we make extensive use of metaprogramming both for
+powerful automation and specialized commands to ease various tasks when
+formalizing. We will discuss this more in Section 6.
+
+\section{3 Contents of mathlib}\label{contents-of-mathlib}
+
+The mathlib library is designed as a basis for research level
+mathematics, as well as a standard library for programming in Lean. We
+build mathlib on top of a small core library, shipped with Lean, which
+contains 19k LOC. The core library sets up the metaprogramming and
+tactic framework for Lean, but it also contains much of the algebraic
+hierarchy and the definitions of basic datatypes, like N, Z, and list.
+
+Currently, much of mathlib consists of undergraduate level mathematics.
+Table 1 gives the size of all top-level directories in the src
+directory. This gives a rough idea of the relative sizes of the
+different topics in mathlib, but the contents of some directories
+require some extra explanation.
+
+In the algebra library, we expand on the core library algebraic
+hierarchy, from semigroup to linear\_ordered\_field, module, and more
+(Section 4.1). The results in this folder are focused on computing with
+elements in these algebraic structures. The structural theory of these
+algebraic objects is developed in the folders group\_theory,
+ring\_theory, field\_theory, and linear\_algebra.
+
+The data folder contains the definitions and properties of data
+structures, including the number systems \(\mathbb{Q}\) , \(\mathbb{R}\)
+, and \(\mathbb{C}\) , sets and subtypes, partial and finitely supported
+functions, polynomials, lists, multisets, and vectors.
+
+The folders meta and tactic use Lean's metaprogramming framework
+(Section 6) to define custom tactics. The category folder defines
+infrastructure for categorical programming, as used in Haskell; this is
+not to be confused with the category\_theory folder, which develops the
+mathematical theory.
+
+Quotients are heavily used in mathlib to avoid the need for setoids.
+They are used to define multisets as lists up to permutation, which are
+in turn used to define finite sets as multisets without duplicates.
+Quotients are also frequently used in algebra, for example for the
+definition of a quotient group, the tensor product of modules or the
+colimit of rings. We also use quotients when defining the Stone-Čech
+compactification and Cauchy completion, the latter of which is used to
+define the real and \(p\) -adic numbers. Quotients are also used to
+define cardinals (as types modulo equivalence) and ordinals (as
+well-ordered types modulo order-isomorphism).
+
+Subdirectory
+
+LOC
+
+Declarations
+
+data
+
+41849
+
+10695
+
+topology
+
+17382
+
+2709
+
+tactic
+
+12184
+
+1679
+
+algebra
+
+9830
+
+2794
+
+analysis
+
+7962
+
+1237
+
+order
+
+6526
+
+1542
+
+category\_theory
+
+6299
+
+1560
+
+set\_theory
+
+6163
+
+1394
+
+measure\_theory
+
+6113
+
+926
+
+ring\_theory
+
+5683
+
+1080
+
+linear\_algebra
+
+4511
+
+805
+
+computability
+
+4205
+
+575
+
+group\_theory
+
+4191
+
+1094
+
+category
+
+1770
+
+389
+
+number\_theory
+
+1394
+
+228
+
+logic
+
+1195
+
+403
+
+field\_theory
+
+1002
+
+121
+
+geometry
+
+848
+
+70
+
+meta
+
+784
+
+135
+
+algebraic\_geometry
+
+194
+
+29
+
+140085
+
+34168
+
+Table 1. Lines of code, excluding white space and comments, in the
+top-level directories of the mathlib source code as of December 12,
+2019.
+
+The extensive topology library includes theories about uniform spaces,
+metric spaces, and algebraic topological spaces such as topological
+groups and rings. A more novel feature is the definition of the
+Gromov--Hausdorff space, i.e.~the space of all nonempty compact metric
+spaces up to isometry, with its natural (Gromov--Hausdorff) distance,
+and the proof that it is a Polish space. \(^{1}\)
+
+The definition of a manifold in mathlib is very general compared to
+other known formalizations {[}38, 51{]}. In particular, the base field
+for differentiable manifolds can be any non-discrete normed field,
+including \(\mathbb{R}\) , \(\mathbb{C}\) , and \(\mathbb{Q}_p\) .
+Arbitrary models and structure groupoids can be used. Examples currently
+include \(C^k\) and \(C^\infty\) manifolds, possibly with boundary or
+corners. Potential future examples include analytic manifolds, contact
+or symplectic manifolds, and translation surfaces.
+
+The category theory library includes (co)limits, monadic adjunctions,
+and monoidal categories. It uses extensive automation to hide easy
+proofs (Section 6.2). The theory established here is used in other parts
+of the library, for example describing the Giry monad in measure theory,
+or showing that products and equalizers in complete separated uniform
+spaces can be calculated in the underlying uniform spaces.
+
+Since Lean's type theory contains a universe hierarchy, it has a higher
+consistency strength than ZFC, and the set theory library defines a
+model of ZFC. Additionally, cardinals and ordinals are defined using
+quotients of a universe, along with related notions like ordinal
+arithmetic, \(\aleph_{\alpha}\) , cofinality, inaccessible cardinals,
+etc. This machinery is used in other parts of the library (Section 5.3).
+
+Structural results about groups, rings, and fields include Sylow's
+theorems, the law of quadratic reciprocity, integral and perfect
+closures, and Hilbert's basis theorem. The linear algebra library is
+described in detail in Section 5.
+
+A library on computability theory {[}16{]} proves the undecidability of
+the halting problem, and a library on the \(p\) -adic numbers proves
+Hensel's lemma {[}44{]}.
+
+Analysis is a weaker point of mathlib, although the Fréchet derivative
+and the Bochner integral have been formalized, as well as basic
+properties of trigonometric functions.
+
+\section{4 Type Classes}\label{type-classes}
+
+Type classes are predicates or extra data attached to types, which are
+systematically inferred by a Prolog-like backtracking search. The idea
+of using type classes to permit polymorphism over types with a
+particular structure was pioneered in Haskell {[}59{]}, and the
+usefulness of type classes for organizing mathematical structures and
+theorems on these structures was recognized in Isabelle {[}31, 60{]} and
+Coq {[}56{]}. Lean's core library builds on these ideas by using type
+classes ubiquitously, including for:
+
+\begin{itemize}
+\tightlist
+\item
+  notations, e.g.~the has\_add \(\alpha\) type class that is inferred
+  when the + symbol is used on a type \(\alpha\) ;\\
+\item
+  mathematical structures, e.g.~the type ring \(\alpha\) that equips a
+  type \(\alpha\) with a ring structure;\\
+\item
+  coercions, via the type class has coe \(\alpha\) \(\beta\) , a wrapper
+  around the type \(\alpha \to \beta\) that allows Lean to accept an
+  element of \(\alpha\) where a \(\beta\) is expected; and\\
+\item
+  decidability of propositions, via the decidable p type class, which
+  enables case analysis in constructive contexts and if statements in
+  programming.
+\end{itemize}
+
+This usage is significantly expanded into all parts of mathlib.
+
+Mathematicians and computer scientists often speak of an algebraic
+hierarchy, but insofar as that brings to mind the groups, rings, and
+fields of an introductory course in abstract algebra, the phrase has the
+wrong connotations. Lean does have a hierarchy of algebraic structures,
+but this only scratches the surface. For example, in mathlib, the real
+numbers are an instance of a normed space, a metric space, a uniform
+space, and a normal topological space. Morphisms between structures have
+algebraic properties that also need to be managed. The library
+instantiates the category of groups and morphisms between them, and the
+functor mapping a measure space X to the space of probability measures
+on X is an instance of a monad, namely, the Giry monad {[}25{]}. To
+convey the richness of such a network of definitions, we will refer to
+it rather as a structure hierarchy.
+
+\section{4.1 Organizing the Structure
+Hierarchy}\label{organizing-the-structure-hierarchy}
+
+A fragment of the structure hierarchy in Figure 1 shows the classes that
+can be derived from a normed\_field instance, which appears near the top
+of the hierarchy. The bottom of the graph is populated by notation
+classes such as has\_add, has\_le, has\_one, etc. The fragment omits
+structures such as partial\_order and lattice, as well as ordered
+structures like ordered\_group and ordered\_ring.
+
+Most of the classes in the hierarchy are unary: they have the form
+\(C \alpha\) where \(\alpha\) is the carrier type. All of the classes in
+the fragment above are unary, but there are some binary classes, such as
+module \(\mathsf{R} \mathsf{M}\) that provides an \(R\) -module
+structure on \(M\) . The fragment constitutes less than a third of the
+current structure hierarchy, which contains 201 unary classes and 266
+instances of the form \(C \alpha \to D \alpha\) , which only change the
+class associated to a type.
+
+Except for notation classes, all the classes in mathlib have some
+independent interest. Uniform spaces are defined because they unify
+theorems of topological groups and metric spaces; extended metric spaces
+exist because they appear in constructions such as the unbounded
+\(\ell^{p}\) spaces. This does not hold for some core library classes,
+e.g.~zero\_ne\_one\_class, which exist only to be mixins for other
+classes.
+
+Diamonds are common---the structure hierarchy is far from being a tree.
+Some of these diamonds arise naturally from the mathematics, some arise
+when a class is defined as a least upper bound of two other classes
+(such as comm\_monoid), and others arise as a result of encoding a
+canonical projection as a parent class.
+
+In some cases, we have a situation in which one structure canonically
+implies another: for example, a metric space is not generally considered
+to contain a topology as a subcomponent, but the metric uniquely defines
+a particular topology of interest. We opt to have metric\_space extend
+topological\_space, with an additional constraint asserting that the
+topology agrees with the induced topology of the metric. This is done
+because Lean depends on definitional equality of projections and this
+approach makes more squares commute definitionally. Using this approach,
+the induced topology on a product metric becomes definitionally equal to
+the product topology on the induced metrics.
+
+\textit{[Image omitted: images/d9c268ff8d7058f1a8927b329ff29a4cdabefb9f8747780cf98196d6da1f30c0.jpg]}
+
+flowchart
+
+Complex community partitioning diagram showing relationships between
+normed\_field, normed\_ring, discrete\_field, and various spatial and
+community types like uniform\_add\_group, topologicalanding, and
+add\_group.
+
+Figure 1. The structure hierarchy underlying normed\_field. An edge from
+S to T indicates that an instance of T can be derived from an instance
+of S. Some arrows to the leaves are omitted for readability (e.g.~from
+zero\_ne\_one\_class to has\_one).
+
+\section{4.1.1 Bundled Type Classes}\label{bundled-type-classes}
+
+When creating a type class, one important design decision is which parts
+of the definition to put as parameters to the type class and which parts
+to store within the element itself, accessible via a projection. We
+refer to a type class as unbundled if it has many parameters and bundled
+if the parameters are moved to projections. For example, given the
+definitions
+
+\begin{enumerate}
+\def\labelenumi{\arabic{enumi}.}
+\tightlist
+\item
+  Group = \{(X, o) \textbar{} (X, o) is a group\}\\
+\item
+  group \(X = \{\circ \mid (X,\circ)\) is a group\}\\
+\item
+  is\_group X \(\circ\) \(\leftrightarrow\) (X, \(\circ\) ) is a group
+\end{enumerate}
+
+we would call Group a bundled definition, is\_group an unbundled
+definition, and group a semi-bundled definition. All of these say
+essentially the same thing from a mathematical point of view, but the
+choice of which to use has a significant impact on formalization.
+
+We primarily use semi-bundled definitions for type classes in mathlib,
+with all operations being bundled except for the carrier types. For use
+with type classes, fully bundling (as with Group) is not an option: a
+type class problem should have (essentially) at most one solution, and
+only the parameters affect the type class search. When the type is
+exposed but not the operation, as with group X, we can register a
+canonical group associated to the type X if there is one. For instance,
+add\_group Z will find the canonical additive group \((\mathbb{Z}, + )\)
+of addition on integers. By contrast, fully bundled definitions work
+best when using canonical structures, as in the Mathematical Components
+library {[}46{]}.
+
+The drawback of further unbundling, as in is\_group X o, is that it
+makes matching problems difficult. For example, a theorem saying that f
+xy = f y x under the condition is\_comm\_group X f, with x, y, f all
+variables, leads to a higher-order matching problem: f could be
+substituted for a lambda term. This kind of theorem will always be
+applicable, since essentially any term can be written in the form f xy
+for some choice of f.~Especially when the simplification tactic simp is
+invoked, this can cause a significant performance problem, with many
+false positives and failed type class searches. With the partially
+unbundled approach this statement instead has the form add X m xy = add
+X m y x where m : comm\_group X. We need only look for terms which have
+a literal appearance of the constant add in them rather than considering
+all terms and excluding them after the fact by a failed type class
+search.
+
+\section{4.1.2 Bundled Morphisms}\label{bundled-morphisms}
+
+A similar distinction arises when talking about morphisms between
+structures. In most cases, a morphism will be a function with an
+additional property, for example a continuous function or a group
+homomorphism. In these cases we have
+
+two options: to bundle the function with the property, producing a type
+\(\operatorname{Hom}(A, B)\) of structure-respecting functions from
+\(A\) to \(B\) , or to have a function \(f: A \to B\) and a type class
+is\_hom \(f\) asserting that \(f\) respects the structure of \(A\) and
+\(B\) .
+
+Both options are workable, and mathlib contains traces of both
+approaches. However, we have found the bundled approach to behave better
+for a number of reasons:
+
+\begin{itemize}
+\tightlist
+\item
+  It is important for compositions of homs to be a hom, but problems of
+  the form is\_hom ( \(f \circ g\) ) can be difficult for type class
+  inference. With bundled homs, one instead defines a custom composition
+  operator
+  \(\operatorname{Hom}(A, B) \times \operatorname{Hom}(B, C) \to \operatorname{Hom}(A, C)\)
+  that is used explicitly, obviating the need to search for is\_hom (
+  \(f \circ g\) ).\\
+\item
+  The type \(\operatorname{Hom}(A, B)\) itself often has interesting
+  structure. For example, the type
+  \(\mathsf{M} \to_{l}[\mathsf{R}] \mathsf{N}\) of \(R\) -linear maps
+  from \(M\) to \(N\) is an \(R\) -module where the zero element is the
+  constant zero map, and addition and scalar multiplication work
+  pointwise (Section 5.1). Bundling the type makes it easier to reason
+  about this structure.
+\end{itemize}
+
+\section{4.2 The decidable Type Class}\label{the-decidable-type-class}
+
+The class decidable p is defined essentially as the disjunctive type
+\(p \oplus \neg p\) : it is a constructive, Type-valued witness to the
+law of excluded middle at proposition p.~Although mathlib primarily
+deals in classical mathematics, it is useful to track decidability
+because it can be used in algorithms and for small scale computation in
+the executable fragment.
+
+The notation if p then t else e is syntactic sugar for ite p t e, where:
+
+\begin{Shaded}
+\begin{Highlighting}[]
+\NormalTok{ite : ∀ (p : Prop) [d : decidable p],}
+\NormalTok{∀ \{α : Sort u\}, α → α → α }
+\end{Highlighting}
+\end{Shaded}
+
+This function is defined by case analysis on the witness d.~In Lean
+syntax, parentheses () denote explicit arguments, curly brackets \{\}
+implicit arguments, and square brackets {[}{]} arguments to be inferred
+by type class resolution. Notice that p is an explicit argument, but p,
+being a proposition, is erased during execution, with the real condition
+in d.~Morally, we can think of d as a boolean value, but it carries
+evidence with it connecting it to the truth or falsity of p.
+
+The Mathematical Components library {[}46{]} relies heavily on the
+technique of small-scale reflection (from which the tactic language
+SSReflect gets its name), where many predicates and propositions are
+defined to live in type bool. The computational behavior of the logic
+can be used to discharge certain proof obligations by reflection. This
+means that most properties have two versions, one that is a Prop and one
+which is a bool, with an additional predicate reflect b p asserting that
+the boolean value b is true iff p holds.
+
+A proof of decidable p is equivalent to \(\Sigma\) b, reflect b p in
+this sense, but because it is a type class the management of this side
+condition is almost entirely automatic. This means we can treat the
+proposition p as primary, as in the definition of ite, and need not
+define two versions of every proposition. We can still prove true
+decidable propositions by computational reflection via dec\_trivial:
+
+\begin{Shaded}
+\begin{Highlighting}[]
+\NormalTok{def as\_true (c : Prop) [decidable c] : Prop :=}
+\NormalTok{if c then true else false }
+\end{Highlighting}
+\end{Shaded}
+
+\begin{Shaded}
+\begin{Highlighting}[]
+\KeywordTok{def}\NormalTok{ of\_as\_true \{c : Prop\} [decidable c] :}
+\NormalTok{    as\_true c → c }\OperatorTok{:=}\NormalTok{ ... }
+\end{Highlighting}
+\end{Shaded}
+
+\begin{Shaded}
+\begin{Highlighting}[]
+\NormalTok{notation \textasciigrave{}dec\_trivial\textasciigrave{} := of\_as\_true trivial }
+\end{Highlighting}
+\end{Shaded}
+
+The considerations in this section apply equally to proving,
+programming, and metaprogramming in Lean. All propositions can be shown
+to be (noncomputably) decidable with the choice axiom; this instance is
+used locally with low priority in mathlib to use declarations with
+decidability hypotheses in classical mathematics.
+
+\section{4.3 Problems with Type
+Classes}\label{problems-with-type-classes}
+
+Given all the aforementioned uses of type classes, and the fact that
+most of instances are available in most of the higher-level files, the
+growth of mathlib has tested the scalability of the type class inference
+system. A file that imports all of mathlib has access to 4256 instances
+among 386 classes. While it has held up remarkably well, aspects of the
+inference algorithm have lead to limitations in some areas and
+performance walls in others.
+
+First, Lean performs a backtracking search on every type class problem.
+Thus, an instance such as
+\(\mathsf{C} \alpha \leftarrow \mathsf{C} \alpha\) (that is, ``to obtain
+\(\mathsf{C} \alpha\) it suffices to prove \(\mathsf{C} \alpha\) ) will
+cause the inference routine to enter a loop, blocking resolution even if
+a successful path exists elsewhere. As a result, mathlib requires the
+complete instance graph to be acyclic. This is a global problem but
+generally single instances can be identified as the culprit when an
+instance loop is discovered.
+
+Second, and relatedly, because Lean cannot tell when it is retreading
+the same paths, even if the graph of instances has no cycles, it will
+traverse all paths through the graph, which is exponential time in the
+worst case. (On successes it is often significantly less if it gets
+lucky, but failures will have to search the whole graph, and
+pathological examples can be constructed in which the search is
+successful but still exponential time.) Instance searches can take
+hundreds of thousands of steps through our thousands of instances.
+
+Third, instance searches are performed exclusively backward, reasoning
+from the goal back through instances. This means that if for example G :
+group \(\alpha\) is in the context, a search for has\_mul \(\alpha\) may
+end up exploring upward through the entire structure hierarchy, looking
+for monoid \(\alpha\) , then ring \(\alpha\) , then field \(\alpha\) ,
+then normed\_field \(\alpha\) , prompting a search for has\_norm
+\(\alpha\) and so on, before eventually failing and attempting group
+\(\alpha\) instead. This search will get larger as our structure
+hierarchy grows.
+
+While the first two problems seem dire, a combination of good caching
+and a very efficient C++ implementation have helped to keep costs
+manageable even at mathlib's scale.
+
+Moreover, efficient graph traversal algorithms are known, and Lean 4 is
+expected to make improvements in this area.
+
+The third problem could potentially be fixed by using a combination of
+forward and backward reasoning. If we reason forward from group
+\(\alpha\) to monoid \(\alpha\) , semigroup \(\alpha\) , has\_mul
+\(\alpha\) , then work backward from the goal has\_mul \(\alpha\) , we
+find the solution quickly without exploring the entire structure
+hierarchy. Working forward from instances such as ring \(\mathbb{Z}\)
+entails generating additional instances for monoid \(\mathbb{Z}\) ,
+add\_group \(\mathbb{Z}\) , and so on, which is currently not required
+but is often done to speed up instance searches.
+
+\section{5 Linear Algebra}\label{linear-algebra}
+
+The development of linear algebra in mathlib showcases many of the
+design principles explained so far. To make earlier discussions more
+concrete, we describe in detail part of the linear algebra development.
+This description does not encompass all of the linear algebra in
+mathlib: the library also develops the theories of dual vector spaces,
+bilinear and sesquilinear forms, direct sums, and tensor products. This
+theory contains structures and theorems that are mathematically
+nontrivial and are used to prove noteworthy results (Section 7.2). Some
+of the structures are close to the top of the type class hierarchy, and
+they illustrate the use of bundled and semi-bundled type classes and
+quotient types.
+
+Our formalization is certainly not unique: we have been heavily inspired
+by existing linear algebra developments, particularly in Isabelle/HOL
+{[}3, 21, 43{]} and Coq {[}26{]}.
+
+\section{5.1 Modules}\label{modules}
+
+The fundamental structures of linear algebra are modules. Given a ring
+R, an R-module consists of an abelian group M and a distributive,
+associative scalar multiplication operator \(\cdot: R \times M \to M\) .
+In mathlib, the type class module R M defines an R-module structure on
+the group M.
+
+\begin{Shaded}
+\begin{Highlighting}[]
+\NormalTok{class mul\_action (α : Type u) (β : Type v)}
+\NormalTok{    [monoid α] extends has\_scalar α β :=}
+\NormalTok{(one\_smul : ∀ b : β, (1 : α) · b = b)}
+\NormalTok{(mul\_smul : ∀ (x y : α) (b : β),}
+\NormalTok{    (x * y) · b = x · y · b)}
+
+\NormalTok{class distrib\_mul\_action (α : Type u)}
+\NormalTok{    (β : Type v) [monoid α] [add\_monoid β]}
+\NormalTok{    extends mul\_action α β :=}
+\NormalTok{(smul\_add : ∀ (r : α) (x y : β),}
+\NormalTok{    r · (x + y) = r · x + r · y)}
+\NormalTok{(smul\_zero : ∀ (r : α), r · (0 : β) = 0)}
+
+\NormalTok{class semimodule (R : Type u) (M : Type v)}
+\NormalTok{    [semiring R] [add\_comm\_monoid M]}
+\NormalTok{    extends distrib\_mul\_action R M :=}
+\NormalTok{(add\_smul : ∀ (r s : R) (x : M),}
+\NormalTok{    (r + s) · x = r · x + s · x)}
+\NormalTok{(zero\_smul : ∀x : M, (0 : R) · x = 0) }
+\end{Highlighting}
+\end{Shaded}
+
+\begin{Shaded}
+\begin{Highlighting}[]
+\KeywordTok{class} \KeywordTok{module}\NormalTok{ (R : }\DataTypeTok{Type}\NormalTok{ u) (M : }\DataTypeTok{Type}\NormalTok{ v)}
+\NormalTok{    [ring R] [add\_comm\_group M]}
+\NormalTok{    extends semimodule R M }
+\end{Highlighting}
+\end{Shaded}
+
+We provide an alternative constructor for module R M that does not
+require the fields smul\_zero and zero\_smul, since they follow from
+other properties.
+
+When R is replaced with a field K, this structure is called a K-vector
+space. All results about modules also apply to vector spaces. In
+mathlib, we favor working with discrete fields, which fix 1/0 = 0.
+
+\begin{Shaded}
+\begin{Highlighting}[]
+\NormalTok{class vector\_space (K : Type u) (V : Type v)}
+\NormalTok{[discrete\_field K] [add\_comm\_group V]}
+\NormalTok{extends module K V }
+\end{Highlighting}
+\end{Shaded}
+
+We consider R-modules for the rest of this section. For the sake of
+display, we will omit the following parameters to all declarations:
+
+\begin{Shaded}
+\begin{Highlighting}[]
+\NormalTok{(R : }\DataTypeTok{Type}\NormalTok{ u) (M : }\DataTypeTok{Type}\NormalTok{ v) [ring R]}
+\NormalTok{[add\_comm\_group M] [}\KeywordTok{module}\NormalTok{ R M] }
+\end{Highlighting}
+\end{Shaded}
+
+We will also sometimes use ``\ldots'' to elide proof terms.
+
+When \((M,\cdot)\) is an R-module, a subgroup of M closed under
+\(\cdot\) is called a submodule. These are also defined as bundled
+structures in mathlib. Ordered by set inclusion, the submodules of a
+module form a complete lattice.
+
+\begin{Shaded}
+\begin{Highlighting}[]
+\NormalTok{structure submodule :=}
+\NormalTok{(carrier : set M)}
+\NormalTok{(zero : (0:M) ∈ carrier)}
+\NormalTok{(add : ∀ \{x y\}, x ∈ carrier →}
+\NormalTok{    y ∈ carrier → x + y ∈ carrier)}
+\NormalTok{(smul : ∀ (c:R) \{x\},}
+\NormalTok{    x ∈ carrier → c · x ∈ carrier) }
+\end{Highlighting}
+\end{Shaded}
+
+The lattice structure on submodules allows us to use the notation
+\(\perp\) for the trivial submodule 0 and \(\top\) for the universal
+submodule M. We also use the lattice structure to define the span of a
+set, the space of all linear combinations of its elements:
+
+\begin{Shaded}
+\begin{Highlighting}[]
+\NormalTok{def span (s : set M) : submodule R M := Inf \{p | s ⊆ p\} }
+\end{Highlighting}
+\end{Shaded}
+
+The quotient M/N of an R-module M by a submodule \(N \subseteq M\)
+equates \(m_{1}, m_{2} \in M\) if \(m_{1} - m_{2} \in N\) . The quotient
+is itself an R-module, and is defined in mathlib as a quotient type.
+
+\begin{Shaded}
+\begin{Highlighting}[]
+\NormalTok{def quotient\_rel (N : submodule R M) :}
+\NormalTok{    setoid M := ⟨λ x y, x {-} y ∈ N, ...⟩}
+\NormalTok{def submodule.quotient (N : submodule R M) :}
+\NormalTok{    Type v := quotient (quotient\_rel N)}
+\NormalTok{instance (N : submodule R M) :}
+\NormalTok{    module R (quotient N) := ... }
+\end{Highlighting}
+\end{Shaded}
+
+A function between two R-modules that preserves addition and scalar
+multiplication is called a linear map. If it is invertible, it is called
+a linear equivalence. We work with linear maps as bundled structures in
+mathlib, and coercions
+
+typically allow us to treat these structures as functions. We use the
+notation \(M \rightarrow_{l}[R]\) N to stand for linear\_map R M N and
+\(M \simeq_{l}[R]\) N for linear\_equiv R M N.
+
+\begin{Shaded}
+\begin{Highlighting}[]
+\NormalTok{structure linear\_map (N : Type w)}
+\NormalTok{[add\_comm\_group N] [module R N] :=}
+\NormalTok{(to\_fun : M → N)}
+\NormalTok{(add : ∀ x y,}
+\NormalTok{    to\_fun (x + y) = to\_fun x + to\_fun y)}
+\NormalTok{(smul : ∀ (c : R) x,}
+\NormalTok{    to\_fun (c · x) = c · to\_fun x) }
+\end{Highlighting}
+\end{Shaded}
+
+The type M →l{[}R{]} N is itself an R-module.
+
+If \(f: M \to N\) is linear, the image of a submodule \(M' \subseteq M\)
+under \(f\) is a submodule of \(N\) , and the preimage of a submodule
+\(N' \subseteq M\) under \(f\) is a submodule of \(M\) . These are
+defined respectively as map and comap. In particular, the kernel of
+\(f\) -defined to be the set \(\{x \in M \mid f(x) = 0\}\) -is a
+submodule, as is the range.
+
+def ker (f : M → \(_{l}\) {[}R{]} N) : submodule R M := comap f ⊥
+
+\begin{Shaded}
+\begin{Highlighting}[]
+\NormalTok{def range (f : M →l[R] N) : submodule R N := map f T }
+\end{Highlighting}
+\end{Shaded}
+
+These definitions and their surrounding proofs are enough to prove the
+first and second isomorphism laws for modules:
+
+def quot\_ker\_equiv\_range : f.ker.quotient \(\simeq_{l}[R]\) f.range
+:= \ldots{}
+
+\begin{Shaded}
+\begin{Highlighting}[]
+\NormalTok{def sup\_quotient\_equiv\_quotient\_inf}
+\NormalTok{(p p\textquotesingle{} : submodule R M) :}
+\NormalTok{(comap p.subtype (p ∩ p\textquotesingle{})).quotient ≈l[R]}
+\NormalTok{(comap (p ∩ p\textquotesingle{}).subtype p\textquotesingle{}).quotient := ... }
+\end{Highlighting}
+\end{Shaded}
+
+\section{5.2 Bases}\label{bases}
+
+A set of elements of an \(R\) -module \(\{v_i\}_{i \in I}\) is said to
+be linearly dependent if there is a finite subset \(I' \subseteq I\) and
+a family of scalars \(\{c_i\}_{i \in I'}\) , not all zero, such that
+\(\sum_{i \in I'} c_i \cdot v_i = 0\) . We are more often interested in
+the negation of this notion. In mathlib, we define the linear
+independence of a family of vectors indexed by a base type:
+
+def linear\_independent
+
+\begin{Shaded}
+\begin{Highlighting}[]
+\NormalTok{\{ι : Type u\} (R : Type v) \{M : Type w\}}
+\NormalTok{[ring R] [add\_comm\_group M] [module R M]}
+\NormalTok{(v : ι → M) : Prop :=}
+\NormalTok{finsupp.total ι M R v).ker = ⊥ }
+\end{Highlighting}
+\end{Shaded}
+
+The function finsupp.total \(\iota\) M R v:
+\((\iota \to_{0} R) \to_{l}[R]\) M sends a finitely supported function
+c: \(\iota \to R\) to the sum over \(\iota\) of c i \(\cdot\) v i.
+
+Through the rest of this subsection we fix parameters as given to
+linear\_independent. A linearly independent family of vectors is a basis
+for a module if it spans the entire module.
+
+def is\_basis (v : \(\iota \rightarrow M\) ) : Prop :=
+linear\_independent R v \(\wedge\) span R (range v) = T
+
+Given such a v and a proof hv : is\_basis R v, we define the linear map
+that decomposes a vector into a weighted sum of vectors in v:
+
+\begin{Shaded}
+\begin{Highlighting}[]
+\NormalTok{def is\_basis.repr : M →l (l →0 R) :=}
+\NormalTok{hv.1.repr.comp}
+\NormalTok{(linear\_map.id.cod\_restrict \_ hv.mem\_span) }
+\end{Highlighting}
+\end{Shaded}
+
+A classic result in linear algebra shows that every vector space has a
+basis. (This result uses Zorn's lemma and does not hold constructively.)
+
+\begin{Shaded}
+\begin{Highlighting}[]
+\NormalTok{lemma exists\_is\_basis [discrete\_field K]}
+\NormalTok{[add\_comm\_group V] [vector\_space K V] :}
+\NormalTok{∃b : set V, is\_basis K (λ i : b, i.val) := ... }
+\end{Highlighting}
+\end{Shaded}
+
+\section{5.3 Dimension}\label{dimension}
+
+Any two bases for a vector space V have equal cardinality. This
+cardinality defines the dimension of V. Vector spaces are not
+necessarily finite dimensional, so we define the dimension function to
+take values in the type cardinal. The theory of cardinal numbers in
+mathlib is located in the set\_theory subfolder. To avoid inconsistency,
+the type cardinal must be parametrized by a universe level.
+
+\begin{Shaded}
+\begin{Highlighting}[]
+\NormalTok{def vector\_space.dim (K : Type u) (V : Type v)}
+\NormalTok{    [discrete\_field K] [add\_comm\_group V]}
+\NormalTok{    [vector\_space K V] : cardinal.\{v\} :=}
+\NormalTok{cardinal.min (nonempty\_subtype.2}
+\NormalTok{(@exists\_is\_basis K V \_ \_ \_))}
+\NormalTok{(λ b, cardinal.mk b.1) }
+\end{Highlighting}
+\end{Shaded}
+
+Because the relevant cardinals may live in different universes, it takes
+some care to state the dimension theorem.
+
+\begin{Shaded}
+\begin{Highlighting}[]
+\NormalTok{theorem mk\_eq\_mk\_of\_basis}
+\NormalTok{\{v : l → V\} \{v\textquotesingle{} : l\textquotesingle{} → V\}}
+\NormalTok{(hv : is\_basis K v) (hv\textquotesingle{} : is\_basis K v\textquotesingle{}) :}
+\NormalTok{cardinal\_lift.\{w w\textquotesingle{}\} (cardinal.mk l) =}
+\NormalTok{cardinal\_lift.\{w\textquotesingle{} w\} (cardinal.mk l\textquotesingle{}) := ... }
+\end{Highlighting}
+\end{Shaded}
+
+Many dimension computations are proved in mathlib, including results
+about the dimensions of quotients and the rank-nullity theorem.
+
+\begin{Shaded}
+\begin{Highlighting}[]
+\NormalTok{theorem dim\_quotient (V\textquotesingle{} : submodule K V) :}
+\NormalTok{dim K p.quotient + dim K V\textquotesingle{} = dim K V := ... }
+\end{Highlighting}
+\end{Shaded}
+
+\begin{Shaded}
+\begin{Highlighting}[]
+\NormalTok{theorem dim\_range\_add\_dim\_ker (f : V → l[K] E) :}
+\NormalTok{dim K f.}\BuiltInTok{range} \OperatorTok{+}\NormalTok{ dim K f.ker }\OperatorTok{=}\NormalTok{ dim K V }\OperatorTok{:=}\NormalTok{ ... }
+\end{Highlighting}
+\end{Shaded}
+
+A number of these computations specialize to finite-dimensional vector
+spaces. For instance, the functions \(A \rightarrow k\) form a k-vector
+space with dimension \(|A|\) when A is finite.
+
+\begin{Shaded}
+\begin{Highlighting}[]
+\NormalTok{lemma dim\_fun [fintype η]:}
+\NormalTok{dim K (η → K) = fintype.card η := ... }
+\end{Highlighting}
+\end{Shaded}
+
+\begin{Shaded}
+\begin{Highlighting}[]
+\NormalTok{lemma dim\_fin\_fun (n : N) :}
+\NormalTok{dim K (fin n → K) = n := ... }
+\end{Highlighting}
+\end{Shaded}
+
+The vector space fin \(n \rightarrow K\) is a common way to represent
+n-tuples of elements of K.
+
+\section{5.4 Matrices}\label{matrices}
+
+It is convenient to consider matrices as functions
+\(m \rightarrow n \rightarrow R\) , where m and n are finite sets of
+indices. We define this type in the data directory of mathlib, along
+with the expected operations and algebraic instances. For a ring R,
+R-valued \(m \times n\) matrices form an R-module.
+
+\begin{Shaded}
+\begin{Highlighting}[]
+\NormalTok{def matrix (m n : Type u) (R : Type v)}
+\NormalTok{    [fintype m] [fintype n] : Type (max u v) := m → n → R}
+\NormalTok{instance [ring R] : module R (matrix m n R) := ... }
+\end{Highlighting}
+\end{Shaded}
+
+There is a direct correspondence between R-valued matrices and linear
+maps between R-modules. To begin with, every such \(m \times n\) matrix
+gives rise to a linear map from \(R^{n}\) to \(R^{m}\) . In fact, this
+evaluation function is itself a linear map.
+
+def eval : (matrix m n R) → \(_{l}\) {[}R{]} ((n → R) → \(_{l}\) {[}R{]}
+(m → R)) := linear\_map.mk \(_{2}\) R mul\_vec \ldots{}
+
+Similarly, a linear map exists in the opposite direction.
+
+def to\_matrix : ((n → R) → \(_{l}\) {[}R{]} (m → R)) → \(_{l}\) {[}R{]}
+matrix m n R := linear\_map.mk (λ f i j, f (λ n, ite (j = n) 1 0) i)
+\ldots{}
+
+These linear maps are inverses of each other, and thus form an
+equivalence between the space of linear maps \(R^{n} \rightarrow R^{m}\)
+and the space of R-valued \(m \times n\) matrices. It follows quickly
+that, given finite bases for two R-modules \(M_{1}\) and \(M_{2}\)
+indexed by \(\iota\) and \(\kappa\) , the space of linear maps
+\(M_{1} \rightarrow M_{2}\) is linearly equivalent to the space of
+R-valued \(\iota \times \kappa\) matrices.
+
+\begin{Shaded}
+\begin{Highlighting}[]
+\NormalTok{def lin\_equiv\_matrix \{l : Type i\} \{k : Type k\}}
+\NormalTok{    [fintype l] [decidable\_eq l]}
+\NormalTok{    [fintype k] [decidable\_eq k]}
+\NormalTok{    \{v1 : l → M1\} (hv1 : is\_basis R v1)}
+\NormalTok{    \{v2 : k → M2\} (hv2 : is\_basis R v2) :}
+\NormalTok{    (M1 →l[R] M2) ≈l[R] matrix k l R := ... }
+\end{Highlighting}
+\end{Shaded}
+
+\section{5.5 Summary}\label{summary}
+
+While mathlib's algebraic content is significant, it is by no means the
+majority of the library, and we do not mean to imply this by focusing on
+linear algebra as an example. The preceding sections intend to give the
+reader an idea of the flavor of mathlib formalizations more generally.
+The use of type classes to manage algebraic and order structure is
+representative of the whole library.
+
+\section{6 Metaprogramming}\label{metaprogramming}
+
+Due to Lean's powerful metaprogramming framework {[}22{]}, many features
+that might otherwise require changes to the prover or extension through
+plugins are implemented in mathlib itself. These include general purpose
+decision procedures, utilities, debugging tools, and special purpose
+automation. All of the following tactics are implemented in Lean as
+metaprograms, with the exceptions of the core simplification routine,
+E-matching {[}19{]}, and congruence closure {[}54{]}, which are exposed
+in the metalanguage as atomic procedures.
+
+\section{6.1 Simplification}\label{simplification}
+
+The tactic simp is the primary tool in the Lean automation arsenal.
+Similar to the simplifier in Isabelle, it performs non-definitional
+directional rewriting with equality and biconditional lemmas. Lean's
+attribute mechanism allows the user to annotate definitions and theorems
+with extra information, which can be accessed by metaprograms; the
+default set of rewrite rules for simp is extended by adding the simp
+attribute to declarations. A variant, dsimp, performs only definitional
+reductions.
+
+The simplifier matches rewrite lemmas up to syntactic, not definitional,
+equality. For this reason, lemmas in mathlib are typically stated in
+simp-normal form. When there are multiple equivalent ways to express a
+term, one is preferred, and others are simplified to the preferred form;
+subsequent lemmas need only be stated for this single case. An example
+of this design pattern can be seen in the development of the p-adic
+numbers Q\_{[}p{]}, where the generic norm notation
+\textbar\textbar x\textbar\textbar{} from the normed\_space type class
+is preferred to the definitionally equal padic\_norm p x. We use simp
+lemmas to transform the latter to the former, and develop the library
+for the p-adic norm based on the generic notation.
+
+\begin{Shaded}
+\begin{Highlighting}[]
+\NormalTok{@[simp] lemma is\_norm (q : Q\_[p]) :}
+\NormalTok{(padic\_norm\_e q) = ||q|| := rfl}
+
+\NormalTok{@[simp] lemma mul (q r : Q\_[p]) :}
+\NormalTok{||q * r|| = ||q|| * ||r|| := ... }
+\end{Highlighting}
+\end{Shaded}
+
+\section{6.2 Tactics and Automation}\label{tactics-and-automation}
+
+Besides simp, we briefly describe notable examples of automation in
+mathlib, which we roughly classify according to whether they are ``big''
+(general-purpose, powerful, and meant to discharge certain classes of
+goals on their own) or ``small'' (specialized and providing finer
+control over the proof state). Alongside tactics, we include user
+commands, which manipulate the prover environment outside of any
+particular proof state, and attributes, which can trigger metaprograms
+when applied to declarations.
+
+Big Automation For general-purpose proof search, the most powerful tools
+in mathlib are finish and tidy. The former combines a tableau prover
+(complete for propositional logic) with simplification, E-matching, and
+congruence closure. The latter implements heuristics and repeatedly
+attempts to apply a preselected list of tactics (recursing into
+subgoals) until none succeed. In the category theory library, tidy is
+used extensively to check functoriality and naturality. The constructors
+for many structures call tidy by default, so that proofs of these
+``obvious'' properties need not even be mentioned.
+
+The tactics ring and abel normalize expressions in commutative
+(semi)rings and abelian groups. They follow the approach described by
+Grégoire and Mahboubi {[}30{]}, but produce proof terms tracing each
+normalization step instead of verifying by reflection.
+
+Two tactics are used for solving linear inequalities. For linear ordered
+commutative semirings, linearith implements an algorithm based on
+Fourier-Motzkin variable elimination {[}61{]}; it is complete for dense
+linear orders. On \(\mathbb{N}\) and \(\mathbb{Z}\) , omega partially
+implements the omega decision procedure for Presburger arithmetic {[}6,
+53{]}.
+
+Small Automation While Lean's metaprogramming engine is powerful enough
+for large tactics, it shines in the context of special-purpose tools,
+which are often simple to create and deploy. We highlight here a few of
+the dozens of such tactics and commands implemented in mathlib.
+
+The norm\_cast tactic manipulates type coercions {[}45{]}. Because Lean
+has no subtyping, a coercion (written with a prefix \(\uparrow\) ) is
+required, for instance, when using a natural number in place of an
+integer. The presence of these coercions in terms can hinder
+simplification and unification: it can be tedious to reduce the integer
+inequality \(\uparrow m + \uparrow n > 5\) to the natural number
+inequality \(m + n > 5\) . Using attributes to track lemmas that pass
+coercions through operations and relations, norm\_cast performs such
+simplification automatically.
+
+Arithmetic expressions involving only literals are evaluated efficiently
+by norm\_num. Over the natural numbers, goals such as \(1 + 2 < 4\) can
+be proved by kernel computation. However, this is inefficient for large
+expressions, and impossible on noncomputable types such as R and on
+arbitrary linear ordered semirings. As an alternative, norm\_num uses
+the syntactic binary representation of numerals and lemmas about the
+relevant algebraic structures to simplify the arithmetic expressions as
+far as possible.
+
+For a type class C, the tactic pi\_instance generalizes instances of the
+form C \(\alpha\) to C ( \(\beta \rightarrow \alpha\) ). With this, we
+obtain much of the algebraic structure of function spaces for free.
+
+The reassoc attribute improves the ability of simp to reason about
+compositions of arrows in a category modulo associativity. By default,
+simp normalizes such expressions by associating composition to the
+right. As a consequence, one often encounters series of arrow
+compositions that are bracketed as a \(\gg\) (b \(\gg\) c). A lemma foo
+that rewrites a \(\gg\) b to d would conflict with this simp normal
+form. Applying the attribute reassoc to foo produces a companion lemma
+of the shape \(\forall X\) , a \(\gg\) (b \(\gg\) X) = d \(\gg\) X that
+can be used by the simplifier.
+
+Maintenance and Fine-Tuning Another group of meta- programs is used for
+library development and maintenance.
+
+Some search-based tactics can report traces of a successful search.
+Variants of tidy and simp list the tactic script and used lemmas,
+respectively, in a format that is faster and more robust than the
+original tactic call. In editors that support Lean's hole commands,
+calls to these tactics can be literally self-replacing.
+
+The command \#lint is a linting tool that performs various tests on
+declarations in a file or environment. Among other things, it checks for
+unused arguments, malformed names, and whether a file meets mathlib's
+documentation requirements. It is easily extended with custom tests.
+
+Lean's namespaces and sectioning mechanisms allow the use of abbreviated
+identifiers, special notation, and instances locally in files, as well
+as to automatically insert parameters to declarations within a section.
+The \#where command prints information about the currently open
+namespaces and parameters; the localized command associates local
+notation and instances with a namespace, making it easy to set up a
+particular local environment.
+
+\section{6.3 Lessons}\label{lessons}
+
+The various tools listed above are provided as a part of mathlib,
+without need for extensions or plugins to the Lean system. (One
+exception, namely simp, is built into Lean.)
+
+Collaboration between mathematically-oriented formalizers and more
+experienced programmers has driven much of the tactic development in
+mathlib. Tools such as norm\_num, ring, and norm\_cast arose after user
+requests to automate mathematically trivial proofs. Others, such as
+pi\_instance, make clever use of the metaprogramming API to eliminate
+boilerplate code. It is hard to separate the metaprogram components of
+mathlib from the mathematical formalizations, as many tactics were
+inspired by particular patterns of use and rely on nontrivial theories
+or the proper use of attributes on library lemmas.
+
+While our approach is not unique, our emphasis is a shift from the
+traditional point of view: we consider tactic and tool development as
+part of library design rather than system development. This division of
+labor has been possible thanks to the flexibility of metaprogramming in
+Lean.
+
+\section{7 Community}\label{community}
+
+The mathlib library is not developed to support any single project. The
+interests of its contributors range from research mathematics, to STEM
+education, to automated proof search, to program verification. These
+contributors come primarily from academia; some are renowned researchers
+and some are bachelor students. Design decisions and future directions
+are discussed openly and publicly, with little central control over the
+library's content.
+
+That a cohesive library has been developed by a community with such
+diverse motivations and backgrounds is perhaps surprising. Unlike most
+proof assistant libraries, which are developed or overseen by dedicated
+research groups, mathlib is organized as an open-source community
+project. While we have witnessed many of the familiar difficulties
+
+with such projects, this organizational scheme is arguably one of the
+reasons the library has been successful.
+
+The communal nature of the project is, perhaps, one reason that Lean and
+mathlib have attracted many mathematicians. Mathematical topics are
+delicately intertwined. Rather than individually building projects on
+top of a generic core library, the involved mathematicians have
+integrated their projects with each other and with mathlib itself. To
+many, the main research question in mathlib is how to design a library
+of formal mathematics that is both broad and deep. This question cannot
+be answered without the collaboration of many people; the range of
+contributors is a vital aspect of the project.
+
+A side effect of the adoption of mathlib by mathematicians is that Lean
+is being used in mathematics education. While it is not uncommon to see
+proof assistants in certain computer science courses, we know of few
+cases where they have been introduced to undergraduate mathematicians
+{[}48{]}. Some of these undergraduates interact on the Lean Zulip chat
+room, contribute to mathlib, and participate in the review process.
+
+\section{7.1 GitHub and Zulip}\label{github-and-zulip}
+
+Communication about mathlib occurs mainly over two channels. The project
+is hosted on GitHub, \(^{2}\) where contributions in the form of pull
+requests can be reviewed and edited. More casual conversations occur in
+a Zulip chat room. \(^{3}\)
+
+Eleven community members have been designated as maintainers of the
+library. These people are responsible for approving pull requests in
+their areas of expertise. Pull request reviews are welcomed from all
+members of the community; in addition to the formal process on GitHub,
+PRs are often discussed on Zulip. Community members are given write
+access to non-master branches of the repository, and many PRs are
+developed as group efforts on these branches.
+
+The Zulip chat room is home to a broad range of discussions. In
+particular, a channel for new members welcomes elementary questions
+about Lean and formalization. Another channel focuses on formalizing
+advanced mathematics. A number of people have cited the accessibility of
+this chat room as a reason for deciding to use Lean.
+
+\section{7.2 Projects Based on mathlib}\label{projects-based-on-mathlib}
+
+As well as being a cohesive collection of mathematics on its own,
+mathlib should also serve as a library on which to build more
+specialized projects. Users have undertaken many such projects, and the
+variety of topics reflects the diverse interests of the mathlib
+community. These projects range from published research papers to
+collaborative weekend efforts coordinated on Zulip. We list here a
+non-exhaustive selection, to give an idea of what mathlib can support.
+
+The cap set problem In 2016, Ellenberg and Gijswijt discovered a
+solution to the cap set problem, a longstanding open question in
+combinatorics. Their celebrated proof {[}23{]}, published in the Annals
+of Mathematics in 2017, was noted for its use of elementary methods from
+linear algebra. Dahmen, Hölzl, and Lewis {[}18{]} formalized this result
+in 2019. The formalization is based on mathlib and resulted in
+significant contributions to the linear algebra theory (Section 5), as
+well as those related to finite combinatorics. It is a rare example of
+contemporary research mathematics being formalized in a proof assistant,
+made possible by collaboration between a mathematician and experts in
+formalization.
+
+The continuum hypothesis Han and van Doorn {[}33{]} verified the
+unprovability in ZFC of the continuum hypothesis. They have since shown
+the unprovability of \(\neg\) CH {[}34{]}, completing the notoriously
+intricate full independence proof. The formalization builds on the
+mathlib embedding of ZFC and develops the syntactic theory of first
+order logic. The independence of CH was one of the few remaining results
+on Wiedijk's list of formalization targets \(^{4}\) that had yet to be
+formalized in any proof assistant.
+
+Perfectoid spaces Scholze was awarded a Fields Medal in 2018, in part
+for introducing the definition of a perfectoid space. To test the
+ability of a proof assistant to understand extremely complicated
+mathematical structures, Buzzard, Commelin, and Massot defined
+perfectoid spaces in Lean {[}15{]}. Defining this structure relies on a
+large amount of algebraic and topological theory, and the months-long
+effort to formalize it resulted in thousands of lines of Lean code.
+
+The sensitivity conjecture Huang's sensational proof of the boolean
+sensitivity conjecture {[}37{]} in 2019 was widely discussed, including
+on the Lean Zulip chat. Following Knuth's simplified writeup, \(^{5}\) a
+number of community members formalized the proof in a matter of days.
+The formalization reuses linear algebra machinery from the cap set
+project and amounts to fewer than 450 lines of heavily commented code.
+
+Cubing a cube After a challenge was issued at the 2019 Big Proofs
+meeting in Edinburgh, van Doorn formalized J. E. Littlewood's
+``elegant'' proof that any dissection of a cube into smaller cubes must
+contain at least two cubes of equal width. This had been considered an
+exemplar of a proof with a simple intuitive argument that is hard to
+make formal. It was another remaining item on Wiedijk's list of targets.
+
+Decision procedures for modal logics Wu and Goré {[}62{]} verified
+decision procedures for the modal logics K, KT, and S4. The decision
+procedures are formalized as programs in Lean with total correctness
+proved. The formalization makes extensive use of sublist permutation
+which is fully supported by mathlib. The need for proving termination
+which involves
+
+reasoning about modal degrees has in turn resulted in further
+development of list theory of mathlib.
+
+\section{8 Comparison with Other
+Libraries}\label{comparison-with-other-libraries}
+
+In this section, we compare and contrast mathlib with other substantial
+formal libraries for mathematics, including libraries for Mizar {[}9,
+28{]}, HOL Light {[}35{]}, Isabelle/HOL {[}49{]}, Coq/SSReflect {[}10,
+46{]}, and Metamath {[}47{]}. Our goal here is not to provide detailed
+comparisons of the various design choices, but, rather to sketch the
+design space in broad strokes, situate mathlib within it, and explain
+some of the decisions we have made. Our choice of comparisons is not
+meant to be exhaustive: there are also substantial mathematical
+libraries in HOL4 {[}55{]}, ACL2 {[}42{]}, PVS {[}50{]}, and NuPRL
+{[}17{]}, as well as notable libraries built on standard Coq, such as
+the Coquelicot analysis library {[}14{]}.
+
+\section{8.1 The Design Space}\label{the-design-space}
+
+We will focus on three specific aspects of the design space, namely, the
+choice of axiomatic foundation, the mechanisms used to represent
+structures and the relationships between them, and the use of
+automation.
+
+Most contemporary interactive proof systems are based on either set
+theory, simple type theory, or dependent type theory. The decision to
+use an untyped framework like set theory or a typed alternative is
+fundamental. Types play two important roles. First, input in a typed
+system is often less verbose because users can elide details that can be
+inferred from the types of the objects involved. For example, users can
+write x + y and allow the system to infer the meaning of the plus sign
+from the types of its arguments. Second, a type system can more easily
+catch and report errors, such as sending the wrong number or kinds of
+arguments to a function, or sending them in the wrong order. Another
+important choice is whether or not the axiomatic framework is
+constructive, and, in particular, whether it specifies a computational
+behavior for objects defined in the framework.
+
+\section{8.2 Libraries Based on Set
+Theory}\label{libraries-based-on-set-theory}
+
+As an axiomatic foundation, set theory has two important advantages.
+First, it is accepted by many mathematicians as being the official
+foundation for mathematics, or, at least, an uncontroversial one. And,
+second, it is fairly easy to implement and check proofs in this
+framework.
+
+The Metamath system {[}47{]} is a generic system for representing formal
+axiomatic frameworks, but its largest library is built on set theory.
+That library currently has about 23,000 theorems and 600k lines of code,
+covering algebra, analysis, topology, number theory, and other areas.
+Because the foundation is so simple, the source files need to provide
+explicit proofs that formulas are well formed, and there are front ends
+that insert that automatically. But the system uses very little
+automation beyond that. There are a number of reference checkers on
+offer that can check the entire library in a few seconds. Sets are used
+to relativize quantifiers to specific domains. For example, the
+following states that every continuous function on a closed interval is
+bounded:
+
+\[
+\begin{array}{r l}&((A \in \mathbb {R} \land B \in \mathbb {R} \land F \in ((A [, ] B) c n \rightarrow \mathbb {C})) \rightarrow\\&\exists x \in \mathbb {R} \forall y \in (A [, ] B) (a b s ^ {\prime} (F ^ {\prime} y)) \leq x)\end{array}
+\]
+
+The need to write proofs that are fully detailed and explicit, however,
+places a high burden on the user.
+
+Mizar {[}9, 28{]}, which dates back to the early 1970s, is based on set
+theory with Grothendieck-Tarski universes. Its vast library {[}8{]}
+currently contains over 3.1 million lines of code and spans many fields
+of mathematics. Proofs in the system are designed to mirror mathematical
+vernacular. They are written in a declarative way, and a fixed checker
+determines whether inferences are valid {[}28{]}. To support a structure
+hierarchy, Mizar uses a soft typing system whereby users register
+associations that are used by the checker. The library has developed
+quite an elaborate hierarchy in this way {[}29{]} (see also {[}28,
+39{]}). To our knowledge, there is no formal specification of the
+inferences that are accepted by the system, making it hard to implement
+an independent reference checker. Nonetheless, Kaliszyk et al.~have had
+success reimplementing the system in the Isabelle framework and checking
+some of the Mizar files {[}39, 40{]}, and Urban and Sutcliffe have shown
+that Mizar's inferences can be cross validated by automated theorem
+provers {[}58{]}.
+
+\section{8.3 Libraries Based on Simple Type
+Theory}\label{libraries-based-on-simple-type-theory}
+
+A number of contemporary proof systems implement versions of simple type
+theory, among them HOL4 {[}55{]}, HOL Light {[}35{]}, and Isabelle/HOL
+{[}49{]}. In simple type theory, types and objects are separate things;
+one defines types and type constructions, and then one defines objects
+of those types. Types cannot depend on objects: for example, one cannot
+define a type \(\mathbb{R}^n\) that depends on a natural number
+parameter \(n\) .
+
+Simple type theory excels at dealing with concrete structures like the
+integers, the reals, and the complex numbers, but when it comes to
+algebraic reasoning, the fact that types cannot depend on parameters is
+a severe restriction. Structures in mathematics are often parameterized
+by other objects: for \(n \geq 1\) , the type of \(M_{n}(R)\) of
+\(n \times n\) over a ring form a ring, and for every prime number p,
+the integers modulo p, Z/pZ, form a field; \(L^{p}\) spaces, rings of
+p-adic integers, and spaces \(C^{k}(X)\) consisting of k-times
+continuously differentiable real-valued functions on a subset X of the
+reals all depend on parameters. In simple type theory, one has to model
+these using predicates on fixed ambient types, erasing many of the
+benefits of using type theory in the first place. Another limitation is
+that one cannot form spaces or structures whose
+
+elements are structures, such as the space of nonempty compact metric
+spaces with the Gromov-Hausdorff distance or the category of groups in
+some universe.
+
+HOL Light {[}35{]} is John Harrison's implementation of simple type
+theory, inspired by Mike Gordon's original HOL system. The library,
+close to 800k lines of code, is especially strong in multivariate real
+analysis and complex analysis. It served as the basis for the Flyspeck
+project {[}32{]}. Harrison uses a trick {[}36{]} to formalize theorems
+about \(\mathbb{R}^n\) for arbitrary \(n\) , using type variables to
+stand proxy for their cardinality. But this trick has limited utility:
+in simple type theory, one cannot even state that for every \(n\) there
+is a type of cardinality \(n\) , and so there is no way of instantiating
+such a generic theorem to particular parameters.
+
+Many aspects of our structure hierarchy, including the algebraic
+hierarchy, the axiomatization of topological spaces and normed spaces,
+our development of measure theory, and our use of filters in analysis,
+were modeled after similar developments in Isabelle {[}49{]}. Isabelle's
+extensive library has about 900k lines of code, and its Archive of
+Formal Proofs {[}12{]} has an additional 2.3 million lines of code. To
+treat common data types as instances of structures, Isabelle adopts a
+conservative extension of simple type theory with axiomatic type classes
+{[}31, 60{]}. But type classes can only depend on a single type
+parameter, and, moreover, the use of type classes suffers from the
+limitations imposed by simple types. For example, the extensive
+libraries and automation developed for instances of rings like the
+integers and the reals cannot be applied to the ring of integers modulo
+some number m. For such structures, Isabelle also provides the mechanism
+of locales {[}7, 41{]}, but, once again, this means relinquishing some
+of the benefits of the use of type theory in the first place. We
+therefore consider it a substantial accomplishment that we are beginning
+to approximate the depth and range of Isabelle's structure hierarchy in
+a dependently typed setting.
+
+Isabelle's supporting automation is especially good. The system provides
+internal automation, decision procedures, and a conditional term
+rewriter {[}49{]}, but can also call external resolution provers and SMT
+solvers and reconstruct their proofs {[}11, 13{]}. Using axiomatic type
+classes, internal automation can work generically with types that
+instantiate the relevant structures, just as our norm\_num works for
+types that support numerals and the relevant operations. Isabelle's
+automation is much more powerful than that of Lean and mathlib, but we
+again consider it notable that we are making progress towards the use of
+such automation with dependent types.
+
+\section{8.4 Libraries Based on Dependent Type
+Theory}\label{libraries-based-on-dependent-type-theory}
+
+Turning to dependent type theory, the best point of comparison for
+mathlib is the Mathematical Components library {[}46{]}, based on Coq
+and the SSReflect proof language {[}27{]}. Coq's version of dependent
+type theory is very similar to Lean's. The Mathematical Components
+library was the basis for the landmark formalization of the odd order
+theorem {[}27{]}, and focuses on related parts of mathematics, including
+group theory, linear algebra, and representation theory. The library
+itself is about 110k lines of code, not including results specific to
+the odd order theorem. Other libraries have been built on it, including
+an analysis library {[}2{]} that is still under development.
+
+In contrast to mathlib, the Mathematical Components library is
+constructive throughout (although the analysis library just mentioned
+uses classical logic). Another distinguishing feature of the
+Mathematical Components library is that it uses very little external
+automation, and instead relies heavily on the computational
+interpretation of the underlying axiomatic framework, so that inferences
+can be verified by computational unfolding of expressions.
+
+Like mathlib, Mathematical Components relies on powerful elaboration
+mechanisms to support a structure hierarchy, though the specific
+mechanisms are different: instead of type classes, Mathematical
+Components uses canonical structures {[}24{]}, a particular kind of
+unification hint {[}4{]}. The core algebraic hierarchy in the
+Mathematical Components library {[}46, Section 7.3{]} includes key
+structures such as Z-modules (essentially, abelian groups), rings,
+commutative rings, fields, algebraically closed fields, modules, and
+algebras. Other parts of the library define vector spaces, and
+structures with orders and norms, that are designed to support reasoning
+about subfields of the complex numbers. There are additional structures
+to support group theory and representation theory, and the analysis
+library includes structures such as topological spaces and normed
+modules.
+
+The Mathematical Components library is generally more conservative than
+we are when it comes to instantiating structures and substructures. For
+example, the theory of the natural numbers in Mathematical Components is
+largely self contained, whereas our natural numbers instantiate an
+ordered semiring, which in turn inherits from the structures of additive
+and multiplicative monoids, linear orders, and so on. A calculation
+involving the natural numbers in mathlib may, and usually does, involve
+generic facts from all levels of this hierarchy.
+
+The Mathematical Components library is also carefully designed to avoid
+the need for the kinds of searches described in Section 4. An artifact
+of the use of canonical structures is that concrete structures have to
+be instantiated to all the classes they inherit from. For example, the
+integers are declared as a Z-module, a ring, a commutative ring, an
+integral domain, and so on. In mathlib, declaring an instance of a
+structure automatically handles not just substructures, but also induced
+structure. When we declare the reals to be a metric space, for example,
+it thereby inherits the structure of a uniform space hence a topological
+space.
+
+\textit{[Image omitted: images/738e0087f296ceb25195c8a9fe61c2aa498194d87a5cb383a8a66f71b3560312.jpg]}
+
+line
+
+{\def\LTcaptype{none} % do not increment counter
+\begin{longtable}[]{@{}ll@{}}
+\toprule\noalign{}
+Date & Lines \\
+\midrule\noalign{}
+\endhead
+\bottomrule\noalign{}
+\endlastfoot
+2017-07-01 & 0 \\
+2017-10-01 & 25000 \\
+2018-01-01 & 50000 \\
+2018-04-01 & 75000 \\
+2018-07-01 & 100000 \\
+2018-10-01 & 125000 \\
+2019-01-01 & 150000 \\
+2019-04-01 & 175000 \\
+2019-07-01 & 200000 \\
+2019-10-01 & 225000 \\
+2020-01-01 & 250000 \\
+\end{longtable}
+}
+
+Figure 2. Lines of code in the mathlib repository over time, including
+white space, comments, and auxiliary files.
+
+\section{9 Conclusion}\label{conclusion}
+
+With respect to the design space described in the previous section, the
+characteristic features of mathlib are as follows. First, it is based on
+a dependent type theory. We have chosen a typed framework for the
+reasons indicated in Section 8.1, and given that we want to carry out
+the full range of mathematical constructions, judicious use of dependent
+types is unavoidable. Second, it is focused on contemporary mathematics,
+which is resolutely classical. Nonetheless, large portions of the
+library are explicitly computational, and functions, say, on lists and
+integers can be executed. Third, it incorporates useful automation, such
+as a good conditional simplifier and domain-specific tactics written in
+the system's metaprogramming language. Our automation is still in an
+incipient state, but we hope and expect to expand these capabilities.
+Finally, it includes a large and interconnected hierarchy of
+mathematical structures and instances. Each of the other libraries
+discussed in Section 8 shares some of these features, but we know of no
+other library that shares them all.
+
+The mathlib library and its surrounding community continue to grow
+(Figures 2 and 3). Various individuals and groups are actively working
+to expand its mathematical content, automated reasoning tools, and
+surrounding infrastructure. There is no target or end goal in mind: as
+in traditional mathematics, the development of new theories will follow
+the needs and desires of the people involved.
+
+A new version of Lean is currently in development {[}57{]}. It will not
+be backward compatible with the current version, and when the system is
+ready, we expect to update mathlib. At the current time, it is hard to
+predict the scale of this undertaking. Lean 4 promises even more
+efficient metaprogramming with access to input syntax trees and a
+customizable parser; it might be possible to automate much of the
+porting process.
+
+The design of mathlib builds on the lessons of existing libraries, but
+the library's special character can be attributed to the range of its
+contributors. The combined efforts of mathematicians, computer
+scientists, and programmers to design a single unified library of
+formalizations and tools has been successful, and we are still learning
+from one another, as the community continues to evolve.
+
+\textit{[Image omitted: images/73ea514c68dea66fce6c4400475cb7efb3357e0574065bbfd1282041690a3fa9.jpg]}
+
+line
+
+{\def\LTcaptype{none} % do not increment counter
+\begin{longtable}[]{@{}
+  >{\raggedright\arraybackslash}p{(\linewidth - 20\tabcolsep) * \real{0.1290}}
+  >{\raggedright\arraybackslash}p{(\linewidth - 20\tabcolsep) * \real{0.0860}}
+  >{\raggedright\arraybackslash}p{(\linewidth - 20\tabcolsep) * \real{0.0860}}
+  >{\raggedright\arraybackslash}p{(\linewidth - 20\tabcolsep) * \real{0.0860}}
+  >{\raggedright\arraybackslash}p{(\linewidth - 20\tabcolsep) * \real{0.0860}}
+  >{\raggedright\arraybackslash}p{(\linewidth - 20\tabcolsep) * \real{0.0860}}
+  >{\raggedright\arraybackslash}p{(\linewidth - 20\tabcolsep) * \real{0.0860}}
+  >{\raggedright\arraybackslash}p{(\linewidth - 20\tabcolsep) * \real{0.0860}}
+  >{\raggedright\arraybackslash}p{(\linewidth - 20\tabcolsep) * \real{0.0860}}
+  >{\raggedright\arraybackslash}p{(\linewidth - 20\tabcolsep) * \real{0.0860}}
+  >{\raggedright\arraybackslash}p{(\linewidth - 20\tabcolsep) * \real{0.0968}}@{}}
+\toprule\noalign{}
+\begin{minipage}[b]{\linewidth}\raggedright
+Date
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+Line 1
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+Line 2
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+Line 3
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+Line 4
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+Line 5
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+Line 6
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+Line 7
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+Line 8
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+Line 9
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+Line 10
+\end{minipage} \\
+\midrule\noalign{}
+\endhead
+\bottomrule\noalign{}
+\endlastfoot
+2017-07-01 & 0 & 0 & 0 & 0 & 0 & 0 & 0 & 0 & 0 & 0 \\
+2017-10-01 & 50 & 0 & 0 & 0 & 0 & 0 & 0 & 0 & 0 & 0 \\
+2018-01-01 & 100 & 0 & 0 & 0 & 0 & 0 & 0 & 0 & 0 & 0 \\
+2018-04-01 & 150 & 0 & 0 & 0 & 0 & 0 & 0 & 0 & 0 & 0 \\
+2018-07-01 & 200 & 0 & 0 & 0 & 0 & 0 & 0 & 0 & 0 & 0 \\
+2018-10-01 & 250 & 0 & 0 & 0 & 0 & 0 & 0 & 0 & 0 & 0 \\
+2019-01-01 & 300 & 0 & 0 & 0 & 0 & 0 & 0 & 0 & 0 & 0 \\
+2019-04-01 & 350 & 0 & 0 & 0 & 0 & 0 & 0 & 0 & 0 & 0 \\
+2019-07-01 & 370 & 0 & 0 & 0 & 0 & 0 & 0 & 0 & 0 & 0 \\
+2019-10-01 & 380 & 0 & 0 & 0 & 0 & 0 & 0 & 0 & 0 & 0 \\
+2020-01-01 & 380 & 0 & 0 & 0 & 0 & 0 & 0 & 0 & 0 & 0 \\
+\end{longtable}
+}
+
+Figure 3. Number of commits to the mathlib repository over time, by the
+20 most active authors.
+
+\section{Acknowledgments}\label{acknowledgments}
+
+We thank Jasmin Blanchette, Assia Mahboubi, Josef Urban, and the
+anonymous referees for their helpful comments and suggestions.
+
+The following people have either authored commits in the mathlib
+repository or are attributed authors of mathlib files:
+
+Lucas Allen, Ellen Arlt, Jeremy Avigad, Tim Baanen, Seul Baek, Reid
+Barton, Tim Baumann, Alexander Bentkamp, Alex Best, Aaron Bryce, Kevin
+Buzzard, Louis Carlin, Mario Carneiro, Bryan Gin-ge Chen, Johan
+Commelin, Sander Dahmen, Floris van Doorn, Gabriel Ebner, Ramon
+Fernández Mir, Fabian Glöckle, Sébastien Gouëzel, Tobias Grosser, Jesse
+Han, Keeley Hoek, Johannes Hölzl, Michael Howes, Simon Hudon,
+Christopher Hughes, Michael Jendrusch, Sangwoo Jo, Kevin Kappelmann,
+Parikshit Khanna, Yury Kudryashov, Joey van Langen, Kenny Lau, Sean
+Leather, Guy Leroy, Robert Y. Lewis, Amelia Livingston, Isabel
+Longbottom, Jean Lo, Paul-Nicolas Madelaine, Patrick Massot, Bhavik
+Mehta, Rohan Mitta, Stephen Morgan, Scott Morrison, Leonardo de Moura,
+Oliver Nash, Wojciech Nawrocki, Morenikeji Neri, Casper Putz, Matt Rice,
+Mitchell Rowett, Jan-David Salchow, Blair Shi, Rory Qianyi Shu, Calle
+Sönne, Robert Spencer, Neil Strickland, Abhimanyu Pallavi Sudhir, Callum
+Sutton, Andreas Swerdlow, Nathaniel Thomas, Alistair Tucker, Sebastian
+Ullrich, Koundinya Vajjha, Jens Wagemaker, Minchao Wu, Haitao Zhang,
+Zhouhang Zhou, Sebastian Zimmer, Andrew Zipperer.
+
+\section{References}\label{references}
+
+{[}1{]} 1994. The QED Manifesto. In Automated Deduction - CADE-12, 12th
+International Conference on Automated Deduction, Nancy, France, June 26
+- July 1, 1994, Proceedings. 238--251.
+http://link.springer.com/chapter/10.1007/3-540-58156-1\_17\\
+{[}2{]} Reynald Affeldt, Cyril Cohen, and Damien Rouhling. 2018.
+Formalization Techniques for Asymptotic Reasoning in Classical Analysis.
+J.
+
+Formalized Reasoning 11, 1 (2018), 43--76.
+https://doi.org/10.6092/issn.1972-5787/8124\\
+{[}3{]} Jesús Aransay and Jose Divasón. 2014. Formalization and
+Execution of Linear Algebra: From Theorems to Algorithms. In Logic-Based
+Program Synthesis and Transformation, Gopal Gupta and Ricardo Peña
+(Eds.). Springer International Publishing, Cham, 1--18.
+https://doi.org/10.1007/978-3-319-14125-1-1\\
+{[}4{]} Andrea Asperti, Wilmer Ricciotti, Claudio Sacerdoti Coen, and
+Enrico Tassi. 2009. Hints in Unification. In Theorem Proving in Higher
+Order Logics, 22nd International Conference, TPHOLs 2009, Munich,
+Germany, August 17-20, 2009. Proceedings. 84--98.
+https://doi.org/10.1007/978-3-642-03359-9\_8\\
+{[}5{]} Jeremy Avigad, Leonardo de Moura, and Soonho Kong. 2014. Theorem
+Proving in Lean. Carnegie Mellon University.\\
+{[}6{]} Seulkee Baek. 2019. Reflected Decision Procedures in Lean.
+Master's thesis. Carnegie Mellon University.
+http://www.andrew.cmu.edu/user/avigad/Students/baek\_ms\_thesis.pdf\\
+{[}7{]} Clemens Ballarin. 2003. Locales and Locale Expressions in
+Isabelle/Isar. In Types for Proofs and Programs, International Workshop,
+TYPES 2003, Torino, Italy, April 30 - May 4, 2003, Revised Selected
+Papers. 34--50. https://doi.org/10.1007/978-3-540-24849-1\_3\\
+{[}8{]} Grzegorz Bancerek, Czeslaw Bylinski, Adam Grabowski, Artur
+Kornilowicz, Roman Matuszewski, Adam Naumowicz, and Karol Pak. 2018. The
+Role of the Mizar Mathematical Library for Interactive Proof Development
+in Mizar. J. Autom. Reasoning 61, 1-4 (2018), 9--32.
+https://doi.org/10.1007/s10817-017-9440-6\\
+{[}9{]} Grzegorz Bancerek, Czesław Byliński, Adam Grabowski, Artur
+Korniłowicz, Roman Matuszewski, Adam Naumowicz, Karol Pąk, and Josef
+Urban. 2015. Mizar: State-of-the-art and Beyond. In Intelligent Computer
+Mathematics, Manfred Kerber, Jacques Carette, Cezary Kaliszyk, Florian
+Rabe, and Volker Sorge (Eds.). Springer International Publishing, Cham,
+261--279. https://doi.org/10.1007/978-3-319-20615-8 17\\
+{[}10{]} Yves Bertot and Pierre Castéran. 2004. Interactive Theorem
+Proving and Program Development - Coq'Art: The Calculus of Inductive
+Constructions. Springer. https://doi.org/10.1007/978-3-662-07964-5\\
+{[}11{]} Jasmin Christian Blanchette, Sascha Böhme, and Lawrence C.
+Paulson. 2013. Extending Sledgehammer with SMT Solvers. J. Autom.
+Reasoning 51, 1 (2013), 109--128.
+https://doi.org/10.1007/s10817-013-9278-5\\
+{[}12{]} Jasmin Christian Blanchette, Max W. Haslbeck, Daniel Matichuk,
+and Tobias Nipkow. 2015. Mining the Archive of Formal Proofs. In
+Intelligent Computer Mathematics - International Conference, CICM 2015,
+Washington, DC, USA, July 13-17, 2015, Proceedings. 3--17.
+https://doi.org/10.1007/978-3-319-20615-8\_1\\
+{[}13{]} Jasmin Christian Blanchette, Cezary Kaliszyk, Lawrence C.
+Paulson, and Josef Urban. 2016. Hammering towards QED. J. Formalized
+Reasoning 9, 1 (2016), 101--148.
+https://doi.org/10.6092/issn.1972-5787/4593\\
+{[}14{]} Sylvie Boldo, Catherine Lelay, and Guillaume Melquiond. 2015.
+Coquelicot: A User-Friendly Library of Real Analysis for Coq.
+Mathematics in Computer Science 9, 1 (2015), 41--62.
+https://doi.org/10.1007/s11786-014-0181-1\\
+{[}15{]} Kevin Buzzard, Johan Commelin, and Patrick Massot. 2020.
+Formalising Perfectoid Spaces. In Proceedings of the 9th ACM SIGPLAN
+International Conference on Certified Programs and Proofs, CPP 2020, New
+Orleans, LA, January 20-21, 2020.\\
+{[}16{]} Mario Carneiro. 2019. Formalizing Computability Theory via
+Partial Recursive Functions. In 10th International Conference on
+Interactive Theorem Proving (ITP 2019) (Leibniz International
+Proceedings in Informatics (LIPIcs)), John Harrison, John O'Leary, and
+Andrew Tolmach (Eds.), Vol. 141. Schloss Dagstuhl--Leibniz-Zentrum fuer
+Informatik, Dagstuhl, Germany, 12:1--12:17.
+https://doi.org/10.4230/LIPIcs.ITP.2019.12\\
+{[}17{]} Robert L. Constable, Stuart F. Allen, Mark Bromley, Rance
+Cleaveland, J. F. Cremer, R. W. Harper, Douglas J. Howe, Todd B.
+Knoblock, N. P.
+
+Mendler, Prakash Panangaden, James T. Sasaki, and Scott F. Smith. 1986.
+Implementing mathematics with the Nuprl proof development system.
+Prentice Hall. http://dl.acm.org/citation.cfm?id=10510\\
+{[}18{]} Sander R. Dahmen, Johannes Hölzl, and Robert Y. Lewis. 2019.
+Formalizing the Solution to the Cap Set Problem. In 10th International
+Conference on Interactive Theorem Proving (ITP 2019) (Leibniz
+International Proceedings in Informatics (LIPIcs)), John Harrison, John
+O'Leary, and Andrew Tolmach (Eds.), Vol. 141. Schloss
+Dagstuhl-Leibniz-Zentrum fuer Informatik, Dagstuhl, Germany,
+15:1--15:19. https://doi.org/10.4230/LIPIcs.ITP.2019.15\\
+{[}19{]} Leonardo de Moura and Nikolaj Bjørner. 2007. Efficient
+E-Matching for SMT Solvers. In Automated Deduction - CADE-21, 21st
+International Conference on Automated Deduction, Bremen, Germany, July
+17-20, 2007, Proceedings. 183--198.
+https://doi.org/10.1007/978-3-540-73595-3\_13\\
+{[}20{]} Leonardo de Moura, Soonho Kong, Jeremy Avigad, Floris van
+Doorn, and Jakob von Raumer. 2015. The Lean Theorem Prover (system
+description). https://leanprover.github.io/papers/system.pdf\\
+{[}21{]} Jose Divasón and Jesús Aransay. 2013. Rank-Nullity Theorem in
+Linear Algebra. Archive of Formal Proofs (Jan.~2013).
+http://isa-afp.org/entries/Rank\_Nullity\_Theorem.html, Formal proof
+development.\\
+{[}22{]} Gabriel Ebner, Sebastian Ullrich, Jared Roesch, Jeremy Avigad,
+and Leonardo de Moura. 2017. A metaprogramming framework for formal
+verification. PACMPL 1, ICFP (2017), 34:1--34:29.
+https://doi.org/10.1145/3110278\\
+{[}23{]} Jordan S. Ellenberg and Dion Gijswijt. 2017. On large subsets
+of \(F_{q}^{n}\) with no three-term arithmetic progression. Ann. of
+Math. (2) 185, 1 (2017), 339--343.
+https://doi.org/10.4007/annals.2017.185.1.8\\
+{[}24{]} François Garillot, Georges Gonthier, Assia Mahboubi, and
+Laurence Rideau. 2009. Packaging Mathematical Structures. In Theorem
+Proving in Higher Order Logics, 22nd International Conference, TPHOLs
+2009, Munich, Germany, August 17-20, 2009. Proceedings. 327--342.
+https://doi.org/10.1007/978-3-642-03359-9\_23\\
+{[}25{]} Michèle Giry. 1982. A categorical approach to probability
+theory. In Categorical aspects of topology and analysis (Ottawa, Ont.,
+1980). Lecture Notes in Math., Vol. 915. Springer, Berlin-New York,
+68--85. https://doi.org/10.1007/BFb0092872\\
+{[}26{]} Georges Gonthier. 2011. Point-Free, Set-Free Concrete Linear
+Algebra. In Interactive Theorem Proving, Marko van Eekelen, Herman
+Geuvers, Julien Schmaltz, and Freek Wiedijk (Eds.). Springer Berlin
+Heidelberg, Berlin, Heidelberg, 103--118.
+https://doi.org/10.1007/978-3-642-22863-6\_10\\
+{[}27{]} Georges Gonthier and Assia Mahboubi. 2010. An introduction to
+small scale reflection in Coq. J. Formalized Reasoning 3, 2 (2010),
+95--152. https://doi.org/10.6092/issn.1972-5787/1979\\
+{[}28{]} Adam Grabowski, Artur Kornilowicz, and Adam Naumowicz. 2010.
+Mizar in a Nutshell. Journal of Formalized Reasoning 3, 2 (2010),
+153--245. https://doi.org/10.6092/issn.1972-5787/1980\\
+{[}29{]} Adam Grabowski, Artur Kornilowicz, and Christoph Schwarzweller.
+2016. On algebraic hierarchies in mathematical repository of Mizar. In
+Proceedings of the 2016 Federated Conference on Computer Science and
+Information Systems, FedCSIS 2016, Gdańsk, Poland, September 11-14,
+2016. 363--371. https://doi.org/10.15439/2016F520\\
+{[}30{]} Benjamin Grégoire and Assia Mahboubi. 2005. Proving Equalities
+in a Commutative Ring Done Right in Coq. In Theorem Proving in Higher
+Order Logics, Joe Hurd and Tom Melham (Eds.). Springer Berlin
+Heidelberg, Berlin, Heidelberg, 98--113.
+https://doi.org/10.1007/11541868\_7\\
+{[}31{]} Florian Haftmann and Makarius Wenzel. 2006. Constructive type
+classes in Isabelle. In International Workshop on Types for Proofs and
+Programs. Springer, 160--174.
+https://doi.org/10.1007/978-3-540-74464-1\_11\\
+{[}32{]} Thomas C. Hales, Mark Adams, Gertrud Bauer, Dat Tat Dang, John
+Harrison, Truong Le Hoang, Cezary Kaliszyk, Victor Magron, Sean
+McLaughlin, Thang Tat Nguyen, Truong Quang Nguyen, Tobias Nipkow, Steven
+Obua, Joseph Pleso, Jason M. Rute, Alexey Solovyev,
+
+An Hoai Thi Ta, Trung Nam Tran, Diep Thi Trieu, Josef Urban, Ky Khac Vu,
+and Roland Zumkeller. 2017. A Formal Proof of the Kepler Conjecture.
+Forum of Mathematics, Pi 5 (2017), e2.
+https://doi.org/10.1017/fmp.2017.1\\
+{[}33{]} Jesse Michael Han and Floris van Doorn. 2019. A Formalization
+of Forcing and the Unprovability of the Continuum Hypothesis. In 10th
+International Conference on Interactive Theorem Proving (ITP 2019)
+(Leibniz International Proceedings in Informatics (LIPIcs)), John
+Harrison, John O'Leary, and Andrew Tolmach (Eds.), Vol. 141. Schloss
+Dagstuhl--Leibniz-Zentrum fuer Informatik, Dagstuhl, Germany,
+19:1--19:19. https://doi.org/10.4230/LIPIcs.ITP.2019.19\\
+{[}34{]} Jesse Michael Han and Floris van Doorn. 2020. A Formal Proof of
+the Independence of the Continuum Hypothesis. In Proceedings of the 9th
+ACM SIGPLAN International Conference on Certified Programs and Proofs,
+CPP 2020, New Orleans, LA, January 20-21, 2020.\\
+{[}35{]} John Harrison. 2009. HOL Light: An Overview. In Theorem Proving
+in Higher Order Logics, Stefan Berghofer, Tobias Nipkow, Christian
+Urban, and Makarius Wenzel (Eds.). Springer Berlin Heidelberg, Berlin,
+Heidelberg, 60--66. https://doi.org/10.1007/978-3-642-03359-9\_4\\
+{[}36{]} John Harrison. 2013. The HOL Light Theory of Euclidean Space.
+J. Autom. Reasoning 50, 2 (2013), 173--190.
+https://doi.org/10.1007/s10817-012-9250-9\\
+{[}37{]} Hao Huang. 2019. Induced subgraphs of hypercubes and a proof of
+the Sensitivity Conjecture. arXiv preprint arXiv:1907.00847 (2019).\\
+{[}38{]} Fabian Immler and Bohua Zhan. 2019. Smooth manifolds and types
+to sets for linear algebra in Isabelle/HOL. In Proceedings of the 8th
+ACM SIGPLAN International Conference on Certified Programs and Proofs,
+CPP 2019, Cascais, Portugal, January 14-15, 2019. 65--77.
+https://doi.org/10.1145/3293880.3294093\\
+{[}39{]} C. Kaliszyk and K. Pąk. 2017. Progress in the independent
+certification of mizar mathematical library in isabelle. In 2017
+Federated Conference on Computer Science and Information Systems
+(FedCSIS). 227--236. https://doi.org/10.15439/2017F289\\
+{[}40{]} Cezary Kaliszyk, Karol Pąk, and Josef Urban. 2016. Towards a
+Mizar Environment for Isabelle: Foundations and Language. In Proceedings
+of the 5th ACM SIGPLAN Conference on Certified Programs and Proofs (CPP
+2016). ACM, New York, NY, USA, 58--65.
+https://doi.org/10.1145/2854065.2854070\\
+{[}41{]} Florian Kammüller, Markus Wenzel, and Lawrence C. Paulson.
+1999. Locales - A Sectioning Concept for Isabelle. In Theorem Proving in
+Higher Order Logics, 12th International Conference, TPHOLs'99, Nice,
+France, September, 1999, Proceedings. 149--166.
+https://doi.org/10.1007/3-540-48256-3\_11\\
+{[}42{]} M. Kaufmann, P. Manolios, and J.S. Moore. 2000. Computer-Aided
+Reasoning: ACL2 Case Studies. Advances in Formal Methods, Vol. 4.
+Springer US. https://doi.org/10.1007/978-1-4757-3188-0\\
+{[}43{]} Holden Lee. 2014. Vector Spaces. Archive of Formal Proofs
+(2014). http://isa-afp.org/entries/VectorSpace.html, Formal proof
+development.\\
+{[}44{]} Robert Y. Lewis. 2019. A formal proof of Hensel's lemma over
+the p-adic integers. In Proceedings of the 8th ACM SIGPLAN International
+Conference on Certified Programs and Proofs, CPP 2019, Cascais,
+Portugal, January 14-15, 2019. 15--26.
+https://doi.org/10.1145/3293880.3294089\\
+{[}45{]} Paul-Nicolas Madelaine. 2019. Arithmetic and casting in Lean.
+Technical Report. Vrije Universiteit Amsterdam.
+https://lean-forward.github.io/internships/arithmetic\_and\_casting\_in\_lean.pdf\\
+{[}46{]} Assia Mahboubi and Enrico Tassi. 2017. Mathematical Components.
+https://math-comp.github.io/mcb/\\
+{[}47{]} Norman Megill and David A. Wheeler. 2019. Metamath: A Computer
+Language for Mathematical Proofs. Lulu Press.\\
+{[}48{]} Walther Neuper. 2019. Technologies for ``Complete, Transparent
+\& Interactive Models of Math'' in Education. Electronic Proceedings in
+Theoretical Computer Science 290 (03 2019), 76--95.
+https://doi.org/10.4204/EPTCS.290.6
+
+{[}49{]} Tobias Nipkow, Lawrence C Paulson, and Markus Wenzel. 2002.
+Isabelle/HOL: a proof assistant for higher-order logic. Vol. 2283.
+Springer Science \& Business Media.
+https://doi.org/10.1007/3-540-45949-9\\
+{[}50{]} Sam Owre, John M. Rushby, and Natarajan Shankar. 1992. PVS: A
+Prototype Verification System. In Automated Deduction - CADE-11, 11th
+International Conference on Automated Deduction, Saratoga Springs, NY,
+USA, June 15-18, 1992, Proceedings. 748--752.
+https://doi.org/10.1007/3-540-55602-8\_217\\
+{[}51{]} Karol Pak. 2016. Topological Foundations for a Formal Theory of
+Manifolds. In Joint Proceedings of the FM4M, MathUI, and ThEdu
+Workshops, Doctoral Program, and Work in Progress at the Conference on
+Intelligent Computer Mathematics 2016 co-located with the 9th Conference
+on Intelligent Computer Mathematics (CICM 2016), Bialystok, Poland, July
+25-29, 2016. 14--16. http://ceur-ws.org/Vol-1785/F4.pdf\\
+{[}52{]} Frank Pfenning and Christine Paulin-Mohring. 1989. Inductively
+Defined Types in the Calculus of Constructions. In Mathematical
+Foundations of Programming Semantics, 5th International Conference,
+Tulane University, New Orleans, Louisiana, USA, March 29 - April 1,
+1989, Proceedings. 209--228. https://doi.org/10.1007/BFb0040259\\
+{[}53{]} William Pugh. 1991. The Omega Test: A Fast and Practical
+Integer Programming Algorithm for Dependence Analysis. In Proceedings of
+the 1991 ACM/IEEE Conference on Supercomputing (Supercomputing '91).
+ACM, New York, NY, USA, 4--13. https://doi.org/10.1145/125826.125848\\
+{[}54{]} Daniel Selsam and Leonardo Moura. 2016. Congruence Closure in
+Intensional Type Theory. In Proceedings of the 8th International Joint
+Conference on Automated Reasoning - Volume 9706. Springer-Verlag,
+Berlin, Heidelberg, 99--115.
+https://doi.org/10.1007/978-3-319-40229-1\_8\\
+{[}55{]} Konrad Slind and Michael Norrish. 2008. A Brief Overview of
+HOL4. In Theorem Proving in Higher Order Logics, Otmane Ait Mohamed,
+César Muñoz, and Sofiène Tahar (Eds.). Springer Berlin Heidelberg,
+Berlin, Heidelberg, 28--32.
+https://doi.org/10.1007/978-3-540-71067-7\_6\\
+{[}56{]} Bas Spitters and Eelis van der Weegen. 2011. Type classes for
+mathematics in type theory. Mathematical Structures in Computer Science
+21, 4 (2011), 795--825. https://doi.org/10.1017/S0960129511000119\\
+{[}57{]} Sebastian Ullrich and Leonardo de Moura. 2019. Counting
+Immutable Beans: Reference Counting Optimized for Purely Functional
+Programming. arXiv:cs.PL/1908.05647\\
+{[}58{]} Josef Urban and Geoff Sutcliffe. 2008. ATP-based
+Cross-Verification of Mizar Proofs: Method, Systems, and First
+Experiments. Mathematics in Computer Science 2, 2 (2008), 231--251.
+https://doi.org/10.1007/s11786-008-0053-7\\
+{[}59{]} Philip Wadler and Stephen Blott. 1989. How to Make ad-hoc
+Polymorphism Less ad-hoc. In Conference Record of the Sixteenth Annual
+ACM Symposium on Principles of Programming Languages, Austin, Texas,
+USA, January 11-13, 1989. 60--76. https://doi.org/10.1145/75277.75283\\
+{[}60{]} Markus Wenzel. 1997. Type Classes and Overloading in
+Higher-Order Logic. In Theorem Proving in Higher Order Logics, 10th
+International Conference, TPHOLs'97, Murray Hill, NJ, USA, August 19-22,
+1997, Proceedings. 307--322. https://doi.org/10.1007/BFb0028402\\
+{[}61{]} H. P. Williams. 1986. Fourier's Method of Linear Programming
+and Its Dual. The American Mathematical Monthly 93, 9 (1986), 681--695.
+http://www.jstor.org/stable/2322281\\
+{[}62{]} Minchao Wu and Rajeev Goré. 2019. Verified Decision Procedures
+for Modal Logics. In 10th International Conference on Interactive
+Theorem Proving (ITP 2019) (Leibniz International Proceedings in
+Informatics (LIPIcs)), John Harrison, John O'Leary, and Andrew Tolmach
+(Eds.), Vol. 141. Schloss Dagstuhl--Leibniz-Zentrum fuer Informatik,
+Dagstuhl, Germany, 31:1--31:19.
+https://doi.org/10.4230/LIPIcs.ITP.2019.31
+
+\end{document}
