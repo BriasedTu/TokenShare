@@ -32,10 +32,10 @@ if not any(feature.get("status") == "in-progress" for feature in features):
 print("harness-files-ok")
 PY
 
-python -m compileall -q .
+python -m compileall -q -x "reference_repos" .
 
 if [ -d tests ]; then
-  python -m pytest
+  PYTHONPATH="src${PYTHONPATH:+:$PYTHONPATH}" python -m pytest tests
 else
   echo "No tests/ directory yet; skipping pytest during startup phase."
 fi

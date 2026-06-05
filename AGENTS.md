@@ -8,14 +8,14 @@ TokenShare 是一个早期本地研究原型，目标是验证一种协议：把
 
 1. 确认当前工作目录是仓库根目录。
 2. 完整阅读本文件。
-3. 阅读当前设计资料：
-   - `Doc/TechnicalDocument/2026-06-03-tokenshare-protocol-technical-design.md`
-   - `Doc/TechnicalDocument/2026-06-02-tokenshare-protocol-kernel-revised-draft.md`
+3. 阅读导引：
+   - `Doc/agent-navigation.md`（agent 导航、模块路由和参考源码使用规则）
 4. 运行基线验证：
    - PowerShell：`.\init.ps1`
    - Bash/Git Bash/WSL：`./init.sh`
 5. 阅读 `feature_list.json`，选择且只选择一个未完成 feature。
 6. 阅读 `progress.md` 和 `session-handoff.md`，确认当前状态和未解决决策。
+7. 如果需要判断代码应该放在哪个模块、哪些参考源码可借鉴，先看 `Doc/agent-navigation.md`。
 
 如果基线验证失败，先修复验证问题，再新增范围。
 
@@ -71,11 +71,11 @@ V1 范围外：
 
 ```bash
 python -c "import json, sqlite3; print('python-json-sqlite-ok')"
-python -m compileall .
-python -m pytest
+python -m compileall -x "reference_repos" .
+PYTHONPATH=src python -m pytest tests
 ```
 
-`init.ps1` 和 `init.sh` 会无条件运行前两个检查；只有存在 `tests/` 目录时才运行 `pytest`。
+`init.ps1` 和 `init.sh` 会无条件运行前两个检查；`reference_repos/` 是外部参考源码目录，不参与 `compileall`；只有存在 `tests/` 目录时才在 `PYTHONPATH=src` 下运行 `pytest tests`。
 
 ## 结束会话（End of Session / Before ending）
 
@@ -83,5 +83,5 @@ python -m pytest
 
 1. 更新 `progress.md`，记录当前状态、验证证据和下一步。
 2. 更新 `feature_list.json`，记录 feature 状态和证据。
-3. 在 `session-handoff.md` 中记录未解决风险或决策。
+3. 在 `session-handoff.md` 中记录未解决风险或决策。   
 4. 保持仓库足够干净，让下一轮可以立即运行验证脚本。

@@ -6,7 +6,7 @@
 | 文档类型 | 技术设计文档 |
 | 状态 | Draft |
 | 创建日期 | 2026-06-03 |
-| 最后更新 | 2026-06-04 |
+| 最后更新 | 2026-06-05 |
 | Owner | TokenShare 研究项目负责人 |
 | 适用阶段 | 本地可复现研究原型 |
 | 关联设计稿 | `2026-06-02-tokenshare-protocol-kernel-revised-draft.md` |
@@ -746,7 +746,7 @@ TokenShare 自己需要验证的协议核心。
 | 索引与查询 | SQLite + `sqlite3` | 保存可重建索引、运行元数据、registry 快照和实验查询视图。 | SQLite 是 materialized view / index，不是 replay 的唯一事实源。 |
 | Artifact 存储 | 本地文件系统 + 内容哈希 | 保存 root input、candidate output、canonical output、日志和原始模型输出。 | 大内容不内联进 event；事件只保存 `ArtifactRef` 和摘要。 |
 | 数据格式 | JSON、JSONL、文本日志 | 插件 descriptor、executor descriptor、实验配置、报告。 | 所有协议相关格式必须显式版本化。 |
-| 测试 | `pytest` + `python -m compileall` | 单元、集成、故障和 replay 验证。 | 当前启动脚本在无 `tests/` 时跳过 pytest；出现测试目录后纳入基线。 |
+| 测试 | `pytest` + `python -m compileall` | 单元、集成、故障和 replay 验证。 | 启动脚本在 `PYTHONPATH=src` 下运行 `pytest tests`；`reference_repos/` 不参与 `compileall` 或 pytest discovery。 |
 | Lean 实验 | fixture / stub | 模拟 Lean 环境、proof patch、error log 和 verifier。 | V1 不依赖真实 Lean theorem proving。 |
 
 ### 20.3 存储边界
@@ -762,7 +762,50 @@ V1 的持久化分成三类，避免把状态源混在一起：
 状态重放必须能在删除 SQLite 后，仅凭 JSONL event ledger 和 artifact 目录重建协议状态。
 SQLite 可以提高查询和实验统计效率，但不能成为隐藏状态。
 
-### 20.4 相似系统对技术栈的启发
+### 20.4 Package Layout 决策
+
+V1 采用 `src/` layout，将 TokenShare 自身源码放在 `src/tokenshare/` 下，测试放在
+`tests/` 下。该选择来自对 Temporal Python SDK、Luigi、cwltool、Prefect 和 Dagster
+源码结构的对比：TokenShare 不采用 Luigi 式扁平包，而采用更适合增长的分层包结构。
+
+当前目录骨架：
+
+```text
+src/
+  tokenshare/
+    core/
+    storage/
+    plugins/
+      factorization/
+      lean_stub/
+    executors/
+    replay/
+    experiments/
+
+tests/
+  core/
+  storage/
+  plugins/
+    factorization/
+    lean_stub/
+  executors/
+  replay/
+  experiments/
+```
+
+| 包目录 | 归属层次 | 职责边界 |
+|---|---|---|
+| `tokenshare.core` | 协议框架 | 协议对象、状态机、任务图、协议不变量和运行配置。 |
+| `tokenshare.storage` | 协议框架 | `ArtifactStore`、JSONL `EventLedger`、SQLite materialized index 和本地文件存储。 |
+| `tokenshare.plugins` | 任务插件 | 插件契约、descriptor、factorization PoC 和 Lean stub PoC。 |
+| `tokenshare.executors` | 执行器 | 执行器契约、本地 mock executor、确定性执行器和后续 AI stub。 |
+| `tokenshare.replay` | 协议框架 | 状态重放、审计重放、一致性检查和 no-double-settlement 检查。 |
+| `tokenshare.experiments` | 实验基础设施 | 实验 runner、故障模拟、metrics 和报告生成。 |
+
+当前只建立目录和包入口，不提前创建 `models.py`、`event_ledger.py` 等具体实现文件。
+这些文件应在 Phase 1 字段规格确定后再创建，避免用文件名提前固化尚未完成的对象边界。
+
+### 20.5 相似系统对技术栈的启发
 
 | 系统 | 可借鉴点 | 不作为 V1 runtime 的原因 |
 |---|---|---|
@@ -773,7 +816,7 @@ SQLite 可以提高查询和实验统计效率，但不能成为隐藏状态。
 | BOINC | 不稳定客户端、deadline、重复执行、canonical result 和 credit。 | BOINC 是志愿计算平台；V1 只本地模拟，不直接引入其服务端栈。 |
 | SQLite | 单机嵌入式数据库、轻量查询、WAL 模式。 | 适合作为本地索引；不承担跨机器协调或网络文件系统上的分布式状态。 |
 
-### 20.5 未来迁移方向
+### 20.6 未来迁移方向
 
 当 V1 证明协议闭环后，可按目标选择迁移路线：
 
@@ -786,7 +829,7 @@ SQLite 可以提高查询和实验统计效率，但不能成为隐藏状态。
 - 如果接入真实 Lean、AI API 或人类 worker，应先扩展 executor 层和 artifact schema，
   不应改写协议核心状态机。
 
-### 20.6 资料依据
+### 20.7 资料依据
 
 - Temporal Workflow Execution 与 replay：<https://docs.temporal.io/workflow-execution>
 - Temporal Workflow Definition 确定性约束：<https://docs.temporal.io/workflow-definition>
@@ -926,7 +969,7 @@ SQLite 可以提高查询和实验统计效率，但不能成为隐藏状态。
 |---|---|---|
 | 对象字段是否全部细化 | 本文只定义字段范畴，不定义最终字段清单。 | 下一步单独写对象字段规格。 |
 | SQLite 表结构与 JSONL event schema 的边界 | JSONL 是权威事实源，SQLite 是可重建索引。 | Phase 1 字段规格中细化表和事件最小载荷。 |
-| 初始 Python package layout | 尚未细化。 | Phase 1 实现前确定 `core`、`storage`、`plugins`、`executors`、`experiments` 等边界。 |
+| 初始 Python package layout | 已确定并创建 `src/tokenshare` 与镜像 `tests` 骨架。 | Phase 1 字段规格确定后，再创建具体实现模块文件。 |
 | 整数分解具体拆分策略 | V1 只要求版本化策略。 | 插件规格中确定。 |
 | Lean stub 具体 fixture | V1 只要求能覆盖 direct 与 decomposition。 | 插件规格中确定。 |
 | 是否实现真实 AI API | V1 不实现。 | 后续版本决定。 |

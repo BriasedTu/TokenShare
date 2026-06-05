@@ -3,6 +3,7 @@ $ErrorActionPreference = "Stop"
 Write-Host "=== TokenShare Startup Verification ==="
 
 python -c "import json, sqlite3; print('python-json-sqlite-ok')"
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
 $check = @'
 import json
@@ -32,11 +33,15 @@ print("harness-files-ok")
 '@
 
 $check | python -
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-python -m compileall -q .
+python -m compileall -q -x "reference_repos" .
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
 if (Test-Path -LiteralPath "tests") {
-    python -m pytest
+    $env:PYTHONPATH = "src;$env:PYTHONPATH"
+    python -m pytest tests
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 } else {
     Write-Host "No tests/ directory yet; skipping pytest during startup phase."
 }

@@ -91,11 +91,11 @@ Bash、Git Bash 或 WSL：
 
 ```bash
 python -c "import json, sqlite3; print('python-json-sqlite-ok')"
-python -m compileall .
-python -m pytest
+python -m compileall -x "reference_repos" .
+PYTHONPATH=src python -m pytest tests
 ```
 
-`init.ps1` 和 `init.sh` 会无条件运行 Python JSON/SQLite 检查和 `compileall`。只有存在 `tests/` 目录时才运行 `pytest`。
+`init.ps1` 和 `init.sh` 会无条件运行 Python JSON/SQLite 检查和 `compileall`。`reference_repos/` 保存外部参考源码，不参与 `compileall`。只有存在 `tests/` 目录时才在 `PYTHONPATH=src` 下运行 `pytest tests`。
 
 ## Repository Map
 
@@ -107,8 +107,12 @@ python -m pytest
 - `session-handoff.md`：下轮会话恢复信息。
 - `init.ps1`：Windows PowerShell 启动验证。
 - `init.sh`：Bash/Git Bash/WSL 启动验证。
+- `src/tokenshare/`：TokenShare Python package 骨架。
+- `tests/`：与 package 边界镜像的测试骨架。
+- `reference_repos/`：package layout 研究用的外部参考源码浅克隆，不属于 TokenShare runtime。
 - `Doc/TechnicalDocument/2026-06-03-tokenshare-protocol-technical-design.md`：当前实现导向技术设计文档。
 - `Doc/TechnicalDocument/2026-06-02-tokenshare-protocol-kernel-revised-draft.md`：协议内核讨论稿。
+- `Doc/agent-navigation.md`：agent 导航、模块路由和参考源码使用规则。
 
 ## Development Workflow
 
@@ -121,12 +125,13 @@ python -m pytest
 3. 阅读两份当前设计文档。
 4. 运行 `.\init.ps1` 或 `./init.sh`。
 5. 阅读 `feature_list.json`、`progress.md` 和 `session-handoff.md`。
+6. 开始具体设计或编码前，阅读 agent 导航文档确认模块归属和参考资料边界。
 
 完成一个 feature 前必须有验证证据。没有实际验证输出，不应把 feature 标记为完成。
 
 ## Current Status
 
-当前日期状态：2026-06-04。
+当前日期状态：2026-06-05。
 
 已完成：
 
@@ -134,12 +139,13 @@ python -m pytest
 - `init.ps1` / `init.sh` 基线验证已建立。
 - V1 路线图已写入 `feature_list.json`。
 - 当前项目边界已写入 `AGENTS.md`。
+- 初始 package layout 已确定并创建：`src/tokenshare/{core,storage,plugins,executors,replay,experiments}` 与镜像 `tests/` 骨架。
 
 当前进行中：
 
 - `feat-002`：Phase 1 - Protocol Base Objects and Storage。
 
-Phase 1 的下一步是先确定最小对象字段规格和 package layout，再实现窄闭环：
+Phase 1 的下一步是先确定最小对象字段规格，再实现窄闭环：
 
 - root task registration。
 - artifact save/read/hash。
