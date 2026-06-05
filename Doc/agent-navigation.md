@@ -25,9 +25,10 @@
 3. `progress.md`：最近进展、风险、验证证据、下一步。
 4. `session-handoff.md`：跨会话恢复摘要，尤其是上一轮未解决问题。
 5. `Doc/TechnicalDocument/2026-06-03-tokenshare-protocol-technical-design.md`：当前实现导向设计。
-6. `README.md`：项目入口和稳定边界。
-7. `Doc/TechnicalDocument/2026-06-02-tokenshare-protocol-kernel-revised-draft.md`：历史讨论稿；用于理解原因，不直接覆盖当前 TDD。
-8. `reference_repos/`：外部参考源码；只能用于借鉴模式，不属于 TokenShare runtime。
+6. `Doc/TechnicalDocument/2026-06-05-phase-1-minimal-object-field-spec.md`：Phase 1 最小对象字段、事件 envelope 和 SQLite 可重建索引规格；用于细化 feat-002。
+7. `README.md`：项目入口和稳定边界。
+8. `Doc/TechnicalDocument/2026-06-02-tokenshare-protocol-kernel-revised-draft.md`：历史讨论稿；用于理解原因，不直接覆盖当前 TDD。
+9. `reference_repos/`：外部参考源码；只能用于借鉴模式，不属于 TokenShare runtime。
 
 如果两个文件冲突，应优先相信上面列表中更靠前的文件，并把冲突记录到 `progress.md` 或 `session-handoff.md`。
 
@@ -42,7 +43,7 @@
 | package layout 在哪里 | TDD 第 20.4 节 | `reference_repos/README.md`、`README.md` | 已创建 `src/tokenshare` 和镜像 `tests` 骨架。 |
 | 具体代码应该放哪个模块 | 本文第 4 节 | TDD 第 5、6、10、11、20 节 | 先守住协议框架、插件、执行器三层边界。 |
 | 需要借鉴已有项目结构 | `reference_repos/README.md` | 对应外部源码目录 | 只能借鉴思路，不引入为 runtime 依赖，不复制大段实现。 |
-| 需要设计对象字段 | TDD 第 6、10、11、20、21、23 节 | 协议讨论稿第 6、7、10、11 节 | 先产出最小字段规格，再写实现。 |
+| 需要设计对象字段 | `Doc/TechnicalDocument/2026-06-05-phase-1-minimal-object-field-spec.md` | TDD 第 6、10、11、20、21、23 节；协议讨论稿第 6、7、10、11 节 | 先区分协议对象名、字段名、事件类型和 SQLite 表名，再写实现。 |
 | 需要更新状态 | `progress.md` | `feature_list.json`、`session-handoff.md` | 没有验证证据，不要标记完成。 |
 
 ## 4. 模块路由
