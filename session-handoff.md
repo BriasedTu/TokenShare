@@ -2,15 +2,15 @@
 
 ## Current Objective
 
-- Goal: Continue feat-002 by preparing Phase 1 protocol base objects and storage.
-- Current status: Harness files have been generated and verified. README and TDD now agree that V1 uses Python 3.12+、SQLite、JSON、JSONL and local filesystem storage. Initial `src/tokenshare` package layout and mirrored `tests` skeleton have been created. Phase 1 minimal object-field, JSONL event envelope, and SQLite materialized-index boundaries are now documented in `Doc/TechnicalDocument/2026-06-05-phase-1-minimal-object-field-spec.md`. The next step is implementing the narrow Phase 1 slice from that spec.
+- Goal: Continue feat-003 by preparing Task Graph, State Machines, and Scheduling.
+- Current status: `feat-002` is complete. Phase 1 now has concrete protocol base objects, local artifact storage, JSONL event ledger, SQLite rebuildable index, root task registration, tests, and a code-to-spec mapping document. `feature_list.json` now marks `feat-003` as the active in-progress feature. Startup verification now uses the `conda` environment `tokenshare`.
 - Branch / commit: Check with `git status` and `git log --oneline -5`.
 
 ## Completed This Session
 
 - [x] Located project documents under `Doc/TechnicalDocument`.
 - [x] Extracted current stage: local reproducible Python/SQLite/JSONL research prototype.
-- [x] Identified V1 boundaries: protocol kernel first; factorization and Lean stub as plugins.
+- [x] Identified V1 boundaries: protocol kernel first; factorization, Lean stub, and structured report stub as plugins.
 - [x] Created startup harness artifacts.
 - [x] Passed startup verification.
 - [x] Passed structural harness validation with 100/100 score.
@@ -25,6 +25,20 @@
 - [x] Moved agent navigation out of `Doc/TechnicalDocument/` so the technical design directory stays focused on design materials.
 - [x] Added `Doc/TechnicalDocument/2026-06-05-phase-1-minimal-object-field-spec.md` to distinguish protocol object names, future Python class names, object fields, JSON keys, event types, and SQLite materialized-index table names.
 - [x] Updated `Doc/agent-navigation.md` so future agents use the new field spec before implementing Phase 1 objects.
+- [x] Implemented `ArtifactRef`, `ProtocolConfig`, `TaskSpec`, `TaskUnit`, `TaskRelation`, and `ClientRecord` in `src/tokenshare/core/models.py`.
+- [x] Implemented Phase 1 root task registration in `src/tokenshare/core/registration.py`.
+- [x] Implemented local `ArtifactStore` in `src/tokenshare/storage/artifacts.py`.
+- [x] Implemented JSONL `LedgerEvent` / `EventLedger` in `src/tokenshare/storage/events.py`.
+- [x] Implemented rebuildable SQLite materialized indexes in `src/tokenshare/storage/sqlite_index.py`.
+- [x] Added tests for Phase 1 protocol objects, artifact storage, event ledger, SQLite rebuild, and root task registration.
+- [x] Added `Doc/TechnicalDocument/2026-06-06-phase-1-code-map.md` to map Phase 1 code back to the field spec.
+- [x] Created the `conda` environment `tokenshare` with Python 3.12.13 and pytest 9.0.3.
+- [x] Added `requirements.md` with conda environment and dependency instructions.
+- [x] Updated `init.ps1` and `init.sh` to run through `conda run -n tokenshare python` by default.
+- [x] Researched LangGraph, AutoGen, CrewAI, LlamaIndex, DSPy Assertions, Decomposed Prompting, Tree of Thoughts, and Graph of Verification, then updated the main TDD to include structured decomposition proposals, layered AI-text validation, `MergePlan`, `MergeRecord`, and a structured report stub experiment.
+- [x] Synced AGENTS, README, agent navigation, feature roadmap, progress, and historical draft wording so the three-experiment V1 scope is consistent.
+- [x] Added a mandatory external-research materialization workflow: project-impacting online research must be saved locally and indexed before it is treated as design evidence.
+- [x] Added a mandatory PowerShell/UTF-8 workflow: routine repository reads and searches should use PowerShell with explicit UTF-8, and `rg` should not be the default search tool for this Windows workspace.
 
 ## Verification Evidence
 
@@ -42,6 +56,18 @@
 | Harness validation after relocation | `node C:\Users\32133\.codex\skills\harness-creator\scripts\validate-harness.mjs --target E:\TokenEcnomic\TokenShare` | Passed | Overall 100/100. |
 | Phase 1 field spec verification | `powershell -ExecutionPolicy Bypass -File E:\TokenEcnomic\TokenShare\init.ps1` | Passed | Re-run after adding field spec and navigation index; pytest ran `tests\test_package_layout.py` with `1 passed`. |
 | Harness validation after field spec | `node C:\Users\32133\.codex\skills\harness-creator\scripts\validate-harness.mjs --target E:\TokenEcnomic\TokenShare` | Passed | Overall 100/100. |
+| Phase 1 TDD red check | `PYTHONPATH=src python -m pytest tests/core/test_phase1_models.py tests/storage/test_artifact_store.py tests/storage/test_event_ledger.py tests/storage/test_sqlite_index.py tests/test_phase1_root_registration.py -q` | Failed as expected | Missing Phase 1 modules: `tokenshare.core.models`, `tokenshare.storage.artifacts`, `tokenshare.storage.events`. |
+| Phase 1 targeted verification | `PYTHONPATH=src python -m pytest tests/core/test_phase1_models.py tests/storage/test_artifact_store.py tests/storage/test_event_ledger.py tests/storage/test_sqlite_index.py tests/test_phase1_root_registration.py -q` | Passed | `6 passed in 0.41s`. |
+| Phase 1 full startup verification | `powershell -ExecutionPolicy Bypass -File .\init.ps1` | Passed | pytest collected 7 items; `7 passed in 0.21s`. |
+| Conda environment check | `conda run -n tokenshare python -c "import sys, sqlite3; print(sys.version); print(sqlite3.sqlite_version)"` | Passed | Python 3.12.13; SQLite 3.51.2. |
+| PowerShell conda startup verification | `powershell -ExecutionPolicy Bypass -File .\init.ps1` | Passed | Output included `Using conda environment: tokenshare`, `harness-files-ok`, and `7 passed in 0.17s`. |
+| Bash conda startup verification | `bash ./init.sh` | Passed | Output included `Using conda environment: tokenshare`, `harness-files-ok`, and `7 passed in 0.21s`. |
+| Semantic decomposition doc verification | `powershell -ExecutionPolicy Bypass -File .\init.ps1` | Passed | pytest collected 7 items; `7 passed in 0.17s`. |
+| Documentation consistency search | stale two-experiment/two-plugin wording, old Phase 1 status, old date, and factorization/Lean-only scope wording | Passed | No conflicting matches outside intentional historical context. |
+| Bash verification after doc update | `bash ./init.sh` | Passed | pytest collected 7 items; `7 passed in 0.18s`. |
+| External research workflow verification | `powershell -ExecutionPolicy Bypass -File .\init.ps1` | Passed | pytest collected 7 items; `7 passed in 0.17s`. |
+| External research workflow Bash verification | `bash ./init.sh` | Passed | pytest collected 7 items; `7 passed in 0.18s`. |
+| PowerShell/UTF-8 workflow verification | `powershell -ExecutionPolicy Bypass -File .\init.ps1` | Passed | pytest collected 7 items; `7 passed in 0.20s`. |
 
 ## Files Changed
 
@@ -49,16 +75,31 @@
 - `feature_list.json`
 - `progress.md`
 - `session-handoff.md`
+- `requirements.md`
 - `init.sh`
 - `init.ps1`
 - `README.md`
 - `Doc/TechnicalDocument/2026-06-03-tokenshare-protocol-technical-design.md`
+- `Doc/TechnicalDocument/2026-06-04-tokenshare-paper-module-map.md`
 - `.gitignore`
 - `reference_repos/README.md`
 - `src/tokenshare/`
 - `tests/`
 - `Doc/agent-navigation.md`
 - `Doc/TechnicalDocument/2026-06-05-phase-1-minimal-object-field-spec.md`
+- `Doc/TechnicalDocument/2026-06-06-phase-1-code-map.md`
+- `src/tokenshare/core/models.py`
+- `src/tokenshare/core/registration.py`
+- `src/tokenshare/core/__init__.py`
+- `src/tokenshare/storage/artifacts.py`
+- `src/tokenshare/storage/events.py`
+- `src/tokenshare/storage/sqlite_index.py`
+- `src/tokenshare/storage/__init__.py`
+- `tests/core/test_phase1_models.py`
+- `tests/storage/test_artifact_store.py`
+- `tests/storage/test_event_ledger.py`
+- `tests/storage/test_sqlite_index.py`
+- `tests/test_phase1_root_registration.py`
 
 ## Decisions Made
 
@@ -71,21 +112,30 @@
 - Use `Doc/agent-navigation.md` before deciding module ownership or using `reference_repos/`.
 - Use the TDD implementation phases as the initial feature roadmap.
 - Use `Doc/TechnicalDocument/2026-06-05-phase-1-minimal-object-field-spec.md` as the Phase 1 field contract before writing `TaskSpec`, `TaskUnit`, `ArtifactRef`, `LedgerEvent`, `EventLedger`, or SQLite index code.
+- Keep `ArtifactRef` in `tokenshare.core` as a protocol reference object; filesystem behavior stays in `tokenshare.storage.artifacts`.
+- Use `RootTaskRegistrar` as a narrow Phase 1 coordinator until the later `ProtocolEngine` / `TaskGraph` work exists.
+- SQLite index tables are rebuilt from `LedgerEvent` payloads and are not authoritative state.
+- Use `conda run -n tokenshare python` as the default verification runtime. The env can be overridden with `TOKENSHARE_CONDA_ENV`.
+- V1 now has three experiment families: factorization, Lean stub, and structured report stub. The third exists to test natural-language decomposition, weak verification, evidence coverage, and `MergePlan` merging.
+- Any online research that affects TokenShare design, code, tests, or docs must be materialized locally before being relied on: papers/reports are indexed in the paper map, open-source projects are pinned in `reference_repos/README.md`, and ordinary online docs record source URL, access date, local summary, and impact scope.
+- Routine file reading/searching in this workspace should use PowerShell with explicit UTF-8, for example `Get-Content -Encoding UTF8`, `Get-ChildItem`, and `Select-String`; avoid using `rg` as the default repository search path.
 
 ## Blockers / Risks
 
-- Object fields now have a Draft Phase 1 specification; implementation may still force small adjustments, especially around `ArtifactRef` module ownership, ID generation, and event payload snapshot shape.
-- SQLite table boundaries and JSONL event schemas have a minimal Draft; implementation must still verify that SQLite remains rebuildable from JSONL plus artifacts.
-- Factorization split strategy and Lean stub fixtures are open design points.
+- Phase 2 must preserve the same event-ledger-first boundary: state transitions, scheduling decisions, lease changes, and attempt changes should be written to JSONL events.
+- Phase 2 should not implement plugin verification/merge yet, but `TaskGraph`, states, and events must not block later `DecompositionProposal`, `VerificationReport`, `ExpansionDecision`, `MergePlan`, and `MergeRecord`.
+- Factorization split strategy, Lean stub fixtures, and structured report fixtures are open design points.
 - Real distributed runtime, real chain settlement, production AI APIs, and full Lean proving are explicitly out of scope for V1.
 
 ## Next Session Startup
 
 1. Read `AGENTS.md`.
 2. Read `feature_list.json` and `progress.md`.
-3. Run `.\init.ps1` on Windows or `./init.sh` in Bash.
-4. Continue feat-002.
+3. Run `.\init.ps1` on Windows or `./init.sh` in Bash. Both default to `conda` env `tokenshare`.
+4. For routine repository reads/searches, follow `Doc/agent-navigation.md` section 4: PowerShell plus explicit UTF-8, no default `rg`.
+5. If using online research, first follow `Doc/agent-navigation.md` section 6 to download/pull and index the source material.
+6. Continue feat-003.
 
 ## Recommended Next Step
 
-- Start Phase 1 implementation from `Doc/TechnicalDocument/2026-06-05-phase-1-minimal-object-field-spec.md`: create concrete modules inside the existing package layout, then implement root task registration, artifact save/read/hash, and JSONL event append/read.
+- Start Phase 2 from the TDD sections on `TaskUnit`, `Lease`, and `Attempt` state machines. Add tests first for ready-node scheduling, lease expiry returning tasks to `Ready`, event-ledger recording of all state transitions, and graph APIs that can later accept expansion/merge metadata without embedding plugin domain logic.

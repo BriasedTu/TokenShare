@@ -3,9 +3,25 @@ set -e
 
 echo "=== TokenShare Startup Verification ==="
 
-python -c "import json, sqlite3; print('python-json-sqlite-ok')"
+CONDA_ENV="${TOKENSHARE_CONDA_ENV:-tokenshare}"
+if command -v conda >/dev/null 2>&1; then
+  CONDA_CMD="conda"
+elif command -v conda.exe >/dev/null 2>&1; then
+  CONDA_CMD="conda.exe"
+elif [ -x /mnt/c/Users/32133/anaconda3/Scripts/conda.exe ]; then
+  CONDA_CMD="/mnt/c/Users/32133/anaconda3/Scripts/conda.exe"
+else
+  echo "Conda executable not found. Install conda or set PATH so the tokenshare environment can be used."
+  exit 1
+fi
 
-python - <<'PY'
+PYTHON=("$CONDA_CMD" run -n "$CONDA_ENV" python)
+
+echo "Using conda environment: $CONDA_ENV"
+
+"${PYTHON[@]}" -c "import json, sqlite3; print('python-json-sqlite-ok')"
+
+CHECK_SCRIPT=$(cat <<'PY'
 import json
 from pathlib import Path
 
@@ -31,11 +47,26 @@ if not any(feature.get("status") == "in-progress" for feature in features):
 
 print("harness-files-ok")
 PY
+)
+ENCODED_CHECK=$(printf '%s' "$CHECK_SCRIPT" | base64 | tr -d '\n')
+"${PYTHON[@]}" -c "import base64; exec(base64.b64decode('$ENCODED_CHECK').decode('utf-8'))"
 
-python -m compileall -q -x "reference_repos" .
+"${PYTHON[@]}" -m compileall -q -x "reference_repos" .
 
 if [ -d tests ]; then
-  PYTHONPATH="src${PYTHONPATH:+:$PYTHONPATH}" python -m pytest tests
+  if [[ "$CONDA_CMD" == *.exe || "$CONDA_CMD" == */conda.exe ]]; then
+    if command -v wslpath >/dev/null 2>&1; then
+      PROJECT_ROOT_FOR_PYTHON="$(wslpath -w "$(pwd)")"
+    elif command -v cygpath >/dev/null 2>&1; then
+      PROJECT_ROOT_FOR_PYTHON="$(cygpath -w "$(pwd)")"
+    else
+      PROJECT_ROOT_FOR_PYTHON="$(pwd)"
+    fi
+    SRC_FOR_PYTHON="${PROJECT_ROOT_FOR_PYTHON}\\src"
+    "${PYTHON[@]}" -c "import sys, pytest; sys.path.insert(0, r'''$SRC_FOR_PYTHON'''); raise SystemExit(pytest.main(['tests']))"
+  else
+    PYTHONPATH="src${PYTHONPATH:+:$PYTHONPATH}" "${PYTHON[@]}" -m pytest tests
+  fi
 else
   echo "No tests/ directory yet; skipping pytest during startup phase."
 fi

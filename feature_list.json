@@ -6,7 +6,7 @@
     "Doc/TechnicalDocument/2026-06-05-phase-1-minimal-object-field-spec.md",
     "Doc/TechnicalDocument/2026-06-02-tokenshare-protocol-kernel-revised-draft.md"
   ],
-  "active_feature": "feat-002",
+  "active_feature": "feat-003",
   "features": [
     {
       "id": "feat-001",
@@ -28,13 +28,13 @@
       "dependencies": [
         "feat-001"
       ],
-      "status": "in-progress",
+      "status": "done",
       "done_criteria": [
         "Root task can be registered",
         "Root input artifact can be saved and content-hash checked",
         "Event ledger can append and read events"
       ],
-      "evidence": "2026-06-04: Design prerequisite completed for Phase 1 technology stack. Updated Doc/TechnicalDocument/2026-06-03-tokenshare-protocol-technical-design.md to choose Python 3.12+, SQLite, JSON, JSONL, and local filesystem storage for V1; external workflow/distributed systems remain design references only. Verification passed with .\\init.ps1. 2026-06-04: Added reference_repos/ with shallow sparse source snapshots for package-layout research: Temporal Python SDK, Luigi, cwltool, Prefect, and Dagster. Updated startup compileall to exclude reference_repos/ because it is external reference source, not TokenShare runtime code. 2026-06-05: Created initial src/tokenshare package layout and mirrored tests skeleton; updated init scripts so pytest runs with PYTHONPATH=src now that tests/ exists. Verification passed with powershell -ExecutionPolicy Bypass -File E:\\TokenEcnomic\\TokenShare\\init.ps1; pytest ran tests\\test_package_layout.py with 1 passed. 2026-06-05: Added Doc/agent-navigation.md to document fact-source priority, module routing, and reference_repo usage rules. 2026-06-05: Moved agent navigation out of Doc/TechnicalDocument/ into Doc/agent-navigation.md and kept it navigation-only; verification passed with init.ps1 and harness validation returned Overall 100/100. 2026-06-05: Added Doc/TechnicalDocument/2026-06-05-phase-1-minimal-object-field-spec.md to distinguish protocol object names, future class names, object fields, JSON keys, event types, and SQLite materialized-index table names; updated Doc/agent-navigation.md to index the new field spec. Verification passed with powershell -ExecutionPolicy Bypass -File .\\init.ps1; pytest ran tests\\test_package_layout.py with 1 passed. Harness validation returned Overall 100/100."
+      "evidence": "2026-06-04: Design prerequisite completed for Phase 1 technology stack. Updated Doc/TechnicalDocument/2026-06-03-tokenshare-protocol-technical-design.md to choose Python 3.12+, SQLite, JSON, JSONL, and local filesystem storage for V1; external workflow/distributed systems remain design references only. Verification passed with .\\init.ps1. 2026-06-04: Added reference_repos/ with shallow sparse source snapshots for package-layout research: Temporal Python SDK, Luigi, cwltool, Prefect, and Dagster. Updated startup compileall to exclude reference_repos/ because it is external reference source, not TokenShare runtime code. 2026-06-05: Created initial src/tokenshare package layout and mirrored tests skeleton; updated init scripts so pytest runs with PYTHONPATH=src now that tests/ exists. Verification passed with powershell -ExecutionPolicy Bypass -File E:\\TokenEcnomic\\TokenShare\\init.ps1; pytest ran tests\\test_package_layout.py with 1 passed. 2026-06-05: Added Doc/agent-navigation.md to document fact-source priority, module routing, and reference_repo usage rules. 2026-06-05: Moved agent navigation out of Doc/TechnicalDocument/ into Doc/agent-navigation.md and kept it navigation-only; verification passed with init.ps1 and harness validation returned Overall 100/100. 2026-06-05: Added Doc/TechnicalDocument/2026-06-05-phase-1-minimal-object-field-spec.md to distinguish protocol object names, future class names, object fields, JSON keys, event types, and SQLite materialized-index table names; updated Doc/agent-navigation.md to index the new field spec. Verification passed with powershell -ExecutionPolicy Bypass -File .\\init.ps1; pytest ran tests\\test_package_layout.py with 1 passed. Harness validation returned Overall 100/100. 2026-06-06: Implemented Phase 1 protocol base objects and storage: ArtifactRef, ProtocolConfig, TaskSpec, TaskUnit, TaskRelation, ClientRecord, RootTaskRegistrar, ArtifactStore, LedgerEvent/EventLedger, and SQLiteMaterializedIndex. Added Doc/TechnicalDocument/2026-06-06-phase-1-code-map.md to map code to the Phase 1 field spec. TDD red run failed as expected with missing Phase 1 modules; implementation verification passed with powershell -ExecutionPolicy Bypass -File .\\init.ps1, pytest collected 7 items and all 7 passed. 2026-06-06: Created conda environment tokenshare with Python 3.12.13 and pytest 9.0.3, added requirements.md, and updated init.ps1/init.sh to run through conda run -n tokenshare python. Verification passed with both powershell -ExecutionPolicy Bypass -File .\\init.ps1 and bash ./init.sh; both printed Using conda environment: tokenshare and pytest 7 passed."
     },
     {
       "id": "feat-003",
@@ -43,18 +43,18 @@
       "dependencies": [
         "feat-002"
       ],
-      "status": "not-started",
+      "status": "in-progress",
       "done_criteria": [
         "Ready nodes can be scheduled",
         "Expired leases return tasks to Ready when retry policy permits",
         "All state transitions are written to the event ledger"
       ],
-      "evidence": ""
+      "evidence": "2026-06-06: Activated as the next feature after feat-002 completion; implementation not started yet. Startup harness now uses conda environment tokenshare. 2026-06-06: Updated design documents after external research so Phase 2 TaskGraph/state-machine work preserves future boundaries for DecompositionProposal, VerificationReport, ExpansionDecision, MergePlan, and MergeRecord. 2026-06-06: Added mandatory external-research materialization workflow: project-impacting online research must be saved locally and indexed before it is treated as design evidence. 2026-06-06: Added mandatory PowerShell/UTF-8 workflow: routine repository reads and searches should use PowerShell with explicit UTF-8, and rg should not be the default search tool; Phase 2 implementation still not started."
     },
     {
       "id": "feat-004",
       "name": "Phase 3 - Plugin and Executor Contracts",
-      "description": "Implement PluginRegistry, ExecutorRegistry, ExecutionRequest, ExecutionSubmission, MockAIExecutor, and deterministic executor boundary.",
+      "description": "Implement PluginRegistry, ExecutorRegistry, ExecutionRequest, ExecutionSubmission, MockAIExecutor, deterministic executor boundary, and AI output artifact contracts.",
       "dependencies": [
         "feat-003"
       ],
@@ -62,35 +62,37 @@
       "done_criteria": [
         "Plugin versions are fixed during a run",
         "Executors receive a unified request and return a unified submission",
-        "AI-style path can persist PromptPackage and RawModelOutput references"
+        "AI-style path can persist PromptPackage, RawModelOutput, and ParsedModelOutput references"
       ],
       "evidence": ""
     },
     {
       "id": "feat-005",
       "name": "Phase 4 - Verification, Canonical Output, and Expansion",
-      "description": "Implement common data checks, plugin-domain verification orchestration, first_verified_bundle selection, ExpansionDecision, and atomic graph updates.",
+      "description": "Implement common data checks, plugin-domain verification orchestration, VerificationReport, first_verified_bundle selection, DecompositionProposal, ExpansionDecision, MergePlan, and atomic graph updates.",
       "dependencies": [
         "feat-004"
       ],
       "status": "not-started",
       "done_criteria": [
         "Only one canonical output bundle can bind per TaskUnit",
-        "expand creates child nodes and dependency edges atomically",
-        "Invalid expansion does not mutate the task graph"
+        "expand records a structured proposal and expansion decision before creating child nodes and dependency edges atomically",
+        "Invalid expansion does not mutate the task graph",
+        "Natural-language candidate outputs pass schema, evidence-reference, required-output coverage, and plugin-domain validation before binding"
       ],
       "evidence": ""
     },
     {
       "id": "feat-006",
       "name": "Phase 5 - Merge, Contribution, and Sandbox Settlement",
-      "description": "Implement plugin merge orchestration, ContributionRecord state machine, SettlementEngine, sandbox reward formula, and subtree pruning.",
+      "description": "Implement MergeCoordinator, plugin merge orchestration, MergeRecord, ContributionRecord state machine, SettlementEngine, sandbox reward formula, and subtree pruning.",
       "dependencies": [
         "feat-005"
       ],
       "status": "not-started",
       "done_criteria": [
         "Canonical child outputs can merge into parent output",
+        "MergePlan required slots are all covered by canonical child outputs and child output hashes are recorded",
         "Intermediate contribution can settle after downstream success",
         "Root completion generates exactly one sandbox settlement"
       ],
@@ -99,7 +101,7 @@
     {
       "id": "feat-007",
       "name": "Phase 6 - Experiments, Fault Simulation, and Metrics",
-      "description": "Implement factorization plugin, Lean stub plugin, SimulationProfile, SimulationWrapper, ExperimentRunner, and MetricsCollector.",
+      "description": "Implement factorization plugin, Lean stub plugin, structured report stub plugin, SimulationProfile, SimulationWrapper, ExperimentRunner, and MetricsCollector.",
       "dependencies": [
         "feat-006"
       ],
@@ -107,6 +109,7 @@
       "done_criteria": [
         "Factorization experiment completes end to end",
         "Lean stub completes one direct proof path and one decomposition path",
+        "Structured report stub completes section decomposition, section validation, and final report merge",
         "Five fault profiles produce expected recovery behavior",
         "Metrics report is generated"
       ],

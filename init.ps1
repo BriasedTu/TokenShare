@@ -2,8 +2,20 @@ $ErrorActionPreference = "Stop"
 
 Write-Host "=== TokenShare Startup Verification ==="
 
-python -c "import json, sqlite3; print('python-json-sqlite-ok')"
-if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+$CondaEnv = if ($env:TOKENSHARE_CONDA_ENV) { $env:TOKENSHARE_CONDA_ENV } else { "tokenshare" }
+Write-Host "Using conda environment: $CondaEnv"
+
+function Invoke-TokenSharePython {
+    param(
+        [Parameter(ValueFromRemainingArguments = $true)]
+        [string[]] $PythonArgs
+    )
+
+    conda run -n $CondaEnv python @PythonArgs
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+}
+
+Invoke-TokenSharePython -c "import json, sqlite3; print('python-json-sqlite-ok')"
 
 $check = @'
 import json
@@ -32,16 +44,14 @@ if not any(feature.get("status") == "in-progress" for feature in features):
 print("harness-files-ok")
 '@
 
-$check | python -
-if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+$encodedCheck = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($check))
+Invoke-TokenSharePython -c "import base64; exec(base64.b64decode('$encodedCheck').decode('utf-8'))"
 
-python -m compileall -q -x "reference_repos" .
-if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+Invoke-TokenSharePython -m compileall -q -x "reference_repos" .
 
 if (Test-Path -LiteralPath "tests") {
     $env:PYTHONPATH = "src;$env:PYTHONPATH"
-    python -m pytest tests
-    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    Invoke-TokenSharePython -m pytest tests
 } else {
     Write-Host "No tests/ directory yet; skipping pytest during startup phase."
 }

@@ -2,9 +2,11 @@
 
 来源文档：`2026-06-02-tokenshare-protocol-kernel-revised-draft.md`
 
-本文件只收录草稿中涉及的论文、技术报告或正式论文 PDF。Airflow、Argo Workflows、Temporal、Kubernetes、Ray 文档、Apache Beam、Nextflow、Chaos Mesh、OpenTelemetry GenAI、IMClaw 等为工程文档、规范或公开站点，不作为论文 OCR 条目收录。
+本文件收录已经影响 TokenShare 设计的论文、技术报告或正式论文 PDF。Airflow、Argo Workflows、Temporal、Kubernetes、Ray 文档、Apache Beam、Nextflow、Chaos Mesh、OpenTelemetry GenAI、IMClaw 等为工程文档、规范或公开站点，不作为论文 OCR 条目收录。
 
 论文 TeX 存放目录：`tokenshare-paper-tex/`
+
+自 2026-06-06 起，任何联网查到并被用于修改 TokenShare 设计、代码、测试或文档的新论文/技术报告，都必须先下载或转换为本地可复查材料，再补充到本文件。新增条目至少记录：论文标题、来源 URL、本地文件路径、下载或转换日期、影响到的模块/章节，以及借鉴方式。无法合法保存全文时，必须记录原因、可访问元数据、本地摘要和影响范围。
 
 ## 模块到论文映射
 

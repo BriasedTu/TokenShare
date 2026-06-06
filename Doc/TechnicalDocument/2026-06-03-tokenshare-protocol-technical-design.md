@@ -6,7 +6,7 @@
 | 文档类型 | 技术设计文档 |
 | 状态 | Draft |
 | 创建日期 | 2026-06-03 |
-| 最后更新 | 2026-06-05 |
+| 最后更新 | 2026-06-06 |
 | Owner | TokenShare 研究项目负责人 |
 | 适用阶段 | 本地可复现研究原型 |
 | 关联设计稿 | `2026-06-02-tokenshare-protocol-kernel-revised-draft.md` |
@@ -14,8 +14,8 @@
 ## 1. 背景
 
 TokenShare 的第一阶段目标不是实现某一个具体任务程序，而是实现一个可运行、可审计、
-可扩展的协议框架。整数分解和 Lean 证明只是两个实验插件，用于验证协议框架能否
-承载不同类型的任务。
+可扩展的协议框架。整数分解、Lean stub 证明和结构化报告只是三类实验插件，用于验证
+协议框架能否承载不同类型的任务。
 
 协议需要把一个大型任务转化为可递归拆分、可分派、可验证、可合并、可结算、可重放
 的任务图。第一版不追求真实分布式部署、链上结算或生产级安全，而是先在本地环境中
@@ -61,7 +61,7 @@ AI 或未来的人类 worker 可能产生不可重现的输出。协议不能在
 TokenShare 的核心主张：复杂任务可以通过统一协议被递归拆分、分派、验证、合并和
 结算。
 
-V1 的技术目标是形成一个最小但完整的本地协议内核。它应能跑通至少两个插件实验，并
+V1 的技术目标是形成一个最小但完整的本地协议内核。它应能跑通三类插件实验，并
 通过事件日志重建最终状态。
 
 ## 3. 范围
@@ -176,6 +176,9 @@ graph LR
 | `LeaseManager` | 协议框架 | 管理认领、租约、心跳、过期、释放、撤销和 fencing。 |
 | `ArtifactStore` | 协议框架 | 保存和读取输入、输出、日志、原始执行结果，提供内容哈希校验。 |
 | `EventLedger` | 协议框架 | 写入 append-only 事件，支持状态重放和审计重放。 |
+| `VerificationOrchestrator` | 协议框架 | 先执行结构、schema、artifact 完整性等通用检查，再调用插件领域验证，并把验证报告写入事件。 |
+| `ExpansionCoordinator` | 协议框架 | 接收插件返回的结构化拆分提案和展开判定，校验图约束后原子写入子节点与依赖边。 |
+| `MergeCoordinator` | 协议框架 | 根据固定 `MergePlan` 收集正式子输出，检查覆盖率和来源 hash 后调用插件合并。 |
 | `SettlementEngine` | 协议框架 | 根据贡献记录和预算策略生成 sandbox 结算。 |
 | `PluginRegistry` | 协议框架 | 固定插件标识、版本、schema、策略和本地实现。 |
 | `ExecutorRegistry` | 协议框架 | 固定可用执行器类别、版本、能力和调用入口。 |
@@ -212,7 +215,11 @@ graph LR
 | `Attempt` | 一次执行尝试。 | attempt 标识、租约、客户端、状态、候选输出、日志、环境摘要。 |
 | `ArtifactRef` | 数据引用。 | artifact 标识、类型、URI、内容哈希、schema、来源、创建时间。 |
 | `VerificationResult` | 验证记录。 | 判定、理由、证据、验证器信息、关联 attempt。 |
-| `ExpansionDecision` | 完成或展开判定。 | `complete` 或 `expand`、输入 artifact、子任务描述、依赖、合并要求。 |
+| `VerificationReport` | 多层验证报告。 | schema 检查、artifact 完整性、证据覆盖、领域验证和审计验证的分层结果。 |
+| `DecompositionProposal` | AI 或确定性逻辑生成的结构化拆分提案。 | 候选子任务、依赖、required outputs、merge slot、来源 artifact、提案生成器。 |
+| `ExpansionDecision` | 完成或展开判定。 | `complete` 或 `expand`、输入 artifact、已验证提案、子任务描述、依赖、合并计划引用。 |
+| `MergePlan` | 父节点后续合并计划。 | 必需子输出、slot 映射、合并策略、验证要求、允许缺失策略。 |
+| `MergeRecord` | 一次合并事实。 | 使用的 child canonical output hash、merge artifact、验证结果、失败原因。 |
 | `ContributionRecord` | 贡献追踪。 | 贡献类型、关联 attempt、后续成功条件、结算状态。 |
 | `SettlementRecord` | sandbox 结算事实。 | 奖励、惩罚、理由、幂等键、结算状态。 |
 | `LedgerEvent` | append-only 事件。 | 事件类型、时间、对象引用、因果链路、幂等键、载荷、哈希链。 |
@@ -226,6 +233,8 @@ graph LR
 | `TaskSchema` | 声明根输入、子任务输入、命名输出和中间结果格式。 |
 | `VerificationRule` | 描述任务域验证规则和验证环境要求。 |
 | `MergeRule` | 描述父节点何时可合并、如何合并、合并输出格式。 |
+| `OutputContract` | 描述 AI 或执行器输出必须满足的结构、证据和引用要求。 |
+| `TextValidationProfile` | 面向自然语言任务的弱验证配置，例如 checklist、引用完整性、覆盖率和禁止无来源断言。 |
 
 ### 6.3 执行器对象
 
@@ -235,6 +244,7 @@ graph LR
 | `ExecutionSubmission` | 执行器返回协议的统一提交信封。 |
 | `PromptPackage` | AI 执行路径使用的 prompt 封装。 |
 | `RawModelOutput` | AI 执行路径的原始模型输出。 |
+| `ParsedModelOutput` | 从原始 AI 文本中解析出的结构化候选输出。 |
 | `SimulationProfile` | 本地实验的故障模拟配置。 |
 
 ### 6.4 新增闭环支撑对象
@@ -245,6 +255,9 @@ graph LR
 | `PluginRegistry` | 因为事件日志需要固定插件版本，并在运行和重放时找到同一实现。 | 协议框架 |
 | `ExecutorRegistry` | 因为调度器需要知道哪些执行器可用、版本是什么、能力是什么。 | 协议框架 |
 | `Scheduler` | 因为 Ready 任务必须被自动分派给满足能力要求的客户端。 | 协议框架 |
+| `VerificationOrchestrator` | 因为 AI 文本、程序输出和 proof patch 都必须先通过统一结构检查，再进入插件领域验证。 | 协议框架 |
+| `ExpansionCoordinator` | 因为拆分提案不能直接改图，必须先落为 artifact，再由协议检查规模、引用、无环和幂等边界。 | 协议框架 |
+| `MergeCoordinator` | 因为合并必须证明所有 required slot 均由正式子输出填充，且 merge artifact 可追踪来源 hash。 | 协议框架 |
 | `ExperimentRunner` | 因为 V1 要可复现实验，而不是只运行单次手工流程。 | 实验基础设施 |
 | `MetricsCollector` | 因为研究原型必须输出 completion、replay、failure、settlement 指标。 | 协议框架/实验 |
 
@@ -274,17 +287,21 @@ sequenceDiagram
     E->>C: ExecutionRequest
     C->>E: ExecutionSubmission
     E->>A: store(candidate outputs/logs)
+    E->>E: common schema/artifact/evidence checks
     E->>P: verify(candidate outputs)
     E->>L: VERIFICATION_RECORDED
     E->>L: CANONICAL_OUTPUTS_BOUND
-    E->>P: decide complete or expand
+    E->>P: create decomposition proposal or completion decision
+    E->>A: store(DecompositionProposal / ExpansionDecision)
     alt complete
         E->>L: TASK_UNIT_STATE_CHANGED(Completed)
     else expand
-        P->>E: child_specs + dependencies + merge_requirements
+        P->>E: verified child_specs + dependencies + MergePlan
+        E->>E: graph limits, reference, acyclicity, and merge-plan checks
         E->>L: TASK_EXPANDED
     end
-    E->>P: merge when child outputs satisfy merge rule
+    E->>P: merge when child outputs satisfy MergePlan
+    E->>A: store(MergeRecord / merge output)
     E->>L: MERGE_RECORDED
     E->>M: settle eligible contributions
     M->>L: SETTLEMENT_RECORDED
@@ -301,14 +318,33 @@ sequenceDiagram
 5. `Scheduler` 扫描 Ready 节点并匹配客户端能力。
 6. `LeaseManager` 创建 `Lease` 和 `Attempt`。
 7. `Executor` 接收 `ExecutionRequest` 并返回 `ExecutionSubmission`。
-8. 协议保存候选输出和日志。
-9. 协议执行通用数据检查并调用插件领域验证。
+8. 协议保存候选输出、原始输出、日志和解析后的结构化输出。
+9. `VerificationOrchestrator` 执行通用数据检查，再调用插件领域验证。
 10. 协议按 `first_verified_bundle` 绑定正式输出束。
-11. 插件返回 `complete` 或 `expand`。
-12. `complete` 节点进入完成或向上合并流程。
-13. `expand` 节点生成子任务和依赖，协议原子写入图更新。
-14. 根任务完成后，协议生成贡献资格并执行 sandbox 结算。
-15. `MetricsCollector` 从事件日志生成实验报告。
+11. 插件基于正式输出返回 `complete` 或结构化 `DecompositionProposal`。
+12. `ExpansionCoordinator` 将提案保存为 artifact，执行 schema、规模、引用、无环和 merge-plan 检查。
+13. `complete` 节点进入完成或向上合并流程。
+14. `expand` 节点生成子任务、依赖和 `MergePlan`，协议原子写入图更新。
+15. `MergeCoordinator` 在正式子输出满足 `MergePlan` 后调用插件合并，保存 `MergeRecord` 和合并输出。
+16. 根任务完成后，协议生成贡献资格并执行 sandbox 结算。
+17. `MetricsCollector` 从事件日志生成实验报告。
+
+### 7.3 AI 文本任务的结构化边界
+
+AI 生成的自然语言不能直接修改任务图、直接通过验证或直接合并为父节点结果。所有 AI
+文本路径都必须经过以下边界：
+
+1. `RawModelOutput` 保存原始文本、模型配置摘要、prompt hash 和环境摘要。
+2. 插件解析原始文本，生成 `ParsedModelOutput` 或 `DecompositionProposal` artifact。
+3. 协议先校验结构、schema、artifact 引用和内容 hash。
+4. 插件执行领域验证；自然语言任务至少要产生 checklist、证据引用、覆盖率和无来源断言检查。
+5. 只有通过验证的候选输出才能绑定为 canonical output。
+6. 合并必须依据 `MergePlan`，并在 `MergeRecord` 中记录所有 child output hash。
+
+这种边界吸收了 Decomposed Prompting 的“子任务可替换为 prompt、模型或符号函数”、Tree of
+Thoughts 的“候选思路可搜索和剪枝”、CrewAI guardrails 的“输出先验证再传递”、LlamaIndex
+structured output 的“Pydantic/schema 化结果”和 Graph of Verification 的“按 DAG 粒度逐步验证”
+思想，但不把这些外部框架作为 V1 runtime 依赖。
 
 ## 8. 关键接口契约
 
@@ -332,9 +368,10 @@ sequenceDiagram
 | 声明 schema | 任务类型 | `TaskSchema` | 命名输出必须有 schema。 |
 | 生成执行说明 | `TaskUnit`、上下文 | 执行说明 | 可按执行器类别不同而不同。 |
 | 解析原始输出 | 原始输出引用 | 候选命名输出 | 只产生候选结果。 |
-| 验证候选输出 | `TaskUnit`、候选输出 | `VerificationResult` | 不绑定正式输出。 |
-| 判断完成或展开 | 正式输出束 | `ExpansionDecision` | 只能返回 `complete` 或 `expand`。 |
-| 合并正式子输出 | 父节点、正式子输出集合 | 父节点候选输出 | 由协议编排和记录。 |
+| 验证候选输出 | `TaskUnit`、候选输出 | `VerificationResult` / `VerificationReport` | 不绑定正式输出；必须区分 schema、证据、领域和审计层。 |
+| 生成拆分提案 | 正式输出束、策略参数 | `DecompositionProposal` artifact | 只描述候选 child、依赖和 merge slot，不直接改图。 |
+| 判断完成或展开 | 正式输出束、已验证提案 | `ExpansionDecision` | 只能返回 `complete` 或 `expand`；`expand` 必须引用 `MergePlan`。 |
+| 合并正式子输出 | 父节点、`MergePlan`、正式子输出集合 | 父节点候选输出 / `MergeRecord` | 由协议编排和记录；必须记录输入 hash 覆盖情况。 |
 
 ### 8.3 执行器契约
 
@@ -354,6 +391,7 @@ sequenceDiagram
 - 租约标识和 fencing 上下文。
 - 执行结果类别。
 - 候选命名输出引用或原始输出引用。
+- 结构化解析输出引用，或声明无法解析的错误。
 - 日志引用。
 - 环境摘要。
 - 用量与成本摘要。
@@ -476,10 +514,15 @@ Invalidated
 | `LEASE_STATE_CHANGED` | 保存租约签发、续期、释放、过期和撤销。 |
 | `ATTEMPT_STATE_CHANGED` | 保存 attempt 生命周期变化。 |
 | `SUBMISSION_RECORDED` | 保存候选输出、日志、环境摘要和来源 attempt。 |
+| `RAW_OUTPUT_STORED` | 保存 AI 原始文本、程序 stdout/stderr 或工具轨迹的 artifact 引用。 |
+| `PARSED_OUTPUT_RECORDED` | 保存从原始输出解析出的结构化候选结果或解析失败报告。 |
 | `VERIFICATION_RECORDED` | 保存验证结论、证据和验证器信息。 |
 | `CANONICAL_OUTPUTS_BOUND` | 原子记录正式输出束绑定。 |
-| `TASK_EXPANDED` | 保存展开输入、插件版本、子节点和依赖关系。 |
-| `MERGE_RECORDED` | 保存合并输入、插件版本、合并输出和验证结果。 |
+| `DECOMPOSITION_PROPOSAL_RECORDED` | 保存 AI 或确定性逻辑生成的结构化拆分提案 artifact 引用。 |
+| `EXPANSION_DECISION_RECORDED` | 保存 `complete` / `expand` 判定、插件版本、依据和幂等键。 |
+| `MERGE_PLAN_RECORDED` | 保存父节点后续合并所需 slot、child output 要求和合并策略。 |
+| `TASK_EXPANDED` | 原子保存展开输入、插件版本、子节点、依赖关系和 `MergePlan` 引用。 |
+| `MERGE_RECORDED` | 保存合并输入 hash、插件版本、合并输出、验证结果和覆盖率。 |
 | `RECOVERY_ACTION_RECORDED` | 保存重试、重新调度、影子执行和终止恢复原因。 |
 | `CONTRIBUTION_STATE_CHANGED` | 保存贡献创建、具备资格和失效。 |
 | `SETTLEMENT_RECORDED` | 保存恰好一次 sandbox 结算。 |
@@ -601,6 +644,27 @@ V1 设计：
 
 Lean V1 是 stub，不要求真实 theorem proving 成功率。
 
+### 14.3 结构化报告 Stub 插件
+
+目标：专门验证大型自然语言任务的“拆分、AI 文本验证、合并”路径，弥补整数分解和
+Lean stub 对普通文字任务覆盖不足的问题。
+
+V1 设计：
+
+- 根输入包含 report topic、目标 section 列表、证据来源 fixture 和输出 schema。
+- 拆分策略将报告拆为 introduction、method、evidence、risk、conclusion 等 section
+  `TaskUnit`，并为父节点生成 `MergePlan`。
+- `MockAIExecutor` 使用 fixture 生成 section 草稿、缺失 section、伪造引用和格式错误等输出。
+- 插件把原始文本解析为 `ParsedModelOutput`，要求每个 section 输出包含 `section_id`、
+  `claims`、`evidence_refs`、`assumptions` 和 `open_questions`。
+- 验证器执行 schema 检查、证据引用存在性、required section 覆盖率、禁止无来源断言和
+  merge slot 完整性检查。
+- 合并规则按 `MergePlan` 收集 canonical section outputs，生成 final report artifact，并记录所有
+  child output hash。
+
+该插件仍是本地 fixture / stub，不接入真实生产 AI API。它的价值是让 V1 不只证明强验证任务
+和 proof-like 任务，也覆盖自然语言大型任务中最容易出错的拆分、验证和合并边界。
+
 ## 15. 测试策略
 
 ### 15.1 单元测试
@@ -612,6 +676,9 @@ Lean V1 是 stub，不要求真实 theorem proving 成功率。
 | `ArtifactStore` | 写入、读取、哈希校验、缺失处理。 |
 | `PluginRegistry` | 插件版本固定、schema 查询、策略查询。 |
 | `ExecutorRegistry` | 执行器能力匹配、版本记录。 |
+| `VerificationOrchestrator` | schema 检查、证据引用检查、验证报告分层和失败留痕。 |
+| `ExpansionCoordinator` | `DecompositionProposal` 校验、无环检查、规模限制和原子图更新。 |
+| `MergeCoordinator` | `MergePlan` slot 覆盖、child output hash 绑定和合并失败留痕。 |
 | `SettlementEngine` | 奖励公式、预算缩放、幂等结算。 |
 | `EventLedger` | append-only、幂等键、事件哈希链。 |
 
@@ -621,8 +688,10 @@ Lean V1 是 stub，不要求真实 theorem proving 成功率。
 |---|---|
 | 根任务到最终结果 | 验证完整主循环。 |
 | 结果驱动展开 | 验证 `expand` 后原子创建子节点和依赖。 |
+| AI 拆分提案验证 | 原始文本先落为 proposal artifact，结构化校验通过后才能写图。 |
 | 正式输出唯一 | 多 attempt 提交时只绑定一个正式输出束。 |
-| 合并流程 | 子节点正式输出齐备后父节点完成。 |
+| 合并流程 | 子节点正式输出齐备后，按 `MergePlan` 合并为父节点候选输出。 |
+| 合并覆盖率 | 检查所有 required slot 均由 canonical child output 填充且来源 hash 被记录。 |
 | 状态重放 | 从 JSONL 重建最终状态。 |
 | 审计重放 | 使用保存的 artifact 和插件版本复核验证结果。 |
 | 结算幂等 | 重放不产生重复 `SettlementRecord`。 |
@@ -635,6 +704,9 @@ Lean V1 是 stub，不要求真实 theorem proving 成功率。
 | slow | 可触发影子 attempt。 |
 | executor_error | attempt 失败并有界重试。 |
 | invalid_output | 验证拒绝，保留证据。 |
+| invalid_decomposition | 提案解析或图约束失败，保留 proposal 和验证报告，不写入非法图。 |
+| incomplete_merge | 缺少 required child output 或 slot 覆盖不足，父节点不进入 Completed。 |
+| hallucinated_evidence | 自然语言输出引用不存在 artifact 或未授权来源，验证拒绝。 |
 | late_submission | 记录审计，不覆盖正式输出。 |
 | missing artifact | 按恢复边界处理。 |
 | plugin invalid expansion | 当前节点失败，不写入非法图。 |
@@ -645,6 +717,8 @@ V1 通过条件：
 
 - 整数分解实验能完成根任务并产生最终 artifact。
 - Lean stub 实验能完成至少一条 direct proof 路径和一条 decomposition 路径。
+- 结构化报告 stub 能完成 section 拆分、section 验证和 final report 合并，并拒绝缺失 section、
+  伪造引用和格式错误输出。
 - 事件日志能重放出相同最终任务状态。
 - sandbox 结算无重复。
 - 五类模拟故障均能产生预期恢复行为。
@@ -815,6 +889,12 @@ tests/
 | Ray | 动态任务、资源调度、失败重试和对象恢复。 | Ray 的自动重执行适合确定性任务；TokenShare 的 AI / 人类输出不能在恢复时重新生成来替代持久化结果。 |
 | BOINC | 不稳定客户端、deadline、重复执行、canonical result 和 credit。 | BOINC 是志愿计算平台；V1 只本地模拟，不直接引入其服务端栈。 |
 | SQLite | 单机嵌入式数据库、轻量查询、WAL 模式。 | 适合作为本地索引；不承担跨机器协调或网络文件系统上的分布式状态。 |
+| LangGraph | 长生命周期 stateful agent、持久化 checkpoint、human-in-the-loop interrupt。 | V1 不引入 LangGraph runtime；借鉴其“每个暂停点必须有可恢复状态”的原则，落实到 JSONL event 和 artifact。 |
+| AutoGen Group Chat | 多 agent 顺序协作、manager 选择下一发言者、可递归嵌套 group chat。 | V1 不用聊天线程作为状态源；借鉴其“复杂任务可动态拆给角色明确的子 agent”，但必须转成结构化 `TaskUnit`。 |
+| CrewAI Task Guardrails | task output 可使用函数或 LLM guardrail 验证，失败后给反馈并重试。 | V1 不把 guardrail 结果当最终事实；借鉴“输出传递前验证”和“失败反馈”机制，落到 `VerificationReport`。 |
+| LlamaIndex Structured Output | agent/workflow 可以使用 Pydantic schema 或 structured output function。 | V1 不依赖 LlamaIndex；借鉴 schema-first output，将 AI 文本解析为 `ParsedModelOutput` / proposal artifact。 |
+| DSPy Assertions | 在 LM pipeline 中声明计算约束并用于自我修正。 | V1 不引入 DSPy 编译器；借鉴“约束是程序对象”，将 checklist、证据覆盖和格式约束写入 `VerificationRule`。 |
+| Decomposed Prompting / Tree of Thoughts / Graph of Verification | 任务可递归拆分为子任务、候选思路可搜索，验证可按 DAG 粒度执行。 | V1 不把 prompt technique 当协议；借鉴结构化拆分、候选提案、DAG 验证和剪枝思想。 |
 
 ### 20.6 未来迁移方向
 
@@ -831,6 +911,8 @@ tests/
 
 ### 20.7 资料依据
 
+本节列出的外部资料如果继续影响 TokenShare 的设计、代码或测试，后续必须按 `Doc/agent-navigation.md` 的外部参考资料落库规则补齐本地证据：论文/技术报告更新到 `Doc/TechnicalDocument/2026-06-04-tokenshare-paper-module-map.md` 和 `tokenshare-paper-tex/`，开源项目或版本化工程实现更新到 `reference_repos/` 和 `reference_repos/README.md`，普通在线文档至少记录来源、访问日期、本地摘要和影响范围。
+
 - Temporal Workflow Execution 与 replay：<https://docs.temporal.io/workflow-execution>
 - Temporal Workflow Definition 确定性约束：<https://docs.temporal.io/workflow-definition>
 - Airflow Dynamic Task Mapping：<https://airflow.apache.org/docs/apache-airflow/stable/authoring-and-scheduling/dynamic-task-mapping.html>
@@ -840,6 +922,15 @@ tests/
 - Python `dataclasses`：<https://docs.python.org/3/library/dataclasses.html>
 - SQLite WAL：<https://www.sqlite.org/wal.html>
 - SQLite JSON functions：<https://www.sqlite.org/json1.html>
+- LangGraph overview：<https://docs.langchain.com/oss/python/langgraph/overview>
+- LangGraph interrupts：<https://docs.langchain.com/oss/python/langgraph/interrupts>
+- AutoGen Group Chat：<https://microsoft.github.io/autogen/stable/user-guide/core-user-guide/design-patterns/group-chat.html>
+- CrewAI task guardrails：<https://docs.crewai.com/en/concepts/tasks>
+- LlamaIndex structured output：<https://developers.llamaindex.ai/python/framework/understanding/agent/structured_output/>
+- Decomposed Prompting：<https://arxiv.org/abs/2210.02406>
+- Tree of Thoughts：<https://arxiv.org/abs/2305.10601>
+- Graph of Verification：<https://arxiv.org/abs/2506.12509>
+- DSPy Assertions：<https://arxiv.org/abs/2312.13382>
 
 ## 21. 实施计划
 
@@ -882,12 +973,15 @@ tests/
 - `ExecutionRequest` 与 `ExecutionSubmission`。
 - `MockAIExecutor`。
 - 确定性程序执行器接口。
+- `PromptPackage`、`RawModelOutput` 和 `ParsedModelOutput` artifact 边界。
+- `OutputContract` 和插件 schema 查询接口。
 
 验收：
 
 - 插件版本固定。
 - 执行器能接收统一请求并返回统一提交。
 - AI 路径能生成 `PromptPackage` 和 `RawModelOutput`。
+- AI 原始文本必须能解析为结构化候选输出，或生成可审计的解析失败报告。
 
 ### Phase 4：验证、正式输出和展开
 
@@ -895,21 +989,27 @@ tests/
 
 - 通用数据检查。
 - 插件领域验证编排。
+- `VerificationReport`。
+- `DecompositionProposal`。
 - `first_verified_bundle`。
 - `ExpansionDecision`。
+- `MergePlan`。
 - 原子图更新。
 
 验收：
 
 - 多 attempt 中只有一个正式输出束。
-- `expand` 能生成子节点和依赖。
+- `expand` 必须先记录结构化 proposal 和 expansion decision，再生成子节点和依赖。
 - 无效展开不会写入任务图。
+- 自然语言输出至少通过 schema、证据引用、required output 覆盖和插件领域验证。
 
 ### Phase 5：合并、贡献与结算
 
 交付：
 
 - 插件合并编排。
+- `MergeCoordinator`。
+- `MergeRecord`。
 - `ContributionRecord` 状态机。
 - `SettlementEngine`。
 - sandbox 奖励公式。
@@ -918,6 +1018,7 @@ tests/
 验收：
 
 - 子节点正式输出可合并为父节点输出。
+- 合并必须按 `MergePlan` 检查 required slot 覆盖，并记录 child canonical output hash。
 - 中间贡献可延迟结算。
 - 根任务完成后生成恰好一次结算。
 
@@ -927,6 +1028,7 @@ tests/
 
 - 整数分解插件。
 - Lean stub 插件。
+- 结构化报告 stub 插件。
 - `SimulationProfile`。
 - `SimulationWrapper`。
 - `ExperimentRunner`。
@@ -934,7 +1036,7 @@ tests/
 
 验收：
 
-- 两个插件实验均能跑通。
+- 三类插件实验均能跑通：强验证计算、proof-like stub、自然语言结构化报告。
 - 五类故障模拟均通过。
 - 指标报告可生成。
 
@@ -961,17 +1063,20 @@ tests/
 | SQLite + Python `sqlite3` | 本地索引与查询 | 保存可重建索引、registry 快照和实验查询视图。 | 必需；不得替代 JSONL event ledger 的权威重放职责。 |
 | JSON / JSONL | 协议数据格式 | 保存事件、descriptor、实验配置和报告。 | 必需；协议相关对象必须显式 `schema_version`。 |
 | Lean 环境摘要或 fixture | 实验依赖 | Lean stub 验证。 | V1 可用 fixture。 |
+| 结构化报告 fixture | 实验依赖 | 自然语言 section 输出、证据引用、缺失 section 和伪造引用测试。 | V1 用本地 fixture，不调用生产 AI API。 |
 | 参考论文归档 | 研究依据 | 审阅设计来源。 | 已归档到 `source/Paper`。 |
 
 ## 23. 开放问题
 
 | 问题 | 当前决策 | 后续处理 |
 |---|---|---|
-| 对象字段是否全部细化 | 本文只定义字段范畴，不定义最终字段清单。 | 下一步单独写对象字段规格。 |
-| SQLite 表结构与 JSONL event schema 的边界 | JSONL 是权威事实源，SQLite 是可重建索引。 | Phase 1 字段规格中细化表和事件最小载荷。 |
-| 初始 Python package layout | 已确定并创建 `src/tokenshare` 与镜像 `tests` 骨架。 | Phase 1 字段规格确定后，再创建具体实现模块文件。 |
+| Phase 1 对象字段是否全部细化 | 已由 `2026-06-05-phase-1-minimal-object-field-spec.md` 固化，并由 Phase 1 代码实现。 | Phase 2 起只为新增对象补字段规格，避免回改已完成字段。 |
+| SQLite 表结构与 JSONL event schema 的边界 | JSONL 是权威事实源，SQLite 是可重建索引；Phase 1 已有最小实现。 | 后续新增状态机、验证和合并事件时同步扩展可重建索引。 |
+| 初始 Python package layout | 已确定并创建 `src/tokenshare` 与镜像 `tests` 骨架。 | 后续新增模块按 `Doc/agent-navigation.md` 路由，不重排包结构。 |
 | 整数分解具体拆分策略 | V1 只要求版本化策略。 | 插件规格中确定。 |
 | Lean stub 具体 fixture | V1 只要求能覆盖 direct 与 decomposition。 | 插件规格中确定。 |
+| Structured report stub fixture | V1 要覆盖 section 拆分、证据引用、缺失 section、伪造引用和合并报告。 | 插件规格中确定 schema、fixture 和验证 checklist。 |
+| 自然语言语义验证强度 | V1 不宣称能证明任意文本“绝对正确”。 | 使用结构化 schema、证据覆盖、引用完整性、领域 checklist 和 audit replay 降低风险。 |
 | 是否实现真实 AI API | V1 不实现。 | 后续版本决定。 |
 
 ## 24. 术语表
@@ -986,7 +1091,11 @@ tests/
 | `Lease` | 客户端对任务单元的临时执行权。 |
 | `Attempt` | 客户端基于某个 lease 的一次执行尝试。 |
 | `Canonical` | 某个 attempt 的输出束被协议选为正式输出。 |
+| `VerificationReport` | 分层验证报告，区分 schema、artifact 完整性、证据覆盖、领域验证和审计验证。 |
+| `DecompositionProposal` | AI 或确定性逻辑生成的结构化拆分提案，必须保存为 artifact 后再由协议检查。 |
 | `ExpansionDecision` | 插件对正式输出返回的完成或展开判定。 |
+| `MergePlan` | 父节点合并计划，声明 required slot、child output 要求、合并策略和验证要求。 |
+| `MergeRecord` | 一次合并事实，记录输入 canonical output hash、合并输出和验证结果。 |
 | `first_verified_bundle` | 第一个通过验证并成功原子绑定的输出束成为正式输出。 |
 | `EventLedger` | append-only 事件日志。 |
 | `SimulationProfile` | 控制本地故障模拟的配置。 |
@@ -1003,7 +1112,7 @@ V1 技术设计成功的判定标准：
 
 V1 实现成功的判定标准：
 
-- 整数分解实验和 Lean stub 实验均能端到端完成。
+- 整数分解、Lean stub 和 structured report stub 三类实验均能端到端完成。
 - 事件日志可重放最终状态。
 - 正式输出唯一。
 - sandbox 结算恰好一次。
