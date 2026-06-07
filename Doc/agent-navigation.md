@@ -71,7 +71,7 @@ conda run -n tokenshare python -c "import json; from pathlib import Path; json.l
 
 ## 5. 模块路由
 
-当前 package layout 已确定为 `src/` layout：
+当前 package layout 已确定为 `src/` layout；其中 `structured_report_stub/` 是 Phase 6 目标插件目录，当前实现阶段可按需创建：
 
 ```text
 src/
@@ -81,6 +81,7 @@ src/
     plugins/
       factorization/
       lean_stub/
+      structured_report_stub/
     executors/
     replay/
     experiments/
@@ -91,6 +92,7 @@ tests/
   plugins/
     factorization/
     lean_stub/
+    structured_report_stub/
   executors/
   replay/
   experiments/

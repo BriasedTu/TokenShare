@@ -45,6 +45,7 @@ V1 范围外：
 - `AGENTS.md` 和 `progress.md` 必须优先用中文维护，方便用户随时监督。
 - 技术名词、代码标识、命令、文件名、对象名可以保留英文，例如 `TaskUnit`、`EventLedger`、`feature_list.json`。
 - 如果为了兼容 harness 审计脚本需要英文锚点，可以把英文放在中文标题或句子的括号中。
+- 代码注释使用中文，尤其是解释代码作用的注释，注释中的技术名词、代码标识、命令、文件名、对象名可以不遵守此要求。
 
 ## 工作规则（Working Rules）
 
@@ -90,3 +91,5 @@ PYTHONPATH=src conda run -n tokenshare python -m pytest tests
 3. 在 `session-handoff.md` 中记录未解决风险或决策。   
 4. 如果本轮使用了联网资料，确认本地论文、参考源码或在线文档摘要已经落库，并更新 `Doc/agent-navigation.md` 指向的相关索引。
 5. 保持仓库足够干净，让下一轮可以立即运行验证脚本。
+6. 若会话在讨论项目中文档的内容并要求做出修改，则在修改后需要二次审核是否有需要修正的旧表述。
+7. 若更新了代码，则需要同步更新code map。

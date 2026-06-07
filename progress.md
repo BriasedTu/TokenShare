@@ -2,7 +2,7 @@
 
 ## 当前状态（Current State）
 
-**最后更新：** 2026-06-06
+**最后更新：** 2026-06-07
 **当前 Feature：** feat-003 - Phase 2 - Task Graph, State Machines, and Scheduling
 **仓库阶段：** startup / local research prototype
 
@@ -58,6 +58,7 @@ V1 的三类实验是 factorization、Lean stub proof 和 structured report stub
 - [x] 同步更新 `AGENTS.md`、`README.md`、`Doc/agent-navigation.md`、`feature_list.json` 和历史讨论稿，避免“三类 PoC”和后续对象边界在文档间冲突。
 - [x] 新增外部资料落库工作流：后续凡联网资料影响设计、代码、测试或项目文档，论文/报告必须本地化并更新论文映射，开源项目必须拉取到 `reference_repos/` 并更新索引，普通在线文档必须记录来源、访问日期、本地摘要和影响范围。
 - [x] 新增工具与编码工作流：后续常规仓库读取和搜索默认使用 PowerShell，中文/JSON/Markdown 读取显式使用 UTF-8，常规检索不要使用 `rg`，避免编码乱码和重复误判浪费上下文。
+- [x] 修正 TDD、agent 导航和历史讨论稿中的旧表述：论文归档路径改为 `Doc/TechnicalDocument/tokenshare-paper-tex/` 与论文映射索引，package layout 明确 `structured_report_stub/` 是 Phase 6 目标插件目录，Phase 1 目录/实现状态改为已创建基础实现，早期任务口径改为 structured report。
 
 ### 进行中（What's In Progress）
 
@@ -106,6 +107,7 @@ V1 的三类实验是 factorization、Lean stub proof 和 structured report stub
 - `src/tokenshare/` - 初始 Python package 骨架。
 - `tests/` - 镜像测试目录骨架和 package layout smoke test。
 - `Doc/agent-navigation.md` - agent 导航、PowerShell/UTF-8 工具规则、模块路由和外部参考资料落库/使用规则。
+- `Doc/TechnicalDocument/2026-06-02-tokenshare-protocol-kernel-revised-draft.md` - 历史讨论稿；已修正 V1 非目标中的旧任务口径。
 - `Doc/TechnicalDocument/2026-06-04-tokenshare-paper-module-map.md` - 论文、技术报告、本地 TeX/OCR 和模块借鉴映射；已加入新增论文落库规则。
 - `Doc/TechnicalDocument/2026-06-05-phase-1-minimal-object-field-spec.md` - Phase 1 最小对象字段规格、事件 envelope 和 SQLite 可重建索引边界。
 - `Doc/TechnicalDocument/2026-06-06-phase-1-code-map.md` - Phase 1 代码、规格章节和测试的对应关系。
@@ -146,6 +148,8 @@ V1 的三类实验是 factorization、Lean stub proof 和 structured report stub
 - [x] 外部资料落库工作流更新后 PowerShell 验证：`powershell -ExecutionPolicy Bypass -File .\init.ps1` passed；pytest collected 7 items，结果 `7 passed in 0.17s`。
 - [x] 外部资料落库工作流更新后 Bash 验证：`bash ./init.sh` passed；pytest collected 7 items，结果 `7 passed in 0.18s`。
 - [x] PowerShell/UTF-8 工具工作流更新后验证：`powershell -ExecutionPolicy Bypass -File .\init.ps1` passed；pytest collected 7 items，结果 `7 passed in 0.20s`。
+- [x] 旧表述修正文档二次审核：已搜索旧论文归档路径、旧“双插件/双实验”表述、旧 Phase 1 layout 表述、旧任务口径和 Phase 2 规格关键词；未命中需要继续修正的旧表述，且未新增 Phase 2 规格文档。
+- [x] 旧表述修正后 PowerShell 验证：`powershell -ExecutionPolicy Bypass -File .\init.ps1` passed；pytest collected 7 items，结果 `7 passed in 0.17s`。
 
 ## 下次会话提示（Notes for Next Session）
 

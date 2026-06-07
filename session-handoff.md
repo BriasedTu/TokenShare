@@ -39,6 +39,7 @@
 - [x] Synced AGENTS, README, agent navigation, feature roadmap, progress, and historical draft wording so the three-experiment V1 scope is consistent.
 - [x] Added a mandatory external-research materialization workflow: project-impacting online research must be saved locally and indexed before it is treated as design evidence.
 - [x] Added a mandatory PowerShell/UTF-8 workflow: routine repository reads and searches should use PowerShell with explicit UTF-8, and `rg` should not be the default search tool for this Windows workspace.
+- [x] Corrected stale documentation wording in the TDD, agent navigation, and historical draft without adding a Phase 2 spec.
 
 ## Verification Evidence
 
@@ -68,6 +69,8 @@
 | External research workflow verification | `powershell -ExecutionPolicy Bypass -File .\init.ps1` | Passed | pytest collected 7 items; `7 passed in 0.17s`. |
 | External research workflow Bash verification | `bash ./init.sh` | Passed | pytest collected 7 items; `7 passed in 0.18s`. |
 | PowerShell/UTF-8 workflow verification | `powershell -ExecutionPolicy Bypass -File .\init.ps1` | Passed | pytest collected 7 items; `7 passed in 0.20s`. |
+| Stale wording correction review | searched old paper archive path, two-plugin wording, old Phase 1 layout wording, stale task wording, and Phase 2 spec terms | Passed | No remaining targeted stale wording; no Phase 2 spec was added. |
+| Stale wording correction verification | `powershell -ExecutionPolicy Bypass -File .\init.ps1` | Passed | pytest collected 7 items; `7 passed in 0.17s`. |
 
 ## Files Changed
 
@@ -79,6 +82,7 @@
 - `init.sh`
 - `init.ps1`
 - `README.md`
+- `Doc/TechnicalDocument/2026-06-02-tokenshare-protocol-kernel-revised-draft.md`
 - `Doc/TechnicalDocument/2026-06-03-tokenshare-protocol-technical-design.md`
 - `Doc/TechnicalDocument/2026-06-04-tokenshare-paper-module-map.md`
 - `.gitignore`
