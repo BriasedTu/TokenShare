@@ -96,7 +96,7 @@ conda run -n tokenshare python -m compileall -x "reference_repos" .
 PYTHONPATH=src conda run -n tokenshare python -m pytest tests
 ```
 
-`init.ps1` 和 `init.sh` 默认使用 `conda` 环境 `tokenshare`，可通过 `TOKENSHARE_CONDA_ENV` 临时覆盖环境名。环境创建和依赖说明见 `requirements.md`。脚本会无条件运行 Python JSON/SQLite 检查和 `compileall`。`reference_repos/` 保存外部参考源码，不参与 `compileall`。只有存在 `tests/` 目录时才在 `PYTHONPATH=src` 下运行 `pytest tests`。
+`init.ps1` 和 `init.sh` 默认使用 `conda` 环境 `tokenshare`，可通过 `TOKENSHARE_CONDA_ENV` 临时覆盖环境名。Python 依赖可通过 `pip install -r requirements.txt` 安装。脚本会无条件运行 Python JSON/SQLite 检查和 `compileall`。`reference_repos/` 保存外部参考源码，不参与 `compileall`。只有存在 `tests/` 目录时才在 `PYTHONPATH=src` 下运行 `pytest tests`。
 
 ## Repository Map
 
@@ -106,7 +106,7 @@ PYTHONPATH=src conda run -n tokenshare python -m pytest tests
 - `feature_list.json`：feature 路线图和状态源。
 - `progress.md`：当前进度、验证证据、风险和下一步。
 - `session-handoff.md`：下轮会话恢复信息。
-- `requirements.md`：`conda` 环境、依赖和启动验证说明。
+- `requirements.txt`：可由 `pip install -r requirements.txt` 安装的 Python 依赖清单。
 - `init.ps1`：Windows PowerShell 启动验证。
 - `init.sh`：Bash/Git Bash/WSL 启动验证。
 - `src/tokenshare/`：TokenShare Python package 骨架。

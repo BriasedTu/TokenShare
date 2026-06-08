@@ -85,7 +85,7 @@
 | `parent_unit_id` | 否 | string or null | 父节点标识。root unit 为 `null`。 | 表达递归树位置。 |
 | `depth` | 是 | integer | 节点深度。root unit 为 `0`。 | 检查 `max_depth`。 |
 | `unit_type` | 是 | string | 节点类型。由协议保存，插件解释。 | root unit 可用 `root`。 |
-| `state` | 是 | string | 生命周期状态。Phase 1 初始用 `Ready`。 | SQLite 查询 ready/root 状态。 |
+| `state` | 是 | string | `TaskUnit` 节点生命周期状态。Phase 1 初始用 `Ready`；后续执行中使用 `Processing` 表示至少存在有效 attempt。不要把 `Lease.Active/Expired` 或 `Attempt.Verifying` 等细节状态放入本字段。 | SQLite 查询 ready/root 状态。 |
 | `input_refs` | 是 | object | 命名输入到 `ArtifactRef` 的映射。 | root unit 指向 root input。 |
 | `canonical_output_refs` | 是 | object | 命名正式输出到 `ArtifactRef` 的映射。初始为空。 | Phase 1 先保存空对象。 |
 | `required_capabilities` | 是 | object | 执行该节点需要的能力声明。 | 后续匹配 `ClientRecord`。 |

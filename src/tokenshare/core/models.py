@@ -21,17 +21,22 @@ class TaskState(str, Enum):
 
     Phase 1 only creates root units in ``Ready``. The other values are reserved
     here so later state-machine code can reuse the same serialized spelling.
+    Keep this enum at TaskUnit granularity: lease validity belongs to the
+    future Lease state machine, and submission/verification progress belongs to
+    the future Attempt state machine.
     """
 
-    WAITING_FOR_DEPENDENCIES = "WaitingForDependencies"
+    CREATED = "Created"
+    BLOCKED = "Blocked"
     READY = "Ready"
-    LEASED = "Leased"
-    VERIFYING = "Verifying"
+    PROCESSING = "Processing"
     WAITING_FOR_CHILDREN = "WaitingForChildren"
     MERGE_READY = "MergeReady"
     MERGING = "Merging"
     COMPLETED = "Completed"
+    MERGE_FAILED = "MergeFailed"
     FAILED = "Failed"
+    CANCELLED = "Cancelled"
 
 
 def _json_value(value: Any) -> Any:

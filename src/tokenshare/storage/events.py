@@ -119,7 +119,22 @@ class EventLedger:
         """
 
         if idempotency_key in self._by_idempotency_key:
-            return self._by_idempotency_key[idempotency_key]
+            existing_event = self._by_idempotency_key[idempotency_key]
+            if _idempotency_signature(
+                event_type=event_type,
+                object_type=object_type,
+                object_id=object_id,
+                task_id=task_id,
+                payload=payload,
+            ) != _idempotency_signature(
+                event_type=existing_event.event_type,
+                object_type=existing_event.object_type,
+                object_id=existing_event.object_id,
+                task_id=existing_event.task_id,
+                payload=existing_event.payload,
+            ):
+                raise ValueError(f"idempotency key conflict: {idempotency_key}")
+            return existing_event
 
         event_seq = len(self._events) + 1
         event_id = f"event_{event_seq:012d}"
@@ -198,6 +213,23 @@ def _parse_event_type(value: str) -> EventType | str:
 
 def _event_type_value(value: EventType | str) -> str:
     return value.value if isinstance(value, EventType) else value
+
+
+def _idempotency_signature(
+    *,
+    event_type: EventType | str,
+    object_type: str,
+    object_id: str,
+    task_id: str | None,
+    payload: JsonObject,
+) -> tuple[str, str, str, str | None, str]:
+    return (
+        _event_type_value(event_type),
+        object_type,
+        object_id,
+        task_id,
+        _canonical_json(payload),
+    )
 
 
 def _event_hash(event_dict: JsonObject) -> str:

@@ -9,19 +9,11 @@ from tokenshare.core.models import (
     TaskState,
     TaskUnit,
 )
-from tokenshare.core.registration import (
-    RootTaskRegistrar,
-    RootTaskRegistrationRequest,
-    RootTaskRegistrationResult,
-)
 
 __all__ = [
     "ArtifactRef",
     "ClientRecord",
     "ProtocolConfig",
-    "RootTaskRegistrar",
-    "RootTaskRegistrationRequest",
-    "RootTaskRegistrationResult",
     "TaskRelation",
     "TaskSpec",
     "TaskState",

@@ -52,13 +52,18 @@ V1 的三类实验是 factorization、Lean stub proof 和 structured report stub
 - [x] 新增 Phase 1 测试：协议对象 snapshot、artifact save/read/hash、event append/read/hash chain、SQLite rebuild、root task registration 三事件顺序。
 - [x] 新增代码映射文档：`Doc/TechnicalDocument/2026-06-06-phase-1-code-map.md`，记录规格章节、代码文件和测试文件之间的对应关系。
 - [x] 创建 `conda` 环境 `tokenshare`，当前验证到 Python 3.12.13、SQLite 3.51.2、pytest 9.0.3。
-- [x] 新增 `requirements.md`，记录环境创建、依赖和启动验证方式。
+- [x] 新增 `requirements.txt`，作为可由 `pip install -r requirements.txt` 安装的 Python 依赖清单。
 - [x] 更新 `init.ps1` 和 `init.sh`，默认使用 `conda run -n tokenshare python`，并支持 `TOKENSHARE_CONDA_ENV` 覆盖。
 - [x] 对照 LangGraph、AutoGen、CrewAI、LlamaIndex、DSPy Assertions、Decomposed Prompting、Tree of Thoughts 和 Graph of Verification，更新主 TDD 中的语义拆分、AI 文本验证、`MergePlan` 和结构化报告 stub 设计。
 - [x] 同步更新 `AGENTS.md`、`README.md`、`Doc/agent-navigation.md`、`feature_list.json` 和历史讨论稿，避免“三类 PoC”和后续对象边界在文档间冲突。
 - [x] 新增外部资料落库工作流：后续凡联网资料影响设计、代码、测试或项目文档，论文/报告必须本地化并更新论文映射，开源项目必须拉取到 `reference_repos/` 并更新索引，普通在线文档必须记录来源、访问日期、本地摘要和影响范围。
 - [x] 新增工具与编码工作流：后续常规仓库读取和搜索默认使用 PowerShell，中文/JSON/Markdown 读取显式使用 UTF-8，常规检索不要使用 `rg`，避免编码乱码和重复误判浪费上下文。
 - [x] 修正 TDD、agent 导航和历史讨论稿中的旧表述：论文归档路径改为 `Doc/TechnicalDocument/tokenshare-paper-tex/` 与论文映射索引，package layout 明确 `structured_report_stub/` 是 Phase 6 目标插件目录，Phase 1 目录/实现状态改为已创建基础实现，早期任务口径改为 structured report。
+- [x] 将错误的依赖说明文件替换为标准 `requirements.txt`，当前可通过 `pip install -r requirements.txt` 安装 Python 依赖。
+- [x] 审核并修正 `TaskState` 边界：确认 `Leased` 和 `Verifying` 不应属于 `TaskUnit` 节点生命周期，已从 `TaskState` 中移除，并用 `Processing` 表达“至少存在有效 attempt”的粗粒度节点状态；新增回归测试防止 `Lease` / `Attempt` 细节状态再次混入。
+- [x] 修正 `EventLedger.append()` 幂等边界：相同 `idempotency_key` 只有在事件类型、对象、任务和 canonical payload 一致时返回旧事件；冲突重复写入会抛出 `ValueError`，避免 replay 审计时吞掉冲突。
+- [x] 收窄 `tokenshare.core` 包入口：不再从 `tokenshare.core.__init__` 重新导出 Phase 1 临时协调器 `RootTaskRegistrar`，避免 protocol core 包入口和 storage orchestration 形成循环依赖。
+- [x] 新增 Phase 2 协调边界备忘录，并在 `Doc/agent-navigation.md` 和 Phase 1 code map 中建立索引，提醒后续 agent 不要让 `RootTaskRegistrar` 继续长成 TaskGraph / Scheduler / LeaseManager 总入口。
 
 ### 进行中（What's In Progress）
 
@@ -90,6 +95,9 @@ V1 的三类实验是 factorization、Lean stub proof 和 structured report stub
 - **字段规格决策：** Phase 1 采用“稳定对象字段 + 版本化 JSON payload + SQLite 可重建索引”的最小规格；协议对象名、字段名、事件类型和 SQLite 表名在 `Doc/TechnicalDocument/2026-06-05-phase-1-minimal-object-field-spec.md` 中分层记录。
 - **外部资料落库决策：** 不能再只把联网研究结果写成在线链接；凡进入项目决策的论文、技术报告、开源项目或工程文档，都必须有本地可复查材料和对应索引记录。
 - **工具与编码决策：** 本仓库常规文件读取、枚举和检索使用 PowerShell；读取中文 Markdown、JSON、脚本和代码时显式指定 UTF-8；常规检索不使用 `rg`。
+- **TaskState 边界决策：** `TaskUnit.state` 只表达节点生命周期；租约有效性属于 `Lease`，提交、验证和正式输出选择进度属于 `Attempt`，不能在 `TaskState` 中重复建模。
+- **EventLedger 幂等决策：** `idempotency_key` 是“同一请求重试”的去重键，不是冲突覆盖键；同 key 写入必须校验事件类型、对象、任务和 canonical payload，一旦不同即失败。
+- **Phase 2 协调边界决策：** `RootTaskRegistrar` 仍可作为 Phase 1 兼容入口，但后续 `TaskGraph`、`Scheduler`、`LeaseManager` 和 attempt 状态推进应进入独立编排层或 `ProtocolEngine`，不要继续塞进 protocol core。
 
 ## 本轮修改文件（Files Modified This Session）
 
@@ -97,7 +105,7 @@ V1 的三类实验是 factorization、Lean stub proof 和 structured report stub
 - `feature_list.json` - TokenShare 阶段路线图和 feature 状态。
 - `progress.md` - 当前理解、状态、风险、下一步；已改为中文并记录语言要求。
 - `session-handoff.md` - 下一轮 restart 摘要。
-- `requirements.md` - `conda` 环境、依赖和启动验证说明。
+- `requirements.txt` - 可由 `pip install -r requirements.txt` 安装的 Python 依赖清单；当前包含测试依赖 `pytest==9.0.3`。
 - `init.sh` - Bash 基线验证，默认使用 `conda` 环境 `tokenshare`。
 - `init.ps1` - Windows PowerShell 基线验证，默认使用 `conda` 环境 `tokenshare`。
 - `README.md` - 中文项目入口，记录项目定义、V1 范围、非目标、启动命令、仓库地图和当前状态。
@@ -111,7 +119,9 @@ V1 的三类实验是 factorization、Lean stub proof 和 structured report stub
 - `Doc/TechnicalDocument/2026-06-04-tokenshare-paper-module-map.md` - 论文、技术报告、本地 TeX/OCR 和模块借鉴映射；已加入新增论文落库规则。
 - `Doc/TechnicalDocument/2026-06-05-phase-1-minimal-object-field-spec.md` - Phase 1 最小对象字段规格、事件 envelope 和 SQLite 可重建索引边界。
 - `Doc/TechnicalDocument/2026-06-06-phase-1-code-map.md` - Phase 1 代码、规格章节和测试的对应关系。
+- `Doc/TechnicalDocument/2026-06-07-phase-2-coordination-debt-memo.md` - Phase 2 协调边界备忘录，记录已修复的边界问题和后续编排层迁移触发条件。
 - `src/tokenshare/core/models.py` - Phase 1 协议对象和稳定 JSON snapshot。
+- `src/tokenshare/core/__init__.py` - protocol core 包入口；不再重新导出 `RootTaskRegistrar` 等存储协调器。
 - `src/tokenshare/core/registration.py` - root task registration 协调器。
 - `src/tokenshare/storage/artifacts.py` - 本地 artifact 保存、读取、hash 校验和 manifest。
 - `src/tokenshare/storage/events.py` - JSONL `EventLedger`、`LedgerEvent`、事件类型、幂等键和 hash chain。
@@ -150,6 +160,16 @@ V1 的三类实验是 factorization、Lean stub proof 和 structured report stub
 - [x] PowerShell/UTF-8 工具工作流更新后验证：`powershell -ExecutionPolicy Bypass -File .\init.ps1` passed；pytest collected 7 items，结果 `7 passed in 0.20s`。
 - [x] 旧表述修正文档二次审核：已搜索旧论文归档路径、旧“双插件/双实验”表述、旧 Phase 1 layout 表述、旧任务口径和 Phase 2 规格关键词；未命中需要继续修正的旧表述，且未新增 Phase 2 规格文档。
 - [x] 旧表述修正后 PowerShell 验证：`powershell -ExecutionPolicy Bypass -File .\init.ps1` passed；pytest collected 7 items，结果 `7 passed in 0.17s`。
+- [x] `requirements.txt` 验证：`conda run -n tokenshare python -m pip install -r requirements.txt` passed；输出显示 `pytest==9.0.3` 已满足。
+- [x] `requirements.txt` 修正后完整启动验证：`powershell -ExecutionPolicy Bypass -File .\init.ps1` passed；pytest collected 7 items，结果 `7 passed in 0.22s`。
+- [x] `TaskState` 边界回归测试：`$env:PYTHONPATH='src'; conda run -n tokenshare python -m pytest tests\core\test_phase1_models.py -q` passed；结果 `2 passed in 0.04s`。
+- [x] `TaskState` 相关定向验证：`$env:PYTHONPATH='src'; conda run -n tokenshare python -m pytest tests\core\test_phase1_models.py tests\test_phase1_root_registration.py tests\storage\test_sqlite_index.py -q` passed；结果 `4 passed in 0.17s`。
+- [x] `TaskState` 边界修正后完整启动验证：`powershell -ExecutionPolicy Bypass -File .\init.ps1` passed；pytest collected 8 items，结果 `8 passed in 0.19s`。
+- [x] `EventLedger` 幂等冲突红灯验证（一）：`$env:PYTHONPATH='src'; conda run -n tokenshare python -m pytest tests\storage\test_event_ledger.py -q` failed；暴露 `tokenshare.core.__init__` 急切导出 `RootTaskRegistrar` 导致 `core` / `storage` 循环导入。
+- [x] `EventLedger` 幂等冲突红灯验证（二）：修正包入口后再次运行同一命令 failed as expected；新增冲突测试失败信息为 `DID NOT RAISE <class 'ValueError'>`。
+- [x] `EventLedger` 幂等冲突绿灯验证：`$env:PYTHONPATH='src'; conda run -n tokenshare python -m pytest tests\storage\test_event_ledger.py -q` passed；结果 `3 passed in 0.06s`。
+- [x] `core` 模型和 package layout 定向验证：`$env:PYTHONPATH='src'; conda run -n tokenshare python -m pytest tests\core\test_phase1_models.py tests\test_package_layout.py -q` passed；结果 `3 passed in 0.06s`。
+- [x] 协调边界修正后完整启动验证：`powershell -ExecutionPolicy Bypass -File .\init.ps1` passed；pytest collected 9 items，结果 `9 passed in 0.20s`。
 
 ## 下次会话提示（Notes for Next Session）
 

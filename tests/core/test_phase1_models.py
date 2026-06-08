@@ -55,7 +55,16 @@ def test_task_spec_and_root_unit_snapshots_use_phase1_json_keys() -> None:
     assert task_snapshot["root_input_ref"]["artifact_id"] == "artifact_root_input"
     assert task_snapshot["protocol_config"]["canonical_output_policy"] == "first_verified_bundle"
     assert unit_snapshot["schema_version"] == "TaskUnit.v1"
-    assert unit_snapshot["state"] == TaskState.READY
+    assert unit_snapshot["state"] == "Ready"
     assert unit_snapshot["input_refs"]["root_input"]["content_hash"] == "sha256:abc123"
     assert unit_snapshot["canonical_output_refs"] == {}
     assert unit_snapshot["plugin_payload"] == {"range": [2, 100]}
+
+
+def test_task_state_keeps_lease_and_attempt_details_out_of_task_unit() -> None:
+    state_values = {state.value for state in TaskState}
+
+    assert "Processing" in state_values
+    assert "Blocked" in state_values
+    assert "Leased" not in state_values
+    assert "Verifying" not in state_values

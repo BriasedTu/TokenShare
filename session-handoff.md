@@ -33,13 +33,18 @@
 - [x] Added tests for Phase 1 protocol objects, artifact storage, event ledger, SQLite rebuild, and root task registration.
 - [x] Added `Doc/TechnicalDocument/2026-06-06-phase-1-code-map.md` to map Phase 1 code back to the field spec.
 - [x] Created the `conda` environment `tokenshare` with Python 3.12.13 and pytest 9.0.3.
-- [x] Added `requirements.md` with conda environment and dependency instructions.
+- [x] Added `requirements.txt` as the pip-installable Python dependency list.
 - [x] Updated `init.ps1` and `init.sh` to run through `conda run -n tokenshare python` by default.
 - [x] Researched LangGraph, AutoGen, CrewAI, LlamaIndex, DSPy Assertions, Decomposed Prompting, Tree of Thoughts, and Graph of Verification, then updated the main TDD to include structured decomposition proposals, layered AI-text validation, `MergePlan`, `MergeRecord`, and a structured report stub experiment.
 - [x] Synced AGENTS, README, agent navigation, feature roadmap, progress, and historical draft wording so the three-experiment V1 scope is consistent.
 - [x] Added a mandatory external-research materialization workflow: project-impacting online research must be saved locally and indexed before it is treated as design evidence.
 - [x] Added a mandatory PowerShell/UTF-8 workflow: routine repository reads and searches should use PowerShell with explicit UTF-8, and `rg` should not be the default search tool for this Windows workspace.
 - [x] Corrected stale documentation wording in the TDD, agent navigation, and historical draft without adding a Phase 2 spec.
+- [x] Replaced the incorrect dependency note file with pip-installable `requirements.txt`.
+- [x] Audited and fixed the `TaskState` boundary: removed `Leased` and `Verifying` from the TaskUnit lifecycle enum because lease validity belongs to `Lease` and verification progress belongs to `Attempt`.
+- [x] Fixed `EventLedger.append()` idempotency conflict handling: duplicate `idempotency_key` now returns the old event only when event type, object, task, and canonical payload match.
+- [x] Narrowed `tokenshare.core.__init__` so the protocol-core package entry no longer re-exports the Phase 1 storage coordinator `RootTaskRegistrar`.
+- [x] Added and indexed `Doc/TechnicalDocument/2026-06-07-phase-2-coordination-debt-memo.md` so future agents see the Phase 2 orchestration-boundary debt before extending registration code.
 
 ## Verification Evidence
 
@@ -71,6 +76,15 @@
 | PowerShell/UTF-8 workflow verification | `powershell -ExecutionPolicy Bypass -File .\init.ps1` | Passed | pytest collected 7 items; `7 passed in 0.20s`. |
 | Stale wording correction review | searched old paper archive path, two-plugin wording, old Phase 1 layout wording, stale task wording, and Phase 2 spec terms | Passed | No remaining targeted stale wording; no Phase 2 spec was added. |
 | Stale wording correction verification | `powershell -ExecutionPolicy Bypass -File .\init.ps1` | Passed | pytest collected 7 items; `7 passed in 0.17s`. |
+| Requirements install check | `conda run -n tokenshare python -m pip install -r requirements.txt` | Passed | `pytest==9.0.3` already satisfied. |
+| TaskState boundary regression | `$env:PYTHONPATH='src'; conda run -n tokenshare python -m pytest tests\core\test_phase1_models.py -q` | Passed | `2 passed in 0.04s`. |
+| TaskState related targeted verification | `$env:PYTHONPATH='src'; conda run -n tokenshare python -m pytest tests\core\test_phase1_models.py tests\test_phase1_root_registration.py tests\storage\test_sqlite_index.py -q` | Passed | `4 passed in 0.17s`. |
+| TaskState boundary full startup verification | `powershell -ExecutionPolicy Bypass -File .\init.ps1` | Passed | pytest collected 8 items; `8 passed in 0.19s`. |
+| EventLedger idempotency red check | `$env:PYTHONPATH='src'; conda run -n tokenshare python -m pytest tests\storage\test_event_ledger.py -q` | Failed as expected after import-cycle fix | New conflict test initially failed with `DID NOT RAISE <class 'ValueError'>`. First run also exposed a `tokenshare.core.__init__` / storage circular import from eager registrar export. |
+| EventLedger idempotency targeted verification | `$env:PYTHONPATH='src'; conda run -n tokenshare python -m pytest tests\storage\test_event_ledger.py -q` | Passed | `3 passed in 0.06s`. |
+| Core model and package targeted verification | `$env:PYTHONPATH='src'; conda run -n tokenshare python -m pytest tests\core\test_phase1_models.py tests\test_package_layout.py -q` | Passed | `3 passed in 0.06s`. |
+| Coordination-boundary full startup verification | `powershell -ExecutionPolicy Bypass -File .\init.ps1` | Passed | pytest collected 9 items; `9 passed in 0.20s`. |
+| Requirements correction startup verification | `powershell -ExecutionPolicy Bypass -File .\init.ps1` | Passed | pytest collected 7 items; `7 passed in 0.22s`. |
 
 ## Files Changed
 
@@ -78,7 +92,7 @@
 - `feature_list.json`
 - `progress.md`
 - `session-handoff.md`
-- `requirements.md`
+- `requirements.txt`
 - `init.sh`
 - `init.ps1`
 - `README.md`
@@ -92,6 +106,7 @@
 - `Doc/agent-navigation.md`
 - `Doc/TechnicalDocument/2026-06-05-phase-1-minimal-object-field-spec.md`
 - `Doc/TechnicalDocument/2026-06-06-phase-1-code-map.md`
+- `Doc/TechnicalDocument/2026-06-07-phase-2-coordination-debt-memo.md`
 - `src/tokenshare/core/models.py`
 - `src/tokenshare/core/registration.py`
 - `src/tokenshare/core/__init__.py`
@@ -123,10 +138,14 @@
 - V1 now has three experiment families: factorization, Lean stub, and structured report stub. The third exists to test natural-language decomposition, weak verification, evidence coverage, and `MergePlan` merging.
 - Any online research that affects TokenShare design, code, tests, or docs must be materialized locally before being relied on: papers/reports are indexed in the paper map, open-source projects are pinned in `reference_repos/README.md`, and ordinary online docs record source URL, access date, local summary, and impact scope.
 - Routine file reading/searching in this workspace should use PowerShell with explicit UTF-8, for example `Get-Content -Encoding UTF8`, `Get-ChildItem`, and `Select-String`; avoid using `rg` as the default repository search path.
+- `TaskUnit.state` is only a coarse node lifecycle state. Do not put lease validity or attempt verification progress into `TaskState`; use `Lease` and `Attempt` state machines for those details.
+- `EventLedger` treats `idempotency_key` as retry dedupe, not conflict overwrite. Same key with different event type, object, task, or canonical payload is an audit conflict and must fail.
+- `RootTaskRegistrar` remains a narrow Phase 1 compatibility coordinator. Phase 2 should put TaskGraph / Scheduler / LeaseManager / attempt orchestration into a separate orchestration layer or `ProtocolEngine`, not into `tokenshare.core.registration`.
 
 ## Blockers / Risks
 
 - Phase 2 must preserve the same event-ledger-first boundary: state transitions, scheduling decisions, lease changes, and attempt changes should be written to JSONL events.
+- Phase 2 agents should read `Doc/TechnicalDocument/2026-06-07-phase-2-coordination-debt-memo.md` before expanding registration/orchestration code; the memo records what was fixed now and what is intentionally deferred.
 - Phase 2 should not implement plugin verification/merge yet, but `TaskGraph`, states, and events must not block later `DecompositionProposal`, `VerificationReport`, `ExpansionDecision`, `MergePlan`, and `MergeRecord`.
 - Factorization split strategy, Lean stub fixtures, and structured report fixtures are open design points.
 - Real distributed runtime, real chain settlement, production AI APIs, and full Lean proving are explicitly out of scope for V1.
@@ -138,7 +157,8 @@
 3. Run `.\init.ps1` on Windows or `./init.sh` in Bash. Both default to `conda` env `tokenshare`.
 4. For routine repository reads/searches, follow `Doc/agent-navigation.md` section 4: PowerShell plus explicit UTF-8, no default `rg`.
 5. If using online research, first follow `Doc/agent-navigation.md` section 6 to download/pull and index the source material.
-6. Continue feat-003.
+6. Read `Doc/TechnicalDocument/2026-06-07-phase-2-coordination-debt-memo.md` before changing registration or orchestration boundaries.
+7. Continue feat-003.
 
 ## Recommended Next Step
 
