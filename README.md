@@ -109,10 +109,14 @@ PYTHONPATH=src conda run -n tokenshare python -m pytest tests
 - `requirements.txt`：可由 `pip install -r requirements.txt` 安装的 Python 依赖清单。
 - `init.ps1`：Windows PowerShell 启动验证。
 - `init.sh`：Bash/Git Bash/WSL 启动验证。
-- `src/tokenshare/`：TokenShare Python package 骨架。
-- `tests/`：与 package 边界镜像的测试骨架。
+- `src/tokenshare/`：TokenShare Python package，实现协议核心、存储、插件、执行器、重放和实验模块边界。
+- `tests/`：与 package 边界镜像的 pytest 测试。
 - `reference_repos/`：package layout 研究用的外部参考源码浅克隆，不属于 TokenShare runtime。
 - `Doc/TechnicalDocument/2026-06-03-tokenshare-protocol-technical-design.md`：当前实现导向技术设计文档。
+- `Doc/TechnicalDocument/2026-06-05-phase-1-minimal-object-field-spec.md`：Phase 1 最小对象字段、event envelope 和 SQLite 可重建索引规格。
+- `Doc/TechnicalDocument/2026-06-06-phase-1-code-map.md`：Phase 1 代码、规格章节和测试的对应关系。
+- `Doc/TechnicalDocument/2026-06-08-phase-2-minimal-field-state-event-spec.md`：Phase 2 最小对象、状态机、事件顺序和 SQLite 投影规格。
+- `Doc/TechnicalDocument/2026-06-08-phase-2-code-map.md`：Phase 2 代码、规格章节和测试的对应关系。
 - `Doc/TechnicalDocument/2026-06-04-tokenshare-paper-module-map.md`：论文、技术报告、本地 TeX/OCR 与模块借鉴映射。
 - `Doc/TechnicalDocument/tokenshare-paper-tex/`：已本地化的论文/技术报告 TeX 或 OCR 文本。
 - `Doc/TechnicalDocument/2026-06-02-tokenshare-protocol-kernel-revised-draft.md`：协议内核讨论稿。
@@ -138,7 +142,7 @@ PYTHONPATH=src conda run -n tokenshare python -m pytest tests
 
 ## Current Status
 
-当前日期状态：2026-06-06。
+当前日期状态：2026-06-08。
 
 已完成：
 
@@ -146,26 +150,30 @@ PYTHONPATH=src conda run -n tokenshare python -m pytest tests
 - `init.ps1` / `init.sh` 基线验证已建立。
 - V1 路线图已写入 `feature_list.json`。
 - 当前项目边界已写入 `AGENTS.md`。
-- 初始 package layout 已确定并创建：`src/tokenshare/{core,storage,plugins,executors,replay,experiments}` 与镜像 `tests/` 骨架。
+- package layout 已确定并创建：`src/tokenshare/{core,storage,plugins,executors,replay,experiments}` 与镜像 `tests/`。
 - Phase 1 协议基础对象与本地存储已实现：root task registration、artifact save/read/hash、JSONL event append/read/hash chain、SQLite 可重建索引。
+- Phase 2 最小协议内核已实现：`TaskGraph`、`TaskUnit` / `Lease` / `Attempt` 状态机、FIFO `Scheduler`、`LeaseManager`、Phase 2 event type、SQLite `leases` / `attempts` / `recovery_actions` 投影，以及顶层 `ProtocolEngine` 调度、heartbeat 和 lease expiry 事件流。
+- Phase 2 code map 已新增：`Doc/TechnicalDocument/2026-06-08-phase-2-code-map.md`。
 - 主 TDD 已补充大型自然语言任务相关边界：`DecompositionProposal`、`VerificationReport`、`MergePlan`、`MergeRecord` 和 structured report stub。
+- 当前完整启动验证通过：`.\init.ps1` 在 `tokenshare` conda 环境中收集 18 个测试并全部通过。
 
 当前进行中：
 
-- `feat-003`：Phase 2 - Task Graph, State Machines, and Scheduling。
+- `feat-004`：Phase 3 - Plugin and Executor Contracts。
 
-Phase 2 的下一步是用 TDD 实现：
+Phase 3 的下一步是用 TDD 实现：
 
-- `TaskGraph`。
-- `TaskUnit` 状态转换。
-- `Lease` / `Attempt` 状态机。
-- `Scheduler` 和 `LeaseManager`。
-- 状态变化写入 JSONL event ledger。
+- `PluginRegistry`。
+- `ExecutorRegistry`。
+- `ExecutionRequest`。
+- `ExecutionSubmission`。
+- `MockAIExecutor`、确定性 executor 边界和 AI output artifact contracts。
 
-同时，Phase 2 不实现插件验证或合并，但图和状态边界不能阻碍后续 `DecompositionProposal`、`VerificationReport`、`ExpansionDecision` 和 `MergePlan`。
+同时，Phase 3 不实现 submission verification、canonical binding、expansion、merge 或 settlement；也不引入真实 executor 网络或生产 AI API。
 
 当前仍需注意：
 
 - 自然语言任务的验证不是“证明文本绝对正确”，而是通过结构化 schema、证据引用、覆盖率和审计 replay 降低风险。
 - Lean V1 只是 stub，不应扩大到真实 theorem proving。
+- factorization、Lean stub 和 structured report stub 是插件实验对象，不应硬编码进协议核心。
 - 当前实现默认使用 `conda` 环境 `tokenshare`；如果运行时选择变化，需要同步更新 README、harness 和设计资料。

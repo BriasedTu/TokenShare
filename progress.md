@@ -6,7 +6,7 @@
 **当前 Feature：** feat-004 - Phase 3 - Plugin and Executor Contracts（下一轮待实现）
 **仓库阶段：** startup / local research prototype
 
-TokenShare 当前已有设计文档、仓库元数据、Python package layout、Phase 1 协议基础对象、本地存储实现，以及 Phase 2 最小任务图、状态机、调度、租约和事件投影代码。启动期 harness 已经建立并通过 `conda` 环境 `tokenshare` 验证；V1 技术栈已收束为 Python 3.12+、SQLite、JSON、JSONL 和本地文件系统。`feat-003` 已完成并通过验证，`feature_list.json` 已将 `feat-004` 激活为下一轮 in-progress feature；Phase 3 代码尚未开始。
+TokenShare 当前已有设计文档、仓库元数据、Python package layout、Phase 1 协议基础对象、本地存储实现，以及 Phase 2 最小任务图、状态机、调度、租约和事件投影代码。启动期 harness 已经建立并通过 `conda` 环境 `tokenshare` 验证；V1 技术栈已收束为 Python 3.12+、SQLite、JSON、JSONL 和本地文件系统。`feat-003` 已完成并通过验证。当前 active feature 是 `feat-004`；Phase 3 代码尚未开始。
 
 ## 项目理解（Project Understanding）
 
@@ -67,6 +67,7 @@ V1 的三类实验是 factorization、Lean stub proof 和 structured report stub
 - [x] 新增 Phase 2 专用规格文档：`Doc/TechnicalDocument/2026-06-08-phase-2-minimal-field-state-event-spec.md`，记录 `TaskGraph`、`TaskUnitStateChange`、`Lease`、`Attempt`、`SchedulingDecision`、`RecoveryAction`、状态机、事件顺序、SQLite 投影和自然语言 artifact 边界。
 - [x] 使用 TDD 实现 Phase 2 最小协议内核：`Lease` / `Attempt` 对象和状态枚举、`TaskGraph` ready 判断和图不变量、`TaskUnit` / `Lease` / `Attempt` 状态机、FIFO `Scheduler`、`LeaseManager` claim/heartbeat/expiry recovery、Phase 2 event type、SQLite `leases` / `attempts` / `recovery_actions` 投影，以及顶层 `ProtocolEngine` 调度、heartbeat 和 lease expiry 事件流。
 - [x] 新增 Phase 2 代码映射文档：`Doc/TechnicalDocument/2026-06-08-phase-2-code-map.md`，记录 Phase 2 规格、实现文件和测试文件的对应关系。
+- [x] 同步更新 `README.md` 当前状态、仓库地图和下一步，把 README 从旧 Phase 2 进行中口径改为当前 Phase 3 准备口径；同步更新 `Doc/agent-navigation.md` 日期。
 
 ### 进行中（What's In Progress）
 
@@ -199,6 +200,7 @@ V1 的三类实验是 factorization、Lean stub proof 和 structured report stub
 - [x] Phase 2 heartbeat 红灯验证：`$env:PYTHONPATH='src'; conda run -n tokenshare python -m pytest tests\test_phase2_scheduling_flow.py -q` failed as expected；失败原因是 `ProtocolEngine.record_lease_heartbeat` 尚不存在。
 - [x] Phase 2 定向绿灯验证：同一定向命令 passed；结果 `9 passed in 0.22s`。
 - [x] Phase 2 完整启动验证：`powershell -ExecutionPolicy Bypass -File .\init.ps1` passed；pytest collected 18 items，结果 `18 passed`。
+- [x] README 状态同步后二次审核：使用 `Select-String` 检查旧状态关键词；`README.md` 无旧状态命中，其他命中均为完成状态、历史 evidence 或当前真实的 Phase 3 尚未开始表述。
 
 ## 下次会话提示（Notes for Next Session）
 

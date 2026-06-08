@@ -3,7 +3,7 @@
 ## Current Objective
 
 - Goal: Continue feat-004 by preparing Plugin and Executor Contracts.
-- Current status: `feat-003` is complete. Phase 2 now has concrete protocol-kernel code for `TaskGraph`, `TaskUnit`/`Lease`/`Attempt` state machines, `Scheduler`, `LeaseManager`, Phase 2 event types, SQLite projections, and a minimal top-level `ProtocolEngine` scheduling/heartbeat/lease-expiry flow. `feature_list.json` marks `feat-004` as the active in-progress feature; Phase 3 implementation code has not started. Startup verification uses the `conda` environment `tokenshare`.
+- Current status: `feat-003` is complete. Phase 2 now has concrete protocol-kernel code for `TaskGraph`, `TaskUnit`/`Lease`/`Attempt` state machines, `Scheduler`, `LeaseManager`, Phase 2 event types, SQLite projections, and a minimal top-level `ProtocolEngine` scheduling/heartbeat/lease-expiry flow. The active feature is `feat-004`; Phase 3 implementation code has not started. Startup verification uses the `conda` environment `tokenshare`.
 - Branch / commit: Check with `git status` and `git log --oneline -5`.
 
 ## Completed This Session
@@ -48,6 +48,7 @@
 - [x] Added and indexed `Doc/TechnicalDocument/2026-06-08-phase-2-minimal-field-state-event-spec.md` to define Phase 2 `TaskGraph`, `TaskUnitStateChange`, `Lease`, `Attempt`, `SchedulingDecision`, `RecoveryAction`, event ordering, SQLite projections, module boundaries, and natural-language artifact handling.
 - [x] Implemented Phase 2 minimal protocol-kernel code: `Lease` / `Attempt` objects and enums, `TaskGraph` ready/dependency/cycle checks, Phase 2 state machines, FIFO `Scheduler`, `LeaseManager` claim/heartbeat/expiry recovery, Phase 2 event types, SQLite `leases` / `attempts` / `recovery_actions` projections, and top-level `ProtocolEngine` event-backed scheduling, heartbeat, and lease expiry flows.
 - [x] Added `Doc/TechnicalDocument/2026-06-08-phase-2-code-map.md` to map Phase 2 code, tests, and specification sections.
+- [x] Updated `README.md` current status and repository map after Phase 2 completion; updated `Doc/agent-navigation.md` date and rechecked stale Phase 2 status wording.
 
 ## Verification Evidence
 
