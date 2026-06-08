@@ -2,11 +2,11 @@
 
 ## 当前状态（Current State）
 
-**最后更新：** 2026-06-07
-**当前 Feature：** feat-003 - Phase 2 - Task Graph, State Machines, and Scheduling
+**最后更新：** 2026-06-08
+**当前 Feature：** feat-004 - Phase 3 - Plugin and Executor Contracts（下一轮待实现）
 **仓库阶段：** startup / local research prototype
 
-TokenShare 当前已有设计文档、仓库元数据、Python package layout、Phase 1 协议基础对象和本地存储实现。启动期 harness 已经建立并通过 `conda` 环境 `tokenshare` 验证；V1 技术栈已收束为 Python 3.12+、SQLite、JSON、JSONL 和本地文件系统。`feat-002` 已完成并通过验证，下一步进入 `feat-003`：任务图、状态机、调度和租约管理。
+TokenShare 当前已有设计文档、仓库元数据、Python package layout、Phase 1 协议基础对象、本地存储实现，以及 Phase 2 最小任务图、状态机、调度、租约和事件投影代码。启动期 harness 已经建立并通过 `conda` 环境 `tokenshare` 验证；V1 技术栈已收束为 Python 3.12+、SQLite、JSON、JSONL 和本地文件系统。`feat-003` 已完成并通过验证，`feature_list.json` 已将 `feat-004` 激活为下一轮 in-progress feature；Phase 3 代码尚未开始。
 
 ## 项目理解（Project Understanding）
 
@@ -64,18 +64,21 @@ V1 的三类实验是 factorization、Lean stub proof 和 structured report stub
 - [x] 修正 `EventLedger.append()` 幂等边界：相同 `idempotency_key` 只有在事件类型、对象、任务和 canonical payload 一致时返回旧事件；冲突重复写入会抛出 `ValueError`，避免 replay 审计时吞掉冲突。
 - [x] 收窄 `tokenshare.core` 包入口：不再从 `tokenshare.core.__init__` 重新导出 Phase 1 临时协调器 `RootTaskRegistrar`，避免 protocol core 包入口和 storage orchestration 形成循环依赖。
 - [x] 新增 Phase 2 协调边界备忘录，并在 `Doc/agent-navigation.md` 和 Phase 1 code map 中建立索引，提醒后续 agent 不要让 `RootTaskRegistrar` 继续长成 TaskGraph / Scheduler / LeaseManager 总入口。
+- [x] 新增 Phase 2 专用规格文档：`Doc/TechnicalDocument/2026-06-08-phase-2-minimal-field-state-event-spec.md`，记录 `TaskGraph`、`TaskUnitStateChange`、`Lease`、`Attempt`、`SchedulingDecision`、`RecoveryAction`、状态机、事件顺序、SQLite 投影和自然语言 artifact 边界。
+- [x] 使用 TDD 实现 Phase 2 最小协议内核：`Lease` / `Attempt` 对象和状态枚举、`TaskGraph` ready 判断和图不变量、`TaskUnit` / `Lease` / `Attempt` 状态机、FIFO `Scheduler`、`LeaseManager` claim/heartbeat/expiry recovery、Phase 2 event type、SQLite `leases` / `attempts` / `recovery_actions` 投影，以及顶层 `ProtocolEngine` 调度、heartbeat 和 lease expiry 事件流。
+- [x] 新增 Phase 2 代码映射文档：`Doc/TechnicalDocument/2026-06-08-phase-2-code-map.md`，记录 Phase 2 规格、实现文件和测试文件的对应关系。
 
 ### 进行中（What's In Progress）
 
-- [ ] 开始 Phase 2 - Task Graph, State Machines, and Scheduling。
-  - 细节：实现 `TaskGraph`、`TaskUnit` 状态转移、`Lease` / `Attempt` 状态机、`Scheduler` 和 `LeaseManager`。
-  - 当前状态：`feat-003` 已在 `feature_list.json` 中激活为下一轮唯一 in-progress feature；具体代码尚未开始。
+- [ ] Phase 3 - Plugin and Executor Contracts。
+  - 细节：实现 `PluginRegistry`、`ExecutorRegistry`、`ExecutionRequest`、`ExecutionSubmission`、`MockAIExecutor`、确定性 executor 边界和 AI output artifact contracts。
+  - 当前状态：`feat-004` 已在 `feature_list.json` 中激活为唯一 in-progress feature；本轮未开始 Phase 3 代码。
 
 ### 下一步（What's Next）
 
-1. 阅读 TDD 第 9、12 节和 `Doc/agent-navigation.md` 中的模块路由，明确 Phase 2 状态机和调度边界。
-2. 为 `TaskGraph`、`TaskUnit` 状态转移、`Lease` 和 `Attempt` 写最小字段/状态规格或实现测试。
-3. 用 TDD 实现 ready node 调度、lease 过期恢复，以及状态转移写入 `EventLedger`。
+1. 下一轮先按 `AGENTS.md` 启动流程重新运行 `.\init.ps1`，确认 Phase 2 后的 18 个测试仍通过。
+2. 阅读主 TDD 中 Phase 3 相关章节，并在不扩大到真实执行器网络或生产 AI API 的前提下细化 `PluginRegistry`、`ExecutorRegistry`、`ExecutionRequest` 和 `ExecutionSubmission` 的最小对象字段。
+3. 使用 TDD 开始 `feat-004`；不要把 factorization、Lean stub 或 structured report stub 的领域规则硬编码进协议核心。
 
 ## 阻塞与风险（Blockers / Risks）
 
@@ -83,6 +86,7 @@ V1 的三类实验是 factorization、Lean stub proof 和 structured report stub
 - [ ] Phase 2 不实现验证/合并，但 `TaskGraph` 和状态机要为后续 `DecompositionProposal`、`ExpansionDecision`、`MergePlan`、`VerificationReport` 预留事件和状态边界。
 - [ ] SQLite 只能作为可重建索引和查询视图，不能变成隐藏权威状态源；后续 replay 测试仍需覆盖“删除 SQLite 后可重建”。
 - [ ] Lean V1 是 stub，不要不小心扩大到真实 theorem proving。
+- [ ] 调度、lease 创建、attempt 创建和 unit 状态推进会产生多条 JSONL 事件；后续实现需要用 `correlation_id` 和恢复逻辑处理局部写入后的中间态。
 
 ## 已做决策（Decisions Made）
 
@@ -98,6 +102,10 @@ V1 的三类实验是 factorization、Lean stub proof 和 structured report stub
 - **TaskState 边界决策：** `TaskUnit.state` 只表达节点生命周期；租约有效性属于 `Lease`，提交、验证和正式输出选择进度属于 `Attempt`，不能在 `TaskState` 中重复建模。
 - **EventLedger 幂等决策：** `idempotency_key` 是“同一请求重试”的去重键，不是冲突覆盖键；同 key 写入必须校验事件类型、对象、任务和 canonical payload，一旦不同即失败。
 - **Phase 2 协调边界决策：** `RootTaskRegistrar` 仍可作为 Phase 1 兼容入口，但后续 `TaskGraph`、`Scheduler`、`LeaseManager` 和 attempt 状态推进应进入独立编排层或 `ProtocolEngine`，不要继续塞进 protocol core。
+- **Phase 2 对象规格决策：** `TaskGraph` 是可重建视图；`Lease` 过期会让关联 `Attempt` 进入 `Superseded` 而不是 `Failed`；`SchedulingDecision` 在 Phase 2 嵌入 lease/attempt 事件，不单独建 event type。
+- **自然语言输出边界决策：** AI raw text、parsed output 和 candidate output bundle 都必须通过 `ArtifactRef` 进入系统；Phase 2 event payload 只保存结构化摘要和 refs，不嵌入长自然语言正文。
+- **Phase 2 开工默认决策：** 当前阶段仍然只做协议内核，不做插件、executor/处理端、AI 调用、submission 验证、canonical binding、expansion、merge 或 settlement；暂不新增 `max_parallel_attempts_per_unit`，用 `allow_shadow_execution=false` 约束同一 unit 最多一个 active lease；heartbeat 每次成功都写 `LEASE_STATE_CHANGED Active -> Active` 事件。
+- **Phase 2 实现边界决策：** `tokenshare.core` 新增纯协议对象、状态机、`TaskGraph`、`Scheduler` 和 `LeaseManager`；顶层 `tokenshare.protocol_engine.ProtocolEngine` 负责把调度和 lease expiry 决策写入 `EventLedger`；`RootTaskRegistrar` 未扩展，SQLite 仍只是从 JSONL events 重建的查询投影。
 
 ## 本轮修改文件（Files Modified This Session）
 
@@ -120,17 +128,32 @@ V1 的三类实验是 factorization、Lean stub proof 和 structured report stub
 - `Doc/TechnicalDocument/2026-06-05-phase-1-minimal-object-field-spec.md` - Phase 1 最小对象字段规格、事件 envelope 和 SQLite 可重建索引边界。
 - `Doc/TechnicalDocument/2026-06-06-phase-1-code-map.md` - Phase 1 代码、规格章节和测试的对应关系。
 - `Doc/TechnicalDocument/2026-06-07-phase-2-coordination-debt-memo.md` - Phase 2 协调边界备忘录，记录已修复的边界问题和后续编排层迁移触发条件。
+- `Doc/TechnicalDocument/2026-06-08-phase-2-minimal-field-state-event-spec.md` - Phase 2 最小字段、状态机、事件顺序、SQLite 投影和自然语言 artifact 边界规格。
+- `Doc/TechnicalDocument/2026-06-08-phase-2-code-map.md` - Phase 2 代码、规格章节和测试的对应关系。
 - `src/tokenshare/core/models.py` - Phase 1 协议对象和稳定 JSON snapshot。
 - `src/tokenshare/core/__init__.py` - protocol core 包入口；不再重新导出 `RootTaskRegistrar` 等存储协调器。
 - `src/tokenshare/core/registration.py` - root task registration 协调器。
+- `src/tokenshare/core/task_graph.py` - Phase 2 `TaskGraph` 纯视图、ready 判断和图不变量。
+- `src/tokenshare/core/state_machines.py` - Phase 2 `TaskUnit`、`Lease` 和 `Attempt` 状态机。
+- `src/tokenshare/core/scheduling.py` - Phase 2 `Scheduler` 和 `SchedulingDecision`。
+- `src/tokenshare/core/leases.py` - Phase 2 `LeaseManager` claim、heartbeat 和 expiry recovery 规则。
+- `src/tokenshare/protocol_engine.py` - Phase 2 最小 application service，按规格写入调度、heartbeat 和 lease expiry 事件序列。
 - `src/tokenshare/storage/artifacts.py` - 本地 artifact 保存、读取、hash 校验和 manifest。
 - `src/tokenshare/storage/events.py` - JSONL `EventLedger`、`LedgerEvent`、事件类型、幂等键和 hash chain。
 - `src/tokenshare/storage/sqlite_index.py` - 从 JSONL events 重建 SQLite 查询索引。
+- `tests/__init__.py` - 让测试 helper 可稳定导入。
+- `tests/phase2_fixtures.py` - Phase 2 测试夹具。
 - `tests/core/test_phase1_models.py` - Phase 1 协议对象测试。
+- `tests/core/test_task_graph.py` - Phase 2 `TaskGraph` 测试。
+- `tests/core/test_state_machines.py` - Phase 2 状态机测试。
+- `tests/core/test_scheduler.py` - Phase 2 scheduler 测试。
+- `tests/core/test_lease_manager.py` - Phase 2 lease manager 测试。
 - `tests/storage/test_artifact_store.py` - artifact store 测试。
 - `tests/storage/test_event_ledger.py` - event ledger 测试。
 - `tests/storage/test_sqlite_index.py` - SQLite rebuild 测试。
+- `tests/storage/test_phase2_event_projection.py` - Phase 2 SQLite event projection 测试。
 - `tests/test_phase1_root_registration.py` - root task registration 集成测试。
+- `tests/test_phase2_scheduling_flow.py` - Phase 2 调度和 lease expiry event-backed flow 集成测试。
 
 ## 完成证据（Evidence of Completion）
 
@@ -170,7 +193,13 @@ V1 的三类实验是 factorization、Lean stub proof 和 structured report stub
 - [x] `EventLedger` 幂等冲突绿灯验证：`$env:PYTHONPATH='src'; conda run -n tokenshare python -m pytest tests\storage\test_event_ledger.py -q` passed；结果 `3 passed in 0.06s`。
 - [x] `core` 模型和 package layout 定向验证：`$env:PYTHONPATH='src'; conda run -n tokenshare python -m pytest tests\core\test_phase1_models.py tests\test_package_layout.py -q` passed；结果 `3 passed in 0.06s`。
 - [x] 协调边界修正后完整启动验证：`powershell -ExecutionPolicy Bypass -File .\init.ps1` passed；pytest collected 9 items，结果 `9 passed in 0.20s`。
+- [x] Phase 2 规格文档新增后完整启动验证：`powershell -ExecutionPolicy Bypass -File .\init.ps1` passed；pytest collected 9 items，结果 `9 passed`。
+- [x] Phase 2 开工默认决策写入规格后完整启动验证：`powershell -ExecutionPolicy Bypass -File .\init.ps1` passed；pytest collected 9 items，结果 `9 passed`。
+- [x] Phase 2 TDD 红灯验证：`$env:PYTHONPATH='src'; conda run -n tokenshare python -m pytest tests\core\test_task_graph.py tests\core\test_state_machines.py tests\core\test_scheduler.py tests\core\test_lease_manager.py tests\storage\test_phase2_event_projection.py tests\test_phase2_scheduling_flow.py -q` failed as expected；失败原因是 `tokenshare.core.task_graph`、`tokenshare.core.scheduling`、`tokenshare.core.leases`、`Lease` / `Attempt` 对象和 `tokenshare.protocol_engine` 尚不存在。
+- [x] Phase 2 heartbeat 红灯验证：`$env:PYTHONPATH='src'; conda run -n tokenshare python -m pytest tests\test_phase2_scheduling_flow.py -q` failed as expected；失败原因是 `ProtocolEngine.record_lease_heartbeat` 尚不存在。
+- [x] Phase 2 定向绿灯验证：同一定向命令 passed；结果 `9 passed in 0.22s`。
+- [x] Phase 2 完整启动验证：`powershell -ExecutionPolicy Bypass -File .\init.ps1` passed；pytest collected 18 items，结果 `18 passed`。
 
 ## 下次会话提示（Notes for Next Session）
 
-Feat-001 和 feat-002 已完成。Phase 1 代码与规格对应关系见 `Doc/TechnicalDocument/2026-06-06-phase-1-code-map.md`。下一步只实现 `feat-003`：Task Graph、State Machines、Scheduling；不实现插件、执行器、验证/合并或实验插件，但必须为后续 `DecompositionProposal`、`VerificationReport`、`ExpansionDecision` 和 `MergePlan` 预留图、事件和状态边界。后续常规仓库读取/搜索按 `Doc/agent-navigation.md` 第 4 节使用 PowerShell 和 UTF-8；如需联网查资料，必须先按第 6 节完成本地落库和索引同步。
+Feat-001、feat-002 和 feat-003 已完成。Phase 1 代码与规格对应关系见 `Doc/TechnicalDocument/2026-06-06-phase-1-code-map.md`；Phase 2 最小字段、状态和事件规格见 `Doc/TechnicalDocument/2026-06-08-phase-2-minimal-field-state-event-spec.md`；Phase 2 代码映射见 `Doc/TechnicalDocument/2026-06-08-phase-2-code-map.md`。下一步只实现 `feat-004`：Plugin and Executor Contracts；不要提前实现真实 executor 网络、生产 AI API、submission verification、canonical binding、merge 或 settlement。后续常规仓库读取/搜索按 `Doc/agent-navigation.md` 第 4 节使用 PowerShell 和 UTF-8；如需联网查资料，必须先按第 6 节完成本地落库和索引同步。

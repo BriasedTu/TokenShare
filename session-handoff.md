@@ -2,8 +2,8 @@
 
 ## Current Objective
 
-- Goal: Continue feat-003 by preparing Task Graph, State Machines, and Scheduling.
-- Current status: `feat-002` is complete. Phase 1 now has concrete protocol base objects, local artifact storage, JSONL event ledger, SQLite rebuildable index, root task registration, tests, and a code-to-spec mapping document. `feature_list.json` now marks `feat-003` as the active in-progress feature. Startup verification now uses the `conda` environment `tokenshare`.
+- Goal: Continue feat-004 by preparing Plugin and Executor Contracts.
+- Current status: `feat-003` is complete. Phase 2 now has concrete protocol-kernel code for `TaskGraph`, `TaskUnit`/`Lease`/`Attempt` state machines, `Scheduler`, `LeaseManager`, Phase 2 event types, SQLite projections, and a minimal top-level `ProtocolEngine` scheduling/heartbeat/lease-expiry flow. `feature_list.json` marks `feat-004` as the active in-progress feature; Phase 3 implementation code has not started. Startup verification uses the `conda` environment `tokenshare`.
 - Branch / commit: Check with `git status` and `git log --oneline -5`.
 
 ## Completed This Session
@@ -45,6 +45,9 @@
 - [x] Fixed `EventLedger.append()` idempotency conflict handling: duplicate `idempotency_key` now returns the old event only when event type, object, task, and canonical payload match.
 - [x] Narrowed `tokenshare.core.__init__` so the protocol-core package entry no longer re-exports the Phase 1 storage coordinator `RootTaskRegistrar`.
 - [x] Added and indexed `Doc/TechnicalDocument/2026-06-07-phase-2-coordination-debt-memo.md` so future agents see the Phase 2 orchestration-boundary debt before extending registration code.
+- [x] Added and indexed `Doc/TechnicalDocument/2026-06-08-phase-2-minimal-field-state-event-spec.md` to define Phase 2 `TaskGraph`, `TaskUnitStateChange`, `Lease`, `Attempt`, `SchedulingDecision`, `RecoveryAction`, event ordering, SQLite projections, module boundaries, and natural-language artifact handling.
+- [x] Implemented Phase 2 minimal protocol-kernel code: `Lease` / `Attempt` objects and enums, `TaskGraph` ready/dependency/cycle checks, Phase 2 state machines, FIFO `Scheduler`, `LeaseManager` claim/heartbeat/expiry recovery, Phase 2 event types, SQLite `leases` / `attempts` / `recovery_actions` projections, and top-level `ProtocolEngine` event-backed scheduling, heartbeat, and lease expiry flows.
+- [x] Added `Doc/TechnicalDocument/2026-06-08-phase-2-code-map.md` to map Phase 2 code, tests, and specification sections.
 
 ## Verification Evidence
 
@@ -85,6 +88,12 @@
 | Core model and package targeted verification | `$env:PYTHONPATH='src'; conda run -n tokenshare python -m pytest tests\core\test_phase1_models.py tests\test_package_layout.py -q` | Passed | `3 passed in 0.06s`. |
 | Coordination-boundary full startup verification | `powershell -ExecutionPolicy Bypass -File .\init.ps1` | Passed | pytest collected 9 items; `9 passed in 0.20s`. |
 | Requirements correction startup verification | `powershell -ExecutionPolicy Bypass -File .\init.ps1` | Passed | pytest collected 7 items; `7 passed in 0.22s`. |
+| Phase 2 spec startup verification | `powershell -ExecutionPolicy Bypass -File .\init.ps1` | Passed | pytest collected 9 items; `9 passed`. |
+| Phase 2 implementation-start decision verification | `powershell -ExecutionPolicy Bypass -File .\init.ps1` | Passed | pytest collected 9 items; `9 passed`. |
+| Phase 2 TDD red check | `$env:PYTHONPATH='src'; conda run -n tokenshare python -m pytest tests\core\test_task_graph.py tests\core\test_state_machines.py tests\core\test_scheduler.py tests\core\test_lease_manager.py tests\storage\test_phase2_event_projection.py tests\test_phase2_scheduling_flow.py -q` | Failed as expected | Missing Phase 2 modules/objects: `tokenshare.core.task_graph`, `tokenshare.core.scheduling`, `tokenshare.core.leases`, `Lease` / `Attempt`, and `tokenshare.protocol_engine`. |
+| Phase 2 heartbeat red check | `$env:PYTHONPATH='src'; conda run -n tokenshare python -m pytest tests\test_phase2_scheduling_flow.py -q` | Failed as expected | `ProtocolEngine.record_lease_heartbeat` was missing. |
+| Phase 2 targeted verification | `$env:PYTHONPATH='src'; conda run -n tokenshare python -m pytest tests\core\test_task_graph.py tests\core\test_state_machines.py tests\core\test_scheduler.py tests\core\test_lease_manager.py tests\storage\test_phase2_event_projection.py tests\test_phase2_scheduling_flow.py -q` | Passed | `9 passed in 0.22s`. |
+| Phase 2 full startup verification | `powershell -ExecutionPolicy Bypass -File .\init.ps1` | Passed | pytest collected 18 items; `18 passed`. |
 
 ## Files Changed
 
@@ -107,18 +116,33 @@
 - `Doc/TechnicalDocument/2026-06-05-phase-1-minimal-object-field-spec.md`
 - `Doc/TechnicalDocument/2026-06-06-phase-1-code-map.md`
 - `Doc/TechnicalDocument/2026-06-07-phase-2-coordination-debt-memo.md`
+- `Doc/TechnicalDocument/2026-06-08-phase-2-minimal-field-state-event-spec.md`
+- `Doc/TechnicalDocument/2026-06-08-phase-2-code-map.md`
 - `src/tokenshare/core/models.py`
 - `src/tokenshare/core/registration.py`
 - `src/tokenshare/core/__init__.py`
+- `src/tokenshare/core/task_graph.py`
+- `src/tokenshare/core/state_machines.py`
+- `src/tokenshare/core/scheduling.py`
+- `src/tokenshare/core/leases.py`
+- `src/tokenshare/protocol_engine.py`
 - `src/tokenshare/storage/artifacts.py`
 - `src/tokenshare/storage/events.py`
 - `src/tokenshare/storage/sqlite_index.py`
 - `src/tokenshare/storage/__init__.py`
+- `tests/__init__.py`
+- `tests/phase2_fixtures.py`
 - `tests/core/test_phase1_models.py`
+- `tests/core/test_task_graph.py`
+- `tests/core/test_state_machines.py`
+- `tests/core/test_scheduler.py`
+- `tests/core/test_lease_manager.py`
 - `tests/storage/test_artifact_store.py`
 - `tests/storage/test_event_ledger.py`
+- `tests/storage/test_phase2_event_projection.py`
 - `tests/storage/test_sqlite_index.py`
 - `tests/test_phase1_root_registration.py`
+- `tests/test_phase2_scheduling_flow.py`
 
 ## Decisions Made
 
@@ -141,12 +165,17 @@
 - `TaskUnit.state` is only a coarse node lifecycle state. Do not put lease validity or attempt verification progress into `TaskState`; use `Lease` and `Attempt` state machines for those details.
 - `EventLedger` treats `idempotency_key` as retry dedupe, not conflict overwrite. Same key with different event type, object, task, or canonical payload is an audit conflict and must fail.
 - `RootTaskRegistrar` remains a narrow Phase 1 compatibility coordinator. Phase 2 should put TaskGraph / Scheduler / LeaseManager / attempt orchestration into a separate orchestration layer or `ProtocolEngine`, not into `tokenshare.core.registration`.
+- Phase 2 field/state/event choices are now explicit: `TaskGraph` is a rebuildable view, lease expiry supersedes the running attempt instead of marking it failed, and `SchedulingDecision` is embedded in lease/attempt events for the minimal version.
+- AI or natural-language raw output must enter the protocol as artifacts referenced by `ArtifactRef`; event payloads should carry structured summaries and refs, not long raw text.
+- Phase 2 is still protocol-kernel development only: no plugin implementation, executor/processing endpoint, AI call, submission verification, canonical binding, expansion, merge, or settlement. Do not add `max_parallel_attempts_per_unit` yet; use `allow_shadow_execution=false` to mean one active lease per unit in the minimal version. Every successful heartbeat should append a `LEASE_STATE_CHANGED Active -> Active` event.
+- Phase 2 implementation boundary is now concrete: `tokenshare.core` contains pure objects/rules/decisions, `tokenshare.storage` contains append-only events and rebuildable projections, and top-level `tokenshare.protocol_engine.ProtocolEngine` is the minimal storage-writing application service. `RootTaskRegistrar` was not expanded.
 
 ## Blockers / Risks
 
-- Phase 2 must preserve the same event-ledger-first boundary: state transitions, scheduling decisions, lease changes, and attempt changes should be written to JSONL events.
-- Phase 2 agents should read `Doc/TechnicalDocument/2026-06-07-phase-2-coordination-debt-memo.md` before expanding registration/orchestration code; the memo records what was fixed now and what is intentionally deferred.
-- Phase 2 should not implement plugin verification/merge yet, but `TaskGraph`, states, and events must not block later `DecompositionProposal`, `VerificationReport`, `ExpansionDecision`, `MergePlan`, and `MergeRecord`.
+- Phase 3 must keep the protocol-core boundary: plugin/executor contracts may depend on protocol objects and artifact refs, but factorization, Lean stub, and structured report rules should not be hard-coded into `tokenshare.core`.
+- Phase 3 should read `Doc/TechnicalDocument/2026-06-08-phase-2-code-map.md` before using scheduler/lease/attempt objects, so executor contracts align with the Phase 2 event-backed flow.
+- Phase 3 should not implement submission verification, canonical binding, expansion, merge, or settlement; those remain later features.
+- Phase 2 event-ledger-first behavior must be preserved: new executor/plugin contract flows should write non-deterministic raw output as artifacts and keep event payloads structured.
 - Factorization split strategy, Lean stub fixtures, and structured report fixtures are open design points.
 - Real distributed runtime, real chain settlement, production AI APIs, and full Lean proving are explicitly out of scope for V1.
 
@@ -157,9 +186,10 @@
 3. Run `.\init.ps1` on Windows or `./init.sh` in Bash. Both default to `conda` env `tokenshare`.
 4. For routine repository reads/searches, follow `Doc/agent-navigation.md` section 4: PowerShell plus explicit UTF-8, no default `rg`.
 5. If using online research, first follow `Doc/agent-navigation.md` section 6 to download/pull and index the source material.
-6. Read `Doc/TechnicalDocument/2026-06-07-phase-2-coordination-debt-memo.md` before changing registration or orchestration boundaries.
-7. Continue feat-003.
+6. Read `Doc/TechnicalDocument/2026-06-08-phase-2-code-map.md` before using Phase 2 scheduling, lease, attempt, or projection code.
+7. Read the main TDD sections for Plugin and Executor Contracts before writing Phase 3 tests or code.
+8. Continue feat-004.
 
 ## Recommended Next Step
 
-- Start Phase 2 from the TDD sections on `TaskUnit`, `Lease`, and `Attempt` state machines. Add tests first for ready-node scheduling, lease expiry returning tasks to `Ready`, event-ledger recording of all state transitions, and graph APIs that can later accept expansion/merge metadata without embedding plugin domain logic.
+- Start Phase 3 implementation with TDD for `PluginRegistry`, `ExecutorRegistry`, `ExecutionRequest`, `ExecutionSubmission`, and artifact-backed raw/parsed output contracts. Keep real executor networking, production AI calls, verification, canonical binding, merge, and settlement out of scope.

@@ -27,11 +27,13 @@
 4. `session-handoff.md`：跨会话恢复摘要，尤其是上一轮未解决问题。
 5. `Doc/TechnicalDocument/2026-06-03-tokenshare-protocol-technical-design.md`：当前实现导向设计。
 6. `Doc/TechnicalDocument/2026-06-05-phase-1-minimal-object-field-spec.md`：Phase 1 最小对象字段、事件 envelope 和 SQLite 可重建索引规格；用于细化 feat-002。
-7. `Doc/TechnicalDocument/2026-06-07-phase-2-coordination-debt-memo.md`：Phase 2 协调边界备忘录；用于提醒后续 agent 不要让 `RootTaskRegistrar` 继续承担状态机、调度或存储编排增长职责。
-8. `README.md`：项目入口和稳定边界。
-9. `Doc/TechnicalDocument/2026-06-04-tokenshare-paper-module-map.md`：论文、技术报告和本地 TeX/OCR 映射；用于追踪研究依据。
-10. `Doc/TechnicalDocument/2026-06-02-tokenshare-protocol-kernel-revised-draft.md`：历史讨论稿；用于理解原因，不直接覆盖当前 TDD。
-11. `reference_repos/`：外部参考源码；只能用于借鉴模式，不属于 TokenShare runtime。
+7. `Doc/TechnicalDocument/2026-06-08-phase-2-minimal-field-state-event-spec.md`：Phase 2 最小对象、字段、状态机、事件顺序和 SQLite 投影规格；用于细化 feat-003。
+8. `Doc/TechnicalDocument/2026-06-08-phase-2-code-map.md`：Phase 2 代码、规格章节和测试的对应关系；用于确认 feat-003 实现边界。
+9. `Doc/TechnicalDocument/2026-06-07-phase-2-coordination-debt-memo.md`：Phase 2 协调边界备忘录；用于提醒后续 agent 不要让 `RootTaskRegistrar` 继续承担状态机、调度或存储编排增长职责。
+10. `README.md`：项目入口和稳定边界。
+11. `Doc/TechnicalDocument/2026-06-04-tokenshare-paper-module-map.md`：论文、技术报告和本地 TeX/OCR 映射；用于追踪研究依据。
+12. `Doc/TechnicalDocument/2026-06-02-tokenshare-protocol-kernel-revised-draft.md`：历史讨论稿；用于理解原因，不直接覆盖当前 TDD。
+13. `reference_repos/`：外部参考源码；只能用于借鉴模式，不属于 TokenShare runtime。
 
 如果两个文件冲突，应优先相信上面列表中更靠前的文件，并把冲突记录到 `progress.md` 或 `session-handoff.md`。
 
@@ -46,10 +48,12 @@
 | 技术栈是什么 | TDD 第 20 节 | `README.md`、`progress.md` | V1 是 Python 3.12+、SQLite、JSON、JSONL、本地文件系统。 |
 | package layout 在哪里 | TDD 第 20.4 节 | `reference_repos/README.md`、`README.md` | 已创建 `src/tokenshare` 和镜像 `tests` 骨架。 |
 | 具体代码应该放哪个模块 | 本文第 5 节 | TDD 第 5、6、10、11、20 节 | 先守住协议框架、插件、执行器三层边界。 |
-| 判断 Phase 2 编排入口和 `RootTaskRegistrar` 边界 | `Doc/TechnicalDocument/2026-06-07-phase-2-coordination-debt-memo.md` | 本文第 5 节、TDD 第 5、7、9、12 节 | `RootTaskRegistrar` 是 Phase 1 临时协调器，不应继续承载 `TaskGraph`、`Scheduler`、`LeaseManager` 或 attempt 状态机增长。 |
+| 判断 Phase 2 对象字段、状态机和事件顺序 | `Doc/TechnicalDocument/2026-06-08-phase-2-minimal-field-state-event-spec.md` | `Doc/TechnicalDocument/2026-06-07-phase-2-coordination-debt-memo.md`、TDD 第 9、11、12 节 | 先区分 `TaskUnit`、`Lease`、`Attempt` 三条状态线，再实现调度、租约和事件投影。 |
+| 判断 Phase 2 代码与测试覆盖 | `Doc/TechnicalDocument/2026-06-08-phase-2-code-map.md` | `Doc/TechnicalDocument/2026-06-08-phase-2-minimal-field-state-event-spec.md`、`tests/core/test_task_graph.py`、`tests/test_phase2_scheduling_flow.py` | feat-003 已实现最小 `TaskGraph`、状态机、scheduler、lease manager、event projection 和 event-backed flow；不要把 Phase 3+ 插件/executor/验证逻辑误认为已实现。 |
+| 判断 Phase 2 编排入口和 `RootTaskRegistrar` 边界 | `Doc/TechnicalDocument/2026-06-07-phase-2-coordination-debt-memo.md` | `Doc/TechnicalDocument/2026-06-08-phase-2-minimal-field-state-event-spec.md`、本文第 5 节、TDD 第 5、7、9、12 节 | `RootTaskRegistrar` 是 Phase 1 临时协调器，不应继续承载 `TaskGraph`、`Scheduler`、`LeaseManager` 或 attempt 状态机增长。 |
 | 需要联网查找资料 | 本文第 6 节 | `Doc/TechnicalDocument/2026-06-04-tokenshare-paper-module-map.md`、`reference_repos/README.md` | 被用于项目决策的外部资料必须本地落库并同步索引。 |
 | 需要借鉴已有项目结构 | `reference_repos/README.md` | 对应外部源码目录 | 先拉取或更新本地浅克隆/sparse checkout；只能借鉴思路，不引入为 runtime 依赖，不复制大段实现。 |
-| 需要设计对象字段 | `Doc/TechnicalDocument/2026-06-05-phase-1-minimal-object-field-spec.md` | TDD 第 6、10、11、20、21、23 节；协议讨论稿第 6、7、10、11 节 | 先区分协议对象名、字段名、事件类型和 SQLite 表名，再写实现。 |
+| 需要设计对象字段 | `Doc/TechnicalDocument/2026-06-05-phase-1-minimal-object-field-spec.md`；Phase 2 使用 `Doc/TechnicalDocument/2026-06-08-phase-2-minimal-field-state-event-spec.md` | TDD 第 6、9、10、11、12、20、21、23 节；协议讨论稿第 6、7、10、11 节 | 先区分协议对象名、字段名、事件类型和 SQLite 表名，再写实现。 |
 | 需要更新状态 | `progress.md` | `feature_list.json`、`session-handoff.md` | 没有验证证据，不要标记完成。 |
 
 ## 4. 工具与编码规则

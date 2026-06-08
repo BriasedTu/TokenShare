@@ -39,6 +39,34 @@ class TaskState(str, Enum):
     CANCELLED = "Cancelled"
 
 
+class LeaseState(str, Enum):
+    """Stable Lease lifecycle strings for Phase 2."""
+
+    ACTIVE = "Active"
+    RELEASED = "Released"
+    EXPIRED = "Expired"
+    REVOKED = "Revoked"
+
+
+class AttemptState(str, Enum):
+    """Stable Attempt lifecycle strings.
+
+    Phase 2 only actively uses Created, Running, Failed, and Superseded. The
+    later verification/canonical states are listed so event snapshots keep one
+    spelling across phases, but Phase 2 state machines do not allow them yet.
+    """
+
+    CREATED = "Created"
+    RUNNING = "Running"
+    SUBMITTED = "Submitted"
+    VERIFYING = "Verifying"
+    VERIFIED = "Verified"
+    CANONICAL = "Canonical"
+    REJECTED = "Rejected"
+    FAILED = "Failed"
+    SUPERSEDED = "Superseded"
+
+
 def _json_value(value: Any) -> Any:
     """Convert nested protocol objects into JSON-safe values.
 
@@ -375,4 +403,100 @@ class ClientRecord:
             "metadata": _json_value(self.metadata),
             "registered_at": self.registered_at,
             "last_seen_at": self.last_seen_at,
+        }
+
+
+@dataclass(frozen=True)
+class Lease:
+    """A fenced, time-limited execution claim for one TaskUnit."""
+
+    lease_id: str
+    task_id: str
+    unit_id: str
+    attempt_id: str
+    client_id: str
+    state: LeaseState
+    fencing_token: str
+    issued_at: str
+    expires_at: str
+    last_heartbeat_at: str | None
+    heartbeat_count: int
+    lease_kind: str
+    terminated_at: str | None
+    terminated_reason: str | None
+    metadata: JsonObject
+    schema_version: str = "phase2.lease.v1"
+
+    def to_dict(self) -> JsonObject:
+        return {
+            "schema_version": self.schema_version,
+            "lease_id": self.lease_id,
+            "task_id": self.task_id,
+            "unit_id": self.unit_id,
+            "attempt_id": self.attempt_id,
+            "client_id": self.client_id,
+            "state": self.state.value,
+            "fencing_token": self.fencing_token,
+            "issued_at": self.issued_at,
+            "expires_at": self.expires_at,
+            "last_heartbeat_at": self.last_heartbeat_at,
+            "heartbeat_count": self.heartbeat_count,
+            "lease_kind": self.lease_kind,
+            "terminated_at": self.terminated_at,
+            "terminated_reason": self.terminated_reason,
+            "metadata": _json_value(self.metadata),
+        }
+
+
+@dataclass(frozen=True)
+class Attempt:
+    """One execution attempt authorized by a Lease."""
+
+    attempt_id: str
+    task_id: str
+    unit_id: str
+    lease_id: str
+    client_id: str
+    state: AttemptState
+    attempt_kind: str
+    created_at: str
+    started_at: str | None = None
+    submitted_at: str | None = None
+    finished_at: str | None = None
+    environment_summary: JsonObject | None = None
+    input_artifact_refs: dict[str, ArtifactRef] | None = None
+    raw_output_ref: ArtifactRef | None = None
+    parsed_output_ref: ArtifactRef | None = None
+    candidate_output_refs: dict[str, ArtifactRef] | None = None
+    log_ref: ArtifactRef | None = None
+    failure_kind: str | None = None
+    failure_reason: str | None = None
+    superseded_by_attempt_id: str | None = None
+    metadata: JsonObject | None = None
+    schema_version: str = "phase2.attempt.v1"
+
+    def to_dict(self) -> JsonObject:
+        return {
+            "schema_version": self.schema_version,
+            "attempt_id": self.attempt_id,
+            "task_id": self.task_id,
+            "unit_id": self.unit_id,
+            "lease_id": self.lease_id,
+            "client_id": self.client_id,
+            "state": self.state.value,
+            "attempt_kind": self.attempt_kind,
+            "created_at": self.created_at,
+            "started_at": self.started_at,
+            "submitted_at": self.submitted_at,
+            "finished_at": self.finished_at,
+            "environment_summary": _json_value(self.environment_summary or {}),
+            "input_artifact_refs": _json_value(self.input_artifact_refs or {}),
+            "raw_output_ref": _json_value(self.raw_output_ref),
+            "parsed_output_ref": _json_value(self.parsed_output_ref),
+            "candidate_output_refs": _json_value(self.candidate_output_refs or {}),
+            "log_ref": _json_value(self.log_ref),
+            "failure_kind": self.failure_kind,
+            "failure_reason": self.failure_reason,
+            "superseded_by_attempt_id": self.superseded_by_attempt_id,
+            "metadata": _json_value(self.metadata or {}),
         }

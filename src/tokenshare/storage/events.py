@@ -15,13 +15,18 @@ JsonObject = dict[str, Any]
 
 
 class EventType(str, Enum):
-    """Phase 1 event type constants from the object-field spec."""
+    """Event type constants used by the current protocol phases."""
 
     ARTIFACT_STORED = "ARTIFACT_STORED"
     TASK_REGISTERED = "TASK_REGISTERED"
     TASK_UNIT_CREATED = "TASK_UNIT_CREATED"
     TASK_RELATION_CREATED = "TASK_RELATION_CREATED"
     CLIENT_REGISTERED = "CLIENT_REGISTERED"
+    TASK_UNIT_STATE_CHANGED = "TASK_UNIT_STATE_CHANGED"
+    CLIENT_STATE_CHANGED = "CLIENT_STATE_CHANGED"
+    LEASE_STATE_CHANGED = "LEASE_STATE_CHANGED"
+    ATTEMPT_STATE_CHANGED = "ATTEMPT_STATE_CHANGED"
+    RECOVERY_ACTION_RECORDED = "RECOVERY_ACTION_RECORDED"
 
 
 @dataclass(frozen=True)

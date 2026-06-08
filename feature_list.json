@@ -4,10 +4,12 @@
   "source_documents": [
     "Doc/TechnicalDocument/2026-06-03-tokenshare-protocol-technical-design.md",
     "Doc/TechnicalDocument/2026-06-05-phase-1-minimal-object-field-spec.md",
+    "Doc/TechnicalDocument/2026-06-08-phase-2-minimal-field-state-event-spec.md",
+    "Doc/TechnicalDocument/2026-06-08-phase-2-code-map.md",
     "Doc/TechnicalDocument/2026-06-02-tokenshare-protocol-kernel-revised-draft.md",
     "Doc/TechnicalDocument/2026-06-07-phase-2-coordination-debt-memo.md"
   ],
-  "active_feature": "feat-003",
+  "active_feature": "feat-004",
   "features": [
     {
       "id": "feat-001",
@@ -44,13 +46,13 @@
       "dependencies": [
         "feat-002"
       ],
-      "status": "in-progress",
+      "status": "done",
       "done_criteria": [
         "Ready nodes can be scheduled",
         "Expired leases return tasks to Ready when retry policy permits",
         "All state transitions are written to the event ledger"
       ],
-      "evidence": "2026-06-06: Activated as the next feature after feat-002 completion; implementation not started yet. Startup harness now uses conda environment tokenshare. 2026-06-06: Updated design documents after external research so Phase 2 TaskGraph/state-machine work preserves future boundaries for DecompositionProposal, VerificationReport, ExpansionDecision, MergePlan, and MergeRecord. 2026-06-06: Added mandatory external-research materialization workflow: project-impacting online research must be saved locally and indexed before it is treated as design evidence. 2026-06-06: Added mandatory PowerShell/UTF-8 workflow: routine repository reads and searches should use PowerShell with explicit UTF-8, and rg should not be the default search tool; Phase 2 implementation still not started. 2026-06-07: Added Doc/TechnicalDocument/2026-06-07-phase-2-coordination-debt-memo.md as the coordination-boundary memo for future Phase 2 orchestration work; TaskGraph/Scheduler/LeaseManager/Attempt orchestration should not be added to RootTaskRegistrar."
+      "evidence": "2026-06-06: Activated as the next feature after feat-002 completion; implementation was pending at that point. Startup harness now uses conda environment tokenshare. 2026-06-06: Updated design documents after external research so Phase 2 TaskGraph/state-machine work preserves future boundaries for DecompositionProposal, VerificationReport, ExpansionDecision, MergePlan, and MergeRecord. 2026-06-06: Added mandatory external-research materialization workflow: project-impacting online research must be saved locally and indexed before it is treated as design evidence. 2026-06-06: Added mandatory PowerShell/UTF-8 workflow: routine repository reads and searches should use PowerShell with explicit UTF-8, and rg should not be the default search tool; Phase 2 implementation remained pending at that point. 2026-06-07: Added Doc/TechnicalDocument/2026-06-07-phase-2-coordination-debt-memo.md as the coordination-boundary memo for future Phase 2 orchestration work; TaskGraph/Scheduler/LeaseManager/Attempt orchestration should not be added to RootTaskRegistrar. 2026-06-08: Created Doc/TechnicalDocument/2026-06-08-phase-2-minimal-field-state-event-spec.md as the dedicated Phase 2 minimal field/state/event spec; it defines TaskGraph, TaskUnitStateChange, Lease, Attempt, SchedulingDecision, RecoveryAction, event ordering, SQLite projections, natural-language artifact boundaries, and module placement. Updated Doc/agent-navigation.md and source_documents to index it. Verification passed with powershell -ExecutionPolicy Bypass -File .\\init.ps1; pytest collected 9 items and all 9 passed. 2026-06-08: Refined the Phase 2 spec with implementation-start decisions: Phase 2 remains protocol-kernel only, no plugin/executor/AI/verification/merge/settlement work; do not add max_parallel_attempts_per_unit yet; use allow_shadow_execution=false as one-active-lease-per-unit; write every successful heartbeat as LEASE_STATE_CHANGED Active -> Active. Verification passed with powershell -ExecutionPolicy Bypass -File .\\init.ps1; pytest collected 9 items and all 9 passed. 2026-06-08: Implemented Phase 2 minimal protocol-kernel code: Lease/Attempt objects and enums, TaskGraph ready/dependency/cycle checks, TaskUnit/Lease/Attempt state machines, FIFO Scheduler/SchedulingDecision, LeaseManager claim/heartbeat/expiry recovery, Phase 2 EventType values, SQLite leases/attempts/recovery projections, and top-level ProtocolEngine schedule/heartbeat/expiry event flow. Added Doc/TechnicalDocument/2026-06-08-phase-2-code-map.md. TDD red run failed as expected with missing Phase 2 modules/objects; heartbeat red run failed as expected with missing ProtocolEngine.record_lease_heartbeat; targeted green passed with 9 Phase 2 tests. Full startup verification passed with powershell -ExecutionPolicy Bypass -File .\\init.ps1; pytest collected 18 items and all 18 passed."
     },
     {
       "id": "feat-004",
@@ -59,13 +61,13 @@
       "dependencies": [
         "feat-003"
       ],
-      "status": "not-started",
+      "status": "in-progress",
       "done_criteria": [
         "Plugin versions are fixed during a run",
         "Executors receive a unified request and return a unified submission",
         "AI-style path can persist PromptPackage, RawModelOutput, and ParsedModelOutput references"
       ],
-      "evidence": ""
+      "evidence": "2026-06-08: Activated as the next feature after feat-003 completion; implementation not started."
     },
     {
       "id": "feat-005",
