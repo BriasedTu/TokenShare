@@ -86,6 +86,8 @@ class LeaseManager:
     def heartbeat(self, lease: Lease, *, now: str) -> Lease:
         if lease.state != LeaseState.ACTIVE:
             raise ValueError(f"terminal lease cannot heartbeat: {lease.state.value}")
+        if _parse_utc(now) >= _parse_utc(lease.expires_at):
+            raise ValueError("expired lease cannot heartbeat")
         return replace(
             lease,
             last_heartbeat_at=now,
@@ -105,6 +107,8 @@ class LeaseManager:
     ) -> LeaseExpiryDecision:
         if lease.state != LeaseState.ACTIVE:
             raise ValueError(f"only Active leases can expire: {lease.state.value}")
+        if _parse_utc(now) < _parse_utc(lease.expires_at):
+            raise ValueError("lease has not reached expires_at")
         if attempt.state not in {AttemptState.CREATED, AttemptState.RUNNING}:
             raise ValueError(f"only Created or Running attempts can be superseded: {attempt.state.value}")
 

@@ -117,8 +117,11 @@ PYTHONPATH=src conda run -n tokenshare python -m pytest tests
 - `Doc/TechnicalDocument/2026-06-06-phase-1-code-map.md`：Phase 1 代码、规格章节和测试的对应关系。
 - `Doc/TechnicalDocument/2026-06-08-phase-2-minimal-field-state-event-spec.md`：Phase 2 最小对象、状态机、事件顺序和 SQLite 投影规格。
 - `Doc/TechnicalDocument/2026-06-08-phase-2-code-map.md`：Phase 2 代码、规格章节和测试的对应关系。
+- `Doc/TechnicalDocument/2026-06-23-phase-3-plugin-executor-field-spec.md`：Phase 3 插件、执行器、request/submission、artifact 和 event 字段规格。
+- `Doc/TechnicalDocument/2026-06-23-phase-3-code-map.md`：Phase 3 代码、规格章节和测试的对应关系。
 - `Doc/TechnicalDocument/2026-06-04-tokenshare-paper-module-map.md`：论文、技术报告、本地 TeX/OCR 与模块借鉴映射。
 - `Doc/TechnicalDocument/tokenshare-paper-tex/`：已本地化的论文/技术报告 TeX 或 OCR 文本。
+- `Doc/TechnicalDocument/2026-06-22-p01-p12-tokenshare-candidate-mechanism-spec.md`：P01-P22 机制整合记录；只用于追溯取舍理由，不覆盖主 TDD。
 - `Doc/TechnicalDocument/2026-06-02-tokenshare-protocol-kernel-revised-draft.md`：协议内核讨论稿。
 - `Doc/agent-navigation.md`：agent 导航、模块路由和外部参考资料落库规则。
 
@@ -142,7 +145,7 @@ PYTHONPATH=src conda run -n tokenshare python -m pytest tests
 
 ## Current Status
 
-当前日期状态：2026-06-08。
+当前日期状态：2026-06-23。
 
 已完成：
 
@@ -154,22 +157,24 @@ PYTHONPATH=src conda run -n tokenshare python -m pytest tests
 - Phase 1 协议基础对象与本地存储已实现：root task registration、artifact save/read/hash、JSONL event append/read/hash chain、SQLite 可重建索引。
 - Phase 2 最小协议内核已实现：`TaskGraph`、`TaskUnit` / `Lease` / `Attempt` 状态机、FIFO `Scheduler`、`LeaseManager`、Phase 2 event type、SQLite `leases` / `attempts` / `recovery_actions` 投影，以及顶层 `ProtocolEngine` 调度、heartbeat 和 lease expiry 事件流。
 - Phase 2 code map 已新增：`Doc/TechnicalDocument/2026-06-08-phase-2-code-map.md`。
+- Phase 3 插件与执行器契约已实现：`PluginRegistry`、`ExecutorRegistry`、`ExecutionRequest`、`ExecutionSubmission`、`MockAIExecutor`、`DeterministicLocalExecutor`、Phase 3 event type、`Attempt.Running -> Submitted` 状态推进，以及 SQLite `registry_snapshots` / `execution_requests` / `execution_submissions` / `executor_statuses` index-only 投影。
+- Phase 3 code map 已新增：`Doc/TechnicalDocument/2026-06-23-phase-3-code-map.md`。
 - 主 TDD 已补充大型自然语言任务相关边界：`DecompositionProposal`、`VerificationReport`、`MergePlan`、`MergeRecord` 和 structured report stub。
-- 当前完整启动验证通过：`.\init.ps1` 在 `tokenshare` conda 环境中收集 18 个测试并全部通过。
+- P01-P22 候选机制已整合进主 TDD：requirements/hints、expected output、environment、allocation、verification/selection、merge、settlement 和 replay 边界现在以主 TDD 为实现口径。
+- 当前完整启动验证通过：`.\init.ps1` 在 `tokenshare` conda 环境中收集 28 个测试并全部通过。
 
 当前进行中：
 
-- `feat-004`：Phase 3 - Plugin and Executor Contracts。
+- `feat-005`：Phase 4 - Verification, Canonical Output, and Expansion。
 
-Phase 3 的下一步是用 TDD 实现：
+Phase 4 的下一步是用 TDD 实现：
 
-- `PluginRegistry`。
-- `ExecutorRegistry`。
-- `ExecutionRequest`。
-- `ExecutionSubmission`。
-- `MockAIExecutor`、确定性 executor 边界和 AI output artifact contracts。
+- 通用数据检查和插件领域验证编排。
+- `VerificationReport`。
+- `first_verified_bundle` 选择与唯一 canonical output bundle 绑定。
+- `DecompositionProposal`、`ExpansionDecision`、`MergePlan` 和原子图更新。
 
-同时，Phase 3 不实现 submission verification、canonical binding、expansion、merge 或 settlement；也不引入真实 executor 网络或生产 AI API。
+同时，Phase 4 不实现 merge、contribution、settlement、真实 executor 网络或生产 AI API。
 
 当前仍需注意：
 

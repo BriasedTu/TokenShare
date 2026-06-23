@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-from tokenshare.core.models import Attempt, AttemptState, Lease, LeaseState, TaskState, TaskUnit
+from tokenshare.core.models import ArtifactRef, Attempt, AttemptState, JsonObject, Lease, LeaseState, TaskState, TaskUnit
 
 
 _TASK_UNIT_TRANSITIONS = {
@@ -29,6 +29,7 @@ _LEASE_TRANSITIONS = {
 _ATTEMPT_TRANSITIONS = {
     (AttemptState.CREATED, AttemptState.RUNNING),
     (AttemptState.CREATED, AttemptState.SUPERSEDED),
+    (AttemptState.RUNNING, AttemptState.SUBMITTED),
     (AttemptState.RUNNING, AttemptState.FAILED),
     (AttemptState.RUNNING, AttemptState.SUPERSEDED),
 }
@@ -82,11 +83,16 @@ def transition_attempt(
     new_state: AttemptState | str,
     changed_at: str,
     reason: str,
+    environment_summary: JsonObject | None = None,
+    raw_output_ref: ArtifactRef | None = None,
+    parsed_output_ref: ArtifactRef | None = None,
+    candidate_output_refs: dict[str, ArtifactRef] | None = None,
+    log_ref: ArtifactRef | None = None,
     failure_kind: str | None = None,
     failure_reason: str | None = None,
     superseded_by_attempt_id: str | None = None,
 ) -> Attempt:
-    """Return an Attempt copy after validating a Phase 2 attempt transition."""
+    """Return an Attempt copy after validating a protocol attempt transition."""
 
     target_state = AttemptState(new_state)
     if (attempt.state, target_state) not in _ATTEMPT_TRANSITIONS:
@@ -97,6 +103,17 @@ def transition_attempt(
         raise ValueError("Attempt transition requires reason")
     if target_state == AttemptState.RUNNING:
         return replace(attempt, state=target_state, started_at=attempt.started_at or changed_at)
+    if target_state == AttemptState.SUBMITTED:
+        return replace(
+            attempt,
+            state=target_state,
+            submitted_at=changed_at,
+            environment_summary=environment_summary or attempt.environment_summary,
+            raw_output_ref=raw_output_ref,
+            parsed_output_ref=parsed_output_ref,
+            candidate_output_refs=candidate_output_refs or {},
+            log_ref=log_ref,
+        )
     if target_state == AttemptState.FAILED:
         return replace(
             attempt,

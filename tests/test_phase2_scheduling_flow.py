@@ -1,3 +1,5 @@
+import pytest
+
 from tests.phase2_fixtures import make_client, make_config, make_unit
 from tokenshare.core.models import AttemptState, LeaseState, TaskState
 from tokenshare.core.task_graph import TaskGraph
@@ -61,3 +63,36 @@ def test_phase2_schedule_and_lease_expiry_flow_writes_ordered_events(tmp_path) -
     assert events[4].payload["old_state"] == "Active"
     assert events[4].payload["new_state"] == "Active"
     assert all(event.correlation_id for event in events)
+
+
+def test_protocol_engine_prevents_duplicate_active_lease_from_ledger(tmp_path) -> None:
+    ledger = EventLedger(tmp_path / "events" / "task_demo.jsonl")
+    config = make_config()
+    unit = make_unit()
+    graph = TaskGraph(task_id="task_demo", units={unit.unit_id: unit}, relations=[])
+    engine = ProtocolEngine(event_ledger=ledger, protocol_config=config)
+
+    engine.schedule_ready_unit(
+        graph=graph,
+        clients=[make_client()],
+        now="2026-06-08T00:00:00Z",
+        correlation_id="corr_schedule_1",
+        decision_id="decision_1",
+        lease_id="lease_1",
+        attempt_id="attempt_1",
+        fencing_token="token_1",
+    )
+
+    with pytest.raises(ValueError, match="no schedulable ready unit"):
+        engine.schedule_ready_unit(
+            graph=graph,
+            clients=[make_client()],
+            now="2026-06-08T00:00:01Z",
+            correlation_id="corr_schedule_2",
+            decision_id="decision_2",
+            lease_id="lease_2",
+            attempt_id="attempt_2",
+            fencing_token="token_2",
+        )
+
+    assert len(ledger.read_all()) == 4

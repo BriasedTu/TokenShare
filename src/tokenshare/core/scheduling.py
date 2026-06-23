@@ -58,7 +58,10 @@ class Scheduler:
         decision_id: str,
         lease_kind: str = "primary",
     ) -> SchedulingDecision | None:
-        ready_unit_ids = graph.ready_unit_ids()
+        ready_unit_ids = sorted(
+            graph.ready_unit_ids(),
+            key=lambda unit_id: (graph.units[unit_id].created_at, unit_id),
+        )
         client_list = list(clients)
         for unit_id in ready_unit_ids:
             if (
@@ -100,7 +103,7 @@ def _has_active_lease(value: Any) -> bool:
 
 
 def _matched_capabilities(required: JsonObject, client: ClientRecord) -> list[str] | None:
-    if client.status.lower() not in {"active", "available", "idle", "online", "ready"}:
+    if not _client_is_available(client.status):
         return None
     matched: list[str] = []
     for key, required_value in required.items():
@@ -110,6 +113,11 @@ def _matched_capabilities(required: JsonObject, client: ClientRecord) -> list[st
             return None
         matched.append(key)
     return matched
+
+
+def _client_is_available(status: str) -> bool:
+    # Phase 3 的执行器状态契约使用序列化值 Available；active 是 Phase 2 ClientRecord 兼容入口。
+    return status == "Available" or status.lower() == "active"
 
 
 def _capability_matches(required_value: Any, client_value: Any) -> bool:

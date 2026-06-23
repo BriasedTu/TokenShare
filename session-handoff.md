@@ -2,8 +2,8 @@
 
 ## Current Objective
 
-- Goal: Continue feat-004 by preparing Plugin and Executor Contracts.
-- Current status: `feat-003` is complete. Phase 2 now has concrete protocol-kernel code for `TaskGraph`, `TaskUnit`/`Lease`/`Attempt` state machines, `Scheduler`, `LeaseManager`, Phase 2 event types, SQLite projections, and a minimal top-level `ProtocolEngine` scheduling/heartbeat/lease-expiry flow. The active feature is `feat-004`; Phase 3 implementation code has not started. Startup verification uses the `conda` environment `tokenshare`.
+- Goal: Continue feat-005 by implementing Verification, Canonical Output, and Expansion.
+- Current status: `feat-004` is complete. Phase 2 has concrete protocol-kernel code for `TaskGraph`, `TaskUnit`/`Lease`/`Attempt` state machines, `Scheduler`, `LeaseManager`, Phase 2 event types, SQLite projections, and a minimal top-level `ProtocolEngine` scheduling/heartbeat/lease-expiry flow. Phase 3 now has `PluginDescriptor` / `OutputContract`, `PluginRegistry` / `RegistrySnapshot`, `ExecutorDescriptor` / `ExecutorRegistry`, `ExecutionRequest`, `ExecutionSubmission`, `EnvironmentRef`, `PromptPackage`, `MockAIExecutor`, `DeterministicLocalExecutor`, Phase 3 event types, `Attempt.Running -> Submitted`, and SQLite `registry_snapshots` / `execution_requests` / `execution_submissions` / `executor_statuses` index-only projections. A 2026-06-23 Phase 3 boundary fix now requires submission task/unit/attempt/lease/fencing-token binding before attempt advancement, and narrows scheduler availability to Phase 3 serialized `Available` plus Phase 2 legacy `active`. P01-P22 candidate mechanisms were integrated into the main TDD on 2026-06-23, so the main TDD is the implementation authority for Phase 4 through Phase 7. The active feature is `feat-005`; Phase 4 implementation code has not started. Startup verification uses the `conda` environment `tokenshare`.
 - Branch / commit: Check with `git status` and `git log --oneline -5`.
 
 ## Completed This Session
@@ -48,7 +48,19 @@
 - [x] Added and indexed `Doc/TechnicalDocument/2026-06-08-phase-2-minimal-field-state-event-spec.md` to define Phase 2 `TaskGraph`, `TaskUnitStateChange`, `Lease`, `Attempt`, `SchedulingDecision`, `RecoveryAction`, event ordering, SQLite projections, module boundaries, and natural-language artifact handling.
 - [x] Implemented Phase 2 minimal protocol-kernel code: `Lease` / `Attempt` objects and enums, `TaskGraph` ready/dependency/cycle checks, Phase 2 state machines, FIFO `Scheduler`, `LeaseManager` claim/heartbeat/expiry recovery, Phase 2 event types, SQLite `leases` / `attempts` / `recovery_actions` projections, and top-level `ProtocolEngine` event-backed scheduling, heartbeat, and lease expiry flows.
 - [x] Added `Doc/TechnicalDocument/2026-06-08-phase-2-code-map.md` to map Phase 2 code, tests, and specification sections.
+- [x] Stabilized Phase 2 scheduling and lease invariants before Phase 3: added regression tests for created-at FIFO ordering, early lease expiry rejection, late heartbeat rejection, and duplicate active lease prevention via event-ledger projection.
 - [x] Updated `README.md` current status and repository map after Phase 2 completion; updated `Doc/agent-navigation.md` date and rechecked stale Phase 2 status wording.
+- [x] Recorded Phase 3 pre-start boundary debts in `progress.md`, `session-handoff.md`, and `feature_list.json`: keep `RootTaskRegistrar` frozen or migrate it before Phase 3 orchestration, and move scheduler client availability strings into an explicit `ExecutorRegistry` / client contract.
+- [x] Added and expanded `Doc/TechnicalDocument/2026-06-22-p01-p12-tokenshare-candidate-mechanism-spec.md`: P01-P22 are integrated by mechanism into the existing structure, with 109 unique normative definitions, 21 invariants, and 27 decision records. P13-P15 remain future weak-verification models; P16-P18 define plugin-local solving and auditable tool-use boundaries; P19-P21 constrain environment-bound Lean/benchmark reproducibility; P22 informs deterministic explainable assignment without requiring full Contract Net negotiation.
+- [x] Reorganized the full P01-P22 candidate specification by protocol lifecycle rather than paper intake order. Stable requirement, invariant, and decision IDs are unchanged; invariants, rejected designs, decision records, adjudication order, TDD guidance, and conclusions now use thematic/phase grouping.
+- [x] Corrected the paper map's prior PBFT-to-verifier-committee wording: `3f+1`/`2f+1` thresholds require the deterministic Byzantine state-machine-replication model and must not be treated as AI/semantic-answer truth thresholds.
+- [x] Integrated the P01-P22 recommendations into the main TDD and synced indexes: main TDD now covers expected output/resolution, requirements/hints, capability snapshot, `EnvironmentRef`, action/observation provenance, verification/selection separation, deterministic allocation, replay without historical re-execution, merge-as-task lifecycle, final settlement, and reproducible experiment fields.
+- [x] Recorded the current Phase 3 field discussion in `Doc/TechnicalDocument/2026-06-23-phase-3-plugin-executor-field-spec.md`: use `ExecutionRequest` / `ExecutionSubmission` as the execution-loop backbone, persist both request and submission bodies as artifacts, keep events to refs/digests/index summaries, and advance `Attempt.Running -> Submitted` after a recorded submission without entering verification or canonical selection.
+- [x] Closed the remaining Phase 3 field decisions in that draft: inline `AllocationDecision` in `ExecutionRequest`, store `PluginDescriptor` / `ExecutorDescriptor` bodies as artifacts, use `Available` / `Busy` / `Offline` / `Disabled` executor status, and keep SQLite Phase 3 projections index-only.
+- [x] Audited code maps against the current codebase as source of truth. Updated `Doc/TechnicalDocument/2026-06-06-phase-1-code-map.md` and `Doc/TechnicalDocument/2026-06-08-phase-2-code-map.md` to cover existing but previously unmapped registration envelopes, `ArtifactStore.save_json()`, `LeaseClaim`, `LeaseExpiryDecision`, `SchedulingFlowResult`, `LeaseHeartbeatFlowResult`, `LeaseExpiryFlowResult`, active lease ledger projection helpers, and current source/test inventories.
+- [x] Implemented Phase 3 Plugin and Executor Contracts with TDD: artifact-backed registry freeze, explicit executor status contract, unified request/submission dataclasses, mock AI and deterministic executor boundaries, Phase 3 events, `Attempt.Running -> Submitted`, and SQLite index-only projections.
+- [x] Added `Doc/TechnicalDocument/2026-06-23-phase-3-code-map.md` to map Phase 3 code, tests, and specification sections.
+- [x] Fixed Phase 3 boundary review findings: mismatched submission artifacts/events remain audit-only and do not advance unrelated attempts; scheduler availability now accepts serialized `Available` and legacy `active` only. Updated the Phase 3 field spec and code map with the binding and status-contract behavior.
 
 ## Verification Evidence
 
@@ -95,6 +107,28 @@
 | Phase 2 heartbeat red check | `$env:PYTHONPATH='src'; conda run -n tokenshare python -m pytest tests\test_phase2_scheduling_flow.py -q` | Failed as expected | `ProtocolEngine.record_lease_heartbeat` was missing. |
 | Phase 2 targeted verification | `$env:PYTHONPATH='src'; conda run -n tokenshare python -m pytest tests\core\test_task_graph.py tests\core\test_state_machines.py tests\core\test_scheduler.py tests\core\test_lease_manager.py tests\storage\test_phase2_event_projection.py tests\test_phase2_scheduling_flow.py -q` | Passed | `9 passed in 0.22s`. |
 | Phase 2 full startup verification | `powershell -ExecutionPolicy Bypass -File .\init.ps1` | Passed | pytest collected 18 items; `18 passed`. |
+| Phase 2 stabilization red check | `$env:PYTHONPATH='src'; conda run -n tokenshare python -m pytest tests\core\test_scheduler.py tests\core\test_lease_manager.py tests\test_phase2_scheduling_flow.py -q` | Failed as expected | New regressions exposed FIFO insertion-order behavior, early expiry, late heartbeat revival, and duplicate active lease creation. |
+| Phase 2 stabilization targeted verification | `$env:PYTHONPATH='src'; conda run -n tokenshare python -m pytest tests\core\test_scheduler.py tests\core\test_lease_manager.py tests\test_phase2_scheduling_flow.py -q` | Passed | `7 passed in 0.18s`. |
+| Phase 2 stabilization full startup verification | `.\init.ps1` | Passed | pytest collected 21 items; `21 passed in 0.38s`. |
+| Phase 3 pre-start boundary note verification | `powershell -ExecutionPolicy Bypass -File .\init.ps1` | Passed | Recorded the RootTaskRegistrar legacy/migration constraint and scheduler availability-state contract constraint; pytest collected 18 items; `18 passed in 0.42s`. |
+| P01-P07 candidate specification verification | `.\init.ps1` | Passed | Candidate document structure audit passed; startup checks passed and pytest collected 18 items, `18 passed in 0.43s`. |
+| P01-P12 integrated candidate specification audit | PowerShell marker/ID/placeholder audit | Passed | All P08-P12 markers are present; 92 unique normative definitions, 16 invariants, 20 unique decisions, no duplicate definitions/decisions or placeholders. |
+| P01-P12 integrated candidate specification verification | `powershell -ExecutionPolicy Bypass -File .\init.ps1` | Passed | Startup checks passed and pytest collected 18 items, `18 passed in 0.35s`. |
+| P01-P22 integrated candidate specification audit | PowerShell marker/ID/placeholder audit | Passed | All P13-P22 markers are integrated; 109 unique normative definitions, 21 invariants, 27 unique decisions, no duplicate definitions/decisions or placeholders. |
+| P01-P22 integrated candidate specification verification | `powershell -ExecutionPolicy Bypass -File .\init.ps1` | Passed | Startup checks passed and pytest collected 18 items, `18 passed in 0.36s`. |
+| P01-P22 thematic reorganization audit and verification | PowerShell structure audit + `powershell -ExecutionPolicy Bypass -File .\init.ps1` | Passed | 109 unique requirements, 21 unique invariants, 27 unique decisions, all 27 adjudication-order references present, no paper-batch revision traces; pytest `18 passed in 0.57s`. |
+| P01-P22 main TDD integration verification | `.\init.ps1` | Passed | Main TDD and indexes synced; startup checks passed and pytest collected 18 items, `18 passed in 0.33s`. |
+| Phase 3 field draft verification | JSON parse + placeholder scan + `powershell -ExecutionPolicy Bypass -File .\init.ps1` | Passed | `feature_list.json` parsed; new Phase 3 draft had no `TODO`/`TBD`/`FIXME`/`待填写`; pytest collected 21 items, `21 passed in 0.39s`. |
+| Phase 3 implementation-start readiness check | JSON parse + stale-decision scan + index check + boundary scan + `powershell -ExecutionPolicy Bypass -File .\init.ps1` | Passed | `feature-list-json-ok`, `phase3-spec-index-ok`, stale decision scans clean; pytest collected 21 items, `21 passed in 0.41s`. |
+| Code map source-of-truth audit | PowerShell + Python AST/Markdown scan | Passed | Scanned current `src/tokenshare/` and `tests/`; all code-map `src/` / `tests/` / `Doc/` path references exist, and missing mappings were added. |
+| Code map audit startup verification | `powershell -ExecutionPolicy Bypass -File .\init.ps1` | Passed | Startup checks passed and pytest collected 21 items, `21 passed in 0.35s`. |
+| Phase 3 TDD red check | `$env:PYTHONPATH='src'; conda run -n tokenshare python -m pytest tests\plugins\test_plugin_registry.py tests\executors\test_executor_registry.py tests\executors\test_mock_ai_executor.py tests\test_phase3_execution_flow.py tests\storage\test_phase3_event_projection.py -q` | Failed as expected | Missing Phase 3 modules including `tokenshare.executors.contracts` and `tokenshare.executors.registry`. |
+| Phase 3 deterministic executor red check | `$env:PYTHONPATH='src'; conda run -n tokenshare python -m pytest tests\executors\test_deterministic_executor.py -q` | Failed as expected | Missing `tokenshare.executors.deterministic`. |
+| Phase 3 targeted verification | `$env:PYTHONPATH='src'; conda run -n tokenshare python -m pytest tests\core\test_state_machines.py tests\plugins\test_plugin_registry.py tests\executors\test_executor_registry.py tests\executors\test_mock_ai_executor.py tests\executors\test_deterministic_executor.py tests\test_phase3_execution_flow.py tests\storage\test_phase3_event_projection.py -q` | Passed | `9 passed in 0.53s`. |
+| Phase 3 full startup verification | `.\init.ps1` | Passed | Startup checks passed and pytest collected 28 items, `28 passed`. |
+| Phase 3 boundary-fix red check | `$env:PYTHONPATH='src'; conda run -n tokenshare python -m pytest tests\core\test_scheduler.py tests\test_phase3_execution_flow.py -q` | Failed as expected | New tests exposed legacy `ready` status being scheduled and missing lease/fencing-token binding in `record_execution_submission()`. |
+| Phase 3 boundary-fix targeted verification | `$env:PYTHONPATH='src'; conda run -n tokenshare python -m pytest tests\core\test_scheduler.py tests\test_phase3_execution_flow.py -q` | Passed | `6 passed in 0.18s`. |
+| Phase 3 boundary-fix full startup verification | `powershell -ExecutionPolicy Bypass -File E:\TokenEcnomic\TokenShare\init.ps1` | Passed | Startup checks passed and pytest collected 30 items, `30 passed in 0.67s`. |
 
 ## Files Changed
 
@@ -119,6 +153,9 @@
 - `Doc/TechnicalDocument/2026-06-07-phase-2-coordination-debt-memo.md`
 - `Doc/TechnicalDocument/2026-06-08-phase-2-minimal-field-state-event-spec.md`
 - `Doc/TechnicalDocument/2026-06-08-phase-2-code-map.md`
+- `Doc/TechnicalDocument/2026-06-23-phase-3-plugin-executor-field-spec.md`
+- `Doc/TechnicalDocument/2026-06-23-phase-3-code-map.md`
+- `Doc/TechnicalDocument/2026-06-22-p01-p12-tokenshare-candidate-mechanism-spec.md`
 - `src/tokenshare/core/models.py`
 - `src/tokenshare/core/registration.py`
 - `src/tokenshare/core/__init__.py`
@@ -127,23 +164,36 @@
 - `src/tokenshare/core/scheduling.py`
 - `src/tokenshare/core/leases.py`
 - `src/tokenshare/protocol_engine.py`
+- `src/tokenshare/plugins/contracts.py`
+- `src/tokenshare/plugins/registry.py`
+- `src/tokenshare/executors/contracts.py`
+- `src/tokenshare/executors/registry.py`
+- `src/tokenshare/executors/mock_ai.py`
+- `src/tokenshare/executors/deterministic.py`
 - `src/tokenshare/storage/artifacts.py`
 - `src/tokenshare/storage/events.py`
 - `src/tokenshare/storage/sqlite_index.py`
 - `src/tokenshare/storage/__init__.py`
 - `tests/__init__.py`
 - `tests/phase2_fixtures.py`
+- `tests/phase3_fixtures.py`
 - `tests/core/test_phase1_models.py`
 - `tests/core/test_task_graph.py`
 - `tests/core/test_state_machines.py`
 - `tests/core/test_scheduler.py`
 - `tests/core/test_lease_manager.py`
+- `tests/plugins/test_plugin_registry.py`
+- `tests/executors/test_executor_registry.py`
+- `tests/executors/test_mock_ai_executor.py`
+- `tests/executors/test_deterministic_executor.py`
 - `tests/storage/test_artifact_store.py`
 - `tests/storage/test_event_ledger.py`
 - `tests/storage/test_phase2_event_projection.py`
+- `tests/storage/test_phase3_event_projection.py`
 - `tests/storage/test_sqlite_index.py`
 - `tests/test_phase1_root_registration.py`
 - `tests/test_phase2_scheduling_flow.py`
+- `tests/test_phase3_execution_flow.py`
 
 ## Decisions Made
 
@@ -170,13 +220,21 @@
 - AI or natural-language raw output must enter the protocol as artifacts referenced by `ArtifactRef`; event payloads should carry structured summaries and refs, not long raw text.
 - Phase 2 is still protocol-kernel development only: no plugin implementation, executor/processing endpoint, AI call, submission verification, canonical binding, expansion, merge, or settlement. Do not add `max_parallel_attempts_per_unit` yet; use `allow_shadow_execution=false` to mean one active lease per unit in the minimal version. Every successful heartbeat should append a `LEASE_STATE_CHANGED Active -> Active` event.
 - Phase 2 implementation boundary is now concrete: `tokenshare.core` contains pure objects/rules/decisions, `tokenshare.storage` contains append-only events and rebuildable projections, and top-level `tokenshare.protocol_engine.ProtocolEngine` is the minimal storage-writing application service. `RootTaskRegistrar` was not expanded.
+- Phase 2 stabilization decision: `Scheduler` FIFO means oldest `TaskUnit.created_at` first with `unit_id` tie-break; `LeaseManager.expire()` requires `now >= expires_at`; `LeaseManager.heartbeat()` requires `now < expires_at`; `ProtocolEngine.schedule_ready_unit()` must derive active lease state from `EventLedger` before accepting a new claim, with caller-supplied active lease maps only as additional context.
+- P01-P22 candidate mechanisms are now resolved at TDD level: the candidate specification is a provenance/integration record, while `Doc/TechnicalDocument/2026-06-03-tokenshare-protocol-technical-design.md` is the implementation authority.
+- Phase 3 implementation boundary is now concrete: `ExecutionRequest` and `ExecutionSubmission` are artifact-backed protocol records, event payloads carry only refs/digests/index summaries, and a valid recorded submission advances the attempt lifecycle from `Running` to `Submitted` only. Verification, canonical binding, merge, and settlement stay in later phases.
+- Phase 3 submission advancement requires the recorded submission to match the current running attempt's task, unit, attempt, lease, and fencing token; mismatches are audit-only `EXECUTION_SUBMISSION_RECORDED` events.
+- Scheduler status matching now preserves the layer boundary by accepting the serialized Phase 3 status value `Available` without importing executor modules into `tokenshare.core`, while keeping only `active` as the Phase 2 legacy compatibility status.
 
 ## Blockers / Risks
 
-- Phase 3 must keep the protocol-core boundary: plugin/executor contracts may depend on protocol objects and artifact refs, but factorization, Lean stub, and structured report rules should not be hard-coded into `tokenshare.core`.
-- Phase 3 should read `Doc/TechnicalDocument/2026-06-08-phase-2-code-map.md` before using scheduler/lease/attempt objects, so executor contracts align with the Phase 2 event-backed flow.
-- Phase 3 should not implement submission verification, canonical binding, expansion, merge, or settlement; those remain later features.
-- Phase 2 event-ledger-first behavior must be preserved: new executor/plugin contract flows should write non-deterministic raw output as artifacts and keep event payloads structured.
+- Phase 4 must keep the protocol-core boundary: plugin verification rules may be orchestrated through plugin contracts, but factorization, Lean stub, and structured report rules should not be hard-coded into `tokenshare.core`.
+- Phase 4 should read `Doc/TechnicalDocument/2026-06-23-phase-3-code-map.md` before using request/submission objects, so verification and canonical binding align with the Phase 3 artifact-backed flow.
+- Phase 4 should not implement merge, contribution, settlement, real distributed executor networks, or production AI APIs; those remain later features or out of V1 scope.
+- Phase 2/3 event-ledger-first behavior must be preserved: verification and canonical binding should read persisted artifact refs and write new artifact/event evidence, not recalculate historical executor output.
+- Phase 4 must enforce one canonical output bundle per `TaskUnit`; duplicate binding should fail and remain auditable.
+- Expansion must record a structured `DecompositionProposal` and `ExpansionDecision` before mutating the task graph; invalid expansion must not partially write child nodes or edges.
+- Phase 3 has an explicit `ExecutorRegistry` / `ExecutorStatus` contract, and Phase 2 `Scheduler` now accepts only serialized `Available` plus legacy `active`; do not do a broader scheduler/runtime migration inside Phase 4 unless it is explicitly scoped and tested.
 - Factorization split strategy, Lean stub fixtures, and structured report fixtures are open design points.
 - Real distributed runtime, real chain settlement, production AI APIs, and full Lean proving are explicitly out of scope for V1.
 
@@ -187,10 +245,14 @@
 3. Run `.\init.ps1` on Windows or `./init.sh` in Bash. Both default to `conda` env `tokenshare`.
 4. For routine repository reads/searches, follow `Doc/agent-navigation.md` section 4: PowerShell plus explicit UTF-8, no default `rg`.
 5. If using online research, first follow `Doc/agent-navigation.md` section 6 to download/pull and index the source material.
-6. Read `Doc/TechnicalDocument/2026-06-08-phase-2-code-map.md` before using Phase 2 scheduling, lease, attempt, or projection code.
-7. Read the main TDD sections for Plugin and Executor Contracts before writing Phase 3 tests or code.
-8. Continue feat-004.
+6. Read `Doc/TechnicalDocument/2026-06-08-phase-2-code-map.md` before using Phase 2 scheduling, lease, attempt, or projection code; it now includes the 2026-06-23 stabilization invariants and verification evidence.
+7. The Phase 1 and Phase 2 code maps were re-audited against current code on 2026-06-23; if code changes again, repeat the same code-as-source audit before relying on them.
+8. Read `Doc/TechnicalDocument/2026-06-23-phase-3-plugin-executor-field-spec.md` and `Doc/TechnicalDocument/2026-06-23-phase-3-code-map.md` before writing Phase 4 tests or code.
+9. Keep the Phase 4 risks from `Blockers / Risks` in scope while implementing verification, canonical binding, and expansion.
+10. Read the main TDD sections 4.3, 8, 9, 10, 12, and 21 before writing Phase 4 tests or code.
+11. Use `Doc/TechnicalDocument/2026-06-22-p01-p12-tokenshare-candidate-mechanism-spec.md` only when tracing the source of a decision, not as a second implementation spec.
+12. Continue feat-005.
 
 ## Recommended Next Step
 
-- Start Phase 3 implementation with TDD for `PluginRegistry`, `ExecutorRegistry`, `ExecutionRequest`, `ExecutionSubmission`, and artifact-backed raw/parsed output contracts. Keep real executor networking, production AI calls, verification, canonical binding, merge, and settlement out of scope.
+- Start Phase 4 TDD from persisted `ExecutionSubmission` artifacts: add verification report tests, single canonical output binding tests, and invalid expansion no-mutation tests before writing implementation code.

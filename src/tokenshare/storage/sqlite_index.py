@@ -41,6 +41,10 @@ class SQLiteMaterializedIndex:
             drop table if exists leases;
             drop table if exists attempts;
             drop table if exists recovery_actions;
+            drop table if exists registry_snapshots;
+            drop table if exists execution_requests;
+            drop table if exists execution_submissions;
+            drop table if exists executor_statuses;
 
             create table ledger_events (
                 event_seq integer primary key,
@@ -148,6 +152,54 @@ class SQLiteMaterializedIndex:
                 retry_allowed integer,
                 reason text,
                 created_at text,
+                payload_json text not null
+            );
+
+            create table registry_snapshots (
+                registry_snapshot_id text primary key,
+                task_id text,
+                registry_snapshot_artifact_id text,
+                registry_snapshot_digest text,
+                plugin_count integer,
+                executor_count integer,
+                frozen_at text,
+                payload_json text not null
+            );
+
+            create table execution_requests (
+                request_id text primary key,
+                task_id text,
+                unit_id text,
+                attempt_id text,
+                lease_id text,
+                request_artifact_id text,
+                request_digest text,
+                plugin_id text,
+                executor_id text,
+                created_at text,
+                payload_json text not null
+            );
+
+            create table execution_submissions (
+                submission_id text primary key,
+                request_id text,
+                task_id text,
+                unit_id text,
+                attempt_id text,
+                lease_id text,
+                submission_artifact_id text,
+                submission_digest text,
+                result_kind text,
+                submitted_at text,
+                payload_json text not null
+            );
+
+            create table executor_statuses (
+                executor_id text primary key,
+                executor_version text,
+                status text,
+                descriptor_digest text,
+                last_updated_at text,
                 payload_json text not null
             );
             """
@@ -425,6 +477,97 @@ class SQLiteMaterializedIndex:
                     recovery_action.get("reason"),
                     recovery_action.get("created_at"),
                     _payload_json(recovery_action),
+                ),
+            )
+        elif event_type == EventType.REGISTRY_SNAPSHOT_RECORDED.value:
+            registry_snapshot = event.payload
+            registry_ref = registry_snapshot.get("registry_snapshot_ref", {})
+            plugin_entries = registry_snapshot.get("plugin_entries", [])
+            executor_entries = registry_snapshot.get("executor_entries", [])
+            connection.execute(
+                """
+                insert or replace into registry_snapshots (
+                    registry_snapshot_id, task_id, registry_snapshot_artifact_id,
+                    registry_snapshot_digest, plugin_count, executor_count, frozen_at,
+                    payload_json
+                ) values (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    registry_snapshot["registry_snapshot_id"],
+                    registry_snapshot.get("task_id"),
+                    registry_ref.get("artifact_id"),
+                    registry_snapshot.get("registry_snapshot_digest"),
+                    len(plugin_entries),
+                    len(executor_entries),
+                    registry_snapshot.get("frozen_at"),
+                    _payload_json(registry_snapshot),
+                ),
+            )
+            for executor_entry in executor_entries:
+                connection.execute(
+                    """
+                    insert or replace into executor_statuses (
+                        executor_id, executor_version, status, descriptor_digest,
+                        last_updated_at, payload_json
+                    ) values (?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        executor_entry["executor_id"],
+                        executor_entry.get("executor_version"),
+                        executor_entry.get("status"),
+                        executor_entry.get("descriptor_digest"),
+                        registry_snapshot.get("frozen_at"),
+                        _payload_json(executor_entry),
+                    ),
+                )
+        elif event_type == EventType.EXECUTION_REQUEST_RECORDED.value:
+            request_record = event.payload
+            request_ref = request_record.get("request_ref", {})
+            connection.execute(
+                """
+                insert or replace into execution_requests (
+                    request_id, task_id, unit_id, attempt_id, lease_id,
+                    request_artifact_id, request_digest, plugin_id, executor_id,
+                    created_at, payload_json
+                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    request_record["request_id"],
+                    request_record.get("task_id"),
+                    request_record.get("unit_id"),
+                    request_record.get("attempt_id"),
+                    request_record.get("lease_id"),
+                    request_ref.get("artifact_id"),
+                    request_record.get("request_digest"),
+                    request_record.get("plugin_id"),
+                    request_record.get("executor_id"),
+                    request_record.get("created_at"),
+                    _payload_json(request_record),
+                ),
+            )
+        elif event_type == EventType.EXECUTION_SUBMISSION_RECORDED.value:
+            submission_record = event.payload
+            submission_ref = submission_record.get("submission_ref", {})
+            connection.execute(
+                """
+                insert or replace into execution_submissions (
+                    submission_id, request_id, task_id, unit_id, attempt_id, lease_id,
+                    submission_artifact_id, submission_digest, result_kind,
+                    submitted_at, payload_json
+                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    submission_record["submission_id"],
+                    submission_record.get("request_id"),
+                    submission_record.get("task_id"),
+                    submission_record.get("unit_id"),
+                    submission_record.get("attempt_id"),
+                    submission_record.get("lease_id"),
+                    submission_ref.get("artifact_id"),
+                    submission_record.get("submission_digest"),
+                    submission_record.get("result_kind"),
+                    submission_record.get("submitted_at"),
+                    _payload_json(submission_record),
                 ),
             )
 

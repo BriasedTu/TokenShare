@@ -91,3 +91,42 @@ def test_lease_and_attempt_state_machines_keep_lifecycle_boundaries_separate() -
             changed_at="2026-06-08T00:02:00Z",
             reason="phase4_not_enabled",
         )
+
+
+def test_attempt_state_machine_allows_phase3_submission_but_rejects_verification_states() -> None:
+    running = Attempt(
+        attempt_id="attempt_1",
+        task_id="task_demo",
+        unit_id="unit_ready",
+        lease_id="lease_1",
+        client_id="client_local",
+        state=AttemptState.RUNNING,
+        attempt_kind="primary",
+        created_at="2026-06-08T00:00:00Z",
+        started_at="2026-06-08T00:00:01Z",
+    )
+
+    submitted = transition_attempt(
+        running,
+        new_state=AttemptState.SUBMITTED,
+        changed_at="2026-06-08T00:02:00Z",
+        reason="execution_submission_recorded",
+        environment_summary={"runtime": "python"},
+        raw_output_ref=None,
+        parsed_output_ref=None,
+        candidate_output_refs={},
+        log_ref=None,
+    )
+
+    assert submitted.state == AttemptState.SUBMITTED
+    assert submitted.submitted_at == "2026-06-08T00:02:00Z"
+    assert submitted.environment_summary == {"runtime": "python"}
+    assert submitted.finished_at is None
+
+    with pytest.raises(ValueError, match="illegal Attempt transition"):
+        transition_attempt(
+            submitted,
+            new_state=AttemptState.VERIFYING,
+            changed_at="2026-06-08T00:03:00Z",
+            reason="phase4_not_enabled",
+        )

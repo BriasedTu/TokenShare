@@ -2,11 +2,15 @@
 
 ## 当前状态（Current State）
 
-**最后更新：** 2026-06-08
-**当前 Feature：** feat-004 - Phase 3 - Plugin and Executor Contracts（下一轮待实现）
+**最后更新：** 2026-06-23
+**当前 Feature：** feat-005 - Phase 4 - Verification, Canonical Output, and Expansion（下一轮待实现）
 **仓库阶段：** startup / local research prototype
 
-TokenShare 当前已有设计文档、仓库元数据、Python package layout、Phase 1 协议基础对象、本地存储实现，以及 Phase 2 最小任务图、状态机、调度、租约和事件投影代码。启动期 harness 已经建立并通过 `conda` 环境 `tokenshare` 验证；V1 技术栈已收束为 Python 3.12+、SQLite、JSON、JSONL 和本地文件系统。`feat-003` 已完成并通过验证。当前 active feature 是 `feat-004`；Phase 3 代码尚未开始。
+TokenShare 当前已有设计文档、仓库元数据、Python package layout、Phase 1 协议基础对象、本地存储实现、Phase 2 最小任务图/状态机/调度/租约/事件投影代码，以及 Phase 3 插件与执行器契约代码。启动期 harness 已经建立并通过 `conda` 环境 `tokenshare` 验证；V1 技术栈已收束为 Python 3.12+、SQLite、JSON、JSONL 和本地文件系统。`feat-003` 已完成并通过 2026-06-23 Phase 2 stabilization：重复 active lease、防提前过期、防超时 heartbeat 复活和 FIFO 排序均已有回归测试。P01-P22 候选机制已在 2026-06-23 整合进主 TDD，后续实现以主 TDD 为准。`feat-004` 已完成：registry freeze、统一 request/submission、mock AI executor、deterministic executor、Phase 3 event、`Attempt.Running -> Submitted` 和 SQLite index-only projection 均已有测试；2026-06-23 追加修复了 submission attempt/lease/fencing token 绑定校验和 scheduler Phase 3 `Available` 状态契约回归。当前 active feature 是 `feat-005`；Phase 4 验证、canonical output 和 expansion 代码尚未开始。
+
+2026-06-23 已按当前代码对 Phase 1 / Phase 2 code map 做全面校准：以 `src/tokenshare/` 和 `tests/` 的 AST/路径扫描结果为准，补齐 `RootTaskRegistrationRequest` / `RootTaskRegistrationResult`、`ArtifactStore.save_json()`、`LeaseClaim`、`LeaseExpiryDecision`、`SchedulingFlowResult`、`LeaseHeartbeatFlowResult`、`LeaseExpiryFlowResult`、ProtocolEngine active lease ledger 投影 helper、当前源码/测试实物清单，并确认两个 code map 中引用的 `src/`、`tests/`、`Doc/` 路径全部真实存在。
+
+2026-06-23 已新增 Phase 3 code map：`Doc/TechnicalDocument/2026-06-23-phase-3-code-map.md`。该 map 记录 `src/tokenshare/plugins/contracts.py`、`src/tokenshare/plugins/registry.py`、`src/tokenshare/executors/contracts.py`、`src/tokenshare/executors/registry.py`、`src/tokenshare/executors/mock_ai.py`、`src/tokenshare/executors/deterministic.py`、`src/tokenshare/protocol_engine.py`、`src/tokenshare/storage/events.py` 和 `src/tokenshare/storage/sqlite_index.py` 与 Phase 3 字段草案、事件和测试的对应关系。
 
 ## 项目理解（Project Understanding）
 
@@ -67,19 +71,35 @@ V1 的三类实验是 factorization、Lean stub proof 和 structured report stub
 - [x] 新增 Phase 2 专用规格文档：`Doc/TechnicalDocument/2026-06-08-phase-2-minimal-field-state-event-spec.md`，记录 `TaskGraph`、`TaskUnitStateChange`、`Lease`、`Attempt`、`SchedulingDecision`、`RecoveryAction`、状态机、事件顺序、SQLite 投影和自然语言 artifact 边界。
 - [x] 使用 TDD 实现 Phase 2 最小协议内核：`Lease` / `Attempt` 对象和状态枚举、`TaskGraph` ready 判断和图不变量、`TaskUnit` / `Lease` / `Attempt` 状态机、FIFO `Scheduler`、`LeaseManager` claim/heartbeat/expiry recovery、Phase 2 event type、SQLite `leases` / `attempts` / `recovery_actions` 投影，以及顶层 `ProtocolEngine` 调度、heartbeat 和 lease expiry 事件流。
 - [x] 新增 Phase 2 代码映射文档：`Doc/TechnicalDocument/2026-06-08-phase-2-code-map.md`，记录 Phase 2 规格、实现文件和测试文件的对应关系。
+- [x] 完成 Phase 2 stabilization：`Scheduler` 的 FIFO 按 `TaskUnit.created_at` / `unit_id` 排序；`LeaseManager.expire()` 拒绝未到 `expires_at` 的提前过期，`heartbeat()` 拒绝 `now >= expires_at` 的续命；`ProtocolEngine.schedule_ready_unit()` 调度前从 `EventLedger` 投影 active leases，避免调用者漏传 `active_leases_by_unit_id` 时重复 claim。
+- [x] 完成 code map 同步审计：以当前代码为准更新 `Doc/TechnicalDocument/2026-06-06-phase-1-code-map.md` 和 `Doc/TechnicalDocument/2026-06-08-phase-2-code-map.md`，补齐已存在但此前未映射的对象、flow result、helper 边界和测试文件清单；未修改协议代码。
 - [x] 同步更新 `README.md` 当前状态、仓库地图和下一步，把 README 从旧 Phase 2 进行中口径改为当前 Phase 3 准备口径；同步更新 `Doc/agent-navigation.md` 日期。
+- [x] 记录 Phase 3 开工前边界债务：`RootTaskRegistrar` 只能冻结为 Phase 1 legacy helper 或迁出到顶层 application service；scheduler 中硬编码的 client availability 字符串应在 Phase 3 `ExecutorRegistry` / client contract 中收束。
+- [x] 新增并扩展 `Doc/TechnicalDocument/2026-06-22-p01-p12-tokenshare-candidate-mechanism-spec.md`：P01-P22 已按机制主题融入同一结构，形成 109 个唯一规范定义、21 条跨模块不变量和 27 项设计决策；该文件现在保留为研究来源和整合记录，不覆盖主 TDD。
+- [x] 完成 P08-P12 冲突审查：P08 进入可重复实验/故障 profile；P09 进入 executor actor 状态、动态 runtime 和 lineage 边界；P10/P11 仅作为未来控制面复制参考；P12 仅保留为未来离散弱验证扩展。同步修正论文映射中把 PBFT `3f+1`/`2f+1` 直接指向 AI verifier committee 的旧表述。
+- [x] 完成 P13-P22 融合与冲突审查：P13-P15 仅支持未来弱验证 model family；P16-P18 只提供插件内求解/工具审计边界；P19-P21 固化验证环境、Lean stub 和 benchmark 可复现性边界；P22 提供可解释的确定性直接分派流程，不把完整 Contract Net 协商带入 V1。
+- [x] 对 P01-P22 候选规范进行全文主题化重排：论文编号只用于溯源，正文按协议生命周期组织；不变量、反面设计、27 项取舍记录和主 TDD 修订清单均改为机制/阶段分组，稳定 requirement/invariant/decision ID 与技术判断保持不变。
+- [x] 将 P01-P22 推荐取舍整合进主 TDD：明确 expected output/resolution、requirements/hints、capability snapshot、`EnvironmentRef`、action/observation provenance、verification/selection 分离、deterministic allocation、state replay 不重执行、merge 普通生命周期、最终结算和可复现实验边界。
+- [x] 同步候选规范、agent 导航、论文映射和 README，使候选规范从“待裁决清单”降级为“整合记录”。
+- [x] 记录 Phase 3 字段与机制讨论成果：新增 `Doc/TechnicalDocument/2026-06-23-phase-3-plugin-executor-field-spec.md` 草案，确认以 `ExecutionRequest` / `ExecutionSubmission` 执行闭环为主骨架；request/submission 本体保存为 artifact，event payload 只保存 ref、digest 和索引摘要；收到 submission 后推进 `Attempt.Running -> Submitted`，但不进入验证、canonical、merge 或 settlement。
+- [x] 使用 TDD 实现 Phase 3 插件与执行器契约：新增 `PluginDescriptor` / `OutputContract`、`PluginRegistry` / `RegistrySnapshot`、`ExecutorDescriptor` / `ExecutorRegistry`、`ExecutionRequest`、`ExecutionSubmission`、`EnvironmentRef`、`PromptPackage`、`MockAIExecutor` 和 `DeterministicLocalExecutor`；新增 `REGISTRY_SNAPSHOT_RECORDED`、`EXECUTION_REQUEST_RECORDED`、`EXECUTION_SUBMISSION_RECORDED`；`ProtocolEngine` 可记录 registry snapshot、request 和 submission artifact event；`Attempt` 允许 `Running -> Submitted`，但仍拒绝 `Submitted -> Verifying` 等 Phase 4 状态；SQLite 新增 `registry_snapshots`、`execution_requests`、`execution_submissions`、`executor_statuses` 四张 index-only projection。
+- [x] 新增 Phase 3 代码映射文档：`Doc/TechnicalDocument/2026-06-23-phase-3-code-map.md`，记录 Phase 3 规格、实现文件和测试文件的对应关系。
+- [x] 修复 Phase 3 边界审查发现的问题：`record_execution_submission()` 现在要求 submission 与当前 running attempt、lease 和 fencing token 匹配才推进 `Attempt.Running -> Submitted`，否则只记录 audit submission event；`Scheduler` 只接受 Phase 3 序列化状态 `Available` 和 Phase 2 legacy `active`，不再接受旧 `ready`/`online`/`idle` 字符串。
 
 ### 进行中（What's In Progress）
 
-- [ ] Phase 3 - Plugin and Executor Contracts。
-  - 细节：实现 `PluginRegistry`、`ExecutorRegistry`、`ExecutionRequest`、`ExecutionSubmission`、`MockAIExecutor`、确定性 executor 边界和 AI output artifact contracts。
-  - 当前状态：`feat-004` 已在 `feature_list.json` 中激活为唯一 in-progress feature；本轮未开始 Phase 3 代码。
+- [ ] Phase 4 - Verification, Canonical Output, and Expansion。
+  - 细节：实现通用数据检查、插件领域验证编排、`VerificationReport`、first_verified_bundle 选择、`DecompositionProposal`、`ExpansionDecision`、`MergePlan` 和原子图更新。
+  - 当前状态：`feat-005` 已在 `feature_list.json` 中激活为唯一 in-progress feature；Phase 4 代码尚未开始。
+  - Phase 4 必须从 Phase 3 artifact-backed submission 出发：读取 `ExecutionSubmission` artifact 和 output refs，写验证报告 artifact/event，再按 selection policy 绑定唯一 canonical output bundle。
+  - Phase 4 不应实现 merge、contribution、settlement、真实网络 executor 或生产 AI API。
 
 ### 下一步（What's Next）
 
-1. 下一轮先按 `AGENTS.md` 启动流程重新运行 `.\init.ps1`，确认 Phase 2 后的 18 个测试仍通过。
-2. 阅读主 TDD 中 Phase 3 相关章节，并在不扩大到真实执行器网络或生产 AI API 的前提下细化 `PluginRegistry`、`ExecutorRegistry`、`ExecutionRequest` 和 `ExecutionSubmission` 的最小对象字段。
-3. 使用 TDD 开始 `feat-004`；不要把 factorization、Lean stub 或 structured report stub 的领域规则硬编码进协议核心。
+1. 下一轮先按 `AGENTS.md` 启动流程重新运行 `.\init.ps1`，确认当前 27 个测试仍通过。
+2. 阅读主 TDD 第 4.3、8、9、10、12、21 节；同时阅读 `Doc/TechnicalDocument/2026-06-23-phase-3-code-map.md`，确认 Phase 4 从 Phase 3 request/submission artifact 边界继续。
+3. 使用 TDD 开始 `feat-005`；优先写验证报告、唯一 canonical binding 和无效 expansion 不改图的红灯测试。
+4. 不要把 factorization、Lean stub 或 structured report stub 的领域规则硬编码进协议核心；插件规则只能通过插件 contract 和未来验证编排进入。
 
 ## 阻塞与风险（Blockers / Risks）
 
@@ -88,6 +108,11 @@ V1 的三类实验是 factorization、Lean stub proof 和 structured report stub
 - [ ] SQLite 只能作为可重建索引和查询视图，不能变成隐藏权威状态源；后续 replay 测试仍需覆盖“删除 SQLite 后可重建”。
 - [ ] Lean V1 是 stub，不要不小心扩大到真实 theorem proving。
 - [ ] 调度、lease 创建、attempt 创建和 unit 状态推进会产生多条 JSONL 事件；后续实现需要用 `correlation_id` 和恢复逻辑处理局部写入后的中间态。
+- [ ] Phase 4 必须继续保持 JSONL event ledger + artifact 为权威事实源；SQLite 只能重建索引，不能成为验证或 canonical 的隐藏权威。
+- [ ] Phase 4 只能从已记录的 `ExecutionSubmission` / output artifact refs 生成验证和 canonical 结果；不得重新调用 executor 或 mock AI 来补历史输出。
+- [ ] Phase 4 需要保证同一 `TaskUnit` 只能绑定一个 canonical output bundle；重复绑定必须失败并留下可审计证据。
+- [ ] Phase 4 的 expansion 必须先记录结构化 `DecompositionProposal` 和 `ExpansionDecision`，无效 expansion 不得部分写入 `TaskGraph`。
+- [ ] Phase 3 已实现显式 `ExecutorRegistry` / `ExecutorStatus` contract，但 Phase 2 `Scheduler` 仍为兼容旧 `ClientRecord.status` 保留字符串匹配；如果 Phase 4 需要更深调度整合，必须作为单独边界变更记录。
 
 ## 已做决策（Decisions Made）
 
@@ -107,6 +132,7 @@ V1 的三类实验是 factorization、Lean stub proof 和 structured report stub
 - **自然语言输出边界决策：** AI raw text、parsed output 和 candidate output bundle 都必须通过 `ArtifactRef` 进入系统；Phase 2 event payload 只保存结构化摘要和 refs，不嵌入长自然语言正文。
 - **Phase 2 开工默认决策：** 当前阶段仍然只做协议内核，不做插件、executor/处理端、AI 调用、submission 验证、canonical binding、expansion、merge 或 settlement；暂不新增 `max_parallel_attempts_per_unit`，用 `allow_shadow_execution=false` 约束同一 unit 最多一个 active lease；heartbeat 每次成功都写 `LEASE_STATE_CHANGED Active -> Active` 事件。
 - **Phase 2 实现边界决策：** `tokenshare.core` 新增纯协议对象、状态机、`TaskGraph`、`Scheduler` 和 `LeaseManager`；顶层 `tokenshare.protocol_engine.ProtocolEngine` 负责把调度和 lease expiry 决策写入 `EventLedger`；`RootTaskRegistrar` 未扩展，SQLite 仍只是从 JSONL events 重建的查询投影。
+- **P01-P22 机制整合决策：** 主 TDD 已吸收候选机制的 V1 取舍；候选规范保留为研究来源。V1 接受 expected output/resolution、requirements/hints、capability snapshot、`EnvironmentRef`、action/observation provenance、verification/selection 分离、deterministic direct assignment、state replay 不重执行、merge 普通任务生命周期、最终一次性结算和可复现实验字段；完整 Contract Net、PBFT/Raft 控制面复制、Dawid-Skene/GLAD/MACE/CROWDLAB、真实 LeanDojo/mathlib/miniF2F 和通用 ToT/ReAct 搜索引擎留到后续版本。
 
 ## 本轮修改文件（Files Modified This Session）
 
@@ -131,30 +157,45 @@ V1 的三类实验是 factorization、Lean stub proof 和 structured report stub
 - `Doc/TechnicalDocument/2026-06-07-phase-2-coordination-debt-memo.md` - Phase 2 协调边界备忘录，记录已修复的边界问题和后续编排层迁移触发条件。
 - `Doc/TechnicalDocument/2026-06-08-phase-2-minimal-field-state-event-spec.md` - Phase 2 最小字段、状态机、事件顺序、SQLite 投影和自然语言 artifact 边界规格。
 - `Doc/TechnicalDocument/2026-06-08-phase-2-code-map.md` - Phase 2 代码、规格章节和测试的对应关系。
+- `Doc/TechnicalDocument/2026-06-23-phase-3-plugin-executor-field-spec.md` - Phase 3 插件/执行器字段规格草案，记录 request/submission artifact 化、event 摘要、attempt submission 状态推进和 AI artifact 边界。
+- `Doc/TechnicalDocument/2026-06-23-phase-3-code-map.md` - Phase 3 代码、规格章节和测试的对应关系。
 - `src/tokenshare/core/models.py` - Phase 1 协议对象和稳定 JSON snapshot。
 - `src/tokenshare/core/__init__.py` - protocol core 包入口；不再重新导出 `RootTaskRegistrar` 等存储协调器。
 - `src/tokenshare/core/registration.py` - root task registration 协调器。
 - `src/tokenshare/core/task_graph.py` - Phase 2 `TaskGraph` 纯视图、ready 判断和图不变量。
-- `src/tokenshare/core/state_machines.py` - Phase 2 `TaskUnit`、`Lease` 和 `Attempt` 状态机。
+- `src/tokenshare/core/state_machines.py` - Phase 2 `TaskUnit`、`Lease` 和 `Attempt` 状态机；已开放 Phase 3 `Attempt.Running -> Submitted`。
 - `src/tokenshare/core/scheduling.py` - Phase 2 `Scheduler` 和 `SchedulingDecision`。
 - `src/tokenshare/core/leases.py` - Phase 2 `LeaseManager` claim、heartbeat 和 expiry recovery 规则。
-- `src/tokenshare/protocol_engine.py` - Phase 2 最小 application service，按规格写入调度、heartbeat 和 lease expiry 事件序列。
+- `src/tokenshare/protocol_engine.py` - Phase 2 最小 application service，并新增 Phase 3 registry/request/submission artifact-backed event flow。
+- `src/tokenshare/plugins/contracts.py` - Phase 3 `OutputContract`、`PluginDescriptor` 和 descriptor digest helper。
+- `src/tokenshare/plugins/registry.py` - Phase 3 `PluginRegistry` 和 `RegistrySnapshot`。
+- `src/tokenshare/executors/contracts.py` - Phase 3 `ExecutorStatus`、`EnvironmentRef`、`ExecutorDescriptor`、`PromptPackage`、`ExecutionRequest` 和 `ExecutionSubmission`。
+- `src/tokenshare/executors/registry.py` - Phase 3 `ExecutorRegistry`、available matching、no-match reason 和 descriptor artifact freeze。
+- `src/tokenshare/executors/mock_ai.py` - Phase 3 deterministic mock AI executor 和 raw/parsed/parse-failure artifact path。
+- `src/tokenshare/executors/deterministic.py` - Phase 3 deterministic local executor boundary。
 - `src/tokenshare/storage/artifacts.py` - 本地 artifact 保存、读取、hash 校验和 manifest。
-- `src/tokenshare/storage/events.py` - JSONL `EventLedger`、`LedgerEvent`、事件类型、幂等键和 hash chain。
-- `src/tokenshare/storage/sqlite_index.py` - 从 JSONL events 重建 SQLite 查询索引。
+- `src/tokenshare/storage/events.py` - JSONL `EventLedger`、`LedgerEvent`、事件类型、幂等键和 hash chain；已包含 Phase 3 event type。
+- `src/tokenshare/storage/sqlite_index.py` - 从 JSONL events 重建 SQLite 查询索引；已包含 Phase 3 四张 index-only projection。
 - `tests/__init__.py` - 让测试 helper 可稳定导入。
 - `tests/phase2_fixtures.py` - Phase 2 测试夹具。
+- `tests/phase3_fixtures.py` - Phase 3 测试夹具。
 - `tests/core/test_phase1_models.py` - Phase 1 协议对象测试。
 - `tests/core/test_task_graph.py` - Phase 2 `TaskGraph` 测试。
 - `tests/core/test_state_machines.py` - Phase 2 状态机测试。
 - `tests/core/test_scheduler.py` - Phase 2 scheduler 测试。
 - `tests/core/test_lease_manager.py` - Phase 2 lease manager 测试。
+- `tests/plugins/test_plugin_registry.py` - Phase 3 plugin registry freeze 测试。
+- `tests/executors/test_executor_registry.py` - Phase 3 executor status contract 测试。
+- `tests/executors/test_mock_ai_executor.py` - Phase 3 mock AI artifact path 测试。
+- `tests/executors/test_deterministic_executor.py` - Phase 3 deterministic executor boundary 测试。
 - `tests/storage/test_artifact_store.py` - artifact store 测试。
 - `tests/storage/test_event_ledger.py` - event ledger 测试。
 - `tests/storage/test_sqlite_index.py` - SQLite rebuild 测试。
 - `tests/storage/test_phase2_event_projection.py` - Phase 2 SQLite event projection 测试。
+- `tests/storage/test_phase3_event_projection.py` - Phase 3 SQLite index-only projection 测试。
 - `tests/test_phase1_root_registration.py` - root task registration 集成测试。
 - `tests/test_phase2_scheduling_flow.py` - Phase 2 调度和 lease expiry event-backed flow 集成测试。
+- `tests/test_phase3_execution_flow.py` - Phase 3 registry/request/submission event-backed flow 集成测试。
 
 ## 完成证据（Evidence of Completion）
 
@@ -200,8 +241,32 @@ V1 的三类实验是 factorization、Lean stub proof 和 structured report stub
 - [x] Phase 2 heartbeat 红灯验证：`$env:PYTHONPATH='src'; conda run -n tokenshare python -m pytest tests\test_phase2_scheduling_flow.py -q` failed as expected；失败原因是 `ProtocolEngine.record_lease_heartbeat` 尚不存在。
 - [x] Phase 2 定向绿灯验证：同一定向命令 passed；结果 `9 passed in 0.22s`。
 - [x] Phase 2 完整启动验证：`powershell -ExecutionPolicy Bypass -File .\init.ps1` passed；pytest collected 18 items，结果 `18 passed`。
+- [x] Phase 2 stabilization 红灯验证：`$env:PYTHONPATH='src'; conda run -n tokenshare python -m pytest tests\core\test_scheduler.py tests\core\test_lease_manager.py tests\test_phase2_scheduling_flow.py -q` failed as expected；新增测试暴露 FIFO 未按 `created_at`、未到期 lease 可提前 expire、超时 lease 可 heartbeat、同一 ready graph 可重复生成 active lease。
+- [x] Phase 2 stabilization 定向绿灯验证：同一定向命令 passed；结果 `7 passed in 0.18s`。
+- [x] Phase 2 stabilization 完整启动验证：`.\init.ps1` passed；pytest collected 21 items，结果 `21 passed in 0.38s`。
 - [x] README 状态同步后二次审核：使用 `Select-String` 检查旧状态关键词；`README.md` 无旧状态命中，其他命中均为完成状态、历史 evidence 或当前真实的 Phase 3 尚未开始表述。
+- [x] Phase 3 开工前边界债务记录验证：`powershell -ExecutionPolicy Bypass -File .\init.ps1` passed；输出包含 `python-json-sqlite-ok`、`harness-files-ok`，pytest collected 18 items，结果 `18 passed in 0.42s`。
+- [x] P01-P07 候选规范结构审核：独立部分定义 85 条要求（73 条 MUST/SHOULD/MAY 和 12 条跨模块不变量），对照部分含 15 个唯一决策标题，无 `TODO`、`TBD`、`FIXME` 或待填写占位符；主 TDD 冲突原文已二次核对。
+- [x] P01-P07 候选规范新增后完整启动验证：`.\init.ps1` passed；输出包含 `python-json-sqlite-ok`、`harness-files-ok`，pytest collected 18 items，结果 `18 passed in 0.43s`。
+- [x] P01-P12 融合结构审核：磁盘文件 SHA-256 为 `CDC6E15B4E862021EEEFE65EF696672078DA5772FF08BEFA5B0122209F58C5BE`；P08-P12 必需标记全部存在；共 92 个唯一规范定义、16 条不变量、20 个唯一决策标题，无重复定义或 `TODO`/`TBD`/`FIXME`/待填写占位符。
+- [x] P01-P12 融合后完整启动验证：`powershell -ExecutionPolicy Bypass -File .\init.ps1` passed；输出包含 `python-json-sqlite-ok`、`harness-files-ok`，pytest collected 18 items，结果 `18 passed in 0.35s`。
+- [x] P01-P22 融合结构审核：P13-P22 均已进入相关机制章节、覆盖矩阵、跨模块不变量或裁决链；共 109 个唯一规范定义（81 MUST、20 SHOULD、8 MAY）、21 条唯一不变量和 27 个唯一决策标题，无重复定义或 `TODO`/`TBD`/`FIXME`/待填写占位符。
+- [x] P01-P22 融合后完整启动验证：`powershell -ExecutionPolicy Bypass -File .\init.ps1` passed；输出包含 `python-json-sqlite-ok`、`harness-files-ok`，pytest collected 18 items，结果 `18 passed in 0.36s`。
+- [x] P01-P22 全文主题化重排验证：结构审核确认 109 个唯一规范定义、21 条唯一不变量、27 个唯一裁决及 27 个取舍顺序引用全部闭合，修订批次痕迹为 0；`powershell -ExecutionPolicy Bypass -File .\init.ps1` passed，pytest 结果 `18 passed in 0.57s`。
+- [x] P01-P22 主 TDD 整合验证：`.\init.ps1` passed；输出包含 `python-json-sqlite-ok`、`harness-files-ok`，pytest collected 18 items，结果 `18 passed in 0.33s`。
+- [x] Phase 3 字段规格草案验证：新增 `Doc/TechnicalDocument/2026-06-23-phase-3-plugin-executor-field-spec.md` 并更新导航、进度、handoff 和 feature source documents；`feature_list.json` JSON 解析通过，新草案 `TODO|TBD|FIXME|待填写` 扫描无命中，`powershell -ExecutionPolicy Bypass -File .\init.ps1` passed，pytest collected 21 items，结果 `21 passed in 0.39s`。
+- [x] Phase 3 开工抉择收束验证：将 `AllocationDecision` 内联、descriptor artifact 化、executor status 最小枚举、SQLite index-only projection 四项决策写入 Phase 3 草案；索引检查确认 `Doc/agent-navigation.md`、`feature_list.json`、`progress.md`、`session-handoff.md` 均指向该草案；未决旧表述扫描无命中；边界扫描确认 Phase 4/5 词汇只出现在非目标或禁止项；`powershell -ExecutionPolicy Bypass -File .\init.ps1` passed，pytest collected 21 items，结果 `21 passed in 0.41s`。
+- [x] Code map 校准前基线验证：`powershell -ExecutionPolicy Bypass -File .\init.ps1` passed；输出包含 `python-json-sqlite-ok`、`harness-files-ok`，pytest collected 21 items，结果 `21 passed in 0.49s`。
+- [x] Code map 路径/符号审计：使用 PowerShell + Python AST/Markdown 扫描当前 `src/tokenshare/` 与 `tests/`，并检查两个 code map 中引用的 `src/`、`tests/`、`Doc/` 路径；结果全部存在，缺失映射已补入两个 code map。
+- [x] Code map 校准和状态记录更新后完整启动验证：`powershell -ExecutionPolicy Bypass -File .\init.ps1` passed；输出包含 `python-json-sqlite-ok`、`harness-files-ok`，pytest collected 21 items，结果 `21 passed in 0.35s`。
+- [x] Phase 3 TDD 红灯验证：`$env:PYTHONPATH='src'; conda run -n tokenshare python -m pytest tests\plugins\test_plugin_registry.py tests\executors\test_executor_registry.py tests\executors\test_mock_ai_executor.py tests\test_phase3_execution_flow.py tests\storage\test_phase3_event_projection.py -q` failed as expected；失败原因是 `tokenshare.executors.contracts`、`tokenshare.executors.registry` 等 Phase 3 模块尚不存在。
+- [x] Phase 3 deterministic executor 红灯验证：`$env:PYTHONPATH='src'; conda run -n tokenshare python -m pytest tests\executors\test_deterministic_executor.py -q` failed as expected；失败原因是 `tokenshare.executors.deterministic` 尚不存在。
+- [x] Phase 3 定向绿灯验证：`$env:PYTHONPATH='src'; conda run -n tokenshare python -m pytest tests\core\test_state_machines.py tests\plugins\test_plugin_registry.py tests\executors\test_executor_registry.py tests\executors\test_mock_ai_executor.py tests\executors\test_deterministic_executor.py tests\test_phase3_execution_flow.py tests\storage\test_phase3_event_projection.py -q` passed；结果 `9 passed in 0.53s`。
+- [x] Phase 3 完整启动验证：`.\init.ps1` passed；输出包含 `python-json-sqlite-ok`、`harness-files-ok`，pytest collected 28 items，结果 `28 passed`。
+- [x] Phase 3 边界修复红灯验证：`$env:PYTHONPATH='src'; conda run -n tokenshare python -m pytest tests\core\test_scheduler.py tests\test_phase3_execution_flow.py -q` failed as expected；新增测试暴露 `ready` 旧状态仍可调度，以及 `record_execution_submission()` 尚未接收 lease/fencing token 绑定校验。
+- [x] Phase 3 边界修复定向绿灯验证：同一定向命令 passed；结果 `6 passed in 0.18s`。
+- [x] Phase 3 边界修复完整启动验证：`powershell -ExecutionPolicy Bypass -File E:\TokenEcnomic\TokenShare\init.ps1` passed；pytest collected 30 items，结果 `30 passed in 0.67s`。
 
 ## 下次会话提示（Notes for Next Session）
 
-Feat-001、feat-002 和 feat-003 已完成。Phase 1 代码与规格对应关系见 `Doc/TechnicalDocument/2026-06-06-phase-1-code-map.md`；Phase 2 最小字段、状态和事件规格见 `Doc/TechnicalDocument/2026-06-08-phase-2-minimal-field-state-event-spec.md`；Phase 2 代码映射见 `Doc/TechnicalDocument/2026-06-08-phase-2-code-map.md`。下一步只实现 `feat-004`：Plugin and Executor Contracts；不要提前实现真实 executor 网络、生产 AI API、submission verification、canonical binding、merge 或 settlement。后续常规仓库读取/搜索按 `Doc/agent-navigation.md` 第 4 节使用 PowerShell 和 UTF-8；如需联网查资料，必须先按第 6 节完成本地落库和索引同步。
+Feat-001、feat-002、feat-003 和 feat-004 已完成；2026-06-23 Phase 3 边界修复后完整启动验证通过 `.\init.ps1`，pytest collected 30 items，结果 `30 passed in 0.67s`。Phase 1 代码与规格对应关系见 `Doc/TechnicalDocument/2026-06-06-phase-1-code-map.md`；Phase 2 最小字段、状态和事件规格见 `Doc/TechnicalDocument/2026-06-08-phase-2-minimal-field-state-event-spec.md`；Phase 2 代码映射见 `Doc/TechnicalDocument/2026-06-08-phase-2-code-map.md`；Phase 3 字段草案见 `Doc/TechnicalDocument/2026-06-23-phase-3-plugin-executor-field-spec.md`；Phase 3 代码映射见 `Doc/TechnicalDocument/2026-06-23-phase-3-code-map.md`。P01-P22 候选规范位于 `Doc/TechnicalDocument/2026-06-22-p01-p12-tokenshare-candidate-mechanism-spec.md`，现在只作为主 TDD 整合记录和论文取舍来源。下一步只实现 `feat-005`：Verification, Canonical Output, and Expansion；不要提前实现 merge、contribution、settlement、真实 executor 网络或生产 AI API。后续常规仓库读取/搜索按 `Doc/agent-navigation.md` 第 4 节使用 PowerShell 和 UTF-8；如需联网查资料，必须先按第 6 节完成本地落库和索引同步。
