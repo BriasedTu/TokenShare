@@ -1,0 +1,1242 @@
+\documentclass[UTF8,12pt]{ctexart}
+
+\usepackage[a4paper,margin=2.4cm]{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage{enumitem}
+\usepackage{hyperref}
+\usepackage{xcolor}
+\usepackage{fvextra}
+\usepackage{titlesec}
+\usepackage{fancyhdr}
+\setmonofont{DejaVu Sans Mono}
+\setlength{\headheight}{15pt}
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=blue,
+  urlcolor=blue,
+  citecolor=blue
+}
+
+\setlist[itemize]{itemsep=2pt,topsep=4pt}
+\setlist[enumerate]{itemsep=2pt,topsep=4pt}
+\DefineVerbatimEnvironment{LeanCode}{Verbatim}{breaklines=true,breakanywhere=true,fontsize=\small,frame=single,rulecolor=\color{gray}}
+\DefineVerbatimEnvironment{Tree}{Verbatim}{breaklines=true,breakanywhere=true,fontsize=\small}
+
+\pagestyle{fancy}
+\fancyhf{}
+\lhead{Lean 证明拆分规则说明文档}
+\rhead{\thepage}
+
+\title{Lean 证明拆分规则说明文档}
+\author{}
+\date{}
+
+\begin{document}
+\maketitle
+\tableofcontents
+\newpage
+
+\section{文档目标}
+
+当我们遇到一个复杂 Lean theorem 时，应该如何把它拆成更小、更容易证明的子目标？
+
+Lean 证明看起来复杂，很多时候是因为目标里嵌套了很多逻辑结构，例如：
+\begin{itemize}
+  \item \(A \land B\)
+  \item \(A \leftrightarrow B\)
+  \item \(A \to B\)
+  \item \(\forall x, P\ x\)
+  \item \(\exists x, P\ x\)
+  \item \(A \lor B\)
+\end{itemize}
+
+一个复杂 theorem 往往就是这些结构不断嵌套在一起。
+
+所以 Lean 证明拆分的核心思想是：
+
+\begin{quote}
+先看当前目标和已知条件的形状，再根据形状选择对应的拆分规则，递归地把大目标变成小目标。
+\end{quote}
+
+\section{Lean 证明中最重要的两个对象}
+
+Lean 证明过程中，我们一直面对两类东西：
+\begin{enumerate}
+  \item 当前目标；
+  \item 已知条件。
+\end{enumerate}
+
+\subsection{当前目标}
+
+Lean 中 \(\vdash\) 后面的内容就是当前要证明的目标。
+
+例如：
+
+\begin{LeanCode}
+A B : Prop
+hA : A
+hB : B
+⊢ A ∧ B
+\end{LeanCode}
+
+意思是：
+\begin{itemize}
+  \item 已知 \(A\)、\(B\) 是命题；
+  \item 已知 \texttt{hA} 是 \(A\) 的证明；
+  \item 已知 \texttt{hB} 是 \(B\) 的证明；
+  \item 现在要证明 \(A \land B\)。
+\end{itemize}
+
+所以看到 Lean 状态时，首先要看：
+
+\begin{quote}
+\(\vdash\) 后面的目标长什么样？
+\end{quote}
+
+\subsection{已知条件}
+
+例如：
+
+\begin{LeanCode}
+hA : A
+hB : B
+h : A → B
+\end{LeanCode}
+
+意思是：
+\begin{itemize}
+  \item \texttt{hA} 是 \(A\) 的证明；
+  \item \texttt{hB} 是 \(B\) 的证明；
+  \item \texttt{h} 是一个从 \(A\) 推出 \(B\) 的规则。
+\end{itemize}
+
+很多时候目标本身不好拆，但已知条件可以拆。所以除了看当前目标，也要看上下文里有没有可以利用的已知条件。
+
+\section{复杂 Lean 证明的基本拆分思路}
+
+遇到一个复杂 theorem，可以按下面的顺序思考：
+
+\begin{enumerate}
+  \item 先看目标最外层结构。
+  \item 如果目标是 \(\to\) 或 \(\forall\)，先 \texttt{intro}。
+  \item 如果目标是 \(\land\) 或 \(\leftrightarrow\)，用 \texttt{constructor} 拆成多个子目标。
+  \item 如果目标是 \(\exists\)，先找 witness。
+  \item 如果目标是 \(\lor\)，选择证明左边或右边。
+  \item 如果已知条件是复合结构，把已知条件拆开。
+  \item 如果有定理可以推出当前目标，用 \texttt{apply} 反推。
+  \item 如果目标可以化简，用 \texttt{simp} / \texttt{rw} / \texttt{unfold}。
+  \item 如果目标涉及 \texttt{Nat} / \texttt{List} / 递归结构，用 \texttt{induction} 或 \texttt{cases}。
+  \item 如果目标已经很小，用 \texttt{exact} / \texttt{rfl} / \texttt{contradiction} 关闭。
+\end{enumerate}
+
+这套思路可以理解成：
+
+\begin{Tree}
+复杂目标
+ ↓
+先拆最外层逻辑结构
+ ↓
+得到若干中等目标
+ ↓
+继续递归拆每个中等目标
+ ↓
+得到很多小目标
+ ↓
+用已有条件、定理、化简、归纳等方法关闭小目标
+\end{Tree}
+
+\section{第一类规则：目标本身可以拆}
+
+这一类规则看的是 \(\vdash\) 后面的目标。
+
+\subsection{目标是 \(A \land B\)}
+
+目标形状：
+
+\begin{LeanCode}
+⊢ A ∧ B
+\end{LeanCode}
+
+意思是：要同时证明 \(A\) 和 \(B\)。
+
+拆分方式：
+\begin{itemize}
+  \item 子目标 1：\(\vdash A\)
+  \item 子目标 2：\(\vdash B\)
+\end{itemize}
+
+Lean 常用写法：
+
+\begin{LeanCode}
+constructor
+\end{LeanCode}
+
+例子：
+
+\begin{LeanCode}
+theorem demo
+  (A B : Prop)
+  (hA : A)
+  (hB : B) :
+  A ∧ B := by
+  constructor
+  · exact hA
+  · exact hB
+\end{LeanCode}
+
+任务树：
+
+\begin{Tree}
+A ∧ B
+├── A
+└── B
+\end{Tree}
+
+只要看到目标最外层是 \(\land\)，就可以先拆成左右两个子目标。
+
+\subsection{目标是 \(A \leftrightarrow B\)}
+
+目标形状：
+
+\begin{LeanCode}
+⊢ A ↔ B
+\end{LeanCode}
+
+意思是：\(A\) 和 \(B\) 等价。
+
+证明等价命题需要证明两个方向：
+\begin{enumerate}
+  \item \(A \to B\)
+  \item \(B \to A\)
+\end{enumerate}
+
+拆分方式：
+\begin{itemize}
+  \item 子目标 1：\(\vdash A \to B\)
+  \item 子目标 2：\(\vdash B \to A\)
+\end{itemize}
+
+Lean 常用写法：
+
+\begin{LeanCode}
+constructor
+\end{LeanCode}
+
+例子：
+
+\begin{LeanCode}
+theorem demo
+  (A B : Prop)
+  (h1 : A → B)
+  (h2 : B → A) :
+  A ↔ B := by
+  constructor
+  · exact h1
+  · exact h2
+\end{LeanCode}
+
+任务树：
+
+\begin{Tree}
+A ↔ B
+├── A → B
+└── B → A
+\end{Tree}
+
+所以遇到 \(\leftrightarrow\)，不要想着一次证明“等价”，而是先拆成两个方向。
+
+\subsection{目标是 \(A \to B\)}
+
+目标形状：
+
+\begin{LeanCode}
+⊢ A → B
+\end{LeanCode}
+
+意思是：如果 \(A\) 成立，那么 \(B\) 成立。
+
+注意，\(A \to B\) 不是拆成：
+\begin{itemize}
+  \item 证明 \(A\)；
+  \item 证明 \(B\)。
+\end{itemize}
+
+而是：先假设 \(A\) 成立，然后在这个假设下证明 \(B\)。
+
+拆分方式：
+
+\begin{Tree}
+原目标：⊢ A → B
+变成：
+hA : A
+⊢ B
+\end{Tree}
+
+Lean 常用写法：
+
+\begin{LeanCode}
+intro hA
+\end{LeanCode}
+
+例子：
+
+\begin{LeanCode}
+theorem demo
+  (A B : Prop)
+  (h : A → B) :
+  A → B := by
+  intro hA
+  exact h hA
+\end{LeanCode}
+
+任务树：
+
+\begin{Tree}
+A → B
+└── 在 hA : A 的条件下证明 B
+\end{Tree}
+
+所以 \(\to\) 是一种单分支推进，不是并行拆分。\texttt{intro hA} 不是证明了 \(A\)，而是临时假设 \(A\) 成立，然后要求你在这个假设下证明 \(B\)。
+
+\subsection{目标是 \(\forall x, P\ x\)}
+
+目标形状：
+
+\begin{LeanCode}
+⊢ ∀ x, P x
+\end{LeanCode}
+
+意思是：对所有 \(x\)，都要证明 \(P\ x\)。
+
+证明方式是：任取一个 \(x\)，然后证明 \(P\ x\)。
+
+拆分方式：
+
+\begin{Tree}
+原目标：⊢ ∀ x, P x
+变成：
+x : α
+⊢ P x
+\end{Tree}
+
+Lean 常用写法：
+
+\begin{LeanCode}
+intro x
+\end{LeanCode}
+
+例子：
+
+\begin{LeanCode}
+theorem demo
+  (P : Nat → Prop)
+  (h : ∀ n, P n) :
+  ∀ n, P n := by
+  intro n
+  exact h n
+\end{LeanCode}
+
+任务树：
+
+\begin{Tree}
+∀ x, P x
+└── 任取 x，证明 P x
+\end{Tree}
+
+\(\forall\) 和 \(\to\) 很像，都是先 \texttt{intro}，把目标向里面推进一层。
+
+\subsection{目标是 \(\exists x, P\ x\)}
+
+目标形状：
+
+\begin{LeanCode}
+⊢ ∃ x, P x
+\end{LeanCode}
+
+意思是：存在一个 \(x\)，使得 \(P\ x\) 成立。
+
+证明存在性需要两步：
+\begin{enumerate}
+  \item 给出一个具体 witness \(w\)；
+  \item 证明 \(P\ w\)。
+\end{enumerate}
+
+Lean 常用写法：
+
+\begin{LeanCode}
+use w
+\end{LeanCode}
+
+例子：
+
+\begin{LeanCode}
+theorem demo : ∃ n : Nat, n + 1 = 4 := by
+  use 3
+  norm_num
+\end{LeanCode}
+
+这里 \texttt{use 3} 的意思是：我选择 \(3\) 作为那个存在的 \(n\)。然后目标会变成：
+
+\begin{LeanCode}
+⊢ 3 + 1 = 4
+\end{LeanCode}
+
+这个目标可以用 \texttt{norm\_num} 解决。
+
+任务关系：
+
+\begin{Tree}
+∃ x, P x
+├── 找 witness w
+└── 证明 P w
+\end{Tree}
+
+注意，目标是 \(\exists x, P\ x\) 时，我们是在主动构造一个存在性证明，所以必须给出具体 witness。
+
+\subsection{目标是 \(A \lor B\)}
+
+目标形状：
+
+\begin{LeanCode}
+⊢ A ∨ B
+\end{LeanCode}
+
+意思是：要证明 \(A\) 或 \(B\) 至少一个成立。
+
+证明 \(A \lor B\) 不需要两边都证明，只要证明其中一边。
+
+如果证明左边：
+
+\begin{LeanCode}
+left
+\end{LeanCode}
+
+如果证明右边：
+
+\begin{LeanCode}
+right
+\end{LeanCode}
+
+例子：
+
+\begin{LeanCode}
+theorem demo
+  (A B : Prop)
+  (hA : A) :
+  A ∨ B := by
+  left
+  exact hA
+\end{LeanCode}
+
+任务关系：
+
+\begin{Tree}
+A ∨ B
+├── 路线 1：证明 A
+└── 路线 2：证明 B
+\end{Tree}
+
+只需要一条路线成功。
+
+\section{第二类规则：已知条件可以拆}
+
+很多时候目标本身不好拆，但上下文里的已知条件可以拆。这类规则看的是 \(\vdash\) 前面的已知条件。
+
+\subsection{已知 \(h : A \land B\)}
+
+已知条件形状：
+
+\begin{LeanCode}
+h : A ∧ B
+\end{LeanCode}
+
+意思是：已经知道 \(A\) 和 \(B\) 都成立。
+
+可以拆成：
+
+\begin{LeanCode}
+hA : A
+hB : B
+\end{LeanCode}
+
+Lean 常用写法：
+
+\begin{LeanCode}
+rcases h with ⟨hA, hB⟩
+\end{LeanCode}
+
+例子：
+
+\begin{LeanCode}
+theorem demo
+  (A B : Prop)
+  (h : A ∧ B) :
+  A := by
+  rcases h with ⟨hA, hB⟩
+  exact hA
+\end{LeanCode}
+
+直觉：如果手里有 \(A \land B\)，就可以分别拿到 \(A\) 和 \(B\)。
+
+\subsection{已知 \(h : \exists x, P\ x\)}
+
+已知条件形状：
+
+\begin{LeanCode}
+h : ∃ x, P x
+\end{LeanCode}
+
+意思是：已经知道存在某个 \(x\) 满足 \(P\ x\)。
+
+这个已知条件可以理解成一个“包裹”，里面装了两样东西：
+\begin{enumerate}
+  \item 某个具体对象 \(w\)；
+  \item 证明这个对象满足 \(P\) 的证据 \(hw : P\ w\)。
+\end{enumerate}
+
+所以可以拆出：
+
+\begin{LeanCode}
+w : α
+hw : P w
+\end{LeanCode}
+
+Lean 常用写法：
+
+\begin{LeanCode}
+rcases h with ⟨w, hw⟩
+\end{LeanCode}
+
+例子：
+
+\begin{LeanCode}
+theorem demo
+  (P : Nat → Prop)
+  (h : ∃ n : Nat, P n) :
+  ∃ n : Nat, P n := by
+  rcases h with ⟨w, hw⟩
+  use w
+  exact hw
+\end{LeanCode}
+
+解释：
+
+\begin{LeanCode}
+h : ∃ n : Nat, P n
+\end{LeanCode}
+
+表示：已经知道存在某个自然数 \(n\)，使得 \(P\ n\) 成立。
+
+执行：
+
+\begin{LeanCode}
+rcases h with ⟨w, hw⟩
+\end{LeanCode}
+
+以后，Lean 得到：
+
+\begin{LeanCode}
+w : Nat
+hw : P w
+\end{LeanCode}
+
+也就是：
+\begin{itemize}
+  \item \(w\) 是那个被证明存在的自然数；
+  \item \(hw\) 是 \(w\) 满足 \(P\) 的证明。
+\end{itemize}
+
+如果当前目标还是：
+
+\begin{LeanCode}
+⊢ ∃ n : Nat, P n
+\end{LeanCode}
+
+那么可以：
+
+\begin{LeanCode}
+use w
+\end{LeanCode}
+
+意思是：我就用刚刚从 \(h\) 里面拆出来的 \(w\)，作为这个存在性目标的 witness。然后目标变成：
+
+\begin{LeanCode}
+⊢ P w
+\end{LeanCode}
+
+而我们已经有：
+
+\begin{LeanCode}
+hw : P w
+\end{LeanCode}
+
+所以：
+
+\begin{LeanCode}
+exact hw
+\end{LeanCode}
+
+直接完成。
+
+最重要的区别是：
+\begin{itemize}
+  \item 目标是 \(\exists x, P\ x\)：你要主动给出一个 witness。
+  \item 已知是 \(h : \exists x, P\ x\)：witness 已经藏在 \(h\) 里面，你要把它取出来。
+\end{itemize}
+
+\subsection{已知 \(h : A \lor B\)}
+
+已知条件形状：
+
+\begin{LeanCode}
+h : A ∨ B
+\end{LeanCode}
+
+意思是：已知 \(A\) 或 \(B\) 至少一个成立。
+
+但你不知道到底是哪边成立，所以必须分情况讨论：
+\begin{itemize}
+  \item 情况 1：假设 \(A\) 成立，证明目标；
+  \item 情况 2：假设 \(B\) 成立，证明目标。
+\end{itemize}
+
+Lean 常用写法：
+
+\begin{LeanCode}
+cases h with
+| inl hA =>
+  ...
+| inr hB =>
+  ...
+\end{LeanCode}
+
+例子：
+
+\begin{LeanCode}
+theorem demo
+  (A B C : Prop)
+  (h : A ∨ B)
+  (hAC : A → C)
+  (hBC : B → C) :
+  C := by
+  cases h with
+  | inl hA =>
+    exact hAC hA
+  | inr hB =>
+    exact hBC hB
+\end{LeanCode}
+
+任务树：
+
+\begin{Tree}
+h : A ∨ B, goal C
+├── 情况 1：hA : A ⊢ C
+└── 情况 2：hB : B ⊢ C
+\end{Tree}
+
+注意：
+\begin{itemize}
+  \item 目标是 \(A \lor B\)：只需要证明一边。
+  \item 已知是 \(h : A \lor B\)：必须两种情况都处理。
+\end{itemize}
+
+\section{第三类规则：用已有定理反推目标}
+
+有时目标本身看不出怎么拆，但是已知条件里有一个定理可以推出目标。这时要用 \texttt{apply}。
+
+\subsection{已知 \(h : A \to B\)，目标是 \(B\)}
+
+当前状态：
+
+\begin{LeanCode}
+h : A → B
+⊢ B
+\end{LeanCode}
+
+可以用 \(h\) 反推目标：要证明 \(B\)，只需要先证明 \(A\)。
+
+Lean 常用写法：
+
+\begin{LeanCode}
+apply h
+\end{LeanCode}
+
+目标变化：
+
+\begin{Tree}
+原目标：⊢ B
+新目标：⊢ A
+\end{Tree}
+
+例子：
+
+\begin{LeanCode}
+theorem demo
+  (A B : Prop)
+  (h : A → B)
+  (hA : A) :
+  B := by
+  apply h
+  exact hA
+\end{LeanCode}
+
+直觉：我有 \(A \to B\)。所以为了证明 \(B\)，可以转而证明 \(A\)。
+
+\subsection{多前提 apply}
+
+如果已知：
+
+\begin{LeanCode}
+L : A → B → C → D
+\end{LeanCode}
+
+当前目标是：
+
+\begin{LeanCode}
+⊢ D
+\end{LeanCode}
+
+那么：
+
+\begin{LeanCode}
+apply L
+\end{LeanCode}
+
+可能生成三个子目标：
+
+\begin{LeanCode}
+⊢ A
+⊢ B
+⊢ C
+\end{LeanCode}
+
+任务树：
+
+\begin{Tree}
+D
+├── A
+├── B
+└── C
+\end{Tree}
+
+很多复杂数学定理本来就是：如果满足若干条件 \(A\)、\(B\)、\(C\)，就能推出结论 \(D\)。所以证明 \(D\) 时，可以先找有没有一个 lemma/theorem 能推出 \(D\)。如果有，就用 \texttt{apply} 把目标反推成 lemma 所需要的前提。
+
+\section{第四类规则：改写和简化}
+
+有些目标不需要拆成多个子目标，而是需要先把目标变简单。
+
+\subsection{等式改写 rw}
+
+如果已知：
+
+\begin{LeanCode}
+h : x = y
+\end{LeanCode}
+
+而目标中出现了 \(x\)，可以把 \(x\) 改成 \(y\)。
+
+Lean 常用写法：
+
+\begin{LeanCode}
+rw [h]
+\end{LeanCode}
+
+如果要反向改写：
+
+\begin{LeanCode}
+rw [← h]
+\end{LeanCode}
+
+例子：
+
+\begin{LeanCode}
+theorem demo
+  (x y : Nat)
+  (h : x = y) :
+  x + 1 = y + 1 := by
+  rw [h]
+\end{LeanCode}
+
+目标变化：
+
+\begin{Tree}
+x + 1 = y + 1
+↓ rw [h]
+y + 1 = y + 1
+\end{Tree}
+
+然后就容易证明了。
+
+\subsection{定义展开 unfold}
+
+如果目标里有一个定义被包起来，可以展开它。
+
+例如：
+
+\begin{LeanCode}
+def double (n : Nat) := n + n
+\end{LeanCode}
+
+目标：
+
+\begin{LeanCode}
+⊢ double n = n + n
+\end{LeanCode}
+
+可以：
+
+\begin{LeanCode}
+unfold double
+\end{LeanCode}
+
+直觉：有些复杂只是因为定义没有展开。展开后目标可能变得很简单。
+
+\subsection{自动简化 simp}
+
+\texttt{simp} 是 Lean 里非常常用的自动简化工具。
+
+适合处理：
+\begin{itemize}
+  \item \(x + 0 = x\)
+  \item \(\mathrm{True} \land P\)
+  \item \(P \land \mathrm{True}\)
+  \item \texttt{List.length []}
+\end{itemize}
+
+例子：
+
+\begin{LeanCode}
+theorem demo (x : Nat) : x + 0 = x := by
+  simp
+\end{LeanCode}
+
+在拆分过程中，\texttt{simp} 很适合作为叶子目标的第一尝试：如果目标已经很简单，先试 \texttt{simp}。如果 \texttt{simp} 能关掉目标，就不需要继续拆。
+
+\section{第五类规则：归纳和分类讨论}
+
+当目标涉及递归结构时，通常要用 \texttt{induction} 或 \texttt{cases}。
+
+\subsection{自然数归纳}
+
+如果目标和自然数 \(n : \texttt{Nat}\) 有关，常常可以对 \(n\) 归纳。
+
+目标形式：
+
+\begin{LeanCode}
+n : Nat
+⊢ P n
+\end{LeanCode}
+
+归纳拆成：
+\begin{itemize}
+  \item base case：证明 \(P\ 0\)
+  \item step case：假设 \(P\ n\)，证明 \(P(n+1)\)
+\end{itemize}
+
+Lean 常用写法：
+
+\begin{LeanCode}
+induction n with
+| zero =>
+  ...
+| succ n ih =>
+  ...
+\end{LeanCode}
+
+任务树：
+
+\begin{Tree}
+P n
+├── P 0
+└── 假设 P n，证明 P (n+1)
+\end{Tree}
+
+\subsection{列表归纳}
+
+如果目标和列表有关：
+
+\begin{LeanCode}
+xs : List Nat
+⊢ P xs
+\end{LeanCode}
+
+列表有两种情况：
+\begin{enumerate}
+  \item 空列表 \texttt{[]}；
+  \item 非空列表 \texttt{x :: xs}。
+\end{enumerate}
+
+所以归纳拆成：
+\begin{itemize}
+  \item case nil：证明 \(P\ []\)
+  \item case cons：假设 \(P\ xs\)，证明 \(P\ (x :: xs)\)
+\end{itemize}
+
+任务树：
+
+\begin{Tree}
+P xs
+├── P []
+└── 假设 P xs，证明 P (x :: xs)
+\end{Tree}
+
+\subsection{一般分类讨论}
+
+如果某个对象只有有限几种形式，可以分类讨论。
+
+例如：
+
+\begin{LeanCode}
+b : Bool
+\end{LeanCode}
+
+布尔值只有两种：
+\begin{itemize}
+  \item \texttt{true}
+  \item \texttt{false}
+\end{itemize}
+
+所以：
+
+\begin{LeanCode}
+cases b
+\end{LeanCode}
+
+会拆成两个情况：
+\begin{itemize}
+  \item case true
+  \item case false
+\end{itemize}
+
+直觉：如果一个对象本身只有几种可能，就把每种可能分别证明一遍。
+
+\section{第六类规则：函数、结构、集合相等}
+
+有些相等目标不能直接证明，需要先转化成更细的目标。
+
+\subsection{函数相等 funext}
+
+目标：
+
+\begin{LeanCode}
+⊢ f = g
+\end{LeanCode}
+
+如果 \(f\) 和 \(g\) 是函数，那么证明函数相等，通常要证明：对任意 \(x\)，\(f\ x = g\ x\)。
+
+Lean 常用写法：
+
+\begin{LeanCode}
+funext x
+\end{LeanCode}
+
+目标变化：
+
+\begin{Tree}
+⊢ f = g
+↓ funext x
+x : α
+⊢ f x = g x
+\end{Tree}
+
+直觉：两个函数相等，就是它们对每个输入的输出都相等。
+
+\subsection{结构或集合相等 ext}
+
+目标：
+
+\begin{LeanCode}
+⊢ S = T
+\end{LeanCode}
+
+如果 \(S\) 和 \(T\) 是集合，通常可以转化成：对任意 \(x\)，\(x \in S \leftrightarrow x \in T\)。
+
+Lean 常用写法：
+
+\begin{LeanCode}
+ext x
+\end{LeanCode}
+
+直觉：两个集合相等，就是它们包含完全相同的元素。
+
+\section{第七类规则：直接关闭目标}
+
+有些目标已经足够小，不需要继续拆。
+
+\subsection{exact}
+
+如果目标正好已经在上下文里：
+
+\begin{LeanCode}
+hA : A
+⊢ A
+\end{LeanCode}
+
+直接：
+
+\begin{LeanCode}
+exact hA
+\end{LeanCode}
+
+\subsection{rfl}
+
+如果目标是自反等式：
+
+\begin{LeanCode}
+⊢ x = x
+\end{LeanCode}
+
+或者经过计算后左右两边完全一样，可以用：
+
+\begin{LeanCode}
+rfl
+\end{LeanCode}
+
+\subsection{contradiction}
+
+如果上下文中有矛盾：
+
+\begin{LeanCode}
+hA : A
+hnA : ¬ A
+\end{LeanCode}
+
+可以：
+
+\begin{LeanCode}
+contradiction
+\end{LeanCode}
+
+直觉：如果已知条件本身矛盾，那么当前目标可以被关闭。
+
+\section{复杂证明如何递归拆分}
+
+复杂 Lean 证明不是一次拆完的，而是不断看当前目标的最外层结构，然后递归拆下去。
+
+例如目标是：
+
+\begin{LeanCode}
+⊢ A → ((B ∧ C) ∧ (D ↔ E))
+\end{LeanCode}
+
+第一步，最外层是 \(\to\)：
+
+\begin{LeanCode}
+intro hA
+\end{LeanCode}
+
+目标变成：
+
+\begin{LeanCode}
+hA : A
+⊢ (B ∧ C) ∧ (D ↔ E)
+\end{LeanCode}
+
+第二步，新目标最外层是 \(\land\)：
+
+\begin{LeanCode}
+constructor
+\end{LeanCode}
+
+拆成：
+\begin{itemize}
+  \item 目标 1：\(\vdash B \land C\)
+  \item 目标 2：\(\vdash D \leftrightarrow E\)
+\end{itemize}
+
+第三步，继续拆每个子目标：
+
+\begin{Tree}
+B ∧ C
+├── B
+└── C
+
+D ↔ E
+├── D → E
+└── E → D
+\end{Tree}
+
+完整证明树：
+
+\begin{Tree}
+A → ((B ∧ C) ∧ (D ↔ E))
+└── intro hA 后证明 (B ∧ C) ∧ (D ↔ E)
+    ├── B ∧ C
+    │   ├── B
+    │   └── C
+    └── D ↔ E
+        ├── D → E
+        └── E → D
+\end{Tree}
+
+如果继续拆 \(D \to E\)：
+
+\begin{LeanCode}
+intro hD
+\end{LeanCode}
+
+变成：
+
+\begin{LeanCode}
+hD : D
+⊢ E
+\end{LeanCode}
+
+如果继续拆 \(E \to D\)：
+
+\begin{LeanCode}
+intro hE
+\end{LeanCode}
+
+变成：
+
+\begin{LeanCode}
+hE : E
+⊢ D
+\end{LeanCode}
+
+所以真正的叶子目标是：
+
+\begin{LeanCode}
+⊢ B
+⊢ C
+hD : D ⊢ E
+hE : E ⊢ D
+\end{LeanCode}
+
+\section{哪些拆分适合并行，哪些不适合}
+
+如果把 Lean proof 看成任务树，有些分支可以并行证明，有些不能。
+
+\subsection{适合并行的拆分}
+
+\paragraph{\(A \land B\)}
+
+\begin{Tree}
+A ∧ B
+├── A
+└── B
+\end{Tree}
+
+证明 \(A\) 和证明 \(B\) 可以分开做。
+
+\paragraph{\(A \leftrightarrow B\)}
+
+\begin{Tree}
+A ↔ B
+├── A → B
+└── B → A
+\end{Tree}
+
+两个方向可以分开做。
+
+\paragraph{多前提 apply}
+
+如果：
+
+\begin{LeanCode}
+L : A → B → C → D
+\end{LeanCode}
+
+目标是：
+
+\begin{LeanCode}
+⊢ D
+\end{LeanCode}
+
+用：
+
+\begin{LeanCode}
+apply L
+\end{LeanCode}
+
+变成：
+
+\begin{LeanCode}
+⊢ A
+⊢ B
+⊢ C
+\end{LeanCode}
+
+这些前提通常可以分开证明。
+
+\subsection{不适合直接并行的拆分}
+
+\paragraph{\(A \to B\)}
+
+\begin{Tree}
+A → B
+└── 假设 A 后证明 B
+\end{Tree}
+
+这是单分支推进。
+
+\paragraph{\(\forall x, P\ x\)}
+
+\begin{Tree}
+∀ x, P x
+└── 任取 x 后证明 P x
+\end{Tree}
+
+这也是单分支推进。
+
+\paragraph{\(\exists x, P\ x\)}
+
+\begin{Tree}
+∃ x, P x
+├── 找 witness w
+└── 证明 P w
+\end{Tree}
+
+证明 \(P\ w\) 依赖于先找到 \(w\)。
+
+\paragraph{\(A \lor B\)}
+
+\begin{Tree}
+A ∨ B
+├── 尝试证明 A
+└── 尝试证明 B
+\end{Tree}
+
+这里只有一边需要成功。它更像竞争式搜索，不是两个任务都必须完成。
+
+\section{最应该记住的核心规则}
+
+如果只记核心规则，先记下面这些：
+
+\begin{enumerate}
+  \item 目标 \(A \land B\)：拆成证明 \(A\) 和证明 \(B\)。
+  \item 目标 \(A \leftrightarrow B\)：拆成证明 \(A \to B\) 和 \(B \to A\)。
+  \item 目标 \(A \to B\)：先假设 \(A\)，再证明 \(B\)。
+  \item 目标 \(\forall x, P\ x\)：任取 \(x\)，再证明 \(P\ x\)。
+  \item 目标 \(\exists x, P\ x\)：找 witness \(w\)，再证明 \(P\ w\)。
+  \item 目标 \(A \lor B\)：证明 \(A\) 或证明 \(B\)，成功一边即可。
+  \item 已知 \(h : A \land B\)：拆出 \(hA : A\) 和 \(hB : B\)。
+  \item 已知 \(h : \exists x, P\ x\)：拆出 witness \(w\) 和证明 \(hw : P\ w\)。
+  \item 已知 \(h : A \lor B\)：分情况讨论 \(A\) 和 \(B\)，两种情况都要证明目标。
+  \item 已知 \(h : A \to B\)，目标是 \(B\)：用 \texttt{apply h}，把目标反推成 \(A\)。
+  \item 目标里有等式或定义：用 \texttt{rw} / \texttt{unfold} / \texttt{simp} 先化简。
+  \item 目标涉及 \texttt{Nat}、\texttt{List}、递归结构：用 \texttt{induction} 或 \texttt{cases} 拆成基本情况和递归情况。
+  \item 目标已经很小：用 \texttt{exact} / \texttt{rfl} / \texttt{simp} / \texttt{contradiction} 关闭。
+\end{enumerate}
+
+\section{一句话总结}
+
+Lean 证明拆分的核心不是死记 tactic，而是看结构：
+
+\begin{quote}
+目标是什么形状，就用对应规则把它变成更小的目标；已知条件是什么形状，就把它拆成更可用的条件；这个过程递归进行，直到所有叶子目标都能被 \texttt{exact}、\texttt{simp}、\texttt{rfl}、\texttt{apply}、\texttt{rw}、\texttt{induction} 等方式解决。
+\end{quote}
+
+复杂 Lean 证明可以理解为：
+
+\begin{Tree}
+逻辑结构递归拆分
++
+叶子目标逐个关闭
+=
+完整 Lean proof tree
+\end{Tree}
+
+\end{document}
