@@ -120,7 +120,12 @@ PYTHONPATH=src conda run -n tokenshare python -m pytest tests
 - `Doc/TechnicalDocument/2026-06-23-phase-3-plugin-executor-field-spec.md`：Phase 3 插件、执行器、request/submission、artifact 和 event 字段规格。
 - `Doc/TechnicalDocument/2026-06-23-phase-3-code-map.md`：Phase 3 代码、规格章节和测试的对应关系。
 - `Doc/TechnicalDocument/2026-06-24-phase-4-discussion-notes.md`：Phase 4 验证、canonical output、split strategy、`MergePlan` 和原子扩图讨论记录。
-- `Doc/TechnicalDocument/2026-06-24-phase-4-verification-canonical-expansion-field-spec.md`：Phase 4 字段规格与 TDD 计划，直接指导 `feat-005` 实现。
+- `Doc/TechnicalDocument/2026-06-24-phase-4-verification-canonical-expansion-field-spec.md`：Phase 4 字段规格与 TDD 计划。
+- `Doc/TechnicalDocument/2026-06-24-phase-4-code-map.md`：Phase 4 代码、规格章节和测试的对应关系。
+- `Doc/TechnicalDocument/2026-06-25-phase-5-merge-contribution-settlement-field-spec.md`：Phase 5 merge、expected output resolution、contribution、settlement 和 pruning 字段规格 / TDD 计划，直接指导 `feat-006` 实现。
+- `Doc/TechnicalDocument/2026-06-25-phase-5-code-map.md`：Phase 5 当前已实现 Task 1 / Task 2 的代码、规格章节和测试对应关系。
+- `Doc/TechnicalDocument/2026-06-25-phase-5-merge-discussion-notes.md`：Phase 5 merge 讨论记录和已确认取舍。
+- `Doc/TechnicalDocument/2026-06-25-phase-5-external-systems-merge-notes.md`：Phase 5 merge 主闭环外部系统调研备忘。
 - `Doc/TechnicalDocument/2026-06-04-tokenshare-paper-module-map.md`：论文、技术报告、本地 TeX/OCR 与模块借鉴映射。
 - `Doc/TechnicalDocument/tokenshare-paper-tex/`：已本地化的论文/技术报告 TeX 或 OCR 文本。
 - `Doc/TechnicalDocument/2026-06-22-p01-p12-tokenshare-candidate-mechanism-spec.md`：P01-P22 机制整合记录；只用于追溯取舍理由，不覆盖主 TDD。
@@ -135,11 +140,11 @@ PYTHONPATH=src conda run -n tokenshare python -m pytest tests
 
 1. 确认工作目录是仓库根目录。
 2. 阅读 `AGENTS.md`。
-3. 阅读两份当前设计文档。
+3. 阅读 `Doc/agent-navigation.md`，再按当前 feature 阅读对应字段规格和 code map。
 4. 运行 `.\init.ps1` 或 `./init.sh`。
 5. 阅读 `feature_list.json`、`progress.md` 和 `session-handoff.md`。
 6. 常规文件读取和搜索使用 PowerShell，并显式使用 UTF-8；中文文档读取用 `Get-Content -Encoding UTF8`，文本检索用 `Select-String`，不要把 `rg` 作为默认检索工具。
-7. 开始具体设计或编码前，阅读 agent 导航文档确认模块归属和参考资料边界。
+7. 开始具体设计或编码前，确认模块归属、参考资料边界和当前 feature 范围。
 
 如果开发中联网查找资料，并且资料影响项目设计、代码、测试或文档，必须先按 `Doc/agent-navigation.md` 完成本地落库和索引同步：论文/报告进入本地论文映射，开源项目进入 `reference_repos/`，普通在线文档至少记录来源、访问日期、本地摘要和影响范围。
 
@@ -147,7 +152,7 @@ PYTHONPATH=src conda run -n tokenshare python -m pytest tests
 
 ## Current Status
 
-当前日期状态：2026-06-24。
+当前日期状态：2026-06-26。
 
 已完成：
 
@@ -163,21 +168,22 @@ PYTHONPATH=src conda run -n tokenshare python -m pytest tests
 - Phase 3 code map 已新增：`Doc/TechnicalDocument/2026-06-23-phase-3-code-map.md`。
 - 主 TDD 已补充大型自然语言任务相关边界：`DecompositionProposal`、`VerificationReport`、`MergePlan`、`MergeRecord` 和 structured report stub。
 - P01-P22 候选机制已整合进主 TDD：requirements/hints、expected output、environment、allocation、verification/selection、merge、settlement 和 replay 边界现在以主 TDD 为实现口径。
-- Phase 4 字段规格与 TDD 计划已新增：`Doc/TechnicalDocument/2026-06-24-phase-4-verification-canonical-expansion-field-spec.md`，覆盖对象字段、event payload、SQLite projection、`LedgerEvent.v2` batch envelope、`EventLedger.append_batch()`、状态机变更、`ProtocolEngine` flow API 和十个红绿 TDD 任务。
-- 当前完整启动验证通过：`.\init.ps1` 在 `tokenshare` conda 环境中收集 30 个测试并全部通过。
+- Phase 4 已完成：`LedgerEvent.v2` batch envelope、`EventLedger.append_batch()`、verification report、canonical output binding、split invocation audit、complete path、accepted expand path、atomic graph update、ExpectedOutputRef 和 SQLite Phase 4 index-only projection 均已实现并映射到 `Doc/TechnicalDocument/2026-06-24-phase-4-code-map.md`。
+- Phase 5 字段规格已收束：`Doc/TechnicalDocument/2026-06-25-phase-5-merge-contribution-settlement-field-spec.md` 是当前 `feat-006` 实现口径。
+- Phase 5 Task 1 已完成：merge / contribution / settlement / pruning 纯对象、digest helper、Phase 5 event constants 和 contribution / settlement 状态规则已实现。
+- Phase 5 Task 2 已完成：`MergeCoordinator.create_ready_merge_tasks()`、`merge_task_creation_batch:{merge_plan_id}`、visible `TASK_EXPANDED` gate、canonical-only required slot binding、staged `merge_input_bundle` 和 `MERGE_TASK_LINK_RECORDED` marker 已实现。
+- 当前完整启动验证通过：`.\init.ps1` 在 `tokenshare` conda 环境中收集 151 个测试并全部通过。
 
 当前进行中：
 
-- `feat-005`：Phase 4 - Verification, Canonical Output, and Expansion。
+- `feat-006`：Phase 5 - Merge, Contribution, and Sandbox Settlement。
 
-Phase 4 的下一步是按字段规格 / TDD 计划从 Task 1 开始实现：
+Phase 5 的下一步是按字段规格 / TDD 计划从 Task 3 `merge resolution batch` 开始实现：
 
-- 先写 `tests/storage/test_phase4_event_ledger_batch.py` 红灯测试。
-- 再实现 `LedgerEvent.v2` batch fields 和 `EventLedger.append_batch()`。
-- 之后依次实现 Phase 4 pure models、verification/canonical flow、split invocation audit、complete path、expand batch 和 SQLite projection。
+- `MERGE_RECORDED` 与 required `EXPECTED_OUTPUT_RESOLVED` 必须通过 `merge_resolution_batch:{merge_record_id}` 原子提交。
+- 后续再依次实现 contribution creation、parent completion、root-level sandbox settlement、subtree pruning、SQLite Phase 5 projection 和 integration。
 
-同时，Phase 4 不实现 merge、contribution、settlement、真实 executor 网络或生产 AI API。
-Phase 4 的 `DecompositionProposal` 必须由插件版本化拆分策略直接生成；AI 文本或 executor 输出只能先作为候选输出 artifact 进入验证和 canonical 选择，不能作为 expansion 候选拆分输入或直接定义扩图规则。
+当前尚未实现 Phase 5 merge resolution、contribution flow、settlement flow、subtree pruning flow、SQLite Phase 5 projection、Phase 5 integration、Phase 6 实验、真实 executor 网络、生产 AI API 或真实链上结算。
 
 当前仍需注意：
 
