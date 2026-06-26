@@ -14,6 +14,7 @@ _TASK_UNIT_TRANSITIONS = {
     (TaskState.READY, TaskState.PROCESSING),
     (TaskState.PROCESSING, TaskState.READY),
     (TaskState.PROCESSING, TaskState.FAILED),
+    (TaskState.PROCESSING, TaskState.COMPLETED),
     (TaskState.READY, TaskState.CANCELLED),
     (TaskState.PROCESSING, TaskState.CANCELLED),
     (TaskState.BLOCKED, TaskState.CANCELLED),
@@ -32,6 +33,9 @@ _ATTEMPT_TRANSITIONS = {
     (AttemptState.RUNNING, AttemptState.SUBMITTED),
     (AttemptState.RUNNING, AttemptState.FAILED),
     (AttemptState.RUNNING, AttemptState.SUPERSEDED),
+    (AttemptState.SUBMITTED, AttemptState.VERIFIED),
+    (AttemptState.SUBMITTED, AttemptState.REJECTED),
+    (AttemptState.VERIFIED, AttemptState.CANONICAL),
 }
 
 
@@ -91,6 +95,7 @@ def transition_attempt(
     failure_kind: str | None = None,
     failure_reason: str | None = None,
     superseded_by_attempt_id: str | None = None,
+    metadata: JsonObject | None = None,
 ) -> Attempt:
     """Return an Attempt copy after validating a protocol attempt transition."""
 
@@ -122,6 +127,20 @@ def transition_attempt(
             failure_kind=failure_kind or "executor_error",
             failure_reason=failure_reason or reason,
         )
+    if target_state == AttemptState.VERIFIED:
+        return replace(attempt, state=target_state, finished_at=changed_at)
+    if target_state == AttemptState.REJECTED:
+        return replace(
+            attempt,
+            state=target_state,
+            finished_at=changed_at,
+            failure_kind=failure_kind or "invalid_output",
+            failure_reason=failure_reason or reason,
+        )
+    if target_state == AttemptState.CANONICAL:
+        updated_metadata = dict(attempt.metadata or {})
+        updated_metadata.update(metadata or {})
+        return replace(attempt, state=target_state, metadata=updated_metadata)
     return replace(
         attempt,
         state=target_state,

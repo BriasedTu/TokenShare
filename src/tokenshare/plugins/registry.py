@@ -80,6 +80,7 @@ class PluginRegistry:
                     "descriptor_ref": artifact_ref.to_dict(),
                     "descriptor_digest": descriptor.descriptor_digest,
                     "supported_task_types": list(descriptor.supported_task_types),
+                    "split_strategy_ids": sorted((descriptor.split_strategies or {}).keys()),
                 }
             )
 

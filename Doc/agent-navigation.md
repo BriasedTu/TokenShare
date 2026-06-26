@@ -1,6 +1,6 @@
 # TokenShare Agent 导航
 
-日期：2026-06-23
+日期：2026-06-24
 
 状态：工作流导航文档。本文只回答“新 AI 遇到问题应先看哪里、代码应放到哪个模块、外部参考资料应如何落库和使用”。本文不是协议设计规格，不覆盖 TDD，不包含下一步任务提示词。
 
@@ -31,12 +31,19 @@
 8. `Doc/TechnicalDocument/2026-06-08-phase-2-code-map.md`：Phase 2 代码、规格章节和测试的对应关系；用于确认 feat-003 实现边界。
 9. `Doc/TechnicalDocument/2026-06-23-phase-3-plugin-executor-field-spec.md`：Phase 3 插件、执行器、执行请求、执行提交、artifact 边界和 attempt submission 状态推进草案；用于理解 feat-004 字段依据。
 10. `Doc/TechnicalDocument/2026-06-23-phase-3-code-map.md`：Phase 3 代码、规格章节和测试的对应关系；用于确认 feat-004 实现边界。
-11. `Doc/TechnicalDocument/2026-06-07-phase-2-coordination-debt-memo.md`：Phase 2 协调边界备忘录；用于提醒后续 agent 不要让 `RootTaskRegistrar` 继续承担状态机、调度或存储编排增长职责。
-12. `README.md`：项目入口和稳定边界。
-13. `Doc/TechnicalDocument/2026-06-04-tokenshare-paper-module-map.md`：论文、技术报告和本地 TeX/OCR 映射；用于追踪研究依据。
-14. `Doc/TechnicalDocument/2026-06-22-p01-p12-tokenshare-candidate-mechanism-spec.md`：P01-P22 机制整合记录；用于追溯取舍理由，不覆盖主 TDD。
-15. `Doc/TechnicalDocument/2026-06-02-tokenshare-protocol-kernel-revised-draft.md`：历史讨论稿；用于理解原因，不直接覆盖当前 TDD。
-16. `reference_repos/`：外部参考源码；只能用于借鉴模式，不属于 TokenShare runtime。
+11. `Doc/TechnicalDocument/2026-06-24-phase-4-verification-canonical-expansion-field-spec.md`：Phase 4 字段规格与 TDD 计划；用于直接指导 feat-005 实现。
+12. `Doc/TechnicalDocument/2026-06-24-phase-4-code-map.md`：Phase 4 当前 Task 1/2/3/4/5/6/7/8/9/10 代码、规格章节、projection 和测试的对应关系；用于确认已实现边界和 review hardening。
+13. `Doc/TechnicalDocument/2026-06-24-phase-4-discussion-notes.md`：Phase 4 验证、正式输出、插件拆分策略、独立 `MergePlan` 和原子扩图讨论记录；用于追溯 feat-005 字段规格的讨论来源。
+14. `Doc/TechnicalDocument/2026-06-25-phase-5-merge-contribution-settlement-field-spec.md`：Phase 5 merge、expected output resolution、contribution、settlement 和 pruning 字段规格 / TDD 计划；用于直接指导 feat-006 实现。
+15. `Doc/TechnicalDocument/2026-06-25-phase-5-code-map.md`：Phase 5 当前 Task 1 / Task 2 代码、规格章节和测试的对应关系；用于确认已实现边界和 Task 2 merge task creation batch 验证。
+16. `Doc/TechnicalDocument/2026-06-25-phase-5-external-systems-merge-notes.md`：Phase 5 merge 主闭环外部系统调研备忘；用于追溯外部系统经验，不是实现规格。
+17. `Doc/TechnicalDocument/2026-06-25-phase-5-merge-discussion-notes.md`：Phase 5 merge 讨论记录；当前已确认 merge 作为普通 `TaskUnit`，并采用 required slots 齐备后再创建 merge `TaskUnit` 的方案。
+17. `Doc/TechnicalDocument/2026-06-07-phase-2-coordination-debt-memo.md`：Phase 2 协调边界备忘录；用于提醒后续 agent 不要让 `RootTaskRegistrar` 继续承担状态机、调度或存储编排增长职责。
+18. `README.md`：项目入口和稳定边界。
+19. `Doc/TechnicalDocument/2026-06-04-tokenshare-paper-module-map.md`：论文、技术报告和本地 TeX/OCR 映射；用于追踪研究依据。
+20. `Doc/TechnicalDocument/2026-06-22-p01-p12-tokenshare-candidate-mechanism-spec.md`：P01-P22 机制整合记录；用于追溯取舍理由，不覆盖主 TDD。
+21. `Doc/TechnicalDocument/2026-06-02-tokenshare-protocol-kernel-revised-draft.md`：历史讨论稿；用于理解原因，不直接覆盖当前 TDD。
+22. `reference_repos/`：外部参考源码；只能用于借鉴模式，不属于 TokenShare runtime。
 
 如果两个文件冲突，应优先相信上面列表中更靠前的文件，并把冲突记录到 `progress.md` 或 `session-handoff.md`。
 
@@ -57,9 +64,11 @@
 | 判断 Phase 2 编排入口和 `RootTaskRegistrar` 边界 | `Doc/TechnicalDocument/2026-06-07-phase-2-coordination-debt-memo.md` | `Doc/TechnicalDocument/2026-06-08-phase-2-minimal-field-state-event-spec.md`、本文第 5 节、TDD 第 5、7、9、12 节 | `RootTaskRegistrar` 是 Phase 1 临时协调器，不应继续承载 `TaskGraph`、`Scheduler`、`LeaseManager` 或 attempt 状态机增长。 |
 | 判断 Phase 3 插件与执行器字段草案 | `Doc/TechnicalDocument/2026-06-23-phase-3-plugin-executor-field-spec.md` | 主 TDD 第 4.3、8、12、21 节；`Doc/TechnicalDocument/2026-06-23-phase-3-code-map.md` | 字段草案确认 request/submission/descriptor artifact 化、`AllocationDecision` 内联、executor status 最小枚举、SQLite index-only projection；feat-004 已实现 submission 后推进 `Attempt.Running -> Submitted`，但不进入验证或 canonical。 |
 | 判断 Phase 3 代码与测试覆盖 | `Doc/TechnicalDocument/2026-06-23-phase-3-code-map.md` | `Doc/TechnicalDocument/2026-06-23-phase-3-plugin-executor-field-spec.md`、`tests/test_phase3_execution_flow.py`、`tests/storage/test_phase3_event_projection.py` | feat-004 已实现 registry freeze、统一 request/submission、mock AI executor、deterministic executor、Phase 3 event 和 SQLite index-only projection；不要把 Phase 4 验证/canonical/expansion 误认为已实现。 |
+| 判断 Phase 4 验证、canonical 和 expansion 边界 | `Doc/TechnicalDocument/2026-06-24-phase-4-verification-canonical-expansion-field-spec.md` | `Doc/TechnicalDocument/2026-06-24-phase-4-code-map.md`、`Doc/TechnicalDocument/2026-06-24-phase-4-discussion-notes.md`、主 TDD 第 4.3、8、9、10、11、12、21 节、`Doc/TechnicalDocument/2026-06-23-phase-3-code-map.md` | 新规格是 feat-005 实现口径；Task 1/2/3/4/5/6/7/8/9/10 当前代码边界见 Phase 4 code map；`DecompositionProposal` 必须由插件版本化拆分策略直接生成；AI、executor 或客户端不能提供 expansion 候选拆分或临时提出协议级子任务；`MergePlan` 独立持久化。 |
+| 判断 Phase 5 merge / contribution / settlement 实现边界 | `Doc/TechnicalDocument/2026-06-25-phase-5-merge-contribution-settlement-field-spec.md` | `Doc/TechnicalDocument/2026-06-25-phase-5-code-map.md`、`Doc/TechnicalDocument/2026-06-25-phase-5-merge-discussion-notes.md`、`Doc/TechnicalDocument/2026-06-25-phase-5-external-systems-merge-notes.md`、主 TDD 第 9、11、12、13、21 节、`Doc/TechnicalDocument/2026-06-22-p01-p12-tokenshare-candidate-mechanism-spec.md` 第 22.5、24.4 节、Phase 4 code map | Phase 5 字段规格是 feat-006 实现口径；它固定 `merge_task_creation_batch`、`merge_resolution_batch`、`parent_completion_batch`、`settlement_batch`、`subtree_pruning_batch`，以及 `MergeTaskLink`、`MergeRecord`、`ExpectedOutputResolution`、`ContributionRecord`、`SettlementRecord` 和 SQLite projection / TDD 计划。`code map` 记录当前已实现 Task 1 / Task 2；讨论记录和调研备忘只用于追溯取舍。 |
 | 需要联网查找资料 | 本文第 6 节 | `Doc/TechnicalDocument/2026-06-04-tokenshare-paper-module-map.md`、`reference_repos/README.md` | 被用于项目决策的外部资料必须本地落库并同步索引。 |
 | 需要借鉴已有项目结构 | `reference_repos/README.md` | 对应外部源码目录 | 先拉取或更新本地浅克隆/sparse checkout；只能借鉴思路，不引入为 runtime 依赖，不复制大段实现。 |
-| 需要设计对象字段 | `Doc/TechnicalDocument/2026-06-05-phase-1-minimal-object-field-spec.md`；Phase 2 使用 `Doc/TechnicalDocument/2026-06-08-phase-2-minimal-field-state-event-spec.md`；Phase 3 使用 `Doc/TechnicalDocument/2026-06-23-phase-3-plugin-executor-field-spec.md` | TDD 第 6、8、9、10、11、12、20、21、23 节；协议讨论稿第 6、7、10、11 节 | 先区分协议对象名、逻辑决策、字段名、artifact 类型、event payload、SQLite 表名和组件名，再写实现。 |
+| 需要设计对象字段 | `Doc/TechnicalDocument/2026-06-05-phase-1-minimal-object-field-spec.md`；Phase 2 使用 `Doc/TechnicalDocument/2026-06-08-phase-2-minimal-field-state-event-spec.md`；Phase 3 使用 `Doc/TechnicalDocument/2026-06-23-phase-3-plugin-executor-field-spec.md`；Phase 4 使用 `Doc/TechnicalDocument/2026-06-24-phase-4-verification-canonical-expansion-field-spec.md`；Phase 5 使用 `Doc/TechnicalDocument/2026-06-25-phase-5-merge-contribution-settlement-field-spec.md` | TDD 第 6、8、9、10、11、12、20、21、23 节；协议讨论稿第 6、7、10、11 节 | 先区分协议对象名、逻辑决策、字段名、artifact 类型、event payload、SQLite 表名和组件名，再写实现。 |
 | 需要更新状态 | `progress.md` | `feature_list.json`、`session-handoff.md` | 没有验证证据，不要标记完成。 |
 
 ## 4. 工具与编码规则

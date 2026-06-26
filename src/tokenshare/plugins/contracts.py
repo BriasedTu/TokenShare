@@ -43,6 +43,42 @@ class OutputContract:
 
 
 @dataclass(frozen=True)
+class SplitStrategyContract:
+    """Versioned plugin-owned split strategy declaration.
+
+    The descriptor declares which strategy IDs a TaskSpec may reference. Runtime
+    candidates from executors can only be inputs to these plugin-owned rules.
+    """
+
+    split_strategy_id: str
+    params_schema_ref: JsonObject
+    allowed_unit_types: list[str]
+    child_input_port_schema_refs: dict[str, JsonObject]
+    child_output_contract_refs: dict[str, JsonObject]
+    validator_policy_id: str
+    merge_policy_id: str
+    durable_subgoal_policy: JsonObject
+    candidate_artifact_policy: JsonObject
+    max_children_per_expansion: int | None = None
+    schema_version: str = "phase3.split_strategy_contract.v1"
+
+    def to_dict(self) -> JsonObject:
+        return {
+            "schema_version": self.schema_version,
+            "split_strategy_id": self.split_strategy_id,
+            "params_schema_ref": _json_value(self.params_schema_ref),
+            "allowed_unit_types": list(self.allowed_unit_types),
+            "child_input_port_schema_refs": _json_value(self.child_input_port_schema_refs),
+            "child_output_contract_refs": _json_value(self.child_output_contract_refs),
+            "validator_policy_id": self.validator_policy_id,
+            "merge_policy_id": self.merge_policy_id,
+            "durable_subgoal_policy": _json_value(self.durable_subgoal_policy),
+            "candidate_artifact_policy": _json_value(self.candidate_artifact_policy),
+            "max_children_per_expansion": self.max_children_per_expansion,
+        }
+
+
+@dataclass(frozen=True)
 class PluginDescriptor:
     """Versioned plugin capability descriptor.
 
@@ -56,6 +92,7 @@ class PluginDescriptor:
     input_contract: JsonObject
     output_contracts: dict[str, OutputContract]
     execution_contracts: dict[str, JsonObject]
+    split_strategies: dict[str, SplitStrategyContract] | None = None
     validator_policy_id: str | None = None
     merge_policy_id: str | None = None
     metadata: JsonObject | None = None
@@ -79,6 +116,10 @@ class PluginDescriptor:
                 name: contract.to_dict() for name, contract in self.output_contracts.items()
             },
             "execution_contracts": _json_value(self.execution_contracts),
+            "split_strategies": {
+                strategy_id: strategy.to_dict()
+                for strategy_id, strategy in (self.split_strategies or {}).items()
+            },
             "validator_policy_id": self.validator_policy_id,
             "merge_policy_id": self.merge_policy_id,
             "metadata": _json_value(self.metadata or {}),

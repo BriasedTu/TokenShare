@@ -1,6 +1,6 @@
 from tests.phase2_fixtures import make_artifact_ref
 from tokenshare.executors.contracts import EnvironmentRef, ExecutorDescriptor, ExecutorStatus
-from tokenshare.plugins.contracts import OutputContract, PluginDescriptor
+from tokenshare.plugins.contracts import OutputContract, PluginDescriptor, SplitStrategyContract
 
 
 def make_output_contract() -> OutputContract:
@@ -30,6 +30,30 @@ def make_plugin_descriptor() -> PluginDescriptor:
                 "environment_policy": {"runtime": "python"},
                 "output_contract_id": "contract_answer",
             }
+        },
+        split_strategies={
+            "structured_report_sections_v1": SplitStrategyContract(
+                split_strategy_id="structured_report_sections_v1",
+                params_schema_ref={"schema_ref": "schema.section_split_params.v1"},
+                allowed_unit_types=["section"],
+                child_input_port_schema_refs={
+                    "section_prompt": {"schema_ref": "schema.section_prompt.v1"}
+                },
+                child_output_contract_refs={"section": {"output_contract_id": "contract_answer"}},
+                validator_policy_id="structured_report_stub_validator_v1",
+                merge_policy_id="structured_report_stub_merge_v1",
+                durable_subgoal_policy={
+                    "requires_typed_io": True,
+                    "requires_validator_policy": True,
+                    "promote_freeform_thoughts": False,
+                },
+                candidate_artifact_policy={
+                    "executor_may_submit_candidates": True,
+                    "executor_may_define_task_graph": False,
+                    "client_may_define_task_graph": False,
+                },
+                max_children_per_expansion=8,
+            )
         },
         validator_policy_id="structured_report_stub_validator_v1",
         merge_policy_id="structured_report_stub_merge_v1",

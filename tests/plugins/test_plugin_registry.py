@@ -1,4 +1,5 @@
 import pytest
+import json
 
 from tokenshare.core.models import ArtifactRef
 from tokenshare.executors.registry import ExecutorRegistry
@@ -30,9 +31,18 @@ def test_plugin_registry_freeze_persists_descriptor_artifacts_and_locks_versions
     assert plugin_entry["plugin_id"] == "structured_report_stub"
     assert plugin_entry["plugin_version"] == "0.1.0"
     assert plugin_entry["descriptor_digest"].startswith("sha256:")
+    assert plugin_entry["split_strategy_ids"] == ["structured_report_sections_v1"]
     assert executor_entry["executor_id"] == "executor_mock_ai"
     assert executor_entry["status"] == "Available"
-    assert store.verify(ArtifactRef.from_dict(plugin_entry["descriptor_ref"]))
+    plugin_descriptor_ref = ArtifactRef.from_dict(plugin_entry["descriptor_ref"])
+    assert store.verify(plugin_descriptor_ref)
+    plugin_descriptor = json.loads(store.read_bytes(plugin_descriptor_ref).decode("utf-8"))
+    split_strategy = plugin_descriptor["split_strategies"]["structured_report_sections_v1"]
+    assert split_strategy["split_strategy_id"] == "structured_report_sections_v1"
+    assert split_strategy["params_schema_ref"] == {"schema_ref": "schema.section_split_params.v1"}
+    assert split_strategy["allowed_unit_types"] == ["section"]
+    assert split_strategy["candidate_artifact_policy"]["executor_may_submit_candidates"] is True
+    assert split_strategy["candidate_artifact_policy"]["executor_may_define_task_graph"] is False
     assert store.verify(ArtifactRef.from_dict(executor_entry["descriptor_ref"]))
 
     with pytest.raises(ValueError, match="frozen"):

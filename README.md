@@ -69,7 +69,7 @@ TokenShare 的核心边界是三层：
 关键原则：
 
 - 协议核心不理解 factorization、Lean 或 structured report 的领域逻辑。
-- 客户端和执行器不能直接修改任务图，图更新只能由协议框架根据固定插件规则写入。
+- 客户端和执行器不能直接修改任务图，也不能临时提出协议级子任务；图更新只能由协议框架根据版本化插件拆分策略写入。
 - 候选输出必须先通过验证，再由协议绑定唯一 canonical output bundle。
 - 非确定性输出必须持久化；状态恢复不能重新调用 AI 或 executor 来假装结果一致。
 - event、plugin、artifact schema 都要显式版本化，以支持 replay。
@@ -119,6 +119,8 @@ PYTHONPATH=src conda run -n tokenshare python -m pytest tests
 - `Doc/TechnicalDocument/2026-06-08-phase-2-code-map.md`：Phase 2 代码、规格章节和测试的对应关系。
 - `Doc/TechnicalDocument/2026-06-23-phase-3-plugin-executor-field-spec.md`：Phase 3 插件、执行器、request/submission、artifact 和 event 字段规格。
 - `Doc/TechnicalDocument/2026-06-23-phase-3-code-map.md`：Phase 3 代码、规格章节和测试的对应关系。
+- `Doc/TechnicalDocument/2026-06-24-phase-4-discussion-notes.md`：Phase 4 验证、canonical output、split strategy、`MergePlan` 和原子扩图讨论记录。
+- `Doc/TechnicalDocument/2026-06-24-phase-4-verification-canonical-expansion-field-spec.md`：Phase 4 字段规格与 TDD 计划，直接指导 `feat-005` 实现。
 - `Doc/TechnicalDocument/2026-06-04-tokenshare-paper-module-map.md`：论文、技术报告、本地 TeX/OCR 与模块借鉴映射。
 - `Doc/TechnicalDocument/tokenshare-paper-tex/`：已本地化的论文/技术报告 TeX 或 OCR 文本。
 - `Doc/TechnicalDocument/2026-06-22-p01-p12-tokenshare-candidate-mechanism-spec.md`：P01-P22 机制整合记录；只用于追溯取舍理由，不覆盖主 TDD。
@@ -145,7 +147,7 @@ PYTHONPATH=src conda run -n tokenshare python -m pytest tests
 
 ## Current Status
 
-当前日期状态：2026-06-23。
+当前日期状态：2026-06-24。
 
 已完成：
 
@@ -157,24 +159,25 @@ PYTHONPATH=src conda run -n tokenshare python -m pytest tests
 - Phase 1 协议基础对象与本地存储已实现：root task registration、artifact save/read/hash、JSONL event append/read/hash chain、SQLite 可重建索引。
 - Phase 2 最小协议内核已实现：`TaskGraph`、`TaskUnit` / `Lease` / `Attempt` 状态机、FIFO `Scheduler`、`LeaseManager`、Phase 2 event type、SQLite `leases` / `attempts` / `recovery_actions` 投影，以及顶层 `ProtocolEngine` 调度、heartbeat 和 lease expiry 事件流。
 - Phase 2 code map 已新增：`Doc/TechnicalDocument/2026-06-08-phase-2-code-map.md`。
-- Phase 3 插件与执行器契约已实现：`PluginRegistry`、`ExecutorRegistry`、`ExecutionRequest`、`ExecutionSubmission`、`MockAIExecutor`、`DeterministicLocalExecutor`、Phase 3 event type、`Attempt.Running -> Submitted` 状态推进，以及 SQLite `registry_snapshots` / `execution_requests` / `execution_submissions` / `executor_statuses` index-only 投影。
+- Phase 3 插件与执行器契约已实现：`PluginRegistry`、`PluginDescriptor` / `SplitStrategyContract`、`ExecutorRegistry`、`ExecutionRequest`、`ExecutionSubmission`、`MockAIExecutor`、`DeterministicLocalExecutor`、Phase 3 event type、`Attempt.Running -> Submitted` 状态推进，以及 SQLite `registry_snapshots` / `execution_requests` / `execution_submissions` / `executor_statuses` index-only 投影。
 - Phase 3 code map 已新增：`Doc/TechnicalDocument/2026-06-23-phase-3-code-map.md`。
 - 主 TDD 已补充大型自然语言任务相关边界：`DecompositionProposal`、`VerificationReport`、`MergePlan`、`MergeRecord` 和 structured report stub。
 - P01-P22 候选机制已整合进主 TDD：requirements/hints、expected output、environment、allocation、verification/selection、merge、settlement 和 replay 边界现在以主 TDD 为实现口径。
-- 当前完整启动验证通过：`.\init.ps1` 在 `tokenshare` conda 环境中收集 28 个测试并全部通过。
+- Phase 4 字段规格与 TDD 计划已新增：`Doc/TechnicalDocument/2026-06-24-phase-4-verification-canonical-expansion-field-spec.md`，覆盖对象字段、event payload、SQLite projection、`LedgerEvent.v2` batch envelope、`EventLedger.append_batch()`、状态机变更、`ProtocolEngine` flow API 和十个红绿 TDD 任务。
+- 当前完整启动验证通过：`.\init.ps1` 在 `tokenshare` conda 环境中收集 30 个测试并全部通过。
 
 当前进行中：
 
 - `feat-005`：Phase 4 - Verification, Canonical Output, and Expansion。
 
-Phase 4 的下一步是用 TDD 实现：
+Phase 4 的下一步是按字段规格 / TDD 计划从 Task 1 开始实现：
 
-- 通用数据检查和插件领域验证编排。
-- `VerificationReport`。
-- `first_verified_bundle` 选择与唯一 canonical output bundle 绑定。
-- `DecompositionProposal`、`ExpansionDecision`、`MergePlan` 和原子图更新。
+- 先写 `tests/storage/test_phase4_event_ledger_batch.py` 红灯测试。
+- 再实现 `LedgerEvent.v2` batch fields 和 `EventLedger.append_batch()`。
+- 之后依次实现 Phase 4 pure models、verification/canonical flow、split invocation audit、complete path、expand batch 和 SQLite projection。
 
 同时，Phase 4 不实现 merge、contribution、settlement、真实 executor 网络或生产 AI API。
+Phase 4 的 `DecompositionProposal` 必须由插件版本化拆分策略直接生成；AI 文本或 executor 输出只能先作为候选输出 artifact 进入验证和 canonical 选择，不能作为 expansion 候选拆分输入或直接定义扩图规则。
 
 当前仍需注意：
 

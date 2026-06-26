@@ -47,7 +47,7 @@
 
 | 协议对象名 | 含义 | 是否可能是未来类名 | Phase 1 角色 | 主要持久化位置 |
 |---|---|---|---|---|
-| `TaskSpec` | 根任务注册对象，固定插件、拆分策略、根输入、预算和协议配置。 | 是 | `register_task` 输入和 `TASK_REGISTERED` payload。 | JSONL event；SQLite `task_specs` 索引。 |
+| `TaskSpec` | 根任务注册对象，固定插件、插件已声明的拆分策略引用、根输入、预算和协议配置。 | 是 | `register_task` 输入和 `TASK_REGISTERED` payload。 | JSONL event；SQLite `task_specs` 索引。 |
 | `TaskUnit` | 任务图中的可执行、可拆分或可合并节点。 | 是 | 创建 root unit，初始状态为 `Ready`。 | JSONL event；SQLite `task_units` 索引。 |
 | `TaskRelation` | 任务节点之间的拆分边或依赖边。 | 是 | Phase 1 只定义字段，root task happy path 可暂不生成关系。 | JSONL event；SQLite `task_relations` 索引。 |
 | `ClientRecord` | 本地模拟客户端或执行器能力记录。 | 是 | Phase 1 只定义字段，后续调度前实现。 | JSONL event；SQLite `client_records` 索引。 |
@@ -66,8 +66,8 @@
 | `description` | 是 | string | 人类可读的任务描述。 | 审计和报告。 |
 | `plugin_id` | 是 | string | 使用的任务插件标识。 | 固定插件边界，不把领域逻辑放进核心。 |
 | `plugin_version` | 是 | string | 使用的插件版本。 | replay 和审计时固定版本。 |
-| `split_strategy_id` | 是 | string | 拆分策略标识。 | 固定本次运行的拆分逻辑。 |
-| `split_strategy_params` | 是 | object | 拆分策略参数。 | 作为稳定 JSON 保存。 |
+| `split_strategy_id` | 是 | string | 插件 descriptor 已声明的拆分策略标识。 | 固定本次运行选择的插件策略；不承载用户、AI 或 executor 临时编写的规则。 |
+| `split_strategy_params` | 是 | object | 插件 schema 允许的拆分策略参数。 | 作为稳定 JSON 保存；参数只能配置插件既有策略，不能替代策略规则本体。 |
 | `root_input_ref` | 是 | `ArtifactRef` snapshot | 根输入 artifact 引用。 | root input hash 校验和 replay。 |
 | `root_budget` | 否 | number | 根任务 sandbox 预算。 | 后续结算使用；Phase 1 可保存但不消费。 |
 | `root_deadline` | 否 | string, ISO-8601 UTC | 根任务截止时间。 | 后续调度使用。 |

@@ -47,6 +47,7 @@ Phase 3 不做以下事项：
 |---|---|---|
 | `AllocationDecision` 保存方式 | 内联进 `ExecutionRequest` artifact，作为执行时分派解释 snapshot；Phase 3 不单独 artifact 化。 | Phase 2 已有 `SchedulingDecision`，Phase 3 只需要让 request 携带更完整的 eligibility、排序、tie-break 和 no-match 摘要，避免第一版多一层对象和事件复杂度。 |
 | `PluginDescriptor` / `ExecutorDescriptor` 保存方式 | descriptor 本体保存为 artifact；registry snapshot 和 request 中只保存 descriptor ref/digest 与必要查询摘要。 | 与 request/submission artifact 化原则一致，满足版本固定、replay 和 audit。 |
+| `SplitStrategyContract` 保存方式 | 作为 `PluginDescriptor` 内的版本化声明保存；registry snapshot plugin entry 只摘要暴露 `split_strategy_ids`。 | `TaskSpec.split_strategy_id` 必须引用插件 descriptor 已声明的策略，`split_strategy_params` 只能配置该策略允许的参数；Phase 3 只声明策略，不生成 `DecompositionProposal`。 |
 | executor status enum | 第一版使用 `Available`、`Busy`、`Offline`、`Disabled`。调度只把 `Available` 视为可分派，其它状态都必须产生明确 no-match reason。 | 替代 Phase 2 scheduler 中硬编码的 client availability 字符串，同时不提前引入生产 worker lifecycle。 |
 | SQLite Phase 3 projection | 只投影索引，不保存完整 body；最小表为 `registry_snapshots`、`execution_requests`、`execution_submissions`、`executor_statuses`。 | 完整 request/submission/descriptor 从 artifact 读取，SQLite 继续保持可重建查询视图而不是权威状态源。 |
 
@@ -63,6 +64,7 @@ Phase 3 不做以下事项：
 | `ExecutionRequest` | artifact 内容类型 | 否 | 协议授权 executor 执行某 attempt 的完整结构化请求。 |
 | `ExecutionSubmission` | artifact 内容类型 | 否 | executor 对某 request 的完整结构化提交。 |
 | `OutputContract` | 子对象 | 可作为 request 字段 | 描述必需命名输出、schema、raw/parsed/candidate/parse failure contract。 |
+| `SplitStrategyContract` | 子对象 | `PluginDescriptor` 字段 | 描述插件拥有的版本化拆分策略、参数 schema、合法 child unit type、端口 schema、validator/merge policy 和候选 artifact 边界；不执行拆分。 |
 | `EnvironmentRef` | 子对象 / artifact ref 候选 | 可作为 request/submission 字段 | 描述不可变执行环境身份和 digest。 |
 | `PromptPackage` | artifact 内容类型 | 否 | AI/mock AI 路径实际使用的 prompt 包。 |
 | `RawModelOutput` | artifact 内容类型 | 否 | AI/mock AI 原始输出或错误文本。 |
@@ -83,10 +85,29 @@ Phase 3 不做以下事项：
 | `input_contract` | object | 是 | 输入 artifact 和 schema 要求。 |
 | `output_contracts` | map[string, OutputContract] | 是 | 按 task type 或 output profile 声明命名输出。 |
 | `execution_contracts` | map[string, object] | 是 | 按 executor type 声明 hard requirements、soft hints、environment policy 和 output contract。 |
+| `split_strategies` | map[string, SplitStrategyContract] | 否 | 插件拥有的版本化拆分策略声明。key 必须等于 strategy 内的 `split_strategy_id`；`TaskSpec.split_strategy_id` 只能引用这里已经声明的 ID。 |
 | `validator_policy_id` | string/null | 否 | 只声明 Phase 4 可能使用的验证策略，不在 Phase 3 执行验证。 |
 | `merge_policy_id` | string/null | 否 | 只声明未来 merge 策略，不在 Phase 3 执行 merge。 |
 | `metadata` | object | 否 | 小型结构化扩展。 |
 | `descriptor_digest` | string | 是 | descriptor canonical JSON 的内容 digest，用于 freeze 和 replay。 |
+
+### 6.1 `SplitStrategyContract` 字段草案
+
+`SplitStrategyContract` 是 Phase 4 expansion authority 边界倒逼 Phase 3 descriptor 补充的前置合同。它只让插件在冻结 registry 前声明“哪些拆分策略存在、参数如何校验、候选 artifact 能做什么”，不让 executor、AI 或 client 直接提交协议级扩图规则。
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `schema_version` | string | 是 | 初始建议 `phase3.split_strategy_contract.v1`。 |
+| `split_strategy_id` | string | 是 | 插件版本内稳定策略 ID。 |
+| `params_schema_ref` | object | 是 | `TaskSpec.split_strategy_params` 必须满足的参数 schema 引用或 digest。 |
+| `allowed_unit_types` | list[string] | 是 | 该策略可直接生成的 child `TaskUnit.unit_type` 范围。 |
+| `child_input_port_schema_refs` | map[string, object] | 是 | child input port schema 引用。 |
+| `child_output_contract_refs` | map[string, object] | 是 | child output contract 引用。 |
+| `validator_policy_id` | string | 是 | child 或候选输出使用的插件验证策略。 |
+| `merge_policy_id` | string | 是 | 未来 `MergePlan` / Phase 5 merge 使用的插件策略。 |
+| `durable_subgoal_policy` | object | 是 | durable subgoal 晋升条件，例如必须 typed I/O、可独立调度、具备 validator policy；free-form thought 不得晋升。 |
+| `candidate_artifact_policy` | object | 是 | 明确 executor/AI/client 只能提交候选 artifact，不能定义 authoritative task graph。 |
+| `max_children_per_expansion` | integer/null | 否 | 插件策略层面的局部规模限制；仍需与 `ProtocolConfig` 全局限制共同检查。 |
 
 ## 7. `ExecutorDescriptor` 字段草案
 
@@ -114,7 +135,7 @@ Phase 3 不做以下事项：
 | `schema_version` | string | 是 | 初始建议 `phase3.registry_snapshot.v1`。 |
 | `registry_snapshot_id` | string | 是 | 本轮 run 的注册表快照 ID。 |
 | `task_id` | string | 是 | 所属 root task。 |
-| `plugin_entries` | list[object] | 是 | 每项至少包含 `plugin_id`、`plugin_version`、`descriptor_ref`、`descriptor_digest`。 |
+| `plugin_entries` | list[object] | 是 | 每项至少包含 `plugin_id`、`plugin_version`、`descriptor_ref`、`descriptor_digest`、`split_strategy_ids`。 |
 | `executor_entries` | list[object] | 是 | 每项至少包含 `executor_id`、`executor_version`、`descriptor_ref`、`descriptor_digest`、`status`。 |
 | `frozen_at` | string | 是 | UTC ISO 8601。 |
 | `metadata` | object | 否 | 小型结构化扩展。 |

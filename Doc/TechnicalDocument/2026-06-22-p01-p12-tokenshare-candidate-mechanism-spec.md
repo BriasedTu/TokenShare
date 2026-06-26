@@ -82,7 +82,7 @@ P01-P22 共同揭示了十四个不能混在一起的问题：
 | P13 GLAD | 用 item difficulty 与 annotator ability 的交互联合估计潜在二元标签、任务难度和贡献者能力 | 作为未来弱验证插件的 difficulty-aware 备选模型，要求记录二元标签、先验、初始化与 EM 收敛证据 | V1 通用验证器、自由文本质量分、把 ability 当永久信誉或直接结算权重 |
 | P14 MACE | 显式 spam latent variable、annotator strategy、EM/VB 与准确率/覆盖率取舍 | 作为未来离散标注任务识别低质或策略性观察的备选模型 | V1 反作弊系统、生产身份信誉、把未满足 spam 模型假设的错误统称为恶意 |
 | P15 CROWDLAB | 将交叠标注与 out-of-sample classifier probability 加权，输出 consensus、label quality 和 annotator quality | 作为未来存在可校准 classifier 时的语义质量评分备选算法 | 没有训练/校准数据时直接使用；用模型置信度替代领域 checker；把 quality score 当证明 |
-| P16 Decomposed Prompting | decomposer、controller、版本化 sub-task handler、具名中间结果和递归分解 | 补强 `ExpansionProposal` 的 handler/typed I/O/merge 语义，并保持领域拆分策略可替换 | 把 prompt program 当协议核心语言、执行器边生成边直接改 authoritative graph |
+| P16 Decomposed Prompting | decomposer、controller、版本化 sub-task handler、具名中间结果和递归分解 | 补强 `DecompositionProposal` 的 handler/typed I/O/merge 语义，并保持领域拆分策略属于版本化插件 | 把 prompt program 当协议核心语言、执行器边生成边直接改 authoritative graph |
 | P17 Tree of Thoughts | thought generation、state evaluation、BFS/DFS、branch/prune 和成本—性能取舍 | 作为未来插件内部搜索策略；只把持久、结构化、可验证的 subgoal/proof state 晋升为 `TaskUnit` | 把每个 thought 都变成任务、用 LM value/vote 直接做 canonical validation、V1 实现通用搜索引擎 |
 | P18 ReAct | action/observation 交错、工具调用轨迹、异常后的计划调整 | 定义 tool provenance、action/observation artifact 和执行日志边界 | 强制保存隐藏 chain-of-thought、把 free-form reasoning 当审计证明、V1 接入生产工具 agent |
 | P19 LeanDojo | proof state、tactic、next/error/done 交互；精确 proof environment；premise retrieval 与 best-first search | 约束 Lean stub 的 checker-authoritative 与 environment-bound 验证；为未来真实 Lean adapter 留接口 | V1 实现 DPR、模型训练、真实 premise retrieval 或完整 proof search |
@@ -112,7 +112,7 @@ P01-P22 共同揭示了十四个不能混在一起的问题：
 SimulationProfile/ExperimentRun -> 控制故障、时间、随机性与报告（P08）
 Control-plane ordering          -> 决定事件以什么顺序成为事实（P10/P11）
 Latent-label estimation         -> 仅在无强 checker 且满足具体模型前提的离散弱验证任务中估计真值（P12-P15）
-Solver strategy boundary        -> decomposition/search/reasoning 属于版本化插件或执行器（P16-P18）
+Solver strategy boundary        -> 协议级 decomposition rules 属于版本化插件；search/reasoning 只能作为插件或执行器内部候选生成（P16-P18）
 VerifierEnvironment             -> 固定 checker、fixture、library 和上下文身份（P19/P21）
 BenchmarkProfile                -> 固定 Lean fixture/benchmark 版本和问题集合（P20）
 AllocationDecision              -> 记录 eligibility、排序、指派或不可分派原因（P22）
@@ -220,13 +220,13 @@ CanonicalSelection ---- * SettlementEntry
 
 ### 7.1 核心思想
 
-TokenShare 的“递归拆分”不能等同于执行器直接向数据库插入子任务。动态任务图需要稳定的预期输出引用、结构化扩图提案和协调器的原子接受；decomposer 与 sub-task handler 必须可独立版本化和替换；搜索中的 partial state 只有具备稳定契约、可独立调度且可验证时才能晋升为协议任务。P02、P16 和 P17 分别从动态图、可替换分解器和搜索状态控制三个角度支持这一边界。
+TokenShare 的“递归拆分”不能等同于执行器直接向数据库插入子任务，也不能等同于处理段 AI 临时提出协议级子任务。动态任务图需要稳定的预期输出引用、由版本化插件拆分策略直接生成的结构化 `DecompositionProposal`，以及协调器的原子接受；插件内 split strategy 与 sub-task handler 必须可独立版本化和替换；搜索中的 partial state 只有经过插件规则晋升、具备稳定契约、可独立调度且可验证时才能成为协议任务。P02、P16 和 P17 分别从动态图、可替换分解器和搜索状态控制三个角度支持这一边界。
 
 ### 7.2 规范要求
 
-`TS-EXPAND-001` **MUST**：执行器不得直接修改 authoritative task graph。执行结果只能包含 `ExpansionProposal`，由协议核心作出 `accepted` 或 `rejected` 决定。
+`TS-EXPAND-001` **MUST**：执行器不得直接修改 authoritative task graph，也不得直接向协议提交 authoritative 子任务。执行结果只能作为候选输出 artifact 进入验证和 canonical 选择；协议级 `DecompositionProposal` 必须由该任务插件的版本化 split strategy 基于 canonical output 直接生成，再由协议核心作出 `accepted` 或 `rejected` 决定。
 
-`TS-EXPAND-002` **MUST**：`ExpansionProposal` 至少包含：
+`TS-EXPAND-002` **MUST**：`DecompositionProposal` 至少包含：
 
 ```json
 {
@@ -235,9 +235,11 @@ TokenShare 的“递归拆分”不能等同于执行器直接向数据库插入
   "origin_attempt_id": "attempt-...",
   "plugin_id": "factorization",
   "plugin_version": "1.0.0",
-  "tasks": [],
-  "edges": [],
+  "split_strategy_id": "factorization-halves-v1",
+  "child_specs": [],
+  "dependency_edges": [],
   "expected_outputs": [],
+  "merge_slots": [],
   "proposal_digest": "sha256:..."
 }
 ```
@@ -253,23 +255,24 @@ TokenShare 的“递归拆分”不能等同于执行器直接向数据库插入
 
 不得让 expected output 永久悬空而把父任务标记为成功。
 
-`TS-EXPAND-006` **MUST**：动态扩图是非确定性或外部决定时，完整提案和接受决定必须持久化。状态重放不得重新调用 agent 生成“看起来相同”的拆分。
+`TS-EXPAND-006` **MUST**：如果 canonical output 来源于非确定性执行、AI 文本或外部决定，候选输出 artifact、canonical selection、`split_strategy_id`/参数摘要、完整 `DecompositionProposal` 和接受决定都必须持久化。状态重放不得重新调用 agent、executor 或 AI 生成“看起来相同”的输出或拆分。
 
 `TS-EXPAND-007` **SHOULD**：插件声明其扩图能力与限制，例如 `can_expand=true`、最大深度、单次最大子任务数、允许生成的 task kind 和 artifact type。
 
 `TS-EXPAND-008` **SHOULD**：对 logically equivalent 的重复提案提供幂等检测，避免协调器重启或执行者重报导致子图重复生成。
 
-`TS-EXPAND-009` **MUST**：每个拟生成子任务必须声明 `task_kind`、目标 plugin/handler ID 与版本、具名输入输出端口和父级 expected output/merge slot 的解析关系。decomposer 可以由 AI、确定性程序或人工策略实现，但协议核心不得执行 prompt program 或依赖某个特定 decomposer 的自由文本约定。
+`TS-EXPAND-009` **MUST**：每个拟生成子任务必须声明 `task_kind`、目标 plugin/handler ID 与版本、具名输入输出端口和父级 expected output/merge slot 的解析关系。协议级拆分规则必须写入任务插件的版本化 split strategy；AI、executor 或人工输入只能提供候选输出事实，不能提供 expansion 候选拆分或临时发明协议级拆分规则。
 
 `TS-EXPAND-010` **MUST**：只有满足以下条件的中间状态才可晋升为 authoritative `TaskUnit`：有稳定 schema、明确输入输出、可独立调度、可验证完成条件和受控图关系。临时 thought、未解析计划、LM 自评 value/vote 和 executor 工作记忆只能保存在 attempt artifact/log 中，不得自动获得任务身份、解锁下游或产生结算资格。
 
-`TS-EXPAND-011` **MAY**：插件未来可声明 `search_policy_id`、breadth/depth/branch budget、state evaluator version 和 pruning policy，用 BFS、DFS 或其他搜索产生候选扩图；V1 不需要通用 ToT runtime，任何搜索决定若影响 authoritative graph 都必须先持久化并通过 `ExpansionProposal` 边界。
+`TS-EXPAND-011` **MAY**：插件未来可声明 `search_policy_id`、breadth/depth/branch budget、state evaluator version 和 pruning policy，用 BFS、DFS 或其他搜索产生插件内部中间状态；V1 不需要通用 ToT runtime，任何搜索决定若影响 authoritative graph，都必须由插件版本化 split strategy 直接生成结构化 `DecompositionProposal`，不能把中间状态作为协议级候选拆分输入。
 
 ### 7.3 示例流程
 
 ```text
-AttemptCompleted
-  -> ExpansionProposalRecorded
+CanonicalOutputsBound
+  -> plugin split strategy directly generates DecompositionProposal
+  -> DecompositionProposalRecorded
   -> proposal schema/type/cycle validation
   -> GraphExpansionAccepted
   -> child TaskUnits + Edges + ExpectedOutputs materialized
@@ -284,8 +287,8 @@ AttemptCompleted
 2. 重启后重放事件，不调用执行器也能恢复完全相同的子图和 ID。
 3. 插件提出未声明类型或形成环的边时，整项提案被拒绝。
 4. 父任务通过子图委派 expected output 后，只有子图正式输出完成，父输出才可解析。
-5. decomposer 输出一个只有自由文本 reasoning、没有 handler/typed I/O 的“子任务”时，提案被拒绝。
-6. executor 产生多个搜索 thought 时，只有被插件转换为合规 subgoal 的状态可进入图，其余只保留为 attempt artifact。
+5. 候选 decomposer/AI 输出一个只有自由文本 reasoning、没有 handler/typed I/O 的“子任务”时，插件拆分策略不得将其规范化为合规提案。
+6. executor 产生多个搜索 thought 时，只有被插件 split strategy 规范化为合规 durable subgoal 的状态可进入图，其余只保留为 attempt artifact。
 
 来源：P02 的 dynamic task graph、future reference、expected output、spawn 与 continuation；P01 的 DAG 约束；P16 的 decomposer/controller/sub-task handler 与递归分解；P17 的 state generation/evaluation/search 分离及成本边界。
 
@@ -661,7 +664,7 @@ ready task
 
 `TS-REPLAY-004` **MUST**：artifact 不可变且按内容摘要校验。event 只保存稳定引用和必要元数据，不依赖“某路径当前恰好是什么内容”。
 
-`TS-REPLAY-005` **MUST**：非确定性输出完整持久化，包括 agent 拆分、executor 输出、外部 checker 结果和人工裁决。状态重放只重放已发生事实，不重新调用生成方。
+`TS-REPLAY-005` **MUST**：非确定性输出完整持久化，包括 AI/executor 候选输出 artifact、插件直接生成的 `DecompositionProposal`、executor 输出、外部 checker 结果和人工裁决。状态重放只重放已发生事实，不重新调用生成方。
 
 `TS-REPLAY-006` **MUST**：恢复分为两种明确模式：
 
@@ -722,7 +725,7 @@ ready task
 
 `TS-MERGE-006` **SHOULD**：若下游消费后上游 canonical 被显式判定无效，系统应能计算受影响的 lineage closure，并把重算或人工处置作为新事件记录。
 
-`TS-MERGE-007` **MUST**：decomposer 生成的“合并步骤”必须落为版本化 `MergePlan`/merge handler contract，声明 required slots、顺序/代数属性和输出验证要求。prompt 中的最后答案、`EOQ` 标记或 controller 停止条件只能结束一次 executor 内部程序，不能直接把父任务标记为协议完成。
+`TS-MERGE-007` **MUST**：插件 split strategy 或 merge strategy 生成的“合并步骤”必须落为版本化 `MergePlan`/merge handler contract，声明 required slots、顺序/代数属性和输出验证要求。prompt 中的最后答案、`EOQ` 标记或 controller 停止条件只能结束一次 executor 内部程序，不能直接把父任务标记为协议完成。
 
 ### 13.2 最小验收条件
 
@@ -730,7 +733,7 @@ ready task
 2. merge 输入中出现 candidate 或 superseded artifact 时执行请求被拒绝。
 3. merge 失败可重试，旧候选保留且只选一个 canonical。
 4. 根结果审计报告能展示完整递归 lineage，而不只展示最终文件。
-5. decomposer 提前输出 `EOQ` 但 required merge slots 未覆盖时，父任务不得完成。
+5. 候选 decomposer/AI 提前输出 `EOQ` 但 required merge slots 未覆盖时，父任务不得完成。
 
 来源：P01 的 DAG/data channels；P02 的 expected output/continuation；P06 的 workflow typed dataflow；P16 的 decomposer/controller、具名中间结果和 merge sub-task。
 
@@ -860,7 +863,7 @@ AND 没有重复记账
 
 ### 16.2 V1 应实现的实验能力（SHOULD）
 
-1. 结构化 `ExpansionProposal`、expected output 与动态扩图，并设置 subgoal/task promotion guard：只有结构化、可调度、可验证的中间状态能进入 authoritative graph。
+1. 结构化 `DecompositionProposal`、expected output 与动态扩图，并设置 subgoal/task promotion guard：只有由插件版本化 split strategy 直接生成、且结构化、可调度、可验证的中间状态能进入 authoritative graph。
 2. hard requirements/hints、executor capability snapshot，以及 tool action/observation provenance；隐藏 reasoning trace 不作为 replay 前置条件。
 3. `deterministic_exact`、`proof_checked`、`bounded_structural` verification mode，以及独立的 `first_verified_bundle` selection policy；仅保留 future aggregation extension point。
 4. 可配置 shadow attempt 与收益/浪费指标。
@@ -935,7 +938,7 @@ AND 没有重复记账
    -> create Attempt
    -> executor writes candidate artifacts
    -> tool executors persist action/observation provenance; hidden reasoning is not protocol truth
-   -> executor submits port bindings and optional ExpansionProposal
+   -> executor submits port bindings and optional plugin-consumable expansion input artifact
    -> append AttemptSubmitted
 
 5. Validate
@@ -1028,7 +1031,7 @@ AND 没有重复记账
 ### 21.1 任务图与完成语义
 
 - 主 TDD 已支持动态扩图，但没有 CIEL 式 expected output/future 委派语义，也没有为 child task、edge 和 expected output 规定确定性派生 ID。
-- decomposer/handler 边界与现有插件分层一致，但尚未规定只有 typed、可独立调度且可验证的中间状态才能晋升为 `TaskUnit`；缺少该门槛会让搜索 thought 或 executor working memory 越过协议边界。
+- 插件 split strategy/handler 边界与现有插件分层一致，但尚未规定只有 typed、可独立调度且可验证的中间状态才能晋升为 `TaskUnit`；缺少该门槛会让搜索 thought 或 executor working memory 越过协议边界。
 - `MergePlan` 已能约束 child slots，但 merge 是否必须走普通 task 的 lease、attempt、validation 和 canonical 生命周期仍不明确，也缺少 expected output 到子图最终输出的显式 resolution。
 
 ### 21.2 执行契约与分派
@@ -1068,7 +1071,7 @@ AND 没有重复记账
 | `TS-EXPAND-003` | 遗漏 | 现有设计有 idempotency key 和 proposal artifact | 没有 child task、edge、expected output 的确定性 ID 派生规则和 proposal digest 规则 |
 | `TS-EXPAND-005` | 遗漏 | 现有设计使用 `MergePlan` 和 required outputs | 没有“任务自己发布 expected output，或显式委派给子图”的 future resolution 语义 |
 | `TS-EXPAND-008` | 部分覆盖 | event ledger 和 expansion decision 使用幂等键 | 未定义逻辑等价 proposal 的 canonical form，也未规定重复提案如何返回同一子图 |
-| `TS-EXPAND-009`、`010` | 部分覆盖 | `DecompositionProposal` 已包含子任务、依赖、required outputs 和插件来源；插件负责领域拆分 | 尚未要求每个 child 绑定 handler/version/typed ports，也未明示 thought/working memory 不得自动成为 `TaskUnit` |
+| `TS-EXPAND-009`、`010` | 部分覆盖 | `DecompositionProposal` 已包含子任务、依赖、required outputs 和插件来源；版本化插件 split strategy 负责领域拆分规则 | 尚未要求每个 child 绑定 handler/version/typed ports，也未明示 thought/working memory 不得自动成为 `TaskUnit` |
 | `TS-EXPAND-011` | 主动延期 | V1 没有 ToT/search runtime 目标 | 延期合理；需要裁决是否在 V1 schema 中预留 search policy/budget，还是完全留在未来插件内部 |
 
 ### 22.2 插件、执行器和执行身份
@@ -1128,7 +1131,7 @@ AND 没有重复记账
 | `TS-MERGE-003` | 表达不清 | 主 TDD 保存 `MergeRecord` 和 merge output，但没有明确 merge 是否创建 lease/attempt 并再次 validation/canonical | 可能形成普通执行路径之外的“特权计算路径” |
 | `TS-MERGE-004` | 部分覆盖 | `MergePlan` 以 required slot 决定父节点何时合并 | 没有 expected output 到子图最终输出的显式 resolution；主要依赖直接 child slot |
 | `TS-MERGE-005`、`006` | 遗漏 | 当前只声明 merge strategy 和 subtree pruning | 未声明交换/结合/幂等性质，也没有 upstream invalidation 后的 lineage closure 计算 |
-| `TS-MERGE-007` | 部分覆盖 | `MergePlan` 有 required slots、策略和 child canonical hashes | 未明确 decomposer 的 `EOQ`/最后答案不等于协议完成，merge handler/version 与验证要求仍需 Phase 4/5 固化 |
+| `TS-MERGE-007` | 部分覆盖 | `MergePlan` 有 required slots、策略和 child canonical hashes | 未明确候选 decomposer/AI 的 `EOQ`/最后答案不等于协议完成，merge handler/version 与验证要求仍需 Phase 4/5 固化 |
 | `TS-SETTLE-001` 至 `004` | 一致 | 只有 eligible contribution 结算；迟到、未请求重复默认不奖励；幂等 SettlementRecord | 建议补“selection/validation IDs 是结算证据”的字段级要求 |
 | `TS-SETTLE-005` | 部分覆盖 | 已有完成、拆分和冗余验证贡献 | merge 贡献和独立验证贡献的统一 taxonomy 未完全固定 |
 | `TS-SETTLE-006` | 遗漏 | 未结算贡献可 invalidated，已生成 SettlementRecord 为不可变事实 | 没有已结算后追加 reversal/adjustment 的政策和事件 |
@@ -1151,7 +1154,7 @@ AND 没有重复记账
 | `TS-INV-015` | 部分覆盖 | 已规划 SimulationProfile、fault wrapper 和报告 | seed、实际随机决定、时钟语义与 replay 零模拟调用未固化 |
 | `TS-INV-016` | 部分覆盖 | AI 原始输出需 artifact 化，非确定性输出不可在 replay 重生 | 尚未覆盖未来 actor/长驻 session 的全部可变状态边界 |
 | `TS-INV-017` | 部分覆盖 | Lean stub 已要求固定环境摘要和 checker fixture | 环境仍是自由结构摘要，缺少不可变 identity 与跨 request/submission/validation 的一致性约束 |
-| `TS-INV-018` | 部分覆盖 | 扩图必须经结构化 proposal，原始 AI 文本不能直接改图 | 没有明确 durable subgoal promotion 条件，也没有禁止把 ToT thought/LM self-score 直接变成任务或验证 |
+| `TS-INV-018` | 部分覆盖 | 扩图必须经插件版本化 split strategy 直接生成的结构化 proposal，原始 AI 文本不能直接改图 | 没有明确 durable subgoal promotion 条件，也没有禁止把 ToT thought/LM self-score 直接变成任务或验证 |
 | `TS-INV-019` | 部分覆盖 | 已规划 raw output、parsed output 和 log artifact | action/observation provenance 与 free-form reasoning 的证据等级尚未区分 |
 | `TS-INV-020` | 一致或部分覆盖 | Scheduler 只创建 lease，submission 仍需验证 | 应在 Phase 3/4 文档明确 allocation、validation、selection 三种 decision 类型和事件身份 |
 | `TS-INV-021` | 主动延期且边界待补 | P12 已被定位为未来弱验证；V1 没有长期信誉系统 | P13-P15 的模型差异、适用数据和 score scope 尚未写入主 TDD extension contract |
@@ -1214,7 +1217,7 @@ AND 没有重复记账
 #### `DEC-P16P17-023`：哪些中间状态可以晋升为 `TaskUnit`
 
 - **方案 A**：decomposer/ToT 产生的每个 thought、partial state 或候选分支都创建 `TaskUnit`。
-- **方案 B**：只有具备稳定 schema、typed I/O、独立调度、明确 validator 和受控图关系的 durable subgoal/proof state 才能通过 `ExpansionProposal` 晋升；其他状态留在 attempt artifact。
+- **方案 B**：只有具备稳定 schema、typed I/O、独立调度、明确 validator 和受控图关系的 durable subgoal/proof state 才能通过插件直接生成的 `DecompositionProposal` 晋升；其他状态留在 attempt artifact。
 - **方案 C**：所有搜索状态都保持 executor 私有，不允许 AI 产生动态子任务。
 - **推荐**：方案 B。它保留 TokenShare 验证递归拆分的研究目标，同时避免图爆炸、不可验证 thought、结算放大和 chain-of-thought 依赖。
 - **影响阶段**：Phase 4 expansion schema、Phase 5 settlement eligibility、Phase 6 structured report/Lean fixtures。
@@ -1222,7 +1225,7 @@ AND 没有重复记账
 #### `DEC-P17-027`：V1 是否定义通用 search policy schema
 
 - **方案 A**：协议核心现在定义 ToT 风格 generator/evaluator、BFS/DFS、breadth/depth/pruning 等通用对象和事件。
-- **方案 B**：V1 只提供通用 budget/deadline、artifact 和 `ExpansionProposal` 边界；search policy 作为版本化插件私有实现，只有影响 authoritative graph 的最终决定进入协议。
+- **方案 B**：V1 只提供通用 budget/deadline、artifact 和插件直接生成的 `DecompositionProposal` 边界；search policy 作为版本化插件私有实现，只有影响 authoritative graph 的最终决定进入协议。
 - **方案 C**：完全禁止插件内部搜索和多候选。
 - **推荐**：方案 B。TokenShare 需要验证“搜索结果如何安全进入协议”，不需要规定求解器如何搜索；未来如果实验把 search trajectory 本身作为研究对象，再新增专门 artifact/schema。
 - **影响阶段**：Phase 3/4 contract 边界与 Phase 6 可选实验指标。
@@ -1411,7 +1414,7 @@ AND 没有重复记账
 
 现有主 TDD 与 P01-P22 独立推导出的协议骨架总体同向。已有设计已经正确建立协议核心、插件和执行器分层，隔离 candidate 与 canonical output，以受控 proposal 扩图，以 append-only event 和 immutable artifact 保存事实，并把真实分布式 runtime、生产 agent 系统和完整 Lean proving 留在 V1 之外。需要加强的不是组件数量，而是若干跨组件合同：expected output/resolution、requirements/hints、selection identity、verifier environment、durable state promotion、action/observation provenance、可解释分派和可复现实验字段。
 
-论文提供的算法必须服从这些合同，而不能反向塑造协议核心。强 checker 仍是 factorization 和 Lean stub 的正确性来源；统计弱验证只在满足具体模型假设的离散任务中启用；ToT、ReAct 和 decomposer 属于插件或执行器策略；miniF2F 和 mathlib 约束 fixture 与环境版本；Contract Net 只贡献 eligibility、assignment 和 refusal 语义；Raft/PBFT 只约束未来控制面排序。由此，TokenShare V1 可以验证递归拆分、执行、验证、合并、结算和 replay 闭环，而不被任何一篇论文的完整系统范围拖走。
+论文提供的算法必须服从这些合同，而不能反向塑造协议核心。强 checker 仍是 factorization 和 Lean stub 的正确性来源；统计弱验证只在满足具体模型假设的离散任务中启用；ToT、ReAct 和 decomposer 只能作为插件内部策略或执行器候选输出生成方式，协议级拆分规则必须属于版本化插件；miniF2F 和 mathlib 约束 fixture 与环境版本；Contract Net 只贡献 eligibility、assignment 和 refusal 语义；Raft/PBFT 只约束未来控制面排序。由此，TokenShare V1 可以验证递归拆分、执行、验证、合并、结算和 replay 闭环，而不被任何一篇论文的完整系统范围拖走。
 
 2026-06-23 起，本文已完成作为主 TDD 输入的职责。后续 Phase 3/4/5/6/7 规格应直接读取主
 TDD 中的 V1 机制整合原则、阶段计划和范围外边界；本文只在需要追溯论文依据、原始冲突

@@ -14,8 +14,8 @@ Phase 3 实现遵循字段草案的三层持久化原则：完整 descriptor、r
 
 | 规格内容 | 代码位置 | 说明 | 主要测试 |
 |---|---|---|---|
-| `PluginDescriptor` / `OutputContract` | `src/tokenshare/plugins/contracts.py` | 描述插件版本、支持 task type、输入输出 contract、execution contract、validator/merge policy 声明；只声明能力，不执行验证或合并。 | `tests/plugins/test_plugin_registry.py` |
-| `PluginRegistry` / `RegistrySnapshot` | `src/tokenshare/plugins/registry.py` | 内存 registry 可注册 descriptor；`freeze()` 把插件 descriptor 和 executor descriptor 保存为 artifact，并生成固定 registry snapshot。冻结后禁止继续注册插件版本。 | `tests/plugins/test_plugin_registry.py` |
+| `PluginDescriptor` / `OutputContract` / `SplitStrategyContract` | `src/tokenshare/plugins/contracts.py` | 描述插件版本、支持 task type、输入输出 contract、execution contract、validator/merge policy 和插件拥有的 split strategy 声明；只声明能力，不执行验证、拆分或合并。 | `tests/plugins/test_plugin_registry.py` |
+| `PluginRegistry` / `RegistrySnapshot` | `src/tokenshare/plugins/registry.py` | 内存 registry 可注册 descriptor；`freeze()` 把插件 descriptor 和 executor descriptor 保存为 artifact，并生成固定 registry snapshot；plugin entry 摘要暴露 `split_strategy_ids` 供后续 `TaskSpec.split_strategy_id` 引用校验。冻结后禁止继续注册插件版本。 | `tests/plugins/test_plugin_registry.py` |
 | `ExecutorDescriptor` / `ExecutorStatus` | `src/tokenshare/executors/contracts.py` | 定义执行器 descriptor、`Available` / `Busy` / `Offline` / `Disabled` 状态枚举、`EnvironmentRef`、`PromptPackage`、`ExecutionRequest` 和 `ExecutionSubmission`。 | `tests/executors/test_executor_registry.py`、`tests/executors/test_mock_ai_executor.py`、`tests/executors/test_deterministic_executor.py` |
 | `ExecutorRegistry` | `src/tokenshare/executors/registry.py` | 只把 `Available` executor 视为可分派；对 Busy/Offline/Disabled 和 capability/schema mismatch 给出 no-match reason；冻结时 artifact 化 descriptor。 | `tests/executors/test_executor_registry.py` |
 | `MockAIExecutor` | `src/tokenshare/executors/mock_ai.py` | 本地 deterministic fixture executor，不调用生产 AI API；保存 `RawModelOutput`、`ParsedModelOutput` 或 `ParseFailureReport` artifact，并返回统一 `ExecutionSubmission`。 | `tests/executors/test_mock_ai_executor.py` |
@@ -34,7 +34,7 @@ Phase 3 实现遵循字段草案的三层持久化原则：完整 descriptor、r
 
 | 顺序 | 动作 | 结果 |
 |---|---|---|
-| 1 | `PluginRegistry.freeze()` 保存 `PluginDescriptor` artifact | snapshot 中 plugin entry 只保留 descriptor ref、digest 和查询摘要。 |
+| 1 | `PluginRegistry.freeze()` 保存 `PluginDescriptor` artifact | snapshot 中 plugin entry 只保留 descriptor ref、digest、`split_strategy_ids` 和查询摘要；完整 `SplitStrategyContract` 必须从 descriptor artifact 读取。 |
 | 2 | `ExecutorRegistry.freeze_entries()` 保存 `ExecutorDescriptor` artifact | snapshot 中 executor entry 只保留 descriptor ref、digest、status 和查询摘要。 |
 | 3 | 保存 `RegistrySnapshot` artifact | snapshot 本体可由 artifact hash 复查。 |
 | 4 | 写 `REGISTRY_SNAPSHOT_RECORDED` | event payload 只保留 snapshot ref/digest、plugin/executor entry 摘要和 `frozen_at`。 |
@@ -75,8 +75,8 @@ Phase 3 实现遵循字段草案的三层持久化原则：完整 descriptor、r
 
 | 文件 | 当前真实内容 | 本 map 处理 |
 |---|---|---|
-| `src/tokenshare/plugins/contracts.py` | `OutputContract`、`PluginDescriptor`、descriptor digest helper | Phase 3 插件 contract。 |
-| `src/tokenshare/plugins/registry.py` | `PluginRegistry`、`RegistrySnapshot` | Phase 3 plugin registry freeze。 |
+| `src/tokenshare/plugins/contracts.py` | `OutputContract`、`SplitStrategyContract`、`PluginDescriptor`、descriptor digest helper | Phase 3 插件 contract；`SplitStrategyContract` 是 Phase 4 expansion authority 边界对 Phase 3 descriptor 的联动补充，只声明插件策略，不生成 proposal。 |
+| `src/tokenshare/plugins/registry.py` | `PluginRegistry`、`RegistrySnapshot` | Phase 3 plugin registry freeze；plugin entry 摘要包含 `split_strategy_ids`。 |
 | `src/tokenshare/executors/contracts.py` | `ExecutorStatus`、`EnvironmentRef`、`ExecutorDescriptor`、`PromptPackage`、`ExecutionRequest`、`ExecutionSubmission` | Phase 3 executor/request/submission contract。 |
 | `src/tokenshare/executors/registry.py` | `ExecutorRegistry`、available matching、no-match reason、descriptor artifact freeze | Phase 3 executor registry。 |
 | `src/tokenshare/executors/mock_ai.py` | `MockAIExecutorProfile`、`MockAIExecutor` | Phase 3 mock AI artifact path。 |
@@ -90,13 +90,13 @@ Phase 3 实现遵循字段草案的三层持久化原则：完整 descriptor、r
 
 | 文件 | 当前覆盖内容 | 本 map 处理 |
 |---|---|---|
-| `tests/plugins/test_plugin_registry.py` | descriptor artifact 化、registry freeze 后版本锁定 | 已覆盖。 |
+| `tests/plugins/test_plugin_registry.py` | descriptor artifact 化、registry freeze 后版本锁定、split strategy 声明持久化和 snapshot summary | 已覆盖。 |
 | `tests/executors/test_executor_registry.py` | `Available` 才可分派，Busy/Offline/Disabled no-match reason | 已覆盖。 |
 | `tests/executors/test_mock_ai_executor.py` | 统一 request 到 mock AI submission，`PromptPackage`、raw、parsed artifact 可验证 | 已覆盖。 |
 | `tests/executors/test_deterministic_executor.py` | 非 AI deterministic executor 使用统一 request/submission，且不产生 raw model output | 已覆盖。 |
 | `tests/test_phase3_execution_flow.py` | registry snapshot、schedule、request artifact event、mock AI submission、submission artifact event、attempt `Running -> Submitted`、不匹配 submission audit-only | 已覆盖。 |
 | `tests/storage/test_phase3_event_projection.py` | 从 Phase 3 events 重建 SQLite 四张 index-only 表 | 已覆盖。 |
-| `tests/phase3_fixtures.py` | Phase 3 test helper | 已覆盖为测试夹具。 |
+| `tests/phase3_fixtures.py` | Phase 3 test helper，包含 structured report stub 的 `SplitStrategyContract` fixture | 已覆盖为测试夹具。 |
 | `tests/core/test_state_machines.py` | Phase 3 允许 `Running -> Submitted`，继续拒绝 Phase 4 verification states | 已补充覆盖。 |
 | `tests/core/test_scheduler.py` | Scheduler 使用 Phase 3 `Available` 状态和 legacy `active` 兼容入口，不再接受旧 `ready` 状态 | 已补充覆盖。 |
 
@@ -110,3 +110,6 @@ Phase 3 实现遵循字段草案的三层持久化原则：完整 descriptor、r
 - Phase 3 边界修复红灯：`$env:PYTHONPATH='src'; conda run -n tokenshare python -m pytest tests\core\test_scheduler.py tests\test_phase3_execution_flow.py -q` 失败，暴露 `ready` 旧状态仍可调度，以及 `record_execution_submission()` 尚未接收 lease/fencing token 绑定校验。
 - Phase 3 边界修复定向绿灯：同一定向命令通过，结果 `6 passed in 0.18s`。
 - Phase 3 边界修复完整启动验证：`powershell -ExecutionPolicy Bypass -File E:\TokenEcnomic\TokenShare\init.ps1` 通过，pytest collected 30 items，结果 `30 passed in 0.67s`。
+- 2026-06-24 Phase 3 descriptor 联动修正红灯：`$env:PYTHONPATH='src'; conda run -n tokenshare python -m pytest tests\plugins\test_plugin_registry.py -q` 失败，暴露 registry snapshot plugin entry 尚无 `split_strategy_ids`。
+- 2026-06-24 Phase 3 descriptor 联动修正定向绿灯：同一定向命令通过，结果 `1 passed in 0.16s`。
+- 2026-06-24 Phase 3 descriptor 联动修正完整启动验证：`powershell -ExecutionPolicy Bypass -File .\init.ps1` 通过，pytest collected 30 items，结果 `30 passed in 0.69s`。
