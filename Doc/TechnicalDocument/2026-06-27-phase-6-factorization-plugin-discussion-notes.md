@@ -2,7 +2,7 @@
 
 日期：2026-06-27
 
-状态：Phase 6 factorization 插件设计讨论记录。本文记录已经确认的 factorization 第一版拆分算法和协议边界；本文不是最终字段规格，也不是实现计划。后续需要把确认后的字段、artifact schema、event payload、SQLite projection、故障模拟和 TDD 任务收束到 Phase 6 专用字段规格。2026-06-27 重读主 TDD 后补充：本文规划的 factorization 插件就是主 TDD 第 14.1 节的“整数分解插件”，不是另一个插件；所谓递归 continuation 也不是新增独立机制，而是主 TDD 已经要求的 canonical output 驱动、插件版本化规则驱动的渐进式扩图闭环。
+状态：Phase 6 factorization 插件设计讨论记录。本文记录已经确认的 factorization 第一版拆分算法和协议边界；本文不是最终字段规格，也不是实现计划。后续需要把确认后的字段、artifact schema、event payload、SQLite projection 和 TDD 任务收束到 Phase 6 插件专用字段规格。2026-06-27 重读主 TDD 后补充：本文规划的 factorization 插件就是主 TDD 第 14.1 节的“整数分解插件”，不是另一个插件；所谓递归 continuation 也不是新增独立机制，而是主 TDD 已经要求的 canonical output 驱动、插件版本化规则驱动的渐进式扩图闭环。2026-06-27 范围再修正：实验基础设施已从 Phase 6 拆出，故障模拟、experiment runner 和 metrics 不再属于本文后续 Phase 6 插件字段规格范围。2026-06-27 路线再修正：实验级 AI API executor 已新增为 `feat-008` / Phase 7，也不属于 Phase 6 factorization 插件字段规格。
 
 ## 0. 主 TDD 对齐修正
 
@@ -18,8 +18,8 @@
 3. **任务图和输出解析分离**：`TaskRelation` 表示拆分和依赖 DAG；父输出满足关系必须通过 `ExpectedOutputRef` / merge resolution 表示，不能把权威 resolution state 藏进 `TaskUnit.plugin_payload` 或 metadata。
 4. **merge 是普通 TaskUnit**：产生父输出的合并必须走 request / submission / verification / canonical 生命周期；插件 merge rule 不能绕过协议生命周期直接写父输出。
 5. **重放不执行历史工作**：state replay 只能读取 event 和 artifact；不能重新调用 executor、AI、插件拆分、插件合并或验证器。因此 split proposal、merge plan、range result、verification report、merge record 和实验随机决定都必须 artifact/event 化。
-6. **插件职责不止拆分算法**：Phase 6 字段规格必须覆盖 descriptor、typed ports、root/child schema、execution contract、执行说明、raw output parser、verification rule、split strategy、completion/expansion decision、merge rule、output contract、metrics/fault assertions。
-7. **实验基础设施也是 Phase 6 范围**：主 TDD Phase 6 交付不只是三个插件，还包括 `SimulationProfile`、`SimulationWrapper`、`ExperimentRunner`、`MetricsCollector`，以及 offline、slow、executor_error、invalid_output、late_submission 五类故障模拟。
+6. **插件职责不止拆分算法**：Phase 6 字段规格必须覆盖 descriptor、typed ports、root/child schema、execution contract、执行说明、raw output parser、verification rule、split strategy、completion/expansion decision、merge rule 和 output contract。
+7. **AI API executor 和实验基础设施已拆出 Phase 6**：实验级 AI API executor 属于 `feat-008` / Phase 7；`SimulationProfile`、`SimulationWrapper`、`ExperimentRunner`、`MetricsCollector`、五类故障模拟和指标报告属于 `feat-009` / Phase 8。Phase 6 插件可以为后续 AI API executor 和实验基础设施暴露稳定 schema、fixture identity 或标签，但不实现 API executor、runner、fault wrapper 或 metrics collector。
 8. **早完成和剪枝是主 TDD 原始目标**：第 14.1 节写到“任一子节点找到有效因数时，父节点可以完成并取消不再需要的兄弟子树”。当前 Phase 5 all-required merge 会阻止这一点；如果 Phase 6 第一版继续采用 all-required merge，就必须在字段规格中把它标成有意的阶段切片，而不是假装已经满足完整 TDD 14.1。
 
 对“continuation”的修正口径：
@@ -146,7 +146,7 @@ factorization.candidate_range_partition.v1
 
 “任何大数输入”在 Phase 6 第一版中应解释为：插件可以为任意合法正整数 `N` 生成确定性、可审计、可验证 coverage 的候选因子搜索计划。
 
-这不等于保证任意巨大合数都能在合理时间内完成。穷举到 `floor_sqrt(N)` 是完整但可能不可行的算法。Phase 6 实验应选择可在本地测试预算内完成的样例，同时保留 schema 能表达更大搜索空间的能力。
+这不等于保证任意巨大合数都能在合理时间内完成。穷举到 `floor_sqrt(N)` 是完整但可能不可行的算法。Phase 6 插件测试应选择可在本地测试预算内完成的样例，同时保留 schema 能表达更大搜索空间的能力；真实模型 executor 效果验证留给 Phase 7，跨插件 benchmark、fault profile 和 metrics 报告留给 Phase 8 实验基础设施。
 
 ## 8. 后续字段规格必须解决的问题
 
@@ -158,9 +158,9 @@ factorization.candidate_range_partition.v1
 4. `d` / `q` primality 判断放在哪里：插件确定性预检、递归 `factor_integer` 子任务、还是两者组合；无论哪种，AI 不能私自决定递归终止。
 5. 当前 Phase 5 all-required merge 对 factorization early success 的效率影响，以及是否在 Phase 6 第一版就引入 `one_success` / early terminal resolution / pruning 来满足主 TDD 第 14.1 节。
 6. `range_result`、`factorization_search_result`、`prime_certificate`、`nontrivial_factor_found` 和 `prime_factorization_result` 的 artifact schema version。
-7. plugin descriptor 中如何声明 `candidate_range_partition.v1`、递归展开策略、merge policy、pruning policy、execution contract、output contract、environment policy 和 metrics labels。
-8. 对 invalid output、late submission、executor_error、slow、offline 五类故障模拟的 factorization 专用断言。
-9. replay 边界：哪些 split / merge / verification / experiment artifacts 必须持久化，确保 replay 不重新调用插件逻辑来补历史事实。
+7. plugin descriptor 中如何声明 `candidate_range_partition.v1`、递归展开策略、merge policy、pruning policy、execution contract、output contract 和 environment policy。
+8. 插件需要为后续 Phase 7 AI API executor 和 Phase 8 实验基础设施暴露哪些稳定 fixture identity、case label 或可审计摘要，但不在 Phase 6 内实现 API executor，也不实现 invalid output、late submission、executor_error、slow、offline 五类故障模拟。
+9. replay 边界：哪些 split / merge / verification artifacts 必须持久化，确保 replay 不重新调用插件逻辑来补历史事实。
 
 ## 9. 第一批 TDD 方向
 
@@ -176,5 +176,5 @@ factorization.candidate_range_partition.v1
 8. 专门记录当前 all-required merge 导致无法 early success 的限制，避免后续误以为 factorization 插件已经实现剪枝优化。
 9. `nontrivial_factor_found(d, q)` 成为 canonical merge output 后，插件生成下一层 `factor_integer(d)` / `factor_integer(q)` 的 `DecompositionProposal`，且该 proposal 不包含 AI 生成的拆分建议。
 10. `factorization` 插件 descriptor 同时声明 range partition、递归展开、验证和 merge/pruning policy；测试禁止注册第二个 continuation 插件来完成同一职责。
-11. replay 测试删除 SQLite 后从 event + artifact 重建 factorization 关键状态，不重新调用 split strategy、merge rule 或 verifier。
+11. 插件 artifact / event contract 足够支持后续 replay：关键 split、merge、verification 事实都有可持久化身份和 digest；真正删除 SQLite 后重放的测试属于后续 Replay/Audit 阶段。
 12. 如果第一版仍采用 all-required merge，应有显式测试证明 early-success/pruning 未被宣称为已实现；如果选择覆盖主 TDD 14.1，应增加 `one_success` / pruning 的红绿测试。

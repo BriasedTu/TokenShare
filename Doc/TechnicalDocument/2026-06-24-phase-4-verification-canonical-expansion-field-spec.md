@@ -47,7 +47,7 @@ Phase 4 必须实现四个可验证结果：
 Phase 4 不实现以下内容：
 
 - 不实现真实 factorization、Lean 或 structured report 完整插件流程。
-- 不调用生产 AI API。
+- 不调用生产级 AI API 平台。
 - 不实现真实分布式 worker pool、HTTP runtime、P2P runtime 或链上结算。
 - 不执行 Phase 5 的 merge、contribution、sandbox settlement、subtree pruning。
 - 不让 executor、AI 输出、client 输入或自然语言正文临时定义协议级子任务。

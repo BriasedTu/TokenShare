@@ -1,6 +1,6 @@
 # AGENTS.md
 
-TokenShare 是一个早期本地研究原型，目标是验证一种协议：把大型任务递归拆分、分派、验证、合并、结算，并能从事件日志重放。当前目标是用 Python/SQLite/JSONL 做本地实现，跑通 factorization、Lean stub proof 和 structured report stub 三类 proof-of-concept 实验。
+TokenShare 是一个早期本地研究原型，目标是验证一种协议：把大型任务递归拆分、分派、验证、合并、结算，并能从事件日志重放。当前目标是用 Python/SQLite/JSONL 做本地实现，跑通 factorization、Lean stub proof 和 structured report stub 三类 proof-of-concept 实验，并在后续 Phase 7 接入实验级 AI API executor 来验证真实模型输出效果。
 
 ## 启动流程（Startup Workflow）
 
@@ -30,6 +30,7 @@ V1 范围内：
 - 使用本地文件系统、SQLite、JSON、JSONL 做 artifact 和事件存储。
 - 带固定版本的插件注册表和执行器注册表。
 - factorization 插件、Lean stub 插件和 structured report stub 插件，作为协议实验对象。
+- 实验级 AI API 执行器，用于在受控 fixture / benchmark 下验证真实模型输出效果；API key 只能来自本地环境变量，调用结果必须持久化为 artifact，replay 不得重新调用 API。
 - offline、slow、executor_error、invalid_output、late_submission 五类故障模拟。
 - 指标报告、状态重放、审计重放、sandbox 结算。
 
@@ -38,7 +39,7 @@ V1 范围外：
 - 真实区块链、钱包、智能合约或真实代币支付。
 - 真实分布式网络、HTTP worker pool 或 P2P runtime。
 - 生产级身份、权限、反女巫或拜占庭容错系统。
-- 完整 Web UI、动态第三方插件市场、生产 AI API 集成、完整 Lean theorem proving。
+- 完整 Web UI、动态第三方插件市场、生产级 AI API 平台或多租户 provider 管理、完整 Lean theorem proving。
 
 ## 语言要求（Language Policy）
 

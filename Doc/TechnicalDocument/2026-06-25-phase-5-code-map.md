@@ -58,7 +58,7 @@
 
 以下内容不属于当前 Task 1-8 已实现范围：
 
-- Phase 6 experiments、真实网络 executor、生产 AI API、真实链上结算。
+- Phase 6 experimental plugins、Phase 7 实验级 AI API executor、独立实验基础设施 / fault simulation / metrics、真实网络 executor、生产级 AI API 平台 / 多租户 provider 管理、真实链上结算。
 - `optional_slots`、partial merge、late optional output、re-merge、tree aggregation、`one_success` early terminal resolution 和 factorization early pruning。
 - 真实支付 / 链上 settlement；当前 `SettlementRecord` 仍是本地 sandbox reward projection。
 

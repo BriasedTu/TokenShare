@@ -20,7 +20,7 @@ Phase 3 采用“执行闭环优先”的字段设计：先围绕 `ExecutionRequ
 
 Phase 3 不做以下事项：
 
-- 不调用生产 AI API。
+- 不调用生产级 AI API 平台。
 - 不实现真实分布式 executor 网络。
 - 不执行 submission verification。
 - 不绑定 canonical output。
@@ -332,7 +332,7 @@ SQLite 仍然只做可重建查询视图，不保存完整 descriptor、request 
 4. 收到与当前 running attempt/lease/fencing token 匹配的有效 submission 后写 `ATTEMPT_STATE_CHANGED Running -> Submitted`。
 5. 扩展 SQLite projection 的四张最小索引表。
 
-不得实现 submission verification、canonical output binding、task expansion、merge、settlement、真实网络 executor 或生产 AI API。
+不得实现 submission verification、canonical output binding、task expansion、merge、settlement、真实网络 executor 或生产级 AI API 平台。
 
 ## 19. 开工对齐备注
 

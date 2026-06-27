@@ -52,7 +52,7 @@
 
 - 独立 replay engine 中的 Phase 4 状态重放；当前只实现 SQLite index-only projection 的 rebuild 检查和查询表。
 - Phase 5 merge、contribution、settlement。
-- 真实网络 executor 或生产 AI API。
+- 真实网络 executor 或生产级 AI API 平台。
 
 ## 3. Review hardening 记录
 

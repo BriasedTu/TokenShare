@@ -1003,7 +1003,7 @@ AND 没有重复记账
 - **偏差**：两者作出了不同选择，必须明确裁决。
 - **主动延期**：现有主设计明确把机制放到 V1 以后，并非无意遗漏。
 
-本节比较的是规范覆盖度，不等同于代码实现度。`feature_list.json` 显示 Phase 1、Phase 2 已完成，Phase 3 正在进行，Phase 4 至 Phase 7 尚未开始；因此主 TDD 中关于验证、canonical、扩图、合并、结算和完整重放的多数内容仍是目标设计，不应被误读为当前代码已有能力。
+本节比较的是规范覆盖度，不等同于代码实现度。该段是 2026-06-22 当时的实现度快照；当前阶段编号以主 TDD 和 `feature_list.json` 为准，实验基础设施已从 Phase 6 插件实现中拆出，实验级 AI API executor 已插入为 Phase 7，实验基础设施顺延为 Phase 8，Replay/Audit 顺延为 Phase 9。因此主 TDD 中关于验证、canonical、扩图、合并、结算、AI API executor、实验基础设施和完整重放的多数内容在当时仍是目标设计，不应被误读为当时代码已有能力。
 
 ## 21. 总体结论
 
@@ -1247,7 +1247,7 @@ AND 没有重复记账
 - **方案 B**：新增不可变 `EnvironmentRef`/digest；request 绑定、submission 回显、validation 引用并检查一致性，summary 只用于展示。
 - **方案 C**：仅 Lean stub 使用固定字符串，其余 task 不定义环境合同。
 - **推荐**：方案 B。P19 已证明细微 namespace/import 环境差异会让正确 proof 被误判；统一引用也能覆盖 deterministic executor、fixture checker 和未来容器环境，而不要求 V1 引入容器或真实 Lean。
-- **影响阶段**：Phase 3 execution contract、Phase 4 verification、Phase 7 audit replay。
+- **影响阶段**：Phase 3 execution contract、Phase 4 verification、Phase 9 audit replay。
 
 #### `DEC-P18-024`：执行审计是否要求 reasoning trace
 
@@ -1255,7 +1255,7 @@ AND 没有重复记账
 - **方案 B**：强制保存 action、observation、tool ID/version、输入输出 digest、raw/parsed output 和错误；reasoning trace 仅作为可选、受政策控制的 raw artifact。
 - **方案 C**：只保存最终输出，不保存工具交互。
 - **推荐**：方案 B。外部动作和观察是可核对事实，free-form reasoning 不是正确性证明，也不应成为 replay 的硬依赖；方案 C 无法解释工具型输出来源。
-- **影响阶段**：Phase 3 `ExecutionSubmission`/log artifact、Phase 7 audit report。
+- **影响阶段**：Phase 3 `ExecutionSubmission`/log artifact、Phase 9 audit report。
 
 #### `DEC-P01P07-007`：V1 验证策略的范围
 
@@ -1319,11 +1319,11 @@ AND 没有重复记账
 
 #### `DEC-P01P07-013`：Cilk 指标进入哪个阶段
 
-- **方案 A**：Phase 6/7 增加 work、critical path、retry work、wasted work、shadow benefit 指标。
+- **方案 A**：在独立实验基础设施部分增加 work、critical path、retry work、wasted work、shadow benefit 指标。
 - **方案 B**：保持现有完成时间、节点数和重复比例。
 - **推荐**：方案 A。没有 critical path 与 wasted work，很难判断递归拆分和 shadow execution 是否真正改善系统，而只能知道“最后跑完了”。
 
-#### `DEC-P08P12-016`：实验可重复性字段是否进入 Phase 6 硬要求
+#### `DEC-P08P12-016`：实验可重复性字段是否进入独立实验基础设施硬要求
 
 - **方案 A**：`ExperimentRun` 固定 `SimulationProfile` digest、seed、clock semantics、fixture、fault triggers、ProtocolConfig/plugin/executor versions，并持久化实际随机决定。
 - **方案 B**：只保存 profile 名称和最终指标。
@@ -1398,13 +1398,15 @@ AND 没有重复记账
 - `CANONICAL_OUTPUTS_BOUND` 明确为带 selection identity、policy/version、完整 bundle 和 validation IDs 的逻辑 `CanonicalSelection`；同时说明 canonical invalidation 的影响分析和 settlement adjustment 是 V1 非目标还是 extension point。
 - merge 使用普通 task/attempt/validation/canonical 生命周期；若选择特权路径，必须显式记录理由、版本和等价的审计约束。
 
-### 26.3 Phase 6：实验与 fixture
+### 26.3 Phase 6 与独立实验基础设施：插件、fixture、故障模拟和指标
 
+- Phase 6 只实现 factorization、Lean stub 和 structured report stub 三类实验插件及其插件内 schema、fixture、validator、split strategy 和 merge policy。
+- `ExperimentRun`、`SimulationProfile`、故障注入 wrapper、runner 和 metrics 已拆为独立实验基础设施部分，不再属于 Phase 6 插件实现范围。
 - `ExperimentRun`/`SimulationProfile` 固定 seed、clock、fixture/benchmark identity、fault trigger 和实际随机决定，并规定 replay 不重新模拟。
 - 指标加入 work、critical path、retry/wasted work 和 shadow benefit，区分协议正确性结论与模拟性能结论。
 - Lean stub 明确采用 one-shot fixture checker 还是多步 proof-state stub，并固定 fixture/benchmark profile；真实 LeanDojo、mathlib 和 miniF2F 集成保持为后续插件工作。
 
-### 26.4 Phase 7 与跨阶段文档：重放、控制面和来源
+### 26.4 Phase 9 与跨阶段文档：重放、控制面和来源
 
 - 删除或改写“状态重放时可重执行确定性输出”的表述，严格区分 state replay、repair 和新实验。
 - event/replay 章节明确 V1 是 single-writer ledger，local append、projection apply 与未来 replicated commit 是不同边界；Raft/PBFT 仅作为未来多协调器控制面扩展，不作为 executor 答案或 AI verifier committee 的正确性依据。

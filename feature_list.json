@@ -17,6 +17,7 @@
                              "Doc/TechnicalDocument/2026-06-25-phase-5-code-map.md",
                              "Doc/TechnicalDocument/2026-06-25-phase-5-external-systems-merge-notes.md",
                              "Doc/TechnicalDocument/2026-06-25-phase-5-merge-discussion-notes.md",
+                             "Doc/TechnicalDocument/2026-06-27-phase-6-factorization-plugin-field-spec.md",
                              "Doc/TechnicalDocument/2026-06-27-phase-6-factorization-plugin-discussion-notes.md",
                              "Doc/TechnicalDocument/2026-06-02-tokenshare-protocol-kernel-revised-draft.md",
                              "Doc/TechnicalDocument/2026-06-07-phase-2-coordination-debt-memo.md"
@@ -117,27 +118,59 @@
                      },
                      {
                          "id":  "feat-007",
-                         "name":  "Phase 6 - Experiments, Fault Simulation, and Metrics",
-                         "description":  "Implement factorization plugin, Lean stub plugin, structured report stub plugin, SimulationProfile, SimulationWrapper, ExperimentRunner, and MetricsCollector.",
+                         "name":  "Phase 6 - Experimental Plugins",
+                         "description":  "Implement the factorization plugin, Lean stub plugin, and structured report stub plugin. Experiment infrastructure, fault simulation, and metrics are now a separate feature.",
                          "dependencies":  [
                                               "feat-006"
                                           ],
                          "status":  "in-progress",
                          "done_criteria":  [
-                                               "Factorization experiment completes end to end",
+                                               "Factorization plugin completes its end-to-end protocol flow",
                                                "Lean stub completes one direct proof path and one decomposition path",
                                                "Structured report stub completes section decomposition, section validation, and final report merge",
-                                               "Five fault profiles produce expected recovery behavior",
-                                               "Metrics report is generated"
+                                               "Plugin descriptors, schemas, validators, split strategies, merge policies, and local fixtures are versioned and testable"
                                            ],
-                         "evidence":  "2026-06-26: Activated after feat-006 completion; implementation not started. 2026-06-27: Pre-start Phase 6 documentation audit found README.md still describing feat-006 Task 3 as next work and session-handoff.md still containing a feat-006 startup step. Synced README.md Current Status / Repository Map and session-handoff.md Next Session Startup to feat-007. Validation passed with feature-list-json-ok, stale README/handoff trigger scan clean, git diff --check without whitespace errors, and .\\init.ps1 collecting 211 tests with 211 passed in 24.46s. 2026-06-27: User accepted the factorization plugin first-version split axis: plugin-owned candidate divisor search-space partition. Added Doc/TechnicalDocument/2026-06-27-phase-6-factorization-plugin-discussion-notes.md and indexed it as Phase 6 decision provenance. The accepted boundary is: plugin generates factor_search_range child tasks; AI/executor only searches bounded ranges; plugin verifies range_result and merges through all-required MergePlan. Validation passed with feature-list-json-ok, new discussion placeholder scan clean, git diff --check without errors, and .\\init.ps1 collecting 211 tests with 211 passed in 22.55s. 2026-06-27: Re-read the main TDD and corrected the Phase 6 factorization record: the planned plugin is the same integer factorization plugin from TDD 14.1, not a separate continuation plugin; continuation means canonical-output-driven recursive expansion by the same plugin after nontrivial_factor_found(d, q). Phase 6 field spec must also explicitly decide whether to implement TDD 14.1 early success / sibling pruning in the first version or record all-required merge as a staged limitation. Validation passed with feature-list-json-ok, discussion placeholder scan clean, git diff --check without errors, and .\\init.ps1 collecting 211 tests with 211 passed in 22.64s. Phase 6 implementation still not started."
+                         "evidence":  "2026-06-26: Activated after feat-006 completion; implementation not started. 2026-06-27: Pre-start Phase 6 documentation audit found README.md still describing feat-006 Task 3 as next work and session-handoff.md still containing a feat-006 startup step. Synced README.md Current Status / Repository Map and session-handoff.md Next Session Startup to feat-007. Validation passed with feature-list-json-ok, stale README/handoff trigger scan clean, git diff --check without whitespace errors, and .\\init.ps1 collecting 211 tests with 211 passed in 24.46s. 2026-06-27: User accepted the factorization plugin first-version split axis: plugin-owned candidate divisor search-space partition. Added Doc/TechnicalDocument/2026-06-27-phase-6-factorization-plugin-discussion-notes.md and indexed it as Phase 6 decision provenance. The accepted boundary is: plugin generates factor_search_range child tasks; AI/executor only searches bounded ranges; plugin verifies range_result and merges through all-required MergePlan. Validation passed with feature-list-json-ok, new discussion placeholder scan clean, git diff --check without errors, and .\\init.ps1 collecting 211 tests with 211 passed in 22.55s. 2026-06-27: Re-read the main TDD and corrected the Phase 6 factorization record: the planned plugin is the same integer factorization plugin from TDD 14.1, not a separate continuation plugin; continuation means canonical-output-driven recursive expansion by the same plugin after nontrivial_factor_found(d, q). Phase 6 field spec must also explicitly decide whether to implement TDD 14.1 early success / sibling pruning in the first version or record all-required merge as a staged limitation. Validation passed with feature-list-json-ok, discussion placeholder scan clean, git diff --check without errors, and .\\init.ps1 collecting 211 tests with 211 passed in 22.64s. 2026-06-27: Scope changed by user: experiment infrastructure is no longer part of Phase 6 implementation. Phase 6 now covers the three experimental plugins only; SimulationProfile, SimulationWrapper, ExperimentRunner, MetricsCollector, fault profiles, and metrics report moved to a separate feature. Validation passed with feature-list-json-ok, stale scope scan clean except explicit correction statements, git diff --check without errors, and .\\init.ps1 collecting 211 tests with 211 passed in 22.29s. Phase 6 implementation still not started. 2026-06-27: Created Doc/TechnicalDocument/2026-06-27-phase-6-factorization-plugin-field-spec.md as the implementation-ready Factorization plugin field spec / TDD plan. It records the concept review result, descriptor/schema fields, candidate range partition, bounded range result verification, all-required merge mapping, prime/semiprime first-slice flow, explicit early-success/pruning and composite-cofactor recursion limitations, and 11 red/green TDD tasks. Validation passed with phase6-field-spec-placeholder-scan-ok, feature-list-json-ok, feature-list-bom-ok, phase6-field-spec-index-ok, git diff --check without whitespace errors, and .\\init.ps1 collecting 211 tests with 211 passed in 22.28s. 2026-06-27: Phase 6 Factorization plugin Task 1 implemented schemas, pure models, descriptor, tests, and code map. Red targeted pytest failed with ModuleNotFoundError: No module named \u0027tokenshare.plugins.factorization.descriptor\u0027; green targeted pytest passed with 4 passed in 0.08s. feature_list.json parse returned feature-list-json-ok; git diff --check exited 0 with CRLF conversion warnings only; final .\\init.ps1 collected 215 tests and passed with 215 passed in 23.16s. Scope remained Task 1 only: no split strategy, parser, verifier, merge policy, fixtures, end-to-end flow, Lean stub, structured report stub, AI API executor, experiment infrastructure, fault simulation, or metrics. 2026-06-27: Phase 6 Factorization plugin Task 2 implemented candidate range partition helper and tests. Added src/tokenshare/plugins/factorization/split_strategy.py and tests/plugins/factorization/test_candidate_range_partition.py; updated factorization __init__ exports and the Phase 6 factorization code map. Red targeted pytest failed with ModuleNotFoundError: No module named \u0027tokenshare.plugins.factorization.split_strategy\u0027; green targeted pytest passed with 4 passed in 0.07s; factorization plugin targeted suite passed with 8 passed in 0.07s. Scope remained Task 2 only: pure candidate_range_partition.v1 helper covering [2, floor_sqrt(N)] without gap/overlap, stable coverage_id/ranges_digest/params_digest, no DecompositionProposal/MergePlan generation, no early success/one_success/sibling pruning, no parser/verifier/merge policy/fixtures/end-to-end flow, no Lean stub, structured report stub, AI API executor, experiment infrastructure, fault simulation, or metrics. Final .\\\\init.ps1 collected 219 tests and passed with 219 passed in 21.76s."
                      },
                      {
                          "id":  "feat-008",
-                         "name":  "Phase 7 - Replay and Audit",
-                         "description":  "Implement state replay, audit replay, replay consistency checks, and no-double-settlement verification.",
+                         "name":  "Phase 7 - Experimental AI API Executor",
+                         "description":  "Implement an experiment-scoped AI API executor that can call a real model through the existing ExecutionRequest/ExecutionSubmission contract while preserving artifact, provenance, secret, and replay boundaries.",
                          "dependencies":  [
                                               "feat-007"
+                                          ],
+                         "status":  "not-started",
+                         "done_criteria":  [
+                                               "AI API executor receives a unified ExecutionRequest and returns a unified artifact-backed ExecutionSubmission",
+                                               "Provider, model, prompt package, raw output, parsed output or parse failure, usage, latency, cost, request id, and error provenance are persisted without storing API secrets",
+                                               "Success, timeout, rate limit, provider error, invalid JSON, and parse failure paths are testable and map to existing executor/submission error boundaries",
+                                               "At least one Phase 6 natural-language plugin fixture can run with either MockAIExecutor or the AI API executor without letting the executor mutate task graph, bind canonical output, decide rewards, or retry outside protocol control",
+                                               "State replay never calls the AI API and fails on missing historical output artifacts"
+                                           ],
+                         "evidence":  "2026-06-27: Created after user clarified that protocol-correctness-only experiments are insufficient for a paper and that V1 should include an experiment-scoped AI API executor to validate real-model effect. Scope remains local research only: no production AI platform, no real distributed executor network, no real chain settlement, and no replay-time API calls. Route/docs sync validation passed with stale AI API / old phase mapping scan clean, feature-list-json-ok, git diff --check without whitespace errors, and .\\init.ps1 collecting 211 tests with 211 passed in 22.00s."
+                     },
+                     {
+                         "id":  "feat-009",
+                         "name":  "Phase 8 - Experiment Infrastructure, Fault Simulation, and Metrics",
+                         "description":  "Implement SimulationProfile, SimulationWrapper, ExperimentRunner, MetricsCollector, experiment run identity, five fault profiles, and metrics reports as a separate part after Phase 6 plugins and the Phase 7 AI API executor.",
+                         "dependencies":  [
+                                              "feat-008"
+                                          ],
+                         "status":  "not-started",
+                         "done_criteria":  [
+                                               "ExperimentRun records profile digest, seed, clock semantics, fixture identity, fault trigger, and actual random decisions",
+                                               "Five fault profiles produce expected recovery behavior",
+                                               "Metrics report is generated with work, critical path, retry/wasted work, shadow benefit, and AI API executor effect/cost fields when applicable",
+                                               "Experiment infrastructure can run all three Phase 6 plugins and the Phase 7 AI API executor path without embedding plugin domain logic"
+                                           ],
+                         "evidence":  "2026-06-27: Renumbered from feat-008 after inserting Phase 7 Experimental AI API Executor. It remains a separate feature after Phase 6 plugins and the AI API executor. Validation evidence must be recorded when implementation starts."
+                     },
+                     {
+                         "id":  "feat-010",
+                         "name":  "Phase 9 - Replay and Audit",
+                         "description":  "Implement state replay, audit replay, replay consistency checks, and no-double-settlement verification.",
+                         "dependencies":  [
+                                              "feat-009"
                                           ],
                          "status":  "not-started",
                          "done_criteria":  [
@@ -145,7 +178,7 @@
                                                "Replay does not call AI or executor code",
                                                "Replay does not produce duplicate SettlementRecord entries"
                                            ],
-                         "evidence":  ""
+                         "evidence":  "2026-06-27: Renumbered from feat-009 / Phase 8 to feat-010 / Phase 9 after inserting Phase 7 Experimental AI API Executor and shifting experiment infrastructure to Phase 8."
                      }
                  ]
 }

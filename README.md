@@ -29,7 +29,7 @@ TokenShare V1 不做：
 - 真实分布式网络、HTTP worker pool 或 P2P runtime。
 - 生产级身份、权限、反女巫或拜占庭容错系统。
 - 完整 Web UI 或动态第三方插件市场。
-- 生产 AI API 集成。
+- 生产级 AI API 平台、多租户 provider 管理或动态模型市场。
 - 完整 Lean theorem proving。
 
 ## V1 Scope
@@ -43,8 +43,8 @@ V1 是本地可复现实验用的协议内核，范围包括：
 - 固定版本的 `PluginRegistry` 和 `ExecutorRegistry`。
 - `ArtifactStore` 写入、读取和内容哈希校验。
 - 调度、租约、执行尝试、验证、正式输出选择、展开、合并、恢复和结算。
-- offline、slow、executor_error、invalid_output、late_submission 五类故障模拟。
-- 指标报告、状态重放、审计重放和 sandbox 结算。
+- offline、slow、executor_error、invalid_output、late_submission 五类故障模拟；该能力作为独立实验基础设施部分，不再归入 Phase 6 插件实现范围。
+- 指标报告、状态重放、审计重放和 sandbox 结算；指标报告作为独立实验基础设施部分实现。
 
 具体字段、SQLite 表结构和插件 API 会在实现阶段逐步细化。README 只记录已经稳定的项目边界和启动方式。
 
@@ -52,7 +52,7 @@ V1 是本地可复现实验用的协议内核，范围包括：
 
 V1 计划包含三类实验插件：
 
-- **factorization**：验证普通可拆分计算任务。当前规划的插件就是主 TDD 第 14.1 节的整数分解插件；第一版采用候选因子搜索空间分区，先覆盖插件主导拆分、bounded range search、结果验证、all-required merge、失败恢复和结算。`nontrivial_factor_found(d, q)` 后的递归展开必须继续由同一个插件生成协议可见子图；提前完成、`one_success` 和子树剪枝是否第一版实现，需要在 Phase 6 字段规格中显式确认。
+- **factorization**：验证普通可拆分计算任务。当前规划的插件就是主 TDD 第 14.1 节的整数分解插件；第一版字段规格已收束为候选因子搜索空间分区、bounded range search、结果验证、all-required merge、prime / semiprime fixture 闭环。`one_success`、提前完成、sibling pruning 和 composite cofactor 的完整递归 resolution 已明确不属于第一切片。
 - **Lean stub proof**：验证 proof-like 工作流。它只使用 fixture 或 stub 模拟 Lean 检查，用来覆盖 proof patch、error log、子目标展开和合并流程。
 - **structured report stub**：验证大型自然语言任务。它使用 fixture 模拟 AI section 输出、证据引用、缺失 section、伪造引用和合并报告，用来覆盖结构化拆分、弱验证、覆盖率检查和 `MergePlan` 合并流程。
 
@@ -126,7 +126,8 @@ PYTHONPATH=src conda run -n tokenshare python -m pytest tests
 - `Doc/TechnicalDocument/2026-06-25-phase-5-code-map.md`：Phase 5 Task 1 / Task 2 / Task 3 / Task 4 / Task 5 / Task 6 / Task 7 / Task 8 的代码、规格章节、projection 和测试对应关系。
 - `Doc/TechnicalDocument/2026-06-25-phase-5-merge-discussion-notes.md`：Phase 5 merge 讨论记录和已确认取舍。
 - `Doc/TechnicalDocument/2026-06-25-phase-5-external-systems-merge-notes.md`：Phase 5 merge 主闭环外部系统调研备忘。
-- `Doc/TechnicalDocument/2026-06-27-phase-6-factorization-plugin-discussion-notes.md`：Phase 6 factorization 插件第一版拆分算法和主 TDD 对齐讨论记录；已确认采用候选因子搜索空间分区，AI / executor 只处理 bounded range search，递归展开由同一插件基于 canonical output 继续生成协议可见子图。
+- `Doc/TechnicalDocument/2026-06-27-phase-6-factorization-plugin-field-spec.md`：Phase 6 factorization 插件第一版字段规格 / TDD 计划，直接指导 factorization 插件实现。
+- `Doc/TechnicalDocument/2026-06-27-phase-6-factorization-plugin-discussion-notes.md`：Phase 6 factorization 插件第一版拆分算法和主 TDD 对齐讨论记录；用于追溯取舍，不覆盖字段规格。
 - `Doc/TechnicalDocument/2026-06-04-tokenshare-paper-module-map.md`：论文、技术报告、本地 TeX/OCR 与模块借鉴映射。
 - `Doc/TechnicalDocument/tokenshare-paper-tex/`：已本地化的论文/技术报告 TeX 或 OCR 文本。
 - `Doc/TechnicalDocument/2026-06-22-p01-p12-tokenshare-candidate-mechanism-spec.md`：P01-P22 机制整合记录；只用于追溯取舍理由，不覆盖主 TDD。
@@ -174,20 +175,34 @@ PYTHONPATH=src conda run -n tokenshare python -m pytest tests
 - Phase 5 merge / contribution / settlement 主闭环已实现：merge task creation、merge resolution、canonical contribution creation、parent completion、root-level sandbox settlement、subtree pruning、SQLite Phase 5 projection，以及完整 merge -> parent completion -> root settlement projection integration。
 - 2026-06-27 Phase 5 hardening 已完成：SQLite rebuild 会拒绝错误 Phase 5 batch id；root settlement 要求 caller supplied eligible contribution set 精确等于 ledger 当前 eligible set。
 - 当前完整启动验证通过：`.\init.ps1` 在 `tokenshare` conda 环境中收集 211 个测试并全部通过。
-- Phase 6 factorization 插件第一版拆分主轴已确认并记录：由插件把候选因子搜索空间拆成 `factor_search_range` 子任务，AI / executor 只在给定范围内搜索，插件验证 `range_result` 并通过 all-required `MergePlan` 合并。重读主 TDD 后已补充纠偏：这是主 TDD 第 14.1 节同一个整数分解插件，递归 continuation 不是新机制或新插件，而是 canonical output 驱动的插件递归展开闭环。
+- Phase 6 factorization 插件第一版字段规格 / TDD 计划已完成：`Doc/TechnicalDocument/2026-06-27-phase-6-factorization-plugin-field-spec.md` 直接指导实现。它固定插件主导候选因子搜索空间分区、bounded `factor_search_range`、deterministic `range_result` verifier、all-required merge、prime / semiprime fixture 闭环，并明确 early success / sibling pruning / composite cofactor 完整递归 resolution 不属于第一切片。
+- 2026-06-27 范围更新：实验基础设施不再属于 Phase 6 实现范围；`SimulationProfile`、`SimulationWrapper`、`ExperimentRunner`、`MetricsCollector`、故障模拟和指标报告移动到独立后续 feature。
 
 当前进行中：
 
-- `feat-007`：Phase 6 - Experiments, Fault Simulation, and Metrics。
+- `feat-007`：Phase 6 - Experimental Plugins。
 
-Phase 6 的下一步是先收束实验、故障模拟和指标字段规格 / TDD 计划，然后按单一 feature 范围实现：
+Phase 6 的下一步是从 factorization 字段规格 Task 1 开始实现，然后继续收束并实现 Lean stub proof 和 structured report stub：
 
 - factorization、Lean stub proof 和 structured report stub 三类 proof-of-concept 实验。
+- factorization 第一版只承诺 prime / semiprime fixture 端到端闭环；不宣称 early success、sibling pruning 或完整 composite cofactor recursive resolution。
+
+Phase 6 之后进入 `feat-008` / Phase 7 Experimental AI API Executor：
+
+- 通过统一 `ExecutionRequest` / `ExecutionSubmission` 调用真实模型 API。
+- 持久化 provider、model、prompt package、raw output、parsed output 或 parse failure、usage、latency、cost 和 error provenance。
+- API key 只来自本地环境变量，不写入 event、artifact、SQLite 或日志；baseline 测试不要求联网。
+- replay 不重新调用 AI API，缺失历史输出 artifact 时必须失败。
+
+之后进入 `feat-009` / Phase 8 独立实验基础设施、故障模拟和指标：
+
 - `SimulationProfile`、`SimulationWrapper`、`ExperimentRunner` 和 `MetricsCollector`。
 - offline、slow、executor_error、invalid_output、late_submission 五类故障模拟。
-- factorization 字段规格需要显式决定：第一版是否实现主 TDD 14.1 的 early success / pruning，还是先把 all-required merge 作为有意的阶段切片记录。
+- work、critical path、retry/wasted work、shadow benefit 等指标报告。
 
-当前尚未实现 Phase 6 实验、Phase 7 replay / audit、真实 executor 网络、生产 AI API 或真实链上结算。
+之后进入 `feat-010` / Phase 9 replay and audit。
+
+当前尚未实现 Phase 6 插件代码、feat-008 实验级 AI API executor、feat-009 独立实验基础设施、feat-010 replay / audit、真实 executor 网络、生产级 AI API 平台或真实链上结算。
 
 当前仍需注意：
 
