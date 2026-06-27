@@ -52,7 +52,7 @@ V1 是本地可复现实验用的协议内核，范围包括：
 
 V1 计划包含三类实验插件：
 
-- **factorization**：验证普通可拆分计算任务。目标是覆盖搜索空间拆分、结果验证、提前完成、子树剪枝、失败恢复和结算。
+- **factorization**：验证普通可拆分计算任务。当前规划的插件就是主 TDD 第 14.1 节的整数分解插件；第一版采用候选因子搜索空间分区，先覆盖插件主导拆分、bounded range search、结果验证、all-required merge、失败恢复和结算。`nontrivial_factor_found(d, q)` 后的递归展开必须继续由同一个插件生成协议可见子图；提前完成、`one_success` 和子树剪枝是否第一版实现，需要在 Phase 6 字段规格中显式确认。
 - **Lean stub proof**：验证 proof-like 工作流。它只使用 fixture 或 stub 模拟 Lean 检查，用来覆盖 proof patch、error log、子目标展开和合并流程。
 - **structured report stub**：验证大型自然语言任务。它使用 fixture 模拟 AI section 输出、证据引用、缺失 section、伪造引用和合并报告，用来覆盖结构化拆分、弱验证、覆盖率检查和 `MergePlan` 合并流程。
 
@@ -123,9 +123,10 @@ PYTHONPATH=src conda run -n tokenshare python -m pytest tests
 - `Doc/TechnicalDocument/2026-06-24-phase-4-verification-canonical-expansion-field-spec.md`：Phase 4 字段规格与 TDD 计划。
 - `Doc/TechnicalDocument/2026-06-24-phase-4-code-map.md`：Phase 4 代码、规格章节和测试的对应关系。
 - `Doc/TechnicalDocument/2026-06-25-phase-5-merge-contribution-settlement-field-spec.md`：Phase 5 merge、expected output resolution、contribution、settlement 和 pruning 字段规格 / TDD 计划，直接指导 `feat-006` 实现。
-- `Doc/TechnicalDocument/2026-06-25-phase-5-code-map.md`：Phase 5 当前已实现 Task 1 / Task 2 的代码、规格章节和测试对应关系。
+- `Doc/TechnicalDocument/2026-06-25-phase-5-code-map.md`：Phase 5 Task 1 / Task 2 / Task 3 / Task 4 / Task 5 / Task 6 / Task 7 / Task 8 的代码、规格章节、projection 和测试对应关系。
 - `Doc/TechnicalDocument/2026-06-25-phase-5-merge-discussion-notes.md`：Phase 5 merge 讨论记录和已确认取舍。
 - `Doc/TechnicalDocument/2026-06-25-phase-5-external-systems-merge-notes.md`：Phase 5 merge 主闭环外部系统调研备忘。
+- `Doc/TechnicalDocument/2026-06-27-phase-6-factorization-plugin-discussion-notes.md`：Phase 6 factorization 插件第一版拆分算法和主 TDD 对齐讨论记录；已确认采用候选因子搜索空间分区，AI / executor 只处理 bounded range search，递归展开由同一插件基于 canonical output 继续生成协议可见子图。
 - `Doc/TechnicalDocument/2026-06-04-tokenshare-paper-module-map.md`：论文、技术报告、本地 TeX/OCR 与模块借鉴映射。
 - `Doc/TechnicalDocument/tokenshare-paper-tex/`：已本地化的论文/技术报告 TeX 或 OCR 文本。
 - `Doc/TechnicalDocument/2026-06-22-p01-p12-tokenshare-candidate-mechanism-spec.md`：P01-P22 机制整合记录；只用于追溯取舍理由，不覆盖主 TDD。
@@ -152,7 +153,7 @@ PYTHONPATH=src conda run -n tokenshare python -m pytest tests
 
 ## Current Status
 
-当前日期状态：2026-06-26。
+当前日期状态：2026-06-27。
 
 已完成：
 
@@ -169,21 +170,24 @@ PYTHONPATH=src conda run -n tokenshare python -m pytest tests
 - 主 TDD 已补充大型自然语言任务相关边界：`DecompositionProposal`、`VerificationReport`、`MergePlan`、`MergeRecord` 和 structured report stub。
 - P01-P22 候选机制已整合进主 TDD：requirements/hints、expected output、environment、allocation、verification/selection、merge、settlement 和 replay 边界现在以主 TDD 为实现口径。
 - Phase 4 已完成：`LedgerEvent.v2` batch envelope、`EventLedger.append_batch()`、verification report、canonical output binding、split invocation audit、complete path、accepted expand path、atomic graph update、ExpectedOutputRef 和 SQLite Phase 4 index-only projection 均已实现并映射到 `Doc/TechnicalDocument/2026-06-24-phase-4-code-map.md`。
-- Phase 5 字段规格已收束：`Doc/TechnicalDocument/2026-06-25-phase-5-merge-contribution-settlement-field-spec.md` 是当前 `feat-006` 实现口径。
-- Phase 5 Task 1 已完成：merge / contribution / settlement / pruning 纯对象、digest helper、Phase 5 event constants 和 contribution / settlement 状态规则已实现。
-- Phase 5 Task 2 已完成：`MergeCoordinator.create_ready_merge_tasks()`、`merge_task_creation_batch:{merge_plan_id}`、visible `TASK_EXPANDED` gate、canonical-only required slot binding、staged `merge_input_bundle` 和 `MERGE_TASK_LINK_RECORDED` marker 已实现。
-- 当前完整启动验证通过：`.\init.ps1` 在 `tokenshare` conda 环境中收集 151 个测试并全部通过。
+- Phase 5 已完成：`Doc/TechnicalDocument/2026-06-25-phase-5-merge-contribution-settlement-field-spec.md` 是 `feat-006` 实现口径，`Doc/TechnicalDocument/2026-06-25-phase-5-code-map.md` 记录 Task 1-8 代码和测试映射。
+- Phase 5 merge / contribution / settlement 主闭环已实现：merge task creation、merge resolution、canonical contribution creation、parent completion、root-level sandbox settlement、subtree pruning、SQLite Phase 5 projection，以及完整 merge -> parent completion -> root settlement projection integration。
+- 2026-06-27 Phase 5 hardening 已完成：SQLite rebuild 会拒绝错误 Phase 5 batch id；root settlement 要求 caller supplied eligible contribution set 精确等于 ledger 当前 eligible set。
+- 当前完整启动验证通过：`.\init.ps1` 在 `tokenshare` conda 环境中收集 211 个测试并全部通过。
+- Phase 6 factorization 插件第一版拆分主轴已确认并记录：由插件把候选因子搜索空间拆成 `factor_search_range` 子任务，AI / executor 只在给定范围内搜索，插件验证 `range_result` 并通过 all-required `MergePlan` 合并。重读主 TDD 后已补充纠偏：这是主 TDD 第 14.1 节同一个整数分解插件，递归 continuation 不是新机制或新插件，而是 canonical output 驱动的插件递归展开闭环。
 
 当前进行中：
 
-- `feat-006`：Phase 5 - Merge, Contribution, and Sandbox Settlement。
+- `feat-007`：Phase 6 - Experiments, Fault Simulation, and Metrics。
 
-Phase 5 的下一步是按字段规格 / TDD 计划从 Task 3 `merge resolution batch` 开始实现：
+Phase 6 的下一步是先收束实验、故障模拟和指标字段规格 / TDD 计划，然后按单一 feature 范围实现：
 
-- `MERGE_RECORDED` 与 required `EXPECTED_OUTPUT_RESOLVED` 必须通过 `merge_resolution_batch:{merge_record_id}` 原子提交。
-- 后续再依次实现 contribution creation、parent completion、root-level sandbox settlement、subtree pruning、SQLite Phase 5 projection 和 integration。
+- factorization、Lean stub proof 和 structured report stub 三类 proof-of-concept 实验。
+- `SimulationProfile`、`SimulationWrapper`、`ExperimentRunner` 和 `MetricsCollector`。
+- offline、slow、executor_error、invalid_output、late_submission 五类故障模拟。
+- factorization 字段规格需要显式决定：第一版是否实现主 TDD 14.1 的 early success / pruning，还是先把 all-required merge 作为有意的阶段切片记录。
 
-当前尚未实现 Phase 5 merge resolution、contribution flow、settlement flow、subtree pruning flow、SQLite Phase 5 projection、Phase 5 integration、Phase 6 实验、真实 executor 网络、生产 AI API 或真实链上结算。
+当前尚未实现 Phase 6 实验、Phase 7 replay / audit、真实 executor 网络、生产 AI API 或真实链上结算。
 
 当前仍需注意：
 

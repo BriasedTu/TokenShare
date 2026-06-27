@@ -145,6 +145,16 @@ def test_sqlite_rebuilds_merge_records_and_expected_output_resolutions_only_afte
     ]
 
 
+def test_sqlite_rejects_merge_resolution_batch_id_mismatch(tmp_path) -> None:
+    context, merge_task_link, merge_canonical = _make_resolution_context(tmp_path)
+    merge_record = _merge_record(context, merge_task_link, merge_canonical)
+    resolution = _expected_output_resolution(context, merge_record)
+    _append_merge_resolution_batch_with_wrong_id(context, merge_record, resolution)
+
+    with pytest.raises(ValueError, match="incomplete merge_resolution_batch"):
+        _rebuild(context)
+
+
 def test_sqlite_updates_expected_output_refs_to_resolved(tmp_path) -> None:
     context, merge_task_link, merge_canonical = _make_resolution_context(tmp_path)
     merge_record = _merge_record(context, merge_task_link, merge_canonical)
@@ -315,7 +325,7 @@ def test_sqlite_rebuilds_subtree_prunes_only_after_marker(tmp_path) -> None:
     ]
 
 
-def test_sqlite_rejects_duplicate_merge_task_link_for_merge_plan(tmp_path) -> None:
+def test_sqlite_rejects_merge_task_creation_batch_id_mismatch(tmp_path) -> None:
     context, coordinator = _make_merge_creation(tmp_path)
     result = coordinator.create_ready_merge_tasks(
         task_id="task_demo",
@@ -327,9 +337,9 @@ def test_sqlite_rejects_duplicate_merge_task_link_for_merge_plan(tmp_path) -> No
         coordinator_id="coordinator_local",
         correlation_id="corr_sqlite_duplicate_link_first",
     )[0]
-    _append_duplicate_merge_task_link_batch(context, result)
+    _append_merge_task_link_batch_with_wrong_id(context, result)
 
-    with pytest.raises(ValueError, match="duplicate merge task link"):
+    with pytest.raises(ValueError, match="incomplete merge_task_creation_batch"):
         _rebuild(context)
 
 
@@ -380,6 +390,22 @@ def test_sqlite_rejects_settlement_entries_digest_or_event_mismatch(
         _rebuild(context)
 
 
+def test_sqlite_rejects_settlement_batch_id_mismatch(tmp_path) -> None:
+    context, root_completion_event_seq, contributions = _make_root_settlement_context(
+        tmp_path
+    )
+    _append_malformed_settlement_batch(
+        context,
+        root_completion_event_seq=root_completion_event_seq,
+        contributions=contributions,
+        mutation="wrong_batch_id",
+        batch_id="settlement_batch:task_demo:wrong_root:999",
+    )
+
+    with pytest.raises(ValueError, match="incomplete settlement_batch"):
+        _rebuild(context)
+
+
 def test_sqlite_rejects_pruning_policy_without_descriptor_provenance(
     tmp_path,
 ) -> None:
@@ -387,6 +413,14 @@ def test_sqlite_rejects_pruning_policy_without_descriptor_provenance(
     _append_pruning_batch_without_descriptor(context, parent_completed_event_seq)
 
     with pytest.raises(ValueError, match="descriptor provenance"):
+        _rebuild(context)
+
+
+def test_sqlite_rejects_subtree_pruning_batch_id_mismatch(tmp_path) -> None:
+    context, parent_completed_event_seq = _make_completed_parent_context(tmp_path)
+    _append_pruning_batch_with_wrong_id(context, parent_completed_event_seq)
+
+    with pytest.raises(ValueError, match="incomplete subtree_pruning_batch"):
         _rebuild(context)
 
 
@@ -492,7 +526,7 @@ def _count(connection: sqlite3.Connection, table: str) -> int:
     return connection.execute(f"select count(*) from {table}").fetchone()[0]
 
 
-def _append_duplicate_merge_task_link_batch(context, result) -> None:
+def _append_merge_task_link_batch_with_wrong_id(context, result) -> None:
     original_link = result.merge_task_link.to_dict()
     duplicate_unit_id = f"{original_link['merge_unit_id']}:duplicate"
     duplicate_link = {
@@ -533,7 +567,7 @@ def _append_duplicate_merge_task_link_batch(context, result) -> None:
                 occurred_at=NOW,
             ),
         ],
-        batch_id=f"merge_task_creation_batch:duplicate:{original_link['merge_plan_id']}",
+        batch_id=f"merge_task_creation_batch:wrong:{original_link['merge_plan_id']}",
     )
 
 
@@ -588,7 +622,45 @@ def _append_duplicate_resolution_batch(context, merge_record, resolution) -> Non
                 occurred_at=NOW,
             ),
         ],
-        batch_id=f"merge_resolution_batch:duplicate:{merge_record.merge_record_id}",
+        batch_id=f"merge_resolution_batch:{merge_record.merge_record_id}",
+    )
+
+
+def _append_merge_resolution_batch_with_wrong_id(context, merge_record, resolution) -> None:
+    context.ledger.append_batch(
+        [
+            EventDraft(
+                event_type=EventType.MERGE_RECORDED,
+                object_type="MergeRecord",
+                object_id=merge_record.merge_record_id,
+                task_id=merge_record.task_id,
+                idempotency_key=f"wrong_batch:merge_record:{merge_record.merge_record_id}",
+                payload={
+                    "schema_version": "phase5.merge_recorded.v1",
+                    "merge_record": merge_record.to_dict(),
+                    "task_id": merge_record.task_id,
+                },
+                occurred_at=NOW,
+            ),
+            EventDraft(
+                event_type=EventType.EXPECTED_OUTPUT_RESOLVED,
+                object_type="ExpectedOutputResolution",
+                object_id=resolution.expected_output_id,
+                task_id=resolution.task_id,
+                idempotency_key=(
+                    "wrong_batch:expected_output_resolution:"
+                    f"{resolution.expected_output_resolution_id}"
+                ),
+                payload={
+                    "schema_version": "phase5.expected_output_resolved.v1",
+                    "expected_output_resolution": resolution.to_dict(),
+                    "task_id": resolution.task_id,
+                    "expected_output_id": resolution.expected_output_id,
+                },
+                occurred_at=NOW,
+            ),
+        ],
+        batch_id="merge_resolution_batch:not_the_merge_record_id",
     )
 
 
@@ -649,6 +721,70 @@ def _append_pruning_batch_without_descriptor(context, parent_completed_event_seq
             ),
         ],
         batch_id=f"subtree_pruning_batch:{context.parent_unit.unit_id}:{parent_completed_event_seq}",
+    )
+
+
+def _append_pruning_batch_with_wrong_id(context, parent_completed_event_seq: int) -> None:
+    unit = _descendant("unit_prune_wrong_batch", TaskState.READY)
+    cancelled_unit_ids = [unit.unit_id]
+    policy_ref = _pruning_policy_ref(context)
+    record = {
+        "schema_version": "phase5.subtree_prune_record.v1",
+        "subtree_prune_id": f"subtree_pruned:{context.parent_unit.unit_id}:{parent_completed_event_seq}",
+        "task_id": "task_demo",
+        "parent_unit_id": context.parent_unit.unit_id,
+        "parent_completed_event_seq": parent_completed_event_seq,
+        "pruning_policy_id": policy_ref["pruning_policy_id"],
+        "pruning_policy_version": policy_ref["pruning_policy_version"],
+        "pruning_policy_plugin_id": policy_ref["pruning_policy_plugin_id"],
+        "pruning_policy_descriptor_digest": policy_ref[
+            "pruning_policy_descriptor_digest"
+        ],
+        "policy_source_type": policy_ref["policy_source_type"],
+        "policy_source_id": policy_ref["policy_source_id"],
+        "policy_source_event_seq": policy_ref["policy_source_event_seq"],
+        "cancelled_unit_count": 1,
+        "cancelled_unit_ids_digest": digest_json(cancelled_unit_ids),
+        "preserved_completed_unit_count": 0,
+        "reason": "parent_completed_post_completion_pruning",
+        "created_at": NOW,
+    }
+    context.ledger.append_batch(
+        [
+            EventDraft(
+                event_type=EventType.TASK_UNIT_STATE_CHANGED,
+                object_type="TaskUnit",
+                object_id=unit.unit_id,
+                task_id=unit.task_id,
+                idempotency_key=f"wrong_pruning_batch:state:{unit.unit_id}",
+                payload={
+                    "schema_version": "phase5.subtree_pruning_task_unit_state_changed.v1",
+                    "old_state": TaskState.READY.value,
+                    "new_state": TaskState.CANCELLED.value,
+                    "task_unit": replace(unit, state=TaskState.CANCELLED).to_dict(),
+                },
+                occurred_at=NOW,
+            ),
+            EventDraft(
+                event_type=EventType.SUBTREE_PRUNED,
+                object_type="SubtreePruneRecord",
+                object_id=record["subtree_prune_id"],
+                task_id="task_demo",
+                idempotency_key=f"wrong_pruning_batch:subtree_pruned:{parent_completed_event_seq}",
+                payload={
+                    "schema_version": "phase5.subtree_pruned.v1",
+                    "subtree_prune_record": record,
+                    "task_id": "task_demo",
+                    "parent_unit_id": context.parent_unit.unit_id,
+                    "parent_completed_event_seq": parent_completed_event_seq,
+                    "cancelled_unit_count": 1,
+                    "cancelled_unit_ids": cancelled_unit_ids,
+                    "cancelled_unit_ids_digest": record["cancelled_unit_ids_digest"],
+                },
+                occurred_at=NOW,
+            ),
+        ],
+        batch_id="subtree_pruning_batch:wrong_parent:999",
     )
 
 

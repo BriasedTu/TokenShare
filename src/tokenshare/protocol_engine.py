@@ -1268,6 +1268,8 @@ class ProtocolEngine:
         }
         if not recorded_eligible_ids.issubset(supplied_eligible_ids):
             raise ValueError("partial settlement: must settle all eligible contributions")
+        if supplied_eligible_ids != recorded_eligible_ids:
+            raise ValueError("eligible contribution set mismatch")
 
         settlement_entries = tuple(
             build_sandbox_equal_weight_settlement_entries(

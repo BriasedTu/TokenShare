@@ -379,6 +379,29 @@ def test_settlement_rejects_partial_settled_contributions(tmp_path) -> None:
         )
 
 
+def test_settlement_rejects_extra_supplied_contribution_not_in_ledger(tmp_path) -> None:
+    context, root_completion_event_seq, contributions = _make_root_settlement_context(
+        tmp_path
+    )
+    extra = _manual_contribution(
+        "contribution:manual:extra",
+        state=ContributionState.ELIGIBLE,
+        source_terminal_event_seq=root_completion_event_seq,
+    )
+
+    with pytest.raises(ValueError, match="eligible contribution set mismatch"):
+        context.engine.record_root_settlement(
+            task_id="task_demo",
+            root_unit_id=context.parent_unit.unit_id,
+            root_completion_event_seq=root_completion_event_seq,
+            eligible_contributions=contributions + [extra],
+            root_budget=10,
+            settlement_policy_id="sandbox_equal_weight_v1",
+            now=NOW,
+            correlation_id="corr_root_settlement_extra",
+        )
+
+
 def test_settlement_same_payload_is_idempotent(tmp_path) -> None:
     context, root_completion_event_seq, contributions = _make_root_settlement_context(
         tmp_path
@@ -496,7 +519,7 @@ def test_settlement_does_not_include_pending_invalidated_or_late_contributions(t
         task_id="task_demo",
         root_unit_id=context.parent_unit.unit_id,
         root_completion_event_seq=root_completion_event_seq,
-        eligible_contributions=[*contributions, pending, invalidated, late],
+        eligible_contributions=contributions,
         root_budget=10,
         settlement_policy_id="sandbox_equal_weight_v1",
         now=NOW,
@@ -786,6 +809,7 @@ def _append_malformed_settlement_batch(
     root_completion_event_seq: int,
     contributions: list[ContributionRecord],
     mutation: str,
+    batch_id: str | None = None,
 ) -> None:
     entries = build_sandbox_equal_weight_settlement_entries(
         task_id="task_demo",
@@ -928,7 +952,8 @@ def _append_malformed_settlement_batch(
     )
     context.ledger.append_batch(
         drafts,
-        batch_id=f"settlement_batch:task_demo:unit_parent:{root_completion_event_seq}",
+        batch_id=batch_id
+        or f"settlement_batch:task_demo:unit_parent:{root_completion_event_seq}",
     )
 
 

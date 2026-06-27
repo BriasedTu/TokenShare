@@ -1888,6 +1888,8 @@ def _validate_merge_task_creation_batch(
     if not isinstance(link_payload, dict):
         raise ValueError(f"incomplete merge_task_creation_batch: {batch_id}")
     link = MergeTaskLink(**link_payload)
+    if batch_id != f"merge_task_creation_batch:{link.merge_plan_id}":
+        raise ValueError(f"incomplete merge_task_creation_batch: {batch_id}")
     task_unit = events[0].payload.get("task_unit", {})
     if (
         not isinstance(task_unit, dict)
@@ -1917,6 +1919,8 @@ def _validate_merge_resolution_batch(
     if not isinstance(merge_record_payload, dict):
         raise ValueError(f"incomplete merge_resolution_batch: {batch_id}")
     merge_record = MergeRecord(**merge_record_payload)
+    if batch_id != f"merge_resolution_batch:{merge_record.merge_record_id}":
+        raise ValueError(f"incomplete merge_resolution_batch: {batch_id}")
     seen_expected_output_ids: set[str] = set()
     resolution_projections: list[_ExpectedOutputResolutionProjection] = []
     for event in events[1:]:
@@ -2001,6 +2005,13 @@ def _validate_settlement_batch(
         if "settlement_entries_ref" in message:
             raise ValueError("settlement_entries_ref is required") from error
         raise
+    expected_batch_id = (
+        f"settlement_batch:{settlement_record.task_id}:"
+        f"{settlement_record.root_unit_id}:"
+        f"{settlement_record.root_completion_event_seq}"
+    )
+    if batch_id != expected_batch_id:
+        raise ValueError(f"incomplete settlement_batch: {batch_id}")
     if artifact_store is None:
         raise ValueError("artifact_store is required to project settlement entries")
     entries_ref_data = settlement_record.settlement_entries_ref
@@ -2077,6 +2088,11 @@ def _validate_subtree_pruning_batch(
         if "pruning_policy_descriptor_digest" in message:
             raise ValueError("descriptor provenance is required for subtree pruning") from error
         raise
+    if batch_id != (
+        f"subtree_pruning_batch:{record.parent_unit_id}:"
+        f"{record.parent_completed_event_seq}"
+    ):
+        raise ValueError(f"incomplete subtree_pruning_batch: {batch_id}")
     cancelled_unit_ids = tuple(event.object_id for event in cancellation_events)
     if (
         record.cancelled_unit_count != len(cancelled_unit_ids)

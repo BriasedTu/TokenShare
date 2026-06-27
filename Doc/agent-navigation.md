@@ -38,12 +38,13 @@
 15. `Doc/TechnicalDocument/2026-06-25-phase-5-code-map.md`：Phase 5 当前 Task 1 / Task 2 / Task 3 / Task 4 / Task 5 / Task 6 / Task 7 / Task 8 代码、规格章节、projection 和测试的对应关系；用于确认 feat-006 已实现边界和 Task 8 SQLite projection / integration 验证。
 16. `Doc/TechnicalDocument/2026-06-25-phase-5-external-systems-merge-notes.md`：Phase 5 merge 主闭环外部系统调研备忘；用于追溯外部系统经验，不是实现规格。
 17. `Doc/TechnicalDocument/2026-06-25-phase-5-merge-discussion-notes.md`：Phase 5 merge 讨论记录；当前已确认 merge 作为普通 `TaskUnit`，并采用 required slots 齐备后再创建 merge `TaskUnit` 的方案。
-17. `Doc/TechnicalDocument/2026-06-07-phase-2-coordination-debt-memo.md`：Phase 2 协调边界备忘录；用于提醒后续 agent 不要让 `RootTaskRegistrar` 继续承担状态机、调度或存储编排增长职责。
-18. `README.md`：项目入口和稳定边界。
-19. `Doc/TechnicalDocument/2026-06-04-tokenshare-paper-module-map.md`：论文、技术报告和本地 TeX/OCR 映射；用于追踪研究依据。
-20. `Doc/TechnicalDocument/2026-06-22-p01-p12-tokenshare-candidate-mechanism-spec.md`：P01-P22 机制整合记录；用于追溯取舍理由，不覆盖主 TDD。
-21. `Doc/TechnicalDocument/2026-06-02-tokenshare-protocol-kernel-revised-draft.md`：历史讨论稿；用于理解原因，不直接覆盖当前 TDD。
-22. `reference_repos/`：外部参考源码；只能用于借鉴模式，不属于 TokenShare runtime。
+18. `Doc/TechnicalDocument/2026-06-27-phase-6-factorization-plugin-discussion-notes.md`：Phase 6 factorization 插件第一版拆分算法和主 TDD 对齐讨论记录；用于追溯“插件主导候选因子搜索空间分区”、同一个整数分解插件、canonical output 驱动递归展开的已确认决策，不是最终字段规格。
+19. `Doc/TechnicalDocument/2026-06-07-phase-2-coordination-debt-memo.md`：Phase 2 协调边界备忘录；用于提醒后续 agent 不要让 `RootTaskRegistrar` 继续承担状态机、调度或存储编排增长职责。
+20. `README.md`：项目入口和稳定边界。
+21. `Doc/TechnicalDocument/2026-06-04-tokenshare-paper-module-map.md`：论文、技术报告和本地 TeX/OCR 映射；用于追踪研究依据。
+22. `Doc/TechnicalDocument/2026-06-22-p01-p12-tokenshare-candidate-mechanism-spec.md`：P01-P22 机制整合记录；用于追溯取舍理由，不覆盖主 TDD。
+23. `Doc/TechnicalDocument/2026-06-02-tokenshare-protocol-kernel-revised-draft.md`：历史讨论稿；用于理解原因，不直接覆盖当前 TDD。
+24. `reference_repos/`：外部参考源码；只能用于借鉴模式，不属于 TokenShare runtime。
 
 如果两个文件冲突，应优先相信上面列表中更靠前的文件，并把冲突记录到 `progress.md` 或 `session-handoff.md`。
 
@@ -66,6 +67,7 @@
 | 判断 Phase 3 代码与测试覆盖 | `Doc/TechnicalDocument/2026-06-23-phase-3-code-map.md` | `Doc/TechnicalDocument/2026-06-23-phase-3-plugin-executor-field-spec.md`、`tests/test_phase3_execution_flow.py`、`tests/storage/test_phase3_event_projection.py` | feat-004 已实现 registry freeze、统一 request/submission、mock AI executor、deterministic executor、Phase 3 event 和 SQLite index-only projection；不要把 Phase 4 验证/canonical/expansion 误认为已实现。 |
 | 判断 Phase 4 验证、canonical 和 expansion 边界 | `Doc/TechnicalDocument/2026-06-24-phase-4-verification-canonical-expansion-field-spec.md` | `Doc/TechnicalDocument/2026-06-24-phase-4-code-map.md`、`Doc/TechnicalDocument/2026-06-24-phase-4-discussion-notes.md`、主 TDD 第 4.3、8、9、10、11、12、21 节、`Doc/TechnicalDocument/2026-06-23-phase-3-code-map.md` | 新规格是 feat-005 实现口径；Task 1/2/3/4/5/6/7/8/9/10 当前代码边界见 Phase 4 code map；`DecompositionProposal` 必须由插件版本化拆分策略直接生成；AI、executor 或客户端不能提供 expansion 候选拆分或临时提出协议级子任务；`MergePlan` 独立持久化。 |
 | 判断 Phase 5 merge / contribution / settlement 实现边界 | `Doc/TechnicalDocument/2026-06-25-phase-5-merge-contribution-settlement-field-spec.md` | `Doc/TechnicalDocument/2026-06-25-phase-5-code-map.md`、`Doc/TechnicalDocument/2026-06-25-phase-5-merge-discussion-notes.md`、`Doc/TechnicalDocument/2026-06-25-phase-5-external-systems-merge-notes.md`、主 TDD 第 9、11、12、13、21 节、`Doc/TechnicalDocument/2026-06-22-p01-p12-tokenshare-candidate-mechanism-spec.md` 第 22.5、24.4 节、Phase 4 code map | Phase 5 字段规格是 feat-006 实现口径；它固定 `merge_task_creation_batch`、`merge_resolution_batch`、`parent_completion_batch`、`settlement_batch`、`subtree_pruning_batch`，以及 `MergeTaskLink`、`MergeRecord`、`ExpectedOutputResolution`、`ContributionRecord`、`SettlementRecord`、`SubtreePruneRecord` 和 SQLite projection / TDD 计划。`code map` 记录当前已实现 Task 1 / Task 2 / Task 3 / Task 4 / Task 5 / Task 6 / Task 7 / Task 8；讨论记录和调研备忘只用于追溯取舍。 |
+| 判断 Phase 6 factorization 插件拆分口径 | `Doc/TechnicalDocument/2026-06-27-phase-6-factorization-plugin-discussion-notes.md` | 主 TDD 第 4.3、7、8、12、14.1、21、23 节；`Doc/TechnicalDocument/2026-06-24-phase-4-verification-canonical-expansion-field-spec.md`、`Doc/TechnicalDocument/2026-06-25-phase-5-merge-contribution-settlement-field-spec.md`、`src/tokenshare/plugins/contracts.py` | 已确认第一版采用插件主导的候选因子搜索空间分区：插件生成 `factor_search_range` 子任务，AI / executor 只处理 bounded range search，插件验证 `range_result` 并通过 all-required `MergePlan` 合并。该插件就是主 TDD 第 14.1 节的整数分解插件；递归 continuation 不是新插件或新机制，而是 canonical output 驱动的插件递归展开闭环。Phase 6 字段规格还必须明确是否第一版实现 early success / pruning，还是把 all-required merge 标成阶段切片。 |
 | 需要联网查找资料 | 本文第 6 节 | `Doc/TechnicalDocument/2026-06-04-tokenshare-paper-module-map.md`、`reference_repos/README.md` | 被用于项目决策的外部资料必须本地落库并同步索引。 |
 | 需要借鉴已有项目结构 | `reference_repos/README.md` | 对应外部源码目录 | 先拉取或更新本地浅克隆/sparse checkout；只能借鉴思路，不引入为 runtime 依赖，不复制大段实现。 |
 | 需要设计对象字段 | `Doc/TechnicalDocument/2026-06-05-phase-1-minimal-object-field-spec.md`；Phase 2 使用 `Doc/TechnicalDocument/2026-06-08-phase-2-minimal-field-state-event-spec.md`；Phase 3 使用 `Doc/TechnicalDocument/2026-06-23-phase-3-plugin-executor-field-spec.md`；Phase 4 使用 `Doc/TechnicalDocument/2026-06-24-phase-4-verification-canonical-expansion-field-spec.md`；Phase 5 使用 `Doc/TechnicalDocument/2026-06-25-phase-5-merge-contribution-settlement-field-spec.md` | TDD 第 6、8、9、10、11、12、20、21、23 节；协议讨论稿第 6、7、10、11 节 | 先区分协议对象名、逻辑决策、字段名、artifact 类型、event payload、SQLite 表名和组件名，再写实现。 |
