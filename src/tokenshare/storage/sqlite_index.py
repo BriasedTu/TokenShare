@@ -5,11 +5,25 @@ from __future__ import annotations
 import json
 import sqlite3
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
+from tokenshare.core.contribution import (
+    ContributionRecord,
+    ContributionState,
+    SettlementEntry,
+    SettlementRecord,
+    SubtreePruneRecord,
+    digest_json,
+    digest_settlement_entries,
+)
 from tokenshare.core.expansion import ExpectedOutputRef
+from tokenshare.core.merge import (
+    ExpectedOutputResolution,
+    MergeRecord,
+    MergeTaskLink,
+)
 from tokenshare.core.models import ArtifactRef
 from tokenshare.storage.artifacts import ArtifactStore
 from tokenshare.storage.events import EventType, LedgerEvent
@@ -36,17 +50,26 @@ class SQLiteMaterializedIndex:
             event_list,
             artifact_store=self._artifact_store,
         )
+        phase5_context = _build_phase5_projection_context(
+            event_list,
+            phase4_context=phase4_context,
+            artifact_store=self._artifact_store,
+        )
         with sqlite3.connect(self.path) as connection:
             self._reset_schema(connection)
             for event in event_list:
                 self._insert_event(connection, event)
                 self._insert_materialized_payload(
                     connection,
-                    event,
+                        event,
                     phase4_context=phase4_context,
                 )
-            for expected_output in phase4_context.expected_output_refs:
+            for expected_output in _phase5_expected_output_refs(
+                phase4_context.expected_output_refs,
+                phase5_context=phase5_context,
+            ):
                 self._insert_expected_output_ref(connection, expected_output)
+            self._insert_phase5_projection(connection, phase5_context)
             connection.commit()
 
     def _reset_schema(self, connection: sqlite3.Connection) -> None:
@@ -72,6 +95,14 @@ class SQLiteMaterializedIndex:
             drop table if exists expansion_decisions;
             drop table if exists merge_plans;
             drop table if exists expected_output_refs;
+            drop table if exists merge_task_links;
+            drop table if exists merge_slot_bindings;
+            drop table if exists merge_records;
+            drop table if exists expected_output_resolutions;
+            drop table if exists contributions;
+            drop table if exists settlement_records;
+            drop table if exists settlement_entries;
+            drop table if exists subtree_prunes;
 
             create table ledger_events (
                 event_seq integer primary key,
@@ -381,6 +412,172 @@ class SQLiteMaterializedIndex:
                 source_expansion_decision_id text,
                 created_event_seq integer,
                 resolved_event_seq integer,
+                payload_json text not null
+            );
+
+            create table merge_task_links (
+                merge_task_link_id text primary key,
+                task_id text,
+                parent_unit_id text,
+                merge_plan_id text not null unique,
+                expansion_decision_id text,
+                merge_unit_id text,
+                merge_input_bundle_artifact_id text,
+                merge_input_bundle_digest text,
+                required_slot_bindings_digest text,
+                merge_policy_id text,
+                merge_policy_version text,
+                merge_policy_descriptor_digest text,
+                source_merge_plan_event_seq integer,
+                source_task_expanded_event_seq integer,
+                optional_task_relation_id text,
+                readiness_reason text,
+                recorded_event_seq integer not null,
+                batch_id text,
+                payload_json text not null
+            );
+
+            create table merge_slot_bindings (
+                merge_task_link_id text not null,
+                slot_key text not null,
+                slot_id text,
+                source_child_logical_key text,
+                source_child_unit_id text,
+                source_output_name text,
+                source_output_schema_digest text,
+                canonical_selection_id text,
+                canonical_event_seq integer,
+                canonical_output_ref_json text not null,
+                canonical_output_digest text,
+                canonical_output_bundle_digest text,
+                selected_verification_report_id text,
+                selected_attempt_id text,
+                binding_source text,
+                payload_json text not null,
+                primary key (merge_task_link_id, slot_key)
+            );
+
+            create table merge_records (
+                merge_record_id text primary key,
+                task_id text,
+                parent_unit_id text,
+                merge_plan_id text not null unique,
+                merge_unit_id text,
+                merge_task_link_id text,
+                merge_input_bundle_artifact_id text,
+                merge_input_bundle_digest text,
+                required_slot_bindings_digest text,
+                merge_policy_id text,
+                merge_policy_version text,
+                merge_policy_descriptor_digest text,
+                merge_policy_params_digest text,
+                canonical_selection_id text,
+                canonical_event_seq integer,
+                selected_verification_report_id text,
+                selected_verification_event_seq integer,
+                selected_submission_id text,
+                selected_submission_event_seq integer,
+                selected_attempt_id text,
+                merge_output_bundle_digest text,
+                parent_output_mapping_digest text,
+                created_at text,
+                recorded_event_seq integer not null,
+                batch_id text,
+                payload_json text not null
+            );
+
+            create table expected_output_resolutions (
+                expected_output_resolution_id text primary key,
+                expected_output_id text not null unique,
+                task_id text,
+                owner_unit_id text,
+                expected_output_name text,
+                resolution_source_type text,
+                merge_record_id text,
+                merge_plan_id text,
+                merge_unit_id text,
+                merge_canonical_selection_id text,
+                resolved_output_ref_json text not null,
+                resolved_output_digest text,
+                resolved_at text,
+                resolved_event_seq integer not null,
+                batch_id text,
+                payload_json text not null
+            );
+
+            create table contributions (
+                contribution_id text primary key,
+                task_id text,
+                unit_id text,
+                kind text,
+                state text,
+                source_attempt_id text,
+                source_client_id text,
+                canonical_selection_id text,
+                canonical_event_seq integer,
+                verification_report_id text,
+                verification_event_seq integer,
+                source_decision_id text,
+                merge_record_id text,
+                source_batch_id text,
+                source_terminal_event_seq integer,
+                reward_weight integer,
+                created_at text,
+                updated_at text,
+                last_event_seq integer not null,
+                payload_json text not null
+            );
+
+            create table settlement_records (
+                settlement_record_id text primary key,
+                task_id text,
+                root_unit_id text,
+                root_completion_event_seq integer not null unique,
+                settlement_policy_id text,
+                settlement_policy_version text,
+                root_budget integer,
+                scale text,
+                total_reward integer,
+                entry_count integer,
+                settlement_entries_digest text,
+                settlement_entries_artifact_id text,
+                settlement_event_seq integer not null,
+                batch_id text,
+                payload_json text not null
+            );
+
+            create table settlement_entries (
+                settlement_entry_id text primary key,
+                settlement_record_id text not null,
+                contribution_id text,
+                task_id text,
+                unit_id text,
+                kind text,
+                source_client_id text,
+                reward_weight integer,
+                reward_units integer,
+                rounding_remainder_rank integer,
+                reason text,
+                payload_json text not null
+            );
+
+            create table subtree_prunes (
+                subtree_prune_id text primary key,
+                task_id text,
+                parent_unit_id text,
+                parent_completed_event_seq integer not null unique,
+                pruning_policy_id text,
+                pruning_policy_version text,
+                pruning_policy_plugin_id text,
+                pruning_policy_descriptor_digest text,
+                policy_source_type text,
+                policy_source_id text,
+                policy_source_event_seq integer,
+                cancelled_unit_count integer,
+                cancelled_unit_ids_digest text,
+                preserved_completed_unit_count integer,
+                recorded_event_seq integer not null,
+                batch_id text,
                 payload_json text not null
             );
             """
@@ -1135,6 +1332,319 @@ class SQLiteMaterializedIndex:
             ),
         )
 
+    def _insert_phase5_projection(
+        self,
+        connection: sqlite3.Connection,
+        phase5_context: "_Phase5ProjectionContext",
+    ) -> None:
+        for projection in phase5_context.merge_task_links:
+            link = projection.merge_task_link
+            ref = link.merge_input_bundle_ref
+            try:
+                connection.execute(
+                    """
+                    insert into merge_task_links (
+                        merge_task_link_id, task_id, parent_unit_id, merge_plan_id,
+                        expansion_decision_id, merge_unit_id,
+                        merge_input_bundle_artifact_id, merge_input_bundle_digest,
+                        required_slot_bindings_digest, merge_policy_id,
+                        merge_policy_version, merge_policy_descriptor_digest,
+                        source_merge_plan_event_seq, source_task_expanded_event_seq,
+                        optional_task_relation_id, readiness_reason,
+                        recorded_event_seq, batch_id, payload_json
+                    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        link.merge_task_link_id,
+                        link.task_id,
+                        link.parent_unit_id,
+                        link.merge_plan_id,
+                        link.expansion_decision_id,
+                        link.merge_unit_id,
+                        ref.get("artifact_id"),
+                        link.merge_input_bundle_digest,
+                        link.required_slot_bindings_digest,
+                        link.merge_policy_id,
+                        link.merge_policy_version,
+                        link.merge_policy_descriptor_digest,
+                        link.source_merge_plan_event_seq,
+                        link.source_task_expanded_event_seq,
+                        link.optional_task_relation_id,
+                        link.readiness_reason,
+                        projection.event.event_seq,
+                        projection.event.batch_id,
+                        _payload_json(link.to_dict()),
+                    ),
+                )
+            except sqlite3.IntegrityError as error:
+                raise ValueError(
+                    f"duplicate merge task link for merge_plan_id: {link.merge_plan_id}"
+                ) from error
+            for binding in link.required_slot_bindings:
+                connection.execute(
+                    """
+                    insert into merge_slot_bindings (
+                        merge_task_link_id, slot_key, slot_id,
+                        source_child_logical_key, source_child_unit_id,
+                        source_output_name, source_output_schema_digest,
+                        canonical_selection_id, canonical_event_seq,
+                        canonical_output_ref_json, canonical_output_digest,
+                        canonical_output_bundle_digest,
+                        selected_verification_report_id, selected_attempt_id,
+                        binding_source, payload_json
+                    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        link.merge_task_link_id,
+                        binding.slot_key,
+                        binding.slot_id,
+                        binding.source_child_logical_key,
+                        binding.source_child_unit_id,
+                        binding.source_output_name,
+                        binding.source_output_schema_digest,
+                        binding.canonical_selection_id,
+                        binding.canonical_event_seq,
+                        _payload_json(binding.canonical_output_ref),
+                        binding.canonical_output_digest,
+                        binding.canonical_output_bundle_digest,
+                        binding.selected_verification_report_id,
+                        binding.selected_attempt_id,
+                        binding.binding_source,
+                        _payload_json(binding.to_dict()),
+                    ),
+                )
+
+        for projection in phase5_context.merge_records:
+            record = projection.merge_record
+            ref = record.merge_input_bundle_ref
+            try:
+                connection.execute(
+                    """
+                    insert into merge_records (
+                        merge_record_id, task_id, parent_unit_id, merge_plan_id,
+                        merge_unit_id, merge_task_link_id,
+                        merge_input_bundle_artifact_id, merge_input_bundle_digest,
+                        required_slot_bindings_digest, merge_policy_id,
+                        merge_policy_version, merge_policy_descriptor_digest,
+                        merge_policy_params_digest, canonical_selection_id,
+                        canonical_event_seq, selected_verification_report_id,
+                        selected_verification_event_seq, selected_submission_id,
+                        selected_submission_event_seq, selected_attempt_id,
+                        merge_output_bundle_digest, parent_output_mapping_digest,
+                        created_at, recorded_event_seq, batch_id, payload_json
+                    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        record.merge_record_id,
+                        record.task_id,
+                        record.parent_unit_id,
+                        record.merge_plan_id,
+                        record.merge_unit_id,
+                        record.merge_task_link_id,
+                        ref.get("artifact_id"),
+                        record.merge_input_bundle_digest,
+                        record.required_slot_bindings_digest,
+                        record.merge_policy_id,
+                        record.merge_policy_version,
+                        record.merge_policy_descriptor_digest,
+                        record.merge_policy_params_digest,
+                        record.canonical_selection_id,
+                        record.canonical_event_seq,
+                        record.selected_verification_report_id,
+                        record.selected_verification_event_seq,
+                        record.selected_submission_id,
+                        record.selected_submission_event_seq,
+                        record.selected_attempt_id,
+                        record.merge_output_bundle_digest,
+                        record.parent_output_mapping_digest,
+                        record.created_at,
+                        projection.event.event_seq,
+                        projection.event.batch_id,
+                        _payload_json(record.to_dict()),
+                    ),
+                )
+            except sqlite3.IntegrityError as error:
+                raise ValueError(
+                    f"duplicate merge record for merge_plan_id: {record.merge_plan_id}"
+                ) from error
+
+        for projection in phase5_context.expected_output_resolutions:
+            resolution = projection.expected_output_resolution
+            try:
+                connection.execute(
+                    """
+                    insert into expected_output_resolutions (
+                        expected_output_resolution_id, expected_output_id,
+                        task_id, owner_unit_id, expected_output_name,
+                        resolution_source_type, merge_record_id, merge_plan_id,
+                        merge_unit_id, merge_canonical_selection_id,
+                        resolved_output_ref_json, resolved_output_digest,
+                        resolved_at, resolved_event_seq, batch_id, payload_json
+                    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        resolution.expected_output_resolution_id,
+                        resolution.expected_output_id,
+                        resolution.task_id,
+                        resolution.owner_unit_id,
+                        resolution.expected_output_name,
+                        resolution.resolution_source_type,
+                        resolution.merge_record_id,
+                        resolution.merge_plan_id,
+                        resolution.merge_unit_id,
+                        resolution.merge_canonical_selection_id,
+                        _payload_json(resolution.resolved_output_ref),
+                        resolution.resolved_output_digest,
+                        resolution.resolved_at,
+                        projection.event.event_seq,
+                        projection.event.batch_id,
+                        _payload_json(resolution.to_dict()),
+                    ),
+                )
+            except sqlite3.IntegrityError as error:
+                raise ValueError(
+                    f"duplicate expected output resolution: {resolution.expected_output_id}"
+                ) from error
+
+        for projection in phase5_context.contributions:
+            contribution = projection.contribution
+            connection.execute(
+                """
+                insert or replace into contributions (
+                    contribution_id, task_id, unit_id, kind, state,
+                    source_attempt_id, source_client_id, canonical_selection_id,
+                    canonical_event_seq, verification_report_id,
+                    verification_event_seq, source_decision_id, merge_record_id,
+                    source_batch_id, source_terminal_event_seq, reward_weight,
+                    created_at, updated_at, last_event_seq, payload_json
+                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    contribution.contribution_id,
+                    contribution.task_id,
+                    contribution.unit_id,
+                    contribution.kind,
+                    contribution.state.value,
+                    contribution.source_attempt_id,
+                    contribution.source_client_id,
+                    contribution.canonical_selection_id,
+                    contribution.canonical_event_seq,
+                    contribution.verification_report_id,
+                    contribution.verification_event_seq,
+                    contribution.source_decision_id,
+                    contribution.merge_record_id,
+                    contribution.source_batch_id,
+                    contribution.source_terminal_event_seq,
+                    contribution.reward_weight,
+                    contribution.created_at,
+                    contribution.updated_at,
+                    projection.event.event_seq,
+                    _payload_json(contribution.to_dict()),
+                ),
+            )
+
+        for projection in phase5_context.settlements:
+            record = projection.settlement_record
+            ref = record.settlement_entries_ref
+            try:
+                connection.execute(
+                    """
+                    insert into settlement_records (
+                        settlement_record_id, task_id, root_unit_id,
+                        root_completion_event_seq, settlement_policy_id,
+                        settlement_policy_version, root_budget, scale,
+                        total_reward, entry_count, settlement_entries_digest,
+                        settlement_entries_artifact_id, settlement_event_seq,
+                        batch_id, payload_json
+                    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        record.settlement_record_id,
+                        record.task_id,
+                        record.root_unit_id,
+                        record.root_completion_event_seq,
+                        record.settlement_policy_id,
+                        record.settlement_policy_version,
+                        record.root_budget,
+                        record.scale,
+                        record.total_reward,
+                        record.entry_count,
+                        record.settlement_entries_digest,
+                        ref.get("artifact_id"),
+                        projection.event.event_seq,
+                        projection.event.batch_id,
+                        _payload_json(record.to_dict()),
+                    ),
+                )
+            except sqlite3.IntegrityError as error:
+                raise ValueError(
+                    "settlement conflict: duplicate root completion settlement"
+                ) from error
+            for entry in projection.settlement_entries:
+                connection.execute(
+                    """
+                    insert into settlement_entries (
+                        settlement_entry_id, settlement_record_id,
+                        contribution_id, task_id, unit_id, kind, source_client_id,
+                        reward_weight, reward_units, rounding_remainder_rank,
+                        reason, payload_json
+                    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        entry.settlement_entry_id,
+                        record.settlement_record_id,
+                        entry.contribution_id,
+                        entry.task_id,
+                        entry.unit_id,
+                        entry.kind,
+                        entry.source_client_id,
+                        entry.reward_weight,
+                        entry.reward_units,
+                        entry.rounding_remainder_rank,
+                        entry.reason,
+                        _payload_json(entry.to_dict()),
+                    ),
+                )
+
+        for projection in phase5_context.subtree_prunes:
+            record = projection.subtree_prune_record
+            try:
+                connection.execute(
+                    """
+                    insert into subtree_prunes (
+                        subtree_prune_id, task_id, parent_unit_id,
+                        parent_completed_event_seq, pruning_policy_id,
+                        pruning_policy_version, pruning_policy_plugin_id,
+                        pruning_policy_descriptor_digest, policy_source_type,
+                        policy_source_id, policy_source_event_seq,
+                        cancelled_unit_count, cancelled_unit_ids_digest,
+                        preserved_completed_unit_count, recorded_event_seq,
+                        batch_id, payload_json
+                    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        record.subtree_prune_id,
+                        record.task_id,
+                        record.parent_unit_id,
+                        record.parent_completed_event_seq,
+                        record.pruning_policy_id,
+                        record.pruning_policy_version,
+                        record.pruning_policy_plugin_id,
+                        record.pruning_policy_descriptor_digest,
+                        record.policy_source_type,
+                        record.policy_source_id,
+                        record.policy_source_event_seq,
+                        record.cancelled_unit_count,
+                        record.cancelled_unit_ids_digest,
+                        record.preserved_completed_unit_count,
+                        projection.event.event_seq,
+                        projection.event.batch_id,
+                        _payload_json(record.to_dict()),
+                    ),
+                )
+            except sqlite3.IntegrityError as error:
+                raise ValueError("subtree pruning conflict") from error
+
 
 @dataclass(frozen=True)
 class _ExpansionBatch:
@@ -1172,6 +1682,486 @@ class _Phase4ProjectionContext:
             expansion_batch is not None
             and expansion_batch.decision_event.event_seq == event.event_seq
         )
+
+
+@dataclass(frozen=True)
+class _MergeTaskLinkProjection:
+    merge_task_link: MergeTaskLink
+    event: LedgerEvent
+
+
+@dataclass(frozen=True)
+class _MergeRecordProjection:
+    merge_record: MergeRecord
+    event: LedgerEvent
+
+
+@dataclass(frozen=True)
+class _ExpectedOutputResolutionProjection:
+    expected_output_resolution: ExpectedOutputResolution
+    merge_record: MergeRecord
+    event: LedgerEvent
+
+
+@dataclass(frozen=True)
+class _ContributionProjection:
+    contribution: ContributionRecord
+    event: LedgerEvent
+
+
+@dataclass(frozen=True)
+class _SettlementProjection:
+    settlement_record: SettlementRecord
+    settlement_entries: tuple[SettlementEntry, ...]
+    event: LedgerEvent
+
+
+@dataclass(frozen=True)
+class _SubtreePruneProjection:
+    subtree_prune_record: SubtreePruneRecord
+    event: LedgerEvent
+
+
+@dataclass(frozen=True)
+class _Phase5ProjectionContext:
+    merge_task_links: tuple[_MergeTaskLinkProjection, ...]
+    merge_records: tuple[_MergeRecordProjection, ...]
+    expected_output_resolutions: tuple[_ExpectedOutputResolutionProjection, ...]
+    contributions: tuple[_ContributionProjection, ...]
+    settlements: tuple[_SettlementProjection, ...]
+    subtree_prunes: tuple[_SubtreePruneProjection, ...]
+
+
+def _build_phase5_projection_context(
+    events: list[LedgerEvent],
+    *,
+    phase4_context: _Phase4ProjectionContext,
+    artifact_store: ArtifactStore | None,
+) -> _Phase5ProjectionContext:
+    del phase4_context
+    grouped_events: dict[str, list[LedgerEvent]] = defaultdict(list)
+    for event in events:
+        if event.batch_id is not None:
+            grouped_events[event.batch_id].append(event)
+        _reject_unbatched_phase5_marker(event)
+
+    merge_task_links: list[_MergeTaskLinkProjection] = []
+    merge_records: list[_MergeRecordProjection] = []
+    expected_output_resolutions: list[_ExpectedOutputResolutionProjection] = []
+    settlements: list[_SettlementProjection] = []
+    subtree_prunes: list[_SubtreePruneProjection] = []
+
+    seen_merge_plan_links: set[str] = set()
+    seen_expected_outputs: set[str] = set()
+    for batch_id, batch_events in grouped_events.items():
+        ordered_events = _ordered_batch_events(batch_id, batch_events)
+        if batch_id.startswith("merge_task_creation_batch:"):
+            projection = _validate_merge_task_creation_batch(batch_id, ordered_events)
+            if projection.merge_task_link.merge_plan_id in seen_merge_plan_links:
+                raise ValueError(
+                    f"duplicate merge task link for merge_plan_id: {projection.merge_task_link.merge_plan_id}"
+                )
+            seen_merge_plan_links.add(projection.merge_task_link.merge_plan_id)
+            merge_task_links.append(projection)
+        elif batch_id.startswith("merge_resolution_batch:"):
+            record_projection, resolution_projections = _validate_merge_resolution_batch(
+                batch_id,
+                ordered_events,
+            )
+            for projection in resolution_projections:
+                expected_output_id = (
+                    projection.expected_output_resolution.expected_output_id
+                )
+                if expected_output_id in seen_expected_outputs:
+                    raise ValueError(
+                        f"duplicate expected output resolution: {expected_output_id}"
+                    )
+                seen_expected_outputs.add(expected_output_id)
+            merge_records.append(record_projection)
+            expected_output_resolutions.extend(resolution_projections)
+        elif batch_id.startswith("parent_completion_batch:"):
+            _validate_parent_completion_batch(batch_id, ordered_events)
+        elif batch_id.startswith("settlement_batch:"):
+            settlements.append(
+                _validate_settlement_batch(
+                    batch_id,
+                    ordered_events,
+                    artifact_store=artifact_store,
+                )
+            )
+        elif batch_id.startswith("subtree_pruning_batch:"):
+            subtree_prunes.append(
+                _validate_subtree_pruning_batch(
+                    batch_id,
+                    ordered_events,
+                    all_events=events,
+                    artifact_store=artifact_store,
+                )
+            )
+
+    contributions = _contribution_projections(events)
+    return _Phase5ProjectionContext(
+        merge_task_links=tuple(merge_task_links),
+        merge_records=tuple(merge_records),
+        expected_output_resolutions=tuple(expected_output_resolutions),
+        contributions=tuple(contributions),
+        settlements=tuple(settlements),
+        subtree_prunes=tuple(subtree_prunes),
+    )
+
+
+def _phase5_expected_output_refs(
+    expected_outputs: tuple[_ExpectedOutputProjection, ...],
+    *,
+    phase5_context: _Phase5ProjectionContext,
+) -> tuple[_ExpectedOutputProjection, ...]:
+    resolutions_by_id = {
+        projection.expected_output_resolution.expected_output_id: projection
+        for projection in phase5_context.expected_output_resolutions
+    }
+    updated: list[_ExpectedOutputProjection] = []
+    for projection in expected_outputs:
+        expected_output_ref = projection.expected_output_ref
+        resolution_projection = resolutions_by_id.get(
+            expected_output_ref.expected_output_id
+        )
+        if resolution_projection is None:
+            updated.append(projection)
+            continue
+        resolution = resolution_projection.expected_output_resolution
+        merge_record = resolution_projection.merge_record
+        resolved_ref = replace(
+            expected_output_ref,
+            resolution_status="resolved",
+            canonical_selection_id=resolution.merge_canonical_selection_id,
+            canonical_output_bundle_digest=merge_record.merge_output_bundle_digest,
+            resolved_event_seq=resolution_projection.event.event_seq,
+        )
+        updated.append(
+            _ExpectedOutputProjection(
+                expected_output_ref=resolved_ref,
+                source_expected_output={
+                    **projection.source_expected_output,
+                    "resolved_output_ref": resolution.resolved_output_ref,
+                    "resolved_output_digest": resolution.resolved_output_digest,
+                    "merge_record_id": resolution.merge_record_id,
+                },
+            )
+        )
+    return tuple(updated)
+
+
+def _reject_unbatched_phase5_marker(event: LedgerEvent) -> None:
+    event_type = _event_type_value(event.event_type)
+    batch_id = event.batch_id or ""
+    phase5_batch_markers = {
+        EventType.MERGE_TASK_LINK_RECORDED.value: "merge_task_creation_batch:",
+        EventType.MERGE_RECORDED.value: "merge_resolution_batch:",
+        EventType.EXPECTED_OUTPUT_RESOLVED.value: "merge_resolution_batch:",
+        EventType.SETTLEMENT_RECORDED.value: "settlement_batch:",
+        EventType.SUBTREE_PRUNED.value: "subtree_pruning_batch:",
+    }
+    expected_prefix = phase5_batch_markers.get(event_type)
+    if expected_prefix is not None and not batch_id.startswith(expected_prefix):
+        raise ValueError(f"incomplete {expected_prefix.removesuffix(':')}: {event.object_id}")
+
+
+def _validate_merge_task_creation_batch(
+    batch_id: str,
+    events: tuple[LedgerEvent, ...],
+) -> _MergeTaskLinkProjection:
+    event_types = [_event_type_value(event.event_type) for event in events]
+    if event_types not in (
+        [
+            EventType.TASK_UNIT_CREATED.value,
+            EventType.MERGE_TASK_LINK_RECORDED.value,
+        ],
+        [
+            EventType.TASK_UNIT_CREATED.value,
+            EventType.TASK_RELATION_CREATED.value,
+            EventType.MERGE_TASK_LINK_RECORDED.value,
+        ],
+    ):
+        raise ValueError(f"incomplete merge_task_creation_batch: {batch_id}")
+    link_event = events[-1]
+    link_payload = link_event.payload.get("merge_task_link")
+    if not isinstance(link_payload, dict):
+        raise ValueError(f"incomplete merge_task_creation_batch: {batch_id}")
+    link = MergeTaskLink(**link_payload)
+    task_unit = events[0].payload.get("task_unit", {})
+    if (
+        not isinstance(task_unit, dict)
+        or task_unit.get("unit_id") != link.merge_unit_id
+        or link_event.payload.get("merge_plan_id") != link.merge_plan_id
+    ):
+        raise ValueError(f"incomplete merge_task_creation_batch: {batch_id}")
+    return _MergeTaskLinkProjection(merge_task_link=link, event=link_event)
+
+
+def _validate_merge_resolution_batch(
+    batch_id: str,
+    events: tuple[LedgerEvent, ...],
+) -> tuple[_MergeRecordProjection, tuple[_ExpectedOutputResolutionProjection, ...]]:
+    event_types = [_event_type_value(event.event_type) for event in events]
+    if (
+        len(event_types) < 2
+        or event_types[0] != EventType.MERGE_RECORDED.value
+        or any(
+            event_type != EventType.EXPECTED_OUTPUT_RESOLVED.value
+            for event_type in event_types[1:]
+        )
+    ):
+        raise ValueError(f"incomplete merge_resolution_batch: {batch_id}")
+    merge_event = events[0]
+    merge_record_payload = merge_event.payload.get("merge_record")
+    if not isinstance(merge_record_payload, dict):
+        raise ValueError(f"incomplete merge_resolution_batch: {batch_id}")
+    merge_record = MergeRecord(**merge_record_payload)
+    seen_expected_output_ids: set[str] = set()
+    resolution_projections: list[_ExpectedOutputResolutionProjection] = []
+    for event in events[1:]:
+        resolution_payload = event.payload.get("expected_output_resolution")
+        if not isinstance(resolution_payload, dict):
+            raise ValueError(f"incomplete merge_resolution_batch: {batch_id}")
+        resolution = ExpectedOutputResolution(**resolution_payload)
+        if resolution.merge_record_id != merge_record.merge_record_id:
+            raise ValueError(f"incomplete merge_resolution_batch: {batch_id}")
+        if resolution.expected_output_id in seen_expected_output_ids:
+            raise ValueError(
+                f"duplicate expected output resolution: {resolution.expected_output_id}"
+            )
+        seen_expected_output_ids.add(resolution.expected_output_id)
+        resolution_projections.append(
+            _ExpectedOutputResolutionProjection(
+                expected_output_resolution=resolution,
+                merge_record=merge_record,
+                event=event,
+            )
+        )
+    return (
+        _MergeRecordProjection(merge_record=merge_record, event=merge_event),
+        tuple(resolution_projections),
+    )
+
+
+def _validate_parent_completion_batch(
+    batch_id: str,
+    events: tuple[LedgerEvent, ...],
+) -> None:
+    event_types = [_event_type_value(event.event_type) for event in events]
+    if (
+        len(event_types) < 1
+        or event_types[0] != EventType.TASK_UNIT_STATE_CHANGED.value
+        or any(
+            event_type != EventType.CONTRIBUTION_STATE_CHANGED.value
+            for event_type in event_types[1:]
+        )
+        or _state_change_new_state(events[0].payload) != "Completed"
+    ):
+        raise ValueError(f"incomplete parent_completion_batch: {batch_id}")
+    for event in events[1:]:
+        if event.payload.get("old_state") != "Pending" or event.payload.get(
+            "new_state"
+        ) != "Eligible":
+            raise ValueError(f"incomplete parent_completion_batch: {batch_id}")
+
+
+def _validate_settlement_batch(
+    batch_id: str,
+    events: tuple[LedgerEvent, ...],
+    *,
+    artifact_store: ArtifactStore | None,
+) -> _SettlementProjection:
+    event_types = [_event_type_value(event.event_type) for event in events]
+    if (
+        len(event_types) < 2
+        or event_types[-1] != EventType.SETTLEMENT_RECORDED.value
+        or any(
+            event_type != EventType.CONTRIBUTION_STATE_CHANGED.value
+            for event_type in event_types[:-1]
+        )
+    ):
+        raise ValueError(f"incomplete settlement_batch: {batch_id}")
+    settled_events = events[:-1]
+    if not all(
+        event.payload.get("old_state") == ContributionState.ELIGIBLE.value
+        and event.payload.get("new_state") == ContributionState.SETTLED.value
+        for event in settled_events
+    ):
+        raise ValueError(f"incomplete settlement_batch: {batch_id}")
+
+    marker_event = events[-1]
+    record_payload = marker_event.payload.get("settlement_record")
+    if not isinstance(record_payload, dict):
+        raise ValueError("settlement_record payload missing")
+    try:
+        settlement_record = SettlementRecord(**record_payload)
+    except (TypeError, ValueError) as error:
+        message = str(error)
+        if "settlement_entries_ref" in message:
+            raise ValueError("settlement_entries_ref is required") from error
+        raise
+    if artifact_store is None:
+        raise ValueError("artifact_store is required to project settlement entries")
+    entries_ref_data = settlement_record.settlement_entries_ref
+    entries_artifact_ref = ArtifactRef.from_dict(entries_ref_data)
+    if not artifact_store.verify(entries_artifact_ref):
+        raise ValueError("settlement entries artifact digest mismatch")
+    entries_payload = json.loads(
+        artifact_store.read_bytes(entries_artifact_ref).decode("utf-8")
+    )
+    if not isinstance(entries_payload, list):
+        raise ValueError("settlement entries artifact must contain a list")
+    entries = tuple(SettlementEntry(**entry) for entry in entries_payload)
+    if digest_settlement_entries(list(entries)) != settlement_record.settlement_entries_digest:
+        raise ValueError("settlement entries artifact digest mismatch")
+    if settlement_record.entry_count != len(entries):
+        raise ValueError("settlement entries mismatch")
+    if sum(entry.reward_units for entry in entries) != settlement_record.total_reward:
+        raise ValueError("settlement entries mismatch")
+
+    entries_by_contribution_id = {entry.contribution_id: entry for entry in entries}
+    settled_contribution_ids = {
+        event.payload.get("contribution", {}).get("contribution_id")
+        for event in settled_events
+    }
+    if set(entries_by_contribution_id) != settled_contribution_ids:
+        raise ValueError("settlement entries mismatch")
+    for event in settled_events:
+        contribution_id = event.payload.get("contribution", {}).get("contribution_id")
+        event_entry = event.payload.get("settlement_entry")
+        entry = entries_by_contribution_id.get(contribution_id)
+        if entry is None or event_entry != entry.to_dict():
+            raise ValueError("settlement entries mismatch")
+    return _SettlementProjection(
+        settlement_record=settlement_record,
+        settlement_entries=entries,
+        event=marker_event,
+    )
+
+
+def _validate_subtree_pruning_batch(
+    batch_id: str,
+    batch_events: tuple[LedgerEvent, ...],
+    *,
+    all_events: list[LedgerEvent],
+    artifact_store: ArtifactStore | None,
+) -> _SubtreePruneProjection:
+    event_types = [_event_type_value(event.event_type) for event in batch_events]
+    if (
+        len(event_types) < 2
+        or event_types[-1] != EventType.SUBTREE_PRUNED.value
+        or any(
+            event_type != EventType.TASK_UNIT_STATE_CHANGED.value
+            for event_type in event_types[:-1]
+        )
+    ):
+        raise ValueError(f"incomplete subtree_pruning_batch: {batch_id}")
+    cancellation_events = batch_events[:-1]
+    if not all(
+        event.payload.get("old_state") in {"Ready", "Processing", "Blocked"}
+        and event.payload.get("new_state") == "Cancelled"
+        for event in cancellation_events
+    ):
+        raise ValueError(f"incomplete subtree_pruning_batch: {batch_id}")
+    marker_event = batch_events[-1]
+    record_payload = marker_event.payload.get("subtree_prune_record")
+    if not isinstance(record_payload, dict):
+        raise ValueError("subtree_prune_record payload missing")
+    if not record_payload.get("pruning_policy_descriptor_digest"):
+        raise ValueError("descriptor provenance is required for subtree pruning")
+    try:
+        record = SubtreePruneRecord(**record_payload)
+    except (TypeError, ValueError) as error:
+        message = str(error)
+        if "pruning_policy_descriptor_digest" in message:
+            raise ValueError("descriptor provenance is required for subtree pruning") from error
+        raise
+    cancelled_unit_ids = tuple(event.object_id for event in cancellation_events)
+    if (
+        record.cancelled_unit_count != len(cancelled_unit_ids)
+        or record.cancelled_unit_ids_digest != digest_json(sorted(cancelled_unit_ids))
+        or marker_event.payload.get("cancelled_unit_ids_digest")
+        != record.cancelled_unit_ids_digest
+        or marker_event.payload.get("parent_completed_event_seq")
+        != record.parent_completed_event_seq
+    ):
+        raise ValueError(f"incomplete subtree_pruning_batch: {batch_id}")
+    _validate_pruning_policy_source(
+        record=record,
+        events=all_events,
+        artifact_store=artifact_store,
+    )
+    return _SubtreePruneProjection(subtree_prune_record=record, event=marker_event)
+
+
+def _validate_pruning_policy_source(
+    *,
+    record: SubtreePruneRecord,
+    events: list[LedgerEvent],
+    artifact_store: ArtifactStore | None,
+) -> None:
+    source_event = next(
+        (event for event in events if event.event_seq == record.policy_source_event_seq),
+        None,
+    )
+    if source_event is None:
+        raise ValueError("policy source event missing for subtree pruning")
+    if record.policy_source_type == "merge_plan":
+        if source_event.event_type != EventType.MERGE_PLAN_RECORDED:
+            raise ValueError("policy source event mismatch for subtree pruning")
+        if source_event.payload.get("merge_plan_id") != record.policy_source_id:
+            raise ValueError("policy source event mismatch for subtree pruning")
+        descriptor_digest = source_event.payload.get("merge_policy_descriptor_digest")
+        if descriptor_digest is None:
+            if artifact_store is None:
+                raise ValueError("descriptor provenance is required for subtree pruning")
+            merge_plan_ref = source_event.payload.get("merge_plan_ref")
+            if not isinstance(merge_plan_ref, dict):
+                raise ValueError("descriptor provenance is required for subtree pruning")
+            merge_plan_payload = _read_json_artifact(artifact_store, merge_plan_ref)
+            if not isinstance(merge_plan_payload, dict):
+                raise ValueError("descriptor provenance is required for subtree pruning")
+            merge_policy_ref = merge_plan_payload.get("merge_policy_ref", {})
+            if isinstance(merge_policy_ref, dict):
+                descriptor_digest = merge_policy_ref.get(
+                    "merge_policy_descriptor_digest"
+                )
+        if descriptor_digest != record.pruning_policy_descriptor_digest:
+            raise ValueError("descriptor provenance mismatch for subtree pruning")
+
+
+def _contribution_projections(events: list[LedgerEvent]) -> list[_ContributionProjection]:
+    latest_by_id: dict[str, _ContributionProjection] = {}
+    for event in sorted(events, key=lambda item: item.event_seq):
+        if event.event_type != EventType.CONTRIBUTION_STATE_CHANGED:
+            continue
+        contribution_payload = event.payload.get("contribution")
+        if not isinstance(contribution_payload, dict):
+            raise ValueError("contribution payload missing")
+        contribution = ContributionRecord(**contribution_payload)
+        new_state = event.payload.get("new_state")
+        if contribution.state.value != new_state:
+            raise ValueError("contribution state mismatch")
+        previous = latest_by_id.get(contribution.contribution_id)
+        old_state = event.payload.get("old_state")
+        if previous is None:
+            if old_state is not None:
+                # Test fixtures may seed settled facts directly for pruning
+                # preservation. Those are still authoritative contribution
+                # state facts and must be indexable.
+                if old_state != ContributionState.ELIGIBLE.value or new_state not in {
+                    ContributionState.SETTLED.value,
+                    ContributionState.INVALIDATED.value,
+                }:
+                    raise ValueError("contribution state mismatch")
+        elif previous.contribution.state.value != old_state:
+            raise ValueError("contribution state mismatch")
+        latest_by_id[contribution.contribution_id] = _ContributionProjection(
+            contribution=contribution,
+            event=event,
+        )
+    return list(latest_by_id.values())
 
 
 def _build_phase4_projection_context(
@@ -1529,6 +2519,16 @@ def _raise_batch_error(batch_id: str) -> None:
         raise ValueError(f"incomplete completion_batch: {batch_id}")
     if batch_id.startswith("expansion_batch:"):
         raise ValueError(f"incomplete expansion_batch: {batch_id}")
+    if batch_id.startswith("merge_task_creation_batch:"):
+        raise ValueError(f"incomplete merge_task_creation_batch: {batch_id}")
+    if batch_id.startswith("merge_resolution_batch:"):
+        raise ValueError(f"incomplete merge_resolution_batch: {batch_id}")
+    if batch_id.startswith("parent_completion_batch:"):
+        raise ValueError(f"incomplete parent_completion_batch: {batch_id}")
+    if batch_id.startswith("settlement_batch:"):
+        raise ValueError(f"incomplete settlement_batch: {batch_id}")
+    if batch_id.startswith("subtree_pruning_batch:"):
+        raise ValueError(f"incomplete subtree_pruning_batch: {batch_id}")
     raise ValueError(f"batch envelope inconsistent: {batch_id}")
 
 

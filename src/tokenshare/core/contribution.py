@@ -6,7 +6,9 @@ import json
 from dataclasses import dataclass, replace
 from enum import Enum
 from hashlib import sha256
-from typing import Any
+from typing import Any, Iterable
+
+from tokenshare.storage.events import EventLedger, EventType, LedgerEvent
 
 
 JsonObject = dict[str, Any]
@@ -85,6 +87,121 @@ class ContributionRecord:
 
     def to_dict(self) -> JsonObject:
         return _dataclass_dict(self)
+
+
+@dataclass(frozen=True)
+class ContributionFlowResult:
+    contribution: ContributionRecord
+    event: LedgerEvent
+
+
+class ContributionCoordinator:
+    """Derive Phase 5 contribution records from complete canonical source batches."""
+
+    def __init__(self, *, event_ledger: EventLedger) -> None:
+        self._event_ledger = event_ledger
+
+    def record_canonical_contributions(
+        self,
+        *,
+        task_id: str,
+        completion_batches: list[Any],
+        expansion_batches: list[Any],
+        merge_resolution_batches: list[Any],
+        now: str,
+        correlation_id: str,
+    ) -> list[ContributionFlowResult]:
+        events = tuple(self._event_ledger.read_all())
+        results: list[ContributionFlowResult] = []
+        for batch in completion_batches:
+            contribution, source_event = _contribution_from_completion_batch(
+                task_id=task_id,
+                batch=batch,
+                events=events,
+            )
+            results.append(
+                self._append_creation_event(
+                    contribution=contribution,
+                    source_event=source_event,
+                    now=now,
+                    correlation_id=correlation_id,
+                )
+            )
+        for batch in expansion_batches:
+            contribution, source_event = _contribution_from_expansion_batch(
+                task_id=task_id,
+                batch=batch,
+                events=events,
+            )
+            results.append(
+                self._append_creation_event(
+                    contribution=contribution,
+                    source_event=source_event,
+                    now=now,
+                    correlation_id=correlation_id,
+                )
+            )
+        for batch in merge_resolution_batches:
+            contribution, source_event = _contribution_from_merge_resolution_batch(
+                task_id=task_id,
+                batch=batch,
+                events=events,
+            )
+            results.append(
+                self._append_creation_event(
+                    contribution=contribution,
+                    source_event=source_event,
+                    now=now,
+                    correlation_id=correlation_id,
+                )
+            )
+        return results
+
+    def _append_creation_event(
+        self,
+        *,
+        contribution: ContributionRecord,
+        source_event: LedgerEvent,
+        now: str,
+        correlation_id: str,
+    ) -> ContributionFlowResult:
+        new_state = ContributionState(contribution.state)
+        event = self._event_ledger.append(
+            event_type=EventType.CONTRIBUTION_STATE_CHANGED,
+            object_type="ContributionRecord",
+            object_id=contribution.contribution_id,
+            task_id=contribution.task_id,
+            actor={"kind": "contribution_coordinator"},
+            correlation_id=correlation_id,
+            causation_event_id=source_event.event_id,
+            idempotency_key=(
+                f"contribution:create:{contribution.contribution_id}:"
+                f"{new_state.value}"
+            ),
+            payload={
+                "schema_version": "phase5.contribution_state_changed.v1",
+                "contribution": contribution.to_dict(),
+                "old_state": None,
+                "new_state": new_state.value,
+                "reason": "canonical_contribution_created",
+                "task_id": contribution.task_id,
+                "unit_id": contribution.unit_id,
+                "kind": contribution.kind,
+                "canonical_selection_id": contribution.canonical_selection_id,
+                "canonical_event_seq": contribution.canonical_event_seq,
+                "source_batch_id": contribution.source_batch_id,
+                "source_terminal_event_seq": contribution.source_terminal_event_seq,
+                "changed_at": contribution.updated_at,
+            },
+            occurred_at=now,
+        )
+        recorded = event.payload.get("contribution")
+        contribution_record = (
+            ContributionRecord(**recorded)
+            if isinstance(recorded, dict)
+            else contribution
+        )
+        return ContributionFlowResult(contribution=contribution_record, event=event)
 
 
 @dataclass(frozen=True)
@@ -337,6 +454,255 @@ def digest_settlement_entries(entries: list[SettlementEntry]) -> str:
 
 def digest_json(data: Any) -> str:
     return f"sha256:{sha256(_canonical_json(data).encode('utf-8')).hexdigest()}"
+
+
+def _contribution_from_completion_batch(
+    *, task_id: str, batch: Any, events: tuple[LedgerEvent, ...]
+) -> tuple[ContributionRecord, LedgerEvent]:
+    batch_events = _validated_named_batch_events(batch, "completion_batch")
+    if len(batch_events) != 2:
+        raise ValueError("projection inconsistent: incomplete completion_batch")
+    decision_event, terminal_event = batch_events
+    if (
+        decision_event.event_type != EventType.EXPANSION_DECISION_RECORDED
+        or decision_event.payload.get("action") != "complete"
+        or terminal_event.event_type != EventType.TASK_UNIT_STATE_CHANGED
+        or terminal_event.payload.get("new_state") != "Completed"
+    ):
+        raise ValueError("projection inconsistent: incomplete completion_batch")
+    return (
+        _contribution_from_decision_event(
+            kind="complete_canonical",
+            state=ContributionState.ELIGIBLE,
+            task_id=task_id,
+            decision_event=decision_event,
+            source_terminal_event=terminal_event,
+            source_batch_id=batch.batch_id,
+            events=events,
+        ),
+        terminal_event,
+    )
+
+
+def _contribution_from_expansion_batch(
+    *, task_id: str, batch: Any, events: tuple[LedgerEvent, ...]
+) -> tuple[ContributionRecord, LedgerEvent]:
+    batch_events = _validated_named_batch_events(batch, "expansion_batch")
+    decision_event = _single_event_of_type(
+        batch_events, EventType.EXPANSION_DECISION_RECORDED
+    )
+    terminal_event = batch_events[-1]
+    if (
+        getattr(batch, "task_expanded_visible", True) is not True
+        or decision_event.payload.get("action") != "expand"
+        or terminal_event.event_type != EventType.TASK_EXPANDED
+    ):
+        raise ValueError("projection inconsistent: incomplete expansion_batch")
+    return (
+        _contribution_from_decision_event(
+            kind="expand_canonical",
+            state=ContributionState.PENDING,
+            task_id=task_id,
+            decision_event=decision_event,
+            source_terminal_event=terminal_event,
+            source_batch_id=batch.batch_id,
+            events=events,
+        ),
+        terminal_event,
+    )
+
+
+def _contribution_from_merge_resolution_batch(
+    *, task_id: str, batch: Any, events: tuple[LedgerEvent, ...]
+) -> tuple[ContributionRecord, LedgerEvent]:
+    batch_events = _validated_named_batch_events(batch, "merge_resolution_batch")
+    merge_event = batch_events[0]
+    if (
+        len(batch_events) < 2
+        or merge_event.event_type != EventType.MERGE_RECORDED
+        or any(
+            event.event_type != EventType.EXPECTED_OUTPUT_RESOLVED
+            for event in batch_events[1:]
+        )
+    ):
+        raise ValueError("projection inconsistent: incomplete merge_resolution_batch")
+    merge_record = merge_event.payload.get("merge_record")
+    if not isinstance(merge_record, dict):
+        raise ValueError("merge_record payload missing")
+    unit_id = _required_string(merge_record, "merge_unit_id")
+    canonical_selection_id = _required_string(merge_record, "canonical_selection_id")
+    selected_attempt_id = _required_string(merge_record, "selected_attempt_id")
+    source_client_id = _source_client_id(
+        events=events,
+        selected_attempt_id=selected_attempt_id,
+    )
+    created_at = merge_event.occurred_at
+    contribution = ContributionRecord(
+        contribution_id=_contribution_id(
+            kind="merge_canonical",
+            task_id=task_id,
+            unit_id=unit_id,
+            canonical_selection_id=canonical_selection_id,
+        ),
+        task_id=task_id,
+        unit_id=unit_id,
+        kind="merge_canonical",
+        state=ContributionState.ELIGIBLE,
+        source_attempt_id=selected_attempt_id,
+        source_client_id=source_client_id,
+        canonical_selection_id=canonical_selection_id,
+        canonical_event_seq=int(merge_record["canonical_event_seq"]),
+        verification_report_id=_required_string(
+            merge_record, "selected_verification_report_id"
+        ),
+        verification_event_seq=int(merge_record["selected_verification_event_seq"]),
+        source_decision_id=None,
+        merge_record_id=_required_string(merge_record, "merge_record_id"),
+        source_batch_id=batch.batch_id,
+        source_terminal_event_seq=merge_event.event_seq,
+        reward_weight=1,
+        created_at=created_at,
+        updated_at=created_at,
+    )
+    return contribution, merge_event
+
+
+def _contribution_from_decision_event(
+    *,
+    kind: str,
+    state: ContributionState,
+    task_id: str,
+    decision_event: LedgerEvent,
+    source_terminal_event: LedgerEvent,
+    source_batch_id: str,
+    events: tuple[LedgerEvent, ...],
+) -> ContributionRecord:
+    canonical_selection_id = _required_string(
+        decision_event.payload, "canonical_selection_id"
+    )
+    canonical_event = _canonical_event_for_selection(
+        events=events,
+        canonical_selection_id=canonical_selection_id,
+    )
+    canonical_selection = canonical_event.payload.get("canonical_selection")
+    if not isinstance(canonical_selection, dict):
+        raise ValueError("canonical selection payload missing")
+    selected_attempt_id = _required_string(canonical_selection, "selected_attempt_id")
+    source_client_id = _source_client_id(
+        events=events,
+        selected_attempt_id=selected_attempt_id,
+    )
+    unit_id = _required_string(decision_event.payload, "unit_id")
+    created_at = source_terminal_event.occurred_at
+    return ContributionRecord(
+        contribution_id=_contribution_id(
+            kind=kind,
+            task_id=task_id,
+            unit_id=unit_id,
+            canonical_selection_id=canonical_selection_id,
+        ),
+        task_id=task_id,
+        unit_id=unit_id,
+        kind=kind,
+        state=state,
+        source_attempt_id=selected_attempt_id,
+        source_client_id=source_client_id,
+        canonical_selection_id=canonical_selection_id,
+        canonical_event_seq=canonical_event.event_seq,
+        verification_report_id=_required_string(
+            canonical_selection, "selected_verification_report_id"
+        ),
+        verification_event_seq=int(
+            canonical_selection["selected_verification_event_seq"]
+        ),
+        source_decision_id=decision_event.object_id,
+        merge_record_id=None,
+        source_batch_id=source_batch_id,
+        source_terminal_event_seq=source_terminal_event.event_seq,
+        reward_weight=1,
+        created_at=created_at,
+        updated_at=created_at,
+    )
+
+
+def _validated_batch_events(batch: Any) -> tuple[LedgerEvent, ...]:
+    batch_id = getattr(batch, "batch_id", None)
+    events = tuple(getattr(batch, "events", ()))
+    if not batch_id or not events:
+        raise ValueError("projection inconsistent: incomplete batch")
+    batch_sizes = {event.batch_size for event in events}
+    batch_ids = {event.batch_id for event in events}
+    indexes = [event.batch_index for event in events]
+    batch_size = next(iter(batch_sizes)) if len(batch_sizes) == 1 else None
+    if (
+        len(batch_ids) != 1
+        or batch_id not in batch_ids
+        or batch_size is None
+        or batch_size != len(events)
+        or indexes != list(range(1, len(events) + 1))
+    ):
+        raise ValueError("projection inconsistent: incomplete batch")
+    return events
+
+
+def _validated_named_batch_events(batch: Any, batch_kind: str) -> tuple[LedgerEvent, ...]:
+    try:
+        return _validated_batch_events(batch)
+    except ValueError as error:
+        raise ValueError(f"projection inconsistent: incomplete {batch_kind}") from error
+
+
+def _single_event_of_type(
+    events: tuple[LedgerEvent, ...], event_type: EventType
+) -> LedgerEvent:
+    matches = [event for event in events if event.event_type == event_type]
+    if len(matches) != 1:
+        raise ValueError(f"projection inconsistent: expected one {event_type.value}")
+    return matches[0]
+
+
+def _canonical_event_for_selection(
+    *, events: Iterable[LedgerEvent], canonical_selection_id: str
+) -> LedgerEvent:
+    for event in events:
+        if event.event_type != EventType.CANONICAL_OUTPUTS_BOUND:
+            continue
+        selection = event.payload.get("canonical_selection")
+        if (
+            isinstance(selection, dict)
+            and selection.get("canonical_selection_id") == canonical_selection_id
+        ):
+            return event
+    raise ValueError("canonical selection event missing for contribution")
+
+
+def _source_client_id(
+    *, events: Iterable[LedgerEvent], selected_attempt_id: str
+) -> str:
+    for event in reversed(tuple(events)):
+        if event.event_type != EventType.ATTEMPT_STATE_CHANGED:
+            continue
+        if event.object_id != selected_attempt_id:
+            continue
+        attempt = event.payload.get("attempt")
+        if isinstance(attempt, dict):
+            client_id = attempt.get("client_id")
+            if isinstance(client_id, str) and client_id:
+                return client_id
+    raise ValueError("selected canonical attempt client missing for contribution")
+
+
+def _contribution_id(
+    *, kind: str, task_id: str, unit_id: str, canonical_selection_id: str
+) -> str:
+    return f"contribution:{kind}:{task_id}:{unit_id}:{canonical_selection_id}"
+
+
+def _required_string(source: JsonObject, key: str) -> str:
+    value = source.get(key)
+    if not isinstance(value, str) or not value:
+        raise ValueError(f"{key} is required")
+    return value
 
 
 def _require_schema_version(actual: str, expected: str) -> None:

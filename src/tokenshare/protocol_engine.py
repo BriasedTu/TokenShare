@@ -17,7 +17,18 @@ from tokenshare.core.expansion import (
     digest_merge_plan_body,
     validate_decomposition_proposal_limits,
 )
+from tokenshare.core.contribution import (
+    ContributionRecord,
+    ContributionState,
+    SettlementEntry,
+    SettlementRecord,
+    SubtreePruneRecord,
+    build_sandbox_equal_weight_settlement_entries,
+    digest_settlement_entries,
+    transition_contribution,
+)
 from tokenshare.core.leases import LeaseManager
+from tokenshare.core.merge import ExpectedOutputResolution, MergeRecord
 from tokenshare.core.models import ArtifactRef, Attempt, AttemptState, ClientRecord, JsonObject, Lease, LeaseState, ProtocolConfig, TaskRelation, TaskState, TaskUnit
 from tokenshare.core.scheduling import Scheduler, SchedulingDecision
 from tokenshare.core.state_machines import transition_attempt, transition_task_unit
@@ -115,6 +126,37 @@ class ExpandDecisionFlowResult:
     relations: tuple[TaskRelation, ...]
     expected_output_refs: tuple[ExpectedOutputRef, ...]
     task_graph: TaskGraph
+    events: tuple[LedgerEvent, ...]
+
+
+@dataclass(frozen=True)
+class MergeResolutionFlowResult:
+    merge_record: MergeRecord
+    expected_output_resolutions: tuple[ExpectedOutputResolution, ...]
+    events: tuple[LedgerEvent, ...]
+
+
+@dataclass(frozen=True)
+class ParentCompletionFlowResult:
+    task_unit: TaskUnit
+    resolved_output_set_digest: str
+    expand_contributions: tuple[ContributionRecord, ...]
+    events: tuple[LedgerEvent, ...]
+
+
+@dataclass(frozen=True)
+class SettlementFlowResult:
+    settlement_record: SettlementRecord
+    settlement_entries: tuple[SettlementEntry, ...]
+    settled_contributions: tuple[ContributionRecord, ...]
+    events: tuple[LedgerEvent, ...]
+
+
+@dataclass(frozen=True)
+class SubtreePruningFlowResult:
+    subtree_prune_record: SubtreePruneRecord | None
+    cancelled_units: tuple[str, ...]
+    preserved_completed_unit_count: int
     events: tuple[LedgerEvent, ...]
 
 
@@ -1031,6 +1073,355 @@ class ProtocolEngine:
             relations=relations,
             expected_output_refs=expected_output_refs,
             task_graph=expanded_graph,
+            events=tuple(batch_events),
+        )
+
+    def record_merge_resolution(
+        self,
+        *,
+        merge_record: MergeRecord,
+        expected_output_resolutions: list[ExpectedOutputResolution],
+        correlation_id: str,
+        causation_event_id: str | None = None,
+    ) -> MergeResolutionFlowResult:
+        """Record merge commitment and parent expected-output resolutions atomically."""
+
+        resolutions = tuple(expected_output_resolutions)
+        current_events = self._event_ledger.read_all()
+        artifact_store = self._require_artifact_store()
+        _reject_incomplete_merge_resolution_batch(
+            events=current_events,
+            merge_record=merge_record,
+        )
+        _reject_existing_merge_record_conflict(
+            events=current_events,
+            merge_record=merge_record,
+        )
+        canonical_event = _validate_merge_resolution_prerequisites(
+            events=current_events,
+            artifact_store=artifact_store,
+            merge_record=merge_record,
+            expected_output_resolutions=resolutions,
+        )
+
+        drafts = _merge_resolution_drafts(
+            merge_record=merge_record,
+            expected_output_resolutions=resolutions,
+            correlation_id=correlation_id,
+            causation_event_id=causation_event_id or canonical_event.event_id,
+        )
+        batch_events = self._event_ledger.append_batch(
+            list(drafts),
+            batch_id=f"merge_resolution_batch:{merge_record.merge_record_id}",
+        )
+        return MergeResolutionFlowResult(
+            merge_record=merge_record,
+            expected_output_resolutions=resolutions,
+            events=tuple(batch_events),
+        )
+
+    def record_parent_completion(
+        self,
+        *,
+        owner_unit: TaskUnit,
+        expected_output_refs: list[ExpectedOutputRef],
+        expected_output_resolutions: list[ExpectedOutputResolution],
+        expand_contributions: list[ContributionRecord],
+        now: str,
+        correlation_id: str,
+        causation_event_id: str | None = None,
+    ) -> ParentCompletionFlowResult:
+        """Complete an expanded owner after every required expected output resolves."""
+
+        refs = tuple(expected_output_refs)
+        resolutions = tuple(expected_output_resolutions)
+        contributions = tuple(expand_contributions)
+        current_events = self._event_ledger.read_all()
+        resolved_output_set_digest = _resolved_output_set_digest(resolutions)
+        _reject_parent_completion_conflict(
+            events=current_events,
+            owner_unit_id=owner_unit.unit_id,
+            resolved_output_set_digest=resolved_output_set_digest,
+        )
+        _validate_parent_completion_resolutions(
+            owner_unit=owner_unit,
+            expected_output_refs=refs,
+            expected_output_resolutions=resolutions,
+            events=current_events,
+        )
+        completed_unit = transition_task_unit(
+            owner_unit,
+            new_state=TaskState.COMPLETED,
+            reason="required_expected_outputs_resolved",
+            trigger="parent_completion_batch",
+            changed_at=now,
+        )
+        eligible_contributions = _eligible_parent_completion_contributions(
+            owner_unit=owner_unit,
+            expected_output_refs=refs,
+            expand_contributions=contributions,
+            now=now,
+        )
+        batch_id = (
+            f"parent_completion_batch:{owner_unit.unit_id}:"
+            f"{resolved_output_set_digest}"
+        )
+        first_batch_event_id = _first_event_id_for_batch(
+            events=current_events,
+            batch_id=batch_id,
+        ) or f"event_{len(current_events) + 1:012d}"
+        drafts = _parent_completion_drafts(
+            owner_unit=owner_unit,
+            completed_unit=completed_unit,
+            eligible_contributions=eligible_contributions,
+            resolved_output_set_digest=resolved_output_set_digest,
+            now=now,
+            correlation_id=correlation_id,
+            causation_event_id=causation_event_id or first_batch_event_id,
+            batch_id=batch_id,
+        )
+        batch_events = self._event_ledger.append_batch(list(drafts), batch_id=batch_id)
+        return ParentCompletionFlowResult(
+            task_unit=completed_unit,
+            resolved_output_set_digest=resolved_output_set_digest,
+            expand_contributions=eligible_contributions,
+            events=tuple(batch_events),
+        )
+
+    def record_root_settlement(
+        self,
+        *,
+        task_id: str,
+        root_unit_id: str,
+        root_completion_event_seq: int,
+        eligible_contributions: list[ContributionRecord],
+        root_budget: int,
+        settlement_policy_id: str,
+        now: str,
+        correlation_id: str,
+        causation_event_id: str | None = None,
+    ) -> SettlementFlowResult:
+        """Settle every eligible contribution for one completed root in one batch."""
+
+        settlement_policy_version = "v1"
+        scale = "1"
+        artifact_store = self._require_artifact_store()
+        current_events = self._event_ledger.read_all()
+        batch_id = (
+            f"settlement_batch:{task_id}:{root_unit_id}:"
+            f"{root_completion_event_seq}"
+        )
+        supplied_eligible = _eligible_settlement_contributions(
+            contributions=tuple(eligible_contributions),
+            task_id=task_id,
+            root_completion_event_seq=root_completion_event_seq,
+        )
+
+        existing = _existing_root_settlement(
+            events=current_events,
+            artifact_store=artifact_store,
+            batch_id=batch_id,
+            task_id=task_id,
+            root_unit_id=root_unit_id,
+            root_completion_event_seq=root_completion_event_seq,
+        )
+        if existing is not None:
+            expected_entries = tuple(
+                build_sandbox_equal_weight_settlement_entries(
+                    task_id=task_id,
+                    root_unit_id=root_unit_id,
+                    root_completion_event_seq=root_completion_event_seq,
+                    eligible_contributions=list(supplied_eligible),
+                    root_budget=root_budget,
+                    settlement_policy_id=settlement_policy_id,
+                    settlement_policy_version=settlement_policy_version,
+                    scale=scale,
+                    created_at=now,
+                )
+            )
+            _validate_existing_settlement_matches_request(
+                existing=existing,
+                expected_entries=expected_entries,
+                settlement_policy_id=settlement_policy_id,
+                settlement_policy_version=settlement_policy_version,
+                root_budget=root_budget,
+                scale=scale,
+            )
+            return existing
+
+        _validate_root_completion_event(
+            events=current_events,
+            task_id=task_id,
+            root_unit_id=root_unit_id,
+            root_completion_event_seq=root_completion_event_seq,
+        )
+        recorded_eligible = _eligible_contributions_from_ledger(
+            events=current_events,
+            task_id=task_id,
+            root_completion_event_seq=root_completion_event_seq,
+        )
+        supplied_eligible_ids = {
+            contribution.contribution_id for contribution in supplied_eligible
+        }
+        recorded_eligible_ids = {
+            contribution.contribution_id for contribution in recorded_eligible
+        }
+        if not recorded_eligible_ids.issubset(supplied_eligible_ids):
+            raise ValueError("partial settlement: must settle all eligible contributions")
+
+        settlement_entries = tuple(
+            build_sandbox_equal_weight_settlement_entries(
+                task_id=task_id,
+                root_unit_id=root_unit_id,
+                root_completion_event_seq=root_completion_event_seq,
+                eligible_contributions=list(recorded_eligible),
+                root_budget=root_budget,
+                settlement_policy_id=settlement_policy_id,
+                settlement_policy_version=settlement_policy_version,
+                scale=scale,
+                created_at=now,
+            )
+        )
+        settlement_entries_ref = artifact_store.save_json(
+            [entry.to_dict() for entry in settlement_entries],
+            artifact_id=(
+                f"settlement_entries_{_stable_id_component(task_id)}_"
+                f"{_stable_id_component(root_unit_id)}_"
+                f"{root_completion_event_seq}"
+            ),
+            artifact_type="SettlementEntrySet",
+            artifact_schema_id="phase5.settlement_entries",
+            artifact_schema_version="v1",
+            source={"kind": "protocol_engine"},
+            metadata={
+                "task_id": task_id,
+                "root_unit_id": root_unit_id,
+                "root_completion_event_seq": root_completion_event_seq,
+            },
+            created_at=now,
+        )
+        settlement_record = SettlementRecord(
+            settlement_record_id=(
+                f"settlement:{task_id}:{root_unit_id}:{root_completion_event_seq}"
+            ),
+            task_id=task_id,
+            root_unit_id=root_unit_id,
+            root_completion_event_seq=root_completion_event_seq,
+            settlement_policy_id=settlement_policy_id,
+            settlement_policy_version=settlement_policy_version,
+            root_budget=root_budget,
+            scale=scale,
+            total_reward=sum(entry.reward_units for entry in settlement_entries),
+            entry_count=len(settlement_entries),
+            settlement_entries_digest=digest_settlement_entries(
+                list(settlement_entries)
+            ),
+            settlement_entries_ref=settlement_entries_ref.to_dict(),
+            settlement_summary=_settlement_summary(settlement_entries),
+            created_at=now,
+        )
+        contributions_by_id = {
+            contribution.contribution_id: contribution
+            for contribution in recorded_eligible
+        }
+        drafts = _settlement_drafts(
+            settlement_record=settlement_record,
+            settlement_entries=settlement_entries,
+            contributions_by_id=contributions_by_id,
+            now=now,
+            correlation_id=correlation_id,
+            causation_event_id=causation_event_id,
+        )
+        batch_events = self._event_ledger.append_batch(list(drafts), batch_id=batch_id)
+        settled_contributions = _settled_contributions_from_events(batch_events)
+        return SettlementFlowResult(
+            settlement_record=settlement_record,
+            settlement_entries=settlement_entries,
+            settled_contributions=settled_contributions,
+            events=tuple(batch_events),
+        )
+
+    def record_subtree_pruning(
+        self,
+        *,
+        parent_unit_id: str,
+        parent_completed_event_seq: int,
+        candidate_descendant_units: list[TaskUnit],
+        pruning_policy_ref: JsonObject,
+        now: str,
+        correlation_id: str,
+        causation_event_id: str | None = None,
+    ) -> SubtreePruningFlowResult:
+        """Cancel unfinished descendant work after a parent has completed."""
+
+        artifact_store = self._require_artifact_store()
+        current_events = self._event_ledger.read_all()
+        parent_completed_event = _validate_parent_completed_event(
+            events=current_events,
+            parent_unit_id=parent_unit_id,
+            parent_completed_event_seq=parent_completed_event_seq,
+        )
+        policy = _validated_pruning_policy_ref(
+            pruning_policy_ref=pruning_policy_ref,
+            events=current_events,
+            artifact_store=artifact_store,
+            task_id=parent_completed_event.task_id or "",
+            parent_unit_id=parent_unit_id,
+        )
+        cancellable_units, preserved_count = _subtree_pruning_candidates(
+            parent_unit_id=parent_unit_id,
+            task_id=parent_completed_event.task_id or "",
+            candidate_descendant_units=tuple(candidate_descendant_units),
+            events=current_events,
+        )
+        batch_id = (
+            f"subtree_pruning_batch:{parent_unit_id}:"
+            f"{parent_completed_event_seq}"
+        )
+        expected_record = _subtree_prune_record(
+            parent_completed_event=parent_completed_event,
+            parent_unit_id=parent_unit_id,
+            parent_completed_event_seq=parent_completed_event_seq,
+            policy=policy,
+            cancellable_units=cancellable_units,
+            preserved_completed_unit_count=preserved_count,
+            now=now,
+        )
+        existing = _existing_subtree_pruning(
+            events=current_events,
+            batch_id=batch_id,
+            parent_unit_id=parent_unit_id,
+            parent_completed_event_seq=parent_completed_event_seq,
+        )
+        if existing is not None:
+            _validate_existing_subtree_pruning_matches_request(
+                existing=existing,
+                expected_record=expected_record,
+                expected_cancelled_unit_ids=tuple(
+                    unit.unit_id for unit in cancellable_units
+                ),
+            )
+            return existing
+        if not cancellable_units:
+            return SubtreePruningFlowResult(
+                subtree_prune_record=None,
+                cancelled_units=(),
+                preserved_completed_unit_count=preserved_count,
+                events=(),
+            )
+
+        drafts = _subtree_pruning_drafts(
+            subtree_prune_record=expected_record,
+            cancellable_units=cancellable_units,
+            now=now,
+            correlation_id=correlation_id,
+            causation_event_id=causation_event_id or parent_completed_event.event_id,
+        )
+        batch_events = self._event_ledger.append_batch(list(drafts), batch_id=batch_id)
+        return SubtreePruningFlowResult(
+            subtree_prune_record=expected_record,
+            cancelled_units=tuple(unit.unit_id for unit in cancellable_units),
+            preserved_completed_unit_count=preserved_count,
             events=tuple(batch_events),
         )
 
@@ -2221,6 +2612,1544 @@ def _validate_merge_plan_child_ids(
             raise ValueError("merge plan slot child logical key mismatch")
         if slot.get("source_child_unit_id") != child_unit_ids_by_key[child_key]:
             raise ValueError("merge plan slot child unit id mismatch")
+
+
+def _reject_incomplete_merge_resolution_batch(
+    *, events: Iterable[LedgerEvent], merge_record: MergeRecord
+) -> None:
+    batch_id = f"merge_resolution_batch:{merge_record.merge_record_id}"
+    relevant_events = [
+        event
+        for event in events
+        if event.batch_id == batch_id
+        or (
+            event.event_type == EventType.MERGE_RECORDED
+            and event.object_id == merge_record.merge_record_id
+        )
+    ]
+    if not relevant_events:
+        return
+    if not _is_complete_merge_resolution_batch(
+        events=events,
+        batch_id=batch_id,
+        merge_record_id=merge_record.merge_record_id,
+    ):
+        raise ValueError("projection inconsistent: incomplete merge_resolution_batch")
+
+
+def _reject_existing_merge_record_conflict(
+    *, events: Iterable[LedgerEvent], merge_record: MergeRecord
+) -> None:
+    for event in events:
+        if event.event_type != EventType.MERGE_RECORDED:
+            continue
+        existing = event.payload.get("merge_record")
+        if not isinstance(existing, dict):
+            continue
+        if existing.get("merge_plan_id") != merge_record.merge_plan_id:
+            continue
+        if existing != merge_record.to_dict():
+            raise ValueError("merge record conflict for merge_plan_id")
+
+
+def _validate_merge_resolution_prerequisites(
+    *,
+    events: Iterable[LedgerEvent],
+    artifact_store: ArtifactStore,
+    merge_record: MergeRecord,
+    expected_output_resolutions: tuple[ExpectedOutputResolution, ...],
+) -> LedgerEvent:
+    ledger_events = tuple(events)
+    canonical_event = _merge_unit_canonical_event(
+        events=ledger_events,
+        merge_record=merge_record,
+    )
+    merge_task_link = _merge_task_link_payload(
+        events=ledger_events,
+        merge_record=merge_record,
+    )
+    parent_output_mapping = _validate_merge_input_bundle(
+        artifact_store=artifact_store,
+        merge_record=merge_record,
+        merge_task_link=merge_task_link,
+    )
+    _validate_merge_record_against_link(
+        merge_record=merge_record,
+        merge_task_link=merge_task_link,
+    )
+    _validate_merge_record_against_canonical_event(
+        merge_record=merge_record,
+        canonical_event=canonical_event,
+    )
+    _validate_expected_output_resolutions(
+        merge_record=merge_record,
+        expected_output_resolutions=expected_output_resolutions,
+        parent_output_mapping=parent_output_mapping,
+    )
+    return canonical_event
+
+
+def _merge_unit_canonical_event(
+    *, events: Iterable[LedgerEvent], merge_record: MergeRecord
+) -> LedgerEvent:
+    for event in events:
+        if event.event_type != EventType.CANONICAL_OUTPUTS_BOUND:
+            continue
+        if event.payload.get("task_id") != merge_record.task_id:
+            continue
+        if event.payload.get("unit_id") != merge_record.merge_unit_id:
+            continue
+        selection = event.payload.get("canonical_selection")
+        if not isinstance(selection, dict):
+            continue
+        if selection.get("canonical_selection_id") != merge_record.canonical_selection_id:
+            continue
+        if event.event_seq != merge_record.canonical_event_seq:
+            raise ValueError("canonical selection event seq mismatch")
+        return event
+    raise ValueError("merge unit CANONICAL_OUTPUTS_BOUND is required before MERGE_RECORDED")
+
+
+def _merge_task_link_payload(
+    *, events: Iterable[LedgerEvent], merge_record: MergeRecord
+) -> JsonObject:
+    for event in events:
+        if event.event_type != EventType.MERGE_TASK_LINK_RECORDED:
+            continue
+        payload = event.payload
+        if payload.get("merge_plan_id") != merge_record.merge_plan_id:
+            continue
+        link = payload.get("merge_task_link")
+        if not isinstance(link, dict):
+            raise ValueError("merge task link payload missing")
+        if link.get("merge_task_link_id") != merge_record.merge_task_link_id:
+            raise ValueError("merge task link mismatch")
+        return link
+    raise ValueError("merge task link not found for merge resolution")
+
+
+def _validate_merge_input_bundle(
+    *,
+    artifact_store: ArtifactStore,
+    merge_record: MergeRecord,
+    merge_task_link: JsonObject,
+) -> list[JsonObject]:
+    if merge_task_link.get("merge_input_bundle_ref") != merge_record.merge_input_bundle_ref:
+        raise ValueError("merge input bundle ref mismatch")
+    if merge_task_link.get("merge_input_bundle_digest") != merge_record.merge_input_bundle_digest:
+        raise ValueError("merge input bundle digest mismatch")
+    bundle_ref = ArtifactRef.from_dict(merge_record.merge_input_bundle_ref)
+    if not artifact_store.verify(bundle_ref):
+        raise ValueError("merge input bundle artifact digest mismatch")
+    bundle = json.loads(artifact_store.read_bytes(bundle_ref).decode("utf-8"))
+    if bundle.get("merge_plan_id") != merge_record.merge_plan_id:
+        raise ValueError("merge input bundle merge_plan_id mismatch")
+    if bundle.get("parent_unit_id") != merge_record.parent_unit_id:
+        raise ValueError("merge input bundle parent_unit_id mismatch")
+    parent_output_mapping = bundle.get("parent_output_mapping")
+    if not isinstance(parent_output_mapping, list) or not parent_output_mapping:
+        raise ValueError("merge input bundle parent_output_mapping missing")
+    if digest_json(parent_output_mapping) != merge_record.parent_output_mapping_digest:
+        raise ValueError("parent output mapping digest mismatch")
+    return [dict(mapping) for mapping in parent_output_mapping]
+
+
+def _validate_merge_record_against_link(
+    *, merge_record: MergeRecord, merge_task_link: JsonObject
+) -> None:
+    expected_fields = {
+        "task_id": merge_record.task_id,
+        "parent_unit_id": merge_record.parent_unit_id,
+        "merge_plan_id": merge_record.merge_plan_id,
+        "merge_unit_id": merge_record.merge_unit_id,
+        "merge_input_bundle_digest": merge_record.merge_input_bundle_digest,
+        "required_slot_bindings_digest": merge_record.required_slot_bindings_digest,
+        "merge_policy_id": merge_record.merge_policy_id,
+        "merge_policy_version": merge_record.merge_policy_version,
+        "merge_policy_descriptor_digest": merge_record.merge_policy_descriptor_digest,
+    }
+    for field_name, expected in expected_fields.items():
+        if merge_task_link.get(field_name) != expected:
+            raise ValueError(f"merge task link {field_name} mismatch")
+
+
+def _validate_merge_record_against_canonical_event(
+    *, merge_record: MergeRecord, canonical_event: LedgerEvent
+) -> None:
+    selection = canonical_event.payload.get("canonical_selection")
+    if not isinstance(selection, dict):
+        raise ValueError("canonical selection payload missing")
+    expected_fields = {
+        "canonical_selection_id": merge_record.canonical_selection_id,
+        "selected_verification_report_id": merge_record.selected_verification_report_id,
+        "selected_verification_event_seq": merge_record.selected_verification_event_seq,
+        "selected_submission_id": merge_record.selected_submission_id,
+        "selected_submission_event_seq": merge_record.selected_submission_event_seq,
+        "selected_attempt_id": merge_record.selected_attempt_id,
+        "canonical_output_bundle_digest": merge_record.merge_output_bundle_digest,
+    }
+    for field_name, expected in expected_fields.items():
+        if selection.get(field_name) != expected:
+            raise ValueError(f"canonical selection {field_name} mismatch")
+    if selection.get("canonical_output_refs") != merge_record.merge_output_refs:
+        raise ValueError("canonical selection merge output refs mismatch")
+    for output_ref in merge_record.merge_output_refs.values():
+        if not isinstance(output_ref, dict):
+            raise ValueError("merge output ref must be an object")
+        if output_ref.get("artifact_type") != "canonical_output":
+            raise ValueError("merge output ref must be canonical_output")
+
+
+def _validate_expected_output_resolutions(
+    *,
+    merge_record: MergeRecord,
+    expected_output_resolutions: tuple[ExpectedOutputResolution, ...],
+    parent_output_mapping: list[JsonObject],
+) -> None:
+    if not expected_output_resolutions:
+        raise ValueError("required parent outputs are not fully resolved")
+    expected_ids: set[str] = set()
+    for resolution in expected_output_resolutions:
+        if resolution.expected_output_id in expected_ids:
+            raise ValueError("duplicate expected output resolution")
+        expected_ids.add(resolution.expected_output_id)
+
+    required_parent_output_names = {
+        mapping["parent_output_name"]
+        for mapping in parent_output_mapping
+        if mapping.get("resolution_kind") == "merge_plan_output"
+    }
+    resolution_names = {
+        resolution.expected_output_name for resolution in expected_output_resolutions
+    }
+    if resolution_names != required_parent_output_names:
+        raise ValueError("required parent outputs are not fully resolved")
+
+    for resolution in expected_output_resolutions:
+        if resolution.task_id != merge_record.task_id:
+            raise ValueError("expected output resolution task mismatch")
+        if resolution.owner_unit_id != merge_record.parent_unit_id:
+            raise ValueError("expected output resolution owner mismatch")
+        if resolution.merge_record_id != merge_record.merge_record_id:
+            raise ValueError("expected output resolution merge_record mismatch")
+        if resolution.merge_plan_id != merge_record.merge_plan_id:
+            raise ValueError("expected output resolution merge_plan mismatch")
+        if resolution.merge_unit_id != merge_record.merge_unit_id:
+            raise ValueError("expected output resolution merge_unit mismatch")
+        if resolution.merge_canonical_selection_id != merge_record.canonical_selection_id:
+            raise ValueError("expected output resolution canonical selection mismatch")
+        expected_ref = merge_record.merge_output_refs.get(resolution.expected_output_name)
+        if expected_ref is None:
+            raise ValueError("expected output resolution missing merge output ref")
+        if resolution.resolved_output_ref != expected_ref:
+            raise ValueError("expected output resolution output ref mismatch")
+        if resolution.resolved_output_digest != expected_ref.get("content_hash"):
+            raise ValueError("expected output resolution output digest mismatch")
+
+
+def _merge_resolution_drafts(
+    *,
+    merge_record: MergeRecord,
+    expected_output_resolutions: tuple[ExpectedOutputResolution, ...],
+    correlation_id: str,
+    causation_event_id: str | None,
+) -> tuple[EventDraft, ...]:
+    merge_record_payload = {
+        "schema_version": "phase5.merge_recorded.v1",
+        "merge_record": merge_record.to_dict(),
+        "task_id": merge_record.task_id,
+        "parent_unit_id": merge_record.parent_unit_id,
+        "merge_plan_id": merge_record.merge_plan_id,
+        "merge_unit_id": merge_record.merge_unit_id,
+        "merge_task_link_id": merge_record.merge_task_link_id,
+        "merge_input_bundle_ref": merge_record.merge_input_bundle_ref,
+        "merge_input_bundle_digest": merge_record.merge_input_bundle_digest,
+        "required_slot_bindings_digest": merge_record.required_slot_bindings_digest,
+        "merge_policy_id": merge_record.merge_policy_id,
+        "merge_policy_version": merge_record.merge_policy_version,
+        "merge_policy_descriptor_digest": merge_record.merge_policy_descriptor_digest,
+        "merge_policy_params_digest": merge_record.merge_policy_params_digest,
+        "canonical_selection_id": merge_record.canonical_selection_id,
+        "canonical_event_seq": merge_record.canonical_event_seq,
+        "selected_verification_report_id": merge_record.selected_verification_report_id,
+        "selected_verification_event_seq": merge_record.selected_verification_event_seq,
+        "selected_submission_id": merge_record.selected_submission_id,
+        "selected_submission_event_seq": merge_record.selected_submission_event_seq,
+        "selected_attempt_id": merge_record.selected_attempt_id,
+        "merge_output_bundle_digest": merge_record.merge_output_bundle_digest,
+        "merge_output_refs": merge_record.merge_output_refs,
+        "parent_output_mapping_digest": merge_record.parent_output_mapping_digest,
+        "created_at": merge_record.created_at,
+    }
+    drafts: list[EventDraft] = [
+        EventDraft(
+            event_type=EventType.MERGE_RECORDED,
+            object_type="MergeRecord",
+            object_id=merge_record.merge_record_id,
+            task_id=merge_record.task_id,
+            actor={"kind": "protocol_engine"},
+            correlation_id=correlation_id,
+            causation_event_id=causation_event_id,
+            idempotency_key=(
+                f"merge_record:{merge_record.merge_plan_id}:"
+                f"{merge_record.merge_unit_id}:{merge_record.canonical_selection_id}"
+            ),
+            payload=merge_record_payload,
+            occurred_at=merge_record.created_at,
+        )
+    ]
+    for resolution in expected_output_resolutions:
+        drafts.append(
+            EventDraft(
+                event_type=EventType.EXPECTED_OUTPUT_RESOLVED,
+                object_type="ExpectedOutputRef",
+                object_id=resolution.expected_output_id,
+                task_id=resolution.task_id,
+                actor={"kind": "protocol_engine"},
+                correlation_id=correlation_id,
+                causation_event_id=causation_event_id,
+                idempotency_key=(
+                    f"expected_output_resolved:{resolution.expected_output_id}:"
+                    f"{merge_record.merge_record_id}"
+                ),
+                payload={
+                    "schema_version": "phase5.expected_output_resolved.v1",
+                    "expected_output_resolution": resolution.to_dict(),
+                    "task_id": resolution.task_id,
+                    "owner_unit_id": resolution.owner_unit_id,
+                    "expected_output_id": resolution.expected_output_id,
+                    "expected_output_name": resolution.expected_output_name,
+                    "resolution_source_type": resolution.resolution_source_type,
+                    "merge_record_id": resolution.merge_record_id,
+                    "merge_plan_id": resolution.merge_plan_id,
+                    "merge_unit_id": resolution.merge_unit_id,
+                    "merge_canonical_selection_id": (
+                        resolution.merge_canonical_selection_id
+                    ),
+                    "resolved_output_ref": resolution.resolved_output_ref,
+                    "resolved_output_digest": resolution.resolved_output_digest,
+                    "resolved_at": resolution.resolved_at,
+                },
+                occurred_at=resolution.resolved_at,
+            )
+        )
+    return tuple(drafts)
+
+
+def _is_complete_merge_resolution_batch(
+    *, events: Iterable[LedgerEvent], batch_id: str, merge_record_id: str
+) -> bool:
+    batch = sorted(
+        (event for event in events if event.batch_id == batch_id),
+        key=lambda event: event.batch_index or 0,
+    )
+    if len(batch) < 2:
+        return False
+    batch_sizes = {event.batch_size for event in batch}
+    if len(batch_sizes) != 1 or None in batch_sizes:
+        return False
+    if next(iter(batch_sizes)) != len(batch):
+        return False
+    if batch[0].batch_index != 1 or batch[0].event_type != EventType.MERGE_RECORDED:
+        return False
+    if batch[0].object_id != merge_record_id:
+        return False
+    expected_indexes = list(range(1, len(batch) + 1))
+    actual_indexes = [event.batch_index for event in batch]
+    if actual_indexes != expected_indexes:
+        return False
+    return all(
+        event.event_type == EventType.EXPECTED_OUTPUT_RESOLVED for event in batch[1:]
+    )
+
+
+def _reject_parent_completion_conflict(
+    *,
+    events: Iterable[LedgerEvent],
+    owner_unit_id: str,
+    resolved_output_set_digest: str,
+) -> None:
+    expected_batch_id = (
+        f"parent_completion_batch:{owner_unit_id}:{resolved_output_set_digest}"
+    )
+    prefix = f"parent_completion_batch:{owner_unit_id}:"
+    batch_ids = {
+        event.batch_id
+        for event in events
+        if isinstance(event.batch_id, str) and event.batch_id.startswith(prefix)
+    }
+    for batch_id in batch_ids:
+        if not _is_complete_parent_completion_batch(
+            events=events,
+            batch_id=batch_id,
+            owner_unit_id=owner_unit_id,
+        ):
+            raise ValueError("projection inconsistent: incomplete parent_completion_batch")
+        if batch_id != expected_batch_id:
+            raise ValueError("parent completion conflict for owner unit")
+
+
+def _validate_parent_completion_resolutions(
+    *,
+    owner_unit: TaskUnit,
+    expected_output_refs: tuple[ExpectedOutputRef, ...],
+    expected_output_resolutions: tuple[ExpectedOutputResolution, ...],
+    events: Iterable[LedgerEvent],
+) -> None:
+    if not expected_output_refs:
+        raise ValueError("required expected outputs are not fully resolved")
+    refs_by_id: dict[str, ExpectedOutputRef] = {}
+    for ref in expected_output_refs:
+        if ref.task_id != owner_unit.task_id or ref.owner_unit_id != owner_unit.unit_id:
+            raise ValueError("required expected outputs do not belong to owner unit")
+        if ref.expected_output_id in refs_by_id:
+            raise ValueError("duplicate required expected output")
+        refs_by_id[ref.expected_output_id] = ref
+
+    resolutions_by_id: dict[str, ExpectedOutputResolution] = {}
+    for resolution in expected_output_resolutions:
+        if resolution.expected_output_id in resolutions_by_id:
+            raise ValueError("duplicate expected output resolution")
+        resolutions_by_id[resolution.expected_output_id] = resolution
+    if set(resolutions_by_id) != set(refs_by_id):
+        raise ValueError("required expected outputs are not fully resolved")
+
+    recorded_by_id = _recorded_expected_output_resolutions(events=events)
+    for expected_output_id, ref in refs_by_id.items():
+        resolution = resolutions_by_id[expected_output_id]
+        if resolution.task_id != owner_unit.task_id:
+            raise ValueError("expected output resolution task mismatch")
+        if resolution.owner_unit_id != owner_unit.unit_id:
+            raise ValueError("expected output resolution owner mismatch")
+        if resolution.expected_output_name != ref.output_name:
+            raise ValueError("expected output resolution name mismatch")
+        recorded = recorded_by_id.get(expected_output_id)
+        if recorded is None:
+            raise ValueError("required expected outputs are not fully resolved")
+        if recorded != resolution.to_dict():
+            raise ValueError("expected output resolution conflict")
+
+
+def _recorded_expected_output_resolutions(
+    *, events: Iterable[LedgerEvent]
+) -> dict[str, JsonObject]:
+    ledger_events = tuple(events)
+    recorded: dict[str, JsonObject] = {}
+    for event in ledger_events:
+        if event.event_type != EventType.EXPECTED_OUTPUT_RESOLVED:
+            continue
+        resolution = event.payload.get("expected_output_resolution")
+        if not isinstance(resolution, dict):
+            continue
+        merge_record_id = resolution.get("merge_record_id")
+        if (
+            not isinstance(event.batch_id, str)
+            or not isinstance(merge_record_id, str)
+            or not _is_complete_merge_resolution_batch(
+                events=ledger_events,
+                batch_id=event.batch_id,
+                merge_record_id=merge_record_id,
+            )
+        ):
+            continue
+        expected_output_id = resolution.get("expected_output_id")
+        if not isinstance(expected_output_id, str) or not expected_output_id:
+            continue
+        existing = recorded.get(expected_output_id)
+        if existing is not None and existing != resolution:
+            raise ValueError("expected output resolution conflict")
+        recorded[expected_output_id] = dict(resolution)
+    return recorded
+
+
+def _eligible_parent_completion_contributions(
+    *,
+    owner_unit: TaskUnit,
+    expected_output_refs: tuple[ExpectedOutputRef, ...],
+    expand_contributions: tuple[ContributionRecord, ...],
+    now: str,
+) -> tuple[ContributionRecord, ...]:
+    if not expand_contributions:
+        raise ValueError("expand contribution is required for parent completion")
+    source_decision_ids = {
+        ref.source_expansion_decision_id for ref in expected_output_refs
+    }
+    eligible: list[ContributionRecord] = []
+    seen_ids: set[str] = set()
+    for contribution in sorted(
+        expand_contributions,
+        key=lambda item: item.contribution_id,
+    ):
+        if contribution.contribution_id in seen_ids:
+            raise ValueError("duplicate expand contribution")
+        seen_ids.add(contribution.contribution_id)
+        if contribution.kind != "expand_canonical":
+            raise ValueError("parent completion requires expand_canonical contribution")
+        if contribution.task_id != owner_unit.task_id or contribution.unit_id != owner_unit.unit_id:
+            raise ValueError("expand contribution owner mismatch")
+        if contribution.state != ContributionState.PENDING:
+            raise ValueError("expand contribution must be Pending")
+        if contribution.source_decision_id not in source_decision_ids:
+            raise ValueError("expand contribution source decision mismatch")
+        eligible.append(
+            transition_contribution(
+                contribution,
+                new_state=ContributionState.ELIGIBLE,
+                changed_at=now,
+                reason="parent_completed",
+            )
+        )
+    return tuple(eligible)
+
+
+def _parent_completion_drafts(
+    *,
+    owner_unit: TaskUnit,
+    completed_unit: TaskUnit,
+    eligible_contributions: tuple[ContributionRecord, ...],
+    resolved_output_set_digest: str,
+    now: str,
+    correlation_id: str,
+    causation_event_id: str | None,
+    batch_id: str,
+) -> tuple[EventDraft, ...]:
+    task_payload = {
+        "schema_version": "phase5.parent_completion_task_unit_state_changed.v1",
+        "old_state": owner_unit.state.value,
+        "new_state": TaskState.COMPLETED.value,
+        "task_unit_state_change": _task_unit_state_change(
+            task_unit=completed_unit,
+            old_state=owner_unit.state,
+            new_state=TaskState.COMPLETED,
+            reason="required_expected_outputs_resolved",
+            trigger="parent_completion_batch",
+            correlation_id=correlation_id,
+            causation_event_id=causation_event_id,
+            changed_at=now,
+            state_context={
+                "resolved_output_set_digest": resolved_output_set_digest,
+                "parent_completion_batch_id": batch_id,
+            },
+        ),
+        "task_unit": completed_unit.to_dict(),
+        "reason": "required_expected_outputs_resolved",
+        "resolved_output_set_digest": resolved_output_set_digest,
+        "parent_completion_batch_id": batch_id,
+        "correlation_id": correlation_id,
+    }
+    drafts: list[EventDraft] = [
+        EventDraft(
+            event_type=EventType.TASK_UNIT_STATE_CHANGED,
+            object_type="TaskUnit",
+            object_id=completed_unit.unit_id,
+            task_id=completed_unit.task_id,
+            actor={"kind": "protocol_engine"},
+            correlation_id=correlation_id,
+            causation_event_id=causation_event_id,
+            idempotency_key=(
+                f"task_unit:state:{completed_unit.unit_id}:Processing:"
+                f"Completed:parent_completion:{resolved_output_set_digest}"
+            ),
+            payload=task_payload,
+            occurred_at=now,
+        )
+    ]
+    for contribution in eligible_contributions:
+        drafts.append(
+            EventDraft(
+                event_type=EventType.CONTRIBUTION_STATE_CHANGED,
+                object_type="ContributionRecord",
+                object_id=contribution.contribution_id,
+                task_id=contribution.task_id,
+                actor={"kind": "protocol_engine"},
+                correlation_id=correlation_id,
+                causation_event_id=causation_event_id,
+                idempotency_key=(
+                    f"contribution:state:{contribution.contribution_id}:"
+                    f"Pending:Eligible:parent_completion:{resolved_output_set_digest}"
+                ),
+                payload={
+                    "schema_version": "phase5.contribution_state_changed.v1",
+                    "contribution": contribution.to_dict(),
+                    "old_state": ContributionState.PENDING.value,
+                    "new_state": ContributionState.ELIGIBLE.value,
+                    "reason": "parent_completed",
+                    "task_id": contribution.task_id,
+                    "unit_id": contribution.unit_id,
+                    "kind": contribution.kind,
+                    "canonical_selection_id": contribution.canonical_selection_id,
+                    "canonical_event_seq": contribution.canonical_event_seq,
+                    "source_batch_id": contribution.source_batch_id,
+                    "source_terminal_event_seq": contribution.source_terminal_event_seq,
+                    "resolved_output_set_digest": resolved_output_set_digest,
+                    "changed_at": contribution.updated_at,
+                },
+                occurred_at=now,
+            )
+        )
+    return tuple(drafts)
+
+
+def _resolved_output_set_digest(
+    resolutions: tuple[ExpectedOutputResolution, ...]
+) -> str:
+    return digest_json(
+        sorted(
+            [
+                {
+                    "expected_output_id": resolution.expected_output_id,
+                    "output_name": resolution.expected_output_name,
+                    "resolved_output_digest": resolution.resolved_output_digest,
+                }
+                for resolution in resolutions
+            ],
+            key=lambda item: item["expected_output_id"],
+        )
+    )
+
+
+def _is_complete_parent_completion_batch(
+    *, events: Iterable[LedgerEvent], batch_id: str, owner_unit_id: str
+) -> bool:
+    batch = sorted(
+        (event for event in events if event.batch_id == batch_id),
+        key=lambda event: event.batch_index or 0,
+    )
+    if len(batch) < 2:
+        return False
+    batch_sizes = {event.batch_size for event in batch}
+    if len(batch_sizes) != 1 or None in batch_sizes:
+        return False
+    if next(iter(batch_sizes)) != len(batch):
+        return False
+    if (
+        batch[0].batch_index != 1
+        or batch[0].event_type != EventType.TASK_UNIT_STATE_CHANGED
+        or batch[0].object_id != owner_unit_id
+        or batch[0].payload.get("old_state") != TaskState.PROCESSING.value
+        or batch[0].payload.get("new_state") != TaskState.COMPLETED.value
+    ):
+        return False
+    expected_indexes = list(range(1, len(batch) + 1))
+    if [event.batch_index for event in batch] != expected_indexes:
+        return False
+    return all(
+        event.event_type == EventType.CONTRIBUTION_STATE_CHANGED
+        and event.payload.get("old_state") == ContributionState.PENDING.value
+        and event.payload.get("new_state") == ContributionState.ELIGIBLE.value
+        for event in batch[1:]
+    )
+
+
+def _eligible_settlement_contributions(
+    *,
+    contributions: tuple[ContributionRecord, ...],
+    task_id: str,
+    root_completion_event_seq: int,
+) -> tuple[ContributionRecord, ...]:
+    by_id: dict[str, ContributionRecord] = {}
+    for contribution in contributions:
+        if contribution.task_id != task_id:
+            continue
+        if contribution.state != ContributionState.ELIGIBLE:
+            continue
+        if contribution.source_terminal_event_seq > root_completion_event_seq:
+            continue
+        existing = by_id.get(contribution.contribution_id)
+        if existing is not None and existing != contribution:
+            raise ValueError("duplicate eligible contribution")
+        by_id[contribution.contribution_id] = contribution
+    return tuple(
+        by_id[contribution_id]
+        for contribution_id in sorted(by_id)
+    )
+
+
+def _validate_root_completion_event(
+    *,
+    events: Iterable[LedgerEvent],
+    task_id: str,
+    root_unit_id: str,
+    root_completion_event_seq: int,
+) -> LedgerEvent:
+    for event in events:
+        if event.event_seq != root_completion_event_seq:
+            continue
+        if (
+            event.event_type == EventType.TASK_UNIT_STATE_CHANGED
+            and event.task_id == task_id
+            and event.object_id == root_unit_id
+            and event.payload.get("new_state") == TaskState.COMPLETED.value
+        ):
+            return event
+        break
+    raise ValueError("root completion event missing")
+
+
+def _eligible_contributions_from_ledger(
+    *,
+    events: Iterable[LedgerEvent],
+    task_id: str,
+    root_completion_event_seq: int,
+) -> tuple[ContributionRecord, ...]:
+    states = _contribution_states_from_events(events=events)
+    eligible = [
+        contribution
+        for contribution in states.values()
+        if contribution.task_id == task_id
+        and contribution.state == ContributionState.ELIGIBLE
+        and contribution.source_terminal_event_seq <= root_completion_event_seq
+    ]
+    if not eligible:
+        raise ValueError("settlement requires at least one eligible contribution")
+    return tuple(sorted(eligible, key=lambda contribution: contribution.contribution_id))
+
+
+def _contribution_states_from_events(
+    *, events: Iterable[LedgerEvent]
+) -> dict[str, ContributionRecord]:
+    states: dict[str, ContributionRecord] = {}
+    for event in events:
+        if event.event_type != EventType.CONTRIBUTION_STATE_CHANGED:
+            continue
+        contribution_data = event.payload.get("contribution")
+        if not isinstance(contribution_data, dict):
+            raise ValueError("contribution state event missing contribution")
+        contribution = ContributionRecord(**contribution_data)
+        states[contribution.contribution_id] = contribution
+    return states
+
+
+def _existing_root_settlement(
+    *,
+    events: Iterable[LedgerEvent],
+    artifact_store: ArtifactStore,
+    batch_id: str,
+    task_id: str,
+    root_unit_id: str,
+    root_completion_event_seq: int,
+) -> SettlementFlowResult | None:
+    ledger_events = tuple(events)
+    matching_markers = [
+        event
+        for event in ledger_events
+        if event.event_type == EventType.SETTLEMENT_RECORDED
+        and event.payload.get("task_id") == task_id
+        and event.payload.get("root_unit_id") == root_unit_id
+        and event.payload.get("root_completion_event_seq") == root_completion_event_seq
+    ]
+    if not matching_markers and not any(event.batch_id == batch_id for event in ledger_events):
+        return None
+    if len(matching_markers) > 1:
+        raise ValueError("settlement conflict: multiple SETTLEMENT_RECORDED markers")
+    if matching_markers and matching_markers[0].batch_id != batch_id:
+        raise ValueError("settlement conflict: unexpected settlement batch id")
+    batch = tuple(
+        sorted(
+            (event for event in ledger_events if event.batch_id == batch_id),
+            key=lambda event: event.batch_index or 0,
+        )
+    )
+    if not batch:
+        return None
+    return _validate_existing_settlement_batch(
+        batch=batch,
+        artifact_store=artifact_store,
+        task_id=task_id,
+        root_unit_id=root_unit_id,
+        root_completion_event_seq=root_completion_event_seq,
+    )
+
+
+def _validate_existing_settlement_batch(
+    *,
+    batch: tuple[LedgerEvent, ...],
+    artifact_store: ArtifactStore,
+    task_id: str,
+    root_unit_id: str,
+    root_completion_event_seq: int,
+) -> SettlementFlowResult:
+    batch_sizes = {event.batch_size for event in batch}
+    if len(batch) < 2 or len(batch_sizes) != 1 or None in batch_sizes:
+        raise ValueError("projection inconsistent: incomplete settlement_batch")
+    if next(iter(batch_sizes)) != len(batch):
+        raise ValueError("projection inconsistent: incomplete settlement_batch")
+    if [event.batch_index for event in batch] != list(range(1, len(batch) + 1)):
+        raise ValueError("projection inconsistent: incomplete settlement_batch")
+    if batch[-1].event_type != EventType.SETTLEMENT_RECORDED:
+        raise ValueError("projection inconsistent: settlement_batch missing final marker")
+    settled_events = batch[:-1]
+    if not all(
+        event.event_type == EventType.CONTRIBUTION_STATE_CHANGED
+        and event.payload.get("old_state") == ContributionState.ELIGIBLE.value
+        and event.payload.get("new_state") == ContributionState.SETTLED.value
+        for event in settled_events
+    ):
+        raise ValueError("projection inconsistent: settlement_batch settled events")
+    marker_payload = batch[-1].payload
+    record_payload = marker_payload.get("settlement_record")
+    if not isinstance(record_payload, dict):
+        raise ValueError("settlement_record payload missing")
+    settlement_record = SettlementRecord(**record_payload)
+    if (
+        settlement_record.task_id != task_id
+        or settlement_record.root_unit_id != root_unit_id
+        or settlement_record.root_completion_event_seq != root_completion_event_seq
+    ):
+        raise ValueError("settlement conflict: root completion mismatch")
+    if marker_payload.get("settlement_entries_ref") != settlement_record.settlement_entries_ref:
+        raise ValueError("settlement_entries_ref mismatch")
+
+    settlement_entries = _settlement_entries_from_artifact(
+        artifact_store=artifact_store,
+        settlement_record=settlement_record,
+    )
+    if len(settlement_entries) != len(settled_events):
+        raise ValueError("settlement entries mismatch settled contribution events")
+    _validate_settlement_entries_against_events(
+        settlement_record=settlement_record,
+        settlement_entries=settlement_entries,
+        settled_events=settled_events,
+    )
+    return SettlementFlowResult(
+        settlement_record=settlement_record,
+        settlement_entries=settlement_entries,
+        settled_contributions=_settled_contributions_from_events(settled_events),
+        events=batch,
+    )
+
+
+def _settlement_entries_from_artifact(
+    *, artifact_store: ArtifactStore, settlement_record: SettlementRecord
+) -> tuple[SettlementEntry, ...]:
+    ref_data = settlement_record.settlement_entries_ref
+    if not isinstance(ref_data, dict):
+        raise ValueError("settlement_entries_ref must be an object")
+    artifact_ref = ArtifactRef.from_dict(ref_data)
+    if not artifact_store.verify(artifact_ref):
+        raise ValueError("settlement entries artifact missing or corrupt")
+    raw_entries = json.loads(artifact_store.read_bytes(artifact_ref).decode("utf-8"))
+    if not isinstance(raw_entries, list):
+        raise ValueError("settlement entries artifact must contain a list")
+    settlement_entries = tuple(SettlementEntry(**entry) for entry in raw_entries)
+    if digest_settlement_entries(list(settlement_entries)) != (
+        settlement_record.settlement_entries_digest
+    ):
+        raise ValueError("settlement entries artifact digest mismatch")
+    if len(settlement_entries) != settlement_record.entry_count:
+        raise ValueError("settlement entries artifact entry_count mismatch")
+    if sum(entry.reward_units for entry in settlement_entries) != (
+        settlement_record.total_reward
+    ):
+        raise ValueError("settlement entries artifact reward total mismatch")
+    if settlement_record.total_reward != settlement_record.root_budget:
+        raise ValueError("settlement entries artifact reward total mismatch")
+    return settlement_entries
+
+
+def _validate_settlement_entries_against_events(
+    *,
+    settlement_record: SettlementRecord,
+    settlement_entries: tuple[SettlementEntry, ...],
+    settled_events: tuple[LedgerEvent, ...],
+) -> None:
+    entries_by_id = {entry.contribution_id: entry for entry in settlement_entries}
+    if len(entries_by_id) != len(settlement_entries):
+        raise ValueError("settlement entries mismatch: duplicate contribution")
+    event_entries: dict[str, JsonObject] = {}
+    for event in settled_events:
+        contribution_data = event.payload.get("contribution")
+        entry_data = event.payload.get("settlement_entry")
+        if not isinstance(contribution_data, dict) or not isinstance(entry_data, dict):
+            raise ValueError("settlement entries mismatch settled contribution events")
+        contribution = ContributionRecord(**contribution_data)
+        if contribution.state != ContributionState.SETTLED:
+            raise ValueError("settlement entries mismatch settled contribution events")
+        entry = entries_by_id.get(contribution.contribution_id)
+        if entry is None:
+            raise ValueError("settlement entries mismatch settled contribution events")
+        if entry_data != entry.to_dict():
+            raise ValueError("settlement entries mismatch settled contribution events")
+        if (
+            entry.reward_weight != contribution.reward_weight
+            or entry.source_client_id != contribution.source_client_id
+            or entry.task_id != contribution.task_id
+            or entry.unit_id != contribution.unit_id
+            or entry.kind != contribution.kind
+        ):
+            raise ValueError("settlement entries mismatch settled contribution events")
+        event_entries[contribution.contribution_id] = dict(entry_data)
+    if set(event_entries) != set(entries_by_id):
+        raise ValueError("settlement entries mismatch settled contribution events")
+    if sum(entry.reward_units for entry in settlement_entries) != (
+        settlement_record.total_reward
+    ):
+        raise ValueError("settlement entries mismatch reward total")
+
+
+def _validate_existing_settlement_matches_request(
+    *,
+    existing: SettlementFlowResult,
+    expected_entries: tuple[SettlementEntry, ...],
+    settlement_policy_id: str,
+    settlement_policy_version: str,
+    root_budget: int,
+    scale: str,
+) -> None:
+    record = existing.settlement_record
+    if (
+        record.settlement_policy_id != settlement_policy_id
+        or record.settlement_policy_version != settlement_policy_version
+        or record.root_budget != root_budget
+        or record.scale != scale
+        or record.entry_count != len(expected_entries)
+        or record.total_reward != sum(entry.reward_units for entry in expected_entries)
+        or record.settlement_entries_digest
+        != digest_settlement_entries(list(expected_entries))
+    ):
+        raise ValueError("settlement conflict")
+    if [entry.to_dict() for entry in existing.settlement_entries] != [
+        entry.to_dict() for entry in expected_entries
+    ]:
+        raise ValueError("settlement conflict")
+
+
+def _settlement_drafts(
+    *,
+    settlement_record: SettlementRecord,
+    settlement_entries: tuple[SettlementEntry, ...],
+    contributions_by_id: dict[str, ContributionRecord],
+    now: str,
+    correlation_id: str,
+    causation_event_id: str | None,
+) -> tuple[EventDraft, ...]:
+    drafts: list[EventDraft] = []
+    for entry in settlement_entries:
+        contribution = contributions_by_id.get(entry.contribution_id)
+        if contribution is None:
+            raise ValueError("settlement entries mismatch eligible contributions")
+        settled = transition_contribution(
+            contribution,
+            new_state=ContributionState.SETTLED,
+            changed_at=now,
+            reason="settlement_batch",
+            source_batch_kind="settlement_batch",
+        )
+        drafts.append(
+            EventDraft(
+                event_type=EventType.CONTRIBUTION_STATE_CHANGED,
+                object_type="ContributionRecord",
+                object_id=contribution.contribution_id,
+                task_id=contribution.task_id,
+                actor={"kind": "protocol_engine"},
+                correlation_id=correlation_id,
+                causation_event_id=causation_event_id,
+                idempotency_key=(
+                    f"contribution:state:{contribution.contribution_id}:"
+                    f"Eligible:Settled:{settlement_record.settlement_record_id}"
+                ),
+                payload={
+                    "schema_version": "phase5.contribution_state_changed.v1",
+                    "contribution": settled.to_dict(),
+                    "old_state": ContributionState.ELIGIBLE.value,
+                    "new_state": ContributionState.SETTLED.value,
+                    "reason": "settlement_batch",
+                    "task_id": contribution.task_id,
+                    "unit_id": contribution.unit_id,
+                    "kind": contribution.kind,
+                    "canonical_selection_id": contribution.canonical_selection_id,
+                    "canonical_event_seq": contribution.canonical_event_seq,
+                    "source_batch_id": contribution.source_batch_id,
+                    "source_terminal_event_seq": contribution.source_terminal_event_seq,
+                    "settlement_record_id": settlement_record.settlement_record_id,
+                    "settlement_entry": entry.to_dict(),
+                    "changed_at": settled.updated_at,
+                },
+                occurred_at=now,
+            )
+        )
+    drafts.append(
+        EventDraft(
+            event_type=EventType.SETTLEMENT_RECORDED,
+            object_type="SettlementRecord",
+            object_id=settlement_record.settlement_record_id,
+            task_id=settlement_record.task_id,
+            actor={"kind": "protocol_engine"},
+            correlation_id=correlation_id,
+            causation_event_id=causation_event_id,
+            idempotency_key=(
+                f"settlement:{settlement_record.task_id}:"
+                f"{settlement_record.root_unit_id}:"
+                f"{settlement_record.root_completion_event_seq}"
+            ),
+            payload={
+                "schema_version": "phase5.settlement_recorded.v1",
+                "settlement_record": settlement_record.to_dict(),
+                "task_id": settlement_record.task_id,
+                "root_unit_id": settlement_record.root_unit_id,
+                "root_completion_event_seq": (
+                    settlement_record.root_completion_event_seq
+                ),
+                "settlement_policy_id": settlement_record.settlement_policy_id,
+                "settlement_policy_version": (
+                    settlement_record.settlement_policy_version
+                ),
+                "root_budget": settlement_record.root_budget,
+                "scale": settlement_record.scale,
+                "total_reward": settlement_record.total_reward,
+                "entry_count": settlement_record.entry_count,
+                "settlement_entries_digest": (
+                    settlement_record.settlement_entries_digest
+                ),
+                "settlement_entries_ref": (
+                    settlement_record.settlement_entries_ref
+                ),
+                "settlement_summary": settlement_record.settlement_summary,
+                "created_at": settlement_record.created_at,
+            },
+            occurred_at=now,
+        )
+    )
+    return tuple(drafts)
+
+
+def _settled_contributions_from_events(
+    events: Iterable[LedgerEvent],
+) -> tuple[ContributionRecord, ...]:
+    settled: list[ContributionRecord] = []
+    for event in events:
+        if event.event_type != EventType.CONTRIBUTION_STATE_CHANGED:
+            continue
+        contribution_data = event.payload.get("contribution")
+        if isinstance(contribution_data, dict):
+            settled.append(ContributionRecord(**contribution_data))
+    return tuple(settled)
+
+
+def _settlement_summary(entries: tuple[SettlementEntry, ...]) -> JsonObject:
+    kind_counts = {
+        kind: sum(1 for entry in entries if entry.kind == kind)
+        for kind in sorted({entry.kind for entry in entries})
+    }
+    client_reward_totals = {
+        client_id: sum(
+            entry.reward_units for entry in entries if entry.source_client_id == client_id
+        )
+        for client_id in sorted({entry.source_client_id for entry in entries})
+    }
+    return {
+        "entry_count": len(entries),
+        "kind_counts": kind_counts,
+        "client_count": len(client_reward_totals),
+        "client_reward_totals": client_reward_totals,
+        "total_reward": sum(entry.reward_units for entry in entries),
+    }
+
+
+def _validate_parent_completed_event(
+    *,
+    events: Iterable[LedgerEvent],
+    parent_unit_id: str,
+    parent_completed_event_seq: int,
+) -> LedgerEvent:
+    for event in events:
+        if event.event_seq != parent_completed_event_seq:
+            continue
+        if (
+            event.event_type == EventType.TASK_UNIT_STATE_CHANGED
+            and event.object_id == parent_unit_id
+            and event.payload.get("new_state") == TaskState.COMPLETED.value
+        ):
+            return event
+        break
+    raise ValueError("parent completion event missing")
+
+
+def _validated_pruning_policy_ref(
+    *,
+    pruning_policy_ref: JsonObject,
+    events: Iterable[LedgerEvent],
+    artifact_store: ArtifactStore,
+    task_id: str,
+    parent_unit_id: str,
+) -> JsonObject:
+    if not isinstance(pruning_policy_ref, dict):
+        raise ValueError("pruning policy ref must be an object")
+    required_fields = (
+        "pruning_policy_id",
+        "pruning_policy_version",
+        "pruning_policy_plugin_id",
+        "pruning_policy_plugin_version",
+        "pruning_policy_descriptor_digest",
+        "policy_source_type",
+        "policy_source_id",
+        "policy_source_event_seq",
+    )
+    missing = [field for field in required_fields if not pruning_policy_ref.get(field)]
+    if missing:
+        if "pruning_policy_descriptor_digest" in missing:
+            raise ValueError("pruning policy descriptor provenance missing")
+        raise ValueError("pruning policy descriptor provenance missing")
+    policy_source_event_seq = pruning_policy_ref["policy_source_event_seq"]
+    if not isinstance(policy_source_event_seq, int) or policy_source_event_seq <= 0:
+        raise ValueError("policy source event mismatch")
+
+    try:
+        descriptor = _load_frozen_plugin_descriptor(
+            events=events,
+            artifact_store=artifact_store,
+            plugin_id=str(pruning_policy_ref["pruning_policy_plugin_id"]),
+            plugin_version=str(pruning_policy_ref["pruning_policy_plugin_version"]),
+            plugin_descriptor_digest=str(
+                pruning_policy_ref["pruning_policy_descriptor_digest"]
+            ),
+        )
+    except ValueError as error:
+        raise ValueError("pruning policy descriptor provenance invalid") from error
+
+    pruning_policy_id = str(pruning_policy_ref["pruning_policy_id"])
+    if not _descriptor_declares_merge_policy(
+        descriptor=descriptor,
+        merge_policy_id=pruning_policy_id,
+    ):
+        raise ValueError("pruning policy is not declared by plugin descriptor")
+
+    source_event = _event_at_seq(events=events, event_seq=policy_source_event_seq)
+    if source_event is None:
+        raise ValueError("policy source event mismatch")
+    if pruning_policy_ref["policy_source_type"] != "merge_plan":
+        raise ValueError("policy source event mismatch")
+    _validate_merge_plan_policy_source(
+        source_event=source_event,
+        artifact_store=artifact_store,
+        pruning_policy_ref=pruning_policy_ref,
+        task_id=task_id,
+        parent_unit_id=parent_unit_id,
+    )
+    return dict(pruning_policy_ref)
+
+
+def _descriptor_declares_merge_policy(
+    *, descriptor: JsonObject, merge_policy_id: str
+) -> bool:
+    if descriptor.get("merge_policy_id") == merge_policy_id:
+        return True
+    split_strategies = descriptor.get("split_strategies", {})
+    if not isinstance(split_strategies, dict):
+        return False
+    return any(
+        isinstance(strategy, dict)
+        and strategy.get("merge_policy_id") == merge_policy_id
+        for strategy in split_strategies.values()
+    )
+
+
+def _event_at_seq(
+    *, events: Iterable[LedgerEvent], event_seq: int
+) -> LedgerEvent | None:
+    for event in events:
+        if event.event_seq == event_seq:
+            return event
+    return None
+
+
+def _validate_merge_plan_policy_source(
+    *,
+    source_event: LedgerEvent,
+    artifact_store: ArtifactStore,
+    pruning_policy_ref: JsonObject,
+    task_id: str,
+    parent_unit_id: str,
+) -> None:
+    if (
+        source_event.event_type != EventType.MERGE_PLAN_RECORDED
+        or source_event.task_id != task_id
+        or source_event.object_id != pruning_policy_ref["policy_source_id"]
+        or source_event.payload.get("merge_plan_id")
+        != pruning_policy_ref["policy_source_id"]
+        or source_event.payload.get("parent_unit_id") != parent_unit_id
+        or source_event.payload.get("merge_policy_id")
+        != pruning_policy_ref["pruning_policy_id"]
+        or source_event.payload.get("merge_policy_version")
+        != pruning_policy_ref["pruning_policy_version"]
+    ):
+        raise ValueError("policy source event mismatch")
+
+    ref_data = source_event.payload.get("merge_plan_ref")
+    if not isinstance(ref_data, dict):
+        raise ValueError("policy source event mismatch")
+    merge_plan_ref = ArtifactRef.from_dict(ref_data)
+    if not artifact_store.verify(merge_plan_ref):
+        raise ValueError("policy source event mismatch")
+    merge_plan_data = json.loads(artifact_store.read_bytes(merge_plan_ref).decode("utf-8"))
+    merge_plan = MergePlan(**merge_plan_data)
+    if digest_merge_plan_body(merge_plan) != source_event.payload.get("merge_plan_digest"):
+        raise ValueError("policy source event mismatch")
+    merge_policy_ref = merge_plan.merge_policy_ref
+    if (
+        merge_policy_ref.get("plugin_id")
+        != pruning_policy_ref["pruning_policy_plugin_id"]
+        or merge_policy_ref.get("plugin_version")
+        != pruning_policy_ref["pruning_policy_plugin_version"]
+        or merge_policy_ref.get("merge_policy_id")
+        != pruning_policy_ref["pruning_policy_id"]
+        or merge_policy_ref.get("merge_policy_version")
+        != pruning_policy_ref["pruning_policy_version"]
+        or merge_policy_ref.get("merge_policy_descriptor_digest")
+        != pruning_policy_ref["pruning_policy_descriptor_digest"]
+    ):
+        raise ValueError("policy source event mismatch")
+
+
+def _subtree_pruning_candidates(
+    *,
+    parent_unit_id: str,
+    task_id: str,
+    candidate_descendant_units: tuple[TaskUnit, ...],
+    events: Iterable[LedgerEvent],
+) -> tuple[tuple[TaskUnit, ...], int]:
+    units_by_id = _unique_units_by_id(candidate_descendant_units)
+    canonical_unit_ids = _canonical_unit_ids_from_events(events=events)
+    settlement_unit_ids = _settlement_evidence_unit_ids(events=events)
+    cancellable_states = {
+        TaskState.READY,
+        TaskState.PROCESSING,
+        TaskState.BLOCKED,
+    }
+    cancellable: list[TaskUnit] = []
+    preserved_count = 0
+    for unit in sorted(units_by_id.values(), key=lambda item: item.unit_id):
+        if unit.task_id != task_id:
+            continue
+        if not _is_descendant_unit(
+            unit=unit,
+            parent_unit_id=parent_unit_id,
+            units_by_id=units_by_id,
+        ):
+            continue
+        protected = (
+            unit.state == TaskState.COMPLETED
+            or bool(unit.canonical_output_refs)
+            or unit.unit_id in canonical_unit_ids
+            or unit.unit_id in settlement_unit_ids
+        )
+        if unit.state in cancellable_states and not protected:
+            cancellable.append(unit)
+        else:
+            preserved_count += 1
+    return tuple(cancellable), preserved_count
+
+
+def _unique_units_by_id(units: tuple[TaskUnit, ...]) -> dict[str, TaskUnit]:
+    units_by_id: dict[str, TaskUnit] = {}
+    for unit in units:
+        existing = units_by_id.get(unit.unit_id)
+        if existing is not None and existing != unit:
+            raise ValueError(f"conflicting candidate descendant unit: {unit.unit_id}")
+        units_by_id[unit.unit_id] = unit
+    return units_by_id
+
+
+def _is_descendant_unit(
+    *, unit: TaskUnit, parent_unit_id: str, units_by_id: dict[str, TaskUnit]
+) -> bool:
+    current_parent_id = unit.parent_unit_id
+    seen: set[str] = set()
+    while current_parent_id:
+        if current_parent_id == parent_unit_id:
+            return True
+        if current_parent_id in seen:
+            return False
+        seen.add(current_parent_id)
+        parent = units_by_id.get(current_parent_id)
+        if parent is None:
+            return False
+        current_parent_id = parent.parent_unit_id
+    return False
+
+
+def _canonical_unit_ids_from_events(*, events: Iterable[LedgerEvent]) -> set[str]:
+    unit_ids: set[str] = set()
+    for event in events:
+        if event.event_type != EventType.CANONICAL_OUTPUTS_BOUND:
+            continue
+        unit_id = event.payload.get("unit_id")
+        if isinstance(unit_id, str) and unit_id:
+            unit_ids.add(unit_id)
+    return unit_ids
+
+
+def _settlement_evidence_unit_ids(*, events: Iterable[LedgerEvent]) -> set[str]:
+    unit_ids: set[str] = set()
+    for event in events:
+        if event.event_type != EventType.CONTRIBUTION_STATE_CHANGED:
+            continue
+        contribution_data = event.payload.get("contribution")
+        if not isinstance(contribution_data, dict):
+            continue
+        try:
+            contribution = ContributionRecord(**contribution_data)
+        except ValueError:
+            continue
+        if contribution.state == ContributionState.SETTLED:
+            unit_ids.add(contribution.unit_id)
+    return unit_ids
+
+
+def _subtree_prune_record(
+    *,
+    parent_completed_event: LedgerEvent,
+    parent_unit_id: str,
+    parent_completed_event_seq: int,
+    policy: JsonObject,
+    cancellable_units: tuple[TaskUnit, ...],
+    preserved_completed_unit_count: int,
+    now: str,
+) -> SubtreePruneRecord:
+    return SubtreePruneRecord(
+        subtree_prune_id=f"subtree_pruned:{parent_unit_id}:{parent_completed_event_seq}",
+        task_id=parent_completed_event.task_id or "",
+        parent_unit_id=parent_unit_id,
+        parent_completed_event_seq=parent_completed_event_seq,
+        pruning_policy_id=str(policy["pruning_policy_id"]),
+        pruning_policy_version=str(policy["pruning_policy_version"]),
+        pruning_policy_plugin_id=str(policy["pruning_policy_plugin_id"]),
+        pruning_policy_descriptor_digest=str(
+            policy["pruning_policy_descriptor_digest"]
+        ),
+        policy_source_type=str(policy["policy_source_type"]),
+        policy_source_id=str(policy["policy_source_id"]),
+        policy_source_event_seq=int(policy["policy_source_event_seq"]),
+        cancelled_unit_count=len(cancellable_units),
+        cancelled_unit_ids_digest=_cancelled_unit_ids_digest(
+            tuple(unit.unit_id for unit in cancellable_units)
+        ),
+        preserved_completed_unit_count=preserved_completed_unit_count,
+        reason="parent_completed_post_completion_pruning",
+        created_at=now,
+    )
+
+
+def _cancelled_unit_ids_digest(cancelled_unit_ids: tuple[str, ...]) -> str:
+    return digest_json(sorted(cancelled_unit_ids))
+
+
+def _existing_subtree_pruning(
+    *,
+    events: Iterable[LedgerEvent],
+    batch_id: str,
+    parent_unit_id: str,
+    parent_completed_event_seq: int,
+) -> SubtreePruningFlowResult | None:
+    ledger_events = tuple(events)
+    matching_markers = [
+        event
+        for event in ledger_events
+        if event.event_type == EventType.SUBTREE_PRUNED
+        and event.payload.get("parent_unit_id") == parent_unit_id
+        and event.payload.get("parent_completed_event_seq")
+        == parent_completed_event_seq
+    ]
+    if not matching_markers and not any(event.batch_id == batch_id for event in ledger_events):
+        return None
+    if len(matching_markers) > 1:
+        raise ValueError("subtree pruning conflict: multiple SUBTREE_PRUNED markers")
+    if matching_markers and matching_markers[0].batch_id != batch_id:
+        raise ValueError("subtree pruning conflict: unexpected pruning batch id")
+    batch = tuple(
+        sorted(
+            (event for event in ledger_events if event.batch_id == batch_id),
+            key=lambda event: event.batch_index or 0,
+        )
+    )
+    if not batch:
+        return None
+    return _validate_existing_subtree_pruning_batch(
+        batch=batch,
+        parent_unit_id=parent_unit_id,
+        parent_completed_event_seq=parent_completed_event_seq,
+    )
+
+
+def _validate_existing_subtree_pruning_batch(
+    *,
+    batch: tuple[LedgerEvent, ...],
+    parent_unit_id: str,
+    parent_completed_event_seq: int,
+) -> SubtreePruningFlowResult:
+    batch_sizes = {event.batch_size for event in batch}
+    if len(batch) < 2 or len(batch_sizes) != 1 or None in batch_sizes:
+        raise ValueError("projection inconsistent: incomplete subtree_pruning_batch")
+    if next(iter(batch_sizes)) != len(batch):
+        raise ValueError("projection inconsistent: incomplete subtree_pruning_batch")
+    if [event.batch_index for event in batch] != list(range(1, len(batch) + 1)):
+        raise ValueError("projection inconsistent: incomplete subtree_pruning_batch")
+    if batch[-1].event_type != EventType.SUBTREE_PRUNED:
+        raise ValueError("projection inconsistent: subtree_pruning_batch missing final marker")
+    cancellation_events = batch[:-1]
+    if not all(
+        event.event_type == EventType.TASK_UNIT_STATE_CHANGED
+        and event.payload.get("old_state")
+        in {
+            TaskState.READY.value,
+            TaskState.PROCESSING.value,
+            TaskState.BLOCKED.value,
+        }
+        and event.payload.get("new_state") == TaskState.CANCELLED.value
+        for event in cancellation_events
+    ):
+        raise ValueError("projection inconsistent: subtree_pruning_batch cancellations")
+    marker_payload = batch[-1].payload
+    record_payload = marker_payload.get("subtree_prune_record")
+    if not isinstance(record_payload, dict):
+        raise ValueError("subtree_prune_record payload missing")
+    record = SubtreePruneRecord(**record_payload)
+    cancelled_unit_ids = tuple(event.object_id for event in cancellation_events)
+    if (
+        record.parent_unit_id != parent_unit_id
+        or record.parent_completed_event_seq != parent_completed_event_seq
+        or record.cancelled_unit_count != len(cancelled_unit_ids)
+        or record.cancelled_unit_ids_digest
+        != _cancelled_unit_ids_digest(cancelled_unit_ids)
+        or marker_payload.get("cancelled_unit_ids_digest")
+        != record.cancelled_unit_ids_digest
+    ):
+        raise ValueError("projection inconsistent: subtree_pruning_batch marker mismatch")
+    return SubtreePruningFlowResult(
+        subtree_prune_record=record,
+        cancelled_units=cancelled_unit_ids,
+        preserved_completed_unit_count=record.preserved_completed_unit_count,
+        events=batch,
+    )
+
+
+def _validate_existing_subtree_pruning_matches_request(
+    *,
+    existing: SubtreePruningFlowResult,
+    expected_record: SubtreePruneRecord,
+    expected_cancelled_unit_ids: tuple[str, ...],
+) -> None:
+    if existing.subtree_prune_record != expected_record:
+        raise ValueError("subtree pruning conflict")
+    if existing.cancelled_units != expected_cancelled_unit_ids:
+        raise ValueError("subtree pruning conflict")
+
+
+def _subtree_pruning_drafts(
+    *,
+    subtree_prune_record: SubtreePruneRecord,
+    cancellable_units: tuple[TaskUnit, ...],
+    now: str,
+    correlation_id: str,
+    causation_event_id: str | None,
+) -> tuple[EventDraft, ...]:
+    drafts: list[EventDraft] = []
+    for unit in cancellable_units:
+        cancelled = transition_task_unit(
+            unit,
+            new_state=TaskState.CANCELLED,
+            reason="parent_completed_post_completion_pruning",
+            trigger="subtree_pruning_batch",
+            changed_at=now,
+        )
+        drafts.append(
+            EventDraft(
+                event_type=EventType.TASK_UNIT_STATE_CHANGED,
+                object_type="TaskUnit",
+                object_id=unit.unit_id,
+                task_id=unit.task_id,
+                actor={"kind": "protocol_engine"},
+                correlation_id=correlation_id,
+                causation_event_id=causation_event_id,
+                idempotency_key=(
+                    f"task_unit:state:{unit.unit_id}:{unit.state.value}:"
+                    f"Cancelled:subtree_pruning:"
+                    f"{subtree_prune_record.parent_completed_event_seq}"
+                ),
+                payload={
+                    "schema_version": "phase5.subtree_pruning_task_unit_state_changed.v1",
+                    "old_state": unit.state.value,
+                    "new_state": TaskState.CANCELLED.value,
+                    "task_unit_state_change": _task_unit_state_change(
+                        task_unit=cancelled,
+                        old_state=unit.state,
+                        new_state=TaskState.CANCELLED,
+                        reason="parent_completed_post_completion_pruning",
+                        trigger="subtree_pruning_batch",
+                        correlation_id=correlation_id,
+                        causation_event_id=causation_event_id,
+                        changed_at=now,
+                        state_context={
+                            "subtree_prune_id": subtree_prune_record.subtree_prune_id,
+                            "parent_unit_id": subtree_prune_record.parent_unit_id,
+                            "parent_completed_event_seq": (
+                                subtree_prune_record.parent_completed_event_seq
+                            ),
+                        },
+                    ),
+                    "task_unit": cancelled.to_dict(),
+                    "subtree_prune_id": subtree_prune_record.subtree_prune_id,
+                    "parent_unit_id": subtree_prune_record.parent_unit_id,
+                    "parent_completed_event_seq": (
+                        subtree_prune_record.parent_completed_event_seq
+                    ),
+                    "reason": "parent_completed_post_completion_pruning",
+                    "correlation_id": correlation_id,
+                },
+                occurred_at=now,
+            )
+        )
+    drafts.append(
+        EventDraft(
+            event_type=EventType.SUBTREE_PRUNED,
+            object_type="SubtreePruneRecord",
+            object_id=subtree_prune_record.subtree_prune_id,
+            task_id=subtree_prune_record.task_id,
+            actor={"kind": "protocol_engine"},
+            correlation_id=correlation_id,
+            causation_event_id=causation_event_id,
+            idempotency_key=(
+                f"subtree_pruned:{subtree_prune_record.parent_unit_id}:"
+                f"{subtree_prune_record.parent_completed_event_seq}"
+            ),
+            payload={
+                "schema_version": "phase5.subtree_pruned.v1",
+                "subtree_prune_record": subtree_prune_record.to_dict(),
+                "task_id": subtree_prune_record.task_id,
+                "parent_unit_id": subtree_prune_record.parent_unit_id,
+                "parent_completed_event_seq": (
+                    subtree_prune_record.parent_completed_event_seq
+                ),
+                "pruning_policy_id": subtree_prune_record.pruning_policy_id,
+                "pruning_policy_version": (
+                    subtree_prune_record.pruning_policy_version
+                ),
+                "pruning_policy_plugin_id": (
+                    subtree_prune_record.pruning_policy_plugin_id
+                ),
+                "pruning_policy_descriptor_digest": (
+                    subtree_prune_record.pruning_policy_descriptor_digest
+                ),
+                "policy_source_type": subtree_prune_record.policy_source_type,
+                "policy_source_id": subtree_prune_record.policy_source_id,
+                "policy_source_event_seq": (
+                    subtree_prune_record.policy_source_event_seq
+                ),
+                "cancelled_unit_count": subtree_prune_record.cancelled_unit_count,
+                "cancelled_unit_ids": [unit.unit_id for unit in cancellable_units],
+                "cancelled_unit_ids_digest": (
+                    subtree_prune_record.cancelled_unit_ids_digest
+                ),
+                "preserved_completed_unit_count": (
+                    subtree_prune_record.preserved_completed_unit_count
+                ),
+                "reason": subtree_prune_record.reason,
+                "created_at": subtree_prune_record.created_at,
+            },
+            occurred_at=now,
+        )
+    )
+    return tuple(drafts)
 
 
 def _final_event_seq_for_batch(
