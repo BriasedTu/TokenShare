@@ -1,0 +1,530 @@
+\documentclass[11pt]{ctexart}
+
+\usepackage[a4paper,margin=2.2cm]{geometry}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{array}
+\usepackage{enumitem}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{listings}
+\usepackage{amsmath,amssymb}
+\usepackage{fontspec}
+\setmonofont{DejaVu Sans Mono}
+
+\hypersetup{colorlinks=true,linkcolor=blue,urlcolor=blue,citecolor=blue}
+\definecolor{codebg}{RGB}{248,248,248}
+\lstdefinestyle{codestyle}{
+  backgroundcolor=\color{codebg},
+  basicstyle=\ttfamily\small,
+  breaklines=true,
+  frame=single,
+  columns=fullflexible
+}
+\lstset{style=codestyle}
+
+\title{TokenShare Real Plugin Experiment Design\\
+\large 基于最新仓库进展的 factorization 插件实验与真实插件泛化实验}
+\author{TokenShare Project}
+\date{2026-06-28}
+
+\begin{document}
+\maketitle
+
+\section{本文档更新点}
+
+本文档根据当前 GitHub 仓库 \texttt{BriasedTu/TokenShare} 的最新实现状态重写实验设计。相比上一版，核心变化有五点：
+
+\begin{enumerate}[leftmargin=2em]
+  \item 不再使用简化 toy / stub 实验来支撑论文主张。实验必须围绕真实插件边界、真实 descriptor、真实 artifact、真实 parser / verifier / merge policy 和真实 protocol lifecycle 展开。
+  \item factorization 插件已经从早期的简单 range demo 更新为 \texttt{factorization@0.1.0} 第一切片：包含 schema、pure models、descriptor、candidate range partition、parser、range verifier、all-required merge policy、prime / semiprime fixture flow、prompt package builder 和 AI output parse policy。
+  \item factorization 的核心 unit type 不再只是简单 range task，而是 \texttt{root}、\texttt{factor\_integer}、\texttt{factor\_search\_range}、\texttt{factorization\_merge} 四类任务单元。
+  \item range worker 的输出 contract 使用 \texttt{factorization.range\_result.v1}，结果种类是 \texttt{found\_factor} 或 \texttt{no\_factor\_in\_range}；所有整数必须以 decimal string 保存，避免 JSON 大整数语义不清。
+  \item 第四个实验继续测试协议泛化能力，但必须使用真实插件：\texttt{factorization plugin} + 真实 \texttt{Lean proof plugin / Lean adapter}。如果 Lean 插件尚未实现，则 Experiment 4 只能标记为待运行，不能用 lean\_stub 结果替代。
+\end{enumerate}
+
+\section{最新仓库事实摘要}
+
+当前实验设计以以下仓库事实为约束：
+
+\begin{itemize}[leftmargin=2em]
+  \item V1 的目标是本地可复现实验内核：任务注册、递归图、lease、attempt、artifact、插件化验证、canonical output、merge、settlement 和 JSONL event replay。
+  \item 协议核心不理解 factorization、Lean 或 structured report 的领域逻辑；领域规则只属于插件。
+  \item factorization 插件第一版不实现 \texttt{one\_success}、early success、sibling pruning 或 composite cofactor 的完整递归 resolution。
+  \item Phase 7 实验级 AI API executor 已实现；executor 只负责 transport、raw output、provenance、usage/cost、parser bridge，不拥有领域解析权。
+  \item Lean 插件新口径是真实 Lean checker 驱动的形式化证明插件，不是 stub。验证必须使用固定本地 Lean / lake / toolchain / library context，并持久化 checker 日志和环境摘要。
+\end{itemize}
+
+\section{实验总目标}
+
+四个实验分别回答四个问题：
+
+\begin{longtable}{p{0.2\linewidth}p{0.32\linewidth}p{0.38\linewidth}}
+\toprule
+实验 & 问题 & 成功证据 \\
+\midrule
+Experiment 1 & factorization 真实插件能否端到端跑通？ & prime / semiprime fixture 走完 descriptor freeze、split、execution、verification、canonical、all-required merge、settlement。 \\
+Experiment 2 & 局部失败和错误输出是否会污染 canonical state？ & invalid factor、false no-factor、parse failure、crash / expired lease 均被拒绝或恢复。 \\
+Experiment 3 & 关键协议机制是否必要？ & 关闭 verification、parser policy、requeue、all-required merge gate 后出现预期退化。 \\
+Experiment 4 & 协议核心是否能泛化到不同真实插件？ & factorization 与真实 Lean plugin 共享同一套 protocol lifecycle，且 core 不硬编码任何领域规则。 \\
+\bottomrule
+\end{longtable}
+
+\section{Factorization 插件最新契约}
+
+\subsection{插件身份与策略 ID}
+
+\begin{longtable}{p{0.35\linewidth}p{0.55\linewidth}}
+\toprule
+字段 & 最新值 \\
+\midrule
+\texttt{plugin\_id} & \texttt{factorization} \\
+\texttt{plugin\_version} & \texttt{0.1.0} \\
+\texttt{split\_strategy\_id} & \texttt{factorization.candidate\_range\_partition.v1} \\
+\texttt{validator\_policy\_id} & \texttt{factorization.range\_result.validator.v1} \\
+\texttt{merge\_policy\_id} & \texttt{factorization.all\_required\_range\_merge.v1} \\
+\texttt{parser\_id} & \texttt{factorization.range\_result.parser.v1} \\
+\texttt{prompt builder} & \texttt{factorization.build\_factor\_search\_prompt\_package.v1} \\
+\bottomrule
+\end{longtable}
+
+\subsection{支持的 TaskUnit 类型}
+
+\begin{lstlisting}
+root
+factor_integer
+factor_search_range
+factorization_merge
+\end{lstlisting}
+
+说明：\texttt{root} 是兼容现有 \texttt{TaskUnit.create\_root()} 的入口。插件通过 root input 和 \texttt{TaskSpec.split\_strategy\_id} 将其解释为 \texttt{factor\_integer} 根目标。真正的 range 子任务使用 \texttt{factor\_search\_range}。
+
+\subsection{关键 schema version}
+
+\begin{longtable}{p{0.38\linewidth}p{0.52\linewidth}}
+\toprule
+对象 / Artifact & Schema version \\
+\midrule
+RootInput & \texttt{factorization.root\_input.v1} \\
+FactorIntegerSubject & \texttt{factorization.factor\_integer\_subject.v1} \\
+CandidateRangePartitionParams & \texttt{factorization.candidate\_range\_partition\_params.v1} \\
+CandidateRangeCoverageProof & \texttt{factorization.candidate\_range\_coverage\_proof.v1} \\
+FactorSearchRangeInput & \texttt{factorization.factor\_search\_range\_input.v1} \\
+FactorSearchInstruction & \texttt{factorization.factor\_search\_instruction.v1} \\
+PromptPackage & \texttt{phase3.prompt\_package.v1} \\
+RangeResult & \texttt{factorization.range\_result.v1} \\
+FactorizationMergeResult & \texttt{factorization.merge\_result.v1} \\
+PrimeFactorizationResult & \texttt{factorization.prime\_factorization\_result.v1} \\
+\bottomrule
+\end{longtable}
+
+\section{统一生命周期与事件要求}
+
+实验必须使用已有 Phase 3-5 events，不新增 factorization 专用 event type。权威事实进入以下事件和 artifacts：
+
+\begin{lstlisting}
+REGISTRY_SNAPSHOT_RECORDED
+EXECUTION_REQUEST_RECORDED
+EXECUTION_SUBMISSION_RECORDED
+VERIFICATION_RECORDED
+CANONICAL_OUTPUTS_BOUND
+SPLIT_STRATEGY_INVOCATION_RECORDED
+DECOMPOSITION_PROPOSAL_RECORDED
+EXPANSION_DECISION_RECORDED
+MERGE_PLAN_RECORDED
+TASK_EXPANDED
+MERGE_TASK_LINK_RECORDED
+MERGE_RECORDED
+EXPECTED_OUTPUT_RESOLVED
+CONTRIBUTION_STATE_CHANGED
+SETTLEMENT_RECORDED
+\end{lstlisting}
+
+每个 run 至少保存：
+
+\begin{lstlisting}
+outputs/events/<run_id>.jsonl
+outputs/artifacts/<run_id>/descriptor.json
+outputs/artifacts/<run_id>/registry_snapshot.json
+outputs/artifacts/<run_id>/root_input.json
+outputs/artifacts/<run_id>/factor_integer_subject.json
+outputs/artifacts/<run_id>/range_inputs/*.json
+outputs/artifacts/<run_id>/execution_instructions/*.json
+outputs/artifacts/<run_id>/prompt_packages/*.json
+outputs/artifacts/<run_id>/raw_outputs/*.json
+outputs/artifacts/<run_id>/parsed_outputs/*.json
+outputs/artifacts/<run_id>/verification_reports/*.json
+outputs/artifacts/<run_id>/merge_records/*.json
+outputs/artifacts/<run_id>/settlement_records/*.json
+outputs/metrics/<experiment>_summary.csv
+\end{lstlisting}
+
+\section{Experiment 1: Factorization End-to-End Execution}
+
+\subsection{实验目的}
+
+验证 factorization 真实插件可以在现有协议核心上完成完整闭环。Experiment 1 不注入失败，重点检查：
+
+\begin{enumerate}[leftmargin=2em]
+  \item root input 不是最终结果，必须先生成并 canonical 绑定 \texttt{factor\_integer\_subject}。
+  \item split strategy 只能消费 canonical subject，并产生完整候选域 range partition。
+  \item 每个 range child 都必须有 \texttt{ExecutionInstruction}；AI/mock-AI 路径还必须有插件生成的 \texttt{PromptPackage}。
+  \item range output 必须经过 parser / verifier，再绑定 canonical。
+  \item merge 只在 all required range slots 都 canonical 后启动。
+  \item semiprime fixture 只有在 factor 与 cofactor 均通过 primality evidence 时才能解析为 \texttt{PrimeFactorizationResult}。
+\end{enumerate}
+
+\subsection{推荐 fixture}
+
+必须优先使用仓库中已有的 Phase 6 fixture，而不是手写 toy 数据。
+
+\begin{longtable}{p{0.22\linewidth}p{0.2\linewidth}p{0.48\linewidth}}
+\toprule
+Fixture & 目标数 & 预期结果 \\
+\midrule
+small prime direct complete & 2 或 3 & split strategy 返回 complete，不生成 proposal、merge plan、child ranges 或 merge task。 \\
+prime range flow & 97 & range children 全部 \texttt{no\_factor\_in\_range}，merge 输出 \texttt{prime\_certificate} 和 \texttt{PrimeFactorizationResult([97])}。 \\
+semiprime range flow & $91 = 7 \times 13$ & found factor range 和 no-factor ranges 都经 verifier，all-required merge 后输出 \texttt{PrimeFactorizationResult([7,13])}。 \\
+extended semiprime benchmark & $8051 = 83 \times 97$ & 可作为更大可读展示 run，但不能替代已有 fixture 回归。 \\
+\bottomrule
+\end{longtable}
+
+\subsection{Semiprime run 完整流程}
+
+以 \texttt{target\_n=91} 为主线：
+
+\begin{longtable}{p{0.06\linewidth}p{0.27\linewidth}p{0.57\linewidth}}
+\toprule
+Step & 操作 & 必须检查 \\
+\midrule
+1 & 冻结 registry / descriptor & registry snapshot 中包含 \texttt{factorization@0.1.0}，descriptor digest 稳定。 \\
+2 & 注册 root task & RootInput 使用 \texttt{factorization.root\_input.v1}，\texttt{requested\_output=prime\_factorization\_result}。 \\
+3 & 生成 root canonical subject & deterministic fixture executor 生成 \texttt{FactorIntegerSubject}，经 \texttt{verify\_factor\_integer\_subject()} 后 canonical 绑定，bundle key 必须是 \texttt{factor\_integer\_subject}，不是最终输出名。 \\
+4 & 调用 split strategy & 记录 \texttt{SPLIT\_STRATEGY\_INVOCATION\_RECORDED}；strategy 为 \texttt{factorization.candidate\_range\_partition.v1}。 \\
+5 & 生成 proposal 和 merge plan & \texttt{DecompositionProposal} child 只能是 \texttt{factor\_search\_range}；coverage proof 必须 no gap、no overlap、full domain covered、sqrt bound checked。 \\
+6 & 创建 range children & 每个 child 拥有 \texttt{FactorSearchRangeInput}，包含 \texttt{coverage\_id}、\texttt{child\_index}、\texttt{child\_count} 和 \texttt{partition\_params\_digest}。 \\
+7 & 生成 execution request & 每个 range child request 同时引用 \texttt{execution\_instruction\_ref} 和插件生成的 \texttt{prompt\_package\_ref}。 \\
+8 & 执行 bounded range search & executor 只搜索自己被分配的闭区间，不得搜索区间外，不得创建子任务，不得声称最终 prime factorization。 \\
+9 & 保存 raw / parsed artifacts & AI/mock-AI 路径必须保存 raw output；parser 成功后保存 typed \texttt{RangeResult} artifact。 \\
+10 & 插件 verifier 检查 & \texttt{found\_factor} 校验 range、divisibility、cofactor、coverage/params；\texttt{no\_factor\_in\_range} 做 deterministic recheck，并受 budget 约束。 \\
+11 & canonical binding & 只有 verifier passed 的 \texttt{range\_result} 可以 canonical。 \\
+12 & all-required merge gate & 只有所有 required range slots canonical 后，才创建 merge task；partial run 不能 merge。 \\
+13 & merge policy & \texttt{merge\_required\_range\_results()} 选择数值最小 verified factor；若 factor/cofactor 均 prime，生成 \texttt{PrimeFactorizationResult}。 \\
+14 & expected output resolution & 只有 \texttt{prime\_certificate} 或完整 \texttt{prime\_factorization\_result} 可以解析为 parent output；\texttt{nontrivial\_factor\_found} 不得伪装成 final。 \\
+15 & completion / settlement & 写 parent completion、contribution state change、settlement，并保证 event replay 可重建。 \\
+\bottomrule
+\end{longtable}
+
+\subsection{Experiment 1 指标}
+
+\begin{longtable}{p{0.35\linewidth}p{0.55\linewidth}}
+\toprule
+Metric & Definition \\
+\midrule
+subject\_canonical\_success & root / factor\_integer subject verified and canonical-bound. \\
+range\_coverage\_valid & coverage proof no gap / no overlap / full domain / sqrt bound all true. \\
+range\_verification\_rate & verified range results / submitted parsed range results. \\
+prompt\_package\_coverage & range execution requests with plugin-owned prompt package / range execution requests. \\
+all\_required\_merge\_gate\_success & merge starts only after all required range slots canonical. \\
+final\_correctness & final prime factor multiset product equals target n. \\
+settlement\_success & settlement event exists and references verified / merged contributions. \\
+ledger\_replay\_success & lifecycle reconstructs from JSONL and artifacts. \\
+\bottomrule
+\end{longtable}
+
+\section{Experiment 2: Failure Injection and Recovery}
+
+\subsection{实验目的}
+
+验证错误输出、parse failure、crash 和 budget failure 不会污染 canonical state。每个 failure case 必须单独 run，不能混合注入。
+
+\subsection{Case A: invalid found\_factor}
+
+注入一个结构化但错误的 \texttt{RangeResult}：
+
+\begin{lstlisting}
+{
+  "schema_version": "factorization.range_result.v1",
+  "result_kind": "found_factor",
+  "target_n": "91",
+  "range_start": "2",
+  "range_end": "5",
+  "found_factor": "5",
+  "cofactor": "18",
+  "checked_divisor_count": 4
+}
+\end{lstlisting}
+
+预期：
+
+\begin{lstlisting}
+VERIFICATION_RECORDED status = rejected
+failure_kind = invalid_output
+no CANONICAL_OUTPUTS_BOUND for this attempt
+unit later requeued or superseded by a valid attempt
+\end{lstlisting}
+
+\subsection{Case B: false no\_factor\_in\_range}
+
+对包含真实 divisor 的 range 恶意提交 \texttt{no\_factor\_in\_range}。例如 target=91，range=[7,7]，实际 7 整除 91。
+
+预期：verifier deterministic recheck 发现 divisor，拒绝该 output。该 case 是 factorization verifier 可信度的关键证据。
+
+\subsection{Case C: parse failure / raw-only forbidden}
+
+AI executor 或 mock-AI executor 返回 free-form raw text：
+
+\begin{lstlisting}
+I found factor 7.
+\end{lstlisting}
+
+由于 descriptor 声明：
+
+\begin{lstlisting}
+parser_id = factorization.range_result.parser.v1
+parse_required = true
+raw_only_allowed = false
+\end{lstlisting}
+
+预期：
+
+\begin{lstlisting}
+raw output artifact persisted
+parse failure artifact persisted
+candidate_output_refs = {}
+no VERIFICATION_RECORDED for successful range_result
+no CANONICAL_OUTPUTS_BOUND
+\end{lstlisting}
+
+\subsection{Case D: worker crash / expired lease}
+
+让某个 range worker 获得 lease 后不提交 output。预期：lease expired 后该 unit 回到 Ready，并由新 attempt 完成。crashed attempt 没有 submission，因此不能进入 verification / canonical。
+
+\subsection{Case E: no-factor recheck budget exceeded}
+
+构造一个 range，使 \texttt{no\_factor\_recheck\_max\_divisors} 小于 range 长度。预期 verifier rejected，不允许无界 brute-force loop，也不允许把无法 recheck 的 no-factor claim canonical。
+
+\subsection{Experiment 2 指标}
+
+\begin{longtable}{p{0.35\linewidth}p{0.55\linewidth}}
+\toprule
+Metric & Definition \\
+\midrule
+detection\_rate & rejected injected invalid outputs / injected invalid outputs. \\
+parse\_failure\_isolation\_rate & parse failures not entering verification/canonical / parse failure cases. \\
+false\_accept\_rate & invalid or raw-only outputs becoming canonical / injected invalid outputs. \\
+requeue\_success\_rate & expired/rejected required units later re-leased and verified / expired/rejected required units. \\
+canonical\_pollution\_count & invalid/crashed/raw-only attempts bound as canonical; expected 0. \\
+completion\_after\_recovery & root completes after recoverable failure. \\
+\bottomrule
+\end{longtable}
+
+\section{Experiment 3: Protocol Ablation Study}
+
+\subsection{实验目的}
+
+验证关键机制不是装饰。当前 factorization 最新设计中，最重要的机制不只是 verifier 和 requeue，还包括：插件拥有 prompt / parser、raw-only forbidden、all-required merge gate、slot integrity 和 first-slice limitation enforcement。
+
+\subsection{Ablation 矩阵}
+
+\begin{longtable}{p{0.25\linewidth}p{0.3\linewidth}p{0.35\linewidth}}
+\toprule
+Mode & Injected condition & Expected degradation \\
+\midrule
+FULL & invalid found factor & verifier rejects; no canonical pollution; root completes after recovery. \\
+NO\_VERIFICATION & invalid found factor & wrong range result may become canonical; merge may fail later or wrong canonical risk increases. \\
+NO\_PARSER\_POLICY & free-form raw output & raw-only / free-form claim may become candidate output; parse boundary broken. \\
+NO\_REQUEUE & worker crash & expired unit unresolved; root stuck; no settlement. \\
+NO\_ALL\_REQUIRED\_MERGE\_GATE & only one found factor slot canonical & merge starts before all required ranges canonical; violates first-slice limitation. \\
+NO\_SLOT\_INTEGRITY\_CHECK & slot/result mismatch & range result can be bound to wrong required slot; merge trust boundary broken. \\
+\bottomrule
+\end{longtable}
+
+\subsection{特别注意：不再把 early success 当作已实现能力}
+
+当前第一切片明确不实现 \texttt{one\_success}、early terminal resolution 或 sibling pruning。因此消融实验不能写成“TokenShare 应该找到一个 factor 后立即停止”。正确写法是：
+
+\begin{quote}
+FULL mode 必须证明 semiprime factor-found partial run 在所有 required ranges canonical 前不会创建 merge task、不会写 merge record、不会 settlement。NO\_ALL\_REQUIRED\_MERGE\_GATE 才故意破坏这个约束，用来展示 all-required merge gate 的必要性。
+\end{quote}
+
+\subsection{Experiment 3 指标}
+
+\begin{longtable}{p{0.36\linewidth}p{0.54\linewidth}}
+\toprule
+Metric & Definition \\
+\midrule
+wrong\_canonical\_acceptance\_rate & invalid outputs bound as canonical / injected invalid outputs. \\
+raw\_only\_acceptance\_rate & raw-only or free-form outputs treated as successful candidate outputs / raw-only cases. \\
+stuck\_task\_rate & runs with unresolved required units / total runs. \\
+premature\_merge\_rate & merge started before all required slots canonical / partial runs. \\
+slot\_mismatch\_acceptance\_rate & wrong slot binding accepted / slot mismatch injections. \\
+completion\_rate & completed runs / total runs. \\
+\bottomrule
+\end{longtable}
+
+\section{Experiment 4: Cross-Plugin Generality with Real Plugins}
+
+\subsection{实验目的}
+
+Experiment 4 继续测试协议泛化能力，但必须使用真实插件。也就是说：
+
+\begin{itemize}[leftmargin=2em]
+  \item factorization 侧使用 \texttt{factorization@0.1.0} 真实插件。
+  \item Lean 侧使用真实 \texttt{Lean proof plugin / Lean adapter}，不是 \texttt{lean\_stub}。
+  \item 如果 Lean plugin 尚未实现或本地没有可复现 Lean / lake 环境，则 Experiment 4 不能声称通过，只能标记为 \texttt{blocked} 或 \texttt{pending real Lean plugin}。
+\end{itemize}
+
+\subsection{两个真实插件的对比维度}
+
+\begin{longtable}{p{0.24\linewidth}p{0.33\linewidth}p{0.33\linewidth}}
+\toprule
+Dimension & factorization plugin & Lean proof plugin \\
+\midrule
+task domain & integer factorization / bounded arithmetic search & formal theorem proving \\
+root input & \texttt{RootInput(target\_n)} & Lean theorem / proof-state code artifact \\
+split authority & plugin deterministic \texttt{candidate\_range\_partition.v1} & plugin deterministic parser / normalizer / split strategy \\
+executor role & bounded range search only & proof candidate generation only \\
+verifier & deterministic factorization verifier & fixed local Lean / lake checker \\
+merge & all-required range merge & verified subproof merge / theorem artifact merge \\
+final output & \texttt{PrimeFactorizationResult} & root proof artifact accepted by Lean \\
+core knowledge & none about divisibility & none about Lean tactic / theorem semantics \\
+\bottomrule
+\end{longtable}
+
+\subsection{Shared lifecycle stages}
+
+两个插件都必须使用同一套协议对象和事件：
+
+\begin{lstlisting}
+PluginDescriptor
+RegistrySnapshot
+TaskSpec / TaskUnit
+ArtifactRef / ArtifactStore
+ExecutionRequest
+ExecutionSubmission
+VerificationReport
+CanonicalOutputBundle
+SplitStrategyInvocation
+DecompositionProposal
+ExpansionDecision
+MergePlan
+MergeTaskLink
+MergeRecord
+ExpectedOutputResolution
+ContributionRecord
+SettlementRecord
+EventLedger replay
+\end{lstlisting}
+
+\subsection{Lean 插件最低通过条件}
+
+Lean 插件不能只返回 success。最低必须满足：
+
+\begin{enumerate}[leftmargin=2em]
+  \item 输入是 Lean theorem / proof-state code artifact，而不是自然语言命题。
+  \item 插件内 deterministic parser / normalizer / split strategy 识别 Lean 命题结构并生成 proposal / merge plan。
+  \item AI 或 executor 不能决定协议级子任务，只能提交 proof candidate。
+  \item verifier 使用固定本地 Lean toolchain / lake project / import context 检查 proof artifact。
+  \item \texttt{EnvironmentRef} 记录 Lean executable、toolchain、lake project、library/import set、namespace/context、config digest 和摘要。
+  \item checker stdout/stderr、exit code、timeout、diagnostics、normalized theorem/proof digest 和 proof artifact ref 都必须持久化。
+  \item replay 不重新运行 Lean 来补历史事实，只根据 event / artifact 重建状态。
+\end{enumerate}
+
+\subsection{Experiment 4 执行流程}
+
+\begin{longtable}{p{0.06\linewidth}p{0.28\linewidth}p{0.56\linewidth}}
+\toprule
+Step & 操作 & 检查 \\
+\midrule
+1 & 运行 factorization fixture & 使用 Experiment 1 的 semiprime fixture，完成 full lifecycle。 \\
+2 & 运行 Lean direct proof fixture & 真实 Lean checker 验证一个 direct proof artifact。 \\
+3 & 运行 Lean decomposition / merge fixture & Lean plugin 自动拆分，子证明 artifact 通过 checker，merge 后 root theorem 再次通过 checker。 \\
+4 & 比较 shared event coverage & 两个插件均覆盖 shared lifecycle stages。 \\
+5 & 检查 core boundary & core 中无 factorization divisibility 逻辑，无 Lean tactic / checker / proof merge 逻辑。 \\
+6 & descriptor replay & 两个插件 descriptor digest 可 replay 验证。 \\
+7 & artifact replay & 不重新运行 executor / Lean / AI API，仅从 artifacts 和 event log 重建状态。 \\
+\bottomrule
+\end{longtable}
+
+\subsection{Experiment 4 指标}
+
+\begin{longtable}{p{0.35\linewidth}p{0.45\linewidth}p{0.12\linewidth}}
+\toprule
+Metric & Definition & Target \\
+\midrule
+shared\_protocol\_event\_coverage & observed shared lifecycle stages / expected stages & 1.0 \\
+plugin\_boundary\_purity & no domain-specific logic in protocol core & 1 \\
+descriptor\_replay\_success & descriptor digest verifies during replay & 1 \\
+artifact\_replay\_success & referenced artifacts load and link correctly & 1 \\
+lifecycle\_equivalence\_score & common lifecycle stages completed by both plugins / expected stages & 1.0 \\
+real\_checker\_evidence & Lean side has real checker logs and environment ref & 1 \\
+\bottomrule
+\end{longtable}
+
+\section{推荐 CLI / 测试入口}
+
+在实验基础设施尚未完全落地前，优先使用仓库已有测试作为 ground truth：
+
+\begin{lstlisting}
+# Factorization plugin unit tests
+PYTHONPATH=src python -m pytest tests/plugins/factorization -q
+
+# Factorization real plugin end-to-end fixtures
+PYTHONPATH=src python -m pytest tests/test_phase6_factorization_flow.py -q
+
+# First-slice limitation tests
+PYTHONPATH=src python -m pytest tests/test_phase6_factorization_limitations.py -q
+
+# Phase 7 AI API executor tests
+PYTHONPATH=src python -m pytest tests/executors tests/test_phase7_ai_api_execution_flow.py -q
+
+# Full startup validation
+./init.sh
+# or on Windows:
+.\init.ps1
+\end{lstlisting}
+
+未来 ExperimentRunner CLI 可设计为：
+
+\begin{lstlisting}
+python -m tokenshare.experiments.exp1_factorization_real_plugin \
+  --fixture semiprime --executor deterministic_local --seed 1
+
+python -m tokenshare.experiments.exp1_factorization_real_plugin \
+  --fixture semiprime --executor ai_api --seed 1 --allow-smoke-skip
+
+python -m tokenshare.experiments.exp2_factorization_failures \
+  --case false_no_factor --seed 1
+
+python -m tokenshare.experiments.exp3_factorization_ablation \
+  --mode NO_ALL_REQUIRED_MERGE_GATE --seed 1
+
+python -m tokenshare.experiments.exp4_real_plugin_generality \
+  --plugins factorization,lean_proof --seed 1
+\end{lstlisting}
+
+\section{最小验收标准}
+
+更新后的实验设计通过，当且仅当：
+
+\begin{enumerate}[leftmargin=2em]
+  \item factorization descriptor 使用 \texttt{plugin\_version=0.1.0}，并声明最新 strategy / parser / validator / merge policy。
+  \item root canonical output bundle key 是 \texttt{factor\_integer\_subject}，不能把 root subject 伪装成最终 \texttt{prime\_factorization\_result}。
+  \item split strategy 生成完整候选域 coverage proof，且 range children 无 gap / overlap。
+  \item range child request 同时持久化 \texttt{execution\_instruction\_ref} 和插件拥有的 \texttt{prompt\_package\_ref}。
+  \item AI / mock-AI raw output 必须经过插件 parser；free-form / raw-only 不能进入 verification 或 canonical。
+  \item invalid found factor、false no-factor、coverage mismatch、slot mismatch 和 budget exceeded 都被 deterministic verifier / merge policy 拒绝。
+  \item semiprime fixture 必须等所有 required ranges canonical 后才能 merge；不得宣称 early success 或 sibling pruning。
+  \item composite cofactor case 只能输出 \texttt{nontrivial\_factor\_found} 和 limitation reason，不能解析成 final result。
+  \item Phase 7 AI API executor 只负责 provider transport、raw artifact、provenance、usage/cost 和插件 parser bridge；不拥有 factorization 解析权。
+  \item Experiment 4 必须使用真实 Lean plugin / Lean adapter。没有真实 checker logs 和 \texttt{EnvironmentRef} 时，不得声称跨插件泛化实验已通过。
+\end{enumerate}
+
+\section{给 AI / Codex 的实现提醒}
+
+不要再实现一个脱离仓库对象的 toy range demo。实现时必须复用现有 \texttt{src/tokenshare/plugins/factorization/}、\texttt{ProtocolEngine}、\texttt{ArtifactStore}、\texttt{EventLedger}、Phase 4 verification / canonical / expansion flow 和 Phase 5 merge / settlement flow。
+
+如果要生成论文实验表格，优先从 JSONL event log 和 artifact refs 复算，而不是在实验脚本里直接硬写成功指标。每一个 “通过” 都应能追溯到：descriptor digest、artifact digest、verification report、canonical binding、merge record 和 settlement record。
+
+\end{document}
