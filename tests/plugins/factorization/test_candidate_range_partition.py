@@ -1,5 +1,7 @@
 from math import isqrt
 
+import pytest
+
 from tokenshare.plugins.factorization.split_strategy import partition_candidate_ranges
 
 
@@ -78,3 +80,27 @@ def test_candidate_range_partition_uses_non_empty_ranges() -> None:
         ("3", "3"),
     ]
     assert all(int(item.range_start) <= int(item.range_end) for item in result.ranges)
+
+
+def test_candidate_range_partition_rejects_empty_domain_instead_of_zero_child_coverage() -> None:
+    with pytest.raises(ValueError, match="candidate domain"):
+        partition_candidate_ranges(
+            target_n="2",
+            requested_child_count=4,
+            max_children_per_unit=4,
+        )
+
+
+def test_candidate_range_partition_rejects_bool_child_counts() -> None:
+    with pytest.raises(TypeError, match="requested_child_count"):
+        partition_candidate_ranges(
+            target_n="101",
+            requested_child_count=True,  # type: ignore[arg-type]
+            max_children_per_unit=4,
+        )
+    with pytest.raises(TypeError, match="max_children_per_unit"):
+        partition_candidate_ranges(
+            target_n="101",
+            requested_child_count=4,
+            max_children_per_unit=True,  # type: ignore[arg-type]
+        )

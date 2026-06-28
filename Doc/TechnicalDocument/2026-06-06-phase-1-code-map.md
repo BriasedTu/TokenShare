@@ -60,8 +60,8 @@ Phase 1 本轮实现遵循“协议对象在 `tokenshare.core`，文件和索引
 - `Lease`、`Attempt`、scheduler、状态机推进已由 `feat-003` 实现；本 Phase 1 code map 不把它们计入 Phase 1 行为，详见 `Doc/TechnicalDocument/2026-06-08-phase-2-code-map.md`。
 - `RootTaskRegistrar` 是 Phase 1 兼容入口和临时协调器；Phase 2 编排入口应另行收束，不能继续在该类中堆叠状态机或调度职责。
 - `PluginRegistry`、`ExecutorRegistry`、`ExecutionRequest`、`ExecutionSubmission` 属于 `feat-004`。
-- factorization、Lean stub 和 structured report stub 的领域规则不进入协议核心字段；本轮只允许通过 `plugin_payload` 和 artifact schema 标识保存。
-- 真实链上结算、真实分布式 worker、真实 Lean proving 仍然不属于 V1。
+- factorization、真实 Lean proof 插件和 structured report stub 的领域规则不进入协议核心字段；本轮只允许通过 `plugin_payload` 和 artifact schema 标识保存。
+- 真实链上结算、真实分布式 worker 和生产级 theorem-proving 平台仍然不属于 V1；本地真实 Lean checker 插件已进入 Phase 6 范围。
 
 ## 6. 2026-06-23 代码实物校准
 

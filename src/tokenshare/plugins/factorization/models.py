@@ -129,6 +129,8 @@ class CandidateRangePartitionParams:
         target_n = _parse_decimal_integer("target_n", self.target_n, min_value=2)
         min_divisor = _parse_decimal_integer("min_divisor", self.min_divisor, min_value=2)
         max_divisor = _parse_decimal_integer("max_divisor", self.max_divisor, min_value=0)
+        _require_integer("requested_child_count", self.requested_child_count)
+        _require_integer("actual_child_count", self.actual_child_count)
         if self.requested_child_count < 1:
             raise ValueError("requested_child_count must be >= 1")
         if self.actual_child_count < 0:
@@ -187,6 +189,7 @@ class CandidateRangeCoverageProof:
         domain_end = _parse_decimal_integer("domain_end", self.domain_end, min_value=0)
         if domain_start <= domain_end and domain_end > isqrt(target_n):
             raise ValueError("domain_end must be <= floor_sqrt(target_n)")
+        _require_integer("range_count", self.range_count)
         if self.range_count < 0:
             raise ValueError("range_count must be >= 0")
         _require_digest("ranges_digest", self.ranges_digest)
@@ -228,6 +231,8 @@ class FactorSearchRangeInput:
         _require_schema(self.schema_version, FACTOR_SEARCH_RANGE_INPUT_SCHEMA_VERSION)
         self._validate_range()
         _require_non_empty("coverage_id", self.coverage_id)
+        _require_integer("child_index", self.child_index)
+        _require_integer("child_count", self.child_count)
         if self.child_index < 0:
             raise ValueError("child_index must be >= 0")
         if self.child_count < 1:
@@ -338,10 +343,14 @@ class RangeResult:
         range_end = _parse_decimal_integer("range_end", self.range_end, min_value=2)
         if range_start > range_end:
             raise ValueError("range_start must be <= range_end")
+        if range_end > isqrt(target_n):
+            raise ValueError("range_end must be <= floor_sqrt(target_n)")
         _require_non_empty("coverage_id", self.coverage_id)
+        _require_integer("child_index", self.child_index)
         if self.child_index < 0:
             raise ValueError("child_index must be >= 0")
         _require_digest("partition_params_digest", self.partition_params_digest)
+        _require_integer("checked_divisor_count", self.checked_divisor_count)
         if self.checked_divisor_count < 0:
             raise ValueError("checked_divisor_count must be >= 0")
         if not isinstance(self.executor_summary, dict):
@@ -417,15 +426,19 @@ class FactorizationMergeResult:
         _require_digest("partition_params_digest", self.partition_params_digest)
         if self.result_kind not in MERGE_RESULT_KINDS:
             raise ValueError("result_kind must be a supported factorization merge result kind")
-        if self.range_result_count < 0:
-            raise ValueError("range_result_count must be >= 0")
-        if self.required_slot_count < 0:
-            raise ValueError("required_slot_count must be >= 0")
-        if self.range_result_count > self.required_slot_count:
-            raise ValueError("range_result_count must be <= required_slot_count")
+        _require_integer("range_result_count", self.range_result_count)
+        _require_integer("required_slot_count", self.required_slot_count)
+        if self.range_result_count < 1:
+            raise ValueError("range_result_count must be >= 1")
+        if self.required_slot_count < 1:
+            raise ValueError("required_slot_count must be >= 1")
+        if self.range_result_count != self.required_slot_count:
+            raise ValueError("range_result_count must equal required_slot_count")
         _require_digest("coverage_digest", self.coverage_digest)
         if not all(isinstance(item, str) and item.startswith("sha256:") for item in self.slot_result_digests):
             raise ValueError("slot_result_digests must contain sha256 digests")
+        if len(self.slot_result_digests) != self.required_slot_count:
+            raise ValueError("slot_result_digests must match required_slot_count")
         if self.result_kind == MERGE_RESULT_PRIME_CERTIFICATE:
             if self.found_factor is not None or self.cofactor is not None:
                 raise ValueError("prime_certificate must not include found_factor or cofactor")
@@ -469,7 +482,8 @@ class PrimeFactor:
 
     def __post_init__(self) -> None:
         _parse_decimal_integer("prime", self.prime, min_value=2)
-        if not isinstance(self.exponent, int) or self.exponent < 1:
+        _require_integer("exponent", self.exponent)
+        if self.exponent < 1:
             raise ValueError("exponent must be a positive integer")
 
     def to_dict(self) -> JsonObject:
@@ -487,6 +501,7 @@ class PrimeFactorizationResult:
     factor_multiset_digest: str | None = None
     product_check_passed: bool = True
     primality_check_policy_id: str = TRIAL_DIVISION_PRIMALITY_POLICY_ID
+    primality_evidence: JsonObject | None = None
     schema_version: str = PRIME_FACTORIZATION_RESULT_SCHEMA_VERSION
 
     def __post_init__(self) -> None:
@@ -505,12 +520,17 @@ class PrimeFactorizationResult:
         factor_values = [int(item["prime"]) for item in factor_dicts]
         if factor_values != sorted(factor_values):
             raise ValueError("prime_factors must be in numeric ascending order")
+        if len(set(factor_values)) != len(factor_values):
+            raise ValueError("prime_factors must contain unique prime entries")
+        _validate_primality_evidence(
+            self.primality_evidence,
+            expected_prime_values=factor_values,
+            policy_id=self.primality_check_policy_id,
+        )
         product = 1
         for item in factor_dicts:
             prime_value = int(item["prime"])
             exponent = int(item["exponent"])
-            if not _is_prime(prime_value):
-                raise ValueError("prime_factors entries must be prime")
             product *= prime_value**exponent
         if product != target_n:
             raise ValueError("prime factor product must equal target_n")
@@ -531,6 +551,7 @@ class PrimeFactorizationResult:
             "factor_multiset_digest": self.factor_multiset_digest,
             "product_check_passed": self.product_check_passed,
             "primality_check_policy_id": self.primality_check_policy_id,
+            "primality_evidence": _json_value(self.primality_evidence),
             "source_kind": self.source_kind,
             "source_merge_result_id": self.source_merge_result_id,
             "created_at": self.created_at,
@@ -567,6 +588,11 @@ def _parse_decimal_integer(field_name: str, value: str, *, min_value: int) -> in
     return parsed
 
 
+def _require_integer(field_name: str, value: int) -> None:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise TypeError(f"{field_name} must be an integer")
+
+
 def _require_schema(actual: str, expected: str) -> None:
     if actual != expected:
         raise ValueError(f"schema_version must be {expected}")
@@ -582,20 +608,26 @@ def _require_digest(field_name: str, value: str) -> None:
         raise ValueError(f"{field_name} must be a sha256 digest")
 
 
-def _is_prime(value: int) -> bool:
-    if value < 2:
-        return False
-    if value == 2:
-        return True
-    if value % 2 == 0:
-        return False
-    limit = isqrt(value)
-    divisor = 3
-    while divisor <= limit:
-        if value % divisor == 0:
-            return False
-        divisor += 2
-    return True
+def _validate_primality_evidence(
+    evidence: JsonObject | None,
+    *,
+    expected_prime_values: list[int],
+    policy_id: str,
+) -> None:
+    if not isinstance(evidence, dict):
+        raise ValueError("primality_evidence is required for prime_factors")
+    if evidence.get("policy_id") != policy_id:
+        raise ValueError("primality_evidence policy_id mismatch")
+    if evidence.get("verification_scope") not in {
+        "merge_policy_budgeted_check",
+        "direct_small_prime_check",
+    }:
+        raise ValueError("primality_evidence verification_scope mismatch")
+    values = evidence.get("verified_prime_values")
+    if not isinstance(values, list) or any(not isinstance(item, str) for item in values):
+        raise ValueError("primality_evidence verified_prime_values must be decimal strings")
+    if values != [str(value) for value in expected_prime_values]:
+        raise ValueError("primality_evidence verified_prime_values mismatch")
 
 
 def _json_value(value: Any) -> Any:

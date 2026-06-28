@@ -12,9 +12,11 @@ from tokenshare.plugins.factorization.schemas import (
     FACTOR_SEARCH_RANGE_INPUT_SCHEMA_VERSION,
     FACTORIZATION_MERGE_RESULT_CONTRACT_ID,
     FACTORIZATION_MERGE_RESULT_SCHEMA_VERSION,
+    PARSE_FAILURE_REPORT_SCHEMA_VERSION,
     PLUGIN_ID,
     PLUGIN_VERSION,
     PRIME_FACTORIZATION_RESULT_SCHEMA_VERSION,
+    RANGE_RESULT_PARSER_ID,
     RANGE_RESULT_CONTRACT_ID,
     RANGE_RESULT_SCHEMA_VERSION,
     RANGE_RESULT_VALIDATOR_POLICY_ID,
@@ -51,6 +53,14 @@ def build_factorization_plugin_descriptor() -> PluginDescriptor:
                 "output_contract_id": RANGE_RESULT_CONTRACT_ID,
                 "bounded_range_required": True,
                 "verifier_rechecks_output": True,
+                "prompt_package": {
+                    "required": True,
+                    "builder": "factorization.build_factor_search_prompt_package.v1",
+                    "prompt_owner": "factorization_plugin",
+                    "executor_may_define_prompt": False,
+                    "executor_may_define_output_schema": False,
+                    "prompt_package_schema": "phase3.prompt_package.v1",
+                },
             },
             "environment_policy": {
                 "runtime": "python",
@@ -89,6 +99,16 @@ def build_factorization_plugin_descriptor() -> PluginDescriptor:
         validator_policy_id=RANGE_RESULT_VALIDATOR_POLICY_ID,
         merge_policy_id=ALL_REQUIRED_RANGE_MERGE_POLICY_ID,
         metadata={
+            "plugin_identity": {
+                "main_tdd_section": "14.1",
+                "role": "integer_factorization_plugin",
+                "is_main_tdd_integer_factorization_plugin": True,
+            },
+            "exclusive_task_types": [
+                "factor_integer",
+                "factor_search_range",
+                "factorization_merge",
+            ],
             "schema_versions": {
                 "factor_integer_subject": FACTOR_INTEGER_SUBJECT_SCHEMA_VERSION,
                 "range_result": RANGE_RESULT_SCHEMA_VERSION,
@@ -103,6 +123,50 @@ def build_factorization_plugin_descriptor() -> PluginDescriptor:
             "recursive_policy": {
                 "same_plugin_for_recursive_factor_integer": True,
                 "continuation_plugin_allowed": False,
+            },
+            "recursive_policy_details": {
+                "recursive_unit_type": "factor_integer",
+                "continuation_plugin_id": None,
+                "second_factorization_plugin_allowed": False,
+                "first_version_recursive_resolution": (
+                    "canonical_output_driven_same_plugin_future_slice"
+                ),
+                "composite_cofactor_resolution": (
+                    "limited_first_slice_nontrivial_factor_found_only"
+                ),
+            },
+            "first_slice_boundary": {
+                "early_success": "not_in_first_slice",
+                "sibling_pruning": "not_in_first_slice",
+                "composite_cofactor_recursive_resolution": (
+                    "limited_first_slice_nontrivial_factor_found_only"
+                ),
+            },
+            "first_slice_limitations_detail": {
+                "merge_readiness_policy": "all_required_ranges_canonical",
+                "factor_found_before_all_required_ranges": "not_early_success",
+                "phase5_subtree_pruning_usage": {
+                    "uses_subtree_pruning_for_factorization_early_success": False,
+                    "sibling_range_pruning": "not_in_first_slice",
+                },
+                "composite_cofactor_limitation_reason": (
+                    "composite_cofactor_requires_future_recursive_resolution"
+                ),
+            },
+            "ai_output_parse_policy": {
+                "parser_id": RANGE_RESULT_PARSER_ID,
+                "parse_required": True,
+                "raw_only_allowed": False,
+                "raw_output_always_persisted": True,
+                "parsed_schema_version": RANGE_RESULT_SCHEMA_VERSION,
+                "required_output_mapping": {
+                    "range_result": {
+                        "artifact_schema_id": "factorization.range_result",
+                        "artifact_schema_version": "v1",
+                    }
+                },
+                "parse_failure_schema": PARSE_FAILURE_REPORT_SCHEMA_VERSION,
+                "verification_authority": RANGE_RESULT_VALIDATOR_POLICY_ID,
             },
         },
     )

@@ -29,7 +29,7 @@
 | JSONL event ledger 是权威事实源 | 删除 SQLite 后，必须能仅凭 JSONL event 和 artifact 文件重建协议状态。 |
 | SQLite 只是可重建索引 | SQLite 表可以提高查询效率，但不能保存唯一事实或隐藏状态。 |
 | 所有持久化对象显式版本化 | 每个协议对象和 event 都带 `schema_version`。 |
-| 核心对象不硬编码插件领域 | factorization、Lean stub 的领域细节放入 `plugin_payload` 或 artifact schema，不进入协议核心字段。 |
+| 核心对象不硬编码插件领域 | factorization、真实 Lean proof 插件的领域细节放入 `plugin_payload` 或 artifact schema，不进入协议核心字段。 |
 | Phase 1 只保留最小闭环字段 | 先支撑 root task registration、artifact save/read/hash、event append/read。 |
 | 大内容不内联进 event | event 保存 `ArtifactRef` 和摘要，不保存大型 prompt、日志或模型原文。 |
 

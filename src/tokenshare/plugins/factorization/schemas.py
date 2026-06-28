@@ -34,8 +34,10 @@ RANGE_RESULT_SCHEMA_VERSION = "factorization.range_result.v1"
 FACTORIZATION_MERGE_RESULT_SCHEMA_VERSION = "factorization.merge_result.v1"
 PRIME_FACTORIZATION_RESULT_SCHEMA_VERSION = "factorization.prime_factorization_result.v1"
 FIXTURE_CASE_SCHEMA_VERSION = "factorization.fixture_case.v1"
+PARSE_FAILURE_REPORT_SCHEMA_VERSION = "phase3.parse_failure_report.v1"
 
 CANDIDATE_RANGE_PARTITION_STRATEGY_ID = "factorization.candidate_range_partition.v1"
+RANGE_RESULT_PARSER_ID = "factorization.range_result.parser.v1"
 RANGE_RESULT_VALIDATOR_POLICY_ID = "factorization.range_result.validator.v1"
 ALL_REQUIRED_RANGE_MERGE_POLICY_ID = "factorization.all_required_range_merge.v1"
 TRIAL_DIVISION_PRIMALITY_POLICY_ID = "factorization.trial_division_primality.v1"
@@ -44,6 +46,7 @@ FACTOR_INTEGER_SUBJECT_CONTRACT_ID = "factorization.factor_integer_subject.contr
 RANGE_RESULT_CONTRACT_ID = "factorization.range_result.contract.v1"
 FACTORIZATION_MERGE_RESULT_CONTRACT_ID = "factorization.merge_result.contract.v1"
 
+FACTOR_INTEGER_SUBJECT_OUTPUT_NAME = "factor_integer_subject"
 REQUESTED_OUTPUT_PRIME_FACTORIZATION = "prime_factorization_result"
 RANGE_RESULT_FOUND_FACTOR = "found_factor"
 RANGE_RESULT_NO_FACTOR = "no_factor_in_range"

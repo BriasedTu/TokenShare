@@ -47,6 +47,7 @@ class PluginRegistry:
         key = (descriptor.plugin_id, descriptor.plugin_version)
         if key in self._plugins:
             raise ValueError(f"duplicate plugin descriptor: {descriptor.plugin_id}@{descriptor.plugin_version}")
+        self._check_exclusive_task_types(descriptor)
         self._plugins[key] = descriptor
 
     def freeze(
@@ -102,3 +103,32 @@ class PluginRegistry:
     @property
     def is_frozen(self) -> bool:
         return self._frozen
+
+    def _check_exclusive_task_types(self, descriptor: PluginDescriptor) -> None:
+        new_supported = set(descriptor.supported_task_types)
+        new_exclusive = _exclusive_task_types(descriptor)
+        for existing in self._plugins.values():
+            existing_supported = set(existing.supported_task_types)
+            existing_exclusive = _exclusive_task_types(existing)
+            blocked_by_existing = sorted(existing_exclusive.intersection(new_supported))
+            if blocked_by_existing:
+                raise ValueError(
+                    "exclusive task type already claimed: "
+                    + ", ".join(blocked_by_existing)
+                )
+            blocked_by_new = sorted(new_exclusive.intersection(existing_supported))
+            if blocked_by_new:
+                raise ValueError(
+                    "exclusive task type already registered: "
+                    + ", ".join(blocked_by_new)
+                )
+
+
+def _exclusive_task_types(descriptor: PluginDescriptor) -> set[str]:
+    metadata = descriptor.metadata or {}
+    value = metadata.get("exclusive_task_types")
+    if value is None:
+        return set()
+    if not isinstance(value, list) or not all(isinstance(item, str) and item for item in value):
+        raise ValueError("exclusive_task_types metadata must be a list of non-empty strings")
+    return set(value)

@@ -25,7 +25,7 @@ Phase 3 不做以下事项：
 - 不执行 submission verification。
 - 不绑定 canonical output。
 - 不实现 expansion、merge 或 settlement。
-- 不把 factorization、Lean stub 或 structured report stub 的领域规则硬编码进协议核心。
+- 不把 factorization、真实 Lean proof 插件或 structured report stub 的领域规则硬编码进协议核心。
 
 ## 3. 三层持久化原则
 

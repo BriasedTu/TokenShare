@@ -2311,11 +2311,12 @@ def _validate_complete_action_body(
         raise ValueError("completion_evidence verification report mismatch")
     if evidence["validator_policy_id"] != selected_verification_report.validator_policy_id:
         raise ValueError("completion_evidence validator policy mismatch")
-    if (
-        _artifact_refs_from_dict(evidence["completed_output_refs"])
-        != canonical_selection.canonical_output_refs
-    ):
-        raise ValueError("completion_evidence completed output refs mismatch")
+    completed_refs = _artifact_refs_from_dict(evidence["completed_output_refs"])
+    for output_name, canonical_ref in canonical_selection.canonical_output_refs.items():
+        if completed_refs.get(output_name) != canonical_ref:
+            raise ValueError(
+                "completion_evidence must include canonical output refs"
+            )
 
 
 def _expansion_decision_payload(*, decision: ExpansionDecision) -> JsonObject:
@@ -2460,7 +2461,10 @@ def _validate_expand_documents(
         ),
         parent_depth=parent_unit.depth,
         existing_unit_count=len(graph.units),
-        parent_required_output_names=list(canonical_selection.canonical_output_refs),
+        parent_required_output_names=_parent_required_output_names(
+            parent_unit=parent_unit,
+            canonical_selection=canonical_selection,
+        ),
         max_children_per_strategy=split_strategy.get("max_children_per_expansion"),
     )
     if descriptor.get("descriptor_digest") != decision.plugin_descriptor_digest:
@@ -2485,6 +2489,27 @@ def _validate_expand_evidence_against_documents(
     for field_name, expected in expected_counts.items():
         if evidence.get(field_name) != expected:
             raise ValueError(f"expand_evidence {field_name} mismatch")
+
+
+def _parent_required_output_names(
+    *,
+    parent_unit: TaskUnit,
+    canonical_selection: CanonicalSelection,
+) -> list[str]:
+    required_outputs = parent_unit.plugin_payload.get("required_outputs")
+    if isinstance(required_outputs, list) and all(
+        isinstance(item, str) and item for item in required_outputs
+    ):
+        return list(required_outputs)
+    requested_outputs = parent_unit.plugin_payload.get("requested_outputs")
+    if isinstance(requested_outputs, list) and all(
+        isinstance(item, str) and item for item in requested_outputs
+    ):
+        return list(requested_outputs)
+    requested_output = parent_unit.plugin_payload.get("requested_output")
+    if isinstance(requested_output, str) and requested_output:
+        return [requested_output]
+    return list(canonical_selection.canonical_output_refs)
 
 
 def _build_expansion_child_units(

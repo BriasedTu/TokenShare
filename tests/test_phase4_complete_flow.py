@@ -276,6 +276,57 @@ def test_completion_evidence_must_match_selected_verification_report(
     assert len(context.ledger.read_all()) == before_count
 
 
+def test_completion_evidence_may_include_plugin_direct_outputs_but_not_drop_canonical_refs(
+    tmp_path,
+) -> None:
+    context = _make_complete_context(tmp_path)
+    extra_output = make_artifact_ref(artifact_id="artifact_plugin_direct_answer")
+    expanded_evidence = {
+        **context.decision.action_body["completion_evidence"],
+        "completed_output_refs": {
+            **context.decision.action_body["completion_evidence"]["completed_output_refs"],
+            "plugin_direct_answer": extra_output.to_dict(),
+        },
+    }
+    expanded_decision = _complete_decision(
+        canonical_selection=context.canonical_selection,
+        plugin_descriptor_digest=context.plugin_descriptor_digest,
+        source_invocation_id=context.invocation.invocation_id,
+        action_body={"completion_evidence": expanded_evidence},
+    )
+
+    result = context.engine.record_complete_decision(
+        decision=expanded_decision,
+        task_unit=context.task_unit,
+        correlation_id="corr_complete_extra_outputs",
+    )
+
+    completed_refs = result.events[0].payload["action_body"]["completion_evidence"][
+        "completed_output_refs"
+    ]
+    assert completed_refs["answer"]["artifact_id"] == "artifact_answer"
+    assert completed_refs["plugin_direct_answer"]["artifact_id"] == (
+        "artifact_plugin_direct_answer"
+    )
+
+    missing_canonical = {
+        **context.decision.action_body["completion_evidence"],
+        "completed_output_refs": {"plugin_direct_answer": extra_output.to_dict()},
+    }
+    bad_decision = _complete_decision(
+        canonical_selection=context.canonical_selection,
+        plugin_descriptor_digest=context.plugin_descriptor_digest,
+        source_invocation_id=context.invocation.invocation_id,
+        action_body={"completion_evidence": missing_canonical},
+    )
+    with pytest.raises(ValueError, match="canonical output refs"):
+        context.engine.record_complete_decision(
+            decision=bad_decision,
+            task_unit=context.task_unit,
+            correlation_id="corr_complete_missing_canonical",
+        )
+
+
 def test_complete_evidence_uses_selected_verification_event_seq_when_report_ids_repeat(
     tmp_path,
 ) -> None:

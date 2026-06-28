@@ -282,7 +282,7 @@ Durable subgoal 晋升规则：
 示例：
 
 - factorization 插件可以规定每次把搜索区间切半，proposal 只包含两个子区间 task、它们的输出契约和后续 merge plan。
-- Lean stub 插件的拆分策略可以更复杂，但规则仍应属于插件版本化实现，而不是由 AI 在运行时自由发明协议子任务。
+- 真实 Lean proof 插件的拆分策略可以更复杂，但规则仍应属于插件版本化实现，而不是由 AI 在运行时自由发明协议子任务。
 
 ### 2.5 `SplitStrategyResult` 同时覆盖 `complete` 和 `expand`
 

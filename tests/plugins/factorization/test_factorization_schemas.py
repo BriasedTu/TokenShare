@@ -2,7 +2,10 @@ import pytest
 
 from tokenshare.plugins.factorization.descriptor import build_factorization_plugin_descriptor
 from tokenshare.plugins.factorization.models import (
+    CandidateRangeCoverageProof,
     FactorIntegerSubject,
+    FactorSearchRangeInput,
+    FactorizationMergeResult,
     PrimeFactor,
     PrimeFactorizationResult,
     RangeResult,
@@ -86,6 +89,14 @@ def test_factorization_descriptor_declares_unit_types_contracts_and_policies() -
         "mock_ai_bounded_search",
         "environment_policy",
     }
+    assert body["execution_contracts"]["mock_ai_bounded_search"]["prompt_package"] == {
+        "required": True,
+        "builder": "factorization.build_factor_search_prompt_package.v1",
+        "prompt_owner": "factorization_plugin",
+        "executor_may_define_prompt": False,
+        "executor_may_define_output_schema": False,
+        "prompt_package_schema": "phase3.prompt_package.v1",
+    }
     assert body["metadata"]["first_slice_limitations"] == {
         "early_success": "deferred",
         "sibling_pruning": "deferred",
@@ -118,7 +129,7 @@ def test_range_result_requires_found_factor_fields_only_for_found_factor() -> No
         result_kind="found_factor",
         target_n="21",
         range_start="2",
-        range_end="5",
+        range_end="4",
         found_factor="3",
         cofactor="7",
     )
@@ -131,7 +142,7 @@ def test_range_result_requires_found_factor_fields_only_for_found_factor() -> No
         result_kind="no_factor_in_range",
         target_n="21",
         range_start="4",
-        range_end="5",
+        range_end="4",
         found_factor=None,
         cofactor=None,
     )
@@ -143,7 +154,7 @@ def test_range_result_requires_found_factor_fields_only_for_found_factor() -> No
             result_kind="found_factor",
             target_n="21",
             range_start="2",
-            range_end="5",
+            range_end="4",
             found_factor=None,
             cofactor=None,
         )
@@ -152,7 +163,7 @@ def test_range_result_requires_found_factor_fields_only_for_found_factor() -> No
             result_kind="found_factor",
             target_n="21",
             range_start="2",
-            range_end="5",
+            range_end="4",
             found_factor="3",
             cofactor=None,
         )
@@ -161,7 +172,7 @@ def test_range_result_requires_found_factor_fields_only_for_found_factor() -> No
             result_kind="no_factor_in_range",
             target_n="21",
             range_start="2",
-            range_end="5",
+            range_end="4",
             found_factor="3",
             cofactor="7",
         )
@@ -170,10 +181,81 @@ def test_range_result_requires_found_factor_fields_only_for_found_factor() -> No
             result_kind="found_factor",
             target_n="21",
             range_start="4",
-            range_end="5",
+            range_end="4",
             found_factor="3",
             cofactor="7",
         )
+
+
+def test_range_result_rejects_range_end_beyond_sqrt_bound() -> None:
+    with pytest.raises(ValueError, match="range_end must be <= floor_sqrt"):
+        _make_range_result(
+            result_kind="no_factor_in_range",
+            target_n="21",
+            range_start="2",
+            range_end="20",
+            found_factor=None,
+            cofactor=None,
+        )
+
+
+def test_factorization_models_reject_bool_integer_fields() -> None:
+    with pytest.raises(TypeError, match="child_index"):
+        FactorSearchRangeInput(
+            target_n="21",
+            range_start="2",
+            range_end="4",
+            coverage_id="coverage_21",
+            child_index=True,  # type: ignore[arg-type]
+            child_count=2,
+            partition_params_digest="sha256:params",
+        )
+    with pytest.raises(TypeError, match="child_count"):
+        FactorSearchRangeInput(
+            target_n="21",
+            range_start="2",
+            range_end="4",
+            coverage_id="coverage_21",
+            child_index=0,
+            child_count=True,  # type: ignore[arg-type]
+            partition_params_digest="sha256:params",
+        )
+    with pytest.raises(TypeError, match="child_index"):
+        _make_range_result(
+            result_kind="no_factor_in_range",
+            target_n="21",
+            range_start="2",
+            range_end="4",
+            found_factor=None,
+            cofactor=None,
+            child_index=True,  # type: ignore[arg-type]
+        )
+    with pytest.raises(TypeError, match="checked_divisor_count"):
+        _make_range_result(
+            result_kind="no_factor_in_range",
+            target_n="21",
+            range_start="2",
+            range_end="4",
+            found_factor=None,
+            cofactor=None,
+            checked_divisor_count=True,  # type: ignore[arg-type]
+        )
+    with pytest.raises(TypeError, match="range_count"):
+        CandidateRangeCoverageProof(
+            coverage_id="coverage_21",
+            target_n="21",
+            domain_start="2",
+            domain_end="4",
+            range_count=True,  # type: ignore[arg-type]
+            ranges_digest="sha256:ranges",
+            no_gap=True,
+            no_overlap=True,
+            full_domain_covered=True,
+            sqrt_bound_checked=True,
+            created_by_strategy_id="factorization.candidate_range_partition.v1",
+        )
+    with pytest.raises(TypeError, match="exponent"):
+        PrimeFactor(prime="2", exponent=True)  # type: ignore[arg-type]
 
 
 def test_prime_factorization_result_requires_prime_factors_product_check() -> None:
@@ -192,6 +274,7 @@ def test_prime_factorization_result_requires_prime_factors_product_check() -> No
         {"prime": "2", "exponent": 2},
         {"prime": "3", "exponent": 1},
     ]
+    assert result.to_dict()["primality_evidence"]["verified_prime_values"] == ["2", "3"]
 
     with pytest.raises(ValueError, match="ascending"):
         _make_prime_factorization_result(
@@ -209,10 +292,28 @@ def test_prime_factorization_result_requires_prime_factors_product_check() -> No
                 PrimeFactor(prime="3", exponent=1),
             ],
         )
-    with pytest.raises(ValueError, match="prime"):
-        _make_prime_factorization_result(
+    with pytest.raises(ValueError, match="primality_evidence"):
+        PrimeFactorizationResult(
+            result_id="prime_factorization:missing:evidence",
             target_n="12",
             prime_factors=[PrimeFactor(prime="4", exponent=1)],
+            source_kind="semiprime_merge",
+            source_merge_result_id="merge_result_1",
+            created_at=CREATED_AT,
+        )
+    with pytest.raises(ValueError, match="verified_prime_values"):
+        PrimeFactorizationResult(
+            result_id="prime_factorization:bad:evidence",
+            target_n="4",
+            prime_factors=[PrimeFactor(prime="4", exponent=1)],
+            source_kind="semiprime_merge",
+            source_merge_result_id="merge_result_1",
+            primality_evidence={
+                "policy_id": "factorization.trial_division_primality.v1",
+                "verified_prime_values": ["2"],
+                "verification_scope": "merge_policy_budgeted_check",
+            },
+            created_at=CREATED_AT,
         )
     with pytest.raises(ValueError, match="product"):
         _make_prime_factorization_result(
@@ -221,6 +322,38 @@ def test_prime_factorization_result_requires_prime_factors_product_check() -> No
                 PrimeFactor(prime="2", exponent=1),
                 PrimeFactor(prime="3", exponent=1),
             ],
+        )
+    with pytest.raises(ValueError, match="unique"):
+        _make_prime_factorization_result(
+            target_n="12",
+            prime_factors=[
+                PrimeFactor(prime="2", exponent=1),
+                PrimeFactor(prime="2", exponent=1),
+                PrimeFactor(prime="3", exponent=1),
+            ],
+        )
+
+
+def test_factorization_merge_result_requires_complete_required_slot_set_for_final_outputs() -> None:
+    with pytest.raises(ValueError, match="range_result_count"):
+        _make_factorization_merge_result(
+            result_kind="prime_certificate",
+            range_result_count=1,
+            required_slot_count=4,
+            slot_result_digests=["sha256:slot1"],
+            found_factor=None,
+            cofactor=None,
+            prime_factorization_ref=None,
+        )
+    with pytest.raises(ValueError, match="slot_result_digests"):
+        _make_factorization_merge_result(
+            result_kind="prime_certificate",
+            range_result_count=4,
+            required_slot_count=4,
+            slot_result_digests=["sha256:slot1"],
+            found_factor=None,
+            cofactor=None,
+            prime_factorization_ref=None,
         )
 
 
@@ -245,6 +378,8 @@ def _make_range_result(
     range_end: str,
     found_factor: str | None,
     cofactor: str | None,
+    child_index: int = 0,
+    checked_divisor_count: int = 4,
 ) -> RangeResult:
     return RangeResult(
         range_result_id="range_result:unit_2:attempt_1:coverage_1:0",
@@ -253,11 +388,11 @@ def _make_range_result(
         range_start=range_start,
         range_end=range_end,
         coverage_id="coverage_1",
-        child_index=0,
+        child_index=child_index,
         partition_params_digest="sha256:params",
         found_factor=found_factor,
         cofactor=cofactor,
-        checked_divisor_count=4,
+        checked_divisor_count=checked_divisor_count,
         executor_summary={"checked": "bounded range"},
         created_at=CREATED_AT,
     )
@@ -274,5 +409,37 @@ def _make_prime_factorization_result(
         prime_factors=prime_factors,
         source_kind="semiprime_merge",
         source_merge_result_id="merge_result_1",
+        primality_evidence={
+            "policy_id": "factorization.trial_division_primality.v1",
+            "verified_prime_values": [factor.prime for factor in prime_factors],
+            "verification_scope": "merge_policy_budgeted_check",
+        },
+        created_at=CREATED_AT,
+    )
+
+
+def _make_factorization_merge_result(
+    *,
+    result_kind: str,
+    range_result_count: int,
+    required_slot_count: int,
+    slot_result_digests: list[str],
+    found_factor: str | None,
+    cofactor: str | None,
+    prime_factorization_ref: dict | None,
+) -> FactorizationMergeResult:
+    return FactorizationMergeResult(
+        merge_result_id="factorization_merge:merge_plan_1:unit_merge",
+        target_n="101",
+        coverage_id="coverage_1",
+        partition_params_digest="sha256:params",
+        result_kind=result_kind,
+        range_result_count=range_result_count,
+        required_slot_count=required_slot_count,
+        coverage_digest="sha256:coverage",
+        slot_result_digests=slot_result_digests,
+        found_factor=found_factor,
+        cofactor=cofactor,
+        prime_factorization_ref=prime_factorization_ref,
         created_at=CREATED_AT,
     )
