@@ -53,8 +53,21 @@ def test_real_siliconflow_smoke_returns_artifact_backed_submission(tmp_path) -> 
         submitted_at="2026-06-28T00:00:02Z",
     )
 
-    assert submission.raw_output_ref is not None or submission.provenance_ref is not None
+    assert submission.result_kind == "succeeded", submission.error
+    assert submission.raw_output_ref is not None
     assert submission.provenance_ref is not None
+    assert submission.usage_summary["cost_estimate_status"] == "estimated"
+    assert submission.usage_summary["total_tokens"] > 0
+    assert submission.usage_summary["provider_attempt_count"] >= 1
+    raw_output = json.loads(store.read_bytes(submission.raw_output_ref).decode("utf-8"))
+    assert raw_output["usage"]["total_tokens"] > 0
+    provenance = json.loads(store.read_bytes(submission.provenance_ref).decode("utf-8"))
+    assert provenance["final_result_kind"] == "succeeded"
+    assert provenance["final_entry_id"]
+    assert any(
+        attempt["result_kind"] == "succeeded" and attempt["http_status"] == 200
+        for attempt in provenance["attempts"]
+    )
     assert store.verify(submission.provenance_ref)
 
 
