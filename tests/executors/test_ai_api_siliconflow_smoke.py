@@ -1,4 +1,6 @@
+import json
 import os
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -35,7 +37,7 @@ def test_real_siliconflow_smoke_returns_artifact_backed_submission(tmp_path) -> 
         body["defaults"]["max_tokens"] = 32
         config = load_ai_api_config(body)
     store = ArtifactStore(tmp_path)
-    request = make_ai_request(store, request_id="request_real_smoke")
+    request = _make_raw_real_smoke_request(store)
     executor = AIAPIExecutor(
         executor_id="executor_ai_api",
         executor_version="0.1.0",
@@ -54,3 +56,33 @@ def test_real_siliconflow_smoke_returns_artifact_backed_submission(tmp_path) -> 
     assert submission.raw_output_ref is not None or submission.provenance_ref is not None
     assert submission.provenance_ref is not None
     assert store.verify(submission.provenance_ref)
+
+
+def test_real_smoke_request_does_not_require_json_mode(tmp_path) -> None:
+    store = ArtifactStore(tmp_path)
+    request = _make_raw_real_smoke_request(store)
+
+    prompt_body = json.loads(store.read_bytes(request.prompt_package_ref).decode("utf-8"))
+
+    assert prompt_body["constraints"]["requires_json_mode"] is False
+    assert prompt_body["constraints"]["format"] == "text"
+
+
+def _make_raw_real_smoke_request(store: ArtifactStore):
+    request = make_ai_request(store, request_id="request_real_smoke")
+    prompt_body = json.loads(store.read_bytes(request.prompt_package_ref).decode("utf-8"))
+    prompt_body["prompt_package_id"] = "prompt_request_real_smoke_raw"
+    prompt_body["prompt_text"] = "Reply with one short sentence confirming the TokenShare smoke request."
+    prompt_body["output_schema"] = {}
+    prompt_body["constraints"] = {"format": "text", "requires_json_mode": False}
+    prompt_ref = store.save_json(
+        prompt_body,
+        artifact_id=prompt_body["prompt_package_id"],
+        artifact_type="PromptPackage",
+        artifact_schema_id="phase3.prompt_package",
+        artifact_schema_version="v1",
+        source={"kind": "phase7_real_smoke"},
+        metadata={"mode": "raw_text"},
+        created_at=str(prompt_body["created_at"]),
+    )
+    return replace(request, prompt_package_ref=prompt_ref, limits={**request.limits, "max_tokens": 64})

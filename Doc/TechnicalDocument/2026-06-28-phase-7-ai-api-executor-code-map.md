@@ -9,7 +9,7 @@
 | 文件 | 规格章节 | 当前内容 |
 |---|---|---|
 | `src/tokenshare/executors/ai_api_config.py` | 第 6 节 | 本地 config dataclasses、schema validation、safe digest、secret env lookup。 |
-| `src/tokenshare/executors/ai_api_local_config.py` | 第 13、16.2 节 / 2026-06-29 smoke 体验补丁 | 读取被 gitignore 的 `local/ai_api_smoke.local.json`，允许 smoke 文件包含明文 `api_key`，但只注入当前进程环境变量，再调用标准 `load_ai_api_config()`；safe dict、config digest、artifact/event/log 均不包含 secret。 |
+| `src/tokenshare/executors/ai_api_local_config.py` | 第 13、16.2 节 / 2026-06-29 smoke 体验补丁 | 读取被 gitignore 的 `local/ai_api_smoke.local.json`，允许 smoke 文件包含本地 `api_keys` 和 `models` 矩阵并展开成标准 `entries`；已填写的明文 `api_key` 只注入当前进程环境变量，再调用标准 `load_ai_api_config()`；safe dict、config digest、artifact/event/log 均不包含 secret。 |
 | `src/tokenshare/executors/ai_api_transport.py` | 第 8 节、第 12 节 | SiliconFlow chat completions request/response boundary、HTTP status / invalid envelope error mapping、opt-in stdlib transport。 |
 | `src/tokenshare/executors/ai_api_selector.py` | 第 7 节 | Eligible filtering、seeded uniform random selection、bounded failover order。 |
 | `src/tokenshare/executors/ai_api.py` | 第 4 节、第 9-13 节 | Descriptor builder、AIAPIExecutor orchestration、raw/parsed/parse failure/provenance/usage artifact persistence。 |
@@ -22,7 +22,7 @@
 |---|---|
 | `tests/phase7_fixtures.py` | Shared PromptPackage、ExecutionRequest、config、fake transport fixture。 |
 | `tests/executors/test_ai_api_config.py` | Config validation、secret boundary、digest、duplicate entry rejection、strict boolean entry fields。 |
-| `tests/executors/test_ai_api_local_config.py` | Gitignored local smoke JSON loader、process-local secret injection、safe config redaction、默认路径被 `.gitignore` 覆盖。 |
+| `tests/executors/test_ai_api_local_config.py` | Gitignored local smoke JSON loader、process-local secret injection、safe config redaction、默认路径被 `.gitignore` 覆盖、API key pool × model matrix 展开。 |
 | `tests/executors/test_ai_api_descriptor.py` | ExecutorDescriptor builder、registry matching、package exports。 |
 | `tests/executors/test_ai_api_transport.py` | SiliconFlow body construction、response/error mapping、stdlib transport bad-body mapping。 |
 | `tests/executors/test_ai_api_selector.py` | Eligible filtering、seeded selection、JSON mode filtering。 |
@@ -35,12 +35,13 @@
 
 ## 3. Boundary Notes
 
-- 标准 executor config 只保存 `api_key_env`；真实 smoke 可从被 gitignore 的 `local/ai_api_smoke.local.json` 读取 `api_key` 并注入当前进程环境变量。API key values are not persisted.
+- 标准 executor config 只保存 `api_key_env`；真实 smoke 可从被 gitignore 的 `local/ai_api_smoke.local.json` 读取本地 `api_keys`，并按 `models` 展开为标准 provider entries。API key values are not persisted.
 - Provider failover is request-scoped and does not create new protocol attempts, leases, graph mutations, canonical binding, reward, or settlement decisions.
 - Plugin parsing remains plugin-owned; executor only calls an injected parser hook and persists parsed or parse-failure artifacts.
 - Replay guard reads historical artifacts and never calls SiliconFlow or reads API key env vars.
 - The default test suite uses fake transport; real SiliconFlow smoke test is opt-in through `TOKENSHARE_RUN_SILICONFLOW_SMOKE=1`.
 - `outputs/` 和 `local/*.local.json` 被 `.gitignore` 覆盖，实验输出和本地 smoke secret 文件不进入版本库。
+- 2026-06-29 local 模板已按 SiliconFlow Chat Completions 的 `model` 字段配置 6 个不同厂商模型；真实 smoke 使用 raw text prompt，所以不会因 JSON mode 支持差异排除非 JSON 模型。
 
 ## 4. Verification Evidence
 

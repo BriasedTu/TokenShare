@@ -116,50 +116,41 @@ $env:PYTHONPATH='src'
 conda run -n tokenshare python -m tokenshare.experiments.run_all --output-root outputs/experiments --seed 1
 ```
 
-真实 SiliconFlow smoke 可用本地 gitignored JSON 配置，不需要手动设置 API key 环境变量。默认路径是 `local/ai_api_smoke.local.json`，该文件被 `.gitignore` 覆盖；loader 会把 `api_key` 仅注入当前进程环境变量，再走原来的 `api_key_env` 安全边界，secret 不进入 event、artifact、SQLite、日志或 config digest。
+真实 SiliconFlow smoke 可用本地 gitignored JSON 配置，不需要手动设置 API key 环境变量。默认路径是 `local/ai_api_smoke.local.json`，该文件被 `.gitignore` 覆盖；loader 会把 `api_keys` 中已填写的 `api_key` 仅注入当前进程环境变量，并把 key 池和 `models` 模型池展开成标准 `entries`，再走原来的 `api_key_env` 安全边界。secret 不进入 event、artifact、SQLite、日志或 config digest。
 
 ```json
 {
   "schema_version": "phase7.ai_api_executor_config.v1",
   "executor_id": "executor_ai_api",
   "provider_family": "siliconflow",
-  "selection_policy": {
-    "kind": "uniform_random_without_weights",
-    "seed_source": "request_or_environment_seed"
-  },
+  "selection_policy": {"kind": "uniform_random_without_weights", "seed_source": "request_or_environment_seed"},
   "defaults": {
-    "timeout_seconds": 30,
-    "max_tokens": 32,
+    "timeout_seconds": 60,
+    "max_tokens": 64,
     "temperature": 0.2,
     "top_p": 0.9,
     "stream": false,
-    "max_provider_attempts": 1
+    "max_provider_attempts": 6
   },
-  "entries": [
-    {
-      "entry_id": "sf_qwen",
-      "enabled": true,
-      "base_url": "https://api.siliconflow.cn/v1",
-      "api_key": "replace-with-local-key",
-      "model": "Qwen/Qwen2.5-7B-Instruct",
-      "endpoint": "/chat/completions",
-      "supports_json_mode": true,
-      "supports_streaming": false,
-      "request_overrides": {},
-      "pricing": {
-        "currency": "CNY",
-        "input_per_million_tokens": 0.0,
-        "output_per_million_tokens": 0.0,
-        "observed_at": "2026-06-29",
-        "source_note": "local smoke config"
-      },
-      "tags": ["smoke"]
-    }
+  "api_keys": [
+    {"key_id": "sf_key_1", "api_key": "PASTE_SILICONFLOW_API_KEY_1_HERE"},
+    {"key_id": "sf_key_2", "api_key": "PASTE_SILICONFLOW_API_KEY_2_HERE"},
+    {"key_id": "sf_key_3", "api_key": "PASTE_SILICONFLOW_API_KEY_3_HERE"}
+  ],
+  "models": [
+    {"model_id": "qwen3_6_27b", "model": "Qwen/Qwen3.6-27B", "base_url": "https://api.siliconflow.cn/v1", "supports_json_mode": true, "pricing": {"currency": "CNY", "input_per_million_tokens": 0.3, "output_per_million_tokens": 3.2}},
+    {"model_id": "deepseek_v4_pro", "model": "deepseek-ai/DeepSeek-V4-Pro", "base_url": "https://api.siliconflow.cn/v1", "supports_json_mode": true, "pricing": {"currency": "CNY", "input_per_million_tokens": 1.6, "output_per_million_tokens": 3.135}},
+    {"model_id": "minimax_m2_5", "model": "MiniMaxAI/MiniMax-M2.5", "base_url": "https://api.siliconflow.cn/v1", "supports_json_mode": true, "pricing": {"currency": "CNY", "input_per_million_tokens": 0.3, "output_per_million_tokens": 1.2}},
+    {"model_id": "glm_5_2", "model": "zai-org/GLM-5.2", "base_url": "https://api.siliconflow.cn/v1", "supports_json_mode": false, "pricing": {"currency": "CNY", "input_per_million_tokens": 1.4, "output_per_million_tokens": 4.4}},
+    {"model_id": "step_3_5_flash", "model": "stepfun-ai/Step-3.5-Flash", "base_url": "https://api.siliconflow.cn/v1", "supports_json_mode": false, "pricing": {"currency": "CNY", "input_per_million_tokens": 0.1, "output_per_million_tokens": 0.3}},
+    {"model_id": "tencent_hy3_preview", "model": "tencent/Hy3-preview", "base_url": "https://api.siliconflow.cn/v1", "supports_json_mode": false, "pricing": {"currency": "CNY", "input_per_million_tokens": 0.066, "output_per_million_tokens": 0.26}}
   ],
   "local_concurrency": {"max_in_flight_global": 1},
   "metadata": {"purpose": "local smoke"}
 }
 ```
+
+本仓库已创建完整模板文件；通常只需要把 `api_keys[].api_key` 的占位符替换成实际 SiliconFlow key。未填写的 `PASTE_` / `REPLACE_` key 会自动禁用；填 1 个 key 会生成 6 个候选 entry，填 3 个 key 会生成 18 个候选 entry。当前真实 smoke 使用 raw text prompt，因此六个模型都会进入随机候选；JSON 任务仍会按 `supports_json_mode` 过滤。
 
 配置好后可显式运行真实 smoke：
 
