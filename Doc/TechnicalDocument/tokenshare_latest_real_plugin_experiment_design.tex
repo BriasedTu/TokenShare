@@ -485,7 +485,14 @@ PYTHONPATH=src python -m pytest tests/executors tests/test_phase7_ai_api_executi
 .\init.ps1
 \end{lstlisting}
 
-未来 ExperimentRunner CLI 可设计为：
+当前默认 ExperimentRunner CLI 已落地，可直接运行 Experiment 1--4：
+
+\begin{lstlisting}
+PYTHONPATH=src python -m tokenshare.experiments.run_all \
+  --output-root outputs/experiments --seed 1
+\end{lstlisting}
+
+后续如需拆分单实验入口，可在此基础上继续扩展：
 
 \begin{lstlisting}
 python -m tokenshare.experiments.exp1_factorization_real_plugin \

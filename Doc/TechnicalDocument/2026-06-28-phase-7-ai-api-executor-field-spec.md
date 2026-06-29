@@ -29,7 +29,7 @@ Phase 7 的目标是实现 `AIAPIExecutor` 或等价组件：
 - 对 provider/transport 失败执行有界自动换 API entry，并把每次尝试记录为 provenance。
 - 保存 raw response、provider call log、usage、latency、cost estimate、错误证据和插件解析结果或解析失败。
 - 返回现有 `ExecutionSubmission`，并继续由 `ProtocolEngine.record_execution_submission()` 落账。
-- 保证 API key 只来自环境变量，不进入 event、artifact、SQLite、日志或错误文本。
+- 保证标准 executor config 只保存 `api_key_env`；真实 API smoke 可从被 gitignore 的本地 JSON 读取明文 key 并仅注入当前进程环境变量。API key 不进入 event、artifact、SQLite、日志、错误文本或 config digest。
 - 保证 replay 只读取历史 event/artifact，不重新调用 API。
 
 ## 3. 非目标
@@ -51,6 +51,7 @@ Phase 7 不做以下事项：
 | 组件 | 归属 | 职责 |
 |---|---|---|
 | `AIAPIExecutorConfig` | `tokenshare.executors` | 从本地 JSON 读取 SiliconFlow entry、采样参数、timeout、local concurrency、pricing 和 secret env var 名；不包含明文 secret。 |
+| `Local AI API smoke config loader` | `tokenshare.executors` | 只供真实 smoke / 本地命令使用：读取被 gitignore 的 `local/ai_api_smoke.local.json`，将 `api_key` 注入当前进程环境变量后删除明文字段，再复用标准 config loader。 |
 | `AIAPIExecutorDescriptor` | `ExecutorDescriptor` artifact | 在现有 executor registry 中声明 `executor_type=ai_api`、支持 request schema、provider family、output modes 和 JSON mode 能力。 |
 | `SiliconFlowChatClient` | `tokenshare.executors` | 只封装 SiliconFlow OpenAI-compatible chat completions HTTP 调用；不理解插件领域。 |
 | `AIProviderSelector` | `tokenshare.executors` | 对符合 request/plugin constraints 的 enabled entry 做均匀随机选择；一次 execution 内对剩余 entry 洗牌后有界 failover。 |
@@ -120,7 +121,7 @@ sequenceDiagram
 | `entry_id` | string | 是 | 本地稳定 ID；进入 provenance。 |
 | `enabled` | bool | 是 | false entry 不参与选择。 |
 | `base_url` | string | 是 | 默认 `https://api.siliconflow.cn/v1`。 |
-| `api_key_env` | string | 是 | 环境变量名；明文 key 不得出现在配置中。 |
+| `api_key_env` | string | 是 | 标准 executor config 中的环境变量名；明文 key 不得出现在标准配置中。真实 smoke 的 `local/ai_api_smoke.local.json` 可包含 `api_key`，loader 会转换为当前进程环境变量后再进入标准配置路径。 |
 | `model` | string | 是 | SiliconFlow model id。 |
 | `endpoint` | string | 是 | 第一版固定 `/chat/completions`。 |
 | `supports_json_mode` | bool | 是 | 由用户配置或模型清单确认。 |
@@ -275,7 +276,8 @@ SiliconFlow response 提供 token usage；成本估算由本地配置的 pricing
 
 ## 13. Secret 与安全边界
 
-- 配置文件只能保存 `api_key_env`，不得保存 API key 明文。
+- 标准配置文件只能保存 `api_key_env`，不得保存 API key 明文。
+- 真实 smoke 可使用被 gitignore 的 `local/ai_api_smoke.local.json` 保存本机明文 key；该文件不是 artifact，不进入 event/SQLite/log，不纳入 config digest，loader 只把 key 注入当前进程环境变量。
 - HTTP `Authorization` header 不得保存到 artifact、event、SQLite、stdout/stderr 或异常字符串。
 - 如果 provider error body 回显 request header 或 key，executor 必须先 redaction 再保存。
 - event payload 只保存 artifact ref、digest 和最小查询摘要。
@@ -335,7 +337,7 @@ Phase 7 不需要新增权威表。可在现有 `execution_submissions` projecti
 真实 SiliconFlow smoke test 必须满足：
 
 - 默认跳过，只有显式环境变量启用。
-- 使用用户本地环境变量中的 API key。
+- 默认优先读取 `local/ai_api_smoke.local.json` 或 `TOKENSHARE_AI_API_CONFIG` 指向的本地 JSON；若文件不存在，仍兼容用户本地环境变量中的 API key。
 - 使用低成本模型和短 prompt。
 - 成功或 provider error 都必须 artifact 化。
 - 测试输出不得打印 key、完整 prompt 或长 raw response。

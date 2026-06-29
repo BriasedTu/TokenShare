@@ -1,10 +1,15 @@
 import os
+from pathlib import Path
 
 import pytest
 
 from tests.phase7_fixtures import make_ai_request, make_config_dict
 from tokenshare.executors.ai_api import AIAPIExecutor
 from tokenshare.executors.ai_api_config import load_ai_api_config
+from tokenshare.executors.ai_api_local_config import (
+    DEFAULT_LOCAL_AI_API_CONFIG_PATH,
+    load_local_ai_api_config,
+)
 from tokenshare.executors.ai_api_transport import UrlLibSiliconFlowTransport
 from tokenshare.storage.artifacts import ArtifactStore
 
@@ -14,15 +19,23 @@ from tokenshare.storage.artifacts import ArtifactStore
     reason="real SiliconFlow smoke test is opt-in",
 )
 def test_real_siliconflow_smoke_returns_artifact_backed_submission(tmp_path) -> None:
-    if not os.environ.get("SILICONFLOW_API_KEY"):
-        pytest.skip("SILICONFLOW_API_KEY is not set")
-    body = make_config_dict()
-    body["entries"] = [body["entries"][0]]
-    body["entries"][0]["api_key_env"] = "SILICONFLOW_API_KEY"
-    body["defaults"]["max_tokens"] = 32
+    config_path = Path(
+        os.environ.get("TOKENSHARE_AI_API_CONFIG", str(DEFAULT_LOCAL_AI_API_CONFIG_PATH))
+    )
+    if config_path.exists():
+        config = load_local_ai_api_config(config_path)
+    else:
+        if not os.environ.get("SILICONFLOW_API_KEY"):
+            pytest.skip(
+                "local/ai_api_smoke.local.json or SILICONFLOW_API_KEY is not configured"
+            )
+        body = make_config_dict()
+        body["entries"] = [body["entries"][0]]
+        body["entries"][0]["api_key_env"] = "SILICONFLOW_API_KEY"
+        body["defaults"]["max_tokens"] = 32
+        config = load_ai_api_config(body)
     store = ArtifactStore(tmp_path)
     request = make_ai_request(store, request_id="request_real_smoke")
-    config = load_ai_api_config(body)
     executor = AIAPIExecutor(
         executor_id="executor_ai_api",
         executor_version="0.1.0",

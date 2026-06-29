@@ -1,6 +1,6 @@
 # AGENTS.md
 
-TokenShare 是一个早期本地研究原型，目标是验证一种协议：把大型任务递归拆分、分派、验证、合并、结算，并能从事件日志重放。当前目标是用 Python/SQLite/JSONL 做本地实现，跑通 factorization、真实 Lean 形式化证明插件和 structured report stub 三类 proof-of-concept 实验，并使用已完成的 Phase 7 实验级 AI API executor 验证真实模型输出效果。实验设计和论文实验口径以 `Doc/TechnicalDocument/tokenshare_latest_real_plugin_experiment_design.tex` / `.pdf` 为准。
+TokenShare 是一个早期本地研究原型，目标是验证一种协议：把大型任务递归拆分、分派、验证、合并、结算，并能从事件日志重放。当前目标是用 Python/SQLite/JSONL 做本地实现，跑通 factorization 和真实 Lean 形式化证明插件两类 proof-of-concept 实验，并使用已完成的 Phase 7 实验级 AI API executor 验证真实模型输出效果。2026-06-29 起，Phase 6 的 structured report stub 插件已从开发计划中剔除；后续如在历史文档或测试夹具中看到该名称，只作为早期通用插件夹具 / provenance，不作为待开发插件目标。实验设计和论文实验口径以 `Doc/TechnicalDocument/tokenshare_latest_real_plugin_experiment_design.tex` / `.pdf` 为准。
 
 ## 启动流程（Startup Workflow）
 
@@ -14,7 +14,7 @@ TokenShare 是一个早期本地研究原型，目标是验证一种协议：把
 4. 运行基线验证：
    - PowerShell：`.\init.ps1`
    - Bash/Git Bash/WSL：`./init.sh`
-5. 阅读 `feature_list.json`，选择且只选择一个未完成 feature。
+5. 阅读 `feature_list.json`，确认当前 active track。若 `active_features` 同时列出 Phase 6 Lean 插件和 Phase 8 实验基础设施，本轮仍只选择其中一个 track 实施，除非用户明确要求做跨 track 状态同步。
 6. 阅读 `progress.md` 和 `session-handoff.md`，确认当前状态和未解决决策。
 7. 如果需要判断代码应该放在哪个模块、哪些外部参考资料可借鉴，先看 `Doc/agent-navigation.md`。
 8. 如果本轮需要联网查找资料，必须按 `Doc/agent-navigation.md` 的“外部参考资料落库与使用规则”执行本地落库和文档同步。
@@ -30,9 +30,9 @@ V1 范围内：
 - 协议对象、状态机、任务图、租约、执行尝试、artifact 引用、append-only event ledger。
 - 使用本地文件系统、SQLite、JSON、JSONL 做 artifact 和事件存储。
 - 带固定版本的插件注册表和执行器注册表。
-- factorization 插件、真实 Lean 形式化证明插件和 structured report stub 插件，作为协议实验对象。
+- factorization 插件和真实 Lean 形式化证明插件，作为协议实验对象；structured report stub 已从 Phase 6 开发计划剔除。
 - 真实 Lean 形式化证明插件必须使用固定本地 Lean/lake/toolchain/library 环境做 proof artifact 检查；拆分算法必须由插件内确定性规则自动识别 Lean theorem / proof-state 结构并生成子任务，不得由 AI 决定协议级拆分。
-- 实验级 AI API 执行器，用于在受控 fixture / benchmark 下验证真实模型输出效果；API key 只能来自本地环境变量，调用结果必须持久化为 artifact，replay 不得重新调用 API。
+- 实验级 AI API 执行器，用于在受控 fixture / benchmark 下验证真实模型输出效果；标准 executor config 只保存 `api_key_env`，真实 API smoke 可从被 gitignore 的 `local/ai_api_smoke.local.json` 读取明文 key 并仅注入当前进程环境变量，调用结果必须持久化为 artifact，event/artifact/SQLite/log/config digest 不得保存 secret，replay 不得重新调用 API。
 - 实验设计必须优先遵守 `tokenshare_latest_real_plugin_experiment_design`：Experiment 1 factorization 真实插件端到端、Experiment 2 failure injection/recovery、Experiment 3 protocol ablation、Experiment 4 factorization + 真实 Lean plugin 跨插件泛化；不得用 toy demo 或 `lean_stub` 结果替代真实实验结论。
 - offline、slow、executor_error、invalid_output、late_submission 五类故障模拟。
 - 指标报告、状态重放、审计重放、sandbox 结算。
@@ -54,7 +54,7 @@ V1 范围外：
 ## 工作规则（Working Rules）
 
 - 一次只做一个 feature（One feature at a time）：以 `feature_list.json` 作为状态源。
-- 协议优先：不要把 factorization、Lean 或 structured report 行为硬编码进协议核心。
+- 协议优先：不要把 factorization、Lean 或历史 structured report fixture 行为硬编码进协议核心。
 - 需要证据：没有验证输出，不要把 feature 标记为完成。
 - 持久化非确定性输出：恢复时不能重新调用 AI 或 executor 来假装结果一致。
 - schema/version 决策必须显式：event、plugin、artifact 格式都要支持 replay。
