@@ -2,7 +2,7 @@
 
 TokenShare 是一个早期本地研究原型，用来验证一种协议内核：把大型任务递归拆分、分派、验证、合并、结算，并能从 append-only 事件日志重放全过程。
 
-当前 V1 目标是用 Python、SQLite、JSON、JSONL 和本地文件系统做一个可复现实验实现，跑通 factorization、真实 Lean 形式化证明插件和 structured report stub 三类 proof-of-concept 实验。
+当前 V1 目标是用 Python、SQLite、JSON、JSONL 和本地文件系统做一个可复现实验实现，跑通 factorization、真实 Lean 形式化证明插件和 structured report stub 三类 proof-of-concept 实验，并使用已完成的 Phase 7 实验级 AI API executor 验证真实模型输出效果。
 
 ## What It Is
 
@@ -50,13 +50,20 @@ V1 是本地可复现实验用的协议内核，范围包括：
 
 ## Proof-of-Concept Experiments
 
-V1 计划包含三类实验插件：
+V1 计划包含三类实验插件，实验设计和论文实验口径以 `Doc/TechnicalDocument/tokenshare_latest_real_plugin_experiment_design.tex` / `.pdf` 为准。旧 toy / stub 实验不能作为论文主实验结论，`lean_stub` 结果不能替代真实 Lean plugin 结果。
 
 - **factorization**：验证普通可拆分计算任务。当前规划的插件就是主 TDD 第 14.1 节的整数分解插件；第一版字段规格已收束为候选因子搜索空间分区、bounded range search、结果验证、all-required merge、prime / semiprime fixture 闭环。`one_success`、提前完成、sibling pruning 和 composite cofactor 的完整递归 resolution 已明确不属于第一切片。
 - **Lean formal proof**：验证真实形式化证明工作流。它接收 Lean theorem / proof-state 代码 artifact，由插件内确定性拆分算法自动识别目标结构并生成子任务；候选 proof artifact 必须通过固定本地 Lean/lake/toolchain/library 环境真实检查，checker 日志和环境身份持久化，replay 不重新运行 Lean 补历史事实。
 - **structured report stub**：验证大型自然语言任务。它使用 fixture 模拟 AI section 输出、证据引用、缺失 section、伪造引用和合并报告，用来覆盖结构化拆分、弱验证、覆盖率检查和 `MergePlan` 合并流程。
 
 这些实验是协议扩展性的验证对象，不应被硬编码进协议核心。
+
+最新实验设计把论文实验分成四组：
+
+- **Experiment 1 - Factorization End-to-End Execution**：用 `factorization@0.1.0` 跑通 prime / semiprime fixture 的 descriptor freeze、split、execution、parser/verifier、canonical、all-required merge、settlement 和 replay。
+- **Experiment 2 - Failure Injection and Recovery**：分别注入 invalid factor、false no-factor、parse failure/raw-only、worker crash/expired lease 和 no-factor recheck budget exceeded，验证错误不会污染 canonical state。
+- **Experiment 3 - Protocol Ablation Study**：关闭 verification、parser policy、requeue、all-required merge gate 或 slot integrity，验证关键机制缺失时出现预期退化。
+- **Experiment 4 - Cross-Plugin Generality with Real Plugins**：用 factorization plugin 和真实 Lean proof plugin 共享同一套 protocol lifecycle，验证协议核心不硬编码分解或 Lean 语义；真实 Lean checker logs 和 `EnvironmentRef` 缺失时不得声称通过。
 
 ## Architecture Principles
 
@@ -129,6 +136,10 @@ PYTHONPATH=src conda run -n tokenshare python -m pytest tests
 - `Doc/TechnicalDocument/2026-06-27-phase-6-factorization-plugin-field-spec.md`：Phase 6 factorization 插件第一版字段规格 / TDD 计划，直接指导 factorization 插件实现。
 - `Doc/TechnicalDocument/2026-06-27-phase-6-factorization-plugin-discussion-notes.md`：Phase 6 factorization 插件第一版拆分算法和主 TDD 对齐讨论记录；用于追溯取舍，不覆盖字段规格。
 - `Doc/TechnicalDocument/2026-06-28-phase-6-lean-real-plugin-scope-change.md`：Phase 6 Lean 插件范围变更记录；覆盖旧 `Lean stub` / synthetic-only 口径，要求实现本地真实 Lean checker 驱动的形式化证明插件。
+- `Doc/TechnicalDocument/tokenshare_latest_real_plugin_experiment_design.tex` / `.pdf`：最新真实插件实验设计；Experiment 1-4 的主口径，覆盖旧 toy / stub 实验设计。
+- `Doc/TechnicalDocument/2026-06-28-phase-7-ai-api-executor-field-spec.md`：Phase 7 实验级 AI API executor 字段规格。
+- `Doc/TechnicalDocument/2026-06-28-phase-7-ai-api-executor-tdd-plan.md`：Phase 7 实验级 AI API executor TDD 实施规划。
+- `Doc/TechnicalDocument/2026-06-28-phase-7-ai-api-executor-code-map.md`：Phase 7 AI API executor 代码、测试、字段规格章节、验证证据和协议边界映射。
 - `Doc/TechnicalDocument/2026-06-04-tokenshare-paper-module-map.md`：论文、技术报告、本地 TeX/OCR 与模块借鉴映射。
 - `Doc/TechnicalDocument/tokenshare-paper-tex/`：已本地化的论文/技术报告 TeX 或 OCR 文本。
 - `Doc/TechnicalDocument/2026-06-22-p01-p12-tokenshare-candidate-mechanism-spec.md`：P01-P22 机制整合记录；只用于追溯取舍理由，不覆盖主 TDD。
@@ -155,7 +166,7 @@ PYTHONPATH=src conda run -n tokenshare python -m pytest tests
 
 ## Current Status
 
-当前日期状态：2026-06-28。
+当前日期状态：2026-06-29。
 
 已完成：
 
@@ -175,23 +186,25 @@ PYTHONPATH=src conda run -n tokenshare python -m pytest tests
 - Phase 5 已完成：`Doc/TechnicalDocument/2026-06-25-phase-5-merge-contribution-settlement-field-spec.md` 是 `feat-006` 实现口径，`Doc/TechnicalDocument/2026-06-25-phase-5-code-map.md` 记录 Task 1-8 代码和测试映射。
 - Phase 5 merge / contribution / settlement 主闭环已实现：merge task creation、merge resolution、canonical contribution creation、parent completion、root-level sandbox settlement、subtree pruning、SQLite Phase 5 projection，以及完整 merge -> parent completion -> root settlement projection integration。
 - 2026-06-27 Phase 5 hardening 已完成：SQLite rebuild 会拒绝错误 Phase 5 batch id；root settlement 要求 caller supplied eligible contribution set 精确等于 ledger 当前 eligible set。
-- 当前完整启动验证通过：`.\init.ps1` 在 `tokenshare` conda 环境中收集 253 个测试并全部通过。
+- 当前完整启动验证通过：`.\init.ps1` 在 `tokenshare` conda 环境中收集 301 个测试，结果 `300 passed, 1 skipped`。
 - Phase 6 factorization 插件第一版字段规格 / TDD 计划已完成：`Doc/TechnicalDocument/2026-06-27-phase-6-factorization-plugin-field-spec.md` 直接指导实现。它固定插件主导候选因子搜索空间分区、bounded `factor_search_range`、deterministic `range_result` verifier、all-required merge、prime / semiprime fixture 闭环，并明确 early success / sibling pruning / composite cofactor 完整递归 resolution 不属于第一切片。
 - 2026-06-28 范围更新：Lean 插件不再是 stub / synthetic-only proof；Phase 6 第二插件必须实现本地真实 Lean checker 驱动的形式化证明能力，且拆分算法必须由插件内确定性规则自动识别 Lean theorem / proof-state 结构并生成子任务。当前环境尚未在 PATH 中发现 `lean` 或 `lake`，后续实现前必须固定可复现 toolchain。
+- 2026-06-28 Phase 7 实验级 AI API executor 已完成并映射：SiliconFlow-only 第一版、request-scoped provider failover、artifact-backed raw/parsed/parse-failure/provenance/usage/cost、secret redaction、plugin parser bridge 和 replay no-call guard 已实现。
+- 2026-06-29 最新真实插件实验设计已拉取并设为实验主口径：后续实验 runner、failure injection、ablation、metrics 和论文实验表格应以 `tokenshare_latest_real_plugin_experiment_design` 为准。
 
 当前进行中：
 
 - `feat-007`：Phase 6 - Experimental Plugins。
 
-Phase 6 的下一步是实现真实 Lean 形式化证明插件，然后继续收束并实现 structured report stub：
+Phase 6 / 实验路线的下一步是按最新实验设计补齐真实 Lean 形式化证明插件和 structured report stub，并让后续 Phase 8 实验基础设施直接服务 Experiment 1-4：
 
 - factorization、真实 Lean 形式化证明插件和 structured report stub 三类 proof-of-concept 实验。
 - factorization 第一版只承诺 prime / semiprime fixture 端到端闭环；不宣称 early success、sibling pruning 或完整 composite cofactor recursive resolution。
 - Lean 插件必须接入本地真实 Lean checker，并用无 AI 介入的确定性拆分算法生成 proof subtask；旧 `Lean stub proof` 路线已废弃。
 
-Phase 6 之后进入 `feat-008` / Phase 7 Experimental AI API Executor：
+`feat-008` / Phase 7 Experimental AI API Executor 已完成：
 
-- 通过统一 `ExecutionRequest` / `ExecutionSubmission` 调用真实模型 API。
+- 可通过统一 `ExecutionRequest` / `ExecutionSubmission` 调用真实模型 API。
 - 持久化 provider、model、prompt package、raw output、parsed output 或 parse failure、usage、latency、cost 和 error provenance。
 - API key 只来自本地环境变量，不写入 event、artifact、SQLite 或日志；baseline 测试不要求联网。
 - replay 不重新调用 AI API，缺失历史输出 artifact 时必须失败。
@@ -204,11 +217,12 @@ Phase 6 之后进入 `feat-008` / Phase 7 Experimental AI API Executor：
 
 之后进入 `feat-010` / Phase 9 replay and audit。
 
-当前尚未实现真实 Lean 形式化证明插件、structured report stub、feat-008 实验级 AI API executor、feat-009 独立实验基础设施、feat-010 replay / audit、真实 executor 网络、生产级 AI API 平台或真实链上结算。
+当前尚未实现真实 Lean 形式化证明插件、structured report stub、feat-009 独立实验基础设施、feat-010 replay / audit、真实 executor 网络、生产级 AI API 平台或真实链上结算。`feat-008` 实验级 AI API executor 已完成。
 
 当前仍需注意：
 
 - 自然语言任务的验证不是“证明文本绝对正确”，而是通过结构化 schema、证据引用、覆盖率和审计 replay 降低风险。
 - Lean V1 已按 2026-06-28 范围变更调整为真实 checker 驱动的形式化证明插件；不得再按 stub/synthetic-only 路线实现。
+- Experiment 4 必须使用真实 Lean proof plugin / Lean adapter；没有真实 checker logs 和 `EnvironmentRef` 时只能标记 blocked / pending，不能用 `lean_stub` 替代。
 - factorization、Lean 形式化证明插件和 structured report stub 是插件实验对象，不应硬编码进协议核心。
 - 当前实现默认使用 `conda` 环境 `tokenshare`；如果运行时选择变化，需要同步更新 README、harness 和设计资料。

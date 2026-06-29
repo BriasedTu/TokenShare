@@ -109,19 +109,36 @@ def _load_entry(body: JsonObject) -> AIAPIProviderEntry:
     for field in ("currency", "input_per_million_tokens", "output_per_million_tokens"):
         if field not in pricing:
             raise ValueError(f"missing pricing field: {field}")
+    enabled = _required_bool(body, "enabled")
+    supports_json_mode = _required_bool(body, "supports_json_mode")
+    supports_streaming = _optional_bool(body, "supports_streaming", default=False)
     return AIAPIProviderEntry(
         entry_id=str(body["entry_id"]),
-        enabled=bool(body["enabled"]),
+        enabled=enabled,
         base_url=str(body["base_url"]).rstrip("/"),
         api_key_env=str(body["api_key_env"]),
         model=str(body["model"]),
         endpoint=str(body.get("endpoint", "/chat/completions")),
-        supports_json_mode=bool(body.get("supports_json_mode", False)),
-        supports_streaming=bool(body.get("supports_streaming", False)),
+        supports_json_mode=supports_json_mode,
+        supports_streaming=supports_streaming,
         request_overrides=dict(body.get("request_overrides", {})),
         pricing=pricing,
         tags=[str(tag) for tag in body.get("tags", [])],
     )
+
+
+def _required_bool(body: JsonObject, field: str) -> bool:
+    value = body.get(field)
+    if not isinstance(value, bool):
+        raise ValueError(f"{field} must be a boolean")
+    return value
+
+
+def _optional_bool(body: JsonObject, field: str, *, default: bool) -> bool:
+    value = body.get(field, default)
+    if not isinstance(value, bool):
+        raise ValueError(f"{field} must be a boolean")
+    return value
 
 
 def _sha256_json(data: JsonObject) -> str:

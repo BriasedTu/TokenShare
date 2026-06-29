@@ -2,6 +2,7 @@ from tests.phase7_fixtures import FakeProviderResponse, make_config_dict
 from tokenshare.executors.ai_api_config import load_ai_api_config
 from tokenshare.executors.ai_api_transport import (
     SiliconFlowProviderError,
+    UrlLibSiliconFlowTransport,
     build_siliconflow_chat_body,
     parse_siliconflow_response,
 )
@@ -64,3 +65,40 @@ def test_parse_siliconflow_response_maps_rate_limit_error() -> None:
         assert exc.http_status == 429
     else:
         raise AssertionError("expected SiliconFlowProviderError")
+
+
+def test_urllib_transport_maps_invalid_json_body_to_provider_error(monkeypatch) -> None:
+    def fake_urlopen(_request, timeout):
+        return _FakeUrlOpenResponse(200, b"not-json")
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    config = load_ai_api_config(make_config_dict())
+    entry = config.entries[0]
+
+    try:
+        UrlLibSiliconFlowTransport().post_chat_completion(
+            entry=entry,
+            api_key="secret",
+            body={"model": entry.model},
+            timeout_seconds=30,
+        )
+    except SiliconFlowProviderError as exc:
+        assert exc.error_kind == "invalid_output"
+        assert exc.http_status == 200
+    else:
+        raise AssertionError("expected SiliconFlowProviderError")
+
+
+class _FakeUrlOpenResponse:
+    def __init__(self, status: int, body: bytes) -> None:
+        self.status = status
+        self._body = body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, _exc_type, _exc, _traceback) -> None:
+        return None
+
+    def read(self) -> bytes:
+        return self._body

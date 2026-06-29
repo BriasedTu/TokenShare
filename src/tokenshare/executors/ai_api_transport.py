@@ -18,7 +18,7 @@ class SiliconFlowChatResult:
     model: str | None
     content_text: str
     finish_reason: str | None
-    usage: JsonObject
+    usage: JsonObject | None
     raw_response_json: JsonObject
 
 
@@ -64,6 +64,12 @@ def build_siliconflow_chat_body(
 
 def parse_siliconflow_response(response: Any) -> SiliconFlowChatResult:
     status_code = int(response.status_code)
+    if not isinstance(response.body, dict):
+        raise SiliconFlowProviderError(
+            error_kind="invalid_output",
+            http_status=status_code,
+            message="provider response body must be a JSON object",
+        )
     body = dict(response.body or {})
     if status_code >= 400:
         raise SiliconFlowProviderError(
@@ -85,7 +91,7 @@ def parse_siliconflow_response(response: Any) -> SiliconFlowChatResult:
         model=body.get("model"),
         content_text=str(content),
         finish_reason=choice.get("finish_reason"),
-        usage=dict(body.get("usage", {})),
+        usage=dict(body["usage"]) if isinstance(body.get("usage"), dict) else None,
         raw_response_json=body,
     )
 
@@ -132,7 +138,15 @@ class UrlLibSiliconFlowTransport:
         try:
             with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
                 text = response.read().decode("utf-8")
-                return _UrlLibResponse(response.status, json.loads(text), text)
+                try:
+                    body_json = json.loads(text)
+                except json.JSONDecodeError as exc:
+                    raise SiliconFlowProviderError(
+                        error_kind="invalid_output",
+                        http_status=response.status,
+                        message="provider returned non-json response body",
+                    ) from exc
+                return _UrlLibResponse(response.status, body_json, text)
         except urllib.error.HTTPError as exc:
             text = exc.read().decode("utf-8", errors="replace")
             try:
@@ -140,6 +154,12 @@ class UrlLibSiliconFlowTransport:
             except json.JSONDecodeError:
                 body_json = {"message": text}
             return _UrlLibResponse(exc.code, body_json, text)
+        except urllib.error.URLError as exc:
+            raise SiliconFlowProviderError(
+                error_kind="connection_error",
+                http_status=None,
+                message="provider connection failed",
+            ) from exc
 
 
 class _UrlLibResponse:

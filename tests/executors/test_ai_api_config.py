@@ -33,3 +33,12 @@ def test_load_ai_api_config_rejects_duplicate_entry_ids() -> None:
 
     with pytest.raises(ValueError, match="duplicate ai api entry"):
         load_ai_api_config(body)
+
+
+@pytest.mark.parametrize("field", ["enabled", "supports_json_mode", "supports_streaming"])
+def test_load_ai_api_config_rejects_string_boolean_fields(field: str) -> None:
+    body = make_config_dict()
+    body["entries"][0][field] = "false"
+
+    with pytest.raises(ValueError, match=f"{field} must be a boolean"):
+        load_ai_api_config(body)

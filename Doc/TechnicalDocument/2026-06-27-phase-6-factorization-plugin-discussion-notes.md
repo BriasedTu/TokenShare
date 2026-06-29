@@ -2,7 +2,9 @@
 
 日期：2026-06-27
 
-状态：Phase 6 factorization 插件设计讨论记录。本文记录已经确认的 factorization 第一版拆分算法和协议边界；本文不是最终字段规格，也不是实现计划。后续需要把确认后的字段、artifact schema、event payload、SQLite projection 和 TDD 任务收束到 Phase 6 插件专用字段规格。2026-06-27 重读主 TDD 后补充：本文规划的 factorization 插件就是主 TDD 第 14.1 节的“整数分解插件”，不是另一个插件；所谓递归 continuation 也不是新增独立机制，而是主 TDD 已经要求的 canonical output 驱动、插件版本化规则驱动的渐进式扩图闭环。2026-06-27 范围再修正：实验基础设施已从 Phase 6 拆出，故障模拟、experiment runner 和 metrics 不再属于本文后续 Phase 6 插件字段规格范围。2026-06-27 路线再修正：实验级 AI API executor 已新增为 `feat-008` / Phase 7，也不属于 Phase 6 factorization 插件字段规格。
+状态：Phase 6 factorization 插件设计讨论记录。本文记录 factorization 第一版拆分算法和协议边界的讨论 provenance；本文不是最终字段规格，也不是实现计划。后续需要把确认后的字段、artifact schema、event payload、SQLite projection 和 TDD 任务收束到 Phase 6 插件专用字段规格。2026-06-27 重读主 TDD 后补充：本文规划的 factorization 插件就是主 TDD 第 14.1 节的“整数分解插件”，不是另一个插件；所谓递归 continuation 也不是新增独立机制，而是主 TDD 已经要求的 canonical output 驱动、插件版本化规则驱动的渐进式扩图闭环。2026-06-27 范围再修正：实验基础设施已从 Phase 6 拆出，故障模拟、experiment runner 和 metrics 不再属于本文后续 Phase 6 插件字段规格范围。2026-06-27 路线再修正：实验级 AI API executor 已新增为 `feat-008` / Phase 7，也不属于 Phase 6 factorization 插件字段规格。
+
+2026-06-29 覆盖说明：最新实验设计以 `Doc/TechnicalDocument/tokenshare_latest_real_plugin_experiment_design.tex` / `.pdf` 为准。该设计确认 factorization 第一切片必须采用 all-required merge，并把 early success、`one_success`、sibling pruning 和 composite cofactor 完整递归 resolution 明确排除在当前实验通过条件之外。本文下方关于“早完成和剪枝是主 TDD 原始目标”的内容只保留为历史讨论来源，不再作为后续实验或 Phase 8 runner 的验收口径。
 
 ## 0. 主 TDD 对齐修正
 

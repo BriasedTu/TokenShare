@@ -108,3 +108,44 @@ def test_ai_api_executor_never_persists_api_key_values(tmp_path, monkeypatch) ->
             data = path.read_bytes()
             assert b"super-secret-a" not in data
             assert b"super-secret-b" not in data
+
+
+def test_ai_api_executor_marks_successful_response_missing_usage(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("SILICONFLOW_API_KEY_A", "secret-a")
+    monkeypatch.setenv("SILICONFLOW_API_KEY_B", "secret-b")
+    store = ArtifactStore(tmp_path)
+    request = make_ai_request(store, request_id="request_missing_usage")
+    config = load_ai_api_config(make_config_dict())
+    transport = FakeSiliconFlowTransport(
+        [
+            FakeProviderResponse(
+                status_code=200,
+                body={
+                    "id": "sf-missing-usage",
+                    "model": "Qwen/Qwen2.5-7B-Instruct",
+                    "choices": [{"message": {"content": '{"answer":"safe"}'}}],
+                },
+            )
+        ]
+    )
+    executor = AIAPIExecutor(
+        executor_id="executor_ai_api",
+        executor_version="0.1.0",
+        artifact_store=store,
+        config=config,
+        transport=transport,
+        parser=lambda raw: {"answer": "safe"},
+    )
+
+    submission = executor.execute(
+        request,
+        submission_id="submission_missing_usage",
+        submitted_at="2026-06-28T00:00:02Z",
+    )
+
+    assert submission.result_kind == "succeeded"
+    assert submission.usage_summary["cost_estimate_status"] == "usage_missing"
+    assert submission.usage_summary["prompt_tokens"] is None
+    assert submission.usage_summary["completion_tokens"] is None
+    assert submission.usage_summary["total_tokens"] is None
+    assert submission.usage_summary["cost_estimate"] is None

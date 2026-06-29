@@ -1,6 +1,6 @@
 # TokenShare Agent 导航
 
-日期：2026-06-24
+日期：2026-06-29
 
 状态：工作流导航文档。本文只回答“新 AI 遇到问题应先看哪里、代码应放到哪个模块、外部参考资料应如何落库和使用”。本文不是协议设计规格，不覆盖 TDD，不包含下一步任务提示词。
 
@@ -45,12 +45,13 @@
 22. `Doc/TechnicalDocument/2026-06-28-phase-7-ai-api-executor-field-spec.md`：Phase 7 实验级 AI API executor 字段规格草案；用于后续实现 SiliconFlow-only 第一版 adapter、均匀随机选择、有界 provider failover、插件拥有解析、artifact/provenance/secret/replay 边界。
 23. `Doc/TechnicalDocument/2026-06-28-phase-7-ai-api-executor-tdd-plan.md`：Phase 7 实验级 AI API executor TDD 实施规划；用于按红绿步骤实现 config、descriptor、transport、selector、executor、parser bridge、secret redaction、replay guard、smoke gate、code map 和状态同步。
 24. `Doc/TechnicalDocument/2026-06-28-phase-7-ai-api-executor-code-map.md`：Phase 7 AI API executor 代码、测试、字段规格章节、验证证据和协议边界映射；用于确认 feat-008 已实现边界。
-25. `Doc/TechnicalDocument/2026-06-07-phase-2-coordination-debt-memo.md`：Phase 2 协调边界备忘录；用于提醒后续 agent 不要让 `RootTaskRegistrar` 继续承担状态机、调度或存储编排增长职责。
-26. `README.md`：项目入口和稳定边界。
-27. `Doc/TechnicalDocument/2026-06-04-tokenshare-paper-module-map.md`：论文、技术报告和本地 TeX/OCR 映射；用于追踪研究依据。
-28. `Doc/TechnicalDocument/2026-06-22-p01-p12-tokenshare-candidate-mechanism-spec.md`：P01-P22 机制整合记录；用于追溯取舍理由，不覆盖主 TDD。
-29. `Doc/TechnicalDocument/2026-06-02-tokenshare-protocol-kernel-revised-draft.md`：历史讨论稿；用于理解原因，不直接覆盖当前 TDD。
-30. `reference_repos/`：外部参考源码；只能用于借鉴模式，不属于 TokenShare runtime。
+25. `Doc/TechnicalDocument/tokenshare_latest_real_plugin_experiment_design.tex` / `.pdf`：最新真实插件实验设计；用于指导论文实验、Experiment 1-4、Phase 8 experiment runner、failure injection、ablation、metrics/report 和跨插件泛化验收；覆盖旧 toy / stub 实验口径。
+26. `Doc/TechnicalDocument/2026-06-07-phase-2-coordination-debt-memo.md`：Phase 2 协调边界备忘录；用于提醒后续 agent 不要让 `RootTaskRegistrar` 继续承担状态机、调度或存储编排增长职责。
+27. `README.md`：项目入口和稳定边界。
+28. `Doc/TechnicalDocument/2026-06-04-tokenshare-paper-module-map.md`：论文、技术报告和本地 TeX/OCR 映射；用于追踪研究依据。
+29. `Doc/TechnicalDocument/2026-06-22-p01-p12-tokenshare-candidate-mechanism-spec.md`：P01-P22 机制整合记录；用于追溯取舍理由，不覆盖主 TDD。
+30. `Doc/TechnicalDocument/2026-06-02-tokenshare-protocol-kernel-revised-draft.md`：历史讨论稿；用于理解原因，不直接覆盖当前 TDD。
+31. `reference_repos/`：外部参考源码；只能用于借鉴模式，不属于 TokenShare runtime。
 
 如果两个文件冲突，应优先相信上面列表中更靠前的文件，并把冲突记录到 `progress.md` 或 `session-handoff.md`。
 
@@ -76,7 +77,8 @@
 | 判断 Phase 6 experimental plugins 实现范围 | `feature_list.json`、主 TDD 第 21 节 | `Doc/TechnicalDocument/2026-06-27-phase-6-factorization-plugin-field-spec.md`、`Doc/TechnicalDocument/2026-06-28-phase-6-lean-real-plugin-scope-change.md`、`Doc/TechnicalDocument/2026-06-27-phase-6-factorization-plugin-discussion-notes.md`、`src/tokenshare/plugins/contracts.py` | 2026-06-28 用户确认：Lean 插件不再是 stub，Phase 6 第二插件必须实现本地真实 Lean checker 驱动的形式化证明能力，且拆分算法由插件内确定性规则自动生成子任务。Phase 6 仍只包含 factorization、Lean 形式化证明、structured report stub 三类插件；实验级 AI API executor 属于 `feat-008` / Phase 7；`SimulationProfile`、`SimulationWrapper`、`ExperimentRunner`、`MetricsCollector`、故障模拟和指标报告属于 `feat-009` / Phase 8。 |
 | 判断 Phase 6 factorization 插件字段规格 / TDD | `Doc/TechnicalDocument/2026-06-27-phase-6-factorization-plugin-field-spec.md` | `Doc/TechnicalDocument/2026-06-27-phase-6-factorization-plugin-code-map.md`、`Doc/TechnicalDocument/2026-06-27-phase-6-factorization-plugin-discussion-notes.md`、主 TDD 第 4.3、7、8、12、14.1、21、23 节；`Doc/TechnicalDocument/2026-06-24-phase-4-verification-canonical-expansion-field-spec.md`、`Doc/TechnicalDocument/2026-06-25-phase-5-merge-contribution-settlement-field-spec.md`、`src/tokenshare/plugins/contracts.py` | 字段规格是 factorization 插件第一版实现口径；code map 是 Task 1-13 source、tests、字段规格章节、验证证据、状态同步和协议边界映射。当前已完成 prime / semiprime fixture 端到端闭环，使用插件主导 `candidate_range_partition.v1`、bounded `factor_search_range`、plugin-owned prompt package、plugin-owned AI output parse policy、deterministic `range_result` verification、all-required merge、现有 Phase 4/5 events；raw-only 不能作为 Factorization 成功输出；early success、sibling pruning、composite cofactor 完整递归 resolution 明确不属于第一切片。讨论记录只用于追溯取舍。 |
 | 判断 Phase 7 AI API executor 边界 | `Doc/TechnicalDocument/2026-06-28-phase-7-ai-api-executor-field-spec.md` | `Doc/TechnicalDocument/2026-06-28-phase-7-ai-api-executor-tdd-plan.md`、`Doc/TechnicalDocument/2026-06-28-phase-7-ai-api-executor-code-map.md`、`feature_list.json`、主 TDD 第 21 节、`src/tokenshare/executors/contracts.py`、`Doc/TechnicalDocument/2026-06-23-phase-3-plugin-executor-field-spec.md`、`Doc/TechnicalDocument/2026-06-23-phase-3-code-map.md` | Phase 7 只实现实验级 AI API executor：第一版固定 SiliconFlow OpenAI-compatible chat completions adapter，通过统一 `ExecutionRequest` / `ExecutionSubmission` 调用真实模型并持久化 raw / parsed / parse failure / usage / latency / cost / error provenance。API key 只来自环境变量，不写入 event、artifact、SQLite 或日志；均匀随机和自动换 API 只能作为同一 request 内有界 provider failover，不得创建协议级 retry、改任务图、绑定 canonical output 或决定奖励；replay 不得重新调用 AI API。code map 记录当前 feat-008 source/tests/验证证据和已实现边界；真实 SiliconFlow smoke test 默认跳过，必须显式启用。 |
-| 判断 Phase 8 实验基础设施、故障模拟与指标边界 | `feature_list.json`、主 TDD 第 21 节 | `Doc/agent-navigation.md`、`src/tokenshare/plugins/contracts.py`、`src/tokenshare/executors/contracts.py` | `feat-009` / Phase 8 才实现 `SimulationProfile`、`SimulationWrapper`、`ExperimentRunner`、`MetricsCollector`、五类故障模拟和指标报告；不得把这些能力放入 Phase 6 插件或 Phase 7 executor。 |
+| 判断最新实验设计 / 论文实验口径 | `Doc/TechnicalDocument/tokenshare_latest_real_plugin_experiment_design.tex` | `Doc/TechnicalDocument/tokenshare_latest_real_plugin_experiment_design.pdf`、Phase 6 factorization code map、Lean scope change、Phase 7 code map | 实验必须围绕真实插件边界、真实 descriptor、真实 artifact、真实 parser/verifier/merge policy 和真实 protocol lifecycle；Experiment 4 必须使用真实 Lean proof plugin / Lean adapter，没有 checker logs 和 `EnvironmentRef` 时只能标记 blocked / pending，不能用 `lean_stub` 结果替代。 |
+| 判断 Phase 8 实验基础设施、故障模拟与指标边界 | `Doc/TechnicalDocument/tokenshare_latest_real_plugin_experiment_design.tex`、`feature_list.json`、主 TDD 第 21 节 | `Doc/agent-navigation.md`、`src/tokenshare/plugins/contracts.py`、`src/tokenshare/executors/contracts.py` | `feat-009` / Phase 8 才实现 `SimulationProfile`、`SimulationWrapper`、`ExperimentRunner`、`MetricsCollector`、五类故障模拟和指标报告；Phase 8 的 runner/metrics/failure/ablation 设计必须服务最新 Experiment 1-4，不得把 toy demo 或 stub Lean 结果作为通过证据，也不得把这些能力放入 Phase 6 插件或 Phase 7 executor。 |
 | 需要联网查找资料 | 本文第 6 节 | `Doc/TechnicalDocument/2026-06-04-tokenshare-paper-module-map.md`、`reference_repos/README.md` | 被用于项目决策的外部资料必须本地落库并同步索引。 |
 | 需要借鉴已有项目结构 | `reference_repos/README.md` | 对应外部源码目录 | 先拉取或更新本地浅克隆/sparse checkout；只能借鉴思路，不引入为 runtime 依赖，不复制大段实现。 |
 | 需要设计对象字段 | `Doc/TechnicalDocument/2026-06-05-phase-1-minimal-object-field-spec.md`；Phase 2 使用 `Doc/TechnicalDocument/2026-06-08-phase-2-minimal-field-state-event-spec.md`；Phase 3 使用 `Doc/TechnicalDocument/2026-06-23-phase-3-plugin-executor-field-spec.md`；Phase 4 使用 `Doc/TechnicalDocument/2026-06-24-phase-4-verification-canonical-expansion-field-spec.md`；Phase 5 使用 `Doc/TechnicalDocument/2026-06-25-phase-5-merge-contribution-settlement-field-spec.md`；Phase 6 factorization 使用 `Doc/TechnicalDocument/2026-06-27-phase-6-factorization-plugin-field-spec.md`；Phase 7 AI API executor 使用 `Doc/TechnicalDocument/2026-06-28-phase-7-ai-api-executor-field-spec.md` 和 `Doc/TechnicalDocument/2026-06-28-phase-7-ai-api-executor-tdd-plan.md` | TDD 第 6、8、9、10、11、12、20、21、23 节；协议讨论稿第 6、7、10、11 节 | 先区分协议对象名、逻辑决策、字段名、artifact 类型、event payload、SQLite 表名和组件名，再写实现。 |
