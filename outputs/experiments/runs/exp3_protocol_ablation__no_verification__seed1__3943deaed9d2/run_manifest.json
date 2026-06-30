@@ -1,0 +1,36 @@
+{
+  "artifact_root": {
+    "artifact_count": 15,
+    "manifest_hash": "sha256:21b822e53800b28d5126eb87ced45271599978a1ac8e51dee006477996d32760",
+    "path": "C:\\Users\\32133\\AppData\\Local\\Temp\\tokenshare_phase8_ablation_vtua1ahe\\artifacts"
+  },
+  "blocked_reason": null,
+  "case_id": "no_verification",
+  "clock_semantics": "fixed_logical_clock",
+  "created_at": "2026-06-29T15:25:30Z",
+  "event_log_ref": {
+    "event_count": 37,
+    "hash": "sha256:e70c4604b2188c1377657efa3e4f2ef91ed1de394a0a2568b57373ca108f09a0",
+    "path": "outputs\\experiments\\runs\\exp3_protocol_ablation__no_verification__seed1__3943deaed9d2\\events\\event_log.jsonl"
+  },
+  "executor_descriptors": [
+    {
+      "descriptor_digest": "sha256:412786c518c66dbee2c4a337572814bf8bfbb2125e5a502ef8fb465e57a49860",
+      "executor_id": "executor_factorization_fixture",
+      "executor_version": "0.1.0"
+    }
+  ],
+  "experiment_id": "exp3_protocol_ablation",
+  "plugin_descriptors": [
+    {
+      "descriptor_digest": "sha256:b1bb02a3222fee65ac13208fb8b12fbc39d6c75c7ef5b315a124133bcbe5ac1c",
+      "plugin_id": "factorization",
+      "plugin_version": "0.1.0"
+    }
+  ],
+  "profile_digest": "sha256:b25310648cf5389b4c18a5f775d38babcc251b4b4946f00dc260fdf3cd5c146b",
+  "run_id": "exp3_protocol_ablation__no_verification__seed1__3943deaed9d2",
+  "schema_version": "phase8.experiment_run_manifest.v1",
+  "seed": 1,
+  "status": "inconclusive"
+}

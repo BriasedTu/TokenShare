@@ -1,0 +1,36 @@
+{
+  "artifact_root": {
+    "artifact_count": 45,
+    "manifest_hash": "sha256:c1a0c4601a37087479e465a362e13d96908e220478968b289ec1136c3f26634f",
+    "path": "outputs\\experiments\\runs\\exp4_real_plugin_generality__lean_decomposition_merge__seed1__ba5732af6d07\\artifacts"
+  },
+  "blocked_reason": null,
+  "case_id": "lean_decomposition_merge",
+  "clock_semantics": "fixed_logical_clock",
+  "created_at": "2026-06-29T15:25:34Z",
+  "event_log_ref": {
+    "event_count": 70,
+    "hash": "sha256:f17305db3c68531f1a99f97f75e7676b2aa5bdfb73bf0867fafc66f8e986eccb",
+    "path": "outputs\\experiments\\runs\\exp4_real_plugin_generality__lean_decomposition_merge__seed1__ba5732af6d07\\events\\event_log.jsonl"
+  },
+  "executor_descriptors": [
+    {
+      "descriptor_digest": "sha256:cfa6ec9e04ef0a8f1bf0931674ddca1e80db69b05f88c16969c9b9b94b0084df",
+      "executor_id": "executor_lean_checker_fixture",
+      "executor_version": "0.1.0"
+    }
+  ],
+  "experiment_id": "exp4_real_plugin_generality",
+  "plugin_descriptors": [
+    {
+      "descriptor_digest": "sha256:f425056dc5050f521ef3da97e092b857daf663802cf2d21ab7902186736ec6d1",
+      "plugin_id": "lean_proof",
+      "plugin_version": "0.1.0"
+    }
+  ],
+  "profile_digest": "sha256:05bbb8968747ec65db40b56384767e597a705d61f8b561bcbe6e3d76994b3b46",
+  "run_id": "exp4_real_plugin_generality__lean_decomposition_merge__seed1__ba5732af6d07",
+  "schema_version": "phase8.experiment_run_manifest.v1",
+  "seed": 1,
+  "status": "passed"
+}

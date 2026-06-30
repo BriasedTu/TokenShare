@@ -1,0 +1,18 @@
+{
+  "artifact_id": "prompt_ai_api_parse_failure_raw_only_1",
+  "artifact_schema_id": "phase3.prompt_package",
+  "artifact_schema_version": "v1",
+  "artifact_type": "PromptPackage",
+  "content_hash": "sha256:8472bbc573107f563635c01eb0f60dc906cb9d4ba80177b359af81ec26b7cb8c",
+  "created_at": "2026-06-30T00:00:00Z",
+  "media_type": "application/json",
+  "metadata": {
+    "case_id": "ai_api_parse_failure_raw_only"
+  },
+  "schema_version": "ArtifactRef.v1",
+  "size_bytes": 2642,
+  "source": {
+    "kind": "ai_profile_suite"
+  },
+  "uri": "artifacts/prompt_ai_api_parse_failure_raw_only_1"
+}

@@ -1,0 +1,496 @@
+{
+  "deterministic_vs_ai_api": {
+    "semiprime_range_flow": {
+      "ai_api_case_id": "ai_api_semiprime_range_flow",
+      "ai_api_correctness": true,
+      "ai_api_cost": 0.0042912,
+      "ai_api_latency_ms_total": 45712,
+      "ai_api_parser_success_rate": 1.0,
+      "ai_api_retry_count": 0,
+      "correctness_delta": 0,
+      "cost_delta": 0.0042912,
+      "deterministic_case_id": "deterministic_semiprime_range_flow",
+      "deterministic_correctness": true,
+      "deterministic_cost": 0,
+      "deterministic_latency_ms_total": 0,
+      "deterministic_parser_success_rate": 1.0,
+      "deterministic_retry_count": 0,
+      "latency_delta_ms": 45712,
+      "parser_success_rate_delta": 0.0,
+      "retry_delta": 0
+    }
+  },
+  "profiles": [
+    {
+      "artifact_root_path": "C:/Users/32133/AppData/Local/Temp/tokenshare_ai_profile_det_a8gbp0j3/artifacts",
+      "case_id": "deterministic_semiprime_range_flow",
+      "cost_estimate_total": 0,
+      "event_log_ref": {
+        "event_count": 96,
+        "hash": "sha256:eb0b7b6c487d2cad6a96a410b184c583c088fb3a087b72bb8451a36efa9861bd",
+        "path": "outputs\\experiments\\ai_profile_real_rerun\\deterministic_semiprime_range_flow\\events\\event_log.jsonl"
+      },
+      "executor_profile": "deterministic_local",
+      "experiment_id": "exp1_factorization_e2e",
+      "final_correctness": true,
+      "fixture_name": "semiprime_range_flow",
+      "latency_ms_total": 0,
+      "models": [],
+      "parse_failure_count": 0,
+      "parse_failure_refs": [],
+      "parsed_output_count": 4,
+      "parsed_output_refs": [
+        {
+          "artifact_id": "range_result_coverage_sha256_678225f9831bb9d5c85cc4ea6dc988e98f5bb827c2ad2a4bb928448641c06f75_sha256_0bd447d924c2d308c1ac3fac1ab7235e87b5d6f90b4d725c1bc9fdd0888cd9a0_0",
+          "artifact_schema_id": "factorization.range_result",
+          "artifact_schema_version": "v1",
+          "artifact_type": "canonical_output",
+          "content_hash": "sha256:e8101fd26ec30956e9c9c42ae26b0422f5b0b0a04a36d2439e09140e01c5a765",
+          "created_at": "2026-06-28T00:00:00Z",
+          "media_type": "application/json",
+          "metadata": {
+            "output_name": "range_result",
+            "task_id": "task_factorization_fixture"
+          },
+          "schema_version": "ArtifactRef.v1",
+          "size_bytes": 820,
+          "source": {
+            "kind": "factorization_fixture"
+          },
+          "uri": "artifacts/range_result_coverage_sha256_678225f9831bb9d5c85cc4ea6dc988e98f5bb827c2ad2a4bb928448641c06f75_sha256_0bd447d924c2d308c1ac3fac1ab7235e87b5d6f90b4d725c1bc9fdd0888cd9a0_0"
+        },
+        {
+          "artifact_id": "range_result_coverage_sha256_678225f9831bb9d5c85cc4ea6dc988e98f5bb827c2ad2a4bb928448641c06f75_sha256_0bd447d924c2d308c1ac3fac1ab7235e87b5d6f90b4d725c1bc9fdd0888cd9a0_1",
+          "artifact_schema_id": "factorization.range_result",
+          "artifact_schema_version": "v1",
+          "artifact_type": "canonical_output",
+          "content_hash": "sha256:83ac516aee802ddb39a45b30d361ed1c6a659ffda5aa0de628d850ac01e87b76",
+          "created_at": "2026-06-28T00:00:00Z",
+          "media_type": "application/json",
+          "metadata": {
+            "output_name": "range_result",
+            "task_id": "task_factorization_fixture"
+          },
+          "schema_version": "ArtifactRef.v1",
+          "size_bytes": 820,
+          "source": {
+            "kind": "factorization_fixture"
+          },
+          "uri": "artifacts/range_result_coverage_sha256_678225f9831bb9d5c85cc4ea6dc988e98f5bb827c2ad2a4bb928448641c06f75_sha256_0bd447d924c2d308c1ac3fac1ab7235e87b5d6f90b4d725c1bc9fdd0888cd9a0_1"
+        },
+        {
+          "artifact_id": "range_result_coverage_sha256_678225f9831bb9d5c85cc4ea6dc988e98f5bb827c2ad2a4bb928448641c06f75_sha256_0bd447d924c2d308c1ac3fac1ab7235e87b5d6f90b4d725c1bc9fdd0888cd9a0_2",
+          "artifact_schema_id": "factorization.range_result",
+          "artifact_schema_version": "v1",
+          "artifact_type": "canonical_output",
+          "content_hash": "sha256:f1e2cd733cbd7e10e6ae39b19ca68ad0373179651e89ee17199500aad513e453",
+          "created_at": "2026-06-28T00:00:00Z",
+          "media_type": "application/json",
+          "metadata": {
+            "output_name": "range_result",
+            "task_id": "task_factorization_fixture"
+          },
+          "schema_version": "ArtifactRef.v1",
+          "size_bytes": 813,
+          "source": {
+            "kind": "factorization_fixture"
+          },
+          "uri": "artifacts/range_result_coverage_sha256_678225f9831bb9d5c85cc4ea6dc988e98f5bb827c2ad2a4bb928448641c06f75_sha256_0bd447d924c2d308c1ac3fac1ab7235e87b5d6f90b4d725c1bc9fdd0888cd9a0_2"
+        },
+        {
+          "artifact_id": "range_result_coverage_sha256_678225f9831bb9d5c85cc4ea6dc988e98f5bb827c2ad2a4bb928448641c06f75_sha256_0bd447d924c2d308c1ac3fac1ab7235e87b5d6f90b4d725c1bc9fdd0888cd9a0_3",
+          "artifact_schema_id": "factorization.range_result",
+          "artifact_schema_version": "v1",
+          "artifact_type": "canonical_output",
+          "content_hash": "sha256:6a3ca9ec0e60ee4029e2c0a2e2051457813d19d611e1be5c3ca3550e8e182040",
+          "created_at": "2026-06-28T00:00:00Z",
+          "media_type": "application/json",
+          "metadata": {
+            "output_name": "range_result",
+            "task_id": "task_factorization_fixture"
+          },
+          "schema_version": "ArtifactRef.v1",
+          "size_bytes": 820,
+          "source": {
+            "kind": "factorization_fixture"
+          },
+          "uri": "artifacts/range_result_coverage_sha256_678225f9831bb9d5c85cc4ea6dc988e98f5bb827c2ad2a4bb928448641c06f75_sha256_0bd447d924c2d308c1ac3fac1ab7235e87b5d6f90b4d725c1bc9fdd0888cd9a0_3"
+        }
+      ],
+      "parser_success_rate": 1.0,
+      "prime_factors": [
+        "7",
+        "13"
+      ],
+      "provider_attempt_count": 0,
+      "providers": [],
+      "raw_output_count": 0,
+      "raw_output_refs": [],
+      "retry_count": 0,
+      "schema_version": "phase8.ai_profile_case_report.v1",
+      "status": "passed",
+      "target_n": "91"
+    },
+    {
+      "artifact_root_path": "outputs/experiments/ai_profile_real_rerun/ai_api_semiprime_range_flow/artifacts",
+      "case_id": "ai_api_semiprime_range_flow",
+      "cost_estimate_total": 0.0042912,
+      "event_log_ref": {
+        "event_count": 12,
+        "hash": "sha256:b13ba43a3c985e823b9ae936583fc433769009b99f6a736a9c23c5b89236d08f",
+        "path": "outputs\\experiments\\ai_profile_real_rerun\\ai_api_semiprime_range_flow\\copied_events\\event_log.jsonl"
+      },
+      "executor_profile": "ai_api",
+      "experiment_id": "exp1_factorization_e2e",
+      "final_correctness": true,
+      "fixture_name": "semiprime_range_flow",
+      "latency_ms_total": 45712,
+      "models": [
+        "MiniMaxAI/MiniMax-M2.5"
+      ],
+      "parse_failure_count": 0,
+      "parse_failure_refs": [],
+      "parsed_output_count": 4,
+      "parsed_output_refs": [
+        {
+          "artifact_id": "parsed_model_output_submission_ai_api_semiprime_range_flow_1",
+          "artifact_schema_id": "factorization.range_result",
+          "artifact_schema_version": "v1",
+          "artifact_type": "ParsedModelOutput",
+          "content_hash": "sha256:de4f94ff1c8095081d015e073c0925127ea2c6e9fe27bc5ee30c05ae9133d44e",
+          "created_at": "2026-06-30T00:00:00Z",
+          "media_type": "application/json",
+          "metadata": {
+            "executor_id": "executor_ai_api"
+          },
+          "schema_version": "ArtifactRef.v1",
+          "size_bytes": 489,
+          "source": {
+            "kind": "ai_api_executor",
+            "raw_output_ref": {
+              "artifact_id": "raw_model_output_submission_ai_api_semiprime_range_flow_1",
+              "artifact_schema_id": "phase7.raw_model_output",
+              "artifact_schema_version": "v1",
+              "artifact_type": "RawModelOutput",
+              "content_hash": "sha256:ffd2b1742c24d97823da010ba866c130390eda53fbfd89bb326ec1b9aa4e620b",
+              "created_at": "2026-06-30T00:00:00Z",
+              "media_type": "application/json",
+              "metadata": {
+                "entry_id": "minimax_m2_5__sf_key_1",
+                "executor_id": "executor_ai_api"
+              },
+              "schema_version": "ArtifactRef.v1",
+              "size_bytes": 3643,
+              "source": {
+                "kind": "ai_api_executor",
+                "request_id": "request_ai_api_semiprime_range_flow_1"
+              },
+              "uri": "artifacts/raw_model_output_submission_ai_api_semiprime_range_flow_1"
+            }
+          },
+          "uri": "artifacts/parsed_model_output_submission_ai_api_semiprime_range_flow_1"
+        },
+        {
+          "artifact_id": "parsed_model_output_submission_ai_api_semiprime_range_flow_2",
+          "artifact_schema_id": "factorization.range_result",
+          "artifact_schema_version": "v1",
+          "artifact_type": "ParsedModelOutput",
+          "content_hash": "sha256:46c60cb8ac7d24b9cebb3c35a19d70632fc1a0975014d7bf76e4d8e5e986d42d",
+          "created_at": "2026-06-30T00:00:00Z",
+          "media_type": "application/json",
+          "metadata": {
+            "executor_id": "executor_ai_api"
+          },
+          "schema_version": "ArtifactRef.v1",
+          "size_bytes": 489,
+          "source": {
+            "kind": "ai_api_executor",
+            "raw_output_ref": {
+              "artifact_id": "raw_model_output_submission_ai_api_semiprime_range_flow_2",
+              "artifact_schema_id": "phase7.raw_model_output",
+              "artifact_schema_version": "v1",
+              "artifact_type": "RawModelOutput",
+              "content_hash": "sha256:0dd8fb66f7e5b2608eb035d0bd34badae8c1014805b2cf78b7a2d0314ae564e7",
+              "created_at": "2026-06-30T00:00:00Z",
+              "media_type": "application/json",
+              "metadata": {
+                "entry_id": "minimax_m2_5__sf_key_1",
+                "executor_id": "executor_ai_api"
+              },
+              "schema_version": "ArtifactRef.v1",
+              "size_bytes": 3364,
+              "source": {
+                "kind": "ai_api_executor",
+                "request_id": "request_ai_api_semiprime_range_flow_2"
+              },
+              "uri": "artifacts/raw_model_output_submission_ai_api_semiprime_range_flow_2"
+            }
+          },
+          "uri": "artifacts/parsed_model_output_submission_ai_api_semiprime_range_flow_2"
+        },
+        {
+          "artifact_id": "parsed_model_output_submission_ai_api_semiprime_range_flow_3",
+          "artifact_schema_id": "factorization.range_result",
+          "artifact_schema_version": "v1",
+          "artifact_type": "ParsedModelOutput",
+          "content_hash": "sha256:01f674321ea340cdb652a0fc13e49ea73b126930a175eab3412d22a3b8d04bdf",
+          "created_at": "2026-06-30T00:00:00Z",
+          "media_type": "application/json",
+          "metadata": {
+            "executor_id": "executor_ai_api"
+          },
+          "schema_version": "ArtifactRef.v1",
+          "size_bytes": 482,
+          "source": {
+            "kind": "ai_api_executor",
+            "raw_output_ref": {
+              "artifact_id": "raw_model_output_submission_ai_api_semiprime_range_flow_3",
+              "artifact_schema_id": "phase7.raw_model_output",
+              "artifact_schema_version": "v1",
+              "artifact_type": "RawModelOutput",
+              "content_hash": "sha256:36266acefe8384eacb776824a339bed21f8149810676f1102ef84209290b3a5a",
+              "created_at": "2026-06-30T00:00:00Z",
+              "media_type": "application/json",
+              "metadata": {
+                "entry_id": "minimax_m2_5__sf_key_1",
+                "executor_id": "executor_ai_api"
+              },
+              "schema_version": "ArtifactRef.v1",
+              "size_bytes": 4246,
+              "source": {
+                "kind": "ai_api_executor",
+                "request_id": "request_ai_api_semiprime_range_flow_3"
+              },
+              "uri": "artifacts/raw_model_output_submission_ai_api_semiprime_range_flow_3"
+            }
+          },
+          "uri": "artifacts/parsed_model_output_submission_ai_api_semiprime_range_flow_3"
+        },
+        {
+          "artifact_id": "parsed_model_output_submission_ai_api_semiprime_range_flow_4",
+          "artifact_schema_id": "factorization.range_result",
+          "artifact_schema_version": "v1",
+          "artifact_type": "ParsedModelOutput",
+          "content_hash": "sha256:8fdd8d47d8423861e680ba90fa0ad0672b29d3ecb42b184cb51b331c9588b85e",
+          "created_at": "2026-06-30T00:00:00Z",
+          "media_type": "application/json",
+          "metadata": {
+            "executor_id": "executor_ai_api"
+          },
+          "schema_version": "ArtifactRef.v1",
+          "size_bytes": 493,
+          "source": {
+            "kind": "ai_api_executor",
+            "raw_output_ref": {
+              "artifact_id": "raw_model_output_submission_ai_api_semiprime_range_flow_4",
+              "artifact_schema_id": "phase7.raw_model_output",
+              "artifact_schema_version": "v1",
+              "artifact_type": "RawModelOutput",
+              "content_hash": "sha256:8b707a97916197fe172e937ba62475a52c5b5283d677591c1fade57143c57497",
+              "created_at": "2026-06-30T00:00:00Z",
+              "media_type": "application/json",
+              "metadata": {
+                "entry_id": "minimax_m2_5__sf_key_1",
+                "executor_id": "executor_ai_api"
+              },
+              "schema_version": "ArtifactRef.v1",
+              "size_bytes": 3257,
+              "source": {
+                "kind": "ai_api_executor",
+                "request_id": "request_ai_api_semiprime_range_flow_4"
+              },
+              "uri": "artifacts/raw_model_output_submission_ai_api_semiprime_range_flow_4"
+            }
+          },
+          "uri": "artifacts/parsed_model_output_submission_ai_api_semiprime_range_flow_4"
+        }
+      ],
+      "parser_success_rate": 1.0,
+      "prime_factors": [
+        "7",
+        "13"
+      ],
+      "provider_attempt_count": 4,
+      "providers": [
+        "siliconflow"
+      ],
+      "raw_output_count": 4,
+      "raw_output_refs": [
+        {
+          "artifact_id": "raw_model_output_submission_ai_api_semiprime_range_flow_1",
+          "artifact_schema_id": "phase7.raw_model_output",
+          "artifact_schema_version": "v1",
+          "artifact_type": "RawModelOutput",
+          "content_hash": "sha256:ffd2b1742c24d97823da010ba866c130390eda53fbfd89bb326ec1b9aa4e620b",
+          "created_at": "2026-06-30T00:00:00Z",
+          "media_type": "application/json",
+          "metadata": {
+            "entry_id": "minimax_m2_5__sf_key_1",
+            "executor_id": "executor_ai_api"
+          },
+          "schema_version": "ArtifactRef.v1",
+          "size_bytes": 3643,
+          "source": {
+            "kind": "ai_api_executor",
+            "request_id": "request_ai_api_semiprime_range_flow_1"
+          },
+          "uri": "artifacts/raw_model_output_submission_ai_api_semiprime_range_flow_1"
+        },
+        {
+          "artifact_id": "raw_model_output_submission_ai_api_semiprime_range_flow_2",
+          "artifact_schema_id": "phase7.raw_model_output",
+          "artifact_schema_version": "v1",
+          "artifact_type": "RawModelOutput",
+          "content_hash": "sha256:0dd8fb66f7e5b2608eb035d0bd34badae8c1014805b2cf78b7a2d0314ae564e7",
+          "created_at": "2026-06-30T00:00:00Z",
+          "media_type": "application/json",
+          "metadata": {
+            "entry_id": "minimax_m2_5__sf_key_1",
+            "executor_id": "executor_ai_api"
+          },
+          "schema_version": "ArtifactRef.v1",
+          "size_bytes": 3364,
+          "source": {
+            "kind": "ai_api_executor",
+            "request_id": "request_ai_api_semiprime_range_flow_2"
+          },
+          "uri": "artifacts/raw_model_output_submission_ai_api_semiprime_range_flow_2"
+        },
+        {
+          "artifact_id": "raw_model_output_submission_ai_api_semiprime_range_flow_3",
+          "artifact_schema_id": "phase7.raw_model_output",
+          "artifact_schema_version": "v1",
+          "artifact_type": "RawModelOutput",
+          "content_hash": "sha256:36266acefe8384eacb776824a339bed21f8149810676f1102ef84209290b3a5a",
+          "created_at": "2026-06-30T00:00:00Z",
+          "media_type": "application/json",
+          "metadata": {
+            "entry_id": "minimax_m2_5__sf_key_1",
+            "executor_id": "executor_ai_api"
+          },
+          "schema_version": "ArtifactRef.v1",
+          "size_bytes": 4246,
+          "source": {
+            "kind": "ai_api_executor",
+            "request_id": "request_ai_api_semiprime_range_flow_3"
+          },
+          "uri": "artifacts/raw_model_output_submission_ai_api_semiprime_range_flow_3"
+        },
+        {
+          "artifact_id": "raw_model_output_submission_ai_api_semiprime_range_flow_4",
+          "artifact_schema_id": "phase7.raw_model_output",
+          "artifact_schema_version": "v1",
+          "artifact_type": "RawModelOutput",
+          "content_hash": "sha256:8b707a97916197fe172e937ba62475a52c5b5283d677591c1fade57143c57497",
+          "created_at": "2026-06-30T00:00:00Z",
+          "media_type": "application/json",
+          "metadata": {
+            "entry_id": "minimax_m2_5__sf_key_1",
+            "executor_id": "executor_ai_api"
+          },
+          "schema_version": "ArtifactRef.v1",
+          "size_bytes": 3257,
+          "source": {
+            "kind": "ai_api_executor",
+            "request_id": "request_ai_api_semiprime_range_flow_4"
+          },
+          "uri": "artifacts/raw_model_output_submission_ai_api_semiprime_range_flow_4"
+        }
+      ],
+      "retry_count": 0,
+      "schema_version": "phase8.ai_profile_case_report.v1",
+      "status": "passed",
+      "target_n": "91",
+      "usage": {
+        "completion_tokens": 2238,
+        "prompt_tokens": 5352,
+        "total_tokens": 7590
+      }
+    },
+    {
+      "artifact_root_path": "outputs/experiments/ai_profile_real_rerun/ai_api_parse_failure_raw_only/artifacts",
+      "case_id": "ai_api_parse_failure_raw_only",
+      "cost_estimate_total": 6.335000000000001e-05,
+      "event_log_ref": {
+        "event_count": 3,
+        "hash": "sha256:7f6ec60ed47dfc8a59582a0f4c7be08f1af7ba84780d922d4a82983ecf40f9a8",
+        "path": "outputs\\experiments\\ai_profile_real_rerun\\ai_api_parse_failure_raw_only\\copied_events\\event_log.jsonl"
+      },
+      "executor_profile": "ai_api",
+      "experiment_id": "exp2_failure_recovery",
+      "final_correctness": false,
+      "fixture_name": "parse_failure_raw_only_forbidden",
+      "latency_ms_total": 0,
+      "models": [
+        "deepseek-ai/DeepSeek-V4-Pro"
+      ],
+      "parse_failure_count": 1,
+      "parse_failure_refs": [
+        {
+          "artifact_id": "parse_failure_submission_ai_api_parse_failure_raw_only_1",
+          "artifact_schema_id": "phase3.parse_failure_report",
+          "artifact_schema_version": "v1",
+          "artifact_type": "ParseFailureReport",
+          "content_hash": "sha256:290db0ef66f8a493cce5041e5a2673d0c8f77ae7dee9fa6e535362fd4c3ed99a",
+          "created_at": "2026-06-30T00:00:00Z",
+          "media_type": "application/json",
+          "metadata": {
+            "executor_id": "executor_ai_api"
+          },
+          "schema_version": "ArtifactRef.v1",
+          "size_bytes": 568,
+          "source": {
+            "kind": "ai_api_executor",
+            "request_id": "request_ai_api_parse_failure_raw_only_1"
+          },
+          "uri": "artifacts/parse_failure_submission_ai_api_parse_failure_raw_only_1"
+        }
+      ],
+      "parsed_output_count": 0,
+      "parsed_output_refs": [],
+      "parser_success_rate": 0.0,
+      "prime_factors": [],
+      "provider_attempt_count": 1,
+      "providers": [
+        "siliconflow"
+      ],
+      "raw_output_count": 1,
+      "raw_output_refs": [
+        {
+          "artifact_id": "raw_model_output_submission_ai_api_parse_failure_raw_only_1",
+          "artifact_schema_id": "phase7.raw_model_output",
+          "artifact_schema_version": "v1",
+          "artifact_type": "RawModelOutput",
+          "content_hash": "sha256:776f43a0fc5cb909da6dee74f7626556e99447f616fe6df006ddf8a2d7d96dde",
+          "created_at": "2026-06-30T00:00:00Z",
+          "media_type": "application/json",
+          "metadata": {
+            "entry_id": "deepseek_v4_pro__sf_key_1",
+            "executor_id": "executor_ai_api"
+          },
+          "schema_version": "ArtifactRef.v1",
+          "size_bytes": 715,
+          "source": {
+            "kind": "ai_api_executor",
+            "request_id": "request_ai_api_parse_failure_raw_only_1"
+          },
+          "uri": "artifacts/raw_model_output_submission_ai_api_parse_failure_raw_only_1"
+        }
+      ],
+      "retry_count": 0,
+      "schema_version": "phase8.ai_profile_case_report.v1",
+      "status": "passed",
+      "target_n": "91",
+      "usage": {
+        "completion_tokens": 10,
+        "prompt_tokens": 20,
+        "total_tokens": 30
+      }
+    }
+  ],
+  "schema_version": "phase8.ai_profile_suite_report.v1",
+  "seed": 1,
+  "suite_report_path": "outputs/experiments/ai_profile_real_rerun/ai_profile_suite_report.json",
+  "summary_csv_path": "outputs/experiments/ai_profile_real_rerun/ai_profile_summary.csv",
+  "total_profiles": 3
+}

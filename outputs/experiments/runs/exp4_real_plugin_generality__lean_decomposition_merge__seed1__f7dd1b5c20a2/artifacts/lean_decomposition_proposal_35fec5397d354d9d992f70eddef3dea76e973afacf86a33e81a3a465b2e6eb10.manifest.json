@@ -1,0 +1,21 @@
+{
+  "artifact_id": "lean_decomposition_proposal_35fec5397d354d9d992f70eddef3dea76e973afacf86a33e81a3a465b2e6eb10",
+  "artifact_schema_id": "phase4.decomposition_proposal",
+  "artifact_schema_version": "v1",
+  "artifact_type": "DecompositionProposal",
+  "content_hash": "sha256:f13edab7a5a7aa3dc677706a93e2b6059a71aed6b684c05211c93f68abba41c1",
+  "created_at": "2026-06-29T00:00:00Z",
+  "media_type": "application/json",
+  "metadata": {
+    "expansion_decision_id": "expansion_decision:sha256_451c03e0d5d492d5198f1e94a11d24dc45c25fcb0f46ce1be5512fa1e4a1d2e1",
+    "task_id": "task_lean_proof_fixture",
+    "unit_id": "unit_lean_theorem_root"
+  },
+  "schema_version": "ArtifactRef.v1",
+  "size_bytes": 7217,
+  "source": {
+    "kind": "protocol_engine",
+    "stage": "staged"
+  },
+  "uri": "artifacts/lean_decomposition_proposal_35fec5397d354d9d992f70eddef3dea76e973afacf86a33e81a3a465b2e6eb10"
+}

@@ -1,0 +1,40 @@
+{
+  "artifact_id": "canonical_lean_merge_root_proof",
+  "artifact_schema_id": "lean_proof.proof_artifact",
+  "artifact_schema_version": "v1",
+  "artifact_type": "canonical_output",
+  "content_hash": "sha256:e4911fd0cd8a636d82127673c7db309ab1083913a7abd01dd9540357626fb746",
+  "created_at": "2026-06-29T00:00:00Z",
+  "media_type": "text/x-lean",
+  "metadata": {
+    "checker_report_ref": {
+      "artifact_id": "lean_merge_checker_decomposition_flow_checker_report_json",
+      "artifact_schema_id": "lean_proof.checker_report",
+      "artifact_schema_version": "v1",
+      "artifact_type": "LeanCheckerReport",
+      "content_hash": "sha256:1f87100e7b45f1d4d65ad39687b59ef4ec2ac31e56a30b58aa1d4f24ab7c550d",
+      "created_at": "2026-06-29T00:00:00Z",
+      "media_type": "application/json",
+      "metadata": {
+        "checker_mode": "merge_proof",
+        "status": "accepted"
+      },
+      "schema_version": "ArtifactRef.v1",
+      "size_bytes": 4557,
+      "source": {
+        "kind": "lean_checker",
+        "request_id": "lean_merge_checker:decomposition_flow"
+      },
+      "uri": "artifacts/lean_merge_checker_decomposition_flow_checker_report_json"
+    },
+    "output_name": "lean_proof_artifact",
+    "proof_digest": "sha256:5558a38466ebdd09c4b6f08d9ebe773f59ec86f89426791fc6c03ea0134907c3"
+  },
+  "schema_version": "ArtifactRef.v1",
+  "size_bytes": 126,
+  "source": {
+    "checker_report_id": "lean_checker_report:lean_merge_checker_decomposition_flow",
+    "kind": "lean_fixture"
+  },
+  "uri": "artifacts/canonical_lean_merge_root_proof"
+}

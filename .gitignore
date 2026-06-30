@@ -2,7 +2,6 @@ __pycache__/
 *.py[cod]
 
 fixtures/lean_proof_project/.lake/
-outputs/
 local/*.local.json
 
 reference_repos/*

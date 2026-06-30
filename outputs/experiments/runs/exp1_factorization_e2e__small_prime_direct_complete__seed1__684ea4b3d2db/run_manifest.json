@@ -1,0 +1,36 @@
+{
+  "artifact_root": {
+    "artifact_count": 9,
+    "manifest_hash": "sha256:5f85ef6b7fb3bc517f3a9e8b3f82851069196d89f8610affcbb5fcf3d07899a4",
+    "path": "C:\\Users\\32133\\AppData\\Local\\Temp\\tokenshare_phase8_factorization_txmjn4xl\\artifacts"
+  },
+  "blocked_reason": null,
+  "case_id": "small_prime_direct_complete",
+  "clock_semantics": "fixed_logical_clock",
+  "created_at": "2026-06-29T15:25:22Z",
+  "event_log_ref": {
+    "event_count": 22,
+    "hash": "sha256:62020b130f3603ff06355cc650d79029199a214d37b383838f7c165cfacbbc3e",
+    "path": "outputs\\experiments\\runs\\exp1_factorization_e2e__small_prime_direct_complete__seed1__684ea4b3d2db\\events\\event_log.jsonl"
+  },
+  "executor_descriptors": [
+    {
+      "descriptor_digest": "sha256:412786c518c66dbee2c4a337572814bf8bfbb2125e5a502ef8fb465e57a49860",
+      "executor_id": "executor_factorization_fixture",
+      "executor_version": "0.1.0"
+    }
+  ],
+  "experiment_id": "exp1_factorization_e2e",
+  "plugin_descriptors": [
+    {
+      "descriptor_digest": "sha256:b1bb02a3222fee65ac13208fb8b12fbc39d6c75c7ef5b315a124133bcbe5ac1c",
+      "plugin_id": "factorization",
+      "plugin_version": "0.1.0"
+    }
+  ],
+  "profile_digest": "sha256:369ec30f4b6f2a00feae10d137a01746caa1254b4cbb0fdbbd2bff54ace69200",
+  "run_id": "exp1_factorization_e2e__small_prime_direct_complete__seed1__684ea4b3d2db",
+  "schema_version": "phase8.experiment_run_manifest.v1",
+  "seed": 1,
+  "status": "passed"
+}

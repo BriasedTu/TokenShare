@@ -1,0 +1,40 @@
+{
+  "artifact_id": "canonical_child_proof_0",
+  "artifact_schema_id": "lean_proof.proof_artifact",
+  "artifact_schema_version": "v1",
+  "artifact_type": "canonical_output",
+  "content_hash": "sha256:fe980e84672c0e6198b30f98e9861a1dcaefcd07867405efd01b147eec276e06",
+  "created_at": "2026-06-29T00:00:00Z",
+  "media_type": "text/x-lean",
+  "metadata": {
+    "checker_report_ref": {
+      "artifact_id": "lean_child_checker_child_left_checker_report_json",
+      "artifact_schema_id": "lean_proof.checker_report",
+      "artifact_schema_version": "v1",
+      "artifact_type": "LeanCheckerReport",
+      "content_hash": "sha256:3b36e70b6ca1c7ede2fdeceb0f1ada3bb17365475d823139986b522ff4139da7",
+      "created_at": "2026-06-29T00:00:00Z",
+      "media_type": "application/json",
+      "metadata": {
+        "checker_mode": "child_proof",
+        "status": "accepted"
+      },
+      "schema_version": "ArtifactRef.v1",
+      "size_bytes": 4876,
+      "source": {
+        "kind": "lean_checker",
+        "request_id": "lean_child_checker:child:left"
+      },
+      "uri": "artifacts/lean_child_checker_child_left_checker_report_json"
+    },
+    "output_name": "lean_proof_artifact",
+    "proof_digest": "sha256:e7b18006a0755d163b6b408484324c89c0bab9638c48dd35125dd4af19397d00"
+  },
+  "schema_version": "ArtifactRef.v1",
+  "size_bytes": 13,
+  "source": {
+    "checker_report_id": "lean_checker_report:lean_child_checker_child_left",
+    "kind": "lean_fixture"
+  },
+  "uri": "artifacts/canonical_child_proof_0"
+}

@@ -1,0 +1,19 @@
+{
+  "artifact_id": "submission_lean_merge",
+  "artifact_schema_id": "phase3.execution_submission",
+  "artifact_schema_version": "v1",
+  "artifact_type": "ExecutionSubmission",
+  "content_hash": "sha256:0e2d058076a6d05b66627c124a276c90828b5d3be00986aa0ee7eefb0efcc0e6",
+  "created_at": "2026-06-29T00:00:00Z",
+  "media_type": "application/json",
+  "metadata": {
+    "attempt_id": "attempt_lean_merge",
+    "task_id": "task_lean_proof_fixture"
+  },
+  "schema_version": "ArtifactRef.v1",
+  "size_bytes": 4882,
+  "source": {
+    "kind": "protocol_engine"
+  },
+  "uri": "artifacts/submission_lean_merge"
+}

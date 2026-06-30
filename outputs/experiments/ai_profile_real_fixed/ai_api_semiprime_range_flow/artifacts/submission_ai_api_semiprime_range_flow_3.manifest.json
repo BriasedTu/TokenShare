@@ -1,0 +1,19 @@
+{
+  "artifact_id": "submission_ai_api_semiprime_range_flow_3",
+  "artifact_schema_id": "phase3.execution_submission",
+  "artifact_schema_version": "v1",
+  "artifact_type": "ExecutionSubmission",
+  "content_hash": "sha256:8f642f2ea63c97386171c552dfa827aa3cfd177dda7d482f3103565df17db5f6",
+  "created_at": "2026-06-30T00:00:00Z",
+  "media_type": "application/json",
+  "metadata": {
+    "attempt_id": "attempt_ai_api_semiprime_range_flow_3",
+    "task_id": "task_ai_profile_ai_api_semiprime_range_flow"
+  },
+  "schema_version": "ArtifactRef.v1",
+  "size_bytes": 3624,
+  "source": {
+    "kind": "protocol_engine"
+  },
+  "uri": "artifacts/submission_ai_api_semiprime_range_flow_3"
+}

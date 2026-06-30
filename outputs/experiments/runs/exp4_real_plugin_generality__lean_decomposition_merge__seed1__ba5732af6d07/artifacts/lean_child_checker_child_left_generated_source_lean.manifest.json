@@ -1,0 +1,19 @@
+{
+  "artifact_id": "lean_child_checker_child_left_generated_source_lean",
+  "artifact_schema_id": "lean_proof.generated_source",
+  "artifact_schema_version": "v1",
+  "artifact_type": "LeanGeneratedSource",
+  "content_hash": "sha256:669886b5ec95c9808a2e0b524f9a306ea19310458177cb0b76c16b4e6d616c6c",
+  "created_at": "2026-06-29T00:00:00Z",
+  "media_type": "text/x-lean",
+  "metadata": {
+    "checker_mode": "child_proof"
+  },
+  "schema_version": "ArtifactRef.v1",
+  "size_bytes": 179,
+  "source": {
+    "kind": "lean_checker",
+    "request_id": "lean_child_checker:child:left"
+  },
+  "uri": "artifacts/lean_child_checker_child_left_generated_source_lean"
+}

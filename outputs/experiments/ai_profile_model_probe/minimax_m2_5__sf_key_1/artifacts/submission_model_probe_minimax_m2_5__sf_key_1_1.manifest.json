@@ -1,0 +1,19 @@
+{
+  "artifact_id": "submission_model_probe_minimax_m2_5__sf_key_1_1",
+  "artifact_schema_id": "phase3.execution_submission",
+  "artifact_schema_version": "v1",
+  "artifact_type": "ExecutionSubmission",
+  "content_hash": "sha256:19d7391d8b02255038fc0efe8139896489013a104dcfe85c7d0fb3585856e0bf",
+  "created_at": "2026-06-30T00:00:00Z",
+  "media_type": "application/json",
+  "metadata": {
+    "attempt_id": "attempt_model_probe_minimax_m2_5__sf_key_1_1",
+    "task_id": "task_ai_profile_model_probe_minimax_m2_5__sf_key_1"
+  },
+  "schema_version": "ArtifactRef.v1",
+  "size_bytes": 5628,
+  "source": {
+    "kind": "protocol_engine"
+  },
+  "uri": "artifacts/submission_model_probe_minimax_m2_5__sf_key_1_1"
+}

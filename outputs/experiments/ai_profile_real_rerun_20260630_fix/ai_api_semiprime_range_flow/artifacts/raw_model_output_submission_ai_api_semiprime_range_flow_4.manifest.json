@@ -1,0 +1,20 @@
+{
+  "artifact_id": "raw_model_output_submission_ai_api_semiprime_range_flow_4",
+  "artifact_schema_id": "phase7.raw_model_output",
+  "artifact_schema_version": "v1",
+  "artifact_type": "RawModelOutput",
+  "content_hash": "sha256:15926b1ab9fcedee30e270a027fffd4b0a77cee3eb02425d666cda7298aa81e0",
+  "created_at": "2026-06-30T00:00:00Z",
+  "media_type": "application/json",
+  "metadata": {
+    "entry_id": "minimax_m2_5__sf_key_1",
+    "executor_id": "executor_ai_api"
+  },
+  "schema_version": "ArtifactRef.v1",
+  "size_bytes": 3297,
+  "source": {
+    "kind": "ai_api_executor",
+    "request_id": "request_ai_api_semiprime_range_flow_4"
+  },
+  "uri": "artifacts/raw_model_output_submission_ai_api_semiprime_range_flow_4"
+}

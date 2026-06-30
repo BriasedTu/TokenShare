@@ -1,0 +1,18 @@
+{
+  "artifact_id": "proof_candidate_direct_valid",
+  "artifact_schema_id": "lean_proof.proof_candidate",
+  "artifact_schema_version": "v1",
+  "artifact_type": "LeanProofCandidate",
+  "content_hash": "sha256:abc4adbbfe82daf095348ab32a8bb2cae1ee01e0deb93ada3155b0445b55b3f5",
+  "created_at": "2026-06-29T00:00:00Z",
+  "media_type": "application/json",
+  "metadata": {
+    "theorem_name": "one_eq_one"
+  },
+  "schema_version": "ArtifactRef.v1",
+  "size_bytes": 280,
+  "source": {
+    "kind": "lean_fixture"
+  },
+  "uri": "artifacts/proof_candidate_direct_valid"
+}

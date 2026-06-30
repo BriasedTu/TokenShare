@@ -1,0 +1,19 @@
+{
+  "artifact_id": "lean_root_input_marker",
+  "artifact_schema_id": "lean_proof.root_input",
+  "artifact_schema_version": "v1",
+  "artifact_type": "root_input",
+  "content_hash": "sha256:8533a84c1feff3df396ac002b0f80053d222b2fcfbe29bac4b297f704359928f",
+  "created_at": "2026-06-29T00:00:00Z",
+  "media_type": "application/json",
+  "metadata": {
+    "fixture": "lean_proof"
+  },
+  "schema_version": "ArtifactRef.v1",
+  "size_bytes": 639,
+  "source": {
+    "kind": "client_input",
+    "task_id": "task_lean_proof_fixture"
+  },
+  "uri": "artifacts/lean_root_input_marker"
+}

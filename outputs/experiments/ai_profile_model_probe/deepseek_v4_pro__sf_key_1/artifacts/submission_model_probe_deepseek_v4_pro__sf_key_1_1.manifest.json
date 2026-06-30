@@ -1,0 +1,19 @@
+{
+  "artifact_id": "submission_model_probe_deepseek_v4_pro__sf_key_1_1",
+  "artifact_schema_id": "phase3.execution_submission",
+  "artifact_schema_version": "v1",
+  "artifact_type": "ExecutionSubmission",
+  "content_hash": "sha256:d288be717936c50ba119efb0a441d29040815017c892e7ab87555e716a2b4930",
+  "created_at": "2026-06-30T00:00:00Z",
+  "media_type": "application/json",
+  "metadata": {
+    "attempt_id": "attempt_model_probe_deepseek_v4_pro__sf_key_1_1",
+    "task_id": "task_ai_profile_model_probe_deepseek_v4_pro__sf_key_1"
+  },
+  "schema_version": "ArtifactRef.v1",
+  "size_bytes": 5718,
+  "source": {
+    "kind": "protocol_engine"
+  },
+  "uri": "artifacts/submission_model_probe_deepseek_v4_pro__sf_key_1_1"
+}

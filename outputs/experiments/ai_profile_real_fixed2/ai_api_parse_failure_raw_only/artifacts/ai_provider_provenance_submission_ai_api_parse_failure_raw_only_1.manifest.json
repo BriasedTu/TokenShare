@@ -1,0 +1,19 @@
+{
+  "artifact_id": "ai_provider_provenance_submission_ai_api_parse_failure_raw_only_1",
+  "artifact_schema_id": "phase7.ai_provider_call_provenance",
+  "artifact_schema_version": "v1",
+  "artifact_type": "AIProviderCallProvenance",
+  "content_hash": "sha256:f552af9a39d94fc832c27a2015fada740d1887f936aa116caa117a90e8b1c0cb",
+  "created_at": "2026-06-30T00:00:00Z",
+  "media_type": "application/json",
+  "metadata": {
+    "executor_id": "executor_ai_api"
+  },
+  "schema_version": "ArtifactRef.v1",
+  "size_bytes": 1066,
+  "source": {
+    "kind": "ai_api_executor",
+    "request_id": "request_ai_api_parse_failure_raw_only_1"
+  },
+  "uri": "artifacts/ai_provider_provenance_submission_ai_api_parse_failure_raw_only_1"
+}

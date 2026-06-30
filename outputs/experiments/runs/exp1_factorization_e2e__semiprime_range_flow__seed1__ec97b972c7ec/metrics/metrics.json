@@ -1,0 +1,145 @@
+{
+  "blocked_reason": null,
+  "common_metrics": {
+    "ai_api_usage_cost": {
+      "cost_estimate_total": 0.0,
+      "latency_ms_total": 0,
+      "provider_attempt_count": 0
+    },
+    "artifact_count": 38,
+    "artifact_link_success": true,
+    "blocked_rate": 0.0,
+    "canonical_pollution_count": 0,
+    "completion_rate": 1.0,
+    "critical_path": {
+      "event_count": 96,
+      "first_event_seq": 1,
+      "last_event_seq": 96
+    },
+    "descriptor_freeze_success": true,
+    "event_count": 96,
+    "retry_wasted_work": {
+      "rejected_attempt_count": 0,
+      "rejected_verification_count": 0
+    },
+    "settlement_success": true,
+    "shadow_benefit": {
+      "shadow_attempt_count": 0,
+      "shadow_execution_enabled": false
+    },
+    "shared_protocol_event_coverage": 1.0,
+    "work": {
+      "canonical_binding_count": 6,
+      "execution_request_count": 6,
+      "execution_submission_count": 6,
+      "verification_count": 6
+    }
+  },
+  "context": {
+    "ablation_mode": "FULL",
+    "case_id": "semiprime_range_flow",
+    "executor_profile": "deterministic_local",
+    "experiment_id": "exp1_factorization_e2e",
+    "plugin_id": "factorization",
+    "plugin_version": "0.1.0",
+    "simulation_profile": "exp1_factorization_e2e:semiprime_range_flow"
+  },
+  "evidence_refs": {
+    "artifact_root_path": "C:/Users/32133/AppData/Local/Temp/tokenshare_phase8_factorization_b5yr__h6/artifacts",
+    "event_log_path": "outputs/experiments/runs/exp1_factorization_e2e__semiprime_range_flow__seed1__ec97b972c7ec/events/event_log.jsonl",
+    "lifecycle_event_coverage": {
+      "ARTIFACT_STORED": 1,
+      "ATTEMPT_STATE_CHANGED": 30,
+      "CANONICAL_OUTPUTS_BOUND": 6,
+      "CONTRIBUTION_STATE_CHANGED": 5,
+      "DECOMPOSITION_PROPOSAL_RECORDED": 1,
+      "EXECUTION_REQUEST_RECORDED": 6,
+      "EXECUTION_SUBMISSION_RECORDED": 6,
+      "EXPANSION_DECISION_RECORDED": 1,
+      "EXPECTED_OUTPUT_RESOLVED": 1,
+      "LEASE_STATE_CHANGED": 12,
+      "MERGE_PLAN_RECORDED": 1,
+      "MERGE_RECORDED": 1,
+      "MERGE_TASK_LINK_RECORDED": 1,
+      "REGISTRY_SNAPSHOT_RECORDED": 1,
+      "SETTLEMENT_RECORDED": 1,
+      "SPLIT_STRATEGY_INVOCATION_RECORDED": 1,
+      "TASK_EXPANDED": 1,
+      "TASK_REGISTERED": 1,
+      "TASK_UNIT_CREATED": 6,
+      "TASK_UNIT_STATE_CHANGED": 7,
+      "VERIFICATION_RECORDED": 6
+    },
+    "prime_factorization_ref": {
+      "artifact_id": "prime_factorization_factorization_merge_merge_plan_5ba71e06ea89e6feacc697c299eefacc4cd64ae0bf87ede0c32588cc52e40a92_merge_unit_merge_plan_5ba71e06ea89e6feacc697c299eefacc4cd64ae0bf87ede0c32588cc52e40a92",
+      "artifact_schema_id": "factorization.prime_factorization_result",
+      "artifact_schema_version": "v1",
+      "artifact_type": "canonical_output",
+      "content_hash": "sha256:90d8f438e6560acf32a69a67a4e44d615033db37f662e1aff88cbe29345688b1",
+      "created_at": "2026-06-28T00:00:00Z",
+      "media_type": "application/json",
+      "metadata": {
+        "output_name": "prime_factorization_result",
+        "task_id": "task_factorization_fixture"
+      },
+      "schema_version": "ArtifactRef.v1",
+      "size_bytes": 1012,
+      "source": {
+        "kind": "factorization_fixture"
+      },
+      "uri": "artifacts/prime_factorization_factorization_merge_merge_plan_5ba71e06ea89e6feacc697c299eefacc4cd64ae0bf87ede0c32588cc52e40a92_merge_unit_merge_plan_5ba71e06ea89e6feacc697c299eefacc4cd64ae0bf87ede0c32588cc52e40a92"
+    },
+    "source_fixture_event_log_path": "C:/Users/32133/AppData/Local/Temp/tokenshare_phase8_factorization_b5yr__h6/events/task_factorization_fixture.jsonl"
+  },
+  "experiment_metrics": {
+    "ai_api_cost_estimate_total": 0,
+    "ai_api_executor_effect": {
+      "cost_estimate_total": 0.0,
+      "executor_profile": "deterministic_local",
+      "provider_attempt_count": 0,
+      "real_api_called": false
+    },
+    "all_required_merge_gate_success": true,
+    "canonical_pollution_count": 0,
+    "false_accept_rate": 0.0,
+    "final_correctness": true,
+    "premature_merge_rate": 0.0,
+    "prime_factors": [
+      "7",
+      "13"
+    ],
+    "prompt_package_coverage": 1.0,
+    "range_canonical_count": 4,
+    "range_coverage_valid": true,
+    "range_verification_rate": 1.0,
+    "requeue_success_rate": 1.0,
+    "slot_mismatch_acceptance_rate": 0.0,
+    "subject_canonical_success": true,
+    "target_n": "91"
+  },
+  "paper_table_rows": [
+    {
+      "ablation_mode": "FULL",
+      "ai_api_cost_estimate_total": 0,
+      "artifact_count": 38,
+      "blocker_kind": "",
+      "canonical_pollution_count": 0,
+      "case_id": "semiprime_range_flow",
+      "completion_rate": 1.0,
+      "event_count": 96,
+      "executor_profile": "deterministic_local",
+      "experiment_id": "exp1_factorization_e2e",
+      "final_correctness": true,
+      "plugin_id": "factorization",
+      "plugin_version": "0.1.0",
+      "real_checker_evidence": false,
+      "run_id": "exp1_factorization_e2e__semiprime_range_flow__seed1__ec97b972c7ec",
+      "settlement_success": true,
+      "simulation_profile": "exp1_factorization_e2e:semiprime_range_flow",
+      "status": "passed"
+    }
+  ],
+  "run_id": "exp1_factorization_e2e__semiprime_range_flow__seed1__ec97b972c7ec",
+  "schema_version": "phase8.experiment_metrics.v1",
+  "status": "passed"
+}

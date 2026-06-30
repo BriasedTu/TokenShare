@@ -1,0 +1,36 @@
+{
+  "artifact_root": {
+    "artifact_count": 15,
+    "manifest_hash": "sha256:2e1d0544e41933b40af6d70997a80880b342cc64140750e4f0e85c74ec210c6c",
+    "path": "outputs\\experiments\\runs\\exp4_real_plugin_generality__lean_direct_proof__seed1__87b84b50d61c\\artifacts"
+  },
+  "blocked_reason": null,
+  "case_id": "lean_direct_proof",
+  "clock_semantics": "fixed_logical_clock",
+  "created_at": "2026-06-29T14:17:23Z",
+  "event_log_ref": {
+    "event_count": 22,
+    "hash": "sha256:d04126172d343a0c25b047da02002ce76210c4038f5f48680152f3bfca7ad1d9",
+    "path": "outputs\\experiments\\runs\\exp4_real_plugin_generality__lean_direct_proof__seed1__87b84b50d61c\\events\\event_log.jsonl"
+  },
+  "executor_descriptors": [
+    {
+      "descriptor_digest": "sha256:cfa6ec9e04ef0a8f1bf0931674ddca1e80db69b05f88c16969c9b9b94b0084df",
+      "executor_id": "executor_lean_checker_fixture",
+      "executor_version": "0.1.0"
+    }
+  ],
+  "experiment_id": "exp4_real_plugin_generality",
+  "plugin_descriptors": [
+    {
+      "descriptor_digest": "sha256:f425056dc5050f521ef3da97e092b857daf663802cf2d21ab7902186736ec6d1",
+      "plugin_id": "lean_proof",
+      "plugin_version": "0.1.0"
+    }
+  ],
+  "profile_digest": "sha256:25a05a1062aec3ffcd58f95bfae4384f416611f2a7d09ade21dd25f01ce69635",
+  "run_id": "exp4_real_plugin_generality__lean_direct_proof__seed1__87b84b50d61c",
+  "schema_version": "phase8.experiment_run_manifest.v1",
+  "seed": 1,
+  "status": "passed"
+}

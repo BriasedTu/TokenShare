@@ -1,0 +1,19 @@
+{
+  "artifact_id": "parse_failure_submission_ai_api_semiprime_range_flow_3",
+  "artifact_schema_id": "phase3.parse_failure_report",
+  "artifact_schema_version": "v1",
+  "artifact_type": "ParseFailureReport",
+  "content_hash": "sha256:211b2a845b33d224360507704dc7b370eb6007edef615f71ae2d614a0fde10e6",
+  "created_at": "2026-06-30T00:00:00Z",
+  "media_type": "application/json",
+  "metadata": {
+    "executor_id": "executor_ai_api"
+  },
+  "schema_version": "ArtifactRef.v1",
+  "size_bytes": 549,
+  "source": {
+    "kind": "ai_api_executor",
+    "request_id": "request_ai_api_semiprime_range_flow_3"
+  },
+  "uri": "artifacts/parse_failure_submission_ai_api_semiprime_range_flow_3"
+}

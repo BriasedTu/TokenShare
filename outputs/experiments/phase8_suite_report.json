@@ -1,0 +1,31 @@
+{
+  "blocked_by_kind": {},
+  "blocked_runs": 0,
+  "failed_runs": 0,
+  "inconclusive_runs": 5,
+  "local_ai_api_config_digest": "sha256:1f31aa90e3af8ba331fbda880e6d09600799f4df678f76f2305cca8f9c992d08",
+  "passed_runs": 12,
+  "run_manifest_paths": [
+    "outputs/experiments/runs/exp1_factorization_e2e__small_prime_direct_complete__seed1__684ea4b3d2db/run_manifest.json",
+    "outputs/experiments/runs/exp1_factorization_e2e__prime_range_flow__seed1__9c8b6e778b2d/run_manifest.json",
+    "outputs/experiments/runs/exp1_factorization_e2e__semiprime_range_flow__seed1__ec97b972c7ec/run_manifest.json",
+    "outputs/experiments/runs/exp1_factorization_e2e__extended_semiprime_benchmark__seed1__c2ed90511fd6/run_manifest.json",
+    "outputs/experiments/runs/exp2_failure_recovery__invalid_found_factor__seed1__56f6f60f0811/run_manifest.json",
+    "outputs/experiments/runs/exp2_failure_recovery__false_no_factor_in_range__seed1__66bb21938ec5/run_manifest.json",
+    "outputs/experiments/runs/exp2_failure_recovery__parse_failure_raw_only_forbidden__seed1__2aaf813d22ca/run_manifest.json",
+    "outputs/experiments/runs/exp2_failure_recovery__worker_crash_expired_lease__seed1__5220a6455693/run_manifest.json",
+    "outputs/experiments/runs/exp2_failure_recovery__no_factor_recheck_budget_exceeded__seed1__4cea586daa65/run_manifest.json",
+    "outputs/experiments/runs/exp3_protocol_ablation__no_verification__seed1__3943deaed9d2/run_manifest.json",
+    "outputs/experiments/runs/exp3_protocol_ablation__no_parser_policy__seed1__86a66c6cb51c/run_manifest.json",
+    "outputs/experiments/runs/exp3_protocol_ablation__no_requeue__seed1__dc455732da2c/run_manifest.json",
+    "outputs/experiments/runs/exp3_protocol_ablation__no_all_required_merge_gate__seed1__c07e29f04c1d/run_manifest.json",
+    "outputs/experiments/runs/exp3_protocol_ablation__no_slot_integrity_check__seed1__0e3ddd6677a3/run_manifest.json",
+    "outputs/experiments/runs/exp4_real_plugin_generality__factorization_semiprime_lifecycle__seed1__fe049f21a686/run_manifest.json",
+    "outputs/experiments/runs/exp4_real_plugin_generality__lean_direct_proof__seed1__7515e9633415/run_manifest.json",
+    "outputs/experiments/runs/exp4_real_plugin_generality__lean_decomposition_merge__seed1__ba5732af6d07/run_manifest.json"
+  ],
+  "schema_version": "phase8.experiment_suite_report.v1",
+  "suite_report_path": "outputs/experiments/phase8_suite_report.json",
+  "summary_csv_path": "outputs/experiments/phase8_suite_summary.csv",
+  "total_runs": 17
+}

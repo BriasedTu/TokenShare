@@ -1,0 +1,110 @@
+{
+  "blocked_reason": null,
+  "common_metrics": {
+    "ai_api_usage_cost": {
+      "cost_estimate_total": 0.0,
+      "latency_ms_total": 0,
+      "provider_attempt_count": 0
+    },
+    "artifact_count": 15,
+    "artifact_link_success": true,
+    "blocked_rate": 0.0,
+    "canonical_pollution_count": 0,
+    "completion_rate": 0.0,
+    "critical_path": {
+      "event_count": 37,
+      "first_event_seq": 1,
+      "last_event_seq": 37
+    },
+    "descriptor_freeze_success": true,
+    "event_count": 37,
+    "retry_wasted_work": {
+      "rejected_attempt_count": 0,
+      "rejected_verification_count": 0
+    },
+    "settlement_success": false,
+    "shadow_benefit": {
+      "shadow_attempt_count": 0,
+      "shadow_execution_enabled": false
+    },
+    "shared_protocol_event_coverage": 0.0,
+    "work": {
+      "canonical_binding_count": 2,
+      "execution_request_count": 2,
+      "execution_submission_count": 2,
+      "verification_count": 2
+    }
+  },
+  "context": {
+    "ablation_mode": "NO_REQUEUE",
+    "case_id": "no_requeue",
+    "executor_profile": "deterministic_local",
+    "experiment_id": "exp3_protocol_ablation",
+    "plugin_id": "factorization",
+    "plugin_version": "0.1.0",
+    "simulation_profile": "exp3_protocol_ablation:no_requeue"
+  },
+  "evidence_refs": {
+    "artifact_root_path": "C:/Users/32133/AppData/Local/Temp/tokenshare_phase8_ablation_sd6w6u38/artifacts",
+    "event_log_path": "outputs/experiments/runs/exp3_protocol_ablation__no_requeue__seed1__dc455732da2c/events/event_log.jsonl",
+    "lifecycle_event_coverage": {
+      "ARTIFACT_STORED": 1,
+      "ATTEMPT_STATE_CHANGED": 10,
+      "CANONICAL_OUTPUTS_BOUND": 2,
+      "DECOMPOSITION_PROPOSAL_RECORDED": 1,
+      "EXECUTION_REQUEST_RECORDED": 2,
+      "EXECUTION_SUBMISSION_RECORDED": 2,
+      "EXPANSION_DECISION_RECORDED": 1,
+      "LEASE_STATE_CHANGED": 4,
+      "MERGE_PLAN_RECORDED": 1,
+      "REGISTRY_SNAPSHOT_RECORDED": 1,
+      "SPLIT_STRATEGY_INVOCATION_RECORDED": 1,
+      "TASK_EXPANDED": 1,
+      "TASK_REGISTERED": 1,
+      "TASK_UNIT_CREATED": 5,
+      "TASK_UNIT_STATE_CHANGED": 2,
+      "VERIFICATION_RECORDED": 2
+    }
+  },
+  "experiment_metrics": {
+    "ai_api_cost_estimate_total": 0,
+    "ai_api_executor_effect": {
+      "cost_estimate_total": 0.0,
+      "executor_profile": "deterministic_local",
+      "provider_attempt_count": 0,
+      "real_api_called": false
+    },
+    "canonical_pollution_count": 0,
+    "final_correctness": false,
+    "premature_merge_rate": 0.0,
+    "raw_only_acceptance_rate": 0.0,
+    "slot_mismatch_acceptance_rate": 0.0,
+    "stuck_task_rate": 1.0,
+    "wrong_canonical_acceptance_rate": 0.0
+  },
+  "paper_table_rows": [
+    {
+      "ablation_mode": "NO_REQUEUE",
+      "ai_api_cost_estimate_total": 0,
+      "artifact_count": 15,
+      "blocker_kind": "",
+      "canonical_pollution_count": 0,
+      "case_id": "no_requeue",
+      "completion_rate": 0.0,
+      "event_count": 37,
+      "executor_profile": "deterministic_local",
+      "experiment_id": "exp3_protocol_ablation",
+      "final_correctness": false,
+      "plugin_id": "factorization",
+      "plugin_version": "0.1.0",
+      "real_checker_evidence": false,
+      "run_id": "exp3_protocol_ablation__no_requeue__seed1__dc455732da2c",
+      "settlement_success": false,
+      "simulation_profile": "exp3_protocol_ablation:no_requeue",
+      "status": "inconclusive"
+    }
+  ],
+  "run_id": "exp3_protocol_ablation__no_requeue__seed1__dc455732da2c",
+  "schema_version": "phase8.experiment_metrics.v1",
+  "status": "inconclusive"
+}

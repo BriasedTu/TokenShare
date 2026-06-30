@@ -1,0 +1,19 @@
+{
+  "artifact_id": "ai_provider_provenance_submission_ai_api_semiprime_range_flow_3",
+  "artifact_schema_id": "phase7.ai_provider_call_provenance",
+  "artifact_schema_version": "v1",
+  "artifact_type": "AIProviderCallProvenance",
+  "content_hash": "sha256:0d22c60f0e3602fc3463ce4c3d5120b525bf3888299ae0e5c03419b8b653471a",
+  "created_at": "2026-06-30T00:00:00Z",
+  "media_type": "application/json",
+  "metadata": {
+    "executor_id": "executor_ai_api"
+  },
+  "schema_version": "ArtifactRef.v1",
+  "size_bytes": 1000,
+  "source": {
+    "kind": "ai_api_executor",
+    "request_id": "request_ai_api_semiprime_range_flow_3"
+  },
+  "uri": "artifacts/ai_provider_provenance_submission_ai_api_semiprime_range_flow_3"
+}

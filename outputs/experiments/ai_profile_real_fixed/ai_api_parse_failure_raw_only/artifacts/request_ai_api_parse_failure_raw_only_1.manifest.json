@@ -1,0 +1,19 @@
+{
+  "artifact_id": "request_ai_api_parse_failure_raw_only_1",
+  "artifact_schema_id": "phase3.execution_request",
+  "artifact_schema_version": "v1",
+  "artifact_type": "ExecutionRequest",
+  "content_hash": "sha256:e02959b1d88876ad85c2a687deb359346b3aa77db5aa504a9e546c194926d4ac",
+  "created_at": "2026-06-30T00:00:00Z",
+  "media_type": "application/json",
+  "metadata": {
+    "attempt_id": "attempt_ai_api_parse_failure_raw_only_1",
+    "task_id": "task_ai_profile_ai_api_parse_failure_raw_only"
+  },
+  "schema_version": "ArtifactRef.v1",
+  "size_bytes": 3940,
+  "source": {
+    "kind": "protocol_engine"
+  },
+  "uri": "artifacts/request_ai_api_parse_failure_raw_only_1"
+}

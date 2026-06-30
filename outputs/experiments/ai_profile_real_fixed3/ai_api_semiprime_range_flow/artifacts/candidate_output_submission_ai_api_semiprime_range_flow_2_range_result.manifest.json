@@ -1,0 +1,39 @@
+{
+  "artifact_id": "candidate_output_submission_ai_api_semiprime_range_flow_2_range_result",
+  "artifact_schema_id": "factorization.range_result",
+  "artifact_schema_version": "v1",
+  "artifact_type": "CandidateOutput",
+  "content_hash": "sha256:4dca25ad0489ce9fef5017624a9ec7609a4719ab9c5bef12fde7694963f70db5",
+  "created_at": "2026-06-30T00:00:00Z",
+  "media_type": "application/json",
+  "metadata": {
+    "executor_id": "executor_ai_api",
+    "output_name": "range_result"
+  },
+  "schema_version": "ArtifactRef.v1",
+  "size_bytes": 489,
+  "source": {
+    "kind": "ai_api_executor",
+    "raw_output_ref": {
+      "artifact_id": "raw_model_output_submission_ai_api_semiprime_range_flow_2",
+      "artifact_schema_id": "phase7.raw_model_output",
+      "artifact_schema_version": "v1",
+      "artifact_type": "RawModelOutput",
+      "content_hash": "sha256:d88694b9cd6382e3e11984a45cdb1812708ebb298b5d070ab2873e6dc7413eff",
+      "created_at": "2026-06-30T00:00:00Z",
+      "media_type": "application/json",
+      "metadata": {
+        "entry_id": "deepseek_v4_pro__sf_key_1",
+        "executor_id": "executor_ai_api"
+      },
+      "schema_version": "ArtifactRef.v1",
+      "size_bytes": 2903,
+      "source": {
+        "kind": "ai_api_executor",
+        "request_id": "request_ai_api_semiprime_range_flow_2"
+      },
+      "uri": "artifacts/raw_model_output_submission_ai_api_semiprime_range_flow_2"
+    }
+  },
+  "uri": "artifacts/candidate_output_submission_ai_api_semiprime_range_flow_2_range_result"
+}

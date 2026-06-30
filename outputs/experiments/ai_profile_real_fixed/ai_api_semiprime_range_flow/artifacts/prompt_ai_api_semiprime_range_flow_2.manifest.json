@@ -1,0 +1,18 @@
+{
+  "artifact_id": "prompt_ai_api_semiprime_range_flow_2",
+  "artifact_schema_id": "phase3.prompt_package",
+  "artifact_schema_version": "v1",
+  "artifact_type": "PromptPackage",
+  "content_hash": "sha256:9339ecd538e1d1305423c089e1b9a436d0c831c047bf173ca3f7f2e4970dcaa6",
+  "created_at": "2026-06-30T00:00:00Z",
+  "media_type": "application/json",
+  "metadata": {
+    "case_id": "ai_api_semiprime_range_flow"
+  },
+  "schema_version": "ArtifactRef.v1",
+  "size_bytes": 4721,
+  "source": {
+    "kind": "ai_profile_suite"
+  },
+  "uri": "artifacts/prompt_ai_api_semiprime_range_flow_2"
+}
