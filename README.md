@@ -116,6 +116,22 @@ $env:PYTHONPATH='src'
 conda run -n tokenshare python -m tokenshare.experiments.run_all --output-root outputs/experiments --seed 1
 ```
 
+如果要单独比较 deterministic baseline 与 AI API executor 的输出质量、parser 成功率、usage、cost、latency、provider/model 和 retry，可运行 AI profile suite。默认路径使用 scripted fake transport，仍会经过真实 `AIAPIExecutor`、raw / parsed / parse-failure artifact 持久化和 factorization 插件 parser，因此不依赖网络或 API key：
+
+```powershell
+$env:PYTHONPATH='src'
+conda run -n tokenshare python -m tokenshare.experiments.run_ai_profile --output-root outputs/experiments/ai_profile --seed 1
+```
+
+也可以在运行默认 Experiment 1-4 后一并写出 AI profile 报告：
+
+```powershell
+$env:PYTHONPATH='src'
+conda run -n tokenshare python -m tokenshare.experiments.run_all --output-root outputs/experiments --seed 1 --run-ai-profile
+```
+
+AI profile 当前覆盖 `deterministic_semiprime_range_flow`、`ai_api_semiprime_range_flow` 和 `ai_api_parse_failure_raw_only` 三个 profile，并写出 `ai_profile_suite_report.json` / `ai_profile_summary.csv`。真实 SiliconFlow transport 仍是显式 opt-in，需要本地 config 至少有一个已启用 key。
+
 真实 SiliconFlow smoke 可用本地 gitignored JSON 配置，不需要手动设置 API key 环境变量。默认路径是 `local/ai_api_smoke.local.json`，该文件被 `.gitignore` 覆盖；loader 会把 `api_keys` 中已填写的 `api_key` 仅注入当前进程环境变量，并把 key 池和 `models` 模型池展开成标准 `entries`，再走原来的 `api_key_env` 安全边界。secret 不进入 event、artifact、SQLite、日志或 config digest。
 
 ```json

@@ -94,6 +94,18 @@ def test_factorization_builds_plugin_owned_prompt_package_for_bounded_range() ->
     prompt_text = body["prompt_text"]
     assert "Target integer: 221" in prompt_text
     assert "Search divisor range: 5 to 10 inclusive" in prompt_text
+    assert "Candidate divisors to test: 5, 6, 7, 8, 9, 10" in prompt_text
+    assert "Do not copy the no_factor_in_range template" in prompt_text
+    assert '"schema_version": "factorization.range_result.v1"' in prompt_text
+    assert '"target_n": "221"' in prompt_text
+    assert '"range_start": "5"' in prompt_text
+    assert '"range_end": "10"' in prompt_text
+    assert '"coverage_id": "coverage_1"' in prompt_text
+    assert '"child_index": 1' in prompt_text
+    assert '"partition_params_digest": "sha256:params"' in prompt_text
+    assert '"checked_divisor_count": 6' in prompt_text
+    assert '"checked_divisor_count": "<' not in prompt_text
+    assert '"executor_summary": {' in prompt_text
     assert "Return only one JSON object" in prompt_text
     assert "Do not search outside the assigned range" in prompt_text
     assert "Do not create child tasks" in prompt_text

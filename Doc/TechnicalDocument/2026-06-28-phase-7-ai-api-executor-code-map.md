@@ -10,9 +10,9 @@
 |---|---|---|
 | `src/tokenshare/executors/ai_api_config.py` | 第 6 节 | 本地 config dataclasses、schema validation、safe digest、secret env lookup。 |
 | `src/tokenshare/executors/ai_api_local_config.py` | 第 13、16.2 节 / 2026-06-29 smoke 体验补丁 | 读取被 gitignore 的 `local/ai_api_smoke.local.json`，允许 smoke 文件包含本地 `api_keys` 和 `models` 矩阵并展开成标准 `entries`；已填写的明文 `api_key` 只注入当前进程环境变量，再调用标准 `load_ai_api_config()`；safe dict、config digest、artifact/event/log 均不包含 secret。 |
-| `src/tokenshare/executors/ai_api_transport.py` | 第 8 节、第 12 节 | SiliconFlow chat completions request/response boundary、HTTP status / invalid envelope error mapping、opt-in stdlib transport。 |
+| `src/tokenshare/executors/ai_api_transport.py` | 第 8 节、第 12 节 | SiliconFlow chat completions request/response boundary、HTTP status / invalid envelope error mapping、opt-in stdlib transport。2026-06-30 strict JSON 修复后，JSON mode request 会加入 JSON-only system message，并对 Qwen / reasoning-tagged entries 默认设置 `enable_thinking=false`（显式 `request_overrides.enable_thinking` 优先），避免 thinking 输出耗尽 completion budget。 |
 | `src/tokenshare/executors/ai_api_selector.py` | 第 7 节 | Eligible filtering、seeded uniform random selection、bounded failover order。 |
-| `src/tokenshare/executors/ai_api.py` | 第 4 节、第 9-13 节 | Descriptor builder、AIAPIExecutor orchestration、raw/parsed/parse failure/provenance/usage artifact persistence。 |
+| `src/tokenshare/executors/ai_api.py` | 第 4 节、第 9-13 节 | Descriptor builder、AIAPIExecutor orchestration、raw/parsed/parse failure/provenance/usage artifact persistence。2026-06-30 起 provider prompt 不再只发送 `PromptPackage.prompt_text`，而是附带 authoritative `input_summary` / `output_schema` / `constraints` JSON blocks，确保插件拥有的 strict parser contract 所需字段被真实模型看到。 |
 | `src/tokenshare/executors/ai_api_replay.py` | 第 14 节 | Replay guard helper that verifies historical artifacts without calling transport。 |
 | `src/tokenshare/executors/__init__.py` | TDD plan Task 10 | Package-level public exports for Phase 7 executor APIs。 |
 
@@ -24,9 +24,9 @@
 | `tests/executors/test_ai_api_config.py` | Config validation、secret boundary、digest、duplicate entry rejection、strict boolean entry fields。 |
 | `tests/executors/test_ai_api_local_config.py` | Gitignored local smoke JSON loader、process-local secret injection、safe config redaction、默认路径被 `.gitignore` 覆盖、API key pool × model matrix 展开。 |
 | `tests/executors/test_ai_api_descriptor.py` | ExecutorDescriptor builder、registry matching、package exports。 |
-| `tests/executors/test_ai_api_transport.py` | SiliconFlow body construction、response/error mapping、stdlib transport bad-body mapping。 |
+| `tests/executors/test_ai_api_transport.py` | SiliconFlow body construction、response/error mapping、stdlib transport bad-body mapping；2026-06-30 新增 JSON mode system message 和 Qwen thinking override 回归。 |
 | `tests/executors/test_ai_api_selector.py` | Eligible filtering、seeded selection、JSON mode filtering。 |
-| `tests/executors/test_ai_api_executor_success.py` | Success path、artifact persistence、usage/cost、missing usage status、redaction scan。 |
+| `tests/executors/test_ai_api_executor_success.py` | Success path、artifact persistence、usage/cost、missing usage status、redaction scan；2026-06-30 新增 provider body 必须包含完整 PromptPackage structured context 的回归。 |
 | `tests/executors/test_ai_api_executor_failover.py` | 429、client timeout、network error、503/504、missing secret/no eligible provider、invalid prompt constraint、invalid envelope request-scoped provider failover / no-failover boundaries。 |
 | `tests/executors/test_ai_api_executor_parser.py` | Plain parser success、plugin-owned parse result bridge、plugin-owned parse failure、raw-only mode。 |
 | `tests/executors/test_ai_api_replay_guard.py` | Replay no-call artifact checks and missing artifact failure。 |
@@ -38,6 +38,7 @@
 - 标准 executor config 只保存 `api_key_env`；真实 smoke 可从被 gitignore 的 `local/ai_api_smoke.local.json` 读取本地 `api_keys`，并按 `models` 展开为标准 provider entries。API key values are not persisted.
 - Provider failover is request-scoped and does not create new protocol attempts, leases, graph mutations, canonical binding, reward, or settlement decisions.
 - Plugin parsing remains plugin-owned; executor only calls an injected parser hook and persists parsed or parse-failure artifacts.
+- Prompt rendering remains executor-owned transport adaptation: executor may render full PromptPackage context into provider messages, but it does not interpret factorization/Lean output schemas or decide candidate output acceptance.
 - Replay guard reads historical artifacts and never calls SiliconFlow or reads API key env vars.
 - The default test suite uses fake transport; real SiliconFlow smoke test is opt-in through `TOKENSHARE_RUN_SILICONFLOW_SMOKE=1`.
 - `outputs/` 和 `local/*.local.json` 被 `.gitignore` 覆盖，实验输出和本地 smoke secret 文件不进入版本库。
@@ -54,3 +55,4 @@
 
 - Final startup verification after hardening: `.\init.ps1` passed with `python-json-sqlite-ok`, `harness-files-ok`, pytest collected 301 items, result `300 passed, 1 skipped in 33.44s`.
 - 2026-06-29 local smoke config patch：RED targeted tests first failed with missing `tokenshare.executors.ai_api_local_config`; GREEN local config suite passed with `3 passed in 0.14s`; local config + smoke skip suite passed with `3 passed, 1 skipped in 0.13s`; wider `tests\executors -q` passed with `37 passed, 1 skipped in 0.56s`; final `.\init.ps1` passed with pytest collected 368 items, result `367 passed, 1 skipped in 115.85s`.
+- 2026-06-30 strict parser adaptation repair：RED tests failed for provider prompt missing full PromptPackage context and JSON mode missing Qwen thinking override；GREEN `tests\executors tests\plugins\factorization tests\experiments tests\test_phase7_ai_api_execution_flow.py -q` passed with `111 passed, 1 skipped in 65.25s`。Real transport profile after the fix passed `ai_api_semiprime_range_flow` with `parser_success_rate=1.0`, `parsed_output_count=4`, `parse_failure_count=0`, and `final_correctness=true`; no API key was printed or persisted。

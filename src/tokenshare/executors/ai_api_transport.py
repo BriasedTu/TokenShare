@@ -39,9 +39,21 @@ def build_siliconflow_chat_body(
     soft_hints: JsonObject,
     require_json_mode: bool,
 ) -> JsonObject:
+    messages = []
+    if require_json_mode:
+        messages.append(
+            {
+                "role": "system",
+                "content": (
+                    "You must output exactly one valid JSON object. "
+                    "Do not output markdown, prose, or hidden reasoning in assistant content."
+                ),
+            }
+        )
+    messages.append({"role": "user", "content": prompt_text})
     body: JsonObject = {
         "model": entry.model,
-        "messages": [{"role": "user", "content": prompt_text}],
+        "messages": messages,
         "stream": False,
         "temperature": _choose_number(
             entry.request_overrides.get("temperature"),
@@ -59,6 +71,13 @@ def build_siliconflow_chat_body(
         if not entry.supports_json_mode:
             raise ValueError(f"entry does not support json mode: {entry.entry_id}")
         body["response_format"] = {"type": "json_object"}
+    thinking_override = entry.request_overrides.get("enable_thinking")
+    if thinking_override is not None:
+        if not isinstance(thinking_override, bool):
+            raise ValueError("request_overrides.enable_thinking must be a boolean")
+        body["enable_thinking"] = thinking_override
+    elif require_json_mode and _should_disable_thinking_for_json_mode(entry):
+        body["enable_thinking"] = False
     return body
 
 
@@ -113,6 +132,12 @@ def _map_http_error(status_code: int) -> str:
     if status_code in {400, 404}:
         return "client_error"
     return "provider_error"
+
+
+def _should_disable_thinking_for_json_mode(entry: AIAPIProviderEntry) -> bool:
+    model = entry.model.lower()
+    tags = {tag.lower() for tag in entry.tags}
+    return "qwen3" in model or "qwen" in tags or "reasoning" in tags
 
 
 class UrlLibSiliconFlowTransport:

@@ -1,6 +1,7 @@
 """Experiment runner, fault simulation, metrics, and reports."""
 
 from tokenshare.experiments.adapters import AdapterRegistry, PluginExperimentAdapter
+from tokenshare.experiments.ai_profile import run_ai_profile_suite
 from tokenshare.experiments.factorization_adapter import FactorizationExperimentAdapter
 from tokenshare.experiments.lean_adapter import LeanProofExperimentAdapter
 from tokenshare.experiments.models import (
@@ -30,5 +31,6 @@ __all__ = [
     "SimulationProfile",
     "SimulationWrapper",
     "default_experiment_cases",
+    "run_ai_profile_suite",
     "run_phase8_default_suite",
 ]

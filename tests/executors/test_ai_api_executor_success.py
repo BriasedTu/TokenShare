@@ -69,6 +69,54 @@ def test_ai_api_executor_persists_raw_parsed_provenance_usage_and_cost(
     assert b"secret-b" not in store.read_bytes(submission.provenance_ref)
 
 
+def test_ai_api_executor_sends_full_prompt_package_context_to_provider(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("SILICONFLOW_API_KEY_A", "secret-a")
+    monkeypatch.setenv("SILICONFLOW_API_KEY_B", "secret-b")
+    store = ArtifactStore(tmp_path)
+    request = make_ai_request(store, request_id="request_prompt_context")
+    config = load_ai_api_config(make_config_dict())
+    transport = FakeSiliconFlowTransport(
+        [
+            FakeProviderResponse(
+                status_code=200,
+                body={
+                    "id": "sf-prompt-context",
+                    "model": "Qwen/Qwen2.5-7B-Instruct",
+                    "choices": [
+                        {"message": {"content": '{"answer":"ok"}'}, "finish_reason": "stop"}
+                    ],
+                    "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+                },
+            )
+        ]
+    )
+    executor = AIAPIExecutor(
+        executor_id="executor_ai_api",
+        executor_version="0.1.0",
+        artifact_store=store,
+        config=config,
+        transport=transport,
+        parser=parse_answer,
+    )
+
+    executor.execute(
+        request,
+        submission_id="submission_prompt_context",
+        submitted_at="2026-06-28T00:00:02Z",
+    )
+
+    sent_prompt = transport.calls[0]["body"]["messages"][-1]["content"]
+    assert "Authoritative PromptPackage input_summary" in sent_prompt
+    assert '"question": "demo"' in sent_prompt
+    assert "Authoritative PromptPackage output_schema" in sent_prompt
+    assert '"required": [' in sent_prompt
+    assert "Authoritative PromptPackage constraints" in sent_prompt
+    assert '"requires_json_mode": true' in sent_prompt
+
+
 def test_ai_api_executor_never_persists_api_key_values(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("SILICONFLOW_API_KEY_A", "super-secret-a")
     monkeypatch.setenv("SILICONFLOW_API_KEY_B", "super-secret-b")

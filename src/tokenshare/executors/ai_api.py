@@ -167,7 +167,7 @@ class AIAPIExecutor:
             try:
                 body = build_siliconflow_chat_body(
                     entry=entry,
-                    prompt_text=str(prompt["prompt_text"]),
+                    prompt_text=_provider_prompt_text(prompt),
                     defaults=self._config.defaults,
                     request_limits=request.limits,
                     soft_hints=request.soft_hints or {},
@@ -686,6 +686,24 @@ def _artifact_ref_summary(ref: ArtifactRef) -> JsonObject:
         "artifact_schema_id": ref.artifact_schema_id,
         "artifact_schema_version": ref.artifact_schema_version,
     }
+
+
+def _provider_prompt_text(prompt: JsonObject) -> str:
+    prompt_text = str(prompt["prompt_text"])
+    sections = [prompt_text]
+    for key, title in (
+        ("input_summary", "Authoritative PromptPackage input_summary"),
+        ("output_schema", "Authoritative PromptPackage output_schema"),
+        ("constraints", "Authoritative PromptPackage constraints"),
+    ):
+        value = prompt.get(key, {})
+        sections.append(f"{title}:")
+        sections.append(json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True))
+    sections.append(
+        "When structured PromptPackage fields conflict with prose, use the structured fields. "
+        "Return only the required JSON object."
+    )
+    return "\n\n".join(sections)
 
 
 def _schema_id_and_version(
