@@ -2,32 +2,32 @@
   "deterministic_vs_ai_api": {
     "semiprime_range_flow": {
       "ai_api_case_id": "ai_api_semiprime_range_flow",
-      "ai_api_correctness": false,
-      "ai_api_cost": 0.0073009699999999995,
-      "ai_api_latency_ms_total": 80004,
-      "ai_api_parser_success_rate": 0.0,
+      "ai_api_correctness": true,
+      "ai_api_cost": 0.0041459999999999995,
+      "ai_api_latency_ms_total": 45858,
+      "ai_api_parser_success_rate": 1.0,
       "ai_api_retry_count": 0,
-      "correctness_delta": -1,
-      "cost_delta": 0.0073009699999999995,
+      "correctness_delta": 0,
+      "cost_delta": 0.0041459999999999995,
       "deterministic_case_id": "deterministic_semiprime_range_flow",
       "deterministic_correctness": true,
       "deterministic_cost": 0,
       "deterministic_latency_ms_total": 0,
       "deterministic_parser_success_rate": 1.0,
       "deterministic_retry_count": 0,
-      "latency_delta_ms": 80004,
-      "parser_success_rate_delta": -1.0,
+      "latency_delta_ms": 45858,
+      "parser_success_rate_delta": 0.0,
       "retry_delta": 0
     }
   },
   "profiles": [
     {
-      "artifact_root_path": "C:/Users/32133/AppData/Local/Temp/tokenshare_ai_profile_det_pshq72ox/artifacts",
+      "artifact_root_path": "outputs/experiments/ai_profile_real/deterministic_semiprime_range_flow/fixture_flow/artifacts",
       "case_id": "deterministic_semiprime_range_flow",
       "cost_estimate_total": 0,
       "event_log_ref": {
         "event_count": 96,
-        "hash": "sha256:5256d929ad199d35194b18f0ec3d0d17d3249cb9701ae0ed174e57c76056ce1b",
+        "hash": "sha256:eb0b7b6c487d2cad6a96a410b184c583c088fb3a087b72bb8451a36efa9861bd",
         "path": "outputs\\experiments\\ai_profile_real\\deterministic_semiprime_range_flow\\events\\event_log.jsonl"
       },
       "executor_profile": "deterministic_local",
@@ -134,105 +134,182 @@
     {
       "artifact_root_path": "outputs/experiments/ai_profile_real/ai_api_semiprime_range_flow/artifacts",
       "case_id": "ai_api_semiprime_range_flow",
-      "cost_estimate_total": 0.0073009699999999995,
+      "cost_estimate_total": 0.0041459999999999995,
       "event_log_ref": {
         "event_count": 12,
-        "hash": "sha256:bed1fe53252fc9b16d6660858d8db386654af2247009302dc56fbc31b8860ebf",
+        "hash": "sha256:9745424d6161cf4c5ca569e094aee2290b3cb2a20694fd2782ca52c1bbc3c645",
         "path": "outputs\\experiments\\ai_profile_real\\ai_api_semiprime_range_flow\\copied_events\\event_log.jsonl"
       },
       "executor_profile": "ai_api",
       "experiment_id": "exp1_factorization_e2e",
-      "final_correctness": false,
+      "final_correctness": true,
       "fixture_name": "semiprime_range_flow",
-      "latency_ms_total": 80004,
+      "latency_ms_total": 45858,
       "models": [
-        "MiniMaxAI/MiniMax-M2.5",
-        "Qwen/Qwen3.6-27B",
-        "deepseek-ai/DeepSeek-V4-Pro"
+        "MiniMaxAI/MiniMax-M2.5"
       ],
-      "parse_failure_count": 4,
-      "parse_failure_refs": [
+      "parse_failure_count": 0,
+      "parse_failure_refs": [],
+      "parsed_output_count": 4,
+      "parsed_output_refs": [
         {
-          "artifact_id": "parse_failure_submission_ai_api_semiprime_range_flow_1",
-          "artifact_schema_id": "phase3.parse_failure_report",
+          "artifact_id": "parsed_model_output_submission_ai_api_semiprime_range_flow_1",
+          "artifact_schema_id": "factorization.range_result",
           "artifact_schema_version": "v1",
-          "artifact_type": "ParseFailureReport",
-          "content_hash": "sha256:c572133c334c1c8b5359f8e1a8c43dced31c1c01f42c110a9120d8955575ffe7",
+          "artifact_type": "ParsedModelOutput",
+          "content_hash": "sha256:84349031fb7c294e233ac27eb8b80354a72f0864f61a431553fd1c59b3a20c3c",
           "created_at": "2026-06-30T00:00:00Z",
           "media_type": "application/json",
           "metadata": {
             "executor_id": "executor_ai_api"
           },
           "schema_version": "ArtifactRef.v1",
-          "size_bytes": 549,
+          "size_bytes": 493,
           "source": {
             "kind": "ai_api_executor",
-            "request_id": "request_ai_api_semiprime_range_flow_1"
+            "raw_output_ref": {
+              "artifact_id": "raw_model_output_submission_ai_api_semiprime_range_flow_1",
+              "artifact_schema_id": "phase7.raw_model_output",
+              "artifact_schema_version": "v1",
+              "artifact_type": "RawModelOutput",
+              "content_hash": "sha256:21f50dde244033e2c714b0c9d1bf3afbfb1a46ca5ddca517280970840032ddc0",
+              "created_at": "2026-06-30T00:00:00Z",
+              "media_type": "application/json",
+              "metadata": {
+                "entry_id": "minimax_m2_5__sf_key_1",
+                "executor_id": "executor_ai_api"
+              },
+              "schema_version": "ArtifactRef.v1",
+              "size_bytes": 3291,
+              "source": {
+                "kind": "ai_api_executor",
+                "request_id": "request_ai_api_semiprime_range_flow_1"
+              },
+              "uri": "artifacts/raw_model_output_submission_ai_api_semiprime_range_flow_1"
+            }
           },
-          "uri": "artifacts/parse_failure_submission_ai_api_semiprime_range_flow_1"
+          "uri": "artifacts/parsed_model_output_submission_ai_api_semiprime_range_flow_1"
         },
         {
-          "artifact_id": "parse_failure_submission_ai_api_semiprime_range_flow_2",
-          "artifact_schema_id": "phase3.parse_failure_report",
+          "artifact_id": "parsed_model_output_submission_ai_api_semiprime_range_flow_2",
+          "artifact_schema_id": "factorization.range_result",
           "artifact_schema_version": "v1",
-          "artifact_type": "ParseFailureReport",
-          "content_hash": "sha256:7639e349a5c4589677c6001a39a34d19535c55bffaf05c5afeae06562f747eaf",
+          "artifact_type": "ParsedModelOutput",
+          "content_hash": "sha256:68fb8aea0bf65058932a8dc239a7f8e8df0e89a8e61bd2893bf26be4cb65664d",
           "created_at": "2026-06-30T00:00:00Z",
           "media_type": "application/json",
           "metadata": {
             "executor_id": "executor_ai_api"
           },
           "schema_version": "ArtifactRef.v1",
-          "size_bytes": 823,
+          "size_bytes": 489,
           "source": {
             "kind": "ai_api_executor",
-            "request_id": "request_ai_api_semiprime_range_flow_2"
+            "raw_output_ref": {
+              "artifact_id": "raw_model_output_submission_ai_api_semiprime_range_flow_2",
+              "artifact_schema_id": "phase7.raw_model_output",
+              "artifact_schema_version": "v1",
+              "artifact_type": "RawModelOutput",
+              "content_hash": "sha256:335a81ed4f88b575515218df34f5a9a31444faf35ccbe5adfa850ff6b1a273bd",
+              "created_at": "2026-06-30T00:00:00Z",
+              "media_type": "application/json",
+              "metadata": {
+                "entry_id": "minimax_m2_5__sf_key_1",
+                "executor_id": "executor_ai_api"
+              },
+              "schema_version": "ArtifactRef.v1",
+              "size_bytes": 3209,
+              "source": {
+                "kind": "ai_api_executor",
+                "request_id": "request_ai_api_semiprime_range_flow_2"
+              },
+              "uri": "artifacts/raw_model_output_submission_ai_api_semiprime_range_flow_2"
+            }
           },
-          "uri": "artifacts/parse_failure_submission_ai_api_semiprime_range_flow_2"
+          "uri": "artifacts/parsed_model_output_submission_ai_api_semiprime_range_flow_2"
         },
         {
-          "artifact_id": "parse_failure_submission_ai_api_semiprime_range_flow_3",
-          "artifact_schema_id": "phase3.parse_failure_report",
+          "artifact_id": "parsed_model_output_submission_ai_api_semiprime_range_flow_3",
+          "artifact_schema_id": "factorization.range_result",
           "artifact_schema_version": "v1",
-          "artifact_type": "ParseFailureReport",
-          "content_hash": "sha256:a4eac03ff5f508c4c98036034ecf4fa575afb745946e2a718faa7adcf558e327",
+          "artifact_type": "ParsedModelOutput",
+          "content_hash": "sha256:9d94326a7e85da183718e972a0f1dd2b1295be3aaeb257fe48afc1ae13fa4522",
           "created_at": "2026-06-30T00:00:00Z",
           "media_type": "application/json",
           "metadata": {
             "executor_id": "executor_ai_api"
           },
           "schema_version": "ArtifactRef.v1",
-          "size_bytes": 549,
+          "size_bytes": 482,
           "source": {
             "kind": "ai_api_executor",
-            "request_id": "request_ai_api_semiprime_range_flow_3"
+            "raw_output_ref": {
+              "artifact_id": "raw_model_output_submission_ai_api_semiprime_range_flow_3",
+              "artifact_schema_id": "phase7.raw_model_output",
+              "artifact_schema_version": "v1",
+              "artifact_type": "RawModelOutput",
+              "content_hash": "sha256:8e917fa0cc090a2fa58ac80929ade3dd491f7b64df5857809412e8354e9a3ae6",
+              "created_at": "2026-06-30T00:00:00Z",
+              "media_type": "application/json",
+              "metadata": {
+                "entry_id": "minimax_m2_5__sf_key_1",
+                "executor_id": "executor_ai_api"
+              },
+              "schema_version": "ArtifactRef.v1",
+              "size_bytes": 4190,
+              "source": {
+                "kind": "ai_api_executor",
+                "request_id": "request_ai_api_semiprime_range_flow_3"
+              },
+              "uri": "artifacts/raw_model_output_submission_ai_api_semiprime_range_flow_3"
+            }
           },
-          "uri": "artifacts/parse_failure_submission_ai_api_semiprime_range_flow_3"
+          "uri": "artifacts/parsed_model_output_submission_ai_api_semiprime_range_flow_3"
         },
         {
-          "artifact_id": "parse_failure_submission_ai_api_semiprime_range_flow_4",
-          "artifact_schema_id": "phase3.parse_failure_report",
+          "artifact_id": "parsed_model_output_submission_ai_api_semiprime_range_flow_4",
+          "artifact_schema_id": "factorization.range_result",
           "artifact_schema_version": "v1",
-          "artifact_type": "ParseFailureReport",
-          "content_hash": "sha256:c9ceb0811b1b6ab110685852778a399ba9ed7cb370d6de51db145d076013e023",
+          "artifact_type": "ParsedModelOutput",
+          "content_hash": "sha256:ca21f7d3758f0e744d16be53cc5b287658466ac3543e22b298e51ca087786619",
           "created_at": "2026-06-30T00:00:00Z",
           "media_type": "application/json",
           "metadata": {
             "executor_id": "executor_ai_api"
           },
           "schema_version": "ArtifactRef.v1",
-          "size_bytes": 824,
+          "size_bytes": 489,
           "source": {
             "kind": "ai_api_executor",
-            "request_id": "request_ai_api_semiprime_range_flow_4"
+            "raw_output_ref": {
+              "artifact_id": "raw_model_output_submission_ai_api_semiprime_range_flow_4",
+              "artifact_schema_id": "phase7.raw_model_output",
+              "artifact_schema_version": "v1",
+              "artifact_type": "RawModelOutput",
+              "content_hash": "sha256:3e5bcc047c8990854a47a489739ae214fc96755bbe3aff8c6d095f0d536f736b",
+              "created_at": "2026-06-30T00:00:00Z",
+              "media_type": "application/json",
+              "metadata": {
+                "entry_id": "minimax_m2_5__sf_key_1",
+                "executor_id": "executor_ai_api"
+              },
+              "schema_version": "ArtifactRef.v1",
+              "size_bytes": 3260,
+              "source": {
+                "kind": "ai_api_executor",
+                "request_id": "request_ai_api_semiprime_range_flow_4"
+              },
+              "uri": "artifacts/raw_model_output_submission_ai_api_semiprime_range_flow_4"
+            }
           },
-          "uri": "artifacts/parse_failure_submission_ai_api_semiprime_range_flow_4"
+          "uri": "artifacts/parsed_model_output_submission_ai_api_semiprime_range_flow_4"
         }
       ],
-      "parsed_output_count": 0,
-      "parsed_output_refs": [],
-      "parser_success_rate": 0.0,
-      "prime_factors": [],
+      "parser_success_rate": 1.0,
+      "prime_factors": [
+        "7",
+        "13"
+      ],
       "provider_attempt_count": 4,
       "providers": [
         "siliconflow"
@@ -244,15 +321,15 @@
           "artifact_schema_id": "phase7.raw_model_output",
           "artifact_schema_version": "v1",
           "artifact_type": "RawModelOutput",
-          "content_hash": "sha256:13da88ced696fa3d3b1d2808e76e23775bc56883706ed8bc2f30060b08afbc31",
+          "content_hash": "sha256:21f50dde244033e2c714b0c9d1bf3afbfb1a46ca5ddca517280970840032ddc0",
           "created_at": "2026-06-30T00:00:00Z",
           "media_type": "application/json",
           "metadata": {
-            "entry_id": "qwen3_6_27b__sf_key_1",
+            "entry_id": "minimax_m2_5__sf_key_1",
             "executor_id": "executor_ai_api"
           },
           "schema_version": "ArtifactRef.v1",
-          "size_bytes": 2608,
+          "size_bytes": 3291,
           "source": {
             "kind": "ai_api_executor",
             "request_id": "request_ai_api_semiprime_range_flow_1"
@@ -264,15 +341,15 @@
           "artifact_schema_id": "phase7.raw_model_output",
           "artifact_schema_version": "v1",
           "artifact_type": "RawModelOutput",
-          "content_hash": "sha256:455c395761a1b1836f9685699538bca364ef5856b7840cdf30fc35d7c14e53ba",
+          "content_hash": "sha256:335a81ed4f88b575515218df34f5a9a31444faf35ccbe5adfa850ff6b1a273bd",
           "created_at": "2026-06-30T00:00:00Z",
           "media_type": "application/json",
           "metadata": {
-            "entry_id": "deepseek_v4_pro__sf_key_1",
+            "entry_id": "minimax_m2_5__sf_key_1",
             "executor_id": "executor_ai_api"
           },
           "schema_version": "ArtifactRef.v1",
-          "size_bytes": 3721,
+          "size_bytes": 3209,
           "source": {
             "kind": "ai_api_executor",
             "request_id": "request_ai_api_semiprime_range_flow_2"
@@ -284,15 +361,15 @@
           "artifact_schema_id": "phase7.raw_model_output",
           "artifact_schema_version": "v1",
           "artifact_type": "RawModelOutput",
-          "content_hash": "sha256:b44195b752783a8955ac3694ab3e75d62d5977bfe59a5a2865529b124c050270",
+          "content_hash": "sha256:8e917fa0cc090a2fa58ac80929ade3dd491f7b64df5857809412e8354e9a3ae6",
           "created_at": "2026-06-30T00:00:00Z",
           "media_type": "application/json",
           "metadata": {
-            "entry_id": "qwen3_6_27b__sf_key_1",
+            "entry_id": "minimax_m2_5__sf_key_1",
             "executor_id": "executor_ai_api"
           },
           "schema_version": "ArtifactRef.v1",
-          "size_bytes": 2574,
+          "size_bytes": 4190,
           "source": {
             "kind": "ai_api_executor",
             "request_id": "request_ai_api_semiprime_range_flow_3"
@@ -304,7 +381,7 @@
           "artifact_schema_id": "phase7.raw_model_output",
           "artifact_schema_version": "v1",
           "artifact_type": "RawModelOutput",
-          "content_hash": "sha256:a8777d2aa0f6c130b74ac9a9adc6cf6e49f91e7eaa3a11e54007256384595af4",
+          "content_hash": "sha256:3e5bcc047c8990854a47a489739ae214fc96755bbe3aff8c6d095f0d536f736b",
           "created_at": "2026-06-30T00:00:00Z",
           "media_type": "application/json",
           "metadata": {
@@ -312,7 +389,7 @@
             "executor_id": "executor_ai_api"
           },
           "schema_version": "ArtifactRef.v1",
-          "size_bytes": 7596,
+          "size_bytes": 3260,
           "source": {
             "kind": "ai_api_executor",
             "request_id": "request_ai_api_semiprime_range_flow_4"
@@ -322,28 +399,28 @@
       ],
       "retry_count": 0,
       "schema_version": "phase8.ai_profile_case_report.v1",
-      "status": "failed",
+      "status": "passed",
       "target_n": "91",
       "usage": {
-        "completion_tokens": 3066,
-        "prompt_tokens": 866,
-        "total_tokens": 3932
+        "completion_tokens": 2117,
+        "prompt_tokens": 5352,
+        "total_tokens": 7469
       }
     },
     {
       "artifact_root_path": "outputs/experiments/ai_profile_real/ai_api_parse_failure_raw_only/artifacts",
       "case_id": "ai_api_parse_failure_raw_only",
-      "cost_estimate_total": 0.001765365,
+      "cost_estimate_total": 6.335000000000001e-05,
       "event_log_ref": {
         "event_count": 3,
-        "hash": "sha256:6d35cbbc05ccdb4a3c97366f8721723e043ee6a332fdd587d09b46e60cbcaf8c",
+        "hash": "sha256:7f6ec60ed47dfc8a59582a0f4c7be08f1af7ba84780d922d4a82983ecf40f9a8",
         "path": "outputs\\experiments\\ai_profile_real\\ai_api_parse_failure_raw_only\\copied_events\\event_log.jsonl"
       },
       "executor_profile": "ai_api",
       "experiment_id": "exp2_failure_recovery",
       "final_correctness": false,
       "fixture_name": "parse_failure_raw_only_forbidden",
-      "latency_ms_total": 17690,
+      "latency_ms_total": 0,
       "models": [
         "deepseek-ai/DeepSeek-V4-Pro"
       ],
@@ -354,14 +431,14 @@
           "artifact_schema_id": "phase3.parse_failure_report",
           "artifact_schema_version": "v1",
           "artifact_type": "ParseFailureReport",
-          "content_hash": "sha256:a5ae408cb879951dda09167f67377c3407ecd2fb20ff12476ebcd7d85bee5bfd",
+          "content_hash": "sha256:290db0ef66f8a493cce5041e5a2673d0c8f77ae7dee9fa6e535362fd4c3ed99a",
           "created_at": "2026-06-30T00:00:00Z",
           "media_type": "application/json",
           "metadata": {
             "executor_id": "executor_ai_api"
           },
           "schema_version": "ArtifactRef.v1",
-          "size_bytes": 828,
+          "size_bytes": 568,
           "source": {
             "kind": "ai_api_executor",
             "request_id": "request_ai_api_parse_failure_raw_only_1"
@@ -384,7 +461,7 @@
           "artifact_schema_id": "phase7.raw_model_output",
           "artifact_schema_version": "v1",
           "artifact_type": "RawModelOutput",
-          "content_hash": "sha256:8dfa34a0d6b7fc24f5cc80e30b6f7e36a4c3be0bceeadad18916fd516a83d5ee",
+          "content_hash": "sha256:776f43a0fc5cb909da6dee74f7626556e99447f616fe6df006ddf8a2d7d96dde",
           "created_at": "2026-06-30T00:00:00Z",
           "media_type": "application/json",
           "metadata": {
@@ -392,7 +469,7 @@
             "executor_id": "executor_ai_api"
           },
           "schema_version": "ArtifactRef.v1",
-          "size_bytes": 3326,
+          "size_bytes": 715,
           "source": {
             "kind": "ai_api_executor",
             "request_id": "request_ai_api_parse_failure_raw_only_1"
@@ -405,14 +482,15 @@
       "status": "passed",
       "target_n": "91",
       "usage": {
-        "completion_tokens": 459,
-        "prompt_tokens": 204,
-        "total_tokens": 663
+        "completion_tokens": 10,
+        "prompt_tokens": 20,
+        "total_tokens": 30
       }
     }
   ],
   "schema_version": "phase8.ai_profile_suite_report.v1",
   "seed": 1,
+  "settings_path": "outputs/experiments/ai_profile_real/ai_profile_settings.json",
   "suite_report_path": "outputs/experiments/ai_profile_real/ai_profile_suite_report.json",
   "summary_csv_path": "outputs/experiments/ai_profile_real/ai_profile_summary.csv",
   "total_profiles": 3

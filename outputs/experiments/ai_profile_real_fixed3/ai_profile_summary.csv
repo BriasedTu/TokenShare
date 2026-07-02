@@ -1,4 +1,0 @@
-experiment_id,case_id,executor_profile,status,final_correctness,parser_success_rate,raw_output_count,parsed_output_count,parse_failure_count,provider_attempt_count,retry_count,cost_estimate_total,latency_ms_total,providers,models
-exp1_factorization_e2e,deterministic_semiprime_range_flow,deterministic_local,passed,true,1.0,0,4,0,0,0,0,0,,
-exp1_factorization_e2e,ai_api_semiprime_range_flow,ai_api,failed,false,1.0,4,4,0,4,0,0.0068739299999999995,74112,siliconflow,MiniMaxAI/MiniMax-M2.5|Qwen/Qwen3.6-27B|deepseek-ai/DeepSeek-V4-Pro
-exp2_failure_recovery,ai_api_parse_failure_raw_only,ai_api,failed,false,1.0,1,1,0,1,0,0.0034025,30300,siliconflow,deepseek-ai/DeepSeek-V4-Pro

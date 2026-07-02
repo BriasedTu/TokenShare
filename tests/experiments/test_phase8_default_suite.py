@@ -59,6 +59,25 @@ def test_default_suite_runs_experiment_1_to_4_with_lean_blocked_gate(tmp_path: P
     assert suite["blocked_runs"] == 0
     assert suite["blocked_by_kind"] == {}
     assert suite["summary_csv_path"].endswith("phase8_suite_summary.csv")
+    assert suite["settings_path"].endswith("phase8_experiment_settings.json")
+
+    settings = json.loads(Path(suite["settings_path"]).read_text(encoding="utf-8"))
+    assert settings["schema_version"] == "phase8.experiment_suite_settings.v1"
+    assert settings["seed"] == 3
+    assert settings["total_cases"] == len(cases)
+    assert {
+        item["experiment_id"] for item in settings["experiment_cases"]
+    } == {
+        "exp1_factorization_e2e",
+        "exp2_failure_recovery",
+        "exp3_protocol_ablation",
+        "exp4_real_plugin_generality",
+    }
+    assert any(
+        profile["ablation_mode"] == "NO_VERIFICATION"
+        for profile in settings["simulation_profiles"]
+    )
+    assert len(settings["run_manifest_paths"]) == len(cases)
 
     rows = list(csv.DictReader(Path(suite["summary_csv_path"]).open(encoding="utf-8")))
     assert len(rows) == len(cases)

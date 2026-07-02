@@ -212,7 +212,9 @@ def run_phase8_default_suite(*, output_root: str | Path, seed: int = 1) -> JsonO
     registry.register(LeanProofExperimentAdapter())
     runner = ExperimentRunner(adapter_registry=registry, output_root=root / "runs")
     results: list[ExperimentResult] = []
-    for case in default_experiment_cases():
+    cases = default_experiment_cases()
+    profiles: list[SimulationProfile] = []
+    for case in cases:
         metadata = case.metadata or {}
         profile = SimulationProfile(
             profile_id=f"{case.experiment_id}:{case.case_id}",
@@ -221,15 +223,27 @@ def run_phase8_default_suite(*, output_root: str | Path, seed: int = 1) -> JsonO
             fault_profile=case.case_id if case.experiment_id == "exp2_failure_recovery" else "none",
             ablation_mode=str(metadata.get("ablation_mode", "FULL")),
         )
+        profiles.append(profile)
         results.append(runner.run(case, profile=profile))
 
     summary_path = root / "phase8_suite_summary.csv"
     suite_report_path = root / "phase8_suite_report.json"
+    settings_path = root / "phase8_experiment_settings.json"
     _write_suite_summary(summary_path, results)
+    _write_suite_settings(
+        settings_path=settings_path,
+        output_root=root,
+        cases=cases,
+        profiles=profiles,
+        results=results,
+        summary_csv_path=summary_path,
+        suite_report_path=suite_report_path,
+    )
     suite_report = _suite_report(
         results=results,
         summary_csv_path=summary_path,
         suite_report_path=suite_report_path,
+        settings_path=settings_path,
     )
     suite_report_path.write_text(
         json.dumps(suite_report, ensure_ascii=False, indent=2, sort_keys=True),
@@ -274,11 +288,44 @@ def _write_suite_summary(path: Path, results: list[ExperimentResult]) -> None:
                     writer.writerow({column: row.get(column, "") for column in SUMMARY_COLUMNS})
 
 
+def _write_suite_settings(
+    *,
+    settings_path: Path,
+    output_root: Path,
+    cases: tuple[ExperimentCase, ...],
+    profiles: list[SimulationProfile],
+    results: list[ExperimentResult],
+    summary_csv_path: Path,
+    suite_report_path: Path,
+) -> None:
+    settings_path.parent.mkdir(parents=True, exist_ok=True)
+    body = {
+        "schema_version": "phase8.experiment_suite_settings.v1",
+        "seed": profiles[0].seed if profiles else None,
+        "output_root": output_root.as_posix(),
+        "runner_output_root": (output_root / "runs").as_posix(),
+        "summary_csv_path": summary_csv_path.as_posix(),
+        "suite_report_path": suite_report_path.as_posix(),
+        "settings_path": settings_path.as_posix(),
+        "total_cases": len(cases),
+        "experiment_cases": [case.to_dict() for case in cases],
+        "simulation_profiles": [profile.to_dict() for profile in profiles],
+        "run_manifest_paths": [result.manifest_path.as_posix() for result in results],
+        "case_report_paths": [result.case_report_path.as_posix() for result in results],
+        "metrics_paths": [result.metrics_path.as_posix() for result in results],
+    }
+    settings_path.write_text(
+        json.dumps(body, ensure_ascii=False, indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
+
+
 def _suite_report(
     *,
     results: list[ExperimentResult],
     summary_csv_path: Path,
     suite_report_path: Path,
+    settings_path: Path,
 ) -> JsonObject:
     statuses = [result.run.status.value for result in results]
     blocked_by_kind: dict[str, int] = {}
@@ -297,5 +344,6 @@ def _suite_report(
         "blocked_by_kind": blocked_by_kind,
         "summary_csv_path": summary_csv_path.as_posix(),
         "suite_report_path": suite_report_path.as_posix(),
+        "settings_path": settings_path.as_posix(),
         "run_manifest_paths": [result.manifest_path.as_posix() for result in results],
     }

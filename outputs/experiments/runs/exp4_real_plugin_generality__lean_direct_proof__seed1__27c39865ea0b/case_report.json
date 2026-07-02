@@ -1,0 +1,119 @@
+{
+  "artifact_root": {
+    "artifact_count": 15,
+    "manifest_hash": "sha256:a5940f6444ba0c89c51b255dd1545f2aa24261019d15c2b5959ecf62042d3d5e",
+    "path": "outputs\\experiments\\runs\\exp4_real_plugin_generality__lean_direct_proof__seed1__27c39865ea0b\\artifacts"
+  },
+  "case_id": "lean_direct_proof",
+  "event_log_ref": {
+    "event_count": 22,
+    "hash": "sha256:d484d0765c70a5f7445e30cf53791e86745996ad376c95919f90f93d09f75422",
+    "path": "outputs\\experiments\\runs\\exp4_real_plugin_generality__lean_direct_proof__seed1__27c39865ea0b\\events\\event_log.jsonl"
+  },
+  "evidence_refs": {
+    "artifact_root_path": "outputs/experiments/runs/exp4_real_plugin_generality__lean_direct_proof__seed1__27c39865ea0b/artifacts",
+    "environment_manifest": {
+      "created_at": "2026-06-29T00:00:00Z",
+      "environment_digest": "sha256:277aa71166a57fced996383699b1d2c47047a4813e4f5965155db77c2fb4d055",
+      "fixture_profile_digest": "sha256:e04ce1d14712c5e2e19d62952b3d3a965800fa8fe599c9241542475174b12e95",
+      "helper_sources_digest": "sha256:8c136823af4521d99a9ef5cec49b9752a776bc379837469bc4487e0e08ca3d2b",
+      "import_set_digest": "sha256:b39755d75744405056126bde010cf60e8e2954ac0f997d0c43215606d1023ff6",
+      "lake_executable": "C:\\Users\\32133\\AppData\\Local\\TokenShare\\LeanToolchain\\elan-home\\bin\\lake.exe",
+      "lake_version": "Lake version 5.0.0-df668f0 (Lean version 4.8.0)",
+      "lakefile_digest": "sha256:288f5b67bd53c82742d276e5ed67714279bdce920c54a6986c1b4a7ef5032d39",
+      "lean_executable": "C:\\Users\\32133\\AppData\\Local\\TokenShare\\LeanToolchain\\elan-home\\bin\\lean.exe",
+      "lean_version": "Lean (version 4.8.0, x86_64-w64-windows-gnu, commit df668f00e6c0, Release)",
+      "project_root": "E:\\TokenEcnomic\\TokenShare\\fixtures\\lean_proof_project",
+      "resource_limits": {
+        "max_output_bytes": 65536,
+        "timeout_seconds": 30
+      },
+      "schema_version": "lean_proof.environment_manifest.v1",
+      "toolchain_file_digest": "sha256:61561b06f5587e027815fac8f59bf6ca160dfbf3f7372fc6297664acfd85b8c0"
+    },
+    "event_log_path": "outputs/experiments/runs/exp4_real_plugin_generality__lean_direct_proof__seed1__27c39865ea0b/events/event_log.jsonl",
+    "fixture_manifest": {
+      "fixture_cases": {
+        "lean_decomposition_merge": {
+          "capabilities": [
+            "decomposition",
+            "child_proof",
+            "merge_proof"
+          ],
+          "case_id": "lean_decomposition_merge",
+          "expected_status": "accepted",
+          "fixture_file": "TokenShare/Fixtures/Decomposition.lean",
+          "theorem_name": "and_swap"
+        },
+        "lean_direct_proof": {
+          "capabilities": [
+            "direct_proof"
+          ],
+          "case_id": "lean_direct_proof",
+          "expected_status": "accepted",
+          "fixture_file": "TokenShare/Fixtures/Direct.lean",
+          "theorem_name": "one_eq_one"
+        },
+        "lean_invalid_proof": {
+          "capabilities": [
+            "direct_proof"
+          ],
+          "case_id": "lean_invalid_proof",
+          "expected_status": "rejected",
+          "fixture_file": "TokenShare/Fixtures/Invalid.lean",
+          "theorem_name": "invalid_proof"
+        },
+        "lean_unsupported_decomposition": {
+          "capabilities": [
+            "unsupported_decomposition"
+          ],
+          "case_id": "lean_unsupported_decomposition",
+          "expected_status": "unsupported_decomposition",
+          "fixture_file": "TokenShare/Fixtures/Unsupported.lean",
+          "theorem_name": "unsupported_goal_shape"
+        }
+      },
+      "helper_sources": {
+        "TokenShare/Fixtures/Decomposition.lean": "sha256:c974b8649b3eadf4738d39e3d852e8a958a5e75e2d751da01759e82cb2f919e0",
+        "TokenShare/Fixtures/Direct.lean": "sha256:06378524b81f22aa3ec652e96cc970be076aa390ab2ed6ada7f66f91013d8653",
+        "TokenShare/Fixtures/Invalid.lean": "sha256:45393c97a1a61a4dd5607da8bbfb73690657b9f1ba61e07d39180a581cfcde85",
+        "TokenShare/Fixtures/Unsupported.lean": "sha256:a6e79e5563ef4dccf0d7985e941c247d70e6e418ba0ba0bbc65785b33ac0619b",
+        "TokenShare/Helper.lean": "sha256:9e98398cb779e5fc5b55cd0a8e521a56f58475285ef6fcd977d73fc62238b02c",
+        "TokenShare/Merge.lean": "sha256:f149dc0171a55156891ecd415fc3889e9030e2b81ce53697b1e1c54a51252fc7",
+        "TokenShare/SplitRules.lean": "sha256:6716f703905abe0b230215ac20886eb96b8e929aec27fb9c78265a7450aee5c1"
+      },
+      "helper_sources_digest": "sha256:8c136823af4521d99a9ef5cec49b9752a776bc379837469bc4487e0e08ca3d2b",
+      "lakefile": "lakefile.lean",
+      "lakefile_digest": "sha256:288f5b67bd53c82742d276e5ed67714279bdce920c54a6986c1b4a7ef5032d39",
+      "manifest_digest": "sha256:46144ae0ebcc7c8b4c700c5f3c946676b4aa15ed4f4228bdd1f369e534482fb2",
+      "project_root": "E:\\TokenEcnomic\\TokenShare\\fixtures\\lean_proof_project",
+      "schema_version": "lean_proof.fixture_manifest.v1",
+      "toolchain_file": "lean-toolchain",
+      "toolchain_file_digest": "sha256:61561b06f5587e027815fac8f59bf6ca160dfbf3f7372fc6297664acfd85b8c0"
+    },
+    "source_fixture_event_log_path": "C:/Users/32133/AppData/Local/Temp/tokenshare_phase8_lean_direct_oo6zx5vk/events/task_lean_proof_fixture.jsonl"
+  },
+  "experiment_id": "exp4_real_plugin_generality",
+  "lean_proof": {
+    "checker_report_id": "lean_checker_report:lean_checker_request_direct_valid",
+    "environment_digest": "sha256:277aa71166a57fced996383699b1d2c47047a4813e4f5965155db77c2fb4d055",
+    "fixture_kind": "direct_proof",
+    "proof_digest": "sha256:8a9766f8f974f2916454f6f1b182cafb93e3cb18a3aff11364aa9682561ebcc4"
+  },
+  "plugin_id": "lean_proof",
+  "plugin_version": "0.1.0",
+  "run_id": "exp4_real_plugin_generality__lean_direct_proof__seed1__27c39865ea0b",
+  "schema_version": "phase8.case_report.v1",
+  "simulation": {
+    "ablation_mode": "FULL",
+    "clock_semantics": "fixed_logical_clock",
+    "executor_profile": "deterministic_local",
+    "fault_profile": "none",
+    "output_policy": {},
+    "profile_digest": "sha256:25a05a1062aec3ffcd58f95bfae4384f416611f2a7d09ade21dd25f01ce69635",
+    "profile_id": "exp4_real_plugin_generality:lean_direct_proof",
+    "schema_version": "phase8.simulation_profile.v1",
+    "seed": 1
+  },
+  "status": "passed"
+}

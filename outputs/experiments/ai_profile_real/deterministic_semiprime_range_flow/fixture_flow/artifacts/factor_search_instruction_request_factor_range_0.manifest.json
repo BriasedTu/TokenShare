@@ -1,0 +1,19 @@
+{
+  "artifact_id": "factor_search_instruction_request_factor_range_0",
+  "artifact_schema_id": "factorization.factor_search_instruction",
+  "artifact_schema_version": "v1",
+  "artifact_type": "ExecutionInstruction",
+  "content_hash": "sha256:609c08a1e128765853b2af7e6f61a897cd4796e6507105fbc9ba71919672071f",
+  "created_at": "2026-06-28T00:00:00Z",
+  "media_type": "application/json",
+  "metadata": {
+    "output_name": "execution_instruction",
+    "task_id": "task_factorization_fixture"
+  },
+  "schema_version": "ArtifactRef.v1",
+  "size_bytes": 650,
+  "source": {
+    "kind": "factorization_fixture"
+  },
+  "uri": "artifacts/factor_search_instruction_request_factor_range_0"
+}

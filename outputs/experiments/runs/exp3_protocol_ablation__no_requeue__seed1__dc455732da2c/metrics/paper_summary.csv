@@ -1,2 +1,0 @@
-experiment_id,case_id,plugin_id,plugin_version,executor_profile,simulation_profile,ablation_mode,status,blocker_kind,final_correctness,canonical_pollution_count,completion_rate,settlement_success,real_checker_evidence,ai_api_cost_estimate_total,event_count,artifact_count
-exp3_protocol_ablation,no_requeue,factorization,0.1.0,deterministic_local,exp3_protocol_ablation:no_requeue,NO_REQUEUE,inconclusive,,false,0,0.0,false,false,0,37,15

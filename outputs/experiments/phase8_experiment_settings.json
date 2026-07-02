@@ -1,0 +1,577 @@
+{
+  "case_report_paths": [
+    "outputs/experiments/runs/exp1_factorization_e2e__small_prime_direct_complete__seed1__ac7006b84025/case_report.json",
+    "outputs/experiments/runs/exp1_factorization_e2e__prime_range_flow__seed1__c73c8839aedf/case_report.json",
+    "outputs/experiments/runs/exp1_factorization_e2e__semiprime_range_flow__seed1__b847c060ad03/case_report.json",
+    "outputs/experiments/runs/exp1_factorization_e2e__extended_semiprime_benchmark__seed1__b1bc7c583762/case_report.json",
+    "outputs/experiments/runs/exp2_failure_recovery__invalid_found_factor__seed1__aac3adc515ca/case_report.json",
+    "outputs/experiments/runs/exp2_failure_recovery__false_no_factor_in_range__seed1__f439853facdf/case_report.json",
+    "outputs/experiments/runs/exp2_failure_recovery__parse_failure_raw_only_forbidden__seed1__b70053261858/case_report.json",
+    "outputs/experiments/runs/exp2_failure_recovery__worker_crash_expired_lease__seed1__72c8473d01fa/case_report.json",
+    "outputs/experiments/runs/exp2_failure_recovery__no_factor_recheck_budget_exceeded__seed1__4d774bc22d3a/case_report.json",
+    "outputs/experiments/runs/exp3_protocol_ablation__no_verification__seed1__170a33d7dbf2/case_report.json",
+    "outputs/experiments/runs/exp3_protocol_ablation__no_parser_policy__seed1__7e9574b3ce7e/case_report.json",
+    "outputs/experiments/runs/exp3_protocol_ablation__no_requeue__seed1__431f6cf18623/case_report.json",
+    "outputs/experiments/runs/exp3_protocol_ablation__no_all_required_merge_gate__seed1__973a7f04bfcd/case_report.json",
+    "outputs/experiments/runs/exp3_protocol_ablation__no_slot_integrity_check__seed1__0322992c56bf/case_report.json",
+    "outputs/experiments/runs/exp4_real_plugin_generality__factorization_semiprime_lifecycle__seed1__12108b7d55a0/case_report.json",
+    "outputs/experiments/runs/exp4_real_plugin_generality__lean_direct_proof__seed1__27c39865ea0b/case_report.json",
+    "outputs/experiments/runs/exp4_real_plugin_generality__lean_decomposition_merge__seed1__627cf97c6b9e/case_report.json"
+  ],
+  "experiment_cases": [
+    {
+      "case_id": "small_prime_direct_complete",
+      "expected_event_types": [
+        "REGISTRY_SNAPSHOT_RECORDED",
+        "EXECUTION_REQUEST_RECORDED",
+        "EXECUTION_SUBMISSION_RECORDED",
+        "VERIFICATION_RECORDED",
+        "CANONICAL_OUTPUTS_BOUND",
+        "SPLIT_STRATEGY_INVOCATION_RECORDED",
+        "EXPANSION_DECISION_RECORDED",
+        "CONTRIBUTION_STATE_CHANGED",
+        "SETTLEMENT_RECORDED"
+      ],
+      "expected_outputs": {
+        "prime_factors": [
+          "2"
+        ],
+        "target_n": "2"
+      },
+      "experiment_id": "exp1_factorization_e2e",
+      "fixture_name": "small_prime_direct_complete",
+      "metadata": {},
+      "plugin_id": "factorization",
+      "plugin_version": "0.1.0",
+      "schema_version": "phase8.experiment_case.v1"
+    },
+    {
+      "case_id": "prime_range_flow",
+      "expected_event_types": [
+        "REGISTRY_SNAPSHOT_RECORDED",
+        "EXECUTION_REQUEST_RECORDED",
+        "EXECUTION_SUBMISSION_RECORDED",
+        "VERIFICATION_RECORDED",
+        "CANONICAL_OUTPUTS_BOUND",
+        "SPLIT_STRATEGY_INVOCATION_RECORDED",
+        "DECOMPOSITION_PROPOSAL_RECORDED",
+        "EXPANSION_DECISION_RECORDED",
+        "MERGE_PLAN_RECORDED",
+        "TASK_EXPANDED",
+        "MERGE_TASK_LINK_RECORDED",
+        "MERGE_RECORDED",
+        "EXPECTED_OUTPUT_RESOLVED",
+        "CONTRIBUTION_STATE_CHANGED",
+        "SETTLEMENT_RECORDED"
+      ],
+      "expected_outputs": {
+        "prime_factors": [
+          "97"
+        ],
+        "target_n": "97"
+      },
+      "experiment_id": "exp1_factorization_e2e",
+      "fixture_name": "prime_range_flow",
+      "metadata": {},
+      "plugin_id": "factorization",
+      "plugin_version": "0.1.0",
+      "schema_version": "phase8.experiment_case.v1"
+    },
+    {
+      "case_id": "semiprime_range_flow",
+      "expected_event_types": [
+        "REGISTRY_SNAPSHOT_RECORDED",
+        "EXECUTION_REQUEST_RECORDED",
+        "EXECUTION_SUBMISSION_RECORDED",
+        "VERIFICATION_RECORDED",
+        "CANONICAL_OUTPUTS_BOUND",
+        "SPLIT_STRATEGY_INVOCATION_RECORDED",
+        "DECOMPOSITION_PROPOSAL_RECORDED",
+        "EXPANSION_DECISION_RECORDED",
+        "MERGE_PLAN_RECORDED",
+        "TASK_EXPANDED",
+        "MERGE_TASK_LINK_RECORDED",
+        "MERGE_RECORDED",
+        "EXPECTED_OUTPUT_RESOLVED",
+        "CONTRIBUTION_STATE_CHANGED",
+        "SETTLEMENT_RECORDED"
+      ],
+      "expected_outputs": {
+        "prime_factors": [
+          "7",
+          "13"
+        ],
+        "target_n": "91"
+      },
+      "experiment_id": "exp1_factorization_e2e",
+      "fixture_name": "semiprime_range_flow",
+      "metadata": {},
+      "plugin_id": "factorization",
+      "plugin_version": "0.1.0",
+      "schema_version": "phase8.experiment_case.v1"
+    },
+    {
+      "case_id": "extended_semiprime_benchmark",
+      "expected_event_types": [
+        "REGISTRY_SNAPSHOT_RECORDED",
+        "EXECUTION_REQUEST_RECORDED",
+        "EXECUTION_SUBMISSION_RECORDED",
+        "VERIFICATION_RECORDED",
+        "CANONICAL_OUTPUTS_BOUND",
+        "SPLIT_STRATEGY_INVOCATION_RECORDED",
+        "DECOMPOSITION_PROPOSAL_RECORDED",
+        "EXPANSION_DECISION_RECORDED",
+        "MERGE_PLAN_RECORDED",
+        "TASK_EXPANDED",
+        "MERGE_TASK_LINK_RECORDED",
+        "MERGE_RECORDED",
+        "EXPECTED_OUTPUT_RESOLVED",
+        "CONTRIBUTION_STATE_CHANGED",
+        "SETTLEMENT_RECORDED"
+      ],
+      "expected_outputs": {
+        "prime_factors": [
+          "83",
+          "97"
+        ],
+        "target_n": "8051"
+      },
+      "experiment_id": "exp1_factorization_e2e",
+      "fixture_name": "extended_semiprime_benchmark",
+      "metadata": {},
+      "plugin_id": "factorization",
+      "plugin_version": "0.1.0",
+      "schema_version": "phase8.experiment_case.v1"
+    },
+    {
+      "case_id": "invalid_found_factor",
+      "expected_event_types": [],
+      "expected_outputs": {
+        "target_n": "91"
+      },
+      "experiment_id": "exp2_failure_recovery",
+      "fixture_name": "invalid_found_factor",
+      "metadata": {},
+      "plugin_id": "factorization",
+      "plugin_version": "0.1.0",
+      "schema_version": "phase8.experiment_case.v1"
+    },
+    {
+      "case_id": "false_no_factor_in_range",
+      "expected_event_types": [],
+      "expected_outputs": {
+        "target_n": "91"
+      },
+      "experiment_id": "exp2_failure_recovery",
+      "fixture_name": "false_no_factor_in_range",
+      "metadata": {},
+      "plugin_id": "factorization",
+      "plugin_version": "0.1.0",
+      "schema_version": "phase8.experiment_case.v1"
+    },
+    {
+      "case_id": "parse_failure_raw_only_forbidden",
+      "expected_event_types": [],
+      "expected_outputs": {
+        "target_n": "91"
+      },
+      "experiment_id": "exp2_failure_recovery",
+      "fixture_name": "parse_failure_raw_only_forbidden",
+      "metadata": {},
+      "plugin_id": "factorization",
+      "plugin_version": "0.1.0",
+      "schema_version": "phase8.experiment_case.v1"
+    },
+    {
+      "case_id": "worker_crash_expired_lease",
+      "expected_event_types": [],
+      "expected_outputs": {
+        "target_n": "91"
+      },
+      "experiment_id": "exp2_failure_recovery",
+      "fixture_name": "worker_crash_expired_lease",
+      "metadata": {},
+      "plugin_id": "factorization",
+      "plugin_version": "0.1.0",
+      "schema_version": "phase8.experiment_case.v1"
+    },
+    {
+      "case_id": "no_factor_recheck_budget_exceeded",
+      "expected_event_types": [],
+      "expected_outputs": {
+        "target_n": "91"
+      },
+      "experiment_id": "exp2_failure_recovery",
+      "fixture_name": "no_factor_recheck_budget_exceeded",
+      "metadata": {},
+      "plugin_id": "factorization",
+      "plugin_version": "0.1.0",
+      "schema_version": "phase8.experiment_case.v1"
+    },
+    {
+      "case_id": "no_verification",
+      "expected_event_types": [],
+      "expected_outputs": {
+        "target_n": "91"
+      },
+      "experiment_id": "exp3_protocol_ablation",
+      "fixture_name": "no_verification",
+      "metadata": {
+        "ablation_mode": "NO_VERIFICATION"
+      },
+      "plugin_id": "factorization",
+      "plugin_version": "0.1.0",
+      "schema_version": "phase8.experiment_case.v1"
+    },
+    {
+      "case_id": "no_parser_policy",
+      "expected_event_types": [],
+      "expected_outputs": {
+        "target_n": "91"
+      },
+      "experiment_id": "exp3_protocol_ablation",
+      "fixture_name": "no_parser_policy",
+      "metadata": {
+        "ablation_mode": "NO_PARSER_POLICY"
+      },
+      "plugin_id": "factorization",
+      "plugin_version": "0.1.0",
+      "schema_version": "phase8.experiment_case.v1"
+    },
+    {
+      "case_id": "no_requeue",
+      "expected_event_types": [],
+      "expected_outputs": {
+        "target_n": "91"
+      },
+      "experiment_id": "exp3_protocol_ablation",
+      "fixture_name": "no_requeue",
+      "metadata": {
+        "ablation_mode": "NO_REQUEUE"
+      },
+      "plugin_id": "factorization",
+      "plugin_version": "0.1.0",
+      "schema_version": "phase8.experiment_case.v1"
+    },
+    {
+      "case_id": "no_all_required_merge_gate",
+      "expected_event_types": [],
+      "expected_outputs": {
+        "target_n": "91"
+      },
+      "experiment_id": "exp3_protocol_ablation",
+      "fixture_name": "no_all_required_merge_gate",
+      "metadata": {
+        "ablation_mode": "NO_ALL_REQUIRED_MERGE_GATE"
+      },
+      "plugin_id": "factorization",
+      "plugin_version": "0.1.0",
+      "schema_version": "phase8.experiment_case.v1"
+    },
+    {
+      "case_id": "no_slot_integrity_check",
+      "expected_event_types": [],
+      "expected_outputs": {
+        "target_n": "91"
+      },
+      "experiment_id": "exp3_protocol_ablation",
+      "fixture_name": "no_slot_integrity_check",
+      "metadata": {
+        "ablation_mode": "NO_SLOT_INTEGRITY_CHECK"
+      },
+      "plugin_id": "factorization",
+      "plugin_version": "0.1.0",
+      "schema_version": "phase8.experiment_case.v1"
+    },
+    {
+      "case_id": "factorization_semiprime_lifecycle",
+      "expected_event_types": [
+        "REGISTRY_SNAPSHOT_RECORDED",
+        "EXECUTION_REQUEST_RECORDED",
+        "EXECUTION_SUBMISSION_RECORDED",
+        "VERIFICATION_RECORDED",
+        "CANONICAL_OUTPUTS_BOUND",
+        "SPLIT_STRATEGY_INVOCATION_RECORDED",
+        "DECOMPOSITION_PROPOSAL_RECORDED",
+        "EXPANSION_DECISION_RECORDED",
+        "MERGE_PLAN_RECORDED",
+        "TASK_EXPANDED",
+        "MERGE_TASK_LINK_RECORDED",
+        "MERGE_RECORDED",
+        "EXPECTED_OUTPUT_RESOLVED",
+        "CONTRIBUTION_STATE_CHANGED",
+        "SETTLEMENT_RECORDED"
+      ],
+      "expected_outputs": {
+        "prime_factors": [
+          "7",
+          "13"
+        ],
+        "target_n": "91"
+      },
+      "experiment_id": "exp4_real_plugin_generality",
+      "fixture_name": "semiprime_range_flow",
+      "metadata": {},
+      "plugin_id": "factorization",
+      "plugin_version": "0.1.0",
+      "schema_version": "phase8.experiment_case.v1"
+    },
+    {
+      "case_id": "lean_direct_proof",
+      "expected_event_types": [],
+      "expected_outputs": {},
+      "experiment_id": "exp4_real_plugin_generality",
+      "fixture_name": "lean_direct_proof",
+      "metadata": {},
+      "plugin_id": "lean_proof",
+      "plugin_version": "0.1.0",
+      "schema_version": "phase8.experiment_case.v1"
+    },
+    {
+      "case_id": "lean_decomposition_merge",
+      "expected_event_types": [],
+      "expected_outputs": {},
+      "experiment_id": "exp4_real_plugin_generality",
+      "fixture_name": "lean_decomposition_merge",
+      "metadata": {},
+      "plugin_id": "lean_proof",
+      "plugin_version": "0.1.0",
+      "schema_version": "phase8.experiment_case.v1"
+    }
+  ],
+  "metrics_paths": [
+    "outputs/experiments/runs/exp1_factorization_e2e__small_prime_direct_complete__seed1__ac7006b84025/metrics/metrics.json",
+    "outputs/experiments/runs/exp1_factorization_e2e__prime_range_flow__seed1__c73c8839aedf/metrics/metrics.json",
+    "outputs/experiments/runs/exp1_factorization_e2e__semiprime_range_flow__seed1__b847c060ad03/metrics/metrics.json",
+    "outputs/experiments/runs/exp1_factorization_e2e__extended_semiprime_benchmark__seed1__b1bc7c583762/metrics/metrics.json",
+    "outputs/experiments/runs/exp2_failure_recovery__invalid_found_factor__seed1__aac3adc515ca/metrics/metrics.json",
+    "outputs/experiments/runs/exp2_failure_recovery__false_no_factor_in_range__seed1__f439853facdf/metrics/metrics.json",
+    "outputs/experiments/runs/exp2_failure_recovery__parse_failure_raw_only_forbidden__seed1__b70053261858/metrics/metrics.json",
+    "outputs/experiments/runs/exp2_failure_recovery__worker_crash_expired_lease__seed1__72c8473d01fa/metrics/metrics.json",
+    "outputs/experiments/runs/exp2_failure_recovery__no_factor_recheck_budget_exceeded__seed1__4d774bc22d3a/metrics/metrics.json",
+    "outputs/experiments/runs/exp3_protocol_ablation__no_verification__seed1__170a33d7dbf2/metrics/metrics.json",
+    "outputs/experiments/runs/exp3_protocol_ablation__no_parser_policy__seed1__7e9574b3ce7e/metrics/metrics.json",
+    "outputs/experiments/runs/exp3_protocol_ablation__no_requeue__seed1__431f6cf18623/metrics/metrics.json",
+    "outputs/experiments/runs/exp3_protocol_ablation__no_all_required_merge_gate__seed1__973a7f04bfcd/metrics/metrics.json",
+    "outputs/experiments/runs/exp3_protocol_ablation__no_slot_integrity_check__seed1__0322992c56bf/metrics/metrics.json",
+    "outputs/experiments/runs/exp4_real_plugin_generality__factorization_semiprime_lifecycle__seed1__12108b7d55a0/metrics/metrics.json",
+    "outputs/experiments/runs/exp4_real_plugin_generality__lean_direct_proof__seed1__27c39865ea0b/metrics/metrics.json",
+    "outputs/experiments/runs/exp4_real_plugin_generality__lean_decomposition_merge__seed1__627cf97c6b9e/metrics/metrics.json"
+  ],
+  "output_root": "outputs/experiments",
+  "run_manifest_paths": [
+    "outputs/experiments/runs/exp1_factorization_e2e__small_prime_direct_complete__seed1__ac7006b84025/run_manifest.json",
+    "outputs/experiments/runs/exp1_factorization_e2e__prime_range_flow__seed1__c73c8839aedf/run_manifest.json",
+    "outputs/experiments/runs/exp1_factorization_e2e__semiprime_range_flow__seed1__b847c060ad03/run_manifest.json",
+    "outputs/experiments/runs/exp1_factorization_e2e__extended_semiprime_benchmark__seed1__b1bc7c583762/run_manifest.json",
+    "outputs/experiments/runs/exp2_failure_recovery__invalid_found_factor__seed1__aac3adc515ca/run_manifest.json",
+    "outputs/experiments/runs/exp2_failure_recovery__false_no_factor_in_range__seed1__f439853facdf/run_manifest.json",
+    "outputs/experiments/runs/exp2_failure_recovery__parse_failure_raw_only_forbidden__seed1__b70053261858/run_manifest.json",
+    "outputs/experiments/runs/exp2_failure_recovery__worker_crash_expired_lease__seed1__72c8473d01fa/run_manifest.json",
+    "outputs/experiments/runs/exp2_failure_recovery__no_factor_recheck_budget_exceeded__seed1__4d774bc22d3a/run_manifest.json",
+    "outputs/experiments/runs/exp3_protocol_ablation__no_verification__seed1__170a33d7dbf2/run_manifest.json",
+    "outputs/experiments/runs/exp3_protocol_ablation__no_parser_policy__seed1__7e9574b3ce7e/run_manifest.json",
+    "outputs/experiments/runs/exp3_protocol_ablation__no_requeue__seed1__431f6cf18623/run_manifest.json",
+    "outputs/experiments/runs/exp3_protocol_ablation__no_all_required_merge_gate__seed1__973a7f04bfcd/run_manifest.json",
+    "outputs/experiments/runs/exp3_protocol_ablation__no_slot_integrity_check__seed1__0322992c56bf/run_manifest.json",
+    "outputs/experiments/runs/exp4_real_plugin_generality__factorization_semiprime_lifecycle__seed1__12108b7d55a0/run_manifest.json",
+    "outputs/experiments/runs/exp4_real_plugin_generality__lean_direct_proof__seed1__27c39865ea0b/run_manifest.json",
+    "outputs/experiments/runs/exp4_real_plugin_generality__lean_decomposition_merge__seed1__627cf97c6b9e/run_manifest.json"
+  ],
+  "runner_output_root": "outputs/experiments/runs",
+  "schema_version": "phase8.experiment_suite_settings.v1",
+  "seed": 1,
+  "settings_path": "outputs/experiments/phase8_experiment_settings.json",
+  "simulation_profiles": [
+    {
+      "ablation_mode": "FULL",
+      "clock_semantics": "fixed_logical_clock",
+      "executor_profile": "deterministic_local",
+      "fault_profile": "none",
+      "output_policy": {},
+      "profile_digest": "sha256:369ec30f4b6f2a00feae10d137a01746caa1254b4cbb0fdbbd2bff54ace69200",
+      "profile_id": "exp1_factorization_e2e:small_prime_direct_complete",
+      "schema_version": "phase8.simulation_profile.v1",
+      "seed": 1
+    },
+    {
+      "ablation_mode": "FULL",
+      "clock_semantics": "fixed_logical_clock",
+      "executor_profile": "deterministic_local",
+      "fault_profile": "none",
+      "output_policy": {},
+      "profile_digest": "sha256:6fdc42cb863aed9567c101743e4cbc795e18920bc544c7ba0e9370281ef94b7c",
+      "profile_id": "exp1_factorization_e2e:prime_range_flow",
+      "schema_version": "phase8.simulation_profile.v1",
+      "seed": 1
+    },
+    {
+      "ablation_mode": "FULL",
+      "clock_semantics": "fixed_logical_clock",
+      "executor_profile": "deterministic_local",
+      "fault_profile": "none",
+      "output_policy": {},
+      "profile_digest": "sha256:d606c8582487d9349bedccfc0686a8a644ce4d2b2ca2f99b7940217a8d595033",
+      "profile_id": "exp1_factorization_e2e:semiprime_range_flow",
+      "schema_version": "phase8.simulation_profile.v1",
+      "seed": 1
+    },
+    {
+      "ablation_mode": "FULL",
+      "clock_semantics": "fixed_logical_clock",
+      "executor_profile": "deterministic_local",
+      "fault_profile": "none",
+      "output_policy": {},
+      "profile_digest": "sha256:a5e2555e69dcdb0e897bb8281032716cc55f2e9d1a9bd4e0a7cf01635316c443",
+      "profile_id": "exp1_factorization_e2e:extended_semiprime_benchmark",
+      "schema_version": "phase8.simulation_profile.v1",
+      "seed": 1
+    },
+    {
+      "ablation_mode": "FULL",
+      "clock_semantics": "fixed_logical_clock",
+      "executor_profile": "deterministic_local",
+      "fault_profile": "invalid_found_factor",
+      "output_policy": {},
+      "profile_digest": "sha256:27ea56969874b31380aea5713eb6a1e36b2dddbd7853561b666c0d859bc32d6b",
+      "profile_id": "exp2_failure_recovery:invalid_found_factor",
+      "schema_version": "phase8.simulation_profile.v1",
+      "seed": 1
+    },
+    {
+      "ablation_mode": "FULL",
+      "clock_semantics": "fixed_logical_clock",
+      "executor_profile": "deterministic_local",
+      "fault_profile": "false_no_factor_in_range",
+      "output_policy": {},
+      "profile_digest": "sha256:ac34a6a15768349fc572ed1599dbffd413ba380800f64d4b473dd0a733c03ca0",
+      "profile_id": "exp2_failure_recovery:false_no_factor_in_range",
+      "schema_version": "phase8.simulation_profile.v1",
+      "seed": 1
+    },
+    {
+      "ablation_mode": "FULL",
+      "clock_semantics": "fixed_logical_clock",
+      "executor_profile": "deterministic_local",
+      "fault_profile": "parse_failure_raw_only_forbidden",
+      "output_policy": {},
+      "profile_digest": "sha256:2bb9f5d2cf89434ccce9ee5913d5c70cbf2b9b12a178ce5786df6ffd0e6568da",
+      "profile_id": "exp2_failure_recovery:parse_failure_raw_only_forbidden",
+      "schema_version": "phase8.simulation_profile.v1",
+      "seed": 1
+    },
+    {
+      "ablation_mode": "FULL",
+      "clock_semantics": "fixed_logical_clock",
+      "executor_profile": "deterministic_local",
+      "fault_profile": "worker_crash_expired_lease",
+      "output_policy": {},
+      "profile_digest": "sha256:1a18644509b746bf9fd7540d6ecc869f60887706100bd67508f334aa93d49452",
+      "profile_id": "exp2_failure_recovery:worker_crash_expired_lease",
+      "schema_version": "phase8.simulation_profile.v1",
+      "seed": 1
+    },
+    {
+      "ablation_mode": "FULL",
+      "clock_semantics": "fixed_logical_clock",
+      "executor_profile": "deterministic_local",
+      "fault_profile": "no_factor_recheck_budget_exceeded",
+      "output_policy": {},
+      "profile_digest": "sha256:3d26c2f4e0c91bf903f5a33db3c6aabb84480e30b055c910070ce126e91ed48c",
+      "profile_id": "exp2_failure_recovery:no_factor_recheck_budget_exceeded",
+      "schema_version": "phase8.simulation_profile.v1",
+      "seed": 1
+    },
+    {
+      "ablation_mode": "NO_VERIFICATION",
+      "clock_semantics": "fixed_logical_clock",
+      "executor_profile": "deterministic_local",
+      "fault_profile": "none",
+      "output_policy": {},
+      "profile_digest": "sha256:b25310648cf5389b4c18a5f775d38babcc251b4b4946f00dc260fdf3cd5c146b",
+      "profile_id": "exp3_protocol_ablation:no_verification",
+      "schema_version": "phase8.simulation_profile.v1",
+      "seed": 1
+    },
+    {
+      "ablation_mode": "NO_PARSER_POLICY",
+      "clock_semantics": "fixed_logical_clock",
+      "executor_profile": "deterministic_local",
+      "fault_profile": "none",
+      "output_policy": {},
+      "profile_digest": "sha256:8f96f259d3d64d372dda5c58f5dd02754a18db4f93ef21221c35cd3e4e8947af",
+      "profile_id": "exp3_protocol_ablation:no_parser_policy",
+      "schema_version": "phase8.simulation_profile.v1",
+      "seed": 1
+    },
+    {
+      "ablation_mode": "NO_REQUEUE",
+      "clock_semantics": "fixed_logical_clock",
+      "executor_profile": "deterministic_local",
+      "fault_profile": "none",
+      "output_policy": {},
+      "profile_digest": "sha256:e7c5803ceddb35c766402bacd79721839a043a9db44f8e8925e2a38f23835ad8",
+      "profile_id": "exp3_protocol_ablation:no_requeue",
+      "schema_version": "phase8.simulation_profile.v1",
+      "seed": 1
+    },
+    {
+      "ablation_mode": "NO_ALL_REQUIRED_MERGE_GATE",
+      "clock_semantics": "fixed_logical_clock",
+      "executor_profile": "deterministic_local",
+      "fault_profile": "none",
+      "output_policy": {},
+      "profile_digest": "sha256:33f791040bf0c3a77c070533a2d3ed3e1776b8790d7f7ae662d5d66517af7cba",
+      "profile_id": "exp3_protocol_ablation:no_all_required_merge_gate",
+      "schema_version": "phase8.simulation_profile.v1",
+      "seed": 1
+    },
+    {
+      "ablation_mode": "NO_SLOT_INTEGRITY_CHECK",
+      "clock_semantics": "fixed_logical_clock",
+      "executor_profile": "deterministic_local",
+      "fault_profile": "none",
+      "output_policy": {},
+      "profile_digest": "sha256:0db509163fea2c0193d85ed47e01b04a0f393dfccf124857361bf7b3a084e49b",
+      "profile_id": "exp3_protocol_ablation:no_slot_integrity_check",
+      "schema_version": "phase8.simulation_profile.v1",
+      "seed": 1
+    },
+    {
+      "ablation_mode": "FULL",
+      "clock_semantics": "fixed_logical_clock",
+      "executor_profile": "deterministic_local",
+      "fault_profile": "none",
+      "output_policy": {},
+      "profile_digest": "sha256:151181cef67b05f90429239b5d50c27f9198f8ca688f6ac0112772a773b506e0",
+      "profile_id": "exp4_real_plugin_generality:factorization_semiprime_lifecycle",
+      "schema_version": "phase8.simulation_profile.v1",
+      "seed": 1
+    },
+    {
+      "ablation_mode": "FULL",
+      "clock_semantics": "fixed_logical_clock",
+      "executor_profile": "deterministic_local",
+      "fault_profile": "none",
+      "output_policy": {},
+      "profile_digest": "sha256:25a05a1062aec3ffcd58f95bfae4384f416611f2a7d09ade21dd25f01ce69635",
+      "profile_id": "exp4_real_plugin_generality:lean_direct_proof",
+      "schema_version": "phase8.simulation_profile.v1",
+      "seed": 1
+    },
+    {
+      "ablation_mode": "FULL",
+      "clock_semantics": "fixed_logical_clock",
+      "executor_profile": "deterministic_local",
+      "fault_profile": "none",
+      "output_policy": {},
+      "profile_digest": "sha256:05bbb8968747ec65db40b56384767e597a705d61f8b561bcbe6e3d76994b3b46",
+      "profile_id": "exp4_real_plugin_generality:lean_decomposition_merge",
+      "schema_version": "phase8.simulation_profile.v1",
+      "seed": 1
+    }
+  ],
+  "suite_report_path": "outputs/experiments/phase8_suite_report.json",
+  "summary_csv_path": "outputs/experiments/phase8_suite_summary.csv",
+  "total_cases": 17
+}

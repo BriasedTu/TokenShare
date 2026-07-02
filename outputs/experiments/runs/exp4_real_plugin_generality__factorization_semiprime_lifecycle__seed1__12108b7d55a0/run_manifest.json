@@ -1,0 +1,36 @@
+{
+  "artifact_root": {
+    "artifact_count": 38,
+    "manifest_hash": "sha256:f262b694ee4ca2453287849949f2e3b78050274098d0b759a4dc796a3fa47a8e",
+    "path": "C:\\Users\\32133\\AppData\\Local\\Temp\\tokenshare_phase8_factorization_ics5xjy3\\artifacts"
+  },
+  "blocked_reason": null,
+  "case_id": "factorization_semiprime_lifecycle",
+  "clock_semantics": "fixed_logical_clock",
+  "created_at": "2026-07-02T06:22:44Z",
+  "event_log_ref": {
+    "event_count": 96,
+    "hash": "sha256:eb0b7b6c487d2cad6a96a410b184c583c088fb3a087b72bb8451a36efa9861bd",
+    "path": "outputs\\experiments\\runs\\exp4_real_plugin_generality__factorization_semiprime_lifecycle__seed1__12108b7d55a0\\events\\event_log.jsonl"
+  },
+  "executor_descriptors": [
+    {
+      "descriptor_digest": "sha256:412786c518c66dbee2c4a337572814bf8bfbb2125e5a502ef8fb465e57a49860",
+      "executor_id": "executor_factorization_fixture",
+      "executor_version": "0.1.0"
+    }
+  ],
+  "experiment_id": "exp4_real_plugin_generality",
+  "plugin_descriptors": [
+    {
+      "descriptor_digest": "sha256:b1bb02a3222fee65ac13208fb8b12fbc39d6c75c7ef5b315a124133bcbe5ac1c",
+      "plugin_id": "factorization",
+      "plugin_version": "0.1.0"
+    }
+  ],
+  "profile_digest": "sha256:151181cef67b05f90429239b5d50c27f9198f8ca688f6ac0112772a773b506e0",
+  "run_id": "exp4_real_plugin_generality__factorization_semiprime_lifecycle__seed1__12108b7d55a0",
+  "schema_version": "phase8.experiment_run_manifest.v1",
+  "seed": 1,
+  "status": "passed"
+}

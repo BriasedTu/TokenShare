@@ -1,0 +1,18 @@
+{
+  "artifact_id": "registry_snapshot_lean_proof",
+  "artifact_schema_id": "phase3.registry_snapshot",
+  "artifact_schema_version": "v1",
+  "artifact_type": "RegistrySnapshot",
+  "content_hash": "sha256:4443d975f4b742d36578a920960f750b7d4618d257e29e866f8af7ed5ba0d0b1",
+  "created_at": "2026-06-29T00:00:00Z",
+  "media_type": "application/json",
+  "metadata": {
+    "task_id": "task_lean_proof_fixture"
+  },
+  "schema_version": "ArtifactRef.v1",
+  "size_bytes": 2055,
+  "source": {
+    "kind": "protocol_engine"
+  },
+  "uri": "artifacts/registry_snapshot_lean_proof"
+}

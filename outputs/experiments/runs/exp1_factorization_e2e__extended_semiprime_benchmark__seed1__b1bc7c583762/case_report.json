@@ -1,0 +1,62 @@
+{
+  "artifact_root": {
+    "artifact_count": 62,
+    "manifest_hash": "sha256:76a2ef6a706143a72cb80aaaa9a39c7f00093998298f81e67f6fd7c2315584c1",
+    "path": "C:\\Users\\32133\\AppData\\Local\\Temp\\tokenshare_phase8_factorization_xrvf8qup\\artifacts"
+  },
+  "case_id": "extended_semiprime_benchmark",
+  "event_log_ref": {
+    "event_count": 148,
+    "hash": "sha256:cc93ce85950c63544258bd27aaf23094a0c7ecf2b84e287d226e50a867bd2f0d",
+    "path": "outputs\\experiments\\runs\\exp1_factorization_e2e__extended_semiprime_benchmark__seed1__b1bc7c583762\\events\\event_log.jsonl"
+  },
+  "evidence_refs": {
+    "artifact_root_path": "C:/Users/32133/AppData/Local/Temp/tokenshare_phase8_factorization_xrvf8qup/artifacts",
+    "event_log_path": "outputs/experiments/runs/exp1_factorization_e2e__extended_semiprime_benchmark__seed1__b1bc7c583762/events/event_log.jsonl",
+    "prime_factorization_ref": {
+      "artifact_id": "prime_factorization_factorization_merge_merge_plan_f68c7e4f9be70b640c8c7c925eda2e8570968cd58ad8554244c75172ecb25f6c_merge_unit_merge_plan_f68c7e4f9be70b640c8c7c925eda2e8570968cd58ad8554244c75172ecb25f6c",
+      "artifact_schema_id": "factorization.prime_factorization_result",
+      "artifact_schema_version": "v1",
+      "artifact_type": "canonical_output",
+      "content_hash": "sha256:f620ec4f1f2c284d27803d4da26219314ac0598491dc3d4c4c68cf3f2539ec91",
+      "created_at": "2026-06-28T00:00:00Z",
+      "media_type": "application/json",
+      "metadata": {
+        "output_name": "prime_factorization_result",
+        "task_id": "task_factorization_fixture"
+      },
+      "schema_version": "ArtifactRef.v1",
+      "size_bytes": 1016,
+      "source": {
+        "kind": "factorization_fixture"
+      },
+      "uri": "artifacts/prime_factorization_factorization_merge_merge_plan_f68c7e4f9be70b640c8c7c925eda2e8570968cd58ad8554244c75172ecb25f6c_merge_unit_merge_plan_f68c7e4f9be70b640c8c7c925eda2e8570968cd58ad8554244c75172ecb25f6c"
+    },
+    "source_fixture_event_log_path": "C:/Users/32133/AppData/Local/Temp/tokenshare_phase8_factorization_xrvf8qup/events/task_factorization_fixture.jsonl"
+  },
+  "experiment_id": "exp1_factorization_e2e",
+  "factorization": {
+    "prime_factors": [
+      "83",
+      "97"
+    ],
+    "range_execution_count": 8,
+    "target_n": "8051"
+  },
+  "plugin_id": "factorization",
+  "plugin_version": "0.1.0",
+  "run_id": "exp1_factorization_e2e__extended_semiprime_benchmark__seed1__b1bc7c583762",
+  "schema_version": "phase8.case_report.v1",
+  "simulation": {
+    "ablation_mode": "FULL",
+    "clock_semantics": "fixed_logical_clock",
+    "executor_profile": "deterministic_local",
+    "fault_profile": "none",
+    "output_policy": {},
+    "profile_digest": "sha256:a5e2555e69dcdb0e897bb8281032716cc55f2e9d1a9bd4e0a7cf01635316c443",
+    "profile_id": "exp1_factorization_e2e:extended_semiprime_benchmark",
+    "schema_version": "phase8.simulation_profile.v1",
+    "seed": 1
+  },
+  "status": "passed"
+}

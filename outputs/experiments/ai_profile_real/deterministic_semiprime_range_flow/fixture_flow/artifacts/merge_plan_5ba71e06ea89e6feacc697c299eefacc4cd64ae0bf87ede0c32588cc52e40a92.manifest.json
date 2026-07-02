@@ -1,0 +1,21 @@
+{
+  "artifact_id": "merge_plan_5ba71e06ea89e6feacc697c299eefacc4cd64ae0bf87ede0c32588cc52e40a92",
+  "artifact_schema_id": "phase4.merge_plan",
+  "artifact_schema_version": "v1",
+  "artifact_type": "MergePlan",
+  "content_hash": "sha256:6e7889cf2d89194ea275e640b35bdaba3a0a5a53ab2bee99073cc54858c5f298",
+  "created_at": "2026-06-28T00:00:00Z",
+  "media_type": "application/json",
+  "metadata": {
+    "expansion_decision_id": "expansion_decision:sha256_887faec470b00334e4d6f892a04db1f30e6d6d9a2d1889407659fd61fbe591a7",
+    "task_id": "task_factorization_fixture",
+    "unit_id": "unit_factor_integer_root"
+  },
+  "schema_version": "ArtifactRef.v1",
+  "size_bytes": 7797,
+  "source": {
+    "kind": "protocol_engine",
+    "stage": "staged"
+  },
+  "uri": "artifacts/merge_plan_5ba71e06ea89e6feacc697c299eefacc4cd64ae0bf87ede0c32588cc52e40a92"
+}

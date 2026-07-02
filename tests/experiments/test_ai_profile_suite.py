@@ -1,5 +1,6 @@
 import csv
 import json
+from pathlib import Path
 
 from tokenshare.experiments.ai_profile import (
     _build_ai_execution_request,
@@ -25,6 +26,25 @@ def test_ai_profile_suite_records_ai_executor_outputs_and_comparison(tmp_path) -
     assert report["total_profiles"] == 3
     assert report["summary_csv_path"]
     assert report["suite_report_path"]
+    assert report["settings_path"]
+
+    settings_text = open(report["settings_path"], encoding="utf-8").read()
+    assert "tokenshare-ai-profile-fake-key" not in settings_text
+    settings = json.loads(settings_text)
+    assert settings["schema_version"] == "phase8.ai_profile_settings.v1"
+    assert settings["seed"] == 11
+    assert settings["real_transport"] is False
+    assert settings["request_limits"]["max_tokens"] == 1024
+    assert settings["request_limits"]["timeout_seconds"] == 30
+    assert settings["ai_api_config"]["config_digest"]
+    assert settings["ai_api_config"]["entry_count"] >= 1
+    assert {
+        profile["case_id"] for profile in settings["profile_settings"]
+    } == {
+        "deterministic_semiprime_range_flow",
+        "ai_api_semiprime_range_flow",
+        "ai_api_parse_failure_raw_only",
+    }
 
     profiles = {item["case_id"]: item for item in report["profiles"]}
     deterministic = profiles["deterministic_semiprime_range_flow"]
@@ -34,6 +54,7 @@ def test_ai_profile_suite_records_ai_executor_outputs_and_comparison(tmp_path) -
     assert deterministic["executor_profile"] == "deterministic_local"
     assert deterministic["final_correctness"] is True
     assert deterministic["cost_estimate_total"] == 0
+    assert Path(deterministic["artifact_root_path"]).exists()
 
     assert ai_success["executor_profile"] == "ai_api"
     assert ai_success["final_correctness"] is True

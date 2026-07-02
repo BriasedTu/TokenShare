@@ -1,0 +1,36 @@
+{
+  "artifact_root": {
+    "artifact_count": 62,
+    "manifest_hash": "sha256:76a2ef6a706143a72cb80aaaa9a39c7f00093998298f81e67f6fd7c2315584c1",
+    "path": "C:\\Users\\32133\\AppData\\Local\\Temp\\tokenshare_phase8_factorization_xrvf8qup\\artifacts"
+  },
+  "blocked_reason": null,
+  "case_id": "extended_semiprime_benchmark",
+  "clock_semantics": "fixed_logical_clock",
+  "created_at": "2026-07-02T06:22:35Z",
+  "event_log_ref": {
+    "event_count": 148,
+    "hash": "sha256:cc93ce85950c63544258bd27aaf23094a0c7ecf2b84e287d226e50a867bd2f0d",
+    "path": "outputs\\experiments\\runs\\exp1_factorization_e2e__extended_semiprime_benchmark__seed1__b1bc7c583762\\events\\event_log.jsonl"
+  },
+  "executor_descriptors": [
+    {
+      "descriptor_digest": "sha256:412786c518c66dbee2c4a337572814bf8bfbb2125e5a502ef8fb465e57a49860",
+      "executor_id": "executor_factorization_fixture",
+      "executor_version": "0.1.0"
+    }
+  ],
+  "experiment_id": "exp1_factorization_e2e",
+  "plugin_descriptors": [
+    {
+      "descriptor_digest": "sha256:b1bb02a3222fee65ac13208fb8b12fbc39d6c75c7ef5b315a124133bcbe5ac1c",
+      "plugin_id": "factorization",
+      "plugin_version": "0.1.0"
+    }
+  ],
+  "profile_digest": "sha256:a5e2555e69dcdb0e897bb8281032716cc55f2e9d1a9bd4e0a7cf01635316c443",
+  "run_id": "exp1_factorization_e2e__extended_semiprime_benchmark__seed1__b1bc7c583762",
+  "schema_version": "phase8.experiment_run_manifest.v1",
+  "seed": 1,
+  "status": "passed"
+}

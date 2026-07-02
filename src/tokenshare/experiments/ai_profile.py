@@ -6,7 +6,6 @@ import csv
 import json
 import os
 from pathlib import Path
-from tempfile import TemporaryDirectory
 from typing import Any
 
 from tokenshare.core.models import Attempt, AttemptState, Lease, LeaseState, TaskState, TaskUnit
@@ -150,13 +149,24 @@ def run_ai_profile_suite(
     profiles = [deterministic, ai_success, ai_parse_failure]
     summary_path = root / "ai_profile_summary.csv"
     report_path = root / "ai_profile_suite_report.json"
+    settings_path = root / "ai_profile_settings.json"
     _write_summary_csv(summary_path, profiles)
+    _write_ai_profile_settings(
+        settings_path=settings_path,
+        output_root=root,
+        seed=seed,
+        ai_api_config=config,
+        real_transport=real_transport,
+        summary_csv_path=summary_path,
+        suite_report_path=report_path,
+    )
     report = {
         "schema_version": "phase8.ai_profile_suite_report.v1",
         "seed": seed,
         "total_profiles": len(profiles),
         "summary_csv_path": summary_path.as_posix(),
         "suite_report_path": report_path.as_posix(),
+        "settings_path": settings_path.as_posix(),
         "profiles": profiles,
         "deterministic_vs_ai_api": {
             "semiprime_range_flow": _comparison(
@@ -173,51 +183,51 @@ def run_ai_profile_suite(
 
 
 def _run_deterministic_semiprime(output_dir: Path) -> dict[str, Any]:
-    with TemporaryDirectory(prefix="tokenshare_ai_profile_det_") as temp_dir:
-        result = run_factorization_fixture_flow(
-            Path(temp_dir),
-            target_n=91,
-            requested_child_count=4,
-        )
-        output_dir.mkdir(parents=True, exist_ok=True)
-        copied_log = copy_event_log(result.ledger.path, output_dir / "events" / "event_log.jsonl")
-        factors = (
-            [
-                item["prime"]
-                for item in result.prime_factorization_result.to_dict()["prime_factors"]
-                for _ in range(int(item["exponent"]))
-            ]
-            if result.prime_factorization_result is not None
-            else []
-        )
-        return {
-            "schema_version": "phase8.ai_profile_case_report.v1",
-            "experiment_id": "exp1_factorization_e2e",
-            "case_id": "deterministic_semiprime_range_flow",
-            "fixture_name": "semiprime_range_flow",
-            "executor_profile": "deterministic_local",
-            "status": "passed",
-            "target_n": "91",
-            "prime_factors": factors,
-            "final_correctness": final_correctness_for_factorization("91", factors),
-            "parser_success_rate": 1.0,
-            "raw_output_count": 0,
-            "parsed_output_count": len(result.range_executions),
-            "parse_failure_count": 0,
-            "provider_attempt_count": 0,
-            "retry_count": 0,
-            "cost_estimate_total": 0,
-            "latency_ms_total": 0,
-            "providers": [],
-            "models": [],
-            "raw_output_refs": [],
-            "parsed_output_refs": [
-                item.range_output_ref.to_dict() for item in result.range_executions
-            ],
-            "parse_failure_refs": [],
-            "event_log_ref": copied_log,
-            "artifact_root_path": result.store.artifact_dir.as_posix(),
-        }
+    fixture_dir = output_dir / "fixture_flow"
+    result = run_factorization_fixture_flow(
+        fixture_dir,
+        target_n=91,
+        requested_child_count=4,
+    )
+    output_dir.mkdir(parents=True, exist_ok=True)
+    copied_log = copy_event_log(result.ledger.path, output_dir / "events" / "event_log.jsonl")
+    factors = (
+        [
+            item["prime"]
+            for item in result.prime_factorization_result.to_dict()["prime_factors"]
+            for _ in range(int(item["exponent"]))
+        ]
+        if result.prime_factorization_result is not None
+        else []
+    )
+    return {
+        "schema_version": "phase8.ai_profile_case_report.v1",
+        "experiment_id": "exp1_factorization_e2e",
+        "case_id": "deterministic_semiprime_range_flow",
+        "fixture_name": "semiprime_range_flow",
+        "executor_profile": "deterministic_local",
+        "status": "passed",
+        "target_n": "91",
+        "prime_factors": factors,
+        "final_correctness": final_correctness_for_factorization("91", factors),
+        "parser_success_rate": 1.0,
+        "raw_output_count": 0,
+        "parsed_output_count": len(result.range_executions),
+        "parse_failure_count": 0,
+        "provider_attempt_count": 0,
+        "retry_count": 0,
+        "cost_estimate_total": 0,
+        "latency_ms_total": 0,
+        "providers": [],
+        "models": [],
+        "raw_output_refs": [],
+        "parsed_output_refs": [
+            item.range_output_ref.to_dict() for item in result.range_executions
+        ],
+        "parse_failure_refs": [],
+        "event_log_ref": copied_log,
+        "artifact_root_path": result.store.artifact_dir.as_posix(),
+    }
 
 
 def _run_ai_semiprime_profile(
@@ -847,6 +857,87 @@ def _write_summary_csv(path: Path, profiles: list[dict[str, Any]]) -> None:
                     for column in AI_PROFILE_SUMMARY_COLUMNS
                 }
             )
+
+
+def _write_ai_profile_settings(
+    *,
+    settings_path: Path,
+    output_root: Path,
+    seed: int,
+    ai_api_config: AIAPIExecutorConfig,
+    real_transport: bool,
+    summary_csv_path: Path,
+    suite_report_path: Path,
+) -> None:
+    filtered_config = _strict_arithmetic_config(ai_api_config)
+    range_inputs = [item.to_dict() for item in _semiprime_range_inputs()]
+    body = {
+        "schema_version": "phase8.ai_profile_settings.v1",
+        "seed": seed,
+        "real_transport": real_transport,
+        "output_root": output_root.as_posix(),
+        "summary_csv_path": summary_csv_path.as_posix(),
+        "suite_report_path": suite_report_path.as_posix(),
+        "settings_path": settings_path.as_posix(),
+        "request_limits": {"timeout_seconds": 30, "max_tokens": 1024},
+        "soft_hints": {"temperature": 0.0},
+        "prompt_constraints": {"requires_json_mode": True, "format": "json"},
+        "parser_policy": {
+            "parser_id": "factorization.range_result.parser.v1",
+            "parse_required": True,
+            "raw_only_allowed": False,
+        },
+        "ai_api_config": {
+            "config_digest": ai_api_config.config_digest,
+            "provider_family": ai_api_config.provider_family,
+            "executor_id": ai_api_config.executor_id,
+            "selection_policy": dict(ai_api_config.selection_policy),
+            "defaults": dict(ai_api_config.defaults),
+            "entry_count": len(ai_api_config.entries),
+            "enabled_entry_ids": [
+                entry.entry_id for entry in ai_api_config.entries if entry.enabled
+            ],
+            "strict_arithmetic_entry_ids": [
+                entry.entry_id for entry in filtered_config.entries
+            ],
+            "entries": [entry.to_safe_dict() for entry in ai_api_config.entries],
+            "metadata": dict(ai_api_config.metadata),
+        },
+        "profile_settings": [
+            {
+                "case_id": "deterministic_semiprime_range_flow",
+                "experiment_id": "exp1_factorization_e2e",
+                "executor_profile": "deterministic_local",
+                "fixture_name": "semiprime_range_flow",
+                "target_n": "91",
+                "requested_child_count": 4,
+            },
+            {
+                "case_id": "ai_api_semiprime_range_flow",
+                "experiment_id": "exp1_factorization_e2e",
+                "executor_profile": "ai_api",
+                "fixture_name": "semiprime_range_flow",
+                "target_n": "91",
+                "range_inputs": range_inputs,
+            },
+            {
+                "case_id": "ai_api_parse_failure_raw_only",
+                "experiment_id": "exp2_failure_recovery",
+                "executor_profile": "ai_api",
+                "fixture_name": "parse_failure_raw_only_forbidden",
+                "target_n": "91",
+                "range_inputs": [range_inputs[1]],
+                "failure_stimulus": {
+                    "kind": "raw_text",
+                    "content_digest": digest_json("I found factor 7."),
+                },
+            },
+        ],
+    }
+    settings_path.write_text(
+        json.dumps(body, ensure_ascii=False, indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
 
 
 def _csv_value(value: Any) -> str:

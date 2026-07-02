@@ -3,14 +3,14 @@
   "artifact_schema_id": "phase3.prompt_package",
   "artifact_schema_version": "v1",
   "artifact_type": "PromptPackage",
-  "content_hash": "sha256:67ec872b1ea69adf2834414fe2f718cc92b35e3d785761a3eaa34cbb4d49b1af",
+  "content_hash": "sha256:c2f939c41fecb4726a4325eb930bfc0007a42562cac3693b6efafd59ece801e6",
   "created_at": "2026-06-30T00:00:00Z",
   "media_type": "application/json",
   "metadata": {
     "case_id": "ai_api_semiprime_range_flow"
   },
   "schema_version": "ArtifactRef.v1",
-  "size_bytes": 2632,
+  "size_bytes": 4973,
   "source": {
     "kind": "ai_profile_suite"
   },

@@ -3,7 +3,7 @@
   "artifact_schema_id": "phase7.raw_model_output",
   "artifact_schema_version": "v1",
   "artifact_type": "RawModelOutput",
-  "content_hash": "sha256:a8777d2aa0f6c130b74ac9a9adc6cf6e49f91e7eaa3a11e54007256384595af4",
+  "content_hash": "sha256:3e5bcc047c8990854a47a489739ae214fc96755bbe3aff8c6d095f0d536f736b",
   "created_at": "2026-06-30T00:00:00Z",
   "media_type": "application/json",
   "metadata": {
@@ -11,7 +11,7 @@
     "executor_id": "executor_ai_api"
   },
   "schema_version": "ArtifactRef.v1",
-  "size_bytes": 7596,
+  "size_bytes": 3260,
   "source": {
     "kind": "ai_api_executor",
     "request_id": "request_ai_api_semiprime_range_flow_4"

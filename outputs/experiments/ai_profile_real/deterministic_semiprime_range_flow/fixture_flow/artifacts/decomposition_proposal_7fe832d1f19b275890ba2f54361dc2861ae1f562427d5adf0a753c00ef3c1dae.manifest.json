@@ -1,0 +1,21 @@
+{
+  "artifact_id": "decomposition_proposal_7fe832d1f19b275890ba2f54361dc2861ae1f562427d5adf0a753c00ef3c1dae",
+  "artifact_schema_id": "phase4.decomposition_proposal",
+  "artifact_schema_version": "v1",
+  "artifact_type": "DecompositionProposal",
+  "content_hash": "sha256:dc03c51349d1ebd11beb882620ee65fb54934202b1c6133474f5871b285f8f17",
+  "created_at": "2026-06-28T00:00:00Z",
+  "media_type": "application/json",
+  "metadata": {
+    "expansion_decision_id": "expansion_decision:sha256_887faec470b00334e4d6f892a04db1f30e6d6d9a2d1889407659fd61fbe591a7",
+    "task_id": "task_factorization_fixture",
+    "unit_id": "unit_factor_integer_root"
+  },
+  "schema_version": "ArtifactRef.v1",
+  "size_bytes": 14336,
+  "source": {
+    "kind": "protocol_engine",
+    "stage": "staged"
+  },
+  "uri": "artifacts/decomposition_proposal_7fe832d1f19b275890ba2f54361dc2861ae1f562427d5adf0a753c00ef3c1dae"
+}
