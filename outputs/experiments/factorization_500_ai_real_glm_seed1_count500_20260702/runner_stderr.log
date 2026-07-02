@@ -1,0 +1,11 @@
+=src : 无法将“=src”项识别为 cmdlet、函数、脚本文件或可运行程序的名称。请检查名称的拼写，如果包括路径，请确保路径正确
+，然后再试一次。
+所在位置 行:1 字符: 1
++ ='src'; conda run -n tokenshare python -m tokenshare.experiments.run_ ...
++ ~~~~~~
+    + CategoryInfo          : ObjectNotFound: (=src:String) [], CommandNotFoundException
+    + FullyQualifiedErrorId : CommandNotFoundException
+ 
+C:\Users\32133\anaconda3\envs\tokenshare\python.exe: Error while finding module specification for 'tokenshare.experiments.run_factorization_500_ai' (ModuleNotFoundError: No module named 'tokenshare')
+
+ERROR conda.cli.main_run:execute(125): `conda run python -m tokenshare.experiments.run_factorization_500_ai --output-root outputs\experiments\factorization_500_ai_real_glm_seed1_count500_20260702 --count 500 --seed 1 --real-transport --entry-id glm_5_2__sf_key_1 --max-provider-attempts 1 --max-tokens 256 --timeout-seconds 20` failed. (See above for error)

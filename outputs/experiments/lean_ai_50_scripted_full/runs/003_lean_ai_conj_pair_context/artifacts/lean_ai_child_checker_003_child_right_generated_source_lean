@@ -1,0 +1,6 @@
+import Init
+set_option autoImplicit false
+namespace TokenShareGenerated
+theorem lean_ai_conj_pair_context_right (P Q : Prop) (hP : P) (hQ : Q) (R S : Prop) (hRS : R ∧ S) : Q := by
+  exact hQ
+end TokenShareGenerated

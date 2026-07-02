@@ -1,0 +1,19 @@
+{
+  "artifact_id": "prompt_018_child_left",
+  "artifact_schema_id": "phase3.prompt_package",
+  "artifact_schema_version": "v1",
+  "artifact_type": "PromptPackage",
+  "content_hash": "sha256:d1d77f50b807455b7335295ef6a08416fa25e6c150c60789e7784428f72eff32",
+  "created_at": "2026-07-02T00:00:00Z",
+  "media_type": "application/json",
+  "metadata": {
+    "child_logical_key": "child:left"
+  },
+  "schema_version": "ArtifactRef.v1",
+  "size_bytes": 3171,
+  "source": {
+    "case_id": "lean_ai_conj_predicate_noise",
+    "kind": "lean_ai_benchmark"
+  },
+  "uri": "artifacts/prompt_018_child_left"
+}

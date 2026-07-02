@@ -1,0 +1,6 @@
+import Init
+set_option autoImplicit false
+namespace TokenShareGenerated
+theorem lean_ai_conj_three_prop_chain_right (P Q : Prop) (hP : P) (hQ : Q) (R S T : Prop) (hRST : R → S → T) : Q := by
+  exact hQ
+end TokenShareGenerated

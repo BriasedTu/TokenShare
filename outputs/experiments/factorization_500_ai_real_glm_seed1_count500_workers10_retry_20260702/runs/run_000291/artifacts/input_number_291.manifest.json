@@ -1,0 +1,18 @@
+{
+  "artifact_id": "input_number_291",
+  "artifact_schema_id": "phase8.factorization_500_ai_input",
+  "artifact_schema_version": "v1",
+  "artifact_type": "Factorization500Input",
+  "content_hash": "sha256:929c26539fbd04a711e1d0c0cd72ba031a924beb6640b04cd2e477d1fcd5676e",
+  "created_at": "2026-07-02T00:00:00Z",
+  "media_type": "application/json",
+  "metadata": {
+    "input_index": 291
+  },
+  "schema_version": "ArtifactRef.v1",
+  "size_bytes": 96,
+  "source": {
+    "kind": "factorization_500_ai_benchmark"
+  },
+  "uri": "artifacts/input_number_291"
+}

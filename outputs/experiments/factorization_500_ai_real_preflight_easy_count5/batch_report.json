@@ -1,0 +1,42 @@
+{
+  "accuracy": 0.0,
+  "ai_api_config_digest": "sha256:978c118217c1ac292005095dbd1f15ad7dd1ee737a2943228dab56477a6ecff8",
+  "attempted_count": 5,
+  "batch_report_path": "outputs/experiments/factorization_500_ai_real_preflight_easy_count5/batch_report.json",
+  "correct_count": 0,
+  "cost_estimate_total": 0.0,
+  "executor_error_count": 5,
+  "failed_count": 5,
+  "failure_breakdown": {
+    "executor_error": 5
+  },
+  "input_numbers_path": "outputs/experiments/factorization_500_ai_real_preflight_easy_count5/input_numbers.jsonl",
+  "latency_ms_total": 301059,
+  "models": [],
+  "number_policy": {
+    "kind": "deterministic_semiprime",
+    "max_exclusive": "1000000000",
+    "min_exclusive": "1000000",
+    "prime_factor_max_inclusive": "5000",
+    "prime_factor_min_exclusive": "1000"
+  },
+  "oracle_answers_path": "outputs/experiments/factorization_500_ai_real_preflight_easy_count5/oracle_answers.jsonl",
+  "parse_failure_count": 0,
+  "parsed_output_count": 0,
+  "parser_success_rate": 0.0,
+  "per_number_results_path": "outputs/experiments/factorization_500_ai_real_preflight_easy_count5/per_number_results.jsonl",
+  "per_number_summary_path": "outputs/experiments/factorization_500_ai_real_preflight_easy_count5/per_number_summary.csv",
+  "provider_attempt_count": 5,
+  "providers": [],
+  "raw_output_count": 0,
+  "requested_count": 5,
+  "retry_count": 0,
+  "schema_version": "phase8.factorization_500_ai_report.v1",
+  "seed": 1,
+  "settings_path": "outputs/experiments/factorization_500_ai_real_preflight_easy_count5/factorization_500_ai_settings.json",
+  "usage": {
+    "completion_tokens": 0,
+    "prompt_tokens": 0,
+    "total_tokens": 0
+  }
+}

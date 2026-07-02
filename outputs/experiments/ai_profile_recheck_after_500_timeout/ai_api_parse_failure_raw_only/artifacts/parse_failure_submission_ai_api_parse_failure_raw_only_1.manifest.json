@@ -1,0 +1,19 @@
+{
+  "artifact_id": "parse_failure_submission_ai_api_parse_failure_raw_only_1",
+  "artifact_schema_id": "phase3.parse_failure_report",
+  "artifact_schema_version": "v1",
+  "artifact_type": "ParseFailureReport",
+  "content_hash": "sha256:290db0ef66f8a493cce5041e5a2673d0c8f77ae7dee9fa6e535362fd4c3ed99a",
+  "created_at": "2026-06-30T00:00:00Z",
+  "media_type": "application/json",
+  "metadata": {
+    "executor_id": "executor_ai_api"
+  },
+  "schema_version": "ArtifactRef.v1",
+  "size_bytes": 568,
+  "source": {
+    "kind": "ai_api_executor",
+    "request_id": "request_ai_api_parse_failure_raw_only_1"
+  },
+  "uri": "artifacts/parse_failure_submission_ai_api_parse_failure_raw_only_1"
+}

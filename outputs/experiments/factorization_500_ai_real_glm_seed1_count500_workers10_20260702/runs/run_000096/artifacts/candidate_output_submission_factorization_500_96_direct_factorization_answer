@@ -1,0 +1,1 @@
+{"answer_digest":"sha256:016c78e7c1f57ceece24f1b6b3cc0deb785d9fc119bb1212ef1fd88ac6c18b3e","created_at":"2026-07-02T00:00:00Z","prime_factors":[{"exponent":1,"prime":"1019"},{"exponent":1,"prime":"1723"}],"schema_version":"factorization.direct_factorization_answer.v1","target_n":"1755737"}

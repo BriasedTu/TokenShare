@@ -1,0 +1,4 @@
+C:\Users\32133\AppData\Local\Temp\tokenshare_lean_81hdhyft\TokenShareGeneratedCheck.lean:4:71: warning: unused variable `hqp`
+note: this linter can be disabled with `set_option linter.unusedVariables false`
+C:\Users\32133\AppData\Local\Temp\tokenshare_lean_81hdhyft\TokenShareGeneratedCheck.lean:4:119: warning: unused variable `hr`
+note: this linter can be disabled with `set_option linter.unusedVariables false`

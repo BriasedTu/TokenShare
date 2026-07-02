@@ -1,0 +1,18 @@
+{
+  "artifact_id": "prompt_factorization_500_376",
+  "artifact_schema_id": "phase3.prompt_package",
+  "artifact_schema_version": "v1",
+  "artifact_type": "PromptPackage",
+  "content_hash": "sha256:348668cca476e28b0b5559d88912fcbba1893ff6a2a79c3b1e754ca7a8e9bd95",
+  "created_at": "2026-07-02T00:00:00Z",
+  "media_type": "application/json",
+  "metadata": {
+    "input_index": 376
+  },
+  "schema_version": "ArtifactRef.v1",
+  "size_bytes": 1457,
+  "source": {
+    "kind": "factorization_500_ai_benchmark"
+  },
+  "uri": "artifacts/prompt_factorization_500_376"
+}

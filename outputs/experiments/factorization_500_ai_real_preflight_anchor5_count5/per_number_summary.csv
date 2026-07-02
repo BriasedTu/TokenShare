@@ -1,0 +1,6 @@
+input_index,target_n,status,final_correctness,failure_kind,factor_expression,parser_success,raw_output_count,parsed_output_count,parse_failure_count,provider_attempt_count,retry_count,usage_total_tokens,cost_estimate,latency_ms,providers,models
+0,3269971,passed,true,,1019 * 3209,true,1,1,0,1,0,,0.0019431,36048,"[""siliconflow""]","[""MiniMaxAI/MiniMax-M2.5""]"
+1,3532873,failed,false,executor_error,,false,0,0,0,1,0,,0.0,45118,[],[]
+2,3661267,failed,false,executor_error,,false,0,0,0,1,0,,0.0,45421,[],[]
+3,4575721,passed,true,,1013 * 4517,true,1,1,0,1,0,,0.0021123,31558,"[""siliconflow""]","[""MiniMaxAI/MiniMax-M2.5""]"
+4,4733749,passed,true,,1013 * 4673,true,1,1,0,1,0,,0.0021579,37813,"[""siliconflow""]","[""MiniMaxAI/MiniMax-M2.5""]"

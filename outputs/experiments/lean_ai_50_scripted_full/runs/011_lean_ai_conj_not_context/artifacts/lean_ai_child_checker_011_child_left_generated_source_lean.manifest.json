@@ -1,0 +1,19 @@
+{
+  "artifact_id": "lean_ai_child_checker_011_child_left_generated_source_lean",
+  "artifact_schema_id": "lean_proof.generated_source",
+  "artifact_schema_version": "v1",
+  "artifact_type": "LeanGeneratedSource",
+  "content_hash": "sha256:0bbabf6ee93ba6505c2098d7ce262a69cb7adb1e7d11854f3b91fb44158aa210",
+  "created_at": "2026-07-02T00:00:00Z",
+  "media_type": "text/x-lean",
+  "metadata": {
+    "checker_mode": "child_proof"
+  },
+  "schema_version": "ArtifactRef.v1",
+  "size_bytes": 217,
+  "source": {
+    "kind": "lean_checker",
+    "request_id": "lean_ai_child_checker_011_child_left"
+  },
+  "uri": "artifacts/lean_ai_child_checker_011_child_left_generated_source_lean"
+}

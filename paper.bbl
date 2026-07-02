@@ -1,0 +1,306 @@
+\begin{thebibliography}{34}
+\providecommand{\natexlab}[1]{#1}
+\providecommand{\url}[1]{\texttt{#1}}
+\expandafter\ifx\csname urlstyle\endcsname\relax
+  \providecommand{\doi}[1]{doi: #1}\else
+  \providecommand{\doi}{doi: \begingroup \urlstyle{rm}\Url}\fi
+
+\bibitem[Anderson(2020)]{anderson2020boinc}
+David~P. Anderson.
+\newblock {BOINC}: A platform for volunteer computing.
+\newblock \emph{Journal of Grid Computing}, 18:\penalty0 99--122, 2020.
+\newblock \doi{10.1007/s10723-019-09497-9}.
+\newblock URL \url{https://doi.org/10.1007/s10723-019-09497-9}.
+
+\bibitem[Buterin(2014)]{buterin2014ethereum}
+Vitalik Buterin.
+\newblock Ethereum: A next-generation smart contract and decentralized
+  application platform, 2014.
+\newblock URL \url{https://ethereum.org/en/whitepaper/}.
+
+\bibitem[Dawid and Skene(1979)]{dawid1979maximum}
+A.~P. Dawid and A.~M. Skene.
+\newblock Maximum likelihood estimation of observer error-rates using the em
+  algorithm.
+\newblock \emph{Applied Statistics}, 28\penalty0 (1):\penalty0 20--28, 1979.
+\newblock \doi{10.2307/2346806}.
+\newblock URL \url{https://doi.org/10.2307/2346806}.
+
+\bibitem[Dean and Ghemawat(2004)]{dean2004mapreduce}
+Jeffrey Dean and Sanjay Ghemawat.
+\newblock Mapreduce: Simplified data processing on large clusters.
+\newblock In \emph{Proceedings of the Sixth Symposium on Operating System
+  Design and Implementation}, pages 137--150, 2004.
+\newblock URL
+  \url{https://www.usenix.org/conference/osdi-04/mapreduce-simplified-data-processing-large-clusters}.
+
+\bibitem[Dias et~al.(2006)Dias, Zlot, Kalra, and Stentz]{dias2006market}
+M.~Bernardine Dias, Robert Zlot, Nidhi Kalra, and Anthony Stentz.
+\newblock Market-based multirobot coordination: A survey and analysis.
+\newblock \emph{Proceedings of the IEEE}, 94\penalty0 (7):\penalty0 1257--1270,
+  2006.
+\newblock \doi{10.1109/JPROC.2006.876939}.
+\newblock URL \url{https://doi.org/10.1109/JPROC.2006.876939}.
+
+\bibitem[Fitzi et~al.(2022)Fitzi, Kiayias, Panagiotakos, and
+  Russell]{fitzi2022ofelimos}
+Matthias Fitzi, Aggelos Kiayias, Giorgos Panagiotakos, and Alexander Russell.
+\newblock Ofelimos: Combinatorial optimization via proof-of-useful-work: A
+  provably secure blockchain protocol.
+\newblock In \emph{Advances in Cryptology - CRYPTO 2022}, volume 13508 of
+  \emph{Lecture Notes in Computer Science}, pages 339--369. Springer, 2022.
+\newblock \doi{10.1007/978-3-031-15979-4_12}.
+\newblock URL \url{https://doi.org/10.1007/978-3-031-15979-4_12}.
+
+\bibitem[Gerkey and Mataric(2004)]{gerkey2004formal}
+Brian~P. Gerkey and Maja~J. Mataric.
+\newblock A formal analysis and taxonomy of task allocation in multi-robot
+  systems.
+\newblock \emph{The International Journal of Robotics Research}, 23\penalty0
+  (9):\penalty0 939--954, 2004.
+\newblock \doi{10.1177/0278364904045564}.
+\newblock URL \url{https://doi.org/10.1177/0278364904045564}.
+
+\bibitem[Hong et~al.(2024)Hong, Zhuge, Chen, Zheng, Cheng, Zhang, Wang, Wang,
+  Yau, Lin, et~al.]{hong2024metagpt}
+Sirui Hong, Mingchen Zhuge, Jiaqi Chen, Xiawu Zheng, Yuheng Cheng, Ceyao Zhang,
+  Jinlin Wang, Zili Wang, Steven Ka~Shing Yau, Zijuan Lin, et~al.
+\newblock {MetaGPT}: Meta programming for a multi-agent collaborative
+  framework.
+\newblock In \emph{International Conference on Learning Representations}, 2024.
+\newblock URL \url{https://openreview.net/forum?id=VtmBAGCN7o}.
+
+\bibitem[Hovy et~al.(2013)Hovy, Berg-Kirkpatrick, Vaswani, and
+  Hovy]{hovy2013mace}
+Dirk Hovy, Taylor Berg-Kirkpatrick, Ashish Vaswani, and Eduard Hovy.
+\newblock Learning whom to trust with mace.
+\newblock In \emph{Proceedings of the 2013 Conference of the North American
+  Chapter of the Association for Computational Linguistics: Human Language
+  Technologies}, pages 1120--1130, 2013.
+\newblock URL \url{https://aclanthology.org/N13-1132/}.
+
+\bibitem[Joshi et~al.(2020)Joshi, Santy, Budhiraja, Bali, and
+  Choudhury]{joshi2020state}
+Pratik Joshi, Sebastin Santy, Amar Budhiraja, Kalika Bali, and Monojit
+  Choudhury.
+\newblock The state and fate of linguistic diversity and inclusion in the {NLP}
+  world.
+\newblock In \emph{Proceedings of the 58th Annual Meeting of the Association
+  for Computational Linguistics}, pages 6282--6293, 2020.
+\newblock \doi{10.18653/v1/2020.acl-main.560}.
+\newblock URL \url{https://aclanthology.org/2020.acl-main.560/}.
+
+\bibitem[Khot et~al.(2023)Khot, Trivedi, Finlayson, Fu, Richardson, Clark, and
+  Sabharwal]{khot2023decomposed}
+Tushar Khot, Harsh Trivedi, Matthew Finlayson, Yao Fu, Kyle Richardson, Peter
+  Clark, and Ashish Sabharwal.
+\newblock Decomposed prompting: A modular approach for solving complex tasks.
+\newblock In \emph{International Conference on Learning Representations}, 2023.
+\newblock URL \url{https://openreview.net/forum?id=_nGgzQjzaRy}.
+
+\bibitem[Kittur et~al.(2011)Kittur, Smus, Khamkar, and
+  Kraut]{kittur2011crowdforge}
+Aniket Kittur, Boris Smus, Susheel Khamkar, and Robert~E. Kraut.
+\newblock Crowdforge: Crowdsourcing complex work.
+\newblock In \emph{Proceedings of the 24th Annual ACM Symposium on User
+  Interface Software and Technology}, pages 43--52, 2011.
+\newblock \doi{10.1145/2047196.2047202}.
+\newblock URL \url{https://doi.org/10.1145/2047196.2047202}.
+
+\bibitem[Kulkarni et~al.(2011)Kulkarni, Can, and
+  Hartmann]{kulkarni2011turkomatic}
+Anand~P. Kulkarni, Matthew Can, and Bjoern Hartmann.
+\newblock Turkomatic: Automatic recursive task and workflow design for
+  mechanical turk.
+\newblock In \emph{CHI Extended Abstracts on Human Factors in Computing
+  Systems}, pages 2053--2058, 2011.
+\newblock \doi{10.1145/1979742.1979827}.
+\newblock URL \url{https://doi.org/10.1145/1979742.1979827}.
+
+\bibitem[Li et~al.(2023)Li, Hammoud, Itani, Khizbullin, and
+  Ghanem]{li2023camel}
+Guohao Li, Hasan Abed Al~Kader Hammoud, Hani Itani, Dmitrii Khizbullin, and
+  Bernard Ghanem.
+\newblock {CAMEL}: Communicative agents for mind exploration of large language
+  model society, 2023.
+\newblock URL \url{https://arxiv.org/abs/2303.17760}.
+
+\bibitem[Li et~al.(2019)Li, Weng, Yang, Lu, Zhang, Hou, Liu, Xiang, and
+  Deng]{li2018crowdbc}
+Ming Li, Jian Weng, Anjia Yang, Wei Lu, Yue Zhang, Lin Hou, Jia-Nan Liu, Yang
+  Xiang, and Robert~H. Deng.
+\newblock {CrowdBC}: A blockchain-based decentralized framework for
+  crowdsourcing.
+\newblock \emph{IEEE Transactions on Parallel and Distributed Systems},
+  30\penalty0 (6):\penalty0 1251--1266, 2019.
+\newblock \doi{10.1109/TPDS.2018.2881735}.
+\newblock URL \url{https://doi.org/10.1109/TPDS.2018.2881735}.
+
+\bibitem[Liang et~al.(2022)Liang, Li, and Shin]{liang2022decentralizedhit}
+Yihuai Liang, Yan Li, and Byeong-Seok Shin.
+\newblock Decentralized crowdsourcing for human intelligence tasks with
+  efficient on-chain cost.
+\newblock \emph{Proceedings of the VLDB Endowment}, 15\penalty0 (9):\penalty0
+  1875--1888, 2022.
+\newblock \doi{10.14778/3538598.3538609}.
+\newblock URL \url{https://www.vldb.org/pvldb/vol15/p1875-shin.pdf}.
+
+\bibitem[Moritz et~al.(2018)Moritz, Nishihara, Wang, Tumanov, Liaw, Liang,
+  Elibol, Yang, Paul, Jordan, and Stoica]{moritz2018ray}
+Philipp Moritz, Robert Nishihara, Stephanie Wang, Alexey Tumanov, Richard Liaw,
+  Eric Liang, Melih Elibol, Zongheng Yang, William Paul, Michael~I. Jordan, and
+  Ion Stoica.
+\newblock Ray: A distributed framework for emerging {AI} applications.
+\newblock In \emph{Proceedings of the 13th USENIX Symposium on Operating
+  Systems Design and Implementation}, pages 561--577, 2018.
+\newblock URL
+  \url{https://www.usenix.org/conference/osdi18/presentation/moritz}.
+
+\bibitem[Nakamoto(2008)]{nakamoto2008bitcoin}
+Satoshi Nakamoto.
+\newblock Bitcoin: A peer-to-peer electronic cash system, 2008.
+\newblock URL \url{https://bitcoin.org/bitcoin.pdf}.
+
+\bibitem[Nekoto et~al.(2020)Nekoto, Marivate, Matsila, Fasubaa, Kolawole,
+  Fagbohungbe, Akinola, Muhammad, Kabongo, Osei,
+  et~al.]{nekoto2020participatory}
+Wilhelmina Nekoto, Vukosi Marivate, Tshinondiwa Matsila, Timi Fasubaa, Tajudeen
+  Kolawole, Taiwo Fagbohungbe, Solomon~Oluwole Akinola, Shamsuddee~Hassan
+  Muhammad, Salomon Kabongo, Salomey Osei, et~al.
+\newblock Participatory research for low-resourced machine translation: A case
+  study in african languages.
+\newblock In \emph{Findings of the Association for Computational Linguistics:
+  EMNLP 2020}, pages 2144--2160, 2020.
+\newblock \doi{10.18653/v1/2020.findings-emnlp.195}.
+\newblock URL \url{https://aclanthology.org/2020.findings-emnlp.195/}.
+
+\bibitem[{NLLB Team} et~al.(2022){NLLB Team}, Costa-jussa, Cross, Celebi,
+  Elbayad, Heafield, Heffernan, Kalbassi, Lam, Licht, Maillard, Sun, Wang,
+  Wenzek, Youngblood, et~al.]{nllb2022}
+{NLLB Team}, Marta~R. Costa-jussa, James Cross, Onur Celebi, Maha Elbayad,
+  Kenneth Heafield, Kevin Heffernan, Elahe Kalbassi, Janice Lam, Daniel Licht,
+  Jean Maillard, Anna Sun, Skyler Wang, Guillaume Wenzek, Al~Youngblood, et~al.
+\newblock No language left behind: Scaling human-centered machine translation.
+\newblock \emph{arXiv preprint arXiv:2207.04672}, 2022.
+\newblock \doi{10.48550/arXiv.2207.04672}.
+\newblock URL \url{https://arxiv.org/abs/2207.04672}.
+
+\bibitem[Ousterhout et~al.(2013)Ousterhout, Wendell, Zaharia, and
+  Stoica]{ousterhout2013sparrow}
+Kay Ousterhout, Patrick Wendell, Matei Zaharia, and Ion Stoica.
+\newblock Sparrow: Distributed, low latency scheduling.
+\newblock In \emph{Proceedings of the Twenty-Fourth ACM Symposium on Operating
+  Systems Principles}, pages 69--84, 2013.
+\newblock \doi{10.1145/2517349.2522716}.
+\newblock URL \url{https://doi.org/10.1145/2517349.2522716}.
+
+\bibitem[Qian et~al.(2023)Qian, Cong, Yang, Chen, Su, Xu, Liu, and
+  Sun]{qian2023chatdev}
+Chen Qian, Xin Cong, Cheng Yang, Weize Chen, Yusheng Su, Juyuan Xu, Zhiyuan
+  Liu, and Maosong Sun.
+\newblock {ChatDev}: Communicative agents for software development, 2023.
+\newblock URL \url{https://arxiv.org/abs/2307.07924}.
+
+\bibitem[Ratner et~al.(2017)Ratner, Bach, Ehrenberg, Fries, Wu, and
+  Re]{ratner2017snorkel}
+Alexander Ratner, Stephen~H. Bach, Henry Ehrenberg, Jason Fries, Sen Wu, and
+  Christopher Re.
+\newblock Snorkel: Rapid training data creation with weak supervision.
+\newblock \emph{Proceedings of the VLDB Endowment}, 11\penalty0 (3):\penalty0
+  269--282, 2017.
+\newblock \doi{10.14778/3157794.3157797}.
+\newblock URL \url{https://doi.org/10.14778/3157794.3157797}.
+
+\bibitem[Shen et~al.(2023)Shen, Song, Tan, Li, Lu, and
+  Zhuang]{shen2023hugginggpt}
+Yongliang Shen, Kaitao Song, Xu~Tan, Dongsheng Li, Weiming Lu, and Yueting
+  Zhuang.
+\newblock {HuggingGPT}: Solving {AI} tasks with {ChatGPT} and its friends in
+  {Hugging Face}, 2023.
+\newblock URL \url{https://arxiv.org/abs/2303.17580}.
+
+\bibitem[Smith(1980)]{smith1980contract}
+Reid~G. Smith.
+\newblock The contract net protocol: High-level communication and control in a
+  distributed problem solver.
+\newblock \emph{IEEE Transactions on Computers}, C-29\penalty0 (12):\penalty0
+  1104--1113, 1980.
+\newblock \doi{10.1109/TC.1980.1675516}.
+\newblock URL \url{https://doi.org/10.1109/TC.1980.1675516}.
+
+\bibitem[Teutsch and Reitwiessner(2019)]{teutsch2019truebit}
+Jason Teutsch and Christian Reitwiessner.
+\newblock A scalable verification solution for blockchains, 2019.
+\newblock URL \url{https://arxiv.org/abs/1908.04756}.
+
+\bibitem[{The mathlib Community}(2020)]{mathlib2020}
+{The mathlib Community}.
+\newblock The lean mathematical library.
+\newblock In \emph{Proceedings of the 9th ACM SIGPLAN International Conference
+  on Certified Programs and Proofs}, pages 367--381, 2020.
+\newblock \doi{10.1145/3372885.3373824}.
+\newblock URL \url{https://doi.org/10.1145/3372885.3373824}.
+
+\bibitem[Whitehill et~al.(2009)Whitehill, Wu, Bergsma, Movellan, and
+  Ruvolo]{whitehill2009glad}
+Jacob Whitehill, Ting-fan Wu, Jacob Bergsma, Javier~R. Movellan, and Paul~L.
+  Ruvolo.
+\newblock Whose vote should count more: Optimal integration of labels from
+  labelers of unknown expertise.
+\newblock In \emph{Advances in Neural Information Processing Systems},
+  volume~22, 2009.
+\newblock URL
+  \url{https://papers.nips.cc/paper/2009/hash/f899139df5e1059396431415e770c6dd-Abstract.html}.
+
+\bibitem[Wu et~al.(2023)Wu, Bansal, Zhang, Wu, Li, Zhu, Jiang, Zhang, Zhang,
+  Liu, et~al.]{wu2023autogen}
+Qingyun Wu, Gagan Bansal, Jieyu Zhang, Yiran Wu, Beibin Li, Erkang Zhu,
+  Li~Jiang, Xiaoyun Zhang, Shaokun Zhang, Jiale Liu, et~al.
+\newblock {AutoGen}: Enabling next-gen {LLM} applications via multi-agent
+  conversation, 2023.
+\newblock URL \url{https://arxiv.org/abs/2308.08155}.
+
+\bibitem[Yang et~al.(2023)Yang, Swope, Gu, Chalamala, Song, Yu, Godil, Prenger,
+  and Anandkumar]{yang2023leandojo}
+Kaiyu Yang, Aidan~M. Swope, Alex Gu, Rahul Chalamala, Peiyang Song, Shixing Yu,
+  Saad Godil, Ryan Prenger, and Anima Anandkumar.
+\newblock {LeanDojo}: Theorem proving with retrieval-augmented language models.
+\newblock In \emph{Advances in Neural Information Processing Systems},
+  volume~36, 2023.
+\newblock URL \url{https://arxiv.org/abs/2306.15626}.
+
+\bibitem[Yao et~al.(2023{\natexlab{a}})Yao, Yu, Zhao, Shafran, Griffiths, Cao,
+  and Narasimhan]{yao2023tree}
+Shunyu Yao, Dian Yu, Jeffrey Zhao, Izhak Shafran, Thomas~L. Griffiths, Yuan
+  Cao, and Karthik Narasimhan.
+\newblock Tree of thoughts: Deliberate problem solving with large language
+  models.
+\newblock In \emph{Advances in Neural Information Processing Systems},
+  volume~36, 2023{\natexlab{a}}.
+\newblock URL \url{https://arxiv.org/abs/2305.10601}.
+
+\bibitem[Yao et~al.(2023{\natexlab{b}})Yao, Zhao, Yu, Du, Shafran, Narasimhan,
+  and Cao]{yao2023react}
+Shunyu Yao, Jeffrey Zhao, Dian Yu, Nan Du, Izhak Shafran, Karthik Narasimhan,
+  and Yuan Cao.
+\newblock {ReAct}: Synergizing reasoning and acting in language models.
+\newblock In \emph{International Conference on Learning Representations},
+  2023{\natexlab{b}}.
+\newblock URL \url{https://openreview.net/forum?id=WE_vluYUL-X}.
+
+\bibitem[Zheng et~al.(2021)Zheng, Han, and Polu]{zheng2021minif2f}
+Kunhao Zheng, Jesse~Michael Han, and Stanislas Polu.
+\newblock {miniF2F}: A cross-system benchmark for formal olympiad-level
+  mathematics, 2021.
+\newblock URL \url{https://arxiv.org/abs/2109.00110}.
+
+\bibitem[Zhou et~al.(2023)Zhou, Scharli, Hou, Wei, Scales, Wang, Schuurmans,
+  Cui, Bousquet, Le, and Chi]{zhou2023least}
+Denny Zhou, Nathanael Scharli, Le~Hou, Jason Wei, Nathan Scales, Xuezhi Wang,
+  Dale Schuurmans, Claire Cui, Olivier Bousquet, Quoc~V. Le, and Ed~H. Chi.
+\newblock Least-to-most prompting enables complex reasoning in large language
+  models.
+\newblock In \emph{International Conference on Learning Representations}, 2023.
+\newblock URL \url{https://openreview.net/forum?id=WZH7099tgfM}.
+
+\end{thebibliography}

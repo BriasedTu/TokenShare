@@ -1,0 +1,6 @@
+input_index,target_n,status,final_correctness,failure_kind,factor_expression,parser_success,raw_output_count,parsed_output_count,parse_failure_count,provider_attempt_count,retry_count,usage_total_tokens,cost_estimate,latency_ms,providers,models
+0,3269971,passed,true,,1019 * 3209,true,1,1,0,1,0,1173,0.0039702,14411,"[""siliconflow""]","[""zai-org/GLM-5.2""]"
+1,3532873,passed,true,,1019 * 3467,true,1,1,0,1,0,1144,0.0038426000000000003,14169,"[""siliconflow""]","[""zai-org/GLM-5.2""]"
+2,3661267,passed,true,,1019 * 3593,true,1,1,0,1,0,1196,0.0040774,15011,"[""siliconflow""]","[""zai-org/GLM-5.2""]"
+3,4575721,passed,true,,1013 * 4517,true,1,1,0,1,0,1110,0.003693,14726,"[""siliconflow""]","[""zai-org/GLM-5.2""]"
+4,4733749,passed,true,,1013 * 4673,true,1,1,0,1,0,1210,0.004133,15995,"[""siliconflow""]","[""zai-org/GLM-5.2""]"

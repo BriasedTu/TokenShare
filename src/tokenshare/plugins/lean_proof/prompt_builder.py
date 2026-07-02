@@ -69,24 +69,33 @@ def build_lean_proof_candidate_prompt_package(
 ) -> PromptPackage:
     """Build the plugin-owned prompt package for proof candidate generation."""
 
+    expected_candidate_id = f"proof_candidate:{request_id}"
     return PromptPackage(
         prompt_package_id=f"lean_proof_candidate_prompt:{request_id}",
         request_id=request_id,
         task_id=task_id,
         unit_id=unit_id,
-        prompt_text=_prompt_text(theorem_payload),
+        prompt_text=_prompt_text(
+            theorem_payload,
+            expected_candidate_id=expected_candidate_id,
+        ),
         input_summary={
             "theorem_id": theorem_payload.theorem_id,
             "theorem_name": theorem_payload.theorem_name,
             "theorem_payload_digest": theorem_payload.payload_digest,
+            "expected_proof_candidate_id": expected_candidate_id,
             "imports": list(theorem_payload.imports),
             "namespace": theorem_payload.namespace,
+            "parameters_source": theorem_payload.parameters_source,
             "statement_source": theorem_payload.statement_source,
         },
         output_schema={
             "schema_version": LEAN_PROOF_CANDIDATE_SCHEMA_VERSION,
             "media_type": "application/json",
             "required_fields": list(_PROOF_CANDIDATE_REQUIRED_FIELDS),
+            "proof_candidate_id_prefix": "proof_candidate:",
+            "expected_proof_candidate_id": expected_candidate_id,
+            "proof_source_scope": "proof_body_only",
         },
         constraints={
             "prompt_owner": "lean_proof_plugin",
@@ -101,6 +110,14 @@ def build_lean_proof_candidate_prompt_package(
                 "claim_checker_success",
                 "claim_canonical_output",
                 "claim_settlement",
+            ],
+            "proof_source_must_not_include": [
+                "import lines",
+                "namespace declarations",
+                "theorem declarations",
+                "end namespace declarations",
+                "markdown fences",
+                "explanatory prose",
             ],
         },
         seed=seed,
@@ -173,7 +190,11 @@ def parse_lean_proof_candidate_ai_output(
     )
 
 
-def _prompt_text(theorem_payload: LeanTheoremPayload) -> str:
+def _prompt_text(
+    theorem_payload: LeanTheoremPayload,
+    *,
+    expected_candidate_id: str,
+) -> str:
     required_fields = ", ".join(_PROOF_CANDIDATE_REQUIRED_FIELDS)
     return "\n".join(
         [
@@ -184,8 +205,17 @@ def _prompt_text(theorem_payload: LeanTheoremPayload) -> str:
             f"Parameters source: {theorem_payload.parameters_source or '<none>'}",
             f"Statement source: {theorem_payload.statement_source}",
             f"Theorem payload digest: {theorem_payload.payload_digest}",
+            f"Use this exact proof_candidate_id: {expected_candidate_id}",
             f"Return only one JSON object matching {LEAN_PROOF_CANDIDATE_SCHEMA_VERSION}.",
+            "The proof_candidate_id must start with proof_candidate:.",
             "The JSON object must contain a proof_source string accepted by the fixed Lean checker.",
+            "proof_source must be a proof body only, such as by\\n  exact hP.",
+            "Do not include import lines, namespace declarations, theorem declarations, or end namespace declarations in proof_source.",
+            "For common TokenShare benchmark subgoals, use these proof bodies when applicable:",
+            "- statement_source P: by\\n  exact hP",
+            "- statement_source Q: by\\n  exact hQ",
+            "- statement_source P → Q: by\\n  exact hpq",
+            "- statement_source Q → P: by\\n  exact hqp",
             "Do not propose child tasks.",
             "Do not return a split plan.",
             "Do not return a merge plan.",

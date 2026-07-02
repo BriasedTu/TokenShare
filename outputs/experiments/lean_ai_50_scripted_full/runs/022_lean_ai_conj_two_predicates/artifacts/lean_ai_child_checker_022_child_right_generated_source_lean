@@ -1,0 +1,6 @@
+import Init
+set_option autoImplicit false
+namespace TokenShareGenerated
+theorem lean_ai_conj_two_predicates_right (P Q : Prop) (hP : P) (hQ : Q) (A : Type) (p q : A → Prop) (x : A) (hp : p x) (hq : q x) : Q := by
+  exact hQ
+end TokenShareGenerated

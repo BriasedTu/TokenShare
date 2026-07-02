@@ -1,0 +1,6 @@
+input_index,target_n,status,final_correctness,failure_kind,factor_expression,parser_success,raw_output_count,parsed_output_count,parse_failure_count,provider_attempt_count,retry_count,usage_total_tokens,cost_estimate,latency_ms,providers,models
+0,30915067,failed,false,executor_error,,false,0,0,0,1,0,,0.0,60385,[],[]
+1,38564233,failed,false,executor_error,,false,0,0,0,1,0,,0.0,60293,[],[]
+2,157471597,failed,false,executor_error,,false,0,0,0,1,0,,0.0,60093,[],[]
+3,231516451,failed,false,executor_error,,false,0,0,0,1,0,,0.0,60107,[],[]
+4,327838447,failed,false,executor_error,,false,0,0,0,1,0,,0.0,60157,[],[]

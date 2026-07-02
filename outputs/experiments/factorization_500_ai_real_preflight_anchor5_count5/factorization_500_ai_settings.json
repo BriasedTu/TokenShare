@@ -1,0 +1,108 @@
+{
+  "accuracy_definition": {
+    "denominator": "attempted_count",
+    "numerator": "tasks with product, primality, and oracle multiset checks all passing"
+  },
+  "ai_api_config": {
+    "defaults": {
+      "max_provider_attempts": 1,
+      "max_tokens": 256,
+      "stream": false,
+      "temperature": 0.0,
+      "timeout_seconds": 45,
+      "top_p": 0.9
+    },
+    "entries": [
+      {
+        "api_key_env": "TOKENSHARE_LOCAL_AI_API_KEY_SF_KEY_1",
+        "base_url": "https://api.siliconflow.cn/v1",
+        "enabled": true,
+        "endpoint": "/chat/completions",
+        "entry_id": "minimax_m2_5__sf_key_1",
+        "model": "MiniMaxAI/MiniMax-M2.5",
+        "pricing": {
+          "currency": "CNY",
+          "input_per_million_tokens": 0.3,
+          "observed_at": "2026-06-29",
+          "output_per_million_tokens": 1.2,
+          "source_note": "SiliconFlow model page"
+        },
+        "request_overrides": {
+          "temperature": 0.1
+        },
+        "supports_json_mode": true,
+        "supports_streaming": false,
+        "tags": [
+          "siliconflow",
+          "smoke",
+          "minimax",
+          "json_mode",
+          "api_key:sf_key_1"
+        ]
+      }
+    ],
+    "executor_id": "executor_ai_api",
+    "local_concurrency": {
+      "max_in_flight_global": 1
+    },
+    "metadata": {
+      "factorization_500_ai": true,
+      "notes": "Fill any subset of api_keys. The loader expands filled keys across the six model entries; unfilled PASTE_/REPLACE_ keys are disabled. Real smoke uses raw text so all six models can be selected; JSON tasks still filter by supports_json_mode.",
+      "purpose": "local real SiliconFlow smoke",
+      "strict_arithmetic_model_filter": {
+        "excluded_entry_ids": [
+          "qwen3_6_27b__sf_key_1",
+          "deepseek_v4_pro__sf_key_1",
+          "glm_5_2__sf_key_1",
+          "step_3_5_flash__sf_key_1",
+          "tencent_hy3_preview__sf_key_1"
+        ],
+        "preferred_entry_ids": [
+          "minimax_m2_5__sf_key_1"
+        ],
+        "reason": "direct factorization benchmark requires strict JSON arithmetic; MiniMax is preferred when available because prior real AI profile runs completed reliably on arithmetic JSON tasks"
+      }
+    },
+    "provider_family": "siliconflow",
+    "schema_version": "phase7.ai_api_executor_config.v1",
+    "selection_policy": {
+      "kind": "uniform_random_without_weights",
+      "seed_source": "request_or_environment_seed"
+    }
+  },
+  "ai_api_config_digest": "sha256:00e835ccf15318ba527256825215b47639670544d65ff5281ba508e524f68af8",
+  "count": 5,
+  "number_policy": {
+    "anchor_prime_factor_count": 5,
+    "anchor_prime_factors": [
+      "1009",
+      "1013",
+      "1019",
+      "1021",
+      "1031"
+    ],
+    "kind": "deterministic_semiprime",
+    "max_exclusive": "1000000000",
+    "min_exclusive": "1000000",
+    "prime_factor_max_inclusive": "5000",
+    "prime_factor_min_exclusive": "1000"
+  },
+  "output_root": "outputs/experiments/factorization_500_ai_real_preflight_anchor5_count5",
+  "parser_policy": {
+    "parse_required": true,
+    "parser_id": "factorization.direct_factorization_answer.parser.v1",
+    "raw_only_allowed": false
+  },
+  "prompt_constraints": {
+    "format": "json",
+    "requires_json_mode": false
+  },
+  "real_transport": true,
+  "request_limits": {
+    "max_provider_attempts": 1,
+    "max_tokens": 256,
+    "timeout_seconds": 45
+  },
+  "schema_version": "phase8.factorization_500_ai_settings.v1",
+  "seed": 1
+}

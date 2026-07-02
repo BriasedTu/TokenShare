@@ -1,0 +1,19 @@
+{
+  "artifact_id": "factorization_merge_merge_plan_5ba71e06ea89e6feacc697c299eefacc4cd64ae0bf87ede0c32588cc52e40a92_merge_unit_merge_plan_5ba71e06ea89e6feacc697c299eefacc4cd64ae0bf87ede0c32588cc52e40a92",
+  "artifact_schema_id": "factorization.merge_result",
+  "artifact_schema_version": "v1",
+  "artifact_type": "canonical_output",
+  "content_hash": "sha256:36f6b9f2895611132336aa27b7aef2c8d8621a6057060dccc052a3f02bd15c3b",
+  "created_at": "2026-06-28T00:00:00Z",
+  "media_type": "application/json",
+  "metadata": {
+    "output_name": "factorization_result",
+    "task_id": "task_factorization_fixture"
+  },
+  "schema_version": "ArtifactRef.v1",
+  "size_bytes": 1658,
+  "source": {
+    "kind": "factorization_fixture"
+  },
+  "uri": "artifacts/factorization_merge_merge_plan_5ba71e06ea89e6feacc697c299eefacc4cd64ae0bf87ede0c32588cc52e40a92_merge_unit_merge_plan_5ba71e06ea89e6feacc697c299eefacc4cd64ae0bf87ede0c32588cc52e40a92"
+}

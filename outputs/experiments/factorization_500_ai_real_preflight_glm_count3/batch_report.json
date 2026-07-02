@@ -1,0 +1,52 @@
+{
+  "accuracy": 1.0,
+  "ai_api_config_digest": "sha256:346eb736ae690c7e6781a85cb9c9d2665e854402f353f15db0b6fd77f6217784",
+  "attempted_count": 3,
+  "batch_report_path": "outputs/experiments/factorization_500_ai_real_preflight_glm_count3/batch_report.json",
+  "correct_count": 3,
+  "cost_estimate_total": 0.010803400000000001,
+  "executor_error_count": 0,
+  "failed_count": 0,
+  "failure_breakdown": {},
+  "input_numbers_path": "outputs/experiments/factorization_500_ai_real_preflight_glm_count3/input_numbers.jsonl",
+  "latency_ms_total": 38707,
+  "models": [
+    "zai-org/GLM-5.2"
+  ],
+  "number_policy": {
+    "anchor_prime_factor_count": 5,
+    "anchor_prime_factors": [
+      "1009",
+      "1013",
+      "1019",
+      "1021",
+      "1031"
+    ],
+    "kind": "deterministic_semiprime",
+    "max_exclusive": "1000000000",
+    "min_exclusive": "1000000",
+    "prime_factor_max_inclusive": "5000",
+    "prime_factor_min_exclusive": "1000"
+  },
+  "oracle_answers_path": "outputs/experiments/factorization_500_ai_real_preflight_glm_count3/oracle_answers.jsonl",
+  "parse_failure_count": 0,
+  "parsed_output_count": 3,
+  "parser_success_rate": 1.0,
+  "per_number_results_path": "outputs/experiments/factorization_500_ai_real_preflight_glm_count3/per_number_results.jsonl",
+  "per_number_summary_path": "outputs/experiments/factorization_500_ai_real_preflight_glm_count3/per_number_summary.csv",
+  "provider_attempt_count": 3,
+  "providers": [
+    "siliconflow"
+  ],
+  "raw_output_count": 3,
+  "requested_count": 3,
+  "retry_count": 0,
+  "schema_version": "phase8.factorization_500_ai_report.v1",
+  "seed": 1,
+  "settings_path": "outputs/experiments/factorization_500_ai_real_preflight_glm_count3/factorization_500_ai_settings.json",
+  "usage": {
+    "completion_tokens": 2077,
+    "prompt_tokens": 1189,
+    "total_tokens": 3266
+  }
+}

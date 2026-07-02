@@ -1,0 +1,16 @@
+{
+  "accuracy_so_far": 0.6,
+  "ai_api_config_digest": "sha256:2e911255ce28c055aa1bc48ad06d214d070178e0084a38d8ab128aa57e8e502f",
+  "completed_count": 5,
+  "correct_count": 3,
+  "executor_error_count": 2,
+  "failed_count": 2,
+  "latency_ms_total": 73006,
+  "parse_failure_count": 0,
+  "parser_success_rate_so_far": 0.6,
+  "provider_attempt_count": 5,
+  "remaining_count": 495,
+  "requested_count": 500,
+  "schema_version": "phase8.factorization_500_ai_progress.v1",
+  "usage_total_tokens": 2728
+}

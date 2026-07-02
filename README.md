@@ -132,6 +132,31 @@ conda run -n tokenshare python -m tokenshare.experiments.run_all --output-root o
 
 AI profile 当前覆盖 `deterministic_semiprime_range_flow`、`ai_api_semiprime_range_flow` 和 `ai_api_parse_failure_raw_only` 三个 profile，并写出 `ai_profile_suite_report.json` / `ai_profile_summary.csv`。真实 SiliconFlow transport 仍是显式 opt-in，需要本地 config 至少有一个已启用 key。
 
+如果要专门评估真实 AI API 在 Lean proof 子任务上的表现，可运行 Lean AI 50 benchmark。当前 50 个任务严格限制在已由本地 Lean helper / merge policy 支持的 `P ∧ Q` 与 `P ↔ Q` 切片；默认 scripted transport 不联网，但仍走真实 `AIAPIExecutor`、Lean proof parser、child checker 和 merge recheck：
+
+```powershell
+$env:PYTHONPATH='src'
+conda run -n tokenshare python -m tokenshare.experiments.run_lean_ai_benchmark --output-root outputs/experiments/lean_ai_50 --count 50 --seed 1
+```
+
+真实 SiliconFlow transport 需要显式 opt-in，并复用 gitignored `local/ai_api_smoke.local.json` 的安全注入边界：
+
+```powershell
+$env:PYTHONPATH='src'
+conda run -n tokenshare python -m tokenshare.experiments.run_lean_ai_benchmark --output-root outputs/experiments/lean_ai_50_real --count 50 --seed 1 --real-transport
+```
+
+本地已验证 scripted full 50 任务全部通过；真实 transport 先以 `--count 1` smoke 通过，避免默认消耗 100 次真实 proof-candidate API 调用。
+
+如果要获得“输入为待分解大整数、输出为直接准确率”的真实 AI API factorization benchmark，可运行 direct 500-number suite。每个输入数都满足 `1_000_000 < n < 1_000_000_000`，本地 oracle 用确定性 semiprime 生成器保存到 `oracle_answers.jsonl`，最终准确率定义为 `correct_count / attempted_count`，其中调用超时、executor error、parse failure 和数学校验失败都计入分母：
+
+```powershell
+$env:PYTHONPATH='src'
+conda run -n tokenshare python -m tokenshare.experiments.run_factorization_500_ai --output-root outputs/experiments/factorization_500_ai_real_glm_seed1_count500_workers10_retry_20260702 --count 500 --seed 1 --real-transport --entry-id glm_5_2__sf_key_1 --max-provider-attempts 1 --max-tokens 256 --timeout-seconds 20 --worker-count 10
+```
+
+该 suite 会写出 `factorization_500_ai_settings.json`、`input_numbers.jsonl`、`oracle_answers.jsonl`、`per_number_results.jsonl`、`per_number_summary.csv`、`progress_report.json` 和 `batch_report.json`。2026-07-02 的真实 SiliconFlow / GLM-5.2 运行结果为 `attempted_count=500`、`correct_count=476`、`accuracy=0.952`、`failure_breakdown={"executor_error": 23, "product_mismatch": 1}`。
+
 真实 SiliconFlow smoke 可用本地 gitignored JSON 配置，不需要手动设置 API key 环境变量。默认路径是 `local/ai_api_smoke.local.json`，该文件被 `.gitignore` 覆盖；loader 会把 `api_keys` 中已填写的 `api_key` 仅注入当前进程环境变量，并把 key 池和 `models` 模型池展开成标准 `entries`，再走原来的 `api_key_env` 安全边界。secret 不进入 event、artifact、SQLite、日志或 config digest。
 
 ```json
@@ -188,6 +213,10 @@ conda run -n tokenshare python -m pytest tests\executors\test_ai_api_siliconflow
 - `init.ps1`：Windows PowerShell 启动验证。
 - `init.sh`：Bash/Git Bash/WSL 启动验证。
 - `src/tokenshare/`：TokenShare Python package，实现协议核心、存储、插件、执行器、重放和实验模块边界。
+- `src/tokenshare/experiments/factorization_500_ai.py`：direct 500-number AI factorization benchmark，实现输入生成、真实/脚本 transport、逐题 artifact/event 记录、oracle 校验和准确率报告。
+- `src/tokenshare/experiments/run_factorization_500_ai.py`：direct 500-number benchmark CLI，默认 scripted transport，`--real-transport` 才调用真实 SiliconFlow API，并支持 `--entry-id` / `--worker-count` 控制真实模型和并发。
+- `src/tokenshare/experiments/lean_ai_benchmark.py`：Lean AI 50 benchmark 实现，生成当前 helper 支持的 50 个证明任务并经 AI executor、parser、checker、merge 写出报告。
+- `src/tokenshare/experiments/run_lean_ai_benchmark.py`：Lean AI 50 benchmark CLI，默认 scripted transport，`--real-transport` 才调用真实 SiliconFlow API。
 - `tests/`：与 package 边界镜像的 pytest 测试。
 - `reference_repos/`：package layout 研究用的外部参考源码浅克隆，不属于 TokenShare runtime。
 - `Doc/TechnicalDocument/2026-06-03-tokenshare-protocol-technical-design.md`：当前实现导向技术设计文档。

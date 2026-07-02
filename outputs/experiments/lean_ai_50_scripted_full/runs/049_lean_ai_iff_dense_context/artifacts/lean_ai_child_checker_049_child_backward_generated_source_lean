@@ -1,0 +1,6 @@
+import Init
+set_option autoImplicit false
+namespace TokenShareGenerated
+theorem lean_ai_iff_dense_context_backward (P Q : Prop) (hpq : P → Q) (hqp : Q → P) (R S : Prop) (h1 : R → P) (h2 : S → Q) (h3 : P → S) : Q → P := by
+  exact hqp
+end TokenShareGenerated

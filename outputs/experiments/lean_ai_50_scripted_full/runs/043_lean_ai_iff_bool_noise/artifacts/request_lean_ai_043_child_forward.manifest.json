@@ -1,0 +1,19 @@
+{
+  "artifact_id": "request_lean_ai_043_child_forward",
+  "artifact_schema_id": "phase3.execution_request",
+  "artifact_schema_version": "v1",
+  "artifact_type": "ExecutionRequest",
+  "content_hash": "sha256:64f1c4374a6283801c9afd86871db9bb9f2d0a48bfb886df0a6b00d2b1da2a57",
+  "created_at": "2026-07-02T00:00:00Z",
+  "media_type": "application/json",
+  "metadata": {
+    "attempt_id": "attempt_lean_ai_043_child_forward",
+    "task_id": "task_lean_ai_043"
+  },
+  "schema_version": "ArtifactRef.v1",
+  "size_bytes": 3985,
+  "source": {
+    "kind": "protocol_engine"
+  },
+  "uri": "artifacts/request_lean_ai_043_child_forward"
+}

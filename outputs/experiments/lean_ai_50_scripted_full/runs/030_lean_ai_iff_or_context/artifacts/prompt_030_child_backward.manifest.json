@@ -1,0 +1,19 @@
+{
+  "artifact_id": "prompt_030_child_backward",
+  "artifact_schema_id": "phase3.prompt_package",
+  "artifact_schema_version": "v1",
+  "artifact_type": "PromptPackage",
+  "content_hash": "sha256:400f1f1d9d0d0a0ed1bd090e58e7e9db81234911ca1dea13bdee0ac56a04a7ff",
+  "created_at": "2026-07-02T00:00:00Z",
+  "media_type": "application/json",
+  "metadata": {
+    "child_logical_key": "child:backward"
+  },
+  "schema_version": "ArtifactRef.v1",
+  "size_bytes": 3213,
+  "source": {
+    "case_id": "lean_ai_iff_or_context",
+    "kind": "lean_ai_benchmark"
+  },
+  "uri": "artifacts/prompt_030_child_backward"
+}

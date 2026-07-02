@@ -1,0 +1,25 @@
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "E:\TokenEcnomic\TokenShare\src\tokenshare\experiments\run_factorization_500_ai.py", line 101, in <module>
+    raise SystemExit(main())
+                     ^^^^^^
+  File "E:\TokenEcnomic\TokenShare\src\tokenshare\experiments\run_factorization_500_ai.py", line 78, in main
+    report = run_factorization_500_ai_suite(
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "E:\TokenEcnomic\TokenShare\src\tokenshare\experiments\factorization_500_ai.py", line 376, in run_factorization_500_ai_suite
+    results = _run_cases_concurrently(
+              ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "E:\TokenEcnomic\TokenShare\src\tokenshare\experiments\factorization_500_ai.py", line 453, in _run_cases_concurrently
+    _write_current_outputs(root=root, count=count, results=completed, config=config)
+  File "E:\TokenEcnomic\TokenShare\src\tokenshare\experiments\factorization_500_ai.py", line 464, in _write_current_outputs
+    _write_jsonl(root / "per_number_results.jsonl", results)
+  File "E:\TokenEcnomic\TokenShare\src\tokenshare\experiments\factorization_500_ai.py", line 1251, in _write_jsonl
+    with path.open("w", encoding="utf-8") as handle:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\32133\anaconda3\envs\tokenshare\Lib\pathlib.py", line 1013, in open
+    return io.open(self, mode, buffering, encoding, errors, newline)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+OSError: [Errno 22] Invalid argument: 'outputs\\experiments\\factorization_500_ai_real_glm_seed1_count500_workers10_20260702\\per_number_results.jsonl'
+
+ERROR conda.cli.main_run:execute(125): `conda run python -m tokenshare.experiments.run_factorization_500_ai --output-root outputs\experiments\factorization_500_ai_real_glm_seed1_count500_workers10_20260702 --count 500 --seed 1 --real-transport --entry-id glm_5_2__sf_key_1 --max-provider-attempts 1 --max-tokens 256 --timeout-seconds 20 --worker-count 10` failed. (See above for error)

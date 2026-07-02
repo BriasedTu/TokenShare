@@ -1,0 +1,8 @@
+import TokenShare.Helper
+
+#eval IO.println (TokenShare.splitCertificateJson
+  "lean_ai_split_request_032"
+  "sha256:1e599274a501040a7b3268a9a98048a7ad568ac6e0083e9fc279edcbdcc1e3d8"
+  "lean_ai_iff_nat_eq_noise"
+  "(P Q : Prop) (hpq : P → Q) (hqp : Q → P) (n m : Nat) (hEq : n = m)"
+  "P ↔ Q")

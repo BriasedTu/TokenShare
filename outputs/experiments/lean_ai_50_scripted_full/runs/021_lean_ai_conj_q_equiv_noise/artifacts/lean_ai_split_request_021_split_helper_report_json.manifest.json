@@ -1,0 +1,19 @@
+{
+  "artifact_id": "lean_ai_split_request_021_split_helper_report_json",
+  "artifact_schema_id": "lean_proof.split_helper_report",
+  "artifact_schema_version": "v1",
+  "artifact_type": "LeanSplitHelperReport",
+  "content_hash": "sha256:118fa65f4f390619e043c615fdfd075d4739f5b118e26fc2d83a9836d18acde3",
+  "created_at": "2026-07-02T00:00:00Z",
+  "media_type": "application/json",
+  "metadata": {
+    "status": "succeeded"
+  },
+  "schema_version": "ArtifactRef.v1",
+  "size_bytes": 14347,
+  "source": {
+    "kind": "lean_split_helper",
+    "request_id": "lean_ai_split_request_021"
+  },
+  "uri": "artifacts/lean_ai_split_request_021_split_helper_report_json"
+}

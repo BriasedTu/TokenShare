@@ -1,0 +1,19 @@
+{
+  "artifact_id": "ai_provider_provenance_submission_factorization_500_129",
+  "artifact_schema_id": "phase7.ai_provider_call_provenance",
+  "artifact_schema_version": "v1",
+  "artifact_type": "AIProviderCallProvenance",
+  "content_hash": "sha256:772945dc6d96aed8bf6cc8aba96f8d6f9242d9f3ec066225849f9bdbcaf70455",
+  "created_at": "2026-07-02T00:00:00Z",
+  "media_type": "application/json",
+  "metadata": {
+    "executor_id": "executor_ai_api"
+  },
+  "schema_version": "ArtifactRef.v1",
+  "size_bytes": 895,
+  "source": {
+    "kind": "ai_api_executor",
+    "request_id": "request_factorization_500_129"
+  },
+  "uri": "artifacts/ai_provider_provenance_submission_factorization_500_129"
+}

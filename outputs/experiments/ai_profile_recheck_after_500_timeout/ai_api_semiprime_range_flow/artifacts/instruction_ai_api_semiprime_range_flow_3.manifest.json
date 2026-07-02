@@ -1,0 +1,18 @@
+{
+  "artifact_id": "instruction_ai_api_semiprime_range_flow_3",
+  "artifact_schema_id": "factorization.factor_search_instruction",
+  "artifact_schema_version": "v1",
+  "artifact_type": "ExecutionInstruction",
+  "content_hash": "sha256:90e64a23bfca8969f1d1a3393001aaee2db5ba4c0fb16d67f0b39937f24cd089",
+  "created_at": "2026-06-30T00:00:00Z",
+  "media_type": "application/json",
+  "metadata": {
+    "case_id": "ai_api_semiprime_range_flow"
+  },
+  "schema_version": "ArtifactRef.v1",
+  "size_bytes": 470,
+  "source": {
+    "kind": "ai_profile_suite"
+  },
+  "uri": "artifacts/instruction_ai_api_semiprime_range_flow_3"
+}

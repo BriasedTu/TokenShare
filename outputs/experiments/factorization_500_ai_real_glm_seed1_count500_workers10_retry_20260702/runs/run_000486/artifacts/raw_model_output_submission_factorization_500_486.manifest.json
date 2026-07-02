@@ -1,0 +1,20 @@
+{
+  "artifact_id": "raw_model_output_submission_factorization_500_486",
+  "artifact_schema_id": "phase7.raw_model_output",
+  "artifact_schema_version": "v1",
+  "artifact_type": "RawModelOutput",
+  "content_hash": "sha256:47cbd8d0cf1b7f37a5782d3ab7aa840850a20a6fec1caf8eddabd71892a0f3de",
+  "created_at": "2026-07-02T00:00:00Z",
+  "media_type": "application/json",
+  "metadata": {
+    "entry_id": "glm_5_2__sf_key_1",
+    "executor_id": "executor_ai_api"
+  },
+  "schema_version": "ArtifactRef.v1",
+  "size_bytes": 2916,
+  "source": {
+    "kind": "ai_api_executor",
+    "request_id": "request_factorization_500_486"
+  },
+  "uri": "artifacts/raw_model_output_submission_factorization_500_486"
+}

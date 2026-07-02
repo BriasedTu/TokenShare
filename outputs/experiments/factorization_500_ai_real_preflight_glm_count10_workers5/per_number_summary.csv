@@ -1,0 +1,11 @@
+input_index,target_n,status,final_correctness,failure_kind,factor_expression,parser_success,raw_output_count,parsed_output_count,parse_failure_count,provider_attempt_count,retry_count,usage_total_tokens,cost_estimate,latency_ms,providers,models
+0,1313861,passed,true,,1013 * 1297,true,1,1,0,1,0,1442,0.0051598,18741,"[""siliconflow""]","[""zai-org/GLM-5.2""]"
+1,1991971,passed,true,,1021 * 1951,true,1,1,0,1,0,1288,0.0044822,16441,"[""siliconflow""]","[""zai-org/GLM-5.2""]"
+2,3269971,passed,true,,1019 * 3209,true,1,1,0,1,0,1226,0.0042034,15951,"[""siliconflow""]","[""zai-org/GLM-5.2""]"
+3,3532873,passed,true,,1019 * 3467,true,1,1,0,1,0,1174,0.0039746,14871,"[""siliconflow""]","[""zai-org/GLM-5.2""]"
+4,3570851,passed,true,,1009 * 3539,true,1,1,0,1,0,857,0.0025798,10596,"[""siliconflow""]","[""zai-org/GLM-5.2""]"
+5,3661267,passed,true,,1019 * 3593,true,1,1,0,1,0,1174,0.0039806,14407,"[""siliconflow""]","[""zai-org/GLM-5.2""]"
+6,4132027,passed,true,,1013 * 4079,true,1,1,0,1,0,1399,0.0049705999999999995,18256,"[""siliconflow""]","[""zai-org/GLM-5.2""]"
+7,4575721,passed,true,,1013 * 4517,true,1,1,0,1,0,1111,0.0036974000000000004,12998,"[""siliconflow""]","[""zai-org/GLM-5.2""]"
+8,4733749,passed,true,,1013 * 4673,true,1,1,0,1,0,1175,0.003979,15130,"[""siliconflow""]","[""zai-org/GLM-5.2""]"
+9,4828309,passed,true,,1021 * 4729,true,1,1,0,1,0,1241,0.0042694000000000005,15804,"[""siliconflow""]","[""zai-org/GLM-5.2""]"

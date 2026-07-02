@@ -1,0 +1,180 @@
+\relax 
+\providecommand\hyper@newdestlabel[2]{}
+\providecommand\HyField@AuxAddToFields[1]{}
+\providecommand\HyField@AuxAddToCoFields[2]{}
+\@writefile{toc}{\contentsline {section}{\numberline {1}Introduction}{1}{section.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {2}\textcolor {blue}{Motivation Towards Shared Token Economics}}{2}{section.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {2.1}Background}{2}{subsection.2.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {2.2}Motivations}{2}{subsection.2.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {3}The Design Philosophy}{2}{section.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.1}Problem Formulation}{2}{subsection.3.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.2}Desiderata of TokenShare Protocol}{3}{subsection.3.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {4}The TokenShare Protocol}{4}{section.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.1}Overall Picture}{4}{subsection.4.1}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {1}{\ignorespaces \textcolor {blue}{TokenShare as a concept implemented by a distributed protocol. Contributors and executors spend tokenized capacity; plugins decide what counts as valid work in a domain; the protocol records the contribution lifecycle that makes accepted work shareable, mergeable, and auditable.}}}{4}{figure.1}\protected@file@percent }
+\newlabel{fig:tokenshare-overall}{{1}{4}{\textcolor {blue}{TokenShare as a concept implemented by a distributed protocol. Contributors and executors spend tokenized capacity; plugins decide what counts as valid work in a domain; the protocol records the contribution lifecycle that makes accepted work shareable, mergeable, and auditable.}}{figure.1}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.2}Task Registration, Decomposition, Assignment, and Commitment}{5}{subsection.4.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {4.2.1}Task Registration}{5}{subsubsection.4.2.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {4.2.2}Recursive Task Decomposition}{5}{subsubsection.4.2.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {4.2.3}Task Assignment and Commitment}{5}{subsubsection.4.2.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.3}\textcolor {blue}{Execution, Verification, Recursive Merge, and Contribution Accounting}}{5}{subsection.4.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {4.3.1}Client-Side Execution and Local Validation}{5}{subsubsection.4.3.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {4.3.2}Server-Side Verification}{5}{subsubsection.4.3.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {4.3.3}Recursive Result Merging}{5}{subsubsection.4.3.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {4.3.4}\textcolor {blue}{Contribution Accounting}}{6}{subsubsection.4.3.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {5}A Robust Fault-Tolerance Mechanism}{6}{section.5}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.1}Failure Model}{6}{subsection.5.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.2}Task State and Idempotent Work Units}{6}{subsection.5.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.3}Lifecycle State Machine}{6}{subsection.5.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.4}Failure Detection}{7}{subsection.5.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.5}Adaptive Redundant Assignment}{7}{subsection.5.5}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.6}\textcolor {blue}{Straggler Mitigation and Lease Recovery}}{7}{subsection.5.6}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.7}\textcolor {blue}{Verification Boundaries}}{7}{subsection.5.7}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.8}Semantic Quality Aggregation}{7}{subsection.5.8}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.9}\textcolor {blue}{Contribution Eligibility and Delayed Accounting}}{7}{subsection.5.9}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.10}Dispute Resolution}{7}{subsection.5.10}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.11}Control-Plane Fault Tolerance}{8}{subsection.5.11}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.12}Fault-Tolerance Summary}{8}{subsection.5.12}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {6}Proof of Concept Applications}{8}{section.6}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {6.1}Application I: Large Integer Factorization}{8}{subsection.6.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Task specification.}{8}{section*.1}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {2}{\ignorespaces \textcolor {blue}{Common proof-of-concept workflow. Each benchmark instance is registered as a root task, optionally expanded by a plugin-owned split strategy, executed through an executor boundary, verified by a task-specific checker, and recorded through canonical, merge, contribution, and accounting events.}}}{9}{figure.2}\protected@file@percent }
+\newlabel{fig:poc_workflow}{{2}{9}{\textcolor {blue}{Common proof-of-concept workflow. Each benchmark instance is registered as a root task, optionally expanded by a plugin-owned split strategy, executed through an executor boundary, verified by a task-specific checker, and recorded through canonical, merge, contribution, and accounting events.}}{figure.2}{}}
+\@writefile{toc}{\contentsline {paragraph}{Decomposition.}{9}{section*.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Experimental workflow.}{9}{section*.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Baselines and metrics.}{9}{section*.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {6.2}Application II: Lean Formal Proof Production}{9}{subsection.6.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Task specification.}{9}{section*.5}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {1}{\ignorespaces How the two applications instantiate TokenShare.}}{10}{table.1}\protected@file@percent }
+\newlabel{tab:poc_applications}{{1}{10}{How the two applications instantiate TokenShare}{table.1}{}}
+\@writefile{toc}{\contentsline {paragraph}{Recursive decomposition.}{10}{section*.6}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Experimental workflow.}{10}{section*.7}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{\textcolor {blue}{Recovery and accounting.}}{10}{section*.8}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Baselines and metrics.}{11}{section*.9}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {7}Experiments}{11}{section.7}\protected@file@percent }
+\newlabel{sec:experiments}{{7}{11}{Experiments}{section.7}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {7.1}Evaluation Objective}{11}{subsection.7.1}\protected@file@percent }
+\newlabel{subsec:evaluation-objective}{{7.1}{11}{Evaluation Objective}{subsection.7.1}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {2}{\ignorespaces \textcolor {blue}{Evaluation groups as evidence for the TokenShare concept. The AI executor profile is treated as an auxiliary contributor-heterogeneity simulation rather than a separate experiment.}}}{11}{table.2}\protected@file@percent }
+\newlabel{tab:evaluation-groups}{{2}{11}{\textcolor {blue}{Evaluation groups as evidence for the TokenShare concept. The AI executor profile is treated as an auxiliary contributor-heterogeneity simulation rather than a separate experiment.}}{table.2}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {7.2}Metrics and Status Definitions}{11}{subsection.7.2}\protected@file@percent }
+\newlabel{subsec:metrics-status}{{7.2}{11}{Metrics and Status Definitions}{subsection.7.2}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {7.3}Reproducibility and Setting Artifacts}{11}{subsection.7.3}\protected@file@percent }
+\newlabel{subsec:experiment-settings-artifacts}{{7.3}{11}{Reproducibility and Setting Artifacts}{subsection.7.3}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {3}{\ignorespaces \textcolor {blue}{Regenerated setting and result artifacts used by the experiment section.}}}{12}{table.3}\protected@file@percent }
+\newlabel{tab:experiment-setting-artifacts}{{3}{12}{\textcolor {blue}{Regenerated setting and result artifacts used by the experiment section.}}{table.3}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {7.4}Suite-Level Results}{12}{subsection.7.4}\protected@file@percent }
+\newlabel{subsec:suite-level-results}{{7.4}{12}{Suite-Level Results}{subsection.7.4}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {3}{\ignorespaces \textcolor {blue}{Suite-level status ribbon. The default suite has 17 runs: 12 passed, 5 intentional ablation degradations, 0 failed, and 0 blocked.}}}{12}{figure.3}\protected@file@percent }
+\newlabel{fig:suite-status-ribbon}{{3}{12}{\textcolor {blue}{Suite-level status ribbon. The default suite has 17 runs: 12 passed, 5 intentional ablation degradations, 0 failed, and 0 blocked.}}{figure.3}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {7.5}Experiment 1: End-to-End Factorization Lifecycle}{12}{subsection.7.5}\protected@file@percent }
+\newlabel{subsec:exp1-factorization}{{7.5}{12}{Experiment 1: End-to-End Factorization Lifecycle}{subsection.7.5}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {4}{\ignorespaces \textcolor {blue}{Experiment 1: factorization lifecycle results.}}}{13}{table.4}\protected@file@percent }
+\newlabel{tab:factorization-results}{{4}{13}{\textcolor {blue}{Experiment 1: factorization lifecycle results.}}{table.4}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {4}{\ignorespaces \textcolor {blue}{Lollipop-style evidence footprint for Experiment~1. E1d produces the largest event and artifact footprint, while all four cases preserve final correctness and zero canonical pollution.}}}{13}{figure.4}\protected@file@percent }
+\newlabel{fig:factorization-lollipop}{{4}{13}{\textcolor {blue}{Lollipop-style evidence footprint for Experiment~1. E1d produces the largest event and artifact footprint, while all four cases preserve final correctness and zero canonical pollution.}}{figure.4}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {7.6}Experiment 2: Failure Injection and Recovery}{13}{subsection.7.6}\protected@file@percent }
+\newlabel{subsec:exp2-failure}{{7.6}{13}{Experiment 2: Failure Injection and Recovery}{subsection.7.6}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {5}{\ignorespaces \textcolor {blue}{Failure-handling matrix for Experiment~2. Each injected failure is handled by the relevant protocol boundary, and every case preserves zero canonical pollution.}}}{14}{figure.5}\protected@file@percent }
+\newlabel{fig:failure-handling-matrix}{{5}{14}{\textcolor {blue}{Failure-handling matrix for Experiment~2. Each injected failure is handled by the relevant protocol boundary, and every case preserves zero canonical pollution.}}{figure.5}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {7.7}Experiment 3: Mechanism Ablation}{14}{subsection.7.7}\protected@file@percent }
+\newlabel{subsec:exp3-ablation}{{7.7}{14}{Experiment 3: Mechanism Ablation}{subsection.7.7}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {6}{\ignorespaces \textcolor {blue}{Mechanism-ablation heatmap. Removing core protections prevents normal completion; removing verification additionally creates canonical pollution.}}}{14}{figure.6}\protected@file@percent }
+\newlabel{fig:ablation-heatmap}{{6}{14}{\textcolor {blue}{Mechanism-ablation heatmap. Removing core protections prevents normal completion; removing verification additionally creates canonical pollution.}}{figure.6}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {7.8}Experiment 4: Cross-Plugin Generality}{14}{subsection.7.8}\protected@file@percent }
+\newlabel{subsec:exp4-cross-plugin}{{7.8}{14}{Experiment 4: Cross-Plugin Generality}{subsection.7.8}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {7}{\ignorespaces \textcolor {blue}{Cross-plugin generality in Experiment~4. The same TokenShare contribution lifecycle supports both factorization and Lean proof plugins while domain semantics remain plugin-owned.}}}{15}{figure.7}\protected@file@percent }
+\newlabel{fig:cross-plugin-map}{{7}{15}{\textcolor {blue}{Cross-plugin generality in Experiment~4. The same TokenShare contribution lifecycle supports both factorization and Lean proof plugins while domain semantics remain plugin-owned.}}{figure.7}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {5}{\ignorespaces \textcolor {blue}{Experiment 4: cross-plugin generality results.}}}{15}{table.5}\protected@file@percent }
+\newlabel{tab:cross-plugin-results}{{5}{15}{\textcolor {blue}{Experiment 4: cross-plugin generality results.}}{table.5}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {7.9}Auxiliary Simulation: Heterogeneous Contributors}{15}{subsection.7.9}\protected@file@percent }
+\newlabel{subsec:aux-heterogeneous-contributors}{{7.9}{15}{Auxiliary Simulation: Heterogeneous Contributors}{subsection.7.9}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {8}{\ignorespaces \textcolor {blue}{Executor-boundary outcomes in the contributor-heterogeneity simulation. The malformed contributor is recorded but not accepted.}}}{16}{figure.8}\protected@file@percent }
+\newlabel{fig:executor-boundary-simulation}{{8}{16}{\textcolor {blue}{Executor-boundary outcomes in the contributor-heterogeneity simulation. The malformed contributor is recorded but not accepted.}}{figure.8}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {9}{\ignorespaces \textcolor {blue}{Cost--latency footprint of simulated contributor profiles. The model-backed contributor increases cost and latency, while the malformed contributor remains cheap but produces no accepted parsed output.}}}{16}{figure.9}\protected@file@percent }
+\newlabel{fig:cost-latency-footprint}{{9}{16}{\textcolor {blue}{Cost--latency footprint of simulated contributor profiles. The model-backed contributor increases cost and latency, while the malformed contributor remains cheap but produces no accepted parsed output.}}{figure.9}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {7.10}Audit Footprint}{17}{subsection.7.10}\protected@file@percent }
+\newlabel{subsec:audit-footprint}{{7.10}{17}{Audit Footprint}{subsection.7.10}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {10}{\ignorespaces \textcolor {blue}{Cumulative audit footprint across Experiments~1--4. The monotone increase reflects accumulated replay and artifact evidence, not merely final-answer records.}}}{17}{figure.10}\protected@file@percent }
+\newlabel{fig:cumulative-audit-footprint}{{10}{17}{\textcolor {blue}{Cumulative audit footprint across Experiments~1--4. The monotone increase reflects accumulated replay and artifact evidence, not merely final-answer records.}}{figure.10}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {6}{\ignorespaces \textcolor {blue}{Event and artifact footprint by experiment group.}}}{17}{table.6}\protected@file@percent }
+\newlabel{tab:audit-footprint}{{6}{17}{\textcolor {blue}{Event and artifact footprint by experiment group.}}{table.6}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {7.11}Limitations}{17}{subsection.7.11}\protected@file@percent }
+\newlabel{subsec:limitations}{{7.11}{17}{Limitations}{subsection.7.11}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {7.12}Summary}{17}{subsection.7.12}\protected@file@percent }
+\newlabel{subsec:experiment-summary}{{7.12}{17}{Summary}{subsection.7.12}{}}
+\citation{smith1980contract}
+\citation{gerkey2004formal}
+\citation{dias2006market}
+\citation{kittur2011crowdforge}
+\citation{kulkarni2011turkomatic}
+\citation{li2018crowdbc,liang2022decentralizedhit}
+\citation{anderson2020boinc}
+\citation{dean2004mapreduce}
+\citation{moritz2018ray}
+\citation{ousterhout2013sparrow}
+\citation{nakamoto2008bitcoin}
+\citation{buterin2014ethereum}
+\citation{teutsch2019truebit}
+\citation{fitzi2022ofelimos}
+\citation{khot2023decomposed,zhou2023least,yao2023tree,yao2023react}
+\citation{shen2023hugginggpt}
+\citation{li2023camel,wu2023autogen,hong2024metagpt,qian2023chatdev}
+\@writefile{toc}{\contentsline {section}{\numberline {8}Related Work}{18}{section.8}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Distributed task allocation and market coordination.}{18}{section*.10}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Complex crowdsourcing and decentralized crowdsourcing.}{18}{section*.11}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Volunteer and distributed execution systems.}{18}{section*.12}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Blockchains, verifiable computation, and useful work.}{18}{section*.13}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{LLM decomposition, tool use, and multi-agent workflows.}{18}{section*.14}\protected@file@percent }
+\citation{mathlib2020}
+\citation{zheng2021minif2f}
+\citation{yang2023leandojo}
+\citation{dawid1979maximum}
+\citation{whitehill2009glad}
+\citation{hovy2013mace}
+\citation{ratner2017snorkel}
+\citation{joshi2020state}
+\citation{nekoto2020participatory}
+\citation{nllb2022}
+\@writefile{lot}{\contentsline {table}{\numberline {7}{\ignorespaces Positioning of TokenShare relative to adjacent work.}}{19}{table.7}\protected@file@percent }
+\newlabel{tab:related_positioning}{{7}{19}{Positioning of TokenShare relative to adjacent work}{table.7}{}}
+\@writefile{toc}{\contentsline {paragraph}{Verification-heavy intelligent tasks.}{19}{section*.15}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Annotation quality and low-resource public-good NLP.}{19}{section*.16}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {9}Conclusion}{19}{section.9}\protected@file@percent }
+\bibstyle{plainnat}
+\bibdata{reference}
+\bibcite{anderson2020boinc}{{1}{2020}{{Anderson}}{{}}}
+\bibcite{buterin2014ethereum}{{2}{2014}{{Buterin}}{{}}}
+\bibcite{dawid1979maximum}{{3}{1979}{{Dawid and Skene}}{{}}}
+\bibcite{dean2004mapreduce}{{4}{2004}{{Dean and Ghemawat}}{{}}}
+\bibcite{dias2006market}{{5}{2006}{{Dias et~al.}}{{Dias, Zlot, Kalra, and Stentz}}}
+\bibcite{fitzi2022ofelimos}{{6}{2022}{{Fitzi et~al.}}{{Fitzi, Kiayias, Panagiotakos, and Russell}}}
+\bibcite{gerkey2004formal}{{7}{2004}{{Gerkey and Mataric}}{{}}}
+\bibcite{hong2024metagpt}{{8}{2024}{{Hong et~al.}}{{Hong, Zhuge, Chen, Zheng, Cheng, Zhang, Wang, Wang, Yau, Lin, et~al.}}}
+\bibcite{hovy2013mace}{{9}{2013}{{Hovy et~al.}}{{Hovy, Berg-Kirkpatrick, Vaswani, and Hovy}}}
+\bibcite{joshi2020state}{{10}{2020}{{Joshi et~al.}}{{Joshi, Santy, Budhiraja, Bali, and Choudhury}}}
+\bibcite{khot2023decomposed}{{11}{2023}{{Khot et~al.}}{{Khot, Trivedi, Finlayson, Fu, Richardson, Clark, and Sabharwal}}}
+\bibcite{kittur2011crowdforge}{{12}{2011}{{Kittur et~al.}}{{Kittur, Smus, Khamkar, and Kraut}}}
+\bibcite{kulkarni2011turkomatic}{{13}{2011}{{Kulkarni et~al.}}{{Kulkarni, Can, and Hartmann}}}
+\bibcite{li2023camel}{{14}{2023}{{Li et~al.}}{{Li, Hammoud, Itani, Khizbullin, and Ghanem}}}
+\bibcite{li2018crowdbc}{{15}{2019}{{Li et~al.}}{{Li, Weng, Yang, Lu, Zhang, Hou, Liu, Xiang, and Deng}}}
+\bibcite{liang2022decentralizedhit}{{16}{2022}{{Liang et~al.}}{{Liang, Li, and Shin}}}
+\bibcite{moritz2018ray}{{17}{2018}{{Moritz et~al.}}{{Moritz, Nishihara, Wang, Tumanov, Liaw, Liang, Elibol, Yang, Paul, Jordan, and Stoica}}}
+\bibcite{nakamoto2008bitcoin}{{18}{2008}{{Nakamoto}}{{}}}
+\bibcite{nekoto2020participatory}{{19}{2020}{{Nekoto et~al.}}{{Nekoto, Marivate, Matsila, Fasubaa, Kolawole, Fagbohungbe, Akinola, Muhammad, Kabongo, Osei, et~al.}}}
+\bibcite{nllb2022}{{20}{2022}{{{NLLB Team} et~al.}}{{{NLLB Team}, Costa-jussa, Cross, Celebi, Elbayad, Heafield, Heffernan, Kalbassi, Lam, Licht, Maillard, Sun, Wang, Wenzek, Youngblood, et~al.}}}
+\bibcite{ousterhout2013sparrow}{{21}{2013}{{Ousterhout et~al.}}{{Ousterhout, Wendell, Zaharia, and Stoica}}}
+\bibcite{qian2023chatdev}{{22}{2023}{{Qian et~al.}}{{Qian, Cong, Yang, Chen, Su, Xu, Liu, and Sun}}}
+\bibcite{ratner2017snorkel}{{23}{2017}{{Ratner et~al.}}{{Ratner, Bach, Ehrenberg, Fries, Wu, and Re}}}
+\bibcite{shen2023hugginggpt}{{24}{2023}{{Shen et~al.}}{{Shen, Song, Tan, Li, Lu, and Zhuang}}}
+\bibcite{smith1980contract}{{25}{1980}{{Smith}}{{}}}
+\bibcite{teutsch2019truebit}{{26}{2019}{{Teutsch and Reitwiessner}}{{}}}
+\bibcite{mathlib2020}{{27}{2020}{{The mathlib Community}}{{}}}
+\bibcite{whitehill2009glad}{{28}{2009}{{Whitehill et~al.}}{{Whitehill, Wu, Bergsma, Movellan, and Ruvolo}}}
+\bibcite{wu2023autogen}{{29}{2023}{{Wu et~al.}}{{Wu, Bansal, Zhang, Wu, Li, Zhu, Jiang, Zhang, Zhang, Liu, et~al.}}}
+\bibcite{yang2023leandojo}{{30}{2023}{{Yang et~al.}}{{Yang, Swope, Gu, Chalamala, Song, Yu, Godil, Prenger, and Anandkumar}}}
+\bibcite{yao2023tree}{{31}{2023{}}{{Yao et~al.}}{{Yao, Yu, Zhao, Shafran, Griffiths, Cao, and Narasimhan}}}
+\bibcite{yao2023react}{{32}{2023{}}{{Yao et~al.}}{{Yao, Zhao, Yu, Du, Shafran, Narasimhan, and Cao}}}
+\bibcite{zheng2021minif2f}{{33}{2021}{{Zheng et~al.}}{{Zheng, Han, and Polu}}}
+\bibcite{zhou2023least}{{34}{2023}{{Zhou et~al.}}{{Zhou, Scharli, Hou, Wei, Scales, Wang, Schuurmans, Cui, Bousquet, Le, and Chi}}}
+\gdef \@abspage@last{22}

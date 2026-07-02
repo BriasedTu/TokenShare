@@ -1,0 +1,56 @@
+{
+  "accuracy": 0.952,
+  "ai_api_config_digest": "sha256:2e911255ce28c055aa1bc48ad06d214d070178e0084a38d8ab128aa57e8e502f",
+  "attempted_count": 500,
+  "batch_report_path": "outputs/experiments/factorization_500_ai_real_glm_seed1_count500_workers10_retry_20260702/batch_report.json",
+  "correct_count": 476,
+  "cost_estimate_total": 1.7462418000000002,
+  "executor_error_count": 23,
+  "failed_count": 24,
+  "failure_breakdown": {
+    "executor_error": 23,
+    "product_mismatch": 1
+  },
+  "input_numbers_path": "outputs/experiments/factorization_500_ai_real_glm_seed1_count500_workers10_retry_20260702/input_numbers.jsonl",
+  "latency_ms_total": 6741567,
+  "models": [
+    "zai-org/GLM-5.2"
+  ],
+  "number_policy": {
+    "anchor_prime_factor_count": 5,
+    "anchor_prime_factors": [
+      "1009",
+      "1013",
+      "1019",
+      "1021",
+      "1031"
+    ],
+    "kind": "deterministic_semiprime",
+    "max_exclusive": "1000000000",
+    "min_exclusive": "1000000",
+    "prime_factor_max_inclusive": "5000",
+    "prime_factor_min_exclusive": "1000"
+  },
+  "oracle_answers_path": "outputs/experiments/factorization_500_ai_real_glm_seed1_count500_workers10_retry_20260702/oracle_answers.jsonl",
+  "parse_failure_count": 0,
+  "parsed_output_count": 477,
+  "parser_success_rate": 0.954,
+  "per_number_results_path": "outputs/experiments/factorization_500_ai_real_glm_seed1_count500_workers10_retry_20260702/per_number_results.jsonl",
+  "per_number_summary_path": "outputs/experiments/factorization_500_ai_real_glm_seed1_count500_workers10_retry_20260702/per_number_summary.csv",
+  "progress_report_path": "outputs/experiments/factorization_500_ai_real_glm_seed1_count500_workers10_retry_20260702/progress_report.json",
+  "provider_attempt_count": 500,
+  "providers": [
+    "siliconflow"
+  ],
+  "raw_output_count": 477,
+  "requested_count": 500,
+  "retry_count": 0,
+  "schema_version": "phase8.factorization_500_ai_report.v1",
+  "seed": 1,
+  "settings_path": "outputs/experiments/factorization_500_ai_real_glm_seed1_count500_workers10_retry_20260702/factorization_500_ai_settings.json",
+  "usage": {
+    "completion_tokens": 336718,
+    "prompt_tokens": 189059,
+    "total_tokens": 525777
+  }
+}

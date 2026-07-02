@@ -1,0 +1,20 @@
+{
+  "artifact_id": "raw_model_output_submission_ai_api_parse_failure_raw_only_1",
+  "artifact_schema_id": "phase7.raw_model_output",
+  "artifact_schema_version": "v1",
+  "artifact_type": "RawModelOutput",
+  "content_hash": "sha256:776f43a0fc5cb909da6dee74f7626556e99447f616fe6df006ddf8a2d7d96dde",
+  "created_at": "2026-06-30T00:00:00Z",
+  "media_type": "application/json",
+  "metadata": {
+    "entry_id": "deepseek_v4_pro__sf_key_1",
+    "executor_id": "executor_ai_api"
+  },
+  "schema_version": "ArtifactRef.v1",
+  "size_bytes": 715,
+  "source": {
+    "kind": "ai_api_executor",
+    "request_id": "request_ai_api_parse_failure_raw_only_1"
+  },
+  "uri": "artifacts/raw_model_output_submission_ai_api_parse_failure_raw_only_1"
+}

@@ -1,0 +1,19 @@
+{
+  "artifact_id": "raw_output_factor_range_3",
+  "artifact_schema_id": "phase3.raw_output",
+  "artifact_schema_version": "v1",
+  "artifact_type": "RawExecutorOutput",
+  "content_hash": "sha256:20fd2fdb3e652b8c6cdad2e596131c2a655a690245402edb8205bb571251234c",
+  "created_at": "2026-06-28T00:00:00Z",
+  "media_type": "application/json",
+  "metadata": {
+    "output_name": "raw_output",
+    "task_id": "task_factorization_fixture"
+  },
+  "schema_version": "ArtifactRef.v1",
+  "size_bytes": 854,
+  "source": {
+    "kind": "factorization_fixture"
+  },
+  "uri": "artifacts/raw_output_factor_range_3"
+}

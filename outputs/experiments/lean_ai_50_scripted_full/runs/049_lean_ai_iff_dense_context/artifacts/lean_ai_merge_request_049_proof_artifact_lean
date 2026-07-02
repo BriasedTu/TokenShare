@@ -1,0 +1,6 @@
+by
+  have child_forward : P → Q := by
+    exact hpq
+  have child_backward : Q → P := by
+    exact hqp
+  exact Iff.intro child_forward child_backward

@@ -1,0 +1,38 @@
+{
+  "artifact_id": "parsed_model_output_submission_lean_ai_018_child_right",
+  "artifact_schema_id": "lean_proof.proof_candidate",
+  "artifact_schema_version": "v1",
+  "artifact_type": "ParsedModelOutput",
+  "content_hash": "sha256:645fcab527c9bb22d9af2b628775d5694cbdcb21a6edf082a08d0e49aab2bfcd",
+  "created_at": "2026-07-02T00:00:00Z",
+  "media_type": "application/json",
+  "metadata": {
+    "executor_id": "executor_lean_ai_api"
+  },
+  "schema_version": "ArtifactRef.v1",
+  "size_bytes": 268,
+  "source": {
+    "kind": "ai_api_executor",
+    "raw_output_ref": {
+      "artifact_id": "raw_model_output_submission_lean_ai_018_child_right",
+      "artifact_schema_id": "phase7.raw_model_output",
+      "artifact_schema_version": "v1",
+      "artifact_type": "RawModelOutput",
+      "content_hash": "sha256:ca6c4bb23c8a72fd2513a19d55ef80c196cd340ee7b7550539cb97daa4faa844",
+      "created_at": "2026-07-02T00:00:00Z",
+      "media_type": "application/json",
+      "metadata": {
+        "entry_id": "qwen3_6_27b__sf_key_1",
+        "executor_id": "executor_lean_ai_api"
+      },
+      "schema_version": "ArtifactRef.v1",
+      "size_bytes": 1285,
+      "source": {
+        "kind": "ai_api_executor",
+        "request_id": "request_lean_ai_018_child_right"
+      },
+      "uri": "artifacts/raw_model_output_submission_lean_ai_018_child_right"
+    }
+  },
+  "uri": "artifacts/parsed_model_output_submission_lean_ai_018_child_right"
+}

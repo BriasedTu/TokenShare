@@ -3,7 +3,12 @@
 from tokenshare.experiments.adapters import AdapterRegistry, PluginExperimentAdapter
 from tokenshare.experiments.ai_profile import run_ai_profile_suite
 from tokenshare.experiments.factorization_adapter import FactorizationExperimentAdapter
+from tokenshare.experiments.factorization_500_ai import run_factorization_500_ai_suite
 from tokenshare.experiments.lean_adapter import LeanProofExperimentAdapter
+from tokenshare.experiments.lean_ai_benchmark import (
+    generate_lean_ai_benchmark_cases,
+    run_lean_ai_benchmark_suite,
+)
 from tokenshare.experiments.models import (
     ExperimentCase,
     ExperimentResult,
@@ -31,6 +36,9 @@ __all__ = [
     "SimulationProfile",
     "SimulationWrapper",
     "default_experiment_cases",
+    "generate_lean_ai_benchmark_cases",
+    "run_factorization_500_ai_suite",
     "run_ai_profile_suite",
+    "run_lean_ai_benchmark_suite",
     "run_phase8_default_suite",
 ]

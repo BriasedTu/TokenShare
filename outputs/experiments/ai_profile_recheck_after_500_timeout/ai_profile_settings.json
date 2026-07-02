@@ -1,0 +1,310 @@
+{
+  "ai_api_config": {
+    "config_digest": "sha256:1f31aa90e3af8ba331fbda880e6d09600799f4df678f76f2305cca8f9c992d08",
+    "defaults": {
+      "max_provider_attempts": 6,
+      "max_tokens": 64,
+      "stream": false,
+      "temperature": 0.2,
+      "timeout_seconds": 60,
+      "top_p": 0.9
+    },
+    "enabled_entry_ids": [
+      "qwen3_6_27b__sf_key_1",
+      "deepseek_v4_pro__sf_key_1",
+      "minimax_m2_5__sf_key_1",
+      "glm_5_2__sf_key_1",
+      "step_3_5_flash__sf_key_1",
+      "tencent_hy3_preview__sf_key_1"
+    ],
+    "entries": [
+      {
+        "api_key_env": "TOKENSHARE_LOCAL_AI_API_KEY_SF_KEY_1",
+        "base_url": "https://api.siliconflow.cn/v1",
+        "enabled": true,
+        "endpoint": "/chat/completions",
+        "entry_id": "qwen3_6_27b__sf_key_1",
+        "model": "Qwen/Qwen3.6-27B",
+        "pricing": {
+          "currency": "CNY",
+          "input_per_million_tokens": 0.3,
+          "observed_at": "2026-06-29",
+          "output_per_million_tokens": 3.2,
+          "source_note": "SiliconFlow model page"
+        },
+        "request_overrides": {
+          "temperature": 0.1
+        },
+        "supports_json_mode": true,
+        "supports_streaming": false,
+        "tags": [
+          "siliconflow",
+          "smoke",
+          "qwen",
+          "json_mode",
+          "api_key:sf_key_1"
+        ]
+      },
+      {
+        "api_key_env": "TOKENSHARE_LOCAL_AI_API_KEY_SF_KEY_1",
+        "base_url": "https://api.siliconflow.cn/v1",
+        "enabled": true,
+        "endpoint": "/chat/completions",
+        "entry_id": "deepseek_v4_pro__sf_key_1",
+        "model": "deepseek-ai/DeepSeek-V4-Pro",
+        "pricing": {
+          "currency": "CNY",
+          "input_per_million_tokens": 1.6,
+          "observed_at": "2026-06-29",
+          "output_per_million_tokens": 3.135,
+          "source_note": "SiliconFlow model page"
+        },
+        "request_overrides": {
+          "temperature": 0.1
+        },
+        "supports_json_mode": true,
+        "supports_streaming": false,
+        "tags": [
+          "siliconflow",
+          "smoke",
+          "deepseek",
+          "json_mode",
+          "api_key:sf_key_1"
+        ]
+      },
+      {
+        "api_key_env": "TOKENSHARE_LOCAL_AI_API_KEY_SF_KEY_1",
+        "base_url": "https://api.siliconflow.cn/v1",
+        "enabled": true,
+        "endpoint": "/chat/completions",
+        "entry_id": "minimax_m2_5__sf_key_1",
+        "model": "MiniMaxAI/MiniMax-M2.5",
+        "pricing": {
+          "currency": "CNY",
+          "input_per_million_tokens": 0.3,
+          "observed_at": "2026-06-29",
+          "output_per_million_tokens": 1.2,
+          "source_note": "SiliconFlow model page"
+        },
+        "request_overrides": {
+          "temperature": 0.1
+        },
+        "supports_json_mode": true,
+        "supports_streaming": false,
+        "tags": [
+          "siliconflow",
+          "smoke",
+          "minimax",
+          "json_mode",
+          "api_key:sf_key_1"
+        ]
+      },
+      {
+        "api_key_env": "TOKENSHARE_LOCAL_AI_API_KEY_SF_KEY_1",
+        "base_url": "https://api.siliconflow.cn/v1",
+        "enabled": true,
+        "endpoint": "/chat/completions",
+        "entry_id": "glm_5_2__sf_key_1",
+        "model": "zai-org/GLM-5.2",
+        "pricing": {
+          "currency": "CNY",
+          "input_per_million_tokens": 1.4,
+          "observed_at": "2026-06-29",
+          "output_per_million_tokens": 4.4,
+          "source_note": "SiliconFlow model page"
+        },
+        "request_overrides": {
+          "temperature": 0.1
+        },
+        "supports_json_mode": false,
+        "supports_streaming": false,
+        "tags": [
+          "siliconflow",
+          "smoke",
+          "zai",
+          "api_key:sf_key_1"
+        ]
+      },
+      {
+        "api_key_env": "TOKENSHARE_LOCAL_AI_API_KEY_SF_KEY_1",
+        "base_url": "https://api.siliconflow.cn/v1",
+        "enabled": true,
+        "endpoint": "/chat/completions",
+        "entry_id": "step_3_5_flash__sf_key_1",
+        "model": "stepfun-ai/Step-3.5-Flash",
+        "pricing": {
+          "currency": "CNY",
+          "input_per_million_tokens": 0.1,
+          "observed_at": "2026-06-29",
+          "output_per_million_tokens": 0.3,
+          "source_note": "SiliconFlow model page"
+        },
+        "request_overrides": {
+          "temperature": 0.1
+        },
+        "supports_json_mode": false,
+        "supports_streaming": false,
+        "tags": [
+          "siliconflow",
+          "smoke",
+          "stepfun",
+          "api_key:sf_key_1"
+        ]
+      },
+      {
+        "api_key_env": "TOKENSHARE_LOCAL_AI_API_KEY_SF_KEY_1",
+        "base_url": "https://api.siliconflow.cn/v1",
+        "enabled": true,
+        "endpoint": "/chat/completions",
+        "entry_id": "tencent_hy3_preview__sf_key_1",
+        "model": "tencent/Hy3-preview",
+        "pricing": {
+          "currency": "CNY",
+          "input_per_million_tokens": 0.066,
+          "observed_at": "2026-06-29",
+          "output_per_million_tokens": 0.26,
+          "source_note": "SiliconFlow model page"
+        },
+        "request_overrides": {
+          "temperature": 0.1
+        },
+        "supports_json_mode": false,
+        "supports_streaming": false,
+        "tags": [
+          "siliconflow",
+          "smoke",
+          "tencent",
+          "api_key:sf_key_1"
+        ]
+      }
+    ],
+    "entry_count": 6,
+    "executor_id": "executor_ai_api",
+    "metadata": {
+      "notes": "Fill any subset of api_keys. The loader expands filled keys across the six model entries; unfilled PASTE_/REPLACE_ keys are disabled. Real smoke uses raw text so all six models can be selected; JSON tasks still filter by supports_json_mode.",
+      "purpose": "local real SiliconFlow smoke"
+    },
+    "provider_family": "siliconflow",
+    "selection_policy": {
+      "kind": "uniform_random_without_weights",
+      "seed_source": "request_or_environment_seed"
+    },
+    "strict_arithmetic_entry_ids": [
+      "deepseek_v4_pro__sf_key_1",
+      "minimax_m2_5__sf_key_1",
+      "glm_5_2__sf_key_1",
+      "step_3_5_flash__sf_key_1",
+      "tencent_hy3_preview__sf_key_1"
+    ]
+  },
+  "output_root": "outputs/experiments/ai_profile_recheck_after_500_timeout",
+  "parser_policy": {
+    "parse_required": true,
+    "parser_id": "factorization.range_result.parser.v1",
+    "raw_only_allowed": false
+  },
+  "profile_settings": [
+    {
+      "case_id": "deterministic_semiprime_range_flow",
+      "executor_profile": "deterministic_local",
+      "experiment_id": "exp1_factorization_e2e",
+      "fixture_name": "semiprime_range_flow",
+      "requested_child_count": 4,
+      "target_n": "91"
+    },
+    {
+      "case_id": "ai_api_semiprime_range_flow",
+      "executor_profile": "ai_api",
+      "experiment_id": "exp1_factorization_e2e",
+      "fixture_name": "semiprime_range_flow",
+      "range_inputs": [
+        {
+          "child_count": 4,
+          "child_index": 0,
+          "coverage_id": "coverage_ai_profile_91",
+          "partition_params_digest": "sha256:dc5e25be2462821422e289074380ba2e28825380ce738819fa2d7cc91e7921e0",
+          "range_digest": "sha256:00995e8187a5dae350138b44d954cdbfd22a685ddd68d4d1a584f1a51f605f06",
+          "range_end": "3",
+          "range_start": "2",
+          "schema_version": "factorization.factor_search_range_input.v1",
+          "target_n": "91"
+        },
+        {
+          "child_count": 4,
+          "child_index": 1,
+          "coverage_id": "coverage_ai_profile_91",
+          "partition_params_digest": "sha256:dc5e25be2462821422e289074380ba2e28825380ce738819fa2d7cc91e7921e0",
+          "range_digest": "sha256:3bc6d417f2d06f80fafe42725ebd414f056df68c053e0fa065834b37980716d3",
+          "range_end": "5",
+          "range_start": "4",
+          "schema_version": "factorization.factor_search_range_input.v1",
+          "target_n": "91"
+        },
+        {
+          "child_count": 4,
+          "child_index": 2,
+          "coverage_id": "coverage_ai_profile_91",
+          "partition_params_digest": "sha256:dc5e25be2462821422e289074380ba2e28825380ce738819fa2d7cc91e7921e0",
+          "range_digest": "sha256:6285f6fe103e78ed62f788a9a5cb0949ef6f66d0b4239f9438fdfe7f484e9847",
+          "range_end": "7",
+          "range_start": "6",
+          "schema_version": "factorization.factor_search_range_input.v1",
+          "target_n": "91"
+        },
+        {
+          "child_count": 4,
+          "child_index": 3,
+          "coverage_id": "coverage_ai_profile_91",
+          "partition_params_digest": "sha256:dc5e25be2462821422e289074380ba2e28825380ce738819fa2d7cc91e7921e0",
+          "range_digest": "sha256:3b0eeb395cd0d04635e5243b30a696838491024bff99e631ef25cc294f8f8627",
+          "range_end": "9",
+          "range_start": "8",
+          "schema_version": "factorization.factor_search_range_input.v1",
+          "target_n": "91"
+        }
+      ],
+      "target_n": "91"
+    },
+    {
+      "case_id": "ai_api_parse_failure_raw_only",
+      "executor_profile": "ai_api",
+      "experiment_id": "exp2_failure_recovery",
+      "failure_stimulus": {
+        "content_digest": "sha256:65d3fc0b4704ec4e807a884c16bd6e507cfda2e57d94b9afcff2fb86acbfa12e",
+        "kind": "raw_text"
+      },
+      "fixture_name": "parse_failure_raw_only_forbidden",
+      "range_inputs": [
+        {
+          "child_count": 4,
+          "child_index": 1,
+          "coverage_id": "coverage_ai_profile_91",
+          "partition_params_digest": "sha256:dc5e25be2462821422e289074380ba2e28825380ce738819fa2d7cc91e7921e0",
+          "range_digest": "sha256:3bc6d417f2d06f80fafe42725ebd414f056df68c053e0fa065834b37980716d3",
+          "range_end": "5",
+          "range_start": "4",
+          "schema_version": "factorization.factor_search_range_input.v1",
+          "target_n": "91"
+        }
+      ],
+      "target_n": "91"
+    }
+  ],
+  "prompt_constraints": {
+    "format": "json",
+    "requires_json_mode": true
+  },
+  "real_transport": true,
+  "request_limits": {
+    "max_tokens": 1024,
+    "timeout_seconds": 30
+  },
+  "schema_version": "phase8.ai_profile_settings.v1",
+  "seed": 1,
+  "settings_path": "outputs/experiments/ai_profile_recheck_after_500_timeout/ai_profile_settings.json",
+  "soft_hints": {
+    "temperature": 0.0
+  },
+  "suite_report_path": "outputs/experiments/ai_profile_recheck_after_500_timeout/ai_profile_suite_report.json",
+  "summary_csv_path": "outputs/experiments/ai_profile_recheck_after_500_timeout/ai_profile_summary.csv"
+}

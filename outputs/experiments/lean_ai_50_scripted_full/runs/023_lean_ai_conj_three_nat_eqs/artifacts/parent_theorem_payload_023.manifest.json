@@ -1,0 +1,19 @@
+{
+  "artifact_id": "parent_theorem_payload_023",
+  "artifact_schema_id": "lean_proof.theorem_payload",
+  "artifact_schema_version": "v1",
+  "artifact_type": "LeanTheoremPayload",
+  "content_hash": "sha256:c82ee38b1a1e4e69ca1872cfc26db28777f9366e8ea80b9eea0cf9d1789509ba",
+  "created_at": "2026-07-02T00:00:00Z",
+  "media_type": "application/json",
+  "metadata": {
+    "theorem_name": "lean_ai_conj_three_nat_eqs"
+  },
+  "schema_version": "ArtifactRef.v1",
+  "size_bytes": 900,
+  "source": {
+    "case_id": "lean_ai_conj_three_nat_eqs",
+    "kind": "lean_ai_benchmark"
+  },
+  "uri": "artifacts/parent_theorem_payload_023"
+}

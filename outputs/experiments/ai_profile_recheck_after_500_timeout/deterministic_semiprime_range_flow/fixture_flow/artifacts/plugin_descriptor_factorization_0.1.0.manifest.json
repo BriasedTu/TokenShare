@@ -1,0 +1,19 @@
+{
+  "artifact_id": "plugin_descriptor_factorization_0.1.0",
+  "artifact_schema_id": "phase3.plugin_descriptor",
+  "artifact_schema_version": "v1",
+  "artifact_type": "PluginDescriptor",
+  "content_hash": "sha256:af4f7eac79c2bc11f38bfbea27f05913c448e26512228ba59ebc8ca7643497d3",
+  "created_at": "2026-06-28T00:00:00Z",
+  "media_type": "application/json",
+  "metadata": {
+    "plugin_id": "factorization",
+    "plugin_version": "0.1.0"
+  },
+  "schema_version": "ArtifactRef.v1",
+  "size_bytes": 7026,
+  "source": {
+    "kind": "plugin_registry"
+  },
+  "uri": "artifacts/plugin_descriptor_factorization_0.1.0"
+}

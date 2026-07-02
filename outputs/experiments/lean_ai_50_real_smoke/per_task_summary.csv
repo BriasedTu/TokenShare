@@ -1,0 +1,2 @@
+input_index,case_id,statement_source,status,split_supported,child_count,raw_output_count,parsed_output_count,parse_failure_count,checker_accepted_count,merge_success,provider_attempt_count,retry_count,cost_estimate_total,latency_ms_total,models
+0,lean_ai_conj_plain,P ∧ Q,failed,true,2,2,0,2,0,false,3,1,0.004155395,84166,Qwen/Qwen3.6-27B|deepseek-ai/DeepSeek-V4-Pro

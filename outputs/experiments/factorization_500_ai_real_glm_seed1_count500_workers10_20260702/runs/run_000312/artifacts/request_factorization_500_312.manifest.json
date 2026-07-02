@@ -1,0 +1,19 @@
+{
+  "artifact_id": "request_factorization_500_312",
+  "artifact_schema_id": "phase3.execution_request",
+  "artifact_schema_version": "v1",
+  "artifact_type": "ExecutionRequest",
+  "content_hash": "sha256:1b327f002424f06b81f07503481be2179b894e7f802103ca8380a93fcb858f75",
+  "created_at": "2026-07-02T00:00:00Z",
+  "media_type": "application/json",
+  "metadata": {
+    "attempt_id": "attempt_factorization_500_312",
+    "task_id": "task_factorization_500_312"
+  },
+  "schema_version": "ArtifactRef.v1",
+  "size_bytes": 3783,
+  "source": {
+    "kind": "protocol_engine"
+  },
+  "uri": "artifacts/request_factorization_500_312"
+}

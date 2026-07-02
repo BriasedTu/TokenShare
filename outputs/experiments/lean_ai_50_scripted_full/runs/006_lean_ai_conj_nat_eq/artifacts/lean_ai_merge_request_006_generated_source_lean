@@ -1,0 +1,10 @@
+import Init
+set_option autoImplicit false
+namespace TokenShareGenerated
+theorem lean_ai_conj_nat_eq (P Q : Prop) (hP : P) (hQ : Q) (n m : Nat) (hEq : n = m) : P ∧ Q := by
+  have child_left : P := by
+    exact hP
+  have child_right : Q := by
+    exact hQ
+  exact And.intro child_left child_right
+end TokenShareGenerated

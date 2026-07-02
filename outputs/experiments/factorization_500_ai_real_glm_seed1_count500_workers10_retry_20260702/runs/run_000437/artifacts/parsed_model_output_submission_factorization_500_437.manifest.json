@@ -1,0 +1,38 @@
+{
+  "artifact_id": "parsed_model_output_submission_factorization_500_437",
+  "artifact_schema_id": "factorization.direct_factorization_answer",
+  "artifact_schema_version": "v1",
+  "artifact_type": "ParsedModelOutput",
+  "content_hash": "sha256:bd93dd46e685e897ac50b8cb6ea4adf3de53dbac6f15158de12f8e7439eff675",
+  "created_at": "2026-07-02T00:00:00Z",
+  "media_type": "application/json",
+  "metadata": {
+    "executor_id": "executor_ai_api"
+  },
+  "schema_version": "ArtifactRef.v1",
+  "size_bytes": 290,
+  "source": {
+    "kind": "ai_api_executor",
+    "raw_output_ref": {
+      "artifact_id": "raw_model_output_submission_factorization_500_437",
+      "artifact_schema_id": "phase7.raw_model_output",
+      "artifact_schema_version": "v1",
+      "artifact_type": "RawModelOutput",
+      "content_hash": "sha256:7f075a70f9f1677d8d0655a6a9ec0dc78d0f807ac8e2bc4a7f5ddf00ca676f41",
+      "created_at": "2026-07-02T00:00:00Z",
+      "media_type": "application/json",
+      "metadata": {
+        "entry_id": "glm_5_2__sf_key_1",
+        "executor_id": "executor_ai_api"
+      },
+      "schema_version": "ArtifactRef.v1",
+      "size_bytes": 2568,
+      "source": {
+        "kind": "ai_api_executor",
+        "request_id": "request_factorization_500_437"
+      },
+      "uri": "artifacts/raw_model_output_submission_factorization_500_437"
+    }
+  },
+  "uri": "artifacts/parsed_model_output_submission_factorization_500_437"
+}

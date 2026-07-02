@@ -1495,12 +1495,17 @@ but its output is accepted only after plugin-owned parsing and verification.};
 \label{fig:cost-latency-footprint}
 \end{figure}
 
-The deterministic and real model-backed profiles have identical correctness and
-parser success:
+Relative to the deterministic local profile, the real model-backed profile shows
+no loss of task correctness, parser reliability, or retry behavior. Both profiles
+complete the task correctly, both produce four parsed outputs, both record zero
+parse failures, and the model-backed run requires no extra retry:
 \[
-  \Delta_{\mathrm{correctness}}=0,\qquad
-  \Delta_{\mathrm{parser}}=0.0,\qquad
-  \Delta_{\mathrm{retry}}=0.
+  \begin{aligned}
+    \mathrm{correct}_{\text{local}} &= \mathrm{correct}_{\text{model}} = 1,\\
+    \mathrm{parsed}_{\text{local}} &= \mathrm{parsed}_{\text{model}} = 4,\\
+    \mathrm{failures}_{\text{local}} &= \mathrm{failures}_{\text{model}} = 0,\\
+    \Delta_{\mathrm{retry}} &= 0.
+  \end{aligned}
 \]
 The real model-backed path introduces external-resource overhead in the explicit
 \texttt{--real-transport} AI profile run reported in

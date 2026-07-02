@@ -1,0 +1,19 @@
+{
+  "artifact_id": "parent_theorem_payload_022",
+  "artifact_schema_id": "lean_proof.theorem_payload",
+  "artifact_schema_version": "v1",
+  "artifact_type": "LeanTheoremPayload",
+  "content_hash": "sha256:7548179e3139ed03effc6ad0fa83727eed2e6df8ca4e25920a83e917b857edfa",
+  "created_at": "2026-07-02T00:00:00Z",
+  "media_type": "application/json",
+  "metadata": {
+    "theorem_name": "lean_ai_conj_two_predicates"
+  },
+  "schema_version": "ArtifactRef.v1",
+  "size_bytes": 923,
+  "source": {
+    "case_id": "lean_ai_conj_two_predicates",
+    "kind": "lean_ai_benchmark"
+  },
+  "uri": "artifacts/parent_theorem_payload_022"
+}

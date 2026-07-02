@@ -1,0 +1,2355 @@
+{
+  "cases": [
+    {
+      "case_id": "lean_ai_conj_plain",
+      "expected_child_keys": [
+        "child:left",
+        "child:right"
+      ],
+      "input_index": 0,
+      "parameters_source": "(P Q : Prop) (hP : P) (hQ : Q)",
+      "schema_version": "phase8.lean_ai_benchmark_case.v1",
+      "statement_source": "P ∧ Q",
+      "theorem_payload": {
+        "decomposition_policy": {
+          "allowed_rules": [
+            "conjunction",
+            "iff",
+            "intro"
+          ],
+          "max_children": 8,
+          "max_depth": 4,
+          "policy_id": "lean_proof.deterministic_tactic_split.v1",
+          "unsupported_policy": "return_unsupported"
+        },
+        "imports": [
+          "Init"
+        ],
+        "library_context": {
+          "benchmark_case_id": "lean_ai_conj_plain",
+          "module": "TokenShareGenerated.LeanAI50",
+          "project": "tokenshare_lean"
+        },
+        "namespace": "TokenShareGenerated",
+        "open_namespaces": [],
+        "options": {},
+        "parameters_source": "(P Q : Prop) (hP : P) (hQ : Q)",
+        "payload_digest": "sha256:ae90385670b7fb8a0c26423f8f050aaad1e2cb7739718586b70c293d6ab44813",
+        "proof_candidate_ref": null,
+        "resource_limits": {
+          "max_output_bytes": 65536,
+          "timeout_seconds": 30
+        },
+        "schema_version": "lean_proof.theorem_payload.v1",
+        "statement_source": "P ∧ Q",
+        "theorem_id": "lean_theorem:lean_ai_conj_plain",
+        "theorem_name": "lean_ai_conj_plain",
+        "theorem_source": null
+      }
+    },
+    {
+      "case_id": "lean_ai_conj_extra_prop",
+      "expected_child_keys": [
+        "child:left",
+        "child:right"
+      ],
+      "input_index": 1,
+      "parameters_source": "(P Q : Prop) (hP : P) (hQ : Q) (R : Prop) (hR : R)",
+      "schema_version": "phase8.lean_ai_benchmark_case.v1",
+      "statement_source": "P ∧ Q",
+      "theorem_payload": {
+        "decomposition_policy": {
+          "allowed_rules": [
+            "conjunction",
+            "iff",
+            "intro"
+          ],
+          "max_children": 8,
+          "max_depth": 4,
+          "policy_id": "lean_proof.deterministic_tactic_split.v1",
+          "unsupported_policy": "return_unsupported"
+        },
+        "imports": [
+          "Init"
+        ],
+        "library_context": {
+          "benchmark_case_id": "lean_ai_conj_extra_prop",
+          "module": "TokenShareGenerated.LeanAI50",
+          "project": "tokenshare_lean"
+        },
+        "namespace": "TokenShareGenerated",
+        "open_namespaces": [],
+        "options": {},
+        "parameters_source": "(P Q : Prop) (hP : P) (hQ : Q) (R : Prop) (hR : R)",
+        "payload_digest": "sha256:d4912b9e13b0059c0a9ec6c6217b20bed8e9d98bf047508e21d38d367858e28d",
+        "proof_candidate_ref": null,
+        "resource_limits": {
+          "max_output_bytes": 65536,
+          "timeout_seconds": 30
+        },
+        "schema_version": "lean_proof.theorem_payload.v1",
+        "statement_source": "P ∧ Q",
+        "theorem_id": "lean_theorem:lean_ai_conj_extra_prop",
+        "theorem_name": "lean_ai_conj_extra_prop",
+        "theorem_source": null
+      }
+    },
+    {
+      "case_id": "lean_ai_conj_chain_to_q",
+      "expected_child_keys": [
+        "child:left",
+        "child:right"
+      ],
+      "input_index": 2,
+      "parameters_source": "(P Q : Prop) (hP : P) (hQ : Q) (R : Prop) (hPR : P → R) (hRQ : R → Q)",
+      "schema_version": "phase8.lean_ai_benchmark_case.v1",
+      "statement_source": "P ∧ Q",
+      "theorem_payload": {
+        "decomposition_policy": {
+          "allowed_rules": [
+            "conjunction",
+            "iff",
+            "intro"
+          ],
+          "max_children": 8,
+          "max_depth": 4,
+          "policy_id": "lean_proof.deterministic_tactic_split.v1",
+          "unsupported_policy": "return_unsupported"
+        },
+        "imports": [
+          "Init"
+        ],
+        "library_context": {
+          "benchmark_case_id": "lean_ai_conj_chain_to_q",
+          "module": "TokenShareGenerated.LeanAI50",
+          "project": "tokenshare_lean"
+        },
+        "namespace": "TokenShareGenerated",
+        "open_namespaces": [],
+        "options": {},
+        "parameters_source": "(P Q : Prop) (hP : P) (hQ : Q) (R : Prop) (hPR : P → R) (hRQ : R → Q)",
+        "payload_digest": "sha256:69dfcfea05fd45e9644877ad92be15b7e689fc4cb51e11959f9bba07104f62fd",
+        "proof_candidate_ref": null,
+        "resource_limits": {
+          "max_output_bytes": 65536,
+          "timeout_seconds": 30
+        },
+        "schema_version": "lean_proof.theorem_payload.v1",
+        "statement_source": "P ∧ Q",
+        "theorem_id": "lean_theorem:lean_ai_conj_chain_to_q",
+        "theorem_name": "lean_ai_conj_chain_to_q",
+        "theorem_source": null
+      }
+    },
+    {
+      "case_id": "lean_ai_conj_pair_context",
+      "expected_child_keys": [
+        "child:left",
+        "child:right"
+      ],
+      "input_index": 3,
+      "parameters_source": "(P Q : Prop) (hP : P) (hQ : Q) (R S : Prop) (hRS : R ∧ S)",
+      "schema_version": "phase8.lean_ai_benchmark_case.v1",
+      "statement_source": "P ∧ Q",
+      "theorem_payload": {
+        "decomposition_policy": {
+          "allowed_rules": [
+            "conjunction",
+            "iff",
+            "intro"
+          ],
+          "max_children": 8,
+          "max_depth": 4,
+          "policy_id": "lean_proof.deterministic_tactic_split.v1",
+          "unsupported_policy": "return_unsupported"
+        },
+        "imports": [
+          "Init"
+        ],
+        "library_context": {
+          "benchmark_case_id": "lean_ai_conj_pair_context",
+          "module": "TokenShareGenerated.LeanAI50",
+          "project": "tokenshare_lean"
+        },
+        "namespace": "TokenShareGenerated",
+        "open_namespaces": [],
+        "options": {},
+        "parameters_source": "(P Q : Prop) (hP : P) (hQ : Q) (R S : Prop) (hRS : R ∧ S)",
+        "payload_digest": "sha256:629596740d9f46651e1b110d8e3c274d009585bac4eb64288c510666e3fdd8fd",
+        "proof_candidate_ref": null,
+        "resource_limits": {
+          "max_output_bytes": 65536,
+          "timeout_seconds": 30
+        },
+        "schema_version": "lean_proof.theorem_payload.v1",
+        "statement_source": "P ∧ Q",
+        "theorem_id": "lean_theorem:lean_ai_conj_pair_context",
+        "theorem_name": "lean_ai_conj_pair_context",
+        "theorem_source": null
+      }
+    },
+    {
+      "case_id": "lean_ai_conj_two_irrelevant_facts",
+      "expected_child_keys": [
+        "child:left",
+        "child:right"
+      ],
+      "input_index": 4,
+      "parameters_source": "(P Q : Prop) (hP : P) (hQ : Q) (R S : Prop) (hR : R) (hS : S)",
+      "schema_version": "phase8.lean_ai_benchmark_case.v1",
+      "statement_source": "P ∧ Q",
+      "theorem_payload": {
+        "decomposition_policy": {
+          "allowed_rules": [
+            "conjunction",
+            "iff",
+            "intro"
+          ],
+          "max_children": 8,
+          "max_depth": 4,
+          "policy_id": "lean_proof.deterministic_tactic_split.v1",
+          "unsupported_policy": "return_unsupported"
+        },
+        "imports": [
+          "Init"
+        ],
+        "library_context": {
+          "benchmark_case_id": "lean_ai_conj_two_irrelevant_facts",
+          "module": "TokenShareGenerated.LeanAI50",
+          "project": "tokenshare_lean"
+        },
+        "namespace": "TokenShareGenerated",
+        "open_namespaces": [],
+        "options": {},
+        "parameters_source": "(P Q : Prop) (hP : P) (hQ : Q) (R S : Prop) (hR : R) (hS : S)",
+        "payload_digest": "sha256:b89e7dea26283c30cbf246579e2a3e20d4ca9a2c553bf66f6d43e2eb853a482f",
+        "proof_candidate_ref": null,
+        "resource_limits": {
+          "max_output_bytes": 65536,
+          "timeout_seconds": 30
+        },
+        "schema_version": "lean_proof.theorem_payload.v1",
+        "statement_source": "P ∧ Q",
+        "theorem_id": "lean_theorem:lean_ai_conj_two_irrelevant_facts",
+        "theorem_name": "lean_ai_conj_two_irrelevant_facts",
+        "theorem_source": null
+      }
+    },
+    {
+      "case_id": "lean_ai_conj_type_predicate",
+      "expected_child_keys": [
+        "child:left",
+        "child:right"
+      ],
+      "input_index": 5,
+      "parameters_source": "(P Q : Prop) (hP : P) (hQ : Q) (A : Type) (x : A) (R : A → Prop) (hx : R x)",
+      "schema_version": "phase8.lean_ai_benchmark_case.v1",
+      "statement_source": "P ∧ Q",
+      "theorem_payload": {
+        "decomposition_policy": {
+          "allowed_rules": [
+            "conjunction",
+            "iff",
+            "intro"
+          ],
+          "max_children": 8,
+          "max_depth": 4,
+          "policy_id": "lean_proof.deterministic_tactic_split.v1",
+          "unsupported_policy": "return_unsupported"
+        },
+        "imports": [
+          "Init"
+        ],
+        "library_context": {
+          "benchmark_case_id": "lean_ai_conj_type_predicate",
+          "module": "TokenShareGenerated.LeanAI50",
+          "project": "tokenshare_lean"
+        },
+        "namespace": "TokenShareGenerated",
+        "open_namespaces": [],
+        "options": {},
+        "parameters_source": "(P Q : Prop) (hP : P) (hQ : Q) (A : Type) (x : A) (R : A → Prop) (hx : R x)",
+        "payload_digest": "sha256:86c431ae7d5b79a2bb8e962f258861c26ac9bc7cbecc2aa523f74e87b8e0c44e",
+        "proof_candidate_ref": null,
+        "resource_limits": {
+          "max_output_bytes": 65536,
+          "timeout_seconds": 30
+        },
+        "schema_version": "lean_proof.theorem_payload.v1",
+        "statement_source": "P ∧ Q",
+        "theorem_id": "lean_theorem:lean_ai_conj_type_predicate",
+        "theorem_name": "lean_ai_conj_type_predicate",
+        "theorem_source": null
+      }
+    },
+    {
+      "case_id": "lean_ai_conj_nat_eq",
+      "expected_child_keys": [
+        "child:left",
+        "child:right"
+      ],
+      "input_index": 6,
+      "parameters_source": "(P Q : Prop) (hP : P) (hQ : Q) (n m : Nat) (hEq : n = m)",
+      "schema_version": "phase8.lean_ai_benchmark_case.v1",
+      "statement_source": "P ∧ Q",
+      "theorem_payload": {
+        "decomposition_policy": {
+          "allowed_rules": [
+            "conjunction",
+            "iff",
+            "intro"
+          ],
+          "max_children": 8,
+          "max_depth": 4,
+          "policy_id": "lean_proof.deterministic_tactic_split.v1",
+          "unsupported_policy": "return_unsupported"
+        },
+        "imports": [
+          "Init"
+        ],
+        "library_context": {
+          "benchmark_case_id": "lean_ai_conj_nat_eq",
+          "module": "TokenShareGenerated.LeanAI50",
+          "project": "tokenshare_lean"
+        },
+        "namespace": "TokenShareGenerated",
+        "open_namespaces": [],
+        "options": {},
+        "parameters_source": "(P Q : Prop) (hP : P) (hQ : Q) (n m : Nat) (hEq : n = m)",
+        "payload_digest": "sha256:10ceb59e951fe2513814d472343b57de04b5dc31e205c15d3a22990543e8b9cd",
+        "proof_candidate_ref": null,
+        "resource_limits": {
+          "max_output_bytes": 65536,
+          "timeout_seconds": 30
+        },
+        "schema_version": "lean_proof.theorem_payload.v1",
+        "statement_source": "P ∧ Q",
+        "theorem_id": "lean_theorem:lean_ai_conj_nat_eq",
+        "theorem_name": "lean_ai_conj_nat_eq",
+        "theorem_source": null
+      }
+    },
+    {
+      "case_id": "lean_ai_conj_nat_reflexive_noise",
+      "expected_child_keys": [
+        "child:left",
+        "child:right"
+      ],
+      "input_index": 7,
+      "parameters_source": "(P Q : Prop) (hP : P) (hQ : Q) (n : Nat) (hNat : n = n)",
+      "schema_version": "phase8.lean_ai_benchmark_case.v1",
+      "statement_source": "P ∧ Q",
+      "theorem_payload": {
+        "decomposition_policy": {
+          "allowed_rules": [
+            "conjunction",
+            "iff",
+            "intro"
+          ],
+          "max_children": 8,
+          "max_depth": 4,
+          "policy_id": "lean_proof.deterministic_tactic_split.v1",
+          "unsupported_policy": "return_unsupported"
+        },
+        "imports": [
+          "Init"
+        ],
+        "library_context": {
+          "benchmark_case_id": "lean_ai_conj_nat_reflexive_noise",
+          "module": "TokenShareGenerated.LeanAI50",
+          "project": "tokenshare_lean"
+        },
+        "namespace": "TokenShareGenerated",
+        "open_namespaces": [],
+        "options": {},
+        "parameters_source": "(P Q : Prop) (hP : P) (hQ : Q) (n : Nat) (hNat : n = n)",
+        "payload_digest": "sha256:6fe997c5697eacc137dbc602f9af440fabb6e6f96cb352d7d0ca95ddba5731e3",
+        "proof_candidate_ref": null,
+        "resource_limits": {
+          "max_output_bytes": 65536,
+          "timeout_seconds": 30
+        },
+        "schema_version": "lean_proof.theorem_payload.v1",
+        "statement_source": "P ∧ Q",
+        "theorem_id": "lean_theorem:lean_ai_conj_nat_reflexive_noise",
+        "theorem_name": "lean_ai_conj_nat_reflexive_noise",
+        "theorem_source": null
+      }
+    },
+    {
+      "case_id": "lean_ai_conj_bool_noise",
+      "expected_child_keys": [
+        "child:left",
+        "child:right"
+      ],
+      "input_index": 8,
+      "parameters_source": "(P Q : Prop) (hP : P) (hQ : Q) (b : Bool) (hBool : b = b)",
+      "schema_version": "phase8.lean_ai_benchmark_case.v1",
+      "statement_source": "P ∧ Q",
+      "theorem_payload": {
+        "decomposition_policy": {
+          "allowed_rules": [
+            "conjunction",
+            "iff",
+            "intro"
+          ],
+          "max_children": 8,
+          "max_depth": 4,
+          "policy_id": "lean_proof.deterministic_tactic_split.v1",
+          "unsupported_policy": "return_unsupported"
+        },
+        "imports": [
+          "Init"
+        ],
+        "library_context": {
+          "benchmark_case_id": "lean_ai_conj_bool_noise",
+          "module": "TokenShareGenerated.LeanAI50",
+          "project": "tokenshare_lean"
+        },
+        "namespace": "TokenShareGenerated",
+        "open_namespaces": [],
+        "options": {},
+        "parameters_source": "(P Q : Prop) (hP : P) (hQ : Q) (b : Bool) (hBool : b = b)",
+        "payload_digest": "sha256:db982140234bbf02fdc897cfd684e05ae72dbb561051c0ba31085d61669e4d75",
+        "proof_candidate_ref": null,
+        "resource_limits": {
+          "max_output_bytes": 65536,
+          "timeout_seconds": 30
+        },
+        "schema_version": "lean_proof.theorem_payload.v1",
+        "statement_source": "P ∧ Q",
+        "theorem_id": "lean_theorem:lean_ai_conj_bool_noise",
+        "theorem_name": "lean_ai_conj_bool_noise",
+        "theorem_source": null
+      }
+    },
+    {
+      "case_id": "lean_ai_conj_list_noise",
+      "expected_child_keys": [
+        "child:left",
+        "child:right"
+      ],
+      "input_index": 9,
+      "parameters_source": "(P Q : Prop) (hP : P) (hQ : Q) (xs : List Nat) (hList : xs = xs)",
+      "schema_version": "phase8.lean_ai_benchmark_case.v1",
+      "statement_source": "P ∧ Q",
+      "theorem_payload": {
+        "decomposition_policy": {
+          "allowed_rules": [
+            "conjunction",
+            "iff",
+            "intro"
+          ],
+          "max_children": 8,
+          "max_depth": 4,
+          "policy_id": "lean_proof.deterministic_tactic_split.v1",
+          "unsupported_policy": "return_unsupported"
+        },
+        "imports": [
+          "Init"
+        ],
+        "library_context": {
+          "benchmark_case_id": "lean_ai_conj_list_noise",
+          "module": "TokenShareGenerated.LeanAI50",
+          "project": "tokenshare_lean"
+        },
+        "namespace": "TokenShareGenerated",
+        "open_namespaces": [],
+        "options": {},
+        "parameters_source": "(P Q : Prop) (hP : P) (hQ : Q) (xs : List Nat) (hList : xs = xs)",
+        "payload_digest": "sha256:8a574b7a575171fb676350e8de7126362a8c508b4976b3fce34f22d3a895ea39",
+        "proof_candidate_ref": null,
+        "resource_limits": {
+          "max_output_bytes": 65536,
+          "timeout_seconds": 30
+        },
+        "schema_version": "lean_proof.theorem_payload.v1",
+        "statement_source": "P ∧ Q",
+        "theorem_id": "lean_theorem:lean_ai_conj_list_noise",
+        "theorem_name": "lean_ai_conj_list_noise",
+        "theorem_source": null
+      }
+    },
+    {
+      "case_id": "lean_ai_conj_option_noise",
+      "expected_child_keys": [
+        "child:left",
+        "child:right"
+      ],
+      "input_index": 10,
+      "parameters_source": "(P Q : Prop) (hP : P) (hQ : Q) (o : Option Nat) (hOpt : o = o)",
+      "schema_version": "phase8.lean_ai_benchmark_case.v1",
+      "statement_source": "P ∧ Q",
+      "theorem_payload": {
+        "decomposition_policy": {
+          "allowed_rules": [
+            "conjunction",
+            "iff",
+            "intro"
+          ],
+          "max_children": 8,
+          "max_depth": 4,
+          "policy_id": "lean_proof.deterministic_tactic_split.v1",
+          "unsupported_policy": "return_unsupported"
+        },
+        "imports": [
+          "Init"
+        ],
+        "library_context": {
+          "benchmark_case_id": "lean_ai_conj_option_noise",
+          "module": "TokenShareGenerated.LeanAI50",
+          "project": "tokenshare_lean"
+        },
+        "namespace": "TokenShareGenerated",
+        "open_namespaces": [],
+        "options": {},
+        "parameters_source": "(P Q : Prop) (hP : P) (hQ : Q) (o : Option Nat) (hOpt : o = o)",
+        "payload_digest": "sha256:04580dd1aa835f723bf817eee3a47b1ddebe8d3d2d3eb4ab9607068cdda21468",
+        "proof_candidate_ref": null,
+        "resource_limits": {
+          "max_output_bytes": 65536,
+          "timeout_seconds": 30
+        },
+        "schema_version": "lean_proof.theorem_payload.v1",
+        "statement_source": "P ∧ Q",
+        "theorem_id": "lean_theorem:lean_ai_conj_option_noise",
+        "theorem_name": "lean_ai_conj_option_noise",
+        "theorem_source": null
+      }
+    },
+    {
+      "case_id": "lean_ai_conj_not_context",
+      "expected_child_keys": [
+        "child:left",
+        "child:right"
+      ],
+      "input_index": 11,
+      "parameters_source": "(P Q : Prop) (hP : P) (hQ : Q) (R : Prop) (hNot : ¬ R → P)",
+      "schema_version": "phase8.lean_ai_benchmark_case.v1",
+      "statement_source": "P ∧ Q",
+      "theorem_payload": {
+        "decomposition_policy": {
+          "allowed_rules": [
+            "conjunction",
+            "iff",
+            "intro"
+          ],
+          "max_children": 8,
+          "max_depth": 4,
+          "policy_id": "lean_proof.deterministic_tactic_split.v1",
+          "unsupported_policy": "return_unsupported"
+        },
+        "imports": [
+          "Init"
+        ],
+        "library_context": {
+          "benchmark_case_id": "lean_ai_conj_not_context",
+          "module": "TokenShareGenerated.LeanAI50",
+          "project": "tokenshare_lean"
+        },
+        "namespace": "TokenShareGenerated",
+        "open_namespaces": [],
+        "options": {},
+        "parameters_source": "(P Q : Prop) (hP : P) (hQ : Q) (R : Prop) (hNot : ¬ R → P)",
+        "payload_digest": "sha256:1ef0ab54d27097187c95772d502c427f61e88cb735e5133b5baeae7101e85737",
+        "proof_candidate_ref": null,
+        "resource_limits": {
+          "max_output_bytes": 65536,
+          "timeout_seconds": 30
+        },
+        "schema_version": "lean_proof.theorem_payload.v1",
+        "statement_source": "P ∧ Q",
+        "theorem_id": "lean_theorem:lean_ai_conj_not_context",
+        "theorem_name": "lean_ai_conj_not_context",
+        "theorem_source": null
+      }
+    },
+    {
+      "case_id": "lean_ai_conj_false_context",
+      "expected_child_keys": [
+        "child:left",
+        "child:right"
+      ],
+      "input_index": 12,
+      "parameters_source": "(P Q : Prop) (hP : P) (hQ : Q) (R : Prop) (hContra : R → False)",
+      "schema_version": "phase8.lean_ai_benchmark_case.v1",
+      "statement_source": "P ∧ Q",
+      "theorem_payload": {
+        "decomposition_policy": {
+          "allowed_rules": [
+            "conjunction",
+            "iff",
+            "intro"
+          ],
+          "max_children": 8,
+          "max_depth": 4,
+          "policy_id": "lean_proof.deterministic_tactic_split.v1",
+          "unsupported_policy": "return_unsupported"
+        },
+        "imports": [
+          "Init"
+        ],
+        "library_context": {
+          "benchmark_case_id": "lean_ai_conj_false_context",
+          "module": "TokenShareGenerated.LeanAI50",
+          "project": "tokenshare_lean"
+        },
+        "namespace": "TokenShareGenerated",
+        "open_namespaces": [],
+        "options": {},
+        "parameters_source": "(P Q : Prop) (hP : P) (hQ : Q) (R : Prop) (hContra : R → False)",
+        "payload_digest": "sha256:5573204679f8fb3a0dd85da9195f60a62abcd04a632bcd9e515afd7639aef2f4",
+        "proof_candidate_ref": null,
+        "resource_limits": {
+          "max_output_bytes": 65536,
+          "timeout_seconds": 30
+        },
+        "schema_version": "lean_proof.theorem_payload.v1",
+        "statement_source": "P ∧ Q",
+        "theorem_id": "lean_theorem:lean_ai_conj_false_context",
+        "theorem_name": "lean_ai_conj_false_context",
+        "theorem_source": null
+      }
+    },
+    {
+      "case_id": "lean_ai_conj_iff_context",
+      "expected_child_keys": [
+        "child:left",
+        "child:right"
+      ],
+      "input_index": 13,
+      "parameters_source": "(P Q : Prop) (hP : P) (hQ : Q) (R : Prop) (hPR : P ↔ R)",
+      "schema_version": "phase8.lean_ai_benchmark_case.v1",
+      "statement_source": "P ∧ Q",
+      "theorem_payload": {
+        "decomposition_policy": {
+          "allowed_rules": [
+            "conjunction",
+            "iff",
+            "intro"
+          ],
+          "max_children": 8,
+          "max_depth": 4,
+          "policy_id": "lean_proof.deterministic_tactic_split.v1",
+          "unsupported_policy": "return_unsupported"
+        },
+        "imports": [
+          "Init"
+        ],
+        "library_context": {
+          "benchmark_case_id": "lean_ai_conj_iff_context",
+          "module": "TokenShareGenerated.LeanAI50",
+          "project": "tokenshare_lean"
+        },
+        "namespace": "TokenShareGenerated",
+        "open_namespaces": [],
+        "options": {},
+        "parameters_source": "(P Q : Prop) (hP : P) (hQ : Q) (R : Prop) (hPR : P ↔ R)",
+        "payload_digest": "sha256:3ae819f5ad8cf0cf77b460bb3432e19d293aa8172bb4797c32d98f1a4d692922",
+        "proof_candidate_ref": null,
+        "resource_limits": {
+          "max_output_bytes": 65536,
+          "timeout_seconds": 30
+        },
+        "schema_version": "lean_proof.theorem_payload.v1",
+        "statement_source": "P ∧ Q",
+        "theorem_id": "lean_theorem:lean_ai_conj_iff_context",
+        "theorem_name": "lean_ai_conj_iff_context",
+        "theorem_source": null
+      }
+    },
+    {
+      "case_id": "lean_ai_conj_three_prop_chain",
+      "expected_child_keys": [
+        "child:left",
+        "child:right"
+      ],
+      "input_index": 14,
+      "parameters_source": "(P Q : Prop) (hP : P) (hQ : Q) (R S T : Prop) (hRST : R → S → T)",
+      "schema_version": "phase8.lean_ai_benchmark_case.v1",
+      "statement_source": "P ∧ Q",
+      "theorem_payload": {
+        "decomposition_policy": {
+          "allowed_rules": [
+            "conjunction",
+            "iff",
+            "intro"
+          ],
+          "max_children": 8,
+          "max_depth": 4,
+          "policy_id": "lean_proof.deterministic_tactic_split.v1",
+          "unsupported_policy": "return_unsupported"
+        },
+        "imports": [
+          "Init"
+        ],
+        "library_context": {
+          "benchmark_case_id": "lean_ai_conj_three_prop_chain",
+          "module": "TokenShareGenerated.LeanAI50",
+          "project": "tokenshare_lean"
+        },
+        "namespace": "TokenShareGenerated",
+        "open_namespaces": [],
+        "options": {},
+        "parameters_source": "(P Q : Prop) (hP : P) (hQ : Q) (R S T : Prop) (hRST : R → S → T)",
+        "payload_digest": "sha256:197d61c46eb56e72900b72ec652d2a637e8cbf0cd7a42b754cbb3012301c4bbb",
+        "proof_candidate_ref": null,
+        "resource_limits": {
+          "max_output_bytes": 65536,
+          "timeout_seconds": 30
+        },
+        "schema_version": "lean_proof.theorem_payload.v1",
+        "statement_source": "P ∧ Q",
+        "theorem_id": "lean_theorem:lean_ai_conj_three_prop_chain",
+        "theorem_name": "lean_ai_conj_three_prop_chain",
+        "theorem_source": null
+      }
+    },
+    {
+      "case_id": "lean_ai_conj_nat_prop_mix",
+      "expected_child_keys": [
+        "child:left",
+        "child:right"
+      ],
+      "input_index": 15,
+      "parameters_source": "(P Q : Prop) (hP : P) (hQ : Q) (n : Nat) (R : Prop) (hMix : R → n = n)",
+      "schema_version": "phase8.lean_ai_benchmark_case.v1",
+      "statement_source": "P ∧ Q",
+      "theorem_payload": {
+        "decomposition_policy": {
+          "allowed_rules": [
+            "conjunction",
+            "iff",
+            "intro"
+          ],
+          "max_children": 8,
+          "max_depth": 4,
+          "policy_id": "lean_proof.deterministic_tactic_split.v1",
+          "unsupported_policy": "return_unsupported"
+        },
+        "imports": [
+          "Init"
+        ],
+        "library_context": {
+          "benchmark_case_id": "lean_ai_conj_nat_prop_mix",
+          "module": "TokenShareGenerated.LeanAI50",
+          "project": "tokenshare_lean"
+        },
+        "namespace": "TokenShareGenerated",
+        "open_namespaces": [],
+        "options": {},
+        "parameters_source": "(P Q : Prop) (hP : P) (hQ : Q) (n : Nat) (R : Prop) (hMix : R → n = n)",
+        "payload_digest": "sha256:386277fbaa6d803349e299addf23f83d7460462e6ee50cbf4abc9504f58287fe",
+        "proof_candidate_ref": null,
+        "resource_limits": {
+          "max_output_bytes": 65536,
+          "timeout_seconds": 30
+        },
+        "schema_version": "lean_proof.theorem_payload.v1",
+        "statement_source": "P ∧ Q",
+        "theorem_id": "lean_theorem:lean_ai_conj_nat_prop_mix",
+        "theorem_name": "lean_ai_conj_nat_prop_mix",
+        "theorem_source": null
+      }
+    },
+    {
+      "case_id": "lean_ai_conj_type_equality",
+      "expected_child_keys": [
+        "child:left",
+        "child:right"
+      ],
+      "input_index": 16,
+      "parameters_source": "(P Q : Prop) (hP : P) (hQ : Q) (A : Type) (a b : A) (hSame : a = b)",
+      "schema_version": "phase8.lean_ai_benchmark_case.v1",
+      "statement_source": "P ∧ Q",
+      "theorem_payload": {
+        "decomposition_policy": {
+          "allowed_rules": [
+            "conjunction",
+            "iff",
+            "intro"
+          ],
+          "max_children": 8,
+          "max_depth": 4,
+          "policy_id": "lean_proof.deterministic_tactic_split.v1",
+          "unsupported_policy": "return_unsupported"
+        },
+        "imports": [
+          "Init"
+        ],
+        "library_context": {
+          "benchmark_case_id": "lean_ai_conj_type_equality",
+          "module": "TokenShareGenerated.LeanAI50",
+          "project": "tokenshare_lean"
+        },
+        "namespace": "TokenShareGenerated",
+        "open_namespaces": [],
+        "options": {},
+        "parameters_source": "(P Q : Prop) (hP : P) (hQ : Q) (A : Type) (a b : A) (hSame : a = b)",
+        "payload_digest": "sha256:3ab7ba77bce05c6be973bc202e8e6b4b9b7c21cb28d2ddaaaf69bae16c38396f",
+        "proof_candidate_ref": null,
+        "resource_limits": {
+          "max_output_bytes": 65536,
+          "timeout_seconds": 30
+        },
+        "schema_version": "lean_proof.theorem_payload.v1",
+        "statement_source": "P ∧ Q",
+        "theorem_id": "lean_theorem:lean_ai_conj_type_equality",
+        "theorem_name": "lean_ai_conj_type_equality",
+        "theorem_source": null
+      }
+    },
+    {
+      "case_id": "lean_ai_conj_function_noise",
+      "expected_child_keys": [
+        "child:left",
+        "child:right"
+      ],
+      "input_index": 17,
+      "parameters_source": "(P Q : Prop) (hP : P) (hQ : Q) (f : Nat → Nat) (n : Nat) (hFun : f n = f n)",
+      "schema_version": "phase8.lean_ai_benchmark_case.v1",
+      "statement_source": "P ∧ Q",
+      "theorem_payload": {
+        "decomposition_policy": {
+          "allowed_rules": [
+            "conjunction",
+            "iff",
+            "intro"
+          ],
+          "max_children": 8,
+          "max_depth": 4,
+          "policy_id": "lean_proof.deterministic_tactic_split.v1",
+          "unsupported_policy": "return_unsupported"
+        },
+        "imports": [
+          "Init"
+        ],
+        "library_context": {
+          "benchmark_case_id": "lean_ai_conj_function_noise",
+          "module": "TokenShareGenerated.LeanAI50",
+          "project": "tokenshare_lean"
+        },
+        "namespace": "TokenShareGenerated",
+        "open_namespaces": [],
+        "options": {},
+        "parameters_source": "(P Q : Prop) (hP : P) (hQ : Q) (f : Nat → Nat) (n : Nat) (hFun : f n = f n)",
+        "payload_digest": "sha256:ca33274a6ec44eaf1cb605ed81f64b72556e57af94d1d7d9c9ae28890dd3cb22",
+        "proof_candidate_ref": null,
+        "resource_limits": {
+          "max_output_bytes": 65536,
+          "timeout_seconds": 30
+        },
+        "schema_version": "lean_proof.theorem_payload.v1",
+        "statement_source": "P ∧ Q",
+        "theorem_id": "lean_theorem:lean_ai_conj_function_noise",
+        "theorem_name": "lean_ai_conj_function_noise",
+        "theorem_source": null
+      }
+    },
+    {
+      "case_id": "lean_ai_conj_predicate_noise",
+      "expected_child_keys": [
+        "child:left",
+        "child:right"
+      ],
+      "input_index": 18,
+      "parameters_source": "(P Q : Prop) (hP : P) (hQ : Q) (R : Nat → Prop) (n : Nat) (hRn : R n)",
+      "schema_version": "phase8.lean_ai_benchmark_case.v1",
+      "statement_source": "P ∧ Q",
+      "theorem_payload": {
+        "decomposition_policy": {
+          "allowed_rules": [
+            "conjunction",
+            "iff",
+            "intro"
+          ],
+          "max_children": 8,
+          "max_depth": 4,
+          "policy_id": "lean_proof.deterministic_tactic_split.v1",
+          "unsupported_policy": "return_unsupported"
+        },
+        "imports": [
+          "Init"
+        ],
+        "library_context": {
+          "benchmark_case_id": "lean_ai_conj_predicate_noise",
+          "module": "TokenShareGenerated.LeanAI50",
+          "project": "tokenshare_lean"
+        },
+        "namespace": "TokenShareGenerated",
+        "open_namespaces": [],
+        "options": {},
+        "parameters_source": "(P Q : Prop) (hP : P) (hQ : Q) (R : Nat → Prop) (n : Nat) (hRn : R n)",
+        "payload_digest": "sha256:2ecddf88217913947d45ff4b2c76e062670792b760a158bfefbf34c8f2bc2230",
+        "proof_candidate_ref": null,
+        "resource_limits": {
+          "max_output_bytes": 65536,
+          "timeout_seconds": 30
+        },
+        "schema_version": "lean_proof.theorem_payload.v1",
+        "statement_source": "P ∧ Q",
+        "theorem_id": "lean_theorem:lean_ai_conj_predicate_noise",
+        "theorem_name": "lean_ai_conj_predicate_noise",
+        "theorem_source": null
+      }
+    },
+    {
+      "case_id": "lean_ai_conj_nested_and_noise",
+      "expected_child_keys": [
+        "child:left",
+        "child:right"
+      ],
+      "input_index": 19,
+      "parameters_source": "(P Q : Prop) (hP : P) (hQ : Q) (R : Prop) (hAnd : P ∧ R)",
+      "schema_version": "phase8.lean_ai_benchmark_case.v1",
+      "statement_source": "P ∧ Q",
+      "theorem_payload": {
+        "decomposition_policy": {
+          "allowed_rules": [
+            "conjunction",
+            "iff",
+            "intro"
+          ],
+          "max_children": 8,
+          "max_depth": 4,
+          "policy_id": "lean_proof.deterministic_tactic_split.v1",
+          "unsupported_policy": "return_unsupported"
+        },
+        "imports": [
+          "Init"
+        ],
+        "library_context": {
+          "benchmark_case_id": "lean_ai_conj_nested_and_noise",
+          "module": "TokenShareGenerated.LeanAI50",
+          "project": "tokenshare_lean"
+        },
+        "namespace": "TokenShareGenerated",
+        "open_namespaces": [],
+        "options": {},
+        "parameters_source": "(P Q : Prop) (hP : P) (hQ : Q) (R : Prop) (hAnd : P ∧ R)",
+        "payload_digest": "sha256:32101aa549ac2086ad6929e771a8980b808b774fb15cc177209b2ea69263bea6",
+        "proof_candidate_ref": null,
+        "resource_limits": {
+          "max_output_bytes": 65536,
+          "timeout_seconds": 30
+        },
+        "schema_version": "lean_proof.theorem_payload.v1",
+        "statement_source": "P ∧ Q",
+        "theorem_id": "lean_theorem:lean_ai_conj_nested_and_noise",
+        "theorem_name": "lean_ai_conj_nested_and_noise",
+        "theorem_source": null
+      }
+    },
+    {
+      "case_id": "lean_ai_conj_or_noise",
+      "expected_child_keys": [
+        "child:left",
+        "child:right"
+      ],
+      "input_index": 20,
+      "parameters_source": "(P Q : Prop) (hP : P) (hQ : Q) (R : Prop) (hOr : P ∨ R)",
+      "schema_version": "phase8.lean_ai_benchmark_case.v1",
+      "statement_source": "P ∧ Q",
+      "theorem_payload": {
+        "decomposition_policy": {
+          "allowed_rules": [
+            "conjunction",
+            "iff",
+            "intro"
+          ],
+          "max_children": 8,
+          "max_depth": 4,
+          "policy_id": "lean_proof.deterministic_tactic_split.v1",
+          "unsupported_policy": "return_unsupported"
+        },
+        "imports": [
+          "Init"
+        ],
+        "library_context": {
+          "benchmark_case_id": "lean_ai_conj_or_noise",
+          "module": "TokenShareGenerated.LeanAI50",
+          "project": "tokenshare_lean"
+        },
+        "namespace": "TokenShareGenerated",
+        "open_namespaces": [],
+        "options": {},
+        "parameters_source": "(P Q : Prop) (hP : P) (hQ : Q) (R : Prop) (hOr : P ∨ R)",
+        "payload_digest": "sha256:ba06e149f76a87df15b28d5846fd5442eeb0e7595edf550ee3100e0ea02beaf2",
+        "proof_candidate_ref": null,
+        "resource_limits": {
+          "max_output_bytes": 65536,
+          "timeout_seconds": 30
+        },
+        "schema_version": "lean_proof.theorem_payload.v1",
+        "statement_source": "P ∧ Q",
+        "theorem_id": "lean_theorem:lean_ai_conj_or_noise",
+        "theorem_name": "lean_ai_conj_or_noise",
+        "theorem_source": null
+      }
+    },
+    {
+      "case_id": "lean_ai_conj_q_equiv_noise",
+      "expected_child_keys": [
+        "child:left",
+        "child:right"
+      ],
+      "input_index": 21,
+      "parameters_source": "(P Q : Prop) (hP : P) (hQ : Q) (R : Prop) (hQR : Q → R) (hRQ : R → Q)",
+      "schema_version": "phase8.lean_ai_benchmark_case.v1",
+      "statement_source": "P ∧ Q",
+      "theorem_payload": {
+        "decomposition_policy": {
+          "allowed_rules": [
+            "conjunction",
+            "iff",
+            "intro"
+          ],
+          "max_children": 8,
+          "max_depth": 4,
+          "policy_id": "lean_proof.deterministic_tactic_split.v1",
+          "unsupported_policy": "return_unsupported"
+        },
+        "imports": [
+          "Init"
+        ],
+        "library_context": {
+          "benchmark_case_id": "lean_ai_conj_q_equiv_noise",
+          "module": "TokenShareGenerated.LeanAI50",
+          "project": "tokenshare_lean"
+        },
+        "namespace": "TokenShareGenerated",
+        "open_namespaces": [],
+        "options": {},
+        "parameters_source": "(P Q : Prop) (hP : P) (hQ : Q) (R : Prop) (hQR : Q → R) (hRQ : R → Q)",
+        "payload_digest": "sha256:bdad512c23adfc0aa882a2d97410f7f9b623a2fc750c822553be51f7f06e9427",
+        "proof_candidate_ref": null,
+        "resource_limits": {
+          "max_output_bytes": 65536,
+          "timeout_seconds": 30
+        },
+        "schema_version": "lean_proof.theorem_payload.v1",
+        "statement_source": "P ∧ Q",
+        "theorem_id": "lean_theorem:lean_ai_conj_q_equiv_noise",
+        "theorem_name": "lean_ai_conj_q_equiv_noise",
+        "theorem_source": null
+      }
+    },
+    {
+      "case_id": "lean_ai_conj_two_predicates",
+      "expected_child_keys": [
+        "child:left",
+        "child:right"
+      ],
+      "input_index": 22,
+      "parameters_source": "(P Q : Prop) (hP : P) (hQ : Q) (A : Type) (p q : A → Prop) (x : A) (hp : p x) (hq : q x)",
+      "schema_version": "phase8.lean_ai_benchmark_case.v1",
+      "statement_source": "P ∧ Q",
+      "theorem_payload": {
+        "decomposition_policy": {
+          "allowed_rules": [
+            "conjunction",
+            "iff",
+            "intro"
+          ],
+          "max_children": 8,
+          "max_depth": 4,
+          "policy_id": "lean_proof.deterministic_tactic_split.v1",
+          "unsupported_policy": "return_unsupported"
+        },
+        "imports": [
+          "Init"
+        ],
+        "library_context": {
+          "benchmark_case_id": "lean_ai_conj_two_predicates",
+          "module": "TokenShareGenerated.LeanAI50",
+          "project": "tokenshare_lean"
+        },
+        "namespace": "TokenShareGenerated",
+        "open_namespaces": [],
+        "options": {},
+        "parameters_source": "(P Q : Prop) (hP : P) (hQ : Q) (A : Type) (p q : A → Prop) (x : A) (hp : p x) (hq : q x)",
+        "payload_digest": "sha256:b74a8011681fad6636d397e71fc8b96283a62da6a5e23bfdbb8d146a615abdc6",
+        "proof_candidate_ref": null,
+        "resource_limits": {
+          "max_output_bytes": 65536,
+          "timeout_seconds": 30
+        },
+        "schema_version": "lean_proof.theorem_payload.v1",
+        "statement_source": "P ∧ Q",
+        "theorem_id": "lean_theorem:lean_ai_conj_two_predicates",
+        "theorem_name": "lean_ai_conj_two_predicates",
+        "theorem_source": null
+      }
+    },
+    {
+      "case_id": "lean_ai_conj_three_nat_eqs",
+      "expected_child_keys": [
+        "child:left",
+        "child:right"
+      ],
+      "input_index": 23,
+      "parameters_source": "(P Q : Prop) (hP : P) (hQ : Q) (n m k : Nat) (h1 : n = m) (h2 : m = k)",
+      "schema_version": "phase8.lean_ai_benchmark_case.v1",
+      "statement_source": "P ∧ Q",
+      "theorem_payload": {
+        "decomposition_policy": {
+          "allowed_rules": [
+            "conjunction",
+            "iff",
+            "intro"
+          ],
+          "max_children": 8,
+          "max_depth": 4,
+          "policy_id": "lean_proof.deterministic_tactic_split.v1",
+          "unsupported_policy": "return_unsupported"
+        },
+        "imports": [
+          "Init"
+        ],
+        "library_context": {
+          "benchmark_case_id": "lean_ai_conj_three_nat_eqs",
+          "module": "TokenShareGenerated.LeanAI50",
+          "project": "tokenshare_lean"
+        },
+        "namespace": "TokenShareGenerated",
+        "open_namespaces": [],
+        "options": {},
+        "parameters_source": "(P Q : Prop) (hP : P) (hQ : Q) (n m k : Nat) (h1 : n = m) (h2 : m = k)",
+        "payload_digest": "sha256:ab5c42d974f6dd0eb62d5409cb71c131a75008544e392c060a67b3b18291f48b",
+        "proof_candidate_ref": null,
+        "resource_limits": {
+          "max_output_bytes": 65536,
+          "timeout_seconds": 30
+        },
+        "schema_version": "lean_proof.theorem_payload.v1",
+        "statement_source": "P ∧ Q",
+        "theorem_id": "lean_theorem:lean_ai_conj_three_nat_eqs",
+        "theorem_name": "lean_ai_conj_three_nat_eqs",
+        "theorem_source": null
+      }
+    },
+    {
+      "case_id": "lean_ai_conj_dense_context",
+      "expected_child_keys": [
+        "child:left",
+        "child:right"
+      ],
+      "input_index": 24,
+      "parameters_source": "(P Q : Prop) (hP : P) (hQ : Q) (R S : Prop) (h1 : P → R) (h2 : Q → S) (h3 : R → S → P)",
+      "schema_version": "phase8.lean_ai_benchmark_case.v1",
+      "statement_source": "P ∧ Q",
+      "theorem_payload": {
+        "decomposition_policy": {
+          "allowed_rules": [
+            "conjunction",
+            "iff",
+            "intro"
+          ],
+          "max_children": 8,
+          "max_depth": 4,
+          "policy_id": "lean_proof.deterministic_tactic_split.v1",
+          "unsupported_policy": "return_unsupported"
+        },
+        "imports": [
+          "Init"
+        ],
+        "library_context": {
+          "benchmark_case_id": "lean_ai_conj_dense_context",
+          "module": "TokenShareGenerated.LeanAI50",
+          "project": "tokenshare_lean"
+        },
+        "namespace": "TokenShareGenerated",
+        "open_namespaces": [],
+        "options": {},
+        "parameters_source": "(P Q : Prop) (hP : P) (hQ : Q) (R S : Prop) (h1 : P → R) (h2 : Q → S) (h3 : R → S → P)",
+        "payload_digest": "sha256:72aac999d209d02ec6b638e5fbdf819ebfe4bf59096ee9e874d1a3fae266867d",
+        "proof_candidate_ref": null,
+        "resource_limits": {
+          "max_output_bytes": 65536,
+          "timeout_seconds": 30
+        },
+        "schema_version": "lean_proof.theorem_payload.v1",
+        "statement_source": "P ∧ Q",
+        "theorem_id": "lean_theorem:lean_ai_conj_dense_context",
+        "theorem_name": "lean_ai_conj_dense_context",
+        "theorem_source": null
+      }
+    },
+    {
+      "case_id": "lean_ai_iff_plain",
+      "expected_child_keys": [
+        "child:forward",
+        "child:backward"
+      ],
+      "input_index": 25,
+      "parameters_source": "(P Q : Prop) (hpq : P → Q) (hqp : Q → P)",
+      "schema_version": "phase8.lean_ai_benchmark_case.v1",
+      "statement_source": "P ↔ Q",
+      "theorem_payload": {
+        "decomposition_policy": {
+          "allowed_rules": [
+            "conjunction",
+            "iff",
+            "intro"
+          ],
+          "max_children": 8,
+          "max_depth": 4,
+          "policy_id": "lean_proof.deterministic_tactic_split.v1",
+          "unsupported_policy": "return_unsupported"
+        },
+        "imports": [
+          "Init"
+        ],
+        "library_context": {
+          "benchmark_case_id": "lean_ai_iff_plain",
+          "module": "TokenShareGenerated.LeanAI50",
+          "project": "tokenshare_lean"
+        },
+        "namespace": "TokenShareGenerated",
+        "open_namespaces": [],
+        "options": {},
+        "parameters_source": "(P Q : Prop) (hpq : P → Q) (hqp : Q → P)",
+        "payload_digest": "sha256:75fde3f938a948139c88c87af619b8cedf0eab7c2120f12ff793fae3067b582c",
+        "proof_candidate_ref": null,
+        "resource_limits": {
+          "max_output_bytes": 65536,
+          "timeout_seconds": 30
+        },
+        "schema_version": "lean_proof.theorem_payload.v1",
+        "statement_source": "P ↔ Q",
+        "theorem_id": "lean_theorem:lean_ai_iff_plain",
+        "theorem_name": "lean_ai_iff_plain",
+        "theorem_source": null
+      }
+    },
+    {
+      "case_id": "lean_ai_iff_extra_prop",
+      "expected_child_keys": [
+        "child:forward",
+        "child:backward"
+      ],
+      "input_index": 26,
+      "parameters_source": "(P Q : Prop) (hpq : P → Q) (hqp : Q → P) (R : Prop) (hR : R)",
+      "schema_version": "phase8.lean_ai_benchmark_case.v1",
+      "statement_source": "P ↔ Q",
+      "theorem_payload": {
+        "decomposition_policy": {
+          "allowed_rules": [
+            "conjunction",
+            "iff",
+            "intro"
+          ],
+          "max_children": 8,
+          "max_depth": 4,
+          "policy_id": "lean_proof.deterministic_tactic_split.v1",
+          "unsupported_policy": "return_unsupported"
+        },
+        "imports": [
+          "Init"
+        ],
+        "library_context": {
+          "benchmark_case_id": "lean_ai_iff_extra_prop",
+          "module": "TokenShareGenerated.LeanAI50",
+          "project": "tokenshare_lean"
+        },
+        "namespace": "TokenShareGenerated",
+        "open_namespaces": [],
+        "options": {},
+        "parameters_source": "(P Q : Prop) (hpq : P → Q) (hqp : Q → P) (R : Prop) (hR : R)",
+        "payload_digest": "sha256:4993c3e0e985517f2e641a20abb644c16f804f72d0a951bbb34002672d3beaca",
+        "proof_candidate_ref": null,
+        "resource_limits": {
+          "max_output_bytes": 65536,
+          "timeout_seconds": 30
+        },
+        "schema_version": "lean_proof.theorem_payload.v1",
+        "statement_source": "P ↔ Q",
+        "theorem_id": "lean_theorem:lean_ai_iff_extra_prop",
+        "theorem_name": "lean_ai_iff_extra_prop",
+        "theorem_source": null
+      }
+    },
+    {
+      "case_id": "lean_ai_iff_forward_chain_noise",
+      "expected_child_keys": [
+        "child:forward",
+        "child:backward"
+      ],
+      "input_index": 27,
+      "parameters_source": "(P Q : Prop) (hpq : P → Q) (hqp : Q → P) (R : Prop) (hPR : P → R) (hRQ : R → Q)",
+      "schema_version": "phase8.lean_ai_benchmark_case.v1",
+      "statement_source": "P ↔ Q",
+      "theorem_payload": {
+        "decomposition_policy": {
+          "allowed_rules": [
+            "conjunction",
+            "iff",
+            "intro"
+          ],
+          "max_children": 8,
+          "max_depth": 4,
+          "policy_id": "lean_proof.deterministic_tactic_split.v1",
+          "unsupported_policy": "return_unsupported"
+        },
+        "imports": [
+          "Init"
+        ],
+        "library_context": {
+          "benchmark_case_id": "lean_ai_iff_forward_chain_noise",
+          "module": "TokenShareGenerated.LeanAI50",
+          "project": "tokenshare_lean"
+        },
+        "namespace": "TokenShareGenerated",
+        "open_namespaces": [],
+        "options": {},
+        "parameters_source": "(P Q : Prop) (hpq : P → Q) (hqp : Q → P) (R : Prop) (hPR : P → R) (hRQ : R → Q)",
+        "payload_digest": "sha256:7f2e4d5c0ca9683c6e7169f058884faae35c2f81b667b25a3355fe46431cf83d",
+        "proof_candidate_ref": null,
+        "resource_limits": {
+          "max_output_bytes": 65536,
+          "timeout_seconds": 30
+        },
+        "schema_version": "lean_proof.theorem_payload.v1",
+        "statement_source": "P ↔ Q",
+        "theorem_id": "lean_theorem:lean_ai_iff_forward_chain_noise",
+        "theorem_name": "lean_ai_iff_forward_chain_noise",
+        "theorem_source": null
+      }
+    },
+    {
+      "case_id": "lean_ai_iff_reverse_chain_noise",
+      "expected_child_keys": [
+        "child:forward",
+        "child:backward"
+      ],
+      "input_index": 28,
+      "parameters_source": "(P Q : Prop) (hpq : P → Q) (hqp : Q → P) (R : Prop) (hRP : R → P) (hQR : Q → R)",
+      "schema_version": "phase8.lean_ai_benchmark_case.v1",
+      "statement_source": "P ↔ Q",
+      "theorem_payload": {
+        "decomposition_policy": {
+          "allowed_rules": [
+            "conjunction",
+            "iff",
+            "intro"
+          ],
+          "max_children": 8,
+          "max_depth": 4,
+          "policy_id": "lean_proof.deterministic_tactic_split.v1",
+          "unsupported_policy": "return_unsupported"
+        },
+        "imports": [
+          "Init"
+        ],
+        "library_context": {
+          "benchmark_case_id": "lean_ai_iff_reverse_chain_noise",
+          "module": "TokenShareGenerated.LeanAI50",
+          "project": "tokenshare_lean"
+        },
+        "namespace": "TokenShareGenerated",
+        "open_namespaces": [],
+        "options": {},
+        "parameters_source": "(P Q : Prop) (hpq : P → Q) (hqp : Q → P) (R : Prop) (hRP : R → P) (hQR : Q → R)",
+        "payload_digest": "sha256:e59d5d416e1c2b4a611189f45ce27a296f71b3019784276405919a61069528ed",
+        "proof_candidate_ref": null,
+        "resource_limits": {
+          "max_output_bytes": 65536,
+          "timeout_seconds": 30
+        },
+        "schema_version": "lean_proof.theorem_payload.v1",
+        "statement_source": "P ↔ Q",
+        "theorem_id": "lean_theorem:lean_ai_iff_reverse_chain_noise",
+        "theorem_name": "lean_ai_iff_reverse_chain_noise",
+        "theorem_source": null
+      }
+    },
+    {
+      "case_id": "lean_ai_iff_pair_context",
+      "expected_child_keys": [
+        "child:forward",
+        "child:backward"
+      ],
+      "input_index": 29,
+      "parameters_source": "(P Q : Prop) (hpq : P → Q) (hqp : Q → P) (R S : Prop) (hRS : R ∧ S)",
+      "schema_version": "phase8.lean_ai_benchmark_case.v1",
+      "statement_source": "P ↔ Q",
+      "theorem_payload": {
+        "decomposition_policy": {
+          "allowed_rules": [
+            "conjunction",
+            "iff",
+            "intro"
+          ],
+          "max_children": 8,
+          "max_depth": 4,
+          "policy_id": "lean_proof.deterministic_tactic_split.v1",
+          "unsupported_policy": "return_unsupported"
+        },
+        "imports": [
+          "Init"
+        ],
+        "library_context": {
+          "benchmark_case_id": "lean_ai_iff_pair_context",
+          "module": "TokenShareGenerated.LeanAI50",
+          "project": "tokenshare_lean"
+        },
+        "namespace": "TokenShareGenerated",
+        "open_namespaces": [],
+        "options": {},
+        "parameters_source": "(P Q : Prop) (hpq : P → Q) (hqp : Q → P) (R S : Prop) (hRS : R ∧ S)",
+        "payload_digest": "sha256:5dcbc091c6e300843f697b972f8174394cf824426c59d40bdb9873ea76f28df5",
+        "proof_candidate_ref": null,
+        "resource_limits": {
+          "max_output_bytes": 65536,
+          "timeout_seconds": 30
+        },
+        "schema_version": "lean_proof.theorem_payload.v1",
+        "statement_source": "P ↔ Q",
+        "theorem_id": "lean_theorem:lean_ai_iff_pair_context",
+        "theorem_name": "lean_ai_iff_pair_context",
+        "theorem_source": null
+      }
+    },
+    {
+      "case_id": "lean_ai_iff_or_context",
+      "expected_child_keys": [
+        "child:forward",
+        "child:backward"
+      ],
+      "input_index": 30,
+      "parameters_source": "(P Q : Prop) (hpq : P → Q) (hqp : Q → P) (R S : Prop) (hEither : R ∨ S)",
+      "schema_version": "phase8.lean_ai_benchmark_case.v1",
+      "statement_source": "P ↔ Q",
+      "theorem_payload": {
+        "decomposition_policy": {
+          "allowed_rules": [
+            "conjunction",
+            "iff",
+            "intro"
+          ],
+          "max_children": 8,
+          "max_depth": 4,
+          "policy_id": "lean_proof.deterministic_tactic_split.v1",
+          "unsupported_policy": "return_unsupported"
+        },
+        "imports": [
+          "Init"
+        ],
+        "library_context": {
+          "benchmark_case_id": "lean_ai_iff_or_context",
+          "module": "TokenShareGenerated.LeanAI50",
+          "project": "tokenshare_lean"
+        },
+        "namespace": "TokenShareGenerated",
+        "open_namespaces": [],
+        "options": {},
+        "parameters_source": "(P Q : Prop) (hpq : P → Q) (hqp : Q → P) (R S : Prop) (hEither : R ∨ S)",
+        "payload_digest": "sha256:557000e2a4f0db8a5ec0186d3c865e0ef8c4b61f55e2996b6f91de61c6b30111",
+        "proof_candidate_ref": null,
+        "resource_limits": {
+          "max_output_bytes": 65536,
+          "timeout_seconds": 30
+        },
+        "schema_version": "lean_proof.theorem_payload.v1",
+        "statement_source": "P ↔ Q",
+        "theorem_id": "lean_theorem:lean_ai_iff_or_context",
+        "theorem_name": "lean_ai_iff_or_context",
+        "theorem_source": null
+      }
+    },
+    {
+      "case_id": "lean_ai_iff_nat_noise",
+      "expected_child_keys": [
+        "child:forward",
+        "child:backward"
+      ],
+      "input_index": 31,
+      "parameters_source": "(P Q : Prop) (hpq : P → Q) (hqp : Q → P) (n : Nat) (hn : n = n)",
+      "schema_version": "phase8.lean_ai_benchmark_case.v1",
+      "statement_source": "P ↔ Q",
+      "theorem_payload": {
+        "decomposition_policy": {
+          "allowed_rules": [
+            "conjunction",
+            "iff",
+            "intro"
+          ],
+          "max_children": 8,
+          "max_depth": 4,
+          "policy_id": "lean_proof.deterministic_tactic_split.v1",
+          "unsupported_policy": "return_unsupported"
+        },
+        "imports": [
+          "Init"
+        ],
+        "library_context": {
+          "benchmark_case_id": "lean_ai_iff_nat_noise",
+          "module": "TokenShareGenerated.LeanAI50",
+          "project": "tokenshare_lean"
+        },
+        "namespace": "TokenShareGenerated",
+        "open_namespaces": [],
+        "options": {},
+        "parameters_source": "(P Q : Prop) (hpq : P → Q) (hqp : Q → P) (n : Nat) (hn : n = n)",
+        "payload_digest": "sha256:a60bc5dbf51c0b76a3d85409a182a83034adeb0675356983f7831efa2c693f8a",
+        "proof_candidate_ref": null,
+        "resource_limits": {
+          "max_output_bytes": 65536,
+          "timeout_seconds": 30
+        },
+        "schema_version": "lean_proof.theorem_payload.v1",
+        "statement_source": "P ↔ Q",
+        "theorem_id": "lean_theorem:lean_ai_iff_nat_noise",
+        "theorem_name": "lean_ai_iff_nat_noise",
+        "theorem_source": null
+      }
+    },
+    {
+      "case_id": "lean_ai_iff_nat_eq_noise",
+      "expected_child_keys": [
+        "child:forward",
+        "child:backward"
+      ],
+      "input_index": 32,
+      "parameters_source": "(P Q : Prop) (hpq : P → Q) (hqp : Q → P) (n m : Nat) (hEq : n = m)",
+      "schema_version": "phase8.lean_ai_benchmark_case.v1",
+      "statement_source": "P ↔ Q",
+      "theorem_payload": {
+        "decomposition_policy": {
+          "allowed_rules": [
+            "conjunction",
+            "iff",
+            "intro"
+          ],
+          "max_children": 8,
+          "max_depth": 4,
+          "policy_id": "lean_proof.deterministic_tactic_split.v1",
+          "unsupported_policy": "return_unsupported"
+        },
+        "imports": [
+          "Init"
+        ],
+        "library_context": {
+          "benchmark_case_id": "lean_ai_iff_nat_eq_noise",
+          "module": "TokenShareGenerated.LeanAI50",
+          "project": "tokenshare_lean"
+        },
+        "namespace": "TokenShareGenerated",
+        "open_namespaces": [],
+        "options": {},
+        "parameters_source": "(P Q : Prop) (hpq : P → Q) (hqp : Q → P) (n m : Nat) (hEq : n = m)",
+        "payload_digest": "sha256:1e599274a501040a7b3268a9a98048a7ad568ac6e0083e9fc279edcbdcc1e3d8",
+        "proof_candidate_ref": null,
+        "resource_limits": {
+          "max_output_bytes": 65536,
+          "timeout_seconds": 30
+        },
+        "schema_version": "lean_proof.theorem_payload.v1",
+        "statement_source": "P ↔ Q",
+        "theorem_id": "lean_theorem:lean_ai_iff_nat_eq_noise",
+        "theorem_name": "lean_ai_iff_nat_eq_noise",
+        "theorem_source": null
+      }
+    },
+    {
+      "case_id": "lean_ai_iff_type_eq_noise",
+      "expected_child_keys": [
+        "child:forward",
+        "child:backward"
+      ],
+      "input_index": 33,
+      "parameters_source": "(P Q : Prop) (hpq : P → Q) (hqp : Q → P) (A : Type) (x : A) (hX : x = x)",
+      "schema_version": "phase8.lean_ai_benchmark_case.v1",
+      "statement_source": "P ↔ Q",
+      "theorem_payload": {
+        "decomposition_policy": {
+          "allowed_rules": [
+            "conjunction",
+            "iff",
+            "intro"
+          ],
+          "max_children": 8,
+          "max_depth": 4,
+          "policy_id": "lean_proof.deterministic_tactic_split.v1",
+          "unsupported_policy": "return_unsupported"
+        },
+        "imports": [
+          "Init"
+        ],
+        "library_context": {
+          "benchmark_case_id": "lean_ai_iff_type_eq_noise",
+          "module": "TokenShareGenerated.LeanAI50",
+          "project": "tokenshare_lean"
+        },
+        "namespace": "TokenShareGenerated",
+        "open_namespaces": [],
+        "options": {},
+        "parameters_source": "(P Q : Prop) (hpq : P → Q) (hqp : Q → P) (A : Type) (x : A) (hX : x = x)",
+        "payload_digest": "sha256:dbabf08073398b923d97632710903d105254c2ce0e18b71078c48e4dea04a44c",
+        "proof_candidate_ref": null,
+        "resource_limits": {
+          "max_output_bytes": 65536,
+          "timeout_seconds": 30
+        },
+        "schema_version": "lean_proof.theorem_payload.v1",
+        "statement_source": "P ↔ Q",
+        "theorem_id": "lean_theorem:lean_ai_iff_type_eq_noise",
+        "theorem_name": "lean_ai_iff_type_eq_noise",
+        "theorem_source": null
+      }
+    },
+    {
+      "case_id": "lean_ai_iff_function_noise",
+      "expected_child_keys": [
+        "child:forward",
+        "child:backward"
+      ],
+      "input_index": 34,
+      "parameters_source": "(P Q : Prop) (hpq : P → Q) (hqp : Q → P) (f : Nat → Nat) (n : Nat) (hf : f n = f n)",
+      "schema_version": "phase8.lean_ai_benchmark_case.v1",
+      "statement_source": "P ↔ Q",
+      "theorem_payload": {
+        "decomposition_policy": {
+          "allowed_rules": [
+            "conjunction",
+            "iff",
+            "intro"
+          ],
+          "max_children": 8,
+          "max_depth": 4,
+          "policy_id": "lean_proof.deterministic_tactic_split.v1",
+          "unsupported_policy": "return_unsupported"
+        },
+        "imports": [
+          "Init"
+        ],
+        "library_context": {
+          "benchmark_case_id": "lean_ai_iff_function_noise",
+          "module": "TokenShareGenerated.LeanAI50",
+          "project": "tokenshare_lean"
+        },
+        "namespace": "TokenShareGenerated",
+        "open_namespaces": [],
+        "options": {},
+        "parameters_source": "(P Q : Prop) (hpq : P → Q) (hqp : Q → P) (f : Nat → Nat) (n : Nat) (hf : f n = f n)",
+        "payload_digest": "sha256:af1e19004430c96046c8139ee1cbc3f4c9c1b707eb2901d59f5999853698daf0",
+        "proof_candidate_ref": null,
+        "resource_limits": {
+          "max_output_bytes": 65536,
+          "timeout_seconds": 30
+        },
+        "schema_version": "lean_proof.theorem_payload.v1",
+        "statement_source": "P ↔ Q",
+        "theorem_id": "lean_theorem:lean_ai_iff_function_noise",
+        "theorem_name": "lean_ai_iff_function_noise",
+        "theorem_source": null
+      }
+    },
+    {
+      "case_id": "lean_ai_iff_predicate_noise",
+      "expected_child_keys": [
+        "child:forward",
+        "child:backward"
+      ],
+      "input_index": 35,
+      "parameters_source": "(P Q : Prop) (hpq : P → Q) (hqp : Q → P) (R : Nat → Prop) (n : Nat) (hRn : R n)",
+      "schema_version": "phase8.lean_ai_benchmark_case.v1",
+      "statement_source": "P ↔ Q",
+      "theorem_payload": {
+        "decomposition_policy": {
+          "allowed_rules": [
+            "conjunction",
+            "iff",
+            "intro"
+          ],
+          "max_children": 8,
+          "max_depth": 4,
+          "policy_id": "lean_proof.deterministic_tactic_split.v1",
+          "unsupported_policy": "return_unsupported"
+        },
+        "imports": [
+          "Init"
+        ],
+        "library_context": {
+          "benchmark_case_id": "lean_ai_iff_predicate_noise",
+          "module": "TokenShareGenerated.LeanAI50",
+          "project": "tokenshare_lean"
+        },
+        "namespace": "TokenShareGenerated",
+        "open_namespaces": [],
+        "options": {},
+        "parameters_source": "(P Q : Prop) (hpq : P → Q) (hqp : Q → P) (R : Nat → Prop) (n : Nat) (hRn : R n)",
+        "payload_digest": "sha256:750bd5fa3cdc4ffdf96110423daa04525ce403948f7c92f4a2e719d271837c47",
+        "proof_candidate_ref": null,
+        "resource_limits": {
+          "max_output_bytes": 65536,
+          "timeout_seconds": 30
+        },
+        "schema_version": "lean_proof.theorem_payload.v1",
+        "statement_source": "P ↔ Q",
+        "theorem_id": "lean_theorem:lean_ai_iff_predicate_noise",
+        "theorem_name": "lean_ai_iff_predicate_noise",
+        "theorem_source": null
+      }
+    },
+    {
+      "case_id": "lean_ai_iff_not_context",
+      "expected_child_keys": [
+        "child:forward",
+        "child:backward"
+      ],
+      "input_index": 36,
+      "parameters_source": "(P Q : Prop) (hpq : P → Q) (hqp : Q → P) (R : Prop) (hNot : ¬ R → P)",
+      "schema_version": "phase8.lean_ai_benchmark_case.v1",
+      "statement_source": "P ↔ Q",
+      "theorem_payload": {
+        "decomposition_policy": {
+          "allowed_rules": [
+            "conjunction",
+            "iff",
+            "intro"
+          ],
+          "max_children": 8,
+          "max_depth": 4,
+          "policy_id": "lean_proof.deterministic_tactic_split.v1",
+          "unsupported_policy": "return_unsupported"
+        },
+        "imports": [
+          "Init"
+        ],
+        "library_context": {
+          "benchmark_case_id": "lean_ai_iff_not_context",
+          "module": "TokenShareGenerated.LeanAI50",
+          "project": "tokenshare_lean"
+        },
+        "namespace": "TokenShareGenerated",
+        "open_namespaces": [],
+        "options": {},
+        "parameters_source": "(P Q : Prop) (hpq : P → Q) (hqp : Q → P) (R : Prop) (hNot : ¬ R → P)",
+        "payload_digest": "sha256:ff1b387d49d3b2a7112ebcc35e3413c0d15487fa0779edbd5900a002aec265ce",
+        "proof_candidate_ref": null,
+        "resource_limits": {
+          "max_output_bytes": 65536,
+          "timeout_seconds": 30
+        },
+        "schema_version": "lean_proof.theorem_payload.v1",
+        "statement_source": "P ↔ Q",
+        "theorem_id": "lean_theorem:lean_ai_iff_not_context",
+        "theorem_name": "lean_ai_iff_not_context",
+        "theorem_source": null
+      }
+    },
+    {
+      "case_id": "lean_ai_iff_false_context",
+      "expected_child_keys": [
+        "child:forward",
+        "child:backward"
+      ],
+      "input_index": 37,
+      "parameters_source": "(P Q : Prop) (hpq : P → Q) (hqp : Q → P) (R : Prop) (hImpossible : R → False)",
+      "schema_version": "phase8.lean_ai_benchmark_case.v1",
+      "statement_source": "P ↔ Q",
+      "theorem_payload": {
+        "decomposition_policy": {
+          "allowed_rules": [
+            "conjunction",
+            "iff",
+            "intro"
+          ],
+          "max_children": 8,
+          "max_depth": 4,
+          "policy_id": "lean_proof.deterministic_tactic_split.v1",
+          "unsupported_policy": "return_unsupported"
+        },
+        "imports": [
+          "Init"
+        ],
+        "library_context": {
+          "benchmark_case_id": "lean_ai_iff_false_context",
+          "module": "TokenShareGenerated.LeanAI50",
+          "project": "tokenshare_lean"
+        },
+        "namespace": "TokenShareGenerated",
+        "open_namespaces": [],
+        "options": {},
+        "parameters_source": "(P Q : Prop) (hpq : P → Q) (hqp : Q → P) (R : Prop) (hImpossible : R → False)",
+        "payload_digest": "sha256:d9c1801b5e8556245ecb344dcd06d81f55f4948805a0cdd359779fc6f148b77d",
+        "proof_candidate_ref": null,
+        "resource_limits": {
+          "max_output_bytes": 65536,
+          "timeout_seconds": 30
+        },
+        "schema_version": "lean_proof.theorem_payload.v1",
+        "statement_source": "P ↔ Q",
+        "theorem_id": "lean_theorem:lean_ai_iff_false_context",
+        "theorem_name": "lean_ai_iff_false_context",
+        "theorem_source": null
+      }
+    },
+    {
+      "case_id": "lean_ai_iff_p_bridge_noise",
+      "expected_child_keys": [
+        "child:forward",
+        "child:backward"
+      ],
+      "input_index": 38,
+      "parameters_source": "(P Q : Prop) (hpq : P → Q) (hqp : Q → P) (R : Prop) (hPIffR : P ↔ R)",
+      "schema_version": "phase8.lean_ai_benchmark_case.v1",
+      "statement_source": "P ↔ Q",
+      "theorem_payload": {
+        "decomposition_policy": {
+          "allowed_rules": [
+            "conjunction",
+            "iff",
+            "intro"
+          ],
+          "max_children": 8,
+          "max_depth": 4,
+          "policy_id": "lean_proof.deterministic_tactic_split.v1",
+          "unsupported_policy": "return_unsupported"
+        },
+        "imports": [
+          "Init"
+        ],
+        "library_context": {
+          "benchmark_case_id": "lean_ai_iff_p_bridge_noise",
+          "module": "TokenShareGenerated.LeanAI50",
+          "project": "tokenshare_lean"
+        },
+        "namespace": "TokenShareGenerated",
+        "open_namespaces": [],
+        "options": {},
+        "parameters_source": "(P Q : Prop) (hpq : P → Q) (hqp : Q → P) (R : Prop) (hPIffR : P ↔ R)",
+        "payload_digest": "sha256:41156fa4fbbcf3244e83198e7a0b62e722ff656bfca7c9cef99f238f5172bac0",
+        "proof_candidate_ref": null,
+        "resource_limits": {
+          "max_output_bytes": 65536,
+          "timeout_seconds": 30
+        },
+        "schema_version": "lean_proof.theorem_payload.v1",
+        "statement_source": "P ↔ Q",
+        "theorem_id": "lean_theorem:lean_ai_iff_p_bridge_noise",
+        "theorem_name": "lean_ai_iff_p_bridge_noise",
+        "theorem_source": null
+      }
+    },
+    {
+      "case_id": "lean_ai_iff_q_bridge_noise",
+      "expected_child_keys": [
+        "child:forward",
+        "child:backward"
+      ],
+      "input_index": 39,
+      "parameters_source": "(P Q : Prop) (hpq : P → Q) (hqp : Q → P) (R : Prop) (hQIffR : Q ↔ R)",
+      "schema_version": "phase8.lean_ai_benchmark_case.v1",
+      "statement_source": "P ↔ Q",
+      "theorem_payload": {
+        "decomposition_policy": {
+          "allowed_rules": [
+            "conjunction",
+            "iff",
+            "intro"
+          ],
+          "max_children": 8,
+          "max_depth": 4,
+          "policy_id": "lean_proof.deterministic_tactic_split.v1",
+          "unsupported_policy": "return_unsupported"
+        },
+        "imports": [
+          "Init"
+        ],
+        "library_context": {
+          "benchmark_case_id": "lean_ai_iff_q_bridge_noise",
+          "module": "TokenShareGenerated.LeanAI50",
+          "project": "tokenshare_lean"
+        },
+        "namespace": "TokenShareGenerated",
+        "open_namespaces": [],
+        "options": {},
+        "parameters_source": "(P Q : Prop) (hpq : P → Q) (hqp : Q → P) (R : Prop) (hQIffR : Q ↔ R)",
+        "payload_digest": "sha256:b58524ba38d2a81e9a1066382c45e9f7df3aef7372253bc7473330177a30d638",
+        "proof_candidate_ref": null,
+        "resource_limits": {
+          "max_output_bytes": 65536,
+          "timeout_seconds": 30
+        },
+        "schema_version": "lean_proof.theorem_payload.v1",
+        "statement_source": "P ↔ Q",
+        "theorem_id": "lean_theorem:lean_ai_iff_q_bridge_noise",
+        "theorem_name": "lean_ai_iff_q_bridge_noise",
+        "theorem_source": null
+      }
+    },
+    {
+      "case_id": "lean_ai_iff_type_predicate",
+      "expected_child_keys": [
+        "child:forward",
+        "child:backward"
+      ],
+      "input_index": 40,
+      "parameters_source": "(P Q : Prop) (hpq : P → Q) (hqp : Q → P) (A : Type) (r : A → Prop) (x : A) (hr : r x)",
+      "schema_version": "phase8.lean_ai_benchmark_case.v1",
+      "statement_source": "P ↔ Q",
+      "theorem_payload": {
+        "decomposition_policy": {
+          "allowed_rules": [
+            "conjunction",
+            "iff",
+            "intro"
+          ],
+          "max_children": 8,
+          "max_depth": 4,
+          "policy_id": "lean_proof.deterministic_tactic_split.v1",
+          "unsupported_policy": "return_unsupported"
+        },
+        "imports": [
+          "Init"
+        ],
+        "library_context": {
+          "benchmark_case_id": "lean_ai_iff_type_predicate",
+          "module": "TokenShareGenerated.LeanAI50",
+          "project": "tokenshare_lean"
+        },
+        "namespace": "TokenShareGenerated",
+        "open_namespaces": [],
+        "options": {},
+        "parameters_source": "(P Q : Prop) (hpq : P → Q) (hqp : Q → P) (A : Type) (r : A → Prop) (x : A) (hr : r x)",
+        "payload_digest": "sha256:0ea6ea4f02b4a48af0fef9a3130290a03f1a8f3009858b5d350fe15fb9e13d06",
+        "proof_candidate_ref": null,
+        "resource_limits": {
+          "max_output_bytes": 65536,
+          "timeout_seconds": 30
+        },
+        "schema_version": "lean_proof.theorem_payload.v1",
+        "statement_source": "P ↔ Q",
+        "theorem_id": "lean_theorem:lean_ai_iff_type_predicate",
+        "theorem_name": "lean_ai_iff_type_predicate",
+        "theorem_source": null
+      }
+    },
+    {
+      "case_id": "lean_ai_iff_list_eq_noise",
+      "expected_child_keys": [
+        "child:forward",
+        "child:backward"
+      ],
+      "input_index": 41,
+      "parameters_source": "(P Q : Prop) (hpq : P → Q) (hqp : Q → P) (xs ys : List Nat) (hxs : xs = ys)",
+      "schema_version": "phase8.lean_ai_benchmark_case.v1",
+      "statement_source": "P ↔ Q",
+      "theorem_payload": {
+        "decomposition_policy": {
+          "allowed_rules": [
+            "conjunction",
+            "iff",
+            "intro"
+          ],
+          "max_children": 8,
+          "max_depth": 4,
+          "policy_id": "lean_proof.deterministic_tactic_split.v1",
+          "unsupported_policy": "return_unsupported"
+        },
+        "imports": [
+          "Init"
+        ],
+        "library_context": {
+          "benchmark_case_id": "lean_ai_iff_list_eq_noise",
+          "module": "TokenShareGenerated.LeanAI50",
+          "project": "tokenshare_lean"
+        },
+        "namespace": "TokenShareGenerated",
+        "open_namespaces": [],
+        "options": {},
+        "parameters_source": "(P Q : Prop) (hpq : P → Q) (hqp : Q → P) (xs ys : List Nat) (hxs : xs = ys)",
+        "payload_digest": "sha256:4138df0818089be6d7322f4b8ae29591ce8087d13af8454a8d28427848710dea",
+        "proof_candidate_ref": null,
+        "resource_limits": {
+          "max_output_bytes": 65536,
+          "timeout_seconds": 30
+        },
+        "schema_version": "lean_proof.theorem_payload.v1",
+        "statement_source": "P ↔ Q",
+        "theorem_id": "lean_theorem:lean_ai_iff_list_eq_noise",
+        "theorem_name": "lean_ai_iff_list_eq_noise",
+        "theorem_source": null
+      }
+    },
+    {
+      "case_id": "lean_ai_iff_option_noise",
+      "expected_child_keys": [
+        "child:forward",
+        "child:backward"
+      ],
+      "input_index": 42,
+      "parameters_source": "(P Q : Prop) (hpq : P → Q) (hqp : Q → P) (o : Option Nat) (ho : o = o)",
+      "schema_version": "phase8.lean_ai_benchmark_case.v1",
+      "statement_source": "P ↔ Q",
+      "theorem_payload": {
+        "decomposition_policy": {
+          "allowed_rules": [
+            "conjunction",
+            "iff",
+            "intro"
+          ],
+          "max_children": 8,
+          "max_depth": 4,
+          "policy_id": "lean_proof.deterministic_tactic_split.v1",
+          "unsupported_policy": "return_unsupported"
+        },
+        "imports": [
+          "Init"
+        ],
+        "library_context": {
+          "benchmark_case_id": "lean_ai_iff_option_noise",
+          "module": "TokenShareGenerated.LeanAI50",
+          "project": "tokenshare_lean"
+        },
+        "namespace": "TokenShareGenerated",
+        "open_namespaces": [],
+        "options": {},
+        "parameters_source": "(P Q : Prop) (hpq : P → Q) (hqp : Q → P) (o : Option Nat) (ho : o = o)",
+        "payload_digest": "sha256:92ef1366244736290a1144d60c7737a6a3e5acdbabc5f94a1fae6ba69eb0a410",
+        "proof_candidate_ref": null,
+        "resource_limits": {
+          "max_output_bytes": 65536,
+          "timeout_seconds": 30
+        },
+        "schema_version": "lean_proof.theorem_payload.v1",
+        "statement_source": "P ↔ Q",
+        "theorem_id": "lean_theorem:lean_ai_iff_option_noise",
+        "theorem_name": "lean_ai_iff_option_noise",
+        "theorem_source": null
+      }
+    },
+    {
+      "case_id": "lean_ai_iff_bool_noise",
+      "expected_child_keys": [
+        "child:forward",
+        "child:backward"
+      ],
+      "input_index": 43,
+      "parameters_source": "(P Q : Prop) (hpq : P → Q) (hqp : Q → P) (b : Bool) (hb : b = b)",
+      "schema_version": "phase8.lean_ai_benchmark_case.v1",
+      "statement_source": "P ↔ Q",
+      "theorem_payload": {
+        "decomposition_policy": {
+          "allowed_rules": [
+            "conjunction",
+            "iff",
+            "intro"
+          ],
+          "max_children": 8,
+          "max_depth": 4,
+          "policy_id": "lean_proof.deterministic_tactic_split.v1",
+          "unsupported_policy": "return_unsupported"
+        },
+        "imports": [
+          "Init"
+        ],
+        "library_context": {
+          "benchmark_case_id": "lean_ai_iff_bool_noise",
+          "module": "TokenShareGenerated.LeanAI50",
+          "project": "tokenshare_lean"
+        },
+        "namespace": "TokenShareGenerated",
+        "open_namespaces": [],
+        "options": {},
+        "parameters_source": "(P Q : Prop) (hpq : P → Q) (hqp : Q → P) (b : Bool) (hb : b = b)",
+        "payload_digest": "sha256:b721a8d1f9c0f82f3251b4764219e8bd1ef11acf68ec4447ed73ebfffe0d6095",
+        "proof_candidate_ref": null,
+        "resource_limits": {
+          "max_output_bytes": 65536,
+          "timeout_seconds": 30
+        },
+        "schema_version": "lean_proof.theorem_payload.v1",
+        "statement_source": "P ↔ Q",
+        "theorem_id": "lean_theorem:lean_ai_iff_bool_noise",
+        "theorem_name": "lean_ai_iff_bool_noise",
+        "theorem_source": null
+      }
+    },
+    {
+      "case_id": "lean_ai_iff_three_prop_chain",
+      "expected_child_keys": [
+        "child:forward",
+        "child:backward"
+      ],
+      "input_index": 44,
+      "parameters_source": "(P Q : Prop) (hpq : P → Q) (hqp : Q → P) (R S T : Prop) (hRST : R → S → T)",
+      "schema_version": "phase8.lean_ai_benchmark_case.v1",
+      "statement_source": "P ↔ Q",
+      "theorem_payload": {
+        "decomposition_policy": {
+          "allowed_rules": [
+            "conjunction",
+            "iff",
+            "intro"
+          ],
+          "max_children": 8,
+          "max_depth": 4,
+          "policy_id": "lean_proof.deterministic_tactic_split.v1",
+          "unsupported_policy": "return_unsupported"
+        },
+        "imports": [
+          "Init"
+        ],
+        "library_context": {
+          "benchmark_case_id": "lean_ai_iff_three_prop_chain",
+          "module": "TokenShareGenerated.LeanAI50",
+          "project": "tokenshare_lean"
+        },
+        "namespace": "TokenShareGenerated",
+        "open_namespaces": [],
+        "options": {},
+        "parameters_source": "(P Q : Prop) (hpq : P → Q) (hqp : Q → P) (R S T : Prop) (hRST : R → S → T)",
+        "payload_digest": "sha256:a22fecf3b8b997fd9b82bbfcc6bce99629e8a473201514a1039fb26a2f548231",
+        "proof_candidate_ref": null,
+        "resource_limits": {
+          "max_output_bytes": 65536,
+          "timeout_seconds": 30
+        },
+        "schema_version": "lean_proof.theorem_payload.v1",
+        "statement_source": "P ↔ Q",
+        "theorem_id": "lean_theorem:lean_ai_iff_three_prop_chain",
+        "theorem_name": "lean_ai_iff_three_prop_chain",
+        "theorem_source": null
+      }
+    },
+    {
+      "case_id": "lean_ai_iff_p_to_q_chain",
+      "expected_child_keys": [
+        "child:forward",
+        "child:backward"
+      ],
+      "input_index": 45,
+      "parameters_source": "(P Q : Prop) (hpq : P → Q) (hqp : Q → P) (R : Prop) (hChain1 : P → R) (hChain2 : R → Q)",
+      "schema_version": "phase8.lean_ai_benchmark_case.v1",
+      "statement_source": "P ↔ Q",
+      "theorem_payload": {
+        "decomposition_policy": {
+          "allowed_rules": [
+            "conjunction",
+            "iff",
+            "intro"
+          ],
+          "max_children": 8,
+          "max_depth": 4,
+          "policy_id": "lean_proof.deterministic_tactic_split.v1",
+          "unsupported_policy": "return_unsupported"
+        },
+        "imports": [
+          "Init"
+        ],
+        "library_context": {
+          "benchmark_case_id": "lean_ai_iff_p_to_q_chain",
+          "module": "TokenShareGenerated.LeanAI50",
+          "project": "tokenshare_lean"
+        },
+        "namespace": "TokenShareGenerated",
+        "open_namespaces": [],
+        "options": {},
+        "parameters_source": "(P Q : Prop) (hpq : P → Q) (hqp : Q → P) (R : Prop) (hChain1 : P → R) (hChain2 : R → Q)",
+        "payload_digest": "sha256:be138c979a93ae5ac5123b7b4ffb282569dc3473cef656f65b36a5002c335f77",
+        "proof_candidate_ref": null,
+        "resource_limits": {
+          "max_output_bytes": 65536,
+          "timeout_seconds": 30
+        },
+        "schema_version": "lean_proof.theorem_payload.v1",
+        "statement_source": "P ↔ Q",
+        "theorem_id": "lean_theorem:lean_ai_iff_p_to_q_chain",
+        "theorem_name": "lean_ai_iff_p_to_q_chain",
+        "theorem_source": null
+      }
+    },
+    {
+      "case_id": "lean_ai_iff_q_to_p_chain",
+      "expected_child_keys": [
+        "child:forward",
+        "child:backward"
+      ],
+      "input_index": 46,
+      "parameters_source": "(P Q : Prop) (hpq : P → Q) (hqp : Q → P) (R : Prop) (hChain1 : Q → R) (hChain2 : R → P)",
+      "schema_version": "phase8.lean_ai_benchmark_case.v1",
+      "statement_source": "P ↔ Q",
+      "theorem_payload": {
+        "decomposition_policy": {
+          "allowed_rules": [
+            "conjunction",
+            "iff",
+            "intro"
+          ],
+          "max_children": 8,
+          "max_depth": 4,
+          "policy_id": "lean_proof.deterministic_tactic_split.v1",
+          "unsupported_policy": "return_unsupported"
+        },
+        "imports": [
+          "Init"
+        ],
+        "library_context": {
+          "benchmark_case_id": "lean_ai_iff_q_to_p_chain",
+          "module": "TokenShareGenerated.LeanAI50",
+          "project": "tokenshare_lean"
+        },
+        "namespace": "TokenShareGenerated",
+        "open_namespaces": [],
+        "options": {},
+        "parameters_source": "(P Q : Prop) (hpq : P → Q) (hqp : Q → P) (R : Prop) (hChain1 : Q → R) (hChain2 : R → P)",
+        "payload_digest": "sha256:7d45ee2b5fdbd53914007e700097250463f31325c2ffce8883c2f104873bc46b",
+        "proof_candidate_ref": null,
+        "resource_limits": {
+          "max_output_bytes": 65536,
+          "timeout_seconds": 30
+        },
+        "schema_version": "lean_proof.theorem_payload.v1",
+        "statement_source": "P ↔ Q",
+        "theorem_id": "lean_theorem:lean_ai_iff_q_to_p_chain",
+        "theorem_name": "lean_ai_iff_q_to_p_chain",
+        "theorem_source": null
+      }
+    },
+    {
+      "case_id": "lean_ai_iff_two_predicates",
+      "expected_child_keys": [
+        "child:forward",
+        "child:backward"
+      ],
+      "input_index": 47,
+      "parameters_source": "(P Q : Prop) (hpq : P → Q) (hqp : Q → P) (A : Type) (p q : A → Prop) (x : A) (hp : p x) (hq : q x)",
+      "schema_version": "phase8.lean_ai_benchmark_case.v1",
+      "statement_source": "P ↔ Q",
+      "theorem_payload": {
+        "decomposition_policy": {
+          "allowed_rules": [
+            "conjunction",
+            "iff",
+            "intro"
+          ],
+          "max_children": 8,
+          "max_depth": 4,
+          "policy_id": "lean_proof.deterministic_tactic_split.v1",
+          "unsupported_policy": "return_unsupported"
+        },
+        "imports": [
+          "Init"
+        ],
+        "library_context": {
+          "benchmark_case_id": "lean_ai_iff_two_predicates",
+          "module": "TokenShareGenerated.LeanAI50",
+          "project": "tokenshare_lean"
+        },
+        "namespace": "TokenShareGenerated",
+        "open_namespaces": [],
+        "options": {},
+        "parameters_source": "(P Q : Prop) (hpq : P → Q) (hqp : Q → P) (A : Type) (p q : A → Prop) (x : A) (hp : p x) (hq : q x)",
+        "payload_digest": "sha256:4ff353141d707c27a1765d326432027dce3436f8e6e48b0272c0dd07178af677",
+        "proof_candidate_ref": null,
+        "resource_limits": {
+          "max_output_bytes": 65536,
+          "timeout_seconds": 30
+        },
+        "schema_version": "lean_proof.theorem_payload.v1",
+        "statement_source": "P ↔ Q",
+        "theorem_id": "lean_theorem:lean_ai_iff_two_predicates",
+        "theorem_name": "lean_ai_iff_two_predicates",
+        "theorem_source": null
+      }
+    },
+    {
+      "case_id": "lean_ai_iff_three_nat_eqs",
+      "expected_child_keys": [
+        "child:forward",
+        "child:backward"
+      ],
+      "input_index": 48,
+      "parameters_source": "(P Q : Prop) (hpq : P → Q) (hqp : Q → P) (n m k : Nat) (h1 : n = m) (h2 : m = k)",
+      "schema_version": "phase8.lean_ai_benchmark_case.v1",
+      "statement_source": "P ↔ Q",
+      "theorem_payload": {
+        "decomposition_policy": {
+          "allowed_rules": [
+            "conjunction",
+            "iff",
+            "intro"
+          ],
+          "max_children": 8,
+          "max_depth": 4,
+          "policy_id": "lean_proof.deterministic_tactic_split.v1",
+          "unsupported_policy": "return_unsupported"
+        },
+        "imports": [
+          "Init"
+        ],
+        "library_context": {
+          "benchmark_case_id": "lean_ai_iff_three_nat_eqs",
+          "module": "TokenShareGenerated.LeanAI50",
+          "project": "tokenshare_lean"
+        },
+        "namespace": "TokenShareGenerated",
+        "open_namespaces": [],
+        "options": {},
+        "parameters_source": "(P Q : Prop) (hpq : P → Q) (hqp : Q → P) (n m k : Nat) (h1 : n = m) (h2 : m = k)",
+        "payload_digest": "sha256:88f425b6af347f24bb526825e91eb115dd3957f8a91d1cab80cfce334e38f1be",
+        "proof_candidate_ref": null,
+        "resource_limits": {
+          "max_output_bytes": 65536,
+          "timeout_seconds": 30
+        },
+        "schema_version": "lean_proof.theorem_payload.v1",
+        "statement_source": "P ↔ Q",
+        "theorem_id": "lean_theorem:lean_ai_iff_three_nat_eqs",
+        "theorem_name": "lean_ai_iff_three_nat_eqs",
+        "theorem_source": null
+      }
+    },
+    {
+      "case_id": "lean_ai_iff_dense_context",
+      "expected_child_keys": [
+        "child:forward",
+        "child:backward"
+      ],
+      "input_index": 49,
+      "parameters_source": "(P Q : Prop) (hpq : P → Q) (hqp : Q → P) (R S : Prop) (h1 : R → P) (h2 : S → Q) (h3 : P → S)",
+      "schema_version": "phase8.lean_ai_benchmark_case.v1",
+      "statement_source": "P ↔ Q",
+      "theorem_payload": {
+        "decomposition_policy": {
+          "allowed_rules": [
+            "conjunction",
+            "iff",
+            "intro"
+          ],
+          "max_children": 8,
+          "max_depth": 4,
+          "policy_id": "lean_proof.deterministic_tactic_split.v1",
+          "unsupported_policy": "return_unsupported"
+        },
+        "imports": [
+          "Init"
+        ],
+        "library_context": {
+          "benchmark_case_id": "lean_ai_iff_dense_context",
+          "module": "TokenShareGenerated.LeanAI50",
+          "project": "tokenshare_lean"
+        },
+        "namespace": "TokenShareGenerated",
+        "open_namespaces": [],
+        "options": {},
+        "parameters_source": "(P Q : Prop) (hpq : P → Q) (hqp : Q → P) (R S : Prop) (h1 : R → P) (h2 : S → Q) (h3 : P → S)",
+        "payload_digest": "sha256:840b7b506ede2c30eaafe91c4d17a9c43cecb793912fe22643003273d7f6e424",
+        "proof_candidate_ref": null,
+        "resource_limits": {
+          "max_output_bytes": 65536,
+          "timeout_seconds": 30
+        },
+        "schema_version": "lean_proof.theorem_payload.v1",
+        "statement_source": "P ↔ Q",
+        "theorem_id": "lean_theorem:lean_ai_iff_dense_context",
+        "theorem_name": "lean_ai_iff_dense_context",
+        "theorem_source": null
+      }
+    }
+  ],
+  "schema_version": "phase8.lean_ai_benchmark_catalog.v1"
+}

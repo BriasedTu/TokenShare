@@ -1,0 +1,20 @@
+{
+  "artifact_id": "settlement_entries_task_factorization_fixture_unit_factor_integer_root_92",
+  "artifact_schema_id": "phase5.settlement_entries",
+  "artifact_schema_version": "v1",
+  "artifact_type": "SettlementEntrySet",
+  "content_hash": "sha256:8cff81f71cc43c0503aa5953d08f48db61831a9053d6b75ce6a46dccf01f3586",
+  "created_at": "2026-06-28T00:00:00Z",
+  "media_type": "application/json",
+  "metadata": {
+    "root_completion_event_seq": 92,
+    "root_unit_id": "unit_factor_integer_root",
+    "task_id": "task_factorization_fixture"
+  },
+  "schema_version": "ArtifactRef.v1",
+  "size_bytes": 1820,
+  "source": {
+    "kind": "protocol_engine"
+  },
+  "uri": "artifacts/settlement_entries_task_factorization_fixture_unit_factor_integer_root_92"
+}

@@ -1,0 +1,2 @@
+C:\Users\32133\AppData\Local\Temp\tokenshare_lean_yv5lv388\TokenShareGeneratedCheck.lean:4:78: warning: unused variable `hContra`
+note: this linter can be disabled with `set_option linter.unusedVariables false`

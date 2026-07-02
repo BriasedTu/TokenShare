@@ -24,6 +24,9 @@ def test_lean_prompt_package_requests_only_proof_candidate_not_split_plan() -> N
 
     assert prompt.prompt_package_id == "lean_proof_candidate_prompt:request_lean_ai_1"
     assert prompt.input_summary["theorem_payload_digest"] == payload.payload_digest
+    assert prompt.input_summary["expected_proof_candidate_id"] == (
+        "proof_candidate:request_lean_ai_1"
+    )
     assert prompt.output_schema == {
         "schema_version": "lean_proof.proof_candidate.v1",
         "media_type": "application/json",
@@ -34,6 +37,9 @@ def test_lean_prompt_package_requests_only_proof_candidate_not_split_plan() -> N
             "proof_source",
             "created_at",
         ],
+        "proof_candidate_id_prefix": "proof_candidate:",
+        "expected_proof_candidate_id": "proof_candidate:request_lean_ai_1",
+        "proof_source_scope": "proof_body_only",
     }
     assert prompt.constraints["strict_json_only"] is True
     assert prompt.constraints["verification_authority"] == "lean_proof.checker.validator.v1"
@@ -48,6 +54,9 @@ def test_lean_prompt_package_requests_only_proof_candidate_not_split_plan() -> N
     ]
     assert "Return only one JSON object" in prompt.prompt_text
     assert "proof_source" in prompt.prompt_text
+    assert "proof_candidate:request_lean_ai_1" in prompt.prompt_text
+    assert "proof body only" in prompt.prompt_text
+    assert "Do not include import lines" in prompt.prompt_text
     assert "Do not propose child tasks" in prompt.prompt_text
     assert "Do not return a split plan" in prompt.prompt_text
 

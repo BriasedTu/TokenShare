@@ -1,0 +1,19 @@
+{
+  "artifact_id": "parent_theorem_payload_033",
+  "artifact_schema_id": "lean_proof.theorem_payload",
+  "artifact_schema_version": "v1",
+  "artifact_type": "LeanTheoremPayload",
+  "content_hash": "sha256:50e6ba764963104cc91f0a53a7af325f3fdfc9e1c8bce0c0886b733d8783b2a7",
+  "created_at": "2026-07-02T00:00:00Z",
+  "media_type": "application/json",
+  "metadata": {
+    "theorem_name": "lean_ai_iff_type_eq_noise"
+  },
+  "schema_version": "ArtifactRef.v1",
+  "size_bytes": 903,
+  "source": {
+    "case_id": "lean_ai_iff_type_eq_noise",
+    "kind": "lean_ai_benchmark"
+  },
+  "uri": "artifacts/parent_theorem_payload_033"
+}

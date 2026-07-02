@@ -1,0 +1,19 @@
+{
+  "artifact_id": "executor_descriptor_executor_factorization_fixture_0.1.0",
+  "artifact_schema_id": "phase3.executor_descriptor",
+  "artifact_schema_version": "v1",
+  "artifact_type": "ExecutorDescriptor",
+  "content_hash": "sha256:c50792ef4734a4a77c8ed96a8fcc60824fc672f03dee37c6eabd1e2afb39b8eb",
+  "created_at": "2026-06-28T00:00:00Z",
+  "media_type": "application/json",
+  "metadata": {
+    "executor_id": "executor_factorization_fixture",
+    "executor_version": "0.1.0"
+  },
+  "schema_version": "ArtifactRef.v1",
+  "size_bytes": 549,
+  "source": {
+    "kind": "executor_registry"
+  },
+  "uri": "artifacts/executor_descriptor_executor_factorization_fixture_0.1.0"
+}

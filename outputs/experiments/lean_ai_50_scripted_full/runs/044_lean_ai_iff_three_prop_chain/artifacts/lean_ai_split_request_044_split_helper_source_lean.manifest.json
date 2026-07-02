@@ -1,0 +1,19 @@
+{
+  "artifact_id": "lean_ai_split_request_044_split_helper_source_lean",
+  "artifact_schema_id": "lean_proof.split_helper_source",
+  "artifact_schema_version": "v1",
+  "artifact_type": "LeanSplitHelperGeneratedSource",
+  "content_hash": "sha256:79cf0c56962ddd909d789013d009b12133957158906d0c4fc39c219213b34011",
+  "created_at": "2026-07-02T00:00:00Z",
+  "media_type": "text/x-lean",
+  "metadata": {
+    "theorem_name": "lean_ai_iff_three_prop_chain"
+  },
+  "schema_version": "ArtifactRef.v1",
+  "size_bytes": 315,
+  "source": {
+    "kind": "lean_split_helper",
+    "request_id": "lean_ai_split_request_044"
+  },
+  "uri": "artifacts/lean_ai_split_request_044_split_helper_source_lean"
+}

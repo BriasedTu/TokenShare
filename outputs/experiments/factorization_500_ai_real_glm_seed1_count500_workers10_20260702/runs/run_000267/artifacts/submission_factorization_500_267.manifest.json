@@ -1,0 +1,19 @@
+{
+  "artifact_id": "submission_factorization_500_267",
+  "artifact_schema_id": "phase3.execution_submission",
+  "artifact_schema_version": "v1",
+  "artifact_type": "ExecutionSubmission",
+  "content_hash": "sha256:44b7f81a0271140152b94fe9dccab39605655e5f4c7b5ee60c507c72f4864815",
+  "created_at": "2026-07-02T00:00:00Z",
+  "media_type": "application/json",
+  "metadata": {
+    "attempt_id": "attempt_factorization_500_267",
+    "task_id": "task_factorization_500_267"
+  },
+  "schema_version": "ArtifactRef.v1",
+  "size_bytes": 5346,
+  "source": {
+    "kind": "protocol_engine"
+  },
+  "uri": "artifacts/submission_factorization_500_267"
+}

@@ -1,0 +1,2 @@
+input_index,case_id,statement_source,status,split_supported,child_count,raw_output_count,parsed_output_count,parse_failure_count,checker_accepted_count,merge_success,provider_attempt_count,retry_count,cost_estimate_total,latency_ms_total,models
+0,lean_ai_conj_plain,P ∧ Q,passed,true,2,2,2,0,2,true,2,0,0.004036774999999999,25137,MiniMaxAI/MiniMax-M2.5|deepseek-ai/DeepSeek-V4-Pro

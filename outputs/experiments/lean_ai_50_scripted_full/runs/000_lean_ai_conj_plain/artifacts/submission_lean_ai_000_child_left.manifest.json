@@ -1,0 +1,19 @@
+{
+  "artifact_id": "submission_lean_ai_000_child_left",
+  "artifact_schema_id": "phase3.execution_submission",
+  "artifact_schema_version": "v1",
+  "artifact_type": "ExecutionSubmission",
+  "content_hash": "sha256:c7e8c8f2aec2ac2e7bc269cdc300665429869a8e06ccab4ee085fb66e2d4ba92",
+  "created_at": "2026-07-02T00:00:00Z",
+  "media_type": "application/json",
+  "metadata": {
+    "attempt_id": "attempt_lean_ai_000_child_left",
+    "task_id": "task_lean_ai_000"
+  },
+  "schema_version": "ArtifactRef.v1",
+  "size_bytes": 5328,
+  "source": {
+    "kind": "protocol_engine"
+  },
+  "uri": "artifacts/submission_lean_ai_000_child_left"
+}

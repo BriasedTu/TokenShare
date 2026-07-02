@@ -1,0 +1,2 @@
+C:\Users\32133\AppData\Local\Temp\tokenshare_lean_k83vr42d\TokenShareGeneratedCheck.lean:4:55: warning: unused variable `hQ`
+note: this linter can be disabled with `set_option linter.unusedVariables false`

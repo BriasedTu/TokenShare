@@ -1,0 +1,19 @@
+{
+  "artifact_id": "parse_failure_submission_factorization_500_0",
+  "artifact_schema_id": "factorization.direct_factorization_parse_failure",
+  "artifact_schema_version": "v1",
+  "artifact_type": "ParseFailureReport",
+  "content_hash": "sha256:1f21364e625fe7a8f7350f3e34fe7c2e60cea50505c262e228f53966fee90d19",
+  "created_at": "2026-07-02T00:00:00Z",
+  "media_type": "application/json",
+  "metadata": {
+    "executor_id": "executor_ai_api"
+  },
+  "schema_version": "ArtifactRef.v1",
+  "size_bytes": 588,
+  "source": {
+    "kind": "ai_api_executor",
+    "request_id": "request_factorization_500_0"
+  },
+  "uri": "artifacts/parse_failure_submission_factorization_500_0"
+}

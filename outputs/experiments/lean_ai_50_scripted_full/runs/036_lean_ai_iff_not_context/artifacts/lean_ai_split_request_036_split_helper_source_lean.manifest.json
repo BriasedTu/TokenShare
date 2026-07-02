@@ -1,0 +1,19 @@
+{
+  "artifact_id": "lean_ai_split_request_036_split_helper_source_lean",
+  "artifact_schema_id": "lean_proof.split_helper_source",
+  "artifact_schema_version": "v1",
+  "artifact_type": "LeanSplitHelperGeneratedSource",
+  "content_hash": "sha256:89d672200f51ab0cb85ff0d0d4a28a19756c5fedec349e031d27a4c176717df4",
+  "created_at": "2026-07-02T00:00:00Z",
+  "media_type": "text/x-lean",
+  "metadata": {
+    "theorem_name": "lean_ai_iff_not_context"
+  },
+  "schema_version": "ArtifactRef.v1",
+  "size_bytes": 303,
+  "source": {
+    "kind": "lean_split_helper",
+    "request_id": "lean_ai_split_request_036"
+  },
+  "uri": "artifacts/lean_ai_split_request_036_split_helper_source_lean"
+}

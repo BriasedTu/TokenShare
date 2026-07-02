@@ -1,0 +1,4 @@
+input_index,target_n,status,final_correctness,failure_kind,factor_expression,parser_success,raw_output_count,parsed_output_count,parse_failure_count,provider_attempt_count,retry_count,usage_total_tokens,cost_estimate,latency_ms,providers,models
+0,3661267,failed,false,parse_failed,,false,1,0,1,1,0,1432,0.000348,23643,"[""siliconflow""]","[""stepfun-ai/Step-3.5-Flash""]"
+1,4575721,failed,false,parse_failed,,false,1,0,1,1,0,1432,0.000348,25102,"[""siliconflow""]","[""stepfun-ai/Step-3.5-Flash""]"
+2,4733749,failed,false,executor_error,,false,0,0,0,1,0,0,0.0,25173,[],[]
