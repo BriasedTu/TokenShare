@@ -1,0 +1,20 @@
+{
+  "artifact_id": "lean_ai_child_checker_033_child_forward_checker_report_json",
+  "artifact_schema_id": "lean_proof.checker_report",
+  "artifact_schema_version": "v1",
+  "artifact_type": "LeanCheckerReport",
+  "content_hash": "sha256:6fc08d8c948baecb3015cc09ddb9606d1114d39418aadf920d536400dc3b2a06",
+  "created_at": "2026-07-02T00:00:00Z",
+  "media_type": "application/json",
+  "metadata": {
+    "checker_mode": "child_proof",
+    "status": "accepted"
+  },
+  "schema_version": "ArtifactRef.v1",
+  "size_bytes": 5450,
+  "source": {
+    "kind": "lean_checker",
+    "request_id": "lean_ai_child_checker_033_child_forward"
+  },
+  "uri": "artifacts/lean_ai_child_checker_033_child_forward_checker_report_json"
+}

@@ -1,0 +1,6 @@
+import Init
+set_option autoImplicit false
+namespace TokenShareGenerated
+theorem lean_ai_conj_three_nat_eqs_left (P Q : Prop) (hP : P) (hQ : Q) (n m k : Nat) (h1 : n = m) (h2 : m = k) : P := by
+  exact hP
+end TokenShareGenerated

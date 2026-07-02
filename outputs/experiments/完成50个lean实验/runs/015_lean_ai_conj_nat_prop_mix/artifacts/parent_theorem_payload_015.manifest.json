@@ -1,0 +1,19 @@
+{
+  "artifact_id": "parent_theorem_payload_015",
+  "artifact_schema_id": "lean_proof.theorem_payload",
+  "artifact_schema_version": "v1",
+  "artifact_type": "LeanTheoremPayload",
+  "content_hash": "sha256:ff6aabb78bb6badededc795bfbfa5b2fd11e7b5ce8039847eabd7337e9ec036a",
+  "created_at": "2026-07-02T00:00:00Z",
+  "media_type": "application/json",
+  "metadata": {
+    "theorem_name": "lean_ai_conj_nat_prop_mix"
+  },
+  "schema_version": "ArtifactRef.v1",
+  "size_bytes": 899,
+  "source": {
+    "case_id": "lean_ai_conj_nat_prop_mix",
+    "kind": "lean_ai_benchmark"
+  },
+  "uri": "artifacts/parent_theorem_payload_015"
+}

@@ -1,0 +1,6 @@
+import Init
+set_option autoImplicit false
+namespace TokenShareGenerated
+theorem lean_ai_iff_list_eq_noise_backward (P Q : Prop) (hpq : P → Q) (hqp : Q → P) (xs ys : List Nat) (hxs : xs = ys) : Q → P := by
+  exact hqp
+end TokenShareGenerated

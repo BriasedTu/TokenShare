@@ -1,0 +1,224 @@
+{
+  "ai_api_config": {
+    "config_digest": "sha256:1f31aa90e3af8ba331fbda880e6d09600799f4df678f76f2305cca8f9c992d08",
+    "defaults": {
+      "max_provider_attempts": 6,
+      "max_tokens": 64,
+      "stream": false,
+      "temperature": 0.2,
+      "timeout_seconds": 60,
+      "top_p": 0.9
+    },
+    "enabled_entry_ids": [
+      "qwen3_6_27b__sf_key_1",
+      "deepseek_v4_pro__sf_key_1",
+      "minimax_m2_5__sf_key_1",
+      "glm_5_2__sf_key_1",
+      "step_3_5_flash__sf_key_1",
+      "tencent_hy3_preview__sf_key_1"
+    ],
+    "entries": [
+      {
+        "api_key_env": "TOKENSHARE_LOCAL_AI_API_KEY_SF_KEY_1",
+        "base_url": "https://api.siliconflow.cn/v1",
+        "enabled": true,
+        "endpoint": "/chat/completions",
+        "entry_id": "qwen3_6_27b__sf_key_1",
+        "model": "Qwen/Qwen3.6-27B",
+        "pricing": {
+          "currency": "CNY",
+          "input_per_million_tokens": 0.3,
+          "observed_at": "2026-06-29",
+          "output_per_million_tokens": 3.2,
+          "source_note": "SiliconFlow model page"
+        },
+        "request_overrides": {
+          "temperature": 0.1
+        },
+        "supports_json_mode": true,
+        "supports_streaming": false,
+        "tags": [
+          "siliconflow",
+          "smoke",
+          "qwen",
+          "json_mode",
+          "api_key:sf_key_1"
+        ]
+      },
+      {
+        "api_key_env": "TOKENSHARE_LOCAL_AI_API_KEY_SF_KEY_1",
+        "base_url": "https://api.siliconflow.cn/v1",
+        "enabled": true,
+        "endpoint": "/chat/completions",
+        "entry_id": "deepseek_v4_pro__sf_key_1",
+        "model": "deepseek-ai/DeepSeek-V4-Pro",
+        "pricing": {
+          "currency": "CNY",
+          "input_per_million_tokens": 1.6,
+          "observed_at": "2026-06-29",
+          "output_per_million_tokens": 3.135,
+          "source_note": "SiliconFlow model page"
+        },
+        "request_overrides": {
+          "temperature": 0.1
+        },
+        "supports_json_mode": true,
+        "supports_streaming": false,
+        "tags": [
+          "siliconflow",
+          "smoke",
+          "deepseek",
+          "json_mode",
+          "api_key:sf_key_1"
+        ]
+      },
+      {
+        "api_key_env": "TOKENSHARE_LOCAL_AI_API_KEY_SF_KEY_1",
+        "base_url": "https://api.siliconflow.cn/v1",
+        "enabled": true,
+        "endpoint": "/chat/completions",
+        "entry_id": "minimax_m2_5__sf_key_1",
+        "model": "MiniMaxAI/MiniMax-M2.5",
+        "pricing": {
+          "currency": "CNY",
+          "input_per_million_tokens": 0.3,
+          "observed_at": "2026-06-29",
+          "output_per_million_tokens": 1.2,
+          "source_note": "SiliconFlow model page"
+        },
+        "request_overrides": {
+          "temperature": 0.1
+        },
+        "supports_json_mode": true,
+        "supports_streaming": false,
+        "tags": [
+          "siliconflow",
+          "smoke",
+          "minimax",
+          "json_mode",
+          "api_key:sf_key_1"
+        ]
+      },
+      {
+        "api_key_env": "TOKENSHARE_LOCAL_AI_API_KEY_SF_KEY_1",
+        "base_url": "https://api.siliconflow.cn/v1",
+        "enabled": true,
+        "endpoint": "/chat/completions",
+        "entry_id": "glm_5_2__sf_key_1",
+        "model": "zai-org/GLM-5.2",
+        "pricing": {
+          "currency": "CNY",
+          "input_per_million_tokens": 1.4,
+          "observed_at": "2026-06-29",
+          "output_per_million_tokens": 4.4,
+          "source_note": "SiliconFlow model page"
+        },
+        "request_overrides": {
+          "temperature": 0.1
+        },
+        "supports_json_mode": false,
+        "supports_streaming": false,
+        "tags": [
+          "siliconflow",
+          "smoke",
+          "zai",
+          "api_key:sf_key_1"
+        ]
+      },
+      {
+        "api_key_env": "TOKENSHARE_LOCAL_AI_API_KEY_SF_KEY_1",
+        "base_url": "https://api.siliconflow.cn/v1",
+        "enabled": true,
+        "endpoint": "/chat/completions",
+        "entry_id": "step_3_5_flash__sf_key_1",
+        "model": "stepfun-ai/Step-3.5-Flash",
+        "pricing": {
+          "currency": "CNY",
+          "input_per_million_tokens": 0.1,
+          "observed_at": "2026-06-29",
+          "output_per_million_tokens": 0.3,
+          "source_note": "SiliconFlow model page"
+        },
+        "request_overrides": {
+          "temperature": 0.1
+        },
+        "supports_json_mode": false,
+        "supports_streaming": false,
+        "tags": [
+          "siliconflow",
+          "smoke",
+          "stepfun",
+          "api_key:sf_key_1"
+        ]
+      },
+      {
+        "api_key_env": "TOKENSHARE_LOCAL_AI_API_KEY_SF_KEY_1",
+        "base_url": "https://api.siliconflow.cn/v1",
+        "enabled": true,
+        "endpoint": "/chat/completions",
+        "entry_id": "tencent_hy3_preview__sf_key_1",
+        "model": "tencent/Hy3-preview",
+        "pricing": {
+          "currency": "CNY",
+          "input_per_million_tokens": 0.066,
+          "observed_at": "2026-06-29",
+          "output_per_million_tokens": 0.26,
+          "source_note": "SiliconFlow model page"
+        },
+        "request_overrides": {
+          "temperature": 0.1
+        },
+        "supports_json_mode": false,
+        "supports_streaming": false,
+        "tags": [
+          "siliconflow",
+          "smoke",
+          "tencent",
+          "api_key:sf_key_1"
+        ]
+      }
+    ],
+    "entry_count": 6,
+    "executor_id": "executor_ai_api",
+    "metadata": {
+      "notes": "Fill any subset of api_keys. The loader expands filled keys across the six model entries; unfilled PASTE_/REPLACE_ keys are disabled. Real smoke uses raw text so all six models can be selected; JSON tasks still filter by supports_json_mode.",
+      "purpose": "local real SiliconFlow smoke"
+    },
+    "provider_family": "siliconflow",
+    "selection_policy": {
+      "kind": "uniform_random_without_weights",
+      "seed_source": "request_or_environment_seed"
+    }
+  },
+  "catalog_path": "outputs/experiments/lean_ai_50_real_full_20260702_191552/task_catalog.json",
+  "lean_split_helper_slice": {
+    "supported_merge_rules": [
+      "lean_merge.conjunction_intro.v1",
+      "lean_merge.iff_intro.v1"
+    ],
+    "supported_statement_sources": [
+      "P ∧ Q",
+      "P ↔ Q"
+    ]
+  },
+  "output_root": "outputs/experiments/lean_ai_50_real_full_20260702_191552",
+  "parser_policy": {
+    "parse_required": true,
+    "parser_id": "lean_proof.proof_candidate.parser.v1",
+    "raw_only_allowed": false
+  },
+  "prompt_constraints": {
+    "requires_json_mode": true,
+    "strict_json_only": true
+  },
+  "real_transport": true,
+  "request_limits": {
+    "max_tokens": 1024,
+    "timeout_seconds": 30
+  },
+  "requested_count": 50,
+  "schema_version": "phase8.lean_ai_benchmark_settings.v1",
+  "seed": 1,
+  "suite_report_path": "outputs/experiments/lean_ai_50_real_full_20260702_191552/batch_report.json",
+  "summary_csv_path": "outputs/experiments/lean_ai_50_real_full_20260702_191552/per_task_summary.csv"
+}

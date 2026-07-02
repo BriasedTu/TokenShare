@@ -1,0 +1,19 @@
+{
+  "artifact_id": "parent_theorem_payload_028",
+  "artifact_schema_id": "lean_proof.theorem_payload",
+  "artifact_schema_version": "v1",
+  "artifact_type": "LeanTheoremPayload",
+  "content_hash": "sha256:99830f6b37061385c8014896c50fdec1d3346c909d81c10ea9e60dd58e24cf94",
+  "created_at": "2026-07-02T00:00:00Z",
+  "media_type": "application/json",
+  "metadata": {
+    "theorem_name": "lean_ai_iff_reverse_chain_noise"
+  },
+  "schema_version": "ArtifactRef.v1",
+  "size_bytes": 932,
+  "source": {
+    "case_id": "lean_ai_iff_reverse_chain_noise",
+    "kind": "lean_ai_benchmark"
+  },
+  "uri": "artifacts/parent_theorem_payload_028"
+}

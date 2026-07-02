@@ -1,0 +1,20 @@
+{
+  "artifact_id": "lean_ai_merge_request_014_checker_report_json",
+  "artifact_schema_id": "lean_proof.checker_report",
+  "artifact_schema_version": "v1",
+  "artifact_type": "LeanCheckerReport",
+  "content_hash": "sha256:e245b8f86a83df1d027b43d7637f123f436f6f3d45fa6847f61ad203da1b9b52",
+  "created_at": "2026-07-02T00:00:00Z",
+  "media_type": "application/json",
+  "metadata": {
+    "checker_mode": "merge_proof",
+    "status": "accepted"
+  },
+  "schema_version": "ArtifactRef.v1",
+  "size_bytes": 4825,
+  "source": {
+    "kind": "lean_checker",
+    "request_id": "lean_ai_merge_request_014"
+  },
+  "uri": "artifacts/lean_ai_merge_request_014_checker_report_json"
+}

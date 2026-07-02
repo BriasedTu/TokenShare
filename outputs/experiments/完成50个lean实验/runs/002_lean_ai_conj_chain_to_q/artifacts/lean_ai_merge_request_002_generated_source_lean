@@ -1,0 +1,10 @@
+import Init
+set_option autoImplicit false
+namespace TokenShareGenerated
+theorem lean_ai_conj_chain_to_q (P Q : Prop) (hP : P) (hQ : Q) (R : Prop) (hPR : P → R) (hRQ : R → Q) : P ∧ Q := by
+  have child_left : P := by
+    exact hP
+  have child_right : Q := by
+    exact hQ
+  exact And.intro child_left child_right
+end TokenShareGenerated

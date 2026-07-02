@@ -1,0 +1,2 @@
+C:\Users\32133\AppData\Local\Temp\tokenshare_lean_i77l3axm\TokenShareGeneratedCheck.lean:4:103: warning: unused variable `hf`
+note: this linter can be disabled with `set_option linter.unusedVariables false`

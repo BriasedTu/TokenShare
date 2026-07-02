@@ -1,0 +1,20 @@
+{
+  "artifact_id": "lean_ai_child_checker_041_child_backward_checker_report_json",
+  "artifact_schema_id": "lean_proof.checker_report",
+  "artifact_schema_version": "v1",
+  "artifact_type": "LeanCheckerReport",
+  "content_hash": "sha256:54bcc108c8ec1c03582fc76da151e39a35852cd3ad44834e65d65b4dad54fdc1",
+  "created_at": "2026-07-02T00:00:00Z",
+  "media_type": "application/json",
+  "metadata": {
+    "checker_mode": "child_proof",
+    "status": "accepted"
+  },
+  "schema_version": "ArtifactRef.v1",
+  "size_bytes": 5466,
+  "source": {
+    "kind": "lean_checker",
+    "request_id": "lean_ai_child_checker_041_child_backward"
+  },
+  "uri": "artifacts/lean_ai_child_checker_041_child_backward_checker_report_json"
+}

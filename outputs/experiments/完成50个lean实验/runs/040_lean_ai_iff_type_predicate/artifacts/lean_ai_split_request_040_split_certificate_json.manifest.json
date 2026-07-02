@@ -1,0 +1,20 @@
+{
+  "artifact_id": "lean_ai_split_request_040_split_certificate_json",
+  "artifact_schema_id": "lean_proof.split_certificate",
+  "artifact_schema_version": "v1",
+  "artifact_type": "LeanSplitCertificate",
+  "content_hash": "sha256:6a81b862934de0e1019009ce568f30d74e6179a21a68b47f2394b177de041a0e",
+  "created_at": "2026-07-02T00:00:00Z",
+  "media_type": "application/json",
+  "metadata": {
+    "rule_id": "lean_split.iff_goal.v1",
+    "split_kind": "all_required_children"
+  },
+  "schema_version": "ArtifactRef.v1",
+  "size_bytes": 3362,
+  "source": {
+    "kind": "lean_split_helper",
+    "request_id": "lean_ai_split_request_040"
+  },
+  "uri": "artifacts/lean_ai_split_request_040_split_certificate_json"
+}

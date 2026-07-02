@@ -1,0 +1,2 @@
+C:\Users\32133\AppData\Local\Temp\tokenshare_lean_m9m2h1w_\TokenShareGeneratedCheck.lean:4:87: warning: unused variable `hMix`
+note: this linter can be disabled with `set_option linter.unusedVariables false`

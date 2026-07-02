@@ -1,0 +1,20 @@
+{
+  "artifact_id": "lean_ai_merge_request_017_merge_proof_candidate",
+  "artifact_schema_id": "lean_proof.proof_candidate",
+  "artifact_schema_version": "v1",
+  "artifact_type": "LeanProofCandidate",
+  "content_hash": "sha256:a174f2a884e5249f402420f0be99d0245a9ca639f7dd9aeb2695eda13e6327ba",
+  "created_at": "2026-07-02T00:00:00Z",
+  "media_type": "application/json",
+  "metadata": {
+    "merge_rule_id": "lean_merge.conjunction_intro.v1",
+    "merge_unit_id": "unit_lean_ai_merge_017"
+  },
+  "schema_version": "ArtifactRef.v1",
+  "size_bytes": 399,
+  "source": {
+    "kind": "lean_merge_policy",
+    "request_id": "lean_ai_merge_request_017"
+  },
+  "uri": "artifacts/lean_ai_merge_request_017_merge_proof_candidate"
+}

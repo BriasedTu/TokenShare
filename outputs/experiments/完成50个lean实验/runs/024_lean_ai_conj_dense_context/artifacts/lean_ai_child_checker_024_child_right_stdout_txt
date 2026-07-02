@@ -1,0 +1,10 @@
+C:\Users\32133\AppData\Local\Temp\tokenshare_lean_w2ta3uh5\TokenShareGeneratedCheck.lean:4:137: error: unexpected token '\'; expected '{' or tactic
+C:\Users\32133\AppData\Local\Temp\tokenshare_lean_w2ta3uh5\TokenShareGeneratedCheck.lean:4:135: error: unsolved goals
+P Q : Prop
+hP : P
+hQ : Q
+R S : Prop
+h1 : P → R
+h2 : Q → S
+h3 : R → S → P
+⊢ Q

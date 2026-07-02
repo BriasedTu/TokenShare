@@ -1,0 +1,38 @@
+{
+  "artifact_id": "parsed_model_output_submission_lean_ai_024_child_right",
+  "artifact_schema_id": "lean_proof.proof_candidate",
+  "artifact_schema_version": "v1",
+  "artifact_type": "ParsedModelOutput",
+  "content_hash": "sha256:7f63ea5d4c307181be6f9f0d32344e977cf09f8e75538de261a3c18ef9c9dbc5",
+  "created_at": "2026-07-02T00:00:00Z",
+  "media_type": "application/json",
+  "metadata": {
+    "executor_id": "executor_lean_ai_api"
+  },
+  "schema_version": "ArtifactRef.v1",
+  "size_bytes": 289,
+  "source": {
+    "kind": "ai_api_executor",
+    "raw_output_ref": {
+      "artifact_id": "raw_model_output_submission_lean_ai_024_child_right",
+      "artifact_schema_id": "phase7.raw_model_output",
+      "artifact_schema_version": "v1",
+      "artifact_type": "RawModelOutput",
+      "content_hash": "sha256:ee57c472c80b28d242637b2aad88c22cf9525a48be3c4c47916a2e4127c9e608",
+      "created_at": "2026-07-02T00:00:00Z",
+      "media_type": "application/json",
+      "metadata": {
+        "entry_id": "minimax_m2_5__sf_key_1",
+        "executor_id": "executor_lean_ai_api"
+      },
+      "schema_version": "ArtifactRef.v1",
+      "size_bytes": 5125,
+      "source": {
+        "kind": "ai_api_executor",
+        "request_id": "request_lean_ai_024_child_right"
+      },
+      "uri": "artifacts/raw_model_output_submission_lean_ai_024_child_right"
+    }
+  },
+  "uri": "artifacts/parsed_model_output_submission_lean_ai_024_child_right"
+}

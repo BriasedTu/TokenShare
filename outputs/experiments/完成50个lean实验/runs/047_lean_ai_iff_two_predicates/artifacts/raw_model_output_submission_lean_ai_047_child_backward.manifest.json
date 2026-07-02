@@ -1,0 +1,20 @@
+{
+  "artifact_id": "raw_model_output_submission_lean_ai_047_child_backward",
+  "artifact_schema_id": "phase7.raw_model_output",
+  "artifact_schema_version": "v1",
+  "artifact_type": "RawModelOutput",
+  "content_hash": "sha256:a93c795084128c36930e30566aaa153c9083bfb9e919de8a42a15f39b0794893",
+  "created_at": "2026-07-02T00:00:00Z",
+  "media_type": "application/json",
+  "metadata": {
+    "entry_id": "qwen3_6_27b__sf_key_1",
+    "executor_id": "executor_lean_ai_api"
+  },
+  "schema_version": "ArtifactRef.v1",
+  "size_bytes": 1450,
+  "source": {
+    "kind": "ai_api_executor",
+    "request_id": "request_lean_ai_047_child_backward"
+  },
+  "uri": "artifacts/raw_model_output_submission_lean_ai_047_child_backward"
+}

@@ -1,0 +1,19 @@
+{
+  "artifact_id": "ai_provider_provenance_submission_lean_ai_017_child_right",
+  "artifact_schema_id": "phase7.ai_provider_call_provenance",
+  "artifact_schema_version": "v1",
+  "artifact_type": "AIProviderCallProvenance",
+  "content_hash": "sha256:71d4d3787942444c75438caeffad070682e8c594ee6a3fd7836566548dc551d5",
+  "created_at": "2026-07-02T00:00:00Z",
+  "media_type": "application/json",
+  "metadata": {
+    "executor_id": "executor_lean_ai_api"
+  },
+  "schema_version": "ArtifactRef.v1",
+  "size_bytes": 1050,
+  "source": {
+    "kind": "ai_api_executor",
+    "request_id": "request_lean_ai_017_child_right"
+  },
+  "uri": "artifacts/ai_provider_provenance_submission_lean_ai_017_child_right"
+}

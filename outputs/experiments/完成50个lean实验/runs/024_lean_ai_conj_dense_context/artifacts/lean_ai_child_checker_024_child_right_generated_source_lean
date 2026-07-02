@@ -1,0 +1,5 @@
+import Init
+set_option autoImplicit false
+namespace TokenShareGenerated
+theorem lean_ai_conj_dense_context_right (P Q : Prop) (hP : P) (hQ : Q) (R S : Prop) (h1 : P → R) (h2 : Q → S) (h3 : R → S → P) : Q := by\n  exact hQ
+end TokenShareGenerated

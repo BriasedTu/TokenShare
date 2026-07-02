@@ -1,0 +1,20 @@
+{
+  "artifact_id": "lean_ai_split_request_030_child_child_backward_json",
+  "artifact_schema_id": "lean_proof.child_theorem_payload",
+  "artifact_schema_version": "v1",
+  "artifact_type": "LeanChildTheoremPayload",
+  "content_hash": "sha256:3d5f20d47d699c76a391d5e3ffc41b19bd4e0e73621edbb310c4c6ac97b2222d",
+  "created_at": "2026-07-02T00:00:00Z",
+  "media_type": "application/json",
+  "metadata": {
+    "child_logical_key": "child:backward",
+    "context_digest": "sha256:lean_context_backward"
+  },
+  "schema_version": "ArtifactRef.v1",
+  "size_bytes": 1167,
+  "source": {
+    "kind": "lean_split_helper",
+    "request_id": "lean_ai_split_request_030"
+  },
+  "uri": "artifacts/lean_ai_split_request_030_child_child_backward_json"
+}

@@ -1,0 +1,6 @@
+import Init
+set_option autoImplicit false
+namespace TokenShareGenerated
+theorem lean_ai_conj_predicate_noise_left (P Q : Prop) (hP : P) (hQ : Q) (R : Nat → Prop) (n : Nat) (hRn : R n) : P := by
+  exact hP
+end TokenShareGenerated

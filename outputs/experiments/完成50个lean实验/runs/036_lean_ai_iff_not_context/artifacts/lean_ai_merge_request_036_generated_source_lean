@@ -1,0 +1,10 @@
+import Init
+set_option autoImplicit false
+namespace TokenShareGenerated
+theorem lean_ai_iff_not_context (P Q : Prop) (hpq : P → Q) (hqp : Q → P) (R : Prop) (hNot : ¬ R → P) : P ↔ Q := by
+  have child_forward : P → Q := by
+    exact hpq
+  have child_backward : Q → P := by
+    exact hqp
+  exact Iff.intro child_forward child_backward
+end TokenShareGenerated

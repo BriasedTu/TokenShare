@@ -1,0 +1,20 @@
+{
+  "artifact_id": "lean_ai_child_checker_027_child_forward_proof_artifact_lean",
+  "artifact_schema_id": "lean_proof.proof_artifact",
+  "artifact_schema_version": "v1",
+  "artifact_type": "LeanProofArtifact",
+  "content_hash": "sha256:fc9a43cc19a4e9177cce177bdcdd09907cde5887503b0ded63f7c23f4ff2adf3",
+  "created_at": "2026-07-02T00:00:00Z",
+  "media_type": "text/x-lean",
+  "metadata": {
+    "checker_mode": "child_proof",
+    "proof_digest": "sha256:d644d966835736945315b17fa459254d664c747da3f5fe859161975beecdb8ad"
+  },
+  "schema_version": "ArtifactRef.v1",
+  "size_bytes": 14,
+  "source": {
+    "kind": "lean_checker",
+    "request_id": "lean_ai_child_checker_027_child_forward"
+  },
+  "uri": "artifacts/lean_ai_child_checker_027_child_forward_proof_artifact_lean"
+}

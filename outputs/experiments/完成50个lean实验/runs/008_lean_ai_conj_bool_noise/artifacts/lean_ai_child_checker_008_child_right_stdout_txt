@@ -1,0 +1,4 @@
+C:\Users\32133\AppData\Local\Temp\tokenshare_lean_32vuk3vi\TokenShareGeneratedCheck.lean:4:52: warning: unused variable `hP`
+note: this linter can be disabled with `set_option linter.unusedVariables false`
+C:\Users\32133\AppData\Local\Temp\tokenshare_lean_32vuk3vi\TokenShareGeneratedCheck.lean:4:81: warning: unused variable `hBool`
+note: this linter can be disabled with `set_option linter.unusedVariables false`

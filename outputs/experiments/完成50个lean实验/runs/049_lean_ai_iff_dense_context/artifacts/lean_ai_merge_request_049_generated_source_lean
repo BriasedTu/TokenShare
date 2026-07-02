@@ -1,0 +1,10 @@
+import Init
+set_option autoImplicit false
+namespace TokenShareGenerated
+theorem lean_ai_iff_dense_context (P Q : Prop) (hpq : P → Q) (hqp : Q → P) (R S : Prop) (h1 : R → P) (h2 : S → Q) (h3 : P → S) : P ↔ Q := by
+  have child_forward : P → Q := by
+    exact hpq
+  have child_backward : Q → P := by
+    exact hqp
+  exact Iff.intro child_forward child_backward
+end TokenShareGenerated
