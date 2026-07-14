@@ -4,6 +4,11 @@ from tokenshare.experiments.adapters import AdapterRegistry, PluginExperimentAda
 from tokenshare.experiments.ai_profile import run_ai_profile_suite
 from tokenshare.experiments.factorization_adapter import FactorizationExperimentAdapter
 from tokenshare.experiments.factorization_500_ai import run_factorization_500_ai_suite
+from tokenshare.experiments.factorization_paper_adapter import (
+    FactorizationPaperRunResult,
+    ScriptedFactorizationRangeTransport,
+    run_factorization_paper_case,
+)
 from tokenshare.experiments.lean_adapter import LeanProofExperimentAdapter
 from tokenshare.experiments.lean_ai_benchmark import (
     generate_lean_ai_benchmark_cases,
@@ -48,6 +53,7 @@ __all__ = [
     "ExperimentRunner",
     "ExperimentStatus",
     "FactorizationExperimentAdapter",
+    "FactorizationPaperRunResult",
     "LeanProofExperimentAdapter",
     "PaperAttemptResult",
     "PaperAttemptStatus",
@@ -64,12 +70,14 @@ __all__ = [
     "PluginExperimentAdapter",
     "SimulationProfile",
     "SimulationWrapper",
+    "ScriptedFactorizationRangeTransport",
     "default_experiment_cases",
     "evaluate_paper_eligibility",
     "expand_plan_conditions",
     "generate_lean_ai_benchmark_cases",
     "load_paper_catalogs",
     "run_factorization_500_ai_suite",
+    "run_factorization_paper_case",
     "run_ai_profile_suite",
     "run_lean_ai_benchmark_suite",
     "run_phase8_default_suite",

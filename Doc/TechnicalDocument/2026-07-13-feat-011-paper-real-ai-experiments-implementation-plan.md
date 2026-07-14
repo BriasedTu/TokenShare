@@ -211,12 +211,12 @@ conda run -n tokenshare python -m pytest tests\experiments\test_paper_real_ai_ga
 - Create: `src/tokenshare/experiments/factorization_paper_adapter.py`
 - Test: `tests/experiments/test_factorization_paper_adapter.py`
 
-- [ ] 从 paper catalog case 生成 factorization root task。
-- [ ] 使用插件 deterministic `candidate_range_partition.v1` 拆成 range children。
-- [ ] 每个 range child 都走真实 `AIAPIExecutor` 生成候选。
-- [ ] 每个候选必须经过 factorization parser/verifier。
-- [ ] 子结果通过 canonical/merge 形成 root final output。
-- [ ] per-attempt 记录 provider/model/raw/parsed/usage/latency/cost。
+- [x] 从 paper catalog case 生成 factorization root task。
+- [x] 使用插件 deterministic `candidate_range_partition.v1` 拆成 range children。
+- [x] 每个 range child 都走真实 `AIAPIExecutor` 生成候选。
+- [x] 每个候选必须经过 factorization parser/verifier。
+- [x] 子结果通过 canonical/merge 形成 root final output。
+- [x] per-attempt 记录 provider/model/raw/parsed/usage/latency/cost。
 
 **修复的缺陷：** D05。
 
