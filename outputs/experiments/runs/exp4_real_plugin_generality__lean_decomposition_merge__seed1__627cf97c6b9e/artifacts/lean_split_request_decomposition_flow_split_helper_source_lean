@@ -1,8 +1,0 @@
-import TokenShare.Helper
-
-#eval IO.println (TokenShare.splitCertificateJson
-  "lean_split_request:decomposition_flow"
-  "sha256:2b517130ee7f5edd14c47cd387cea3782f78ee2dc3b6ced4769900d3a5ae5e85"
-  "and_intro_fixture"
-  "(P Q : Prop) (hP : P) (hQ : Q)"
-  "P ∧ Q")

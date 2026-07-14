@@ -26,7 +26,10 @@ required = [
     "feature_list.json",
     "progress.md",
     "session-handoff.md",
-    "Doc/TechnicalDocument/2026-06-03-tokenshare-protocol-technical-design.md",
+    "Doc/agent-navigation.md",
+    "Doc/TechnicalDocument/tokenshare_v1_complete_spec.md",
+    "Doc/TechnicalDocument/tokenshare_v1_code_map.md",
+    "Doc/TechnicalDocument/tokenshare_latest_real_plugin_experiment_design.md",
     "Doc/TechnicalDocument/2026-06-02-tokenshare-protocol-kernel-revised-draft.md",
 ]
 

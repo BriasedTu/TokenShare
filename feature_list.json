@@ -1,40 +1,30 @@
 {
     "project": "TokenShare",
-    "stage": "startup",
+    "stage": "paper-experiments",
+    "doc_consolidation_phase1_6_2026_07_13": {
+        "status": "completed",
+        "summary": "Phase 1-6 default documentation was consolidated into two current docs: a detailed complete spec and an implementation-accurate code map. Old Phase 1-6 docs were moved to Doc/TechnicalDocument/phase-1-6-archive/ with no archive index.",
+        "documents": [
+            "Doc/TechnicalDocument/tokenshare_v1_complete_spec.md",
+            "Doc/TechnicalDocument/tokenshare_v1_code_map.md"
+        ],
+        "archive_path": "Doc/TechnicalDocument/phase-1-6-archive/",
+        "evidence": "Updated Doc/agent-navigation.md, README.md, progress.md, session-handoff.md, init.ps1, init.sh, and source_documents so the two new docs are the default Phase 1-6 entry points and startup verification no longer requires the archived 2026-06-03 technical design path. No runtime code or online research was used. Verification passed: feature-list-json-ok; source-documents-ok; source-documents-no-archived-phase1-6-ok; archive-no-index-ok count=23; v1-doc-local-paths-ok; code-map-src-coverage-ok; code-map-tests-coverage-ok; README/navigation stale default-path scan clean; new spec/code map placeholder scan clean; git diff --check exited 0 with LF/CRLF warnings only; powershell -ExecutionPolicy Bypass -File .\\init.ps1 passed with python-json-sqlite-ok, harness-files-ok, pytest collected 388 items, result 387 passed, 1 skipped in 140.46s."
+    },
     "source_documents": [
-        "Doc/TechnicalDocument/2026-06-03-tokenshare-protocol-technical-design.md",
+        "Doc/TechnicalDocument/tokenshare_v1_complete_spec.md",
+        "Doc/TechnicalDocument/tokenshare_v1_code_map.md",
         "Doc/TechnicalDocument/2026-06-04-tokenshare-paper-module-map.md",
         "Doc/TechnicalDocument/2026-06-22-p01-p12-tokenshare-candidate-mechanism-spec.md",
-        "Doc/TechnicalDocument/2026-06-05-phase-1-minimal-object-field-spec.md",
-        "Doc/TechnicalDocument/2026-06-08-phase-2-minimal-field-state-event-spec.md",
-        "Doc/TechnicalDocument/2026-06-08-phase-2-code-map.md",
-        "Doc/TechnicalDocument/2026-06-23-phase-3-plugin-executor-field-spec.md",
-        "Doc/TechnicalDocument/2026-06-23-phase-3-code-map.md",
-        "Doc/TechnicalDocument/2026-06-24-phase-4-discussion-notes.md",
-        "Doc/TechnicalDocument/2026-06-24-phase-4-verification-canonical-expansion-field-spec.md",
-        "Doc/TechnicalDocument/2026-06-24-phase-4-code-map.md",
-        "Doc/TechnicalDocument/2026-06-25-phase-5-merge-contribution-settlement-field-spec.md",
-        "Doc/TechnicalDocument/2026-06-25-phase-5-code-map.md",
-        "Doc/TechnicalDocument/2026-06-25-phase-5-external-systems-merge-notes.md",
-        "Doc/TechnicalDocument/2026-06-25-phase-5-merge-discussion-notes.md",
-        "Doc/TechnicalDocument/2026-06-27-phase-6-factorization-plugin-field-spec.md",
-        "Doc/TechnicalDocument/2026-06-27-phase-6-factorization-plugin-code-map.md",
-        "Doc/TechnicalDocument/2026-06-28-phase-6-lean-real-plugin-scope-change.md",
-        "Doc/TechnicalDocument/2026-06-29-phase-6-lean-real-plugin-tdd.md",
-        "Doc/TechnicalDocument/2026-06-29-phase-6-lean-real-plugin-code-map.md",
-        "Doc/TechnicalDocument/2026-06-29-phase-6-lean-toolchain-setup-notes.md",
-        "Doc/TechnicalDocument/2026-06-27-phase-6-factorization-plugin-discussion-notes.md",
         "Doc/TechnicalDocument/2026-06-28-phase-7-ai-api-executor-field-spec.md",
         "Doc/TechnicalDocument/2026-06-28-phase-7-ai-api-executor-tdd-plan.md",
         "Doc/TechnicalDocument/2026-06-28-phase-7-ai-api-executor-code-map.md",
-        "Doc/TechnicalDocument/tokenshare_latest_real_plugin_experiment_design.tex",
-        "Doc/TechnicalDocument/tokenshare_latest_real_plugin_experiment_design.pdf",
-        "Doc/TechnicalDocument/2026-06-29-phase-8-experiment-infrastructure-tdd.md",
+        "Doc/TechnicalDocument/tokenshare_latest_real_plugin_experiment_design.md",
+        "Doc/TechnicalDocument/2026-07-13-feat-011-paper-real-ai-experiments-implementation-plan.md",
         "Doc/TechnicalDocument/2026-06-29-phase-8-experiment-infrastructure-code-map.md",
-        "Doc/TechnicalDocument/2026-06-02-tokenshare-protocol-kernel-revised-draft.md",
-        "Doc/TechnicalDocument/2026-06-07-phase-2-coordination-debt-memo.md"
+        "Doc/TechnicalDocument/2026-06-02-tokenshare-protocol-kernel-revised-draft.md"
     ],
-    "active_feature": "feat-010",
+    "active_feature": "feat-011",
     "features": [
         {
             "id": "feat-001",
@@ -223,17 +213,38 @@
             "dependencies": [
                 "feat-009"
             ],
-            "status": "in-progress",
+            "status": "deferred",
             "done_criteria": [
                 "Final state can be rebuilt from JSONL events",
                 "Replay does not call AI or executor code",
                 "Replay does not produce duplicate SettlementRecord entries"
             ],
-            "evidence": "2026-06-27: Renumbered from feat-009 / Phase 8 to feat-010 / Phase 9 after inserting Phase 7 Experimental AI API Executor and shifting experiment infrastructure to Phase 8. 2026-06-29: Activated after feat-007 real Lean proof plugin completion and feat-008/feat-009 done review, so startup harness retains exactly one in-progress active feature. Implementation has not started beyond activation/status sync. Validation passed with feature-list-phase9-active-single-in-progress-ok; compileall -q -x reference_repos . exit 0; git diff --check exit 0 with LF/CRLF warnings only; final .\\init.ps1 printed python-json-sqlite-ok and harness-files-ok, collected 356 tests, and passed with 355 passed, 1 skipped in 107.88s."
+            "evidence": "2026-06-27: Renumbered from feat-009 / Phase 8 to feat-010 / Phase 9 after inserting Phase 7 Experimental AI API Executor and shifting experiment infrastructure to Phase 8. 2026-06-29: Activated after feat-007 real Lean proof plugin completion and feat-008/feat-009 done review, so startup harness retains exactly one in-progress active feature. Implementation has not started beyond activation/status sync. Validation passed with feature-list-phase9-active-single-in-progress-ok; compileall -q -x reference_repos . exit 0; git diff --check exit 0 with LF/CRLF warnings only; final .\\init.ps1 printed python-json-sqlite-ok and harness-files-ok, collected 356 tests, and passed with 355 passed, 1 skipped in 107.88s. 2026-07-12: User corrected the remaining-work plan: the project should no longer show Phase 9 replay/audit as the next unfinished development phase before experiments. Replay/audit remains a possible future hardening topic, but it is deferred from the current completion path; the remaining active work is the latest real-AI paper experiment implementation and execution."
+        },
+        {
+            "id": "feat-011",
+            "name": "Paper Real AI Experiments",
+            "description": "Implement and run the current real-AI paper experiment plan from tokenshare_latest_real_plugin_experiment_design.md: paper catalogs, real-transport gate, budget approval, factorization and Lean adapters, post-AI faults, worker death, ablation, metrics, reports, paper eligibility, and final paper tables/figures.",
+            "dependencies": [
+                "feat-009"
+            ],
+            "status": "in-progress",
+            "done_criteria": [
+                "Frozen factorization and Lean paper catalogs exist and validate against the latest experiment design",
+                "run_paper_experiments supports plan-only budget generation, explicit budget approval, real-transport-only paper eligibility, and no scripted fallback for paper runs",
+                "Experiment 1-4 P0-core paper outputs, and Experiment 5 P0-full outputs when strong/weak model entries are configured, are generated from real AI API calls with provider/model/usage/latency/cost/raw-output evidence and secret scan reports",
+                "Fault injection and worker-death experiments mutate or terminate only after real provider output evidence is persisted",
+                "Metrics, CSVs, failure examples, and paper text are derived from per-task/per-attempt evidence and the append-only artifacts/events, not from hard-coded regression summaries",
+                "Targeted tests, experiment impact tests, compileall, and full init.ps1 pass after the experiment implementation and final run evidence is recorded"
+            ],
+            "evidence": "2026-07-12: Activated after user correction that the project is effectively complete except for the real AI paper experiments. feat-010 replay/audit was deferred from the remaining active development path rather than treated as a required pre-experiment phase. Implementation and run evidence pending. Post-cleanup validation: git diff --check exited 0 with LF/CRLF warnings only; powershell -ExecutionPolicy Bypass -File .\\init.ps1 passed with python-json-sqlite-ok, harness-files-ok, pytest collected 388 items, result 387 passed, 1 skipped in 148.08s. Cleanup removed tracked/generated outputs and caches; cache directories regenerated by validation were removed again afterward. 2026-07-12: Hardened the authoritative paper experiment design with additive consistency decisions: Experiment 2 P0-core is 600 root-runs, Experiment 3 rate faults exclude worker_death, Experiment 4 P0-core is 540 root-runs, Experiment 5 joins P0-full when strong/weak model entries exist, and Python/CLI return schemas, status enums, per-attempt fields, catalog manifest fields, metric denominators, and CLI exit codes are now explicit. Validation passed with paper-design-old-matrix-scan-ok, paper-design-required-text-ok, feature-list-paper-consistency-ok, git diff --check exit 0 with LF/CRLF warnings only, and powershell -ExecutionPolicy Bypass -File .\\init.ps1 reporting 387 passed, 1 skipped in 163.31s. 2026-07-13: Added Doc/TechnicalDocument/2026-07-13-feat-011-paper-real-ai-experiments-implementation-plan.md as the implementation checklist requested by the user. It separates experiment-layer work from true system-internal gaps, records that budget/plan-only is not an online system capability, and identifies Lean split/merge expansion as conditional on hard catalog needs. Verification for the planning update: feature-list-json-ok; paper plan placeholder scan clean; git diff --check exit 0 with LF/CRLF warnings only; powershell -ExecutionPolicy Bypass -File .\\init.ps1 passed with python-json-sqlite-ok, harness-files-ok, pytest collected 388 items, result 387 passed, 1 skipped in 161.66s. 2026-07-14: Completed feat-011 Task 1 first implementation slice: paper result/status schema, stable condition digest, frozen 30 factorization + 30 Lean paper catalogs with easy/medium/hard distribution, catalog loader/digest validation, plan-only budget estimator, non-plan budget approval digest gate, plan condition expansion for exp1, and minimal run_paper_experiments CLI that writes suite_manifest.json/run_budget.json for plan-only and blocks formal runs without --real-transport or budget approval. Added tests\\experiments\\test_paper_models.py, test_paper_catalog.py, test_paper_budget.py, and test_run_paper_experiments_cli.py. Review fixes: Lean catalog manifest now records metadata_only rather than overclaiming checker-backed preflight, and unknown domain/difficulty values are rejected instead of being budgeted as Lean or zero cases. Evidence: startup baseline init.ps1 passed with 387 passed, 1 skipped in 175.44s; RED targeted paper tests failed on missing paper modules; final targeted paper tests passed with 13 passed in 0.33s; tests\\experiments -q passed with 41 passed in 68.27s; compileall -x reference_repos . exited 0; final init.ps1 passed with python-json-sqlite-ok, harness-files-ok, pytest collected 401 items, result 400 passed, 1 skipped in 138.50s. Scope caveat: this slice does not yet call real AI API, does not mark paper_eligible true, and does not implement paper adapters/faults/workers/metrics/reports. 2026-07-14: Completed feat-011 Task 2 real-AI paper eligibility gate and checker-backed Lean catalog preflight. Added PaperEligibilityReport/evaluate_paper_eligibility, exported the API, added tests\\experiments\\test_paper_real_ai_gate.py, and upgraded paper_catalog Lean preflight to run the fixed local Lean checker over all 30 embedded oracle proofs and reject bad proof fixtures. Code review hardening fixed an initial caller-assertion gap: evaluate_paper_eligibility now takes run_evidence, derives real transport and secret scan status from transport/secret-scan evidence refs, verifies attempt artifact refs against an artifact manifest inventory by id/hash/type/schema, and PaperAttemptResult now includes provider_attempt_index, started_at, ended_at, prompt_tokens, and completion_tokens. Evidence: baseline init.ps1 passed with 400 passed, 1 skipped in 167.07s; tests\\experiments\\test_paper_catalog.py -q passed with 5 passed in 20.05s; review RED tests failed on missing provider_attempt_index and missing run_evidence; hardened tests\\experiments\\test_paper_models.py tests\\experiments\\test_paper_real_ai_gate.py -q passed with 9 passed in 0.24s; combined paper slice passed with 19 passed in 30.15s; compileall -x reference_repos src tests exited 0; tests\\experiments -q passed with 47 passed in 96.98s; final init.ps1 passed with python-json-sqlite-ok, harness-files-ok, pytest collected 407 items, result 406 passed, 1 skipped in 171.09s. Scope caveat: no real API paper run or paper-eligible run yet; paper adapters/faults/workers/metrics/reports/formal runs remain pending."
         }
     ],
     "active_features": [
-        "feat-010"
+        "feat-011"
     ],
-    "active_feature_note": "2026-06-29: feat-007 Phase 6 real Lean proof plugin is done after direct proof, decomposition/merge, Phase 8 ready path, and replay evidence guard validation. feat-008 Phase 7 and feat-009 Phase 8 are already done. Current active feature is feat-010 Phase 9 replay/audit, marked in-progress to keep startup verification restartable."
+    "active_feature_note": "2026-07-12: User corrected the remaining-work plan. Protocol core, plugins, AI API executor, and first experiment infrastructure are treated as complete enough for the current project path; feat-010 Phase 9 replay/audit is deferred and no longer the active unfinished phase. The only active remaining work is feat-011 Paper Real AI Experiments, governed by Doc/TechnicalDocument/tokenshare_latest_real_plugin_experiment_design.md.",
+    "paper_visual_update_2026_07_03": "Added paper.tex Figure fig:protocol-operational-pathway as a TikZ operational pathway replacing the table-like presentation requested by the user. This is a paper presentation update only; feat-010 replay/audit status is unchanged. Verification: startup init.ps1 passed before editing with 387 passed and 1 skipped; latexmk -pdf -interaction=nonstopmode -halt-on-error paper.tex passed; Poppler-rendered page review confirmed the figure is readable; feature-list-json-ok passed; git diff --check exited 0 with only LF/CRLF warning; post-sync init.ps1 passed twice, latest with 387 passed and 1 skipped.",
+    "paper_experiment_redesign_2026_07_12": "Replaced the old Phase 8 Experiment 1-4 design with Doc/TechnicalDocument/tokenshare_latest_real_plugin_experiment_design.md as the sole authority. New paper experiments require real AI API calls and cover cross-domain feasibility/difficulty, worker scalability, post-AI fault and worker-death recovery, protocol ablation, and optional strong/weak/mixed model allocation. Deleted the old .tex/.pdf authority and Phase 8 experiment-infrastructure TDD; retained the Phase 8 code map as implementation history/current-gap evidence. At that documentation moment active feature remained feat-010; 2026-07-12 cleanup/planning sync later moved active work to feat-011 Paper Real AI Experiments and deferred feat-010 from the current completion path. Verification: Markdown structure/path/deletion audits passed; git diff --check exited 0; post-change init.ps1 passed with 387 passed and 1 skipped in 146.87s.",
+    "cleanup_and_planning_sync_2026_07_12": "Cleaned tracked/generated experiment outputs and local caches, and corrected planning state so the project no longer presents feat-010 Phase 9 replay/audit as the next unfinished phase. Active work is feat-011 Paper Real AI Experiments. Post-cleanup verification evidence is recorded in progress.md/session-handoff.md after the validation run. Post-cleanup validation: git diff --check exited 0 with LF/CRLF warnings only; powershell -ExecutionPolicy Bypass -File .\\init.ps1 passed with python-json-sqlite-ok, harness-files-ok, pytest collected 388 items, result 387 passed, 1 skipped in 148.08s. Cleanup removed tracked/generated outputs and caches; cache directories regenerated by validation were removed again afterward."
 }

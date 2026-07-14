@@ -1,6 +1,0 @@
-import Init
-set_option autoImplicit false
-namespace TokenShareGenerated
-theorem and_intro_fixture_left (P Q : Prop) (hP : P) (hQ : Q) : P := by
-  exact hP
-end TokenShareGenerated

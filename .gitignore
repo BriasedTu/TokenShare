@@ -4,6 +4,17 @@ __pycache__/
 fixtures/lean_proof_project/.lake/
 local/*.local.json
 outputs/
+out/
+
+*.aux
+*.blg
+*.fdb_latexmk
+*.fls
+*.log
+*.synctex.gz
+*.toc
+paper.before_codex_rewrite.tex
+paper.*backup*.tex
 
 reference_repos/*
 !reference_repos/README.md

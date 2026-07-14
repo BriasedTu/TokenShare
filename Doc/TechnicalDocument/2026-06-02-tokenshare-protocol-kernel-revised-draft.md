@@ -7,7 +7,7 @@
 
 2026-06-29 说明：本文是历史讨论稿，不直接覆盖当前实验设计。后续论文实验、Phase 8
 experiment runner、failure injection、ablation、metrics/report 和跨插件泛化验收，以
-`Doc/TechnicalDocument/tokenshare_latest_real_plugin_experiment_design.tex` / `.pdf` 为准。
+`Doc/TechnicalDocument/tokenshare_latest_real_plugin_experiment_design.md` 为唯一实验设计权威。
 本文中关于整数分解“提前合并”的表述只保留为历史设计背景；当前 factorization 第一切片
 实验采用 all-required merge，不以 early success 或 sibling pruning 作为通过条件。
 

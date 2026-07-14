@@ -1,0 +1,547 @@
+# TokenShare 真实 AI API 论文实验设计与实施规格
+
+> 状态：唯一权威实验设计
+> 生效日期：2026-07-12
+> 适用范围：论文实验、实验 runner 改造、论文表格与图、实验执行和结果审计
+
+> **强制口径：** 自 2026-07-12 起，旧 Phase 8 Experiment 1-4、scripted/fake transport、deterministic fixture 和 direct 500-number benchmark 只保留为回归、输入来源或成本校准，不得作为新论文主实验结果。所有可写入论文的新实验必须实际调用真实 AI API，并保留可审计的 provider、model、usage、latency、cost 和 raw-output 证据。
+
+# 文档目的、来源与替代关系
+
+本文档把导师研讨意见转化为可直接实现和执行的实验规格。它回答以下问题：为什么要做每个实验；输入、变量、控制条件和重复次数是什么；当前系统缺什么；agent 应修改哪些程序；每次运行必须输出哪些数据；哪些结果可以进入论文；需要多少 API、时间、token、成本和人工检查。
+
+本文档不沿用旧实验问题结构。旧的 Phase 8 实验基础设施仍可用于回归，但旧的实验设计文稿 `2026-06-29-phase-8-experiment-infrastructure-tdd.md` 被删除。`2026-06-29-phase-8-experiment-infrastructure-code-map.md` 继续保留，因为它是当前实现事实和验证证据映射，不是第二份实验设计。
+
+研讨录音转写存在以下高置信度纠正：`令` 指 Lean，`头疼` 指 token，`force positive/negative` 指 false positive/false negative，`obligation` 在消融上下文中指 ablation，`skin low` 指 scaling law。导师举出的 3/30/300 workers、1%–100% 和黎曼猜想是问题尺度示例，不应机械解释为逐整数故障率或要求运行著名未解问题。
+
+# 设计一致性决议（Additive Consistency Decisions）
+
+若本文不同段落对同一实验数量、条件或模式出现局部不一致，采用加法原则修正：在工程和预算上合理、且不违反真实 AI / deterministic verifier 边界的条件都进入计划；不得为了让数字变小而默认删减实验。删减只能作为显式预算决策写入 suite manifest，不能静默发生。
+
+本版固定以下一致性决议：
+
+1.  Experiment 2 P0-core scaling 使用两个 domain、三个 difficulty、每档固定 5-task batch、4 个强制 worker levels（1, 3, 10, 30）和 5 次 repeat，共 600 个 root-runs。100 和 300 worker levels 是 preflight-gated extension：quota、AI unit 数量和机器资源都满足时运行；不满足时输出 `unsupported_worker_level`，不补造曲线。
+
+2.  Experiment 3 的 rate-fault 矩阵只包含 5 类非死亡故障：`false_positive`、`false_negative`、`no_return`、`late_submission`、`executor_error`。`worker_death` 永远单独进入 worker-death 矩阵，避免被 rate-fault 统计重复计算。
+
+3.  Experiment 4 P0-core ablation 使用每个 domain / difficulty 固定 5 个 tasks、6 个模式和 3 次 repeat，共 540 个 root-runs。旧的 3-task 数字不再作为正式 P0 口径。
+
+4.  Experiment 5 在 strong 和 weak 真实模型 entry 都可用时纳入 P0-full；如果本地配置缺少任一强弱模型类别，则该实验输出结构化 `blocked`，不算作协议失败，也不影响 Experiment 1-4 的主张。
+
+5.  P0-core 指 Experiment 1-4；P0-full 指 Experiment 1-5 且模型策略 preflight 通过。所有 summary、预算和论文表格必须标明自己属于 P0-core、P0-full 还是包含 100/300 worker extension 的扩展运行。
+
+# 论文要回答的三个主问题
+
+论文实验章节只围绕三个主张组织：
+
+1.  **可行性（Feasibility）**：同一协议生命周期能否在 factorization 和真实 Lean proof 两个不同领域中，用真实 AI API 生成候选输出，并由各自确定性 verifier/checker 给出可审计结果？
+
+2.  **扩展性（Scalability）**：固定任务和模型时，增加协议 worker/node 是否改变端到端时间、吞吐、token、成本和失败率？收益在哪个并发点开始饱和？
+
+3.  **鲁棒性（Robustness）**：真实 AI 输出之后发生 false positive、false negative、不返回、延迟、executor error 或 worker death 时，协议能否检测、隔离、重试、重分配并完成？哪些错误只能检测而不能恢复？
+
+协议消融用于解释第三个主张中各机制的贡献；strong/weak/mixed 模型组合只作为次要分析，不单独证明协议正确性。
+
+# 论文可采信硬门槛
+
+## 真实 AI API 门槛
+
+一条 run 只有同时满足以下条件，才可标记 `paper_eligible=true`：
+
+1.  `real_transport=true`，且配置来自被 gitignore 的本地 config；标准配置只记录 `api_key_env`。
+
+2.  每个需要 AI 生成的 `TaskUnit` 至少存在一次真实 provider attempt；不得用 scripted response、mock executor 或 deterministic answer 替代。
+
+3.  保存 request、raw model output、parsed output 或 parse failure、provider provenance、usage、latency、cost estimate 和模型身份 artifact。
+
+4.  输出中不存在 API key；event、artifact、SQLite、日志、config digest 和论文 CSV 均不得包含 secret。
+
+5.  AI 不决定协议级拆分。factorization 和 Lean 的拆分仍由插件确定性规则生成。
+
+6.  factorization 结果必须经插件 parser/verifier；Lean proof 必须经固定本地 Lean/lake/toolchain/project checker。
+
+7.  replay/metrics/report 阶段不重新调用 AI API，也不重新调用 Lean 来补写历史成功事实。
+
+任何缺少真实 provider attempt 的 run 都必须输出 `paper_eligible=false` 和具体 `ineligibility_reasons`。现有 `run_all` 默认 suite、scripted Lean 50、scripted AI profile 和 deterministic fixture 即使测试通过，也只能标记 `regression_only=true`。
+
+## 受控故障仍必须经过真实 API
+
+故障注入不能绕过真实 API。正确流程是：
+
+1.  正常发送真实 API request，保存 provider provenance、raw output 和 usage。
+
+2.  在预先声明的注入点对 parsed candidate、submission、lease 或 worker 进程做受控变换。
+
+3.  保存独立 `FaultInjectionRecord`，同时引用原始真实输出和变换后输出。
+
+4.  恢复 attempt 若需要 AI 候选，必须再次调用真实 API；不得复用未被协议接受的历史 candidate 假装恢复完成。
+
+因此，论文必须把“自然模型错误”和“真实输出后的受控注入错误”分开统计。注入变换本身消耗 0 个 provider token；原始调用和恢复调用的实际 token 必须全部计入。
+
+# 当前系统事实与关键缺口
+
+| 组件 | 当前已有能力 | 新实验缺口 |
+|:---|:---|:---|
+| Phase 7 AI executor | 真实 SiliconFlow-compatible transport；raw/parsed/error/usage/latency/cost/provenance artifact；secret 和 replay guard。 | 新论文 runner 必须强制 real transport、预算门禁、固定模型策略和每个 AI unit 的 provider-attempt coverage。 |
+| Phase 8 default suite | 通用 runner、adapter、simulation、metrics/report；默认 Experiment 1–4。 | 默认使用 deterministic/scripted 路径，旧 case 不再是论文实验；`SimulationProfile` 也没有 fault rate、worker count、difficulty、repeat、model policy。 |
+| Factorization 500 benchmark | 500 个 deterministic semiprime、真实 API direct answer、并发、准确率、token/cost/latency。 | 它直接让模型给完整分解，`worker_count` 并发的是独立整数，不是协议内部 range workers；不能单独证明协议 lifecycle 或 worker scaling。 |
+| Factorization adapter | 真实插件 fixture、deterministic split/verifier/merge。 | 缺少“协议 range child 全部由真实 API 执行”的批量论文路径、难度 catalog、factor position 控制和同一 root 内 worker 并发。 |
+| Lean AI 50 | 50 个 `P ∧ Q` / `P ↔ Q` 任务；真实 API child proof、parser、checker、merge/root recheck。 | 仅两种浅层结构、没有难度标签、固定顺序、没有 worker/model/request-limit CLI、缺少故障和消融入口，容易出现接近全对而无区分度。 |
+| Metrics | 可从 events/artifacts 复算 event coverage 和 AI usage/cost。 | 某些旧 helper 把 canonical pollution、requeue、premature merge 等固定写成 0/1；新论文指标必须从实际事件、attempt、verification 和 fault record 复算。 |
+| Worker fault | 旧 wrapper 可记录 offline/slow/executor_error/invalid_output/late_submission 决策。 | 只是报告层决策；缺少真实 API 后注入、故障率选择、真实 worker process 终止、lease expiry 和 replacement attempt 证据。 |
+| Report | JSON/CSV/run manifest。 | 缺少按条件聚合、重复统计、置信区间、论文图数据、预算报告、paper eligibility 和 secret scan report。 |
+
+# 统一术语、实验单位和控制变量
+
+## 术语
+
+| 术语 | 定义 |
+|:---|:---|
+| root task | 一个 factorization 整数或一个 Lean theorem payload 的协议根任务。 |
+| AI unit | 一次需要真实 AI API 生成候选输出的叶子执行单元。 |
+| worker | 可同时执行一个 AI unit 的实验执行槽。论文和代码统一使用 `worker_count`；不要与 attempt/run/node 混用。 |
+| attempt | 一个 worker 对一个 AI unit 的一次执行尝试；provider failover attempts 单独统计。 |
+| run | 一个固定 condition、repeat id 和 seed 下的完整实验批次。 |
+| condition | domain、difficulty、worker count、fault、ablation、model policy 等自变量的唯一组合。 |
+| task completion | 根任务得到插件认可的 final output；未完成、超时和 blocked 均计失败。 |
+| accepted result validity | 已被协议接受的 final output 是否通过 deterministic oracle/checker。它和 completion rate 必须分开。 |
+
+## 必须固定或记录的控制变量
+
+同一对比组必须固定 input catalog digest、provider/model entry、prompt/parser/plugin/executor version、Lean environment digest、timeout、max tokens、provider-attempt limit、fault seed、worker scheduling policy、机器与 Python/Lean 版本。每次 run 记录开始/结束时间、进程数、CPU logical count、内存摘要和网络/provider rate-limit 事件。
+
+真实 API 温度等非确定性参数必须写入 request artifact。论文主对比不得在看到结果后更换模型或 prompt；若必须修复 prompt contract，修复前后的结果分开成不同 experiment version。
+
+# 输入 catalog 与难度定义
+
+## Factorization catalog v1
+
+新建并冻结 `benchmarks/paper/factorization_catalog.v1.jsonl`。主实验使用 30 个 root tasks，每档 10 个；另保留现有 500 输入作为 appendix/model-quality sanity check，不作为协议主结果。
+
+factorization 难度不用十进制位数单独定义，而用插件实际搜索工作量定义：
+
+| 难度 | candidate divisor count | factor position | 目的 |
+|:---|:---|:---|:---|
+| easy | 1–32 | early/middle/late 均衡 | 验证基本真实 API + parser/verifier/merge 闭环。 |
+| medium | 33–128 | early/middle/late 均衡 | 测试更多 range units 和适度并发。 |
+| hard | 129–512 | early/middle/late 均衡，并含 no-factor/prime case | 观察成本、失败和饱和，不追求全对。 |
+
+每行至少包含：`case_id,target_n,oracle_prime_factors,candidate_start,candidate_end,candidate_divisor_count,factor_position_quantile,difficulty,split_params,source_seed`。target 和 oracle 由 deterministic generator 生成并在运行前验证，但候选执行必须走真实 AI API。
+
+## Lean catalog v1
+
+新建并冻结 `benchmarks/paper/lean_catalog.v1.jsonl`。主实验使用 30 个有效且可由固定 toolchain 检查的 theorem payload，每档 10 个：
+
+| 难度 | 客观定义 | 构造规则 |
+|:---|:---|:---|
+| easy | 每个 child 需要 1 个直接 proof step，2 个子目标以内。 | 基础 conjunction/iff，必要假设直接可用。 |
+| medium | 至少一个 child 需要 2–3 个 proof steps，含一层 implication chain 或干扰 context。 | 顶层结构仍由 deterministic helper 支持，但不能只用 `exact hP/hQ`。 |
+| hard | 至少一个 child 需要 4 个以上步骤、较长 chain、嵌套可支持结构或明显 lemma selection；允许合理失败。 | 只使用已证明为真的 theorem；不用黎曼猜想、哥德巴赫猜想等未解问题。 |
+
+每行至少包含：`case_id,theorem_payload,difficulty,expected_split_kind,expected_child_count,minimum_proof_steps,context_item_count,oracle_proof_ref,environment_digest`。catalog freeze 前运行本地 Lean preflight，确保 theorem 本身可验证；AI 是否能找到 proof 不能作为纳入/排除条件，避免按结果挑题。
+
+# Experiment 1: 真实 AI 跨领域可行性与难度
+
+## 为什么需要
+
+论文首先必须证明 TokenShare 不是只在一个 toy task 上工作。factorization 和 Lean 分别代表可枚举算术搜索与形式化证明；两者共享协议 lifecycle，但 split、parser、verifier/checker 和 merge 都属于插件。难度分层用于避免所有输入都成功而没有信息量。
+
+## 设计
+
+| 项目 | 固定值 |
+|:---|:---|
+| domains | `factorization`, `lean_proof` |
+| difficulty | easy, medium, hard |
+| tasks | 每个 domain 每档 10 个，共 60 个 root tasks |
+| repeats | 论文 run 每个 task 3 次；pilot 只跑 1 次且不进入主表 |
+| worker count | 固定 10；若 provider preflight 不允许 10，并发改为可用上限且整个实验保持一致 |
+| model | 固定一个预注册的 strong entry id |
+| fault/ablation | none / FULL |
+
+## 程序必须输出
+
+逐 task 输出：completion、accepted validity、parser/checker status、split/child/merge 数、attempt/provider-attempt 数、wall-clock、provider latency sum、prompt/completion/total tokens、cost、failure stage、event/artifact refs。逐难度输出 completion rate、accepted validity、median/P90 wall-clock、median/P90 tokens、cost per completed task 和 failure breakdown。
+
+## 可写入论文的结果
+
+可以写两个领域在不同难度下的完成率与成本；可以写 Lean checker 或 factorization verifier 拒绝了哪些候选；可以写能力边界随难度下降。不得仅写“accepted outputs 100% correct”而不报告未完成任务，也不得把模型求解失败解释为协议状态污染。
+
+# Experiment 2: 真实 AI worker 扩展性
+
+## 为什么需要
+
+TokenShare 的关键价值主张之一是把可拆任务分派给多个 worker。必须用固定任务和真实 API 测量增加 worker 是否缩短端到端时间，以及收益何时被 provider rate limit、任务粒度、merge gate 或调度开销抵消。
+
+## 设计
+
+强制 worker levels 为 `1, 3, 10, 30`。`100, 300` 是扩展点：只有当输入至少产生相同数量的可运行 AI units、provider quota preflight 通过、没有把线程数冒充逻辑 worker 数时才运行。否则报告 `unsupported_worker_level`，不能补造曲线。
+
+每个 worker level 在每个 domain 的 easy / medium / hard 各取固定 5-task batch，使用完全相同的 catalog digest、任务顺序集合、模型、prompt、timeout 和 seed family，重复 5 次；时间比较报告 median 和 IQR。factorization 主 scaling case 必须是同一 root 内的 range children 并行，不得用当前 direct 500 中“多个独立整数同时跑”替代。Lean scaling 同时报告 root throughput 和 child-proof throughput。
+
+## 输出与公式
+
+``` math
+S(w)=\frac{T(1)}{T(w)},\qquad
+E(w)=\frac{S(w)}{w},\qquad
+Q(w)=\frac{\text{completed roots}}{\text{wall-clock seconds}}
+```
+
+程序输出 `worker_count,difficulty,task_batch_id,wall_clock_ms,critical_path_ms,provider_latency_sum_ms,throughput,speedup,parallel_efficiency,total_tokens,cost,completion_rate,http_429_count,retry_count`。`critical_path_ms` 必须从同一 root / task batch 的 task-attempt 时间戳和 merge gate 依赖关系复算，不能用 provider latency sum 替代。若出现 provider 429/限流，必须同时给出包含限流的 end-to-end 曲线和去除限流 run 的敏感性分析，不能把外部 API 限流声称为协议本身不可扩展。
+
+# Experiment 3: 真实 AI 故障注入与 worker death 恢复
+
+## 为什么需要
+
+只有 pass/fail 不能证明鲁棒性。该实验必须显示故障率增加时检测、恢复、完成、时间和 token 如何变化，并明确哪些错误可恢复、哪些只能检测、哪些会导致失败。
+
+## 故障类型与注入点
+
+| fault type | 注入点 | 受控动作 |
+|:---|:---|:---|
+| false_positive | real parsed candidate 之后、verification 之前 | 把未成立的 factor/proof claim 写入 mutated submission；保留原始 raw/parsed refs。 |
+| false_negative | real parsed candidate 之后、verification 之前 | 把本来找到的结果改为 no-result/缺失 child；记录被抑制 candidate。 |
+| no_return | real raw output 保存之后、submission 之前 | 丢弃 submission，使 lease 过期并触发 replacement attempt。 |
+| late_submission | real raw output 保存之后 | 延迟到 lease deadline 之后提交，验证 late result 不污染 canonical。 |
+| executor_error | real provider response 保存之后、parser bridge 之前 | 生成受控 executor error record，恢复 attempt 再次真实调用 API。 |
+| worker_death | 独立 worker process 已保存 raw output、尚未提交时 | 终止该 worker process；协调器保持运行，等待 lease expiry 后交给 replacement worker。 |
+
+Rate-fault 矩阵只覆盖 5 类非死亡故障：`false_positive`、`false_negative`、`no_return`、`late_submission`、`executor_error`。Factorization fault rates 使用 `0%, 1%, 5%, 10%, 25%, 50%, 100%`。Lean 因每个 root 有多个 proof calls，使用 `0%, 10%, 50%, 100%`。故障目标用固定 seed 从 AI units 中选择，实际 target ids 写入 manifest。每个 condition 重复 3 次。
+
+worker death 另按任务进度 25%、50%、75% 三个位置注入，每个 domain 每个位置重复 3 次。这里终止的是 executor worker，不是 coordinator；因此可以在 Phase 9 完整 replay 之前测试 lease/reassignment。若要测试 coordinator crash/restart，必须等待 state replay 可重建后另立实验，不得混写。
+
+## 必须输出
+
+`fault_type,fault_rate,fault_target_count,injection_point,original_output_ref,mutated_output_ref,detection_rate,false_accept_rate,recovery_rate,completion_rate,recovery_latency_ms,retry_count,reassignment_count,wasted_actual_tokens,total_actual_tokens,cost_overhead`。
+
+actual token 只来自 provider usage。注入变换的 synthetic work 另写 `simulated_mutation_count`，不能伪造 token。论文必须至少展示一个可恢复正例和一个不可恢复或代价过高的负例。
+
+指标分母固定如下：
+
+- `detection_rate = detected_fault_count / injected_fault_count`。
+
+- `false_accept_rate = wrongly_canonicalized_fault_count / injected_fault_count`。
+
+- `recovery_rate = recovered_faulted_unit_count / recoverable_fault_target_count`；不可恢复或只应检测的 fault 不进入分母。
+
+- `completion_rate = completed_root_count / attempted_root_count`。
+
+- `cost_overhead = (fault_condition_cost - matched_no_fault_baseline_cost) / matched_no_fault_baseline_cost`。
+
+`false_positive` 和 `late_submission` 默认是 detect-and-isolate；`no_return`、`executor_error` 和 `worker_death` 默认是 recoverable；`false_negative` 必须按插件能否从后续 merge / checker 发现缺失事实记录为 `recoverable` 或 `detect_only`，不能硬写为成功恢复。
+
+# Experiment 4: 真实 AI 协议消融
+
+## 为什么需要
+
+消融用于证明 verification、parser、requeue 和 merge gate 不是装饰。所有消融 run 仍先调用真实 AI API，只在协议边界关闭一个机制；每个 run 使用独立 output root，防止错误 canonical 数据影响其他实验。
+
+| mode | 与 FULL 唯一差异 | 主要观察 |
+|:---|:---|:---|
+| FULL | 无 | 论文 baseline。 |
+| NO_VERIFICATION | 不执行 domain verifier/checker gate | wrong canonical acceptance、final invalidity。 |
+| NO_PARSER_POLICY | 允许 raw/free-form 直接进入候选边界 | parse isolation 破坏和错误逃逸。 |
+| NO_REQUEUE | rejected/expired unit 不创建 replacement attempt | stuck task rate 和 completion 降低。 |
+| NO_MERGE_GATE | required slots 未齐时允许 merge 尝试 | premature merge、root checker/merge failure。 |
+| NO_SLOT_INTEGRITY | child output 可绑定到错误 slot | slot mismatch acceptance 和错误 merge 风险。 |
+
+每个 domain 从 easy/medium/hard 各取固定 5 个 tasks，所有模式重复 3 次。报告 completion、accepted validity、wrong canonical acceptance、raw-only acceptance、stuck task、premature merge、slot mismatch、time、token 和 cost。消融实现必须在实验 wrapper/adapter 中，不修改协议 core 的默认 FULL 语义。
+
+# Experiment 5: strong/weak/mixed 模型策略（次要）
+
+## 为什么需要
+
+导师建议比较 strong-only、weak-only 和混合模型。它可说明协议是否能容纳异构模型和成本/成功率权衡，但主要测量模型与分配策略，不能替代前四个协议实验。
+
+模型 entry 必须在运行前以本地 config tag 固定为 `strength:strong` 或 `strength:weak`，不能看完结果后重标。三种策略为：
+
+- `strong_only`：所有 AI units 固定 strong entry。
+
+- `weak_only`：所有 AI units 固定 weak entry。
+
+- `difficulty_aware_mixed`：easy 使用 weak，medium 首次使用 weak、失败恢复使用 strong，hard 首次即使用 strong。
+
+使用 Experiment 1 catalog，每种策略重复 3 次，输出 completion、accepted validity、tokens、cost、latency、recovery attempts 和 model routing records。若本地只有一个真实模型或缺少 `strength:strong` / `strength:weak` 任一 tag，该实验标记 `blocked`，`blocked_reason="missing_strong_or_weak_model_entry"`，`paper_eligible=false`，`provider_attempt_count=0`，不影响前三个论文主张。
+
+`model_routing_records` 每行至少包含 `condition_id,task_id,unit_id,attempt_id,model_policy,selected_entry_id,selected_strength,routing_reason,previous_attempt_status,provider_attempt_ref,cost_estimate`。`difficulty_aware_mixed` 的升级规则固定为：easy 首次和恢复均用 weak；medium 首次 weak，若 parser/verifier/checker 拒绝或 no_return/executor_error 后恢复则升级 strong；hard 首次和恢复均用 strong。
+
+# 统一输出契约
+
+## Python / CLI 返回值契约
+
+新 paper runner 的 Python API 和 CLI 必须返回同一套结构化结果；CLI 可以把完整对象写入 `suite_manifest.json`，stdout 只打印摘要路径和 status。
+
+最小返回对象如下：
+
+| 对象 | 最小字段 |
+|:---|:---|
+| `PaperSuiteResult` | `schema_version,suite_id,status,output_root,started_at,ended_at,experiment_ids,condition_count,run_count,task_count,provider_attempt_count,total_tokens,total_cost_estimate,paper_eligible,eligibility_report_ref,budget_ref,metrics_refs,audit_refs,error_summary` |
+| `PaperExperimentResult` | `experiment_id,status,condition_ids,run_count,task_count,completion_rate,accepted_validity_rate,total_tokens,total_cost_estimate,summary_ref` |
+| `PaperConditionResult` | `condition_id,status,repeat_count,task_count,completed_root_count,failed_root_count,blocked_root_count,provider_attempt_count,metrics_ref` |
+| `PaperRunResult` | `condition_id,repeat_id,run_id,status,run_manifest_ref,per_task_results_ref,per_attempt_results_ref,fault_injections_ref,event_log_ref,artifact_root,paper_eligible,ineligibility_reasons` |
+| `PaperTaskResult` | `condition_id,repeat_id,task_id,domain,difficulty,root_status,accepted_validity,failure_stage,failure_kind,attempt_count,provider_attempt_count,wall_clock_ms,total_tokens,cost_estimate,event_refs,artifact_refs,paper_eligible` |
+| `PaperAttemptResult` | `condition_id,repeat_id,task_id,unit_id,attempt_id,worker_id,attempt_status,provider,model,entry_id,request_ref,raw_output_ref,parsed_output_ref,parse_failure_ref,provenance_ref,usage_ref,latency_ms,total_tokens,cost_estimate,error_kind,fault_injection_ref,paper_eligible` |
+| `PaperBudgetResult` | `budget_digest,planned_experiments,planned_conditions,planned_root_runs,planned_ai_units,max_provider_attempts,token_upper_bound,cost_upper_bound,wall_clock_estimate,quota_preflight,rate_limit_preflight,disk_estimate,status` |
+
+## 状态与失败枚举
+
+`status` 字段必须使用稳定枚举，不能临时写自然语言：
+
+- suite / experiment / condition / run status：`planned`、`running`、`completed`、`completed_with_failures`、`blocked`、`budget_exhausted`、`failed`。
+
+- root task status：`completed`、`failed`、`blocked`、`timeout`、`budget_exhausted`、`ineligible`。
+
+- attempt status：`succeeded`、`provider_error`、`parse_failed`、`verification_rejected`、`checker_rejected`、`lease_expired`、`late_rejected`、`worker_died`、`cancelled_by_budget`。
+
+- failure stage：`catalog`、`split`、`request`、`provider`、`parse`、`verification`、`checker`、`canonical`、`merge`、`settlement`、`metrics`、`audit`。
+
+- failure kind：`provider_error`、`rate_limited`、`parse_failure`、`verifier_rejected`、`checker_rejected`、`lease_expired`、`late_submission`、`no_requeue`、`premature_merge`、`slot_mismatch`、`budget_limit`、`unsupported_worker_level`、`missing_model_entry`、`secret_leak`、`internal_error`。
+
+CLI exit code 固定为：0 表示 runner 正常结束或按预算上限结构化停止；1 表示参数 / config / catalog / schema 错误；2 表示预算 digest 不匹配或缺少批准；3 表示 secret scan failure；4 表示 runner 内部错误。
+
+## 目录结构
+
+    outputs/experiments/paper_v1/<suite_id>/
+      suite_manifest.json
+      run_budget.json
+      input_catalog_manifest.json
+      conditions.jsonl
+      runs/<condition_id>/<repeat_id>/
+        run_manifest.json
+        per_task_results.jsonl
+        per_attempt_results.jsonl
+        fault_injections.jsonl
+        events/event_log.jsonl
+        artifacts/...
+      metrics/per_condition_summary.csv
+      metrics/paper_table_feasibility.csv
+      metrics/paper_table_ablation.csv
+      metrics/paper_plot_scalability.csv
+      metrics/paper_plot_robustness.csv
+      metrics/failure_examples.json
+      audit/paper_eligibility_report.json
+      audit/secret_scan_report.json
+
+## Condition manifest 最小字段
+
+    {
+      "schema_version": "tokenshare.paper_condition.v1",
+      "experiment_id": "exp2_real_ai_scalability",
+      "condition_id": "...",
+      "domain": "factorization|lean_proof",
+      "difficulty": "easy|medium|hard|all",
+      "worker_count": 10,
+      "fault_type": "none",
+      "fault_rate": 0.0,
+      "ablation_mode": "FULL",
+      "model_policy": "strong_only",
+      "repeat_id": 0,
+      "seed": 1,
+      "catalog_digest": "sha256:...",
+      "real_transport_required": true,
+      "paper_eligible_required": true
+    }
+
+## Per-task result 最小字段
+
+每行必须包含 condition/run/task id、domain/difficulty、root status、accepted validity、failure stage/kind、worker/attempt/provider/model、parser/verifier/checker/merge 状态、wall-clock/provider latency、tokens/cost、fault/ablation refs、event/artifact refs 和 `paper_eligible`。任何 summary 数字都必须能回到这些逐 task/attempt 记录和 event/artifact evidence。
+
+## Per-attempt result 最小字段
+
+每行必须包含 `condition_id,repeat_id,run_id,task_id,unit_id,attempt_id,worker_id,provider_attempt_index,provider,model,entry_id,request_ref,raw_output_ref,parsed_output_ref,parse_failure_ref,provenance_ref,usage_ref,started_at,ended_at,latency_ms,prompt_tokens,completion_tokens,total_tokens,cost_estimate,attempt_status,error_kind,fault_injection_ref,paper_eligible`。如果 provider failover 发生，必须为每次 provider attempt 写独立行或写入可展开的 `provider_attempts[]`，不能只保留最后一次。
+
+## Catalog manifest 最小字段
+
+`input_catalog_manifest.json` 必须包含 `schema_version,catalog_id,catalog_version,catalog_digest,generator_version,case_count,domain_counts,difficulty_counts,oracle_validation_status,lean_preflight_status,created_at,source_files`。任一 case 的 oracle 或 Lean preflight 失败时，catalog freeze 失败；不能在正式 run 中静默跳过该 case。
+
+# 论文表格、图和可写结论
+
+| 论文产物 | 数据文件 | 可以回答 |
+|:---|:---|:---|
+| Feasibility table | `paper_table_feasibility.csv` | 两个领域、三档难度的完成率、accepted validity、时间、token、成本。 |
+| Difficulty figure | feasibility CSV 派生 | 难度上升时成功率和成本如何变化，能力边界在哪里。 |
+| Scalability figure | `paper_plot_scalability.csv` | worker 增加后的 wall-clock、throughput、speedup、efficiency、token 和限流。 |
+| Robustness figure | `paper_plot_robustness.csv` | fault rate 对检测、恢复、完成、时间/token overhead 的影响。 |
+| Ablation table | `paper_table_ablation.csv` | 关闭一个机制后哪种错误逃逸或任务卡住。 |
+| Failure examples | `failure_examples.json` | 至少一个可恢复和一个不可恢复案例的完整 evidence chain。 |
+
+只有数据支持时才可写“worker 增加缩短时间”“混合模型降低成本”或“某类错误可恢复”。负面结果可以直接写：例如速度在 10 workers 后饱和、false negative 在某种同批次条件下无法恢复、NO_VERIFICATION 导致错误 canonical。不得预写必然正向结论。
+
+论文结构建议固定为：`Feasibility Across Two Domains`、`Scalability with Real AI Workers`、`Robustness and Failure Boundaries`。Ablation 放在第三部分，模型组合放 appendix 或次要 subsection。
+
+# API、时间、token、成本和人工投入
+
+正式 P0 的最小执行规模固定如下；agent 不得自行扩大，扩大前必须重新生成预算并由用户批准：
+
+| 实验 | 最小正式规模 | root-run 数量 |
+|---|---:|---:|
+| Experiment 1 | 2 domains × 3 difficulties × 10 tasks × 3 repeats | 180 |
+| Experiment 2 | 2 domains × 3 difficulties × 每档固定 5-task batch × 4 worker levels × 5 repeats | 600 |
+| Experiment 3 rate faults | Factorization: 5 tasks × 5 fault types × 7 rates × 3 repeats；Lean: 3 tasks × 5 fault types × 4 rates × 3 repeats | 705 |
+| Experiment 3 worker death | 2 domains × 3 tasks × 3 kill positions × 3 repeats | 54 |
+| Experiment 4 | 2 domains × 3 difficulties × 5 tasks × 6 modes × 3 repeats | 540 |
+| Experiment 5（配置支持时纳入 P0-full） | 2 domains × 3 difficulties × 5 tasks × 3 policies × 3 repeats | 270 |
+
+P0-core（Experiment 1-4）合计 2079 个 root-runs；P0-full（Experiment 1-5 且 strong/weak 模型 preflight 通过）合计 2349 个 root-runs。100 / 300 worker extension 若 preflight 通过，最多额外增加 300 个 root-runs，并必须在 suite manifest 中标记为 extension，不并入 P0-core 或 P0-full 主统计。root-run 数量不等于 provider calls。Factorization root 可能拆成多个 range AI units，Lean root 可能拆成多个 proof AI units；真实 provider-attempt 上界必须由 split preflight 精确展开。若预算上限无法覆盖计划，runner 写 `budget_exhausted` 并停止启动新 task；不得静默减少样本、删 mode 或删 difficulty。任何缩小矩阵都必须作为新的用户批准 suite version 记录。
+
+## 运行前预算门禁
+
+runner 必须先执行 `--plan-only`，根据 catalog、child counts、conditions、repeats 和 max provider attempts 生成 `run_budget.json`：
+
+``` math
+N_{calls}^{max}=\sum_{conditions}\sum_{tasks}
+  N_{AI\ units}(task)\times repeats\times maxProviderAttempts
+```
+
+预算文件至少包含 planned root tasks、AI units、provider attempts 上界、token 上界、cost estimate 上界、预计 wall-clock、provider/model、并发、quota/rate-limit preflight 和磁盘空间估计。正式运行需要显式 `--approve-budget-digest`，避免配置变化后误花费。
+
+CLI 必须支持 `--max-total-provider-attempts`、`--max-total-tokens`、`--max-cost-estimate` 和 `--stop-after-current-task`。超过任一上限时写结构化 `budget_exhausted`，不启动新 task；已完成 evidence 保留。
+
+## 现有真实运行只用于资源校准
+
+2026-07-02 的本地记录显示：direct factorization 500 tasks 使用 525777 total tokens、cost estimate 1.7462418；Lean 50 root tasks 使用 101 provider attempts、cost estimate 0.167799265。它们不是本文新实验结果，只用于初始预算量级。新 factorization 协议实验每个 root 会有多个 range AI units，必须由 `--plan-only` 按实际 split 重新估算，不能用 direct benchmark 的每题成本直接代替。
+
+## 人工与机器投入
+
+| 阶段 | 预计投入 | 完成物 |
+|:---|:---|:---|
+| 代码补齐 | 1–2 人日 | paper runner、catalog、real-AI gate、fault/process worker、metrics/report、tests。 |
+| pilot | 0.5 人日 + API | 每个 condition 1 repeat，发现 schema/prompt/quota 问题，不进入主表。 |
+| 正式 P0 run | 0.5–1 人日 + API | Experiment 1–3 三次重复和完整 evidence。 |
+| ablation/model | 0.5 人日 + API | Experiment 4；预算允许时 Experiment 5。 |
+| 论文与审计 | 1 人日 | 图表、failure analysis、secret scan、replay/evidence check、文字改写。 |
+
+# 代码改造计划（agent 可直接实施）
+
+## 文件结构
+
+| 文件 | 职责 |
+|:---|:---|
+| `benchmarks/paper/factorization_catalog.v1.jsonl` | 冻结的 factorization 30-task catalog。 |
+| `benchmarks/paper/lean_catalog.v1.jsonl` | 冻结的 Lean 30-task catalog。 |
+| `src/tokenshare/experiments/paper_models.py` | `PaperExperimentCondition`、budget、fault record、paper eligibility schema 和 digest。 |
+| `src/tokenshare/experiments/paper_catalog.py` | 加载、校验和 digest 两个 catalog；本地 oracle/Lean preflight。 |
+| `src/tokenshare/experiments/factorization_paper_adapter.py` | 从 root split 到 range children，所有 range candidate 经真实 `AIAPIExecutor`、插件 parser/verifier、canonical/merge。 |
+| `src/tokenshare/experiments/lean_paper_adapter.py` | 执行分难度 Lean catalog，真实 API child/direct proof、checker、merge/root recheck，并支持 model/worker config。 |
+| `src/tokenshare/experiments/paper_faults.py` | 在真实 output 后执行 deterministic fault selection/mutation，写 `FaultInjectionRecord`。 |
+| `src/tokenshare/experiments/paper_workers.py` | 独立 worker process、kill point、lease expiry、replacement attempt 和进程 evidence。 |
+| `src/tokenshare/experiments/paper_budget.py` | plan-only provider/token/cost/time/space 预算及硬上限。 |
+| `src/tokenshare/experiments/paper_runner.py` | 展开 Experiment 1–5 conditions、repeat/seed、resume、budget gate、paper eligibility。 |
+| `src/tokenshare/experiments/paper_metrics.py` | 从 events/artifacts/attempts/fault records 复算逐条件统计、quantile、speedup、recovery、ablation。 |
+| `src/tokenshare/experiments/paper_report.py` | 写统一目录、逐 task/attempt JSONL、论文 CSV、audit reports。 |
+| `src/tokenshare/experiments/run_paper_experiments.py` | 唯一论文实验 CLI；默认拒绝 scripted transport。 |
+| `tests/experiments/test_paper_*.py` | schema/catalog/gate/fault/worker/budget/metrics/report/CLI 回归。 |
+
+## 现有文件的最小修改
+
+- `src/tokenshare/experiments/__init__.py`：导出 paper suite public API。
+
+- `src/tokenshare/experiments/lean_ai_benchmark.py`：抽出可复用单 case 执行函数；不得再限制新 catalog 只能按前 N 个固定顺序；暴露 request limits、entry ids、worker count。
+
+- `src/tokenshare/experiments/factorization_500_ai.py`：仅复用 deterministic semiprime generator/oracle；不要把 direct answer runner 当作 protocol adapter。
+
+- `src/tokenshare/experiments/metrics.py`：旧 hard-coded 0/1 指标保留给 regression only；paper runner 不得调用这些字段作为论文统计。
+
+- `src/tokenshare/experiments/simulation.py`：旧 v1 决策保留回归；paper faults 使用新 v2 record，不用只写“selected fault”的报告层模拟。
+
+- `src/tokenshare/executors/ai_api.py`：原则上不改 authority；只有缺少 provider attempt correlation 或 cancellation-safe provenance 时才增加 artifact 字段，不把 fault/worker/experiment policy 放入 executor。
+
+## 实施顺序与测试
+
+1.  先写 paper model/catalog/budget 的失败测试，验证 digest、难度字段、30+30 catalog、plan-only 和 budget approval。
+
+2.  实现真实 API paper eligibility gate；测试 scripted/fake/deterministic run 必须被拒绝为论文结果。
+
+3.  实现 factorization paper adapter；用注入 fake transport 做测试，但正式 CLI 必须 real transport。验证每个 range AI unit 都有 provider attempt、raw/parsed/verifier evidence。
+
+4.  实现 Lean paper adapter 和难度 catalog；本地 Lean checker 测试不依赖网络，正式候选生成走真实 API。
+
+5.  实现 post-AI fault mutation 和 worker process death；测试 original/mutated refs、lease expiry、replacement attempt 和 no canonical pollution。
+
+6.  实现 paper metrics/report；用手工构造 event/artifact fixture 验证统计，不硬写 pass。
+
+7.  运行 targeted tests，再运行 `tests/experiments`、executor/plugin impact suite 和完整 `init.ps1`。
+
+8.  执行 plan-only、pilot、正式 P0、ablation；Experiment 5 由预算决定但不得阻塞 P0。
+
+建议验证命令：
+
+    $env:PYTHONPATH='src'
+    conda run -n tokenshare python -m pytest tests/experiments/test_paper_models.py -q
+    conda run -n tokenshare python -m pytest tests/experiments/test_paper_catalog.py -q
+    conda run -n tokenshare python -m pytest tests/experiments/test_paper_real_ai_gate.py -q
+    conda run -n tokenshare python -m pytest tests/experiments/test_paper_faults.py -q
+    conda run -n tokenshare python -m pytest tests/experiments/test_paper_workers.py -q
+    conda run -n tokenshare python -m pytest tests/experiments/test_paper_metrics.py -q
+    conda run -n tokenshare python -m pytest tests/experiments -q
+    .\init.ps1
+
+# 正式 CLI 规格
+
+唯一论文入口：
+
+    $env:PYTHONPATH='src'
+conda run -n tokenshare python -m tokenshare.experiments.run_paper_experiments `
+  --output-root outputs/experiments/paper_v1 `
+  --experiments exp1,exp2,exp3,exp4,exp5 `
+  --real-transport `
+  --ai-api-config local/ai_api_smoke.local.json `
+  --strong-entry-id <configured-strong-id> `
+  --weak-entry-id <configured-weak-id> `
+  --worker-levels 1,3,10,30 `
+  --optional-worker-levels 100,300 `
+  --repeats 3 `
+  --seed-family 1,2,3 `
+  --plan-only
+
+plan-only 通过人工检查后：
+
+conda run -n tokenshare python -m tokenshare.experiments.run_paper_experiments `
+  --output-root outputs/experiments/paper_v1 `
+  --experiments exp1,exp2,exp3,exp4,exp5 `
+  --real-transport `
+  --ai-api-config local/ai_api_smoke.local.json `
+  --strong-entry-id <configured-strong-id> `
+  --weak-entry-id <configured-weak-id> `
+  --worker-levels 1,3,10,30 `
+  --optional-worker-levels 100,300 `
+  --repeats 3 `
+  --seed-family 1,2,3 `
+  --approve-budget-digest <digest> `
+      --max-total-provider-attempts <approved-limit> `
+      --max-total-tokens <approved-limit> `
+      --max-cost-estimate <approved-limit>
+
+CLI 若未给 `--real-transport`、没有可用 key、catalog digest 不匹配、预算 digest 不匹配或输出目录已有不同 suite manifest，应拒绝启动，不得自动退回 scripted transport。`--weak-entry-id` 仅在运行 Experiment 5 时需要；若用户要求运行 Experiment 5 但缺少 weak entry，runner 仍写 blocked condition / experiment result，而不是让 Experiment 1-4 失败。
+
+# 四天执行安排
+
+| 日期 | 工作和完成门槛 |
+|:---|:---|
+| Day 1 | 完成 catalog、paper schemas、real-AI gate、budget plan 和 adapter 最小路径；targeted tests 通过；跑每个 domain 1 个真实 API smoke。 |
+| Day 2 | 完成 Experiment 1 和 Experiment 2；跑完整 pilot；当天生成 feasibility/scalability CSV 并检查是否有区分度和 429。 |
+| Day 3 | 完成 post-AI fault、worker process death 和 Experiment 3；跑 factorization 完整故障率和 Lean 精简故障率。 |
+| Day 4 | 完成 Experiment 4、论文表图和 failure analysis；配置支持时跑 Experiment 5；做 secret scan、evidence check、Markdown/论文文字更新和完整 init。 |
+
+如果时间或预算不足，runner 使用 `budget_exhausted` 结构化停止，不能静默删除 Experiment 1-4、difficulty、fault type 或 ablation mode。Experiment 5 只在 strong/weak 模型配置不满足时允许 blocked；其他删减必须经用户重新批准并写成新的 suite version。Ablation 默认运行全部 6 个模式，FULL、NO_VERIFICATION、NO_REQUEUE 只是后续人工分析时的最低必读对照，不是默认裁剪口径。
+
+# 验收标准
+
+新实验计划完成的必要条件：
+
+1.  本 Markdown 是唯一权威设计；旧 `.tex/.pdf` 和 Phase 8 实验设计文稿已删除，导航和 README 不再把旧 Experiment 1-4 当论文主口径。
+
+2.  新 paper runner 没有 scripted fallback；所有论文 run 的 `paper_eligible=true` 可由真实 provider attempts 和 raw artifacts 证明。
+
+3.  factorization 主实验走协议 range children、parser/verifier/canonical/merge，不用 direct 500 准确率替代。
+
+4.  Lean 主实验有三档难度、真实 AI proof candidates、真实 checker、merge/root recheck；不是 50 个近似同难度题全部 100%。
+
+5.  worker scaling 测同一 root/task batch 的协议 worker，并记录 provider 限流混杂。
+
+6.  故障注入引用原始真实输出，实际 token 与 synthetic mutation 分开；worker death 是真实独立 worker process 终止。
+
+7.  metrics 从 events/artifacts/attempts/fault records 复算；逐 task/attempt 数据能支撑每个论文汇总值。
+
+8.  输出包含预算、paper eligibility、secret scan、图表 CSV、正负 failure examples 和稳定 schema version。
+
+9.  targeted tests、影响范围 tests、`compileall`、完整 `init.ps1` 通过，并把证据同步到 code map、feature list、progress 和 handoff。

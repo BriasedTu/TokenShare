@@ -1,6 +1,6 @@
 # AGENTS.md
 
-TokenShare 是一个早期本地研究原型，目标是验证一种协议：把大型任务递归拆分、分派、验证、合并、结算，并能从事件日志重放。当前目标是用 Python/SQLite/JSONL 做本地实现，跑通 factorization 和真实 Lean 形式化证明插件两类 proof-of-concept 实验，并使用已完成的 Phase 7 实验级 AI API executor 验证真实模型输出效果。2026-06-29 起，Phase 6 的 structured report stub 插件已从开发计划中剔除；后续如在历史文档或测试夹具中看到该名称，只作为早期通用插件夹具 / provenance，不作为待开发插件目标。实验设计和论文实验口径以 `Doc/TechnicalDocument/tokenshare_latest_real_plugin_experiment_design.tex` / `.pdf` 为准。
+TokenShare 是一个早期本地研究原型，目标是验证一种协议：把大型任务递归拆分、分派、验证、合并、结算，并能从事件日志重放。当前目标是用 Python/SQLite/JSONL 做本地实现，跑通 factorization 和真实 Lean 形式化证明插件两类 proof-of-concept 实验，并使用已完成的 Phase 7 实验级 AI API executor 验证真实模型输出效果。2026-06-29 起，Phase 6 的 structured report stub 插件已从开发计划中剔除；后续如在历史文档或测试夹具中看到该名称，只作为早期通用插件夹具 / provenance，不作为待开发插件目标。实验设计和论文实验口径以 `Doc/TechnicalDocument/tokenshare_latest_real_plugin_experiment_design.md` 为唯一权威。
 
 ## 启动流程（Startup Workflow）
 
@@ -10,7 +10,7 @@ TokenShare 是一个早期本地研究原型，目标是验证一种协议：把
 2. 完整阅读本文件。
 3. 阅读导引：
    - `Doc/agent-navigation.md`（agent 导航、模块路由和外部参考资料落库规则）
-   - 如果本轮涉及实验设计、实验 runner、论文实验表格、failure/ablation/generalization 实验，阅读 `Doc/TechnicalDocument/tokenshare_latest_real_plugin_experiment_design.tex`
+   - 如果本轮涉及实验设计、实验 runner、论文实验表格、failure/ablation/generalization 实验，阅读 `Doc/TechnicalDocument/tokenshare_latest_real_plugin_experiment_design.md`
 4. 运行基线验证：
    - PowerShell：`.\init.ps1`
    - Bash/Git Bash/WSL：`./init.sh`
@@ -33,7 +33,7 @@ V1 范围内：
 - factorization 插件和真实 Lean 形式化证明插件，作为协议实验对象；structured report stub 已从 Phase 6 开发计划剔除。
 - 真实 Lean 形式化证明插件必须使用固定本地 Lean/lake/toolchain/library 环境做 proof artifact 检查；拆分算法必须由插件内确定性规则自动识别 Lean theorem / proof-state 结构并生成子任务，不得由 AI 决定协议级拆分。
 - 实验级 AI API 执行器，用于在受控 fixture / benchmark 下验证真实模型输出效果；标准 executor config 只保存 `api_key_env`，真实 API smoke 可从被 gitignore 的 `local/ai_api_smoke.local.json` 读取明文 key 并仅注入当前进程环境变量，调用结果必须持久化为 artifact，event/artifact/SQLite/log/config digest 不得保存 secret，replay 不得重新调用 API。
-- 实验设计必须优先遵守 `tokenshare_latest_real_plugin_experiment_design`：Experiment 1 factorization 真实插件端到端、Experiment 2 failure injection/recovery、Experiment 3 protocol ablation、Experiment 4 factorization + 真实 Lean plugin 跨插件泛化；不得用 toy demo 或 `lean_stub` 结果替代真实实验结论。
+- 实验设计必须优先遵守 `tokenshare_latest_real_plugin_experiment_design.md`：Experiment 1 真实 AI 跨领域可行性与难度、Experiment 2 真实 AI worker 扩展性、Experiment 3 真实 AI 故障注入与 worker death 恢复、Experiment 4 真实 AI 协议消融、Experiment 5 strong/weak/mixed 模型策略。所有可写入论文的新实验都必须实际调用真实 AI API；旧 deterministic/scripted suite、direct 500 benchmark、toy demo 或 `lean_stub` 只能作为回归、输入来源或成本校准。
 - offline、slow、executor_error、invalid_output、late_submission 五类故障模拟。
 - 指标报告、状态重放、审计重放、sandbox 结算。
 
