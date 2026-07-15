@@ -20,11 +20,11 @@
 
 本版固定以下一致性决议：
 
-1.  Experiment 2 P0-core scaling 使用两个 domain、三个 difficulty、每档固定 5-task batch、4 个强制 worker levels（1, 3, 10, 30）和 5 次 repeat，共 600 个 root-runs。100 和 300 worker levels 是 preflight-gated extension：quota、AI unit 数量和机器资源都满足时运行；不满足时输出 `unsupported_worker_level`，不补造曲线。
+1.  Experiment 2 P0-core scaling 使用两个 domain、三个 paper difficulty、每档固定 5-task batch、4 个强制 worker levels（1, 3, 10, 30）和 5 次 repeat，共 600 个 root-runs。factorization 的三档是 easy / medium / hard；Lean 的三档是 simple / medium lemma-DAG / hard-frontier，当前 shallow v1 只能填 simple。100 和 300 worker levels 是 preflight-gated extension：quota、AI unit 数量和机器资源都满足时运行；不满足时输出 `unsupported_worker_level`，不补造曲线。
 
 2.  Experiment 3 的 rate-fault 矩阵只包含 5 类非死亡故障：`false_positive`、`false_negative`、`no_return`、`late_submission`、`executor_error`。`worker_death` 永远单独进入 worker-death 矩阵，避免被 rate-fault 统计重复计算。
 
-3.  Experiment 4 P0-core ablation 使用每个 domain / difficulty 固定 5 个 tasks、6 个模式和 3 次 repeat，共 540 个 root-runs。旧的 3-task 数字不再作为正式 P0 口径。
+3.  Experiment 4 P0-core ablation 使用每个 domain / paper difficulty 固定 5 个 tasks、6 个模式和 3 次 repeat，共 540 个 root-runs。旧的 3-task 数字不再作为正式 P0 口径；若 Lean medium lemma-DAG / hard-frontier catalog 未完成，Lean 对应难度的 ablation claim 必须 blocked 或降级。
 
 4.  Experiment 5 在 strong 和 weak 真实模型 entry 都可用时纳入 P0-full；如果本地配置缺少任一强弱模型类别，则该实验输出结构化 `blocked`，不算作协议失败，也不影响 Experiment 1-4 的主张。
 
@@ -128,17 +128,21 @@ factorization 难度不用十进制位数单独定义，而用插件实际搜索
 
 每行至少包含：`case_id,target_n,oracle_prime_factors,candidate_start,candidate_end,candidate_divisor_count,factor_position_quantile,difficulty,split_params,source_seed`。target 和 oracle 由 deterministic generator 生成并在运行前验证，但候选执行必须走真实 AI API。
 
-## Lean catalog v1
+## Lean catalog 分层要求
 
-新建并冻结 `benchmarks/paper/lean_catalog.v1.jsonl`。主实验使用 30 个有效且可由固定 toolchain 检查的 theorem payload，每档 10 个：
+`benchmarks/paper/lean_catalog.v1.jsonl` 已经冻结并可由固定 toolchain 检查，但 2026-07-15 起它只作为 **simple / shallow Lean catalog**：其中历史 `easy` / `medium` / `hard` 标签只表示 shallow-v1 proof-chain 长度和上下文干扰，不再满足正式论文的 Lean 三档难度定义。当前 v1 的全部 30 个 `P ∧ Q` / `P ↔ Q` case 都归入正式论文口径的 `simple` 层，只能用于 adapter、checker、artifact、fault/worker/ablation 基础设施验证和成本校准；不得用它们单独支撑“复杂 Lean 递归拆分”或“hard theorem proving”主张。
 
-| 难度 | 客观定义 | 构造规则 |
-|:---|:---|:---|
-| easy | 每个 child 需要 1 个直接 proof step，2 个子目标以内。 | 基础 conjunction/iff，必要假设直接可用。 |
-| medium | 至少一个 child 需要 2–3 个 proof steps，含一层 implication chain 或干扰 context。 | 顶层结构仍由 deterministic helper 支持，但不能只用 `exact hP/hQ`。 |
-| hard | 至少一个 child 需要 4 个以上步骤、较长 chain、嵌套可支持结构或明显 lemma selection；允许合理失败。 | 只使用已证明为真的 theorem；不用黎曼猜想、哥德巴赫猜想等未解问题。 |
+正式论文 Lean catalog 必须扩展为分层 catalog，建议新增 `benchmarks/paper/lean_lemma_graph_catalog.v1.jsonl` 或 `lean_catalog.v2.jsonl`，并把 `paper_difficulty` 与旧 `difficulty` 字段区分开：
 
-每行至少包含：`case_id,theorem_payload,difficulty,expected_split_kind,expected_child_count,minimum_proof_steps,context_item_count,oracle_proof_ref,environment_digest`。catalog freeze 前运行本地 Lean preflight，确保 theorem 本身可验证；AI 是否能找到 proof 不能作为纳入/排除条件，避免按结果挑题。
+| 正式层级 | 客观定义 | 构造规则 | 论文用途 |
+|:---|:---|:---|:---|
+| simple | 当前 v1 shallow theorem：单个 root theorem，顶层 `P ∧ Q` / `P ↔ Q`，通常 2 个 child，child proof 是直接假设或短 implication chain。 | 保留当前 v1，必要时把旧 `difficulty` 重命名或解释为 `shallow_v1_difficulty`。 | 验证 Lean adapter、checker、merge/root recheck、artifact evidence 和 fault/worker/ablation 基础机制。 |
+| medium | 用户要求的递归 lemma-DAG：一个 root theorem 由多个 lemma 推出，每个 lemma 又可由多个 sublemma 推出，形成 2-3 层 dependency DAG。 | catalog 显式给出 lemma graph、dependency edges、expected depth、leaf proof units、merge slots、root theorem payload、oracle proof package 和 environment digest；拆分仍由 Lean 插件/确定性 catalog 规则决定，AI 只证明被分派的 proof unit。 | 支撑 TokenShare 的递归任务拆分、分派、验证、合并和 replay 主张；正式 Experiment 1/2/4 的 Lean 主张必须至少包含这一层。 |
+| hard / frontier | 更复杂的混合题：多层 lemma-DAG、induction/rewrite/theorem reuse、跨主题组合，或接近人类研究难度的 frontier stress case。 | 如果 theorem 已有固定 oracle proof，必须 preflight 通过后才能作为 `paper_eligible` proof case；如果题目本身可能未解或人类也不一定能完成，只能作为 `frontier_stress` / `structured_blocked` / negative case，不能伪造成 Lean checker success。 | 观察系统在复杂/不可解任务下的 structured failure、budget、worker recovery、ablation 和 evidence 边界；不能把未解 conjecture 的失败算作协议失败。 |
+
+medium lemma-DAG / hard-frontier catalog 每行至少包含：`case_id,paper_difficulty,root_theorem_payload,lemma_graph,dependency_edges,expected_depth,expected_leaf_count,expected_ai_unit_count,merge_plan_shape,oracle_proof_package_ref,environment_digest,preflight_status`。catalog freeze 前必须运行本地 Lean preflight，确保所有纳入 `paper_eligible` 的 theorem / lemma / root assembly 都可由固定 Lean/lake/toolchain/library 环境验证；AI 是否能找到 proof 不能作为纳入/排除条件，避免按结果挑题。
+
+为了支持 medium lemma-DAG / hard-frontier，Lean 插件能力也必须随 catalog 提升：支持递归 lemma graph split、proof-file assembly、per-lemma checker evidence、multi-level merge/root recheck、dependency-aware slot integrity，以及必要的 deterministic split/merge 规则，例如 implication introduction、forall introduction、nested conjunction/iff、induction/rewrite skeleton。仍然禁止让 AI 决定协议级拆分；AI 输出只能作为 proof candidate，经 parser/checker 后进入 evidence。
 
 # Experiment 1: 真实 AI 跨领域可行性与难度
 
@@ -151,8 +155,8 @@ factorization 难度不用十进制位数单独定义，而用插件实际搜索
 | 项目 | 固定值 |
 |:---|:---|
 | domains | `factorization`, `lean_proof` |
-| difficulty | easy, medium, hard |
-| tasks | 每个 domain 每档 10 个，共 60 个 root tasks |
+| paper difficulty | factorization 使用 easy / medium / hard；Lean 使用 simple / medium lemma-DAG / hard-frontier 三档 |
+| tasks | 每个 domain 每个 paper difficulty 目标 10 个，共 60 个 root tasks；若 Lean medium / hard-frontier catalog 未完成，正式 Lean 难度主张 blocked 或降级，不得用当前 shallow v1 补齐三档 |
 | repeats | 论文 run 每个 task 3 次；pilot 只跑 1 次且不进入主表 |
 | worker count | 固定 10；若 provider preflight 不允许 10，并发改为可用上限且整个实验保持一致 |
 | model | 固定一个预注册的 strong entry id |
@@ -176,7 +180,7 @@ TokenShare 的关键价值主张之一是把可拆任务分派给多个 worker�
 
 强制 worker levels 为 `1, 3, 10, 30`。`100, 300` 是扩展点：只有当输入至少产生相同数量的可运行 AI units、provider quota preflight 通过、没有把线程数冒充逻辑 worker 数时才运行。否则报告 `unsupported_worker_level`，不能补造曲线。
 
-每个 worker level 在每个 domain 的 easy / medium / hard 各取固定 5-task batch，使用完全相同的 catalog digest、任务顺序集合、模型、prompt、timeout 和 seed family，重复 5 次；时间比较报告 median 和 IQR。factorization 主 scaling case 必须是同一 root 内的 range children 并行，不得用当前 direct 500 中“多个独立整数同时跑”替代。Lean scaling 同时报告 root throughput 和 child-proof throughput。
+每个 worker level 在每个 domain 的每个 paper difficulty 各取固定 5-task batch：factorization 使用 easy / medium / hard，Lean 使用 simple / medium lemma-DAG / hard-frontier，且当前 shallow v1 不得冒充 Lean medium / hard-frontier。所有 batch 使用完全相同的 catalog digest、任务顺序集合、模型、prompt、timeout 和 seed family，重复 5 次；时间比较报告 median 和 IQR。factorization 主 scaling case 必须是同一 root 内的 range children 并行，不得用当前 direct 500 中“多个独立整数同时跑”替代。Lean scaling 同时报告 root throughput、child-proof throughput 和 lemma-DAG critical path。
 
 ## 输出与公式
 
@@ -258,11 +262,11 @@ actual token 只来自 provider usage。注入变换的 synthetic work 另写 `s
 
 - `weak_only`：所有 AI units 固定 weak entry。
 
-- `difficulty_aware_mixed`：easy 使用 weak，medium 首次使用 weak、失败恢复使用 strong，hard 首次即使用 strong。
+- `difficulty_aware_mixed`：factorization easy / Lean simple 使用 weak；medium（含 Lean medium lemma-DAG）首次使用 weak、失败恢复使用 strong；hard / hard-frontier 首次即使用 strong。
 
 使用 Experiment 1 catalog，每种策略重复 3 次，输出 completion、accepted validity、tokens、cost、latency、recovery attempts 和 model routing records。若本地只有一个真实模型或缺少 `strength:strong` / `strength:weak` 任一 tag，该实验标记 `blocked`，`blocked_reason="missing_strong_or_weak_model_entry"`，`paper_eligible=false`，`provider_attempt_count=0`，不影响前三个论文主张。
 
-`model_routing_records` 每行至少包含 `condition_id,task_id,unit_id,attempt_id,model_policy,selected_entry_id,selected_strength,routing_reason,previous_attempt_status,provider_attempt_ref,cost_estimate`。`difficulty_aware_mixed` 的升级规则固定为：easy 首次和恢复均用 weak；medium 首次 weak，若 parser/verifier/checker 拒绝或 no_return/executor_error 后恢复则升级 strong；hard 首次和恢复均用 strong。
+`model_routing_records` 每行至少包含 `condition_id,task_id,unit_id,attempt_id,model_policy,selected_entry_id,selected_strength,routing_reason,previous_attempt_status,provider_attempt_ref,cost_estimate`。`difficulty_aware_mixed` 的升级规则固定为：factorization easy / Lean simple 首次和恢复均用 weak；medium（含 Lean medium lemma-DAG）首次 weak，若 parser/verifier/checker 拒绝或 no_return/executor_error 后恢复则升级 strong；hard / hard-frontier 首次和恢复均用 strong。
 
 # 统一输出契约
 
@@ -329,6 +333,7 @@ CLI exit code 固定为：0 表示 runner 正常结束或按预算上限结构�
       "condition_id": "...",
       "domain": "factorization|lean_proof",
       "difficulty": "easy|medium|hard|all",
+      "paper_difficulty": "easy|medium|hard|simple|medium_lemma_dag|hard_frontier|all",
       "worker_count": 10,
       "fault_type": "none",
       "fault_rate": 0.0,
@@ -351,13 +356,13 @@ CLI exit code 固定为：0 表示 runner 正常结束或按预算上限结构�
 
 ## Catalog manifest 最小字段
 
-`input_catalog_manifest.json` 必须包含 `schema_version,catalog_id,catalog_version,catalog_digest,generator_version,case_count,domain_counts,difficulty_counts,oracle_validation_status,lean_preflight_status,created_at,source_files`。任一 case 的 oracle 或 Lean preflight 失败时，catalog freeze 失败；不能在正式 run 中静默跳过该 case。
+`input_catalog_manifest.json` 必须包含 `schema_version,catalog_id,catalog_version,catalog_digest,generator_version,case_count,domain_counts,difficulty_counts,oracle_validation_status,lean_preflight_status,created_at,source_files`。Lean v2 / lemma-DAG catalog 还必须包含 `paper_difficulty_counts`，用于区分 current shallow-v1 legacy difficulty 和正式 Lean paper difficulty。任一 case 的 oracle 或 Lean preflight 失败时，catalog freeze 失败；不能在正式 run 中静默跳过该 case。
 
 # 论文表格、图和可写结论
 
 | 论文产物 | 数据文件 | 可以回答 |
 |:---|:---|:---|
-| Feasibility table | `paper_table_feasibility.csv` | 两个领域、三档难度的完成率、accepted validity、时间、token、成本。 |
+| Feasibility table | `paper_table_feasibility.csv` | 两个领域、三档 paper difficulty 的完成率、accepted validity、时间、token、成本；Lean 当前 shallow v1 只能进入 simple。 |
 | Difficulty figure | feasibility CSV 派生 | 难度上升时成功率和成本如何变化，能力边界在哪里。 |
 | Scalability figure | `paper_plot_scalability.csv` | worker 增加后的 wall-clock、throughput、speedup、efficiency、token 和限流。 |
 | Robustness figure | `paper_plot_robustness.csv` | fault rate 对检测、恢复、完成、时间/token overhead 的影响。 |
@@ -417,9 +422,10 @@ CLI 必须支持 `--max-total-provider-attempts`、`--max-total-tokens`、`--max
 | 文件 | 职责 |
 |:---|:---|
 | `benchmarks/paper/factorization_catalog.v1.jsonl` | 冻结的 factorization 30-task catalog。 |
-| `benchmarks/paper/lean_catalog.v1.jsonl` | 冻结的 Lean 30-task catalog。 |
+| `benchmarks/paper/lean_catalog.v1.jsonl` | 冻结的 Lean simple/shallow 30-task catalog；历史 easy/medium/hard 只保留为 shallow-v1 标签。 |
+| `benchmarks/paper/lean_lemma_graph_catalog.v1.jsonl` 或 `benchmarks/paper/lean_catalog.v2.jsonl` | 后续必须新增的 medium recursive lemma-DAG / hard-frontier catalog，用于正式 Lean 复杂度主张。 |
 | `src/tokenshare/experiments/paper_models.py` | `PaperExperimentCondition`、budget、fault record、paper eligibility schema 和 digest。 |
-| `src/tokenshare/experiments/paper_catalog.py` | 加载、校验和 digest 两个 catalog；本地 oracle/Lean preflight。 |
+| `src/tokenshare/experiments/paper_catalog.py` | 加载、校验和 digest paper catalogs；本地 oracle/Lean preflight；后续必须区分 Lean `paper_difficulty` 与 shallow-v1 legacy difficulty。 |
 | `src/tokenshare/experiments/factorization_paper_adapter.py` | 从 root split 到 range children，所有 range candidate 经真实 `AIAPIExecutor`、插件 parser/verifier、canonical/merge。 |
 | `src/tokenshare/experiments/lean_paper_adapter.py` | 执行分难度 Lean catalog，真实 API child/direct proof、checker、merge/root recheck，并支持 model/worker config。 |
 | `src/tokenshare/experiments/paper_faults.py` | 在真实 output 后执行 deterministic fault selection/mutation，写 `FaultInjectionRecord`。 |
@@ -534,7 +540,7 @@ CLI 若未给 `--real-transport`、没有可用 key、catalog digest 不匹配�
 
 3.  factorization 主实验走协议 range children、parser/verifier/canonical/merge，不用 direct 500 准确率替代。
 
-4.  Lean 主实验有三档难度、真实 AI proof candidates、真实 checker、merge/root recheck；不是 50 个近似同难度题全部 100%。
+4.  Lean 主实验必须区分 simple shallow、medium recursive lemma-DAG 和 hard/frontier stress 层级：当前 `lean_catalog.v1.jsonl` 全部只能算 simple，正式递归证明拆分主张至少需要 medium lemma-DAG；所有可采信 proof case 都必须有真实 AI proof candidates、真实 checker、merge/root recheck，不能用 50 个近似同难度 shallow 题替代。
 
 5.  worker scaling 测同一 root/task batch 的协议 worker，并记录 provider 限流混杂。
 

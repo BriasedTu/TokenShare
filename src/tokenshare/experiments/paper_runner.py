@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from tokenshare.experiments.paper_catalog import PaperInputCatalogManifest
+from tokenshare.experiments.paper_ablation import ablation_modes
 from tokenshare.experiments.paper_models import PaperExperimentCondition
 
 
@@ -35,29 +36,54 @@ def expand_plan_conditions(
 ) -> tuple[PaperExperimentCondition, ...]:
     conditions: list[PaperExperimentCondition] = []
     for experiment_id in experiment_ids:
-        if experiment_id != "exp1_real_ai_feasibility":
-            continue
         worker_count = worker_levels[0] if worker_levels else 10
         for repeat_index in range(repeats):
             seed = seed_family[repeat_index % len(seed_family)] if seed_family else repeat_index
             for domain in ("factorization", "lean_proof"):
                 for difficulty in ("easy", "medium", "hard"):
-                    conditions.append(
-                        PaperExperimentCondition(
-                            experiment_id=experiment_id,
-                            condition_id=(
-                                f"exp1_{domain}_{difficulty}_w{worker_count}_r{repeat_index}"
-                            ),
-                            domain=domain,
-                            difficulty=difficulty,
-                            worker_count=worker_count,
-                            fault_type="none",
-                            fault_rate=0.0,
-                            ablation_mode="FULL",
-                            model_policy="strong_only",
-                            repeat_id=repeat_index,
-                            seed=seed,
-                            catalog_digest=catalog_manifest.catalog_digest,
+                    if experiment_id == "exp1_real_ai_feasibility":
+                        conditions.append(
+                            PaperExperimentCondition(
+                                experiment_id=experiment_id,
+                                condition_id=(
+                                    f"exp1_{domain}_{difficulty}_w{worker_count}_r{repeat_index}"
+                                ),
+                                domain=domain,
+                                difficulty=difficulty,
+                                worker_count=worker_count,
+                                fault_type="none",
+                                fault_rate=0.0,
+                                ablation_mode="FULL",
+                                model_policy="strong_only",
+                                repeat_id=repeat_index,
+                                seed=seed,
+                                catalog_digest=catalog_manifest.catalog_digest,
+                            )
                         )
-                    )
+                    elif experiment_id == "exp4_real_ai_protocol_ablation":
+                        for ablation_mode in ablation_modes():
+                            conditions.append(
+                                PaperExperimentCondition(
+                                    experiment_id=experiment_id,
+                                    condition_id=(
+                                        "exp4_"
+                                        f"{domain}_{difficulty}_{ablation_mode.value}"
+                                        f"_w{worker_count}_r{repeat_index}"
+                                    ),
+                                    domain=domain,
+                                    difficulty=difficulty,
+                                    worker_count=worker_count,
+                                    fault_type="none",
+                                    fault_rate=0.0,
+                                    ablation_mode=ablation_mode.value,
+                                    model_policy="strong_only",
+                                    repeat_id=repeat_index,
+                                    seed=seed,
+                                    catalog_digest=catalog_manifest.catalog_digest,
+                                    paper_eligible_required=not (
+                                        domain == "lean_proof"
+                                        and difficulty in {"medium", "hard"}
+                                    ),
+                                )
+                            )
     return tuple(conditions)

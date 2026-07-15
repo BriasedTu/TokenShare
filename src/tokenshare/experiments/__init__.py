@@ -14,6 +14,11 @@ from tokenshare.experiments.lean_ai_benchmark import (
     generate_lean_ai_benchmark_cases,
     run_lean_ai_benchmark_suite,
 )
+from tokenshare.experiments.lean_paper_adapter import (
+    LeanPaperRunResult,
+    ScriptedLeanPaperProofTransport,
+    run_lean_paper_case,
+)
 from tokenshare.experiments.models import (
     ExperimentCase,
     ExperimentResult,
@@ -22,6 +27,25 @@ from tokenshare.experiments.models import (
     SimulationProfile,
 )
 from tokenshare.experiments.paper_catalog import load_paper_catalogs
+from tokenshare.experiments.paper_ablation import (
+    AblationAttemptCoverage,
+    PaperAblationEvidenceRecord,
+    PaperAblationMode,
+    PaperAblationProfile,
+    PaperAblationSummary,
+    ablation_profile_for_mode,
+    summarize_ablation_evidence,
+    validate_ablation_attempt_coverage,
+)
+from tokenshare.experiments.paper_faults import (
+    FaultInjectionOutcome,
+    FaultInjectionRecord,
+    FaultTargetDescriptor,
+    PaperFaultType,
+    inject_post_ai_fault,
+    select_fault_target_descriptors,
+    select_fault_targets,
+)
 from tokenshare.experiments.paper_models import (
     PaperAttemptResult,
     PaperAttemptStatus,
@@ -38,6 +62,14 @@ from tokenshare.experiments.paper_models import (
     evaluate_paper_eligibility,
 )
 from tokenshare.experiments.paper_runner import expand_plan_conditions
+from tokenshare.experiments.paper_workers import (
+    PaperAIUnit,
+    WorkerDeathKillPoint,
+    WorkerDeathOutcome,
+    WorkerDeathRecord,
+    run_worker_death_harness,
+    validate_ai_unit_dependency_graph,
+)
 from tokenshare.experiments.runner import (
     ExperimentRunner,
     default_experiment_cases,
@@ -54,9 +86,18 @@ __all__ = [
     "ExperimentStatus",
     "FactorizationExperimentAdapter",
     "FactorizationPaperRunResult",
+    "FaultInjectionOutcome",
+    "FaultInjectionRecord",
+    "FaultTargetDescriptor",
     "LeanProofExperimentAdapter",
+    "LeanPaperRunResult",
     "PaperAttemptResult",
     "PaperAttemptStatus",
+    "PaperAblationEvidenceRecord",
+    "PaperAblationMode",
+    "PaperAblationProfile",
+    "PaperAblationSummary",
+    "PaperAIUnit",
     "PaperBudgetResult",
     "PaperConditionResult",
     "PaperEligibilityReport",
@@ -67,18 +108,33 @@ __all__ = [
     "PaperSuiteResult",
     "PaperTaskResult",
     "PaperTaskStatus",
+    "PaperFaultType",
     "PluginExperimentAdapter",
     "SimulationProfile",
     "SimulationWrapper",
     "ScriptedFactorizationRangeTransport",
+    "ScriptedLeanPaperProofTransport",
+    "AblationAttemptCoverage",
+    "WorkerDeathKillPoint",
+    "WorkerDeathOutcome",
+    "WorkerDeathRecord",
+    "ablation_profile_for_mode",
     "default_experiment_cases",
     "evaluate_paper_eligibility",
     "expand_plan_conditions",
     "generate_lean_ai_benchmark_cases",
+    "inject_post_ai_fault",
     "load_paper_catalogs",
     "run_factorization_500_ai_suite",
     "run_factorization_paper_case",
     "run_ai_profile_suite",
     "run_lean_ai_benchmark_suite",
+    "run_lean_paper_case",
     "run_phase8_default_suite",
+    "run_worker_death_harness",
+    "select_fault_target_descriptors",
+    "select_fault_targets",
+    "summarize_ablation_evidence",
+    "validate_ablation_attempt_coverage",
+    "validate_ai_unit_dependency_graph",
 ]

@@ -26,6 +26,9 @@ def test_paper_catalogs_load_30_factorization_and_30_lean_cases() -> None:
     assert body["lean_preflight_summary"]["checked_case_count"] == 30
     assert body["lean_preflight_summary"]["accepted_case_count"] == 30
     assert body["lean_preflight_summary"]["environment_digest"].startswith("sha256:")
+    assert {
+        case["environment_digest"] for case in manifest.lean_cases
+    } == {body["lean_preflight_summary"]["environment_digest"]}
     assert body["catalog_digest"].startswith("sha256:")
     assert manifest.catalog_digest == load_paper_catalogs(
         factorization_path=Path("benchmarks/paper/factorization_catalog.v1.jsonl"),
@@ -86,6 +89,27 @@ def test_lean_catalog_preflight_rejects_bad_embedded_oracle_proof(tmp_path: Path
     )
 
     with pytest.raises(ValueError, match="Lean preflight rejected case lean_easy_01"):
+        load_paper_catalogs(
+            factorization_path=Path("benchmarks/paper/factorization_catalog.v1.jsonl"),
+            lean_path=bad_path,
+        )
+
+
+def test_lean_catalog_rejects_environment_digest_drift(tmp_path: Path) -> None:
+    source_path = Path("benchmarks/paper/lean_catalog.v1.jsonl")
+    rows = source_path.read_text(encoding="utf-8").splitlines()
+    first = json.loads(rows[0])
+    first["environment_digest"] = "sha256:" + "0" * 64
+    bad_path = tmp_path / "bad_lean_environment_digest.jsonl"
+    bad_path.write_text(
+        json.dumps(first, ensure_ascii=False, sort_keys=True)
+        + "\n"
+        + "\n".join(rows[1:])
+        + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="environment_digest"):
         load_paper_catalogs(
             factorization_path=Path("benchmarks/paper/factorization_catalog.v1.jsonl"),
             lean_path=bad_path,

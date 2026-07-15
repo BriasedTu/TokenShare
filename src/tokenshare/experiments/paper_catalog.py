@@ -104,6 +104,10 @@ def load_paper_catalogs(
     _validate_distribution("factorization", factorization_cases)
     _validate_distribution("lean_proof", lean_cases)
     lean_preflight_summary = _run_lean_catalog_preflight(lean_cases)
+    _validate_lean_environment_digest(
+        lean_cases,
+        expected_digest=str(lean_preflight_summary["environment_digest"]),
+    )
 
     body = {
         "catalog_id": "tokenshare.paper.catalog",
@@ -135,6 +139,10 @@ def load_paper_catalogs(
         factorization_cases=factorization_cases,
         lean_cases=lean_cases,
     )
+
+
+def default_lean_paper_environment_manifest() -> LeanEnvironmentManifest:
+    return _default_lean_environment_manifest()
 
 
 def estimated_ai_units_for_case(case: JsonObject) -> int:
@@ -283,6 +291,18 @@ def _validate_lean_case(case: JsonObject) -> None:
     _require_digest("environment_digest", case["environment_digest"])
 
 
+def _validate_lean_environment_digest(
+    lean_cases: tuple[JsonObject, ...],
+    *,
+    expected_digest: str,
+) -> None:
+    for case in lean_cases:
+        if case["environment_digest"] != expected_digest:
+            raise ValueError(
+                "Lean case environment_digest does not match checker environment"
+            )
+
+
 def _run_lean_catalog_preflight(lean_cases: tuple[JsonObject, ...]) -> JsonObject:
     environment_manifest = _default_lean_environment_manifest()
     cache_key = digest_json(
@@ -391,7 +411,7 @@ def _check_lean_catalog_case(
     }
 
 
-def _lean_theorem_payload_from_case(case: JsonObject) -> LeanTheoremPayload:
+def lean_theorem_payload_from_case(case: JsonObject) -> LeanTheoremPayload:
     payload = case["theorem_payload"]
     return LeanTheoremPayload(
         theorem_id=f"lean_theorem:{case['case_id']}",
@@ -419,7 +439,7 @@ def _lean_theorem_payload_from_case(case: JsonObject) -> LeanTheoremPayload:
                 "decomposition_policy",
                 {
                     "policy_id": "lean_proof.deterministic_tactic_split.v1",
-                    "allowed_rules": ["conjunction_intro", "iff_intro"],
+                    "allowed_rules": ["conjunction", "iff", "intro"],
                     "max_depth": 1,
                     "max_children": int(case["expected_child_count"]),
                     "unsupported_policy": "return_unsupported",
@@ -428,6 +448,10 @@ def _lean_theorem_payload_from_case(case: JsonObject) -> LeanTheoremPayload:
         ),
         resource_limits=dict(payload.get("resource_limits", LEAN_RESOURCE_LIMITS)),
     )
+
+
+def _lean_theorem_payload_from_case(case: JsonObject) -> LeanTheoremPayload:
+    return lean_theorem_payload_from_case(case)
 
 
 def _default_lean_environment_manifest() -> LeanEnvironmentManifest:

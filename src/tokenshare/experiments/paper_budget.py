@@ -21,6 +21,13 @@ class PaperBudgetApprovalError(ValueError):
     pass
 
 
+PAPER_EXPERIMENT_TASK_LIMITS = {
+    "exp2_real_ai_scalability": 5,
+    "exp4_real_ai_protocol_ablation": 5,
+    "exp5_real_ai_model_policy": 5,
+}
+
+
 def plan_paper_suite(
     *,
     catalog_manifest: PaperInputCatalogManifest,
@@ -47,6 +54,9 @@ def plan_paper_suite(
             domain=condition.domain,
             difficulty=condition.difficulty,
         )
+        task_limit = PAPER_EXPERIMENT_TASK_LIMITS.get(condition.experiment_id)
+        if task_limit is not None:
+            cases = cases[:task_limit]
         planned_root_runs += len(cases)
         planned_ai_units += sum(estimated_ai_units_for_case(case) for case in cases)
     max_provider_attempts = planned_ai_units * max_provider_attempts_per_ai_unit
