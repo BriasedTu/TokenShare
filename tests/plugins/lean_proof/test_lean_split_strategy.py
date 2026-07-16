@@ -14,7 +14,11 @@ from tokenshare.plugins.lean_proof.environment import (
     build_lean_environment_ref,
 )
 from tokenshare.plugins.lean_proof.fixtures import default_lean_fixture_project_path
-from tokenshare.plugins.lean_proof.models import LeanSplitCertificate, LeanTheoremPayload
+from tokenshare.plugins.lean_proof.models import (
+    LeanLemmaGraphCertificate,
+    LeanSplitCertificate,
+    LeanTheoremPayload,
+)
 from tokenshare.plugins.lean_proof.models import canonical_json_digest
 from tokenshare.plugins.lean_proof.schemas import (
     CHECKER_VALIDATOR_POLICY_ID,
@@ -105,6 +109,208 @@ def test_lean_split_strategy_maps_certificate_children_to_decomposition_proposal
         _assert_no_forbidden_plugin_payload_keys(child_spec["plugin_payload"])
 
 
+def test_lean_split_strategy_maps_v2_lemma_graph_edges_to_decomposition_proposal(
+    tmp_path: Path,
+) -> None:
+    store = ArtifactStore(tmp_path)
+    manifest = _environment_manifest()
+    parent_payload = _theorem_payload(
+        theorem_id="lean_theorem:medium_logic_root",
+        theorem_name="medium_logic_root",
+        statement_source="R",
+        parameters_source="(P Q R : Prop) (hP : P) (hpq : P -> Q) (hqr : Q -> R)",
+        decomposition_policy={
+            "policy_id": DETERMINISTIC_TACTIC_SPLIT_STRATEGY_ID,
+            "allowed_rules": ["fixed_oracle_lemma_graph"],
+            "max_depth": 4,
+            "max_children": 3,
+            "max_nodes": 8,
+            "max_leaf_count": 4,
+            "unsupported_policy": "return_unsupported",
+        },
+    )
+    parent_ref = store.save_json(
+        parent_payload.to_dict(),
+        artifact_id="lean_parent_payload_medium_graph",
+        artifact_type="LeanTheoremPayload",
+        artifact_schema_id="lean_proof.theorem_payload",
+        artifact_schema_version="v1",
+        source={"kind": "test"},
+        metadata={"theorem_name": parent_payload.theorem_name},
+        created_at=CREATED_AT,
+    )
+    certificate = LeanLemmaGraphCertificate.from_dict(
+        _lemma_graph_certificate_body(parent_ref, manifest.environment_digest),
+        expected_environment_digest=manifest.environment_digest,
+    )
+    certificate_ref = store.save_json(
+        certificate.to_dict(),
+        artifact_id="lean_lemma_graph_certificate_medium",
+        artifact_type="LeanLemmaGraphCertificate",
+        artifact_schema_id="lean_proof.lemma_graph_certificate",
+        artifact_schema_version="v2",
+        source={"kind": "fixed_oracle_package", "case_id": "medium_logic"},
+        metadata={"root_node_id": certificate.root_node_id},
+        created_at=CREATED_AT,
+    )
+    split_report = LeanSplitHelperReport(
+        report_id="lean_split_helper_report:medium_graph",
+        request_id="lean_split_request:medium_graph",
+        status=LeanSplitHelperStatus.SUCCEEDED,
+        exit_code=0,
+        generated_source_ref=None,
+        helper_stdout_ref=None,
+        helper_stderr_ref=None,
+        certificate_ref=certificate_ref,
+        report_ref=None,
+        certificate=certificate,
+        diagnostics={},
+        environment_ref=build_lean_environment_ref(manifest),
+        command_summary={},
+        duration_ms=0,
+        helper_stdout_excerpt="",
+        helper_stderr_excerpt="",
+    )
+
+    split_plan = build_lean_split_plan(
+        split_report=split_report,
+        artifact_store=store,
+        task_id="task_lean",
+        parent_unit_id="unit_lean",
+        canonical_selection_id="canonical_selection:task_lean:unit_lean",
+        canonical_output_bundle_digest="sha256:lean_canonical_bundle",
+        plugin_descriptor_digest=build_lean_proof_plugin_descriptor().descriptor_digest,
+        expansion_scope_hash="sha256:lean_scope",
+        expansion_decision_id="expansion_decision:lean_scope",
+        created_at=CREATED_AT,
+    )
+
+    assert [spec["child_logical_key"] for spec in split_plan.proposal.child_specs] == [
+        "leaf_p",
+        "leaf_p_to_q",
+        "intermediate_q",
+        "leaf_q_to_r",
+        "root_r",
+    ]
+    assert [
+        (edge["source_child_key"], edge["target_child_key"])
+        for edge in split_plan.proposal.dependency_edges
+    ] == [
+        ("leaf_p", "intermediate_q"),
+        ("leaf_p_to_q", "intermediate_q"),
+        ("intermediate_q", "root_r"),
+        ("leaf_q_to_r", "root_r"),
+    ]
+    for edge in split_plan.proposal.dependency_edges:
+        assert edge["source_output_name"] == PROOF_ARTIFACT_OUTPUT_NAME
+        assert edge["relation_type"] == "depends_on_output"
+        edge_summary = edge["plugin_payload"]["summary"]
+        assert edge_summary["topic_family"] == "pure_logic"
+        assert edge_summary["construction_rule_id"] == "fixed_oracle_lemma_graph.pure_logic.v1"
+        assert edge_summary["proof_assembly_shape"] == "recursive_lemma_dag_required_slots.v1"
+    expected_slot_keys = [
+        "leaf_p:lean_proof_artifact",
+        "leaf_p_to_q:lean_proof_artifact",
+        "intermediate_q:lean_proof_artifact",
+        "leaf_q_to_r:lean_proof_artifact",
+        "root_r:lean_proof_artifact",
+    ]
+    assert [slot["slot_key"] for slot in split_plan.merge_plan.required_slots] == (
+        expected_slot_keys
+    )
+    assert split_plan.merge_plan.parent_output_mapping[0]["merge_slot_keys"] == (
+        expected_slot_keys
+    )
+    assert split_plan.proposal.expected_outputs[0]["merge_slot_keys"] == expected_slot_keys
+    for required_slot in split_plan.merge_plan.required_slots:
+        node_id = required_slot["source_child_logical_key"]
+        assert required_slot["source_child_unit_id"] == (
+            split_plan.child_unit_ids_by_logical_key[node_id]
+        )
+        assert required_slot["source_output_name"] == PROOF_ARTIFACT_OUTPUT_NAME
+        assert required_slot["required"] is True
+        assert required_slot["missing_policy"] == "block_merge"
+        assert required_slot["slot_metadata"]["node_id"] == node_id
+        assert required_slot["slot_metadata"]["root_node_id"] == "root_r"
+        assert required_slot["slot_metadata"]["topic_family"] == "pure_logic"
+        assert required_slot["slot_metadata"]["construction_rule_id"] == (
+            "fixed_oracle_lemma_graph.pure_logic.v1"
+        )
+    assert split_plan.proposal.promotion_guard_evidence["lean_rule_id"] == (
+        "lean_split.lemma_graph_dag.v2"
+    )
+
+
+def test_lean_split_strategy_v2_child_specs_plugin_payload_includes_topic_metadata(
+    tmp_path: Path,
+) -> None:
+    split_plan = _lemma_graph_split_plan(tmp_path)
+
+    for child_spec in split_plan.proposal.child_specs:
+        payload = child_spec["plugin_payload"]
+        summary = payload["summary"]
+        assert summary["topic_family"] == "pure_logic"
+        assert summary["topic_family_version"] == "v1"
+        assert summary["construction_rule_id"] == "fixed_oracle_lemma_graph.pure_logic.v1"
+        assert summary["oracle_package_group"] == "lean_lemma_graph_oracle.pure_logic.v1"
+        assert summary["proof_assembly_shape"] == "recursive_lemma_dag_required_slots.v1"
+        assert payload["provenance"]["certificate_digest"] == (
+            split_plan.certificate.certificate_digest
+        )
+
+
+def test_lean_split_strategy_v2_merge_plan_payload_includes_topic_metadata(
+    tmp_path: Path,
+) -> None:
+    split_plan = _lemma_graph_split_plan(tmp_path)
+
+    plugin_body = split_plan.merge_plan.plugin_payload["plugin_defined_body"]
+    summary = plugin_body["summary"]
+    assert summary["topic_family"] == "pure_logic"
+    assert summary["oracle_package_group"] == "lean_lemma_graph_oracle.pure_logic.v1"
+    assert summary["proof_assembly_shape"] == "recursive_lemma_dag_required_slots.v1"
+    assert summary["construction_rule_id"] == "fixed_oracle_lemma_graph.pure_logic.v1"
+    expected_slot_keys = [
+        f"{node['node_id']}:{PROOF_ARTIFACT_OUTPUT_NAME}"
+        for node in split_plan.certificate.lemma_nodes
+    ]
+    assert summary["required_slot_count"] == len(expected_slot_keys)
+    assert summary["required_slot_keys"] == expected_slot_keys
+    assert plugin_body["validation_requirements"]["proof_file_assembly_required"] is True
+    assert plugin_body["validation_requirements"]["root_merge_proof_checker_required"] is True
+    assert "proof_file_assembly_not_implemented" not in plugin_body[
+        "validation_requirements"
+    ]
+
+
+def test_lean_split_strategy_v2_induction_shape_enters_proposal_without_success_claim(
+    tmp_path: Path,
+) -> None:
+    split_plan = _lemma_graph_split_plan(
+        tmp_path,
+        topic_family="induction",
+        construction_rule_id="induction.medium_lemma_dag.nat_predicate_chain.v1",
+        oracle_package_group="lean_lemma_graph_oracle.induction.v1",
+        proof_assembly_shape="recursive_induction_lemma_dag_required_slots.v1",
+    )
+
+    assert split_plan.proposal.promotion_guard_evidence["topic_family"] == "induction"
+    assert (
+        split_plan.proposal.promotion_guard_evidence["proof_assembly_shape"]
+        == "recursive_induction_lemma_dag_required_slots.v1"
+    )
+    plugin_body = split_plan.merge_plan.plugin_payload["plugin_defined_body"]
+    assert plugin_body["summary"]["topic_family"] == "induction"
+    assert plugin_body["summary"]["proof_assembly_shape"] == (
+        "recursive_induction_lemma_dag_required_slots.v1"
+    )
+    assert plugin_body["validation_requirements"]["proof_file_assembly_required"] is True
+    assert plugin_body["validation_requirements"]["root_merge_proof_checker_required"] is True
+    assert "proof_file_assembly_not_implemented" not in plugin_body[
+        "validation_requirements"
+    ]
+
+
 def test_lean_split_strategy_maps_merge_skeleton_to_merge_plan(tmp_path: Path) -> None:
     store, split_report = _split_report(tmp_path, statement_source="P ↔ Q")
     split_plan = build_lean_split_plan(
@@ -152,6 +358,51 @@ def test_lean_split_strategy_maps_merge_skeleton_to_merge_plan(tmp_path: Path) -
         split_report.certificate.split_certificate_id
     )
     _assert_no_forbidden_plugin_payload_keys(split_plan.merge_plan.plugin_payload)
+
+
+def test_lean_split_strategy_v1_conjunction_and_iff_keep_empty_dependency_edges(
+    tmp_path: Path,
+) -> None:
+    for statement_source in ("P ∧ Q", "P ↔ Q"):
+        store, split_report = _split_report(tmp_path / statement_source.encode("utf-8").hex(), statement_source=statement_source)
+        split_plan = build_lean_split_plan(
+            split_report=split_report,
+            artifact_store=store,
+            task_id="task_lean",
+            parent_unit_id="unit_lean",
+            canonical_selection_id="canonical_selection:task_lean:unit_lean",
+            canonical_output_bundle_digest="sha256:lean_canonical_bundle",
+            plugin_descriptor_digest=build_lean_proof_plugin_descriptor().descriptor_digest,
+            expansion_scope_hash="sha256:lean_scope",
+            expansion_decision_id="expansion_decision:lean_scope",
+            created_at=CREATED_AT,
+        )
+
+        assert split_plan.proposal.dependency_edges == []
+        assert len(split_plan.proposal.child_specs) == 2
+
+
+def test_lean_split_strategy_unsupported_shape_stays_structured_unsupported(
+    tmp_path: Path,
+) -> None:
+    store, split_report = _split_report(tmp_path, statement_source="Nat.succ n = 0")
+
+    assert split_report.status == LeanSplitHelperStatus.UNSUPPORTED
+    assert split_report.certificate is not None
+    assert split_report.certificate.unsupported_reason == "unsupported_goal_shape"
+    with pytest.raises(ValueError, match="unsupported Lean split certificate"):
+        build_lean_split_plan(
+            split_report=split_report,
+            artifact_store=store,
+            task_id="task_lean",
+            parent_unit_id="unit_lean",
+            canonical_selection_id="canonical_selection:task_lean:unit_lean",
+            canonical_output_bundle_digest="sha256:lean_canonical_bundle",
+            plugin_descriptor_digest=build_lean_proof_plugin_descriptor().descriptor_digest,
+            expansion_scope_hash="sha256:lean_scope",
+            expansion_decision_id="expansion_decision:lean_scope",
+            created_at=CREATED_AT,
+        )
 
 
 def test_lean_split_strategy_never_uses_ai_output_as_decomposition_authority(
@@ -407,6 +658,188 @@ def _theorem_payload(**overrides) -> LeanTheoremPayload:
     }
     values.update(overrides)
     return LeanTheoremPayload(**values)
+
+
+def _lemma_graph_split_plan(tmp_path: Path, **certificate_overrides):
+    store = ArtifactStore(tmp_path)
+    manifest = _environment_manifest()
+    parent_payload = _theorem_payload(
+        theorem_id="lean_theorem:medium_logic_root",
+        theorem_name="medium_logic_root",
+        statement_source="R",
+        parameters_source="(P Q R : Prop) (hP : P) (hpq : P -> Q) (hqr : Q -> R)",
+        decomposition_policy={
+            "policy_id": DETERMINISTIC_TACTIC_SPLIT_STRATEGY_ID,
+            "allowed_rules": ["fixed_oracle_lemma_graph"],
+            "max_depth": 4,
+            "max_children": 3,
+            "max_nodes": 8,
+            "max_leaf_count": 4,
+            "unsupported_policy": "return_unsupported",
+        },
+    )
+    parent_ref = store.save_json(
+        parent_payload.to_dict(),
+        artifact_id="lean_parent_payload_medium_graph",
+        artifact_type="LeanTheoremPayload",
+        artifact_schema_id="lean_proof.theorem_payload",
+        artifact_schema_version="v1",
+        source={"kind": "test"},
+        metadata={"theorem_name": parent_payload.theorem_name},
+        created_at=CREATED_AT,
+    )
+    certificate = LeanLemmaGraphCertificate.from_dict(
+        _lemma_graph_certificate_body(
+            parent_ref,
+            manifest.environment_digest,
+            **certificate_overrides,
+        ),
+        expected_environment_digest=manifest.environment_digest,
+    )
+    certificate_ref = store.save_json(
+        certificate.to_dict(),
+        artifact_id="lean_lemma_graph_certificate_medium",
+        artifact_type="LeanLemmaGraphCertificate",
+        artifact_schema_id="lean_proof.lemma_graph_certificate",
+        artifact_schema_version="v2",
+        source={"kind": "fixed_oracle_package", "case_id": "medium_logic"},
+        metadata={"root_node_id": certificate.root_node_id},
+        created_at=CREATED_AT,
+    )
+    split_report = LeanSplitHelperReport(
+        report_id="lean_split_helper_report:medium_graph",
+        request_id="lean_split_request:medium_graph",
+        status=LeanSplitHelperStatus.SUCCEEDED,
+        exit_code=0,
+        generated_source_ref=None,
+        helper_stdout_ref=None,
+        helper_stderr_ref=None,
+        certificate_ref=certificate_ref,
+        report_ref=None,
+        certificate=certificate,
+        diagnostics={},
+        environment_ref=build_lean_environment_ref(manifest),
+        command_summary={},
+        duration_ms=0,
+        helper_stdout_excerpt="",
+        helper_stderr_excerpt="",
+    )
+    return build_lean_split_plan(
+        split_report=split_report,
+        artifact_store=store,
+        task_id="task_lean",
+        parent_unit_id="unit_lean",
+        canonical_selection_id="canonical_selection:task_lean:unit_lean",
+        canonical_output_bundle_digest="sha256:lean_canonical_bundle",
+        plugin_descriptor_digest=build_lean_proof_plugin_descriptor().descriptor_digest,
+        expansion_scope_hash="sha256:lean_scope",
+        expansion_decision_id="expansion_decision:lean_scope",
+        created_at=CREATED_AT,
+    )
+
+
+def _lemma_graph_certificate_body(parent_ref, environment_digest, **overrides):
+    nodes = [
+        _lemma_graph_node("leaf_p", depth=1, statement_source="P", max_depth=0, max_children=0),
+        _lemma_graph_node(
+            "leaf_p_to_q",
+            depth=1,
+            statement_source="P -> Q",
+            max_depth=0,
+            max_children=0,
+        ),
+        _lemma_graph_node(
+            "intermediate_q",
+            depth=2,
+            statement_source="Q",
+            max_depth=1,
+            max_children=2,
+        ),
+        _lemma_graph_node(
+            "leaf_q_to_r",
+            depth=1,
+            statement_source="Q -> R",
+            max_depth=0,
+            max_children=0,
+        ),
+        _lemma_graph_node("root_r", depth=3, statement_source="R", max_depth=2, max_children=2),
+    ]
+    body = {
+        "certificate_schema_version": "lean_proof.lemma_graph_certificate.v2",
+        "certificate_id": "lean_lemma_graph_certificate:medium_logic",
+        "parent_theorem_payload_ref": parent_ref.to_dict(),
+        "normalized_parent_goal_digest": "sha256:parent_goal",
+        "policy_id": DETERMINISTIC_TACTIC_SPLIT_STRATEGY_ID,
+        "rule_id": "lean_split.lemma_graph_dag.v2",
+        "topic_family": "pure_logic",
+        "topic_family_version": "v1",
+        "construction_rule_id": "fixed_oracle_lemma_graph.pure_logic.v1",
+        "oracle_package_group": "lean_lemma_graph_oracle.pure_logic.v1",
+        "proof_assembly_shape": "recursive_lemma_dag_required_slots.v1",
+        "root_node_id": "root_r",
+        "lemma_nodes": nodes,
+        "dependency_edges": [
+            {"source_node_id": "leaf_p", "target_node_id": "intermediate_q"},
+            {"source_node_id": "leaf_p_to_q", "target_node_id": "intermediate_q"},
+            {"source_node_id": "intermediate_q", "target_node_id": "root_r"},
+            {"source_node_id": "leaf_q_to_r", "target_node_id": "root_r"},
+        ],
+        "merge_nodes": [
+            {
+                "node_id": "intermediate_q",
+                "merge_kind": "dependency_proof_unit",
+                "required_input_node_ids": ["leaf_p", "leaf_p_to_q"],
+            },
+            {
+                "node_id": "root_r",
+                "merge_kind": "root_dependency_proof_unit",
+                "required_input_node_ids": ["intermediate_q", "leaf_q_to_r"],
+            },
+        ],
+        "environment_digest": environment_digest,
+        "oracle_proof_package_ref": {
+            "kind": "fixed_oracle_package",
+            "package_id": "oracle:medium_logic",
+            "content_hash": "sha256:oracle_package",
+        },
+        "oracle_proof_package_digest": "sha256:oracle_package",
+        "diagnostics": {"source": "test"},
+    }
+    body.update(overrides)
+    return body
+
+
+def _lemma_graph_node(
+    node_id: str,
+    *,
+    depth: int,
+    statement_source: str,
+    max_depth: int,
+    max_children: int,
+):
+    payload = _theorem_payload(
+        theorem_id=f"lean_lemma_graph_node:{node_id}",
+        theorem_name=f"medium_logic_{node_id}",
+        parameters_source="(P Q R : Prop) (hP : P) (hpq : P -> Q) (hqr : Q -> R)",
+        statement_source=statement_source,
+        decomposition_policy={
+            "policy_id": DETERMINISTIC_TACTIC_SPLIT_STRATEGY_ID,
+            "allowed_rules": ["fixed_oracle_lemma_graph"],
+            "max_depth": max_depth,
+            "max_children": max_children,
+            "max_nodes": 8,
+            "max_leaf_count": 4,
+            "unsupported_policy": "return_unsupported",
+        },
+    )
+    return {
+        "node_id": node_id,
+        "node_kind": "root_theorem" if node_id == "root_r" else "lemma",
+        "depth": depth,
+        "required_output_name": PROOF_ARTIFACT_OUTPUT_NAME,
+        "context_digest": f"sha256:ctx_{node_id}",
+        "theorem_payload": payload.to_dict(),
+    }
 
 
 def _assert_no_forbidden_plugin_payload_keys(value) -> None:

@@ -114,3 +114,33 @@ def test_local_ai_api_config_expands_api_key_pool_across_model_matrix(tmp_path: 
         "MiniMaxAI/MiniMax-M2.5",
     }
     assert {entry.base_url for entry in config.entries} == {"https://api.siliconflow.cn/v1"}
+
+
+def test_local_ai_api_config_uses_openai_default_base_url_for_openai_model_matrix(
+    tmp_path: Path,
+):
+    body = make_config_dict()
+    body["provider_family"] = "openai"
+    body.pop("entries")
+    body["api_keys"] = [{"key_id": "openai", "api_key": "openai-key"}]
+    body["models"] = [
+        {
+            "model_id": "gpt_5_6_sol_high",
+            "model": "gpt-5.6-sol",
+            "supports_json_mode": True,
+            "request_overrides": {"reasoning_effort": "high"},
+            "pricing": {
+                "currency": "USD",
+                "input_per_million_tokens": 0.0,
+                "output_per_million_tokens": 0.0,
+            },
+        }
+    ]
+    config_path = tmp_path / "openai_api_smoke.local.json"
+    config_path.write_text(json.dumps(body), encoding="utf-8")
+
+    config = load_local_ai_api_config(config_path)
+
+    assert config.provider_family == "openai"
+    assert config.entries[0].base_url == "https://api.openai.com/v1"
+    assert config.entries[0].request_overrides["reasoning_effort"] == "high"

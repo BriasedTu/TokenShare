@@ -15,6 +15,31 @@ def parse_answer(raw_text: str):
     return {"answer": json.loads(raw_text)["answer"]}
 
 
+def _openai_config_dict():
+    body = make_config_dict()
+    body["provider_family"] = "openai"
+    body["entries"] = [
+        {
+            "entry_id": "openai_gpt_5_6_sol_high",
+            "enabled": True,
+            "base_url": "https://api.openai.com/v1",
+            "api_key_env": "OPENAI_API_KEY",
+            "model": "gpt-5.6-sol",
+            "endpoint": "/chat/completions",
+            "supports_json_mode": True,
+            "supports_streaming": False,
+            "request_overrides": {"reasoning_effort": "high", "temperature": 0.0},
+            "pricing": {
+                "currency": "USD",
+                "input_per_million_tokens": 0.0,
+                "output_per_million_tokens": 0.0,
+            },
+            "tags": ["paper", "openai", "reasoning:high"],
+        }
+    ]
+    return body
+
+
 def test_ai_api_executor_persists_raw_parsed_provenance_usage_and_cost(
     tmp_path,
     monkeypatch,
@@ -67,6 +92,60 @@ def test_ai_api_executor_persists_raw_parsed_provenance_usage_and_cost(
     assert store.verify(submission.provenance_ref)
     assert b"secret-a" not in store.read_bytes(submission.provenance_ref)
     assert b"secret-b" not in store.read_bytes(submission.provenance_ref)
+
+
+def test_ai_api_executor_uses_openai_provider_family_in_request_and_provenance(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "openai-secret")
+    store = ArtifactStore(tmp_path)
+    request = make_ai_request(store, request_id="request_openai_success")
+    config = load_ai_api_config(_openai_config_dict())
+    transport = FakeSiliconFlowTransport(
+        [
+            FakeProviderResponse(
+                status_code=200,
+                body={
+                    "id": "chatcmpl-openai-1",
+                    "model": "gpt-5.6-sol-2026-07-01",
+                    "choices": [
+                        {"message": {"content": '{"answer":"ok"}'}, "finish_reason": "stop"}
+                    ],
+                    "usage": {"prompt_tokens": 11, "completion_tokens": 7, "total_tokens": 18},
+                },
+            )
+        ]
+    )
+    executor = AIAPIExecutor(
+        executor_id="executor_ai_api",
+        executor_version="0.1.0",
+        artifact_store=store,
+        config=config,
+        transport=transport,
+        parser=parse_answer,
+    )
+
+    submission = executor.execute(
+        request,
+        submission_id="submission_openai_success",
+        submitted_at="2026-07-16T00:00:02Z",
+    )
+
+    raw = json.loads(store.read_bytes(submission.raw_output_ref).decode("utf-8"))
+    provenance = json.loads(store.read_bytes(submission.provenance_ref).decode("utf-8"))
+
+    assert submission.result_kind == "succeeded"
+    assert transport.calls[0]["body"]["reasoning_effort"] == "high"
+    assert "enable_thinking" not in transport.calls[0]["body"]
+    assert submission.environment_summary["provider_family"] == "openai"
+    assert submission.usage_summary["provider_family"] == "openai"
+    assert raw["provider_family"] == "openai"
+    assert raw["entry_id"] == "openai_gpt_5_6_sol_high"
+    assert raw["model"] == "gpt-5.6-sol-2026-07-01"
+    assert provenance["provider_family"] == "openai"
+    assert provenance["attempts"][0]["provider_family"] == "openai"
+    assert b"openai-secret" not in store.read_bytes(submission.provenance_ref)
 
 
 def test_ai_api_executor_sends_full_prompt_package_context_to_provider(

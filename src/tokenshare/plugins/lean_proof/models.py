@@ -17,6 +17,18 @@ from tokenshare.plugins.lean_proof.schemas import (
 )
 
 
+LEAN_LEMMA_GRAPH_CERTIFICATE_SCHEMA_VERSION = "lean_proof.lemma_graph_certificate.v2"
+LEAN_LEMMA_GRAPH_TOPIC_FAMILIES = ("pure_logic", "function_set", "induction")
+LEAN_LEMMA_GRAPH_PROOF_ASSEMBLY_SHAPES = (
+    "recursive_lemma_dag_required_slots.v1",
+    "recursive_induction_lemma_dag_required_slots.v1",
+    "structured_blocked_no_oracle_frontier_stress.v1",
+)
+LEAN_LEMMA_GRAPH_STRUCTURED_BLOCKED_SHAPE = (
+    "structured_blocked_no_oracle_frontier_stress.v1"
+)
+
+
 @dataclass(frozen=True, kw_only=True)
 class LeanTheoremPayload:
     theorem_id: str
@@ -266,6 +278,167 @@ class LeanSplitCertificate:
         }
 
 
+@dataclass(frozen=True, kw_only=True)
+class LeanLemmaGraphCertificate:
+    certificate_id: str
+    parent_theorem_payload_ref: ArtifactRef | None
+    normalized_parent_goal_digest: str
+    policy_id: str
+    rule_id: str
+    topic_family: str
+    topic_family_version: str
+    construction_rule_id: str
+    oracle_package_group: str
+    proof_assembly_shape: str
+    root_node_id: str
+    lemma_nodes: list[JsonObject]
+    dependency_edges: list[JsonObject]
+    merge_nodes: list[JsonObject]
+    environment_digest: str
+    oracle_proof_package_ref: JsonObject | None
+    oracle_proof_package_digest: str | None
+    diagnostics: JsonObject
+    certificate_digest: str | None = None
+    certificate_schema_version: str = LEAN_LEMMA_GRAPH_CERTIFICATE_SCHEMA_VERSION
+
+    def __post_init__(self) -> None:
+        _require_schema(
+            self.certificate_schema_version,
+            LEAN_LEMMA_GRAPH_CERTIFICATE_SCHEMA_VERSION,
+        )
+        _require_non_empty("certificate_id", self.certificate_id)
+        _require_digest("normalized_parent_goal_digest", self.normalized_parent_goal_digest)
+        if self.policy_id != DETERMINISTIC_TACTIC_SPLIT_STRATEGY_ID:
+            raise ValueError("policy_id must be lean_proof.deterministic_tactic_split.v1")
+        _require_non_empty("rule_id", self.rule_id)
+        _require_topic_family(self.topic_family)
+        _require_non_empty("topic_family_version", self.topic_family_version)
+        _require_non_empty("construction_rule_id", self.construction_rule_id)
+        _require_non_empty("oracle_package_group", self.oracle_package_group)
+        _require_proof_assembly_shape(self.proof_assembly_shape)
+        _require_non_empty("root_node_id", self.root_node_id)
+        _require_digest("environment_digest", self.environment_digest)
+        if (
+            self.proof_assembly_shape == LEAN_LEMMA_GRAPH_STRUCTURED_BLOCKED_SHAPE
+            and self.oracle_proof_package_ref is not None
+        ):
+            raise ValueError(
+                "structured_blocked_no_oracle_frontier_stress.v1 cannot carry "
+                "oracle_proof_package_ref"
+            )
+        if self.oracle_proof_package_ref is not None:
+            _require_json_object("oracle_proof_package_ref", self.oracle_proof_package_ref)
+            if self.oracle_proof_package_digest is None:
+                raise ValueError("oracle_proof_package_digest is required with oracle_proof_package_ref")
+            _require_digest("oracle_proof_package_digest", self.oracle_proof_package_digest)
+            ref_digest = self.oracle_proof_package_ref.get("content_hash")
+            if ref_digest is not None and ref_digest != self.oracle_proof_package_digest:
+                raise ValueError("oracle_proof_package_digest must match oracle_proof_package_ref")
+        elif self.oracle_proof_package_digest is not None:
+            raise ValueError("oracle_proof_package_digest requires oracle_proof_package_ref")
+        _require_json_object("diagnostics", self.diagnostics)
+        _validate_lemma_graph_nodes(self.lemma_nodes, self.root_node_id)
+        _validate_lemma_graph_dependency_edges(self.lemma_nodes, self.dependency_edges)
+        _validate_lemma_graph_merge_nodes(self.lemma_nodes, self.merge_nodes)
+        _set_or_check_digest(self, "certificate_digest", self._digest_body())
+
+    def to_dict(self) -> JsonObject:
+        body = self._digest_body()
+        body["certificate_digest"] = self.certificate_digest
+        return body
+
+    @classmethod
+    def from_dict(
+        cls,
+        data: JsonObject,
+        *,
+        expected_environment_digest: str | None = None,
+    ) -> "LeanLemmaGraphCertificate":
+        _require_fields(
+            data,
+            (
+                "certificate_id",
+                "normalized_parent_goal_digest",
+                "policy_id",
+                "rule_id",
+                "topic_family",
+                "topic_family_version",
+                "construction_rule_id",
+                "oracle_package_group",
+                "proof_assembly_shape",
+                "root_node_id",
+                "lemma_nodes",
+                "dependency_edges",
+                "environment_digest",
+            ),
+            "lemma graph certificate",
+        )
+        certificate = cls(
+            certificate_schema_version=data.get(
+                "certificate_schema_version",
+                LEAN_LEMMA_GRAPH_CERTIFICATE_SCHEMA_VERSION,
+            ),
+            certificate_id=data["certificate_id"],
+            parent_theorem_payload_ref=_artifact_ref_or_none(
+                data.get("parent_theorem_payload_ref")
+            ),
+            normalized_parent_goal_digest=data["normalized_parent_goal_digest"],
+            policy_id=data["policy_id"],
+            rule_id=data["rule_id"],
+            topic_family=data["topic_family"],
+            topic_family_version=data["topic_family_version"],
+            construction_rule_id=data["construction_rule_id"],
+            oracle_package_group=data["oracle_package_group"],
+            proof_assembly_shape=data["proof_assembly_shape"],
+            root_node_id=data["root_node_id"],
+            lemma_nodes=[dict(item) for item in data.get("lemma_nodes", [])],
+            dependency_edges=[dict(item) for item in data.get("dependency_edges", [])],
+            merge_nodes=[dict(item) for item in data.get("merge_nodes", [])],
+            environment_digest=data["environment_digest"],
+            oracle_proof_package_ref=(
+                dict(data["oracle_proof_package_ref"])
+                if data.get("oracle_proof_package_ref") is not None
+                else None
+            ),
+            oracle_proof_package_digest=data.get("oracle_proof_package_digest"),
+            diagnostics=dict(data.get("diagnostics", {})),
+            certificate_digest=data.get("certificate_digest"),
+        )
+        if (
+            expected_environment_digest is not None
+            and certificate.environment_digest != expected_environment_digest
+        ):
+            raise ValueError("environment_digest does not match expected environment")
+        return certificate
+
+    @property
+    def lemma_nodes_by_id(self) -> dict[str, JsonObject]:
+        return {str(node["node_id"]): node for node in self.lemma_nodes}
+
+    def _digest_body(self) -> JsonObject:
+        return {
+            "certificate_schema_version": self.certificate_schema_version,
+            "certificate_id": self.certificate_id,
+            "parent_theorem_payload_ref": _json_value(self.parent_theorem_payload_ref),
+            "normalized_parent_goal_digest": self.normalized_parent_goal_digest,
+            "policy_id": self.policy_id,
+            "rule_id": self.rule_id,
+            "topic_family": self.topic_family,
+            "topic_family_version": self.topic_family_version,
+            "construction_rule_id": self.construction_rule_id,
+            "oracle_package_group": self.oracle_package_group,
+            "proof_assembly_shape": self.proof_assembly_shape,
+            "root_node_id": self.root_node_id,
+            "lemma_nodes": _json_value(self.lemma_nodes),
+            "dependency_edges": _json_value(self.dependency_edges),
+            "merge_nodes": _json_value(self.merge_nodes),
+            "environment_digest": self.environment_digest,
+            "oracle_proof_package_ref": _json_value(self.oracle_proof_package_ref),
+            "oracle_proof_package_digest": self.oracle_proof_package_digest,
+            "diagnostics": _json_value(self.diagnostics),
+        }
+
+
 def canonical_json_digest(data: Any) -> str:
     encoded = json.dumps(data, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode(
         "utf-8"
@@ -340,6 +513,18 @@ def _require_digest(field_name: str, value: str) -> None:
         raise ValueError(f"{field_name} must be a sha256 digest")
 
 
+def _require_topic_family(value: str) -> None:
+    if value not in LEAN_LEMMA_GRAPH_TOPIC_FAMILIES:
+        allowed = ", ".join(LEAN_LEMMA_GRAPH_TOPIC_FAMILIES)
+        raise ValueError(f"topic_family must be one of: {allowed}")
+
+
+def _require_proof_assembly_shape(value: str) -> None:
+    if value not in LEAN_LEMMA_GRAPH_PROOF_ASSEMBLY_SHAPES:
+        allowed = ", ".join(LEAN_LEMMA_GRAPH_PROOF_ASSEMBLY_SHAPES)
+        raise ValueError(f"proof_assembly_shape must be one of: {allowed}")
+
+
 def _artifact_ref_or_none(value: Any) -> ArtifactRef | None:
     if value is None:
         return None
@@ -385,6 +570,125 @@ def _validate_child_goals(child_goals: list[JsonObject], split_kind: str) -> Non
         _require_digest("child_payload_digest", child["child_payload_digest"])
         if child["required_output_name"] != PROOF_ARTIFACT_OUTPUT_NAME:
             raise ValueError("child required_output_name must be lean_proof_artifact")
+
+
+def _validate_lemma_graph_nodes(nodes: list[JsonObject], root_node_id: str) -> None:
+    if not isinstance(nodes, list) or not nodes:
+        raise ValueError("lemma_nodes must be a non-empty list")
+    seen: set[str] = set()
+    for node in nodes:
+        if not isinstance(node, dict):
+            raise ValueError("lemma_nodes must be a list of objects")
+        _require_fields(
+            node,
+            (
+                "node_id",
+                "node_kind",
+                "depth",
+                "required_output_name",
+                "context_digest",
+                "theorem_payload",
+            ),
+            "lemma_node",
+        )
+        node_id = node["node_id"]
+        if not isinstance(node_id, str) or not node_id:
+            raise ValueError("node_id must be a non-empty string")
+        if node_id in seen:
+            raise ValueError(f"duplicate node_id: {node_id}")
+        seen.add(node_id)
+        _require_non_empty("node_kind", node["node_kind"])
+        if type(node["depth"]) is not int or node["depth"] < 0:
+            raise ValueError("lemma node depth must be a non-negative integer")
+        if node["required_output_name"] != PROOF_ARTIFACT_OUTPUT_NAME:
+            raise ValueError("lemma node required_output_name must be lean_proof_artifact")
+        _require_digest("lemma node context_digest", node["context_digest"])
+        _require_json_object("lemma node theorem_payload", node["theorem_payload"])
+    if root_node_id not in seen:
+        raise ValueError("root_node_id must reference a lemma node")
+
+
+def _validate_lemma_graph_dependency_edges(
+    nodes: list[JsonObject],
+    edges: list[JsonObject],
+) -> None:
+    if not isinstance(edges, list):
+        raise ValueError("dependency_edges must be a list")
+    node_ids = {str(node["node_id"]) for node in nodes}
+    seen_edges: set[tuple[str, str]] = set()
+    out_edges: dict[str, list[str]] = {node_id: [] for node_id in node_ids}
+    for edge in edges:
+        if not isinstance(edge, dict):
+            raise ValueError("dependency_edges must be a list of objects")
+        _require_fields(edge, ("source_node_id", "target_node_id"), "dependency edge")
+        source = edge["source_node_id"]
+        target = edge["target_node_id"]
+        if not isinstance(source, str) or not isinstance(target, str) or not source or not target:
+            raise ValueError("dependency edge source_node_id and target_node_id are required")
+        if source not in node_ids or target not in node_ids:
+            raise ValueError("dependency edge source and target must reference existing nodes")
+        edge_key = (source, target)
+        if edge_key in seen_edges:
+            raise ValueError(f"duplicate dependency edge: {source}->{target}")
+        seen_edges.add(edge_key)
+        out_edges[source].append(target)
+    _validate_acyclic_node_graph(out_edges)
+
+
+def _validate_lemma_graph_merge_nodes(
+    nodes: list[JsonObject],
+    merge_nodes: list[JsonObject],
+) -> None:
+    if not isinstance(merge_nodes, list):
+        raise ValueError("merge_nodes must be a list")
+    node_ids = {str(node["node_id"]) for node in nodes}
+    seen: set[str] = set()
+    for merge_node in merge_nodes:
+        if not isinstance(merge_node, dict):
+            raise ValueError("merge_nodes must be a list of objects")
+        _require_fields(merge_node, ("node_id",), "merge_node")
+        node_id = merge_node["node_id"]
+        if node_id not in node_ids:
+            raise ValueError("merge_node node_id must reference an existing node")
+        if node_id in seen:
+            raise ValueError(f"duplicate merge node: {node_id}")
+        seen.add(node_id)
+        required_inputs = merge_node.get("required_input_node_ids", [])
+        if not isinstance(required_inputs, list) or any(
+            not isinstance(item, str) for item in required_inputs
+        ):
+            raise ValueError("merge_node required_input_node_ids must be a list of strings")
+        missing_inputs = sorted(set(required_inputs).difference(node_ids))
+        if missing_inputs:
+            raise ValueError(
+                "merge_node required_input_node_ids must reference existing nodes: "
+                + ", ".join(missing_inputs)
+            )
+
+
+def _validate_acyclic_node_graph(out_edges: dict[str, list[str]]) -> None:
+    visiting: set[str] = set()
+    visited: set[str] = set()
+
+    def visit(node_id: str) -> None:
+        if node_id in visiting:
+            raise ValueError("lemma graph dependency edges contain a cycle")
+        if node_id in visited:
+            return
+        visiting.add(node_id)
+        for target_id in out_edges.get(node_id, []):
+            visit(target_id)
+        visiting.remove(node_id)
+        visited.add(node_id)
+
+    for node_id in out_edges:
+        visit(node_id)
+
+
+def _require_fields(data: JsonObject, required_fields: tuple[str, ...], context: str) -> None:
+    missing = sorted(set(required_fields).difference(data))
+    if missing:
+        raise ValueError(f"{context} missing required field: " + ", ".join(missing))
 
 
 def _json_value(value: Any) -> Any:

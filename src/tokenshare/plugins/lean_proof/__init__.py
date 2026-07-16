@@ -21,14 +21,20 @@ from tokenshare.plugins.lean_proof.fixtures import (
     default_lean_fixture_project_path,
 )
 from tokenshare.plugins.lean_proof.models import (
+    LEAN_LEMMA_GRAPH_PROOF_ASSEMBLY_SHAPES,
+    LEAN_LEMMA_GRAPH_TOPIC_FAMILIES,
     LeanFixtureManifest,
+    LeanLemmaGraphCertificate,
     LeanSplitCertificate,
     LeanTheoremPayload,
     canonical_json_digest,
 )
 from tokenshare.plugins.lean_proof.merge_policy import (
+    LeanLemmaGraphMergeResult,
+    LeanLemmaGraphProofInput,
     LeanProofMergeInput,
     LeanProofMergeResult,
+    merge_lean_lemma_graph_proofs,
     merge_lean_child_proofs,
 )
 from tokenshare.plugins.lean_proof.preflight import (
@@ -62,6 +68,11 @@ __all__ = [
     "LeanChildProofResult",
     "LeanEnvironmentManifest",
     "LeanFixtureManifest",
+    "LEAN_LEMMA_GRAPH_PROOF_ASSEMBLY_SHAPES",
+    "LEAN_LEMMA_GRAPH_TOPIC_FAMILIES",
+    "LeanLemmaGraphCertificate",
+    "LeanLemmaGraphMergeResult",
+    "LeanLemmaGraphProofInput",
     "LeanPreflightResult",
     "LeanProofCandidateAIParseResult",
     "LeanProofMergeInput",
@@ -83,6 +94,7 @@ __all__ = [
     "check_lean_proof",
     "canonical_json_digest",
     "default_lean_fixture_project_path",
+    "merge_lean_lemma_graph_proofs",
     "merge_lean_child_proofs",
     "parse_lean_proof_candidate_ai_output",
     "run_lean_split_helper",

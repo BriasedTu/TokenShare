@@ -18,7 +18,10 @@ from typing import Any
 from tokenshare.core.models import ArtifactRef, JsonObject, TaskState, TaskUnit
 from tokenshare.executors.ai_api import AIAPIExecutor
 from tokenshare.executors.ai_api_config import AIAPIExecutorConfig, load_ai_api_config
-from tokenshare.executors.ai_api_transport import UrlLibSiliconFlowTransport
+from tokenshare.executors.ai_api_transport import (
+    UrlLibOpenAITransport,
+    UrlLibSiliconFlowTransport,
+)
 from tokenshare.executors.contracts import EnvironmentRef, ExecutionRequest
 from tokenshare.experiments.paper_models import (
     PaperAttemptResult,
@@ -81,6 +84,7 @@ NOW = "2026-07-14T00:00:00Z"
 AI_EXECUTOR_ID = "executor_ai_api"
 AI_EXECUTOR_VERSION = "0.1.0"
 FAKE_KEY_ENV = "TOKENSHARE_FACTORIZATION_PAPER_FAKE_KEY"
+REAL_TRANSPORT_TYPES = (UrlLibSiliconFlowTransport, UrlLibOpenAITransport)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -204,26 +208,32 @@ def run_factorization_paper_case(
         raise ValueError("condition difficulty must match factorization case difficulty")
     if real_transport and ai_api_config is None:
         raise ValueError("real transport factorization paper runs require ai_api_config")
-    if real_transport and transport is not None and type(transport) is not UrlLibSiliconFlowTransport:
-        raise ValueError(
-            "real transport factorization paper runs require UrlLibSiliconFlowTransport"
-        )
-    if not real_transport and isinstance(transport, UrlLibSiliconFlowTransport):
-        raise ValueError("UrlLibSiliconFlowTransport requires real_transport=True")
+    _validate_real_transport_mode(
+        real_transport=real_transport,
+        transport=transport,
+        ai_api_config=ai_api_config,
+    )
+    resolved_entry_id = _resolve_condition_entry_id(condition, entry_id)
 
     case_id = str(case["case_id"])
     root = Path(output_root)
     run_root = root / case_id
     store = ArtifactStore(run_root)
     config = _prepare_config(
-        ai_api_config if ai_api_config is not None else _default_scripted_config(entry_id),
-        entry_id=entry_id,
+        ai_api_config
+        if ai_api_config is not None
+        else _default_scripted_config(resolved_entry_id),
+        entry_id=resolved_entry_id,
         max_tokens=max_tokens,
         timeout_seconds=timeout_seconds,
     )
     active_transport = transport
     if active_transport is None:
-        active_transport = UrlLibSiliconFlowTransport() if real_transport else ScriptedFactorizationRangeTransport()
+        active_transport = (
+            _default_real_transport(config)
+            if real_transport
+            else ScriptedFactorizationRangeTransport()
+        )
 
     root_input_ref = _save_root_input(store, case)
     subject = _factor_integer_subject(case=case, root_input_ref=root_input_ref)
@@ -247,6 +257,7 @@ def run_factorization_paper_case(
             split_plan=split_plan,
             range_input=range_input,
             index=index,
+            provider_family=config.provider_family,
             max_tokens=max_tokens,
             timeout_seconds=timeout_seconds,
         )
@@ -498,6 +509,7 @@ def _build_range_execution_request(
     split_plan: FactorizationSplitPlanResult,
     range_input: FactorSearchRangeInput,
     index: int,
+    provider_family: str,
     max_tokens: int,
     timeout_seconds: int,
 ) -> ExecutionRequest:
@@ -571,7 +583,7 @@ def _build_range_execution_request(
             "selected_executor_id": AI_EXECUTOR_ID,
             "eligible_executor_ids": [AI_EXECUTOR_ID],
         },
-        capability_snapshot={"executor": "ai_api", "provider_family": "siliconflow"},
+        capability_snapshot={"executor": "ai_api", "provider_family": provider_family},
         task_unit_snapshot=_range_task_unit(
             task_id=task_id,
             unit_id=unit_id,
@@ -580,7 +592,7 @@ def _build_range_execution_request(
         ).to_dict(),
         input_artifact_refs={"range_input": range_input_ref},
         output_contract=_range_output_contract(),
-        hard_requirements={"executor": "ai_api", "provider_family": "siliconflow"},
+        hard_requirements={"executor": "ai_api", "provider_family": provider_family},
         soft_hints={"temperature": 0.0, "paper_condition_id": condition.condition_id},
         environment_ref=_environment_ref(seed=condition.seed),
         execution_instruction_ref=instruction_ref,
@@ -676,6 +688,58 @@ def _prepare_config(
         local_concurrency=dict(config.local_concurrency),
         metadata={**dict(config.metadata), "factorization_paper_adapter": True},
     )
+
+
+def _resolve_condition_entry_id(
+    condition: PaperExperimentCondition,
+    entry_id: str | None,
+) -> str | None:
+    if condition.model_entry_id is None:
+        return entry_id
+    if entry_id is not None and entry_id != condition.model_entry_id:
+        raise ValueError(
+            "entry_id must match condition.model_entry_id for fixed-entry paper runs"
+        )
+    return condition.model_entry_id
+
+
+def _validate_real_transport_mode(
+    *,
+    real_transport: bool,
+    transport: Any | None,
+    ai_api_config: AIAPIExecutorConfig | None,
+) -> None:
+    if not real_transport:
+        if isinstance(transport, REAL_TRANSPORT_TYPES):
+            raise ValueError(
+                "UrlLibSiliconFlowTransport or UrlLibOpenAITransport requires "
+                "real_transport=True"
+            )
+        return
+    if ai_api_config is None:
+        return
+    if transport is None:
+        return
+    expected_type = _real_transport_type(ai_api_config.provider_family)
+    if type(transport) is not expected_type:
+        raise ValueError(
+            "real transport factorization paper runs require "
+            "UrlLibSiliconFlowTransport or UrlLibOpenAITransport matching "
+            f"provider_family={ai_api_config.provider_family}"
+        )
+
+
+def _default_real_transport(config: AIAPIExecutorConfig):
+    transport_type = _real_transport_type(config.provider_family)
+    return transport_type()
+
+
+def _real_transport_type(provider_family: str):
+    if provider_family == "siliconflow":
+        return UrlLibSiliconFlowTransport
+    if provider_family == "openai":
+        return UrlLibOpenAITransport
+    raise ValueError(f"unsupported real transport provider_family: {provider_family}")
 
 
 def _default_scripted_config(entry_id: str | None) -> AIAPIExecutorConfig:

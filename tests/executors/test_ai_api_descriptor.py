@@ -31,3 +31,23 @@ def test_ai_api_public_exports_are_available() -> None:
     assert AIAPIExecutor.__name__ == "AIAPIExecutor"
     assert build_ai_api_executor_descriptor().executor_type == "ai_api"
     assert callable(load_ai_api_config)
+
+
+def test_ai_api_executor_descriptor_can_advertise_openai_provider_family() -> None:
+    descriptor = build_ai_api_executor_descriptor(
+        executor_id="executor_ai_api_openai",
+        executor_version="0.1.0",
+        provider_family="openai",
+    )
+    registry = ExecutorRegistry()
+    registry.register(descriptor)
+
+    matches = registry.match_available(
+        executor_type="ai_api",
+        hard_requirements={"executor": "ai_api", "provider_family": "openai"},
+        request_schema_version="phase3.execution_request.v1",
+    )
+
+    assert [item.executor_id for item in matches] == ["executor_ai_api_openai"]
+    assert descriptor.capabilities["provider_family"] == "openai"
+    assert descriptor.metadata["adapter"] == "openai_chat_completions"

@@ -67,6 +67,7 @@ def _expand_model_matrix(body: JsonObject) -> JsonObject:
         raise ValueError("models must be a non-empty list")
     if not key_slots:
         raise ValueError("api_keys must contain at least one key slot")
+    default_base_url = _default_base_url_for_provider(str(expanded.get("provider_family", "siliconflow")))
     entries: list[JsonObject] = []
     for model in models:
         if not isinstance(model, dict):
@@ -78,7 +79,7 @@ def _expand_model_matrix(body: JsonObject) -> JsonObject:
                 {
                     "entry_id": f"{model_id}__{key_slot.key_id}",
                     "enabled": model_enabled and key_slot.enabled,
-                    "base_url": str(model.get("base_url", "https://api.siliconflow.cn/v1")),
+                    "base_url": str(model.get("base_url", default_base_url)),
                     "api_key_env": key_slot.api_key_env,
                     "model": str(model["model"]),
                     "endpoint": str(model.get("endpoint", "/chat/completions")),
@@ -92,6 +93,12 @@ def _expand_model_matrix(body: JsonObject) -> JsonObject:
             )
     expanded["entries"] = entries
     return expanded
+
+
+def _default_base_url_for_provider(provider_family: str) -> str:
+    if provider_family == "openai":
+        return "https://api.openai.com/v1"
+    return "https://api.siliconflow.cn/v1"
 
 
 def _load_key_slots(key_bodies: object) -> list[_LocalAPIKeySlot]:

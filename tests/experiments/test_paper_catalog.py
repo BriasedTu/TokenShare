@@ -3,7 +3,9 @@ from pathlib import Path
 
 import pytest
 
+from tokenshare.experiments.paper_budget import plan_paper_suite
 from tokenshare.experiments.paper_catalog import load_paper_catalogs
+from tokenshare.experiments.paper_models import PaperExperimentCondition
 
 
 def test_paper_catalogs_load_30_factorization_and_30_lean_cases() -> None:
@@ -21,6 +23,11 @@ def test_paper_catalogs_load_30_factorization_and_30_lean_cases() -> None:
         "factorization": {"easy": 10, "medium": 10, "hard": 10},
         "lean_proof": {"easy": 10, "medium": 10, "hard": 10},
     }
+    assert body["paper_difficulty_counts"] == {
+        "factorization": {"easy": 10, "medium": 10, "hard": 10},
+        "lean_proof": {"simple": 30, "medium_lemma_dag": 0, "hard_frontier": 0},
+    }
+    assert {case["paper_difficulty"] for case in manifest.lean_cases} == {"simple"}
     assert body["oracle_validation_status"] == "passed"
     assert body["lean_preflight_status"] == "passed"
     assert body["lean_preflight_summary"]["checked_case_count"] == 30
@@ -34,6 +41,341 @@ def test_paper_catalogs_load_30_factorization_and_30_lean_cases() -> None:
         factorization_path=Path("benchmarks/paper/factorization_catalog.v1.jsonl"),
         lean_path=Path("benchmarks/paper/lean_catalog.v1.jsonl"),
     ).catalog_digest
+
+
+def test_loads_legal_lean_v2_lemma_dag_catalog_fixture() -> None:
+    manifest = load_paper_catalogs(
+        factorization_path=Path("benchmarks/paper/factorization_catalog.v1.jsonl"),
+        lean_path=Path("benchmarks/paper/lean_catalog.v1.jsonl"),
+        lean_lemma_graph_path=Path("benchmarks/paper/lean_lemma_graph_catalog.v1.jsonl"),
+    )
+
+    body = manifest.to_dict()
+
+    assert body["domain_counts"]["lean_proof"] == 34
+    assert body["paper_difficulty_counts"]["lean_proof"] == {
+        "simple": 30,
+        "medium_lemma_dag": 3,
+        "hard_frontier": 1,
+    }
+    assert {case["case_id"] for case in manifest.lean_lemma_graph_cases} == {
+        "lean_v2_medium_lemma_dag_01",
+        "lean_v2_medium_function_set_dx_subset_chain_01",
+        "lean_v2_medium_induction_nat_predicate_chain_01",
+        "lean_v2_hard_frontier_01",
+    }
+    assert manifest.topic_family_counts["lean_proof"]["pure_logic"] == 32
+    assert manifest.topic_family_counts["lean_proof"]["function_set"] == 1
+    assert manifest.topic_family_counts["lean_proof"]["induction"] == 1
+    assert manifest.paper_difficulty_topic_family_counts["lean_proof"][
+        "medium_lemma_dag"
+    ]["pure_logic"] == 1
+    assert manifest.paper_difficulty_topic_family_counts["lean_proof"][
+        "medium_lemma_dag"
+    ]["function_set"] == 1
+    assert manifest.paper_difficulty_topic_family_counts["lean_proof"][
+        "medium_lemma_dag"
+    ]["induction"] == 1
+    assert manifest.paper_difficulty_topic_family_counts["lean_proof"][
+        "hard_frontier"
+    ]["pure_logic"] == 1
+
+
+@pytest.mark.parametrize(
+    "field_name",
+    (
+        "topic_family",
+        "construction_rule_id",
+        "oracle_package_group",
+        "proof_assembly_shape",
+    ),
+)
+def test_lean_v2_rejects_missing_required_topic_provenance_field(
+    tmp_path: Path,
+    field_name: str,
+) -> None:
+    case = _valid_medium_lemma_dag_case()
+    case.pop(field_name)
+    v2_path = _write_lemma_graph_catalog(tmp_path, case)
+
+    with pytest.raises(ValueError, match=field_name):
+        load_paper_catalogs(
+            factorization_path=Path("benchmarks/paper/factorization_catalog.v1.jsonl"),
+            lean_path=Path("benchmarks/paper/lean_catalog.v1.jsonl"),
+            lean_lemma_graph_path=v2_path,
+        )
+
+
+def test_lean_v2_medium_rejects_missing_dependency_edges(tmp_path: Path) -> None:
+    case = _valid_medium_lemma_dag_case()
+    case.pop("dependency_edges")
+    v2_path = _write_lemma_graph_catalog(tmp_path, case)
+
+    with pytest.raises(ValueError, match="dependency_edges"):
+        load_paper_catalogs(
+            factorization_path=Path("benchmarks/paper/factorization_catalog.v1.jsonl"),
+            lean_path=Path("benchmarks/paper/lean_catalog.v1.jsonl"),
+            lean_lemma_graph_path=v2_path,
+        )
+
+
+def test_lean_v2_medium_rejects_missing_oracle_proof_package_ref(tmp_path: Path) -> None:
+    case = _valid_medium_lemma_dag_case()
+    case.pop("oracle_proof_package_ref")
+    v2_path = _write_lemma_graph_catalog(tmp_path, case)
+
+    with pytest.raises(ValueError, match="oracle_proof_package_ref"):
+        load_paper_catalogs(
+            factorization_path=Path("benchmarks/paper/factorization_catalog.v1.jsonl"),
+            lean_path=Path("benchmarks/paper/lean_catalog.v1.jsonl"),
+            lean_lemma_graph_path=v2_path,
+        )
+
+
+def test_lean_v2_medium_rejects_missing_environment_digest(tmp_path: Path) -> None:
+    case = _valid_medium_lemma_dag_case()
+    case.pop("environment_digest")
+    v2_path = _write_lemma_graph_catalog(tmp_path, case)
+
+    with pytest.raises(ValueError, match="environment_digest"):
+        load_paper_catalogs(
+            factorization_path=Path("benchmarks/paper/factorization_catalog.v1.jsonl"),
+            lean_path=Path("benchmarks/paper/lean_catalog.v1.jsonl"),
+            lean_lemma_graph_path=v2_path,
+        )
+
+
+def test_budget_estimation_uses_lean_v2_expected_ai_unit_count(tmp_path: Path) -> None:
+    v2_path = _write_lemma_graph_catalog(tmp_path, _valid_medium_lemma_dag_case())
+    catalog = load_paper_catalogs(
+        factorization_path=Path("benchmarks/paper/factorization_catalog.v1.jsonl"),
+        lean_path=Path("benchmarks/paper/lean_catalog.v1.jsonl"),
+        lean_lemma_graph_path=v2_path,
+    )
+    conditions = (
+        PaperExperimentCondition(
+            experiment_id="exp1_real_ai_feasibility",
+            condition_id="exp1_lean_medium_lemma_dag_repeat0",
+            domain="lean_proof",
+            difficulty="medium",
+            paper_difficulty="medium_lemma_dag",
+            topic_family="pure_logic",
+            worker_count=10,
+            fault_type="none",
+            fault_rate=0.0,
+            ablation_mode="FULL",
+            model_policy="fixed_entry",
+            repeat_id=0,
+            seed=1,
+            catalog_digest=catalog.catalog_digest,
+        ),
+    )
+
+    budget = plan_paper_suite(
+        catalog_manifest=catalog,
+        conditions=conditions,
+        max_provider_attempts_per_ai_unit=1,
+        token_upper_bound_per_provider_attempt=100,
+        cost_upper_bound_per_provider_attempt=0.01,
+        plan_only=True,
+    )
+
+    assert budget.planned_root_runs == 1
+    assert budget.planned_ai_units == 5
+
+
+def test_budget_selection_filters_lean_medium_by_topic_family() -> None:
+    catalog = load_paper_catalogs(
+        factorization_path=Path("benchmarks/paper/factorization_catalog.v1.jsonl"),
+        lean_path=Path("benchmarks/paper/lean_catalog.v1.jsonl"),
+        lean_lemma_graph_path=Path("benchmarks/paper/lean_lemma_graph_catalog.v1.jsonl"),
+    )
+    condition = PaperExperimentCondition(
+        experiment_id="exp1_real_ai_feasibility",
+        condition_id="exp1_lean_function_set_medium_lemma_dag_repeat0",
+        domain="lean_proof",
+        difficulty="medium",
+        paper_difficulty="medium_lemma_dag",
+        topic_family="function_set",
+        worker_count=10,
+        fault_type="none",
+        fault_rate=0.0,
+        ablation_mode="FULL",
+        model_policy="fixed_entry",
+        repeat_id=0,
+        seed=1,
+        catalog_digest=catalog.catalog_digest,
+    )
+
+    budget = plan_paper_suite(
+        catalog_manifest=catalog,
+        conditions=(condition,),
+        max_provider_attempts_per_ai_unit=1,
+        token_upper_bound_per_provider_attempt=100,
+        cost_upper_bound_per_provider_attempt=0.01,
+        plan_only=True,
+    )
+
+    assert budget.planned_root_runs == 1
+    assert budget.planned_ai_units == 4
+
+
+def test_hard_frontier_without_oracle_cannot_claim_passed_preflight(tmp_path: Path) -> None:
+    case = _valid_medium_lemma_dag_case()
+    case["case_id"] = "lean_v2_hard_frontier_bad"
+    case["paper_difficulty"] = "hard_frontier"
+    case["difficulty"] = "hard"
+    case["oracle_proof_package_ref"] = None
+    case["preflight_status"] = "passed"
+    v2_path = _write_lemma_graph_catalog(tmp_path, case)
+
+    with pytest.raises(ValueError, match="hard_frontier"):
+        load_paper_catalogs(
+            factorization_path=Path("benchmarks/paper/factorization_catalog.v1.jsonl"),
+            lean_path=Path("benchmarks/paper/lean_catalog.v1.jsonl"),
+            lean_lemma_graph_path=v2_path,
+        )
+
+
+def test_manifest_outputs_topic_family_counts() -> None:
+    manifest = load_paper_catalogs(
+        factorization_path=Path("benchmarks/paper/factorization_catalog.v1.jsonl"),
+        lean_path=Path("benchmarks/paper/lean_catalog.v1.jsonl"),
+        lean_lemma_graph_path=Path("benchmarks/paper/lean_lemma_graph_catalog.v1.jsonl"),
+    )
+    body = manifest.to_dict()
+
+    assert body["topic_family_counts"]["lean_proof"]["pure_logic"] == 32
+    assert body["topic_family_counts"]["lean_proof"]["function_set"] == 1
+    assert body["topic_family_counts"]["lean_proof"]["induction"] == 1
+
+
+def test_manifest_outputs_paper_difficulty_topic_family_counts() -> None:
+    manifest = load_paper_catalogs(
+        factorization_path=Path("benchmarks/paper/factorization_catalog.v1.jsonl"),
+        lean_path=Path("benchmarks/paper/lean_catalog.v1.jsonl"),
+        lean_lemma_graph_path=Path("benchmarks/paper/lean_lemma_graph_catalog.v1.jsonl"),
+    )
+    body = manifest.to_dict()
+
+    assert body["paper_difficulty_topic_family_counts"]["lean_proof"] == {
+        "simple": {"pure_logic": 30, "function_set": 0, "induction": 0},
+        "medium_lemma_dag": {"pure_logic": 1, "function_set": 1, "induction": 1},
+        "hard_frontier": {"pure_logic": 1, "function_set": 0, "induction": 0},
+    }
+
+
+def test_catalog_topic_family_distribution_separates_shallow_and_lemma_graph_cases() -> None:
+    manifest = load_paper_catalogs(
+        factorization_path=Path("benchmarks/paper/factorization_catalog.v1.jsonl"),
+        lean_path=Path("benchmarks/paper/lean_catalog.v1.jsonl"),
+        lean_lemma_graph_path=Path("benchmarks/paper/lean_lemma_graph_catalog.v1.jsonl"),
+    )
+
+    shallow_cases = manifest.cases_for(
+        domain="lean_proof",
+        paper_difficulty="simple",
+        topic_family="pure_logic",
+    )
+    medium_cases = manifest.cases_for(
+        domain="lean_proof",
+        paper_difficulty="medium_lemma_dag",
+    )
+    hard_cases = manifest.cases_for(
+        domain="lean_proof",
+        paper_difficulty="hard_frontier",
+    )
+
+    assert len(shallow_cases) == 30
+    assert {case["schema_version"] for case in shallow_cases} == {
+        "tokenshare.paper_lean_case.v1"
+    }
+    assert {case["topic_family"] for case in medium_cases} == {
+        "pure_logic",
+        "function_set",
+        "induction",
+    }
+    assert {case["case_id"] for case in hard_cases} == {"lean_v2_hard_frontier_01"}
+    assert hard_cases[0]["preflight_status"] == "structured_blocked"
+    assert hard_cases[0]["oracle_proof_package_ref"] is None
+
+
+def test_cases_for_filters_lean_v2_by_paper_difficulty_and_topic_family() -> None:
+    manifest = load_paper_catalogs(
+        factorization_path=Path("benchmarks/paper/factorization_catalog.v1.jsonl"),
+        lean_path=Path("benchmarks/paper/lean_catalog.v1.jsonl"),
+        lean_lemma_graph_path=Path("benchmarks/paper/lean_lemma_graph_catalog.v1.jsonl"),
+    )
+
+    cases = manifest.cases_for(
+        domain="lean_proof",
+        paper_difficulty="medium_lemma_dag",
+        topic_family="pure_logic",
+    )
+
+    assert [case["case_id"] for case in cases] == ["lean_v2_medium_lemma_dag_01"]
+
+
+def test_cases_for_filters_function_set_medium_lemma_dag() -> None:
+    manifest = load_paper_catalogs(
+        factorization_path=Path("benchmarks/paper/factorization_catalog.v1.jsonl"),
+        lean_path=Path("benchmarks/paper/lean_catalog.v1.jsonl"),
+        lean_lemma_graph_path=Path("benchmarks/paper/lean_lemma_graph_catalog.v1.jsonl"),
+    )
+
+    cases = manifest.cases_for(
+        domain="lean_proof",
+        paper_difficulty="medium_lemma_dag",
+        topic_family="function_set",
+    )
+
+    assert [case["case_id"] for case in cases] == [
+        "lean_v2_medium_function_set_dx_subset_chain_01"
+    ]
+
+
+def test_cases_for_filters_induction_medium_lemma_dag() -> None:
+    manifest = load_paper_catalogs(
+        factorization_path=Path("benchmarks/paper/factorization_catalog.v1.jsonl"),
+        lean_path=Path("benchmarks/paper/lean_catalog.v1.jsonl"),
+        lean_lemma_graph_path=Path("benchmarks/paper/lean_lemma_graph_catalog.v1.jsonl"),
+    )
+
+    cases = manifest.cases_for(
+        domain="lean_proof",
+        paper_difficulty="medium_lemma_dag",
+        topic_family="induction",
+    )
+
+    assert [case["case_id"] for case in cases] == [
+        "lean_v2_medium_induction_nat_predicate_chain_01"
+    ]
+
+
+def test_cases_for_does_not_mix_shallow_v1_medium_into_medium_lemma_dag() -> None:
+    manifest = load_paper_catalogs(
+        factorization_path=Path("benchmarks/paper/factorization_catalog.v1.jsonl"),
+        lean_path=Path("benchmarks/paper/lean_catalog.v1.jsonl"),
+        lean_lemma_graph_path=Path("benchmarks/paper/lean_lemma_graph_catalog.v1.jsonl"),
+    )
+
+    cases = manifest.cases_for(
+        domain="lean_proof",
+        difficulty="medium",
+        paper_difficulty="medium_lemma_dag",
+    )
+
+    assert {case["case_id"] for case in cases} == {
+        "lean_v2_medium_lemma_dag_01",
+        "lean_v2_medium_function_set_dx_subset_chain_01",
+        "lean_v2_medium_induction_nat_predicate_chain_01",
+    }
+    assert {case["topic_family"] for case in cases} == {
+        "pure_logic",
+        "function_set",
+        "induction",
+    }
+    assert all(case["paper_difficulty"] == "medium_lemma_dag" for case in cases)
 
 
 def test_factorization_catalog_preflight_rejects_wrong_oracle_product(tmp_path: Path) -> None:
@@ -126,3 +468,27 @@ def test_catalog_case_lookup_rejects_unknown_domain_or_difficulty() -> None:
         manifest.cases_for(domain="lean-proof", difficulty="easy")
     with pytest.raises(ValueError, match="difficulty"):
         manifest.cases_for(domain="lean_proof", difficulty="all")
+
+
+def _write_lemma_graph_catalog(tmp_path: Path, *cases: dict) -> Path:
+    path = tmp_path / "lean_lemma_graph_catalog.v1.jsonl"
+    path.write_text(
+        "\n".join(json.dumps(case, ensure_ascii=False, sort_keys=True) for case in cases)
+        + "\n",
+        encoding="utf-8",
+    )
+    return path
+
+
+def _valid_medium_lemma_dag_case() -> dict:
+    rows = [
+        json.loads(line)
+        for line in Path("benchmarks/paper/lean_lemma_graph_catalog.v1.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+        if line.strip()
+    ]
+    for row in rows:
+        if row["paper_difficulty"] == "medium_lemma_dag":
+            return json.loads(json.dumps(row))
+    raise AssertionError("missing medium_lemma_dag fixture")

@@ -24,7 +24,7 @@ class PaperBudgetApprovalError(ValueError):
 PAPER_EXPERIMENT_TASK_LIMITS = {
     "exp2_real_ai_scalability": 5,
     "exp4_real_ai_protocol_ablation": 5,
-    "exp5_real_ai_model_policy": 5,
+    "exp5_real_ai_model_endpoint_comparison": 5,
 }
 
 
@@ -36,6 +36,9 @@ def plan_paper_suite(
     token_upper_bound_per_provider_attempt: int,
     cost_upper_bound_per_provider_attempt: float,
     plan_only: bool,
+    lean_3x3_matrix: JsonObject | None = None,
+    model_policy_preflight: JsonObject | None = None,
+    model_endpoint_cohort_preflight: JsonObject | None = None,
     approve_budget_digest: str | None = None,
 ) -> PaperBudgetResult:
     if max_provider_attempts_per_ai_unit < 1:
@@ -53,7 +56,17 @@ def plan_paper_suite(
         cases = catalog_manifest.cases_for(
             domain=condition.domain,
             difficulty=condition.difficulty,
+            paper_difficulty=condition.paper_difficulty,
+            topic_family=condition.topic_family,
         )
+        if not cases:
+            raise ValueError(
+                "insufficient catalog cases for condition "
+                f"{condition.condition_id}: domain={condition.domain} "
+                f"difficulty={condition.difficulty} "
+                f"paper_difficulty={condition.paper_difficulty} "
+                f"topic_family={condition.topic_family}"
+            )
         task_limit = PAPER_EXPERIMENT_TASK_LIMITS.get(condition.experiment_id)
         if task_limit is not None:
             cases = cases[:task_limit]
@@ -71,6 +84,12 @@ def plan_paper_suite(
         "catalog_digest": catalog_manifest.catalog_digest,
         "condition_digests": [item.condition_digest for item in condition_tuple],
     }
+    if lean_3x3_matrix is not None:
+        body["lean_3x3_matrix"] = lean_3x3_matrix
+    if model_policy_preflight is not None:
+        body["model_policy_preflight"] = model_policy_preflight
+    if model_endpoint_cohort_preflight is not None:
+        body["model_endpoint_cohort_preflight"] = model_endpoint_cohort_preflight
     budget_digest = digest_json(body)
     if not plan_only and approve_budget_digest is None:
         raise PaperBudgetApprovalError("budget approval digest is required")
@@ -90,6 +109,21 @@ def plan_paper_suite(
             "status": "not_checked",
             "provider_calls_made": 0,
             "plan_only": plan_only,
+            **(
+                {"lean_3x3_matrix": lean_3x3_matrix}
+                if lean_3x3_matrix is not None
+                else {}
+            ),
+            **(
+                {"model_policy_preflight": model_policy_preflight}
+                if model_policy_preflight is not None
+                else {}
+            ),
+            **(
+                {"model_endpoint_cohort_preflight": model_endpoint_cohort_preflight}
+                if model_endpoint_cohort_preflight is not None
+                else {}
+            ),
         },
         rate_limit_preflight={"status": "not_checked"},
         disk_estimate={

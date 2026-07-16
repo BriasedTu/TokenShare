@@ -13,8 +13,11 @@ from tokenshare.core.models import ArtifactRef, JsonObject
 from tokenshare.executors.ai_api_config import AIAPIExecutorConfig
 from tokenshare.executors.ai_api_selector import build_provider_selection, entries_by_attempt_order
 from tokenshare.executors.ai_api_transport import (
+    OpenAIProviderError,
     SiliconFlowProviderError,
+    build_openai_chat_body,
     build_siliconflow_chat_body,
+    parse_openai_response,
     parse_siliconflow_response,
 )
 from tokenshare.executors.contracts import (
@@ -30,7 +33,10 @@ def build_ai_api_executor_descriptor(
     *,
     executor_id: str = "executor_ai_api",
     executor_version: str = "0.1.0",
+    provider_family: str = "siliconflow",
 ) -> ExecutorDescriptor:
+    if provider_family not in {"siliconflow", "openai"}:
+        raise ValueError(f"unsupported ai api provider_family: {provider_family}")
     return ExecutorDescriptor(
         executor_id=executor_id,
         executor_type="ai_api",
@@ -38,7 +44,7 @@ def build_ai_api_executor_descriptor(
         supported_request_schema_versions=["phase3.execution_request.v1"],
         capabilities={
             "executor": "ai_api",
-            "provider_family": "siliconflow",
+            "provider_family": provider_family,
             "output_modes": ["raw_text", "parsed_json", "parse_failure"],
             "provider_failover": "request_scoped_bounded",
         },
@@ -50,7 +56,7 @@ def build_ai_api_executor_descriptor(
         status=ExecutorStatus.AVAILABLE,
         metadata={
             "phase": "phase7",
-            "adapter": "siliconflow_chat_completions",
+            "adapter": f"{provider_family}_chat_completions",
             "production_platform": False,
         },
     )
@@ -161,11 +167,12 @@ class AIAPIExecutor:
         attempts: list[JsonObject] = []
         final_result = None
         final_entry = None
-        terminal_error: SiliconFlowProviderError | None = None
+        terminal_error: SiliconFlowProviderError | OpenAIProviderError | None = None
+        build_chat_body, parse_provider_response = _provider_adapter(self._config.provider_family)
         for entry in entries_by_attempt_order(config=self._config, selection=selection):
             started = perf_counter()
             try:
-                body = build_siliconflow_chat_body(
+                body = build_chat_body(
                     entry=entry,
                     prompt_text=_provider_prompt_text(prompt),
                     defaults=self._config.defaults,
@@ -180,16 +187,23 @@ class AIAPIExecutor:
                     body=body,
                     timeout_seconds=int(self._config.defaults.get("timeout_seconds", 30)),
                 )
-                final_result = parse_siliconflow_response(response)
+                final_result = parse_provider_response(response)
                 final_entry = entry
                 attempts.append(
-                    _attempt_record(entry, "succeeded", perf_counter() - started, response.status_code)
+                    _attempt_record(
+                        self._config.provider_family,
+                        entry,
+                        "succeeded",
+                        perf_counter() - started,
+                        response.status_code,
+                    )
                 )
                 break
             except ValueError as exc:
                 error_kind = "secret_missing" if "missing API key env var" in str(exc) else "config_error"
                 attempts.append(
                     _attempt_record(
+                        self._config.provider_family,
                         entry,
                         error_kind,
                         perf_counter() - started,
@@ -199,10 +213,19 @@ class AIAPIExecutor:
                     )
                 )
             except TimeoutError:
-                attempts.append(_attempt_record(entry, "timeout", perf_counter() - started, None))
+                attempts.append(
+                    _attempt_record(
+                        self._config.provider_family,
+                        entry,
+                        "timeout",
+                        perf_counter() - started,
+                        None,
+                    )
+                )
             except OSError as exc:
                 attempts.append(
                     _attempt_record(
+                        self._config.provider_family,
                         entry,
                         "connection_error",
                         perf_counter() - started,
@@ -210,9 +233,10 @@ class AIAPIExecutor:
                         message=_redact_text(str(exc), self._config),
                     )
                 )
-            except SiliconFlowProviderError as exc:
+            except (SiliconFlowProviderError, OpenAIProviderError) as exc:
                 attempts.append(
                     _attempt_record(
+                        self._config.provider_family,
                         entry,
                         exc.error_kind,
                         perf_counter() - started,
@@ -266,7 +290,7 @@ class AIAPIExecutor:
                 "schema_version": "phase7.raw_model_output.v1",
                 "submission_id": submission_id,
                 "request_id": request.request_id,
-                "provider_family": "siliconflow",
+                "provider_family": self._config.provider_family,
                 "entry_id": final_entry.entry_id,
                 "model": final_result.model or final_entry.model,
                 "provider_response_id": final_result.provider_response_id,
@@ -321,7 +345,12 @@ class AIAPIExecutor:
                         candidate_output_refs={},
                         parse_failure_ref=parse_failure_ref,
                         provenance_ref=provenance_ref,
-                        usage_summary=_usage_summary(final_entry, final_result.usage, len(attempts)),
+                        usage_summary=_usage_summary(
+                            self._config.provider_family,
+                            final_entry,
+                            final_result.usage,
+                            len(attempts),
+                        ),
                         error={"kind": "parse_failed", "reason": "plugin_parser_rejected_output"},
                     )
                 parsed_ref, candidate_refs = self._save_parser_success(
@@ -359,11 +388,21 @@ class AIAPIExecutor:
                     candidate_output_refs={},
                     parse_failure_ref=parse_failure_ref,
                     provenance_ref=provenance_ref,
-                    usage_summary=_usage_summary(final_entry, final_result.usage, len(attempts)),
+                    usage_summary=_usage_summary(
+                        self._config.provider_family,
+                        final_entry,
+                        final_result.usage,
+                        len(attempts),
+                    ),
                     error={"kind": "parse_failed", "reason": "plugin_parser_rejected_output"},
                 )
 
-        usage_summary = _usage_summary(final_entry, final_result.usage, len(attempts))
+        usage_summary = _usage_summary(
+            self._config.provider_family,
+            final_entry,
+            final_result.usage,
+            len(attempts),
+        )
         provenance_ref = self._save_provenance(
             submission_id=submission_id,
             request=request,
@@ -512,6 +551,7 @@ class AIAPIExecutor:
                 "schema_version": "phase7.ai_provider_call_provenance.v1",
                 "submission_id": submission_id,
                 "request_id": request.request_id,
+                "provider_family": self._config.provider_family,
                 "config_digest": self._config.config_digest,
                 "selection_record": selection,
                 "attempts": attempts,
@@ -593,7 +633,7 @@ class AIAPIExecutor:
             environment_ref=request.environment_ref,
             environment_summary={
                 "runtime": request.environment_ref.runtime,
-                "provider_family": "siliconflow",
+                "provider_family": self._config.provider_family,
                 "config_digest": self._config.config_digest,
             },
             provenance_ref=provenance_ref,
@@ -604,6 +644,7 @@ class AIAPIExecutor:
 
 
 def _attempt_record(
+    provider_family: str,
     entry,
     result_kind: str,
     elapsed_seconds: float,
@@ -613,6 +654,7 @@ def _attempt_record(
     extra: JsonObject | None = None,
 ) -> JsonObject:
     record: JsonObject = {
+        "provider_family": provider_family,
         "entry_id": entry.entry_id,
         "model": entry.model,
         "result_kind": result_kind,
@@ -626,9 +668,14 @@ def _attempt_record(
     return record
 
 
-def _usage_summary(entry, usage: JsonObject | None, attempt_count: int) -> JsonObject:
+def _usage_summary(
+    provider_family: str,
+    entry,
+    usage: JsonObject | None,
+    attempt_count: int,
+) -> JsonObject:
     base = {
-        "provider_family": "siliconflow",
+        "provider_family": provider_family,
         "entry_id": entry.entry_id,
         "model": entry.model,
         "provider_attempt_count": attempt_count,
@@ -656,6 +703,14 @@ def _usage_summary(entry, usage: JsonObject | None, attempt_count: int) -> JsonO
         "cost_estimate": input_cost + output_cost,
         "cost_estimate_status": "estimated",
     }
+
+
+def _provider_adapter(provider_family: str):
+    if provider_family == "siliconflow":
+        return build_siliconflow_chat_body, parse_siliconflow_response
+    if provider_family == "openai":
+        return build_openai_chat_body, parse_openai_response
+    raise ValueError(f"unsupported ai api provider_family: {provider_family}")
 
 
 def _parser_accepts_context(parser: Callable[..., object]) -> bool:
@@ -764,7 +819,9 @@ def _selection_failure_records(
             extra["api_key_env"] = entry.api_key_env
         else:
             result_kind = "not_selected"
-        records.append(_attempt_record(entry, result_kind, 0.0, None, extra=extra))
+        records.append(
+            _attempt_record(config.provider_family, entry, result_kind, 0.0, None, extra=extra)
+        )
     return records
 
 

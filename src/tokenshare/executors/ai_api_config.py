@@ -11,6 +11,7 @@ from tokenshare.core.models import JsonObject
 
 
 CONFIG_SCHEMA_VERSION = "phase7.ai_api_executor_config.v1"
+SUPPORTED_PROVIDER_FAMILIES = frozenset({"siliconflow", "openai"})
 
 
 @dataclass(frozen=True)
@@ -80,8 +81,10 @@ class AIAPIExecutorConfig:
 def load_ai_api_config(body: JsonObject) -> AIAPIExecutorConfig:
     if body.get("schema_version") != CONFIG_SCHEMA_VERSION:
         raise ValueError("unsupported ai api config schema")
-    if body.get("provider_family") != "siliconflow":
-        raise ValueError("phase7 first slice supports siliconflow only")
+    provider_family = str(body.get("provider_family", ""))
+    if provider_family not in SUPPORTED_PROVIDER_FAMILIES:
+        supported = ", ".join(sorted(SUPPORTED_PROVIDER_FAMILIES))
+        raise ValueError(f"unsupported ai api provider_family: {provider_family}; supported: {supported}")
     entries = [_load_entry(entry) for entry in body.get("entries", [])]
     if not entries:
         raise ValueError("at least one ai api entry is required")
@@ -93,7 +96,7 @@ def load_ai_api_config(body: JsonObject) -> AIAPIExecutorConfig:
     return AIAPIExecutorConfig(
         schema_version=str(body["schema_version"]),
         executor_id=str(body["executor_id"]),
-        provider_family=str(body["provider_family"]),
+        provider_family=provider_family,
         selection_policy=dict(body["selection_policy"]),
         defaults=dict(body["defaults"]),
         entries=entries,

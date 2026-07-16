@@ -28,13 +28,14 @@
 6. `Doc/TechnicalDocument/tokenshare_v1_code_map.md`：Phase 1-6 收敛后的代码映射，以当前 `src/` 和 `tests/` 为准。
 7. `Doc/TechnicalDocument/tokenshare_latest_real_plugin_experiment_design.md`：唯一权威实验设计；用于全部新论文实验、真实 AI API 门槛、Experiment 1-5、输入 catalog、runner 改造、failure/ablation、metrics/report、预算和论文结果口径。
 8. `Doc/TechnicalDocument/2026-07-13-feat-011-paper-real-ai-experiments-implementation-plan.md`：feat-011 实施顺序与边界清单；只说明落地顺序，不替代唯一权威实验设计。
-9. `Doc/TechnicalDocument/2026-06-28-phase-7-ai-api-executor-field-spec.md`、`Doc/TechnicalDocument/2026-06-28-phase-7-ai-api-executor-tdd-plan.md`、`Doc/TechnicalDocument/2026-06-28-phase-7-ai-api-executor-code-map.md`：Phase 7 实验级 AI API executor 已实现边界。
-10. `Doc/TechnicalDocument/2026-06-29-phase-8-experiment-infrastructure-code-map.md`：Phase 8 第一版 regression infrastructure 的 source/tests/边界和验证证据映射；不是新论文实验设计权威。
-11. `README.md`：人类入口、运行命令和仓库地图。
-12. `Doc/TechnicalDocument/2026-06-04-tokenshare-paper-module-map.md`：论文、技术报告和本地 TeX/OCR 映射；用于追踪研究依据。
-13. `Doc/TechnicalDocument/2026-06-22-p01-p12-tokenshare-candidate-mechanism-spec.md`：P01-P22 机制整合记录；只用于追溯取舍理由，不覆盖当前实现规格。
-14. `Doc/TechnicalDocument/2026-06-02-tokenshare-protocol-kernel-revised-draft.md`：历史讨论稿；只用于理解早期设计原因。
-15. `reference_repos/`：外部参考源码；只能用于借鉴模式，不属于 TokenShare runtime。
+9. `Doc/TechnicalDocument/2026-07-15-feat-011-lean-3x3-topic-template-design.md`：Lean 3×3 topic-family / paper-difficulty theorem template 设计记录；用于 case selection、oracle package 和能力缺口判断，不表示 runner 已支持完整 3×3 执行矩阵。
+10. `Doc/TechnicalDocument/2026-06-28-phase-7-ai-api-executor-field-spec.md`、`Doc/TechnicalDocument/2026-06-28-phase-7-ai-api-executor-tdd-plan.md`、`Doc/TechnicalDocument/2026-06-28-phase-7-ai-api-executor-code-map.md`：Phase 7 实验级 AI API executor 已实现边界。
+11. `Doc/TechnicalDocument/2026-06-29-phase-8-experiment-infrastructure-code-map.md`：Phase 8 第一版 regression infrastructure 的 source/tests/边界和验证证据映射；不是新论文实验设计权威。
+12. `README.md`：人类入口、运行命令和仓库地图。
+13. `Doc/TechnicalDocument/2026-06-04-tokenshare-paper-module-map.md`：论文、技术报告和本地 TeX/OCR 映射；用于追踪研究依据。
+14. `Doc/TechnicalDocument/2026-06-22-p01-p12-tokenshare-candidate-mechanism-spec.md`：P01-P22 机制整合记录；只用于追溯取舍理由，不覆盖当前实现规格。
+15. `Doc/TechnicalDocument/2026-06-02-tokenshare-protocol-kernel-revised-draft.md`：历史讨论稿；只用于理解早期设计原因。
+16. `reference_repos/`：外部参考源码；只能用于借鉴模式，不属于 TokenShare runtime。
 
 旧 Phase 1-6 文档已移动到 `Doc/TechnicalDocument/phase-1-6-archive/`。该目录只作普通历史归档，不写单独索引，也不作为默认阅读入口。如果新文档和旧归档冲突，应相信新文档和当前代码；必要时把冲突记录到 `progress.md` 或 `session-handoff.md`。
 
@@ -46,7 +47,7 @@
 | 启动和验证怎么跑 | `AGENTS.md` | `init.ps1`、`init.sh`、`README.md` | 当前基线会运行 Python JSON/SQLite、`compileall` 和 `pytest tests`。 |
 | Phase 1-6 V1 协议在做什么 | `Doc/TechnicalDocument/tokenshare_v1_complete_spec.md` | `README.md` | 只覆盖 Phase 1-6 协议内核、存储、插件和执行器契约。 |
 | Phase 1-6 代码在哪、测试在哪 | `Doc/TechnicalDocument/tokenshare_v1_code_map.md` | `src/tokenshare/`、`tests/` | code map 必须以当前实现为准；不要从旧归档文档倒推。 |
-| 最新真实 AI 论文实验 | `Doc/TechnicalDocument/tokenshare_latest_real_plugin_experiment_design.md` | `Doc/TechnicalDocument/2026-07-13-feat-011-paper-real-ai-experiments-implementation-plan.md`、`src/tokenshare/experiments/` | 所有可写入论文的新实验必须真实调用 AI API。旧 deterministic/scripted suite、direct 500 和 Lean 50 只能作为 regression/calibration。 |
+| 最新真实 AI 论文实验 | `Doc/TechnicalDocument/tokenshare_latest_real_plugin_experiment_design.md` | `Doc/TechnicalDocument/2026-07-13-feat-011-paper-real-ai-experiments-implementation-plan.md`、`Doc/TechnicalDocument/2026-07-15-feat-011-lean-3x3-topic-template-design.md`、`src/tokenshare/experiments/` | 所有可写入论文的新实验必须真实调用 AI API。旧 deterministic/scripted suite、direct 500 和 Lean 50 只能作为 regression/calibration；Lean 3×3 模板设计不等于完整 runner 已可执行。 |
 | Phase 7 AI API executor | Phase 7 field spec / TDD plan / code map | `src/tokenshare/executors/ai_api*.py`、`tests/executors/test_ai_api_*.py` | 保持 artifact/provenance/secret/replay 边界；标准 config 只保存 `api_key_env`。 |
 | Phase 8 regression infrastructure | `Doc/TechnicalDocument/2026-06-29-phase-8-experiment-infrastructure-code-map.md` | `src/tokenshare/experiments/`、`tests/experiments/` | Phase 8 code map 不是最新论文实验设计。 |
 | V1 做什么、不做什么 | `AGENTS.md` | `tokenshare_v1_complete_spec.md`、`README.md` | 不做真实区块链、真实分布式 network、生产级 AI 平台或生产级 theorem-proving 平台。 |

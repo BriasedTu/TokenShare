@@ -33,7 +33,7 @@ V1 范围内：
 - factorization 插件和真实 Lean 形式化证明插件，作为协议实验对象；structured report stub 已从 Phase 6 开发计划剔除。
 - 真实 Lean 形式化证明插件必须使用固定本地 Lean/lake/toolchain/library 环境做 proof artifact 检查；拆分算法必须由插件内确定性规则自动识别 Lean theorem / proof-state 结构并生成子任务，不得由 AI 决定协议级拆分。
 - 实验级 AI API 执行器，用于在受控 fixture / benchmark 下验证真实模型输出效果；标准 executor config 只保存 `api_key_env`，真实 API smoke 可从被 gitignore 的 `local/ai_api_smoke.local.json` 读取明文 key 并仅注入当前进程环境变量，调用结果必须持久化为 artifact，event/artifact/SQLite/log/config digest 不得保存 secret，replay 不得重新调用 API。
-- 实验设计必须优先遵守 `tokenshare_latest_real_plugin_experiment_design.md`：Experiment 1 真实 AI 跨领域可行性与难度、Experiment 2 真实 AI worker 扩展性、Experiment 3 真实 AI 故障注入与 worker death 恢复、Experiment 4 真实 AI 协议消融、Experiment 5 strong/weak/mixed 模型策略。所有可写入论文的新实验都必须实际调用真实 AI API；旧 deterministic/scripted suite、direct 500 benchmark、toy demo 或 `lean_stub` 只能作为回归、输入来源或成本校准。
+- 实验设计必须优先遵守 `tokenshare_latest_real_plugin_experiment_design.md`：Experiment 1 真实 AI 跨领域可行性与难度、Experiment 2 真实 AI worker 扩展性、Experiment 3 真实 AI 故障注入与 worker death 恢复、Experiment 4 真实 AI 协议消融、Experiment 5 预注册三模型 model-provider endpoint comparison。Experiment 5 不再使用 strong/weak/mixed 标签；固定比较 SiliconFlow GLM-5.2、SiliconFlow Qwen3.6-27B 和 OpenAI GPT-5.6 Sol high 三个端点，外部榜单分数只作背景 metadata。所有可写入论文的新实验都必须实际调用真实 AI API；旧 deterministic/scripted suite、direct 500 benchmark、toy demo 或 `lean_stub` 只能作为回归、输入来源或成本校准。
 - offline、slow、executor_error、invalid_output、late_submission 五类故障模拟。
 - 指标报告、状态重放、审计重放、sandbox 结算。
 

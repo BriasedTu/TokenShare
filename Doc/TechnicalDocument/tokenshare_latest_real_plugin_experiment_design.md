@@ -26,7 +26,7 @@
 
 3.  Experiment 4 P0-core ablation 使用每个 domain / paper difficulty 固定 5 个 tasks、6 个模式和 3 次 repeat，共 540 个 root-runs。旧的 3-task 数字不再作为正式 P0 口径；若 Lean medium lemma-DAG / hard-frontier catalog 未完成，Lean 对应难度的 ablation claim 必须 blocked 或降级。
 
-4.  Experiment 5 在 strong 和 weak 真实模型 entry 都可用时纳入 P0-full；如果本地配置缺少任一强弱模型类别，则该实验输出结构化 `blocked`，不算作协议失败，也不影响 Experiment 1-4 的主张。
+4.  Experiment 5 改为预注册的三模型 model-provider endpoint comparison：SiliconFlow `zai-org/GLM-5.2`、SiliconFlow `Qwen/Qwen3.6-27B`、OpenAI `gpt-5.6-sol` with `reasoning_effort=high`。三个真实 entry、provider transport、reasoning profile 和 smoke evidence 都可用时纳入 P0-full；缺少任一 cohort member 时输出结构化 `blocked`，不算协议失败，也不影响 Experiment 1-4 的主张。
 
 5.  P0-core 指 Experiment 1-4；P0-full 指 Experiment 1-5 且模型策略 preflight 通过。所有 summary、预算和论文表格必须标明自己属于 P0-core、P0-full 还是包含 100/300 worker extension 的扩展运行。
 
@@ -40,7 +40,7 @@
 
 3.  **鲁棒性（Robustness）**：真实 AI 输出之后发生 false positive、false negative、不返回、延迟、executor error 或 worker death 时，协议能否检测、隔离、重试、重分配并完成？哪些错误只能检测而不能恢复？
 
-协议消融用于解释第三个主张中各机制的贡献；strong/weak/mixed 模型组合只作为次要分析，不单独证明协议正确性。
+协议消融用于解释第三个主张中各机制的贡献；三模型 model-provider endpoint comparison 只作为次要分析，不单独证明协议正确性，也不把跨 provider 的 latency/cost 差异解释为纯模型效应。
 
 # 论文可采信硬门槛
 
@@ -144,6 +144,24 @@ medium lemma-DAG / hard-frontier catalog 每行至少包含：`case_id,paper_dif
 
 为了支持 medium lemma-DAG / hard-frontier，Lean 插件能力也必须随 catalog 提升：支持递归 lemma graph split、proof-file assembly、per-lemma checker evidence、multi-level merge/root recheck、dependency-aware slot integrity，以及必要的 deterministic split/merge 规则，例如 implication introduction、forall introduction、nested conjunction/iff、induction/rewrite skeleton。仍然禁止让 AI 决定协议级拆分；AI 输出只能作为 proof candidate，经 parser/checker 后进入 evidence。
 
+### Lean catalog 题型矩阵目标
+
+2026-07-15 起，正式 Lean catalog 的长期目标不只是三档难度，还应覆盖三类经过设计的题型。目标 catalog pool 使用 3 × 3 矩阵：`paper_difficulty` 为 `simple`、`medium_lemma_dag`、`hard_frontier`；`topic_family` 为 `pure_logic`、`function_set`、`induction`。
+
+| `topic_family` | simple 目标 | medium_lemma_dag 目标 | hard_frontier 目标 |
+|:---|:---|:---|:---|
+| `pure_logic` | 当前 shallow `P ∧ Q` / `P ↔ Q` 可作为过渡样本，但正式 simple pool 应记录题型 metadata。 | 多层命题逻辑 lemma-DAG，例如 root 依赖 intermediate lemma，再依赖多个 leaf/sublemma proof units。 | 更深的量词、等价、rewrite 或 theorem reuse 组合；无 oracle 时只能 blocked / stress。 |
+| `function_set` | 函数、集合、子集、像/原像或简单单调性相关 theorem，证明结构浅但不是纯 `P ∧ Q`。 | 函数与集合 theorem 的 2-3 层 lemma-DAG，例如先证明函数分段性质、集合刻画，再证明 root subset。 | 混合实数函数、集合构造、分类讨论、rewrite 和外部库 theorem reuse；必须先做 oracle feasibility review。 |
+| `induction` | Nat/List 上的简单归纳或递归定义 theorem，root proof 可以由一个短 induction skeleton 完成。 | 一个 root theorem 依赖多个归纳/辅助 lemma，形成 recursive lemma-DAG，AI 只证明分派 proof unit。 | 嵌套归纳、互相依赖 rewrite、theorem reuse 或较长 proof-file assembly；无固定 oracle proof 时不能标 checker success。 |
+
+用户最新决策是：当前正式实验目标要扩大到覆盖上述 Lean 3 × 3 题型矩阵，而不是把它只当远期 catalog pool。每个 `(paper_difficulty, topic_family)` 单元的目标规模仍是 10-20 道可审计 case；扩大后的 suite version、抽样规则、预算审批和输出表格必须显式记录，不得静默沿用旧 P0 口径，也不得用当前 shallow v1 Lean case 补齐 medium / hard。
+
+该决策目前是文档层要求，不表示 runner、paper adapter 或 Lean plugin 已具备执行能力。进入实现前必须先完成题库与拆分机制复核：每个题型/难度先做 1-2 个 checker-backed golden case；明确 `topic_family` schema、deterministic catalog rule / Lean plugin rule / fixed oracle package 的责任边界；确认 recursive lemma-DAG split、proof-file assembly、dependency-aware merge/root recheck、preflight 时间和真实 AI provider 预算。只有这些复核通过后，才能按 TDD 扩成正式批量题库并修改 runner / adapter；不能先写实验层代码假装这些题已经可拆、可合并或可 paper-eligible。
+
+扩展 schema 时应考虑显式记录 `topic_family`、`topic_family_version`、`construction_rule_id` 或等价 metadata，并继续要求 `environment_digest`、`preflight_status`、oracle package hash 和 checker evidence。当前已存在的 `lean_catalog.v1.jsonl` 仍只算 simple/shallow 过渡输入；当前 `lean_lemma_graph_catalog.v1.jsonl` 只有最小 medium golden fixture，不满足上述完整矩阵。
+
+后续 reviewer 应先使用 `Doc/TechnicalDocument/2026-07-15-feat-011-lean-tiered-topic-catalog-review-prompt.md` 复核矩阵可行性、Lean 规则成本、oracle package 组织方式、正式实验扩大后的预算影响和 runner / adapter 实现顺序，再进入实现。
+
 # Experiment 1: 真实 AI 跨领域可行性与难度
 
 ## 为什么需要
@@ -159,7 +177,7 @@ medium lemma-DAG / hard-frontier catalog 每行至少包含：`case_id,paper_dif
 | tasks | 每个 domain 每个 paper difficulty 目标 10 个，共 60 个 root tasks；若 Lean medium / hard-frontier catalog 未完成，正式 Lean 难度主张 blocked 或降级，不得用当前 shallow v1 补齐三档 |
 | repeats | 论文 run 每个 task 3 次；pilot 只跑 1 次且不进入主表 |
 | worker count | 固定 10；若 provider preflight 不允许 10，并发改为可用上限且整个实验保持一致 |
-| model | 固定一个预注册的 strong entry id |
+| model | 固定一个预注册的 baseline entry id；baseline 只表示控制变量，不表示 strong |
 | fault/ablation | none / FULL |
 
 ## 程序必须输出
@@ -250,23 +268,31 @@ actual token 只来自 provider usage。注入变换的 synthetic work 另写 `s
 
 每个 domain 从 easy/medium/hard 各取固定 5 个 tasks，所有模式重复 3 次。报告 completion、accepted validity、wrong canonical acceptance、raw-only acceptance、stuck task、premature merge、slot mismatch、time、token 和 cost。消融实现必须在实验 wrapper/adapter 中，不修改协议 core 的默认 FULL 语义。
 
-# Experiment 5: strong/weak/mixed 模型策略（次要）
+# Experiment 5: 三模型 model-provider endpoint comparison（次要）
 
 ## 为什么需要
 
-导师建议比较 strong-only、weak-only 和混合模型。它可说明协议是否能容纳异构模型和成本/成功率权衡，但主要测量模型与分配策略，不能替代前四个协议实验。
+三个具名模型端点可用于观察 TokenShare 在异构真实模型/提供商上的完成率、有效性、token、成本和延迟差异，但不再人为划分 strong/weak，也不实现 mixed routing。它主要测量 model-provider endpoint 对实验结果的影响，不能替代前四个协议实验；OpenAI 与 SiliconFlow 的 provider 差异会同时影响 latency、429、成本和可用性，因此论文必须显式保留该混杂因素。
 
-模型 entry 必须在运行前以本地 config tag 固定为 `strength:strong` 或 `strength:weak`，不能看完结果后重标。三种策略为：
+## 预注册 cohort
 
-- `strong_only`：所有 AI units 固定 strong entry。
+正式 cohort 固定为 `tokenshare.paper.model_endpoint_cohort.v1`：
 
-- `weak_only`：所有 AI units 固定 weak entry。
+| `cohort_member_id` | provider endpoint | provider model / reasoning profile | Artificial Analysis v4.1 背景分数 | 解释边界 |
+|:---|:---|:---|---:|:---|
+| `glm_5_2_siliconflow` | SiliconFlow | `zai-org/GLM-5.2`；reasoning controls 在 pilot 前固定 | GLM-5.2 (max): 51 | 未证明 SiliconFlow reasoning mode 与榜单 max 完全一致时，`benchmark_match_status=family_only`。 |
+| `qwen3_6_27b_siliconflow` | SiliconFlow | `Qwen/Qwen3.6-27B`；reasoning controls 在 pilot 前固定 | Qwen3.6 27B (Reasoning): 37 | 未证明 endpoint thinking configuration 与榜单一致时，`benchmark_match_status=family_only`。 |
+| `gpt_5_6_sol_high_openai` | OpenAI | `gpt-5.6-sol`；`reasoning_effort=high` | GPT-5.6 Sol (high): 56 | provider request、response resolved model 和 reasoning profile 都匹配后才标 `exact`。 |
 
-- `difficulty_aware_mixed`：factorization easy / Lean simple 使用 weak；medium（含 Lean medium lemma-DAG）首次使用 weak、失败恢复使用 strong；hard / hard-frontier 首次即使用 strong。
+外部分数只进入 cohort snapshot 和论文模型背景表，不产生 strong/weak 标签，不决定 routing、paper eligibility 或 TokenShare 结论。正式 run 不联网刷新榜单；榜单变更只能生成新 cohort version，不能改写旧 suite。2026-07-16 本地摘要来源为 Artificial Analysis [v4.1 methodology](https://artificialanalysis.ai/methodology/intelligence-benchmarking)、[Data API](https://artificialanalysis.ai/data-api)、[GLM-5.2](https://artificialanalysis.ai/models/glm-5-2)、[Qwen3.6 27B](https://artificialanalysis.ai/models/qwen3-6-27b)、[GPT-5.6 Sol high](https://artificialanalysis.ai/models/gpt-5-6-sol-high)，以及 provider identity 来源 SiliconFlow [模型中心](https://www.siliconflow.cn/models) 和 OpenAI [Models](https://developers.openai.com/api/docs/models)。这些在线资料影响的范围仅为 cohort identity、外部分数 provenance、provider/model/reasoning preflight 和论文限定语。
 
-使用 Experiment 1 catalog，每种策略重复 3 次，输出 completion、accepted validity、tokens、cost、latency、recovery attempts 和 model routing records。若本地只有一个真实模型或缺少 `strength:strong` / `strength:weak` 任一 tag，该实验标记 `blocked`，`blocked_reason="missing_strong_or_weak_model_entry"`，`paper_eligible=false`，`provider_attempt_count=0`，不影响前三个论文主张。
+## 设计与输出
 
-`model_routing_records` 每行至少包含 `condition_id,task_id,unit_id,attempt_id,model_policy,selected_entry_id,selected_strength,routing_reason,previous_attempt_status,provider_attempt_ref,cost_estimate`。`difficulty_aware_mixed` 的升级规则固定为：factorization easy / Lean simple 首次和恢复均用 weak；medium（含 Lean medium lemma-DAG）首次 weak，若 parser/verifier/checker 拒绝或 no_return/executor_error 后恢复则升级 strong；hard / hard-frontier 首次和恢复均用 strong。
+使用 Experiment 1 catalog slice，每个 domain / paper difficulty 固定 5 个 tasks；三个 cohort member 各自作为 `model_policy="fixed_entry"` 的独立 condition，使用相同 task order、prompt/parser/plugin version、worker count、timeout、request-limit policy 和 repeat/seed family，每个 condition 重复 3 次。AI unit 在整个首次/恢复 attempt 链中保持同一 cohort member，不按 difficulty 换模型，也不在失败后升级到另一个模型。
+
+输出 completion、accepted validity、tokens、cost、latency、provider errors、recovery attempts 和 `model_execution_records`。每条 execution record 至少包含 `condition_id,task_id,unit_id,attempt_id,model_policy,model_cohort_id,cohort_member_id,selected_entry_id,provider_family,provider_model_id,reasoning_profile_id,request_ref,provider_attempt_ref,usage_ref,latency_ms,total_tokens,cost_estimate`。论文以 completion / accepted validity 作为主要跨端点结果；latency、cost 和 rate-limit 结果必须按 provider 分层或标注 provider confounding。
+
+正式 Experiment 5 preflight 必须验证三个 cohort member 的 provider config、key env、model id、reasoning profile、真实 smoke evidence、catalog compatibility 和预算。缺少任一 member 时，整个正式 Experiment 5 标记 `blocked`，`blocked_reason="incomplete_model_cohort"`，`paper_eligible=false`，`provider_attempt_count=0`；可用 member 的单模型试跑只能标 `pilot_only=true`，不能生成三模型论文主表。该 blocked 不影响 Experiment 1-4 的主张。
 
 # 统一输出契约
 
@@ -338,7 +364,10 @@ CLI exit code 固定为：0 表示 runner 正常结束或按预算上限结构�
       "fault_type": "none",
       "fault_rate": 0.0,
       "ablation_mode": "FULL",
-      "model_policy": "strong_only",
+      "model_policy": "fixed_entry",
+      "model_cohort_id": null,
+      "cohort_member_id": null,
+      "model_entry_id": "glm_5_2_siliconflow",
       "repeat_id": 0,
       "seed": 1,
       "catalog_digest": "sha256:...",
@@ -371,7 +400,7 @@ CLI exit code 固定为：0 表示 runner 正常结束或按预算上限结构�
 
 只有数据支持时才可写“worker 增加缩短时间”“混合模型降低成本”或“某类错误可恢复”。负面结果可以直接写：例如速度在 10 workers 后饱和、false negative 在某种同批次条件下无法恢复、NO_VERIFICATION 导致错误 canonical。不得预写必然正向结论。
 
-论文结构建议固定为：`Feasibility Across Two Domains`、`Scalability with Real AI Workers`、`Robustness and Failure Boundaries`。Ablation 放在第三部分，模型组合放 appendix 或次要 subsection。
+论文结构建议固定为：`Feasibility Across Two Domains`、`Scalability with Real AI Workers`、`Robustness and Failure Boundaries`。Ablation 放在第三部分，三模型 model-provider endpoint comparison 放 appendix 或次要 subsection。
 
 # API、时间、token、成本和人工投入
 
@@ -384,9 +413,9 @@ CLI exit code 固定为：0 表示 runner 正常结束或按预算上限结构�
 | Experiment 3 rate faults | Factorization: 5 tasks × 5 fault types × 7 rates × 3 repeats；Lean: 3 tasks × 5 fault types × 4 rates × 3 repeats | 705 |
 | Experiment 3 worker death | 2 domains × 3 tasks × 3 kill positions × 3 repeats | 54 |
 | Experiment 4 | 2 domains × 3 difficulties × 5 tasks × 6 modes × 3 repeats | 540 |
-| Experiment 5（配置支持时纳入 P0-full） | 2 domains × 3 difficulties × 5 tasks × 3 policies × 3 repeats | 270 |
+| Experiment 5（三模型 cohort 完整时纳入 P0-full） | 2 domains × 3 difficulties × 5 tasks × 3 fixed model-provider endpoints × 3 repeats | 270 |
 
-P0-core（Experiment 1-4）合计 2079 个 root-runs；P0-full（Experiment 1-5 且 strong/weak 模型 preflight 通过）合计 2349 个 root-runs。100 / 300 worker extension 若 preflight 通过，最多额外增加 300 个 root-runs，并必须在 suite manifest 中标记为 extension，不并入 P0-core 或 P0-full 主统计。root-run 数量不等于 provider calls。Factorization root 可能拆成多个 range AI units，Lean root 可能拆成多个 proof AI units；真实 provider-attempt 上界必须由 split preflight 精确展开。若预算上限无法覆盖计划，runner 写 `budget_exhausted` 并停止启动新 task；不得静默减少样本、删 mode 或删 difficulty。任何缩小矩阵都必须作为新的用户批准 suite version 记录。
+P0-core（Experiment 1-4）合计 2079 个 root-runs；P0-full（Experiment 1-5 且三模型 cohort / provider preflight 通过）合计 2349 个 root-runs。100 / 300 worker extension 若 preflight 通过，最多额外增加 300 个 root-runs，并必须在 suite manifest 中标记为 extension，不并入 P0-core 或 P0-full 主统计。root-run 数量不等于 provider calls。Factorization root 可能拆成多个 range AI units，Lean root 可能拆成多个 proof AI units；真实 provider-attempt 上界必须由 split preflight 精确展开。若预算上限无法覆盖计划，runner 写 `budget_exhausted` 并停止启动新 task；不得静默减少样本、删 mode 或删 difficulty。任何缩小矩阵都必须作为新的用户批准 suite version 记录。
 
 ## 运行前预算门禁
 
@@ -430,6 +459,7 @@ CLI 必须支持 `--max-total-provider-attempts`、`--max-total-tokens`、`--max
 | `src/tokenshare/experiments/lean_paper_adapter.py` | 执行分难度 Lean catalog，真实 API child/direct proof、checker、merge/root recheck，并支持 model/worker config。 |
 | `src/tokenshare/experiments/paper_faults.py` | 在真实 output 后执行 deterministic fault selection/mutation，写 `FaultInjectionRecord`。 |
 | `src/tokenshare/experiments/paper_workers.py` | 独立 worker process、kill point、lease expiry、replacement attempt 和进程 evidence。 |
+| `src/tokenshare/experiments/paper_model_policy.py` | 加载/校验三模型 cohort snapshot 与 local entry map，展开 fixed-entry conditions，写 model execution records；不在 executor 内解释模型强弱。 |
 | `src/tokenshare/experiments/paper_budget.py` | plan-only provider/token/cost/time/space 预算及硬上限。 |
 | `src/tokenshare/experiments/paper_runner.py` | 展开 Experiment 1–5 conditions、repeat/seed、resume、budget gate、paper eligibility。 |
 | `src/tokenshare/experiments/paper_metrics.py` | 从 events/artifacts/attempts/fault records 复算逐条件统计、quantile、speedup、recovery、ablation。 |
@@ -449,7 +479,7 @@ CLI 必须支持 `--max-total-provider-attempts`、`--max-total-tokens`、`--max
 
 - `src/tokenshare/experiments/simulation.py`：旧 v1 决策保留回归；paper faults 使用新 v2 record，不用只写“selected fault”的报告层模拟。
 
-- `src/tokenshare/executors/ai_api.py`：原则上不改 authority；只有缺少 provider attempt correlation 或 cancellation-safe provenance 时才增加 artifact 字段，不把 fault/worker/experiment policy 放入 executor。
+- `src/tokenshare/executors/ai_api.py`、`ai_api_config.py`、`ai_api_transport.py`：为 Task 10 增加独立 OpenAI Chat Completions provider family 和动态 provider provenance，同时保持 SiliconFlow v1 兼容；不把 cohort、外部分数、fault、worker 或 experiment policy 放入 executor。
 
 ## 实施顺序与测试
 
@@ -467,7 +497,7 @@ CLI 必须支持 `--max-total-provider-attempts`、`--max-total-tokens`、`--max
 
 7.  运行 targeted tests，再运行 `tests/experiments`、executor/plugin impact suite 和完整 `init.ps1`。
 
-8.  执行 plan-only、pilot、正式 P0、ablation；Experiment 5 由预算决定但不得阻塞 P0。
+8.  执行 plan-only、pilot、正式 P0、ablation；Experiment 5 只有在三模型 cohort、OpenAI/SiliconFlow provider preflight 和预算都通过时进入 P0-full，不得阻塞 P0-core。
 
 建议验证命令：
 
@@ -490,9 +520,11 @@ conda run -n tokenshare python -m tokenshare.experiments.run_paper_experiments `
   --output-root outputs/experiments/paper_v1 `
   --experiments exp1,exp2,exp3,exp4,exp5 `
   --real-transport `
-  --ai-api-config local/ai_api_smoke.local.json `
-  --strong-entry-id <configured-strong-id> `
-  --weak-entry-id <configured-weak-id> `
+  --provider-config siliconflow=local/ai_api_smoke.local.json `
+  --provider-config openai=local/openai_api_smoke.local.json `
+  --baseline-entry-id <configured-baseline-entry-id> `
+  --model-cohort-file benchmarks/paper/model_comparison_cohort.v1.json `
+  --model-entry-map local/model_comparison_entries.local.json `
   --worker-levels 1,3,10,30 `
   --optional-worker-levels 100,300 `
   --repeats 3 `
@@ -505,9 +537,11 @@ conda run -n tokenshare python -m tokenshare.experiments.run_paper_experiments `
   --output-root outputs/experiments/paper_v1 `
   --experiments exp1,exp2,exp3,exp4,exp5 `
   --real-transport `
-  --ai-api-config local/ai_api_smoke.local.json `
-  --strong-entry-id <configured-strong-id> `
-  --weak-entry-id <configured-weak-id> `
+  --provider-config siliconflow=local/ai_api_smoke.local.json `
+  --provider-config openai=local/openai_api_smoke.local.json `
+  --baseline-entry-id <configured-baseline-entry-id> `
+  --model-cohort-file benchmarks/paper/model_comparison_cohort.v1.json `
+  --model-entry-map local/model_comparison_entries.local.json `
   --worker-levels 1,3,10,30 `
   --optional-worker-levels 100,300 `
   --repeats 3 `
@@ -517,7 +551,7 @@ conda run -n tokenshare python -m tokenshare.experiments.run_paper_experiments `
       --max-total-tokens <approved-limit> `
       --max-cost-estimate <approved-limit>
 
-CLI 若未给 `--real-transport`、没有可用 key、catalog digest 不匹配、预算 digest 不匹配或输出目录已有不同 suite manifest，应拒绝启动，不得自动退回 scripted transport。`--weak-entry-id` 仅在运行 Experiment 5 时需要；若用户要求运行 Experiment 5 但缺少 weak entry，runner 仍写 blocked condition / experiment result，而不是让 Experiment 1-4 失败。
+CLI 若未给 `--real-transport`、Experiment 1-4 baseline entry 不可用、catalog digest 不匹配、预算 digest 不匹配或输出目录已有不同 suite manifest，应拒绝启动，不得自动退回 scripted transport。运行 Experiment 5 时还必须加载 frozen cohort、local entry map、SiliconFlow/OpenAI provider configs，并通过三个 member 的 key/model/reasoning/smoke preflight；任一 member 缺失时 runner 写 `blocked_reason="incomplete_model_cohort"`，而不是让 Experiment 1-4 失败，也不得自动替换模型。
 
 # 四天执行安排
 
@@ -526,9 +560,9 @@ CLI 若未给 `--real-transport`、没有可用 key、catalog digest 不匹配�
 | Day 1 | 完成 catalog、paper schemas、real-AI gate、budget plan 和 adapter 最小路径；targeted tests 通过；跑每个 domain 1 个真实 API smoke。 |
 | Day 2 | 完成 Experiment 1 和 Experiment 2；跑完整 pilot；当天生成 feasibility/scalability CSV 并检查是否有区分度和 429。 |
 | Day 3 | 完成 post-AI fault、worker process death 和 Experiment 3；跑 factorization 完整故障率和 Lean 精简故障率。 |
-| Day 4 | 完成 Experiment 4、论文表图和 failure analysis；配置支持时跑 Experiment 5；做 secret scan、evidence check、Markdown/论文文字更新和完整 init。 |
+| Day 4 | 完成 Experiment 4、论文表图和 failure analysis；三模型 cohort 与双 provider preflight 通过时跑 Experiment 5；做 secret scan、evidence check、Markdown/论文文字更新和完整 init。 |
 
-如果时间或预算不足，runner 使用 `budget_exhausted` 结构化停止，不能静默删除 Experiment 1-4、difficulty、fault type 或 ablation mode。Experiment 5 只在 strong/weak 模型配置不满足时允许 blocked；其他删减必须经用户重新批准并写成新的 suite version。Ablation 默认运行全部 6 个模式，FULL、NO_VERIFICATION、NO_REQUEUE 只是后续人工分析时的最低必读对照，不是默认裁剪口径。
+如果时间或预算不足，runner 使用 `budget_exhausted` 结构化停止，不能静默删除 Experiment 1-4、difficulty、fault type 或 ablation mode。Experiment 5 只在三模型 cohort 任一 member、provider transport、reasoning profile 或真实 smoke 不满足时允许 `incomplete_model_cohort` blocked；其他删减必须经用户重新批准并写成新的 suite version。Ablation 默认运行全部 6 个模式，FULL、NO_VERIFICATION、NO_REQUEUE 只是后续人工分析时的最低必读对照，不是默认裁剪口径。
 
 # 验收标准
 

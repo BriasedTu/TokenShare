@@ -12,6 +12,10 @@ from typing import Any
 JsonObject = dict[str, Any]
 PAPER_DOMAINS = ("factorization", "lean_proof")
 PAPER_DIFFICULTIES = ("easy", "medium", "hard")
+LEAN_PAPER_DIFFICULTIES = ("simple", "medium_lemma_dag", "hard_frontier")
+PAPER_DIFFICULTY_VALUES = PAPER_DIFFICULTIES + LEAN_PAPER_DIFFICULTIES
+LEAN_TOPIC_FAMILIES = ("pure_logic", "function_set", "induction")
+PAPER_MODEL_POLICIES = ("fixed_entry",)
 UNSUPPORTED_PAPER_TRANSPORTS = frozenset({"scripted", "fake", "deterministic", "mock"})
 
 
@@ -85,11 +89,24 @@ class PaperExperimentCondition:
     condition_id: str
     domain: str
     difficulty: str
+    paper_difficulty: str | None = None
+    topic_family: str | None = None
+    topic_family_version: str | None = None
+    construction_rule_id: str | None = None
+    oracle_package_group: str | None = None
+    proof_assembly_shape: str | None = None
     worker_count: int
     fault_type: str
     fault_rate: float
     ablation_mode: str
     model_policy: str
+    model_cohort_id: str | None = None
+    cohort_member_id: str | None = None
+    model_entry_id: str | None = None
+    provider_family: str | None = None
+    provider_model_id: str | None = None
+    reasoning_profile_id: str | None = None
+    model_cohort_digest: str | None = None
     repeat_id: int
     seed: int
     catalog_digest: str
@@ -115,6 +132,24 @@ class PaperExperimentCondition:
             raise ValueError("domain must be factorization or lean_proof")
         if self.difficulty not in PAPER_DIFFICULTIES:
             raise ValueError("difficulty must be easy, medium, or hard")
+        _resolve_paper_difficulty(self.domain, self.difficulty, self.paper_difficulty)
+        _validate_optional_topic_family(self.domain, self.topic_family)
+        _validate_model_policy(self.model_policy)
+        for field_name in (
+            "topic_family_version",
+            "construction_rule_id",
+            "oracle_package_group",
+            "proof_assembly_shape",
+            "model_cohort_id",
+            "cohort_member_id",
+            "model_entry_id",
+            "provider_family",
+            "provider_model_id",
+            "reasoning_profile_id",
+        ):
+            _validate_optional_non_empty(field_name, getattr(self, field_name))
+        if self.model_cohort_digest is not None:
+            _require_digest("model_cohort_digest", self.model_cohort_digest)
         if not isinstance(self.fault_rate, (float, int)) or self.fault_rate < 0:
             raise ValueError("fault_rate must be a non-negative number")
         _require_digest("catalog_digest", self.catalog_digest)
@@ -133,11 +168,28 @@ class PaperExperimentCondition:
             "condition_id": self.condition_id,
             "domain": self.domain,
             "difficulty": self.difficulty,
+            "paper_difficulty": _resolve_paper_difficulty(
+                self.domain,
+                self.difficulty,
+                self.paper_difficulty,
+            ),
+            "topic_family": self.topic_family,
+            "topic_family_version": self.topic_family_version,
+            "construction_rule_id": self.construction_rule_id,
+            "oracle_package_group": self.oracle_package_group,
+            "proof_assembly_shape": self.proof_assembly_shape,
             "worker_count": self.worker_count,
             "fault_type": self.fault_type,
             "fault_rate": float(self.fault_rate),
             "ablation_mode": self.ablation_mode,
             "model_policy": self.model_policy,
+            "model_cohort_id": self.model_cohort_id,
+            "cohort_member_id": self.cohort_member_id,
+            "model_entry_id": self.model_entry_id,
+            "provider_family": self.provider_family,
+            "provider_model_id": self.provider_model_id,
+            "reasoning_profile_id": self.reasoning_profile_id,
+            "model_cohort_digest": self.model_cohort_digest,
             "repeat_id": self.repeat_id,
             "seed": self.seed,
             "catalog_digest": self.catalog_digest,
@@ -169,6 +221,8 @@ class PaperSuiteResult:
     metrics_refs: list[JsonObject] | tuple[JsonObject, ...]
     audit_refs: list[JsonObject] | tuple[JsonObject, ...]
     error_summary: list[JsonObject] | tuple[JsonObject, ...]
+    model_policy_preflight: JsonObject | None = None
+    model_endpoint_cohort_preflight: JsonObject | None = None
     schema_version: str = "tokenshare.paper_suite_result.v1"
 
     def to_dict(self) -> JsonObject:
@@ -192,6 +246,10 @@ class PaperSuiteResult:
             "metrics_refs": _json_value(list(self.metrics_refs)),
             "audit_refs": _json_value(list(self.audit_refs)),
             "error_summary": _json_value(list(self.error_summary)),
+            "model_policy_preflight": _json_value(self.model_policy_preflight),
+            "model_endpoint_cohort_preflight": _json_value(
+                self.model_endpoint_cohort_preflight
+            ),
         }
 
 
@@ -297,6 +355,12 @@ class PaperTaskResult:
     task_id: str
     domain: str
     difficulty: str
+    paper_difficulty: str | None = None
+    topic_family: str | None = None
+    topic_family_version: str | None = None
+    construction_rule_id: str | None = None
+    oracle_package_group: str | None = None
+    proof_assembly_shape: str | None = None
     root_status: PaperTaskStatus | str
     accepted_validity: bool | None
     failure_stage: PaperFailureStage | str | None
@@ -319,6 +383,16 @@ class PaperTaskResult:
             "task_id": self.task_id,
             "domain": self.domain,
             "difficulty": self.difficulty,
+            "paper_difficulty": _resolve_paper_difficulty(
+                self.domain,
+                self.difficulty,
+                self.paper_difficulty,
+            ),
+            "topic_family": self.topic_family,
+            "topic_family_version": self.topic_family_version,
+            "construction_rule_id": self.construction_rule_id,
+            "oracle_package_group": self.oracle_package_group,
+            "proof_assembly_shape": self.proof_assembly_shape,
             "root_status": _status_value("root_status", PaperTaskStatus, self.root_status),
             "accepted_validity": self.accepted_validity,
             "failure_stage": _optional_status_value(
@@ -372,6 +446,15 @@ class PaperAttemptResult:
     error_kind: str | None
     fault_injection_ref: JsonObject | None
     paper_eligible: bool
+    paper_difficulty: str | None = None
+    topic_family: str | None = None
+    topic_family_version: str | None = None
+    construction_rule_id: str | None = None
+    oracle_package_group: str | None = None
+    proof_assembly_shape: str | None = None
+    lemma_node_id: str | None = None
+    slot_key: str | None = None
+    dependency_path: list[str] | tuple[str, ...] | None = None
     schema_version: str = "tokenshare.paper_attempt_result.v1"
 
     def to_dict(self) -> JsonObject:
@@ -409,6 +492,19 @@ class PaperAttemptResult:
             "error_kind": self.error_kind,
             "fault_injection_ref": _json_value(self.fault_injection_ref),
             "paper_eligible": self.paper_eligible,
+            "paper_difficulty": self.paper_difficulty,
+            "topic_family": self.topic_family,
+            "topic_family_version": self.topic_family_version,
+            "construction_rule_id": self.construction_rule_id,
+            "oracle_package_group": self.oracle_package_group,
+            "proof_assembly_shape": self.proof_assembly_shape,
+            "lemma_node_id": self.lemma_node_id,
+            "slot_key": self.slot_key,
+            "dependency_path": (
+                list(self.dependency_path)
+                if self.dependency_path is not None
+                else None
+            ),
         }
 
 
@@ -828,6 +924,45 @@ def _json_value(value: Any) -> Any:
     if isinstance(value, (list, tuple)):
         return [_json_value(item) for item in value]
     return value
+
+
+def _resolve_paper_difficulty(
+    domain: str,
+    difficulty: str,
+    paper_difficulty: str | None,
+) -> str:
+    resolved = difficulty if paper_difficulty is None else paper_difficulty
+    if not isinstance(resolved, str) or not resolved:
+        raise ValueError("paper_difficulty must be a non-empty string")
+    if resolved not in PAPER_DIFFICULTY_VALUES:
+        raise ValueError(
+            "paper_difficulty must be easy, medium, hard, simple, "
+            "medium_lemma_dag, or hard_frontier"
+        )
+    if domain == "factorization" and resolved not in PAPER_DIFFICULTIES:
+        raise ValueError("factorization paper_difficulty must be easy, medium, or hard")
+    return resolved
+
+
+def _validate_optional_topic_family(domain: str, topic_family: str | None) -> None:
+    if topic_family is None:
+        return
+    if not isinstance(topic_family, str) or not topic_family:
+        raise ValueError("topic_family must be a non-empty string")
+    if domain == "lean_proof" and topic_family not in LEAN_TOPIC_FAMILIES:
+        raise ValueError("topic_family must be pure_logic, function_set, or induction")
+
+
+def _validate_optional_non_empty(field_name: str, value: str | None) -> None:
+    if value is None:
+        return
+    if not isinstance(value, str) or not value:
+        raise ValueError(f"{field_name} must be a non-empty string")
+
+
+def _validate_model_policy(value: str) -> None:
+    if value not in PAPER_MODEL_POLICIES:
+        raise ValueError("model_policy must be fixed_entry")
 
 
 def _require_non_empty(field_name: str, value: str) -> None:

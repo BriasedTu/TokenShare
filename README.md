@@ -66,7 +66,7 @@ V1 当前计划包含两类实验插件，实验设计和论文实验口径以 `
 - **Experiment 2 - 真实 AI worker 扩展性**：固定任务和模型，比较 1/3/10/30 workers；100/300 只在任务粒度和 provider quota 允许时扩展。
 - **Experiment 3 - 真实 AI 故障注入与 worker death 恢复**：真实 API 输出后注入 false positive、false negative、不返回、延迟、executor error 和独立 worker process death，报告检测、恢复和成本曲线。
 - **Experiment 4 - 真实 AI 协议消融**：每次只关闭 verification、parser policy、requeue、merge gate 或 slot integrity 中的一个机制。
-- **Experiment 5 - strong/weak/mixed 模型策略**：作为次要分析比较模型分配策略，不替代协议正确性、扩展性或鲁棒性实验。
+- **Experiment 5 - 三模型 model-provider endpoint comparison**：预注册比较 SiliconFlow GLM-5.2、SiliconFlow Qwen3.6-27B 和 OpenAI GPT-5.6 Sol high；不使用 strong/weak/mixed 标签，外部榜单分数只作背景，且跨 provider 的延迟/成本差异不能解释为纯模型效应。
 
 ## Architecture Principles
 

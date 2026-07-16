@@ -22,6 +22,7 @@ from tokenshare.core.verification import digest_json
 from tokenshare.executors.contracts import EnvironmentRef
 from tokenshare.plugins.lean_proof.environment import LeanEnvironmentManifest
 from tokenshare.plugins.lean_proof.models import (
+    LeanLemmaGraphCertificate,
     LeanSplitCertificate,
     LeanTheoremPayload,
     canonical_json_digest,
@@ -59,6 +60,7 @@ _RULE_POLICY_NAMES = {
     "lean_split.iff_goal.v1": "iff",
     "lean_split.implication_intro.v1": "intro",
     "lean_split.forall_intro.v1": "intro",
+    "lean_split.lemma_graph_dag.v2": "fixed_oracle_lemma_graph",
 }
 
 
@@ -95,7 +97,7 @@ class LeanSplitHelperReport:
     helper_stderr_ref: ArtifactRef | None
     certificate_ref: ArtifactRef | None
     report_ref: ArtifactRef | None
-    certificate: LeanSplitCertificate | None
+    certificate: LeanSplitCertificate | LeanLemmaGraphCertificate | None
     diagnostics: JsonObject
     environment_ref: EnvironmentRef
     command_summary: JsonObject
@@ -130,7 +132,7 @@ class LeanSplitHelperReport:
 
 @dataclass(frozen=True, kw_only=True)
 class LeanSplitPlanResult:
-    certificate: LeanSplitCertificate
+    certificate: LeanSplitCertificate | LeanLemmaGraphCertificate
     proposal: DecompositionProposal
     merge_plan: MergePlan
     child_payload_refs_by_logical_key: dict[str, ArtifactRef]
@@ -338,6 +340,20 @@ def build_lean_split_plan(
     if split_report.certificate is None or split_report.certificate_ref is None:
         raise ValueError("Lean split plan requires a split certificate artifact")
     certificate = split_report.certificate
+    if isinstance(certificate, LeanLemmaGraphCertificate):
+        return _build_lean_lemma_graph_split_plan(
+            split_report=split_report,
+            certificate=certificate,
+            artifact_store=artifact_store,
+            task_id=task_id,
+            parent_unit_id=parent_unit_id,
+            canonical_selection_id=canonical_selection_id,
+            canonical_output_bundle_digest=canonical_output_bundle_digest,
+            plugin_descriptor_digest=plugin_descriptor_digest,
+            expansion_scope_hash=expansion_scope_hash,
+            expansion_decision_id=expansion_decision_id,
+            created_at=created_at,
+        )
     if certificate.split_kind == "unsupported":
         raise ValueError("unsupported Lean split certificate cannot create a split plan")
     if certificate.split_kind not in {"single_child", "all_required_children"}:
@@ -432,6 +448,123 @@ def build_lean_split_plan(
         proposal=proposal,
         merge_plan=merge_plan,
         child_payload_refs_by_logical_key=child_payload_refs,
+        child_unit_ids_by_logical_key=child_unit_ids,
+    )
+
+
+def _build_lean_lemma_graph_split_plan(
+    *,
+    split_report: LeanSplitHelperReport,
+    certificate: LeanLemmaGraphCertificate,
+    artifact_store: ArtifactStore,
+    task_id: str,
+    parent_unit_id: str,
+    canonical_selection_id: str,
+    canonical_output_bundle_digest: str,
+    plugin_descriptor_digest: str,
+    expansion_scope_hash: str,
+    expansion_decision_id: str,
+    created_at: str,
+) -> LeanSplitPlanResult:
+    if certificate.parent_theorem_payload_ref is None:
+        raise ValueError("Lean lemma graph certificate requires parent theorem payload ref")
+    if certificate.environment_digest != split_report.environment_ref.environment_digest:
+        raise ValueError("Lean lemma graph certificate environment_digest mismatch")
+    parent_payload = LeanTheoremPayload.from_dict(
+        json.loads(
+            artifact_store.read_bytes(certificate.parent_theorem_payload_ref).decode("utf-8")
+        )
+    )
+    _validate_lemma_graph_certificate_against_parent_policy(certificate, parent_payload)
+    node_payload_digests = {
+        str(node["node_id"]): _lemma_graph_node_payload(parent_payload, node).payload_digest
+        for node in certificate.lemma_nodes
+    }
+    node_payload_refs = _save_lemma_graph_node_payloads(
+        certificate=certificate,
+        parent_payload=parent_payload,
+        artifact_store=artifact_store,
+        split_request_id=split_report.request_id,
+        created_at=created_at,
+    )
+
+    proposal = _build_lemma_graph_proposal(
+        certificate=certificate,
+        certificate_ref=split_report.certificate_ref,
+        node_payload_refs=node_payload_refs,
+        node_payload_digests=node_payload_digests,
+        task_id=task_id,
+        parent_unit_id=parent_unit_id,
+        canonical_selection_id=canonical_selection_id,
+        canonical_output_bundle_digest=canonical_output_bundle_digest,
+        plugin_descriptor_digest=plugin_descriptor_digest,
+        expansion_scope_hash=expansion_scope_hash,
+        created_at=created_at,
+        proposal_id="lean_decomposition_proposal_pending",
+        proposal_digest="sha256:pending_proposal_digest",
+    )
+    proposal_digest = digest_decomposition_proposal_body(proposal)
+    proposal_id = f"lean_decomposition_proposal_{proposal_digest.removeprefix('sha256:')}"
+    proposal = _build_lemma_graph_proposal(
+        certificate=certificate,
+        certificate_ref=split_report.certificate_ref,
+        node_payload_refs=node_payload_refs,
+        node_payload_digests=node_payload_digests,
+        task_id=task_id,
+        parent_unit_id=parent_unit_id,
+        canonical_selection_id=canonical_selection_id,
+        canonical_output_bundle_digest=canonical_output_bundle_digest,
+        plugin_descriptor_digest=plugin_descriptor_digest,
+        expansion_scope_hash=expansion_scope_hash,
+        created_at=created_at,
+        proposal_id=proposal_id,
+        proposal_digest=proposal_digest,
+    )
+
+    child_unit_ids = {
+        node["node_id"]: _derive_phase4_child_unit_id(
+            proposal_digest=proposal_digest,
+            parent_unit_id=parent_unit_id,
+            child_logical_key=node["node_id"],
+        )
+        for node in certificate.lemma_nodes
+    }
+    merge_plan = _build_lemma_graph_merge_plan(
+        certificate=certificate,
+        task_id=task_id,
+        parent_unit_id=parent_unit_id,
+        canonical_selection_id=canonical_selection_id,
+        plugin_descriptor_digest=plugin_descriptor_digest,
+        expansion_decision_id=expansion_decision_id,
+        proposal_id=proposal_id,
+        node_payload_digests=node_payload_digests,
+        child_unit_ids_by_node_id=child_unit_ids,
+        created_at=created_at,
+        merge_plan_id="lean_merge_plan_pending",
+        merge_plan_digest="sha256:pending_merge_plan_digest",
+    )
+    merge_plan_digest = digest_merge_plan_body(merge_plan)
+    merge_plan_id = f"lean_merge_plan_{merge_plan_digest.removeprefix('sha256:')}"
+    merge_plan = _build_lemma_graph_merge_plan(
+        certificate=certificate,
+        task_id=task_id,
+        parent_unit_id=parent_unit_id,
+        canonical_selection_id=canonical_selection_id,
+        plugin_descriptor_digest=plugin_descriptor_digest,
+        expansion_decision_id=expansion_decision_id,
+        proposal_id=proposal_id,
+        node_payload_digests=node_payload_digests,
+        child_unit_ids_by_node_id=child_unit_ids,
+        created_at=created_at,
+        merge_plan_id=merge_plan_id,
+        merge_plan_digest=merge_plan_digest,
+    )
+
+    return LeanSplitPlanResult(
+        certificate=certificate,
+        proposal=proposal,
+        merge_plan=merge_plan,
+        child_payload_refs_by_logical_key=node_payload_refs,
         child_unit_ids_by_logical_key=child_unit_ids,
     )
 
@@ -585,6 +718,66 @@ def _validate_certificate_against_parent_policy(
         raise ValueError("Lean split certificate uses unsupported merge rule")
 
 
+def _validate_lemma_graph_certificate_against_parent_policy(
+    certificate: LeanLemmaGraphCertificate,
+    parent_payload: LeanTheoremPayload,
+) -> None:
+    policy = parent_payload.decomposition_policy
+    rule_name = _rule_policy_name(certificate.rule_id)
+    if rule_name is None:
+        raise ValueError("Lean lemma graph certificate uses unsupported split rule")
+    allowed_rules = set(str(item) for item in policy.get("allowed_rules", []))
+    if rule_name not in allowed_rules:
+        raise ValueError("Lean lemma graph certificate rule disallowed by parent policy")
+    graph_depth = _lemma_graph_longest_path_to_root(certificate)
+    if graph_depth > int(policy.get("max_depth", 0)):
+        raise ValueError("Lean lemma graph certificate exceeds max_depth")
+    incoming_counts: dict[str, int] = {str(node["node_id"]): 0 for node in certificate.lemma_nodes}
+    for edge in certificate.dependency_edges:
+        incoming_counts[str(edge["target_node_id"])] += 1
+    if incoming_counts[certificate.root_node_id] > int(policy.get("max_children", 0)):
+        raise ValueError("Lean lemma graph certificate exceeds max_children")
+    for node in certificate.lemma_nodes:
+        node_id = str(node["node_id"])
+        node_payload = LeanTheoremPayload.from_dict(dict(node["theorem_payload"]))
+        node_policy = node_payload.decomposition_policy
+        if incoming_counts[node_id] > int(node_policy.get("max_children", 0)):
+            raise ValueError("Lean lemma graph certificate exceeds node max_children")
+    max_nodes = policy.get("max_nodes")
+    if max_nodes is not None and (type(max_nodes) is not int or max_nodes < 0):
+        raise ValueError("decomposition_policy.max_nodes must be a non-negative integer")
+    if max_nodes is not None and len(certificate.lemma_nodes) > max_nodes:
+        raise ValueError("Lean lemma graph certificate exceeds max_nodes")
+    max_leaf_count = policy.get("max_leaf_count")
+    if max_leaf_count is not None and (
+        type(max_leaf_count) is not int or max_leaf_count < 0
+    ):
+        raise ValueError("decomposition_policy.max_leaf_count must be a non-negative integer")
+    if max_leaf_count is not None and _lemma_graph_leaf_count(certificate) > max_leaf_count:
+        raise ValueError("Lean lemma graph certificate exceeds max_leaf_count")
+
+
+def _lemma_graph_longest_path_to_root(certificate: LeanLemmaGraphCertificate) -> int:
+    incoming_by_target: dict[str, list[str]] = {
+        str(node["node_id"]): [] for node in certificate.lemma_nodes
+    }
+    for edge in certificate.dependency_edges:
+        incoming_by_target[str(edge["target_node_id"])].append(str(edge["source_node_id"]))
+
+    def depth_to_root(node_id: str) -> int:
+        incoming = incoming_by_target.get(node_id, [])
+        if not incoming:
+            return 0
+        return 1 + max(depth_to_root(source_id) for source_id in incoming)
+
+    return depth_to_root(certificate.root_node_id)
+
+
+def _lemma_graph_leaf_count(certificate: LeanLemmaGraphCertificate) -> int:
+    targets = {str(edge["target_node_id"]) for edge in certificate.dependency_edges}
+    return sum(1 for node in certificate.lemma_nodes if str(node["node_id"]) not in targets)
+
+
 def _rule_policy_name(rule_id: str) -> str | None:
     return _RULE_POLICY_NAMES.get(rule_id)
 
@@ -706,6 +899,64 @@ def _child_payload(parent_payload: LeanTheoremPayload, child: JsonObject) -> Lea
     )
 
 
+def _save_lemma_graph_node_payloads(
+    *,
+    certificate: LeanLemmaGraphCertificate,
+    parent_payload: LeanTheoremPayload,
+    artifact_store: ArtifactStore,
+    split_request_id: str,
+    created_at: str,
+) -> dict[str, ArtifactRef]:
+    refs: dict[str, ArtifactRef] = {}
+    for node in certificate.lemma_nodes:
+        node_payload = _lemma_graph_node_payload(parent_payload, node)
+        node_id = str(node["node_id"])
+        refs[node_id] = artifact_store.save_json(
+            node_payload.to_dict(),
+            artifact_id=_artifact_id(split_request_id, f"lemma_node_{node_id}.json"),
+            artifact_type="LeanLemmaGraphNodePayload",
+            artifact_schema_id="lean_proof.lemma_graph_node_payload",
+            artifact_schema_version="v2",
+            source={"kind": "lean_lemma_graph_certificate", "request_id": split_request_id},
+            metadata={
+                "node_id": node_id,
+                "root_node_id": certificate.root_node_id,
+                "context_digest": node["context_digest"],
+            },
+            created_at=created_at,
+        )
+    return refs
+
+
+def _lemma_graph_node_payload(
+    parent_payload: LeanTheoremPayload,
+    node: JsonObject,
+) -> LeanTheoremPayload:
+    payload_body = dict(node["theorem_payload"])
+    node_id = str(node["node_id"])
+    payload_body.setdefault("schema_version", parent_payload.schema_version)
+    payload_body.setdefault("theorem_id", f"{parent_payload.theorem_id}:{node_id}")
+    payload_body.setdefault("imports", list(parent_payload.imports))
+    payload_body.setdefault("namespace", parent_payload.namespace)
+    payload_body.setdefault("open_namespaces", list(parent_payload.open_namespaces))
+    payload_body.setdefault("options", dict(parent_payload.options))
+    payload_body.setdefault("parameters_source", parent_payload.parameters_source)
+    payload_body.setdefault("theorem_source", None)
+    payload_body.setdefault("proof_candidate_ref", None)
+    payload_body.setdefault(
+        "library_context",
+        {
+            **dict(parent_payload.library_context),
+            "parent_theorem_id": parent_payload.theorem_id,
+            "parent_payload_digest": parent_payload.payload_digest,
+            "lemma_node_id": node_id,
+        },
+    )
+    payload_body.setdefault("decomposition_policy", dict(parent_payload.decomposition_policy))
+    payload_body.setdefault("resource_limits", dict(parent_payload.resource_limits))
+    return LeanTheoremPayload.from_dict(payload_body)
+
+
 def _build_proposal(
     *,
     certificate: LeanSplitCertificate,
@@ -774,6 +1025,89 @@ def _build_proposal(
     )
 
 
+def _build_lemma_graph_proposal(
+    *,
+    certificate: LeanLemmaGraphCertificate,
+    certificate_ref: ArtifactRef,
+    node_payload_refs: dict[str, ArtifactRef],
+    node_payload_digests: dict[str, str],
+    task_id: str,
+    parent_unit_id: str,
+    canonical_selection_id: str,
+    canonical_output_bundle_digest: str,
+    plugin_descriptor_digest: str,
+    expansion_scope_hash: str,
+    created_at: str,
+    proposal_id: str,
+    proposal_digest: str,
+) -> DecompositionProposal:
+    merge_slots = [_lemma_graph_proposal_merge_slot(node, certificate) for node in certificate.lemma_nodes]
+    root_slot_id = f"{certificate.root_node_id}:{PROOF_ARTIFACT_OUTPUT_NAME}"
+    return DecompositionProposal(
+        proposal_header={
+            "proposal_id": proposal_id,
+            "proposal_schema_version": "phase4.decomposition_proposal.v1",
+            "task_id": task_id,
+            "parent_unit_id": parent_unit_id,
+            "canonical_selection_id": canonical_selection_id,
+            "canonical_output_bundle_digest": canonical_output_bundle_digest,
+            "plugin_id": PLUGIN_ID,
+            "plugin_version": PLUGIN_VERSION,
+            "plugin_descriptor_digest": plugin_descriptor_digest,
+            "split_strategy_id": DETERMINISTIC_TACTIC_SPLIT_STRATEGY_ID,
+            "split_strategy_params_digest": certificate.certificate_digest,
+            "expansion_scope_hash": expansion_scope_hash,
+            "proposal_digest": proposal_digest,
+            "created_at": created_at,
+        },
+        child_specs=[
+            _lemma_graph_child_spec(
+                node,
+                node_payload_refs[str(node["node_id"])],
+                node_payload_digests[str(node["node_id"])],
+                certificate,
+            )
+            for node in certificate.lemma_nodes
+        ],
+        dependency_edges=[
+            _lemma_graph_dependency_edge(edge, certificate)
+            for edge in certificate.dependency_edges
+        ],
+        expected_outputs=[
+            {
+                "output_name": PROOF_ARTIFACT_OUTPUT_NAME,
+                "schema_ref": schema_ref(LEAN_PROOF_ARTIFACT_SCHEMA_VERSION),
+                "resolution_kind": "merge_plan_output",
+                "child_key": None,
+                "child_output_name": None,
+                "merge_slot_id": root_slot_id,
+                "merge_slot_policy": "all_required_lemma_graph_node_slots",
+                "merge_slot_count": len(merge_slots),
+                "merge_slot_keys": [slot["slot_id"] for slot in merge_slots],
+                "required": True,
+            }
+        ],
+        merge_slots=merge_slots,
+        promotion_guard_evidence={
+            "typed_io_checked": True,
+            "independently_schedulable_checked": True,
+            "validator_policy_checked": True,
+            "output_contract_checked": True,
+            "no_freeform_thought_checked": True,
+            "max_depth_checked": True,
+            "max_children_checked": True,
+            "dependency_edges_checked": True,
+            "lean_split_certificate_ref": certificate_ref.to_dict(),
+            "lean_split_certificate_digest": certificate.certificate_digest,
+            "lean_rule_id": certificate.rule_id,
+            **_lemma_graph_metadata_summary(certificate),
+            "root_node_id": certificate.root_node_id,
+            "environment_digest": certificate.environment_digest,
+            "oracle_proof_package_digest": certificate.oracle_proof_package_digest,
+        },
+    )
+
+
 def _child_spec(child: JsonObject, child_payload_ref: ArtifactRef) -> JsonObject:
     return {
         "child_logical_key": child["child_logical_key"],
@@ -820,11 +1154,106 @@ def _child_spec(child: JsonObject, child_payload_ref: ArtifactRef) -> JsonObject
     }
 
 
+def _lemma_graph_child_spec(
+    node: JsonObject,
+    node_payload_ref: ArtifactRef,
+    node_payload_digest: str,
+    certificate: LeanLemmaGraphCertificate,
+) -> JsonObject:
+    node_id = str(node["node_id"])
+    return {
+        "child_logical_key": node_id,
+        "unit_type": "lean_proof_lemma_node",
+        "input_bindings": {
+            "lemma_theorem_payload": {
+                "kind": "artifact_ref",
+                "artifact_ref": node_payload_ref.to_dict(),
+                "body_digest": node_payload_digest,
+                "context_digest": node["context_digest"],
+            }
+        },
+        "required_outputs": [PROOF_ARTIFACT_OUTPUT_NAME],
+        "output_contract_refs": {
+            PROOF_ARTIFACT_OUTPUT_NAME: {
+                "output_contract_id": PROOF_ARTIFACT_CONTRACT_ID,
+                "schema_ref": schema_ref(LEAN_PROOF_ARTIFACT_SCHEMA_VERSION),
+            }
+        },
+        "validator_policy_id": CHECKER_VALIDATOR_POLICY_ID,
+        "budget_limit": None,
+        "deadline": None,
+        "weight": 1.0,
+        "required_capabilities": {
+            "executor": "deterministic_local_lean_checker",
+            "lean_checker": True,
+        },
+        "plugin_payload": {
+            "schema_version": "lean_proof.lemma_graph_node_plugin_payload.v2",
+            "summary": {
+                "node_id": node_id,
+                "node_kind": node["node_kind"],
+                "depth": node["depth"],
+                "root_node_id": certificate.root_node_id,
+                "certificate_digest": certificate.certificate_digest,
+                "environment_digest": certificate.environment_digest,
+                **_lemma_graph_metadata_summary(certificate),
+            },
+            "provenance": _lemma_graph_provenance(certificate),
+            "validation_requirements": {
+                "checker_required": True,
+                "environment_ref_required": True,
+                "context_digest_required": True,
+                "lemma_graph_certificate_node_required": True,
+                "dependency_aware_slot_integrity_required": True,
+            },
+        },
+        "promotion_guard_ref": None,
+    }
+
+
+def _lemma_graph_dependency_edge(
+    edge: JsonObject,
+    certificate: LeanLemmaGraphCertificate,
+) -> JsonObject:
+    source = str(edge["source_node_id"])
+    target = str(edge["target_node_id"])
+    return {
+        "edge_logical_key": f"edge:{source}->{target}",
+        "source_child_key": source,
+        "target_child_key": target,
+        "source_output_name": PROOF_ARTIFACT_OUTPUT_NAME,
+        "target_input_name": f"dependency:{source}",
+        "relation_type": "depends_on_output",
+        "plugin_payload": {
+            "schema_version": "lean_proof.lemma_graph_dependency_edge_payload.v2",
+            "summary": {
+                "source_node_id": source,
+                "target_node_id": target,
+                "root_node_id": certificate.root_node_id,
+                "certificate_digest": certificate.certificate_digest,
+                **_lemma_graph_metadata_summary(certificate),
+            },
+            "provenance": _lemma_graph_provenance(certificate),
+        },
+    }
+
+
 def _proposal_merge_slot(child: JsonObject) -> JsonObject:
     slot_key = _slot_key(child)
     return {
         "slot_id": slot_key,
         "child_key": child["child_logical_key"],
+        "child_output_name": PROOF_ARTIFACT_OUTPUT_NAME,
+        "schema_ref": schema_ref(LEAN_PROOF_ARTIFACT_SCHEMA_VERSION),
+        "required": True,
+        "missing_policy": "block_merge",
+    }
+
+
+def _lemma_graph_root_merge_slot(certificate: LeanLemmaGraphCertificate) -> JsonObject:
+    return {
+        "slot_id": f"{certificate.root_node_id}:{PROOF_ARTIFACT_OUTPUT_NAME}",
+        "child_key": certificate.root_node_id,
         "child_output_name": PROOF_ARTIFACT_OUTPUT_NAME,
         "schema_ref": schema_ref(LEAN_PROOF_ARTIFACT_SCHEMA_VERSION),
         "required": True,
@@ -906,6 +1335,85 @@ def _build_merge_plan(
     )
 
 
+def _build_lemma_graph_merge_plan(
+    *,
+    certificate: LeanLemmaGraphCertificate,
+    task_id: str,
+    parent_unit_id: str,
+    canonical_selection_id: str,
+    plugin_descriptor_digest: str,
+    expansion_decision_id: str,
+    proposal_id: str,
+    node_payload_digests: dict[str, str],
+    child_unit_ids_by_node_id: dict[str, str],
+    created_at: str,
+    merge_plan_id: str,
+    merge_plan_digest: str,
+) -> MergePlan:
+    required_slots = [
+        _lemma_graph_required_slot(
+            certificate=certificate,
+            node=node,
+            node_payload_digest=node_payload_digests[str(node["node_id"])],
+            child_unit_id=child_unit_ids_by_node_id[str(node["node_id"])],
+        )
+        for node in certificate.lemma_nodes
+    ]
+    result_schema_ref = schema_ref(LEAN_PROOF_ARTIFACT_SCHEMA_VERSION)
+    plugin_defined_body = _lemma_graph_merge_plugin_defined_body(certificate, required_slots)
+    return MergePlan(
+        merge_plan_header={
+            "merge_plan_id": merge_plan_id,
+            "merge_plan_schema_version": "phase4.merge_plan.v1",
+            "task_id": task_id,
+            "parent_unit_id": parent_unit_id,
+            "canonical_selection_id": canonical_selection_id,
+            "decomposition_proposal_id": proposal_id,
+            "expansion_decision_id": expansion_decision_id,
+            "created_by_plugin_id": PLUGIN_ID,
+            "created_by_plugin_version": PLUGIN_VERSION,
+            "merge_plan_digest": merge_plan_digest,
+            "created_at": created_at,
+        },
+        merge_policy_ref={
+            "plugin_id": PLUGIN_ID,
+            "plugin_version": PLUGIN_VERSION,
+            "merge_policy_id": VERIFIED_MERGE_POLICY_ID,
+            "merge_policy_version": "v1",
+            "merge_policy_descriptor_digest": plugin_descriptor_digest,
+            "merge_policy_params_digest": certificate.certificate_digest,
+        },
+        required_slots=required_slots,
+        parent_output_mapping=[
+            {
+                "parent_output_name": PROOF_ARTIFACT_OUTPUT_NAME,
+                "resolution_kind": "merge_plan_output",
+                "merge_slot_keys": [slot["slot_key"] for slot in required_slots],
+                "result_schema_ref": result_schema_ref,
+                "result_schema_digest": canonical_json_digest(result_schema_ref),
+            }
+        ],
+        hash_recording_requirements={
+            "record_child_canonical_output_digest": True,
+            "record_slot_source_artifact_digest": True,
+            "record_merge_input_bundle_digest": True,
+        },
+        merge_validation_requirements={
+            "all_required_slots_canonical": True,
+            "slot_schema_check_required": True,
+            "merged_output_schema_check_required": True,
+            "plugin_merge_validator_policy_id": CHECKER_VALIDATOR_POLICY_ID,
+        },
+        plugin_payload={
+            "plugin_defined_schema_ref": schema_ref(
+                "lean_proof.lemma_graph_merge_plan_plugin_payload.v2"
+            ),
+            "plugin_defined_body_digest": canonical_json_digest(plugin_defined_body),
+            "plugin_defined_body": plugin_defined_body,
+        },
+    )
+
+
 def _required_slot(*, child: JsonObject, child_unit_id: str) -> JsonObject:
     output_schema_ref = schema_ref(LEAN_PROOF_ARTIFACT_SCHEMA_VERSION)
     return {
@@ -917,6 +1425,51 @@ def _required_slot(*, child: JsonObject, child_unit_id: str) -> JsonObject:
         "output_schema_digest": canonical_json_digest(output_schema_ref),
         "required": True,
         "missing_policy": "block_merge",
+    }
+
+
+def _lemma_graph_required_root_slot(
+    *,
+    certificate: LeanLemmaGraphCertificate,
+    child_unit_id: str,
+) -> JsonObject:
+    root_node = certificate.lemma_nodes_by_id[certificate.root_node_id]
+    root_payload = LeanTheoremPayload.from_dict(dict(root_node["theorem_payload"]))
+    return _lemma_graph_required_slot(
+        certificate=certificate,
+        node=root_node,
+        node_payload_digest=root_payload.payload_digest or "",
+        child_unit_id=child_unit_id,
+    )
+
+
+def _lemma_graph_required_slot(
+    *,
+    certificate: LeanLemmaGraphCertificate,
+    node: JsonObject,
+    node_payload_digest: str,
+    child_unit_id: str,
+) -> JsonObject:
+    node_id = str(node["node_id"])
+    output_schema_ref = schema_ref(LEAN_PROOF_ARTIFACT_SCHEMA_VERSION)
+    return {
+        "slot_key": f"{node_id}:{PROOF_ARTIFACT_OUTPUT_NAME}",
+        "source_child_logical_key": node_id,
+        "source_child_unit_id": child_unit_id,
+        "source_output_name": PROOF_ARTIFACT_OUTPUT_NAME,
+        "output_schema_ref": output_schema_ref,
+        "output_schema_digest": canonical_json_digest(output_schema_ref),
+        "required": True,
+        "missing_policy": "block_merge",
+        "slot_metadata": {
+            "schema_version": "lean_proof.lemma_graph_required_slot_metadata.v2",
+            "node_id": node_id,
+            "root_node_id": certificate.root_node_id,
+            "context_digest": node["context_digest"],
+            "theorem_payload_digest": node_payload_digest,
+            **_lemma_graph_metadata_summary(certificate),
+            "provenance": _lemma_graph_provenance(certificate),
+        },
     }
 
 
@@ -942,6 +1495,78 @@ def _merge_plugin_defined_body(
             "environment_ref_compatibility_required": True,
             "root_merge_proof_checker_required": True,
         },
+    }
+
+
+def _lemma_graph_merge_plugin_defined_body(
+    certificate: LeanLemmaGraphCertificate,
+    required_slots: list[JsonObject],
+) -> JsonObject:
+    return {
+        "schema_version": "lean_proof.lemma_graph_merge_plan_plugin_payload.v2",
+        "summary": {
+            "merge_policy": VERIFIED_MERGE_POLICY_ID,
+            "split_certificate_id": certificate.certificate_id,
+            "split_certificate_digest": certificate.certificate_digest,
+            "root_node_id": certificate.root_node_id,
+            "lemma_node_count": len(certificate.lemma_nodes),
+            "dependency_edge_count": len(certificate.dependency_edges),
+            "required_slot_count": len(required_slots),
+            "required_slot_keys": [slot["slot_key"] for slot in required_slots],
+            "oracle_proof_package_digest": certificate.oracle_proof_package_digest,
+            **_lemma_graph_metadata_summary(certificate),
+        },
+        "validation_requirements": {
+            "all_required_child_proofs_canonical": True,
+            "child_context_digest_check_required": True,
+            "environment_ref_compatibility_required": True,
+            "dependency_aware_slot_integrity_required": True,
+            "all_lemma_node_proofs_required": True,
+            "proof_file_assembly_required": True,
+            "root_merge_proof_checker_required": True,
+        },
+    }
+
+
+def _lemma_graph_proposal_merge_slot(
+    node: JsonObject,
+    certificate: LeanLemmaGraphCertificate,
+) -> JsonObject:
+    node_id = str(node["node_id"])
+    return {
+        "slot_id": f"{node_id}:{PROOF_ARTIFACT_OUTPUT_NAME}",
+        "child_key": node_id,
+        "child_output_name": PROOF_ARTIFACT_OUTPUT_NAME,
+        "schema_ref": schema_ref(LEAN_PROOF_ARTIFACT_SCHEMA_VERSION),
+        "required": True,
+        "missing_policy": "block_merge",
+        "slot_metadata": {
+            "schema_version": "lean_proof.lemma_graph_required_slot_metadata.v2",
+            "node_id": node_id,
+            "root_node_id": certificate.root_node_id,
+            "context_digest": node["context_digest"],
+            **_lemma_graph_metadata_summary(certificate),
+            "provenance": _lemma_graph_provenance(certificate),
+        },
+    }
+
+
+def _lemma_graph_metadata_summary(certificate: LeanLemmaGraphCertificate) -> JsonObject:
+    return {
+        "topic_family": certificate.topic_family,
+        "topic_family_version": certificate.topic_family_version,
+        "construction_rule_id": certificate.construction_rule_id,
+        "oracle_package_group": certificate.oracle_package_group,
+        "proof_assembly_shape": certificate.proof_assembly_shape,
+    }
+
+
+def _lemma_graph_provenance(certificate: LeanLemmaGraphCertificate) -> JsonObject:
+    return {
+        "certificate_id": certificate.certificate_id,
+        "certificate_digest": certificate.certificate_digest,
+        "rule_id": certificate.rule_id,
+        "oracle_proof_package_digest": certificate.oracle_proof_package_digest,
     }
 
 

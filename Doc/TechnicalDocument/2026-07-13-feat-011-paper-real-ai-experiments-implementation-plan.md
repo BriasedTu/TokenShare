@@ -69,7 +69,7 @@
 | D08 | worker death 还不是独立 worker process death。 | 实验层，可能暴露系统 bug | 写 `paper_workers.py`；如 lease/reassignment 真实失败，再补协议内部。 |
 | D09 | 旧 metrics 有些指标是硬写 0/1，不能支撑论文结论。 | 实验层 | 写 `paper_metrics.py`，从 evidence 复算。 |
 | D10 | 没有论文所需目录、per-task/per-attempt JSONL、CSV、audit 和 secret scan report。 | 实验层 | 写 `paper_report.py`。 |
-| D11 | strong/weak/mixed 模型策略没有统一 paper condition 支持。 | 实验层 | 在 runner/model policy 中实现，不进 executor。 |
+| D11 | Experiment 5 的预注册三模型 cohort、外部分数快照、跨 provider preflight、fixed-entry condition expansion 和 adapter request provenance 已完成；仍缺正式 real-provider execution、逐 AI unit `model_execution_records`、paper metrics/report/CSV 和 formal secret scan wiring。 | 实验层为主；OpenAI transport 是 executor 前置能力 | 后续只补真实执行和报告链路；不得回退到 strong/weak/mixed 或在失败后换模型。 |
 | D12 | `budget / plan-only` 容易被误解为线上系统能力。 | 实验层可选 | 只作为正式大规模实验的成本安全阀；不进入协议核心、插件或 executor。 |
 | D13 | 当前 Lean paper catalog 太浅，历史 easy/medium/hard 都只是 simple/shallow proof-chain 变化，不能支撑递归证明拆分主张。 | 实验层 + Lean 插件能力提升 | 新增 medium recursive lemma-DAG catalog；hard/frontier 作为复杂/不可解 stress；正式论文 run 前补 catalog schema、split/merge 能力和 checker preflight。 |
 
@@ -302,14 +302,17 @@ conda run -n tokenshare python -m pytest tests\plugins\lean_proof -q
 - 用户要求新增一类更难题：一个 root theorem 由多个 lemma 推导，每个 lemma 又由多个 sublemma 推导，形成递归 lemma dependency DAG；这类题应作为正式口径的 medium 难度。
 - 用户还要求再定义更难一类：目前人类也不一定能做出、或非常复杂的混合题目。该类应作为 hard / frontier stress，但若没有可验证 oracle proof，不能伪造成 Lean checker success，只能输出 structured blocked / frontier stress evidence。
 - 拆分插件能力必须随之提升，系统要支持这种复杂题，而不是只扩 catalog 文本。
+- 2026-07-15 用户最新决策：当前正式 Lean 实验目标要扩大到 3 个 `paper_difficulty` × 3 个 `topic_family`，难度为 `simple`、`medium_lemma_dag`、`hard_frontier`，题型为 `pure_logic`、`function_set`、`induction`；每个单元目标 10-20 道可审计 case。这个决定先记录为正式实验目标，不代表现在可以直接修改 runner 或 paper adapter 执行矩阵。
 
 **回应与边界：**
 
 - 可以先继续 Task 7 / Task 8 / Task 9：post-AI fault injection、worker death harness 和 ablation support 不依赖复杂 Lean 题库才能实现；当前 shallow Lean + factorization adapter 足以验证基础机制。
 - 但正式 Experiment 1-5 的论文结果不能只用当前 shallow Lean catalog 支撑 Lean 难度、worker scaling 或 protocol ablation 主张；正式 run 前必须回来补 complex Lean catalog 或把 Lean 复杂度主张降级。
 - 后续实现应新增 `lean_lemma_graph_catalog.v1.jsonl` 或 `lean_catalog.v2.jsonl`，字段至少包含 `paper_difficulty`、`root_theorem_payload`、`lemma_graph`、`dependency_edges`、`expected_depth`、`expected_leaf_count`、`expected_ai_unit_count`、`merge_plan_shape`、`oracle_proof_package_ref`、`environment_digest`、`preflight_status`。
+- 扩展 schema 时应复核是否新增 `topic_family`、`topic_family_version`、`construction_rule_id`、`oracle_package_group` 或等价 metadata；当前 v1 simple catalog 只是过渡输入，当前 v2 medium fixture 只是最小 golden case，不满足完整 3 × 3 题型矩阵。
 - Lean 插件/adapter 后续必须支持递归 lemma graph split、proof-file assembly、per-lemma checker evidence、multi-level merge/root recheck、dependency-aware slot integrity，以及必要的 deterministic split/merge 规则；仍禁止 AI 决定协议级拆分。
 - Task 7/8/9 实现时不得把 Lean 写死为两个 child 或 `P ∧ Q` / `P ↔ Q`；fault、worker、ablation 数据结构应按 child list / slot list / dependency graph 扩展，避免后续 lemma-DAG 重做。
+- 进入实现前，下一位 reviewer 应先使用 `Doc/TechnicalDocument/2026-07-15-feat-011-lean-tiered-topic-catalog-review-prompt.md` 复核正式实验扩大后的矩阵规模、题型模板、oracle proof 成本、Lean split/merge 缺口、paper adapter DAG execution 缺口和预算影响；不要在题库与 deterministic split/oracle 方案未确定前先写 runner 执行代码或直接批量添加 90-180 道题。
 
 ### Task 7: 实现 post-AI fault injection
 
@@ -401,27 +404,63 @@ $env:PYTHONPATH='src'
 conda run -n tokenshare python -m pytest tests\experiments\test_paper_ablation.py -q
 ```
 
-### Task 10: 实现 strong/weak/mixed model policy
+### Task 10: 实现预注册三模型 model-provider endpoint comparison
 
-**层级：** 实验层。
+**层级：** Experiment 5 的 cohort、condition、执行记录和比较逻辑属于实验层；为了接入 `gpt-5.6-sol` 而新增的 OpenAI Chat Completions transport/config 支持属于 executor 层。executor 只执行 runner 已选择的 entry，不解释外部分数、不贴 strong/weak 标签、不决定实验路由。
+
+**2026-07-16 用户决策：** 论文正式放弃 `strong`、`weak`、`mixed` 和 `difficulty_aware_mixed` 口径。Experiment 5 改为三个预注册、具名的固定模型端点比较：SiliconFlow `zai-org/GLM-5.2`、SiliconFlow `Qwen/Qwen3.6-27B`、OpenAI `gpt-5.6-sol` 且固定 `reasoning_effort=high`。Artificial Analysis 分数只作为模型背景和外部排序 metadata，不产生类别、不参与 routing，也不能代替 TokenShare 实验中的 completion、accepted validity、token、cost 和 latency 实测。
+
+**外部资料本地摘要（访问日期：2026-07-16）：**
+
+- Artificial Analysis [Intelligence Benchmarking Methodology](https://artificialanalysis.ai/methodology/intelligence-benchmarking) 与 [Data API](https://artificialanalysis.ai/data-api)：Intelligence Index v4.1 是版本化综合指标，覆盖 agent、coding、scientific reasoning 和 general 能力，并提供稳定数据接口。影响范围：只用于冻结 cohort 的外部背景分数、榜单版本、模型变体和访问日期；正式 run 不联网刷新分数。
+- Artificial Analysis 模型页：[GLM-5.2 (max)](https://artificialanalysis.ai/models/glm-5-2) 为 51 分，[Qwen3.6 27B (Reasoning)](https://artificialanalysis.ai/models/qwen3-6-27b) 为 37 分，[GPT-5.6 Sol (high)](https://artificialanalysis.ai/models/gpt-5-6-sol-high) 为 56 分。影响范围：分数进入 tracked cohort snapshot；GLM/Qwen 的 SiliconFlow endpoint 若未证明 reasoning mode 与榜单变体完全一致，必须标记 `benchmark_match_status=family_only`，不能声称是同一 benchmark configuration。
+- SiliconFlow [模型中心](https://www.siliconflow.cn/models) 确认当前 provider model strings `zai-org/GLM-5.2` 与 `Qwen/Qwen3.6-27B`；OpenAI [Models](https://developers.openai.com/api/docs/models) 确认 `gpt-5.6-sol` 是 GPT-5.6 Sol API model id，并支持 `high` reasoning effort。影响范围：Task 10A/10B 的 provider/model/reasoning identity preflight 和 safe manifest 字段。
 
 **Files:**
+- Create: `benchmarks/paper/model_comparison_cohort.v1.json`
+- Create: `src/tokenshare/experiments/paper_model_policy.py`
 - Extend: `src/tokenshare/experiments/paper_models.py`
 - Extend: `src/tokenshare/experiments/paper_runner.py`
+- Extend: `src/tokenshare/experiments/run_paper_experiments.py`
+- Extend: `src/tokenshare/executors/ai_api_config.py`
+- Extend: `src/tokenshare/executors/ai_api_transport.py`
+- Extend: `src/tokenshare/executors/ai_api.py`
+- Extend: `src/tokenshare/executors/ai_api_local_config.py`
 - Test: `tests/experiments/test_paper_model_policy.py`
+- Test: `tests/executors/test_ai_api_config.py`
+- Test: `tests/executors/test_ai_api_transport.py`
+- Create: `tests/executors/test_ai_api_openai_transport.py`
 
-- [ ] 支持 `strong_only`、`weak_only`、`mixed`。
-- [ ] 记录每个 AI unit 实际使用的 entry id、provider、model。
-- [ ] 如果缺少 strong 或 weak entry，Experiment 5 写 structured blocked，不让 Experiment 1-4 失败。
-- [ ] 模型策略不进入 executor；executor 只执行被选择的 entry。
+#### Task 10A: 补 OpenAI provider transport，但不把实验策略放进 executor
 
-**修复的缺陷：** D11。
+- [ ] 先写 failing config/transport tests：当前 `load_ai_api_config()` 对 `provider_family="openai"` 的拒绝必须成为红灯；测试要求 OpenAI config 仍只保存 `api_key_env`，禁止明文 key，并要求 provider/model/reasoning request 字段进入 safe digest。
+- [ ] 保持一个 executor config 只对应一个 `provider_family`；允许 runner 同时加载独立的 SiliconFlow config 和 OpenAI config，不把两类 key 或 endpoint 强行交叉展开成同一 entry pool。
+- [ ] 为 OpenAI Chat Completions 增加独立 request builder/parser/transport；使用 `model="gpt-5.6-sol"`、`reasoning_effort="high"`、固定 paper request limits，并继续保存 request、raw response、parsed/parse-failure、usage、latency、provider response id、resolved model 和 provenance artifacts。
+- [ ] 把 `AIAPIExecutor` provenance 中硬编码的 `provider_family="siliconflow"` 改为来自已校验 config；SiliconFlow v1 行为和历史 replay evidence 保持兼容。
+- [ ] OpenAI provider error、429、usage、secret redaction 和 replay guard 复用现有稳定枚举与 artifact 边界；不得在 executor 内出现 `experiment_id`、cohort、外部分数或模型比较结论。
+- [ ] 真实 GPT entry 尚未配置或 API smoke 未通过时，只把 Experiment 5 preflight 标记为 blocked；不得自动用另一个 SiliconFlow 模型冒充 GPT-5.6。
+
+#### Task 10B: 冻结三模型 cohort 并实现 fixed-entry condition
+
+- [x] `model_comparison_cohort.v1.json` 固定 `cohort_id=tokenshare.paper.model_endpoint_cohort.v1` 和三个 member：`glm_5_2_siliconflow`、`qwen3_6_27b_siliconflow`、`gpt_5_6_sol_high_openai`。每个 member 至少记录 `provider_family,provider_model_id,reasoning_profile_id,external_benchmark_source,index_version,index_score,benchmark_variant,benchmark_match_status,source_url,observed_at`。
+- [x] cohort snapshot 是 tracked、无 secret 的输入；正式 run 只读 snapshot 和 digest，不在 plan-only、execution、metrics 或 replay 阶段联网刷新榜单。榜单更新只能生成新的 cohort version，不能改写已运行 suite 的模型身份。
+- [ ] local gitignored entry map 只负责把三个 `cohort_member_id` 映射到真实 executor config/entry id；suite manifest 保存 sanitized mapping、config digest、`api_key_env` 名称和 smoke evidence ref，不保存 key value。
+- [x] `PaperExperimentCondition` 对 Experiment 5 使用 `model_policy="fixed_entry"`，并增加 `model_cohort_id,cohort_member_id,model_entry_id,provider_family,provider_model_id,reasoning_profile_id,model_cohort_digest`；新 schema 不允许 `strength`、`selected_strength`、strong/weak tag 或旧 strong/weak/mixed model policy。
+- [ ] 三个 member 分别跑相同的 Experiment 1 catalog slice、task order、prompt/parser/plugin version、worker count、timeout、request-limit policy、repeat/seed family；每个 AI unit 固定 cohort member，不做 difficulty-aware routing，也不在失败后换模型。
+- [ ] 新增 `model_execution_records`，每行至少包含 `condition_id,task_id,unit_id,attempt_id,model_policy,model_cohort_id,cohort_member_id,selected_entry_id,provider_family,provider_model_id,reasoning_profile_id,request_ref,provider_attempt_ref,usage_ref,latency_ms,total_tokens,cost_estimate`。
+- [x] plan-only preflight 已逐 member 验证 config、key env、model id、reasoning control 和 smoke evidence schema/status/provider/model/reasoning/artifact refs。任一 member 缺失或不匹配时，正式 Experiment 5 整体写 `status="blocked"`、`blocked_reason="incomplete_model_cohort"`、`paper_eligible_possible=false`、`provider_calls_made=0`，且 Experiment 1-4 不失败。后续真实执行仍需补 catalog/parser/checker compatibility、预算审批和 formal `model_execution_records`。
+- [ ] 论文和 CSV 将该实验称为 `three-model model-provider endpoint comparison`。GPT 走 OpenAI、GLM/Qwen 走 SiliconFlow 时，completion/accepted validity 是主要比较；latency、429 和 cost 必须标注 provider confounding，不能归因于纯模型能力。
+- [ ] Experiment 5 仍为 2 domains × 3 difficulties × 5 tasks × 3 fixed members × 3 repeats = 270 root-runs，因此不增加原 P0-full root-run 数；provider calls、token 和成本上界必须按三个 endpoint 的真实 split/request profile 重新 plan-only 展开。
+
+**修复的缺陷：** D11，并补齐 GPT-5.6 所需的最小 provider transport 前置能力。
 
 **验证：**
 
 ```powershell
 $env:PYTHONPATH='src'
-conda run -n tokenshare python -m pytest tests\experiments\test_paper_model_policy.py -q
+conda run -n tokenshare python -m pytest tests\executors\test_ai_api_config.py tests\executors\test_ai_api_transport.py tests\executors\test_ai_api_openai_transport.py -q
+conda run -n tokenshare python -m pytest tests\experiments\test_paper_model_policy.py tests\experiments\test_paper_models.py tests\experiments\test_run_paper_experiments_cli.py -q
+conda run -n tokenshare python -m pytest tests\executors tests\experiments -q
 ```
 
 ### Task 11: 实现可选 experiment budget / plan-only
@@ -483,7 +522,7 @@ conda run -n tokenshare python -m pytest tests\experiments\test_paper_metrics.py
 - [ ] 写 `input_catalog_manifest.json`。
 - [ ] 写 `conditions.jsonl`。
 - [ ] 每个 run 写 `run_manifest.json`、`per_task_results.jsonl`、`per_attempt_results.jsonl`、`fault_injections.jsonl`、event log 和 artifacts。
-- [ ] 写 feasibility/scalability/robustness/ablation/model policy CSV。
+- [ ] 写 feasibility/scalability/robustness/ablation/model-provider endpoint comparison CSV。
 - [ ] 写 `paper_eligibility_report.json`。
 - [ ] 写 `secret_scan_report.json`。
 
@@ -506,8 +545,10 @@ conda run -n tokenshare python -m pytest tests\experiments\test_paper_report.py 
 
 - [ ] 支持 `--experiments exp1,exp2,exp3,exp4,exp5`。
 - [ ] 支持 `--real-transport`，默认拒绝 scripted paper run。
-- [ ] 支持 `--ai-api-config local/ai_api_smoke.local.json`。
-- [ ] 支持 `--strong-entry-id`、`--weak-entry-id`。
+- [ ] 仅运行 Experiment 1-4 时兼容旧单配置入口 `--ai-api-config local/ai_api_smoke.local.json`；Experiment 5 使用可重复的 `--provider-config siliconflow=<path>` / `--provider-config openai=<path>`，或由 local entry map 引用两份独立配置。
+- [ ] 支持 `--baseline-entry-id`，供 Experiment 1-4 固定同一个预注册 baseline entry。
+- [ ] 支持 `--model-cohort-file benchmarks/paper/model_comparison_cohort.v1.json` 和 gitignored `--model-entry-map local/model_comparison_entries.local.json`，供 Experiment 5 解析三模型 logical member 到真实 provider config / entry id。
+- [ ] CLI 和 manifest 均不得保存明文 key；provider config 只记录安全路径引用、digest 和 `api_key_env` 名称。
 - [ ] 支持 `--worker-levels`、`--optional-worker-levels`、`--repeats`、`--seed-family`。
 - [ ] 支持 `--pilot` 或等价小规模 suite。
 - [ ] 输出路径固定为 `outputs/experiments/paper_v1/` 下的 suite id 子目录。
@@ -540,20 +581,20 @@ conda run -n tokenshare python -m pytest tests\experiments\test_run_paper_experi
 
 ```powershell
 $env:PYTHONPATH='src'
-$env:TOKENSHARE_STRONG_ENTRY_ID='glm_5_2__sf_key_1'
+$env:TOKENSHARE_BASELINE_ENTRY_ID='glm_5_2__sf_key_1'
 conda run -n tokenshare python -m tokenshare.experiments.run_paper_experiments `
   --output-root outputs/experiments/paper_v1 `
   --experiments exp1,exp2,exp3,exp4 `
   --pilot `
   --real-transport `
   --ai-api-config local/ai_api_smoke.local.json `
-  --strong-entry-id $env:TOKENSHARE_STRONG_ENTRY_ID `
+  --baseline-entry-id $env:TOKENSHARE_BASELINE_ENTRY_ID `
   --worker-levels 1,3 `
   --repeats 1 `
   --seed-family 1
 ```
 
-`TOKENSHARE_STRONG_ENTRY_ID` 的值必须是本地 gitignored config 里的真实 entry id；不要把 key 或 secret 写进命令、日志或文档。
+`TOKENSHARE_BASELINE_ENTRY_ID` 的值必须是本地 gitignored config 里的真实 entry id；这里的 baseline 只表示 Experiment 1-4 的固定控制模型，不表示 strong。不要把 key 或 secret 写进命令、日志或文档。
 
 ### Task 16: 根据 pilot 决定系统内部是否补强
 
@@ -571,7 +612,7 @@ conda run -n tokenshare python -m tokenshare.experiments.run_paper_experiments `
 **层级：** 实验执行。
 
 - [ ] 2 domains × 3 difficulties × 10 tasks × 3 repeats。
-- [ ] 固定 strong entry。
+- [ ] 固定一个预注册 baseline entry；论文只写实际 provider/model/entry identity，不贴 strong 标签。
 - [ ] 输出 feasibility table。
 - [ ] 报告 completion rate 和 accepted validity rate，不能只报 accepted outputs 100% correct。
 
@@ -605,9 +646,10 @@ conda run -n tokenshare python -m tokenshare.experiments.run_paper_experiments `
 **层级：** 实验执行。
 
 - [ ] Experiment 4 跑 6 个 ablation modes，输出 ablation table。
-- [ ] Experiment 5 只在 strong/weak 模型 entry 都可用时跑。
-- [ ] 如果缺 weak entry，Experiment 5 写 blocked，不影响 Experiment 1-4。
-- [ ] mixed 策略必须记录每个 AI unit 的真实模型选择。
+- [ ] Experiment 5 只在 `glm_5_2_siliconflow`、`qwen3_6_27b_siliconflow`、`gpt_5_6_sol_high_openai` 三个 cohort member 的真实 entry、key env、reasoning profile 和 smoke evidence 都可用时正式运行。
+- [ ] 任一 cohort member 缺失时，Experiment 5 写 `blocked_reason="incomplete_model_cohort"`，不影响 Experiment 1-4；不得用相邻模型替代或只跑两个模型后仍生成三模型主表。
+- [ ] 每个 condition / AI unit 使用固定 cohort member，并写完整 `model_execution_records`；不实现 strong/weak/mixed 或失败升级换模。
+- [ ] 论文把结果表述为 three-model model-provider endpoint comparison；跨 SiliconFlow/OpenAI 的 latency、cost、429 差异保留 provider confounding 限定。
 
 **验证对象：** 协议机制贡献与模型策略。
 
@@ -669,7 +711,7 @@ powershell -ExecutionPolicy Bypass -File .\init.ps1
 ### 第三批：正式数据
 
 - Task 11，如果需要正式成本安全阀。
-- 回到“Lean 复杂题库与递归 lemma-DAG 要求”：若论文要保留 Lean 递归拆分、难度、worker scaling 或 ablation 主张，正式数据前必须补 medium recursive lemma-DAG catalog 和对应 split/merge/adapter 能力；否则 suite manifest 和论文文字必须降级 Lean claim，只把当前 v1 当 simple/shallow。
+- 回到“Lean 复杂题库与递归 lemma-DAG 要求”：用户已决定正式 Lean 实验目标扩大为三难度 × 三题型矩阵；正式数据前必须补 medium recursive lemma-DAG catalog、topic_family schema、fixed oracle package、deterministic split/merge 规则、paper adapter DAG execution / proof-file assembly 和预算门禁。若这些前置项未完成，suite manifest 必须把对应 Lean medium / hard / topic-family condition 标为 blocked，论文文字必须降级 Lean claim，只把当前 v1 当 simple/shallow；不得先改 runner 让实验层绕过 Lean checker 或把 AI 拆分输出当协议事实。
 - Task 17
 - Task 18
 - Task 19
@@ -681,7 +723,7 @@ powershell -ExecutionPolicy Bypass -File .\init.ps1
 ## 对用户问题的直接答案
 
 **这些实验现在能不能跑？**
-不能直接跑成论文结果。当前 paper schema、catalog、budget/plan-only skeleton、real-AI eligibility gate、Lean catalog checker-backed preflight、factorization paper adapter 和 Lean paper adapter 已有基础；仍缺真实 API pilot 执行路径、post-AI fault / worker-death harness、worker scaling condition expansion、ablation/model policy、evidence-derived metrics/report、secret scan wiring 和正式 Experiment 1-5 run。2026-07-15 新增决策还要求正式论文 Lean 主张必须补 medium recursive lemma-DAG catalog；当前 `lean_catalog.v1.jsonl` 全部只算 simple / shallow。旧实验能跑，但只能算 regression/calibration。
+不能直接跑成论文结果。当前 paper schema、catalog、budget/plan-only skeleton、real-AI eligibility gate、Lean catalog checker-backed preflight、factorization paper adapter 和 Lean paper adapter 已有基础；仍缺真实 API pilot 执行路径、post-AI fault / worker-death harness、worker scaling condition expansion、正式 ablation integration、Task 10 OpenAI transport 与三模型 cohort/fixed-entry comparison、evidence-derived metrics/report、secret scan wiring 和正式 Experiment 1-5 run。2026-07-15 新增决策还要求正式论文 Lean 主张必须补 medium recursive lemma-DAG catalog；当前 `lean_catalog.v1.jsonl` 全部只算 simple / shallow。旧实验能跑，但只能算 regression/calibration。
 
 **要跑还需要哪些东西？**
 优先需要实验层代码，不是优先改系统核心：adapters、真实执行 runner、faults、workers、metrics、report、CLI 和正式运行编排。系统内部只在 pilot 证明挡路时补。
@@ -696,7 +738,7 @@ powershell -ExecutionPolicy Bypass -File .\init.ps1
 factorization 和真实 Lean checker、AI executor、artifact/event 基础已经足够支持 pilot。正式论文实验缺的是把这些能力串起来的 paper experiment layer。协议核心只在真实 fault/worker pilot 暴露安全问题时再补。
 
 **哪些是专门为实验写的代码？**
-`tokenshare.experiments.paper_*`、`run_paper_experiments.py`、`benchmarks/paper/*.jsonl`、paper metrics/report/fault/worker/model policy/budget 都是实验层。
+`tokenshare.experiments.paper_*`、`run_paper_experiments.py`、`benchmarks/paper/*.jsonl`、paper metrics/report/fault/worker/model cohort/budget 都是实验层。只有为 `gpt-5.6-sol` 新增的 OpenAI transport/config/provenance 支持属于 executor 层；cohort、外部分数和比较策略仍不得进入 executor。
 
 **哪些是系统内部缺的代码？**
 当前明确候选只有 Lean split/merge 扩展；其次是 pilot 可能暴露的 protocol lease/reassignment/canonical bug；最后是 executor evidence 字段不足。没有证据前，不主动扩大系统内部改动。

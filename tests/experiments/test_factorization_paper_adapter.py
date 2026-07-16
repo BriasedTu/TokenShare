@@ -1,9 +1,15 @@
 import json
+from pathlib import Path
 
 import pytest
 
+from tokenshare.executors.ai_api import build_ai_api_executor_descriptor
 from tokenshare.executors.ai_api_config import load_ai_api_config
-from tokenshare.executors.ai_api_transport import UrlLibSiliconFlowTransport
+from tokenshare.executors.ai_api_transport import (
+    UrlLibOpenAITransport,
+    UrlLibSiliconFlowTransport,
+)
+from tokenshare.executors.registry import ExecutorRegistry
 from tokenshare.experiments.factorization_paper_adapter import (
     ScriptedFactorizationRangeTransport,
     run_factorization_paper_case,
@@ -66,6 +72,10 @@ def test_factorization_paper_adapter_runs_range_children_through_ai_api_executor
     assert all(attempt.usage_ref is not None for attempt in result.attempt_results)
     assert all(attempt.provider == "siliconflow" for attempt in result.attempt_results)
     assert all(attempt.entry_id == "factorization_paper_scripted" for attempt in result.attempt_results)
+    assert all(
+        _request_provider_family(result.output_root, attempt.request_ref) == "siliconflow"
+        for attempt in result.attempt_results
+    )
 
     provider_prompt = json.dumps(transport.calls[0]["body"], ensure_ascii=False)
     assert "factorization.range_result.v1" in provider_prompt
@@ -179,6 +189,99 @@ def test_factorization_paper_adapter_rejects_custom_transport_marked_real(
         )
 
 
+def test_factorization_paper_adapter_accepts_openai_real_transport_through_executor(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    catalog = load_paper_catalogs(
+        factorization_path=FACTOR_CATALOG,
+        lean_path=LEAN_CATALOG,
+    )
+    case = catalog.cases_for(domain="factorization", difficulty="easy")[0]
+    condition = _condition(catalog.catalog_digest)
+    monkeypatch.setenv("TOKENSHARE_OPENAI_REAL_TRANSPORT_GUARD_KEY", "test-key")
+    transport = UrlLibOpenAITransport()
+    calls = []
+
+    def fake_openai_call(*, entry, api_key: str, body, timeout_seconds: int):
+        calls.append(
+            {
+                "entry_id": entry.entry_id,
+                "model": entry.model,
+                "api_key_seen": bool(api_key),
+                "body": body,
+                "timeout_seconds": timeout_seconds,
+            }
+        )
+        return _TransportResponse(
+            status_code=200,
+            body={
+                "id": "fake-openai-factorization",
+                "model": entry.model,
+                "choices": [
+                    {
+                        "message": {"content": "not-json"},
+                        "finish_reason": "stop",
+                    }
+                ],
+                "usage": {
+                    "prompt_tokens": 7,
+                    "completion_tokens": 3,
+                    "total_tokens": 10,
+                },
+            },
+        )
+
+    monkeypatch.setattr(transport, "post_chat_completion", fake_openai_call)
+
+    result = run_factorization_paper_case(
+        case=case,
+        condition=condition,
+        output_root=tmp_path,
+        transport=transport,
+        real_transport=True,
+        ai_api_config=_openai_real_transport_config(),
+        entry_id="openai_real_transport_guard",
+    )
+
+    assert calls
+    assert result.task_result.root_status == PaperTaskStatus.FAILED
+    assert result.task_result.failure_stage == PaperFailureStage.PARSE
+    assert result.task_result.failure_kind == PaperFailureKind.PARSE_FAILURE
+    assert all(attempt.provider == "openai" for attempt in result.attempt_results)
+    assert all(attempt.model == "gpt-5.6-sol" for attempt in result.attempt_results)
+    assert all(
+        attempt.entry_id == "openai_real_transport_guard"
+        for attempt in result.attempt_results
+    )
+    assert result.run_evidence["transport_evidence"]["transport_kind"] == "ai_api"
+    for attempt in result.attempt_results:
+        request = _read_request_artifact(result.output_root, attempt.request_ref)
+        assert request["capability_snapshot"]["provider_family"] == "openai"
+        assert request["hard_requirements"]["provider_family"] == "openai"
+        assert _registry_provider_matches(request) == ["openai"]
+
+
+def test_factorization_paper_adapter_rejects_openai_url_transport_without_real_flag(
+    tmp_path,
+) -> None:
+    catalog = load_paper_catalogs(
+        factorization_path=FACTOR_CATALOG,
+        lean_path=LEAN_CATALOG,
+    )
+    case = catalog.cases_for(domain="factorization", difficulty="easy")[0]
+    condition = _condition(catalog.catalog_digest)
+
+    with pytest.raises(ValueError, match="UrlLibOpenAITransport"):
+        run_factorization_paper_case(
+            case=case,
+            condition=condition,
+            output_root=tmp_path,
+            transport=UrlLibOpenAITransport(),
+            real_transport=False,
+        )
+
+
 class _CustomRealTransportSubclass(UrlLibSiliconFlowTransport):
     def post_chat_completion(self, *, entry, api_key: str, body, timeout_seconds: int):
         return _TransportResponse(
@@ -238,7 +341,7 @@ def _condition(catalog_digest: str) -> PaperExperimentCondition:
         fault_type="none",
         fault_rate=0.0,
         ablation_mode="FULL",
-        model_policy="strong_only",
+        model_policy="fixed_entry",
         repeat_id=0,
         seed=1,
         catalog_digest=catalog_digest,
@@ -286,3 +389,85 @@ def _real_transport_config():
             "metadata": {"purpose": "real-transport-guard-test"},
         }
     )
+
+
+def _openai_real_transport_config():
+    return load_ai_api_config(
+        {
+            "schema_version": "phase7.ai_api_executor_config.v1",
+            "executor_id": "executor_ai_api",
+            "provider_family": "openai",
+            "selection_policy": {
+                "kind": "uniform_random_without_weights",
+                "seed_source": "request_or_environment_seed",
+            },
+            "defaults": {
+                "timeout_seconds": 30,
+                "max_tokens": 512,
+                "temperature": 0.0,
+                "top_p": 0.9,
+                "stream": False,
+                "max_provider_attempts": 1,
+            },
+            "entries": [
+                {
+                    "entry_id": "openai_real_transport_guard",
+                    "enabled": True,
+                    "base_url": "https://api.openai.com/v1",
+                    "api_key_env": "TOKENSHARE_OPENAI_REAL_TRANSPORT_GUARD_KEY",
+                    "model": "gpt-5.6-sol",
+                    "endpoint": "/chat/completions",
+                    "supports_json_mode": True,
+                    "supports_streaming": False,
+                    "request_overrides": {
+                        "temperature": 0.0,
+                        "reasoning_effort": "high",
+                    },
+                    "pricing": {
+                        "currency": "USD",
+                        "input_per_million_tokens": 1.0,
+                        "output_per_million_tokens": 2.0,
+                    },
+                    "tags": ["factorization_paper", "openai", "real_guard"],
+                }
+            ],
+            "local_concurrency": {"max_in_flight_global": 1},
+            "metadata": {"purpose": "openai-real-transport-guard-test"},
+        }
+    )
+
+
+def _read_request_artifact(output_root: str, request_ref: dict) -> dict:
+    return json.loads((Path(output_root) / request_ref["uri"]).read_text(encoding="utf-8"))
+
+
+def _request_provider_family(output_root: str, request_ref: dict) -> str:
+    request = _read_request_artifact(output_root, request_ref)
+    assert request["capability_snapshot"]["provider_family"] == request["hard_requirements"][
+        "provider_family"
+    ]
+    return str(request["hard_requirements"]["provider_family"])
+
+
+def _registry_provider_matches(request: dict) -> list[str]:
+    registry = ExecutorRegistry()
+    registry.register(
+        build_ai_api_executor_descriptor(
+            executor_id="executor_ai_api_siliconflow",
+            provider_family="siliconflow",
+        )
+    )
+    registry.register(
+        build_ai_api_executor_descriptor(
+            executor_id="executor_ai_api_openai",
+            provider_family="openai",
+        )
+    )
+    return [
+        str(descriptor.capabilities["provider_family"])
+        for descriptor in registry.match_available(
+            executor_type="ai_api",
+            hard_requirements=request["hard_requirements"],
+            request_schema_version=request["schema_version"],
+        )
+    ]

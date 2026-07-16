@@ -25,7 +25,7 @@ def test_paper_condition_digest_is_stable_and_records_required_controls() -> Non
         fault_type="none",
         fault_rate=0.0,
         ablation_mode="FULL",
-        model_policy="strong_only",
+        model_policy="fixed_entry",
         repeat_id=0,
         seed=42,
         catalog_digest="sha256:" + "1" * 64,
@@ -39,7 +39,7 @@ def test_paper_condition_digest_is_stable_and_records_required_controls() -> Non
         fault_type="none",
         fault_rate=0.0,
         ablation_mode="FULL",
-        model_policy="strong_only",
+        model_policy="fixed_entry",
         repeat_id=0,
         seed=42,
         catalog_digest="sha256:" + "1" * 64,
@@ -48,9 +48,170 @@ def test_paper_condition_digest_is_stable_and_records_required_controls() -> Non
     body = condition.to_dict()
 
     assert body["schema_version"] == "tokenshare.paper_condition.v1"
+    assert body["paper_difficulty"] == "medium"
     assert body["real_transport_required"] is True
     assert body["paper_eligible_required"] is True
     assert condition.condition_digest == same_condition.condition_digest
+
+
+def test_paper_condition_supports_explicit_paper_difficulty_in_digest() -> None:
+    simple_condition = PaperExperimentCondition(
+        experiment_id="exp1_real_ai_feasibility",
+        condition_id="exp1_lean_medium_legacy_simple_repeat0",
+        domain="lean_proof",
+        difficulty="medium",
+        paper_difficulty="simple",
+        worker_count=10,
+        fault_type="none",
+        fault_rate=0.0,
+        ablation_mode="FULL",
+        model_policy="fixed_entry",
+        repeat_id=0,
+        seed=1,
+        catalog_digest="sha256:" + "1" * 64,
+    )
+    lemma_dag_condition = PaperExperimentCondition(
+        experiment_id="exp1_real_ai_feasibility",
+        condition_id="exp1_lean_medium_legacy_simple_repeat0",
+        domain="lean_proof",
+        difficulty="medium",
+        paper_difficulty="medium_lemma_dag",
+        worker_count=10,
+        fault_type="none",
+        fault_rate=0.0,
+        ablation_mode="FULL",
+        model_policy="fixed_entry",
+        repeat_id=0,
+        seed=1,
+        catalog_digest="sha256:" + "1" * 64,
+    )
+
+    assert simple_condition.to_dict()["paper_difficulty"] == "simple"
+    assert lemma_dag_condition.to_dict()["paper_difficulty"] == "medium_lemma_dag"
+    assert simple_condition.condition_digest != lemma_dag_condition.condition_digest
+
+
+def test_paper_condition_roundtrip_records_topic_and_provenance_fields() -> None:
+    condition = PaperExperimentCondition(
+        experiment_id="exp1_real_ai_feasibility",
+        condition_id="exp1_lean_medium_pure_logic_repeat0",
+        domain="lean_proof",
+        difficulty="medium",
+        paper_difficulty="medium_lemma_dag",
+        topic_family="pure_logic",
+        topic_family_version="v1",
+        construction_rule_id="fixed_oracle_lemma_graph.pure_logic.v1",
+        oracle_package_group="lean_lemma_graph_oracle.pure_logic.v1",
+        proof_assembly_shape="recursive_lemma_dag_required_slots.v1",
+        worker_count=10,
+        fault_type="none",
+        fault_rate=0.0,
+        ablation_mode="FULL",
+        model_policy="fixed_entry",
+        repeat_id=0,
+        seed=1,
+        catalog_digest="sha256:" + "1" * 64,
+    )
+
+    body = condition.to_dict()
+
+    assert body["topic_family"] == "pure_logic"
+    assert body["topic_family_version"] == "v1"
+    assert body["construction_rule_id"] == "fixed_oracle_lemma_graph.pure_logic.v1"
+    assert body["oracle_package_group"] == "lean_lemma_graph_oracle.pure_logic.v1"
+    assert body["proof_assembly_shape"] == "recursive_lemma_dag_required_slots.v1"
+
+
+def test_paper_task_result_roundtrip_records_topic_and_provenance_fields() -> None:
+    task = PaperTaskResult(
+        condition_id="cond1",
+        repeat_id=0,
+        task_id="lean_v2_medium_lemma_dag_01",
+        domain="lean_proof",
+        difficulty="medium",
+        paper_difficulty="medium_lemma_dag",
+        topic_family="pure_logic",
+        topic_family_version="v1",
+        construction_rule_id="fixed_oracle_lemma_graph.pure_logic.v1",
+        oracle_package_group="lean_lemma_graph_oracle.pure_logic.v1",
+        proof_assembly_shape="recursive_lemma_dag_required_slots.v1",
+        root_status=PaperTaskStatus.BLOCKED,
+        accepted_validity=None,
+        failure_stage=None,
+        failure_kind=None,
+        attempt_count=0,
+        provider_attempt_count=0,
+        wall_clock_ms=0,
+        total_tokens=0,
+        cost_estimate=0.0,
+        event_refs=[],
+        artifact_refs=[],
+        paper_eligible=False,
+    )
+
+    body = task.to_dict()
+
+    assert body["paper_difficulty"] == "medium_lemma_dag"
+    assert body["topic_family"] == "pure_logic"
+    assert body["topic_family_version"] == "v1"
+    assert body["construction_rule_id"] == "fixed_oracle_lemma_graph.pure_logic.v1"
+    assert body["oracle_package_group"] == "lean_lemma_graph_oracle.pure_logic.v1"
+    assert body["proof_assembly_shape"] == "recursive_lemma_dag_required_slots.v1"
+
+
+def test_paper_condition_digest_changes_for_topic_family_or_construction_rule() -> None:
+    base = {
+        "experiment_id": "exp1_real_ai_feasibility",
+        "condition_id": "exp1_lean_medium_repeat0",
+        "domain": "lean_proof",
+        "difficulty": "medium",
+        "paper_difficulty": "medium_lemma_dag",
+        "topic_family": "pure_logic",
+        "topic_family_version": "v1",
+        "construction_rule_id": "fixed_oracle_lemma_graph.pure_logic.v1",
+        "oracle_package_group": "lean_lemma_graph_oracle.pure_logic.v1",
+        "proof_assembly_shape": "recursive_lemma_dag_required_slots.v1",
+        "worker_count": 10,
+        "fault_type": "none",
+        "fault_rate": 0.0,
+        "ablation_mode": "FULL",
+        "model_policy": "fixed_entry",
+        "repeat_id": 0,
+        "seed": 1,
+        "catalog_digest": "sha256:" + "1" * 64,
+    }
+
+    first = PaperExperimentCondition(**base)
+    changed_topic = PaperExperimentCondition(**{**base, "topic_family": "function_set"})
+    changed_rule = PaperExperimentCondition(
+        **{
+            **base,
+            "construction_rule_id": "fixed_oracle_lemma_graph.function_set.v1",
+        }
+    )
+
+    assert first.condition_digest != changed_topic.condition_digest
+    assert first.condition_digest != changed_rule.condition_digest
+
+
+def test_paper_condition_rejects_invalid_lean_topic_family() -> None:
+    with pytest.raises(ValueError, match="topic_family"):
+        PaperExperimentCondition(
+            experiment_id="exp1_real_ai_feasibility",
+            condition_id="exp1_lean_algebra_repeat0",
+            domain="lean_proof",
+            difficulty="medium",
+            paper_difficulty="medium_lemma_dag",
+            topic_family="algebra",
+            worker_count=10,
+            fault_type="none",
+            fault_rate=0.0,
+            ablation_mode="FULL",
+            model_policy="fixed_entry",
+            repeat_id=0,
+            seed=1,
+            catalog_digest="sha256:" + "1" * 64,
+        )
 
 
 def test_paper_result_objects_serialize_stable_status_schema_and_evidence_refs() -> None:
@@ -90,6 +251,7 @@ def test_paper_result_objects_serialize_stable_status_schema_and_evidence_refs()
         task_id="task1",
         domain="lean_proof",
         difficulty="easy",
+        paper_difficulty="simple",
         root_status=PaperTaskStatus.COMPLETED,
         accepted_validity=True,
         failure_stage=None,
@@ -183,6 +345,7 @@ def test_paper_result_objects_serialize_stable_status_schema_and_evidence_refs()
     assert attempt_body["ended_at"] == "2026-07-14T00:00:01Z"
     assert attempt_body["prompt_tokens"] == 100
     assert attempt_body["completion_tokens"] == 156
+    assert task.to_dict()["paper_difficulty"] == "simple"
     assert task.to_dict()["root_status"] == "completed"
     assert run.to_dict()["status"] == "completed"
     assert condition.to_dict()["provider_attempt_count"] == 1
@@ -217,7 +380,7 @@ def test_paper_condition_rejects_unknown_domain_or_difficulty() -> None:
         "fault_type": "none",
         "fault_rate": 0.0,
         "ablation_mode": "FULL",
-        "model_policy": "strong_only",
+        "model_policy": "fixed_entry",
         "repeat_id": 0,
         "seed": 1,
         "catalog_digest": "sha256:" + "1" * 64,
