@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from math import isfinite
 from typing import Any
 
 from tokenshare.executors.ai_api_artifacts import read_raw_model_identity_evidence
@@ -494,6 +495,7 @@ def _model_execution_row(item: Mapping[str, Any]) -> JsonObject:
         if not provider_attempts:
             failure_reasons.append("missing_provider_attempt_identity")
     actual_controls: dict[str, Any] = {}
+    request_controls_digests: list[str] = []
     for request_identity in request_identities:
         provider = request_identity.get("provider_family")
         entry_id = request_identity.get("entry_id")
@@ -520,6 +522,15 @@ def _model_execution_row(item: Mapping[str, Any]) -> JsonObject:
             actual=actual_controls,
         ):
             failure_reasons.append("reasoning_drift")
+        controls_digest = request_identity.get(
+            "effective_request_controls_digest"
+        )
+        if not _is_complete_digest(controls_digest):
+            failure_reasons.append("invalid_effective_request_controls_digest")
+        else:
+            request_controls_digests.append(str(controls_digest))
+    if len(set(request_controls_digests)) > 1:
+        failure_reasons.append("request_controls_drift")
     for provider_attempt in provider_attempts:
         if (
             provider_attempt.get("provider_family") != expected_provider
@@ -538,12 +549,21 @@ def _model_execution_row(item: Mapping[str, Any]) -> JsonObject:
         raise ValueError("attempt join body must be a mapping")
     _validate_required_attempt_fields(attempt, item=item)
     _validate_attempt_identity(record_body, attempt)
+    task_paper_eligible, task_eligibility_reason = _task_paper_eligibility(
+        item,
+        record_body,
+    )
+    if task_eligibility_reason is not None:
+        failure_reasons.append(task_eligibility_reason)
     transport_kind = _required_row_string("transport_kind", item.get("transport_kind"))
     if transport_kind != "ai_api" or transport_kind in UNSUPPORTED_PAPER_TRANSPORTS:
         failure_reasons.append("unsupported_transport")
     model_policy = _required_row_string("model_policy", item.get("model_policy"))
     if model_policy != "fixed_entry":
         failure_reasons.append("invalid_model_policy")
+    pilot_only = item.get("pilot_only")
+    if not isinstance(pilot_only, bool):
+        raise ValueError("pilot_only must be a bool")
     if attempt.get("provider") != expected_provider:
         failure_reasons.append("attempt_provider_identity_mismatch")
     if attempt.get("model") != configured_model:
@@ -566,14 +586,14 @@ def _model_execution_row(item: Mapping[str, Any]) -> JsonObject:
     provider_errors = _provider_errors(item, attempt, provider_attempts)
     if provider_errors:
         failure_reasons.append("provider_error")
-    if item.get("pilot_only") is True:
+    if pilot_only:
         failure_reasons.append("pilot_only")
     stable_reasons = tuple(dict.fromkeys(failure_reasons))
     paper_eligible = (
         schema_version == "tokenshare.paper_model_execution_record.v2"
         and record_body.get("identity_status") == "matched"
         and record_body.get("paper_eligible") is True
-        and attempt.get("paper_eligible") is True
+        and task_paper_eligible
         and not stable_reasons
     )
 
@@ -600,6 +620,7 @@ def _model_execution_row(item: Mapping[str, Any]) -> JsonObject:
         "reasoning_profile_id": expected_identity.get("reasoning_profile_id"),
         "expected_reasoning_controls": dict(expected_controls),
         "reasoning_controls": actual_controls,
+        "effective_request_controls_digests": request_controls_digests,
         "source_provider_config_digest": record_body[
             "source_provider_config_digest"
         ],
@@ -627,28 +648,30 @@ def _model_execution_row(item: Mapping[str, Any]) -> JsonObject:
         "model_execution_record_ref": record_ref,
         "started_at": attempt.get("started_at"),
         "ended_at": attempt.get("ended_at"),
-        "latency_ms": _non_negative_int(attempt.get("latency_ms", 0), "latency_ms"),
+        "latency_ms": _non_negative_int(attempt["latency_ms"], "latency_ms"),
         "prompt_tokens": _non_negative_int(
-            attempt.get("prompt_tokens", 0),
+            attempt["prompt_tokens"],
             "prompt_tokens",
         ),
         "completion_tokens": _non_negative_int(
-            attempt.get("completion_tokens", 0),
+            attempt["completion_tokens"],
             "completion_tokens",
         ),
         "total_tokens": _non_negative_int(
-            attempt.get("total_tokens", 0),
+            attempt["total_tokens"],
             "total_tokens",
         ),
         "cost_estimate": _non_negative_number(
-            attempt.get("cost_estimate", 0.0),
+            attempt["cost_estimate"],
             "cost_estimate",
         ),
         "provider_errors": provider_errors,
         "error_kind": attempt.get("error_kind"),
         "failure_reasons": list(stable_reasons),
         "transport_kind": transport_kind,
-        "pilot_only": item.get("pilot_only") is True,
+        "pilot_only": pilot_only,
+        "attempt_paper_eligible": attempt["paper_eligible"],
+        "task_paper_eligible": task_paper_eligible,
         "paper_eligible": paper_eligible,
     }
 
@@ -706,9 +729,18 @@ def _validate_required_attempt_fields(
     item: Mapping[str, Any],
 ) -> None:
     required_fields = (
+        "condition_id",
+        "repeat_id",
+        "run_id",
+        "task_id",
+        "unit_id",
+        "attempt_id",
         "worker_id",
         "provider_attempt_index",
         "attempt_status",
+        "provider",
+        "model",
+        "entry_id",
         "request_ref",
         "raw_output_ref",
         "provenance_ref",
@@ -716,16 +748,46 @@ def _validate_required_attempt_fields(
         "model_execution_record_ref",
         "started_at",
         "ended_at",
+        "latency_ms",
+        "prompt_tokens",
+        "completion_tokens",
+        "total_tokens",
+        "cost_estimate",
+        "paper_eligible",
     )
     for field_name in required_fields:
         if field_name not in attempt:
             raise ValueError(f"formal Experiment 5 attempt requires {field_name}")
-    for field_name in ("worker_id", "attempt_status", "started_at", "ended_at"):
+    for field_name in (
+        "condition_id",
+        "run_id",
+        "task_id",
+        "unit_id",
+        "attempt_id",
+        "worker_id",
+        "attempt_status",
+        "provider",
+        "model",
+        "entry_id",
+        "started_at",
+        "ended_at",
+    ):
         _required_row_string(field_name, attempt[field_name])
+    _non_negative_int(attempt["repeat_id"], "repeat_id")
     _non_negative_int(
         attempt["provider_attempt_index"],
         "provider_attempt_index",
     )
+    for field_name in (
+        "latency_ms",
+        "prompt_tokens",
+        "completion_tokens",
+        "total_tokens",
+    ):
+        _non_negative_int(attempt[field_name], field_name)
+    _non_negative_number(attempt["cost_estimate"], "cost_estimate")
+    if not isinstance(attempt["paper_eligible"], bool):
+        raise ValueError("paper_eligible must be a bool")
     for field_name in (
         "request_ref",
         "provenance_ref",
@@ -754,8 +816,28 @@ def _validate_attempt_identity(
         "unit_id",
         "attempt_id",
     ):
-        if field_name in attempt and attempt[field_name] != record[field_name]:
+        if attempt[field_name] != record[field_name]:
             raise ValueError(f"attempt {field_name} does not match model record")
+
+
+def _task_paper_eligibility(
+    item: Mapping[str, Any],
+    record: Mapping[str, Any],
+) -> tuple[bool, str | None]:
+    task = item.get("task")
+    if not isinstance(task, Mapping):
+        return False, "task_eligibility_missing"
+    for field_name in ("condition_id", "repeat_id", "task_id"):
+        if field_name not in task:
+            raise ValueError(f"formal Experiment 5 task requires {field_name}")
+        if task[field_name] != record[field_name]:
+            raise ValueError(f"task {field_name} does not match model record")
+    value = task.get("paper_eligible")
+    if not isinstance(value, bool):
+        return False, "task_eligibility_missing"
+    if not value:
+        return False, "task_not_paper_eligible"
+    return True, None
 
 
 def _mapping_sequence(value: Any, field_name: str) -> tuple[Mapping[str, Any], ...]:
@@ -771,7 +853,9 @@ def _provider_errors(
     attempt: Mapping[str, Any],
     provider_attempts: Sequence[Mapping[str, Any]],
 ) -> list[str]:
-    value = item.get("provider_errors", ())
+    if "provider_errors" not in item:
+        raise ValueError("formal Experiment 5 join requires provider_errors")
+    value = item["provider_errors"]
     if not isinstance(value, (list, tuple)):
         raise ValueError("provider_errors must be a list or tuple")
     errors = [str(item) for item in value if str(item)]
@@ -813,7 +897,12 @@ def _non_negative_int(value: Any, field_name: str) -> int:
 
 
 def _non_negative_number(value: Any, field_name: str) -> float:
-    if isinstance(value, bool) or not isinstance(value, (int, float)) or value < 0:
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or not isfinite(value)
+        or value < 0
+    ):
         raise ValueError(f"{field_name} must be a number >= 0")
     return float(value)
 

@@ -24,6 +24,8 @@ from tokenshare.experiments.paper_models import (
     PaperConditionResult,
     PaperModelExecutionRecord,
     PaperStatus,
+    PaperTaskResult,
+    PaperTaskStatus,
     digest_json,
 )
 
@@ -301,8 +303,52 @@ def test_exp5_model_execution_join_returns_auditable_v2_fields() -> None:
     assert row["cost_estimate"] == 0.012
     assert row["provider_errors"] == []
     assert row["error_kind"] is None
+    assert row["attempt_paper_eligible"] is False
+    assert row["task_paper_eligible"] is True
+    assert row["effective_request_controls_digests"] == [
+        "sha256:" + "7" * 64
+    ]
     assert row["paper_eligible"] is True
     assert summary.rows == rows
+
+
+def test_exp5_model_execution_join_uses_final_task_eligibility_for_standard_attempt() -> None:
+    module = _load_module()
+    item = _model_execution_item()
+
+    assert item["attempt"]["paper_eligible"] is False
+    assert item["task"]["paper_eligible"] is True
+    eligible_row = module.build_exp5_model_execution_rows(
+        {"model_execution_records": [item]}
+    )[0]
+
+    item["task"]["paper_eligible"] = False
+    ineligible_row = module.build_exp5_model_execution_rows(
+        {"model_execution_records": [item]}
+    )[0]
+
+    assert eligible_row["paper_eligible"] is True
+    assert "task_not_paper_eligible" in ineligible_row["failure_reasons"]
+    assert ineligible_row["paper_eligible"] is False
+
+
+def test_exp5_model_execution_join_requires_final_task_eligibility_and_identity() -> None:
+    module = _load_module()
+    missing_task = _model_execution_item()
+    missing_task.pop("task")
+    mismatched_task = _model_execution_item()
+    mismatched_task["task"]["task_id"] = "different-task"
+
+    row = module.build_exp5_model_execution_rows(
+        {"model_execution_records": [missing_task]}
+    )[0]
+
+    assert "task_eligibility_missing" in row["failure_reasons"]
+    assert row["paper_eligible"] is False
+    with pytest.raises(ValueError, match="task task_id"):
+        module.build_exp5_model_execution_rows(
+            {"model_execution_records": [mismatched_task]}
+        )
 
 
 @pytest.mark.parametrize(
@@ -348,6 +394,38 @@ def test_exp5_model_execution_join_rejects_endpoint_failover_and_scripted_eligib
     assert failover_row["paper_eligible"] is False
     assert "unsupported_transport" in scripted_row["failure_reasons"]
     assert scripted_row["paper_eligible"] is False
+
+
+@pytest.mark.parametrize("field_name", ["pilot_only", "provider_errors"])
+def test_exp5_model_execution_join_requires_top_level_formal_metadata(
+    field_name: str,
+) -> None:
+    module = _load_module()
+    item = _model_execution_item()
+    item.pop(field_name)
+
+    with pytest.raises(ValueError, match=field_name):
+        module.build_exp5_model_execution_rows(
+            {"model_execution_records": [item]}
+        )
+
+
+@pytest.mark.parametrize(
+    ("field_name", "value"),
+    [("pilot_only", None), ("provider_errors", None)],
+)
+def test_exp5_model_execution_join_rejects_invalid_top_level_formal_metadata(
+    field_name: str,
+    value: object,
+) -> None:
+    module = _load_module()
+    item = _model_execution_item()
+    item[field_name] = value
+
+    with pytest.raises(ValueError, match=field_name):
+        module.build_exp5_model_execution_rows(
+            {"model_execution_records": [item]}
+        )
 
 
 def test_exp5_model_execution_join_audits_persisted_raw_provider_and_entry() -> None:
@@ -423,9 +501,18 @@ def test_exp5_model_execution_join_binds_formal_attempt_identity_refs_and_fields
 @pytest.mark.parametrize(
     "field_name",
     [
+        "condition_id",
+        "repeat_id",
+        "run_id",
+        "task_id",
+        "unit_id",
+        "attempt_id",
         "worker_id",
         "provider_attempt_index",
         "attempt_status",
+        "provider",
+        "model",
+        "entry_id",
         "request_ref",
         "raw_output_ref",
         "provenance_ref",
@@ -433,6 +520,12 @@ def test_exp5_model_execution_join_binds_formal_attempt_identity_refs_and_fields
         "model_execution_record_ref",
         "started_at",
         "ended_at",
+        "latency_ms",
+        "prompt_tokens",
+        "completion_tokens",
+        "total_tokens",
+        "cost_estimate",
+        "paper_eligible",
     ],
 )
 def test_exp5_model_execution_join_fails_closed_on_missing_attempt_field(
@@ -443,6 +536,20 @@ def test_exp5_model_execution_join_fails_closed_on_missing_attempt_field(
     item["attempt"].pop(field_name)
 
     with pytest.raises(ValueError, match=field_name):
+        module.build_exp5_model_execution_rows(
+            {"model_execution_records": [item]}
+        )
+
+
+@pytest.mark.parametrize("cost_estimate", [float("nan"), float("inf")])
+def test_exp5_model_execution_join_rejects_non_finite_cost(
+    cost_estimate: float,
+) -> None:
+    module = _load_module()
+    item = _model_execution_item()
+    item["attempt"]["cost_estimate"] = cost_estimate
+
+    with pytest.raises(ValueError, match="cost_estimate"):
         module.build_exp5_model_execution_rows(
             {"model_execution_records": [item]}
         )
@@ -684,6 +791,27 @@ def _model_execution_item(
         cost_estimate=0.012,
         error_kind=None,
         fault_injection_ref=None,
+        paper_eligible=False,
+    ).to_dict()
+    task = PaperTaskResult(
+        condition_id="condition1",
+        repeat_id=0,
+        task_id="task1",
+        domain="lean_proof",
+        difficulty="hard",
+        paper_difficulty="hard_frontier",
+        topic_family="pure_logic",
+        root_status=PaperTaskStatus.COMPLETED,
+        accepted_validity=True,
+        failure_stage=None,
+        failure_kind=None,
+        attempt_count=1,
+        provider_attempt_count=1,
+        wall_clock_ms=150,
+        total_tokens=45,
+        cost_estimate=0.012,
+        event_refs=[],
+        artifact_refs=[],
         paper_eligible=True,
     ).to_dict()
     return {
@@ -691,6 +819,7 @@ def _model_execution_item(
         "record_ref": {"artifact_id": "model-record1"},
         "raw_output": raw_output,
         "attempt": attempt,
+        "task": task,
         "transport_kind": transport_kind,
         "model_policy": "fixed_entry",
         "provider_errors": [],
