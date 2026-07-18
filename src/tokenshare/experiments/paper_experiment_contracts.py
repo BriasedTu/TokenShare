@@ -102,25 +102,28 @@ class FrozenCaseSelection:
 
     @classmethod
     def from_dict(cls, body: Mapping[str, Any]) -> FrozenCaseSelection:
-        expected_digest = body.get("selection_digest")
-        if not isinstance(expected_digest, str) or not expected_digest:
-            raise ValueError("selection_digest is required")
+        body = _require_mapping(body)
+        expected_digest = _required_digest_field(body, "selection_digest")
         selection = cls(
-            schema_version=str(
-                body.get("schema_version", FROZEN_CASE_SELECTION_SCHEMA_VERSION)
+            schema_version=_required_string_field(body, "schema_version"),
+            selection_id=_required_string_field(body, "selection_id"),
+            experiment_id=_required_string_field(body, "experiment_id"),
+            suite_version=_required_string_field(body, "suite_version"),
+            catalog_version=_required_string_field(body, "catalog_version"),
+            domain=_required_string_field(body, "domain"),
+            paper_difficulty=_required_string_field(body, "paper_difficulty"),
+            topic_family=_optional_string_field(body, "topic_family"),
+            ordered_case_ids=_required_value(body, "ordered_case_ids"),
+            catalog_digest=_required_digest_field(body, "catalog_digest"),
+            expected_ai_unit_count=_required_non_negative_int_field(
+                body,
+                "expected_ai_unit_count",
             ),
-            selection_id=str(body.get("selection_id", "")),
-            experiment_id=str(body.get("experiment_id", "")),
-            suite_version=str(body.get("suite_version", "")),
-            catalog_version=str(body.get("catalog_version", "")),
-            domain=str(body.get("domain", "")),
-            paper_difficulty=str(body.get("paper_difficulty", "")),
-            topic_family=body.get("topic_family"),
-            ordered_case_ids=body.get("ordered_case_ids", ()),
-            catalog_digest=str(body.get("catalog_digest", "")),
-            expected_ai_unit_count=body.get("expected_ai_unit_count"),
-            paper_eligible_required=body.get("paper_eligible_required"),
-            blocked_reason=body.get("blocked_reason"),
+            paper_eligible_required=_required_bool_field(
+                body,
+                "paper_eligible_required",
+            ),
+            blocked_reason=_optional_string_field(body, "blocked_reason"),
         )
         if expected_digest != selection.selection_digest:
             raise ValueError("selection_digest mismatch")
@@ -221,19 +224,17 @@ class ExperimentSummaryRows:
 
     @classmethod
     def from_dict(cls, body: Mapping[str, Any]) -> ExperimentSummaryRows:
-        expected_digest = body.get("summary_digest")
+        body = _require_mapping(body)
+        expected_digest = _required_digest_field(body, "summary_digest")
+        row_count = _required_non_negative_int_field(body, "row_count")
         summary = cls(
-            schema_version=str(
-                body.get("schema_version", EXPERIMENT_SUMMARY_ROWS_SCHEMA_VERSION)
-            ),
-            experiment_id=str(body.get("experiment_id", "")),
-            rows=body.get("rows", ()),
+            schema_version=_required_string_field(body, "schema_version"),
+            experiment_id=_required_string_field(body, "experiment_id"),
+            rows=_required_value(body, "rows"),
         )
-        if (
-            isinstance(expected_digest, str)
-            and expected_digest
-            and expected_digest != summary.summary_digest
-        ):
+        if row_count != len(summary.rows):
+            raise ValueError("row_count must equal len(rows)")
+        if expected_digest != summary.summary_digest:
             raise ValueError("summary_digest mismatch")
         return summary
 
@@ -332,6 +333,53 @@ def _reject_scripted_eligible_row(row: JsonObject) -> None:
         and row.get("paper_eligible") is True
     ):
         raise ValueError(f"{transport_kind} transport cannot be paper eligible")
+
+
+def _require_mapping(value: Any, field_name: str = "body") -> Mapping[str, Any]:
+    if not isinstance(value, Mapping):
+        raise ValueError(f"{field_name} must be a mapping")
+    return value
+
+
+def _required_value(body: Mapping[str, Any], field_name: str) -> Any:
+    if field_name not in body:
+        raise ValueError(f"{field_name} is required")
+    return body[field_name]
+
+
+def _required_string_field(body: Mapping[str, Any], field_name: str) -> str:
+    value = _required_value(body, field_name)
+    _require_non_empty(field_name, value)
+    return value
+
+
+def _optional_string_field(body: Mapping[str, Any], field_name: str) -> str | None:
+    if field_name not in body or body[field_name] is None:
+        return None
+    value = body[field_name]
+    _require_non_empty(field_name, value)
+    return value
+
+
+def _required_bool_field(body: Mapping[str, Any], field_name: str) -> bool:
+    value = _required_value(body, field_name)
+    _require_bool(field_name, value)
+    return value
+
+
+def _required_non_negative_int_field(
+    body: Mapping[str, Any],
+    field_name: str,
+) -> int:
+    value = _required_value(body, field_name)
+    _require_non_negative_int(field_name, value)
+    return value
+
+
+def _required_digest_field(body: Mapping[str, Any], field_name: str) -> str:
+    value = _required_value(body, field_name)
+    _require_complete_digest(field_name, value)
+    return value
 
 
 def _require_non_empty(field_name: str, value: Any) -> None:

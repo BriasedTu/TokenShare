@@ -20,6 +20,7 @@ from tokenshare.experiments.paper_models import (
 
 
 CATALOG_DIGEST = "sha256:" + "1" * 64
+_MISSING = object()
 
 
 def test_frozen_case_selection_digest_is_stable_and_order_sensitive() -> None:
@@ -119,6 +120,27 @@ def test_frozen_case_selection_roundtrip_rejects_digest_drift() -> None:
             FrozenCaseSelection.from_dict(unsealed)
 
 
+def test_frozen_case_selection_from_dict_rejects_missing_schema_and_wrong_field_types() -> None:
+    body = _selection().to_dict()
+    cases = (
+        ("schema_version", _MISSING, "schema_version"),
+        ("schema_version", 123, "schema_version"),
+        ("selection_id", 123, "selection_id"),
+        ("experiment_id", 123, "experiment_id"),
+        ("suite_version", 123, "suite_version"),
+        ("catalog_version", 123, "catalog_version"),
+        ("domain", 123, "domain"),
+        ("paper_difficulty", 123, "paper_difficulty"),
+        ("topic_family", 123, "topic_family"),
+        ("catalog_digest", 123, "catalog_digest"),
+    )
+
+    for field_name, value, message in cases:
+        mutated = _mutated_body(body, field_name, value)
+        with pytest.raises(ValueError, match=message):
+            FrozenCaseSelection.from_dict(mutated)
+
+
 def test_execution_context_only_holds_shared_references_and_callback() -> None:
     catalog_ref = {"catalog_digest": CATALOG_DIGEST}
     endpoint_ref = {"model_endpoint_identity_digest": "sha256:" + "2" * 64}
@@ -212,6 +234,40 @@ def test_condition_result_is_reexported_and_summary_rows_roundtrip() -> None:
         )
 
 
+def test_experiment_summary_rows_from_dict_rejects_missing_schema_digest_and_row_count_drift() -> None:
+    rows = ExperimentSummaryRows(
+        experiment_id="exp1_real_ai_feasibility",
+        rows=(
+            {
+                "domain": "lean_proof",
+                "paper_difficulty": "simple",
+                "case_count": 15,
+                "transport_kind": "scripted",
+                "paper_eligible": False,
+            },
+        ),
+    )
+    body = rows.to_dict()
+    cases = (
+        ("schema_version", _MISSING, "schema_version"),
+        ("schema_version", 123, "schema_version"),
+        ("experiment_id", 123, "experiment_id"),
+        ("summary_digest", _MISSING, "summary_digest"),
+        ("summary_digest", "", "summary_digest"),
+        ("summary_digest", 123, "summary_digest"),
+        ("summary_digest", "sha256:" + "0" * 64, "summary_digest mismatch"),
+        ("row_count", _MISSING, "row_count"),
+        ("row_count", "1", "row_count"),
+        ("row_count", True, "row_count"),
+        ("row_count", 2, "row_count"),
+    )
+
+    for field_name, value, message in cases:
+        mutated = _mutated_body(body, field_name, value)
+        with pytest.raises(ValueError, match=message):
+            ExperimentSummaryRows.from_dict(mutated)
+
+
 def test_paper_experiment_module_protocol_conformance() -> None:
     class DemoExperimentModule:
         def expand_conditions(
@@ -252,6 +308,15 @@ def test_paper_experiment_module_protocol_conformance() -> None:
             )
 
     assert isinstance(DemoExperimentModule(), PaperExperimentModule)
+
+
+def _mutated_body(body: dict, field_name: str, value: object) -> dict:
+    mutated = dict(body)
+    if value is _MISSING:
+        mutated.pop(field_name, None)
+    else:
+        mutated[field_name] = value
+    return mutated
 
 
 def _selection(**changes) -> FrozenCaseSelection:
