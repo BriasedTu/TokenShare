@@ -66,12 +66,12 @@ TokenShare 已把默认启动验证拆成快速档 `.\init.ps1` / `./init.sh` �
 
 1. 检查固定 Lean/lake/toolchain/project/environment digest。
 2. 对 `TokenShare.LemmaGraphOracle` 执行一次 `lake build`，利用 Lake 自身的标准增量构建产物；不生成 TokenShare checker evidence cache。
-3. 从 readiness manifest 读取 exact 135 selected case IDs，并与 catalog、selection digest、checker-backed/preflight 状态交叉核对。
-4. 按 case 的拓扑顺序把 selected cases 的 node theorem payload 与 `node_proof_sources` 合成为一个临时 Lean source，在一次 `lake env lean` 中验证。临时文件结束后删除。
+3. 从 readiness manifest 读取 exact 135 selected case IDs，并从 `lean_catalog.v1.jsonl` 与 `lean_lemma_graph_catalog.v1.jsonl` 联合解析这些 IDs；同时交叉核对全 catalog digest、selection digest、checker-backed/preflight 状态。
+4. 把 selected v1 cases 的 root theorem/oracle proof，以及 selected v2 cases 按拓扑顺序展开的 node theorem payload/`node_proof_sources`，合成为一个临时 Lean source，在一次 `lake env lean` 中验证。临时文件结束后删除。
 5. 选择 readiness manifest 中固定的 hard-frontier/induction golden case，执行一次真实 deterministic split、node checker、dependency-aware merge 和 root recheck；必须保持 `provider_calls_made=0`。
 6. 运行秒级 Python 契约/负向测试，验证 semantic fingerprint、readiness fail-closed、manifest/CLI 契约及快速入口自身。
 
-批量 source 仅是快速回归工具：它必须使用当前 catalog 的原始 theorem payload、proof source、imports、namespace、parameters、statement 和 dependency order，不得把 oracle module build 成功等同于每个 JSON proof candidate 成功。Lean 诊断需要映射回 case ID/node ID；任一失败使整个快速入口失败。
+批量 source 仅是快速回归工具：它必须同时覆盖 readiness 选中的 v1 root proof candidates 和 v2 node proof candidates，使用当前两个 Lean catalogs 的原始 theorem payload、proof source、imports、namespace、parameters、statement 和 dependency order，不得把 oracle module build 成功等同于每个 JSON proof candidate 成功。Lean 诊断需要映射回 case ID/node ID；任一失败使整个快速入口失败。
 
 ## 组件与文件边界
 
@@ -87,7 +87,8 @@ TokenShare 已把默认启动验证拆成快速档 `.\init.ps1` / `./init.sh` �
 - `AGENTS.md`：最醒目的 Lean 慢路径规则和决策表。
 - `Doc/TechnicalDocument/2026-07-18-feat-011-parallel-experiment-prompt-pack.md`：并发 agent 验证责任。
 - `README.md`、`Doc/agent-navigation.md`：命令索引。
-- `progress.md`、`session-handoff.md`：记录新验证策略与证据。
+- `Doc/TechnicalDocument/tokenshare_v1_code_map.md`：记录快速验证组件边界。
+- `feature_list.json`、`progress.md`、`session-handoff.md`：记录新验证策略与证据。
 
 除非 TDD 证明不可避免，不修改 `check_lean_proof()`、paper catalog loader、Lean adapter、merge policy 或正式 evidence schema。
 
