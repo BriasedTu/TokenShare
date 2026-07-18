@@ -41,7 +41,7 @@ EXP1_BASELINE_PROVIDER_CONFIG_ID = "exp1_baseline_siliconflow"
 EXP1_BASELINE_ENTRY_ID = "glm_5_2_exp1_baseline"
 EXP1_BASELINE_PROVIDER_FAMILY = "siliconflow"
 EXP1_BASELINE_PROVIDER_MODEL_ID = "zai-org/GLM-5.2"
-EXP1_BASELINE_REASONING_PROFILE_ID = "temperature0_thinking_false"
+EXP1_BASELINE_REASONING_PROFILE_ID = "default"
 
 EXP1_FORMAL_REQUEST_CONTROLS: JsonObject = {
     "max_tokens": 1024,
@@ -1474,6 +1474,12 @@ def _validate_task_metrics_and_status(
         raise ValueError("root_status is not a supported paper task status")
     if accepted_validity is True:
         raise ValueError("non-completed task cannot have accepted validity")
+    if root_status == "budget_exhausted":
+        if failure_stage is not None or failure_kind != "budget_limit":
+            raise ValueError(
+                "budget-exhausted task requires budget_limit failure kind"
+            )
+        return
     if formal and (failure_stage is None or failure_kind is None):
         raise ValueError("formal non-completed task requires failure stage and kind")
 

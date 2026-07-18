@@ -8,6 +8,7 @@ from typing import Any
 
 import pytest
 
+from tokenshare.executors.ai_api_config import load_ai_api_config
 from tokenshare.experiments.paper_experiment_contracts import (
     ExperimentSummaryRows,
     FrozenCaseSelection,
@@ -19,7 +20,11 @@ from tokenshare.experiments.paper_models import (
     PaperStatus,
     digest_json,
 )
-from tokenshare.experiments.paper_model_identity import PaperModelEndpointIdentity
+from tokenshare.experiments.paper_model_identity import (
+    PaperModelEndpointIdentity,
+    build_model_endpoint_identity,
+    validate_fixed_entry_config_identity,
+)
 from tokenshare.experiments.paper_exp1 import Exp1FormalModule
 
 
@@ -74,7 +79,7 @@ def test_exp1_formal_expands_exact_conditions_with_frozen_baseline_controls() ->
         assert condition.model_entry_id == "glm_5_2_exp1_baseline"
         assert condition.provider_family == "siliconflow"
         assert condition.provider_model_id == "zai-org/GLM-5.2"
-        assert condition.reasoning_profile_id == "temperature0_thinking_false"
+        assert condition.reasoning_profile_id == "default"
         assert condition.source_provider_config_digest == SOURCE_CONFIG_DIGEST
         assert condition.model_endpoint_identity_digest == ENDPOINT_DIGEST
         assert condition.catalog_digest == CATALOG_DIGEST
@@ -93,6 +98,23 @@ def test_exp1_formal_accepts_shared_endpoint_identity_and_effective_controls() -
     }
     assert {condition.model_endpoint_identity_digest for condition in conditions} == {
         identity.model_endpoint_identity_digest
+    }
+
+
+def test_exp1_formal_accepts_normal_validated_endpoint_binding() -> None:
+    identity = _shared_baseline_identity()
+    source_config = _baseline_source_config()
+    binding = validate_fixed_entry_config_identity(
+        expected_identity=identity,
+        provider_config_id="exp1_baseline_siliconflow",
+        source_config=source_config,
+    )
+
+    conditions = Exp1FormalModule().expand_conditions(_context(binding=binding))
+
+    assert len(conditions) == 36
+    assert {condition.reasoning_profile_id for condition in conditions} == {
+        "default"
     }
 
 
@@ -642,6 +664,45 @@ def test_exp1_formal_summary_applies_task_ineligibility_to_the_whole_matrix() ->
     assert all(row["paper_eligible"] is False for row in summary.rows)
 
 
+def test_exp1_formal_summary_preserves_normal_budget_exhausted_metrics() -> None:
+    evidence = _integration_summary_evidence(
+        _context(binding=_shared_baseline_identity())
+    )
+    evidence["paper_eligible"] = False
+    task = evidence["task_metrics"][0]
+    task.update(
+        {
+            "root_status": "budget_exhausted",
+            "completed": False,
+            "accepted_validity": False,
+            "failure_stage": None,
+            "failure_kind": "budget_limit",
+            "attempt_count": 0,
+            "provider_attempt_count": 0,
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 0,
+            "provider_latency_ms": 0,
+            "cost_estimate": 0.0,
+            "artifact_ref_count": 0,
+            "paper_eligible": False,
+        }
+    )
+
+    summary = Exp1FormalModule().summarize(evidence)
+
+    easy = next(
+        row
+        for row in summary.rows
+        if row["domain"] == "factorization"
+        and row["paper_difficulty"] == "easy"
+    )
+    assert easy["failure_breakdown"] == [
+        {"failure_kind": "budget_limit", "count": 1}
+    ]
+    assert all(row["paper_eligible"] is False for row in summary.rows)
+
+
 def test_exp1_formal_summary_rejects_non_finite_integration_metric() -> None:
     evidence = _integration_summary_evidence(
         _context(binding=_shared_baseline_identity())
@@ -692,7 +753,7 @@ def _baseline_binding() -> dict[str, Any]:
         "model_entry_id": "glm_5_2_exp1_baseline",
         "provider_family": "siliconflow",
         "provider_model_id": "zai-org/GLM-5.2",
-        "reasoning_profile_id": "temperature0_thinking_false",
+        "reasoning_profile_id": "default",
         "source_provider_config_digest": SOURCE_CONFIG_DIGEST,
         "model_endpoint_identity_digest": ENDPOINT_DIGEST,
         "request_controls": _baseline_request_controls(),
@@ -712,21 +773,28 @@ def _baseline_request_controls() -> dict[str, Any]:
 
 
 def _shared_baseline_identity() -> PaperModelEndpointIdentity:
-    return PaperModelEndpointIdentity(
+    source_config = _baseline_source_config()
+    return build_model_endpoint_identity(
         model_cohort_id="exp1_to_exp4_glm_baseline",
         model_cohort_digest="sha256:" + "8" * 64,
         cohort_member_id="exp1_glm_5_2_siliconflow_default_v1",
         provider_config_id="exp1_baseline_siliconflow",
         selected_entry_id="glm_5_2_exp1_baseline",
-        provider_family="siliconflow",
-        provider_model_id="zai-org/GLM-5.2",
-        reasoning_profile_id="temperature0_thinking_false",
-        effective_reasoning_controls={
-            "temperature": 0.0,
-            "enable_thinking": False,
-        },
-        source_provider_config_digest=SOURCE_CONFIG_DIGEST,
+        expected_provider_family="siliconflow",
+        expected_provider_model_id="zai-org/GLM-5.2",
+        expected_reasoning_profile_id="default",
+        source_config=source_config,
     )
+
+
+def _baseline_source_config():
+    config_path = (
+        Path(__file__).resolve().parents[2]
+        / "benchmarks"
+        / "paper"
+        / "exp1_baseline_provider_config.v1.json"
+    )
+    return load_ai_api_config(json.loads(config_path.read_text(encoding="utf-8")))
 
 
 def _integration_summary_evidence(
