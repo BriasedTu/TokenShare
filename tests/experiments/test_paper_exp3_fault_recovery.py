@@ -202,6 +202,20 @@ def test_exp3_validation_rejects_model_failover_and_slice_drift() -> None:
             catalog=context.catalog,
         )
 
+    drifted_fields = replace(
+        conditions[0],
+        fault_rate=0.99,
+        ablation_mode="NO_VERIFICATION",
+        real_transport_required=False,
+        paper_eligible_required=False,
+    )
+    with pytest.raises(ValueError, match="condition field drift"):
+        validate_exp3_condition_matrix(
+            (drifted_fields,) + conditions[1:],
+            selections,
+            catalog=context.catalog,
+        )
+
     with pytest.raises(ValueError, match="condition matrix drift"):
         validate_exp3_condition_matrix(
             conditions[:-1],
@@ -308,8 +322,14 @@ def test_exp3_summary_computes_matched_baseline_overhead_and_zero_denominator() 
     assert positive["token_overhead_ratio"] == pytest.approx(0.5)
     assert positive["cost_overhead"] == pytest.approx(0.25)
     assert positive["cost_overhead_ratio"] == pytest.approx(0.5)
-    assert positive["original_output_refs"] == [{"artifact_id": "original"}]
-    assert positive["mutated_output_refs"] == [{"artifact_id": "mutated"}]
+    assert positive["original_output_refs"] == [
+        {"artifact_id": f"original_{index}"}
+        for index in range(4)
+    ]
+    assert positive["mutated_output_refs"] == [
+        {"artifact_id": f"mutated_{index}"}
+        for index in range(4)
+    ]
     assert positive["provider_tokens_attributed_by_mutation"] == 0
     assert positive["injected_fault_count"] == 4
     assert positive["detection_rate"] == pytest.approx(0.75)
@@ -403,6 +423,19 @@ def test_exp3_summary_rejects_fault_timing_before_raw_persistence_and_model_fail
             {"rate_fault_runs": [baseline_mismatch], "worker_death_runs": []}
         )
 
+    missing_expected = _rate_fault_run(
+        condition_id="fault_missing_expected_baseline",
+        matched_baseline_condition_id="baseline_missing_expected",
+    )
+    missing_expected.pop("expected_baseline_condition_id")
+    with pytest.raises(ValueError, match="expected_baseline_condition_id"):
+        summarize_exp3(
+            {
+                "rate_fault_runs": [missing_expected],
+                "worker_death_runs": [],
+            }
+        )
+
     provider_drift = _rate_fault_run(
         condition_id="fault_provider_drift",
         matched_baseline_condition_id="baseline_provider_drift",
@@ -449,6 +482,88 @@ def test_exp3_summary_rejects_fault_timing_before_raw_persistence_and_model_fail
     with pytest.raises(ValueError, match="fault record evidence"):
         summarize_exp3(
             {"rate_fault_runs": [missing_fault_records], "worker_death_runs": []}
+        )
+
+    partial_fault_records = _rate_fault_run(
+        condition_id="fault_partial_records",
+        matched_baseline_condition_id="baseline_partial_records",
+    )
+    partial_fault_records["fault_records"] = partial_fault_records[
+        "fault_records"
+    ][:1]
+    with pytest.raises(ValueError, match="fault record count"):
+        summarize_exp3(
+            {"rate_fault_runs": [partial_fault_records], "worker_death_runs": []}
+        )
+
+    missing_provenance = _rate_fault_run(
+        condition_id="fault_missing_provenance",
+        matched_baseline_condition_id="baseline_missing_provenance",
+    )
+    missing_provenance["fault_records"][0].pop("original_provenance_ref")
+    with pytest.raises(ValueError, match="provenance"):
+        summarize_exp3(
+            {"rate_fault_runs": [missing_provenance], "worker_death_runs": []}
+        )
+
+    malformed_artifact_ref = _rate_fault_run(
+        condition_id="fault_malformed_artifact_ref",
+        matched_baseline_condition_id="baseline_malformed_artifact_ref",
+        injected_fault_count=1,
+        detected_fault_count=1,
+        false_accept_count=0,
+        recoverable_fault_target_count=1,
+        recovered_fault_target_count=1,
+    )
+    malformed_artifact_ref["original_output_refs"] = [{}]
+    malformed_artifact_ref["fault_records"][0]["original_output_ref"] = {}
+    with pytest.raises(ValueError, match="artifact ref"):
+        summarize_exp3(
+            {
+                "rate_fault_runs": [malformed_artifact_ref],
+                "worker_death_runs": [],
+            }
+        )
+
+    malformed_provenance_ref = _rate_fault_run(
+        condition_id="fault_malformed_provenance_ref",
+        matched_baseline_condition_id="baseline_malformed_provenance_ref",
+        injected_fault_count=1,
+        detected_fault_count=1,
+        false_accept_count=0,
+        recoverable_fault_target_count=1,
+        recovered_fault_target_count=1,
+    )
+    malformed_provenance_ref["fault_records"][0]["original_provenance_ref"] = {}
+    with pytest.raises(ValueError, match="artifact ref"):
+        summarize_exp3(
+            {
+                "rate_fault_runs": [malformed_provenance_ref],
+                "worker_death_runs": [],
+            }
+        )
+
+    zero_fault_with_records = _rate_fault_run(
+        condition_id="fault_zero_with_records",
+        matched_baseline_condition_id="baseline_zero_with_records",
+        injected_fault_count=0,
+        detected_fault_count=0,
+        false_accept_count=0,
+        recoverable_fault_target_count=0,
+        recovered_fault_target_count=0,
+    )
+    zero_fault_with_records["original_output_refs"] = [{"artifact_id": "original_0"}]
+    zero_fault_with_records["mutated_output_refs"] = [{"artifact_id": "mutated_0"}]
+    zero_fault_with_records["fault_records"] = [
+        _fault_record(
+            index=0,
+            original_output_ref={"artifact_id": "original_0"},
+            mutated_output_ref={"artifact_id": "mutated_0"},
+        )
+    ]
+    with pytest.raises(ValueError, match="zero injected faults"):
+        summarize_exp3(
+            {"rate_fault_runs": [zero_fault_with_records], "worker_death_runs": []}
         )
 
     bad_completion = _rate_fault_run(
@@ -533,6 +648,222 @@ def test_exp3_worker_death_summary_keeps_actual_dead_count_mismatch_failed() -> 
     assert coordinator_failed["condition_included"] is False
     assert coordinator_failed["run_status"] == "failed"
     assert coordinator_failed["failure_reason"] == "coordinator_not_continued"
+
+    missing_records = _worker_death_run(
+        condition_id="worker_death_missing_records",
+        target_dead_worker_count=1,
+        actual_dead_worker_count=1,
+        required_slot_count=1,
+        recovered_slot_count=1,
+    )
+    missing_records["worker_death_records"] = []
+    missing_records["worker_death_record_refs"] = []
+    with pytest.raises(ValueError, match="worker death record evidence"):
+        summarize_exp3(
+            {"rate_fault_runs": [], "worker_death_runs": [missing_records]}
+        )
+
+    bad_record_count = _worker_death_run(
+        condition_id="worker_death_bad_record_count",
+        target_dead_worker_count=3,
+        actual_dead_worker_count=2,
+        required_slot_count=1,
+        recovered_slot_count=1,
+    )
+    bad_record_count["worker_death_records"] = bad_record_count[
+        "worker_death_records"
+    ][:1]
+    with pytest.raises(ValueError, match="worker death record count"):
+        summarize_exp3(
+            {"rate_fault_runs": [], "worker_death_runs": [bad_record_count]}
+        )
+
+    bad_process_evidence = _worker_death_run(
+        condition_id="worker_death_bad_process",
+        target_dead_worker_count=1,
+        actual_dead_worker_count=1,
+        required_slot_count=1,
+        recovered_slot_count=1,
+    )
+    bad_process_evidence["worker_death_records"][0]["worker_process_exitcode"] = 0
+    with pytest.raises(ValueError, match="worker death record"):
+        summarize_exp3(
+            {
+                "rate_fault_runs": [],
+                "worker_death_runs": [bad_process_evidence],
+            }
+        )
+
+    duplicate_records = _worker_death_run(
+        condition_id="worker_death_duplicate_records",
+        target_dead_worker_count=3,
+        actual_dead_worker_count=3,
+        required_slot_count=3,
+        recovered_slot_count=3,
+    )
+    duplicate_records["worker_death_records"] = [
+        duplicate_records["worker_death_records"][0],
+        duplicate_records["worker_death_records"][0],
+        duplicate_records["worker_death_records"][0],
+    ]
+    duplicate_records["worker_death_record_refs"] = _worker_death_record_refs(
+        condition_id="worker_death_duplicate_records",
+        records=duplicate_records["worker_death_records"],
+    )
+    with pytest.raises(ValueError, match="distinct worker death records"):
+        summarize_exp3(
+            {"rate_fault_runs": [], "worker_death_runs": [duplicate_records]}
+        )
+
+    duplicate_refs = _worker_death_run(
+        condition_id="worker_death_duplicate_refs",
+        target_dead_worker_count=3,
+        actual_dead_worker_count=3,
+        required_slot_count=3,
+        recovered_slot_count=3,
+    )
+    duplicate_refs["worker_death_record_refs"] = [
+        duplicate_refs["worker_death_record_refs"][0],
+        duplicate_refs["worker_death_record_refs"][0],
+        duplicate_refs["worker_death_record_refs"][0],
+    ]
+    with pytest.raises(ValueError, match="worker death record refs must be unique"):
+        summarize_exp3(
+            {"rate_fault_runs": [], "worker_death_runs": [duplicate_refs]}
+        )
+
+    mismatched_record_ref = _worker_death_run(
+        condition_id="worker_death_mismatched_ref",
+        target_dead_worker_count=1,
+        actual_dead_worker_count=1,
+        required_slot_count=1,
+        recovered_slot_count=1,
+    )
+    mismatched_record_ref["worker_death_record_refs"][0]["record_digest"] = (
+        "sha256:" + "f" * 64
+    )
+    with pytest.raises(ValueError, match="worker death record ref"):
+        summarize_exp3(
+            {
+                "rate_fault_runs": [],
+                "worker_death_runs": [mismatched_record_ref],
+            }
+        )
+
+    swapped_record_refs = _worker_death_run(
+        condition_id="worker_death_swapped_refs",
+        target_dead_worker_count=3,
+        actual_dead_worker_count=3,
+        required_slot_count=3,
+        recovered_slot_count=3,
+    )
+    swapped_record_refs["worker_death_record_refs"][0]["record_digest"], (
+        swapped_record_refs["worker_death_record_refs"][1]["record_digest"]
+    ) = (
+        swapped_record_refs["worker_death_record_refs"][1]["record_digest"],
+        swapped_record_refs["worker_death_record_refs"][0]["record_digest"],
+    )
+    with pytest.raises(ValueError, match="worker death record ref"):
+        summarize_exp3(
+            {
+                "rate_fault_runs": [],
+                "worker_death_runs": [swapped_record_refs],
+            }
+        )
+
+    progress_drift = _worker_death_run(
+        condition_id="worker_death_progress_drift",
+        target_dead_worker_count=1,
+        actual_dead_worker_count=1,
+        required_slot_count=1,
+        recovered_slot_count=1,
+    )
+    progress_drift["worker_death_records"][0]["progress_before_kill"] = 75
+    progress_drift["worker_death_record_refs"] = _worker_death_record_refs(
+        condition_id="worker_death_progress_drift",
+        records=progress_drift["worker_death_records"],
+    )
+    with pytest.raises(ValueError, match="actual kill progress"):
+        summarize_exp3(
+            {"rate_fault_runs": [], "worker_death_runs": [progress_drift]}
+        )
+
+    nested_process_drift = _worker_death_run(
+        condition_id="worker_death_nested_process_drift",
+        target_dead_worker_count=1,
+        actual_dead_worker_count=1,
+        required_slot_count=1,
+        recovered_slot_count=1,
+    )
+    nested_process_drift["worker_death_records"][0]["dead_attempt"][
+        "process_exitcode"
+    ] = 0
+    nested_process_drift["worker_death_record_refs"] = _worker_death_record_refs(
+        condition_id="worker_death_nested_process_drift",
+        records=nested_process_drift["worker_death_records"],
+    )
+    with pytest.raises(ValueError, match="worker death record"):
+        summarize_exp3(
+            {
+                "rate_fault_runs": [],
+                "worker_death_runs": [nested_process_drift],
+            }
+        )
+
+    reassignment_drift = _worker_death_run(
+        condition_id="worker_death_reassignment_drift",
+        target_dead_worker_count=1,
+        actual_dead_worker_count=1,
+        required_slot_count=1,
+        recovered_slot_count=1,
+    )
+    reassignment_drift["worker_death_records"][0]["reassignment"][
+        "from_worker_id"
+    ] = "other_worker"
+    reassignment_drift["worker_death_record_refs"] = _worker_death_record_refs(
+        condition_id="worker_death_reassignment_drift",
+        records=reassignment_drift["worker_death_records"],
+    )
+    with pytest.raises(ValueError, match="worker death record"):
+        summarize_exp3(
+            {
+                "rate_fault_runs": [],
+                "worker_death_runs": [reassignment_drift],
+            }
+        )
+
+    worker_baseline_mismatch = _worker_death_run(
+        condition_id="worker_death_baseline_mismatch",
+        target_dead_worker_count=1,
+        actual_dead_worker_count=1,
+        required_slot_count=1,
+        recovered_slot_count=1,
+        matched_baseline_condition_id="worker_baseline_wrong",
+        expected_baseline_condition_id="worker_baseline_expected",
+    )
+    with pytest.raises(ValueError, match="baseline mismatch"):
+        summarize_exp3(
+            {
+                "rate_fault_runs": [],
+                "worker_death_runs": [worker_baseline_mismatch],
+            }
+        )
+
+    worker_missing_expected = _worker_death_run(
+        condition_id="worker_death_missing_expected_baseline",
+        target_dead_worker_count=1,
+        actual_dead_worker_count=1,
+        required_slot_count=1,
+        recovered_slot_count=1,
+    )
+    worker_missing_expected.pop("expected_baseline_condition_id")
+    with pytest.raises(ValueError, match="expected_baseline_condition_id"):
+        summarize_exp3(
+            {
+                "rate_fault_runs": [],
+                "worker_death_runs": [worker_missing_expected],
+            }
+        )
 
 
 def test_exp3_module_protocol_run_condition_and_scripted_eligibility_guard() -> None:
@@ -647,7 +978,16 @@ def _rate_fault_run(
     false_accept_count: int = 1,
     recoverable_fault_target_count: int = 2,
     recovered_fault_target_count: int = 2,
+    expected_baseline_condition_id: str | None = None,
 ) -> dict[str, Any]:
+    original_refs = [
+        {"artifact_id": f"original_{index}"}
+        for index in range(injected_fault_count)
+    ]
+    mutated_refs = [
+        {"artifact_id": f"mutated_{index}"}
+        for index in range(injected_fault_count)
+    ]
     return {
         "condition_id": condition_id,
         "domain": "factorization",
@@ -670,19 +1010,21 @@ def _rate_fault_run(
         "total_tokens": total_tokens,
         "cost_estimate": cost_estimate,
         "matched_baseline_condition_id": matched_baseline_condition_id,
+        "expected_baseline_condition_id": (
+            expected_baseline_condition_id or matched_baseline_condition_id
+        ),
         "baseline_wall_clock_ms": baseline_wall_clock_ms,
         "baseline_total_tokens": baseline_total_tokens,
         "baseline_cost_estimate": baseline_cost_estimate,
-        "original_output_refs": [{"artifact_id": "original"}],
-        "mutated_output_refs": [{"artifact_id": "mutated"}],
+        "original_output_refs": original_refs,
+        "mutated_output_refs": mutated_refs,
         "fault_records": [
-            {
-                "injection_point": "after_raw_output_before_parser_bridge",
-                "original_raw_output_ref": {"artifact_id": "raw"},
-                "original_output_ref": {"artifact_id": "original"},
-                "mutated_output_ref": {"artifact_id": "mutated"},
-                "provider_tokens_attributed": 0,
-            }
+            _fault_record(
+                index=index,
+                original_output_ref=original_refs[index],
+                mutated_output_ref=mutated_refs[index],
+            )
+            for index in range(injected_fault_count)
         ],
         "attempts": [
             {
@@ -697,6 +1039,23 @@ def _rate_fault_run(
     }
 
 
+def _fault_record(
+    *,
+    index: int,
+    original_output_ref: dict[str, str],
+    mutated_output_ref: dict[str, str],
+) -> dict[str, Any]:
+    return {
+        "injection_point": "after_raw_output_before_parser_bridge",
+        "original_raw_output_ref": {"artifact_id": f"raw_{index}"},
+        "original_provenance_ref": {"artifact_id": f"provenance_{index}"},
+        "original_output_ref": original_output_ref,
+        "mutated_output_ref": mutated_output_ref,
+        "mutated_provenance_ref": {"artifact_id": f"mutated_provenance_{index}"},
+        "provider_tokens_attributed": 0,
+    }
+
+
 def _worker_death_run(
     *,
     condition_id: str,
@@ -708,7 +1067,16 @@ def _worker_death_run(
     baseline_wall_clock_ms: int = 100,
     baseline_total_tokens: int = 50,
     baseline_cost_estimate: float = 0.7,
+    expected_baseline_condition_id: str | None = None,
 ) -> dict[str, Any]:
+    records = [
+        _worker_death_record(
+            condition_id=condition_id,
+            index=index,
+            target_progress=50,
+        )
+        for index in range(actual_dead_worker_count)
+    ]
     return {
         "condition_id": condition_id,
         "domain": "lean_proof",
@@ -730,9 +1098,17 @@ def _worker_death_run(
         "total_tokens": 61,
         "cost_estimate": 0.9,
         "matched_baseline_condition_id": matched_baseline_condition_id,
+        "expected_baseline_condition_id": (
+            expected_baseline_condition_id or matched_baseline_condition_id
+        ),
         "baseline_wall_clock_ms": baseline_wall_clock_ms,
         "baseline_total_tokens": baseline_total_tokens,
         "baseline_cost_estimate": baseline_cost_estimate,
+        "worker_death_records": records,
+        "worker_death_record_refs": _worker_death_record_refs(
+            condition_id=condition_id,
+            records=records,
+        ),
         "attempts": [
             {
                 "entry_id": BASELINE_MODEL_ENTRY_ID,
@@ -744,3 +1120,98 @@ def _worker_death_run(
         "transport_kind": "scripted",
         "paper_eligible": False,
     }
+
+
+def _worker_death_record(
+    *,
+    condition_id: str,
+    index: int,
+    target_progress: int,
+) -> dict[str, Any]:
+    return {
+        "schema_version": "tokenshare.paper_worker_death.v1",
+        "condition_id": condition_id,
+        "repeat_id": 0,
+        "run_id": f"run_{condition_id}",
+        "task_id": f"task_{index}",
+        "target_ai_unit": {
+            "schema_version": "tokenshare.paper_ai_unit.v1",
+            "task_id": f"task_{index}",
+            "unit_id": f"unit_{index}",
+            "unit_kind": "generic_ai_unit",
+            "dependencies": [],
+            "depth": 0,
+            "domain": "lean_proof",
+            "metadata": {},
+        },
+        "dependency_graph": {
+            "schema_version": "tokenshare.paper_ai_dependency_graph.v1",
+            "task_id": f"task_{index}",
+            "expected_ai_unit_count": 1,
+            "unit_ids": [f"unit_{index}"],
+            "graph_digest": "sha256:" + f"{index:064x}"[-64:],
+        },
+        "worker_id": f"worker_{index}_initial",
+        "worker_pid": 1000 + index,
+        "worker_process_exitcode": -15,
+        "kill_point": f"progress_{target_progress}",
+        "progress_before_kill": target_progress,
+        "worker_started_at": "2026-07-15T00:00:00Z",
+        "killed_at": "2026-07-15T00:00:01Z",
+        "initial_lease": {"lease_id": f"lease_{index}_initial"},
+        "lease_expiry": {
+            "trigger": "lease_expired",
+            "lease_id": f"lease_{index}_initial",
+            "attempt_id": f"attempt_{index}_initial",
+        },
+        "dead_attempt": {
+            "role": "killed_worker",
+            "attempt_id": f"attempt_{index}_initial",
+            "unit_id": f"unit_{index}",
+            "worker_id": f"worker_{index}_initial",
+            "worker_pid": 1000 + index,
+            "process_exitcode": -15,
+        },
+        "replacement_worker_id": f"worker_{index}_replacement",
+        "replacement_worker_pid": 2000 + index,
+        "replacement_process_exitcode": 0,
+        "replacement_attempt": {
+            "role": "replacement_worker",
+            "attempt_id": f"attempt_{index}_replacement",
+            "unit_id": f"unit_{index}",
+            "worker_id": f"worker_{index}_replacement",
+            "worker_pid": 2000 + index,
+            "lease_id": f"lease_{index}_replacement",
+            "process_exitcode": 0,
+        },
+        "reassignment": {
+            "from_worker_id": f"worker_{index}_initial",
+            "to_worker_id": f"worker_{index}_replacement",
+            "target_unit_id": f"unit_{index}",
+            "original_attempt_id": f"attempt_{index}_initial",
+            "replacement_attempt_id": f"attempt_{index}_replacement",
+            "replacement_lease_id": f"lease_{index}_replacement",
+        },
+        "coordinator": {
+            "pid": 999,
+            "survived": True,
+            "waited_for_lease_expiry": True,
+        },
+        "canonical_pollution": False,
+        "provider_tokens_attributed": 0,
+        "created_at": "2026-07-15T00:00:02Z",
+    }
+
+
+def _worker_death_record_refs(
+    *,
+    condition_id: str,
+    records: list[dict[str, Any]],
+) -> list[dict[str, str]]:
+    return [
+        {
+            "artifact_id": f"worker_death_{condition_id}_{index}",
+            "record_digest": digest_json(record),
+        }
+        for index, record in enumerate(records)
+    ]

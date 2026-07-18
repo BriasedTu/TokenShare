@@ -25,6 +25,7 @@ from tokenshare.experiments.paper_models import (
     PaperStatus,
     digest_json,
 )
+from tokenshare.experiments.paper_workers import WORKER_DEATH_RECORD_SCHEMA_VERSION
 
 
 EXP3_EXPERIMENT_ID = "exp3_real_ai_fault_recovery"
@@ -353,10 +354,16 @@ def validate_exp3_condition_matrix(
     expected_condition_ids = tuple(condition.condition_id for condition in expected_conditions)
     if tuple(condition_ids) != expected_condition_ids:
         raise ValueError("condition matrix drift for Experiment 3")
-    for condition, selection in zip(conditions, selections, strict=True):
+    for condition, expected_condition, selection in zip(
+        conditions,
+        expected_conditions,
+        selections,
+        strict=True,
+    ):
         _validate_baseline_condition(condition)
         if condition.catalog_digest != catalog_digest:
             raise ValueError("catalog digest drift for Experiment 3 condition")
+        _validate_condition_matches_expected(condition, expected_condition)
         if selection.catalog_digest != catalog_digest:
             raise ValueError("selection catalog digest drift for Experiment 3")
         try:
@@ -409,6 +416,18 @@ def _root_run_counts(
             counts["worker_death"] += case_count
         counts["total"] += case_count
     return counts
+
+
+def _validate_condition_matches_expected(
+    condition: PaperExperimentCondition,
+    expected_condition: PaperExperimentCondition,
+) -> None:
+    actual_body = condition.to_dict()
+    expected_body = expected_condition.to_dict()
+    actual_body.pop("condition_digest", None)
+    expected_body.pop("condition_digest", None)
+    if actual_body != expected_body:
+        raise ValueError("condition field drift for Experiment 3")
 
 
 def summarize_exp3(evidence: Mapping[str, Any]) -> ExperimentSummaryRows:
@@ -711,8 +730,8 @@ def _expected_ai_unit_count(
 def _summarize_rate_fault_run(run: Mapping[str, Any]) -> JsonObject:
     _validate_attempt_model_entries(run)
     matched_baseline = _required_str(run, "matched_baseline_condition_id")
-    expected_baseline = run.get("expected_baseline_condition_id")
-    if expected_baseline is not None and expected_baseline != matched_baseline:
+    expected_baseline = _required_str(run, "expected_baseline_condition_id")
+    if expected_baseline != matched_baseline:
         raise ValueError("baseline mismatch for Experiment 3 rate-fault run")
     task_count = _positive_int(run, "task_count")
     domain = _required_str(run, "domain")
@@ -804,6 +823,7 @@ def _summarize_rate_fault_run(run: Mapping[str, Any]) -> JsonObject:
         "task_count": task_count,
         "completed_root_count": completed_root_count,
         "matched_baseline_condition_id": matched_baseline,
+        "expected_baseline_condition_id": expected_baseline,
         "injected_fault_count": injected_fault_count,
         "detected_fault_count": detected_fault_count,
         "false_accept_count": false_accept_count,
@@ -841,8 +861,10 @@ def _summarize_rate_fault_run(run: Mapping[str, Any]) -> JsonObject:
 
 def _summarize_worker_death_run(run: Mapping[str, Any]) -> JsonObject:
     _validate_attempt_model_entries(run)
+    condition_id = _required_str(run, "condition_id")
     domain = _required_str(run, "domain")
     _validate_domain(domain)
+    repeat_id = _non_negative_int(run, "repeat_id")
     target_dead = _non_negative_int(run, "target_dead_worker_count")
     actual_dead = _non_negative_int(run, "actual_dead_worker_count")
     required_slots = _positive_int(run, "required_slot_count")
@@ -865,6 +887,18 @@ def _summarize_worker_death_run(run: Mapping[str, Any]) -> JsonObject:
         raise ValueError("unsupported frozen worker-death count")
     if target_progress not in WORKER_DEATH_KILL_PROGRESS_PERCENT:
         raise ValueError("unsupported frozen worker-death kill progress")
+    worker_death_record_refs = _validate_worker_death_records(
+        run,
+        condition_id=condition_id,
+        repeat_id=repeat_id,
+        actual_dead_worker_count=actual_dead,
+        target_kill_progress_percent=target_progress,
+        actual_kill_progress_percent=actual_progress,
+    )
+    matched_baseline = _required_str(run, "matched_baseline_condition_id")
+    expected_baseline = _required_str(run, "expected_baseline_condition_id")
+    if expected_baseline != matched_baseline:
+        raise ValueError("baseline mismatch for Experiment 3 worker-death run")
     coordinator_continued = _bool(run, "coordinator_continued")
     mismatch_reason = None
     if actual_dead != target_dead:
@@ -878,9 +912,9 @@ def _summarize_worker_death_run(run: Mapping[str, Any]) -> JsonObject:
         "schema_version": "tokenshare.paper_exp3_worker_death_summary_row.v1",
         "experiment_id": EXP3_EXPERIMENT_ID,
         "summary_kind": "worker_death",
-        "condition_id": _required_str(run, "condition_id"),
+        "condition_id": condition_id,
         "domain": domain,
-        "repeat_id": _non_negative_int(run, "repeat_id"),
+        "repeat_id": repeat_id,
         "task_count": _positive_int(run, "task_count"),
         "target_dead_worker_count": target_dead,
         "actual_dead_worker_count": actual_dead,
@@ -895,10 +929,9 @@ def _summarize_worker_death_run(run: Mapping[str, Any]) -> JsonObject:
         "recovery_latency_ms": _non_negative_int(run, "recovery_latency_ms"),
         "retry_count": _non_negative_int(run, "retry_count"),
         "reassignment_count": _non_negative_int(run, "reassignment_count"),
-        "matched_baseline_condition_id": _required_str(
-            run,
-            "matched_baseline_condition_id",
-        ),
+        "matched_baseline_condition_id": matched_baseline,
+        "expected_baseline_condition_id": expected_baseline,
+        "worker_death_record_refs": worker_death_record_refs,
         "wall_clock_ms": wall_clock,
         "total_tokens": tokens,
         "cost_estimate": cost,
@@ -957,8 +990,30 @@ def _validate_fault_records(
     mutated_output_refs: Sequence[Mapping[str, Any]],
 ) -> None:
     records = _require_sequence(run.get("fault_records", ()), "fault_records")
-    if injected_fault_count > 0 and not records:
+    if injected_fault_count == 0:
+        if records or original_output_refs or mutated_output_refs:
+            raise ValueError(
+                "zero injected faults must not declare fault records or mutation refs"
+            )
+        return
+    if not records:
         raise ValueError("fault record evidence is required for injected faults")
+    if len(records) != injected_fault_count:
+        raise ValueError("fault record count must equal injected_fault_count")
+    if len(original_output_refs) != injected_fault_count:
+        raise ValueError("original output ref count must equal injected_fault_count")
+    if len(mutated_output_refs) != injected_fault_count:
+        raise ValueError("mutated output ref count must equal injected_fault_count")
+    expected_original_ref_digests = _artifact_ref_digests(
+        original_output_refs,
+        "original_output_refs",
+    )
+    expected_mutated_ref_digests = _artifact_ref_digests(
+        mutated_output_refs,
+        "mutated_output_refs",
+    )
+    actual_original_ref_digests: list[str] = []
+    actual_mutated_ref_digests: list[str] = []
     for record in records:
         body = _require_mapping(record, "fault_record")
         injection_point = _required_str(body, "injection_point")
@@ -966,21 +1021,192 @@ def _validate_fault_records(
             raise ValueError("fault injection must occur after raw persistence")
         for field_name in (
             "original_raw_output_ref",
+            "original_provenance_ref",
             "original_output_ref",
             "mutated_output_ref",
+            "mutated_provenance_ref",
         ):
-            if not isinstance(body.get(field_name), Mapping):
-                raise ValueError(f"{field_name} is required in fault record")
-        if dict(body["original_output_ref"]) not in [
-            dict(item) for item in original_output_refs
-        ]:
-            raise ValueError("fault record original_output_ref does not match summary")
-        if dict(body["mutated_output_ref"]) not in [
-            dict(item) for item in mutated_output_refs
-        ]:
-            raise ValueError("fault record mutated_output_ref does not match summary")
+            _validate_artifact_ref(body.get(field_name), field_name)
+        actual_original_ref_digests.append(
+            digest_json(body["original_output_ref"])
+        )
+        actual_mutated_ref_digests.append(
+            digest_json(body["mutated_output_ref"])
+        )
         if _non_negative_int(body, "provider_tokens_attributed") != 0:
             raise ValueError("synthetic mutation must not attribute provider tokens")
+    if sorted(actual_original_ref_digests) != sorted(expected_original_ref_digests):
+        raise ValueError("fault record original_output_ref does not match summary")
+    if sorted(actual_mutated_ref_digests) != sorted(expected_mutated_ref_digests):
+        raise ValueError("fault record mutated_output_ref does not match summary")
+
+
+def _artifact_ref_digests(
+    values: Sequence[Mapping[str, Any]],
+    field_name: str,
+) -> list[str]:
+    digests = [
+        digest_json(_validate_artifact_ref(value, field_name))
+        for value in values
+    ]
+    if len(set(digests)) != len(digests):
+        raise ValueError("summary artifact refs must be unique")
+    return digests
+
+
+def _validate_artifact_ref(value: Any, field_name: str) -> JsonObject:
+    if not isinstance(value, Mapping):
+        raise ValueError(f"{field_name} artifact ref must be a mapping")
+    body = dict(value)
+    artifact_id = body.get("artifact_id")
+    if not isinstance(artifact_id, str) or not artifact_id:
+        raise ValueError(f"{field_name} artifact ref must include artifact_id")
+    return body
+
+
+def _validate_worker_death_records(
+    run: Mapping[str, Any],
+    *,
+    condition_id: str,
+    repeat_id: int,
+    actual_dead_worker_count: int,
+    target_kill_progress_percent: int,
+    actual_kill_progress_percent: int,
+) -> list[JsonObject]:
+    records = _require_sequence(
+        run.get("worker_death_records", ()),
+        "worker_death_records",
+    )
+    record_refs = _json_list(run.get("worker_death_record_refs", []))
+    if actual_dead_worker_count > 0 and not records:
+        raise ValueError("worker death record evidence is required")
+    if len(records) != actual_dead_worker_count:
+        raise ValueError(
+            "worker death record count must equal actual_dead_worker_count"
+        )
+    if len(record_refs) != actual_dead_worker_count:
+        raise ValueError(
+            "worker death record ref count must equal actual_dead_worker_count"
+        )
+    if len(set(digest_json(ref) for ref in record_refs)) != len(record_refs):
+        raise ValueError("worker death record refs must be unique")
+    expected_record_digests: list[str] = []
+    actual_record_digests: list[str] = []
+    worker_evidence_keys: set[tuple[str, str, str, int]] = set()
+    for record, record_ref in zip(records, record_refs, strict=True):
+        body = _require_mapping(record, "worker_death_record")
+        record_digest = digest_json(body)
+        ref_body = _validate_artifact_ref(record_ref, "worker_death_record_ref")
+        ref_record_digest = _required_str(ref_body, "record_digest")
+        _validate_complete_digest("record_digest", ref_record_digest)
+        if ref_record_digest != record_digest:
+            raise ValueError("worker death record ref digest mismatch")
+        actual_record_digests.append(ref_record_digest)
+        if body.get("schema_version") != WORKER_DEATH_RECORD_SCHEMA_VERSION:
+            raise ValueError("worker death record schema drift")
+        if body.get("condition_id") != condition_id:
+            raise ValueError("worker death record condition_id mismatch")
+        if body.get("repeat_id") != repeat_id:
+            raise ValueError("worker death record repeat_id mismatch")
+        if body.get("kill_point") != f"progress_{target_kill_progress_percent}":
+            raise ValueError("worker death record kill point mismatch")
+        progress_before_kill = _non_negative_int(body, "progress_before_kill")
+        if progress_before_kill < target_kill_progress_percent:
+            raise ValueError("worker death record progress is before kill target")
+        if progress_before_kill != actual_kill_progress_percent:
+            raise ValueError(
+                "actual kill progress must match worker death record evidence"
+            )
+        worker_pid = _positive_int(body, "worker_pid")
+        replacement_worker_pid = _positive_int(body, "replacement_worker_pid")
+        if worker_pid == replacement_worker_pid:
+            raise ValueError("worker death record must use independent workers")
+        worker_exitcode = _required_int(body, "worker_process_exitcode")
+        if worker_exitcode == 0:
+            raise ValueError("worker death record must show killed worker exit")
+        replacement_exitcode = _required_int(body, "replacement_process_exitcode")
+        if replacement_exitcode != 0:
+            raise ValueError("worker death record replacement worker did not complete")
+        coordinator = _require_mapping(
+            body.get("coordinator"),
+            "worker_death_record.coordinator",
+        )
+        if (
+            coordinator.get("survived") is not True
+            or coordinator.get("waited_for_lease_expiry") is not True
+        ):
+            raise ValueError("worker death record coordinator did not continue")
+        lease_expiry = _require_mapping(
+            body.get("lease_expiry"),
+            "worker_death_record.lease_expiry",
+        )
+        if lease_expiry.get("trigger") != "lease_expired":
+            raise ValueError("worker death record must include lease expiry")
+        dead_attempt = _require_mapping(
+            body.get("dead_attempt"),
+            "worker_death_record.dead_attempt",
+        )
+        replacement_attempt = _require_mapping(
+            body.get("replacement_attempt"),
+            "worker_death_record.replacement_attempt",
+        )
+        if dead_attempt.get("role") != "killed_worker":
+            raise ValueError("worker death record dead attempt role mismatch")
+        if replacement_attempt.get("role") != "replacement_worker":
+            raise ValueError("worker death record replacement attempt role mismatch")
+        if dead_attempt.get("attempt_id") == replacement_attempt.get("attempt_id"):
+            raise ValueError("worker death record replacement attempt must be distinct")
+        if dead_attempt.get("worker_id") != body.get("worker_id"):
+            raise ValueError("worker death record dead attempt worker mismatch")
+        if dead_attempt.get("worker_pid") != worker_pid:
+            raise ValueError("worker death record dead attempt pid mismatch")
+        if dead_attempt.get("process_exitcode") != worker_exitcode:
+            raise ValueError("worker death record dead attempt exit mismatch")
+        if replacement_attempt.get("worker_id") != body.get("replacement_worker_id"):
+            raise ValueError(
+                "worker death record replacement attempt worker mismatch"
+            )
+        if replacement_attempt.get("worker_pid") != replacement_worker_pid:
+            raise ValueError("worker death record replacement attempt pid mismatch")
+        if replacement_attempt.get("process_exitcode") != replacement_exitcode:
+            raise ValueError("worker death record replacement attempt exit mismatch")
+        reassignment = _require_mapping(
+            body.get("reassignment"),
+            "worker_death_record.reassignment",
+        )
+        if reassignment.get("from_worker_id") != body.get("worker_id"):
+            raise ValueError("worker death record reassignment mismatch")
+        if reassignment.get("original_attempt_id") != dead_attempt.get("attempt_id"):
+            raise ValueError("worker death record reassignment mismatch")
+        if reassignment.get("to_worker_id") != body.get("replacement_worker_id"):
+            raise ValueError("worker death record reassignment mismatch")
+        if reassignment.get("replacement_attempt_id") != replacement_attempt.get(
+            "attempt_id"
+        ):
+            raise ValueError("worker death record reassignment mismatch")
+        if reassignment.get("replacement_lease_id") != replacement_attempt.get(
+            "lease_id"
+        ):
+            raise ValueError("worker death record reassignment mismatch")
+        if body.get("canonical_pollution") is not False:
+            raise ValueError("worker death record must not pollute canonical output")
+        if _non_negative_int(body, "provider_tokens_attributed") != 0:
+            raise ValueError("worker death record must not attribute provider tokens")
+        evidence_key = (
+            _required_str(body, "task_id"),
+            _required_str(body, "worker_id"),
+            _required_str(dead_attempt, "attempt_id"),
+            worker_pid,
+        )
+        if evidence_key in worker_evidence_keys:
+            raise ValueError("distinct worker death records are required")
+        worker_evidence_keys.add(evidence_key)
+        expected_record_digests.append(record_digest)
+    if len(set(expected_record_digests)) != len(expected_record_digests):
+        raise ValueError("distinct worker death records are required")
+    if actual_record_digests != expected_record_digests:
+        raise ValueError("worker death record ref digest mismatch")
+    return record_refs
 
 
 def _validate_rate_fault_membership(
@@ -1123,6 +1349,13 @@ def _non_negative_int(body: Mapping[str, Any], field_name: str) -> int:
     value = body.get(field_name)
     if isinstance(value, bool) or not isinstance(value, int) or value < 0:
         raise ValueError(f"{field_name} must be an integer >= 0")
+    return value
+
+
+def _required_int(body: Mapping[str, Any], field_name: str) -> int:
+    value = body.get(field_name)
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"{field_name} must be an integer")
     return value
 
 
