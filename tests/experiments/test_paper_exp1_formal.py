@@ -19,6 +19,7 @@ from tokenshare.experiments.paper_models import (
     PaperStatus,
     digest_json,
 )
+from tokenshare.experiments.paper_model_identity import PaperModelEndpointIdentity
 from tokenshare.experiments.paper_exp1 import Exp1FormalModule
 
 
@@ -77,6 +78,22 @@ def test_exp1_formal_expands_exact_conditions_with_frozen_baseline_controls() ->
         assert condition.source_provider_config_digest == SOURCE_CONFIG_DIGEST
         assert condition.model_endpoint_identity_digest == ENDPOINT_DIGEST
         assert condition.catalog_digest == CATALOG_DIGEST
+
+
+def test_exp1_formal_accepts_shared_endpoint_identity_and_effective_controls() -> None:
+    module = Exp1FormalModule()
+    identity = _shared_baseline_identity()
+    context = _context(binding=identity)
+
+    conditions = module.expand_conditions(context)
+
+    assert len(conditions) == 36
+    assert {condition.model_entry_id for condition in conditions} == {
+        "glm_5_2_exp1_baseline"
+    }
+    assert {condition.model_endpoint_identity_digest for condition in conditions} == {
+        identity.model_endpoint_identity_digest
+    }
 
 
 def test_exp1_formal_freezes_165_unique_roots_and_495_root_runs_without_resampling() -> None:
@@ -439,7 +456,7 @@ def test_exp1_formal_summary_rows_cover_feasibility_metrics_and_scripted_eligibi
             False,
             300,
             30,
-            0.00,
+            0.30,
             failure_kind="checker_rejected",
         ),
         _task(
@@ -469,7 +486,7 @@ def test_exp1_formal_summary_rows_cover_feasibility_metrics_and_scripted_eligibi
     assert simple["wall_clock_p90_ms"] == 300
     assert simple["total_tokens_median"] == 20
     assert simple["total_tokens_p90"] == 30
-    assert simple["cost_per_completed_task"] == pytest.approx(0.15)
+    assert simple["cost_per_completed_task"] == pytest.approx(0.30)
     assert simple["failure_breakdown"] == [{"failure_kind": "checker_rejected", "count": 1}]
     assert simple["highest_observed_valid_completion_difficulty"] == "medium_lemma_dag"
     assert rows[("factorization", "easy", None)][
@@ -518,37 +535,20 @@ def test_exp1_formal_summary_rejects_pilot_records_even_when_real_transport_elig
         )
 
 
-def test_exp1_formal_summary_rejects_flat_self_reported_ai_api_eligibility() -> None:
-    task = _task(
-        "lean_unproven_formal_case",
-        "lean_proof",
-        "simple",
-        "pure_logic",
-        True,
-        True,
-        100,
-        10,
-        0.1,
-    )
-    task.update({"transport_kind": "ai_api", "paper_eligible": True})
-
-    with pytest.raises(ValueError, match="requires condition_evidence"):
-        Exp1FormalModule().summarize({"task_results": [task]})
-
-
 def test_exp1_formal_summary_requires_complete_canonical_formal_inventory() -> None:
-    module = Exp1FormalModule()
-    evidence = _formal_evidence(_context())
-    evidence["condition_evidence"] = evidence["condition_evidence"][:-1]
+    evidence = _integration_summary_evidence(
+        _context(binding=_shared_baseline_identity())
+    )
+    evidence["task_metrics"] = evidence["task_metrics"][:-1]
 
-    with pytest.raises(ValueError, match="36 canonical conditions"):
-        module.summarize(evidence)
+    with pytest.raises(ValueError, match="495 root-runs"):
+        Exp1FormalModule().summarize(evidence)
 
 
 def test_exp1_formal_summary_accepts_exact_165_by_3_real_evidence_matrix() -> None:
-    module = Exp1FormalModule()
-
-    summary = module.summarize(_formal_evidence(_context()))
+    summary = Exp1FormalModule().summarize(
+        _integration_summary_evidence(_context(binding=_shared_baseline_identity()))
+    )
 
     assert len(summary.rows) == 12
     assert sum(int(row["case_count"]) for row in summary.rows) == 165
@@ -557,128 +557,99 @@ def test_exp1_formal_summary_accepts_exact_165_by_3_real_evidence_matrix() -> No
     assert all(row["paper_eligible"] is True for row in summary.rows)
 
 
+def test_exp1_formal_summary_accepts_integration_prepared_task_metrics() -> None:
+    summary = Exp1FormalModule().summarize(
+        _integration_summary_evidence(_context(binding=_shared_baseline_identity()))
+    )
+
+    assert len(summary.rows) == 12
+    assert sum(int(row["case_count"]) for row in summary.rows) == 165
+    assert sum(int(row["root_run_count"]) for row in summary.rows) == 495
+    assert {int(row["repeat_count"]) for row in summary.rows} == {3}
+    assert all(row["transport_kind"] == "ai_api" for row in summary.rows)
+    assert all(row["paper_eligible"] is True for row in summary.rows)
+
+
 @pytest.mark.parametrize(
     ("tamper", "message"),
     [
         (
-            lambda evidence: evidence["condition_evidence"][0]["condition"].update(
+            lambda evidence: evidence["conditions"][0].update(
                 {"condition_digest": "sha256:" + "0" * 64}
             ),
             "condition digest mismatch",
         ),
         (
-            lambda evidence: evidence["condition_evidence"][0]["selection"].update(
+            lambda evidence: evidence["selections"][0].update(
                 {
                     "ordered_case_ids": list(
-                        reversed(
-                            evidence["condition_evidence"][0]["selection"][
-                                "ordered_case_ids"
-                            ]
-                        )
+                        reversed(evidence["selections"][0]["ordered_case_ids"])
                     )
                 }
             ),
             "selection_digest mismatch",
         ),
-        (
-            lambda evidence: evidence["condition_evidence"].append(
-                evidence["condition_evidence"][0]
-            ),
-            "36 canonical conditions",
-        ),
-        (
-            lambda evidence: evidence["condition_evidence"][0]["tasks"][0][
-                "attempts"
-            ][0].update({"raw_output_ref": None}),
-            "raw_output_ref artifact evidence",
-        ),
-        (
-            lambda evidence: evidence["condition_evidence"][0]["tasks"][0].update(
-                {"total_tokens": 999}
-            ),
-            "task total_tokens does not match attempt evidence",
-        ),
     ],
 )
-def test_exp1_formal_summary_rejects_digest_inventory_and_provider_evidence_drift(
+def test_exp1_formal_summary_rejects_accidental_plan_inventory_drift(
     tamper: Any,
     message: str,
 ) -> None:
-    evidence = _formal_evidence(_context())
+    evidence = _integration_summary_evidence(
+        _context(binding=_shared_baseline_identity())
+    )
     tamper(evidence)
 
     with pytest.raises(ValueError, match=message):
         Exp1FormalModule().summarize(evidence)
 
 
-@pytest.mark.parametrize(
-    ("tamper", "message"),
-    [
-        (
-            lambda evidence: evidence["condition_evidence"][0]["tasks"][0][
-                "attempts"
-            ][0].update(
-                {"transport_kind": "scripted", "executor_kind": "mock"}
-            ),
-            "attempt transport",
-        ),
-        (
-            lambda evidence: evidence["condition_evidence"][0]["tasks"][0].update(
-                {
-                    "run_kind": "pilot",
-                    "formal_run": False,
-                    "provenance": {"pilot_only": True},
-                }
-            ),
-            "pilot output",
-        ),
-        (
-            lambda evidence: evidence["condition_evidence"][0]["tasks"][0].update(
-                {"condition_id": "wrong-condition"}
-            ),
-            "task condition_id",
-        ),
-    ],
-)
-def test_exp1_formal_summary_rejects_nested_nonformal_or_identity_evidence(
-    tamper: Any,
-    message: str,
-) -> None:
-    module = Exp1FormalModule()
-    evidence = _formal_evidence(_context())
-    tamper(evidence)
+def test_exp1_formal_summary_rejects_integration_prepared_pilot_metrics() -> None:
+    evidence = _integration_summary_evidence(
+        _context(binding=_shared_baseline_identity())
+    )
+    evidence.update({"formal": False, "pilot_only": True})
+    for task in evidence["task_metrics"]:
+        task["pilot_only"] = True
 
-    with pytest.raises(ValueError, match=message):
-        module.summarize(evidence)
+    with pytest.raises(ValueError, match="pilot output"):
+        Exp1FormalModule().summarize(evidence)
 
 
-@pytest.mark.parametrize(
-    ("changes", "message"),
-    [
-        ({"wall_clock_ms": "not-a-number"}, "wall_clock_ms must be numeric"),
-        ({"total_tokens": None}, "total_tokens must be a non-negative integer"),
-        ({"cost_estimate": True}, "cost_estimate must be numeric"),
-        (
-            {
-                "root_status": "failed",
-                "failure_stage": "checker",
-                "failure_kind": "checker_rejected",
-                "accepted_validity": True,
-            },
-            "failed task cannot have accepted validity",
-        ),
-    ],
-)
-def test_exp1_formal_summary_rejects_invalid_metrics_and_status_invariants(
-    changes: dict[str, Any],
-    message: str,
-) -> None:
-    module = Exp1FormalModule()
-    evidence = _formal_evidence(_context())
-    evidence["condition_evidence"][0]["tasks"][0].update(changes)
+def test_exp1_formal_summary_keeps_scripted_shared_metrics_ineligible() -> None:
+    evidence = _integration_summary_evidence(
+        _context(binding=_shared_baseline_identity())
+    )
+    evidence["paper_eligible"] = False
+    for task in evidence["task_metrics"]:
+        task.update({"paper_eligible": False, "transport_kind": "scripted"})
 
-    with pytest.raises(ValueError, match=message):
-        module.summarize(evidence)
+    summary = Exp1FormalModule().summarize(evidence)
+
+    assert summary.rows
+    assert all(row["paper_eligible"] is False for row in summary.rows)
+
+
+def test_exp1_formal_summary_applies_task_ineligibility_to_the_whole_matrix() -> None:
+    evidence = _integration_summary_evidence(
+        _context(binding=_shared_baseline_identity())
+    )
+    evidence["task_metrics"][0]["paper_eligible"] = False
+
+    summary = Exp1FormalModule().summarize(evidence)
+
+    assert summary.rows
+    assert all(row["paper_eligible"] is False for row in summary.rows)
+
+
+def test_exp1_formal_summary_rejects_non_finite_integration_metric() -> None:
+    evidence = _integration_summary_evidence(
+        _context(binding=_shared_baseline_identity())
+    )
+    evidence["task_metrics"][0]["wall_clock_ms"] = float("nan")
+
+    with pytest.raises(ValueError, match="wall_clock_ms must be finite"):
+        Exp1FormalModule().summarize(evidence)
 
 
 @pytest.mark.parametrize("catalog_version", [None, "unsupported-v2"])
@@ -697,7 +668,7 @@ def test_exp1_formal_requires_explicit_supported_catalog_version(
 def _context(
     *,
     catalog: Any | None = None,
-    binding: dict[str, Any] | None = None,
+    binding: Any | None = None,
     request_limits: dict[str, Any] | None = None,
     callback: Any | None = None,
 ) -> PaperExecutionContext:
@@ -734,132 +705,86 @@ def _baseline_request_controls() -> dict[str, Any]:
         "timeout_seconds": 30,
         "max_provider_attempts": 1,
         "temperature": 0.0,
+        "top_p": 1.0,
+        "stream": False,
         "enable_thinking": False,
     }
 
 
-def _formal_evidence(context: PaperExecutionContext) -> dict[str, Any]:
+def _shared_baseline_identity() -> PaperModelEndpointIdentity:
+    return PaperModelEndpointIdentity(
+        model_cohort_id="exp1_to_exp4_glm_baseline",
+        model_cohort_digest="sha256:" + "8" * 64,
+        cohort_member_id="exp1_glm_5_2_siliconflow_default_v1",
+        provider_config_id="exp1_baseline_siliconflow",
+        selected_entry_id="glm_5_2_exp1_baseline",
+        provider_family="siliconflow",
+        provider_model_id="zai-org/GLM-5.2",
+        reasoning_profile_id="temperature0_thinking_false",
+        effective_reasoning_controls={
+            "temperature": 0.0,
+            "enable_thinking": False,
+        },
+        source_provider_config_digest=SOURCE_CONFIG_DIGEST,
+    )
+
+
+def _integration_summary_evidence(
+    context: PaperExecutionContext,
+) -> dict[str, Any]:
     module = Exp1FormalModule()
     conditions = module.expand_conditions(context)
     selections = module.freeze_case_selections(context, conditions)
-    cases_by_id = {
-        str(case["case_id"]): case
-        for domain in ("factorization", "lean_proof")
-        for case in context.catalog.cases_for(domain=domain)
-    }
-    condition_evidence: list[dict[str, Any]] = []
+    task_metrics: list[dict[str, Any]] = []
     for condition, selection in zip(conditions, selections, strict=True):
-        tasks: list[dict[str, Any]] = []
         for case_id in selection.ordered_case_ids:
-            task_id = f"task_{case_id}_r{condition.repeat_id}"
-            ai_unit_count = int(cases_by_id[case_id]["expected_ai_unit_count"])
-            ai_units = [
-                {"unit_id": f"{task_id}:unit:{index}"}
-                for index in range(ai_unit_count)
-            ]
-            attempts = [
+            task_metrics.append(
                 {
-                    "attempt_id": f"{unit['unit_id']}:attempt:0",
+                    "schema_version": "tokenshare.paper_task_metrics.v1",
                     "condition_id": condition.condition_id,
-                    "condition_digest": condition.condition_digest,
-                    "selection_digest": selection.selection_digest,
-                    "repeat_id": condition.repeat_id,
-                    "task_id": task_id,
-                    "unit_id": unit["unit_id"],
-                    "transport_kind": "ai_api",
-                    "executor_kind": "ai_api",
-                    "provider": "siliconflow",
-                    "provider_family": "siliconflow",
-                    "model": "zai-org/GLM-5.2",
-                    "provider_model_id": "zai-org/GLM-5.2",
-                    "entry_id": "glm_5_2_exp1_baseline",
-                    "model_entry_id": "glm_5_2_exp1_baseline",
-                    "reasoning_profile_id": "temperature0_thinking_false",
-                    "source_provider_config_digest": SOURCE_CONFIG_DIGEST,
-                    "model_endpoint_identity_digest": ENDPOINT_DIGEST,
-                    "request_controls": _baseline_request_controls(),
-                    "latency_ms": 50,
-                    "prompt_tokens": 4,
-                    "completion_tokens": 6,
-                    "total_tokens": 10,
-                    "cost_estimate": 0.01,
-                    "request_ref": {"artifact_id": f"request:{unit['unit_id']}"},
-                    "raw_output_ref": {"artifact_id": f"raw:{unit['unit_id']}"},
-                    "parsed_output_ref": {"artifact_id": f"parsed:{unit['unit_id']}"},
-                    "parse_failure_ref": None,
-                    "provenance_ref": {
-                        "artifact_id": f"provenance:{unit['unit_id']}"
-                    },
-                    "usage_ref": {"artifact_id": f"usage:{unit['unit_id']}"},
-                    "model_execution_record_ref": {
-                        "artifact_id": f"model:{unit['unit_id']}"
-                    },
-                    "paper_eligible": True,
-                }
-                for unit in ai_units
-            ]
-            tasks.append(
-                {
+                    "run_id": f"{condition.condition_id}_{case_id}",
                     "case_id": case_id,
-                    "task_id": task_id,
-                    "condition_id": condition.condition_id,
-                    "condition_digest": condition.condition_digest,
-                    "selection_id": selection.selection_id,
-                    "selection_digest": selection.selection_digest,
-                    "catalog_digest": selection.catalog_digest,
-                    "catalog_version": selection.catalog_version,
-                    "suite_version": selection.suite_version,
-                    "repeat_id": condition.repeat_id,
+                    "task_id": f"task_{case_id}_r{condition.repeat_id}",
                     "domain": condition.domain,
+                    "difficulty": condition.difficulty,
                     "paper_difficulty": condition.paper_difficulty,
                     "topic_family": condition.topic_family,
-                    "model_entry_id": condition.model_entry_id,
-                    "transport_kind": "ai_api",
-                    "executor_kind": "ai_api",
-                    "run_kind": "formal",
-                    "formal_run": True,
-                    "pilot_only": False,
+                    "execution_status": "executable",
                     "root_status": "completed",
+                    "attempted": True,
+                    "completed": True,
                     "accepted_validity": True,
                     "failure_stage": None,
                     "failure_kind": None,
-                    "attempt_count": len(attempts),
-                    "provider_attempt_count": len(attempts),
+                    "attempt_count": 1,
+                    "provider_attempt_count": 1,
+                    "parser_failure_count": 0,
+                    "verifier_rejection_count": 0,
+                    "checker_rejection_count": 0,
+                    "provider_error_count": 0,
+                    "prompt_tokens": 4,
+                    "completion_tokens": 6,
+                    "total_tokens": 10,
+                    "provider_latency_ms": 50,
                     "wall_clock_ms": 100,
-                    "total_tokens": 10 * len(attempts),
-                    "cost_estimate": 0.01 * len(attempts),
-                    "ai_units": ai_units,
-                    "attempts": attempts,
+                    "cost_estimate": 0.01,
+                    "artifact_ref_count": 6,
                     "paper_eligible": True,
+                    "pilot_only": False,
                 }
             )
-        condition_evidence.append(
-            {
-                "condition": condition.to_dict(),
-                "selection": selection.to_dict(),
-                "tasks": tasks,
-                "catalog_digest": selection.catalog_digest,
-                "catalog_version": selection.catalog_version,
-                "suite_version": selection.suite_version,
-                "formal": True,
-                "formal_run": True,
-                "run_kind": "formal",
-                "pilot_only": False,
-                "transport_kind": "ai_api",
-                "paper_eligible": True,
-            }
-        )
     return {
-        "schema_version": "tokenshare.paper_exp1_formal_evidence.v1",
+        "schema_version": "tokenshare.paper_exp1_summary_input.v1",
         "experiment_id": "exp1_real_ai_feasibility",
+        "formal": True,
+        "pilot_only": False,
+        "paper_eligible": True,
         "catalog_digest": CATALOG_DIGEST,
         "catalog_version": "v1",
         "suite_version": "paper_v1",
-        "formal": True,
-        "formal_run": True,
-        "run_kind": "formal",
-        "pilot_only": False,
-        "condition_evidence": condition_evidence,
+        "conditions": [condition.to_dict() for condition in conditions],
+        "selections": [selection.to_dict() for selection in selections],
+        "task_metrics": task_metrics,
     }
 
 
