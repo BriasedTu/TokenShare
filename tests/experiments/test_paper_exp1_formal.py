@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import json
 from collections import Counter, defaultdict
 from dataclasses import replace
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -110,6 +112,75 @@ def test_exp1_formal_freezes_165_unique_roots_and_495_root_runs_without_resampli
         assert len(repeated_ids[0]) == expected_count
 
 
+def test_exp1_formal_consumes_task14_selected_lean_ids_instead_of_catalog_pools() -> None:
+    module = Exp1FormalModule()
+    context = _context(catalog=_FakeCatalog(extra_lean_pool=True))
+    conditions = module.expand_conditions(context)
+
+    selections = module.freeze_case_selections(context, conditions)
+
+    assert all(selection.is_executable for selection in selections)
+    assert sum(len(selection.ordered_case_ids) for selection in selections) == 495
+    assert len({case_id for selection in selections for case_id in selection.ordered_case_ids}) == 165
+    simple_pure = next(
+        selection
+        for selection in selections
+        if selection.domain == "lean_proof"
+        and selection.paper_difficulty == "simple"
+        and selection.topic_family == "pure_logic"
+    )
+    hard_function_set = next(
+        selection
+        for selection in selections
+        if selection.domain == "lean_proof"
+        and selection.paper_difficulty == "hard_frontier"
+        and selection.topic_family == "function_set"
+    )
+    assert tuple(simple_pure.ordered_case_ids) == tuple(
+        context.catalog.task15_budget_input["selected_case_ids_by_cell"][
+            "simple/pure_logic"
+        ]
+    )
+    assert tuple(hard_function_set.ordered_case_ids) == tuple(
+        context.catalog.task15_budget_input["selected_case_ids_by_cell"][
+            "hard_frontier/function_set"
+        ]
+    )
+    assert len(context.catalog.cases_for(
+        domain="lean_proof",
+        paper_difficulty="simple",
+        topic_family="pure_logic",
+    )) == 45
+    assert len(context.catalog.cases_for(
+        domain="lean_proof",
+        paper_difficulty="hard_frontier",
+        topic_family="function_set",
+    )) == 25
+
+
+def test_exp1_formal_real_catalog_probe_generates_495_root_runs() -> None:
+    module = Exp1FormalModule()
+    context = _context(catalog=_RealCatalogProbe())
+    conditions = module.expand_conditions(context)
+
+    selections = module.freeze_case_selections(context, conditions)
+
+    assert all(selection.is_executable for selection in selections)
+    assert sum(len(selection.ordered_case_ids) for selection in selections) == 495
+    assert len({case_id for selection in selections for case_id in selection.ordered_case_ids}) == 165
+    assert len(context.catalog.cases_for(
+        domain="lean_proof",
+        paper_difficulty="simple",
+        topic_family="pure_logic",
+    )) == 45
+    for topic_family in ("pure_logic", "function_set", "induction"):
+        assert len(context.catalog.cases_for(
+            domain="lean_proof",
+            paper_difficulty="hard_frontier",
+            topic_family=topic_family,
+        )) == 25
+
+
 def test_exp1_formal_blocks_lean_before_provider_when_readiness_is_missing() -> None:
     calls: list[str] = []
     module = Exp1FormalModule()
@@ -144,19 +215,29 @@ def test_exp1_formal_blocks_lean_before_provider_when_readiness_is_missing() -> 
     assert calls == []
 
 
+def test_exp1_formal_blocks_incomplete_task14_readiness_before_provider() -> None:
+    module = Exp1FormalModule()
+    context = _context(
+        catalog=_FakeCatalog(incomplete_task15_budget_input=True),
+    )
+    conditions = module.expand_conditions(context)
+
+    selections = module.freeze_case_selections(context, conditions)
+    lean_selections = [selection for selection in selections if selection.domain == "lean_proof"]
+
+    assert len(lean_selections) == 27
+    assert all(selection.is_blocked for selection in lean_selections)
+    assert {selection.blocked_reason for selection in lean_selections} == {
+        "lean_semantic_readiness_not_passed"
+    }
+    assert sum(len(selection.ordered_case_ids) for selection in selections) == 90
+
+
 def test_exp1_formal_rejects_duplicate_roots_model_drift_and_condition_order_drift() -> None:
     module = Exp1FormalModule()
     with pytest.raises(ValueError, match="duplicate root case_id"):
-        context = _context(catalog=_FakeCatalog(duplicate_global_case=True))
+        context = _context(catalog=_FakeCatalog(duplicate_selected_case=True))
         module.freeze_case_selections(context, module.expand_conditions(context))
-
-    with pytest.raises(ValueError, match="GLM-5.2 baseline"):
-        module.expand_conditions(
-            _context(binding={**_baseline_binding(), "provider_model_id": "wrong-model"})
-        )
-
-    with pytest.raises(ValueError, match="GLM-5.2 baseline"):
-        module.expand_conditions(_context(request_limits={"temperature": 0.7}))
 
     context = _context()
     conditions = module.expand_conditions(context)
@@ -165,6 +246,42 @@ def test_exp1_formal_rejects_duplicate_roots_model_drift_and_condition_order_dri
     drifted_repeat = (replace(conditions[0], repeat_id=99),) + conditions[1:]
     with pytest.raises(ValueError, match="condition order drift"):
         module.freeze_case_selections(context, drifted_repeat)
+
+
+@pytest.mark.parametrize(
+    "binding_drift",
+    [
+        {"provider_config_id": "wrong_provider_config"},
+        {"model_entry_id": None},
+        {"model_entry_id": "wrong-entry"},
+        {"provider_family": "openai"},
+        {"provider_model_id": "wrong-model"},
+        {"reasoning_profile_id": "temperature1_thinking_true"},
+    ],
+)
+def test_exp1_formal_rejects_complete_baseline_identity_drift(
+    binding_drift: dict[str, Any],
+) -> None:
+    module = Exp1FormalModule()
+
+    with pytest.raises(ValueError, match="GLM-5.2 baseline"):
+        module.expand_conditions(_context(binding={**_baseline_binding(), **binding_drift}))
+
+
+@pytest.mark.parametrize(
+    "request_limits",
+    [
+        {"temperature": 0.7, "enable_thinking": False},
+        {"temperature": 0.0, "enable_thinking": True},
+    ],
+)
+def test_exp1_formal_rejects_request_control_drift(
+    request_limits: dict[str, Any],
+) -> None:
+    module = Exp1FormalModule()
+
+    with pytest.raises(ValueError, match="GLM-5.2 baseline"):
+        module.expand_conditions(_context(request_limits=request_limits))
 
 
 def test_exp1_formal_run_condition_consumes_the_matching_frozen_selection() -> None:
@@ -267,6 +384,34 @@ def test_exp1_formal_summary_rows_cover_feasibility_metrics_and_scripted_eligibi
         )
 
 
+def test_exp1_formal_summary_rejects_pilot_records_even_when_real_transport_eligible() -> None:
+    module = Exp1FormalModule()
+
+    with pytest.raises(ValueError, match="pilot output cannot enter formal"):
+        module.summarize(
+            {
+                "task_results": [
+                    {
+                        **_task(
+                            "lean_pilot_case",
+                            "lean_proof",
+                            "simple",
+                            "pure_logic",
+                            True,
+                            True,
+                            100,
+                            10,
+                            0.1,
+                        ),
+                        "transport_kind": "ai_api",
+                        "paper_eligible": True,
+                        "pilot_only": True,
+                    }
+                ]
+            }
+        )
+
+
 def _context(
     *,
     catalog: Any | None = None,
@@ -305,13 +450,16 @@ class _FakeCatalog:
     catalog_digest = CATALOG_DIGEST
     catalog_version = "v1"
     lean_semantic_readiness_passed: bool
+    task15_budget_input: dict[str, Any]
 
     def __init__(
         self,
         *,
         lean_semantic_ready: bool = True,
         missing_lean_cell: bool = False,
-        duplicate_global_case: bool = False,
+        duplicate_selected_case: bool = False,
+        extra_lean_pool: bool = False,
+        incomplete_task15_budget_input: bool = False,
     ) -> None:
         self.lean_semantic_readiness_passed = lean_semantic_ready
         self._cases: list[dict[str, Any]] = []
@@ -344,8 +492,10 @@ class _FakeCatalog:
                     topic_family,
                 ) == ("hard_frontier", "function_set"):
                     continue
+                selected_ids: list[str] = []
                 for index in range(1, 16):
                     case_id = f"lean_{paper_difficulty}_{topic_family}_{index:02d}"
+                    selected_ids.append(case_id)
                     self._cases.append(
                         {
                             "case_id": case_id,
@@ -362,8 +512,55 @@ class _FakeCatalog:
                             "expected_ai_unit_count": ai_units,
                         }
                     )
-        if duplicate_global_case:
-            self._cases[-1]["case_id"] = self._cases[0]["case_id"]
+                if extra_lean_pool:
+                    extra_count = (
+                        30
+                        if (paper_difficulty, topic_family) == ("simple", "pure_logic")
+                        else 10
+                        if paper_difficulty == "hard_frontier"
+                        else 0
+                    )
+                    for index in range(16, 16 + extra_count):
+                        self._cases.append(
+                            {
+                                **self._cases[-1],
+                                "case_id": (
+                                    f"lean_{paper_difficulty}_{topic_family}"
+                                    f"_extra_{index:02d}"
+                                ),
+                            }
+                        )
+        selected_case_ids_by_cell = {
+            f"{paper_difficulty}/{topic_family}": [
+                f"lean_{paper_difficulty}_{topic_family}_{index:02d}"
+                for index in range(1, 16)
+            ]
+            for paper_difficulty in ("simple", "medium_lemma_dag", "hard_frontier")
+            for topic_family in ("pure_logic", "function_set", "induction")
+        }
+        if duplicate_selected_case:
+            selected_case_ids_by_cell["hard_frontier/induction"][-1] = (
+                "lean_simple_pure_logic_01"
+            )
+        self.task15_budget_input = {
+            "schema_version": "tokenshare.lean_task15_budget_input.v1",
+            "catalog_digest": CATALOG_DIGEST,
+            "target_case_count": 15,
+            "executable_cell_count": 9,
+            "blocked_cell_count": 0,
+            "selected_case_count": 135,
+            "selected_case_ids_by_cell": selected_case_ids_by_cell,
+            "case_counts_by_cell": {
+                key: len(value)
+                for key, value in selected_case_ids_by_cell.items()
+            },
+            "selection_digest": "sha256:" + "4" * 64,
+            "catalog_slice_digest": "sha256:" + "4" * 64,
+            "matrix_digest": "sha256:" + "5" * 64,
+            "provider_calls_made": 0,
+        }
+        if incomplete_task15_budget_input:
+            self.task15_budget_input["case_counts_by_cell"] = {}
 
     def cases_for(
         self,
@@ -383,6 +580,58 @@ class _FakeCatalog:
                 or case["paper_difficulty"] == paper_difficulty
             )
             and (topic_family is None or case["topic_family"] == topic_family)
+        )
+
+
+class _RealCatalogProbe:
+    catalog_version = "v1"
+
+    def __init__(self) -> None:
+        readiness = json.loads(
+            Path("benchmarks/paper/lean_task14_3x3_readiness.v1.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.catalog_digest = readiness["task15_budget_input"]["catalog_digest"]
+        self.task15_budget_input = readiness["task15_budget_input"]
+        self._cases: list[dict[str, Any]] = []
+        for path in (
+            Path("benchmarks/paper/factorization_catalog.v1.jsonl"),
+            Path("benchmarks/paper/lean_catalog.v1.jsonl"),
+            Path("benchmarks/paper/lean_lemma_graph_catalog.v1.jsonl"),
+        ):
+            for line in path.read_text(encoding="utf-8").splitlines():
+                if not line.strip():
+                    continue
+                case = json.loads(line)
+                if path.name == "factorization_catalog.v1.jsonl":
+                    case["domain"] = "factorization"
+                    case.setdefault("paper_difficulty", case["difficulty"])
+                else:
+                    case["domain"] = "lean_proof"
+                    if path.name == "lean_catalog.v1.jsonl":
+                        case["paper_difficulty"] = "simple"
+                        case["topic_family"] = "pure_logic"
+                self._cases.append(case)
+
+    def cases_for(
+        self,
+        *,
+        domain: str,
+        difficulty: str | None = None,
+        paper_difficulty: str | None = None,
+        topic_family: str | None = None,
+    ) -> tuple[dict[str, Any], ...]:
+        return tuple(
+            case
+            for case in self._cases
+            if case["domain"] == domain
+            and (difficulty is None or case["difficulty"] == difficulty)
+            and (
+                paper_difficulty is None
+                or case.get("paper_difficulty") == paper_difficulty
+            )
+            and (topic_family is None or case.get("topic_family") == topic_family)
         )
 
 

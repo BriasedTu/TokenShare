@@ -47,6 +47,11 @@ _LEAN_DIFFICULTY_TO_LEGACY_DIFFICULTY = {
     "medium_lemma_dag": "medium",
     "hard_frontier": "hard",
 }
+_LEAN_CELL_KEYS = tuple(
+    f"{paper_difficulty}/{topic_family}"
+    for paper_difficulty in LEAN_PAPER_DIFFICULTIES
+    for topic_family in LEAN_TOPIC_FAMILIES
+)
 _DIFFICULTY_ORDER = {
     "easy": 0,
     "medium": 1,
@@ -250,18 +255,15 @@ def _selection_for_condition(
             blocked_reason="lean_semantic_readiness_not_passed",
         )
 
-    cases = _catalog_cases(
-        context.catalog,
-        domain="lean_proof",
-        difficulty=None,
-        paper_difficulty=condition.paper_difficulty,
-        topic_family=condition.topic_family,
+    cases = _selected_lean_cases_for_condition(
+        context=context,
+        condition=condition,
     )
     if len(cases) != EXP1_LEAN_CASES_PER_CELL:
         return _blocked_selection(
             context=context,
             condition=condition,
-            blocked_reason="missing_lean_cell",
+            blocked_reason="missing_lean_selected_case",
         )
     return _executable_selection(context=context, condition=condition, cases=cases)
 
@@ -361,38 +363,42 @@ def _validate_condition_selection_match(
 
 def _baseline_identity(context: PaperExecutionContext) -> JsonObject:
     binding = context.approved_endpoint_binding
-    entry_id = _field(binding, "selected_entry_id") or _field(binding, "model_entry_id")
+    selected_entry_id = _field(binding, "selected_entry_id")
+    model_entry_id = _field(binding, "model_entry_id")
+    provider_config_id = _field(binding, "provider_config_id")
     provider_family = _field(binding, "provider_family")
     provider_model_id = _field(binding, "provider_model_id")
+    reasoning_profile_id = _field(binding, "reasoning_profile_id")
     temperature = _request_control(context, "temperature")
     enable_thinking = _request_control(context, "enable_thinking")
     if (
-        entry_id != EXP1_BASELINE_ENTRY_ID
+        selected_entry_id != EXP1_BASELINE_ENTRY_ID
+        or model_entry_id != EXP1_BASELINE_ENTRY_ID
+        or provider_config_id != EXP1_BASELINE_PROVIDER_CONFIG_ID
         or provider_family != EXP1_BASELINE_PROVIDER_FAMILY
         or provider_model_id != EXP1_BASELINE_PROVIDER_MODEL_ID
+        or reasoning_profile_id != EXP1_BASELINE_REASONING_PROFILE_ID
         or float(temperature) != 0.0
         or enable_thinking is not False
     ):
         raise ValueError("Experiment 1 requires the fixed GLM-5.2 baseline")
+    source_provider_config_digest = _field(binding, "source_provider_config_digest")
+    model_endpoint_identity_digest = _field(
+        binding,
+        "model_endpoint_identity_digest",
+    )
+    if not _is_complete_digest(source_provider_config_digest) or not _is_complete_digest(
+        model_endpoint_identity_digest
+    ):
+        raise ValueError("Experiment 1 requires the fixed GLM-5.2 baseline")
     return {
-        "provider_config_id": (
-            _field(binding, "provider_config_id") or EXP1_BASELINE_PROVIDER_CONFIG_ID
-        ),
+        "provider_config_id": EXP1_BASELINE_PROVIDER_CONFIG_ID,
         "model_entry_id": EXP1_BASELINE_ENTRY_ID,
         "provider_family": EXP1_BASELINE_PROVIDER_FAMILY,
         "provider_model_id": EXP1_BASELINE_PROVIDER_MODEL_ID,
-        "reasoning_profile_id": (
-            _field(binding, "reasoning_profile_id")
-            or EXP1_BASELINE_REASONING_PROFILE_ID
-        ),
-        "source_provider_config_digest": _field(
-            binding,
-            "source_provider_config_digest",
-        ),
-        "model_endpoint_identity_digest": _field(
-            binding,
-            "model_endpoint_identity_digest",
-        ),
+        "reasoning_profile_id": EXP1_BASELINE_REASONING_PROFILE_ID,
+        "source_provider_config_digest": source_provider_config_digest,
+        "model_endpoint_identity_digest": model_endpoint_identity_digest,
     }
 
 
@@ -445,21 +451,116 @@ def _catalog_cases(
 
 def _lean_semantic_readiness_passed(catalog: Any) -> bool:
     value = _field(catalog, "lean_semantic_readiness_passed")
-    if isinstance(value, bool):
-        return value
-    task15_input = _field(catalog, "task15_budget_input")
-    if isinstance(task15_input, Mapping):
-        return (
-            task15_input.get("target_case_count") == EXP1_LEAN_CASES_PER_CELL
-            and task15_input.get("selected_case_count") == 135
-            and task15_input.get("executable_cell_count") == 9
-            and task15_input.get("blocked_cell_count") == 0
-            and all(
-                count == EXP1_LEAN_CASES_PER_CELL
-                for count in dict(task15_input.get("case_counts_by_cell", {})).values()
-            )
+    if value is False:
+        return False
+    return _validated_task15_budget_input(catalog) is not None
+
+
+def _selected_lean_cases_for_condition(
+    *,
+    context: PaperExecutionContext,
+    condition: PaperExperimentCondition,
+) -> tuple[JsonObject, ...]:
+    task15_input = _validated_task15_budget_input(context.catalog)
+    if task15_input is None:
+        return ()
+    cell_key = f"{condition.paper_difficulty}/{condition.topic_family}"
+    selected_ids = tuple(
+        str(case_id)
+        for case_id in task15_input["selected_case_ids_by_cell"][cell_key]
+    )
+    cases_by_id = _cases_by_id(
+        _catalog_cases(
+            context.catalog,
+            domain="lean_proof",
+            difficulty=None,
+            paper_difficulty=None,
+            topic_family=None,
         )
-    return False
+    )
+    selected_cases: list[JsonObject] = []
+    for case_id in selected_ids:
+        case = cases_by_id.get(case_id)
+        if case is None:
+            return ()
+        if (
+            case.get("paper_difficulty") != condition.paper_difficulty
+            or case.get("topic_family") != condition.topic_family
+        ):
+            return ()
+        selected_cases.append(case)
+    return tuple(selected_cases)
+
+
+def _validated_task15_budget_input(catalog: Any) -> JsonObject | None:
+    task15_input = _field(catalog, "task15_budget_input")
+    if not isinstance(task15_input, Mapping):
+        return None
+    if task15_input.get("schema_version") != "tokenshare.lean_task15_budget_input.v1":
+        return None
+    if task15_input.get("catalog_digest") != _catalog_digest(catalog):
+        return None
+    if (
+        task15_input.get("target_case_count") != EXP1_LEAN_CASES_PER_CELL
+        or task15_input.get("selected_case_count") != 135
+        or task15_input.get("executable_cell_count") != 9
+        or task15_input.get("blocked_cell_count") != 0
+        or task15_input.get("provider_calls_made") != 0
+    ):
+        return None
+    for digest_field in (
+        "selection_digest",
+        "catalog_slice_digest",
+        "matrix_digest",
+    ):
+        if not _is_complete_digest(task15_input.get(digest_field)):
+            return None
+    selected_by_cell = task15_input.get("selected_case_ids_by_cell")
+    counts_by_cell = task15_input.get("case_counts_by_cell")
+    if not isinstance(selected_by_cell, Mapping) or not isinstance(counts_by_cell, Mapping):
+        return None
+    if set(selected_by_cell) != set(_LEAN_CELL_KEYS) or set(counts_by_cell) != set(
+        _LEAN_CELL_KEYS
+    ):
+        return None
+
+    seen_ids: set[str] = set()
+    normalized_by_cell: dict[str, list[str]] = {}
+    for cell_key in _LEAN_CELL_KEYS:
+        case_ids = selected_by_cell[cell_key]
+        if not isinstance(case_ids, Sequence) or isinstance(case_ids, (str, bytes)):
+            return None
+        normalized_ids = [
+            str(case_id)
+            for case_id in case_ids
+            if isinstance(case_id, str) and case_id
+        ]
+        if (
+            len(normalized_ids) != EXP1_LEAN_CASES_PER_CELL
+            or len(normalized_ids) != len(case_ids)
+            or counts_by_cell[cell_key] != EXP1_LEAN_CASES_PER_CELL
+        ):
+            return None
+        for case_id in normalized_ids:
+            if case_id in seen_ids:
+                raise ValueError(f"duplicate root case_id in Task14 selection: {case_id}")
+            seen_ids.add(case_id)
+        normalized_by_cell[cell_key] = normalized_ids
+    if len(seen_ids) != 135:
+        return None
+    normalized = dict(task15_input)
+    normalized["selected_case_ids_by_cell"] = normalized_by_cell
+    return normalized
+
+
+def _cases_by_id(cases: tuple[JsonObject, ...]) -> dict[str, JsonObject]:
+    indexed: dict[str, JsonObject] = {}
+    for case in cases:
+        case_id = str(case.get("case_id"))
+        if case_id in indexed:
+            raise ValueError(f"duplicate root case_id in catalog: {case_id}")
+        indexed[case_id] = case
+    return indexed
 
 
 def _catalog_digest(catalog: Any) -> str:
@@ -499,6 +600,8 @@ def _task_records(evidence: Any) -> tuple[JsonObject, ...]:
 
 def _reject_scripted_paper_eligible_records(records: tuple[JsonObject, ...]) -> None:
     for record in records:
+        if record.get("pilot_only") is True:
+            raise ValueError("pilot output cannot enter formal Experiment 1 summary")
         transport_kind = record.get("transport_kind")
         if (
             isinstance(transport_kind, str)
@@ -661,6 +764,15 @@ def _number(value: Any) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return 0.0
     return float(value)
+
+
+def _is_complete_digest(value: Any) -> bool:
+    return (
+        isinstance(value, str)
+        and len(value) == 71
+        and value.startswith("sha256:")
+        and all(character in "0123456789abcdef" for character in value[7:])
+    )
 
 
 def _optional_string(value: Any) -> str | None:
