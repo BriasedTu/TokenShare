@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import json
 from collections import Counter, defaultdict
 from collections.abc import Iterable, Mapping, Sequence
+from pathlib import Path
 from typing import Any
 
+from tokenshare.core.models import ArtifactRef
 from tokenshare.experiments.paper_experiment_contracts import (
     ExperimentSummaryRows,
     FrozenCaseSelection,
@@ -16,7 +19,9 @@ from tokenshare.experiments.paper_models import (
     LEAN_TOPIC_FAMILIES,
     PaperConditionResult,
     PaperExperimentCondition,
+    digest_json,
 )
+from tokenshare.storage.artifacts import ArtifactStore
 
 
 EXP2_EXPERIMENT_ID = "exp2_real_ai_worker_scalability"
@@ -111,6 +116,16 @@ class Exp2MixedLeanCaseSelection(FrozenCaseSelection):
 
     def _body(self, *, include_digest: bool) -> dict[str, Any]:
         body = super()._body(include_digest=include_digest)
+        for field_name in (
+            "catalog_source_kind",
+            "slice_digest",
+            "split_metadata_digest",
+            "case_expected_ai_unit_counts",
+            "readiness_selection_digest",
+        ):
+            if hasattr(self, field_name):
+                value = getattr(self, field_name)
+                body[field_name] = dict(value) if isinstance(value, Mapping) else value
         if self.domain == "lean_proof" and self.topic_family is None:
             body["topic_family_marker"] = getattr(
                 self,
@@ -229,7 +244,7 @@ def count_exp2_root_runs(
 def evaluate_exp2_optional_worker_levels(
     context: PaperExecutionContext,
 ) -> tuple[dict[str, Any], ...]:
-    preflight = _exp2_catalog(context).get("optional_worker_preflight", {})
+    preflight = _mapping(_catalog(context).get("optional_worker_preflight", {}))
     rows: list[dict[str, Any]] = []
     for worker_count in OPTIONAL_WORKER_LEVELS:
         entry = _mapping(preflight.get(str(worker_count), preflight.get(worker_count, {})))
@@ -346,7 +361,19 @@ def _canonical_condition_for(
 
 def summarize_exp2_scalability(evidence: Any) -> ExperimentSummaryRows:
     records = _condition_records(evidence)
-    repeat_rows = [_summarize_condition(record) for record in records]
+    explicit_artifact_store = (
+        evidence.get("artifact_store") if isinstance(evidence, Mapping) else None
+    )
+    repeat_rows = [
+        _summarize_condition(
+            record,
+            artifact_store=_artifact_store_for_record(
+                record,
+                explicit_store=explicit_artifact_store,
+            ),
+        )
+        for record in records
+    ]
     baseline_rows = {
         _baseline_key(row): row
         for row in repeat_rows
@@ -397,6 +424,7 @@ def summarize_exp2_scalability(evidence: Any) -> ExperimentSummaryRows:
         )
         scored_rows.append(row)
     completed_rows = _aggregate_repeat_rows(scored_rows)
+    completed_rows = _apply_formal_matrix_audit(completed_rows)
     return ExperimentSummaryRows(
         experiment_id=EXP2_EXPERIMENT_ID,
         rows=tuple(completed_rows),
@@ -452,19 +480,28 @@ def _factorization_selection(
     context: PaperExecutionContext,
     condition: PaperExperimentCondition,
 ) -> FrozenCaseSelection:
-    cases_by_difficulty = _mapping(_exp2_catalog(context).get("factorization"))
-    cases = _case_list(cases_by_difficulty.get(condition.paper_difficulty))
+    cases = tuple(
+        case
+        for case in _catalog_cases(context, domain="factorization")
+        if case.get("paper_difficulty", case.get("difficulty"))
+        == condition.paper_difficulty
+    )[:5]
     if len(cases) != 5:
         raise ValueError("Experiment 2 factorization selection must contain 5 roots")
     expected_ai_units = 0
     case_ids: list[str] = []
     for case in cases:
-        if case.get("parallelism_scope") != "within_root_range_children":
+        split_params = _mapping(case.get("split_params"))
+        if (
+            split_params.get("strategy_id")
+            != "factorization.candidate_range_partition.v1"
+            or split_params.get("range_policy") != "contiguous"
+        ):
             raise ValueError(
                 "factorization scaling must use within-root range children"
             )
         case_ids.append(_case_id(case))
-        expected_ai_units += _positive_int(case.get("expected_ai_unit_count"))
+        expected_ai_units += _case_expected_ai_unit_count(case)
     return _selection(
         context,
         condition,
@@ -473,6 +510,7 @@ def _factorization_selection(
         ),
         ordered_case_ids=case_ids,
         expected_ai_unit_count=expected_ai_units,
+        cases=cases,
     )
 
 
@@ -480,18 +518,33 @@ def _lean_selection(
     context: PaperExecutionContext,
     condition: PaperExperimentCondition,
 ) -> FrozenCaseSelection:
-    lean_catalog = _mapping(_exp2_catalog(context).get("lean_proof"))
-    by_topic = _mapping(lean_catalog.get(condition.paper_difficulty))
+    readiness = _validated_readiness_selection(context)
+    cases_by_id = {
+        _case_id(case): case
+        for case in _catalog_cases(context, domain="lean_proof")
+    }
     cases: list[Mapping[str, Any]] = []
     for topic_family, expected_count in LEAN_TOPIC_ALLOCATIONS[
         str(condition.paper_difficulty)
     ].items():
-        topic_cases = _case_list(by_topic.get(topic_family))
-        if len(topic_cases) != expected_count:
+        cell_key = f"{condition.paper_difficulty}/{topic_family}"
+        selected_ids = tuple(readiness["selected_case_ids_by_cell"][cell_key])[
+            :expected_count
+        ]
+        if len(selected_ids) != expected_count:
             raise ValueError("Experiment 2 Lean topic slice count drift")
-        cases.extend(topic_cases)
+        for case_id in selected_ids:
+            case = cases_by_id.get(str(case_id))
+            if case is None:
+                raise ValueError("Lean readiness selection references unknown catalog case")
+            if (
+                case.get("paper_difficulty") != condition.paper_difficulty
+                or case.get("topic_family") != topic_family
+            ):
+                raise ValueError("Lean readiness selection metadata drift")
+            cases.append(case)
     expected_ai_units = sum(
-        _positive_int(case.get("expected_ai_unit_count")) for case in cases
+        _case_expected_ai_unit_count(case) for case in cases
     )
     if len(cases) != 5:
         raise ValueError("Experiment 2 Lean selection must contain 5 roots")
@@ -504,10 +557,12 @@ def _lean_selection(
         ),
         ordered_case_ids=[_case_id(case) for case in cases],
         expected_ai_unit_count=expected_ai_units,
+        cases=cases,
         selection_topic_family=None,
         mixed_topic_family_counts=LEAN_TOPIC_ALLOCATIONS[
             str(condition.paper_difficulty)
         ],
+        readiness_selection_digest=str(readiness["selection_digest"]),
     )
 
 
@@ -518,16 +573,13 @@ def _selection(
     selection_id: str,
     ordered_case_ids: Sequence[str],
     expected_ai_unit_count: int,
+    cases: Sequence[Mapping[str, Any]],
     selection_topic_family: str | None = None,
     mixed_topic_family_counts: Mapping[str, int] | None = None,
+    readiness_selection_digest: str | None = None,
 ) -> FrozenCaseSelection:
     catalog = _catalog(context)
-    selection_type = (
-        Exp2MixedLeanCaseSelection
-        if condition.domain == "lean_proof" and mixed_topic_family_counts is not None
-        else FrozenCaseSelection
-    )
-    selection = selection_type(
+    selection = Exp2MixedLeanCaseSelection(
         selection_id=selection_id,
         experiment_id=EXP2_EXPERIMENT_ID,
         suite_version=str(catalog.get("suite_version") or EXP2_SUITE_VERSION),
@@ -542,7 +594,39 @@ def _selection(
         expected_ai_unit_count=expected_ai_unit_count,
         paper_eligible_required=True,
     )
-    if isinstance(selection, Exp2MixedLeanCaseSelection):
+    case_unit_counts = {
+        _case_id(case): _case_expected_ai_unit_count(case) for case in cases
+    }
+    split_metadata = [_case_split_metadata(case) for case in cases]
+    object.__setattr__(selection, "catalog_source_kind", "formal_paper_catalog")
+    object.__setattr__(
+        selection,
+        "slice_digest",
+        digest_json(
+            {
+                "catalog_digest": _catalog_digest(context),
+                "ordered_case_ids": list(ordered_case_ids),
+                "cases": [dict(case) for case in cases],
+            }
+        ),
+    )
+    object.__setattr__(
+        selection,
+        "split_metadata_digest",
+        digest_json(split_metadata),
+    )
+    object.__setattr__(
+        selection,
+        "case_expected_ai_unit_counts",
+        case_unit_counts,
+    )
+    if readiness_selection_digest is not None:
+        object.__setattr__(
+            selection,
+            "readiness_selection_digest",
+            readiness_selection_digest,
+        )
+    if condition.domain == "lean_proof":
         object.__setattr__(
             selection,
             "topic_family_counts",
@@ -599,24 +683,7 @@ def _validate_canonical_selection(
 
 
 def _selection_contract_body(selection: FrozenCaseSelection) -> dict[str, Any]:
-    return {
-        "selection_id": selection.selection_id,
-        "experiment_id": selection.experiment_id,
-        "suite_version": selection.suite_version,
-        "catalog_version": selection.catalog_version,
-        "domain": selection.domain,
-        "paper_difficulty": selection.paper_difficulty,
-        "topic_family": selection.topic_family,
-        "ordered_case_ids": tuple(selection.ordered_case_ids),
-        "catalog_digest": selection.catalog_digest,
-        "expected_ai_unit_count": selection.expected_ai_unit_count,
-        "paper_eligible_required": selection.paper_eligible_required,
-        "blocked_reason": selection.blocked_reason,
-        "selection_digest": selection.selection_digest,
-        "schema_version": selection.schema_version,
-        "topic_family_marker": getattr(selection, "topic_family_marker", None),
-        "topic_family_counts": dict(getattr(selection, "topic_family_counts", {})),
-    }
+    return selection.to_dict()
 
 
 def _condition_records(evidence: Any) -> tuple[Mapping[str, Any], ...]:
@@ -632,28 +699,67 @@ def _condition_records(evidence: Any) -> tuple[Mapping[str, Any], ...]:
     return tuple(records)
 
 
-def _summarize_condition(record: Mapping[str, Any]) -> dict[str, Any]:
+def _summarize_condition(
+    record: Mapping[str, Any],
+    *,
+    artifact_store: Any,
+) -> dict[str, Any]:
     condition = _validated_summary_condition(_mapping(record.get("condition")))
     selection = _mapping(record.get("selection"))
     tasks = _tasks(record.get("tasks"))
     _validate_formal_summary_provenance(record)
-    _validate_summary_selection(condition, selection, tasks)
+    case_unit_counts = _validate_summary_selection(condition, selection, tasks)
+    _validate_optional_worker_preflight(
+        record,
+        condition=condition,
+        selection=selection,
+        artifact_store=artifact_store,
+    )
     transport_kind = _validated_transport_kind(record, tasks)
-    task_eligibility = tuple(
+    task_audits = tuple(
         _validate_task_and_attempt_evidence(
             condition=condition,
             task=task,
             record_transport=transport_kind,
+            expected_ai_unit_count=case_unit_counts[str(task.get("task_id") or "")],
+            artifact_store=artifact_store,
         )
         for task in tasks
     )
+    observed_worker_ids = {
+        worker_id
+        for audit in task_audits
+        for worker_id in audit["worker_ids"]
+    }
+    expected_worker_count = min(
+        _positive_int(condition.get("worker_count")),
+        _positive_int(selection.get("expected_ai_unit_count")),
+    )
+    if len(observed_worker_ids) != expected_worker_count:
+        raise ValueError(
+            "worker execution commitment does not match frozen worker/AI-unit inventory"
+        )
     task_count = len(tasks)
     completed_root_count = sum(1 for task in tasks if task.get("root_status") == "completed")
     accepted_validity_count = sum(
         1 for task in tasks if task.get("accepted_validity") is True
     )
     wall_clock_ms, batch_timing_status = _condition_wall_clock_ms(record, tasks)
-    critical_path_ms = max((_task_critical_path_ms(task) for task in tasks), default=0)
+    batch_bounds = _authoritative_batch_bounds(record)
+    critical_path_ms = max(
+        (
+            _task_critical_path_ms(
+                task,
+                batch_started_at_ms=(
+                    batch_bounds[0]
+                    if batch_bounds is not None
+                    else _task_evidence_origin_ms(task)
+                ),
+            )
+            for task in tasks
+        ),
+        default=0,
+    )
     provider_latency_sum_ms = sum(_task_provider_latency_sum(task) for task in tasks)
     total_tokens = sum(_non_negative_int(task.get("total_tokens")) for task in tasks)
     total_cost = sum(_non_negative_number(task.get("cost_estimate")) for task in tasks)
@@ -661,7 +767,12 @@ def _summarize_condition(record: Mapping[str, Any]) -> dict[str, Any]:
         _non_negative_int(task.get("rate_limited_429_count")) for task in tasks
     )
     retry_count = sum(_non_negative_int(task.get("retry_count")) for task in tasks)
-    paper_eligible_task_count = sum(task_eligibility)
+    paper_eligible_task_count = sum(bool(audit["paper_eligible"]) for audit in task_audits)
+    completed_child_proof_count = sum(
+        int(audit["completed_ai_unit_count"])
+        for audit in task_audits
+        if condition.get("domain") == "lean_proof"
+    )
     all_tasks_eligible = task_count > 0 and paper_eligible_task_count == task_count
     paper_eligible = (
         all_tasks_eligible
@@ -674,6 +785,11 @@ def _summarize_condition(record: Mapping[str, Any]) -> dict[str, Any]:
     topic_family = condition.get("topic_family")
     worker_count = _positive_int(condition.get("worker_count"))
     repeat_id = _non_negative_int(condition.get("repeat_id"))
+    child_proof_throughput = (
+        completed_child_proof_count / (wall_clock_ms / 1000.0)
+        if condition.get("domain") == "lean_proof" and wall_clock_ms > 0
+        else None
+    )
     return {
         "experiment_id": EXP2_EXPERIMENT_ID,
         "condition_id": condition_id,
@@ -691,6 +807,8 @@ def _summarize_condition(record: Mapping[str, Any]) -> dict[str, Any]:
         "case_count": task_count,
         "root_run_count": task_count,
         "completed_root_count": completed_root_count,
+        "completed_child_proof_count": completed_child_proof_count,
+        "child_proof_throughput_per_second": child_proof_throughput,
         "completion_rate": _ratio(completed_root_count, task_count),
         "accepted_validity_count": accepted_validity_count,
         "accepted_validity_rate": _ratio(accepted_validity_count, task_count),
@@ -780,7 +898,7 @@ def _validate_summary_selection(
     condition: Mapping[str, Any],
     selection: Mapping[str, Any],
     tasks: Sequence[Mapping[str, Any]],
-) -> None:
+) -> dict[str, int]:
     ordered_case_ids = _normalize_ordered_case_ids(selection.get("ordered_case_ids"))
     if len(ordered_case_ids) != 5:
         raise ValueError("Experiment 2 summary selection must contain exactly 5 roots")
@@ -808,23 +926,42 @@ def _validate_summary_selection(
     )
     if selection.get("selection_id") != expected_selection_id:
         raise ValueError("summary selection_id drift")
+    generated_fields = {
+        "selection_digest",
+        "execution_status",
+        "paper_eligible_possible",
+        "provider_calls_made",
+    }
+    required_commitment_fields = {
+        "catalog_source_kind",
+        "slice_digest",
+        "split_metadata_digest",
+        "case_expected_ai_unit_counts",
+    }
+    if not required_commitment_fields.issubset(selection):
+        raise ValueError("summary selection is missing Exp2 slice commitments")
+    if selection.get("catalog_source_kind") != "formal_paper_catalog":
+        raise ValueError("summary selection catalog source drift")
+    _require_complete_digest("slice_digest", selection.get("slice_digest"))
+    _require_complete_digest(
+        "split_metadata_digest",
+        selection.get("split_metadata_digest"),
+    )
+    raw_case_unit_counts = _mapping(selection.get("case_expected_ai_unit_counts"))
+    if set(raw_case_unit_counts) != set(ordered_case_ids):
+        raise ValueError("summary selection AI-unit commitment IDs drift")
+    case_unit_counts = {
+        case_id: _positive_int(raw_case_unit_counts[case_id])
+        for case_id in ordered_case_ids
+    }
+    if sum(case_unit_counts.values()) != _positive_int(
+        selection.get("expected_ai_unit_count")
+    ):
+        raise ValueError("summary selection AI-unit commitment count drift")
     selection_digest_body = {
-        field_name: selection.get(field_name)
-        for field_name in (
-            "schema_version",
-            "selection_id",
-            "experiment_id",
-            "suite_version",
-            "catalog_version",
-            "domain",
-            "paper_difficulty",
-            "topic_family",
-            "ordered_case_ids",
-            "catalog_digest",
-            "expected_ai_unit_count",
-            "paper_eligible_required",
-            "blocked_reason",
-        )
+        field_name: value
+        for field_name, value in selection.items()
+        if field_name not in generated_fields
     }
     if condition.get("domain") == "lean_proof":
         expected_counts = LEAN_TOPIC_ALLOCATIONS[str(condition["paper_difficulty"])]
@@ -841,10 +978,15 @@ def _validate_summary_selection(
         selection_digest_body["topic_family_counts"] = selection.get(
             "topic_family_counts"
         )
+        _require_complete_digest(
+            "readiness_selection_digest",
+            selection.get("readiness_selection_digest"),
+        )
     if selection.get("selection_digest") != canonical_contract_digest(
         selection_digest_body
     ):
         raise ValueError("summary selection_digest mismatch")
+    return case_unit_counts
 
 
 def _validate_task_and_attempt_evidence(
@@ -852,7 +994,9 @@ def _validate_task_and_attempt_evidence(
     condition: Mapping[str, Any],
     task: Mapping[str, Any],
     record_transport: str,
-) -> bool:
+    expected_ai_unit_count: int,
+    artifact_store: Any,
+) -> dict[str, Any]:
     task_id = _require_non_empty_string("task_id", task.get("task_id"))
     if task.get("condition_id") != condition.get("condition_id"):
         raise ValueError("task condition_id does not match condition evidence")
@@ -869,8 +1013,8 @@ def _validate_task_and_attempt_evidence(
     if task_transport != record_transport:
         raise ValueError("record/task transport conflict")
     ai_units = _list_of_mappings(task.get("ai_units"))
-    if not ai_units:
-        raise ValueError("task AI unit evidence is required")
+    if len(ai_units) != expected_ai_unit_count:
+        raise ValueError("task AI-unit inventory does not match frozen selection")
     unit_ids = tuple(
         _require_non_empty_string("unit_id", unit.get("unit_id"))
         for unit in ai_units
@@ -885,6 +1029,9 @@ def _validate_task_and_attempt_evidence(
     covered_units: set[str] = set()
     attempt_ids: set[str] = set()
     all_attempts_real = True
+    worker_ids: set[str] = set()
+    usage_total_tokens = 0
+    usage_total_cost = 0.0
     for attempt in attempts:
         attempt_id = _require_non_empty_string(
             "attempt_id",
@@ -943,21 +1090,499 @@ def _validate_task_and_attempt_evidence(
             != condition.get("model_endpoint_identity_digest")
         ):
             raise ValueError("attempt model identity mismatch")
-        for field_name in (
-            "request_ref",
-            "raw_output_ref",
-            "provenance_ref",
-            "usage_ref",
-            "model_execution_record_ref",
+        try:
+            worker_id = _require_non_empty_string(
+                "worker_id",
+                attempt.get("worker_id"),
+            )
+        except ValueError as exc:
+            raise ValueError("worker execution evidence is incomplete") from exc
+        worker_pid = attempt.get("worker_pid")
+        worker_slot = attempt.get("worker_slot")
+        if (
+            isinstance(worker_pid, bool)
+            or not isinstance(worker_pid, int)
+            or worker_pid < 1
+            or isinstance(worker_slot, bool)
+            or not isinstance(worker_slot, int)
+            or worker_slot < 0
         ):
-            _require_artifact_ref(attempt.get(field_name), field_name)
+            raise ValueError("worker execution evidence is incomplete")
+        worker_ids.add(worker_id)
+        if attempt_transport == "ai_api":
+            persisted = _validate_persisted_attempt_evidence(
+                artifact_store=artifact_store,
+                condition=condition,
+                task=task,
+                attempt=attempt,
+            )
+            usage_total_tokens += int(persisted["total_tokens"])
+            usage_total_cost += float(persisted["cost_estimate"])
     if covered_units != set(unit_ids):
         raise ValueError("attempt evidence must cover every AI unit")
-    return (
-        task.get("paper_eligible") is True
-        and task_transport == "ai_api"
-        and all_attempts_real
+    if task_transport == "ai_api":
+        if usage_total_tokens != _non_negative_int(task.get("total_tokens")):
+            raise ValueError("persisted usage token total conflicts with task evidence")
+        if abs(usage_total_cost - _non_negative_number(task.get("cost_estimate"))) > 1e-9:
+            raise ValueError("persisted usage cost conflicts with task evidence")
+    return {
+        "paper_eligible": (
+            task.get("paper_eligible") is True
+            and task_transport == "ai_api"
+            and all_attempts_real
+        ),
+        "worker_ids": tuple(sorted(worker_ids)),
+        "completed_ai_unit_count": (
+            len(covered_units) if task.get("root_status") == "completed" else 0
+        ),
+    }
+
+
+def _artifact_store_for_record(
+    record: Mapping[str, Any],
+    *,
+    explicit_store: Any,
+) -> Any:
+    if explicit_store is not None:
+        store = explicit_store
+    else:
+        artifact_root = record.get("artifact_root")
+        store = ArtifactStore(Path(artifact_root)) if artifact_root else None
+    if store is not None and not all(
+        callable(getattr(store, method_name, None))
+        for method_name in ("verify", "read_bytes")
+    ):
+        raise ValueError("artifact_store must verify and read persisted artifacts")
+    return store
+
+
+def _validate_optional_worker_preflight(
+    record: Mapping[str, Any],
+    *,
+    condition: Mapping[str, Any],
+    selection: Mapping[str, Any],
+    artifact_store: Any,
+) -> None:
+    worker_count = _positive_int(condition.get("worker_count"))
+    if worker_count not in OPTIONAL_WORKER_LEVELS:
+        return
+    if _non_negative_int(selection.get("expected_ai_unit_count")) < worker_count:
+        raise ValueError(
+            "optional worker preflight cannot exceed frozen batch AI-unit inventory"
+        )
+    manifest = record.get("optional_worker_preflight")
+    if not isinstance(manifest, Mapping):
+        raise ValueError("optional worker preflight manifest is required")
+    if (
+        manifest.get("schema_version")
+        != "tokenshare.paper_exp2_optional_worker_preflight.v1"
+        or manifest.get("worker_count") != worker_count
+        or _non_negative_int(manifest.get("ai_unit_count_available")) < worker_count
+        or manifest.get("quota_status") != "passed"
+        or manifest.get("real_worker_preflight_status") != "passed"
+        or manifest.get("status") != "supported"
+        or manifest.get("provider_calls_made") != 0
+    ):
+        raise ValueError("optional worker preflight manifest is not approved")
+    digest_body = {
+        key: value
+        for key, value in manifest.items()
+        if key not in {"preflight_digest", "preflight_ref"}
+    }
+    if manifest.get("preflight_digest") != digest_json(digest_body):
+        raise ValueError("optional worker preflight digest mismatch")
+    persisted = _read_persisted_json(
+        artifact_store,
+        manifest.get("preflight_ref"),
+        field_name="optional_worker_preflight.preflight_ref",
+        artifact_type="Exp2OptionalWorkerPreflight",
+        schema_id="tokenshare.paper_exp2_optional_worker_preflight",
+        schema_version="v1",
     )
+    if persisted != digest_body:
+        raise ValueError("optional worker preflight persisted manifest mismatch")
+
+
+def _validate_persisted_attempt_evidence(
+    *,
+    artifact_store: Any,
+    condition: Mapping[str, Any],
+    task: Mapping[str, Any],
+    attempt: Mapping[str, Any],
+) -> dict[str, float | int]:
+    if artifact_store is None:
+        raise ValueError("persisted artifact store is required for ai_api evidence")
+    request_ref, request = _read_typed_attempt_artifact(
+        artifact_store,
+        attempt,
+        "request_ref",
+        artifact_type="ExecutionRequest",
+        schema_id="phase3.execution_request",
+        schema_version="v1",
+    )
+    raw_ref, raw = _read_typed_attempt_artifact(
+        artifact_store,
+        attempt,
+        "raw_output_ref",
+        artifact_type="RawModelOutput",
+        schema_id="phase7.raw_model_output",
+        schema_version="v2",
+    )
+    provenance_ref, provenance = _read_typed_attempt_artifact(
+        artifact_store,
+        attempt,
+        "provenance_ref",
+        artifact_type="AIProviderCallProvenance",
+        schema_id="phase7.ai_provider_call_provenance",
+        schema_version="v2",
+    )
+    usage_ref, usage = _read_typed_attempt_artifact(
+        artifact_store,
+        attempt,
+        "usage_ref",
+        artifact_type="AIUsageSummary",
+        schema_id="tokenshare.paper_ai_usage",
+        schema_version="v1",
+    )
+    model_record_ref, model_record = _read_typed_attempt_artifact(
+        artifact_store,
+        attempt,
+        "model_execution_record_ref",
+        artifact_type="PaperModelExecutionRecord",
+        schema_id="tokenshare.paper_model_execution_record",
+        schema_version="v2",
+    )
+    worker_ref, worker = _read_typed_attempt_artifact(
+        artifact_store,
+        attempt,
+        "worker_ref",
+        artifact_type="PaperWorkerExecution",
+        schema_id="tokenshare.paper_worker_execution",
+        schema_version="v1",
+    )
+    if (
+        _mapping(raw_ref.get("source")).get("kind") != "ai_api_executor"
+        or _mapping(provenance_ref.get("source")).get("kind")
+        != "ai_api_executor"
+    ):
+        raise ValueError("persisted raw/provenance artifacts do not prove real transport")
+    expected_ids = {
+        "condition_id": condition.get("condition_id"),
+        "repeat_id": condition.get("repeat_id"),
+        "task_id": task.get("task_id"),
+        "unit_id": attempt.get("unit_id"),
+        "attempt_id": attempt.get("attempt_id"),
+    }
+    _validate_request_artifact(request, condition=condition, expected_ids=expected_ids)
+    _validate_raw_artifact(raw, condition=condition, request=request)
+    provider_attempts, request_identities = _validate_provenance_artifact(
+        provenance,
+        condition=condition,
+        request=request,
+    )
+    if raw.get("submission_id") != provenance.get("submission_id"):
+        raise ValueError("persisted raw/provenance submission identity mismatch")
+    _validate_worker_artifact(
+        worker,
+        attempt=attempt,
+        expected_ids=expected_ids,
+        worker_ref=worker_ref,
+    )
+    _validate_model_execution_record(
+        model_record,
+        condition=condition,
+        expected_ids=expected_ids,
+        provenance=provenance,
+        refs={
+            "request_ref": request_ref,
+            "raw_output_ref": raw_ref,
+            "provenance_ref": provenance_ref,
+            "usage_ref": usage_ref,
+        },
+        provider_attempts=provider_attempts,
+        request_identities=request_identities,
+    )
+    if model_record_ref.get("source", {}).get("kind") not in {
+        "paper_adapter",
+        "factorization_paper_adapter",
+        "lean_paper_adapter",
+    }:
+        raise ValueError("persisted model execution record has unsupported source")
+    total_tokens, cost_estimate = _validate_usage_artifact(
+        usage,
+        condition=condition,
+        request=request,
+        provenance=provenance,
+    )
+    return {"total_tokens": total_tokens, "cost_estimate": cost_estimate}
+
+
+def _read_typed_attempt_artifact(
+    artifact_store: Any,
+    attempt: Mapping[str, Any],
+    field_name: str,
+    *,
+    artifact_type: str,
+    schema_id: str,
+    schema_version: str,
+) -> tuple[dict[str, Any], Mapping[str, Any]]:
+    value = attempt.get(field_name)
+    body = _read_persisted_json(
+        artifact_store,
+        value,
+        field_name=field_name,
+        artifact_type=artifact_type,
+        schema_id=schema_id,
+        schema_version=schema_version,
+    )
+    return dict(_mapping(value)), body
+
+
+def _read_persisted_json(
+    artifact_store: Any,
+    value: Any,
+    *,
+    field_name: str,
+    artifact_type: str,
+    schema_id: str,
+    schema_version: str,
+) -> Mapping[str, Any]:
+    try:
+        ref_body = dict(_mapping(value))
+        ref = ArtifactRef.from_dict(ref_body)
+        if ref.to_dict() != ref_body:
+            raise ValueError("artifact reference body drift")
+        if (
+            ref.artifact_type != artifact_type
+            or ref.artifact_schema_id != schema_id
+            or ref.artifact_schema_version != schema_version
+            or ref.media_type != "application/json"
+            or not artifact_store.verify(ref)
+        ):
+            raise ValueError("artifact identity or content verification failed")
+        body = json.loads(artifact_store.read_bytes(ref).decode("utf-8"))
+    except (KeyError, OSError, TypeError, UnicodeError, ValueError, json.JSONDecodeError) as exc:
+        raise ValueError(f"persisted artifact verification failed for {field_name}") from exc
+    if not isinstance(body, Mapping):
+        raise ValueError(f"persisted artifact {field_name} must contain a JSON object")
+    expected_body_schema = f"{schema_id}.{schema_version}"
+    if body.get("schema_version") != expected_body_schema:
+        raise ValueError(f"persisted artifact schema mismatch for {field_name}")
+    return body
+
+
+def _validate_request_artifact(
+    request: Mapping[str, Any],
+    *,
+    condition: Mapping[str, Any],
+    expected_ids: Mapping[str, Any],
+) -> None:
+    for field_name in ("task_id", "unit_id", "attempt_id"):
+        if request.get(field_name) != expected_ids[field_name]:
+            raise ValueError("persisted request identity mismatch")
+    if _mapping(request.get("hard_requirements")).get(
+        "provider_family"
+    ) != condition.get("provider_family") or _mapping(
+        request.get("capability_snapshot")
+    ).get("provider_family") != condition.get("provider_family"):
+        raise ValueError("persisted request provider identity mismatch")
+    limits = _mapping(request.get("limits"))
+    if limits != {
+        "max_tokens": BASELINE_REQUEST_LIMIT_POLICY["max_tokens"],
+        "timeout_seconds": BASELINE_REQUEST_LIMIT_POLICY["timeout_seconds"],
+    }:
+        raise ValueError("persisted request limits drift")
+    executor = _mapping(request.get("executor"))
+    if executor.get("executor_id") != "executor_ai_api":
+        raise ValueError("persisted request does not target the AI API executor")
+    provider_body = _mapping(request.get("provider_request_body"))
+    if (
+        provider_body.get("model") != condition.get("provider_model_id")
+        or provider_body.get("temperature") != BASELINE_REQUEST_CONTROLS["temperature"]
+        or provider_body.get("enable_thinking")
+        is not BASELINE_REQUEST_CONTROLS["enable_thinking"]
+        or provider_body.get("max_tokens")
+        != BASELINE_REQUEST_LIMIT_POLICY["max_tokens"]
+    ):
+        raise ValueError("persisted provider request controls drift")
+
+
+def _validate_raw_artifact(
+    raw: Mapping[str, Any],
+    *,
+    condition: Mapping[str, Any],
+    request: Mapping[str, Any],
+) -> None:
+    if (
+        raw.get("request_id") != request.get("request_id")
+        or raw.get("provider_family") != condition.get("provider_family")
+        or raw.get("entry_id") != condition.get("model_entry_id")
+        or raw.get("configured_model") != condition.get("provider_model_id")
+        or raw.get("requested_model") != condition.get("provider_model_id")
+        or raw.get("resolved_model") != condition.get("provider_model_id")
+        or raw.get("response_model_status") != "present"
+        or _mapping(raw.get("raw_response_json")).get("model")
+        != condition.get("provider_model_id")
+    ):
+        raise ValueError("persisted raw model identity mismatch")
+
+
+def _validate_provenance_artifact(
+    provenance: Mapping[str, Any],
+    *,
+    condition: Mapping[str, Any],
+    request: Mapping[str, Any],
+) -> tuple[list[Mapping[str, Any]], list[Mapping[str, Any]]]:
+    selection = _mapping(provenance.get("selection_record"))
+    attempts = _list_of_mappings(provenance.get("attempts"))
+    if (
+        provenance.get("request_id") != request.get("request_id")
+        or provenance.get("provider_family") != condition.get("provider_family")
+        or selection.get("selected_entry_id") != condition.get("model_entry_id")
+        or selection.get("eligible_entry_ids") != [condition.get("model_entry_id")]
+        or selection.get("attempt_entry_ids") != [condition.get("model_entry_id")]
+        or provenance.get("final_entry_id") != condition.get("model_entry_id")
+        or provenance.get("final_result_kind") != "succeeded"
+        or len(attempts) != BASELINE_REQUEST_LIMIT_POLICY["max_provider_attempts"]
+    ):
+        raise ValueError("persisted provider provenance mismatch")
+    request_identities: list[Mapping[str, Any]] = []
+    provider_body = _mapping(request.get("provider_request_body"))
+    effective_controls = {
+        key: provider_body[key]
+        for key in (
+            "stream",
+            "temperature",
+            "top_p",
+            "max_tokens",
+            "response_format",
+            "reasoning_effort",
+            "enable_thinking",
+        )
+        if key in provider_body
+    }
+    expected_controls_digest = digest_json(effective_controls)
+    for provider_attempt in attempts:
+        request_identity = _mapping(provider_attempt.get("provider_request_identity"))
+        if (
+            provider_attempt.get("result_kind") != "succeeded"
+            or provider_attempt.get("provider_family")
+            != condition.get("provider_family")
+            or provider_attempt.get("entry_id") != condition.get("model_entry_id")
+            or provider_attempt.get("configured_model")
+            != condition.get("provider_model_id")
+            or request_identity.get("schema_version")
+            != "phase7.provider_request_identity.v2"
+            or request_identity.get("provider_family")
+            != condition.get("provider_family")
+            or request_identity.get("entry_id") != condition.get("model_entry_id")
+            or request_identity.get("configured_model")
+            != condition.get("provider_model_id")
+            or request_identity.get("requested_model")
+            != condition.get("provider_model_id")
+            or _mapping(request_identity.get("reasoning_controls"))
+            != {"enable_thinking": False}
+            or request_identity.get("effective_request_controls_digest")
+            != expected_controls_digest
+        ):
+            raise ValueError("persisted provider request identity mismatch")
+        request_identities.append(request_identity)
+    return attempts, request_identities
+
+
+def _validate_usage_artifact(
+    usage: Mapping[str, Any],
+    *,
+    condition: Mapping[str, Any],
+    request: Mapping[str, Any],
+    provenance: Mapping[str, Any],
+) -> tuple[int, float]:
+    if (
+        usage.get("request_id") != request.get("request_id")
+        or usage.get("submission_id") != provenance.get("submission_id")
+        or usage.get("provider_family") != condition.get("provider_family")
+        or usage.get("entry_id") != condition.get("model_entry_id")
+        or usage.get("configured_model") != condition.get("provider_model_id")
+        or usage.get("requested_model") != condition.get("provider_model_id")
+        or usage.get("provider_attempt_count") != 1
+        or usage.get("cost_estimate_status") != "estimated"
+    ):
+        raise ValueError("persisted usage identity mismatch")
+    prompt_tokens = _non_negative_int(usage.get("prompt_tokens"))
+    completion_tokens = _non_negative_int(usage.get("completion_tokens"))
+    total_tokens = _non_negative_int(usage.get("total_tokens"))
+    if total_tokens != prompt_tokens + completion_tokens:
+        raise ValueError("persisted usage token arithmetic mismatch")
+    return total_tokens, float(_non_negative_number(usage.get("cost_estimate")))
+
+
+def _validate_model_execution_record(
+    record: Mapping[str, Any],
+    *,
+    condition: Mapping[str, Any],
+    expected_ids: Mapping[str, Any],
+    provenance: Mapping[str, Any],
+    refs: Mapping[str, Mapping[str, Any]],
+    provider_attempts: Sequence[Mapping[str, Any]],
+    request_identities: Sequence[Mapping[str, Any]],
+) -> None:
+    digest_body = {key: value for key, value in record.items() if key != "record_digest"}
+    expected_identity = _mapping(record.get("expected_identity"))
+    if (
+        record.get("record_digest") != digest_json(digest_body)
+        or any(record.get(field_name) != value for field_name, value in expected_ids.items())
+        or record.get("source_provider_config_digest")
+        != condition.get("source_provider_config_digest")
+        or record.get("prepared_execution_config_digest")
+        != provenance.get("config_digest")
+        or record.get("identity_status") != "matched"
+        or record.get("response_model_status") != "present"
+        or record.get("requested_model") != condition.get("provider_model_id")
+        or record.get("resolved_model") != condition.get("provider_model_id")
+        or record.get("mismatch_reasons") != []
+        or record.get("paper_eligible") is not True
+        or expected_identity.get("provider_config_id")
+        != condition.get("provider_config_id")
+        or expected_identity.get("selected_entry_id")
+        != condition.get("model_entry_id")
+        or expected_identity.get("provider_family")
+        != condition.get("provider_family")
+        or expected_identity.get("provider_model_id")
+        != condition.get("provider_model_id")
+        or expected_identity.get("reasoning_profile_id")
+        != condition.get("reasoning_profile_id")
+        or expected_identity.get("source_provider_config_digest")
+        != condition.get("source_provider_config_digest")
+        or expected_identity.get("model_endpoint_identity_digest")
+        != condition.get("model_endpoint_identity_digest")
+        or record.get("actual_provider_attempts") != list(provider_attempts)
+        or record.get("actual_request_identities") != list(request_identities)
+        or any(record.get(field_name) != ref for field_name, ref in refs.items())
+    ):
+        raise ValueError("persisted model execution record identity mismatch")
+    _require_complete_digest(
+        "prepared_execution_config_digest",
+        record.get("prepared_execution_config_digest"),
+    )
+
+
+def _validate_worker_artifact(
+    worker: Mapping[str, Any],
+    *,
+    attempt: Mapping[str, Any],
+    expected_ids: Mapping[str, Any],
+    worker_ref: Mapping[str, Any],
+) -> None:
+    if (
+        any(worker.get(field_name) != value for field_name, value in expected_ids.items())
+        or worker.get("worker_id") != attempt.get("worker_id")
+        or worker.get("worker_pid") != attempt.get("worker_pid")
+        or worker.get("worker_slot") != attempt.get("worker_slot")
+        or worker.get("executor_id") != "executor_ai_api"
+        or worker.get("transport_kind") != "ai_api"
+        or _mapping(worker_ref.get("source")).get("kind") != "real_worker_executor"
+    ):
+        raise ValueError("worker execution evidence does not match persisted artifact")
 
 
 def _identity_field_matches(
@@ -1003,7 +1628,9 @@ def _validate_factorization_parallelism(
         range_start = _non_negative_int(unit.get("range_start"))
         range_end = _non_negative_int(unit.get("range_end"))
         if range_end < range_start:
-            raise ValueError("factorization range child has invalid range")
+            raise ValueError(
+                "factorization contiguous range partition has an invalid child range"
+            )
         ranges.append((range_start, range_end))
     candidate_start = _non_negative_int(task.get("candidate_start"))
     candidate_end = _non_negative_int(task.get("candidate_end"))
@@ -1089,6 +1716,9 @@ def _aggregate_repeat_rows(rows: Sequence[dict[str, Any]]) -> list[dict[str, Any
         repeat_audit = _repeat_set_audit(group)
         task_count = sum(row["case_count"] for row in group)
         completed = sum(row["completed_root_count"] for row in group)
+        completed_child_proofs = sum(
+            row["completed_child_proof_count"] for row in group
+        )
         accepted = sum(row["accepted_validity_count"] for row in group)
         paper_eligible_tasks = sum(row["paper_eligible_task_count"] for row in group)
         rate_limit_excluded_rows = [
@@ -1112,6 +1742,22 @@ def _aggregate_repeat_rows(rows: Sequence[dict[str, Any]]) -> list[dict[str, Any
                 "root_run_count": task_count,
                 "expected_root_run_count": repeat_audit["expected_root_run_count"],
                 "completed_root_count": completed,
+                "completed_child_proof_count": completed_child_proofs,
+                "child_proof_throughput_per_second": _median(
+                    _numeric_values(
+                        row["child_proof_throughput_per_second"] for row in group
+                    )
+                ),
+                "child_proof_throughput_median_per_second": _median(
+                    _numeric_values(
+                        row["child_proof_throughput_per_second"] for row in group
+                    )
+                ),
+                "child_proof_throughput_iqr_per_second": _iqr(
+                    _numeric_values(
+                        row["child_proof_throughput_per_second"] for row in group
+                    )
+                ),
                 "completion_rate": _ratio(completed, task_count),
                 "accepted_validity_count": accepted,
                 "accepted_validity_rate": _ratio(accepted, task_count),
@@ -1242,6 +1888,92 @@ def _aggregate_repeat_rows(rows: Sequence[dict[str, Any]]) -> list[dict[str, Any
     return aggregated
 
 
+def _apply_formal_matrix_audit(
+    rows: Sequence[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    expected_group_keys = {
+        ("factorization", difficulty, worker_count)
+        for difficulty in FACTOR_PAPER_DIFFICULTIES
+        for worker_count in MANDATORY_WORKER_LEVELS
+    } | {
+        ("lean_proof", difficulty, worker_count)
+        for difficulty in LEAN_PAPER_DIFFICULTIES
+        for worker_count in MANDATORY_WORKER_LEVELS
+    }
+    mandatory_rows = [
+        row
+        for row in rows
+        if (
+            row.get("domain"),
+            row.get("paper_difficulty"),
+            row.get("worker_count"),
+        )
+        in expected_group_keys
+    ]
+    observed_group_keys = {
+        (
+            row.get("domain"),
+            row.get("paper_difficulty"),
+            row.get("worker_count"),
+        )
+        for row in mandatory_rows
+    }
+    condition_ids = tuple(
+        str(condition_id)
+        for row in mandatory_rows
+        for condition_id in row.get("condition_ids", ())
+    )
+    root_run_count = sum(
+        _non_negative_int(row.get("root_run_count")) for row in mandatory_rows
+    )
+    expected_condition_ids = {
+        _expected_formal_condition_id(
+            domain=domain,
+            paper_difficulty=paper_difficulty,
+            worker_count=worker_count,
+            repeat_id=repeat_id,
+        )
+        for domain, paper_difficulty, worker_count in expected_group_keys
+        for repeat_id in range(EXP2_REPEATS)
+    }
+    matrix_complete = (
+        observed_group_keys == expected_group_keys
+        and len(mandatory_rows) == len(expected_group_keys)
+        and all(row.get("repeat_set_status") == "complete" for row in mandatory_rows)
+        and all(row.get("root_run_count") == 25 for row in mandatory_rows)
+        and len(condition_ids) == len(set(condition_ids))
+        and set(condition_ids) == expected_condition_ids
+        and root_run_count == 600
+    )
+    audit = {
+        "formal_matrix_status": "complete" if matrix_complete else "incomplete",
+        "formal_matrix_group_count": len(observed_group_keys),
+        "expected_formal_matrix_group_count": len(expected_group_keys),
+        "formal_matrix_condition_count": len(set(condition_ids)),
+        "expected_formal_matrix_condition_count": len(expected_condition_ids),
+        "formal_matrix_root_run_count": root_run_count,
+        "expected_formal_matrix_root_run_count": 600,
+    }
+    audited_rows: list[dict[str, Any]] = []
+    for row in rows:
+        audited = {**row, **audit}
+        audited["paper_eligible"] = bool(row.get("paper_eligible")) and matrix_complete
+        audited_rows.append(audited)
+    return audited_rows
+
+
+def _expected_formal_condition_id(
+    *,
+    domain: str,
+    paper_difficulty: str,
+    worker_count: int,
+    repeat_id: int,
+) -> str:
+    return (
+        f"exp2_{domain}_{paper_difficulty}_w{worker_count}_r{repeat_id}"
+    )
+
+
 def _aggregate_key(row: Mapping[str, Any]) -> tuple[Any, ...]:
     return (
         row.get("domain"),
@@ -1325,6 +2057,27 @@ def _condition_wall_clock_ms(
             task_started, task_ended = _time_bounds_ms(task)
             if task_started < batch_started or task_ended > batch_ended:
                 raise ValueError("task timestamps fall outside authoritative batch bounds")
+            for unit in _list_of_mappings(task.get("ai_units")):
+                _require_interval_within_batch(
+                    unit,
+                    batch_started=batch_started,
+                    batch_ended=batch_ended,
+                    label="AI-unit",
+                )
+            for attempt in _list_of_mappings(task.get("attempts")):
+                _require_interval_within_batch(
+                    attempt,
+                    batch_started=batch_started,
+                    batch_ended=batch_ended,
+                    label="attempt",
+                )
+            for gate in _list_of_mappings(task.get("merge_gates")):
+                _require_interval_within_batch(
+                    gate,
+                    batch_started=batch_started,
+                    batch_ended=batch_ended,
+                    label="merge gate",
+                )
         return batch_ended - batch_started, "authoritative"
     starts: list[int] = []
     ends: list[int] = []
@@ -1336,13 +2089,60 @@ def _condition_wall_clock_ms(
     return max(ends) - min(starts), "missing_authoritative_batch_bounds"
 
 
-def _task_critical_path_ms(task: Mapping[str, Any]) -> int:
+def _authoritative_batch_bounds(
+    record: Mapping[str, Any],
+) -> tuple[int, int] | None:
+    if "batch_started_at_ms" not in record or "batch_ended_at_ms" not in record:
+        return None
+    return (
+        _non_negative_int(record.get("batch_started_at_ms")),
+        _non_negative_int(record.get("batch_ended_at_ms")),
+    )
+
+
+def _task_evidence_origin_ms(task: Mapping[str, Any]) -> int:
+    starts = [_time_bounds_ms(task)[0]]
+    for field_name in ("ai_units", "attempts", "merge_gates"):
+        starts.extend(
+            _time_bounds_ms(value)[0]
+            for value in _list_of_mappings(task.get(field_name))
+        )
+    return min(starts)
+
+
+def _require_interval_within_batch(
+    value: Mapping[str, Any],
+    *,
+    batch_started: int,
+    batch_ended: int,
+    label: str,
+) -> None:
+    started, ended = _time_bounds_ms(value)
+    if started < batch_started or ended > batch_ended:
+        raise ValueError(f"{label} timestamps fall outside authoritative batch bounds")
+
+
+def _task_critical_path_ms(
+    task: Mapping[str, Any],
+    *,
+    batch_started_at_ms: int,
+) -> int:
     nodes: dict[str, tuple[int, int, tuple[str, ...]]] = {}
+    attempts_by_unit: dict[str, list[Mapping[str, Any]]] = defaultdict(list)
+    for attempt in _list_of_mappings(task.get("attempts")):
+        attempts_by_unit[str(attempt.get("unit_id") or "")].append(attempt)
     for unit in _list_of_mappings(task.get("ai_units")):
         unit_id = str(unit.get("unit_id") or "")
         if not unit_id:
             raise ValueError("ai unit must declare unit_id")
         started, ended = _time_bounds_ms(unit)
+        unit_attempts = attempts_by_unit.get(unit_id, [])
+        if not unit_attempts:
+            raise ValueError("critical path requires attempt timestamps for every AI unit")
+        for attempt in unit_attempts:
+            attempt_started, attempt_ended = _time_bounds_ms(attempt)
+            if attempt_started < started or attempt_ended > ended:
+                raise ValueError("attempt timestamps must be contained by AI-unit timestamps")
         dependencies = tuple(str(item) for item in unit.get("dependencies", ()))
         nodes[unit_id] = (started, ended, dependencies)
     for gate in _list_of_mappings(task.get("merge_gates")):
@@ -1386,7 +2186,9 @@ def _task_critical_path_ms(task: Mapping[str, Any]) -> int:
             )
             path_start = best_start
         else:
-            path_start = started
+            if started < batch_started_at_ms:
+                raise ValueError("critical path node starts before authoritative batch")
+            path_start = batch_started_at_ms
         visiting.remove(node_id)
         cache[node_id] = (path_start, ended - path_start)
         return cache[node_id]
@@ -1471,16 +2273,229 @@ def _topic_family_counts(case_ids: Any) -> dict[str, int]:
 
 
 def _catalog(context: PaperExecutionContext) -> Mapping[str, Any]:
-    return _mapping(context.catalog)
+    if isinstance(context.catalog, Mapping):
+        return context.catalog
+    fields = (
+        "catalog_id",
+        "catalog_version",
+        "catalog_digest",
+        "factorization_cases",
+        "lean_cases",
+        "lean_lemma_graph_cases",
+        "task15_budget_input",
+        "lean_task14_readiness",
+        "optional_worker_preflight",
+    )
+    catalog = {
+        field_name: getattr(context.catalog, field_name)
+        for field_name in fields
+        if hasattr(context.catalog, field_name)
+    }
+    if not catalog:
+        raise ValueError("catalog must expose formal paper catalog fields")
+    return catalog
 
 
-def _exp2_catalog(context: PaperExecutionContext) -> Mapping[str, Any]:
-    return _mapping(_catalog(context).get("exp2"))
+def _catalog_cases(
+    context: PaperExecutionContext,
+    *,
+    domain: str,
+) -> tuple[Mapping[str, Any], ...]:
+    catalog = _catalog(context)
+    if domain == "factorization":
+        raw_cases = catalog.get("factorization_cases", ())
+    else:
+        raw_cases = tuple(catalog.get("lean_cases", ())) + tuple(
+            catalog.get("lean_lemma_graph_cases", ())
+        )
+    if not isinstance(raw_cases, (list, tuple)):
+        raise ValueError("formal paper catalog cases must be a list or tuple")
+    cases = tuple(_mapping(case) for case in raw_cases)
+    case_ids = tuple(_case_id(case) for case in cases)
+    if len(set(case_ids)) != len(case_ids):
+        raise ValueError("formal paper catalog contains duplicate case IDs")
+    return cases
 
 
 def _catalog_digest(context: PaperExecutionContext) -> str:
-    digest = _catalog(context).get("catalog_digest")
-    return _require_complete_digest("catalog_digest", digest)
+    catalog = _catalog(context)
+    digest = _require_complete_digest("catalog_digest", catalog.get("catalog_digest"))
+    if all(
+        field_name in catalog
+        for field_name in (
+            "factorization_cases",
+            "lean_cases",
+            "lean_lemma_graph_cases",
+        )
+    ):
+        digest_body = {
+            "catalog_id": str(catalog.get("catalog_id") or "tokenshare.paper.catalog"),
+            "catalog_version": str(
+                catalog.get("catalog_version") or EXP2_CATALOG_VERSION
+            ),
+            "factorization_cases": list(catalog["factorization_cases"]),
+            "lean_cases": list(catalog["lean_cases"]),
+            "lean_lemma_graph_cases": list(catalog["lean_lemma_graph_cases"]),
+        }
+        if digest_json(digest_body) != digest:
+            raise ValueError("formal paper catalog digest mismatch")
+    return digest
+
+
+def _validated_readiness_selection(
+    context: PaperExecutionContext,
+) -> Mapping[str, Any]:
+    catalog = _catalog(context)
+    readiness = catalog.get("task15_budget_input")
+    if readiness is None:
+        readiness_wrapper = catalog.get("lean_task14_readiness")
+        if isinstance(readiness_wrapper, Mapping):
+            readiness = readiness_wrapper.get("task15_budget_input")
+    readiness = _mapping(readiness)
+    if (
+        readiness.get("schema_version")
+        != "tokenshare.lean_task15_budget_input.v1"
+        or readiness.get("target_case_count") != 15
+        or readiness.get("selected_case_count") != 135
+        or readiness.get("executable_cell_count") != 9
+        or readiness.get("blocked_cell_count") != 0
+        or readiness.get("provider_calls_made") != 0
+        or readiness.get("catalog_digest") != _catalog_digest(context)
+    ):
+        raise ValueError("Lean readiness selection is not formal/executable")
+    selected_by_cell = _mapping(readiness.get("selected_case_ids_by_cell"))
+    expected_cells = {
+        f"{difficulty}/{topic_family}"
+        for difficulty in LEAN_PAPER_DIFFICULTIES
+        for topic_family in LEAN_TOPIC_FAMILIES
+    }
+    if set(selected_by_cell) != expected_cells:
+        raise ValueError("Lean readiness selection cell matrix drift")
+    normalized_selected: dict[str, list[str]] = {}
+    seen_ids: set[str] = set()
+    lean_cases_by_id = {
+        _case_id(case): case for case in _catalog_cases(context, domain="lean_proof")
+    }
+    readiness_ai_unit_count = 0
+    for cell_key in sorted(expected_cells):
+        case_ids = _normalize_ordered_case_ids(selected_by_cell[cell_key])
+        if len(case_ids) != 15 or any(case_id in seen_ids for case_id in case_ids):
+            raise ValueError("Lean readiness selection must freeze 15 unique cases per cell")
+        paper_difficulty, topic_family = cell_key.split("/", 1)
+        for case_id in case_ids:
+            case = lean_cases_by_id.get(case_id)
+            if case is None:
+                raise ValueError(
+                    "Lean readiness selection references unknown catalog case"
+                )
+            if (
+                case.get("paper_difficulty") != paper_difficulty
+                or case.get("topic_family") != topic_family
+            ):
+                raise ValueError("Lean readiness selection metadata drift")
+            readiness_ai_unit_count += _case_expected_ai_unit_count(case)
+        seen_ids.update(case_ids)
+        normalized_selected[cell_key] = list(case_ids)
+    if readiness.get("expected_ai_unit_count") != readiness_ai_unit_count:
+        raise ValueError("Lean readiness AI-unit commitment drift")
+    semantic_fingerprints = _digest_lists_by_cell(
+        readiness.get("semantic_fingerprint_digests_by_cell"),
+        expected_cells=expected_cells,
+    )
+    golden_case_ids = _mapping(readiness.get("golden_case_ids_by_cell"))
+    normalized_golden: dict[str, list[str]] = {}
+    for cell_key in sorted(expected_cells):
+        ids = _normalize_ordered_case_ids(golden_case_ids.get(cell_key))
+        if not ids or any(case_id not in normalized_selected[cell_key] for case_id in ids):
+            raise ValueError("Lean readiness golden-case provenance drift")
+        normalized_golden[cell_key] = list(ids)
+    oracle_digests = _mapping(readiness.get("oracle_package_digests"))
+    if not oracle_digests or any(
+        not _is_complete_digest_value(value) for value in oracle_digests.values()
+    ):
+        raise ValueError("Lean readiness oracle package digest drift")
+    expected_selection_digest = digest_json(
+        {
+            "schema_version": "tokenshare.lean_task14_selected_cases.v1",
+            "catalog_digest": _catalog_digest(context),
+            "environment_digest": _require_complete_digest(
+                "environment_digest",
+                readiness.get("environment_digest"),
+            ),
+            "oracle_package_digests": dict(oracle_digests),
+            "target_case_count": 15,
+            "selected_case_ids_by_cell": normalized_selected,
+            "semantic_fingerprint_digests_by_cell": semantic_fingerprints,
+            "golden_case_ids_by_cell": normalized_golden,
+        }
+    )
+    if (
+        readiness.get("selection_digest") != expected_selection_digest
+        or readiness.get("catalog_slice_digest") != expected_selection_digest
+    ):
+        raise ValueError("Lean readiness selection digest mismatch")
+    normalized = dict(readiness)
+    normalized["selected_case_ids_by_cell"] = normalized_selected
+    return normalized
+
+
+def _digest_lists_by_cell(
+    value: Any,
+    *,
+    expected_cells: set[str],
+) -> dict[str, list[str]]:
+    by_cell = _mapping(value)
+    if set(by_cell) != expected_cells:
+        raise ValueError("Lean readiness semantic fingerprint matrix drift")
+    normalized: dict[str, list[str]] = {}
+    for cell_key in sorted(expected_cells):
+        values = by_cell[cell_key]
+        if not isinstance(values, (list, tuple)) or len(values) != 15:
+            raise ValueError("Lean readiness semantic fingerprint count drift")
+        digests = [str(digest) for digest in values]
+        if any(not _is_complete_digest_value(digest) for digest in digests):
+            raise ValueError("Lean readiness semantic fingerprint digest drift")
+        normalized[cell_key] = digests
+    return normalized
+
+
+def _is_complete_digest_value(value: Any) -> bool:
+    try:
+        _require_complete_digest("digest", value)
+    except ValueError:
+        return False
+    return True
+
+
+def _case_expected_ai_unit_count(case: Mapping[str, Any]) -> int:
+    if "expected_ai_unit_count" in case:
+        return _positive_int(case.get("expected_ai_unit_count"))
+    if case.get("schema_version") == "tokenshare.paper_factorization_case.v1":
+        return _positive_int(_mapping(case.get("split_params")).get("requested_child_count"))
+    return _positive_int(case.get("expected_child_count"))
+
+
+def _case_split_metadata(case: Mapping[str, Any]) -> dict[str, Any]:
+    if case.get("schema_version") == "tokenshare.paper_factorization_case.v1":
+        return {
+            "case_id": _case_id(case),
+            "candidate_start": case.get("candidate_start"),
+            "candidate_end": case.get("candidate_end"),
+            "split_params": dict(_mapping(case.get("split_params"))),
+        }
+    oracle_proof_ref = case.get("oracle_proof_ref")
+    return {
+        "case_id": _case_id(case),
+        "expected_ai_unit_count": _case_expected_ai_unit_count(case),
+        "expected_split_kind": case.get("expected_split_kind"),
+        "dependency_edges": list(case.get("dependency_edges", ())),
+        "environment_digest": case.get("environment_digest"),
+        "oracle_preflight_status": (
+            oracle_proof_ref.get("preflight_status")
+            if isinstance(oracle_proof_ref, Mapping)
+            else None
+        ),
+    }
 
 
 def _validate_approved_endpoint_binding(

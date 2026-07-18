@@ -5,6 +5,8 @@ import importlib.util
 import json
 from collections import Counter, defaultdict
 from dataclasses import replace
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Any
 
 import pytest
@@ -18,7 +20,9 @@ from tokenshare.experiments.paper_models import (
     PaperConditionResult,
     PaperExperimentCondition,
     PaperStatus,
+    digest_json,
 )
+from tokenshare.storage.artifacts import ArtifactStore
 
 
 MODULE_NAME = "tokenshare.experiments.paper_exp2_scalability"
@@ -32,6 +36,9 @@ REQUEST_LIMITS = {
     "temperature": 0.0,
     "enable_thinking": False,
 }
+_EVIDENCE_TEMP_DIR = TemporaryDirectory(prefix="tokenshare-exp2-evidence-")
+_EVIDENCE_STORE = ArtifactStore(Path(_EVIDENCE_TEMP_DIR.name))
+_EVIDENCE_NONCE = 0
 
 
 def test_exp2_module_implements_contract_and_freezes_600_root_runs() -> None:
@@ -75,6 +82,55 @@ def test_exp2_module_implements_contract_and_freezes_600_root_runs() -> None:
     )
     assert all(condition.fault_type == "none" for condition in conditions)
     assert all(condition.ablation_mode == "FULL" for condition in conditions)
+
+
+def test_formal_json_catalog_freezes_canonical_600_root_run_slices() -> None:
+    module = _load_module()
+    exp2 = module.Experiment2ScalabilityModule()
+    catalog, readiness = _formal_catalog_from_json_files()
+    context = _context(catalog=catalog)
+
+    conditions = exp2.expand_conditions(context)
+    selections = exp2.freeze_case_selections(context, conditions)
+
+    assert len(conditions) == 120
+    assert len(selections) == 120
+    assert module.count_exp2_root_runs(conditions, selections) == 600
+    factor_cases = catalog["factorization_cases"]
+    readiness_ids = readiness["task15_budget_input"]["selected_case_ids_by_cell"]
+    for condition, selection in zip(conditions, selections, strict=True):
+        body = selection.to_dict()
+        assert body["catalog_source_kind"] == "formal_paper_catalog"
+        assert body["slice_digest"].startswith("sha256:")
+        assert body["split_metadata_digest"].startswith("sha256:")
+        assert len(body["case_expected_ai_unit_counts"]) == 5
+        if condition.domain == "factorization":
+            expected_ids = tuple(
+                case["case_id"]
+                for case in factor_cases
+                if case["paper_difficulty"] == condition.paper_difficulty
+            )[:5]
+        else:
+            expected_ids = tuple(
+                case_id
+                for topic_family, count in module.LEAN_TOPIC_ALLOCATIONS[
+                    condition.paper_difficulty
+                ].items()
+                for case_id in readiness_ids[
+                    f"{condition.paper_difficulty}/{topic_family}"
+                ][:count]
+            )
+            assert body["readiness_selection_digest"] == readiness[
+                "task15_budget_input"
+            ]["selection_digest"]
+        assert selection.ordered_case_ids == expected_ids
+
+    tampered = json.loads(json.dumps(catalog))
+    tampered["factorization_cases"][0]["split_params"][
+        "requested_child_count"
+    ] += 1
+    with pytest.raises(ValueError, match="catalog digest"):
+        exp2.expand_conditions(_context(catalog=tampered))
 
 
 def test_lean_conditions_are_full_5_task_batches_stable_across_worker_and_repeat() -> None:
@@ -136,9 +192,13 @@ def test_factorization_batches_are_stable_and_require_within_root_parallelism() 
     assert all(len(case_id_sets) == 1 for case_id_sets in by_difficulty.values())
 
     bad_catalog = _catalog()
-    bad_catalog["exp2"]["factorization"]["medium"][0]["parallelism_scope"] = (
-        "independent_integer_batch"
+    medium_case = next(
+        case
+        for case in bad_catalog["factorization_cases"]
+        if case["paper_difficulty"] == "medium"
     )
+    medium_case["split_params"]["strategy_id"] = "independent_integer_batch"
+    _refresh_catalog_digest(bad_catalog)
     bad_context = _context(catalog=bad_catalog)
     with pytest.raises(ValueError, match="within-root range children"):
         exp2.freeze_case_selections(
@@ -161,7 +221,7 @@ def test_optional_worker_levels_require_ai_units_quota_and_real_worker_preflight
     assert "real_worker_preflight" in support[1]["unsupported_reasons"]
 
     supported_catalog = _catalog()
-    supported_catalog["exp2"]["optional_worker_preflight"]["100"] = {
+    supported_catalog["optional_worker_preflight"]["100"] = {
         "ai_unit_count_available": 120,
         "quota_status": "passed",
         "real_worker_preflight_status": "passed",
@@ -439,7 +499,9 @@ def test_summary_uses_wall_clock_critical_path_and_not_provider_latency_sum() ->
 
     assert scaled["wall_clock_ms"] == 400
     assert scaled["critical_path_ms"] == 250
-    assert scaled["provider_latency_sum_ms"] == 5 * 2 * 9999
+    assert scaled["provider_latency_sum_ms"] == (
+        scaled_selection.expected_ai_unit_count * 9999
+    )
     assert scaled["speedup"] == 2.5
     assert scaled["efficiency"] == pytest.approx(2.5 / 3)
     assert scaled["throughput_completed_roots_per_second"] == 12.5
@@ -664,6 +726,42 @@ def test_summary_audits_attempt_identity_transport_and_formal_provenance() -> No
         exp2.summarize({"condition_evidence": [pilot]})
 
 
+def test_summary_rejects_nonpersisted_ai_api_artifact_refs(tmp_path: Path) -> None:
+    module = _load_module()
+    exp2 = module.Experiment2ScalabilityModule()
+    context = _context()
+    conditions = exp2.expand_conditions(context)
+    selections = exp2.freeze_case_selections(context, conditions)
+    evidence_rows = []
+    for repeat_id in range(5):
+        condition, selection = _find_condition(
+            conditions,
+            selections,
+            domain="factorization",
+            paper_difficulty="easy",
+            worker_count=1,
+            repeat_id=repeat_id,
+        )
+        evidence_rows.append(
+            _condition_evidence(
+                condition,
+                selection,
+                task_wall_clock_ms=100,
+                task_critical_path_ms=100,
+                paper_eligible=True,
+                transport_kind="ai_api",
+            )
+        )
+
+    with pytest.raises(ValueError, match="persisted artifact"):
+        exp2.summarize(
+            {
+                "artifact_store": ArtifactStore(tmp_path / "empty_store"),
+                "condition_evidence": evidence_rows,
+            }
+        )
+
+
 def test_summary_binds_actual_task_order_and_factorization_range_children() -> None:
     module = _load_module()
     exp2 = module.Experiment2ScalabilityModule()
@@ -742,6 +840,69 @@ def test_summary_binds_actual_task_order_and_factorization_range_children() -> N
     broken_ranges["tasks"][0]["ai_units"][1]["range_start"] += 1
     with pytest.raises(ValueError, match="contiguous range partition"):
         exp2.summarize({"condition_evidence": [broken_ranges]})
+
+
+def test_summary_audits_ai_unit_worker_commitments_and_optional_preflight() -> None:
+    module = _load_module()
+    exp2 = module.Experiment2ScalabilityModule()
+    context = _context()
+    conditions = exp2.expand_conditions(context)
+    selections = exp2.freeze_case_selections(context, conditions)
+    condition, selection = _find_condition(
+        conditions,
+        selections,
+        domain="factorization",
+        paper_difficulty="easy",
+        worker_count=30,
+        repeat_id=0,
+    )
+
+    missing_unit = _condition_evidence(
+        condition,
+        selection,
+        task_wall_clock_ms=100,
+        task_critical_path_ms=100,
+        paper_eligible=True,
+        transport_kind="ai_api",
+    )
+    task = missing_unit["tasks"][0]
+    task["ai_units"].pop()
+    task["attempts"].pop()
+    task["candidate_end"] = task["ai_units"][-1]["range_end"]
+    task["merge_gates"][0]["dependencies"] = [
+        unit["unit_id"] for unit in task["ai_units"]
+    ]
+    with pytest.raises(ValueError, match="AI-unit inventory"):
+        exp2.summarize({"condition_evidence": [missing_unit]})
+
+    missing_worker = _condition_evidence(
+        condition,
+        selection,
+        task_wall_clock_ms=100,
+        task_critical_path_ms=100,
+        paper_eligible=True,
+        transport_kind="ai_api",
+    )
+    for field_name in ("worker_id", "worker_pid", "worker_slot", "worker_ref"):
+        missing_worker["tasks"][0]["attempts"][0].pop(field_name, None)
+    with pytest.raises(ValueError, match="worker execution evidence"):
+        exp2.summarize({"condition_evidence": [missing_worker]})
+
+    optional = replace(
+        condition,
+        condition_id="exp2_factorization_easy_w100_r0",
+        worker_count=100,
+    )
+    optional_evidence = _condition_evidence(
+        optional,
+        selection,
+        task_wall_clock_ms=100,
+        task_critical_path_ms=100,
+        paper_eligible=True,
+        transport_kind="ai_api",
+    )
+    with pytest.raises(ValueError, match="optional worker preflight"):
+        exp2.summarize({"condition_evidence": [optional_evidence]})
 
 
 def test_summary_zero_baseline_returns_null_without_nan_or_infinity() -> None:
@@ -960,13 +1121,49 @@ def test_summary_keeps_no_429_sensitivity_stats_for_complete_repeat_groups() -> 
     assert rows[3]["repeat_set_status"] == "complete"
     assert rows[3]["repeat_count"] == 5
     assert rows[3]["root_run_count"] == 25
-    assert rows[3]["paper_eligible"] is True
+    assert rows[3]["paper_eligible"] is False
+    assert rows[3]["formal_matrix_status"] == "incomplete"
+    assert rows[3]["formal_matrix_group_count"] == 2
+    assert rows[3]["formal_matrix_root_run_count"] == 50
     assert rows[3]["rate_limit_sensitivity"] == "rate_limited"
     assert rows[3]["included_in_rate_limit_excluded_view"] is False
     assert rows[3]["rate_limit_excluded_repeat_count"] == 4
     assert rows[3]["rate_limit_excluded_root_run_count"] == 20
     assert rows[3]["rate_limit_excluded_wall_clock_median_ms"] == 500
     assert rows[3]["rate_limit_excluded_speedup_median"] == 2.0
+
+
+def test_formal_matrix_audit_accepts_exact_24_group_600_root_run_matrix() -> None:
+    module = _load_module()
+    rows = []
+    for domain, difficulties in (
+        ("factorization", module.FACTOR_PAPER_DIFFICULTIES),
+        ("lean_proof", module.LEAN_PAPER_DIFFICULTIES),
+    ):
+        for difficulty in difficulties:
+            for worker_count in module.MANDATORY_WORKER_LEVELS:
+                rows.append(
+                    {
+                        "domain": domain,
+                        "paper_difficulty": difficulty,
+                        "worker_count": worker_count,
+                        "condition_ids": tuple(
+                            f"exp2_{domain}_{difficulty}_w{worker_count}_r{repeat_id}"
+                            for repeat_id in range(5)
+                        ),
+                        "repeat_set_status": "complete",
+                        "root_run_count": 25,
+                        "paper_eligible": True,
+                    }
+                )
+
+    audited = module._apply_formal_matrix_audit(rows)
+
+    assert len(audited) == 24
+    assert all(row["formal_matrix_status"] == "complete" for row in audited)
+    assert all(row["formal_matrix_condition_count"] == 120 for row in audited)
+    assert all(row["formal_matrix_root_run_count"] == 600 for row in audited)
+    assert all(row["paper_eligible"] is True for row in audited)
 
 
 def test_summary_excludes_repeat_when_matched_worker_one_baseline_has_429() -> None:
@@ -1076,6 +1273,81 @@ def test_summary_uses_authoritative_batch_bounds_for_wall_clock() -> None:
     assert fallback_row["paper_eligible"] is False
 
 
+def test_critical_path_uses_batch_origin_and_attempt_timestamps() -> None:
+    module = _load_module()
+    exp2 = module.Experiment2ScalabilityModule()
+    context = _context()
+    conditions = exp2.expand_conditions(context)
+    selections = exp2.freeze_case_selections(context, conditions)
+    condition, selection = _find_condition(
+        conditions,
+        selections,
+        domain="factorization",
+        paper_difficulty="easy",
+        worker_count=1,
+        repeat_id=0,
+    )
+    evidence = _condition_evidence(
+        condition,
+        selection,
+        task_wall_clock_ms=600,
+        task_critical_path_ms=100,
+        paper_eligible=True,
+        transport_kind="ai_api",
+    )
+    for task in evidence["tasks"]:
+        for unit, attempt in zip(task["ai_units"], task["attempts"], strict=True):
+            unit["started_at_ms"] = 500
+            unit["ended_at_ms"] = 600
+            attempt["started_at_ms"] = 500
+            attempt["ended_at_ms"] = 600
+        task["merge_gates"][0]["started_at_ms"] = 600
+        task["merge_gates"][0]["ended_at_ms"] = 600
+    row = next(iter(exp2.summarize({"condition_evidence": [evidence]}).rows))
+    assert row["critical_path_ms"] == 600
+
+    outside_batch = json.loads(json.dumps(evidence))
+    outside_batch["tasks"][0]["attempts"][0]["started_at_ms"] = 650
+    outside_batch["tasks"][0]["attempts"][0]["ended_at_ms"] = 700
+    with pytest.raises(ValueError, match="attempt timestamps.*batch"):
+        exp2.summarize({"condition_evidence": [outside_batch]})
+
+
+def test_lean_summary_reports_child_proof_throughput_median_and_iqr() -> None:
+    module = _load_module()
+    exp2 = module.Experiment2ScalabilityModule()
+    context = _context()
+    conditions = exp2.expand_conditions(context)
+    selections = exp2.freeze_case_selections(context, conditions)
+    evidence_rows = []
+    for repeat_id in range(5):
+        condition, selection = _find_condition(
+            conditions,
+            selections,
+            domain="lean_proof",
+            paper_difficulty="medium_lemma_dag",
+            worker_count=1,
+            repeat_id=repeat_id,
+        )
+        evidence_rows.append(
+            _condition_evidence(
+                condition,
+                selection,
+                task_wall_clock_ms=1000,
+                task_critical_path_ms=800,
+                paper_eligible=True,
+                transport_kind="ai_api",
+            )
+        )
+
+    row = next(iter(exp2.summarize({"condition_evidence": evidence_rows}).rows))
+    assert row["completed_child_proof_count"] == selection.expected_ai_unit_count * 5
+    assert row["child_proof_throughput_median_per_second"] == (
+        selection.expected_ai_unit_count
+    )
+    assert row["child_proof_throughput_iqr_per_second"] == 0
+
+
 def _load_module():
     spec = importlib.util.find_spec(MODULE_NAME)
     assert spec is not None, "Exp2 scalability module must exist"
@@ -1133,40 +1405,39 @@ def _baseline_binding() -> dict[str, Any]:
     }
 
 
-def _catalog() -> dict[str, Any]:
-    return {
-        "suite_version": "paper_v1",
+def _formal_catalog_from_json_files() -> tuple[dict[str, Any], dict[str, Any]]:
+    factorization_cases = _read_jsonl(
+        Path("benchmarks/paper/factorization_catalog.v1.jsonl")
+    )
+    for case in factorization_cases:
+        case["paper_difficulty"] = case["difficulty"]
+    lean_cases = _read_jsonl(Path("benchmarks/paper/lean_catalog.v1.jsonl"))
+    for case in lean_cases:
+        case["paper_difficulty"] = "simple"
+        case["topic_family"] = "pure_logic"
+        case["topic_family_version"] = "shallow_v1"
+    lean_lemma_graph_cases = _read_jsonl(
+        Path("benchmarks/paper/lean_lemma_graph_catalog.v1.jsonl")
+    )
+    readiness = json.loads(
+        Path("benchmarks/paper/lean_task14_3x3_readiness.v1.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    digest_body = {
+        "catalog_id": "tokenshare.paper.catalog",
         "catalog_version": "v1",
-        "catalog_digest": CATALOG_DIGEST,
-        "exp2": {
-            "factorization": {
-                difficulty: [
-                    {
-                        "case_id": f"factorization_{difficulty}_{index:02d}",
-                        "expected_ai_unit_count": 3 + index,
-                        "parallelism_scope": "within_root_range_children",
-                    }
-                    for index in range(1, 6)
-                ]
-                for difficulty in ("easy", "medium", "hard")
-            },
-            "lean_proof": {
-                "simple": {
-                    "pure_logic": _lean_cases("simple", "pure_logic", 2, 2),
-                    "function_set": _lean_cases("simple", "function_set", 2, 2),
-                    "induction": _lean_cases("simple", "induction", 1, 2),
-                },
-                "medium_lemma_dag": {
-                    "pure_logic": _lean_cases("medium_lemma_dag", "pure_logic", 1, 4),
-                    "function_set": _lean_cases("medium_lemma_dag", "function_set", 2, 4),
-                    "induction": _lean_cases("medium_lemma_dag", "induction", 2, 4),
-                },
-                "hard_frontier": {
-                    "pure_logic": _lean_cases("hard_frontier", "pure_logic", 2, 6),
-                    "function_set": _lean_cases("hard_frontier", "function_set", 1, 6),
-                    "induction": _lean_cases("hard_frontier", "induction", 2, 6),
-                },
-            },
+        "factorization_cases": factorization_cases,
+        "lean_cases": lean_cases,
+        "lean_lemma_graph_cases": lean_lemma_graph_cases,
+    }
+    return (
+        {
+            **digest_body,
+            "suite_version": "paper_v1",
+            "catalog_digest": digest_json(digest_body),
+            "task15_budget_input": readiness["task15_budget_input"],
+            "lean_task14_readiness": readiness,
             "optional_worker_preflight": {
                 "100": {
                     "ai_unit_count_available": 90,
@@ -1180,6 +1451,128 @@ def _catalog() -> dict[str, Any]:
                 },
             },
         },
+        readiness,
+    )
+
+
+def _read_jsonl(path: Path) -> list[dict[str, Any]]:
+    return [
+        json.loads(line)
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+
+
+def _catalog() -> dict[str, Any]:
+    factorization_cases = [
+        {
+            "schema_version": "tokenshare.paper_factorization_case.v1",
+            "case_id": f"factorization_{difficulty}_{index:02d}",
+            "difficulty": difficulty,
+            "paper_difficulty": difficulty,
+            "candidate_start": "2",
+            "candidate_end": str(1 + 2 * (3 + index)),
+            "split_params": {
+                "strategy_id": "factorization.candidate_range_partition.v1",
+                "range_policy": "contiguous",
+                "requested_child_count": 3 + index,
+            },
+        }
+        for difficulty in ("easy", "medium", "hard")
+        for index in range(1, 6)
+    ]
+    lean_cases = [
+        case
+        for paper_difficulty, expected_count in (
+            ("simple", 2),
+            ("medium_lemma_dag", 4),
+            ("hard_frontier", 6),
+        )
+        for topic_family in ("pure_logic", "function_set", "induction")
+        for case in _lean_cases(
+            paper_difficulty,
+            topic_family,
+            15,
+            expected_count,
+        )
+    ]
+    digest_body = {
+        "catalog_id": "tokenshare.paper.catalog",
+        "catalog_version": "v1",
+        "factorization_cases": factorization_cases,
+        "lean_cases": [],
+        "lean_lemma_graph_cases": lean_cases,
+    }
+    catalog_digest = digest_json(digest_body)
+    selected_by_cell = {
+        f"{paper_difficulty}/{topic_family}": [
+            case["case_id"]
+            for case in lean_cases
+            if case["paper_difficulty"] == paper_difficulty
+            and case["topic_family"] == topic_family
+        ]
+        for paper_difficulty in ("simple", "medium_lemma_dag", "hard_frontier")
+        for topic_family in ("pure_logic", "function_set", "induction")
+    }
+    semantic_by_cell = {
+        cell_key: [
+            digest_json({"cell": cell_key, "index": index})
+            for index in range(15)
+        ]
+        for cell_key in selected_by_cell
+    }
+    golden_by_cell = {
+        cell_key: case_ids[:2] for cell_key, case_ids in selected_by_cell.items()
+    }
+    environment_digest = "sha256:" + "4" * 64
+    oracle_package_digests = {"synthetic_oracle.v1": "sha256:" + "5" * 64}
+    readiness_selection_digest = digest_json(
+        {
+            "schema_version": "tokenshare.lean_task14_selected_cases.v1",
+            "catalog_digest": catalog_digest,
+            "environment_digest": environment_digest,
+            "oracle_package_digests": oracle_package_digests,
+            "target_case_count": 15,
+            "selected_case_ids_by_cell": selected_by_cell,
+            "semantic_fingerprint_digests_by_cell": semantic_by_cell,
+            "golden_case_ids_by_cell": golden_by_cell,
+        }
+    )
+    return {
+        **digest_body,
+        "suite_version": "paper_v1",
+        "catalog_digest": catalog_digest,
+        "task15_budget_input": {
+            "schema_version": "tokenshare.lean_task15_budget_input.v1",
+            "target_case_count": 15,
+            "selected_case_count": 135,
+            "executable_cell_count": 9,
+            "blocked_cell_count": 0,
+            "provider_calls_made": 0,
+            "catalog_digest": catalog_digest,
+            "expected_ai_unit_count": sum(
+                case["expected_ai_unit_count"] for case in lean_cases
+            ),
+            "environment_digest": environment_digest,
+            "oracle_package_digests": oracle_package_digests,
+            "selected_case_ids_by_cell": selected_by_cell,
+            "semantic_fingerprint_digests_by_cell": semantic_by_cell,
+            "golden_case_ids_by_cell": golden_by_cell,
+            "selection_digest": readiness_selection_digest,
+            "catalog_slice_digest": readiness_selection_digest,
+        },
+        "optional_worker_preflight": {
+            "100": {
+                "ai_unit_count_available": 90,
+                "quota_status": "passed",
+                "real_worker_preflight_status": "passed",
+            },
+            "300": {
+                "ai_unit_count_available": 320,
+                "quota_status": "blocked",
+                "real_worker_preflight_status": "not_checked",
+            },
+        },
     }
 
 
@@ -1191,11 +1584,36 @@ def _lean_cases(
 ) -> list[dict[str, Any]]:
     return [
         {
+            "schema_version": "tokenshare.paper_lean_lemma_graph_case.v2",
             "case_id": f"lean_{paper_difficulty}_{topic_family}_{index:02d}",
+            "domain": "lean_proof",
+            "difficulty": {
+                "simple": "easy",
+                "medium_lemma_dag": "medium",
+                "hard_frontier": "hard",
+            }[paper_difficulty],
+            "paper_difficulty": paper_difficulty,
+            "topic_family": topic_family,
             "expected_ai_unit_count": expected_ai_unit_count,
+            "expected_split_kind": "recursive_lemma_dag",
+            "dependency_edges": [],
+            "environment_digest": "sha256:" + "4" * 64,
+            "oracle_proof_ref": {"preflight_status": "passed"},
         }
         for index in range(1, count + 1)
     ]
+
+
+def _refresh_catalog_digest(catalog: dict[str, Any]) -> None:
+    catalog["catalog_digest"] = digest_json(
+        {
+            "catalog_id": catalog["catalog_id"],
+            "catalog_version": catalog["catalog_version"],
+            "factorization_cases": catalog["factorization_cases"],
+            "lean_cases": catalog["lean_cases"],
+            "lean_lemma_graph_cases": catalog["lean_lemma_graph_cases"],
+        }
+    )
 
 
 def _find_condition(
@@ -1232,10 +1650,16 @@ def _condition_evidence(
     merge_start_ms: int | None = None,
     merge_end_ms: int | None = None,
 ) -> dict[str, Any]:
+    global _EVIDENCE_NONCE
+    _EVIDENCE_NONCE += 1
+    fixture_nonce = _EVIDENCE_NONCE
+    selection_body = selection.to_dict()
+    case_unit_counts = selection_body["case_expected_ai_unit_counts"]
+    worker_capacity = min(condition.worker_count, selection.expected_ai_unit_count)
     tasks = []
+    global_unit_index = 0
     for index, case_id in enumerate(selection.ordered_case_ids):
-        left_unit_id = f"{case_id}_left"
-        right_unit_id = f"{case_id}_right"
+        expected_unit_count = case_unit_counts[case_id]
         unit_kind = (
             "factorization_range_child"
             if condition.domain == "factorization"
@@ -1243,33 +1667,41 @@ def _condition_evidence(
         )
         ai_units = [
             {
-                "unit_id": left_unit_id,
+                "unit_id": f"{case_id}_unit_{unit_index:02d}",
                 "root_task_id": case_id,
                 "unit_kind": unit_kind,
                 "plugin_generated": True,
-                "range_start": 2,
-                "range_end": 3,
+                "range_start": 2 + unit_index,
+                "range_end": 2 + unit_index,
                 "dependencies": [],
                 "started_at_ms": 0,
                 "ended_at_ms": task_critical_path_ms // 2,
                 "provider_latency_ms": provider_latency_ms_per_task,
-            },
-            {
-                "unit_id": right_unit_id,
-                "root_task_id": case_id,
-                "unit_kind": unit_kind,
-                "plugin_generated": True,
-                "range_start": 4,
-                "range_end": 5,
-                "dependencies": [],
-                "started_at_ms": 0,
-                "ended_at_ms": task_critical_path_ms // 2,
-                "provider_latency_ms": provider_latency_ms_per_task,
-            },
+            }
+            for unit_index in range(expected_unit_count)
         ]
-        attempts = [
-            {
-                "attempt_id": f"{unit['unit_id']}_attempt_0",
+        attempts = []
+        task_total_tokens = 100 + index
+        token_base, token_remainder = divmod(task_total_tokens, expected_unit_count)
+        for unit_index, unit in enumerate(ai_units):
+            worker_slot = global_unit_index % worker_capacity
+            worker_id = f"worker_{condition.condition_id}_{worker_slot:03d}"
+            attempt_id = f"{unit['unit_id']}_attempt_0"
+            token_count = token_base + (1 if unit_index < token_remainder else 0)
+            refs = _persist_attempt_artifacts(
+                fixture_nonce=fixture_nonce,
+                condition=condition,
+                case_id=case_id,
+                unit=unit,
+                attempt_id=attempt_id,
+                worker_id=worker_id,
+                worker_slot=worker_slot,
+                total_tokens=token_count,
+                cost_estimate=0.01 / expected_unit_count,
+            )
+            attempts.append(
+                {
+                "attempt_id": attempt_id,
                 "condition_id": condition.condition_id,
                 "repeat_id": condition.repeat_id,
                 "task_id": case_id,
@@ -1285,17 +1717,21 @@ def _condition_evidence(
                 "model_endpoint_identity_digest": (
                     condition.model_endpoint_identity_digest
                 ),
-                "request_ref": {"artifact_id": f"request_{unit['unit_id']}"},
-                "raw_output_ref": {"artifact_id": f"raw_{unit['unit_id']}"},
-                "provenance_ref": {"artifact_id": f"provenance_{unit['unit_id']}"},
-                "usage_ref": {"artifact_id": f"usage_{unit['unit_id']}"},
-                "model_execution_record_ref": {
-                    "artifact_id": f"model_record_{unit['unit_id']}"
-                },
+                "request_ref": refs["request_ref"],
+                "raw_output_ref": refs["raw_output_ref"],
+                "provenance_ref": refs["provenance_ref"],
+                "usage_ref": refs["usage_ref"],
+                "model_execution_record_ref": refs["model_execution_record_ref"],
+                "worker_ref": refs["worker_ref"],
+                "worker_id": worker_id,
+                "worker_pid": 10000 + worker_slot,
+                "worker_slot": worker_slot,
+                "started_at_ms": unit["started_at_ms"],
+                "ended_at_ms": unit["ended_at_ms"],
                 "paper_eligible": paper_eligible,
-            }
-            for unit in ai_units
-        ]
+                }
+            )
+            global_unit_index += 1
         tasks.append(
             {
                 "task_id": case_id,
@@ -1308,7 +1744,7 @@ def _condition_evidence(
                 "accepted_validity": True,
                 "started_at_ms": 0,
                 "ended_at_ms": task_wall_clock_ms,
-                "total_tokens": 100 + index,
+                "total_tokens": task_total_tokens,
                 "cost_estimate": 0.01,
                 "rate_limited_429_count": rate_limited_429_count,
                 "retry_count": retry_count,
@@ -1321,13 +1757,13 @@ def _condition_evidence(
                     else "dependency_graph_proof_units"
                 ),
                 "candidate_start": 2,
-                "candidate_end": 5,
+                "candidate_end": 1 + expected_unit_count,
                 "ai_units": ai_units,
                 "attempts": attempts,
                 "merge_gates": [
                     {
                         "gate_id": f"{case_id}_merge",
-                        "dependencies": [left_unit_id, right_unit_id],
+                        "dependencies": [unit["unit_id"] for unit in ai_units],
                         "started_at_ms": (
                             task_critical_path_ms // 2
                             if merge_start_ms is None
@@ -1351,8 +1787,249 @@ def _condition_evidence(
         "pilot_only": False,
         "batch_started_at_ms": 0,
         "batch_ended_at_ms": task_wall_clock_ms,
+        "artifact_root": str(_EVIDENCE_STORE.root_path),
         "tasks": tasks,
     }
+
+
+def _persist_attempt_artifacts(
+    *,
+    fixture_nonce: int,
+    condition: PaperExperimentCondition,
+    case_id: str,
+    unit: dict[str, Any],
+    attempt_id: str,
+    worker_id: str,
+    worker_slot: int,
+    total_tokens: int,
+    cost_estimate: float,
+) -> dict[str, dict[str, Any]]:
+    prefix = f"exp2_{fixture_nonce}_{attempt_id}"
+    request_id = f"request_{prefix}"
+    submission_id = f"submission_{prefix}"
+    run_id = f"run_{condition.condition_id}_{case_id}"
+    prepared_digest = "sha256:" + "6" * 64
+    provider_request_body = {
+        "model": condition.provider_model_id,
+        "temperature": 0.0,
+        "enable_thinking": False,
+        "max_tokens": REQUEST_LIMITS["max_tokens"],
+    }
+    request_body = {
+        "schema_version": "phase3.execution_request.v1",
+        "request_id": request_id,
+        "task_id": case_id,
+        "unit_id": unit["unit_id"],
+        "attempt_id": attempt_id,
+        "executor": {"executor_id": "executor_ai_api"},
+        "hard_requirements": {"provider_family": condition.provider_family},
+        "capability_snapshot": {"provider_family": condition.provider_family},
+        "limits": {
+            "max_tokens": REQUEST_LIMITS["max_tokens"],
+            "timeout_seconds": REQUEST_LIMITS["timeout_seconds"],
+        },
+        "provider_request_body": provider_request_body,
+    }
+    request_ref = _save_evidence_artifact(
+        body=request_body,
+        artifact_id=f"request_{prefix}",
+        artifact_type="ExecutionRequest",
+        schema_id="phase3.execution_request",
+        schema_version="v1",
+        source={"kind": "paper_adapter", "condition_id": condition.condition_id},
+    )
+    request_identity = {
+        "schema_version": "phase7.provider_request_identity.v2",
+        "provider_family": condition.provider_family,
+        "entry_id": condition.model_entry_id,
+        "configured_model": condition.provider_model_id,
+        "requested_model": condition.provider_model_id,
+        "reasoning_controls": {"enable_thinking": False},
+        "effective_request_controls_digest": digest_json(
+            {
+                key: value
+                for key, value in provider_request_body.items()
+                if key != "model"
+            }
+        ),
+    }
+    provider_attempt = {
+        "provider_family": condition.provider_family,
+        "entry_id": condition.model_entry_id,
+        "configured_model": condition.provider_model_id,
+        "result_kind": "succeeded",
+        "provider_request_identity": request_identity,
+    }
+    provenance_body = {
+        "schema_version": "phase7.ai_provider_call_provenance.v2",
+        "submission_id": submission_id,
+        "request_id": request_id,
+        "provider_family": condition.provider_family,
+        "config_digest": prepared_digest,
+        "selection_record": {
+            "eligible_entry_ids": [condition.model_entry_id],
+            "selected_entry_id": condition.model_entry_id,
+            "attempt_entry_ids": [condition.model_entry_id],
+        },
+        "attempts": [provider_attempt],
+        "final_entry_id": condition.model_entry_id,
+        "final_result_kind": "succeeded",
+        "secret_redaction": {"authorization_header": False, "api_key_value": False},
+    }
+    provenance_ref = _save_evidence_artifact(
+        body=provenance_body,
+        artifact_id=f"provenance_{prefix}",
+        artifact_type="AIProviderCallProvenance",
+        schema_id="phase7.ai_provider_call_provenance",
+        schema_version="v2",
+        source={"kind": "ai_api_executor", "request_id": request_id},
+    )
+    raw_body = {
+        "schema_version": "phase7.raw_model_output.v2",
+        "submission_id": submission_id,
+        "request_id": request_id,
+        "provider_family": condition.provider_family,
+        "entry_id": condition.model_entry_id,
+        "configured_model": condition.provider_model_id,
+        "requested_model": condition.provider_model_id,
+        "resolved_model": condition.provider_model_id,
+        "response_model_status": "present",
+        "raw_response_json": {
+            "id": f"provider_{prefix}",
+            "model": condition.provider_model_id,
+        },
+        "content_text": "fixture output",
+        "usage": {"total_tokens": total_tokens},
+    }
+    raw_output_ref = _save_evidence_artifact(
+        body=raw_body,
+        artifact_id=f"raw_{prefix}",
+        artifact_type="RawModelOutput",
+        schema_id="phase7.raw_model_output",
+        schema_version="v2",
+        source={"kind": "ai_api_executor", "request_id": request_id},
+    )
+    usage_body = {
+        "schema_version": "tokenshare.paper_ai_usage.v1",
+        "submission_id": submission_id,
+        "request_id": request_id,
+        "provider_family": condition.provider_family,
+        "entry_id": condition.model_entry_id,
+        "model": condition.provider_model_id,
+        "configured_model": condition.provider_model_id,
+        "requested_model": condition.provider_model_id,
+        "provider_attempt_count": 1,
+        "prompt_tokens": total_tokens // 2,
+        "completion_tokens": total_tokens - total_tokens // 2,
+        "total_tokens": total_tokens,
+        "cost_estimate": cost_estimate,
+        "cost_estimate_status": "estimated",
+    }
+    usage_ref = _save_evidence_artifact(
+        body=usage_body,
+        artifact_id=f"usage_{prefix}",
+        artifact_type="AIUsageSummary",
+        schema_id="tokenshare.paper_ai_usage",
+        schema_version="v1",
+        source={"kind": "paper_adapter", "case_id": case_id},
+    )
+    expected_identity = {
+        "provider_config_id": condition.provider_config_id,
+        "selected_entry_id": condition.model_entry_id,
+        "provider_family": condition.provider_family,
+        "provider_model_id": condition.provider_model_id,
+        "reasoning_profile_id": condition.reasoning_profile_id,
+        "effective_reasoning_controls": {
+            "temperature": 0.0,
+            "enable_thinking": False,
+        },
+        "source_provider_config_digest": condition.source_provider_config_digest,
+        "model_endpoint_identity_digest": condition.model_endpoint_identity_digest,
+    }
+    model_record_body = {
+        "schema_version": "tokenshare.paper_model_execution_record.v2",
+        "condition_id": condition.condition_id,
+        "repeat_id": condition.repeat_id,
+        "run_id": run_id,
+        "task_id": case_id,
+        "unit_id": unit["unit_id"],
+        "attempt_id": attempt_id,
+        "expected_identity": expected_identity,
+        "source_provider_config_digest": condition.source_provider_config_digest,
+        "prepared_execution_config_digest": prepared_digest,
+        "request_ref": request_ref,
+        "provenance_ref": provenance_ref,
+        "raw_output_ref": raw_output_ref,
+        "usage_ref": usage_ref,
+        "actual_request_identities": [request_identity],
+        "actual_provider_attempts": [provider_attempt],
+        "requested_model": condition.provider_model_id,
+        "resolved_model": condition.provider_model_id,
+        "response_model_status": "present",
+        "identity_status": "matched",
+        "mismatch_reasons": [],
+        "paper_eligible": True,
+        "created_at": "2026-07-19T00:00:00Z",
+    }
+    model_record_body["record_digest"] = digest_json(model_record_body)
+    model_record_ref = _save_evidence_artifact(
+        body=model_record_body,
+        artifact_id=f"model_record_{prefix}",
+        artifact_type="PaperModelExecutionRecord",
+        schema_id="tokenshare.paper_model_execution_record",
+        schema_version="v2",
+        source={"kind": "paper_adapter", "condition_id": condition.condition_id},
+    )
+    worker_body = {
+        "schema_version": "tokenshare.paper_worker_execution.v1",
+        "condition_id": condition.condition_id,
+        "repeat_id": condition.repeat_id,
+        "task_id": case_id,
+        "unit_id": unit["unit_id"],
+        "attempt_id": attempt_id,
+        "worker_id": worker_id,
+        "worker_pid": 10000 + worker_slot,
+        "worker_slot": worker_slot,
+        "executor_id": "executor_ai_api",
+        "transport_kind": "ai_api",
+    }
+    worker_ref = _save_evidence_artifact(
+        body=worker_body,
+        artifact_id=f"worker_{prefix}",
+        artifact_type="PaperWorkerExecution",
+        schema_id="tokenshare.paper_worker_execution",
+        schema_version="v1",
+        source={"kind": "real_worker_executor", "worker_id": worker_id},
+    )
+    return {
+        "request_ref": request_ref,
+        "raw_output_ref": raw_output_ref,
+        "provenance_ref": provenance_ref,
+        "usage_ref": usage_ref,
+        "model_execution_record_ref": model_record_ref,
+        "worker_ref": worker_ref,
+    }
+
+
+def _save_evidence_artifact(
+    *,
+    body: dict[str, Any],
+    artifact_id: str,
+    artifact_type: str,
+    schema_id: str,
+    schema_version: str,
+    source: dict[str, Any],
+) -> dict[str, Any]:
+    return _EVIDENCE_STORE.save_json(
+        body,
+        artifact_id=artifact_id,
+        artifact_type=artifact_type,
+        artifact_schema_id=schema_id,
+        artifact_schema_version=schema_version,
+        source=source,
+        metadata={},
+        created_at="2026-07-19T00:00:00Z",
+    ).to_dict()
 
 
 def _topic_counts(case_ids) -> dict[str, int]:
