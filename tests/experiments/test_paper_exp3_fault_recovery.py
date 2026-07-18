@@ -216,6 +216,42 @@ def test_exp3_validation_rejects_model_failover_and_slice_drift() -> None:
             catalog=context.catalog,
         )
 
+    blocked_misuse = replace(
+        selections[0],
+        ordered_case_ids=(),
+        expected_ai_unit_count=0,
+        blocked_reason="missing_exp3_catalog_slice",
+    )
+    with pytest.raises(ValueError, match="blocked selection conflicts"):
+        validate_exp3_condition_matrix(
+            conditions,
+            (blocked_misuse,) + selections[1:],
+            catalog=context.catalog,
+        )
+
+    stale_selection_digest = replace(
+        selections[0],
+        catalog_digest="sha256:" + "d" * 64,
+    )
+    with pytest.raises(ValueError, match="selection catalog digest drift"):
+        validate_exp3_condition_matrix(
+            conditions,
+            (stale_selection_digest,) + selections[1:],
+            catalog=context.catalog,
+        )
+
+    malformed_catalog = dict(_catalog())
+    malformed_catalog["exp3_rate_fault_lean_case_ids_by_topic"] = {
+        **malformed_catalog["exp3_rate_fault_lean_case_ids_by_topic"],
+        "pure_logic": ("lean_rate_pure_logic", "lean_rate_pure_logic_extra"),
+    }
+    malformed_catalog["ai_units_by_case_id"] = {
+        **malformed_catalog["ai_units_by_case_id"],
+        "lean_rate_pure_logic_extra": ("lean_rate_pure_logic_extra_unit_0",),
+    }
+    with pytest.raises(ValueError, match="Lean rate-fault slice"):
+        module.freeze_case_selections(_context(catalog=malformed_catalog), conditions)
+
 
 def test_exp3_missing_catalog_slice_becomes_structured_blocked_selection() -> None:
     catalog = dict(_catalog())
@@ -311,6 +347,32 @@ def test_exp3_summary_computes_matched_baseline_overhead_and_zero_denominator() 
     assert zero_fault["recovery_rate"] is None
     assert zero_fault["recovery_applicability"] == "zero_recoverable_denominator"
 
+    worker_death = summarize_exp3(
+        {
+            "rate_fault_runs": [],
+            "worker_death_runs": [
+                _worker_death_run(
+                    condition_id="worker_death_overhead",
+                    target_dead_worker_count=1,
+                    actual_dead_worker_count=1,
+                    required_slot_count=2,
+                    recovered_slot_count=1,
+                    matched_baseline_condition_id="worker_baseline",
+                    baseline_wall_clock_ms=160,
+                    baseline_total_tokens=40,
+                    baseline_cost_estimate=0.6,
+                )
+            ],
+        }
+    ).rows[0]
+    assert worker_death["matched_baseline_condition_id"] == "worker_baseline"
+    assert worker_death["wall_clock_overhead_ms"] == 40
+    assert worker_death["wall_clock_overhead_ratio"] == pytest.approx(0.25)
+    assert worker_death["token_overhead"] == 21
+    assert worker_death["token_overhead_ratio"] == pytest.approx(0.525)
+    assert worker_death["cost_overhead"] == pytest.approx(0.3)
+    assert worker_death["cost_overhead_ratio"] == pytest.approx(0.5)
+
 
 def test_exp3_summary_rejects_fault_timing_before_raw_persistence_and_model_failover() -> None:
     bad_timing = _rate_fault_run(
@@ -367,6 +429,46 @@ def test_exp3_summary_rejects_fault_timing_before_raw_persistence_and_model_fail
     with pytest.raises(ValueError, match="frozen rate"):
         summarize_exp3(
             {"rate_fault_runs": [bad_fault_rate], "worker_death_runs": []}
+        )
+
+    missing_identity = _rate_fault_run(
+        condition_id="fault_missing_identity",
+        matched_baseline_condition_id="baseline_missing_identity",
+    )
+    missing_identity["attempts"] = [{"entry_id": BASELINE_MODEL_ENTRY_ID}]
+    with pytest.raises(ValueError, match="model failover"):
+        summarize_exp3(
+            {"rate_fault_runs": [missing_identity], "worker_death_runs": []}
+        )
+
+    missing_fault_records = _rate_fault_run(
+        condition_id="fault_missing_records",
+        matched_baseline_condition_id="baseline_missing_records",
+    )
+    missing_fault_records["fault_records"] = []
+    with pytest.raises(ValueError, match="fault record evidence"):
+        summarize_exp3(
+            {"rate_fault_runs": [missing_fault_records], "worker_death_runs": []}
+        )
+
+    bad_completion = _rate_fault_run(
+        condition_id="fault_bad_completion",
+        matched_baseline_condition_id="baseline_bad_completion",
+    )
+    bad_completion["completed_root_count"] = 6
+    with pytest.raises(ValueError, match="completed_root_count"):
+        summarize_exp3(
+            {"rate_fault_runs": [bad_completion], "worker_death_runs": []}
+        )
+
+    unknown_domain = _rate_fault_run(
+        condition_id="fault_unknown_domain",
+        matched_baseline_condition_id="baseline_unknown_domain",
+    )
+    unknown_domain["domain"] = "structured_report"
+    with pytest.raises(ValueError, match="domain"):
+        summarize_exp3(
+            {"rate_fault_runs": [unknown_domain], "worker_death_runs": []}
         )
 
 
@@ -602,6 +704,10 @@ def _worker_death_run(
     actual_dead_worker_count: int,
     required_slot_count: int,
     recovered_slot_count: int,
+    matched_baseline_condition_id: str = "worker_death_baseline",
+    baseline_wall_clock_ms: int = 100,
+    baseline_total_tokens: int = 50,
+    baseline_cost_estimate: float = 0.7,
 ) -> dict[str, Any]:
     return {
         "condition_id": condition_id,
@@ -623,6 +729,10 @@ def _worker_death_run(
         "wall_clock_ms": 200,
         "total_tokens": 61,
         "cost_estimate": 0.9,
+        "matched_baseline_condition_id": matched_baseline_condition_id,
+        "baseline_wall_clock_ms": baseline_wall_clock_ms,
+        "baseline_total_tokens": baseline_total_tokens,
+        "baseline_cost_estimate": baseline_cost_estimate,
         "attempts": [
             {
                 "entry_id": BASELINE_MODEL_ENTRY_ID,

@@ -59,9 +59,19 @@ WORKER_DEATH_WORKER_COUNT = 10
 WORKER_DEATH_COUNTS = (1, 3)
 WORKER_DEATH_KILL_PROGRESS_PERCENT = (25, 50, 75)
 RATE_FAULT_TARGET_SEED = 300300
+EXPECTED_ROOT_RUN_COUNTS = {
+    "rate_fault_factorization": 525,
+    "rate_fault_lean_proof": 180,
+    "worker_death": 108,
+    "total": 813,
+}
 
 _FACTOR_DIFFICULTIES = ("easy", "medium", "hard")
 _RATE_FACTOR_SELECTION_ID = "exp3_rate_fault_factorization_slice_v1"
+
+
+class _MissingCatalogSlice(ValueError):
+    pass
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -291,6 +301,9 @@ def build_exp3_plan_manifest(
                     "provider_tokens_attributed_by_mutation": 0,
                 }
             )
+    if not any(selection.is_blocked for selection in selections):
+        if root_counts != EXPECTED_ROOT_RUN_COUNTS:
+            raise ValueError("root-run total drift for Experiment 3 matrix")
 
     return {
         "schema_version": EXP3_SCHEMA_VERSION,
@@ -344,18 +357,58 @@ def validate_exp3_condition_matrix(
         _validate_baseline_condition(condition)
         if condition.catalog_digest != catalog_digest:
             raise ValueError("catalog digest drift for Experiment 3 condition")
+        if selection.catalog_digest != catalog_digest:
+            raise ValueError("selection catalog digest drift for Experiment 3")
+        try:
+            expected_case_ids = _expected_case_ids_for_condition(
+                condition,
+                catalog=catalog,
+            )
+        except _MissingCatalogSlice:
+            if selection.is_blocked and selection.blocked_reason == (
+                "missing_exp3_catalog_slice"
+            ):
+                continue
+            raise
         if selection.is_blocked:
-            continue
-        expected_case_ids = _expected_case_ids_for_condition(condition, catalog=catalog)
-        if selection.is_blocked:
-            continue
+            raise ValueError("blocked selection conflicts with available catalog slice")
         if tuple(selection.ordered_case_ids) != expected_case_ids:
             raise ValueError(
                 f"slice drift for {condition.condition_id}: "
                 f"{tuple(selection.ordered_case_ids)!r} != {expected_case_ids!r}"
             )
+        expected_ai_units = _expected_ai_unit_count(expected_case_ids, catalog=catalog)
+        if selection.expected_ai_unit_count != expected_ai_units:
+            raise ValueError("selection AI-unit count drift for Experiment 3")
         if selection.paper_eligible_required is not True:
             raise ValueError("Exp3 selections must require paper eligibility")
+    if not any(selection.is_blocked for selection in selections):
+        root_counts = _root_run_counts(conditions, selections)
+        if root_counts != EXPECTED_ROOT_RUN_COUNTS:
+            raise ValueError("root-run total drift for Experiment 3 matrix")
+
+
+def _root_run_counts(
+    conditions: Sequence[PaperExperimentCondition],
+    selections: Sequence[FrozenCaseSelection],
+) -> dict[str, int]:
+    counts = {
+        "rate_fault_factorization": 0,
+        "rate_fault_lean_proof": 0,
+        "worker_death": 0,
+        "total": 0,
+    }
+    for condition, selection in zip(conditions, selections, strict=True):
+        key = _parse_condition_id(condition.condition_id)
+        case_count = len(selection.ordered_case_ids)
+        if key.matrix_kind == "rate_fault" and key.domain == "factorization":
+            counts["rate_fault_factorization"] += case_count
+        elif key.matrix_kind == "rate_fault" and key.domain == "lean_proof":
+            counts["rate_fault_lean_proof"] += case_count
+        elif key.matrix_kind == "worker_death":
+            counts["worker_death"] += case_count
+        counts["total"] += case_count
+    return counts
 
 
 def summarize_exp3(evidence: Mapping[str, Any]) -> ExperimentSummaryRows:
@@ -518,21 +571,7 @@ def _selection_for_condition(
     suite_version = str(catalog.get("suite_version") or "paper_v1")
     try:
         case_ids = _expected_case_ids_for_condition(condition, catalog=catalog)
-        expected_ai_units = _expected_ai_unit_count(case_ids, catalog=catalog)
-        return FrozenCaseSelection(
-            selection_id=_selection_id_for_key(key),
-            experiment_id=EXP3_EXPERIMENT_ID,
-            suite_version=suite_version,
-            catalog_version=catalog_version,
-            domain=key.domain,
-            paper_difficulty=key.paper_difficulty,
-            topic_family=_selection_topic_family_for_key(key),
-            ordered_case_ids=case_ids,
-            catalog_digest=catalog_digest,
-            expected_ai_unit_count=expected_ai_units,
-            paper_eligible_required=True,
-        )
-    except (KeyError, TypeError, ValueError):
+    except _MissingCatalogSlice:
         return FrozenCaseSelection(
             selection_id=_selection_id_for_key(key),
             experiment_id=EXP3_EXPERIMENT_ID,
@@ -547,6 +586,20 @@ def _selection_for_condition(
             paper_eligible_required=True,
             blocked_reason="missing_exp3_catalog_slice",
         )
+    expected_ai_units = _expected_ai_unit_count(case_ids, catalog=catalog)
+    return FrozenCaseSelection(
+        selection_id=_selection_id_for_key(key),
+        experiment_id=EXP3_EXPERIMENT_ID,
+        suite_version=suite_version,
+        catalog_version=catalog_version,
+        domain=key.domain,
+        paper_difficulty=key.paper_difficulty,
+        topic_family=_selection_topic_family_for_key(key),
+        ordered_case_ids=case_ids,
+        catalog_digest=catalog_digest,
+        expected_ai_unit_count=expected_ai_units,
+        paper_eligible_required=True,
+    )
 
 
 def _selection_id_for_key(key: _ConditionKey) -> str:
@@ -577,27 +630,67 @@ def _expected_case_ids_for_condition(
 ) -> tuple[str, ...]:
     key = _parse_condition_id(condition.condition_id)
     if key.matrix_kind == "rate_fault" and key.domain == "factorization":
-        return _case_tuple(catalog["exp3_rate_fault_factorization_case_ids"])
-    if key.matrix_kind == "rate_fault" and key.domain == "lean_proof":
-        by_topic = _mapping(catalog["exp3_rate_fault_lean_case_ids_by_topic"])
-        if key.task_slice_key == "all_topics":
-            return tuple(
-                case_id
-                for topic_family in LEAN_TOPIC_FAMILIES
-                for case_id in _case_tuple(by_topic[topic_family])
+        case_ids = _case_tuple(
+            _required_catalog_value(
+                catalog,
+                "exp3_rate_fault_factorization_case_ids",
             )
-        return _case_tuple(by_topic[str(key.topic_family)])
-    if key.matrix_kind == "worker_death" and key.domain == "factorization":
-        return _case_tuple(
-            _mapping(
-                catalog["exp3_worker_death_factorization_case_ids_by_difficulty"]
-            )[key.task_slice_key]
         )
-    return _case_tuple(
-        _mapping(catalog["exp3_worker_death_lean_case_ids_by_topic"])[
-            key.task_slice_key
-        ]
+        if len(case_ids) != 5:
+            raise ValueError("factorization rate-fault slice must contain 5 cases")
+        return case_ids
+    if key.matrix_kind == "rate_fault" and key.domain == "lean_proof":
+        by_topic = _mapping(
+            _required_catalog_value(
+                catalog,
+                "exp3_rate_fault_lean_case_ids_by_topic",
+            )
+        )
+        if key.task_slice_key == "all_topics":
+            selected: list[str] = []
+            for topic_family in LEAN_TOPIC_FAMILIES:
+                topic_case_ids = _case_tuple(
+                    _required_catalog_value(by_topic, topic_family)
+                )
+                if len(topic_case_ids) != 1:
+                    raise ValueError(
+                        "Lean rate-fault slice must contain exactly one case "
+                        "per topic family"
+                    )
+                selected.extend(topic_case_ids)
+            if len(selected) != 3:
+                raise ValueError("Lean rate-fault slice must contain 3 cases")
+            return tuple(selected)
+        return _case_tuple(_required_catalog_value(by_topic, str(key.topic_family)))
+    if key.matrix_kind == "worker_death" and key.domain == "factorization":
+        case_ids = _case_tuple(
+            _required_catalog_value(
+                _mapping(
+                    _required_catalog_value(
+                        catalog,
+                        "exp3_worker_death_factorization_case_ids_by_difficulty",
+                    )
+                ),
+                key.task_slice_key,
+            )
+        )
+        if len(case_ids) != 1:
+            raise ValueError("worker-death factorization slice must contain 1 case")
+        return case_ids
+    case_ids = _case_tuple(
+        _required_catalog_value(
+            _mapping(
+                _required_catalog_value(
+                    catalog,
+                    "exp3_worker_death_lean_case_ids_by_topic",
+                )
+            ),
+            key.task_slice_key,
+        )
     )
+    if len(case_ids) != 1:
+        raise ValueError("worker-death Lean slice must contain 1 case")
+    return case_ids
 
 
 def _expected_ai_unit_count(
@@ -617,7 +710,6 @@ def _expected_ai_unit_count(
 
 def _summarize_rate_fault_run(run: Mapping[str, Any]) -> JsonObject:
     _validate_attempt_model_entries(run)
-    _validate_fault_records(run)
     matched_baseline = _required_str(run, "matched_baseline_condition_id")
     expected_baseline = run.get("expected_baseline_condition_id")
     if expected_baseline is not None and expected_baseline != matched_baseline:
@@ -660,6 +752,21 @@ def _summarize_rate_fault_run(run: Mapping[str, Any]) -> JsonObject:
         "recoverable_fault_target_count",
         recoverable_fault_target_count,
     )
+    completed_root_count = _non_negative_int(run, "completed_root_count")
+    _require_numerator_leq_denominator(
+        "completed_root_count",
+        completed_root_count,
+        "task_count",
+        task_count,
+    )
+    original_refs = _json_list(run.get("original_output_refs"))
+    mutated_refs = _json_list(run.get("mutated_output_refs"))
+    _validate_fault_records(
+        run,
+        injected_fault_count=injected_fault_count,
+        original_output_refs=original_refs,
+        mutated_output_refs=mutated_refs,
+    )
     detection = _denominator_rate(
         detected_fault_count,
         injected_fault_count,
@@ -695,7 +802,7 @@ def _summarize_rate_fault_run(run: Mapping[str, Any]) -> JsonObject:
         "fault_rate_percent": fault_rate_percent,
         "repeat_id": _non_negative_int(run, "repeat_id"),
         "task_count": task_count,
-        "completed_root_count": _non_negative_int(run, "completed_root_count"),
+        "completed_root_count": completed_root_count,
         "matched_baseline_condition_id": matched_baseline,
         "injected_fault_count": injected_fault_count,
         "detected_fault_count": detected_fault_count,
@@ -708,7 +815,7 @@ def _summarize_rate_fault_run(run: Mapping[str, Any]) -> JsonObject:
         "false_accept_applicability": false_accept["applicability"],
         "recovery_rate": recovery["rate"],
         "recovery_applicability": recovery["applicability"],
-        "completion_rate": _rate(run, "completed_root_count", task_count),
+        "completion_rate": completed_root_count / task_count,
         "recovery_latency_ms": _non_negative_int(run, "recovery_latency_ms"),
         "retry_count": _non_negative_int(run, "retry_count"),
         "reassignment_count": _non_negative_int(run, "reassignment_count"),
@@ -722,8 +829,8 @@ def _summarize_rate_fault_run(run: Mapping[str, Any]) -> JsonObject:
         "cost_overhead": cost_overhead["delta"],
         "cost_overhead_ratio": cost_overhead["ratio"],
         "cost_overhead_applicability": cost_overhead["applicability"],
-        "original_output_refs": _json_list(run.get("original_output_refs")),
-        "mutated_output_refs": _json_list(run.get("mutated_output_refs")),
+        "original_output_refs": original_refs,
+        "mutated_output_refs": mutated_refs,
         "provider_tokens_attributed_by_mutation": 0,
         "transport_kind": _required_str(run, "transport_kind"),
         "paper_eligible": _bool(run, "paper_eligible"),
@@ -735,6 +842,7 @@ def _summarize_rate_fault_run(run: Mapping[str, Any]) -> JsonObject:
 def _summarize_worker_death_run(run: Mapping[str, Any]) -> JsonObject:
     _validate_attempt_model_entries(run)
     domain = _required_str(run, "domain")
+    _validate_domain(domain)
     target_dead = _non_negative_int(run, "target_dead_worker_count")
     actual_dead = _non_negative_int(run, "actual_dead_worker_count")
     required_slots = _positive_int(run, "required_slot_count")
@@ -742,6 +850,15 @@ def _summarize_worker_death_run(run: Mapping[str, Any]) -> JsonObject:
     if recovered_slots > required_slots:
         raise ValueError("recovered_slot_count must not exceed required_slot_count")
     completeness = recovered_slots / required_slots
+    wall_clock = _number(run, "wall_clock_ms")
+    baseline_wall_clock = _number(run, "baseline_wall_clock_ms")
+    tokens = _number(run, "total_tokens")
+    baseline_tokens = _number(run, "baseline_total_tokens")
+    cost = _number(run, "cost_estimate")
+    baseline_cost = _number(run, "baseline_cost_estimate")
+    wall_clock_overhead = _overhead(wall_clock, baseline_wall_clock)
+    token_overhead = _overhead(tokens, baseline_tokens)
+    cost_overhead = _overhead(cost, baseline_cost)
     target_progress = _non_negative_int(run, "target_kill_progress_percent")
     actual_progress = _non_negative_int(run, "actual_kill_progress_percent")
     if target_dead not in WORKER_DEATH_COUNTS:
@@ -778,9 +895,22 @@ def _summarize_worker_death_run(run: Mapping[str, Any]) -> JsonObject:
         "recovery_latency_ms": _non_negative_int(run, "recovery_latency_ms"),
         "retry_count": _non_negative_int(run, "retry_count"),
         "reassignment_count": _non_negative_int(run, "reassignment_count"),
-        "wall_clock_ms": _number(run, "wall_clock_ms"),
-        "total_tokens": _number(run, "total_tokens"),
-        "cost_estimate": _number(run, "cost_estimate"),
+        "matched_baseline_condition_id": _required_str(
+            run,
+            "matched_baseline_condition_id",
+        ),
+        "wall_clock_ms": wall_clock,
+        "total_tokens": tokens,
+        "cost_estimate": cost,
+        "wall_clock_overhead_ms": wall_clock_overhead["delta"],
+        "wall_clock_overhead_ratio": wall_clock_overhead["ratio"],
+        "wall_clock_overhead_applicability": wall_clock_overhead["applicability"],
+        "token_overhead": token_overhead["delta"],
+        "token_overhead_ratio": token_overhead["ratio"],
+        "token_overhead_applicability": token_overhead["applicability"],
+        "cost_overhead": cost_overhead["delta"],
+        "cost_overhead_ratio": cost_overhead["ratio"],
+        "cost_overhead_applicability": cost_overhead["applicability"],
         "condition_included": mismatch_reason is None,
         "run_status": "failed" if mismatch_reason else "completed",
         "failure_reason": mismatch_reason,
@@ -811,16 +941,24 @@ def _validate_attempt_model_entries(run: Mapping[str, Any]) -> None:
         attempt_body = _require_mapping(attempt, "attempt")
         if (
             attempt_body.get("entry_id") != BASELINE_MODEL_ENTRY_ID
-            or attempt_body.get("provider") not in (None, BASELINE_PROVIDER_FAMILY)
-            or attempt_body.get("model") not in (None, BASELINE_PROVIDER_MODEL_ID)
+            or attempt_body.get("provider") != BASELINE_PROVIDER_FAMILY
+            or attempt_body.get("model") != BASELINE_PROVIDER_MODEL_ID
             or attempt_body.get("reasoning_profile_id")
-            not in (None, BASELINE_REASONING_PROFILE_ID)
+            != BASELINE_REASONING_PROFILE_ID
         ):
             raise ValueError("model failover is forbidden for Experiment 3")
 
 
-def _validate_fault_records(run: Mapping[str, Any]) -> None:
+def _validate_fault_records(
+    run: Mapping[str, Any],
+    *,
+    injected_fault_count: int,
+    original_output_refs: Sequence[Mapping[str, Any]],
+    mutated_output_refs: Sequence[Mapping[str, Any]],
+) -> None:
     records = _require_sequence(run.get("fault_records", ()), "fault_records")
+    if injected_fault_count > 0 and not records:
+        raise ValueError("fault record evidence is required for injected faults")
     for record in records:
         body = _require_mapping(record, "fault_record")
         injection_point = _required_str(body, "injection_point")
@@ -833,6 +971,14 @@ def _validate_fault_records(run: Mapping[str, Any]) -> None:
         ):
             if not isinstance(body.get(field_name), Mapping):
                 raise ValueError(f"{field_name} is required in fault record")
+        if dict(body["original_output_ref"]) not in [
+            dict(item) for item in original_output_refs
+        ]:
+            raise ValueError("fault record original_output_ref does not match summary")
+        if dict(body["mutated_output_ref"]) not in [
+            dict(item) for item in mutated_output_refs
+        ]:
+            raise ValueError("fault record mutated_output_ref does not match summary")
         if _non_negative_int(body, "provider_tokens_attributed") != 0:
             raise ValueError("synthetic mutation must not attribute provider tokens")
 
@@ -843,6 +989,7 @@ def _validate_rate_fault_membership(
     fault_type: str,
     fault_rate_percent: int,
 ) -> None:
+    _validate_domain(domain)
     if fault_type not in RATE_FAULT_TYPES:
         raise ValueError("unsupported frozen fault type")
     allowed_rates = (
@@ -852,6 +999,11 @@ def _validate_rate_fault_membership(
     )
     if fault_rate_percent not in allowed_rates:
         raise ValueError("unsupported frozen rate")
+
+
+def _validate_domain(domain: str) -> None:
+    if domain not in ("factorization", "lean_proof"):
+        raise ValueError("domain must be factorization or lean_proof")
 
 
 def _require_numerator_leq_denominator(
@@ -926,6 +1078,13 @@ def _mapping(value: Any) -> Mapping[str, Any]:
     if not isinstance(value, Mapping):
         raise ValueError("expected mapping")
     return value
+
+
+def _required_catalog_value(catalog: Mapping[str, Any], key: str) -> Any:
+    try:
+        return catalog[key]
+    except KeyError as exc:
+        raise _MissingCatalogSlice(f"missing Exp3 catalog slice: {key}") from exc
 
 
 def _case_tuple(value: Any) -> tuple[str, ...]:
