@@ -40,7 +40,7 @@ def test_exp3_expands_rate_fault_and_worker_death_root_run_counts() -> None:
 
     assert manifest["experiment_id"] == EXP3_EXPERIMENT_ID
     assert manifest["provider_calls_made"] == 0
-    assert manifest["condition_count"] == 393
+    assert manifest["condition_count"] == 273
     assert manifest["root_run_counts"] == {
         "rate_fault_factorization": 525,
         "rate_fault_lean_proof": 180,
@@ -103,22 +103,22 @@ def test_exp3_freezes_task_slices_and_fault_target_manifest_without_resampling()
     assert len(factor_rate_digests) == 1
     assert next(iter(factor_rate_digests)).startswith("sha256:")
 
-    for topic_family, expected_case_id in {
-        "pure_logic": "lean_rate_pure_logic",
-        "function_set": "lean_rate_function_set",
-        "induction": "lean_rate_induction",
-    }.items():
-        topic_digests = {
-            selection.selection_digest
-            for condition_id, selection in by_condition_id.items()
-            if condition_id.startswith(f"exp3_rate_fault_lean__{topic_family}__")
-        }
-        assert len(topic_digests) == 1
-        assert {
-            selection.ordered_case_ids
-            for condition_id, selection in by_condition_id.items()
-            if condition_id.startswith(f"exp3_rate_fault_lean__{topic_family}__")
-        } == {(expected_case_id,)}
+    lean_rate_selections = {
+        condition_id: selection
+        for condition_id, selection in by_condition_id.items()
+        if condition_id.startswith("exp3_rate_fault_lean__all_topics__")
+    }
+    assert len(lean_rate_selections) == 60
+    assert {selection.selection_digest for selection in lean_rate_selections.values()} == {
+        next(iter(lean_rate_selections.values())).selection_digest
+    }
+    assert {selection.ordered_case_ids for selection in lean_rate_selections.values()} == {
+        (
+            "lean_rate_pure_logic",
+            "lean_rate_function_set",
+            "lean_rate_induction",
+        )
+    }
 
     factor_100_rows = [
         row
@@ -141,6 +141,28 @@ def test_exp3_freezes_task_slices_and_fault_target_manifest_without_resampling()
         }
         for row in factor_100_rows
     )
+    lean_10_rows = [
+        row
+        for row in manifest["fault_target_manifest"]
+        if row["matrix_kind"] == "rate_fault"
+        and row["domain"] == "lean_proof"
+        and row["fault_rate_percent"] == 10
+    ]
+    assert lean_10_rows
+    assert {tuple(row["topic_family_slice"]) for row in lean_10_rows} == {
+        ("pure_logic", "function_set", "induction")
+    }
+    assert {
+        tuple(row["ordered_case_ids"])
+        for row in lean_10_rows
+    } == {
+        (
+            "lean_rate_pure_logic",
+            "lean_rate_function_set",
+            "lean_rate_induction",
+        )
+    }
+    assert all(len(row["selected_target_ai_unit_ids"]) == 1 for row in lean_10_rows)
 
 
 def test_exp3_validation_rejects_model_failover_and_slice_drift() -> None:
@@ -168,6 +190,48 @@ def test_exp3_validation_rejects_model_failover_and_slice_drift() -> None:
             (drifted_selection,) + selections[1:],
             catalog=context.catalog,
         )
+
+    stale_catalog_digest = replace(
+        conditions[0],
+        catalog_digest="sha256:" + "c" * 64,
+    )
+    with pytest.raises(ValueError, match="catalog digest drift"):
+        validate_exp3_condition_matrix(
+            (stale_catalog_digest,) + conditions[1:],
+            selections,
+            catalog=context.catalog,
+        )
+
+    with pytest.raises(ValueError, match="condition matrix drift"):
+        validate_exp3_condition_matrix(
+            conditions[:-1],
+            selections[:-1],
+            catalog=context.catalog,
+        )
+
+    with pytest.raises(ValueError, match="duplicate condition"):
+        validate_exp3_condition_matrix(
+            conditions + (conditions[-1],),
+            selections + (selections[-1],),
+            catalog=context.catalog,
+        )
+
+
+def test_exp3_missing_catalog_slice_becomes_structured_blocked_selection() -> None:
+    catalog = dict(_catalog())
+    catalog.pop("exp3_rate_fault_lean_case_ids_by_topic")
+    context = _context(catalog=catalog)
+    module = Experiment3FaultRecoveryModule()
+
+    conditions = module.expand_conditions(context)
+    selections = module.freeze_case_selections(context, conditions)
+
+    blocked = [selection for selection in selections if selection.is_blocked]
+    assert blocked
+    assert {selection.blocked_reason for selection in blocked} == {
+        "missing_exp3_catalog_slice"
+    }
+    assert all(selection.expected_ai_unit_count == 0 for selection in blocked)
 
 
 def test_exp3_summary_computes_matched_baseline_overhead_and_zero_denominator() -> None:
@@ -211,6 +275,11 @@ def test_exp3_summary_computes_matched_baseline_overhead_and_zero_denominator() 
     assert positive["original_output_refs"] == [{"artifact_id": "original"}]
     assert positive["mutated_output_refs"] == [{"artifact_id": "mutated"}]
     assert positive["provider_tokens_attributed_by_mutation"] == 0
+    assert positive["injected_fault_count"] == 4
+    assert positive["detection_rate"] == pytest.approx(0.75)
+    assert positive["false_accept_rate"] == pytest.approx(0.25)
+    assert positive["recoverable_fault_target_count"] == 2
+    assert positive["recovery_rate"] == pytest.approx(1.0)
 
     assert zero["wall_clock_overhead_ratio"] is None
     assert zero["wall_clock_overhead_applicability"] == "zero_baseline_denominator"
@@ -218,6 +287,29 @@ def test_exp3_summary_computes_matched_baseline_overhead_and_zero_denominator() 
     assert zero["token_overhead_applicability"] == "zero_baseline_denominator"
     assert zero["cost_overhead_ratio"] is None
     assert zero["cost_overhead_applicability"] == "zero_baseline_denominator"
+
+    zero_fault = summarize_exp3(
+        {
+            "rate_fault_runs": [
+                _rate_fault_run(
+                    condition_id="fault_zero_injected",
+                    matched_baseline_condition_id="baseline_zero_injected",
+                    injected_fault_count=0,
+                    detected_fault_count=0,
+                    false_accept_count=0,
+                    recoverable_fault_target_count=0,
+                    recovered_fault_target_count=0,
+                ),
+            ],
+            "worker_death_runs": [],
+        }
+    ).rows[0]
+    assert zero_fault["detection_rate"] is None
+    assert zero_fault["detection_applicability"] == "zero_fault_denominator"
+    assert zero_fault["false_accept_rate"] is None
+    assert zero_fault["false_accept_applicability"] == "zero_fault_denominator"
+    assert zero_fault["recovery_rate"] is None
+    assert zero_fault["recovery_applicability"] == "zero_recoverable_denominator"
 
 
 def test_exp3_summary_rejects_fault_timing_before_raw_persistence_and_model_failover() -> None:
@@ -247,6 +339,34 @@ def test_exp3_summary_rejects_fault_timing_before_raw_persistence_and_model_fail
     with pytest.raises(ValueError, match="baseline mismatch"):
         summarize_exp3(
             {"rate_fault_runs": [baseline_mismatch], "worker_death_runs": []}
+        )
+
+    provider_drift = _rate_fault_run(
+        condition_id="fault_provider_drift",
+        matched_baseline_condition_id="baseline_provider_drift",
+    )
+    provider_drift["attempts"][0]["provider"] = "openai"
+    with pytest.raises(ValueError, match="model failover"):
+        summarize_exp3(
+            {"rate_fault_runs": [provider_drift], "worker_death_runs": []}
+        )
+
+    no_attempts = _rate_fault_run(
+        condition_id="fault_no_attempts",
+        matched_baseline_condition_id="baseline_no_attempts",
+    )
+    no_attempts["attempts"] = []
+    with pytest.raises(ValueError, match="attempt evidence"):
+        summarize_exp3({"rate_fault_runs": [no_attempts], "worker_death_runs": []})
+
+    bad_fault_rate = _rate_fault_run(
+        condition_id="fault_bad_rate",
+        matched_baseline_condition_id="baseline_bad_rate",
+    )
+    bad_fault_rate["fault_rate_percent"] = 33
+    with pytest.raises(ValueError, match="frozen rate"):
+        summarize_exp3(
+            {"rate_fault_runs": [bad_fault_rate], "worker_death_runs": []}
         )
 
 
@@ -290,6 +410,27 @@ def test_exp3_worker_death_summary_keeps_actual_dead_count_mismatch_failed() -> 
     assert mismatch["condition_included"] is False
     assert mismatch["run_status"] == "failed"
     assert mismatch["failure_reason"] == "actual_dead_count_mismatch"
+
+    coordinator_failed = summarize_exp3(
+        {
+            "rate_fault_runs": [],
+            "worker_death_runs": [
+                {
+                    **_worker_death_run(
+                        condition_id="worker_death_coordinator_failed",
+                        target_dead_worker_count=1,
+                        actual_dead_worker_count=1,
+                        required_slot_count=1,
+                        recovered_slot_count=1,
+                    ),
+                    "coordinator_continued": False,
+                }
+            ],
+        }
+    ).rows[0]
+    assert coordinator_failed["condition_included"] is False
+    assert coordinator_failed["run_status"] == "failed"
+    assert coordinator_failed["failure_reason"] == "coordinator_not_continued"
 
 
 def test_exp3_module_protocol_run_condition_and_scripted_eligibility_guard() -> None:
@@ -399,6 +540,11 @@ def _rate_fault_run(
     baseline_total_tokens: int = 30,
     cost_estimate: float = 0.75,
     baseline_cost_estimate: float = 0.5,
+    injected_fault_count: int = 4,
+    detected_fault_count: int = 3,
+    false_accept_count: int = 1,
+    recoverable_fault_target_count: int = 2,
+    recovered_fault_target_count: int = 2,
 ) -> dict[str, Any]:
     return {
         "condition_id": condition_id,
@@ -408,9 +554,12 @@ def _rate_fault_run(
         "repeat_id": 0,
         "task_count": 5,
         "completed_root_count": 4,
-        "detected_fault_count": 3,
-        "false_accept_count": 1,
-        "recovered_root_count": 2,
+        "injected_fault_count": injected_fault_count,
+        "detected_fault_count": detected_fault_count,
+        "false_accept_count": false_accept_count,
+        "recoverable_fault_target_count": recoverable_fault_target_count,
+        "recovered_fault_target_count": recovered_fault_target_count,
+        "recovered_root_count": recovered_fault_target_count,
         "recovery_latency_ms": 17,
         "retry_count": 2,
         "reassignment_count": 1,
@@ -433,7 +582,14 @@ def _rate_fault_run(
                 "provider_tokens_attributed": 0,
             }
         ],
-        "attempts": [{"entry_id": BASELINE_MODEL_ENTRY_ID}],
+        "attempts": [
+            {
+                "entry_id": BASELINE_MODEL_ENTRY_ID,
+                "provider": "siliconflow",
+                "model": "zai-org/GLM-5.2",
+                "reasoning_profile_id": "temperature_0_thinking_false",
+            }
+        ],
         "transport_kind": "scripted",
         "paper_eligible": False,
     }
@@ -467,7 +623,14 @@ def _worker_death_run(
         "wall_clock_ms": 200,
         "total_tokens": 61,
         "cost_estimate": 0.9,
-        "attempts": [{"entry_id": BASELINE_MODEL_ENTRY_ID}],
+        "attempts": [
+            {
+                "entry_id": BASELINE_MODEL_ENTRY_ID,
+                "provider": "siliconflow",
+                "model": "zai-org/GLM-5.2",
+                "reasoning_profile_id": "temperature_0_thinking_false",
+            }
+        ],
         "transport_kind": "scripted",
         "paper_eligible": False,
     }

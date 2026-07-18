@@ -16,7 +16,7 @@ from tokenshare.experiments.paper_experiment_contracts import (
     FrozenCaseSelection,
     PaperExecutionContext,
 )
-from tokenshare.experiments.paper_faults import PaperFaultType, select_fault_targets
+from tokenshare.experiments.paper_faults import select_fault_targets
 from tokenshare.experiments.paper_models import (
     JsonObject,
     LEAN_TOPIC_FAMILIES,
@@ -36,7 +36,21 @@ BASELINE_PROVIDER_MODEL_ID = "zai-org/GLM-5.2"
 BASELINE_MODEL_ENTRY_ID = "glm_5_2_exp1_baseline"
 BASELINE_REASONING_PROFILE_ID = "temperature_0_thinking_false"
 
-RATE_FAULT_TYPES = tuple(fault.value for fault in PaperFaultType)
+RATE_FAULT_TYPES = (
+    "false_positive",
+    "false_negative",
+    "no_return",
+    "late_submission",
+    "executor_error",
+)
+VALID_FAULT_INJECTION_POINTS = frozenset(
+    {
+        "after_parsed_candidate_before_verification",
+        "after_raw_output_before_submission",
+        "after_raw_output_late_submission",
+        "after_raw_output_before_parser_bridge",
+    }
+)
 FACTOR_RATE_FAULT_RATES_PERCENT = (0, 1, 5, 10, 25, 50, 100)
 LEAN_RATE_FAULT_RATES_PERCENT = (0, 10, 50, 100)
 REPEAT_IDS = (0, 1, 2)
@@ -131,26 +145,25 @@ def expand_exp3_conditions(
                         catalog_digest=catalog_digest,
                     )
                 )
-    for topic_family in LEAN_TOPIC_FAMILIES:
-        for fault_type in RATE_FAULT_TYPES:
-            for rate_percent in LEAN_RATE_FAULT_RATES_PERCENT:
-                for repeat_id in REPEAT_IDS:
-                    conditions.append(
-                        _condition_from_key(
-                            _ConditionKey(
-                                matrix_kind="rate_fault",
-                                domain="lean_proof",
-                                task_slice_key=topic_family,
-                                difficulty="medium",
-                                paper_difficulty="medium_lemma_dag",
-                                topic_family=topic_family,
-                                fault_type=fault_type,
-                                fault_rate_percent=rate_percent,
-                                repeat_id=repeat_id,
-                            ),
-                            catalog_digest=catalog_digest,
-                        )
+    for fault_type in RATE_FAULT_TYPES:
+        for rate_percent in LEAN_RATE_FAULT_RATES_PERCENT:
+            for repeat_id in REPEAT_IDS:
+                conditions.append(
+                    _condition_from_key(
+                        _ConditionKey(
+                            matrix_kind="rate_fault",
+                            domain="lean_proof",
+                            task_slice_key="all_topics",
+                            difficulty="medium",
+                            paper_difficulty="medium_lemma_dag",
+                            topic_family=None,
+                            fault_type=fault_type,
+                            fault_rate_percent=rate_percent,
+                            repeat_id=repeat_id,
+                        ),
+                        catalog_digest=catalog_digest,
                     )
+                )
     for difficulty in _FACTOR_DIFFICULTIES:
         for dead_count in WORKER_DEATH_COUNTS:
             for kill_progress in WORKER_DEATH_KILL_PROGRESS_PERCENT:
@@ -256,6 +269,16 @@ def build_exp3_plan_manifest(
                     "matrix_kind": key.matrix_kind,
                     "domain": key.domain,
                     "topic_family": key.topic_family,
+                    "topic_family_slice": (
+                        list(LEAN_TOPIC_FAMILIES)
+                        if key.domain == "lean_proof"
+                        and key.task_slice_key == "all_topics"
+                        else (
+                            [key.topic_family]
+                            if key.topic_family is not None
+                            else []
+                        )
+                    ),
                     "fault_type": key.fault_type,
                     "fault_rate_percent": key.fault_rate_percent,
                     "repeat_id": key.repeat_id,
@@ -309,8 +332,20 @@ def validate_exp3_condition_matrix(
     if len(conditions) != len(selections):
         raise ValueError("conditions and selections must have matching length")
     catalog = _catalog_mapping(catalog)
+    catalog_digest = _catalog_digest(catalog)
+    condition_ids = [condition.condition_id for condition in conditions]
+    if len(set(condition_ids)) != len(condition_ids):
+        raise ValueError("duplicate condition in Exp3 condition matrix")
+    expected_conditions = expand_exp3_conditions(catalog_digest=catalog_digest)
+    expected_condition_ids = tuple(condition.condition_id for condition in expected_conditions)
+    if tuple(condition_ids) != expected_condition_ids:
+        raise ValueError("condition matrix drift for Experiment 3")
     for condition, selection in zip(conditions, selections, strict=True):
         _validate_baseline_condition(condition)
+        if condition.catalog_digest != catalog_digest:
+            raise ValueError("catalog digest drift for Experiment 3 condition")
+        if selection.is_blocked:
+            continue
         expected_case_ids = _expected_case_ids_for_condition(condition, catalog=catalog)
         if selection.is_blocked:
             continue
@@ -378,7 +413,7 @@ def _condition_id(key: _ConditionKey) -> str:
         )
     if key.matrix_kind == "rate_fault" and key.domain == "lean_proof":
         return (
-            f"exp3_rate_fault_lean__{key.topic_family}__{key.fault_type}"
+            f"exp3_rate_fault_lean__{key.task_slice_key}__{key.fault_type}"
             f"__r{key.fault_rate_percent}__rep{key.repeat_id}"
         )
     if key.matrix_kind == "worker_death" and key.domain == "factorization":
@@ -420,11 +455,12 @@ def _parse_condition_id(condition_id: str) -> _ConditionKey:
             repeat_id=_int_suffix(repeat_part, "rep"),
         )
     if len(parts) == 5 and parts[0] == "exp3_rate_fault_lean":
-        topic_family, fault_type, rate_part, repeat_part = parts[1:]
+        task_slice_key, fault_type, rate_part, repeat_part = parts[1:]
+        topic_family = None if task_slice_key == "all_topics" else task_slice_key
         return _ConditionKey(
             matrix_kind="rate_fault",
             domain="lean_proof",
-            task_slice_key=topic_family,
+            task_slice_key=task_slice_key,
             difficulty="medium",
             paper_difficulty="medium_lemma_dag",
             topic_family=topic_family,
@@ -490,7 +526,7 @@ def _selection_for_condition(
             catalog_version=catalog_version,
             domain=key.domain,
             paper_difficulty=key.paper_difficulty,
-            topic_family=key.topic_family,
+            topic_family=_selection_topic_family_for_key(key),
             ordered_case_ids=case_ids,
             catalog_digest=catalog_digest,
             expected_ai_unit_count=expected_ai_units,
@@ -504,7 +540,7 @@ def _selection_for_condition(
             catalog_version=catalog_version,
             domain=key.domain,
             paper_difficulty=key.paper_difficulty,
-            topic_family=key.topic_family,
+            topic_family=_selection_topic_family_for_key(key),
             ordered_case_ids=(),
             catalog_digest=catalog_digest,
             expected_ai_unit_count=0,
@@ -523,6 +559,17 @@ def _selection_id_for_key(key: _ConditionKey) -> str:
     return f"exp3_worker_death_lean_{key.task_slice_key}_slice_v1"
 
 
+def _selection_topic_family_for_key(key: _ConditionKey) -> str | None:
+    if key.domain != "lean_proof":
+        return None
+    if key.topic_family is not None:
+        return key.topic_family
+    # Gate B FrozenCaseSelection 目前要求 Lean selection 带单个 topic_family。
+    # Exp3 的 rate-fault selection 是三 topic 组合 slice，这里用首个 topic
+    # 作为稳定 anchor；完整 topic slice 在 manifest 中显式冻结。
+    return LEAN_TOPIC_FAMILIES[0]
+
+
 def _expected_case_ids_for_condition(
     condition: PaperExperimentCondition,
     *,
@@ -532,11 +579,14 @@ def _expected_case_ids_for_condition(
     if key.matrix_kind == "rate_fault" and key.domain == "factorization":
         return _case_tuple(catalog["exp3_rate_fault_factorization_case_ids"])
     if key.matrix_kind == "rate_fault" and key.domain == "lean_proof":
-        return _case_tuple(
-            _mapping(catalog["exp3_rate_fault_lean_case_ids_by_topic"])[
-                str(key.topic_family)
-            ]
-        )
+        by_topic = _mapping(catalog["exp3_rate_fault_lean_case_ids_by_topic"])
+        if key.task_slice_key == "all_topics":
+            return tuple(
+                case_id
+                for topic_family in LEAN_TOPIC_FAMILIES
+                for case_id in _case_tuple(by_topic[topic_family])
+            )
+        return _case_tuple(by_topic[str(key.topic_family)])
     if key.matrix_kind == "worker_death" and key.domain == "factorization":
         return _case_tuple(
             _mapping(
@@ -573,6 +623,58 @@ def _summarize_rate_fault_run(run: Mapping[str, Any]) -> JsonObject:
     if expected_baseline is not None and expected_baseline != matched_baseline:
         raise ValueError("baseline mismatch for Experiment 3 rate-fault run")
     task_count = _positive_int(run, "task_count")
+    domain = _required_str(run, "domain")
+    fault_type = _required_str(run, "fault_type")
+    fault_rate_percent = _non_negative_int(run, "fault_rate_percent")
+    _validate_rate_fault_membership(
+        domain=domain,
+        fault_type=fault_type,
+        fault_rate_percent=fault_rate_percent,
+    )
+    injected_fault_count = _non_negative_int(run, "injected_fault_count")
+    detected_fault_count = _non_negative_int(run, "detected_fault_count")
+    false_accept_count = _non_negative_int(run, "false_accept_count")
+    recoverable_fault_target_count = _non_negative_int(
+        run,
+        "recoverable_fault_target_count",
+    )
+    recovered_fault_target_count = _non_negative_int(
+        run,
+        "recovered_fault_target_count",
+    )
+    _require_numerator_leq_denominator(
+        "detected_fault_count",
+        detected_fault_count,
+        "injected_fault_count",
+        injected_fault_count,
+    )
+    _require_numerator_leq_denominator(
+        "false_accept_count",
+        false_accept_count,
+        "injected_fault_count",
+        injected_fault_count,
+    )
+    _require_numerator_leq_denominator(
+        "recovered_fault_target_count",
+        recovered_fault_target_count,
+        "recoverable_fault_target_count",
+        recoverable_fault_target_count,
+    )
+    detection = _denominator_rate(
+        detected_fault_count,
+        injected_fault_count,
+        zero_applicability="zero_fault_denominator",
+    )
+    false_accept = _denominator_rate(
+        false_accept_count,
+        injected_fault_count,
+        zero_applicability="zero_fault_denominator",
+    )
+    recovery = _denominator_rate(
+        recovered_fault_target_count,
+        recoverable_fault_target_count,
+        zero_applicability="zero_recoverable_denominator",
+    )
     wall_clock = _number(run, "wall_clock_ms")
     baseline_wall_clock = _number(run, "baseline_wall_clock_ms")
     tokens = _number(run, "total_tokens")
@@ -588,19 +690,24 @@ def _summarize_rate_fault_run(run: Mapping[str, Any]) -> JsonObject:
         "experiment_id": EXP3_EXPERIMENT_ID,
         "summary_kind": "rate_fault",
         "condition_id": _required_str(run, "condition_id"),
-        "domain": _required_str(run, "domain"),
-        "fault_type": _required_str(run, "fault_type"),
-        "fault_rate_percent": _non_negative_int(run, "fault_rate_percent"),
+        "domain": domain,
+        "fault_type": fault_type,
+        "fault_rate_percent": fault_rate_percent,
         "repeat_id": _non_negative_int(run, "repeat_id"),
         "task_count": task_count,
         "completed_root_count": _non_negative_int(run, "completed_root_count"),
         "matched_baseline_condition_id": matched_baseline,
-        "detected_fault_count": _non_negative_int(run, "detected_fault_count"),
-        "false_accept_count": _non_negative_int(run, "false_accept_count"),
-        "recovered_root_count": _non_negative_int(run, "recovered_root_count"),
-        "detection_rate": _rate(run, "detected_fault_count", task_count),
-        "false_accept_rate": _rate(run, "false_accept_count", task_count),
-        "recovery_rate": _rate(run, "recovered_root_count", task_count),
+        "injected_fault_count": injected_fault_count,
+        "detected_fault_count": detected_fault_count,
+        "false_accept_count": false_accept_count,
+        "recoverable_fault_target_count": recoverable_fault_target_count,
+        "recovered_fault_target_count": recovered_fault_target_count,
+        "detection_rate": detection["rate"],
+        "detection_applicability": detection["applicability"],
+        "false_accept_rate": false_accept["rate"],
+        "false_accept_applicability": false_accept["applicability"],
+        "recovery_rate": recovery["rate"],
+        "recovery_applicability": recovery["applicability"],
         "completion_rate": _rate(run, "completed_root_count", task_count),
         "recovery_latency_ms": _non_negative_int(run, "recovery_latency_ms"),
         "retry_count": _non_negative_int(run, "retry_count"),
@@ -627,6 +734,7 @@ def _summarize_rate_fault_run(run: Mapping[str, Any]) -> JsonObject:
 
 def _summarize_worker_death_run(run: Mapping[str, Any]) -> JsonObject:
     _validate_attempt_model_entries(run)
+    domain = _required_str(run, "domain")
     target_dead = _non_negative_int(run, "target_dead_worker_count")
     actual_dead = _non_negative_int(run, "actual_dead_worker_count")
     required_slots = _positive_int(run, "required_slot_count")
@@ -636,25 +744,32 @@ def _summarize_worker_death_run(run: Mapping[str, Any]) -> JsonObject:
     completeness = recovered_slots / required_slots
     target_progress = _non_negative_int(run, "target_kill_progress_percent")
     actual_progress = _non_negative_int(run, "actual_kill_progress_percent")
+    if target_dead not in WORKER_DEATH_COUNTS:
+        raise ValueError("unsupported frozen worker-death count")
+    if target_progress not in WORKER_DEATH_KILL_PROGRESS_PERCENT:
+        raise ValueError("unsupported frozen worker-death kill progress")
+    coordinator_continued = _bool(run, "coordinator_continued")
     mismatch_reason = None
     if actual_dead != target_dead:
         mismatch_reason = "actual_dead_count_mismatch"
     elif actual_progress != target_progress:
         mismatch_reason = "actual_kill_progress_mismatch"
+    elif not coordinator_continued:
+        mismatch_reason = "coordinator_not_continued"
 
     row: JsonObject = {
         "schema_version": "tokenshare.paper_exp3_worker_death_summary_row.v1",
         "experiment_id": EXP3_EXPERIMENT_ID,
         "summary_kind": "worker_death",
         "condition_id": _required_str(run, "condition_id"),
-        "domain": _required_str(run, "domain"),
+        "domain": domain,
         "repeat_id": _non_negative_int(run, "repeat_id"),
         "task_count": _positive_int(run, "task_count"),
         "target_dead_worker_count": target_dead,
         "actual_dead_worker_count": actual_dead,
         "target_kill_progress_percent": target_progress,
         "actual_kill_progress_percent": actual_progress,
-        "coordinator_continued": _bool(run, "coordinator_continued"),
+        "coordinator_continued": coordinator_continued,
         "required_slot_count": required_slots,
         "recovered_slot_count": recovered_slots,
         "result_completeness_rate": completeness,
@@ -683,15 +798,24 @@ def _validate_baseline_condition(condition: PaperExperimentCondition) -> None:
         condition.model_entry_id != BASELINE_MODEL_ENTRY_ID
         or condition.provider_family != BASELINE_PROVIDER_FAMILY
         or condition.provider_model_id != BASELINE_PROVIDER_MODEL_ID
+        or condition.reasoning_profile_id != BASELINE_REASONING_PROFILE_ID
     ):
         raise ValueError("model failover is forbidden for Experiment 3")
 
 
 def _validate_attempt_model_entries(run: Mapping[str, Any]) -> None:
     attempts = _require_sequence(run.get("attempts", ()), "attempts")
+    if not attempts:
+        raise ValueError("attempt evidence is required for Experiment 3 summary")
     for attempt in attempts:
         attempt_body = _require_mapping(attempt, "attempt")
-        if attempt_body.get("entry_id") != BASELINE_MODEL_ENTRY_ID:
+        if (
+            attempt_body.get("entry_id") != BASELINE_MODEL_ENTRY_ID
+            or attempt_body.get("provider") not in (None, BASELINE_PROVIDER_FAMILY)
+            or attempt_body.get("model") not in (None, BASELINE_PROVIDER_MODEL_ID)
+            or attempt_body.get("reasoning_profile_id")
+            not in (None, BASELINE_REASONING_PROFILE_ID)
+        ):
             raise ValueError("model failover is forbidden for Experiment 3")
 
 
@@ -700,10 +824,7 @@ def _validate_fault_records(run: Mapping[str, Any]) -> None:
     for record in records:
         body = _require_mapping(record, "fault_record")
         injection_point = _required_str(body, "injection_point")
-        if not (
-            injection_point.startswith("after_raw_output")
-            or injection_point.startswith("after_parsed_candidate")
-        ):
+        if injection_point not in VALID_FAULT_INJECTION_POINTS:
             raise ValueError("fault injection must occur after raw persistence")
         for field_name in (
             "original_raw_output_ref",
@@ -714,6 +835,44 @@ def _validate_fault_records(run: Mapping[str, Any]) -> None:
                 raise ValueError(f"{field_name} is required in fault record")
         if _non_negative_int(body, "provider_tokens_attributed") != 0:
             raise ValueError("synthetic mutation must not attribute provider tokens")
+
+
+def _validate_rate_fault_membership(
+    *,
+    domain: str,
+    fault_type: str,
+    fault_rate_percent: int,
+) -> None:
+    if fault_type not in RATE_FAULT_TYPES:
+        raise ValueError("unsupported frozen fault type")
+    allowed_rates = (
+        FACTOR_RATE_FAULT_RATES_PERCENT
+        if domain == "factorization"
+        else LEAN_RATE_FAULT_RATES_PERCENT
+    )
+    if fault_rate_percent not in allowed_rates:
+        raise ValueError("unsupported frozen rate")
+
+
+def _require_numerator_leq_denominator(
+    numerator_name: str,
+    numerator: int,
+    denominator_name: str,
+    denominator: int,
+) -> None:
+    if numerator > denominator:
+        raise ValueError(f"{numerator_name} must not exceed {denominator_name}")
+
+
+def _denominator_rate(
+    numerator: int,
+    denominator: int,
+    *,
+    zero_applicability: str,
+) -> JsonObject:
+    if denominator == 0:
+        return {"rate": None, "applicability": zero_applicability}
+    return {"rate": numerator / denominator, "applicability": "matched_denominator"}
 
 
 def _overhead(value: float, baseline: float) -> JsonObject:
