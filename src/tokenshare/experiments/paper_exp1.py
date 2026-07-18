@@ -23,6 +23,7 @@ from tokenshare.experiments.paper_models import (
     PaperConditionResult,
     PaperExperimentCondition,
     PaperStatus,
+    digest_json,
 )
 
 
@@ -51,6 +52,12 @@ _LEAN_CELL_KEYS = tuple(
     f"{paper_difficulty}/{topic_family}"
     for paper_difficulty in LEAN_PAPER_DIFFICULTIES
     for topic_family in LEAN_TOPIC_FAMILIES
+)
+_TASK14_MATRIX_PLAN_SCHEMA_VERSIONS = frozenset(
+    {
+        "tokenshare.lean_3x3_matrix_plan.v1",
+        "tokenshare.lean_task14_3x3_readiness.v1",
+    }
 )
 _DIFFICULTY_ORDER = {
     "easy": 0,
@@ -148,10 +155,19 @@ class Exp1FormalModule:
         condition: PaperExperimentCondition,
         selection: FrozenCaseSelection,
     ) -> PaperConditionResult:
-        _validate_condition_selection_match(condition=condition, selection=selection)
+        canonical_condition = _canonical_condition_for(context, condition)
+        _validate_condition_selection_match(
+            condition=canonical_condition,
+            selection=selection,
+        )
+        _validate_canonical_selection(
+            context=context,
+            condition=canonical_condition,
+            selection=selection,
+        )
         if selection.is_blocked:
             return PaperConditionResult(
-                condition_id=condition.condition_id,
+                condition_id=canonical_condition.condition_id,
                 status=PaperStatus.BLOCKED,
                 repeat_count=1,
                 task_count=0,
@@ -166,12 +182,12 @@ class Exp1FormalModule:
             )
         result = context.execution_callback(
             context=context,
-            condition=condition,
+            condition=canonical_condition,
             selection=selection,
         )
         if not isinstance(result, PaperConditionResult):
             raise ValueError("execution callback must return PaperConditionResult")
-        if result.condition_id != condition.condition_id:
+        if result.condition_id != canonical_condition.condition_id:
             raise ValueError("execution callback returned a mismatched condition_id")
         return result
 
@@ -361,6 +377,53 @@ def _validate_condition_selection_match(
         raise ValueError("selection does not match condition")
 
 
+def _canonical_condition_for(
+    context: PaperExecutionContext,
+    condition: PaperExperimentCondition,
+) -> PaperExperimentCondition:
+    expected_conditions = {
+        expected.condition_id: expected
+        for expected in Exp1FormalModule().expand_conditions(context)
+    }
+    canonical = expected_conditions.get(condition.condition_id)
+    if (
+        canonical is None
+        or condition.condition_digest != canonical.condition_digest
+    ):
+        raise ValueError("condition does not match canonical formal condition")
+    return canonical
+
+
+def _validate_canonical_selection(
+    *,
+    context: PaperExecutionContext,
+    condition: PaperExperimentCondition,
+    selection: FrozenCaseSelection,
+) -> None:
+    canonical = _selection_for_condition(context=context, condition=condition)
+    if _selection_contract_body(selection) != _selection_contract_body(canonical):
+        raise ValueError("selection does not match canonical frozen selection")
+
+
+def _selection_contract_body(selection: FrozenCaseSelection) -> JsonObject:
+    return {
+        "schema_version": selection.schema_version,
+        "selection_id": selection.selection_id,
+        "experiment_id": selection.experiment_id,
+        "suite_version": selection.suite_version,
+        "catalog_version": selection.catalog_version,
+        "domain": selection.domain,
+        "paper_difficulty": selection.paper_difficulty,
+        "topic_family": selection.topic_family,
+        "ordered_case_ids": list(selection.ordered_case_ids),
+        "catalog_digest": selection.catalog_digest,
+        "expected_ai_unit_count": selection.expected_ai_unit_count,
+        "paper_eligible_required": selection.paper_eligible_required,
+        "blocked_reason": selection.blocked_reason,
+        "selection_digest": selection.selection_digest,
+    }
+
+
 def _baseline_identity(context: PaperExecutionContext) -> JsonObject:
     binding = context.approved_endpoint_binding
     selected_entry_id = _field(binding, "selected_entry_id")
@@ -369,8 +432,7 @@ def _baseline_identity(context: PaperExecutionContext) -> JsonObject:
     provider_family = _field(binding, "provider_family")
     provider_model_id = _field(binding, "provider_model_id")
     reasoning_profile_id = _field(binding, "reasoning_profile_id")
-    temperature = _request_control(context, "temperature")
-    enable_thinking = _request_control(context, "enable_thinking")
+    request_controls = _fixed_request_controls(context)
     if (
         selected_entry_id != EXP1_BASELINE_ENTRY_ID
         or model_entry_id != EXP1_BASELINE_ENTRY_ID
@@ -378,8 +440,8 @@ def _baseline_identity(context: PaperExecutionContext) -> JsonObject:
         or provider_family != EXP1_BASELINE_PROVIDER_FAMILY
         or provider_model_id != EXP1_BASELINE_PROVIDER_MODEL_ID
         or reasoning_profile_id != EXP1_BASELINE_REASONING_PROFILE_ID
-        or float(temperature) != 0.0
-        or enable_thinking is not False
+        or request_controls["temperature"] != 0.0
+        or request_controls["enable_thinking"] is not False
     ):
         raise ValueError("Experiment 1 requires the fixed GLM-5.2 baseline")
     source_provider_config_digest = _field(binding, "source_provider_config_digest")
@@ -402,14 +464,52 @@ def _baseline_identity(context: PaperExecutionContext) -> JsonObject:
     }
 
 
-def _request_control(context: PaperExecutionContext, field_name: str) -> Any:
-    request_limits = context.request_limits
+def _fixed_request_controls(context: PaperExecutionContext) -> JsonObject:
+    request_limits = _required_controls_mapping(
+        context.request_limits,
+        "request_limits",
+    )
     binding_controls = _field(context.approved_endpoint_binding, "request_controls")
-    if isinstance(request_limits, Mapping) and field_name in request_limits:
-        return request_limits[field_name]
-    if isinstance(binding_controls, Mapping) and field_name in binding_controls:
-        return binding_controls[field_name]
-    raise ValueError("Experiment 1 requires the fixed GLM-5.2 baseline")
+    binding_controls = _required_controls_mapping(
+        binding_controls,
+        "approved binding request_controls",
+    )
+    request_temperature = _required_temperature_control(request_limits)
+    binding_temperature = _required_temperature_control(binding_controls)
+    request_enable_thinking = _required_enable_thinking_control(request_limits)
+    binding_enable_thinking = _required_enable_thinking_control(binding_controls)
+    if (
+        request_temperature != binding_temperature
+        or request_enable_thinking is not binding_enable_thinking
+    ):
+        raise ValueError("Experiment 1 requires the fixed GLM-5.2 baseline")
+    return {
+        "temperature": request_temperature,
+        "enable_thinking": request_enable_thinking,
+    }
+
+
+def _required_controls_mapping(value: Any, field_name: str) -> Mapping[str, Any]:
+    if not isinstance(value, Mapping):
+        raise ValueError("Experiment 1 requires the fixed GLM-5.2 baseline")
+    return value
+
+
+def _required_temperature_control(controls: Mapping[str, Any]) -> float:
+    value = controls.get("temperature")
+    if (
+        not isinstance(value, (int, float))
+        or isinstance(value, bool)
+        or float(value) != 0.0
+    ):
+        raise ValueError("Experiment 1 requires the fixed GLM-5.2 baseline")
+    return 0.0
+
+
+def _required_enable_thinking_control(controls: Mapping[str, Any]) -> bool:
+    if controls.get("enable_thinking") is not False:
+        raise ValueError("Experiment 1 requires the fixed GLM-5.2 baseline")
+    return False
 
 
 def _catalog_cases(
@@ -508,13 +608,14 @@ def _validated_task15_budget_input(catalog: Any) -> JsonObject | None:
         or task15_input.get("provider_calls_made") != 0
     ):
         return None
-    for digest_field in (
-        "selection_digest",
-        "catalog_slice_digest",
-        "matrix_digest",
-    ):
-        if not _is_complete_digest(task15_input.get(digest_field)):
-            return None
+    environment_digest = task15_input.get("environment_digest")
+    if not _is_complete_digest(environment_digest):
+        return None
+    oracle_package_digests = _normalized_digest_mapping(
+        task15_input.get("oracle_package_digests")
+    )
+    if oracle_package_digests is None:
+        return None
     selected_by_cell = task15_input.get("selected_case_ids_by_cell")
     counts_by_cell = task15_input.get("case_counts_by_cell")
     if not isinstance(selected_by_cell, Mapping) or not isinstance(counts_by_cell, Mapping):
@@ -548,9 +649,264 @@ def _validated_task15_budget_input(catalog: Any) -> JsonObject | None:
         normalized_by_cell[cell_key] = normalized_ids
     if len(seen_ids) != 135:
         return None
+    semantic_fingerprints_by_cell = _normalized_cell_digest_lists(
+        task15_input.get("semantic_fingerprint_digests_by_cell")
+    )
+    if semantic_fingerprints_by_cell is None:
+        return None
+    golden_case_ids_by_cell = _normalized_golden_case_ids_by_cell(
+        task15_input.get("golden_case_ids_by_cell"),
+        selected_by_cell=normalized_by_cell,
+    )
+    if golden_case_ids_by_cell is None:
+        return None
+    selection_digest = digest_json(
+        _task14_selection_digest_body(
+            catalog_digest=_catalog_digest(catalog),
+            environment_digest=environment_digest,
+            oracle_package_digests=oracle_package_digests,
+            selected_case_ids_by_cell=normalized_by_cell,
+            semantic_fingerprint_digests_by_cell=semantic_fingerprints_by_cell,
+            golden_case_ids_by_cell=golden_case_ids_by_cell,
+        )
+    )
+    if (
+        task15_input.get("selection_digest") != selection_digest
+        or task15_input.get("catalog_slice_digest") != selection_digest
+    ):
+        return None
+    if not _task14_matrix_digest_matches(
+        catalog=catalog,
+        task15_input=task15_input,
+        selection_digest=selection_digest,
+    ):
+        return None
     normalized = dict(task15_input)
     normalized["selected_case_ids_by_cell"] = normalized_by_cell
+    normalized["semantic_fingerprint_digests_by_cell"] = semantic_fingerprints_by_cell
+    normalized["golden_case_ids_by_cell"] = golden_case_ids_by_cell
+    normalized["oracle_package_digests"] = oracle_package_digests
+    normalized["selection_digest"] = selection_digest
+    normalized["catalog_slice_digest"] = selection_digest
     return normalized
+
+
+def _normalized_digest_mapping(value: Any) -> dict[str, str] | None:
+    if not isinstance(value, Mapping) or not value:
+        return None
+    normalized: dict[str, str] = {}
+    for key, digest in value.items():
+        if not isinstance(key, str) or not key or not _is_complete_digest(digest):
+            return None
+        normalized[key] = str(digest)
+    return normalized
+
+
+def _normalized_cell_digest_lists(value: Any) -> dict[str, list[str]] | None:
+    if not isinstance(value, Mapping) or set(value) != set(_LEAN_CELL_KEYS):
+        return None
+    normalized: dict[str, list[str]] = {}
+    for cell_key in _LEAN_CELL_KEYS:
+        digests = value[cell_key]
+        if not isinstance(digests, Sequence) or isinstance(digests, (str, bytes)):
+            return None
+        normalized_digests = [str(digest) for digest in digests]
+        if len(normalized_digests) != EXP1_LEAN_CASES_PER_CELL:
+            return None
+        if any(not _is_complete_digest(digest) for digest in normalized_digests):
+            return None
+        normalized[cell_key] = normalized_digests
+    return normalized
+
+
+def _normalized_golden_case_ids_by_cell(
+    value: Any,
+    *,
+    selected_by_cell: Mapping[str, list[str]],
+) -> dict[str, list[str]] | None:
+    if not isinstance(value, Mapping) or set(value) != set(_LEAN_CELL_KEYS):
+        return None
+    normalized: dict[str, list[str]] = {}
+    for cell_key in _LEAN_CELL_KEYS:
+        case_ids = value[cell_key]
+        if not isinstance(case_ids, Sequence) or isinstance(case_ids, (str, bytes)):
+            return None
+        normalized_ids = [
+            str(case_id)
+            for case_id in case_ids
+            if isinstance(case_id, str) and case_id
+        ]
+        if len(normalized_ids) != len(case_ids) or not normalized_ids:
+            return None
+        selected_ids = set(selected_by_cell[cell_key])
+        if any(case_id not in selected_ids for case_id in normalized_ids):
+            return None
+        normalized[cell_key] = normalized_ids
+    return normalized
+
+
+def _task14_selection_digest_body(
+    *,
+    catalog_digest: str,
+    environment_digest: Any,
+    oracle_package_digests: Mapping[str, str],
+    selected_case_ids_by_cell: Mapping[str, list[str]],
+    semantic_fingerprint_digests_by_cell: Mapping[str, list[str]],
+    golden_case_ids_by_cell: Mapping[str, list[str]],
+) -> JsonObject:
+    return {
+        "schema_version": "tokenshare.lean_task14_selected_cases.v1",
+        "catalog_digest": catalog_digest,
+        "environment_digest": environment_digest,
+        "oracle_package_digests": dict(oracle_package_digests),
+        "target_case_count": EXP1_LEAN_CASES_PER_CELL,
+        "selected_case_ids_by_cell": {
+            key: list(value) for key, value in selected_case_ids_by_cell.items()
+        },
+        "semantic_fingerprint_digests_by_cell": {
+            key: list(value)
+            for key, value in semantic_fingerprint_digests_by_cell.items()
+        },
+        "golden_case_ids_by_cell": {
+            key: list(value) for key, value in golden_case_ids_by_cell.items()
+        },
+    }
+
+
+def _task14_matrix_digest_matches(
+    *,
+    catalog: Any,
+    task15_input: Mapping[str, Any],
+    selection_digest: str,
+) -> bool:
+    matrix_plan = _task14_matrix_plan(catalog)
+    if matrix_plan is None:
+        return False
+    try:
+        expected_matrix_digest = digest_json(_task14_matrix_digest_body(matrix_plan))
+        expected_ai_unit_count = _task14_matrix_expected_ai_unit_count(matrix_plan)
+    except (KeyError, TypeError, ValueError):
+        return False
+    matrix_task15_input = matrix_plan.get("task15_budget_input")
+    if not isinstance(matrix_task15_input, Mapping):
+        return False
+    return (
+        matrix_plan.get("matrix_digest") == expected_matrix_digest
+        and task15_input.get("matrix_digest") == expected_matrix_digest
+        and matrix_task15_input.get("matrix_digest") == expected_matrix_digest
+        and matrix_task15_input.get("selection_digest") == selection_digest
+        and matrix_task15_input.get("catalog_slice_digest") == selection_digest
+        and task15_input.get("expected_ai_unit_count") == expected_ai_unit_count
+        and matrix_task15_input.get("expected_ai_unit_count") == expected_ai_unit_count
+    )
+
+
+def _task14_matrix_plan(catalog: Any) -> Mapping[str, Any] | None:
+    candidates = (
+        catalog,
+        _field(catalog, "task14_matrix_plan"),
+        _field(catalog, "lean_task14_matrix_plan"),
+        _field(catalog, "lean_3x3_matrix_plan"),
+        _field(catalog, "task14_readiness"),
+    )
+    for candidate in candidates:
+        if (
+            isinstance(candidate, Mapping)
+            and candidate.get("schema_version") in _TASK14_MATRIX_PLAN_SCHEMA_VERSIONS
+            and isinstance(candidate.get("cells"), Sequence)
+            and not isinstance(candidate.get("cells"), (str, bytes))
+            and isinstance(candidate.get("task15_budget_input"), Mapping)
+        ):
+            return candidate
+    return None
+
+
+def _task14_matrix_digest_body(body: Mapping[str, Any]) -> JsonObject:
+    cells = body["cells"]
+    if not isinstance(cells, Sequence) or isinstance(cells, (str, bytes)):
+        raise ValueError("Task14 matrix cells must be a sequence")
+    ignored_wrapper_fields = {
+        "blocked_cell_map",
+        "catalog_path",
+        "catalog_version",
+        "executable_cell_map",
+        "matrix_digest",
+    }
+    digest_body = {
+        key: value for key, value in body.items() if key not in ignored_wrapper_fields
+    }
+    digest_body["schema_version"] = "tokenshare.lean_3x3_matrix_plan.v1"
+    task15_budget_input = digest_body.get("task15_budget_input")
+    if isinstance(task15_budget_input, Mapping):
+        digest_body["task15_budget_input"] = {
+            key: value
+            for key, value in task15_budget_input.items()
+            if key != "matrix_digest"
+        }
+    digest_body["cells"] = [
+        _task14_cell_digest_projection(cell) for cell in cells
+    ]
+    return digest_body
+
+
+def _task14_matrix_expected_ai_unit_count(body: Mapping[str, Any]) -> int:
+    cells = body["cells"]
+    if not isinstance(cells, Sequence) or isinstance(cells, (str, bytes)):
+        raise ValueError("Task14 matrix cells must be a sequence")
+    total = 0
+    for cell in cells:
+        if not isinstance(cell, Mapping):
+            raise ValueError("Task14 matrix cell must be a JSON object")
+        expected_ai_unit_count = cell.get("expected_ai_unit_count")
+        if (
+            not isinstance(expected_ai_unit_count, int)
+            or isinstance(expected_ai_unit_count, bool)
+            or expected_ai_unit_count < 0
+        ):
+            raise ValueError("Task14 matrix cell AI-unit count must be non-negative")
+        total += expected_ai_unit_count
+    if total < 1:
+        raise ValueError("Task14 matrix must declare AI units")
+    return total
+
+
+def _task14_cell_digest_projection(cell: Any) -> JsonObject:
+    if not isinstance(cell, Mapping):
+        raise ValueError("Task14 matrix cell must be a JSON object")
+    projected = {
+        key: value
+        for key, value in cell.items()
+        if key != "golden_evidence_by_case_id"
+    }
+    projected["golden_evidence_digest_by_case_id"] = {
+        case_id: digest_json(_task14_golden_evidence_digest_body(evidence))
+        for case_id, evidence in sorted(
+            dict(cell.get("golden_evidence_by_case_id", {})).items()
+        )
+    }
+    return projected
+
+
+def _task14_golden_evidence_digest_body(evidence: Any) -> JsonObject:
+    if not isinstance(evidence, Mapping):
+        raise ValueError("Task14 golden evidence must be a JSON object")
+    return {
+        "schema_version": evidence.get("schema_version"),
+        "evidence_source": evidence.get("evidence_source"),
+        "case_id": evidence.get("case_id"),
+        "environment_digest": evidence.get("environment_digest"),
+        "oracle_package_digest": evidence.get("oracle_package_digest"),
+        "split_certificate_digest": evidence.get("split_certificate_digest"),
+        "deterministic_split": evidence.get("deterministic_split"),
+        "child_proof_file_construction": evidence.get(
+            "child_proof_file_construction"
+        ),
+        "checker_preflight": evidence.get("checker_preflight"),
+        "dependency_aware_merge": evidence.get("dependency_aware_merge"),
+        "root_recheck": evidence.get("root_recheck"),
+        "provider_calls_made": evidence.get("provider_calls_made"),
+        "node_ids": sorted(dict(evidence.get("node_checker_report_refs", {}))),
+    }
 
 
 def _cases_by_id(cases: tuple[JsonObject, ...]) -> dict[str, JsonObject]:

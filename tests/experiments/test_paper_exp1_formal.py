@@ -14,13 +14,19 @@ from tokenshare.experiments.paper_experiment_contracts import (
     PaperExecutionContext,
     PaperExperimentModule,
 )
-from tokenshare.experiments.paper_models import PaperConditionResult, PaperStatus
+from tokenshare.experiments.paper_models import (
+    PaperConditionResult,
+    PaperStatus,
+    digest_json,
+)
 from tokenshare.experiments.paper_exp1 import Exp1FormalModule
 
 
 CATALOG_DIGEST = "sha256:" + "1" * 64
 SOURCE_CONFIG_DIGEST = "sha256:" + "2" * 64
 ENDPOINT_DIGEST = "sha256:" + "3" * 64
+LEAN_ENVIRONMENT_DIGEST = "sha256:" + "6" * 64
+LEAN_ORACLE_DIGEST = "sha256:" + "7" * 64
 
 
 def test_exp1_formal_expands_exact_conditions_with_frozen_baseline_controls() -> None:
@@ -233,6 +239,21 @@ def test_exp1_formal_blocks_incomplete_task14_readiness_before_provider() -> Non
     assert sum(len(selection.ordered_case_ids) for selection in selections) == 90
 
 
+def test_exp1_formal_rejects_task14_selection_order_tamper_with_stale_digest() -> None:
+    module = Exp1FormalModule()
+    context = _context(catalog=_FakeCatalog(tamper_task14_selection_order=True))
+
+    conditions = module.expand_conditions(context)
+    selections = module.freeze_case_selections(context, conditions)
+
+    lean_selections = [selection for selection in selections if selection.domain == "lean_proof"]
+    assert len(lean_selections) == 27
+    assert all(selection.is_blocked for selection in lean_selections)
+    assert {selection.blocked_reason for selection in lean_selections} == {
+        "lean_semantic_readiness_not_passed"
+    }
+
+
 def test_exp1_formal_rejects_duplicate_roots_model_drift_and_condition_order_drift() -> None:
     module = Exp1FormalModule()
     with pytest.raises(ValueError, match="duplicate root case_id"):
@@ -284,6 +305,22 @@ def test_exp1_formal_rejects_request_control_drift(
         module.expand_conditions(_context(request_limits=request_limits))
 
 
+def test_exp1_formal_rejects_binding_request_control_drift_even_when_context_limits_match() -> None:
+    module = Exp1FormalModule()
+    binding = {
+        **_baseline_binding(),
+        "request_controls": {"temperature": 0.9, "enable_thinking": True},
+    }
+
+    with pytest.raises(ValueError, match="GLM-5.2 baseline"):
+        module.expand_conditions(
+            _context(
+                binding=binding,
+                request_limits={"temperature": 0.0, "enable_thinking": False},
+            )
+        )
+
+
 def test_exp1_formal_run_condition_consumes_the_matching_frozen_selection() -> None:
     calls: list[tuple[str, str]] = []
 
@@ -317,6 +354,44 @@ def test_exp1_formal_run_condition_consumes_the_matching_frozen_selection() -> N
     assert calls == [(condition.condition_id, selection.selection_id)]
     with pytest.raises(ValueError, match="selection does not match condition"):
         module.run_condition(context, conditions[1], selection)
+
+
+def test_exp1_formal_run_condition_rejects_noncanonical_condition_and_selection() -> None:
+    calls: list[str] = []
+
+    def callback(**kwargs: Any) -> PaperConditionResult:
+        calls.append(kwargs["condition"].condition_id)
+        return PaperConditionResult(
+            condition_id=kwargs["condition"].condition_id,
+            status=PaperStatus.COMPLETED,
+            repeat_count=1,
+            task_count=len(kwargs["selection"].ordered_case_ids),
+            completed_root_count=len(kwargs["selection"].ordered_case_ids),
+            failed_root_count=0,
+            blocked_root_count=0,
+            provider_attempt_count=0,
+            metrics_ref={"transport_kind": "scripted", "paper_eligible": False},
+        )
+
+    module = Exp1FormalModule()
+    context = _context(callback=callback)
+    conditions = module.expand_conditions(context)
+    selections = module.freeze_case_selections(context, conditions)
+    condition = conditions[3]
+    selection = selections[3]
+
+    reversed_selection = replace(
+        selection,
+        ordered_case_ids=tuple(reversed(selection.ordered_case_ids)),
+    )
+    with pytest.raises(ValueError, match="canonical frozen selection"):
+        module.run_condition(context, condition, reversed_selection)
+
+    drifted_condition = replace(condition, model_entry_id="wrong-entry")
+    with pytest.raises(ValueError, match="canonical formal condition"):
+        module.run_condition(context, drifted_condition, selection)
+
+    assert calls == []
 
 
 def test_exp1_formal_summary_rows_cover_feasibility_metrics_and_scripted_eligibility() -> None:
@@ -460,6 +535,7 @@ class _FakeCatalog:
         duplicate_selected_case: bool = False,
         extra_lean_pool: bool = False,
         incomplete_task15_budget_input: bool = False,
+        tamper_task14_selection_order: bool = False,
     ) -> None:
         self.lean_semantic_readiness_passed = lean_semantic_ready
         self._cases: list[dict[str, Any]] = []
@@ -542,23 +618,20 @@ class _FakeCatalog:
             selected_case_ids_by_cell["hard_frontier/induction"][-1] = (
                 "lean_simple_pure_logic_01"
             )
-        self.task15_budget_input = {
-            "schema_version": "tokenshare.lean_task15_budget_input.v1",
-            "catalog_digest": CATALOG_DIGEST,
-            "target_case_count": 15,
-            "executable_cell_count": 9,
-            "blocked_cell_count": 0,
-            "selected_case_count": 135,
-            "selected_case_ids_by_cell": selected_case_ids_by_cell,
-            "case_counts_by_cell": {
-                key: len(value)
-                for key, value in selected_case_ids_by_cell.items()
-            },
-            "selection_digest": "sha256:" + "4" * 64,
-            "catalog_slice_digest": "sha256:" + "4" * 64,
-            "matrix_digest": "sha256:" + "5" * 64,
-            "provider_calls_made": 0,
-        }
+        matrix_plan = _fake_task14_matrix_plan(selected_case_ids_by_cell)
+        self.task14_matrix_plan = matrix_plan
+        self.task15_budget_input = dict(matrix_plan["task15_budget_input"])
+        if tamper_task14_selection_order:
+            tampered_by_cell = {
+                key: list(value)
+                for key, value in self.task15_budget_input[
+                    "selected_case_ids_by_cell"
+                ].items()
+            }
+            tampered_by_cell["simple/pure_logic"] = list(
+                reversed(tampered_by_cell["simple/pure_logic"])
+            )
+            self.task15_budget_input["selected_case_ids_by_cell"] = tampered_by_cell
         if incomplete_task15_budget_input:
             self.task15_budget_input["case_counts_by_cell"] = {}
 
@@ -583,6 +656,244 @@ class _FakeCatalog:
         )
 
 
+_LEAN_TEST_CELL_KEYS = tuple(
+    f"{paper_difficulty}/{topic_family}"
+    for paper_difficulty in ("simple", "medium_lemma_dag", "hard_frontier")
+    for topic_family in ("pure_logic", "function_set", "induction")
+)
+
+
+def _fake_task14_matrix_plan(
+    selected_case_ids_by_cell: dict[str, list[str]],
+) -> dict[str, Any]:
+    semantic_fingerprints_by_cell = {
+        cell_key: [
+            digest_json(
+                {
+                    "schema_version": "tokenshare.fake_lean_semantic.v1",
+                    "case_id": case_id,
+                }
+            )
+            for case_id in case_ids
+        ]
+        for cell_key, case_ids in selected_case_ids_by_cell.items()
+    }
+    golden_case_ids_by_cell = {
+        cell_key: list(case_ids[:2])
+        for cell_key, case_ids in selected_case_ids_by_cell.items()
+    }
+    oracle_package_digests = {
+        f"synthetic.{topic_family}.v1": LEAN_ORACLE_DIGEST
+        for topic_family in ("pure_logic", "function_set", "induction")
+    }
+    topic_family_expected_ai_unit_counts = {
+        topic_family: 0
+        for topic_family in ("pure_logic", "function_set", "induction")
+    }
+    topic_family_available_case_counts = {
+        topic_family: 0
+        for topic_family in ("pure_logic", "function_set", "induction")
+    }
+    ai_units_by_difficulty = {
+        "simple": 2,
+        "medium_lemma_dag": 5,
+        "hard_frontier": 6,
+    }
+    cells: list[dict[str, Any]] = []
+    for cell_key in _LEAN_TEST_CELL_KEYS:
+        paper_difficulty, topic_family = cell_key.split("/", 1)
+        case_ids = list(selected_case_ids_by_cell[cell_key])
+        semantic_fingerprints = semantic_fingerprints_by_cell[cell_key]
+        expected_ai_unit_count = (
+            ai_units_by_difficulty[paper_difficulty] * len(case_ids)
+        )
+        topic_family_expected_ai_unit_counts[topic_family] += expected_ai_unit_count
+        topic_family_available_case_counts[topic_family] += len(case_ids)
+        cells.append(
+            {
+                "schema_version": "tokenshare.lean_3x3_matrix_cell_plan.v1",
+                "domain": "lean_proof",
+                "status": "planned",
+                "paper_difficulty": paper_difficulty,
+                "topic_family": topic_family,
+                "catalog_case_count": len(case_ids),
+                "catalog_pool_case_count": len(case_ids),
+                "checker_backed_pool_case_count": len(case_ids),
+                "available_case_count": len(case_ids),
+                "target_case_count": 15,
+                "expected_ai_unit_count": expected_ai_unit_count,
+                "preflight_status": {
+                    "summary": "passed",
+                    "status_counts": {"passed": len(case_ids)},
+                    "checker_backed_case_count": len(case_ids),
+                },
+                "paper_eligible_possible": True,
+                "blocked_reason": None,
+                "semantic_fingerprint_count": len(set(semantic_fingerprints)),
+                "semantic_fingerprint_digest": digest_json(semantic_fingerprints),
+                "semantic_fingerprint_digests": semantic_fingerprints,
+                "golden_case_ids": golden_case_ids_by_cell[cell_key],
+                "golden_evidence_by_case_id": {
+                    golden_case_id: _fake_task14_golden_evidence(golden_case_id)
+                    for golden_case_id in golden_case_ids_by_cell[cell_key]
+                },
+                "case_ids": case_ids,
+                "oracle_package_digest": LEAN_ORACLE_DIGEST,
+                "readiness": {
+                    "blocker": None,
+                    "dependency_aware_merge": "ready",
+                    "deterministic_split_rule": "ready",
+                    "golden_evidence": "passed",
+                    "local_checker_preflight": "passed",
+                    "oracle_package": "present",
+                    "proof_file_assembly": "ready",
+                    "provider_calls_made": 0,
+                    "root_recheck": "ready",
+                },
+            }
+        )
+    selection_digest = digest_json(
+        {
+            "schema_version": "tokenshare.lean_task14_selected_cases.v1",
+            "catalog_digest": CATALOG_DIGEST,
+            "environment_digest": LEAN_ENVIRONMENT_DIGEST,
+            "oracle_package_digests": oracle_package_digests,
+            "target_case_count": 15,
+            "selected_case_ids_by_cell": selected_case_ids_by_cell,
+            "semantic_fingerprint_digests_by_cell": semantic_fingerprints_by_cell,
+            "golden_case_ids_by_cell": golden_case_ids_by_cell,
+        }
+    )
+    body: dict[str, Any] = {
+        "schema_version": "tokenshare.lean_3x3_matrix_plan.v1",
+        "domain": "lean_proof",
+        "catalog_digest": CATALOG_DIGEST,
+        "environment_digest": LEAN_ENVIRONMENT_DIGEST,
+        "oracle_package_digests": oracle_package_digests,
+        "provider_calls_made": 0,
+        "cell_count": len(cells),
+        "target_case_count": 15,
+        "cells": cells,
+        "topic_family_expected_ai_unit_counts": topic_family_expected_ai_unit_counts,
+        "topic_family_available_case_counts": topic_family_available_case_counts,
+        "paper_eligible_possible_cell_count": len(cells),
+        "blocked_cell_count": 0,
+        "task15_boundary": {
+            "formal_exp1_started": False,
+            "exp2_to_exp5_started": False,
+            "real_ai_api_calls_allowed": False,
+            "provider_calls_made": 0,
+        },
+        "task15_budget_input": {
+            "schema_version": "tokenshare.lean_task15_budget_input.v1",
+            "catalog_digest": CATALOG_DIGEST,
+            "environment_digest": LEAN_ENVIRONMENT_DIGEST,
+            "oracle_package_digests": oracle_package_digests,
+            "target_case_count": 15,
+            "executable_cell_count": len(cells),
+            "blocked_cell_count": 0,
+            "expected_ai_unit_count": sum(
+                topic_family_expected_ai_unit_counts.values()
+            ),
+            "selected_case_count": sum(
+                len(case_ids) for case_ids in selected_case_ids_by_cell.values()
+            ),
+            "selected_case_ids_by_cell": selected_case_ids_by_cell,
+            "semantic_fingerprint_digests_by_cell": semantic_fingerprints_by_cell,
+            "golden_case_ids_by_cell": golden_case_ids_by_cell,
+            "case_counts_by_cell": {
+                cell_key: len(case_ids)
+                for cell_key, case_ids in selected_case_ids_by_cell.items()
+            },
+            "selection_digest": selection_digest,
+            "catalog_slice_digest": selection_digest,
+            "construction_sampling_rules": {
+                "selection_rule": (
+                    "stable catalog order; first target_case_count checker-backed "
+                    "preflight-passed cases per paper_difficulty/topic_family cell"
+                ),
+                "simple_pure_logic_rule": (
+                    "legacy shallow Lean v1 rows remain simple/pure_logic and are "
+                    "sliced to exactly target_case_count"
+                ),
+                "blocked_rows_counted": False,
+                "provider_calls_made": 0,
+            },
+            "provider_calls_made": 0,
+        },
+    }
+    body["matrix_digest"] = digest_json(_fake_task14_matrix_digest_body(body))
+    body["task15_budget_input"]["matrix_digest"] = body["matrix_digest"]
+    return body
+
+
+def _fake_task14_golden_evidence(case_id: str) -> dict[str, Any]:
+    return {
+        "schema_version": "tokenshare.lean_task14_golden_evidence.v1",
+        "evidence_source": "synthetic_fixture",
+        "case_id": case_id,
+        "environment_digest": LEAN_ENVIRONMENT_DIGEST,
+        "oracle_package_digest": LEAN_ORACLE_DIGEST,
+        "split_certificate_digest": digest_json({"split": case_id}),
+        "deterministic_split": "passed",
+        "child_proof_file_construction": "passed",
+        "checker_preflight": "passed",
+        "dependency_aware_merge": "passed",
+        "root_recheck": "passed",
+        "provider_calls_made": 0,
+        "node_checker_report_refs": {
+            f"{case_id}_node": {
+                "artifact_id": f"{case_id}_node_checker",
+            }
+        },
+    }
+
+
+def _fake_task14_matrix_digest_body(body: dict[str, Any]) -> dict[str, Any]:
+    digest_body = {
+        key: value for key, value in body.items() if key != "matrix_digest"
+    }
+    digest_body["cells"] = [
+        _fake_task14_cell_digest_projection(cell) for cell in body["cells"]
+    ]
+    return digest_body
+
+
+def _fake_task14_cell_digest_projection(cell: dict[str, Any]) -> dict[str, Any]:
+    projected = {
+        key: value
+        for key, value in cell.items()
+        if key != "golden_evidence_by_case_id"
+    }
+    projected["golden_evidence_digest_by_case_id"] = {
+        case_id: digest_json(_fake_task14_golden_evidence_digest_body(evidence))
+        for case_id, evidence in sorted(
+            dict(cell.get("golden_evidence_by_case_id", {})).items()
+        )
+    }
+    return projected
+
+
+def _fake_task14_golden_evidence_digest_body(evidence: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "schema_version": evidence.get("schema_version"),
+        "evidence_source": evidence.get("evidence_source"),
+        "case_id": evidence.get("case_id"),
+        "environment_digest": evidence.get("environment_digest"),
+        "oracle_package_digest": evidence.get("oracle_package_digest"),
+        "split_certificate_digest": evidence.get("split_certificate_digest"),
+        "deterministic_split": evidence.get("deterministic_split"),
+        "child_proof_file_construction": evidence.get(
+            "child_proof_file_construction"
+        ),
+        "checker_preflight": evidence.get("checker_preflight"),
+        "dependency_aware_merge": evidence.get("dependency_aware_merge"),
+        "root_recheck": evidence.get("root_recheck"),
+        "provider_calls_made": evidence.get("provider_calls_made"),
+        "node_ids": sorted(dict(evidence.get("node_checker_report_refs", {}))),
+    }
+
+
 class _RealCatalogProbe:
     catalog_version = "v1"
 
@@ -592,6 +903,7 @@ class _RealCatalogProbe:
                 encoding="utf-8"
             )
         )
+        self.task14_matrix_plan = readiness
         self.catalog_digest = readiness["task15_budget_input"]["catalog_digest"]
         self.task15_budget_input = readiness["task15_budget_input"]
         self._cases: list[dict[str, Any]] = []
