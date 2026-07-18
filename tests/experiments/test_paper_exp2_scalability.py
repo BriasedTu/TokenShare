@@ -25,6 +25,13 @@ MODULE_NAME = "tokenshare.experiments.paper_exp2_scalability"
 CATALOG_DIGEST = "sha256:" + "1" * 64
 ENDPOINT_DIGEST = "sha256:" + "2" * 64
 SOURCE_CONFIG_DIGEST = "sha256:" + "3" * 64
+REQUEST_LIMITS = {
+    "max_tokens": 1024,
+    "timeout_seconds": 30,
+    "max_provider_attempts": 1,
+    "temperature": 0.0,
+    "enable_thinking": False,
+}
 
 
 def test_exp2_module_implements_contract_and_freezes_600_root_runs() -> None:
@@ -95,7 +102,7 @@ def test_lean_conditions_are_full_5_task_batches_stable_across_worker_and_repeat
         assert selection.topic_family is None
         body = selection.to_dict()
         assert body["topic_family"] is None
-        assert body["topic_family_marker"] == "mixed_2_2_1"
+        assert body["topic_family_marker"] == "mixed_topic_family"
         assert len(selection.ordered_case_ids) == 5
         assert _topic_counts(selection.ordered_case_ids) == expected_allocations[
             condition.paper_difficulty
@@ -301,6 +308,85 @@ def test_run_condition_validates_approved_endpoint_binding_before_callback() -> 
     assert calls == []
 
 
+def test_run_condition_rejects_noncanonical_condition_and_full_request_policy_drift() -> None:
+    module = _load_module()
+    calls: list[str] = []
+
+    def callback(**kwargs: Any) -> PaperConditionResult:
+        calls.append(kwargs["condition"].condition_id)
+        return PaperConditionResult(
+            condition_id=kwargs["condition"].condition_id,
+            status=PaperStatus.BLOCKED,
+            repeat_count=1,
+            task_count=len(kwargs["selection"].ordered_case_ids),
+            completed_root_count=0,
+            failed_root_count=0,
+            blocked_root_count=len(kwargs["selection"].ordered_case_ids),
+            provider_attempt_count=0,
+            metrics_ref=None,
+        )
+
+    exp2 = module.Experiment2ScalabilityModule()
+    context = _context(callback=callback)
+    conditions = exp2.expand_conditions(context)
+    selections = exp2.freeze_case_selections(context, conditions)
+    condition = conditions[0]
+    selection = selections[0]
+    drifts = {
+        "repeat": replace(condition, repeat_id=1),
+        "seed": replace(condition, seed=condition.seed + 1),
+        "catalog": replace(condition, catalog_digest="sha256:" + "9" * 64),
+        "condition_id": replace(condition, condition_id="foreign_condition"),
+        "difficulty": replace(condition, difficulty="medium"),
+        "real_transport": replace(condition, real_transport_required=False),
+        "paper_eligibility": replace(condition, paper_eligible_required=False),
+    }
+    for drifted in drifts.values():
+        with pytest.raises(ValueError, match="canonical Experiment 2 condition"):
+            exp2.run_condition(context, drifted, selection)
+    assert calls == []
+
+    request_policy_drifts = (
+        {**REQUEST_LIMITS, "max_tokens": 2048},
+        {key: value for key, value in REQUEST_LIMITS.items() if key != "timeout_seconds"},
+        {**REQUEST_LIMITS, "top_p": 0.9},
+    )
+    for request_limits in request_policy_drifts:
+        with pytest.raises(ValueError, match="request limit policy"):
+            exp2.run_condition(
+                _context(request_limits=request_limits, callback=callback),
+                condition,
+                selection,
+            )
+    assert calls == []
+
+    binding = _baseline_binding()
+    binding["request_controls"] = {
+        **binding["request_controls"],
+        "top_p": 0.9,
+    }
+    with pytest.raises(ValueError, match="approved endpoint binding"):
+        exp2.run_condition(
+            _context(binding=binding, callback=callback),
+            condition,
+            selection,
+        )
+    assert calls == []
+
+    binding = _baseline_binding()
+    binding["request_limits"] = {
+        **binding["request_limits"],
+        "top_p": 0.9,
+    }
+    with pytest.raises(ValueError, match="approved request limit policy"):
+        exp2.run_condition(
+            _context(binding=binding, callback=callback),
+            condition,
+            selection,
+        )
+    assert calls == []
+
+
 def test_summary_uses_wall_clock_critical_path_and_not_provider_latency_sum() -> None:
     module = _load_module()
     exp2 = module.Experiment2ScalabilityModule()
@@ -502,6 +588,160 @@ def test_summary_rejects_record_task_transport_conflicts() -> None:
     evidence["tasks"][0]["transport_kind"] = "scripted"
     with pytest.raises(ValueError, match="transport conflict"):
         exp2.summarize({"condition_evidence": [evidence]})
+
+
+def test_summary_audits_attempt_identity_transport_and_formal_provenance() -> None:
+    module = _load_module()
+    exp2 = module.Experiment2ScalabilityModule()
+    context = _context()
+    conditions = exp2.expand_conditions(context)
+    selections = exp2.freeze_case_selections(context, conditions)
+    condition, selection = _find_condition(
+        conditions,
+        selections,
+        domain="factorization",
+        paper_difficulty="easy",
+        worker_count=1,
+        repeat_id=0,
+    )
+
+    probes = []
+    scripted = _condition_evidence(
+        condition,
+        selection,
+        task_wall_clock_ms=100,
+        task_critical_path_ms=100,
+        paper_eligible=True,
+        transport_kind="ai_api",
+    )
+    scripted["tasks"][0]["attempts"][0]["transport_kind"] = "scripted"
+    probes.append((scripted, "attempt transport"))
+
+    foreign_condition = json.loads(json.dumps(scripted))
+    foreign_condition["tasks"][0]["attempts"][0]["transport_kind"] = "ai_api"
+    foreign_condition["tasks"][0]["condition_id"] = "foreign_condition"
+    probes.append((foreign_condition, "task condition_id"))
+
+    wrong_repeat = json.loads(json.dumps(foreign_condition))
+    wrong_repeat["tasks"][0]["condition_id"] = condition.condition_id
+    wrong_repeat["tasks"][0]["repeat_id"] = 999
+    probes.append((wrong_repeat, "task repeat_id"))
+
+    wrong_model = json.loads(json.dumps(wrong_repeat))
+    wrong_model["tasks"][0]["repeat_id"] = condition.repeat_id
+    wrong_model["tasks"][0]["attempts"][0]["entry_id"] = "other_model"
+    probes.append((wrong_model, "attempt model identity"))
+
+    wrong_task_model = json.loads(json.dumps(wrong_model))
+    wrong_task_model["tasks"][0]["attempts"][0]["entry_id"] = (
+        condition.model_entry_id
+    )
+    wrong_task_model["tasks"][0]["model_entry_id"] = "other_model"
+    probes.append((wrong_task_model, "task model identity"))
+
+    missing_attempt = json.loads(json.dumps(wrong_model))
+    missing_attempt["tasks"][0]["attempts"][0]["entry_id"] = (
+        condition.model_entry_id
+    )
+    missing_attempt["tasks"][0]["attempts"] = []
+    probes.append((missing_attempt, "attempt evidence"))
+
+    for evidence, expected_error in probes:
+        with pytest.raises(ValueError, match=expected_error):
+            exp2.summarize({"condition_evidence": [evidence]})
+
+    pilot = _condition_evidence(
+        condition,
+        selection,
+        task_wall_clock_ms=100,
+        task_critical_path_ms=100,
+        paper_eligible=True,
+        transport_kind="ai_api",
+    )
+    pilot["pilot_only"] = True
+    pilot["formal"] = False
+    with pytest.raises(ValueError, match="pilot output cannot enter formal"):
+        exp2.summarize({"condition_evidence": [pilot]})
+
+
+def test_summary_binds_actual_task_order_and_factorization_range_children() -> None:
+    module = _load_module()
+    exp2 = module.Experiment2ScalabilityModule()
+    context = _context()
+    conditions = exp2.expand_conditions(context)
+    selections = exp2.freeze_case_selections(context, conditions)
+    condition, selection = _find_condition(
+        conditions,
+        selections,
+        domain="factorization",
+        paper_difficulty="medium",
+        worker_count=3,
+        repeat_id=0,
+    )
+
+    forged = _condition_evidence(
+        condition,
+        selection,
+        task_wall_clock_ms=100,
+        task_critical_path_ms=100,
+        paper_eligible=True,
+        transport_kind="ai_api",
+    )
+    forged["tasks"][0]["task_id"] = "forged_task"
+    with pytest.raises(ValueError, match="frozen ordered_case_ids"):
+        exp2.summarize({"condition_evidence": [forged]})
+
+    independent = _condition_evidence(
+        condition,
+        selection,
+        task_wall_clock_ms=100,
+        task_critical_path_ms=100,
+        paper_eligible=True,
+        transport_kind="ai_api",
+    )
+    independent["tasks"][0]["actual_parallelism_scope"] = (
+        "independent_integer_batch"
+    )
+    with pytest.raises(ValueError, match="within-root range children"):
+        exp2.summarize({"condition_evidence": [independent]})
+
+    conflicting_scope = _condition_evidence(
+        condition,
+        selection,
+        task_wall_clock_ms=100,
+        task_critical_path_ms=100,
+        paper_eligible=True,
+        transport_kind="ai_api",
+    )
+    conflicting_scope["tasks"][0]["parallelism_scope"] = (
+        "independent_integer_batch"
+    )
+    with pytest.raises(ValueError, match="within-root range children"):
+        exp2.summarize({"condition_evidence": [conflicting_scope]})
+
+    wrong_root = _condition_evidence(
+        condition,
+        selection,
+        task_wall_clock_ms=100,
+        task_critical_path_ms=100,
+        paper_eligible=True,
+        transport_kind="ai_api",
+    )
+    wrong_root["tasks"][0]["ai_units"][0]["root_task_id"] = "other_root"
+    with pytest.raises(ValueError, match="same factorization root"):
+        exp2.summarize({"condition_evidence": [wrong_root]})
+
+    broken_ranges = _condition_evidence(
+        condition,
+        selection,
+        task_wall_clock_ms=100,
+        task_critical_path_ms=100,
+        paper_eligible=True,
+        transport_kind="ai_api",
+    )
+    broken_ranges["tasks"][0]["ai_units"][1]["range_start"] += 1
+    with pytest.raises(ValueError, match="contiguous range partition"):
+        exp2.summarize({"condition_evidence": [broken_ranges]})
 
 
 def test_summary_zero_baseline_returns_null_without_nan_or_infinity() -> None:
@@ -729,6 +969,113 @@ def test_summary_keeps_no_429_sensitivity_stats_for_complete_repeat_groups() -> 
     assert rows[3]["rate_limit_excluded_speedup_median"] == 2.0
 
 
+def test_summary_excludes_repeat_when_matched_worker_one_baseline_has_429() -> None:
+    module = _load_module()
+    exp2 = module.Experiment2ScalabilityModule()
+    context = _context()
+    conditions = exp2.expand_conditions(context)
+    selections = exp2.freeze_case_selections(context, conditions)
+    evidence_rows = []
+
+    for repeat_id in range(5):
+        baseline_condition, baseline_selection = _find_condition(
+            conditions,
+            selections,
+            domain="factorization",
+            paper_difficulty="easy",
+            worker_count=1,
+            repeat_id=repeat_id,
+        )
+        scaled_condition, scaled_selection = _find_condition(
+            conditions,
+            selections,
+            domain="factorization",
+            paper_difficulty="easy",
+            worker_count=3,
+            repeat_id=repeat_id,
+        )
+        evidence_rows.append(
+            _condition_evidence(
+                baseline_condition,
+                baseline_selection,
+                task_wall_clock_ms=1000,
+                task_critical_path_ms=1000,
+                rate_limited_429_count=1 if repeat_id == 2 else 0,
+                paper_eligible=True,
+                transport_kind="ai_api",
+            )
+        )
+        evidence_rows.append(
+            _condition_evidence(
+                scaled_condition,
+                scaled_selection,
+                task_wall_clock_ms=500,
+                task_critical_path_ms=500,
+                paper_eligible=True,
+                transport_kind="ai_api",
+            )
+        )
+
+    summary = exp2.summarize({"condition_evidence": evidence_rows})
+    rows = {
+        row["worker_count"]: row
+        for row in summary.rows
+        if row["paper_difficulty"] == "easy"
+    }
+
+    assert rows[1]["rate_limit_excluded_repeat_count"] == 4
+    assert rows[3]["rate_limit_excluded_repeat_count"] == 4
+    assert rows[3]["rate_limit_excluded_root_run_count"] == 20
+    assert rows[3]["rate_limit_excluded_speedup_median"] == 2.0
+    assert rows[3]["matched_baseline_rate_limited_429_count"] == 5
+    assert rows[3]["rate_limit_sensitivity"] == "matched_baseline_rate_limited"
+
+
+def test_summary_uses_authoritative_batch_bounds_for_wall_clock() -> None:
+    module = _load_module()
+    exp2 = module.Experiment2ScalabilityModule()
+    context = _context()
+    conditions = exp2.expand_conditions(context)
+    selections = exp2.freeze_case_selections(context, conditions)
+    condition, selection = _find_condition(
+        conditions,
+        selections,
+        domain="factorization",
+        paper_difficulty="easy",
+        worker_count=1,
+        repeat_id=0,
+    )
+    evidence = _condition_evidence(
+        condition,
+        selection,
+        task_wall_clock_ms=600,
+        task_critical_path_ms=600,
+        paper_eligible=True,
+        transport_kind="ai_api",
+    )
+    evidence["batch_started_at_ms"] = 0
+    evidence["batch_ended_at_ms"] = 1000
+    for task in evidence["tasks"]:
+        task["started_at_ms"] = 200
+        task["ended_at_ms"] = 800
+
+    row = next(iter(exp2.summarize({"condition_evidence": [evidence]}).rows))
+
+    assert row["wall_clock_ms"] == 1000
+    assert row["batch_timing_status"] == "authoritative"
+    assert row["throughput_completed_roots_per_second"] == 5.0
+
+    fallback = json.loads(json.dumps(evidence))
+    fallback.pop("batch_started_at_ms")
+    fallback.pop("batch_ended_at_ms")
+    fallback_row = next(
+        iter(exp2.summarize({"condition_evidence": [fallback]}).rows)
+    )
+    assert fallback_row["wall_clock_ms"] == 600
+    assert fallback_row["batch_timing_status"] == "missing_authoritative_batch_bounds"
+    assert fallback_row["paper_eligible"] is False
+
+
 def _load_module():
     spec = importlib.util.find_spec(MODULE_NAME)
     assert spec is not None, "Exp2 scalability module must exist"
@@ -762,8 +1109,7 @@ def _context(
         context_id="exp2_test_context",
         catalog=catalog or _catalog(),
         approved_endpoint_binding=binding or _baseline_binding(),
-        request_limits=request_limits
-        or {"max_tokens": 1024, "temperature": 0.0, "enable_thinking": False},
+        request_limits=request_limits or dict(REQUEST_LIMITS),
         hard_limits=hard_limits or {"max_total_provider_attempts": 0},
         output_root="outputs/experiments/exp2_test",
         artifact_store=object(),
@@ -783,6 +1129,7 @@ def _baseline_binding() -> dict[str, Any]:
         "source_provider_config_digest": SOURCE_CONFIG_DIGEST,
         "model_endpoint_identity_digest": ENDPOINT_DIGEST,
         "request_controls": {"temperature": 0.0, "enable_thinking": False},
+        "request_limits": dict(REQUEST_LIMITS),
     }
 
 
@@ -887,9 +1234,76 @@ def _condition_evidence(
 ) -> dict[str, Any]:
     tasks = []
     for index, case_id in enumerate(selection.ordered_case_ids):
+        left_unit_id = f"{case_id}_left"
+        right_unit_id = f"{case_id}_right"
+        unit_kind = (
+            "factorization_range_child"
+            if condition.domain == "factorization"
+            else "lean_proof_child"
+        )
+        ai_units = [
+            {
+                "unit_id": left_unit_id,
+                "root_task_id": case_id,
+                "unit_kind": unit_kind,
+                "plugin_generated": True,
+                "range_start": 2,
+                "range_end": 3,
+                "dependencies": [],
+                "started_at_ms": 0,
+                "ended_at_ms": task_critical_path_ms // 2,
+                "provider_latency_ms": provider_latency_ms_per_task,
+            },
+            {
+                "unit_id": right_unit_id,
+                "root_task_id": case_id,
+                "unit_kind": unit_kind,
+                "plugin_generated": True,
+                "range_start": 4,
+                "range_end": 5,
+                "dependencies": [],
+                "started_at_ms": 0,
+                "ended_at_ms": task_critical_path_ms // 2,
+                "provider_latency_ms": provider_latency_ms_per_task,
+            },
+        ]
+        attempts = [
+            {
+                "attempt_id": f"{unit['unit_id']}_attempt_0",
+                "condition_id": condition.condition_id,
+                "repeat_id": condition.repeat_id,
+                "task_id": case_id,
+                "unit_id": unit["unit_id"],
+                "transport_kind": transport_kind,
+                "provider": condition.provider_family,
+                "model": condition.provider_model_id,
+                "entry_id": condition.model_entry_id,
+                "reasoning_profile_id": condition.reasoning_profile_id,
+                "source_provider_config_digest": (
+                    condition.source_provider_config_digest
+                ),
+                "model_endpoint_identity_digest": (
+                    condition.model_endpoint_identity_digest
+                ),
+                "request_ref": {"artifact_id": f"request_{unit['unit_id']}"},
+                "raw_output_ref": {"artifact_id": f"raw_{unit['unit_id']}"},
+                "provenance_ref": {"artifact_id": f"provenance_{unit['unit_id']}"},
+                "usage_ref": {"artifact_id": f"usage_{unit['unit_id']}"},
+                "model_execution_record_ref": {
+                    "artifact_id": f"model_record_{unit['unit_id']}"
+                },
+                "paper_eligible": paper_eligible,
+            }
+            for unit in ai_units
+        ]
         tasks.append(
             {
                 "task_id": case_id,
+                "condition_id": condition.condition_id,
+                "repeat_id": condition.repeat_id,
+                "domain": condition.domain,
+                "paper_difficulty": condition.paper_difficulty,
+                "model_entry_id": condition.model_entry_id,
                 "root_status": "completed",
                 "accepted_validity": True,
                 "started_at_ms": 0,
@@ -900,26 +1314,20 @@ def _condition_evidence(
                 "retry_count": retry_count,
                 "paper_eligible": paper_eligible,
                 "transport_kind": transport_kind,
-                "ai_units": [
-                    {
-                        "unit_id": f"{case_id}_left",
-                        "dependencies": [],
-                        "started_at_ms": 0,
-                        "ended_at_ms": task_critical_path_ms // 2,
-                        "provider_latency_ms": provider_latency_ms_per_task,
-                    },
-                    {
-                        "unit_id": f"{case_id}_right",
-                        "dependencies": [],
-                        "started_at_ms": 0,
-                        "ended_at_ms": task_critical_path_ms // 2,
-                        "provider_latency_ms": provider_latency_ms_per_task,
-                    },
-                ],
+                "root_task_id": case_id,
+                "actual_parallelism_scope": (
+                    "within_root_range_children"
+                    if condition.domain == "factorization"
+                    else "dependency_graph_proof_units"
+                ),
+                "candidate_start": 2,
+                "candidate_end": 5,
+                "ai_units": ai_units,
+                "attempts": attempts,
                 "merge_gates": [
                     {
                         "gate_id": f"{case_id}_merge",
-                        "dependencies": [f"{case_id}_left", f"{case_id}_right"],
+                        "dependencies": [left_unit_id, right_unit_id],
                         "started_at_ms": (
                             task_critical_path_ms // 2
                             if merge_start_ms is None
@@ -939,6 +1347,10 @@ def _condition_evidence(
         "selection": selection.to_dict(),
         "transport_kind": transport_kind,
         "paper_eligible": paper_eligible,
+        "formal": True,
+        "pilot_only": False,
+        "batch_started_at_ms": 0,
+        "batch_ended_at_ms": task_wall_clock_ms,
         "tasks": tasks,
     }
 
