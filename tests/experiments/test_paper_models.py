@@ -1,3 +1,5 @@
+from dataclasses import replace
+
 import pytest
 
 from tokenshare.experiments.paper_models import (
@@ -7,12 +9,119 @@ from tokenshare.experiments.paper_models import (
     PaperConditionResult,
     PaperExperimentCondition,
     PaperExperimentResult,
+    PaperModelExecutionRecord,
     PaperRunResult,
     PaperStatus,
     PaperSuiteResult,
     PaperTaskResult,
     PaperTaskStatus,
 )
+
+
+def test_model_execution_record_v2_represents_provider_failure_as_not_observed() -> None:
+    record = PaperModelExecutionRecord(
+        condition_id="condition1",
+        repeat_id=0,
+        run_id="run1",
+        task_id="task1",
+        unit_id="unit1",
+        attempt_id="attempt1",
+        expected_identity={"provider_model_id": "gpt-5.6-sol"},
+        source_provider_config_digest="sha256:" + "1" * 64,
+        prepared_execution_config_digest="sha256:" + "2" * 64,
+        request_ref={"artifact_id": "request1"},
+        provenance_ref={"artifact_id": "provenance1"},
+        raw_output_ref=None,
+        usage_ref={"artifact_id": "usage1"},
+        actual_request_identities=[],
+        actual_provider_attempts=[],
+        requested_model="gpt-5.6-sol",
+        resolved_model=None,
+        response_model_status="unavailable",
+        identity_status="not_observed",
+        mismatch_reasons=[],
+        paper_eligible=False,
+        created_at="2026-07-17T00:00:00Z",
+    )
+
+    body = record.to_dict()
+    assert body["schema_version"] == "tokenshare.paper_model_execution_record.v2"
+    assert body["identity_status"] == "not_observed"
+    assert body["requested_model"] == "gpt-5.6-sol"
+    assert body["resolved_model"] is None
+    assert body["response_model_status"] == "unavailable"
+
+
+@pytest.mark.parametrize(
+    ("changes", "message"),
+    [
+        ({"response_model_status": "present", "resolved_model": None}, "present"),
+        (
+            {"response_model_status": "missing", "resolved_model": "gpt-5.6-sol"},
+            "resolved_model",
+        ),
+        (
+            {"response_model_status": "missing", "identity_status": "not_observed"},
+            "not_observed",
+        ),
+        (
+            {"schema_version": "tokenshare.paper_model_execution_record.v1"},
+            "schema_version",
+        ),
+        (
+            {
+                "identity_status": "matched",
+                "response_model_status": "present",
+                "resolved_model": "different-model",
+                "raw_output_ref": {"artifact_id": "raw1"},
+                "paper_eligible": True,
+            },
+            "expected_identity",
+        ),
+        (
+            {
+                "identity_status": "matched",
+                "requested_model": "different-request-model",
+                "response_model_status": "present",
+                "resolved_model": "gpt-5.6-sol",
+                "raw_output_ref": {"artifact_id": "raw1"},
+                "paper_eligible": True,
+            },
+            "requested_model",
+        ),
+    ],
+)
+def test_model_execution_record_v2_rejects_internally_inconsistent_identity(
+    changes: dict,
+    message: str,
+) -> None:
+    record = PaperModelExecutionRecord(
+        condition_id="condition1",
+        repeat_id=0,
+        run_id="run1",
+        task_id="task1",
+        unit_id="unit1",
+        attempt_id="attempt1",
+        expected_identity={"provider_model_id": "gpt-5.6-sol"},
+        source_provider_config_digest="sha256:" + "1" * 64,
+        prepared_execution_config_digest="sha256:" + "2" * 64,
+        request_ref={"artifact_id": "request1"},
+        provenance_ref={"artifact_id": "provenance1"},
+        raw_output_ref=None,
+        usage_ref={"artifact_id": "usage1"},
+        actual_request_identities=[],
+        actual_provider_attempts=[],
+        requested_model="gpt-5.6-sol",
+        resolved_model=None,
+        response_model_status="unavailable",
+        identity_status="not_observed",
+        mismatch_reasons=[],
+        paper_eligible=False,
+        created_at="2026-07-17T00:00:00Z",
+    )
+
+    with pytest.raises(ValueError, match=message):
+        replace(record, **changes)
 
 
 def test_paper_condition_digest_is_stable_and_records_required_controls() -> None:
@@ -52,6 +161,66 @@ def test_paper_condition_digest_is_stable_and_records_required_controls() -> Non
     assert body["real_transport_required"] is True
     assert body["paper_eligible_required"] is True
     assert condition.condition_digest == same_condition.condition_digest
+
+
+def test_formal_exp5_condition_records_complete_fixed_entry_identity() -> None:
+    condition = PaperExperimentCondition(**_formal_exp5_condition_body())
+
+    body = condition.to_dict()
+
+    assert body["model_cohort_id"] == "tokenshare.paper.model_endpoint_cohort.v1"
+    assert body["model_cohort_digest"] == "sha256:" + "2" * 64
+    assert body["cohort_member_id"] == "gpt_5_6_sol_high_openai"
+    assert body["provider_config_id"] == "openai"
+    assert body["model_entry_id"] == "gpt-entry"
+    assert body["provider_family"] == "openai"
+    assert body["provider_model_id"] == "gpt-5.6-sol"
+    assert body["reasoning_profile_id"] == "high"
+    assert body["source_provider_config_digest"] == "sha256:" + "3" * 64
+    assert body["model_endpoint_identity_digest"] == "sha256:" + "4" * 64
+
+
+@pytest.mark.parametrize(
+    "missing_field",
+    [
+        "model_cohort_id",
+        "model_cohort_digest",
+        "cohort_member_id",
+        "provider_config_id",
+        "model_entry_id",
+        "provider_family",
+        "provider_model_id",
+        "reasoning_profile_id",
+        "source_provider_config_digest",
+        "model_endpoint_identity_digest",
+    ],
+)
+def test_formal_exp5_condition_rejects_incomplete_fixed_entry_identity(
+    missing_field: str,
+) -> None:
+    body = _formal_exp5_condition_body()
+    body[missing_field] = None
+
+    with pytest.raises(ValueError, match="complete fixed-entry identity"):
+        PaperExperimentCondition(**body)
+
+
+@pytest.mark.parametrize(
+    "digest_field",
+    [
+        "model_cohort_digest",
+        "source_provider_config_digest",
+        "model_endpoint_identity_digest",
+    ],
+)
+def test_formal_exp5_condition_rejects_malformed_identity_digest(
+    digest_field: str,
+) -> None:
+    body = _formal_exp5_condition_body()
+    body[digest_field] = "sha256:not-a-complete-digest"
+
+    with pytest.raises(ValueError, match=digest_field):
+        PaperExperimentCondition(**body)
 
 
 def test_paper_condition_supports_explicit_paper_difficulty_in_digest() -> None:
@@ -390,3 +559,30 @@ def test_paper_condition_rejects_unknown_domain_or_difficulty() -> None:
         PaperExperimentCondition(**{**base, "domain": "lean-proof"})
     with pytest.raises(ValueError, match="difficulty"):
         PaperExperimentCondition(**{**base, "difficulty": "all"})
+
+
+def _formal_exp5_condition_body() -> dict:
+    return {
+        "experiment_id": "exp5_real_ai_model_endpoint_comparison",
+        "condition_id": "exp5_factorization_easy_gpt_repeat0",
+        "domain": "factorization",
+        "difficulty": "easy",
+        "worker_count": 10,
+        "fault_type": "none",
+        "fault_rate": 0.0,
+        "ablation_mode": "FULL",
+        "model_policy": "fixed_entry",
+        "model_cohort_id": "tokenshare.paper.model_endpoint_cohort.v1",
+        "model_cohort_digest": "sha256:" + "2" * 64,
+        "cohort_member_id": "gpt_5_6_sol_high_openai",
+        "provider_config_id": "openai",
+        "model_entry_id": "gpt-entry",
+        "provider_family": "openai",
+        "provider_model_id": "gpt-5.6-sol",
+        "reasoning_profile_id": "high",
+        "source_provider_config_digest": "sha256:" + "3" * 64,
+        "model_endpoint_identity_digest": "sha256:" + "4" * 64,
+        "repeat_id": 0,
+        "seed": 1,
+        "catalog_digest": "sha256:" + "1" * 64,
+    }

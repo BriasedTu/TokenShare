@@ -23,6 +23,11 @@ from tokenshare.executors.ai_api_transport import (
     UrlLibSiliconFlowTransport,
 )
 from tokenshare.executors.contracts import EnvironmentRef, ExecutionRequest
+from tokenshare.experiments.paper_model_identity import (
+    ValidatedModelEndpointBinding,
+    validate_condition_fixed_entry_identity,
+    validate_fixed_entry_submission_identity,
+)
 from tokenshare.experiments.paper_models import (
     PaperAttemptResult,
     PaperAttemptStatus,
@@ -33,6 +38,10 @@ from tokenshare.experiments.paper_models import (
     PaperTaskResult,
     PaperTaskStatus,
     evaluate_paper_eligibility,
+)
+from tokenshare.experiments.paper_report import scan_artifact_store_for_secrets
+from tokenshare.experiments.paper_unit_commitments import (
+    factorization_range_plugin_payload,
 )
 from tokenshare.plugins.contracts import OutputContract
 from tokenshare.plugins.factorization.descriptor import build_factorization_plugin_descriptor
@@ -214,19 +223,28 @@ def run_factorization_paper_case(
         ai_api_config=ai_api_config,
     )
     resolved_entry_id = _resolve_condition_entry_id(condition, entry_id)
+    source_config = (
+        ai_api_config
+        if ai_api_config is not None
+        else _default_scripted_config(resolved_entry_id)
+    )
+    validated_binding = validate_condition_fixed_entry_identity(
+        condition=condition,
+        source_config=source_config,
+    )
+    config = _prepare_config(
+        source_config,
+        entry_id=resolved_entry_id,
+        validated_binding=validated_binding,
+        max_tokens=max_tokens,
+        timeout_seconds=timeout_seconds,
+    )
+    secret_values = _real_secret_values(config) if real_transport else ()
 
     case_id = str(case["case_id"])
     root = Path(output_root)
     run_root = root / case_id
     store = ArtifactStore(run_root)
-    config = _prepare_config(
-        ai_api_config
-        if ai_api_config is not None
-        else _default_scripted_config(resolved_entry_id),
-        entry_id=resolved_entry_id,
-        max_tokens=max_tokens,
-        timeout_seconds=timeout_seconds,
-    )
     active_transport = transport
     if active_transport is None:
         active_transport = (
@@ -282,11 +300,35 @@ def run_factorization_paper_case(
             index=index,
             submission=submission,
         )
-        candidate_ref = submission.candidate_output_refs.get("range_result")
+        model_execution_record, model_execution_record_ref = (
+            _save_model_execution_record(
+                store=store,
+                condition=condition,
+                binding=validated_binding,
+                prepared_config=config,
+                case_id=case_id,
+                request=request,
+                request_ref=request_ref,
+                submission=submission,
+                usage_ref=usage_ref,
+            )
+        )
+        model_identity_mismatch = (
+            model_execution_record is not None
+            and model_execution_record.identity_status
+            == "model_identity_mismatch"
+        )
+        candidate_ref = (
+            None
+            if model_identity_mismatch
+            else submission.candidate_output_refs.get("range_result")
+        )
         verification = None
         range_result_body: JsonObject | None = None
         canonical_output_ref = None
         attempt_status = _attempt_status_from_submission(submission.result_kind)
+        if model_identity_mismatch:
+            attempt_status = PaperAttemptStatus.MODEL_IDENTITY_MISMATCH
         if candidate_ref is not None:
             range_result_body = _read_json_ref(store, candidate_ref)
             verification = verify_range_result(range_result_body, child_input=range_input)
@@ -305,6 +347,11 @@ def run_factorization_paper_case(
                 submission=submission,
                 usage_ref=usage_ref,
                 attempt_status=attempt_status,
+                planned_ai_unit_id=f"range_{range_input.child_index}",
+                model_execution_record_ref=model_execution_record_ref,
+                error_kind_override=(
+                    "model_identity_mismatch" if model_identity_mismatch else None
+                ),
             )
         )
         range_records.append(
@@ -322,16 +369,38 @@ def run_factorization_paper_case(
                         "failure_summary": verification.failure_summary,
                     }
                     if verification is not None
-                    else {
-                        "accepted": False,
-                        "status": "missing_candidate",
-                        "layer_summary": {},
-                        "failure_summary": submission.error,
-                    }
+                    else (
+                        {
+                            "accepted": False,
+                            "status": "model_identity_mismatch",
+                            "layer_summary": {},
+                            "failure_summary": {
+                                "kind": "model_identity_mismatch",
+                                "reasons": list(
+                                    model_execution_record.mismatch_reasons
+                                ),
+                            },
+                        }
+                        if model_execution_record is not None
+                        and model_identity_mismatch
+                        else {
+                            "accepted": False,
+                            "status": "missing_candidate",
+                            "layer_summary": {},
+                            "failure_summary": submission.error,
+                        }
+                    )
                 ),
                 "canonical_output_ref": canonical_output_ref,
+                "model_execution_record_ref": (
+                    model_execution_record_ref.to_dict()
+                    if model_execution_record_ref is not None
+                    else None
+                ),
             }
         )
+        if model_identity_mismatch:
+            break
 
     merge_summary: JsonObject
     prime_result: PrimeFactorizationResult | None = None
@@ -388,6 +457,7 @@ def run_factorization_paper_case(
         store=store,
         real_transport=real_transport,
         transport_kind="ai_api" if real_transport else "scripted",
+        secret_values=secret_values,
     )
     eligibility = evaluate_paper_eligibility(
         attempts=attempts,
@@ -413,7 +483,15 @@ def run_factorization_paper_case(
         total_tokens=sum(attempt.total_tokens for attempt in attempts),
         cost_estimate=sum(attempt.cost_estimate for attempt in attempts),
         event_refs=[],
-        artifact_refs=[attempt.raw_output_ref for attempt in attempts if attempt.raw_output_ref],
+        artifact_refs=[
+            ref
+            for attempt in attempts
+            for ref in (
+                attempt.raw_output_ref,
+                attempt.model_execution_record_ref,
+            )
+            if ref is not None
+        ],
         paper_eligible=eligibility.paper_eligible,
     )
     result = FactorizationPaperRunResult(
@@ -589,11 +667,17 @@ def _build_range_execution_request(
             unit_id=unit_id,
             range_input_ref=range_input_ref,
             case=case,
+            range_input_body=range_input.to_dict(),
         ).to_dict(),
         input_artifact_refs={"range_input": range_input_ref},
         output_contract=_range_output_contract(),
         hard_requirements={"executor": "ai_api", "provider_family": provider_family},
-        soft_hints={"temperature": 0.0, "paper_condition_id": condition.condition_id},
+        soft_hints={
+            "temperature": 0.0,
+            "paper_condition_id": condition.condition_id,
+            "planned_ai_unit_id": f"range_{range_input.child_index}",
+            "paper_provider_attempt_index": 0,
+        },
         environment_ref=_environment_ref(seed=condition.seed),
         execution_instruction_ref=instruction_ref,
         prompt_package_ref=prompt_ref,
@@ -608,6 +692,7 @@ def _range_task_unit(
     unit_id: str,
     range_input_ref,
     case: JsonObject,
+    range_input_body: JsonObject,
 ) -> TaskUnit:
     return TaskUnit(
         unit_id=unit_id,
@@ -622,10 +707,10 @@ def _range_task_unit(
         weight=1.0,
         budget_limit=None,
         deadline=None,
-        plugin_payload={
-            "schema_version": FACTOR_SEARCH_RANGE_INPUT_SCHEMA_VERSION,
-            "case_id": case["case_id"],
-        },
+        plugin_payload=factorization_range_plugin_payload(
+            case=case,
+            range_input_body=range_input_body,
+        ),
         metadata={"paper_factorization": True, "case_id": case["case_id"]},
         created_at=NOW,
         updated_at=NOW,
@@ -663,11 +748,15 @@ def _prepare_config(
     config: AIAPIExecutorConfig,
     *,
     entry_id: str | None,
+    validated_binding: ValidatedModelEndpointBinding | None = None,
     max_tokens: int,
     timeout_seconds: int,
 ) -> AIAPIExecutorConfig:
-    entries = list(config.entries)
-    if entry_id is not None:
+    if validated_binding is not None:
+        entries = [validated_binding.selected_entry]
+    else:
+        entries = list(config.entries)
+    if validated_binding is None and entry_id is not None:
         entries = [entry for entry in entries if entry.entry_id == entry_id]
         if not entries:
             raise ValueError(f"missing ai api entry id: {entry_id}")
@@ -811,6 +900,72 @@ def _save_usage_artifact(
     )
 
 
+def _save_model_execution_record(
+    *,
+    store: ArtifactStore,
+    condition: PaperExperimentCondition,
+    binding: ValidatedModelEndpointBinding | None,
+    prepared_config: AIAPIExecutorConfig,
+    case_id: str,
+    request: ExecutionRequest,
+    request_ref: ArtifactRef,
+    submission,
+    usage_ref: ArtifactRef,
+):
+    if binding is None:
+        return None, None
+    if submission.provenance_ref is None:
+        raise ValueError("fixed-entry submission requires provenance_ref")
+    provenance = _read_json_ref(store, submission.provenance_ref)
+    raw_output = (
+        _read_json_ref(store, submission.raw_output_ref)
+        if submission.raw_output_ref is not None
+        else None
+    )
+    record = validate_fixed_entry_submission_identity(
+        expected_identity=binding.identity,
+        prepared_execution_config_digest=prepared_config.config_digest,
+        condition_id=condition.condition_id,
+        repeat_id=condition.repeat_id,
+        run_id=f"{condition.condition_id}_{case_id}",
+        task_id=request.task_id,
+        unit_id=request.unit_id,
+        attempt_id=request.attempt_id,
+        request=request.to_dict(),
+        request_ref=request_ref.to_dict(),
+        provenance=provenance,
+        provenance_ref=submission.provenance_ref.to_dict(),
+        raw_output=raw_output,
+        raw_output_ref=(
+            submission.raw_output_ref.to_dict()
+            if submission.raw_output_ref is not None
+            else None
+        ),
+        usage_ref=usage_ref.to_dict(),
+        created_at=NOW,
+    )
+    record_ref = store.save_json(
+        record.to_dict(),
+        artifact_id=f"paper_model_execution_{submission.submission_id}",
+        artifact_type="PaperModelExecutionRecord",
+        artifact_schema_id="tokenshare.paper_model_execution_record",
+        artifact_schema_version="v2",
+        source={
+            "kind": "factorization_paper_adapter",
+            "condition_id": condition.condition_id,
+            "request_id": request.request_id,
+        },
+        metadata={
+            "model_endpoint_identity_digest": (
+                binding.identity.model_endpoint_identity_digest
+            ),
+            "identity_status": record.identity_status,
+        },
+        created_at=NOW,
+    )
+    return record, record_ref
+
+
 def _save_prime_factorization_result(
     *,
     store: ArtifactStore,
@@ -843,6 +998,9 @@ def _paper_attempt_result(
     submission,
     usage_ref,
     attempt_status: PaperAttemptStatus,
+    planned_ai_unit_id: str,
+    model_execution_record_ref=None,
+    error_kind_override: str | None = None,
 ) -> PaperAttemptResult:
     usage = dict(submission.usage_summary or {})
     provenance_attempt = _last_provenance_attempt(store=store, submission=submission)
@@ -855,6 +1013,7 @@ def _paper_attempt_result(
         run_id=f"{condition.condition_id}_{case_id}",
         task_id=request.task_id,
         unit_id=request.unit_id,
+        planned_ai_unit_id=planned_ai_unit_id,
         attempt_id=request.attempt_id,
         worker_id=f"worker_factorization_paper_{index}",
         provider_attempt_index=0,
@@ -887,9 +1046,18 @@ def _paper_attempt_result(
         completion_tokens=completion_tokens,
         total_tokens=total_tokens,
         cost_estimate=_float_metric(usage.get("cost_estimate")),
-        error_kind=(submission.error or {}).get("kind") if submission.error else None,
+        error_kind=(
+            error_kind_override
+            if error_kind_override is not None
+            else ((submission.error or {}).get("kind") if submission.error else None)
+        ),
         fault_injection_ref=None,
         paper_eligible=False,
+        model_execution_record_ref=(
+            model_execution_record_ref.to_dict()
+            if model_execution_record_ref is not None
+            else None
+        ),
     )
 
 
@@ -951,6 +1119,7 @@ def _run_evidence(
     store: ArtifactStore,
     real_transport: bool,
     transport_kind: str,
+    secret_values: tuple[str, ...],
 ) -> JsonObject:
     transport_ref = store.save_json(
         {
@@ -971,16 +1140,22 @@ def _run_evidence(
         metadata={},
         created_at=NOW,
     )
-    scanned_ids = _artifact_ids(store)
-    secret_scan_ref = store.save_json(
-        {
+    if secret_values:
+        secret_scan = scan_artifact_store_for_secrets(
+            store,
+            secret_values=secret_values,
+        )
+    else:
+        secret_scan = {
             "schema_version": "tokenshare.paper_secret_scan_report.v1",
             "status": "pending",
             "leak_count": 0,
             "secret_checked_count": 0,
-            "scanned_artifact_ids": scanned_ids,
-            "scan_scope": "not_wired_in_factorization_adapter_slice",
-        },
+            "scanned_artifact_ids": _artifact_ids(store),
+            "scan_scope": "scripted_transport_not_paper_eligible",
+        }
+    secret_scan_ref = store.save_json(
+        secret_scan,
         artifact_id="paper_secret_scan_report",
         artifact_type="SecretScanReport",
         artifact_schema_id="tokenshare.paper_secret_scan_report",
@@ -990,7 +1165,6 @@ def _run_evidence(
         created_at=NOW,
     )
     artifact_manifests = _artifact_manifests(store)
-    scanned_ids = _artifact_ids(store)
     return {
         "schema_version": "tokenshare.paper_run_evidence.v1",
         "transport_evidence": {
@@ -1005,16 +1179,19 @@ def _run_evidence(
             "evidence_ref": transport_ref.to_dict(),
         },
         "secret_scan_report": {
-            "schema_version": "tokenshare.paper_secret_scan_report.v1",
-            "status": "pending",
-            "leak_count": 0,
-            "secret_checked_count": 0,
-            "scanned_artifact_ids": scanned_ids,
-            "scan_scope": "not_wired_in_factorization_adapter_slice",
+            **secret_scan,
             "report_ref": secret_scan_ref.to_dict(),
         },
         "artifact_manifests": artifact_manifests,
     }
+
+
+def _real_secret_values(config: AIAPIExecutorConfig) -> tuple[str, ...]:
+    return tuple(
+        dict.fromkeys(
+            entry.resolve_api_key() for entry in config.entries if entry.enabled
+        )
+    )
 
 
 def _artifact_manifests(store: ArtifactStore) -> list[JsonObject]:
@@ -1042,6 +1219,11 @@ def _task_failure_from_child_evidence(
     attempts: list[PaperAttemptResult],
     range_records: list[JsonObject],
 ) -> tuple[PaperFailureStage, PaperFailureKind]:
+    if any(
+        attempt.attempt_status == PaperAttemptStatus.MODEL_IDENTITY_MISMATCH
+        for attempt in attempts
+    ):
+        return PaperFailureStage.AUDIT, PaperFailureKind.MODEL_IDENTITY_MISMATCH
     if any(attempt.attempt_status == PaperAttemptStatus.PARSE_FAILED for attempt in attempts):
         return PaperFailureStage.PARSE, PaperFailureKind.PARSE_FAILURE
     if any(attempt.attempt_status == PaperAttemptStatus.PROVIDER_ERROR for attempt in attempts):

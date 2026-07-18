@@ -1,11 +1,11 @@
 import json
 from hashlib import sha256
 from pathlib import Path
-
 import pytest
 
 from tokenshare.experiments.paper_catalog import (
     default_lean_paper_environment_manifest,
+    lean_case_semantic_fingerprint as production_lean_case_semantic_fingerprint,
     load_paper_catalogs,
 )
 
@@ -132,20 +132,34 @@ def test_induction_medium_lemma_dag_golden_case_preflight_passed() -> None:
     )
 
 
-def test_topic_family_counts_include_first_medium_golden_cases() -> None:
+def test_topic_family_counts_include_task14_catalog_pool() -> None:
     manifest = _load_catalog_with_lemma_graph()
 
     assert manifest.topic_family_counts["lean_proof"] == {
-        "pure_logic": 32,
-        "function_set": 1,
-        "induction": 1,
+        "pure_logic": 85,
+        "function_set": 55,
+        "induction": 55,
+    }
+    assert manifest.paper_difficulty_topic_family_counts["lean_proof"][
+        "simple"
+    ] == {
+        "pure_logic": 45,
+        "function_set": 15,
+        "induction": 15,
     }
     assert manifest.paper_difficulty_topic_family_counts["lean_proof"][
         "medium_lemma_dag"
     ] == {
-        "pure_logic": 1,
-        "function_set": 1,
-        "induction": 1,
+        "pure_logic": 15,
+        "function_set": 15,
+        "induction": 15,
+    }
+    assert manifest.paper_difficulty_topic_family_counts["lean_proof"][
+        "hard_frontier"
+    ] == {
+        "pure_logic": 25,
+        "function_set": 25,
+        "induction": 25,
     }
 
 
@@ -211,23 +225,121 @@ def test_medium_lemma_dag_preflight_rejects_bad_node_oracle_proof(
         )
 
 
-def test_hard_frontier_no_oracle_remains_structured_blocked() -> None:
+def test_hard_frontier_catalog_has_checker_backed_task14_pool() -> None:
     manifest = _load_catalog_with_lemma_graph()
     hard_cases = [
         case
         for case in manifest.lean_lemma_graph_cases
         if case["paper_difficulty"] == "hard_frontier"
     ]
+    checker_backed = [
+        case
+        for case in hard_cases
+        if case["preflight_status"] == "passed"
+        and isinstance(case.get("oracle_proof_package_ref"), dict)
+    ]
 
-    assert len(hard_cases) == 1
-    assert hard_cases[0]["topic_family"] == "pure_logic"
-    assert hard_cases[0]["preflight_status"] == "structured_blocked"
-    assert hard_cases[0]["oracle_proof_package_ref"] is None
-    assert (
-        hard_cases[0]["proof_assembly_shape"]
-        == "structured_blocked_no_oracle_frontier_stress.v1"
+    assert len(hard_cases) == 75
+    assert len(checker_backed) == 45
+    assert {
+        topic_family: sum(
+            1 for case in checker_backed if case["topic_family"] == topic_family
+        )
+        for topic_family in ("pure_logic", "function_set", "induction")
+    } == {"pure_logic": 15, "function_set": 15, "induction": 15}
+    assert {
+        topic_family: sum(
+            1
+            for case in hard_cases
+            if case["topic_family"] == topic_family
+            and case["preflight_status"] == "structured_blocked"
+        )
+        for topic_family in ("pure_logic", "function_set", "induction")
+    } == {"pure_logic": 10, "function_set": 10, "induction": 10}
+    assert manifest.lean_lemma_graph_preflight_summary["blocked_case_count"] == 30
+    for case in checker_backed:
+        assert case["difficulty"] == "hard"
+        assert case["catalog_pool_role"] == "task14_checker_backed_pool"
+        assert case["construction_rule_id"].startswith("hard_frontier.")
+        assert case["preflight_status"] == "passed"
+        _assert_checker_backed_node_sources_cover_graph(case)
+
+
+def test_task14_selected_lemma_graph_cells_have_distinct_semantic_fingerprints() -> None:
+    manifest = _load_catalog_with_lemma_graph()
+
+    for paper_difficulty in ("simple", "medium_lemma_dag", "hard_frontier"):
+        for topic_family in ("function_set", "induction"):
+            cases = [
+                case
+                for case in manifest.lean_lemma_graph_cases
+                if case["paper_difficulty"] == paper_difficulty
+                and case["topic_family"] == topic_family
+                and case["preflight_status"] == "passed"
+                and isinstance(case.get("oracle_proof_package_ref"), dict)
+            ][:15]
+            fingerprints = [production_lean_case_semantic_fingerprint(case) for case in cases]
+
+            assert len(cases) == 15
+            assert len(set(fingerprints)) == 15, (
+                "semantic duplicate: "
+                f"{paper_difficulty}/{topic_family} selected rows must be 15 "
+                "distinct theorem/DAG fingerprints after ignoring identity fields"
+            )
+
+
+def test_task14_hard_frontier_fingerprints_are_not_medium_renames() -> None:
+    manifest = _load_catalog_with_lemma_graph()
+
+    for topic_family in ("pure_logic", "function_set", "induction"):
+        medium_fingerprints = {
+            production_lean_case_semantic_fingerprint(case)
+            for case in manifest.lean_lemma_graph_cases
+            if case["paper_difficulty"] == "medium_lemma_dag"
+            and case["topic_family"] == topic_family
+            and case["preflight_status"] == "passed"
+        }
+        hard_fingerprints = {
+            production_lean_case_semantic_fingerprint(case)
+            for case in manifest.lean_lemma_graph_cases
+            if case["paper_difficulty"] == "hard_frontier"
+            and case["topic_family"] == topic_family
+            and case["preflight_status"] == "passed"
+            and isinstance(case.get("oracle_proof_package_ref"), dict)
+        }
+
+        assert len(hard_fingerprints) == 15
+        assert hard_fingerprints.isdisjoint(medium_fingerprints), (
+            "hard-is-medium: hard_frontier "
+            f"{topic_family} roots must not be relabeled medium_lemma_dag "
+            "fingerprints"
+        )
+
+
+def test_hard_frontier_without_oracle_still_structured_blocks_in_tmp_fixture(
+    tmp_path: Path,
+) -> None:
+    case = _single_medium_case(_load_catalog_with_lemma_graph(), topic_family="pure_logic")
+    case["case_id"] = "lean_v2_hard_frontier_no_oracle_tmp"
+    case["paper_difficulty"] = "hard_frontier"
+    case["difficulty"] = "hard"
+    case["construction_rule_id"] = "frontier_stress_no_oracle.pure_logic.v1"
+    case["oracle_package_group"] = "no_oracle.frontier_stress.pure_logic.v1"
+    case["oracle_proof_package_ref"] = None
+    case["preflight_status"] = "structured_blocked"
+    case["proof_assembly_shape"] = "structured_blocked_no_oracle_frontier_stress.v1"
+    case["structured_blocked_reason"] = "missing_oracle_proof_package"
+    graph_path = _write_graph_catalog(tmp_path, case)
+
+    manifest = load_paper_catalogs(
+        factorization_path=FACTOR_CATALOG,
+        lean_path=LEAN_V1_CATALOG,
+        lean_lemma_graph_path=graph_path,
     )
+
     assert manifest.lean_lemma_graph_preflight_summary["blocked_case_count"] == 1
+    assert manifest.lean_lemma_graph_cases[0]["preflight_status"] == "structured_blocked"
+    assert manifest.lean_lemma_graph_cases[0]["oracle_proof_package_ref"] is None
 
 
 def test_lean_v2_rejects_unsupported_proof_assembly_shape(tmp_path: Path) -> None:
@@ -254,14 +366,21 @@ def _load_catalog_with_lemma_graph():
 
 
 def _single_medium_case(manifest, *, topic_family: str) -> dict:
+    seed_case_ids = {
+        "pure_logic": "lean_v2_medium_lemma_dag_01",
+        "function_set": "lean_v2_medium_function_set_dx_subset_chain_01",
+        "induction": "lean_v2_medium_induction_nat_predicate_chain_01",
+    }
     cases = [
         case
         for case in manifest.lean_lemma_graph_cases
         if case["paper_difficulty"] == "medium_lemma_dag"
         and case["topic_family"] == topic_family
     ]
-    assert len(cases) == 1
-    return dict(cases[0])
+    assert len(cases) == 15
+    matches = [case for case in cases if case["case_id"] == seed_case_ids[topic_family]]
+    assert len(matches) == 1
+    return dict(matches[0])
 
 
 def _assert_checker_backed_node_sources_cover_graph(case: dict) -> None:
@@ -275,7 +394,7 @@ def _assert_checker_backed_node_sources_cover_graph(case: dict) -> None:
     for node_id, proof_source in oracle_ref["node_proof_sources"].items():
         assert node_id in node_ids
         assert isinstance(proof_source, str)
-        assert proof_source.startswith("by\n  exact TokenShare.LemmaGraphOracle.")
+        assert proof_source.startswith("by\n")
 
 
 def _write_graph_catalog(tmp_path: Path, *cases: dict) -> Path:

@@ -44,7 +44,7 @@
 | 问题 | 首先阅读 | 辅助阅读 | 注意事项 |
 |---|---|---|---|
 | 当前要做哪个 feature / track | `feature_list.json` | `progress.md`、`session-handoff.md` | 当前 active feature 是 `feat-011` Paper Real AI Experiments。`feat-007` 真实 Lean proof plugin、`feat-008` Phase 7 AI API executor、`feat-009` Phase 8 已完成；`feat-010` replay/audit 已延后。 |
-| 启动和验证怎么跑 | `AGENTS.md` | `init.ps1`、`init.sh`、`README.md` | 当前基线会运行 Python JSON/SQLite、`compileall` 和 `pytest tests`。 |
+| 启动和验证怎么跑 | `AGENTS.md` | `init.ps1`、`init.sh`、`verification/fast-tests.txt`、`README.md` | 默认档运行公共检查、`compileall` 和共享 smoke suite；feature 完成、提交/合并或实验发布前用 `-Full` / `--full` 运行 `pytest tests`。 |
 | Phase 1-6 V1 协议在做什么 | `Doc/TechnicalDocument/tokenshare_v1_complete_spec.md` | `README.md` | 只覆盖 Phase 1-6 协议内核、存储、插件和执行器契约。 |
 | Phase 1-6 代码在哪、测试在哪 | `Doc/TechnicalDocument/tokenshare_v1_code_map.md` | `src/tokenshare/`、`tests/` | code map 必须以当前实现为准；不要从旧归档文档倒推。 |
 | 最新真实 AI 论文实验 | `Doc/TechnicalDocument/tokenshare_latest_real_plugin_experiment_design.md` | `Doc/TechnicalDocument/2026-07-13-feat-011-paper-real-ai-experiments-implementation-plan.md`、`Doc/TechnicalDocument/2026-07-15-feat-011-lean-3x3-topic-template-design.md`、`src/tokenshare/experiments/` | 所有可写入论文的新实验必须真实调用 AI API。旧 deterministic/scripted suite、direct 500 和 Lean 50 只能作为 regression/calibration；Lean 3×3 模板设计不等于完整 runner 已可执行。 |

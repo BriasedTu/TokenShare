@@ -10,6 +10,10 @@ from time import perf_counter
 from typing import Callable
 
 from tokenshare.core.models import ArtifactRef, JsonObject
+from tokenshare.executors.ai_api_artifacts import (
+    RAW_MODEL_OUTPUT_SCHEMA_V2,
+    build_raw_model_identity_fields,
+)
 from tokenshare.executors.ai_api_config import AIAPIExecutorConfig
 from tokenshare.executors.ai_api_selector import build_provider_selection, entries_by_attempt_order
 from tokenshare.executors.ai_api_transport import (
@@ -87,6 +91,42 @@ class AIAPIExecutor:
         submission_id: str,
         submitted_at: str,
     ) -> ExecutionSubmission:
+        required_provider_family = request.hard_requirements.get("provider_family")
+        if (
+            required_provider_family is not None
+            and required_provider_family != self._config.provider_family
+        ):
+            provenance_ref = self._save_provenance(
+                submission_id=submission_id,
+                request=request,
+                selection=_empty_selection_record(
+                    config=self._config,
+                    request=request,
+                    require_json_mode=False,
+                ),
+                attempts=[],
+                final_entry_id=None,
+                final_result_kind="executor_error",
+                submitted_at=submitted_at,
+            )
+            return self._submission(
+                request=request,
+                submission_id=submission_id,
+                submitted_at=submitted_at,
+                result_kind="executor_error",
+                raw_output_ref=None,
+                parsed_output_ref=None,
+                candidate_output_refs={},
+                parse_failure_ref=None,
+                provenance_ref=provenance_ref,
+                usage_summary={"provider_attempt_count": 0},
+                error={
+                    "kind": "executor_error",
+                    "reason": "provider_requirement_mismatch",
+                    "required_provider_family": required_provider_family,
+                    "config_provider_family": self._config.provider_family,
+                },
+            )
         if request.prompt_package_ref is None:
             raise ValueError("AI API executor requires prompt_package_ref")
         prompt = json.loads(self._artifact_store.read_bytes(request.prompt_package_ref).decode("utf-8"))
@@ -167,10 +207,12 @@ class AIAPIExecutor:
         attempts: list[JsonObject] = []
         final_result = None
         final_entry = None
+        final_request_identity: JsonObject | None = None
         terminal_error: SiliconFlowProviderError | OpenAIProviderError | None = None
         build_chat_body, parse_provider_response = _provider_adapter(self._config.provider_family)
         for entry in entries_by_attempt_order(config=self._config, selection=selection):
             started = perf_counter()
+            request_identity: JsonObject | None = None
             try:
                 body = build_chat_body(
                     entry=entry,
@@ -179,6 +221,11 @@ class AIAPIExecutor:
                     request_limits=request.limits,
                     soft_hints=request.soft_hints or {},
                     require_json_mode=require_json_mode,
+                )
+                request_identity = _provider_request_identity(
+                    provider_family=self._config.provider_family,
+                    entry=entry,
+                    body=body,
                 )
                 api_key = entry.resolve_api_key()
                 response = self._transport.post_chat_completion(
@@ -189,6 +236,7 @@ class AIAPIExecutor:
                 )
                 final_result = parse_provider_response(response)
                 final_entry = entry
+                final_request_identity = request_identity
                 attempts.append(
                     _attempt_record(
                         self._config.provider_family,
@@ -196,6 +244,7 @@ class AIAPIExecutor:
                         "succeeded",
                         perf_counter() - started,
                         response.status_code,
+                        provider_request_identity=request_identity,
                     )
                 )
                 break
@@ -210,6 +259,7 @@ class AIAPIExecutor:
                         None,
                         message=_redact_text(str(exc), self._config),
                         extra={"api_key_env": entry.api_key_env} if error_kind == "secret_missing" else None,
+                        provider_request_identity=request_identity,
                     )
                 )
             except TimeoutError:
@@ -220,6 +270,7 @@ class AIAPIExecutor:
                         "timeout",
                         perf_counter() - started,
                         None,
+                        provider_request_identity=request_identity,
                     )
                 )
             except OSError as exc:
@@ -231,6 +282,7 @@ class AIAPIExecutor:
                         perf_counter() - started,
                         None,
                         message=_redact_text(str(exc), self._config),
+                        provider_request_identity=request_identity,
                     )
                 )
             except (SiliconFlowProviderError, OpenAIProviderError) as exc:
@@ -242,12 +294,13 @@ class AIAPIExecutor:
                         perf_counter() - started,
                         exc.http_status,
                         message=_redact_text(exc.message, self._config),
+                        provider_request_identity=request_identity,
                     )
                 )
                 if exc.error_kind in {"invalid_output", "client_error"}:
                     terminal_error = exc
                     break
-        if final_result is None or final_entry is None:
+        if final_result is None or final_entry is None or final_request_identity is None:
             result_kind = terminal_error.error_kind if terminal_error is not None else "executor_error"
             parse_failure_ref = None
             if result_kind == "invalid_output":
@@ -287,12 +340,16 @@ class AIAPIExecutor:
 
         raw_ref = self._artifact_store.save_json(
             {
-                "schema_version": "phase7.raw_model_output.v1",
+                "schema_version": RAW_MODEL_OUTPUT_SCHEMA_V2,
                 "submission_id": submission_id,
                 "request_id": request.request_id,
                 "provider_family": self._config.provider_family,
                 "entry_id": final_entry.entry_id,
-                "model": final_result.model or final_entry.model,
+                **build_raw_model_identity_fields(
+                    configured_model=final_entry.model,
+                    requested_model=str(final_request_identity["requested_model"]),
+                    raw_response_json=final_result.raw_response_json,
+                ),
                 "provider_response_id": final_result.provider_response_id,
                 "content_text": final_result.content_text,
                 "raw_response_json": final_result.raw_response_json,
@@ -303,7 +360,7 @@ class AIAPIExecutor:
             artifact_id=f"raw_model_output_{submission_id}",
             artifact_type="RawModelOutput",
             artifact_schema_id="phase7.raw_model_output",
-            artifact_schema_version="v1",
+            artifact_schema_version="v2",
             source={"kind": "ai_api_executor", "request_id": request.request_id},
             metadata={"executor_id": self.executor_id, "entry_id": final_entry.entry_id},
             created_at=submitted_at,
@@ -348,8 +405,11 @@ class AIAPIExecutor:
                         usage_summary=_usage_summary(
                             self._config.provider_family,
                             final_entry,
-                            final_result.usage,
-                            len(attempts),
+                            requested_model=str(
+                                final_request_identity["requested_model"]
+                            ),
+                            usage=final_result.usage,
+                            attempt_count=len(attempts),
                         ),
                         error={"kind": "parse_failed", "reason": "plugin_parser_rejected_output"},
                     )
@@ -391,8 +451,11 @@ class AIAPIExecutor:
                     usage_summary=_usage_summary(
                         self._config.provider_family,
                         final_entry,
-                        final_result.usage,
-                        len(attempts),
+                        requested_model=str(
+                            final_request_identity["requested_model"]
+                        ),
+                        usage=final_result.usage,
+                        attempt_count=len(attempts),
                     ),
                     error={"kind": "parse_failed", "reason": "plugin_parser_rejected_output"},
                 )
@@ -400,8 +463,9 @@ class AIAPIExecutor:
         usage_summary = _usage_summary(
             self._config.provider_family,
             final_entry,
-            final_result.usage,
-            len(attempts),
+            requested_model=str(final_request_identity["requested_model"]),
+            usage=final_result.usage,
+            attempt_count=len(attempts),
         )
         provenance_ref = self._save_provenance(
             submission_id=submission_id,
@@ -548,7 +612,7 @@ class AIAPIExecutor:
     ) -> ArtifactRef:
         return self._artifact_store.save_json(
             {
-                "schema_version": "phase7.ai_provider_call_provenance.v1",
+                "schema_version": "phase7.ai_provider_call_provenance.v2",
                 "submission_id": submission_id,
                 "request_id": request.request_id,
                 "provider_family": self._config.provider_family,
@@ -565,7 +629,7 @@ class AIAPIExecutor:
             artifact_id=f"ai_provider_provenance_{submission_id}",
             artifact_type="AIProviderCallProvenance",
             artifact_schema_id="phase7.ai_provider_call_provenance",
-            artifact_schema_version="v1",
+            artifact_schema_version="v2",
             source={"kind": "ai_api_executor", "request_id": request.request_id},
             metadata={"executor_id": self.executor_id},
             created_at=submitted_at,
@@ -652,11 +716,12 @@ def _attempt_record(
     *,
     message: str | None = None,
     extra: JsonObject | None = None,
+    provider_request_identity: JsonObject | None = None,
 ) -> JsonObject:
     record: JsonObject = {
         "provider_family": provider_family,
         "entry_id": entry.entry_id,
-        "model": entry.model,
+        "configured_model": entry.model,
         "result_kind": result_kind,
         "latency_ms": int(elapsed_seconds * 1000),
         "http_status": http_status,
@@ -665,12 +730,60 @@ def _attempt_record(
         record["message"] = message[:500]
     if extra:
         record.update(extra)
+    if provider_request_identity is not None:
+        record["provider_request_identity"] = dict(provider_request_identity)
     return record
+
+
+def _provider_request_identity(
+    *,
+    provider_family: str,
+    entry,
+    body: JsonObject,
+) -> JsonObject:
+    control_keys = (
+        "stream",
+        "temperature",
+        "top_p",
+        "max_tokens",
+        "response_format",
+        "reasoning_effort",
+        "enable_thinking",
+    )
+    effective_controls = {
+        key: body[key]
+        for key in control_keys
+        if key in body
+    }
+    reasoning_controls = {
+        key: effective_controls[key]
+        for key in ("reasoning_effort", "enable_thinking")
+        if key in effective_controls
+    }
+    encoded_controls = json.dumps(
+        effective_controls,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return {
+        "schema_version": "phase7.provider_request_identity.v2",
+        "provider_family": provider_family,
+        "entry_id": entry.entry_id,
+        "configured_model": entry.model,
+        "requested_model": _required_request_model(body),
+        "reasoning_controls": reasoning_controls,
+        "effective_request_controls_digest": (
+            f"sha256:{sha256(encoded_controls).hexdigest()}"
+        ),
+    }
 
 
 def _usage_summary(
     provider_family: str,
     entry,
+    *,
+    requested_model: str,
     usage: JsonObject | None,
     attempt_count: int,
 ) -> JsonObject:
@@ -678,6 +791,8 @@ def _usage_summary(
         "provider_family": provider_family,
         "entry_id": entry.entry_id,
         "model": entry.model,
+        "configured_model": entry.model,
+        "requested_model": requested_model,
         "provider_attempt_count": attempt_count,
         "currency": entry.pricing["currency"],
         "pricing_snapshot": dict(entry.pricing),
@@ -703,6 +818,13 @@ def _usage_summary(
         "cost_estimate": input_cost + output_cost,
         "cost_estimate_status": "estimated",
     }
+
+
+def _required_request_model(body: JsonObject) -> str:
+    model = body.get("model")
+    if not isinstance(model, str) or not model.strip():
+        raise ValueError("provider request body model must be a non-empty string")
+    return model
 
 
 def _provider_adapter(provider_family: str):

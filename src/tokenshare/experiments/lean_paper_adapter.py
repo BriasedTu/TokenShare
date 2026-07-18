@@ -12,6 +12,7 @@ import copy
 import json
 import os
 import re
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -33,6 +34,11 @@ from tokenshare.experiments.paper_catalog import (
     default_lean_paper_environment_manifest,
     lean_theorem_payload_from_case,
 )
+from tokenshare.experiments.paper_model_identity import (
+    ValidatedModelEndpointBinding,
+    validate_condition_fixed_entry_identity,
+    validate_fixed_entry_submission_identity,
+)
 from tokenshare.experiments.paper_models import (
     PaperAttemptResult,
     PaperAttemptStatus,
@@ -43,6 +49,11 @@ from tokenshare.experiments.paper_models import (
     PaperTaskResult,
     PaperTaskStatus,
     evaluate_paper_eligibility,
+)
+from tokenshare.experiments.paper_report import scan_artifact_store_for_secrets
+from tokenshare.experiments.paper_unit_commitments import (
+    lean_lemma_graph_plugin_payload,
+    lean_simple_plugin_payload,
 )
 from tokenshare.plugins.contracts import OutputContract
 from tokenshare.plugins.lean_proof.child_proof import (
@@ -231,25 +242,20 @@ def run_lean_paper_case(
 ) -> LeanPaperRunResult:
     """Run one Lean paper catalog case through split children and checker merge."""
 
-    entry_id = _resolve_condition_entry_id(condition, entry_id)
-    if case.get("schema_version") == LEAN_V2_SCHEMA_VERSION:
-        return _run_lean_lemma_graph_paper_case(
-            case=case,
-            condition=condition,
-            output_root=output_root,
-            transport=transport,
-            real_transport=real_transport,
-            ai_api_config=ai_api_config,
-            entry_id=entry_id,
-            max_tokens=max_tokens,
-            timeout_seconds=timeout_seconds,
-        )
-
-    _validate_lean_case_for_adapter(case)
+    is_lemma_graph_case = case.get("schema_version") == LEAN_V2_SCHEMA_VERSION
+    if is_lemma_graph_case:
+        _validate_lean_lemma_graph_case_for_adapter(case)
+    else:
+        _validate_lean_case_for_adapter(case)
+    resolved_entry_id = _resolve_condition_entry_id(condition, entry_id)
     if condition.domain != "lean_proof":
         raise ValueError("condition domain must be lean_proof")
     if condition.difficulty != case["difficulty"]:
         raise ValueError("condition difficulty must match Lean case difficulty")
+    paper_metadata = _validated_condition_paper_metadata(
+        condition=condition,
+        case=case,
+    )
     if real_transport and ai_api_config is None:
         raise ValueError("real transport Lean paper runs require ai_api_config")
     _validate_real_transport_mode(
@@ -257,19 +263,42 @@ def run_lean_paper_case(
         transport=transport,
         ai_api_config=ai_api_config,
     )
-    entry_id = _resolve_condition_entry_id(condition, entry_id)
+    source_config = (
+        ai_api_config
+        if ai_api_config is not None
+        else _default_scripted_config(resolved_entry_id)
+    )
+    validated_binding = validate_condition_fixed_entry_identity(
+        condition=condition,
+        source_config=source_config,
+    )
+    config = _prepare_config(
+        source_config,
+        entry_id=resolved_entry_id,
+        validated_binding=validated_binding,
+        max_tokens=max_tokens,
+        timeout_seconds=timeout_seconds,
+    )
+    secret_values = _real_secret_values(config) if real_transport else ()
+    if is_lemma_graph_case:
+        return _run_lean_lemma_graph_paper_case(
+            case=case,
+            condition=condition,
+            output_root=output_root,
+            transport=transport,
+            real_transport=real_transport,
+            config=config,
+            secret_values=secret_values,
+            validated_binding=validated_binding,
+            max_tokens=max_tokens,
+            timeout_seconds=timeout_seconds,
+        )
 
     case_id = str(case["case_id"])
     root = Path(output_root)
     run_root = root / case_id
     store = ArtifactStore(run_root)
     ledger = EventLedger(run_root / "events" / "event_log.jsonl")
-    config = _prepare_config(
-        ai_api_config if ai_api_config is not None else _default_scripted_config(entry_id),
-        entry_id=entry_id,
-        max_tokens=max_tokens,
-        timeout_seconds=timeout_seconds,
-    )
     active_transport = transport
     if active_transport is None:
         active_transport = (
@@ -302,6 +331,7 @@ def run_lean_paper_case(
             store=store,
             split_summary=split_summary,
             real_transport=real_transport,
+            secret_values=secret_values,
         )
 
     split_plan = build_lean_split_plan(
@@ -340,6 +370,7 @@ def run_lean_paper_case(
             store=store,
             ledger=ledger,
             config=config,
+            validated_binding=validated_binding,
             transport=active_transport,
             index=index,
             timeout_seconds=timeout_seconds,
@@ -356,6 +387,8 @@ def run_lean_paper_case(
                     child_proof=proof_result,
                 )
             )
+        if child_result["model_identity_mismatch"]:
+            break
 
     merge_summary = _merge_children_if_ready(
         split_plan=split_plan,
@@ -382,6 +415,7 @@ def run_lean_paper_case(
         store=store,
         real_transport=real_transport,
         transport_kind="ai_api" if real_transport else "scripted",
+        secret_values=secret_values,
     )
     eligibility = evaluate_paper_eligibility(
         attempts=attempts,
@@ -393,6 +427,7 @@ def run_lean_paper_case(
         task_id=f"paper_lean_{case_id}",
         domain="lean_proof",
         difficulty=str(case["difficulty"]),
+        **paper_metadata,
         root_status=task_status,
         accepted_validity=accepted_validity,
         failure_stage=failure_stage,
@@ -426,6 +461,221 @@ def run_lean_paper_case(
     return result
 
 
+def build_lean_lemma_graph_oracle_evidence(
+    *,
+    case: JsonObject,
+    output_root: str | Path | None = None,
+) -> JsonObject:
+    """Run a checker-backed lemma graph through local oracle split/merge evidence."""
+
+    if output_root is None:
+        with tempfile.TemporaryDirectory(prefix="tokenshare_task14_golden_") as tmp_dir:
+            return _build_lean_lemma_graph_oracle_evidence(
+                case=case,
+                output_root=Path(tmp_dir),
+            )
+    return _build_lean_lemma_graph_oracle_evidence(
+        case=case,
+        output_root=Path(output_root),
+    )
+
+
+def _build_lean_lemma_graph_oracle_evidence(
+    *,
+    case: JsonObject,
+    output_root: Path,
+) -> JsonObject:
+    _validate_lean_lemma_graph_case_for_adapter(case)
+    oracle_ref = case.get("oracle_proof_package_ref")
+    if not isinstance(oracle_ref, dict):
+        raise ValueError("Task 14 golden evidence requires an oracle proof package")
+    if case.get("preflight_status") != "passed":
+        raise ValueError("Task 14 golden evidence requires passed preflight")
+    proof_sources = {
+        str(node_id): str(proof_source)
+        for node_id, proof_source in dict(oracle_ref["node_proof_sources"]).items()
+    }
+
+    case_id = str(case["case_id"])
+    run_root = output_root / _safe_id(case_id)
+    store = ArtifactStore(run_root)
+    environment_manifest = default_lean_paper_environment_manifest()
+    root_node_id = str(case["merge_plan_shape"]["root_node_id"])
+    parent_payload = _lean_lemma_graph_payload_from_body(
+        case["root_theorem_payload"],
+        case_id=case_id,
+        node_id=root_node_id,
+    )
+    parent_payload_ref = _save_parent_payload(
+        store=store,
+        case_id=case_id,
+        payload=parent_payload,
+    )
+    certificate = _lemma_graph_certificate_from_case(
+        case,
+        parent_payload_ref=parent_payload_ref,
+        environment_manifest=environment_manifest,
+    )
+    certificate_ref = _save_lemma_graph_certificate(
+        store=store,
+        case=case,
+        certificate=certificate,
+    )
+    split_report = LeanSplitHelperReport(
+        report_id=f"lean_split_helper_report:{case_id}:task14_golden",
+        request_id=f"task14_golden_split_request_{case_id}",
+        status=LeanSplitHelperStatus.SUCCEEDED,
+        exit_code=0,
+        generated_source_ref=None,
+        helper_stdout_ref=None,
+        helper_stderr_ref=None,
+        certificate_ref=certificate_ref,
+        report_ref=None,
+        certificate=certificate,
+        diagnostics={"source": "task14_local_oracle_evidence"},
+        environment_ref=build_lean_environment_ref(environment_manifest),
+        command_summary={"kind": "catalog_deterministic_certificate"},
+        duration_ms=0,
+        helper_stdout_excerpt="",
+        helper_stderr_excerpt="",
+    )
+    split_plan = build_lean_split_plan(
+        split_report=split_report,
+        artifact_store=store,
+        task_id=f"task14_golden_lean_{case_id}",
+        parent_unit_id=f"task14_golden_lean_root_{case_id}",
+        canonical_selection_id=f"task14_golden_canonical_root_{case_id}",
+        canonical_output_bundle_digest=parent_payload_ref.content_hash,
+        plugin_descriptor_digest=build_lean_proof_plugin_descriptor().descriptor_digest,
+        expansion_scope_hash=canonical_json_digest(
+            {
+                "case_id": case_id,
+                "parent_payload_digest": parent_payload_ref.content_hash,
+                "certificate_digest": certificate.certificate_digest,
+            }
+        ),
+        expansion_decision_id=f"task14_golden_expansion_decision_{case_id}",
+        created_at=NOW,
+    )
+
+    slot_by_node = {
+        str(slot["source_child_logical_key"]): str(slot["slot_key"])
+        for slot in split_plan.merge_plan.required_slots
+    }
+    nodes_by_id = {str(node["node_id"]): node for node in certificate.lemma_nodes}
+    node_inputs: list[LeanLemmaGraphProofInput] = []
+    node_checker_report_refs: dict[str, JsonObject] = {}
+    node_proof_artifact_refs: dict[str, JsonObject] = {}
+    node_proof_candidate_refs: dict[str, JsonObject] = {}
+    for node_id in _lemma_graph_topological_order(case):
+        node = nodes_by_id[node_id]
+        if node_id not in proof_sources:
+            raise ValueError(f"Task 14 oracle proof missing node: {node_id}")
+        node_payload_ref = split_plan.child_payload_refs_by_logical_key[node_id]
+        node_payload = LeanTheoremPayload.from_dict(dict(node["theorem_payload"]))
+        proof_candidate_ref = store.save_json(
+            {
+                "schema_version": "lean_proof.proof_candidate.v1",
+                "proof_candidate_id": (
+                    f"proof_candidate:task14_golden:{case_id}:{node_id}"
+                ),
+                "theorem_payload_digest": node_payload.payload_digest,
+                "proof_source": proof_sources[node_id],
+                "created_at": NOW,
+            },
+            artifact_id=(
+                f"task14_golden_{_safe_id(case_id)}_{_safe_id(node_id)}"
+                "_proof_candidate"
+            ),
+            artifact_type="LeanProofCandidate",
+            artifact_schema_id="lean_proof.proof_candidate",
+            artifact_schema_version="v1",
+            source={
+                "kind": "task14_local_oracle_evidence",
+                "case_id": case_id,
+                "node_id": node_id,
+            },
+            metadata={"node_id": node_id, "case_id": case_id},
+            created_at=NOW,
+        )
+        checker_report = check_lean_proof(
+            LeanCheckerRequest(
+                request_id=f"task14_golden_checker_{case_id}_{_safe_id(node_id)}",
+                theorem_payload_ref=node_payload_ref,
+                proof_candidate_ref=proof_candidate_ref,
+                environment_ref=build_lean_environment_ref(environment_manifest),
+                checker_mode=LeanCheckerMode.CHILD_PROOF,
+                timeout_seconds=int(node_payload.resource_limits["timeout_seconds"]),
+                max_output_bytes=int(node_payload.resource_limits["max_output_bytes"]),
+                created_at=NOW,
+            ),
+            artifact_store=store,
+            environment_manifest=environment_manifest,
+        )
+        if checker_report.status != LeanCheckerStatus.ACCEPTED:
+            raise ValueError(f"Task 14 oracle proof checker rejected node: {node_id}")
+        if checker_report.report_ref is None or checker_report.proof_artifact_ref is None:
+            raise ValueError("Task 14 accepted node proof missing checker artifacts")
+        node_checker_report_refs[node_id] = checker_report.report_ref.to_dict()
+        node_proof_artifact_refs[node_id] = checker_report.proof_artifact_ref.to_dict()
+        node_proof_candidate_refs[node_id] = proof_candidate_ref.to_dict()
+        node_inputs.append(
+            LeanLemmaGraphProofInput(
+                node_id=node_id,
+                slot_key=slot_by_node[node_id],
+                node_payload_ref=node_payload_ref,
+                proof_candidate_ref=proof_candidate_ref,
+                checker_report=checker_report,
+                context_digest=str(node["context_digest"]),
+                theorem_payload_digest=node_payload.payload_digest or "",
+            )
+        )
+
+    merge_result = merge_lean_lemma_graph_proofs(
+        merge_plan=split_plan.merge_plan,
+        lemma_graph_certificate=certificate,
+        parent_theorem_payload_ref=parent_payload_ref,
+        node_proofs=node_inputs,
+        artifact_store=store,
+        environment_manifest=environment_manifest,
+        merge_unit_id=f"task14_golden_lemma_graph_merge_unit_{case_id}",
+        request_id=f"task14_golden_lemma_graph_merge_request_{case_id}",
+        created_at=NOW,
+    )
+    if not merge_result.accepted:
+        raise ValueError("Task 14 oracle merge/root checker rejected root")
+    if (
+        merge_result.merge_result_ref is None
+        or merge_result.root_checker_report.report_ref is None
+        or merge_result.root_proof_artifact_ref is None
+    ):
+        raise ValueError("Task 14 accepted merge missing root artifacts")
+
+    return {
+        "schema_version": "tokenshare.lean_task14_golden_evidence.v1",
+        "evidence_source": "local_oracle_lemma_graph",
+        "case_id": case_id,
+        "environment_digest": environment_manifest.environment_digest,
+        "oracle_package_digest": str(oracle_ref["content_hash"]),
+        "split_certificate_digest": certificate.certificate_digest,
+        "split_certificate_ref": certificate_ref.to_dict(),
+        "deterministic_split": "passed",
+        "child_proof_file_construction": "passed",
+        "checker_preflight": "passed",
+        "dependency_aware_merge": "passed",
+        "root_recheck": "passed",
+        "node_checker_report_refs": dict(sorted(node_checker_report_refs.items())),
+        "node_proof_candidate_refs": dict(sorted(node_proof_candidate_refs.items())),
+        "node_proof_artifact_refs": dict(sorted(node_proof_artifact_refs.items())),
+        "merge_result_ref": merge_result.merge_result_ref.to_dict(),
+        "root_checker_report_ref": (
+            merge_result.root_checker_report.report_ref.to_dict()
+        ),
+        "root_proof_artifact_ref": merge_result.root_proof_artifact_ref.to_dict(),
+        "provider_calls_made": 0,
+    }
+
+
 def _run_lean_lemma_graph_paper_case(
     *,
     case: JsonObject,
@@ -433,38 +683,20 @@ def _run_lean_lemma_graph_paper_case(
     output_root: str | Path,
     transport: Any | None,
     real_transport: bool,
-    ai_api_config: AIAPIExecutorConfig | None,
-    entry_id: str | None,
+    config: AIAPIExecutorConfig,
+    secret_values: tuple[str, ...],
+    validated_binding: ValidatedModelEndpointBinding | None,
     max_tokens: int,
     timeout_seconds: int,
 ) -> LeanPaperRunResult:
-    _validate_lean_lemma_graph_case_for_adapter(case)
-    if condition.domain != "lean_proof":
-        raise ValueError("condition domain must be lean_proof")
-    if condition.difficulty != case["difficulty"]:
-        raise ValueError("condition difficulty must match Lean case difficulty")
-    if condition.to_dict()["paper_difficulty"] != case["paper_difficulty"]:
-        raise ValueError("condition paper_difficulty must match Lean v2 case")
-    if condition.topic_family is not None and condition.topic_family != case["topic_family"]:
-        raise ValueError("condition topic_family must match Lean v2 case")
-    if real_transport and ai_api_config is None:
-        raise ValueError("real transport Lean paper runs require ai_api_config")
-    _validate_real_transport_mode(
-        real_transport=real_transport,
-        transport=transport,
-        ai_api_config=ai_api_config,
+    paper_metadata = _validated_condition_paper_metadata(
+        condition=condition,
+        case=case,
     )
-
     case_id = str(case["case_id"])
     root = Path(output_root)
     run_root = root / case_id
     store = ArtifactStore(run_root)
-    config = _prepare_config(
-        ai_api_config if ai_api_config is not None else _default_scripted_config(entry_id),
-        entry_id=entry_id,
-        max_tokens=max_tokens,
-        timeout_seconds=timeout_seconds,
-    )
     active_transport = transport
     if active_transport is None:
         active_transport = (
@@ -484,6 +716,7 @@ def _run_lean_lemma_graph_paper_case(
             run_root=run_root,
             store=store,
             real_transport=real_transport,
+            secret_values=secret_values,
         )
 
     root_node_id = str(case["merge_plan_shape"]["root_node_id"])
@@ -565,6 +798,7 @@ def _run_lean_lemma_graph_paper_case(
             node_payload_ref=node_payload_ref,
             store=store,
             config=config,
+            validated_binding=validated_binding,
             transport=active_transport,
             index=index,
             timeout_seconds=timeout_seconds,
@@ -576,6 +810,8 @@ def _run_lean_lemma_graph_paper_case(
         proof_input = node_result["proof_input"]
         if proof_input is not None:
             node_proofs.append(proof_input)
+        if node_result["model_identity_mismatch"]:
+            break
 
     merge_summary = _merge_lemma_graph_if_ready(
         split_plan=split_plan,
@@ -603,6 +839,7 @@ def _run_lean_lemma_graph_paper_case(
         store=store,
         real_transport=real_transport,
         transport_kind="ai_api" if real_transport else "scripted",
+        secret_values=secret_values,
     )
     run_evidence["lean_lemma_graph"] = _lemma_graph_run_metadata(
         case=case,
@@ -620,12 +857,7 @@ def _run_lean_lemma_graph_paper_case(
         task_id=f"paper_lean_{case_id}",
         domain="lean_proof",
         difficulty=str(case["difficulty"]),
-        paper_difficulty=str(case["paper_difficulty"]),
-        topic_family=str(case["topic_family"]),
-        topic_family_version=str(case["topic_family_version"]),
-        construction_rule_id=str(case["construction_rule_id"]),
-        oracle_package_group=str(case["oracle_package_group"]),
-        proof_assembly_shape=str(case["proof_assembly_shape"]),
+        **paper_metadata,
         root_status=task_status,
         accepted_validity=accepted_validity,
         failure_stage=failure_stage,
@@ -673,6 +905,7 @@ def _run_child_attempt(
     store: ArtifactStore,
     ledger: EventLedger,
     config: AIAPIExecutorConfig,
+    validated_binding: ValidatedModelEndpointBinding | None,
     transport: Any,
     index: int,
     timeout_seconds: int,
@@ -730,9 +963,30 @@ def _run_child_attempt(
         index=index,
         submission=submission,
     )
-    proof_candidate_ref = submission.candidate_output_refs.get(PROOF_CANDIDATE_OUTPUT_NAME)
+    model_execution_record, model_execution_record_ref = _save_model_execution_record(
+        store=store,
+        condition=condition,
+        binding=validated_binding,
+        prepared_config=config,
+        case_id=case_id,
+        request=request,
+        request_ref=request_ref,
+        submission=submission,
+        usage_ref=usage_ref,
+    )
+    model_identity_mismatch = (
+        model_execution_record is not None
+        and model_execution_record.identity_status == "model_identity_mismatch"
+    )
+    proof_candidate_ref = (
+        None
+        if model_identity_mismatch
+        else submission.candidate_output_refs.get(PROOF_CANDIDATE_OUTPUT_NAME)
+    )
     proof_result: LeanChildProofResult | None = None
     attempt_status = _attempt_status_from_submission(submission.result_kind)
+    if model_identity_mismatch:
+        attempt_status = PaperAttemptStatus.MODEL_IDENTITY_MISMATCH
     if proof_candidate_ref is not None:
         proof_result = check_lean_child_proof(
             child_logical_key=child_key,
@@ -756,6 +1010,17 @@ def _run_child_attempt(
         submission=submission,
         usage_ref=usage_ref,
         attempt_status=attempt_status,
+        planned_ai_unit_id=f"child_{index}",
+        paper_difficulty=condition.paper_difficulty,
+        topic_family=condition.topic_family,
+        topic_family_version=condition.topic_family_version,
+        construction_rule_id=condition.construction_rule_id,
+        oracle_package_group=condition.oracle_package_group,
+        proof_assembly_shape=condition.proof_assembly_shape,
+        model_execution_record_ref=model_execution_record_ref,
+        error_kind_override=(
+            "model_identity_mismatch" if model_identity_mismatch else None
+        ),
     )
     record = _child_record(
         child_key=child_key,
@@ -765,7 +1030,22 @@ def _run_child_attempt(
         proof_candidate_ref=proof_candidate_ref,
         proof_result=proof_result,
     )
-    return {"attempt": attempt, "record": record, "proof_result": proof_result}
+    record["model_execution_record_ref"] = (
+        model_execution_record_ref.to_dict()
+        if model_execution_record_ref is not None
+        else None
+    )
+    record["model_identity_status"] = (
+        model_execution_record.identity_status
+        if model_execution_record is not None
+        else None
+    )
+    return {
+        "attempt": attempt,
+        "record": record,
+        "proof_result": proof_result,
+        "model_identity_mismatch": model_identity_mismatch,
+    }
 
 
 def _run_lemma_graph_node_attempt(
@@ -777,6 +1057,7 @@ def _run_lemma_graph_node_attempt(
     node_payload_ref: ArtifactRef,
     store: ArtifactStore,
     config: AIAPIExecutorConfig,
+    validated_binding: ValidatedModelEndpointBinding | None,
     transport: Any,
     index: int,
     timeout_seconds: int,
@@ -816,8 +1097,12 @@ def _run_lemma_graph_node_attempt(
             "lemma_node_id": node_id,
             "slot_key": slot_key,
             "dependency_path": dependency_path,
-            "paper_difficulty": case["paper_difficulty"],
-            "topic_family": case["topic_family"],
+            "paper_difficulty": condition.paper_difficulty,
+            "topic_family": condition.topic_family,
+            "topic_family_version": condition.topic_family_version,
+            "construction_rule_id": condition.construction_rule_id,
+            "oracle_package_group": condition.oracle_package_group,
+            "proof_assembly_shape": condition.proof_assembly_shape,
             "construction_rule_id": case["construction_rule_id"],
             "oracle_package_group": case["oracle_package_group"],
             "proof_assembly_shape": case["proof_assembly_shape"],
@@ -848,9 +1133,30 @@ def _run_lemma_graph_node_attempt(
         index=index,
         submission=submission,
     )
-    proof_candidate_ref = submission.candidate_output_refs.get(PROOF_CANDIDATE_OUTPUT_NAME)
+    model_execution_record, model_execution_record_ref = _save_model_execution_record(
+        store=store,
+        condition=condition,
+        binding=validated_binding,
+        prepared_config=config,
+        case_id=case_id,
+        request=request,
+        request_ref=request_ref,
+        submission=submission,
+        usage_ref=usage_ref,
+    )
+    model_identity_mismatch = (
+        model_execution_record is not None
+        and model_execution_record.identity_status == "model_identity_mismatch"
+    )
+    proof_candidate_ref = (
+        None
+        if model_identity_mismatch
+        else submission.candidate_output_refs.get(PROOF_CANDIDATE_OUTPUT_NAME)
+    )
     checker_report = None
     attempt_status = _attempt_status_from_submission(submission.result_kind)
+    if model_identity_mismatch:
+        attempt_status = PaperAttemptStatus.MODEL_IDENTITY_MISMATCH
     if proof_candidate_ref is not None:
         checker_report = check_lean_proof(
             LeanCheckerRequest(
@@ -878,15 +1184,20 @@ def _run_lemma_graph_node_attempt(
         submission=submission,
         usage_ref=usage_ref,
         attempt_status=attempt_status,
-        paper_difficulty=str(case["paper_difficulty"]),
-        topic_family=str(case["topic_family"]),
-        topic_family_version=str(case["topic_family_version"]),
-        construction_rule_id=str(case["construction_rule_id"]),
-        oracle_package_group=str(case["oracle_package_group"]),
-        proof_assembly_shape=str(case["proof_assembly_shape"]),
+        planned_ai_unit_id=node_id,
+        paper_difficulty=condition.paper_difficulty,
+        topic_family=condition.topic_family,
+        topic_family_version=condition.topic_family_version,
+        construction_rule_id=condition.construction_rule_id,
+        oracle_package_group=condition.oracle_package_group,
+        proof_assembly_shape=condition.proof_assembly_shape,
         lemma_node_id=node_id,
         slot_key=slot_key,
         dependency_path=dependency_path,
+        model_execution_record_ref=model_execution_record_ref,
+        error_kind_override=(
+            "model_identity_mismatch" if model_identity_mismatch else None
+        ),
     )
     proof_input = None
     if (
@@ -915,7 +1226,22 @@ def _run_lemma_graph_node_attempt(
         proof_candidate_ref=proof_candidate_ref,
         checker_report=checker_report,
     )
-    return {"attempt": attempt, "record": record, "proof_input": proof_input}
+    record["model_execution_record_ref"] = (
+        model_execution_record_ref.to_dict()
+        if model_execution_record_ref is not None
+        else None
+    )
+    record["model_identity_status"] = (
+        model_execution_record.identity_status
+        if model_execution_record is not None
+        else None
+    )
+    return {
+        "attempt": attempt,
+        "record": record,
+        "proof_input": proof_input,
+        "model_identity_mismatch": model_identity_mismatch,
+    }
 
 
 def _build_lemma_node_execution_request(
@@ -958,8 +1284,8 @@ def _build_lemma_node_execution_request(
             "lemma_node_id": node_id,
             "slot_key": slot_key,
             "dependency_path": dependency_path,
-            "paper_difficulty": case["paper_difficulty"],
-            "topic_family": case["topic_family"],
+            "paper_difficulty": condition.paper_difficulty,
+            "topic_family": condition.topic_family,
         },
         created_at=NOW,
     )
@@ -996,6 +1322,7 @@ def _build_lemma_node_execution_request(
             node=node,
             slot_key=slot_key,
             dependency_path=dependency_path,
+            node_payload_body=node_payload.to_dict(),
         ).to_dict(),
         input_artifact_refs={"lemma_theorem_payload": node_payload_ref},
         output_contract=_proof_candidate_output_contract(),
@@ -1003,11 +1330,17 @@ def _build_lemma_node_execution_request(
         soft_hints={
             "temperature": 0.0,
             "paper_condition_id": condition.condition_id,
-            "paper_difficulty": case["paper_difficulty"],
-            "topic_family": case["topic_family"],
+            "paper_difficulty": condition.paper_difficulty,
+            "topic_family": condition.topic_family,
+            "topic_family_version": condition.topic_family_version,
+            "construction_rule_id": condition.construction_rule_id,
+            "oracle_package_group": condition.oracle_package_group,
+            "proof_assembly_shape": condition.proof_assembly_shape,
             "lemma_node_id": node_id,
             "slot_key": slot_key,
             "dependency_path": dependency_path,
+            "planned_ai_unit_id": node_id,
+            "paper_provider_attempt_index": 0,
         },
         environment_ref=_ai_environment_ref(seed=condition.seed + index),
         execution_instruction_ref=None,
@@ -1083,11 +1416,24 @@ def _build_child_execution_request(
             unit_id=unit_id,
             child_payload_ref=child_payload_ref,
             case=case,
+            child_logical_key=child_key,
+            child_payload_body=child_payload.to_dict(),
         ).to_dict(),
         input_artifact_refs={"child_theorem_payload": child_payload_ref},
         output_contract=_proof_candidate_output_contract(),
         hard_requirements={"executor": "ai_api", "provider_family": provider_family},
-        soft_hints={"temperature": 0.0, "paper_condition_id": condition.condition_id},
+        soft_hints={
+            "temperature": 0.0,
+            "paper_condition_id": condition.condition_id,
+            "planned_ai_unit_id": f"child_{index}",
+            "paper_provider_attempt_index": 0,
+            "paper_difficulty": condition.paper_difficulty,
+            "topic_family": condition.topic_family,
+            "topic_family_version": condition.topic_family_version,
+            "construction_rule_id": condition.construction_rule_id,
+            "oracle_package_group": condition.oracle_package_group,
+            "proof_assembly_shape": condition.proof_assembly_shape,
+        },
         environment_ref=_ai_environment_ref(seed=condition.seed + index),
         execution_instruction_ref=None,
         prompt_package_ref=prompt_ref,
@@ -1102,6 +1448,8 @@ def _child_task_unit(
     unit_id: str,
     child_payload_ref: ArtifactRef,
     case: JsonObject,
+    child_logical_key: str,
+    child_payload_body: JsonObject,
 ) -> TaskUnit:
     return TaskUnit(
         unit_id=unit_id,
@@ -1116,11 +1464,11 @@ def _child_task_unit(
         weight=1.0,
         budget_limit=None,
         deadline=None,
-        plugin_payload={
-            "schema_version": "lean_proof.subgoal_plugin_payload.v1",
-            "case_id": case["case_id"],
-            "validator_policy_id": CHECKER_VALIDATOR_POLICY_ID,
-        },
+        plugin_payload=lean_simple_plugin_payload(
+            case=case,
+            child_logical_key=child_logical_key,
+            child_payload_body=child_payload_body,
+        ),
         metadata={"paper_lean": True, "case_id": case["case_id"]},
         created_at=NOW,
         updated_at=NOW,
@@ -1157,11 +1505,15 @@ def _prepare_config(
     config: AIAPIExecutorConfig,
     *,
     entry_id: str | None,
+    validated_binding: ValidatedModelEndpointBinding | None = None,
     max_tokens: int,
     timeout_seconds: int,
 ) -> AIAPIExecutorConfig:
-    entries = list(config.entries)
-    if entry_id is not None:
+    if validated_binding is not None:
+        entries = [validated_binding.selected_entry]
+    else:
+        entries = list(config.entries)
+    if validated_binding is None and entry_id is not None:
         entries = [entry for entry in entries if entry.entry_id == entry_id]
         if not entries:
             raise ValueError(f"missing ai api entry id: {entry_id}")
@@ -1289,14 +1641,48 @@ def _validate_lean_case_for_adapter(case: JsonObject) -> None:
         raise ValueError("Lean paper adapter requires at least one expected child")
 
 
+def _validated_condition_paper_metadata(
+    *,
+    condition: PaperExperimentCondition,
+    case: JsonObject,
+) -> JsonObject:
+    """只从已冻结 condition 传播论文分层元数据，并与 catalog case 双向核对。"""
+
+    metadata: JsonObject = {}
+    for field_name in (
+        "paper_difficulty",
+        "topic_family",
+        "topic_family_version",
+        "construction_rule_id",
+        "oracle_package_group",
+        "proof_assembly_shape",
+    ):
+        condition_value = getattr(condition, field_name)
+        case_value = case.get(field_name)
+        if condition_value != case_value:
+            raise ValueError(
+                f"condition {field_name} must match frozen Lean case metadata"
+            )
+        metadata[field_name] = condition_value
+    if not isinstance(metadata["paper_difficulty"], str) or not metadata[
+        "paper_difficulty"
+    ]:
+        raise ValueError("Lean paper condition requires paper_difficulty")
+    if not isinstance(metadata["topic_family"], str) or not metadata["topic_family"]:
+        raise ValueError("Lean paper condition requires topic_family")
+    return metadata
+
+
 def _validate_lean_lemma_graph_case_for_adapter(case: JsonObject) -> None:
     if case.get("schema_version") != LEAN_V2_SCHEMA_VERSION:
         raise ValueError("Lean lemma graph paper case schema_version mismatch")
     if case.get("domain") != "lean_proof":
         raise ValueError("Lean lemma graph paper case domain must be lean_proof")
     paper_difficulty = case.get("paper_difficulty")
-    if paper_difficulty not in {"medium_lemma_dag", "hard_frontier"}:
-        raise ValueError("Lean lemma graph adapter requires medium_lemma_dag or hard_frontier")
+    if paper_difficulty not in {"simple", "medium_lemma_dag", "hard_frontier"}:
+        raise ValueError(
+            "Lean lemma graph adapter requires simple, medium_lemma_dag, or hard_frontier"
+        )
     for field_name in (
         "case_id",
         "difficulty",
@@ -1316,11 +1702,13 @@ def _validate_lean_lemma_graph_case_for_adapter(case: JsonObject) -> None:
     nodes = case.get("lemma_graph", {}).get("nodes")
     if not isinstance(nodes, list) or not nodes:
         raise ValueError("Lean lemma graph case requires lemma_graph.nodes")
-    if paper_difficulty == "medium_lemma_dag":
+    if paper_difficulty in {"simple", "medium_lemma_dag"}:
         if case.get("preflight_status") != "passed":
-            raise ValueError("medium_lemma_dag requires passed preflight_status")
+            raise ValueError(f"{paper_difficulty} requires passed preflight_status")
         if not isinstance(case.get("oracle_proof_package_ref"), dict):
-            raise ValueError("medium_lemma_dag requires oracle proof package metadata")
+            raise ValueError(
+                f"{paper_difficulty} requires oracle proof package metadata"
+            )
     if (
         paper_difficulty == "hard_frontier"
         and case.get("oracle_proof_package_ref") is None
@@ -1608,6 +1996,7 @@ def _lemma_node_task_unit(
     node: JsonObject,
     slot_key: str,
     dependency_path: list[str],
+    node_payload_body: JsonObject,
 ) -> TaskUnit:
     node_id = str(node["node_id"])
     return TaskUnit(
@@ -1623,32 +2012,13 @@ def _lemma_node_task_unit(
         weight=1.0,
         budget_limit=None,
         deadline=None,
-        plugin_payload={
-            "schema_version": "lean_proof.lemma_graph_node_plugin_payload.v2",
-            "summary": {
-                "case_id": case["case_id"],
-                "node_id": node_id,
-                "node_kind": node["node_kind"],
-                "depth": node["depth"],
-                "root_node_id": case["merge_plan_shape"]["root_node_id"],
-                "slot_key": slot_key,
-                "dependency_path": dependency_path,
-                "paper_difficulty": case["paper_difficulty"],
-                "topic_family": case["topic_family"],
-                "topic_family_version": case["topic_family_version"],
-                "construction_rule_id": case["construction_rule_id"],
-                "oracle_package_group": case["oracle_package_group"],
-                "proof_assembly_shape": case["proof_assembly_shape"],
-            },
-            "validation_requirements": {
-                "checker_required": True,
-                "environment_ref_required": True,
-                "context_digest_required": True,
-                "lemma_graph_certificate_node_required": True,
-                "dependency_aware_slot_integrity_required": True,
-                "ai_decomposition_forbidden": True,
-            },
-        },
+        plugin_payload=lean_lemma_graph_plugin_payload(
+            case=case,
+            node=node,
+            slot_key=slot_key,
+            dependency_path=dependency_path,
+            node_payload_body=node_payload_body,
+        ),
         metadata={
             "paper_lean": True,
             "case_id": case["case_id"],
@@ -1843,11 +2213,17 @@ def _blocked_lemma_graph_frontier_result(
     run_root: Path,
     store: ArtifactStore,
     real_transport: bool,
+    secret_values: tuple[str, ...],
 ) -> LeanPaperRunResult:
+    paper_metadata = _validated_condition_paper_metadata(
+        condition=condition,
+        case=case,
+    )
     run_evidence = _run_evidence(
         store=store,
         real_transport=real_transport,
         transport_kind="ai_api" if real_transport else "scripted",
+        secret_values=secret_values,
     )
     run_evidence["lean_lemma_graph"] = {
         "schema_version": "tokenshare.paper_lean_lemma_graph_run_metadata.v1",
@@ -1871,12 +2247,7 @@ def _blocked_lemma_graph_frontier_result(
         task_id=f"paper_lean_{case['case_id']}",
         domain="lean_proof",
         difficulty=str(case["difficulty"]),
-        paper_difficulty=str(case["paper_difficulty"]),
-        topic_family=str(case["topic_family"]),
-        topic_family_version=str(case["topic_family_version"]),
-        construction_rule_id=str(case["construction_rule_id"]),
-        oracle_package_group=str(case["oracle_package_group"]),
-        proof_assembly_shape=str(case["proof_assembly_shape"]),
+        **paper_metadata,
         root_status=PaperTaskStatus.BLOCKED,
         accepted_validity=False,
         failure_stage=PaperFailureStage.CATALOG,
@@ -1966,6 +2337,72 @@ def _save_usage_artifact(
     )
 
 
+def _save_model_execution_record(
+    *,
+    store: ArtifactStore,
+    condition: PaperExperimentCondition,
+    binding: ValidatedModelEndpointBinding | None,
+    prepared_config: AIAPIExecutorConfig,
+    case_id: str,
+    request: ExecutionRequest,
+    request_ref: ArtifactRef,
+    submission,
+    usage_ref: ArtifactRef,
+):
+    if binding is None:
+        return None, None
+    if submission.provenance_ref is None:
+        raise ValueError("fixed-entry submission requires provenance_ref")
+    provenance = _read_json_ref(store, submission.provenance_ref)
+    raw_output = (
+        _read_json_ref(store, submission.raw_output_ref)
+        if submission.raw_output_ref is not None
+        else None
+    )
+    record = validate_fixed_entry_submission_identity(
+        expected_identity=binding.identity,
+        prepared_execution_config_digest=prepared_config.config_digest,
+        condition_id=condition.condition_id,
+        repeat_id=condition.repeat_id,
+        run_id=f"{condition.condition_id}_{case_id}",
+        task_id=request.task_id,
+        unit_id=request.unit_id,
+        attempt_id=request.attempt_id,
+        request=request.to_dict(),
+        request_ref=request_ref.to_dict(),
+        provenance=provenance,
+        provenance_ref=submission.provenance_ref.to_dict(),
+        raw_output=raw_output,
+        raw_output_ref=(
+            submission.raw_output_ref.to_dict()
+            if submission.raw_output_ref is not None
+            else None
+        ),
+        usage_ref=usage_ref.to_dict(),
+        created_at=NOW,
+    )
+    record_ref = store.save_json(
+        record.to_dict(),
+        artifact_id=f"paper_model_execution_{submission.submission_id}",
+        artifact_type="PaperModelExecutionRecord",
+        artifact_schema_id="tokenshare.paper_model_execution_record",
+        artifact_schema_version="v2",
+        source={
+            "kind": "lean_paper_adapter",
+            "condition_id": condition.condition_id,
+            "request_id": request.request_id,
+        },
+        metadata={
+            "model_endpoint_identity_digest": (
+                binding.identity.model_endpoint_identity_digest
+            ),
+            "identity_status": record.identity_status,
+        },
+        created_at=NOW,
+    )
+    return record, record_ref
+
+
 def _paper_attempt_result(
     *,
     store: ArtifactStore,
@@ -1977,6 +2414,7 @@ def _paper_attempt_result(
     submission,
     usage_ref: ArtifactRef,
     attempt_status: PaperAttemptStatus,
+    planned_ai_unit_id: str,
     paper_difficulty: str | None = None,
     topic_family: str | None = None,
     topic_family_version: str | None = None,
@@ -1986,6 +2424,8 @@ def _paper_attempt_result(
     lemma_node_id: str | None = None,
     slot_key: str | None = None,
     dependency_path: list[str] | None = None,
+    model_execution_record_ref: ArtifactRef | None = None,
+    error_kind_override: str | None = None,
 ) -> PaperAttemptResult:
     usage = dict(submission.usage_summary or {})
     provenance_attempt = _last_provenance_attempt(store=store, submission=submission)
@@ -1998,6 +2438,7 @@ def _paper_attempt_result(
         run_id=f"{condition.condition_id}_{case_id}",
         task_id=request.task_id,
         unit_id=request.unit_id,
+        planned_ai_unit_id=planned_ai_unit_id,
         attempt_id=request.attempt_id,
         worker_id=f"worker_lean_paper_{index}",
         provider_attempt_index=0,
@@ -2030,9 +2471,18 @@ def _paper_attempt_result(
         completion_tokens=completion_tokens,
         total_tokens=total_tokens,
         cost_estimate=_float_metric(usage.get("cost_estimate")),
-        error_kind=(submission.error or {}).get("kind") if submission.error else None,
+        error_kind=(
+            error_kind_override
+            if error_kind_override is not None
+            else ((submission.error or {}).get("kind") if submission.error else None)
+        ),
         fault_injection_ref=None,
         paper_eligible=False,
+        model_execution_record_ref=(
+            model_execution_record_ref.to_dict()
+            if model_execution_record_ref is not None
+            else None
+        ),
         paper_difficulty=paper_difficulty,
         topic_family=topic_family,
         topic_family_version=topic_family_version,
@@ -2163,11 +2613,17 @@ def _blocked_split_result(
     store: ArtifactStore,
     split_summary: JsonObject,
     real_transport: bool,
+    secret_values: tuple[str, ...],
 ) -> LeanPaperRunResult:
+    paper_metadata = _validated_condition_paper_metadata(
+        condition=condition,
+        case=case,
+    )
     run_evidence = _run_evidence(
         store=store,
         real_transport=real_transport,
         transport_kind="ai_api" if real_transport else "scripted",
+        secret_values=secret_values,
     )
     eligibility = evaluate_paper_eligibility(attempts=[], run_evidence=run_evidence)
     task_result = PaperTaskResult(
@@ -2176,6 +2632,7 @@ def _blocked_split_result(
         task_id=f"paper_lean_{case['case_id']}",
         domain="lean_proof",
         difficulty=str(case["difficulty"]),
+        **paper_metadata,
         root_status=PaperTaskStatus.BLOCKED,
         accepted_validity=False,
         failure_stage=PaperFailureStage.SPLIT,
@@ -2230,6 +2687,7 @@ def _run_evidence(
     store: ArtifactStore,
     real_transport: bool,
     transport_kind: str,
+    secret_values: tuple[str, ...],
 ) -> JsonObject:
     transport_ref = store.save_json(
         {
@@ -2250,16 +2708,22 @@ def _run_evidence(
         metadata={},
         created_at=NOW,
     )
-    scanned_ids = _artifact_ids(store)
-    secret_scan_ref = store.save_json(
-        {
+    if secret_values:
+        secret_scan = scan_artifact_store_for_secrets(
+            store,
+            secret_values=secret_values,
+        )
+    else:
+        secret_scan = {
             "schema_version": "tokenshare.paper_secret_scan_report.v1",
             "status": "pending",
             "leak_count": 0,
             "secret_checked_count": 0,
-            "scanned_artifact_ids": scanned_ids,
-            "scan_scope": "not_wired_in_lean_adapter_slice",
-        },
+            "scanned_artifact_ids": _artifact_ids(store),
+            "scan_scope": "scripted_transport_not_paper_eligible",
+        }
+    secret_scan_ref = store.save_json(
+        secret_scan,
         artifact_id="paper_secret_scan_report",
         artifact_type="SecretScanReport",
         artifact_schema_id="tokenshare.paper_secret_scan_report",
@@ -2269,7 +2733,6 @@ def _run_evidence(
         created_at=NOW,
     )
     artifact_manifests = _artifact_manifests(store)
-    scanned_ids = _artifact_ids(store)
     return {
         "schema_version": "tokenshare.paper_run_evidence.v1",
         "transport_evidence": {
@@ -2284,16 +2747,19 @@ def _run_evidence(
             "evidence_ref": transport_ref.to_dict(),
         },
         "secret_scan_report": {
-            "schema_version": "tokenshare.paper_secret_scan_report.v1",
-            "status": "pending",
-            "leak_count": 0,
-            "secret_checked_count": 0,
-            "scanned_artifact_ids": scanned_ids,
-            "scan_scope": "not_wired_in_lean_adapter_slice",
+            **secret_scan,
             "report_ref": secret_scan_ref.to_dict(),
         },
         "artifact_manifests": artifact_manifests,
     }
+
+
+def _real_secret_values(config: AIAPIExecutorConfig) -> tuple[str, ...]:
+    return tuple(
+        dict.fromkeys(
+            entry.resolve_api_key() for entry in config.entries if entry.enabled
+        )
+    )
 
 
 def _attempt_status_from_submission(result_kind: str) -> PaperAttemptStatus:
@@ -2312,6 +2778,11 @@ def _task_failure_from_child_evidence(
     child_records: list[JsonObject],
     merge_summary: JsonObject,
 ) -> tuple[PaperFailureStage, PaperFailureKind]:
+    if any(
+        attempt.attempt_status == PaperAttemptStatus.MODEL_IDENTITY_MISMATCH
+        for attempt in attempts
+    ):
+        return PaperFailureStage.AUDIT, PaperFailureKind.MODEL_IDENTITY_MISMATCH
     if any(attempt.attempt_status == PaperAttemptStatus.PARSE_FAILED for attempt in attempts):
         return PaperFailureStage.PARSE, PaperFailureKind.PARSE_FAILURE
     if any(attempt.attempt_status == PaperAttemptStatus.PROVIDER_ERROR for attempt in attempts):
@@ -2333,7 +2804,12 @@ def _task_artifact_refs(
 ) -> list[JsonObject]:
     refs: list[JsonObject] = []
     for attempt in attempts:
-        for ref in (attempt.raw_output_ref, attempt.parsed_output_ref, attempt.parse_failure_ref):
+        for ref in (
+            attempt.raw_output_ref,
+            attempt.parsed_output_ref,
+            attempt.parse_failure_ref,
+            attempt.model_execution_record_ref,
+        ):
             if ref is not None:
                 refs.append(ref)
     for record in child_records:

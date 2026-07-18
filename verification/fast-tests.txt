@@ -1,0 +1,11 @@
+# 默认启动 smoke/regression suite；完整验证使用 init.ps1 -Full / init.sh --full。
+tests/core
+tests/storage
+tests/executors
+tests/plugins/factorization
+tests/test_package_layout.py
+tests/test_init_verification_profiles.py
+tests/plugins/lean_proof/test_lean_descriptor_and_schemas.py
+tests/plugins/lean_proof/test_lean_environment.py
+tests/experiments/test_paper_experiment_contracts.py
+tests/experiments/test_paper_models.py

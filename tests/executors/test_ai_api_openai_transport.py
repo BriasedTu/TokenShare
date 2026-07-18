@@ -1,3 +1,5 @@
+import pytest
+
 from tests.phase7_fixtures import FakeProviderResponse, make_config_dict
 from tokenshare.executors.ai_api_config import load_ai_api_config
 from tokenshare.executors.ai_api_transport import (
@@ -82,10 +84,41 @@ def test_parse_openai_response_extracts_content_usage_and_resolved_model() -> No
     parsed = parse_openai_response(response)
 
     assert parsed.provider_response_id == "chatcmpl-openai-1"
-    assert parsed.model == "gpt-5.6-sol-2026-07-01"
+    assert parsed.resolved_model == "gpt-5.6-sol-2026-07-01"
+    assert parsed.response_model_status == "present"
     assert parsed.content_text == '{"answer":"ok"}'
     assert parsed.finish_reason == "stop"
     assert parsed.usage["total_tokens"] == 18
+
+
+@pytest.mark.parametrize(
+    ("response_model", "include_model", "expected_resolved", "expected_status"),
+    [
+        ("gpt-5.6-sol-wrong", True, "gpt-5.6-sol-wrong", "present"),
+        (None, False, None, "missing"),
+        (None, True, None, "null"),
+        ("", True, None, "empty"),
+        ({"unexpected": "object"}, True, None, "invalid_type"),
+    ],
+)
+def test_parse_openai_response_classifies_response_model_without_fallback(
+    response_model,
+    include_model: bool,
+    expected_resolved: str | None,
+    expected_status: str,
+) -> None:
+    body = {
+        "id": "openai-response-model-shape",
+        "choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}],
+    }
+    if include_model:
+        body["model"] = response_model
+
+    parsed = parse_openai_response(FakeProviderResponse(status_code=200, body=body))
+
+    assert parsed.resolved_model == expected_resolved
+    assert parsed.response_model_status == expected_status
+    assert parsed.raw_response_json == body
 
 
 def test_parse_openai_response_maps_rate_limit_error() -> None:

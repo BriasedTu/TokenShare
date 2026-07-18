@@ -186,12 +186,15 @@ sequenceDiagram
 
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| `schema_version` | string | 是 | `phase7.raw_model_output.v1`。 |
+| `schema_version` | string | 是 | 新写入使用 `phase7.raw_model_output.v2`。 |
 | `submission_id` | string | 是 | 对应 submission。 |
 | `request_id` | string | 是 | 对应 request。 |
-| `provider_family` | string | 是 | `siliconflow`。 |
+| `provider_family` | string | 是 | 来自已校验 config，例如 `siliconflow` / `openai`。 |
 | `entry_id` | string | 是 | 实际成功返回的 entry；全部失败时可为空并由 error artifact 描述。 |
-| `model` | string | 是 | provider response model 或 selected model。 |
+| `configured_model` | string | 是 | 已校验 selected entry model；只表示本地配置事实。 |
+| `requested_model` | string | 是 | 实际 provider request body 的 `model`；只表示请求事实。 |
+| `resolved_model` | string/null | 是 | 仅当 provider response `model` 是非空字符串时保存原值；否则必须为 `null`，禁止从 config/request 回填。 |
+| `response_model_status` | string | 是 | `present`、`missing`、`null`、`empty` 或 `invalid_type`。 |
 | `provider_response_id` | string/null | 否 | SiliconFlow response `id`。 |
 | `content_text` | string/null | 否 | assistant message content。 |
 | `raw_response_json` | object/null | 否 | provider response body 的无 secret 版本。 |
@@ -199,15 +202,17 @@ sequenceDiagram
 | `usage` | object/null | 否 | prompt/completion/total tokens。 |
 | `created_at` | string | 是 | UTC ISO 8601。 |
 
+历史 `phase7.raw_model_output.v1` 的外层 `model` 曾允许“provider response model 或 selected model”，因此无法证明值的信任来源。已有 v1 artifact 不重写；新 reader 必须忽略 v1 外层 `model` 作为 observed evidence，只能从历史 `raw_response_json.model` 保守恢复 resolved model。v2 删除该通用字段，未知 schema 或 persisted resolved/status 与原始 response 不一致时 fail closed。展示层如需要 fallback，必须生成独立 presentation 值，不能写回 raw audit evidence。
+
 ### 9.2 `AIProviderCallProvenance`
 
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| `schema_version` | string | 是 | `phase7.ai_provider_call_provenance.v1`。 |
+| `schema_version` | string | 是 | 新写入使用 `phase7.ai_provider_call_provenance.v2`。 |
 | `submission_id` | string | 是 | 对应 submission。 |
 | `config_digest` | string | 是 | 无 secret 配置 canonical digest。 |
 | `selection_record` | object | 是 | eligible、selected、seed digest 和 selection index。 |
-| `attempts` | list[object] | 是 | 每个 provider attempt 的开始/结束时间、entry、model、status、latency、HTTP code、error kind、usage 摘要和 response id。 |
+| `attempts` | list[object] | 是 | 每个 provider attempt 的开始/结束时间、entry、configured model、status、latency、HTTP code、error kind、usage 摘要、response id 和安全 `provider_request_identity.v2`。request identity 分开保存 config entry 的 `configured_model` 与实际 request body 的 `requested_model`。 |
 | `final_entry_id` | string/null | 否 | 最终成功 entry。 |
 | `final_result_kind` | string | 是 | 与 submission result kind 对齐。 |
 | `secret_redaction` | object | 是 | 记录哪些字段已禁止持久化，例如 `authorization_header=false`、`api_key_value=false`。 |
@@ -243,11 +248,13 @@ Phase 7 复用现有 `ExecutionSubmission`，不新增 event type。
 
 SiliconFlow response 提供 token usage；成本估算由本地配置的 pricing snapshot 计算。
 
-`usage_summary` 建议字段：
+`usage_summary` 建议字段（其中兼容 `model` 只表示 configured/display model，不得用作 response identity）：
 
 - `provider_family`
 - `entry_id`
 - `model`
+- `configured_model`
+- `requested_model`
 - `prompt_tokens`
 - `completion_tokens`
 - `total_tokens`
@@ -290,8 +297,10 @@ Phase 7 不实现完整 replay engine，但设计必须保证后续 Phase 9 可�
 
 - Replay 读取 `EXECUTION_REQUEST_RECORDED`、`EXECUTION_SUBMISSION_RECORDED`、`ATTEMPT_STATE_CHANGED` 和 artifact refs。
 - Replay 不实例化 `AIAPIExecutor`，不读取 API key env，不访问 SiliconFlow。
+- Replay 不读取当前 config 来补写 provider response identity；requested/configured model 不能替代 resolved model。
 - 缺失 `RawModelOutput`、`ParsedModelOutput`、`ParseFailureReport`、`AIProviderCallProvenance` 或 `ExecutionSubmission` artifact 时，replay 必须失败。
 - 非确定性随机选择、provider failover 顺序和实际响应只以已保存 provenance 为历史事实。
+- schema-aware reader 对 v1 只从 `raw_response_json.model` 保守恢复 observed identity，对 v2 校验 configured/requested/resolved/status 与原始 response 一致；历史 artifact 不重写。
 - repair 或 rerun 必须创建新的 run、lease、attempt、submission 和 artifact 身份。
 
 ## 15. SQLite projection

@@ -260,6 +260,143 @@ def estimated_ai_units_for_case(case: JsonObject) -> int:
     return max(1, int(case.get("expected_child_count", 1)))
 
 
+def lean_case_semantic_fingerprint(case: JsonObject) -> str:
+    """Return a digest for theorem/DAG semantics, ignoring catalog identity fields."""
+
+    return digest_json(lean_case_semantic_fingerprint_body(case))
+
+
+def lean_case_semantic_fingerprint_body(case: JsonObject) -> JsonObject:
+    schema_version = str(case.get("schema_version") or "")
+    if schema_version == "tokenshare.paper_lean_case.v1":
+        return {
+            "schema_version": schema_version,
+            "topic_family": case.get("topic_family"),
+            "topic_family_version": case.get("topic_family_version"),
+            "theorem_payload": _semantic_theorem_payload(case["theorem_payload"]),
+            "expected_split_kind": case["expected_split_kind"],
+            "expected_child_count": case["expected_child_count"],
+            "minimum_proof_steps": case["minimum_proof_steps"],
+            "context_item_count": case["context_item_count"],
+        }
+    if schema_version != LEAN_V2_SCHEMA_VERSION:
+        raise ValueError("Lean semantic fingerprint requires a Lean catalog case")
+
+    nodes = [
+        _semantic_lemma_node(node)
+        for node in case["lemma_graph"]["nodes"]
+    ]
+    node_semantics_by_id = {
+        str(node["node_id"]): _semantic_lemma_node(node)
+        for node in case["lemma_graph"]["nodes"]
+    }
+    return {
+        "schema_version": schema_version,
+        "topic_family": case["topic_family"],
+        "topic_family_version": case["topic_family_version"],
+        "proof_assembly_shape": case["proof_assembly_shape"],
+        "expected_split_kind": case.get("expected_split_kind"),
+        "root_theorem_payload": _semantic_theorem_payload(
+            case["root_theorem_payload"]
+        ),
+        "lemma_graph_nodes": sorted(
+            nodes,
+            key=lambda item: (
+                item["depth"],
+                item["node_kind"],
+                item["statement"],
+                json.dumps(item["theorem_payload"], ensure_ascii=False, sort_keys=True),
+            ),
+        ),
+        "dependency_edges": sorted(
+            (
+                {
+                    "source": node_semantics_by_id[str(edge["source_node_id"])],
+                    "target": node_semantics_by_id[str(edge["target_node_id"])],
+                }
+                for edge in case["dependency_edges"]
+            ),
+            key=lambda item: digest_json(item),
+        ),
+        "expected_depth": case["expected_depth"],
+        "expected_leaf_count": case["expected_leaf_count"],
+        "expected_ai_unit_count": case["expected_ai_unit_count"],
+        "merge_plan_shape": _semantic_merge_plan_shape(
+            case,
+            node_semantics_by_id=node_semantics_by_id,
+        ),
+        "oracle_package_group": case["oracle_package_group"],
+    }
+
+
+def _semantic_theorem_payload(payload: JsonObject) -> JsonObject:
+    return {
+        "schema_version": payload["schema_version"],
+        "imports": list(payload.get("imports", [])),
+        "namespace": payload.get("namespace"),
+        "open_namespaces": list(payload.get("open_namespaces", [])),
+        "parameters_source": payload["parameters_source"],
+        "statement_source": payload["statement_source"],
+        "decomposition_policy": _semantic_dict(
+            dict(payload.get("decomposition_policy", {}))
+        ),
+    }
+
+
+def _semantic_lemma_node(node: JsonObject) -> JsonObject:
+    return {
+        "node_kind": node["node_kind"],
+        "depth": node["depth"],
+        "statement": node["statement"],
+        "theorem_payload": _semantic_theorem_payload(node["theorem_payload"]),
+    }
+
+
+def _semantic_merge_plan_shape(
+    case: JsonObject,
+    *,
+    node_semantics_by_id: dict[str, JsonObject],
+) -> JsonObject:
+    merge_plan = case["merge_plan_shape"]
+    return {
+        "kind": merge_plan.get("kind"),
+        "required_slots": [
+            node_semantics_by_id[str(node_id)]
+            for node_id in sorted(str(item) for item in merge_plan.get("required_slots", []))
+        ],
+        "dependency_order": [
+            node_semantics_by_id[str(node_id)]
+            for node_id in merge_plan.get("dependency_order", [])
+        ],
+        "root_node": node_semantics_by_id[str(merge_plan.get("root_node_id"))],
+    }
+
+
+def _semantic_dict(value: JsonObject) -> JsonObject:
+    identity_keys = {
+        "case_id",
+        "node_id",
+        "theorem_name",
+        "theorem_id",
+        "package_id",
+        "construction_seed",
+    }
+    result: JsonObject = {}
+    for key, item in value.items():
+        if key in identity_keys:
+            continue
+        if isinstance(item, dict):
+            result[key] = _semantic_dict(item)
+        elif isinstance(item, list):
+            result[key] = [
+                _semantic_dict(element) if isinstance(element, dict) else element
+                for element in item
+            ]
+        else:
+            result[key] = item
+    return result
+
+
 def _with_factorization_paper_difficulty(case: JsonObject) -> JsonObject:
     enriched = dict(case)
     enriched.setdefault("paper_difficulty", enriched.get("difficulty"))
@@ -511,17 +648,20 @@ def _validate_lean_lemma_graph_case(case: JsonObject) -> None:
         raise ValueError("merge_plan_shape must be a non-empty object")
     preflight_status = str(case["preflight_status"])
     oracle_ref = case.get("oracle_proof_package_ref")
+    if case["paper_difficulty"] in {"simple", "medium_lemma_dag"}:
+        if not isinstance(oracle_ref, dict) or not oracle_ref:
+            raise ValueError(
+                f"{case['paper_difficulty']} requires oracle_proof_package_ref"
+            )
+        if preflight_status != "passed":
+            raise ValueError(
+                f"{case['paper_difficulty']} requires passed preflight_status"
+            )
+        if not case.get("environment_digest"):
+            raise ValueError(f"{case['paper_difficulty']} requires environment_digest")
     if case["paper_difficulty"] == "medium_lemma_dag":
         if not isinstance(case.get("dependency_edges"), list) or not case["dependency_edges"]:
             raise ValueError("medium_lemma_dag requires dependency_edges")
-        if not isinstance(oracle_ref, dict) or not oracle_ref:
-            raise ValueError("medium_lemma_dag requires oracle_proof_package_ref")
-        if not preflight_status:
-            raise ValueError("medium_lemma_dag requires preflight_status")
-        if preflight_status != "passed":
-            raise ValueError("medium_lemma_dag requires passed preflight_status")
-        if not case.get("environment_digest"):
-            raise ValueError("medium_lemma_dag requires environment_digest")
     if case["paper_difficulty"] == "hard_frontier" and not oracle_ref:
         if preflight_status not in {"structured_blocked", "frontier_stress"}:
             raise ValueError(

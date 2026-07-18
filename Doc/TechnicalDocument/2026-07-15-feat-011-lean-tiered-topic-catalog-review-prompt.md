@@ -2,6 +2,7 @@
 
 > 状态：给后续 reviewer / agent 的复核 prompt。本文不是实现结果，不表示当前 Lean plugin 已支持这些题型，也不替代 `tokenshare_latest_real_plugin_experiment_design.md`。
 > 日期：2026-07-15
+> 2026-07-18 Task 14 二次审核备注：本文下方关于“只有一个 checker-backed medium_lemma_dag golden fixture”和“还没有完整 recursive DAG adapter execution / proof-file assembly / dependency-aware merge/root recheck”的描述是 2026-07-15 当时的复核背景，已被 Task 14 当前代码、catalog、tests、`benchmarks/paper/lean_task14_3x3_readiness.v1.json`、`progress.md` 和 Phase 8 code map 更新覆盖。保留这些句子只作为历史 prompt provenance，不应作为当前实现事实。
 
 ## 使用方式
 

@@ -13,6 +13,12 @@ from tokenshare.executors.ai_api_config import (
     AIAPIProviderEntry,
     load_ai_api_config,
 )
+from tokenshare.experiments.paper_model_identity import (
+    PaperModelEndpointIdentity,
+    PaperModelIdentityMismatch,
+    build_model_endpoint_identity,
+    validate_fixed_entry_config_identity,
+)
 from tokenshare.experiments.paper_models import JsonObject, digest_json
 
 
@@ -163,7 +169,8 @@ def build_model_endpoint_cohort_preflight(
         provider_model_id = str(expected_member["provider_model_id"])
         reasoning_profile_id = str(expected_member["reasoning_profile_id"])
         config = provider_configs.get(provider_config_id)
-        selected_entry = None
+        selected_entry: AIAPIProviderEntry | None = None
+        endpoint_identity: PaperModelEndpointIdentity | None = None
         blocked_reasons: list[str] = []
         if str(member.get("provider_family") or "") != provider_family:
             blocked_reasons.append("cohort_provider_family_mismatch")
@@ -174,18 +181,33 @@ def build_model_endpoint_cohort_preflight(
         if config is None:
             missing_provider_configs.append(provider_config_id)
             blocked_reasons.append("missing_provider_config")
-        elif config.provider_family != provider_family:
-            blocked_reasons.append("provider_family_mismatch")
         else:
-            selected_entry = _enabled_entry_by_id(config, entry_id)
+            try:
+                endpoint_identity = build_model_endpoint_identity(
+                    model_cohort_id=PAPER_MODEL_ENDPOINT_COHORT_ID,
+                    model_cohort_digest=cohort_digest,
+                    cohort_member_id=member_id,
+                    provider_config_id=provider_config_id,
+                    selected_entry_id=entry_id,
+                    expected_provider_family=provider_family,
+                    expected_provider_model_id=provider_model_id,
+                    expected_reasoning_profile_id=reasoning_profile_id,
+                    source_config=config,
+                )
+                binding = validate_fixed_entry_config_identity(
+                    expected_identity=endpoint_identity,
+                    provider_config_id=provider_config_id,
+                    source_config=config,
+                )
+                selected_entry = binding.selected_entry
+            except PaperModelIdentityMismatch as exc:
+                blocked_reasons.extend(exc.reasons)
+                selected_entry = _entry_by_id(config, entry_id)
             if selected_entry is None:
                 missing_entry_ids.append(entry_id)
-                blocked_reasons.append("missing_model_entry")
-            else:
-                if selected_entry.model != provider_model_id:
-                    blocked_reasons.append("model_mismatch")
-                if _entry_reasoning_profile(selected_entry) != reasoning_profile_id:
-                    blocked_reasons.append("reasoning_profile_mismatch")
+                if "selected_entry_not_found" not in blocked_reasons:
+                    blocked_reasons.append("selected_entry_not_found")
+            elif selected_entry.enabled:
                 if not os.environ.get(selected_entry.api_key_env, ""):
                     blocked_reasons.append("missing_api_key_env")
                 smoke_reasons = _smoke_evidence_blocked_reasons(
@@ -198,9 +220,11 @@ def build_model_endpoint_cohort_preflight(
                 )
                 blocked_reasons.extend(smoke_reasons)
 
+        blocked_reasons = list(dict.fromkeys(blocked_reasons))
         plan = {
             "schema_version": "tokenshare.paper_model_endpoint_member_plan.v1",
             "cohort_id": PAPER_MODEL_ENDPOINT_COHORT_ID,
+            "model_cohort_digest": cohort_digest,
             "cohort_member_id": member_id,
             "provider_config_id": provider_config_id or None,
             "requested_entry_id": entry_id or None,
@@ -210,7 +234,17 @@ def build_model_endpoint_cohort_preflight(
             "reasoning_profile_id": reasoning_profile_id,
             "model": selected_entry.model if selected_entry is not None else None,
             "api_key_env": selected_entry.api_key_env if selected_entry is not None else None,
-            "config_digest": config.config_digest if config is not None else None,
+            "source_provider_config_digest": (
+                config.config_digest if config is not None else None
+            ),
+            "model_endpoint_identity_digest": (
+                endpoint_identity.model_endpoint_identity_digest
+                if endpoint_identity is not None
+                else None
+            ),
+            "endpoint_identity": (
+                endpoint_identity.to_dict() if endpoint_identity is not None else None
+            ),
             "smoke_evidence_ref": spec.get("smoke_evidence_ref"),
             "external_benchmark": {
                 "source": member.get("external_benchmark_source"),
@@ -510,13 +544,6 @@ def _validate_model_policy(value: str) -> None:
         raise ValueError("model_policy must be strong_only, weak_only, or mixed")
 
 
-def _entry_reasoning_profile(entry: AIAPIProviderEntry) -> str:
-    reasoning_effort = entry.request_overrides.get("reasoning_effort")
-    if reasoning_effort is None or reasoning_effort == "":
-        return "default"
-    return str(reasoning_effort)
-
-
 def _smoke_evidence_blocked_reasons(
     *,
     smoke_evidence: Any,
@@ -643,11 +670,11 @@ def _cohort_members_by_id(cohort: JsonObject) -> dict[str, JsonObject]:
     return result
 
 
-def _enabled_entry_by_id(
+def _entry_by_id(
     config: AIAPIExecutorConfig,
     entry_id: str,
 ) -> AIAPIProviderEntry | None:
     for entry in config.entries:
-        if entry.entry_id == entry_id and entry.enabled:
+        if entry.entry_id == entry_id:
             return entry
     return None

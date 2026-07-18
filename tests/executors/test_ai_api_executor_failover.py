@@ -50,10 +50,79 @@ def test_ai_api_executor_failover_after_rate_limit(tmp_path, monkeypatch) -> Non
     assert submission.result_kind == "succeeded"
     assert submission.usage_summary["provider_attempt_count"] == 2
     assert len(transport.calls) == 2
-    provenance = store.read_bytes(submission.provenance_ref).decode("utf-8")
-    assert "rate_limited" in provenance
-    assert "secret-a" not in provenance
-    assert "secret-b" not in provenance
+    provenance_bytes = store.read_bytes(submission.provenance_ref)
+    provenance = json.loads(provenance_bytes.decode("utf-8"))
+    assert provenance["attempts"][0]["result_kind"] == "rate_limited"
+    assert len(provenance["attempts"]) == 2
+    for attempt, call in zip(provenance["attempts"], transport.calls, strict=True):
+        provider_request_identity = attempt["provider_request_identity"]
+        assert provider_request_identity["provider_family"] == "siliconflow"
+        assert provider_request_identity["entry_id"] == call["entry_id"]
+        assert provider_request_identity["configured_model"] == call["model"]
+        assert provider_request_identity["requested_model"] == call["body"]["model"]
+        assert provider_request_identity["reasoning_controls"] == {}
+        assert provider_request_identity["effective_request_controls_digest"].startswith(
+            "sha256:"
+        )
+        assert "messages" not in provider_request_identity
+    assert b"secret-a" not in provenance_bytes
+    assert b"secret-b" not in provenance_bytes
+
+
+def test_ai_api_executor_rejects_provider_hard_requirement_mismatch_before_call(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("SILICONFLOW_API_KEY_A", "secret-a")
+    monkeypatch.setenv("SILICONFLOW_API_KEY_B", "secret-b")
+    store = ArtifactStore(tmp_path)
+    request = make_ai_request(store, request_id="request_provider_mismatch")
+    request = replace(
+        request,
+        capability_snapshot={"executor": "ai_api", "provider_family": "openai"},
+        hard_requirements={"executor": "ai_api", "provider_family": "openai"},
+    )
+    config = load_ai_api_config(make_config_dict())
+    transport = FakeSiliconFlowTransport(
+        [
+            FakeProviderResponse(
+                status_code=200,
+                body={
+                    "id": "must-not-be-called",
+                    "model": "Qwen/Qwen2.5-7B-Instruct",
+                    "choices": [{"message": {"content": '{"answer":"wrong-provider"}'}}],
+                    "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+                },
+            )
+        ]
+    )
+    executor = AIAPIExecutor(
+        executor_id="executor_ai_api",
+        executor_version="0.1.0",
+        artifact_store=store,
+        config=config,
+        transport=transport,
+    )
+
+    submission = executor.execute(
+        request,
+        submission_id="submission_provider_mismatch",
+        submitted_at="2026-07-16T00:00:02Z",
+    )
+
+    assert submission.result_kind == "executor_error"
+    assert submission.error == {
+        "kind": "executor_error",
+        "reason": "provider_requirement_mismatch",
+        "required_provider_family": "openai",
+        "config_provider_family": "siliconflow",
+    }
+    assert submission.usage_summary == {"provider_attempt_count": 0}
+    assert submission.provenance_ref is not None
+    assert transport.calls == []
+    provenance = json.loads(store.read_bytes(submission.provenance_ref).decode("utf-8"))
+    assert provenance["attempts"] == []
+    assert provenance["final_result_kind"] == "executor_error"
 
 
 def test_ai_api_executor_failover_after_client_timeout(tmp_path, monkeypatch) -> None:

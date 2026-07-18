@@ -52,33 +52,34 @@ def test_loads_legal_lean_v2_lemma_dag_catalog_fixture() -> None:
 
     body = manifest.to_dict()
 
-    assert body["domain_counts"]["lean_proof"] == 34
+    assert body["domain_counts"]["lean_proof"] == 195
     assert body["paper_difficulty_counts"]["lean_proof"] == {
-        "simple": 30,
-        "medium_lemma_dag": 3,
-        "hard_frontier": 1,
+        "simple": 75,
+        "medium_lemma_dag": 45,
+        "hard_frontier": 75,
     }
-    assert {case["case_id"] for case in manifest.lean_lemma_graph_cases} == {
+    assert len(manifest.lean_lemma_graph_cases) == 165
+    assert {
         "lean_v2_medium_lemma_dag_01",
         "lean_v2_medium_function_set_dx_subset_chain_01",
         "lean_v2_medium_induction_nat_predicate_chain_01",
         "lean_v2_hard_frontier_01",
-    }
-    assert manifest.topic_family_counts["lean_proof"]["pure_logic"] == 32
-    assert manifest.topic_family_counts["lean_proof"]["function_set"] == 1
-    assert manifest.topic_family_counts["lean_proof"]["induction"] == 1
+    } <= {case["case_id"] for case in manifest.lean_lemma_graph_cases}
+    assert manifest.topic_family_counts["lean_proof"]["pure_logic"] == 85
+    assert manifest.topic_family_counts["lean_proof"]["function_set"] == 55
+    assert manifest.topic_family_counts["lean_proof"]["induction"] == 55
     assert manifest.paper_difficulty_topic_family_counts["lean_proof"][
         "medium_lemma_dag"
-    ]["pure_logic"] == 1
+    ]["pure_logic"] == 15
     assert manifest.paper_difficulty_topic_family_counts["lean_proof"][
         "medium_lemma_dag"
-    ]["function_set"] == 1
+    ]["function_set"] == 15
     assert manifest.paper_difficulty_topic_family_counts["lean_proof"][
         "medium_lemma_dag"
-    ]["induction"] == 1
+    ]["induction"] == 15
     assert manifest.paper_difficulty_topic_family_counts["lean_proof"][
         "hard_frontier"
-    ]["pure_logic"] == 1
+    ] == {"pure_logic": 25, "function_set": 25, "induction": 25}
 
 
 @pytest.mark.parametrize(
@@ -216,8 +217,8 @@ def test_budget_selection_filters_lean_medium_by_topic_family() -> None:
         plan_only=True,
     )
 
-    assert budget.planned_root_runs == 1
-    assert budget.planned_ai_units == 4
+    assert budget.planned_root_runs == 15
+    assert budget.planned_ai_units == 60
 
 
 def test_hard_frontier_without_oracle_cannot_claim_passed_preflight(tmp_path: Path) -> None:
@@ -245,9 +246,9 @@ def test_manifest_outputs_topic_family_counts() -> None:
     )
     body = manifest.to_dict()
 
-    assert body["topic_family_counts"]["lean_proof"]["pure_logic"] == 32
-    assert body["topic_family_counts"]["lean_proof"]["function_set"] == 1
-    assert body["topic_family_counts"]["lean_proof"]["induction"] == 1
+    assert body["topic_family_counts"]["lean_proof"]["pure_logic"] == 85
+    assert body["topic_family_counts"]["lean_proof"]["function_set"] == 55
+    assert body["topic_family_counts"]["lean_proof"]["induction"] == 55
 
 
 def test_manifest_outputs_paper_difficulty_topic_family_counts() -> None:
@@ -259,9 +260,9 @@ def test_manifest_outputs_paper_difficulty_topic_family_counts() -> None:
     body = manifest.to_dict()
 
     assert body["paper_difficulty_topic_family_counts"]["lean_proof"] == {
-        "simple": {"pure_logic": 30, "function_set": 0, "induction": 0},
-        "medium_lemma_dag": {"pure_logic": 1, "function_set": 1, "induction": 1},
-        "hard_frontier": {"pure_logic": 1, "function_set": 0, "induction": 0},
+        "simple": {"pure_logic": 45, "function_set": 15, "induction": 15},
+        "medium_lemma_dag": {"pure_logic": 15, "function_set": 15, "induction": 15},
+        "hard_frontier": {"pure_logic": 25, "function_set": 25, "induction": 25},
     }
 
 
@@ -286,18 +287,36 @@ def test_catalog_topic_family_distribution_separates_shallow_and_lemma_graph_cas
         paper_difficulty="hard_frontier",
     )
 
-    assert len(shallow_cases) == 30
+    assert len(shallow_cases) == 45
     assert {case["schema_version"] for case in shallow_cases} == {
-        "tokenshare.paper_lean_case.v1"
+        "tokenshare.paper_lean_case.v1",
+        "tokenshare.paper_lean_lemma_graph_case.v1",
     }
     assert {case["topic_family"] for case in medium_cases} == {
         "pure_logic",
         "function_set",
         "induction",
     }
-    assert {case["case_id"] for case in hard_cases} == {"lean_v2_hard_frontier_01"}
-    assert hard_cases[0]["preflight_status"] == "structured_blocked"
-    assert hard_cases[0]["oracle_proof_package_ref"] is None
+    assert len(hard_cases) == 75
+    assert {case["topic_family"] for case in hard_cases} == {
+        "pure_logic",
+        "function_set",
+        "induction",
+    }
+    checker_backed_hard = [
+        case
+        for case in hard_cases
+        if case["preflight_status"] == "passed"
+        and isinstance(case.get("oracle_proof_package_ref"), dict)
+    ]
+    blocked_hard = [
+        case
+        for case in hard_cases
+        if case["preflight_status"] == "structured_blocked"
+        and case["oracle_proof_package_ref"] is None
+    ]
+    assert len(checker_backed_hard) == 45
+    assert len(blocked_hard) == 30
 
 
 def test_cases_for_filters_lean_v2_by_paper_difficulty_and_topic_family() -> None:
@@ -313,7 +332,8 @@ def test_cases_for_filters_lean_v2_by_paper_difficulty_and_topic_family() -> Non
         topic_family="pure_logic",
     )
 
-    assert [case["case_id"] for case in cases] == ["lean_v2_medium_lemma_dag_01"]
+    assert len(cases) == 15
+    assert cases[0]["case_id"] == "lean_v2_medium_lemma_dag_01"
 
 
 def test_cases_for_filters_function_set_medium_lemma_dag() -> None:
@@ -329,9 +349,8 @@ def test_cases_for_filters_function_set_medium_lemma_dag() -> None:
         topic_family="function_set",
     )
 
-    assert [case["case_id"] for case in cases] == [
-        "lean_v2_medium_function_set_dx_subset_chain_01"
-    ]
+    assert len(cases) == 15
+    assert cases[0]["case_id"] == "lean_v2_medium_function_set_dx_subset_chain_01"
 
 
 def test_cases_for_filters_induction_medium_lemma_dag() -> None:
@@ -347,9 +366,8 @@ def test_cases_for_filters_induction_medium_lemma_dag() -> None:
         topic_family="induction",
     )
 
-    assert [case["case_id"] for case in cases] == [
-        "lean_v2_medium_induction_nat_predicate_chain_01"
-    ]
+    assert len(cases) == 15
+    assert cases[0]["case_id"] == "lean_v2_medium_induction_nat_predicate_chain_01"
 
 
 def test_cases_for_does_not_mix_shallow_v1_medium_into_medium_lemma_dag() -> None:
@@ -365,11 +383,12 @@ def test_cases_for_does_not_mix_shallow_v1_medium_into_medium_lemma_dag() -> Non
         paper_difficulty="medium_lemma_dag",
     )
 
-    assert {case["case_id"] for case in cases} == {
+    assert len(cases) == 45
+    assert {
         "lean_v2_medium_lemma_dag_01",
         "lean_v2_medium_function_set_dx_subset_chain_01",
         "lean_v2_medium_induction_nat_predicate_chain_01",
-    }
+    } <= {case["case_id"] for case in cases}
     assert {case["topic_family"] for case in cases} == {
         "pure_logic",
         "function_set",

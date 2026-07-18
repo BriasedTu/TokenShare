@@ -62,11 +62,13 @@ V1 当前计划包含两类实验插件，实验设计和论文实验口径以 `
 
 最新实验设计把论文实验分成五组：
 
-- **Experiment 1 - 真实 AI 跨领域可行性与难度**：factorization 和 Lean 都按简单/中等/困难输入运行，分别报告完成率、accepted result validity、时间、token、成本和失败边界。
+- **Experiment 1 - 真实 AI 跨领域可行性与难度**：factorization 使用三档各 10 道，Lean 使用 3 个 paper difficulty × 3 个 topic family × 每格固定 15 道，分别报告完成率、accepted result validity、时间、token、成本和失败边界。
 - **Experiment 2 - 真实 AI worker 扩展性**：固定任务和模型，比较 1/3/10/30 workers；100/300 只在任务粒度和 provider quota 允许时扩展。
 - **Experiment 3 - 真实 AI 故障注入与 worker death 恢复**：真实 API 输出后注入 false positive、false negative、不返回、延迟、executor error 和独立 worker process death，报告检测、恢复和成本曲线。
 - **Experiment 4 - 真实 AI 协议消融**：每次只关闭 verification、parser policy、requeue、merge gate 或 slot integrity 中的一个机制。
 - **Experiment 5 - 三模型 model-provider endpoint comparison**：预注册比较 SiliconFlow GLM-5.2、SiliconFlow Qwen3.6-27B 和 OpenAI GPT-5.6 Sol high；不使用 strong/weak/mixed 标签，外部榜单分数只作背景，且跨 provider 的延迟/成本差异不能解释为纯模型效应。
+
+除 Experiment 5 外，Experiment 1–4 的 pilot、正式 condition、故障恢复 attempt 和消融 mode 均固定使用 SiliconFlow `zai-org/GLM-5.2` / `glm_5_2_exp1_baseline`；配置或 identity 证据不满足时结构化停止，不自动切换模型。
 
 ## Architecture Principles
 
@@ -90,23 +92,26 @@ Windows PowerShell：
 
 ```powershell
 .\init.ps1
+# feature 完成、提交/合并或发布实验结果前
+.\init.ps1 -Full
 ```
 
 Bash、Git Bash 或 WSL：
 
 ```bash
 ./init.sh
+# feature 完成、提交/合并或发布实验结果前
+./init.sh --full
 ```
 
-当前启动验证会运行：
+默认快速档和完整档都会运行：
 
 ```bash
 conda run -n tokenshare python -c "import json, sqlite3; print('python-json-sqlite-ok')"
 conda run -n tokenshare python -m compileall -x "reference_repos" .
-PYTHONPATH=src conda run -n tokenshare python -m pytest tests
 ```
 
-`init.ps1` 和 `init.sh` 默认使用 `conda` 环境 `tokenshare`，可通过 `TOKENSHARE_CONDA_ENV` 临时覆盖环境名。Python 依赖可通过 `pip install -r requirements.txt` 安装。脚本会无条件运行 Python JSON/SQLite 检查和 `compileall`。`reference_repos/` 保存外部参考源码，不参与 `compileall`。只有存在 `tests/` 目录时才在 `PYTHONPATH=src` 下运行 `pytest tests`。
+默认快速档随后运行 `verification/fast-tests.txt` 维护的无网络 smoke/regression suite；完整档运行 `PYTHONPATH=src ... pytest tests`。`init.ps1` 和 `init.sh` 默认使用 `conda` 环境 `tokenshare`，可通过 `TOKENSHARE_CONDA_ENV` 临时覆盖环境名。Python 依赖可通过 `pip install -r requirements.txt` 安装。`reference_repos/` 保存外部参考源码，不参与 `compileall`。默认快速档用于启动和开发循环，不能替代 feature 完成、提交/合并或实验发布前的完整验证。
 
 ## Run Experiments
 

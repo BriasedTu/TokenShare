@@ -12,8 +12,9 @@ TokenShare 是一个早期本地研究原型，目标是验证一种协议：把
    - `Doc/agent-navigation.md`（agent 导航、模块路由和外部参考资料落库规则）
    - 如果本轮涉及实验设计、实验 runner、论文实验表格、failure/ablation/generalization 实验，阅读 `Doc/TechnicalDocument/tokenshare_latest_real_plugin_experiment_design.md`
 4. 运行基线验证：
-   - PowerShell：`.\init.ps1`
-   - Bash/Git Bash/WSL：`./init.sh`
+   - PowerShell 默认快速档：`.\init.ps1`
+   - Bash/Git Bash/WSL 默认快速档：`./init.sh`
+   - feature 完成、提交/合并或发布实验结果前，运行完整档：`.\init.ps1 -Full` 或 `./init.sh --full`
 5. 阅读 `feature_list.json`，确认当前 active track。若 `active_features` 同时列出 Phase 6 Lean 插件和 Phase 8 实验基础设施，本轮仍只选择其中一个 track 实施，除非用户明确要求做跨 track 状态同步。
 6. 阅读 `progress.md` 和 `session-handoff.md`，确认当前状态和未解决决策。
 7. 如果需要判断代码应该放在哪个模块、哪些外部参考资料可借鉴，先看 `Doc/agent-navigation.md`。
@@ -33,7 +34,7 @@ V1 范围内：
 - factorization 插件和真实 Lean 形式化证明插件，作为协议实验对象；structured report stub 已从 Phase 6 开发计划剔除。
 - 真实 Lean 形式化证明插件必须使用固定本地 Lean/lake/toolchain/library 环境做 proof artifact 检查；拆分算法必须由插件内确定性规则自动识别 Lean theorem / proof-state 结构并生成子任务，不得由 AI 决定协议级拆分。
 - 实验级 AI API 执行器，用于在受控 fixture / benchmark 下验证真实模型输出效果；标准 executor config 只保存 `api_key_env`，真实 API smoke 可从被 gitignore 的 `local/ai_api_smoke.local.json` 读取明文 key 并仅注入当前进程环境变量，调用结果必须持久化为 artifact，event/artifact/SQLite/log/config digest 不得保存 secret，replay 不得重新调用 API。
-- 实验设计必须优先遵守 `tokenshare_latest_real_plugin_experiment_design.md`：Experiment 1 真实 AI 跨领域可行性与难度、Experiment 2 真实 AI worker 扩展性、Experiment 3 真实 AI 故障注入与 worker death 恢复、Experiment 4 真实 AI 协议消融、Experiment 5 预注册三模型 model-provider endpoint comparison。Experiment 5 不再使用 strong/weak/mixed 标签；固定比较 SiliconFlow GLM-5.2、SiliconFlow Qwen3.6-27B 和 OpenAI GPT-5.6 Sol high 三个端点，外部榜单分数只作背景 metadata。所有可写入论文的新实验都必须实际调用真实 AI API；旧 deterministic/scripted suite、direct 500 benchmark、toy demo 或 `lean_stub` 只能作为回归、输入来源或成本校准。
+- 实验设计必须优先遵守 `tokenshare_latest_real_plugin_experiment_design.md`：Experiment 1 真实 AI 跨领域可行性与难度、Experiment 2 真实 AI worker 扩展性、Experiment 3 真实 AI 故障注入与 worker death 恢复、Experiment 4 真实 AI 协议消融、Experiment 5 预注册三模型 model-provider endpoint comparison。正式 Lean catalog 固定为 3 个 paper difficulty × 3 个 topic family × 每格 15 道，共 135 道；不得缩成 10–20 道区间或用 shallow case 补格。除 Experiment 5 外，Experiment 1–4 的 pilot、正式条件、故障恢复和消融均固定使用 SiliconFlow `zai-org/GLM-5.2` / `glm_5_2_exp1_baseline`，不得自动换模型。Experiment 5 不再使用 strong/weak/mixed 标签；固定比较 SiliconFlow GLM-5.2、SiliconFlow Qwen3.6-27B 和 OpenAI GPT-5.6 Sol high 三个端点，外部榜单分数只作背景 metadata。所有可写入论文的新实验都必须实际调用真实 AI API；旧 deterministic/scripted suite、direct 500 benchmark、toy demo 或 `lean_stub` 只能作为回归、输入来源或成本校准。
 - offline、slow、executor_error、invalid_output、late_submission 五类故障模拟。
 - 指标报告、状态重放、审计重放、sandbox 结算。
 
@@ -72,19 +73,31 @@ V1 范围外：
 - 验证证据已经写入 `feature_list.json` 或 `progress.md`。
 - 如果修改了协议、event、artifact schema，必须同步记录。
 - 如果使用了联网资料，论文/报告已经下载或转写到 `Doc/TechnicalDocument/tokenshare-paper-tex/` 并更新论文映射；开源项目已经浅克隆或 sparse checkout 到 `reference_repos/` 并更新 `reference_repos/README.md`；普通在线文档已经记录来源、访问日期、本地摘要和影响范围。
-- 仓库仍然可以通过 `.\init.ps1` 或 `./init.sh` 重新启动验证，保持 restartable 和 clean。
+- 仓库仍然可以通过 `.\init.ps1` 或 `./init.sh` 完成默认快速启动验证，并在 feature 完成、提交/合并或发布实验结果前通过 `.\init.ps1 -Full` 或 `./init.sh --full` 完整验证，保持 restartable 和 clean。
 
 ## 验证命令（Verification Commands）
 
-当前启动验证：
+默认快速启动验证：
 
-```bash
-conda run -n tokenshare python -c "import json, sqlite3; print('python-json-sqlite-ok')"
-conda run -n tokenshare python -m compileall -x "reference_repos" .
-PYTHONPATH=src conda run -n tokenshare python -m pytest tests
+```powershell
+.\init.ps1
 ```
 
-`init.ps1` 和 `init.sh` 默认使用 `conda run -n tokenshare python`；可通过 `TOKENSHARE_CONDA_ENV` 临时覆盖环境名。脚本会无条件运行前两个检查；`reference_repos/` 是外部参考源码目录，不参与 `compileall`；只有存在 `tests/` 目录时才在 `PYTHONPATH=src` 下运行 `pytest tests`。
+```bash
+./init.sh
+```
+
+完整验证：
+
+```powershell
+.\init.ps1 -Full
+```
+
+```bash
+./init.sh --full
+```
+
+`init.ps1` 和 `init.sh` 默认使用 `conda run -n tokenshare python`；可通过 `TOKENSHARE_CONDA_ENV` 临时覆盖环境名。两个档位都会运行 Python JSON/SQLite、harness 文件检查和排除 `reference_repos/` 的全仓 `compileall`。默认快速档随后执行 `verification/fast-tests.txt` 中的无网络 smoke/regression tests；完整档执行 `pytest tests`。改动相关的定向测试仍需单独运行，默认快速档不能替代 feature 完成证据。
 
 ## 结束会话（End of Session / Before ending）
 

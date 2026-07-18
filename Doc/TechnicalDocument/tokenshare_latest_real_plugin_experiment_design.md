@@ -20,15 +20,19 @@
 
 本版固定以下一致性决议：
 
-1.  Experiment 2 P0-core scaling 使用两个 domain、三个 paper difficulty、每档固定 5-task batch、4 个强制 worker levels（1, 3, 10, 30）和 5 次 repeat，共 600 个 root-runs。factorization 的三档是 easy / medium / hard；Lean 的三档是 simple / medium lemma-DAG / hard-frontier，当前 shallow v1 只能填 simple。100 和 300 worker levels 是 preflight-gated extension：quota、AI unit 数量和机器资源都满足时运行；不满足时输出 `unsupported_worker_level`，不补造曲线。
+1.  Experiment 1 正式输入固定为 30 个 Factorization roots（每档 10 个）和 135 个 Lean roots（3 个 `paper_difficulty` × 3 个 `topic_family` × 每格恰好 15 个），合计 165 个唯一 roots；每题 3 次 repeat，共 495 个 root-runs。每格 15 道是冻结的正式样本量，不再使用“10–20 道”区间，也不得从完整矩阵中临时抽 10 道冒充正式 Experiment 1。
 
-2.  Experiment 3 的 rate-fault 矩阵只包含 5 类非死亡故障：`false_positive`、`false_negative`、`no_return`、`late_submission`、`executor_error`。`worker_death` 永远单独进入 worker-death 矩阵，避免被 rate-fault 统计重复计算。
+2.  Experiment 2 P0-core scaling 使用两个 domain、三个 paper difficulty、每档固定 5-task batch、4 个强制 worker levels（1, 3, 10, 30）和 5 次 repeat，共 600 个 root-runs。factorization 的三档是 easy / medium / hard；Lean 的三档是 simple / medium lemma-DAG / hard-frontier，当前 shallow v1 只能填 simple。Lean 每个 5-task batch 必须覆盖全部三个 `topic_family`，使用预注册的 2/2/1 分层分配：simple=`pure_logic:2,function_set:2,induction:1`，medium=`pure_logic:1,function_set:2,induction:2`，hard=`pure_logic:2,function_set:1,induction:2`；condition manifest 保存具体 task ids 和 slice digest，且同一对比组完全复用。100 和 300 worker levels 是 preflight-gated extension：quota、AI unit 数量和机器资源都满足时运行；不满足时输出 `unsupported_worker_level`，不补造曲线。
 
-3.  Experiment 4 P0-core ablation 使用每个 domain / paper difficulty 固定 5 个 tasks、6 个模式和 3 次 repeat，共 540 个 root-runs。旧的 3-task 数字不再作为正式 P0 口径；若 Lean medium lemma-DAG / hard-frontier catalog 未完成，Lean 对应难度的 ablation claim 必须 blocked 或降级。
+3.  Experiment 3 的 rate-fault 矩阵只包含 5 类非死亡故障：`false_positive`、`false_negative`、`no_return`、`late_submission`、`executor_error`。`worker_death` 永远单独进入 worker-death 矩阵，避免被 rate-fault 统计重复计算。worker-death P0 固定 `worker_count=10`、`dead_worker_count ∈ {1,3}` 和 25% / 50% / 75% 三个 kill positions。
 
-4.  Experiment 5 改为预注册的三模型 model-provider endpoint comparison：SiliconFlow `zai-org/GLM-5.2`、SiliconFlow `Qwen/Qwen3.6-27B`、OpenAI `gpt-5.6-sol` with `reasoning_effort=high`。三个真实 entry、provider transport、reasoning profile 和 smoke evidence 都可用时纳入 P0-full；缺少任一 cohort member 时输出结构化 `blocked`，不算协议失败，也不影响 Experiment 1-4 的主张。
+4.  Experiment 4 P0-core ablation 使用每个 domain / paper difficulty 固定 5 个 tasks、6 个模式和 3 次 repeat，共 540 个 root-runs。Lean slice 同样使用预注册的 2/2/1 topic-family 分层分配。旧的 3-task 数字不再作为正式 P0 口径；若 Lean medium lemma-DAG / hard-frontier catalog 未完成，Lean 对应难度的 ablation claim 必须 blocked 或降级。
 
-5.  P0-core 指 Experiment 1-4；P0-full 指 Experiment 1-5 且模型策略 preflight 通过。所有 summary、预算和论文表格必须标明自己属于 P0-core、P0-full 还是包含 100/300 worker extension 的扩展运行。
+5.  Experiment 5 改为预注册的三模型 model-provider endpoint comparison：SiliconFlow `zai-org/GLM-5.2`、SiliconFlow `Qwen/Qwen3.6-27B`、OpenAI `gpt-5.6-sol` with `reasoning_effort=high`。三个真实 entry、provider transport、reasoning profile 和 smoke evidence 都可用时纳入 P0-full；缺少任一 cohort member 时输出结构化 `blocked`，不算协议失败，也不影响 Experiment 1-4 的主张。
+
+6.  除 Experiment 5 三端点对比外，Experiment 1–4 的所有 pilot、正式 condition、故障恢复 attempt 和消融 mode 都固定使用 SiliconFlow `zai-org/GLM-5.2`，安全配置为 `benchmarks/paper/exp1_baseline_provider_config.v1.json`，entry id 为 `glm_5_2_exp1_baseline`，`temperature=0.0`、`enable_thinking=false`。缺少该 entry、API key、真实 smoke 或 identity evidence 时对应实验结构化 `blocked`；不得切换到 Qwen、OpenAI 或其他模型继续生成论文结果。
+
+7.  P0-core 指 Experiment 1-4；P0-full 指 Experiment 1-5 且模型策略 preflight 通过。所有 summary、预算和论文表格必须标明自己属于 P0-core、P0-full 还是包含 100/300 worker extension 的扩展运行。
 
 # 论文要回答的三个主问题
 
@@ -87,6 +91,7 @@
 | Factorization 500 benchmark | 500 个 deterministic semiprime、真实 API direct answer、并发、准确率、token/cost/latency。 | 它直接让模型给完整分解，`worker_count` 并发的是独立整数，不是协议内部 range workers；不能单独证明协议 lifecycle 或 worker scaling。 |
 | Factorization adapter | 真实插件 fixture、deterministic split/verifier/merge。 | 缺少“协议 range child 全部由真实 API 执行”的批量论文路径、难度 catalog、factor position 控制和同一 root 内 worker 并发。 |
 | Lean AI 50 | 50 个 `P ∧ Q` / `P ↔ Q` 任务；真实 API child proof、parser、checker、merge/root recheck。 | 仅两种浅层结构、没有难度标签、固定顺序、没有 worker/model/request-limit CLI、缺少故障和消融入口，容易出现接近全对而无区分度。 |
+| Task 14 readiness 草稿 | 当前工作树已有 `benchmarks/paper/lean_task14_3x3_readiness.v1.json` 和 `tests/experiments/test_lean_task14_readiness.py`，能描述九格 readiness。 | 草稿仍把 `target_case_count` 固定为 10，现有测试也断言 10；它不满足本版每格 15 道的新冻结契约。Task 14 必须先把测试改成 15 的 RED，再扩 catalog、重生成 manifest 并通过 checker preflight；当前全量测试通过不能证明新样本契约已实现。 |
 | Metrics | 可从 events/artifacts 复算 event coverage 和 AI usage/cost。 | 某些旧 helper 把 canonical pollution、requeue、premature merge 等固定写成 0/1；新论文指标必须从实际事件、attempt、verification 和 fault record 复算。 |
 | Worker fault | 旧 wrapper 可记录 offline/slow/executor_error/invalid_output/late_submission 决策。 | 只是报告层决策；缺少真实 API 后注入、故障率选择、真实 worker process 终止、lease expiry 和 replacement attempt 证据。 |
 | Report | JSON/CSV/run manifest。 | 缺少按条件聚合、重复统计、置信区间、论文图数据、预算报告、paper eligibility 和 secret scan report。 |
@@ -111,6 +116,8 @@
 同一对比组必须固定 input catalog digest、provider/model entry、prompt/parser/plugin/executor version、Lean environment digest、timeout、max tokens、provider-attempt limit、fault seed、worker scheduling policy、机器与 Python/Lean 版本。每次 run 记录开始/结束时间、进程数、CPU logical count、内存摘要和网络/provider rate-limit 事件。
 
 真实 API 温度等非确定性参数必须写入 request artifact。论文主对比不得在看到结果后更换模型或 prompt；若必须修复 prompt contract，修复前后的结果分开成不同 experiment version。
+
+Experiment 1–4 的模型控制变量不是运行时任选值：必须解析到 SiliconFlow `zai-org/GLM-5.2` / `glm_5_2_exp1_baseline`，首次执行、provider retry、replacement 和 resume 都保持同一 identity。Experiment 5 才加载三模型 cohort；它的 GLM cohort entry `glm_5_2_siliconflow` 与 Experiment 1–4 baseline entry 是两个不同命名空间，不得混用 digest 或 approval。
 
 # 输入 catalog 与难度定义
 
@@ -146,7 +153,7 @@ medium lemma-DAG / hard-frontier catalog 每行至少包含：`case_id,paper_dif
 
 ### Lean catalog 题型矩阵目标
 
-2026-07-15 起，正式 Lean catalog 的长期目标不只是三档难度，还应覆盖三类经过设计的题型。目标 catalog pool 使用 3 × 3 矩阵：`paper_difficulty` 为 `simple`、`medium_lemma_dag`、`hard_frontier`；`topic_family` 为 `pure_logic`、`function_set`、`induction`。
+2026-07-15 起，正式 Lean catalog 不只区分三档难度，还必须覆盖三类经过设计的题型。正式 catalog 使用 3 × 3 矩阵：`paper_difficulty` 为 `simple`、`medium_lemma_dag`、`hard_frontier`；`topic_family` 为 `pure_logic`、`function_set`、`induction`。
 
 | `topic_family` | simple 目标 | medium_lemma_dag 目标 | hard_frontier 目标 |
 |:---|:---|:---|:---|
@@ -154,11 +161,11 @@ medium lemma-DAG / hard-frontier catalog 每行至少包含：`case_id,paper_dif
 | `function_set` | 函数、集合、子集、像/原像或简单单调性相关 theorem，证明结构浅但不是纯 `P ∧ Q`。 | 函数与集合 theorem 的 2-3 层 lemma-DAG，例如先证明函数分段性质、集合刻画，再证明 root subset。 | 混合实数函数、集合构造、分类讨论、rewrite 和外部库 theorem reuse；必须先做 oracle feasibility review。 |
 | `induction` | Nat/List 上的简单归纳或递归定义 theorem，root proof 可以由一个短 induction skeleton 完成。 | 一个 root theorem 依赖多个归纳/辅助 lemma，形成 recursive lemma-DAG，AI 只证明分派 proof unit。 | 嵌套归纳、互相依赖 rewrite、theorem reuse 或较长 proof-file assembly；无固定 oracle proof 时不能标 checker success。 |
 
-用户最新决策是：当前正式实验目标要扩大到覆盖上述 Lean 3 × 3 题型矩阵，而不是把它只当远期 catalog pool。每个 `(paper_difficulty, topic_family)` 单元的目标规模仍是 10-20 道可审计 case；扩大后的 suite version、抽样规则、预算审批和输出表格必须显式记录，不得静默沿用旧 P0 口径，也不得用当前 shallow v1 Lean case 补齐 medium / hard。
+用户最新决策是：当前正式实验目标要覆盖上述 Lean 3 × 3 题型矩阵，而不是把它只当远期 catalog pool。每个 `(paper_difficulty, topic_family)` 单元固定为 **恰好 15 道** checker-backed、可审计 case，完整 Lean 正式 catalog 因而固定为 135 道。扩大后的 suite version、构造/抽样规则、预算审批和输出表格必须显式记录，不得静默沿用旧 P0 口径，也不得用当前 shallow v1 Lean case 补齐 medium / hard。
 
 该决策目前是文档层要求，不表示 runner、paper adapter 或 Lean plugin 已具备执行能力。进入实现前必须先完成题库与拆分机制复核：每个题型/难度先做 1-2 个 checker-backed golden case；明确 `topic_family` schema、deterministic catalog rule / Lean plugin rule / fixed oracle package 的责任边界；确认 recursive lemma-DAG split、proof-file assembly、dependency-aware merge/root recheck、preflight 时间和真实 AI provider 预算。只有这些复核通过后，才能按 TDD 扩成正式批量题库并修改 runner / adapter；不能先写实验层代码假装这些题已经可拆、可合并或可 paper-eligible。
 
-扩展 schema 时应考虑显式记录 `topic_family`、`topic_family_version`、`construction_rule_id` 或等价 metadata，并继续要求 `environment_digest`、`preflight_status`、oracle package hash 和 checker evidence。当前已存在的 `lean_catalog.v1.jsonl` 仍只算 simple/shallow 过渡输入；当前 `lean_lemma_graph_catalog.v1.jsonl` 只有最小 medium golden fixture，不满足上述完整矩阵。
+扩展 schema 必须显式记录 `topic_family`、`topic_family_version`、`construction_rule_id`、`matrix_cell_id`，并继续要求 `environment_digest`、`preflight_status`、oracle package hash 和 checker evidence。catalog manifest 必须证明九个 cell 的 `case_count` 均为 15；多一个、少一个、重复 case 或 preflight 不通过都使正式 catalog freeze 失败。当前已存在的 `lean_catalog.v1.jsonl` 仍只算 simple/shallow 过渡输入；当前 `lean_lemma_graph_catalog.v1.jsonl` 只有最小 medium golden fixture，不满足上述完整矩阵。
 
 后续 reviewer 应先使用 `Doc/TechnicalDocument/2026-07-15-feat-011-lean-tiered-topic-catalog-review-prompt.md` 复核矩阵可行性、Lean 规则成本、oracle package 组织方式、正式实验扩大后的预算影响和 runner / adapter 实现顺序，再进入实现。
 
@@ -174,15 +181,15 @@ medium lemma-DAG / hard-frontier catalog 每行至少包含：`case_id,paper_dif
 |:---|:---|
 | domains | `factorization`, `lean_proof` |
 | paper difficulty | factorization 使用 easy / medium / hard；Lean 使用 simple / medium lemma-DAG / hard-frontier 三档 |
-| tasks | 每个 domain 每个 paper difficulty 目标 10 个，共 60 个 root tasks；若 Lean medium / hard-frontier catalog 未完成，正式 Lean 难度主张 blocked 或降级，不得用当前 shallow v1 补齐三档 |
+| tasks | Factorization 每个 difficulty 10 个，共 30 个；Lean 每个 `(paper_difficulty,topic_family)` 15 个，共 135 个；合计 165 个唯一 root tasks。若任一 Lean cell 未达到 15 个 checker-backed cases，正式 Experiment 1 不得启动，不得用其他 cell 或 shallow v1 补齐 |
 | repeats | 论文 run 每个 task 3 次；pilot 只跑 1 次且不进入主表 |
 | worker count | 固定 10；若 provider preflight 不允许 10，并发改为可用上限且整个实验保持一致 |
-| model | 固定一个预注册的 baseline entry id；baseline 只表示控制变量，不表示 strong |
+| model | 固定 SiliconFlow `zai-org/GLM-5.2`，entry id `glm_5_2_exp1_baseline`，`temperature=0.0`、`enable_thinking=false`；不得自动替换模型 |
 | fault/ablation | none / FULL |
 
 ## 程序必须输出
 
-逐 task 输出：completion、accepted validity、parser/checker status、split/child/merge 数、attempt/provider-attempt 数、wall-clock、provider latency sum、prompt/completion/total tokens、cost、failure stage、event/artifact refs。逐难度输出 completion rate、accepted validity、median/P90 wall-clock、median/P90 tokens、cost per completed task 和 failure breakdown。
+逐 task 输出：completion、accepted validity、parser/checker status、split/child/merge 数、attempt/provider-attempt 数、wall-clock、provider latency sum、prompt/completion/total tokens、cost、failure stage、event/artifact refs。逐 `(domain,paper_difficulty,topic_family)` 输出 case count、completion rate、accepted validity、median/P90 wall-clock、median/P90 tokens、cost per completed task 和 failure breakdown；Factorization 的 `topic_family=not_applicable`。另外输出 `highest_observed_valid_completion_difficulty`：对每个 domain/topic family，取至少出现一个 `completion=true && accepted_validity=true` 的最高已测试难度；它只表示观测上界，不替代完整成功率和置信区间。
 
 ## 可写入论文的结果
 
@@ -198,7 +205,7 @@ TokenShare 的关键价值主张之一是把可拆任务分派给多个 worker�
 
 强制 worker levels 为 `1, 3, 10, 30`。`100, 300` 是扩展点：只有当输入至少产生相同数量的可运行 AI units、provider quota preflight 通过、没有把线程数冒充逻辑 worker 数时才运行。否则报告 `unsupported_worker_level`，不能补造曲线。
 
-每个 worker level 在每个 domain 的每个 paper difficulty 各取固定 5-task batch：factorization 使用 easy / medium / hard，Lean 使用 simple / medium lemma-DAG / hard-frontier，且当前 shallow v1 不得冒充 Lean medium / hard-frontier。所有 batch 使用完全相同的 catalog digest、任务顺序集合、模型、prompt、timeout 和 seed family，重复 5 次；时间比较报告 median 和 IQR。factorization 主 scaling case 必须是同一 root 内的 range children 并行，不得用当前 direct 500 中“多个独立整数同时跑”替代。Lean scaling 同时报告 root throughput、child-proof throughput 和 lemma-DAG critical path。
+每个 worker level 在每个 domain 的每个 paper difficulty 各取固定 5-task batch：factorization 使用 easy / medium / hard；Lean 使用 simple / medium lemma-DAG / hard-frontier，并在每档按预注册的 2/2/1 分配覆盖 `pure_logic/function_set/induction`，当前 shallow v1 不得冒充 Lean medium / hard-frontier。所有 batch 使用完全相同的 catalog digest、任务顺序集合、SiliconFlow `zai-org/GLM-5.2` baseline、prompt、timeout 和 seed family，重复 5 次；时间比较报告 median 和 IQR。factorization 主 scaling case 必须是同一 root 内的 range children 并行，不得用当前 direct 500 中“多个独立整数同时跑”替代。Lean scaling 同时报告 root throughput、child-proof throughput 和 lemma-DAG critical path。
 
 ## 输出与公式
 
@@ -227,13 +234,17 @@ Q(w)=\frac{\text{completed roots}}{\text{wall-clock seconds}}
 | executor_error | real provider response 保存之后、parser bridge 之前 | 生成受控 executor error record，恢复 attempt 再次真实调用 API。 |
 | worker_death | 独立 worker process 已保存 raw output、尚未提交时 | 终止该 worker process；协调器保持运行，等待 lease expiry 后交给 replacement worker。 |
 
-Rate-fault 矩阵只覆盖 5 类非死亡故障：`false_positive`、`false_negative`、`no_return`、`late_submission`、`executor_error`。Factorization fault rates 使用 `0%, 1%, 5%, 10%, 25%, 50%, 100%`。Lean 因每个 root 有多个 proof calls，使用 `0%, 10%, 50%, 100%`。故障目标用固定 seed 从 AI units 中选择，实际 target ids 写入 manifest。每个 condition 重复 3 次。
+Rate-fault 矩阵只覆盖 5 类非死亡故障：`false_positive`、`false_negative`、`no_return`、`late_submission`、`executor_error`。Factorization fault rates 使用 `0%, 1%, 5%, 10%, 25%, 50%, 100%`。Lean 因每个 root 有多个 proof calls，使用 `0%, 10%, 50%, 100%`，其 3-task slice 固定为 `pure_logic/function_set/induction` 各 1 道。故障目标用固定 seed 从 AI units 中选择，实际 target ids 写入 manifest。每个 condition 重复 3 次。所有原始和恢复 AI attempts 固定使用 `glm_5_2_exp1_baseline`，故障不得触发模型升级或 provider 切换。
 
-worker death 另按任务进度 25%、50%、75% 三个位置注入，每个 domain 每个位置重复 3 次。这里终止的是 executor worker，不是 coordinator；因此可以在 Phase 9 完整 replay 之前测试 lease/reassignment。若要测试 coordinator crash/restart，必须等待 state replay 可重建后另立实验，不得混写。
+worker death 固定 `worker_count=10`，分别终止 1 个和 3 个 executor workers，并按任务进度 25%、50%、75% 三个位置注入；每个 domain、每个死亡数量、每个位置重复 3 次。这里终止的是 executor worker，不是 coordinator；因此可以在 Phase 9 完整 replay 之前测试 lease/reassignment。若要测试 coordinator crash/restart，必须等待 state replay 可重建后另立实验，不得混写。
 
 ## 必须输出
 
-`fault_type,fault_rate,fault_target_count,injection_point,original_output_ref,mutated_output_ref,detection_rate,false_accept_rate,recovery_rate,completion_rate,recovery_latency_ms,retry_count,reassignment_count,wasted_actual_tokens,total_actual_tokens,cost_overhead`。
+Rate-fault 与通用恢复输出至少包含：`fault_type,fault_rate,fault_target_count,injection_point,original_output_ref,mutated_output_ref,matched_baseline_condition_id,detection_rate,false_accept_rate,recovery_rate,completion_rate,recovery_latency_ms,retry_count,reassignment_count,wasted_actual_tokens,total_actual_tokens,matched_baseline_wall_clock_ms,wall_clock_overhead_ms,wall_clock_overhead_ratio,matched_baseline_total_tokens,token_overhead,token_overhead_ratio,cost_overhead`。
+
+worker-death 条件另必须输出：`worker_count,dead_worker_count,kill_progress,coordinator_continued,required_slot_count,recovered_slot_count,result_completeness_rate,root_output_complete,accepted_validity`。`coordinator_continued=true` 只表示 worker 被终止后 coordinator 仍存活并继续产生调度/租约事件；不能用最终完成状态倒推该字段。
+
+`dead_worker_count` 记录操作系统层确认已终止的 executor worker process 数量，而不是计划请求值；实际未达到 condition 的 1 或 3 时该 run 标记 `failed`，不得并入对应 condition。`recovery_latency_ms` 从 lease expiry / 明确 fault detection 中较早的 recovery trigger 时间算到 replacement attempt 被接受的时间；没有恢复成功时为 `null`，并保留 terminal failure。`kill_progress` 同时保存预注册目标和依据已完成 AI units 计算的实际比例，实际注入误差必须进入审计。
 
 actual token 只来自 provider usage。注入变换的 synthetic work 另写 `simulated_mutation_count`，不能伪造 token。论文必须至少展示一个可恢复正例和一个不可恢复或代价过高的负例。
 
@@ -247,7 +258,15 @@ actual token 只来自 provider usage。注入变换的 synthetic work 另写 `s
 
 - `completion_rate = completed_root_count / attempted_root_count`。
 
+- `wall_clock_overhead_ms = fault_condition_wall_clock_ms - matched_no_fault_baseline_wall_clock_ms`；`wall_clock_overhead_ratio = wall_clock_overhead_ms / matched_no_fault_baseline_wall_clock_ms`。
+
+- `token_overhead = total_actual_tokens - matched_baseline_total_tokens`；`token_overhead_ratio = token_overhead / matched_baseline_total_tokens`。`wasted_actual_tokens` 只累计因注入、死亡、late/no-return 或 rejected recovery 而无法贡献到最终 accepted result 的真实 provider usage，不与 `token_overhead` 混用。
+
 - `cost_overhead = (fault_condition_cost - matched_no_fault_baseline_cost) / matched_no_fault_baseline_cost`。
+
+- `result_completeness_rate = recovered_slot_count / required_slot_count`；`root_output_complete = (recovered_slot_count == required_slot_count)`。它必须和 deterministic `accepted_validity` 同时报告：slot 齐全但 checker/verifier 不通过，仍不是完整有效结果。
+
+所有 matched baseline 必须与 fault condition 使用相同 task ids、repeat/seed、worker count、GLM-5.2 entry、prompt/parser/plugin/executor version 和 request limits。任何比率的 baseline 分母为 0 时写 `null` 并记录 `zero_baseline_denominator`，不得输出 `Infinity`、`NaN` 或改用其他 condition。
 
 `false_positive` 和 `late_submission` 默认是 detect-and-isolate；`no_return`、`executor_error` 和 `worker_death` 默认是 recoverable；`false_negative` 必须按插件能否从后续 merge / checker 发现缺失事实记录为 `recoverable` 或 `detect_only`，不能硬写为成功恢复。
 
@@ -266,7 +285,9 @@ actual token 只来自 provider usage。注入变换的 synthetic work 另写 `s
 | NO_MERGE_GATE | required slots 未齐时允许 merge 尝试 | premature merge、root checker/merge failure。 |
 | NO_SLOT_INTEGRITY | child output 可绑定到错误 slot | slot mismatch acceptance 和错误 merge 风险。 |
 
-每个 domain 从 easy/medium/hard 各取固定 5 个 tasks，所有模式重复 3 次。报告 completion、accepted validity、wrong canonical acceptance、raw-only acceptance、stuck task、premature merge、slot mismatch、time、token 和 cost。消融实现必须在实验 wrapper/adapter 中，不修改协议 core 的默认 FULL 语义。
+每个 domain 从三档 paper difficulty 各取固定 5 个 tasks；Lean 每档按预注册的 2/2/1 分层 slice 覆盖三个 topic families。所有模式重复 3 次，并固定使用 SiliconFlow `zai-org/GLM-5.2` / `glm_5_2_exp1_baseline`。报告 completion、accepted validity、wrong canonical acceptance、raw-only acceptance、stuck task、premature merge、slot mismatch、time、token 和 cost。消融实现必须在实验 wrapper/adapter 中，不修改协议 core 的默认 FULL 语义。
+
+消融还必须输出 `exposed_error_count,escaped_error_count,error_escape_rate,error_escape_applicability`。其中 `exposed_error_count` 是到达被关闭机制、且 FULL 模式本应拒绝或隔离的无效候选/不完整状态数量；`escaped_error_count` 是这些对象中继续进入 canonical、merge 或被错误标记为 terminal success 的数量；`error_escape_rate = escaped_error_count / exposed_error_count`。若某 mode 没有可适用的 gate（例如 NO_REQUEUE 主要观察 stuck/completion）或分母为 0，rate 写 `null`，并把 applicability 写为 `not_applicable` 或 `zero_denominator`，不得用 0 假装“没有逃逸”。
 
 # Experiment 5: 三模型 model-provider endpoint comparison（次要）
 
@@ -288,11 +309,45 @@ actual token 只来自 provider usage。注入变换的 synthetic work 另写 `s
 
 ## 设计与输出
 
-使用 Experiment 1 catalog slice，每个 domain / paper difficulty 固定 5 个 tasks；三个 cohort member 各自作为 `model_policy="fixed_entry"` 的独立 condition，使用相同 task order、prompt/parser/plugin version、worker count、timeout、request-limit policy 和 repeat/seed family，每个 condition 重复 3 次。AI unit 在整个首次/恢复 attempt 链中保持同一 cohort member，不按 difficulty 换模型，也不在失败后升级到另一个模型。
+使用 Experiment 1 catalog slice，每个 domain / paper difficulty 固定 5 个 tasks；Lean 使用与 Experiment 2/4 相同的预注册 2/2/1 topic-family 分层和 task ids。三个 cohort member 各自作为 `model_policy="fixed_entry"` 的独立 condition，使用相同 task order、prompt/parser/plugin version、worker count、timeout、request-limit policy 和 repeat/seed family，每个 condition 重复 3 次。AI unit 在整个首次/恢复 attempt 链中保持同一 cohort member，不按 difficulty 换模型，也不在失败后升级到另一个模型。
 
-输出 completion、accepted validity、tokens、cost、latency、provider errors、recovery attempts 和 `model_execution_records`。每条 execution record 至少包含 `condition_id,task_id,unit_id,attempt_id,model_policy,model_cohort_id,cohort_member_id,selected_entry_id,provider_family,provider_model_id,reasoning_profile_id,request_ref,provider_attempt_ref,usage_ref,latency_ms,total_tokens,cost_estimate`。论文以 completion / accepted validity 作为主要跨端点结果；latency、cost 和 rate-limit 结果必须按 provider 分层或标注 provider confounding。
+输出 completion、accepted validity、tokens、cost、latency、provider errors、recovery attempts 和 `model_execution_records`。运行时首先为每个正式 AI unit 保存 `tokenshare.paper_model_execution_record.v2` identity artifact；正式 runner/report 再把该 artifact 与 `PaperAttemptResult` / usage evidence 连接成 `model_execution_records.jsonl`，补齐 `model_policy,latency_ms,total_tokens,cost_estimate` 等统计列。历史 v1 artifact 不重写，新 reader 必须按 schema version 保守读取。论文以 completion / accepted validity 作为主要跨端点结果；latency、cost 和 rate-limit 结果必须按 provider 分层或标注 provider confounding。
 
 正式 Experiment 5 preflight 必须验证三个 cohort member 的 provider config、key env、model id、reasoning profile、真实 smoke evidence、catalog compatibility 和预算。缺少任一 member 时，整个正式 Experiment 5 标记 `blocked`，`blocked_reason="incomplete_model_cohort"`，`paper_eligible=false`，`provider_attempt_count=0`；可用 member 的单模型试跑只能标 `pilot_only=true`，不能生成三模型论文主表。该 blocked 不影响 Experiment 1-4 的主张。
+
+## Fixed-entry 身份闭环
+
+`entry_id` 只在一个 `AIAPIExecutorConfig.entries` 内唯一，不是跨 provider config 的全局模型身份。正式 Experiment 5 必须使用 `provider_config_id + selected_entry_id` 定位 entry，并同时冻结 provider/model/reasoning；仅比较同名 `entry_id` 不构成有效校验。
+
+身份和 digest 分层如下：
+
+- cohort 逻辑身份：`model_cohort_id,model_cohort_digest,cohort_member_id`；`model_cohort_digest` 锚定 tracked frozen cohort。
+- endpoint 语义身份：`provider_config_id,selected_entry_id,provider_family,provider_model_id,reasoning_profile_id,effective_reasoning_controls`；`model_endpoint_identity_digest` 对这组语义字段做 canonical digest。
+- 批准配置快照：`source_provider_config_digest` 锚定 preflight 加载的原始 safe config。即使 endpoint 语义未变，只要 safe config 内容改变，旧 condition/budget approval 也失效，必须重新 plan/approve。
+- 运行时配置 provenance：`prepared_execution_config_digest` 锚定 adapter 过滤为单 entry、覆盖 request limits 并固定 `max_provider_attempts=1` 后的 config。它不能替代 source digest，也不能写回 endpoint 语义 digest。
+
+模型字段的唯一语义和数据来源如下：
+
+| 字段 | 唯一允许来源 | 正式含义与限制 |
+|:---|:---|:---|
+| `configured_model` | 调用前已校验的 selected config entry | 本地配置要求；只能证明配置了什么，不能证明 provider 实际执行了什么。 |
+| `requested_model` | 实际发送的 provider request body `model` | 请求事实；只能证明请求了什么。必须与 configured model 分字段保存。 |
+| `response_model` | provider response 原始 JSON 的 `model` 字段 | 原始响应事实；缺字段、`null`、空字符串、非字符串必须分别分类，禁止 fallback。 |
+| `resolved_model` | `response_model` 为非空字符串时的原值 | 可用于正式 post-call audit 的 observed identity；其他情形必须为 `null`。alias 不做前缀猜测或本地规范化。 |
+| `provider_request_identity.requested_model` | 实际 request body | actual request identity 中的 model；`configured_model` 另存，仅用于 config/request 一致性审计。 |
+| `RawModelOutput.model` | 仅历史 `phase7.raw_model_output.v1` | v1 曾混合 response 与 selected entry，语义不可信。v2 删除该字段，改为 `configured_model,requested_model,resolved_model,response_model_status`；v1 reader 必须忽略外层 `model`，只从 `raw_response_json.model` 恢复 observed evidence。 |
+| `PaperAttemptResult.model` | executor usage summary 中的 configured entry model | 兼容/展示字段，只表示本次 attempt 绑定的配置模型；不得用于正式 resolved-model audit。 |
+| `PaperModelExecutionRecord.resolved_model` | schema-aware RawModelOutput observed evidence | 正式审计字段；nullable，缺失时保持 `null`，不得从 condition、config、request、attempt display 字段或当前 replay config 补写。 |
+
+展示层如需要“模型标签”，必须使用独立 presentation 值（例如 `resolved_model ?? requested_model ?? configured_model`），并明确标注来源；该计算值不得写回 `RawModelOutput`、`PaperModelExecutionRecord.resolved_model`、identity status 或 replay evidence。
+
+Provider call 前必须满足：condition 的 provider config namespace、entry、provider/model/reasoning、cohort digest、source config digest 和 endpoint identity digest都与批准 preflight binding 相等；prepared config 只含批准 entry；`ExecutionRequest.capability_snapshot.provider_family == hard_requirements.provider_family == condition.provider_family`。通用 `AIAPIExecutor` 只执行 request/config provider invariant，不解释 cohort/member/Experiment 5。
+
+Provider call 后必须从持久化 evidence 审计：每个 provenance attempt 的 provider/entry/configured model、`provider_request_identity` 的 configured/requested model 与 reasoning controls、provenance 的 prepared config digest，以及 raw output 的 provider/entry/resolved model。成功或 parse-failed response 的 `model` 缺失、`null`、空字符串或非字符串统一产生稳定 reason `missing_resolved_model`；非空但与批准 identity 不同（包括未批准版本化 alias）产生 `resolved_model_mismatch`。OpenAI resolved model 默认 exact match；版本化 alias 只有进入新的 cohort/preflight approval 才可接受，禁止前缀猜测。上述 identity mismatch 必须把 attempt/failure kind 标为 `model_identity_mismatch`、`paper_eligible=false`，并停止该 condition 内尚未执行的 AI units；已经持久化的 raw/parsed evidence 保留用于审计，但不得进入 verifier/checker/canonical/merge。provider error 且没有成功 raw response 时不得伪造 resolved model，model execution record 写 `identity_status=not_observed`、`response_model_status=unavailable`，attempt 继续保留原 provider failure 分类。
+
+Reasoning normalization 规则：OpenAI `reasoning_effort` 缺失或 `None` 为 `default`，空字符串非法，非空字符串规范化后比较，GPT member 必须为 `high`；SiliconFlow cohort v1 的逻辑 profile 保持 `default`，`enable_thinking` 作为独立 boolean effective control 持久化。JSON-mode builder 隐式产生的 `enable_thinking=false` 必须进入 request identity；未批准的 `true` 不能被 `default` 标签吞掉。
+
+首次执行、provider failure、replacement/retry 和 resume 必须复用 condition 已批准的 endpoint identity；不得重新从当前 config 仅按 entry 字符串解析。source config drift 在 provider call 前失败；单-entry prepared config 禁止 failover 到 sibling entry/model。Replay 只验证和读取历史 request/provenance/raw/usage/model-execution artifacts，provider calls 必须为 0，也不得重新读取当前 API key 或当前 config 来补写历史事实。v1 artifact 的外层混合 `model` 不作为 resolved evidence；不能重写已有历史 artifact。未知 schema 或 v2 内部 requested/resolved/status 与原始 response 不一致时必须 fail closed。
 
 # 统一输出契约
 
@@ -308,8 +363,9 @@ actual token 只来自 provider usage。注入变换的 synthetic work 另写 `s
 | `PaperExperimentResult` | `experiment_id,status,condition_ids,run_count,task_count,completion_rate,accepted_validity_rate,total_tokens,total_cost_estimate,summary_ref` |
 | `PaperConditionResult` | `condition_id,status,repeat_count,task_count,completed_root_count,failed_root_count,blocked_root_count,provider_attempt_count,metrics_ref` |
 | `PaperRunResult` | `condition_id,repeat_id,run_id,status,run_manifest_ref,per_task_results_ref,per_attempt_results_ref,fault_injections_ref,event_log_ref,artifact_root,paper_eligible,ineligibility_reasons` |
-| `PaperTaskResult` | `condition_id,repeat_id,task_id,domain,difficulty,root_status,accepted_validity,failure_stage,failure_kind,attempt_count,provider_attempt_count,wall_clock_ms,total_tokens,cost_estimate,event_refs,artifact_refs,paper_eligible` |
-| `PaperAttemptResult` | `condition_id,repeat_id,task_id,unit_id,attempt_id,worker_id,attempt_status,provider,model,entry_id,request_ref,raw_output_ref,parsed_output_ref,parse_failure_ref,provenance_ref,usage_ref,latency_ms,total_tokens,cost_estimate,error_kind,fault_injection_ref,paper_eligible` |
+| `PaperTaskResult` | `condition_id,repeat_id,task_id,domain,difficulty,paper_difficulty,topic_family,root_status,accepted_validity,failure_stage,failure_kind,attempt_count,provider_attempt_count,wall_clock_ms,total_tokens,cost_estimate,event_refs,artifact_refs,paper_eligible`；worker-death task 另含 completeness 字段。 |
+| `PaperAttemptResult` | `condition_id,repeat_id,run_id,task_id,unit_id,attempt_id,worker_id,provider_attempt_index,attempt_status,provider,model,entry_id,request_ref,raw_output_ref,parsed_output_ref,parse_failure_ref,provenance_ref,usage_ref,model_execution_record_ref,started_at,ended_at,latency_ms,prompt_tokens,completion_tokens,total_tokens,cost_estimate,error_kind,fault_injection_ref,paper_eligible` |
+| `PaperModelExecutionRecord` | `condition_id,repeat_id,run_id,task_id,unit_id,attempt_id,expected_identity,source_provider_config_digest,prepared_execution_config_digest,request_ref,provenance_ref,raw_output_ref,usage_ref,actual_request_identities,actual_provider_attempts,requested_model,resolved_model,response_model_status,identity_status,mismatch_reasons,paper_eligible,record_digest`；正式 report export 另从 attempt/usage join `model_policy,latency_ms,total_tokens,cost_estimate`。 |
 | `PaperBudgetResult` | `budget_digest,planned_experiments,planned_conditions,planned_root_runs,planned_ai_units,max_provider_attempts,token_upper_bound,cost_upper_bound,wall_clock_estimate,quota_preflight,rate_limit_preflight,disk_estimate,status` |
 
 ## 状态与失败枚举
@@ -320,11 +376,11 @@ actual token 只来自 provider usage。注入变换的 synthetic work 另写 `s
 
 - root task status：`completed`、`failed`、`blocked`、`timeout`、`budget_exhausted`、`ineligible`。
 
-- attempt status：`succeeded`、`provider_error`、`parse_failed`、`verification_rejected`、`checker_rejected`、`lease_expired`、`late_rejected`、`worker_died`、`cancelled_by_budget`。
+- attempt status：`succeeded`、`model_identity_mismatch`、`provider_error`、`parse_failed`、`verification_rejected`、`checker_rejected`、`lease_expired`、`late_rejected`、`worker_died`、`cancelled_by_budget`。
 
 - failure stage：`catalog`、`split`、`request`、`provider`、`parse`、`verification`、`checker`、`canonical`、`merge`、`settlement`、`metrics`、`audit`。
 
-- failure kind：`provider_error`、`rate_limited`、`parse_failure`、`verifier_rejected`、`checker_rejected`、`lease_expired`、`late_submission`、`no_requeue`、`premature_merge`、`slot_mismatch`、`budget_limit`、`unsupported_worker_level`、`missing_model_entry`、`secret_leak`、`internal_error`。
+- failure kind：`model_identity_mismatch`、`provider_error`、`rate_limited`、`parse_failure`、`verifier_rejected`、`checker_rejected`、`lease_expired`、`late_submission`、`no_requeue`、`premature_merge`、`slot_mismatch`、`budget_limit`、`unsupported_worker_level`、`missing_model_entry`、`secret_leak`、`internal_error`。
 
 CLI exit code 固定为：0 表示 runner 正常结束或按预算上限结构化停止；1 表示参数 / config / catalog / schema 错误；2 表示预算 digest 不匹配或缺少批准；3 表示 secret scan failure；4 表示 runner 内部错误。
 
@@ -354,20 +410,31 @@ CLI exit code 固定为：0 表示 runner 正常结束或按预算上限结构�
 ## Condition manifest 最小字段
 
     {
-      "schema_version": "tokenshare.paper_condition.v1",
+      "schema_version": "tokenshare.paper_condition.v2",
       "experiment_id": "exp2_real_ai_scalability",
       "condition_id": "...",
       "domain": "factorization|lean_proof",
       "difficulty": "easy|medium|hard|all",
       "paper_difficulty": "easy|medium|hard|simple|medium_lemma_dag|hard_frontier|all",
+      "topic_family": "pure_logic|function_set|induction|not_applicable|all",
       "worker_count": 10,
       "fault_type": "none",
       "fault_rate": 0.0,
+      "dead_worker_count": 0,
+      "kill_progress": null,
+      "matched_baseline_condition_id": null,
       "ablation_mode": "FULL",
       "model_policy": "fixed_entry",
       "model_cohort_id": null,
       "cohort_member_id": null,
-      "model_entry_id": "glm_5_2_siliconflow",
+      "provider_config_id": "siliconflow",
+      "model_entry_id": "glm_5_2_exp1_baseline",
+      "provider_family": "siliconflow",
+      "provider_model_id": "zai-org/GLM-5.2",
+      "reasoning_profile_id": null,
+      "model_cohort_digest": null,
+      "source_provider_config_digest": null,
+      "model_endpoint_identity_digest": null,
       "repeat_id": 0,
       "seed": 1,
       "catalog_digest": "sha256:...",
@@ -377,28 +444,34 @@ CLI exit code 固定为：0 表示 runner 正常结束或按预算上限结构�
 
 ## Per-task result 最小字段
 
-每行必须包含 condition/run/task id、domain/difficulty、root status、accepted validity、failure stage/kind、worker/attempt/provider/model、parser/verifier/checker/merge 状态、wall-clock/provider latency、tokens/cost、fault/ablation refs、event/artifact refs 和 `paper_eligible`。任何 summary 数字都必须能回到这些逐 task/attempt 记录和 event/artifact evidence。
+每行必须包含 condition/run/task id、domain/difficulty/topic family、root status、accepted validity、failure stage/kind、worker/attempt/provider/model、parser/verifier/checker/merge 状态、wall-clock/provider latency、tokens/cost、fault/ablation refs、event/artifact refs 和 `paper_eligible`。Experiment 3 worker-death 行还必须包含 `dead_worker_count,kill_progress,coordinator_continued,required_slot_count,recovered_slot_count,result_completeness_rate,root_output_complete`。任何 summary 数字都必须能回到这些逐 task/attempt 记录和 event/artifact evidence。
 
 ## Per-attempt result 最小字段
 
-每行必须包含 `condition_id,repeat_id,run_id,task_id,unit_id,attempt_id,worker_id,provider_attempt_index,provider,model,entry_id,request_ref,raw_output_ref,parsed_output_ref,parse_failure_ref,provenance_ref,usage_ref,started_at,ended_at,latency_ms,prompt_tokens,completion_tokens,total_tokens,cost_estimate,attempt_status,error_kind,fault_injection_ref,paper_eligible`。如果 provider failover 发生，必须为每次 provider attempt 写独立行或写入可展开的 `provider_attempts[]`，不能只保留最后一次。
+每行必须包含 `condition_id,repeat_id,run_id,task_id,unit_id,attempt_id,worker_id,provider_attempt_index,provider,model,entry_id,request_ref,raw_output_ref,parsed_output_ref,parse_failure_ref,provenance_ref,usage_ref,model_execution_record_ref,started_at,ended_at,latency_ms,prompt_tokens,completion_tokens,total_tokens,cost_estimate,attempt_status,error_kind,fault_injection_ref,paper_eligible`。如果 provider failover 发生，必须为每次 provider attempt 写独立行或写入可展开的 `provider_attempts[]`，不能只保留最后一次。正式 Experiment 5 的每个 AI unit 必须能从 `model_execution_record_ref` 回到 expected identity、实际 request/attempt identity、raw resolved model 和 source/prepared config digests。
+
+## 实验专项汇总最小字段
+
+- `paper_plot_robustness.csv` 必须包含通用 fault 字段、matched baseline id/value、`wall_clock_overhead_ms,wall_clock_overhead_ratio,token_overhead,token_overhead_ratio,cost_overhead`；worker-death 行另含 `dead_worker_count,kill_progress,coordinator_continued,result_completeness_rate,root_output_complete,accepted_validity`。
+- `paper_table_ablation.csv` 必须包含 `ablation_mode,exposed_error_count,escaped_error_count,error_escape_rate,error_escape_applicability,completion_rate,accepted_validity_rate,wrong_canonical_acceptance_rate,raw_only_acceptance_rate,stuck_task_rate,premature_merge_rate,slot_mismatch_rate,wall_clock_ms,total_tokens,cost`。
+- `paper_table_feasibility.csv` 必须包含 `domain,paper_difficulty,topic_family,case_count,repeat_count,completion_rate,accepted_validity_rate,wall_clock_median_ms,wall_clock_p90_ms,total_tokens_median,total_tokens_p90,cost_per_completed_task,failure_kind,count`，并能生成每个 topic family 的 `highest_observed_valid_completion_difficulty`。
 
 ## Catalog manifest 最小字段
 
-`input_catalog_manifest.json` 必须包含 `schema_version,catalog_id,catalog_version,catalog_digest,generator_version,case_count,domain_counts,difficulty_counts,oracle_validation_status,lean_preflight_status,created_at,source_files`。Lean v2 / lemma-DAG catalog 还必须包含 `paper_difficulty_counts`，用于区分 current shallow-v1 legacy difficulty 和正式 Lean paper difficulty。任一 case 的 oracle 或 Lean preflight 失败时，catalog freeze 失败；不能在正式 run 中静默跳过该 case。
+`input_catalog_manifest.json` 必须包含 `schema_version,catalog_id,catalog_version,catalog_digest,generator_version,case_count,domain_counts,difficulty_counts,oracle_validation_status,lean_preflight_status,created_at,source_files`。Lean 正式 catalog 还必须包含 `paper_difficulty_counts,topic_family_counts,matrix_cell_counts`，且九个 `matrix_cell_counts` 必须全部等于 15、总数等于 135，用于区分 current shallow-v1 legacy difficulty 和正式 Lean paper difficulty。任一 case 的 oracle 或 Lean preflight 失败时，catalog freeze 失败；不能在正式 run 中静默跳过该 case。
 
 # 论文表格、图和可写结论
 
 | 论文产物 | 数据文件 | 可以回答 |
 |:---|:---|:---|
-| Feasibility table | `paper_table_feasibility.csv` | 两个领域、三档 paper difficulty 的完成率、accepted validity、时间、token、成本；Lean 当前 shallow v1 只能进入 simple。 |
+| Feasibility table | `paper_table_feasibility.csv` | 两个领域、三档 paper difficulty 的完成率、accepted validity、时间、token、成本；Lean 按 3×3 矩阵每格 15 道报告，当前 shallow v1 只能进入 simple。 |
 | Difficulty figure | feasibility CSV 派生 | 难度上升时成功率和成本如何变化，能力边界在哪里。 |
 | Scalability figure | `paper_plot_scalability.csv` | worker 增加后的 wall-clock、throughput、speedup、efficiency、token 和限流。 |
 | Robustness figure | `paper_plot_robustness.csv` | fault rate 对检测、恢复、完成、时间/token overhead 的影响。 |
 | Ablation table | `paper_table_ablation.csv` | 关闭一个机制后哪种错误逃逸或任务卡住。 |
 | Failure examples | `failure_examples.json` | 至少一个可恢复和一个不可恢复案例的完整 evidence chain。 |
 
-只有数据支持时才可写“worker 增加缩短时间”“混合模型降低成本”或“某类错误可恢复”。负面结果可以直接写：例如速度在 10 workers 后饱和、false negative 在某种同批次条件下无法恢复、NO_VERIFICATION 导致错误 canonical。不得预写必然正向结论。
+只有数据支持时才可写“worker 增加缩短时间”“某一具名 model-provider endpoint 成本较低”或“某类错误可恢复”。负面结果可以直接写：例如速度在 10 workers 后饱和、false negative 在某种同批次条件下无法恢复、NO_VERIFICATION 导致错误 canonical。不得预写必然正向结论。
 
 论文结构建议固定为：`Feasibility Across Two Domains`、`Scalability with Real AI Workers`、`Robustness and Failure Boundaries`。Ablation 放在第三部分，三模型 model-provider endpoint comparison 放 appendix 或次要 subsection。
 
@@ -408,14 +481,14 @@ CLI exit code 固定为：0 表示 runner 正常结束或按预算上限结构�
 
 | 实验 | 最小正式规模 | root-run 数量 |
 |---|---:|---:|
-| Experiment 1 | 2 domains × 3 difficulties × 10 tasks × 3 repeats | 180 |
+| Experiment 1 | Factorization: 3 difficulties × 10 tasks；Lean: 3 difficulties × 3 topic families × 15 tasks；共 165 unique roots × 3 repeats | 495 |
 | Experiment 2 | 2 domains × 3 difficulties × 每档固定 5-task batch × 4 worker levels × 5 repeats | 600 |
 | Experiment 3 rate faults | Factorization: 5 tasks × 5 fault types × 7 rates × 3 repeats；Lean: 3 tasks × 5 fault types × 4 rates × 3 repeats | 705 |
-| Experiment 3 worker death | 2 domains × 3 tasks × 3 kill positions × 3 repeats | 54 |
+| Experiment 3 worker death | 2 domains × 3 tasks × 2 death counts（1/3）× 3 kill positions × 3 repeats | 108 |
 | Experiment 4 | 2 domains × 3 difficulties × 5 tasks × 6 modes × 3 repeats | 540 |
 | Experiment 5（三模型 cohort 完整时纳入 P0-full） | 2 domains × 3 difficulties × 5 tasks × 3 fixed model-provider endpoints × 3 repeats | 270 |
 
-P0-core（Experiment 1-4）合计 2079 个 root-runs；P0-full（Experiment 1-5 且三模型 cohort / provider preflight 通过）合计 2349 个 root-runs。100 / 300 worker extension 若 preflight 通过，最多额外增加 300 个 root-runs，并必须在 suite manifest 中标记为 extension，不并入 P0-core 或 P0-full 主统计。root-run 数量不等于 provider calls。Factorization root 可能拆成多个 range AI units，Lean root 可能拆成多个 proof AI units；真实 provider-attempt 上界必须由 split preflight 精确展开。若预算上限无法覆盖计划，runner 写 `budget_exhausted` 并停止启动新 task；不得静默减少样本、删 mode 或删 difficulty。任何缩小矩阵都必须作为新的用户批准 suite version 记录。
+P0-core（Experiment 1-4）合计 2448 个 root-runs；P0-full（Experiment 1-5 且三模型 cohort / provider preflight 通过）合计 2718 个 root-runs。100 / 300 worker extension 若 preflight 通过，最多额外增加 300 个 root-runs，并必须在 suite manifest 中标记为 extension，不并入 P0-core 或 P0-full 主统计。root-run 数量不等于 provider calls。Factorization root 可能拆成多个 range AI units，Lean root 可能拆成多个 proof AI units；真实 provider-attempt 上界必须由 split preflight 精确展开。若预算上限无法覆盖计划，runner 写 `budget_exhausted` 并停止启动新 task；不得静默减少样本、删 mode、删 difficulty、删 topic family 或把 Lean 每格 15 道减为子样本。任何缩小矩阵都必须作为新的用户批准 suite version 记录。
 
 ## 运行前预算门禁
 
@@ -453,13 +526,14 @@ CLI 必须支持 `--max-total-provider-attempts`、`--max-total-tokens`、`--max
 | `benchmarks/paper/factorization_catalog.v1.jsonl` | 冻结的 factorization 30-task catalog。 |
 | `benchmarks/paper/lean_catalog.v1.jsonl` | 冻结的 Lean simple/shallow 30-task catalog；历史 easy/medium/hard 只保留为 shallow-v1 标签。 |
 | `benchmarks/paper/lean_lemma_graph_catalog.v1.jsonl` 或 `benchmarks/paper/lean_catalog.v2.jsonl` | 后续必须新增的 medium recursive lemma-DAG / hard-frontier catalog，用于正式 Lean 复杂度主张。 |
-| `src/tokenshare/experiments/paper_models.py` | `PaperExperimentCondition`、budget、fault record、paper eligibility schema 和 digest。 |
+| `src/tokenshare/experiments/paper_models.py` | `PaperExperimentCondition`、`PaperModelExecutionRecord`、budget、fault record、paper eligibility schema 和 digest。 |
+| `src/tokenshare/experiments/paper_model_identity.py` | Experiment-layer endpoint identity、provider-specific reasoning normalization、condition-to-config pre-call binding 和 submission post-call audit；不得导入 runner/adapter 或硬编码 cohort member 列表。 |
 | `src/tokenshare/experiments/paper_catalog.py` | 加载、校验和 digest paper catalogs；本地 oracle/Lean preflight；后续必须区分 Lean `paper_difficulty` 与 shallow-v1 legacy difficulty。 |
 | `src/tokenshare/experiments/factorization_paper_adapter.py` | 从 root split 到 range children，所有 range candidate 经真实 `AIAPIExecutor`、插件 parser/verifier、canonical/merge。 |
 | `src/tokenshare/experiments/lean_paper_adapter.py` | 执行分难度 Lean catalog，真实 API child/direct proof、checker、merge/root recheck，并支持 model/worker config。 |
 | `src/tokenshare/experiments/paper_faults.py` | 在真实 output 后执行 deterministic fault selection/mutation，写 `FaultInjectionRecord`。 |
 | `src/tokenshare/experiments/paper_workers.py` | 独立 worker process、kill point、lease expiry、replacement attempt 和进程 evidence。 |
-| `src/tokenshare/experiments/paper_model_policy.py` | 加载/校验三模型 cohort snapshot 与 local entry map，展开 fixed-entry conditions，写 model execution records；不在 executor 内解释模型强弱。 |
+| `src/tokenshare/experiments/paper_model_policy.py` | 加载/校验三模型 cohort snapshot 与 local entry map，构造批准的 fixed-entry member plans；不在 executor 内解释模型强弱。 |
 | `src/tokenshare/experiments/paper_budget.py` | plan-only provider/token/cost/time/space 预算及硬上限。 |
 | `src/tokenshare/experiments/paper_runner.py` | 展开 Experiment 1–5 conditions、repeat/seed、resume、budget gate、paper eligibility。 |
 | `src/tokenshare/experiments/paper_metrics.py` | 从 events/artifacts/attempts/fault records 复算逐条件统计、quantile、speedup、recovery、ablation。 |
@@ -522,7 +596,7 @@ conda run -n tokenshare python -m tokenshare.experiments.run_paper_experiments `
   --real-transport `
   --provider-config siliconflow=local/ai_api_smoke.local.json `
   --provider-config openai=local/openai_api_smoke.local.json `
-  --baseline-entry-id <configured-baseline-entry-id> `
+  --baseline-entry-id glm_5_2_exp1_baseline `
   --model-cohort-file benchmarks/paper/model_comparison_cohort.v1.json `
   --model-entry-map local/model_comparison_entries.local.json `
   --worker-levels 1,3,10,30 `
@@ -539,7 +613,7 @@ conda run -n tokenshare python -m tokenshare.experiments.run_paper_experiments `
   --real-transport `
   --provider-config siliconflow=local/ai_api_smoke.local.json `
   --provider-config openai=local/openai_api_smoke.local.json `
-  --baseline-entry-id <configured-baseline-entry-id> `
+  --baseline-entry-id glm_5_2_exp1_baseline `
   --model-cohort-file benchmarks/paper/model_comparison_cohort.v1.json `
   --model-entry-map local/model_comparison_entries.local.json `
   --worker-levels 1,3,10,30 `
@@ -551,7 +625,7 @@ conda run -n tokenshare python -m tokenshare.experiments.run_paper_experiments `
       --max-total-tokens <approved-limit> `
       --max-cost-estimate <approved-limit>
 
-CLI 若未给 `--real-transport`、Experiment 1-4 baseline entry 不可用、catalog digest 不匹配、预算 digest 不匹配或输出目录已有不同 suite manifest，应拒绝启动，不得自动退回 scripted transport。运行 Experiment 5 时还必须加载 frozen cohort、local entry map、SiliconFlow/OpenAI provider configs，并通过三个 member 的 key/model/reasoning/smoke preflight；任一 member 缺失时 runner 写 `blocked_reason="incomplete_model_cohort"`，而不是让 Experiment 1-4 失败，也不得自动替换模型。
+CLI 若未给 `--real-transport`、Experiment 1-4 baseline 不能从 `benchmarks/paper/exp1_baseline_provider_config.v1.json` 解析到 SiliconFlow `zai-org/GLM-5.2` / `glm_5_2_exp1_baseline`、catalog digest 不匹配、预算 digest 不匹配或输出目录已有不同 suite manifest，应拒绝启动，不得自动退回 scripted transport，也不得用 Experiment 5 cohort 的其他 member 替代。运行 Experiment 5 时还必须加载 frozen cohort、local entry map、SiliconFlow/OpenAI provider configs，并通过三个 member 的 key/model/reasoning/smoke preflight；任一 member 缺失时 runner 写 `blocked_reason="incomplete_model_cohort"`，而不是让 Experiment 1-4 失败，也不得自动替换模型。
 
 # 四天执行安排
 

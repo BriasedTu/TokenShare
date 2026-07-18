@@ -9,13 +9,15 @@ from dataclasses import dataclass
 from typing import Any
 
 from tokenshare.core.models import JsonObject
+from tokenshare.executors.ai_api_artifacts import classify_response_model
 from tokenshare.executors.ai_api_config import AIAPIProviderEntry
 
 
 @dataclass(frozen=True)
 class SiliconFlowChatResult:
     provider_response_id: str | None
-    model: str | None
+    resolved_model: str | None
+    response_model_status: str
     content_text: str
     finish_reason: str | None
     usage: JsonObject | None
@@ -25,7 +27,8 @@ class SiliconFlowChatResult:
 @dataclass(frozen=True)
 class OpenAIChatResult:
     provider_response_id: str | None
-    model: str | None
+    resolved_model: str | None
+    response_model_status: str
     content_text: str
     finish_reason: str | None
     usage: JsonObject | None
@@ -170,9 +173,11 @@ def parse_siliconflow_response(response: Any) -> SiliconFlowChatResult:
             http_status=status_code,
             message="missing assistant message content",
         ) from exc
+    resolved_model, response_model_status = classify_response_model(body)
     return SiliconFlowChatResult(
         provider_response_id=body.get("id"),
-        model=body.get("model"),
+        resolved_model=resolved_model,
+        response_model_status=response_model_status,
         content_text=str(content),
         finish_reason=choice.get("finish_reason"),
         usage=dict(body["usage"]) if isinstance(body.get("usage"), dict) else None,
@@ -211,9 +216,11 @@ def parse_openai_response(response: Any) -> OpenAIChatResult:
         )
     else:
         content_text = str(content)
+    resolved_model, response_model_status = classify_response_model(body)
     return OpenAIChatResult(
         provider_response_id=body.get("id"),
-        model=body.get("model"),
+        resolved_model=resolved_model,
+        response_model_status=response_model_status,
         content_text=content_text,
         finish_reason=choice.get("finish_reason"),
         usage=dict(body["usage"]) if isinstance(body.get("usage"), dict) else None,

@@ -76,12 +76,18 @@ def test_accepted_pure_logic_node_proofs_assemble_into_root_recheck(
         bundle.store.read_bytes(result.root_proof_candidate_ref).decode("utf-8")
     )
     proof_source = candidate["proof_source"]
-    assert "have node_leaf_p : P :=" in proof_source
-    assert "have node_intermediate_q : Q :=" in proof_source
-    assert "have node_root_r : R :=" in proof_source
-    assert "exact node_leaf_p_to_q node_leaf_p" in proof_source
-    assert "exact node_leaf_q_to_r node_intermediate_q" in proof_source
-    assert "TokenShare.LemmaGraphOracle.medium_logic_root_r" not in proof_source
+    assert "have node_pure_medium_leaf_a_01 : P :=" in proof_source
+    assert "have node_pure_medium_mid_b_01 : S :=" in proof_source
+    assert "have node_pure_medium_root_01 : P ∨ Q :=" in proof_source
+    assert (
+        "exact node_pure_medium_leaf_ab_01 node_pure_medium_leaf_a_01"
+        in proof_source
+    )
+    assert (
+        "exact node_pure_medium_leaf_bc_01 node_pure_medium_mid_b_01"
+        in proof_source
+    )
+    assert "TokenShare.LemmaGraphOracle." not in proof_source
     body = json.loads(bundle.store.read_bytes(result.merge_result_ref).decode("utf-8"))
     assert body["lemma_graph_certificate_id"] == bundle.certificate.certificate_id
     assert body["lemma_graph_certificate_digest"] == bundle.certificate.certificate_digest
@@ -98,13 +104,13 @@ def test_accepted_pure_logic_node_proofs_assemble_into_root_recheck(
     [
         (
             "lean_v2_medium_function_set_dx_subset_chain_01",
-            "exact node_function_set_intermediate_d_subset_f",
-            "TokenShare.LemmaGraphOracle.function_set_root_d_subset_f",
+            "exact node_function_set_medium_ac_01",
+            "TokenShare.LemmaGraphOracle.",
         ),
         (
             "lean_v2_medium_induction_nat_predicate_chain_01",
-            "exact node_induction_leaf_q_to_r n (node_induction_intermediate_all_q n)",
-            "TokenShare.LemmaGraphOracle.induction_root_all_r",
+            "exact node_induction_medium_bc_01 n (node_induction_medium_b_01 n)",
+            "TokenShare.LemmaGraphOracle.",
         ),
     ],
 )
@@ -144,7 +150,7 @@ def test_missing_leaf_proof_blocks_lemma_graph_merge(lemma_graph_bundle_factory)
     inputs = [
         proof
         for proof in _proof_inputs(merge_policy, bundle)
-        if proof.node_id != "leaf_p"
+        if proof.node_id != "pure_medium_leaf_a_01"
     ]
 
     with pytest.raises(ValueError, match="missing required Lean lemma graph proof slots"):

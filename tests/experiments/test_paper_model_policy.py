@@ -105,6 +105,23 @@ def test_model_endpoint_cohort_preflight_selects_explicit_fixed_entries_and_bloc
     assert preflight["member_plans"]["gpt_5_6_sol_high_openai"]["reasoning_profile_id"] == (
         "high"
     )
+    gpt_plan = preflight["member_plans"]["gpt_5_6_sol_high_openai"]
+    gpt_identity = gpt_plan["endpoint_identity"]
+    assert gpt_plan["provider_config_id"] == "openai"
+    assert (
+        gpt_plan["source_provider_config_digest"]
+        == provider_configs["openai"].config_digest
+    )
+    assert gpt_plan["model_endpoint_identity_digest"].startswith("sha256:")
+    assert (
+        gpt_plan["model_endpoint_identity_digest"]
+        == gpt_identity["model_endpoint_identity_digest"]
+    )
+    assert gpt_identity["selected_entry_id"] == "gpt-entry"
+    assert gpt_identity["effective_reasoning_controls"] == {
+        "reasoning_effort": "high"
+    }
+    assert "api_key_env" not in gpt_identity
 
     incomplete = policy.build_model_endpoint_cohort_preflight(
         cohort=cohort,
@@ -311,6 +328,20 @@ def test_expand_plan_conditions_uses_exp5_preflight_fixed_entries_without_breaki
         condition.model_entry_id == entry_by_member[condition.cohort_member_id]
         for condition in exp5_conditions
     )
+    plan_by_member = preflight["member_plans"]
+    assert all(
+        condition.provider_config_id
+        == plan_by_member[condition.cohort_member_id]["provider_config_id"]
+        and condition.source_provider_config_digest
+        == plan_by_member[condition.cohort_member_id][
+            "source_provider_config_digest"
+        ]
+        and condition.model_endpoint_identity_digest
+        == plan_by_member[condition.cohort_member_id][
+            "model_endpoint_identity_digest"
+        ]
+        for condition in exp5_conditions
+    )
 
     core_conditions = expand_plan_conditions(
         catalog_manifest=catalog,
@@ -326,9 +357,99 @@ def test_expand_plan_conditions_uses_exp5_preflight_fixed_entries_without_breaki
 
     assert core_conditions
     assert {condition.model_policy for condition in core_conditions} == {"fixed_entry"}
+    assert all(
+        condition.provider_config_id is None
+        and condition.source_provider_config_digest is None
+        and condition.model_endpoint_identity_digest is None
+        for condition in core_conditions
+    )
     assert "exp5_real_ai_model_endpoint_comparison" not in {
         condition.experiment_id for condition in core_conditions
     }
+
+
+def test_source_config_drift_changes_condition_identity_without_changing_endpoint_identity(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    policy = _policy_module()
+    catalog = _catalog()
+    for env_name in ("TOKENSHARE_GLM_KEY", "TOKENSHARE_QWEN_KEY", "TOKENSHARE_GPT_KEY"):
+        monkeypatch.setenv(env_name, "test-key")
+    cohort = policy.load_model_endpoint_cohort(_write_cohort(tmp_path / "cohort.json"))
+    entry_map = policy.load_model_entry_map(
+        _write_entry_map(tmp_path / "entry_map.json", include_gpt=True)
+    )
+    siliconflow_path = _write_provider_config(
+        tmp_path / "siliconflow.json",
+        provider_family="siliconflow",
+        entries={
+            "glm-entry": ("zai-org/GLM-5.2", "TOKENSHARE_GLM_KEY"),
+            "qwen-entry": ("Qwen/Qwen3.6-27B", "TOKENSHARE_QWEN_KEY"),
+        },
+    )
+    original_openai_path = _write_provider_config(
+        tmp_path / "openai_original.json",
+        provider_family="openai",
+        entries={"gpt-entry": ("gpt-5.6-sol", "TOKENSHARE_GPT_KEY")},
+        metadata={"approval": "original"},
+    )
+    changed_openai_path = _write_provider_config(
+        tmp_path / "openai_changed.json",
+        provider_family="openai",
+        entries={"gpt-entry": ("gpt-5.6-sol", "TOKENSHARE_GPT_KEY")},
+        metadata={"approval": "changed-after-planning"},
+    )
+
+    def build_preflight(openai_path: Path) -> dict:
+        return policy.build_model_endpoint_cohort_preflight(
+            cohort=cohort,
+            entry_map=entry_map,
+            provider_configs=policy.load_provider_config_map(
+                {"siliconflow": siliconflow_path, "openai": openai_path}
+            ),
+        )
+
+    original = build_preflight(original_openai_path)
+    changed = build_preflight(changed_openai_path)
+    original_gpt = original["member_plans"]["gpt_5_6_sol_high_openai"]
+    changed_gpt = changed["member_plans"]["gpt_5_6_sol_high_openai"]
+
+    assert original_gpt["model_endpoint_identity_digest"] == changed_gpt[
+        "model_endpoint_identity_digest"
+    ]
+    assert original_gpt["source_provider_config_digest"] != changed_gpt[
+        "source_provider_config_digest"
+    ]
+
+    original_conditions = expand_plan_conditions(
+        catalog_manifest=catalog,
+        experiment_ids=("exp5_real_ai_model_endpoint_comparison",),
+        worker_levels=(10,),
+        repeats=1,
+        seed_family=(1,),
+        model_endpoint_cohort_preflight=original,
+    )
+    changed_conditions = expand_plan_conditions(
+        catalog_manifest=catalog,
+        experiment_ids=("exp5_real_ai_model_endpoint_comparison",),
+        worker_levels=(10,),
+        repeats=1,
+        seed_family=(1,),
+        model_endpoint_cohort_preflight=changed,
+    )
+    original_gpt_condition = next(
+        condition
+        for condition in original_conditions
+        if condition.cohort_member_id == "gpt_5_6_sol_high_openai"
+    )
+    changed_gpt_condition = next(
+        condition
+        for condition in changed_conditions
+        if condition.cohort_member_id == "gpt_5_6_sol_high_openai"
+    )
+
+    assert original_gpt_condition.condition_digest != changed_gpt_condition.condition_digest
 
 
 def test_exp5_blocked_cohort_does_not_expand_extra_conditions(
@@ -564,6 +685,12 @@ def test_factorization_and_lean_adapters_keep_attempt_model_identity_records(
             model_policy="fixed_entry",
             catalog_digest=catalog.catalog_digest,
             model_entry_id="gpt-entry",
+            paper_difficulty=lean_case["paper_difficulty"],
+            topic_family=lean_case["topic_family"],
+            topic_family_version=lean_case["topic_family_version"],
+            construction_rule_id=lean_case.get("construction_rule_id"),
+            oracle_package_group=lean_case.get("oracle_package_group"),
+            proof_assembly_shape=lean_case.get("proof_assembly_shape"),
         ),
         output_root=tmp_path / "lean",
         transport=ScriptedLeanPaperProofTransport(),
@@ -615,6 +742,12 @@ def _condition(
     provider_model_id: str | None = None,
     reasoning_profile_id: str | None = None,
     model_cohort_digest: str | None = None,
+    paper_difficulty: str | None = None,
+    topic_family: str | None = None,
+    topic_family_version: str | None = None,
+    construction_rule_id: str | None = None,
+    oracle_package_group: str | None = None,
+    proof_assembly_shape: str | None = None,
 ) -> PaperExperimentCondition:
     return PaperExperimentCondition(
         experiment_id="exp1_real_ai_feasibility",
@@ -636,6 +769,12 @@ def _condition(
         repeat_id=0,
         seed=1,
         catalog_digest=catalog_digest,
+        paper_difficulty=paper_difficulty,
+        topic_family=topic_family,
+        topic_family_version=topic_family_version,
+        construction_rule_id=construction_rule_id,
+        oracle_package_group=oracle_package_group,
+        proof_assembly_shape=proof_assembly_shape,
     )
 
 
@@ -841,6 +980,7 @@ def _write_provider_config(
     *,
     provider_family: str,
     entries: dict[str, tuple[str, str]],
+    metadata: dict | None = None,
 ) -> Path:
     body = {
         "schema_version": "phase7.ai_api_executor_config.v1",
@@ -887,7 +1027,7 @@ def _write_provider_config(
             for entry_id, (model, api_key_env) in entries.items()
         ],
         "local_concurrency": {"max_in_flight_global": 1},
-        "metadata": {"purpose": "paper-model-endpoint-test"},
+        "metadata": metadata or {"purpose": "paper-model-endpoint-test"},
     }
     path.write_text(json.dumps(body, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
     return path

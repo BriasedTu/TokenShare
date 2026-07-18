@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import Enum
 from hashlib import sha256
@@ -16,6 +17,7 @@ LEAN_PAPER_DIFFICULTIES = ("simple", "medium_lemma_dag", "hard_frontier")
 PAPER_DIFFICULTY_VALUES = PAPER_DIFFICULTIES + LEAN_PAPER_DIFFICULTIES
 LEAN_TOPIC_FAMILIES = ("pure_logic", "function_set", "induction")
 PAPER_MODEL_POLICIES = ("fixed_entry",)
+FORMAL_MODEL_ENDPOINT_EXPERIMENT_ID = "exp5_real_ai_model_endpoint_comparison"
 UNSUPPORTED_PAPER_TRANSPORTS = frozenset({"scripted", "fake", "deterministic", "mock"})
 
 
@@ -40,6 +42,7 @@ class PaperTaskStatus(str, Enum):
 
 class PaperAttemptStatus(str, Enum):
     SUCCEEDED = "succeeded"
+    MODEL_IDENTITY_MISMATCH = "model_identity_mismatch"
     PROVIDER_ERROR = "provider_error"
     PARSE_FAILED = "parse_failed"
     VERIFICATION_REJECTED = "verification_rejected"
@@ -66,6 +69,7 @@ class PaperFailureStage(str, Enum):
 
 
 class PaperFailureKind(str, Enum):
+    MODEL_IDENTITY_MISMATCH = "model_identity_mismatch"
     PROVIDER_ERROR = "provider_error"
     RATE_LIMITED = "rate_limited"
     PARSE_FAILURE = "parse_failure"
@@ -102,11 +106,14 @@ class PaperExperimentCondition:
     model_policy: str
     model_cohort_id: str | None = None
     cohort_member_id: str | None = None
+    provider_config_id: str | None = None
     model_entry_id: str | None = None
     provider_family: str | None = None
     provider_model_id: str | None = None
     reasoning_profile_id: str | None = None
     model_cohort_digest: str | None = None
+    source_provider_config_digest: str | None = None
+    model_endpoint_identity_digest: str | None = None
     repeat_id: int
     seed: int
     catalog_digest: str
@@ -142,6 +149,7 @@ class PaperExperimentCondition:
             "proof_assembly_shape",
             "model_cohort_id",
             "cohort_member_id",
+            "provider_config_id",
             "model_entry_id",
             "provider_family",
             "provider_model_id",
@@ -149,7 +157,19 @@ class PaperExperimentCondition:
         ):
             _validate_optional_non_empty(field_name, getattr(self, field_name))
         if self.model_cohort_digest is not None:
-            _require_digest("model_cohort_digest", self.model_cohort_digest)
+            _require_identity_digest("model_cohort_digest", self.model_cohort_digest)
+        if self.source_provider_config_digest is not None:
+            _require_identity_digest(
+                "source_provider_config_digest",
+                self.source_provider_config_digest,
+            )
+        if self.model_endpoint_identity_digest is not None:
+            _require_identity_digest(
+                "model_endpoint_identity_digest",
+                self.model_endpoint_identity_digest,
+            )
+        if self.experiment_id == FORMAL_MODEL_ENDPOINT_EXPERIMENT_ID:
+            _require_complete_model_endpoint_identity(self)
         if not isinstance(self.fault_rate, (float, int)) or self.fault_rate < 0:
             raise ValueError("fault_rate must be a non-negative number")
         _require_digest("catalog_digest", self.catalog_digest)
@@ -185,11 +205,14 @@ class PaperExperimentCondition:
             "model_policy": self.model_policy,
             "model_cohort_id": self.model_cohort_id,
             "cohort_member_id": self.cohort_member_id,
+            "provider_config_id": self.provider_config_id,
             "model_entry_id": self.model_entry_id,
             "provider_family": self.provider_family,
             "provider_model_id": self.provider_model_id,
             "reasoning_profile_id": self.reasoning_profile_id,
             "model_cohort_digest": self.model_cohort_digest,
+            "source_provider_config_digest": self.source_provider_config_digest,
+            "model_endpoint_identity_digest": self.model_endpoint_identity_digest,
             "repeat_id": self.repeat_id,
             "seed": self.seed,
             "catalog_digest": self.catalog_digest,
@@ -446,6 +469,7 @@ class PaperAttemptResult:
     error_kind: str | None
     fault_injection_ref: JsonObject | None
     paper_eligible: bool
+    model_execution_record_ref: JsonObject | None = None
     paper_difficulty: str | None = None
     topic_family: str | None = None
     topic_family_version: str | None = None
@@ -455,6 +479,7 @@ class PaperAttemptResult:
     lemma_node_id: str | None = None
     slot_key: str | None = None
     dependency_path: list[str] | tuple[str, ...] | None = None
+    planned_ai_unit_id: str | None = None
     schema_version: str = "tokenshare.paper_attempt_result.v1"
 
     def to_dict(self) -> JsonObject:
@@ -492,6 +517,9 @@ class PaperAttemptResult:
             "error_kind": self.error_kind,
             "fault_injection_ref": _json_value(self.fault_injection_ref),
             "paper_eligible": self.paper_eligible,
+            "model_execution_record_ref": _json_value(
+                self.model_execution_record_ref
+            ),
             "paper_difficulty": self.paper_difficulty,
             "topic_family": self.topic_family,
             "topic_family_version": self.topic_family_version,
@@ -500,12 +528,192 @@ class PaperAttemptResult:
             "proof_assembly_shape": self.proof_assembly_shape,
             "lemma_node_id": self.lemma_node_id,
             "slot_key": self.slot_key,
+            "planned_ai_unit_id": self.planned_ai_unit_id,
             "dependency_path": (
                 list(self.dependency_path)
                 if self.dependency_path is not None
                 else None
             ),
         }
+
+
+@dataclass(frozen=True, kw_only=True)
+class PaperModelExecutionRecord:
+    """正式 fixed-entry AI unit 的预期身份与实际执行事实。"""
+
+    condition_id: str
+    repeat_id: int
+    run_id: str
+    task_id: str
+    unit_id: str
+    attempt_id: str
+    expected_identity: JsonObject
+    source_provider_config_digest: str
+    prepared_execution_config_digest: str
+    request_ref: JsonObject
+    provenance_ref: JsonObject
+    raw_output_ref: JsonObject | None
+    usage_ref: JsonObject
+    actual_request_identities: list[JsonObject] | tuple[JsonObject, ...]
+    actual_provider_attempts: list[JsonObject] | tuple[JsonObject, ...]
+    requested_model: str | None
+    resolved_model: str | None
+    response_model_status: str
+    identity_status: str
+    mismatch_reasons: list[str] | tuple[str, ...]
+    paper_eligible: bool
+    created_at: str
+    schema_version: str = "tokenshare.paper_model_execution_record.v2"
+
+    def __post_init__(self) -> None:
+        if self.schema_version != "tokenshare.paper_model_execution_record.v2":
+            raise ValueError(
+                "schema_version must be tokenshare.paper_model_execution_record.v2"
+            )
+        for field_name in (
+            "condition_id",
+            "run_id",
+            "task_id",
+            "unit_id",
+            "attempt_id",
+            "created_at",
+        ):
+            _require_non_empty(field_name, getattr(self, field_name))
+        _require_integer("repeat_id", self.repeat_id, min_value=0)
+        _require_identity_digest(
+            "source_provider_config_digest",
+            self.source_provider_config_digest,
+        )
+        _require_identity_digest(
+            "prepared_execution_config_digest",
+            self.prepared_execution_config_digest,
+        )
+        if self.identity_status not in {
+            "matched",
+            "model_identity_mismatch",
+            "not_observed",
+        }:
+            raise ValueError(
+                "identity_status must be matched, model_identity_mismatch, or not_observed"
+            )
+        if self.response_model_status not in {
+            "present",
+            "missing",
+            "null",
+            "empty",
+            "invalid_type",
+            "unavailable",
+        }:
+            raise ValueError("invalid response_model_status")
+        if self.requested_model is not None:
+            _require_non_empty("requested_model", self.requested_model)
+        if self.resolved_model is not None:
+            _require_non_empty("resolved_model", self.resolved_model)
+        if self.response_model_status == "present" and self.resolved_model is None:
+            raise ValueError("present response model requires resolved_model")
+        if self.response_model_status != "present" and self.resolved_model is not None:
+            raise ValueError(
+                "resolved_model must be null unless response_model_status is present"
+            )
+        stable_reasons = tuple(dict.fromkeys(str(item) for item in self.mismatch_reasons))
+        if self.identity_status == "matched" and stable_reasons:
+            raise ValueError("matched model execution record cannot have mismatch_reasons")
+        if self.identity_status == "model_identity_mismatch" and not stable_reasons:
+            raise ValueError("model identity mismatch requires mismatch_reasons")
+        if self.identity_status == "model_identity_mismatch" and self.paper_eligible:
+            raise ValueError("model identity mismatch cannot be paper eligible")
+        if self.identity_status == "not_observed" and stable_reasons:
+            raise ValueError("not_observed record cannot have mismatch_reasons")
+        if self.identity_status == "not_observed" and self.paper_eligible:
+            raise ValueError("not_observed record cannot be paper eligible")
+        if (
+            self.identity_status == "not_observed"
+            and self.response_model_status != "unavailable"
+        ):
+            raise ValueError("not_observed record requires unavailable response model")
+        if self.identity_status == "not_observed" and self.raw_output_ref is not None:
+            raise ValueError("not_observed record cannot reference a raw output")
+        if self.identity_status == "matched" and self.response_model_status != "present":
+            raise ValueError("matched record requires a present response model")
+        if self.identity_status == "matched" and self.requested_model is None:
+            raise ValueError("matched record requires requested_model")
+        if self.identity_status == "matched" and self.raw_output_ref is None:
+            raise ValueError("matched record requires raw_output_ref")
+        if self.identity_status == "matched":
+            expected_model = (
+                self.expected_identity.get("provider_model_id")
+                if isinstance(self.expected_identity, Mapping)
+                else None
+            )
+            if (
+                not isinstance(expected_model, str)
+                or not expected_model
+                or self.resolved_model != expected_model
+            ):
+                raise ValueError(
+                    "matched resolved_model must equal expected_identity provider_model_id"
+                )
+            if self.requested_model != expected_model:
+                raise ValueError(
+                    "matched requested_model must equal expected_identity provider_model_id"
+                )
+        object.__setattr__(self, "expected_identity", _json_value(self.expected_identity))
+        object.__setattr__(self, "request_ref", _json_value(self.request_ref))
+        object.__setattr__(self, "provenance_ref", _json_value(self.provenance_ref))
+        object.__setattr__(self, "raw_output_ref", _json_value(self.raw_output_ref))
+        object.__setattr__(self, "usage_ref", _json_value(self.usage_ref))
+        object.__setattr__(
+            self,
+            "actual_request_identities",
+            tuple(_json_value(item) for item in self.actual_request_identities),
+        )
+        object.__setattr__(
+            self,
+            "actual_provider_attempts",
+            tuple(_json_value(item) for item in self.actual_provider_attempts),
+        )
+        object.__setattr__(self, "mismatch_reasons", stable_reasons)
+
+    @property
+    def record_digest(self) -> str:
+        return digest_json(self._body(include_digest=False))
+
+    def to_dict(self) -> JsonObject:
+        return self._body(include_digest=True)
+
+    def _body(self, *, include_digest: bool) -> JsonObject:
+        body: JsonObject = {
+            "schema_version": self.schema_version,
+            "condition_id": self.condition_id,
+            "repeat_id": self.repeat_id,
+            "run_id": self.run_id,
+            "task_id": self.task_id,
+            "unit_id": self.unit_id,
+            "attempt_id": self.attempt_id,
+            "expected_identity": _json_value(self.expected_identity),
+            "source_provider_config_digest": self.source_provider_config_digest,
+            "prepared_execution_config_digest": self.prepared_execution_config_digest,
+            "request_ref": _json_value(self.request_ref),
+            "provenance_ref": _json_value(self.provenance_ref),
+            "raw_output_ref": _json_value(self.raw_output_ref),
+            "usage_ref": _json_value(self.usage_ref),
+            "actual_request_identities": _json_value(
+                list(self.actual_request_identities)
+            ),
+            "actual_provider_attempts": _json_value(
+                list(self.actual_provider_attempts)
+            ),
+            "requested_model": self.requested_model,
+            "resolved_model": self.resolved_model,
+            "response_model_status": self.response_model_status,
+            "identity_status": self.identity_status,
+            "mismatch_reasons": list(self.mismatch_reasons),
+            "paper_eligible": self.paper_eligible,
+            "created_at": self.created_at,
+        }
+        if include_digest:
+            body["record_digest"] = self.record_digest
+        return body
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -671,6 +879,8 @@ def _attempt_ineligibility_reasons(
 ) -> list[str]:
     attempt_id = str(attempt.get("attempt_id") or "unknown")
     reasons: list[str] = []
+    if attempt.get("attempt_status") == PaperAttemptStatus.MODEL_IDENTITY_MISMATCH.value:
+        reasons.append(f"attempt:{attempt_id}:model_identity_mismatch")
     for field_name in ("provider", "model", "entry_id"):
         if not isinstance(attempt.get(field_name), str) or not attempt.get(field_name):
             reasons.append(f"attempt:{attempt_id}:missing_{field_name}")
@@ -965,6 +1175,33 @@ def _validate_model_policy(value: str) -> None:
         raise ValueError("model_policy must be fixed_entry")
 
 
+def _require_complete_model_endpoint_identity(
+    condition: PaperExperimentCondition,
+) -> None:
+    field_names = (
+        "model_cohort_id",
+        "model_cohort_digest",
+        "cohort_member_id",
+        "provider_config_id",
+        "model_entry_id",
+        "provider_family",
+        "provider_model_id",
+        "reasoning_profile_id",
+        "source_provider_config_digest",
+        "model_endpoint_identity_digest",
+    )
+    missing = [
+        field_name
+        for field_name in field_names
+        if getattr(condition, field_name) is None
+    ]
+    if missing:
+        raise ValueError(
+            "formal Experiment 5 requires complete fixed-entry identity: "
+            + ", ".join(missing)
+        )
+
+
 def _require_non_empty(field_name: str, value: str) -> None:
     if not isinstance(value, str) or not value:
         raise ValueError(f"{field_name} must be a non-empty string")
@@ -978,3 +1215,13 @@ def _require_integer(field_name: str, value: int, *, min_value: int) -> None:
 def _require_digest(field_name: str, value: str) -> None:
     if not isinstance(value, str) or not value.startswith("sha256:"):
         raise ValueError(f"{field_name} must be a sha256 digest")
+
+
+def _require_identity_digest(field_name: str, value: str) -> None:
+    if (
+        not isinstance(value, str)
+        or len(value) != 71
+        or not value.startswith("sha256:")
+        or any(character not in "0123456789abcdef" for character in value[7:])
+    ):
+        raise ValueError(f"{field_name} must be a complete sha256 digest")

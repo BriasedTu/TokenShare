@@ -61,6 +61,14 @@ from tokenshare.experiments.paper_models import (
     PaperTaskStatus,
     evaluate_paper_eligibility,
 )
+from tokenshare.experiments.paper_metrics import (
+    PaperMetricsResult,
+    recompute_exp1_pilot_metrics,
+)
+from tokenshare.experiments.paper_report import (
+    PaperReportResult,
+    write_exp1_pilot_report,
+)
 from tokenshare.experiments.paper_runner import expand_plan_conditions
 from tokenshare.experiments.paper_workers import (
     PaperAIUnit,
@@ -109,6 +117,8 @@ __all__ = [
     "PaperTaskResult",
     "PaperTaskStatus",
     "PaperFaultType",
+    "PaperMetricsResult",
+    "PaperReportResult",
     "PluginExperimentAdapter",
     "SimulationProfile",
     "SimulationWrapper",
@@ -131,10 +141,12 @@ __all__ = [
     "run_lean_ai_benchmark_suite",
     "run_lean_paper_case",
     "run_phase8_default_suite",
+    "recompute_exp1_pilot_metrics",
     "run_worker_death_harness",
     "select_fault_target_descriptors",
     "select_fault_targets",
     "summarize_ablation_evidence",
     "validate_ablation_attempt_coverage",
     "validate_ai_unit_dependency_graph",
+    "write_exp1_pilot_report",
 ]

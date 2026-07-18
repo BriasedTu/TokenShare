@@ -1221,6 +1221,12 @@ Flow result 对象：
 Startup / package layout：
 
 - `tests/test_package_layout.py`
+- `tests/test_init_verification_profiles.py`
+- `verification/fast-tests.txt`
+- `init.ps1`
+- `init.sh`
+
+`verification/fast-tests.txt` 是 PowerShell 与 Bash 共用的默认快速测试清单；两个启动脚本默认执行该 smoke suite，`init.ps1 -Full` / `init.sh --full` 才执行完整 `pytest tests`。验证模式契约测试负责防止清单缺失、重复、指向不存在路径或两个入口发生漂移。
 
 Phase 1：
 
@@ -1339,23 +1345,42 @@ Phase 8 / benchmark / paper experiment source：
 - `src/tokenshare/experiments/factorization_adapter.py`
 - `src/tokenshare/experiments/lean_adapter.py`
 - `src/tokenshare/experiments/lean_ai_benchmark.py`
+- `src/tokenshare/experiments/lean_paper_adapter.py`
 - `src/tokenshare/experiments/metrics.py`
 - `src/tokenshare/experiments/models.py`
+- `src/tokenshare/experiments/paper_budget.py`
+- `src/tokenshare/experiments/paper_catalog.py`
+- `src/tokenshare/experiments/paper_metrics.py`
+- `src/tokenshare/experiments/paper_model_identity.py`
+- `src/tokenshare/experiments/paper_model_policy.py`
+- `src/tokenshare/experiments/paper_models.py`
+- `src/tokenshare/experiments/paper_report.py`
+- `src/tokenshare/experiments/paper_runner.py`
+- `src/tokenshare/experiments/paper_unit_commitments.py`
 - `src/tokenshare/experiments/report.py`
 - `src/tokenshare/experiments/run_ai_profile.py`
 - `src/tokenshare/experiments/run_all.py`
 - `src/tokenshare/experiments/run_factorization_500_ai.py`
 - `src/tokenshare/experiments/run_lean_ai_benchmark.py`
+- `src/tokenshare/experiments/run_paper_experiments.py`
 - `src/tokenshare/experiments/runner.py`
 - `src/tokenshare/experiments/simulation.py`
 
-这些文件承载 Phase 8 regression infrastructure、AI profile、direct factorization 500、Lean AI 50 和后续 `feat-011` paper experiments。它们可以调用 Phase 1-6 protocol/plugin/executor surfaces，但不能重新定义协议权威事实。
+这些文件承载 Phase 8 regression infrastructure、AI profile、direct factorization 500、Lean AI 50 和后续 `feat-011` paper experiments。2026-07-18 Task 14 的 Lean 3×3 catalog/readiness、checker-backed oracle feasibility、paper runner plan-only budget input 和 zero-call boundary 也属于这个范围外实验层；它们可以调用 Phase 1-6 protocol/plugin/executor surfaces，但不能重新定义协议权威事实。当前 Task 14 manifest 冻结 9 个 executable cells、0 个 blocked cells、每格 15 个 checker-backed selected case IDs、合计 135 个 Lean roots；`benchmarks/paper/lean_lemma_graph_catalog.v1.jsonl` 保留 hard/frontier no-oracle structured-blocked regression rows，但这些 rows 不计入 selected slice 或 golden readiness。
+
+2026-07-18 语义复核补充：上述 manifest 当前只能证明 135 个唯一 case IDs 和 checker-backed 机械 readiness，不能证明 135 个语义不同 roots。八个 v2 passed cells 每格只有一个 canonical theorem/DAG 形状，三个 hard checker pools 与对应 medium 模板相同，hard/function_set 与 hard/induction 还缺少逐格端到端 golden evidence。因此 Task 14 当前为 `semantic_blocked`；旧 digests 不得进入正式 Task 15，需在 semantic catalog repair 后重算。
 
 Phase 8 / benchmark tests：
 
 - `tests/experiments/test_ai_profile_suite.py`
 - `tests/experiments/test_factorization_500_ai.py`
 - `tests/experiments/test_lean_ai_benchmark.py`
+- `tests/experiments/test_lean_paper_adapter.py`
+- `tests/experiments/test_lean_task14_readiness.py`
+- `tests/experiments/test_lean_lemma_graph_catalog.py`
+- `tests/experiments/test_paper_budget.py`
+- `tests/experiments/test_paper_catalog.py`
+- `tests/experiments/test_run_paper_experiments_cli.py`
 - `tests/experiments/test_phase8_default_suite.py`
 - `tests/experiments/test_phase8_models.py`
 - `tests/experiments/test_phase8_runner_reports.py`
@@ -1371,19 +1396,26 @@ Replay placeholder：
 
 ## 12. 当前验证命令
 
-完整启动验证：
+默认快速启动验证：
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\init.ps1
 ```
 
-当前 `init.ps1` 会运行：
+完整验证：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\init.ps1 -Full
+```
+
+两个档位都会运行：
 
 ```text
 conda run -n tokenshare python -c "import json, sqlite3; print('python-json-sqlite-ok')"
 conda run -n tokenshare python -m compileall -x "reference_repos" .
-PYTHONPATH=src conda run -n tokenshare python -m pytest tests
 ```
+
+默认档随后读取 `verification/fast-tests.txt` 并运行无网络 smoke/regression suite；完整档随后运行 `PYTHONPATH=src conda run -n tokenshare python -m pytest tests`。默认档用于启动和开发循环，完整档用于 feature 完成、提交/合并和实验发布门禁。
 
 2026-07-13 文档收敛前的基线验证结果：
 

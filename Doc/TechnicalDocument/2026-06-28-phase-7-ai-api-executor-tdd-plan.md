@@ -1113,12 +1113,15 @@ class AIAPIExecutor:
             )
         raw_ref = self._artifact_store.save_json(
             {
-                "schema_version": "phase7.raw_model_output.v1",
+                "schema_version": "phase7.raw_model_output.v2",
                 "submission_id": submission_id,
                 "request_id": request.request_id,
                 "provider_family": "siliconflow",
                 "entry_id": final_entry.entry_id,
-                "model": final_result.model or final_entry.model,
+                "configured_model": final_entry.model,
+                "requested_model": _required_request_model(final_request_body),
+                "resolved_model": final_result.resolved_model,
+                "response_model_status": final_result.response_model_status,
                 "provider_response_id": final_result.provider_response_id,
                 "content_text": final_result.content_text,
                 "raw_response_json": final_result.raw_response_json,
@@ -1129,7 +1132,7 @@ class AIAPIExecutor:
             artifact_id=f"raw_model_output_{submission_id}",
             artifact_type="RawModelOutput",
             artifact_schema_id="phase7.raw_model_output",
-            artifact_schema_version="v1",
+            artifact_schema_version="v2",
             source={"kind": "ai_api_executor", "request_id": request.request_id},
             metadata={"executor_id": self.executor_id, "entry_id": final_entry.entry_id},
             created_at=submitted_at,

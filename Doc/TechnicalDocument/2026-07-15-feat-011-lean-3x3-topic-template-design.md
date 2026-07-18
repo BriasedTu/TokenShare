@@ -3,10 +3,11 @@
 > 状态：设计记录 / case-selection guidance。本文不代表 runner、paper adapter 或 Lean plugin 已支持完整 3x3 执行矩阵。
 > 日期：2026-07-15
 > 权威边界：本文服从 `Doc/TechnicalDocument/tokenshare_latest_real_plugin_experiment_design.md`。如两者冲突，以唯一权威实验设计为准。
+> 2026-07-18 Task 14 二次审核备注：本文中“只有一个 medium_lemma_dag golden case”“adapter 不能执行 v2 recursive lemma-DAG”“proof-file assembly / dependency-aware merge/root recheck 未完成”等描述是 2026-07-15 当时的设计背景，已被 Task 14 当前代码、catalog、tests、`benchmarks/paper/lean_task14_3x3_readiness.v1.json`、`progress.md` 和 Phase 8 code map 更新覆盖。保留旧描述只作为设计 provenance，不应作为当前实现事实。
 
 ## 结论
 
-基于已完成的 `topic_family` schema retrofit，Lean 正式实验的 3x3 目标可以设计，但必须分阶段落地。当前实现事实是：
+基于已完成的 `topic_family` schema retrofit，Lean 正式实验的 3x3 目标可以设计，但必须分阶段落地。2026-07-15 当时实现事实是：
 
 - `benchmarks/paper/lean_catalog.v1.jsonl` 全部只能算 `simple` / shallow；历史 `easy` / `medium` / `hard` 只是 shallow-v1 内部 proof-chain 变化，不能填正式 `medium_lemma_dag` 或 `hard_frontier`。
 - `benchmarks/paper/lean_lemma_graph_catalog.v1.jsonl` 当前只有一个 checker-backed `pure_logic / medium_lemma_dag` golden case 和一个 no-oracle `pure_logic / hard_frontier` structured-blocked row。

@@ -15,6 +15,10 @@ from tokenshare.experiments.factorization_paper_adapter import (
     run_factorization_paper_case,
 )
 from tokenshare.experiments.paper_catalog import load_paper_catalogs
+from tokenshare.experiments.paper_model_identity import (
+    PaperModelIdentityMismatch,
+    build_model_endpoint_identity,
+)
 from tokenshare.experiments.paper_models import (
     PaperAttemptStatus,
     PaperExperimentCondition,
@@ -255,6 +259,11 @@ def test_factorization_paper_adapter_accepts_openai_real_transport_through_execu
         for attempt in result.attempt_results
     )
     assert result.run_evidence["transport_evidence"]["transport_kind"] == "ai_api"
+    secret_scan = result.run_evidence["secret_scan_report"]
+    assert secret_scan["status"] == "passed"
+    assert secret_scan["secret_checked_count"] == 1
+    assert secret_scan["leak_count"] == 0
+    assert "secret_scan_failed" not in result.eligibility_report.ineligibility_reasons
     for attempt in result.attempt_results:
         request = _read_request_artifact(result.output_root, attempt.request_ref)
         assert request["capability_snapshot"]["provider_family"] == "openai"
@@ -280,6 +289,282 @@ def test_factorization_paper_adapter_rejects_openai_url_transport_without_real_f
             transport=UrlLibOpenAITransport(),
             real_transport=False,
         )
+
+
+def test_factorization_paper_adapter_rejects_same_entry_id_from_wrong_provider_before_call(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("TOKENSHARE_IDENTITY_TEST_KEY", "fake-identity-test-key")
+    catalog = load_paper_catalogs(
+        factorization_path=FACTOR_CATALOG,
+        lean_path=LEAN_CATALOG,
+    )
+    case = catalog.cases_for(domain="factorization", difficulty="easy")[0]
+    approved_config = _identity_config(
+        provider_family="openai",
+        model="gpt-5.6-sol",
+        reasoning_effort="high",
+    )
+    condition = _formal_exp5_condition(
+        catalog_digest=catalog.catalog_digest,
+        domain="factorization",
+        difficulty="easy",
+        approved_config=approved_config,
+    )
+    wrong_config = _identity_config(
+        provider_family="siliconflow",
+        model="Qwen/Qwen3.6-27B",
+        reasoning_effort=None,
+    )
+    transport = ScriptedFactorizationRangeTransport()
+    output_root = tmp_path / "wrong-provider"
+
+    with pytest.raises(PaperModelIdentityMismatch):
+        try:
+            run_factorization_paper_case(
+                case=case,
+                condition=condition,
+                output_root=output_root,
+                transport=transport,
+                real_transport=False,
+                ai_api_config=wrong_config,
+                entry_id="gpt-entry",
+            )
+        finally:
+            assert transport.calls == []
+            assert not output_root.exists()
+
+
+def test_factorization_fixed_entry_503_does_not_failover_to_sibling_model(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("TOKENSHARE_IDENTITY_TEST_KEY", "fake-identity-test-key")
+    catalog = load_paper_catalogs(
+        factorization_path=FACTOR_CATALOG,
+        lean_path=LEAN_CATALOG,
+    )
+    case = catalog.cases_for(domain="factorization", difficulty="easy")[0]
+    source_config = _identity_config(
+        provider_family="openai",
+        model="gpt-5.6-sol",
+        reasoning_effort="high",
+        sibling_model="gpt-5.6-sol-sibling",
+        max_provider_attempts=2,
+    )
+    condition = _formal_exp5_condition(
+        catalog_digest=catalog.catalog_digest,
+        domain="factorization",
+        difficulty="easy",
+        approved_config=source_config,
+    )
+    transport = _RecordingProviderErrorTransport()
+
+    result = run_factorization_paper_case(
+        case=case,
+        condition=condition,
+        output_root=tmp_path / "selected-entry-503",
+        transport=transport,
+        real_transport=False,
+        ai_api_config=source_config,
+        entry_id="gpt-entry",
+    )
+
+    expected_ai_units = case["split_params"]["requested_child_count"]
+    assert result.task_result.root_status == PaperTaskStatus.FAILED
+    assert result.task_result.failure_stage == PaperFailureStage.PROVIDER
+    assert result.task_result.provider_attempt_count == expected_ai_units
+    assert len(transport.calls) == expected_ai_units
+    assert {call["entry_id"] for call in transport.calls} == {"gpt-entry"}
+    assert {call["model"] for call in transport.calls} == {"gpt-5.6-sol"}
+    for attempt in result.attempt_results:
+        assert attempt.provenance_ref is not None
+        provenance = json.loads(
+            (Path(result.output_root) / attempt.provenance_ref["uri"]).read_text(
+                encoding="utf-8"
+            )
+        )
+        assert provenance["selection_record"]["eligible_entry_ids"] == ["gpt-entry"]
+        assert provenance["selection_record"]["attempt_entry_ids"] == ["gpt-entry"]
+
+
+def test_factorization_resolved_model_mismatch_records_audit_and_stops_later_units(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("TOKENSHARE_IDENTITY_TEST_KEY", "fake-identity-test-key")
+    catalog = load_paper_catalogs(
+        factorization_path=FACTOR_CATALOG,
+        lean_path=LEAN_CATALOG,
+    )
+    case = catalog.cases_for(domain="factorization", difficulty="easy")[0]
+    approved_config = _identity_config(
+        provider_family="openai",
+        model="gpt-5.6-sol",
+        reasoning_effort="high",
+    )
+    condition = _formal_exp5_condition(
+        catalog_digest=catalog.catalog_digest,
+        domain="factorization",
+        difficulty="easy",
+        approved_config=approved_config,
+    )
+    transport = _ResolvedModelMismatchFactorizationTransport(
+        resolved_model="gpt-5.6-sol-versioned",
+    )
+
+    result = run_factorization_paper_case(
+        case=case,
+        condition=condition,
+        output_root=tmp_path / "resolved-model-mismatch",
+        transport=transport,
+        real_transport=False,
+        ai_api_config=approved_config,
+        entry_id="gpt-entry",
+    )
+
+    assert len(transport.calls) == 1
+    assert result.task_result.attempt_count == 1
+    assert result.task_result.provider_attempt_count == 1
+    assert result.task_result.root_status == PaperTaskStatus.FAILED
+    assert result.task_result.failure_stage == PaperFailureStage.AUDIT
+    assert result.task_result.failure_kind == PaperFailureKind.MODEL_IDENTITY_MISMATCH
+    assert result.task_result.paper_eligible is False
+    assert result.merge_summary["status"] == "blocked"
+    attempt = result.attempt_results[0]
+    assert attempt.attempt_status == PaperAttemptStatus.MODEL_IDENTITY_MISMATCH
+    assert attempt.error_kind == "model_identity_mismatch"
+    assert attempt.paper_eligible is False
+    assert attempt.model_execution_record_ref is not None
+
+    record = _read_artifact(result.output_root, attempt.model_execution_record_ref)
+    provenance = _read_artifact(result.output_root, attempt.provenance_ref)
+    assert record["schema_version"] == "tokenshare.paper_model_execution_record.v2"
+    assert record["identity_status"] == "model_identity_mismatch"
+    assert record["paper_eligible"] is False
+    assert "resolved_model_mismatch" in record["mismatch_reasons"]
+    assert record["expected_identity"]["model_endpoint_identity_digest"] == (
+        condition.model_endpoint_identity_digest
+    )
+    assert record["actual_request_identities"][0]["configured_model"] == "gpt-5.6-sol"
+    assert record["actual_request_identities"][0]["requested_model"] == "gpt-5.6-sol"
+    assert record["actual_request_identities"][0]["reasoning_controls"] == {
+        "reasoning_effort": "high"
+    }
+    assert record["resolved_model"] == "gpt-5.6-sol-versioned"
+    assert record["source_provider_config_digest"] == approved_config.config_digest
+    assert record["prepared_execution_config_digest"] == provenance["config_digest"]
+    assert record["request_ref"] == attempt.request_ref
+    assert record["provenance_ref"] == attempt.provenance_ref
+    assert record["raw_output_ref"] == attempt.raw_output_ref
+    assert record["usage_ref"] == attempt.usage_ref
+
+
+def test_factorization_fixed_entry_matching_response_writes_matched_v2_records(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("TOKENSHARE_IDENTITY_TEST_KEY", "fake-identity-test-key")
+    catalog = load_paper_catalogs(
+        factorization_path=FACTOR_CATALOG,
+        lean_path=LEAN_CATALOG,
+    )
+    case = catalog.cases_for(domain="factorization", difficulty="easy")[0]
+    approved_config = _identity_config(
+        provider_family="openai",
+        model="gpt-5.6-sol",
+        reasoning_effort="high",
+    )
+    condition = _formal_exp5_condition(
+        catalog_digest=catalog.catalog_digest,
+        domain="factorization",
+        difficulty="easy",
+        approved_config=approved_config,
+    )
+    transport = ScriptedFactorizationRangeTransport()
+
+    result = run_factorization_paper_case(
+        case=case,
+        condition=condition,
+        output_root=tmp_path / "matching-response",
+        transport=transport,
+        real_transport=False,
+        ai_api_config=approved_config,
+        entry_id="gpt-entry",
+    )
+
+    assert result.task_result.root_status == PaperTaskStatus.COMPLETED
+    assert len(transport.calls) == len(result.attempt_results)
+    assert len(transport.calls) > 1
+    for attempt in result.attempt_results:
+        assert attempt.model_execution_record_ref is not None
+        assert attempt.model_execution_record_ref["artifact_schema_version"] == "v2"
+        record = _read_artifact(result.output_root, attempt.model_execution_record_ref)
+        assert record["identity_status"] == "matched"
+        assert record["requested_model"] == "gpt-5.6-sol"
+        assert record["resolved_model"] == "gpt-5.6-sol"
+        assert record["response_model_status"] == "present"
+        assert record["mismatch_reasons"] == []
+
+
+def test_factorization_missing_resolved_model_records_audit_and_stops_later_units(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("TOKENSHARE_IDENTITY_TEST_KEY", "fake-identity-test-key")
+    catalog = load_paper_catalogs(
+        factorization_path=FACTOR_CATALOG,
+        lean_path=LEAN_CATALOG,
+    )
+    case = catalog.cases_for(domain="factorization", difficulty="easy")[0]
+    approved_config = _identity_config(
+        provider_family="openai",
+        model="gpt-5.6-sol",
+        reasoning_effort="high",
+    )
+    condition = _formal_exp5_condition(
+        catalog_digest=catalog.catalog_digest,
+        domain="factorization",
+        difficulty="easy",
+        approved_config=approved_config,
+    )
+    transport = _MissingResolvedModelFactorizationTransport()
+
+    result = run_factorization_paper_case(
+        case=case,
+        condition=condition,
+        output_root=tmp_path / "missing-resolved-model",
+        transport=transport,
+        real_transport=False,
+        ai_api_config=approved_config,
+        entry_id="gpt-entry",
+    )
+
+    assert len(transport.calls) == 1
+    assert result.task_result.failure_stage == PaperFailureStage.AUDIT
+    assert result.task_result.failure_kind == PaperFailureKind.MODEL_IDENTITY_MISMATCH
+    assert result.merge_summary["status"] == "blocked"
+    assert result.range_results[0]["range_result"] is None
+    assert result.range_results[0]["verification"]["status"] == "model_identity_mismatch"
+    attempt = result.attempt_results[0]
+    assert attempt.attempt_status == PaperAttemptStatus.MODEL_IDENTITY_MISMATCH
+    assert attempt.error_kind == "model_identity_mismatch"
+    assert attempt.raw_output_ref is not None
+    assert attempt.provenance_ref is not None
+    assert attempt.usage_ref is not None
+    assert attempt.model_execution_record_ref is not None
+    assert attempt.model_execution_record_ref["artifact_schema_version"] == "v2"
+    raw = _read_artifact(result.output_root, attempt.raw_output_ref)
+    record = _read_artifact(result.output_root, attempt.model_execution_record_ref)
+    assert raw["resolved_model"] is None
+    assert raw["response_model_status"] == "missing"
+    assert "model" not in raw["raw_response_json"]
+    assert record["identity_status"] == "model_identity_mismatch"
+    assert record["resolved_model"] is None
+    assert record["response_model_status"] == "missing"
+    assert record["mismatch_reasons"] == ["missing_resolved_model"]
+    assert record["paper_eligible"] is False
 
 
 class _CustomRealTransportSubclass(UrlLibSiliconFlowTransport):
@@ -331,6 +616,60 @@ class _ProviderErrorTransport:
         )
 
 
+class _RecordingProviderErrorTransport:
+    def __init__(self) -> None:
+        self.calls: list[dict] = []
+
+    def post_chat_completion(self, *, entry, api_key: str, body, timeout_seconds: int):
+        self.calls.append(
+            {
+                "entry_id": entry.entry_id,
+                "model": entry.model,
+                "api_key_seen": bool(api_key),
+                "body": body,
+                "timeout_seconds": timeout_seconds,
+            }
+        )
+        return _TransportResponse(
+            status_code=503,
+            body={"message": "provider overloaded"},
+        )
+
+
+class _ResolvedModelMismatchFactorizationTransport(
+    ScriptedFactorizationRangeTransport
+):
+    def __init__(self, *, resolved_model: str) -> None:
+        super().__init__()
+        self.resolved_model = resolved_model
+
+    def post_chat_completion(self, *, entry, api_key: str, body, timeout_seconds: int):
+        response = super().post_chat_completion(
+            entry=entry,
+            api_key=api_key,
+            body=body,
+            timeout_seconds=timeout_seconds,
+        )
+        response.body["model"] = self.resolved_model
+        response.text = json.dumps(response.body, ensure_ascii=False)
+        return response
+
+
+class _MissingResolvedModelFactorizationTransport(
+    ScriptedFactorizationRangeTransport
+):
+    def post_chat_completion(self, *, entry, api_key: str, body, timeout_seconds: int):
+        response = super().post_chat_completion(
+            entry=entry,
+            api_key=api_key,
+            body=body,
+            timeout_seconds=timeout_seconds,
+        )
+        response.body.pop("model", None)
+        response.text = json.dumps(response.body, ensure_ascii=False)
+        return response
+
+
 def _condition(catalog_digest: str) -> PaperExperimentCondition:
     return PaperExperimentCondition(
         experiment_id="exp1_real_ai_feasibility",
@@ -345,6 +684,127 @@ def _condition(catalog_digest: str) -> PaperExperimentCondition:
         repeat_id=0,
         seed=1,
         catalog_digest=catalog_digest,
+    )
+
+
+def _formal_exp5_condition(
+    *,
+    catalog_digest: str,
+    domain: str,
+    difficulty: str,
+    approved_config,
+) -> PaperExperimentCondition:
+    identity = build_model_endpoint_identity(
+        model_cohort_id="experiment_5_fixed_endpoint_cohort_v1",
+        model_cohort_digest=f"sha256:{'1' * 64}",
+        cohort_member_id="gpt_5_6_sol_high_openai",
+        provider_config_id="openai",
+        selected_entry_id="gpt-entry",
+        expected_provider_family="openai",
+        expected_provider_model_id="gpt-5.6-sol",
+        expected_reasoning_profile_id="high",
+        source_config=approved_config,
+    )
+    return PaperExperimentCondition(
+        experiment_id="exp5_real_ai_model_endpoint_comparison",
+        condition_id=f"exp5_{domain}_{difficulty}_gpt_r0",
+        domain=domain,
+        difficulty=difficulty,
+        worker_count=10,
+        fault_type="none",
+        fault_rate=0.0,
+        ablation_mode="FULL",
+        model_policy="fixed_entry",
+        model_cohort_id=identity.model_cohort_id,
+        cohort_member_id=identity.cohort_member_id,
+        provider_config_id=identity.provider_config_id,
+        model_entry_id=identity.selected_entry_id,
+        provider_family=identity.provider_family,
+        provider_model_id=identity.provider_model_id,
+        reasoning_profile_id=identity.reasoning_profile_id,
+        model_cohort_digest=identity.model_cohort_digest,
+        source_provider_config_digest=identity.source_provider_config_digest,
+        model_endpoint_identity_digest=identity.model_endpoint_identity_digest,
+        repeat_id=0,
+        seed=1,
+        catalog_digest=catalog_digest,
+    )
+
+
+def _identity_config(
+    *,
+    provider_family: str,
+    model: str,
+    reasoning_effort: str | None,
+    sibling_model: str | None = None,
+    max_provider_attempts: int = 1,
+):
+    request_overrides = {"temperature": 0.0}
+    if reasoning_effort is not None:
+        request_overrides["reasoning_effort"] = reasoning_effort
+    base_url = (
+        "https://api.openai.com/v1"
+        if provider_family == "openai"
+        else "https://api.siliconflow.cn/v1"
+    )
+    entries = [
+        {
+            "entry_id": "gpt-entry",
+            "enabled": True,
+            "base_url": base_url,
+            "api_key_env": "TOKENSHARE_IDENTITY_TEST_KEY",
+            "model": model,
+            "endpoint": "/chat/completions",
+            "supports_json_mode": True,
+            "supports_streaming": False,
+            "request_overrides": request_overrides,
+            "pricing": {
+                "currency": "USD",
+                "input_per_million_tokens": 1.0,
+                "output_per_million_tokens": 2.0,
+            },
+            "tags": ["identity_test"],
+        }
+    ]
+    if sibling_model is not None:
+        entries.append(
+            {
+                "entry_id": "sibling-entry",
+                "enabled": True,
+                "base_url": base_url,
+                "api_key_env": "TOKENSHARE_IDENTITY_TEST_KEY",
+                "model": sibling_model,
+                "endpoint": "/chat/completions",
+                "supports_json_mode": True,
+                "supports_streaming": False,
+                "request_overrides": request_overrides,
+                "pricing": {
+                    "currency": "USD",
+                    "input_per_million_tokens": 1.0,
+                    "output_per_million_tokens": 2.0,
+                },
+                "tags": ["identity_test", "sibling"],
+            }
+        )
+    return load_ai_api_config(
+        {
+            "schema_version": "phase7.ai_api_executor_config.v1",
+            "executor_id": "executor_ai_api",
+            "provider_family": provider_family,
+            "selection_policy": {
+                "kind": "uniform_random_without_weights",
+                "seed_source": "request_or_environment_seed",
+            },
+            "defaults": {
+                "timeout_seconds": 30,
+                "max_tokens": 512,
+                "temperature": 0.0,
+                "max_provider_attempts": max_provider_attempts,
+            },
+            "entries": entries,
+            "local_concurrency": {"max_in_flight_global": 1},
+            "metadata": {"purpose": "fixed-entry-identity-test"},
+        }
     )
 
 
@@ -438,7 +898,11 @@ def _openai_real_transport_config():
 
 
 def _read_request_artifact(output_root: str, request_ref: dict) -> dict:
-    return json.loads((Path(output_root) / request_ref["uri"]).read_text(encoding="utf-8"))
+    return _read_artifact(output_root, request_ref)
+
+
+def _read_artifact(output_root: str, artifact_ref: dict) -> dict:
+    return json.loads((Path(output_root) / artifact_ref["uri"]).read_text(encoding="utf-8"))
 
 
 def _request_provider_family(output_root: str, request_ref: dict) -> str:
