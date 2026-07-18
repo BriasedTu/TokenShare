@@ -18,12 +18,18 @@ from tokenshare.experiments.paper_exp3_fault_recovery import (
     summarize_exp3,
     validate_exp3_condition_matrix,
 )
-from tokenshare.experiments.paper_models import PaperStatus
+from tokenshare.experiments.paper_models import (
+    PaperAttemptResult,
+    PaperAttemptStatus,
+    PaperStatus,
+)
 from tokenshare.experiments.paper_models import digest_json
+from tokenshare.storage.artifacts import ArtifactStore
 
 
 CATALOG_DIGEST = "sha256:" + "a" * 64
 ENDPOINT_DIGEST = "sha256:" + "b" * 64
+SOURCE_CONFIG_DIGEST = "sha256:" + "d" * 64
 
 
 def test_exp3_expands_rate_fault_and_worker_death_root_run_counts() -> None:
@@ -118,6 +124,9 @@ def test_exp3_freezes_task_slices_and_fault_target_manifest_without_resampling()
             "lean_rate_function_set",
             "lean_rate_induction",
         )
+    }
+    assert {selection.topic_family for selection in lean_rate_selections.values()} == {
+        None
     }
 
     factor_100_rows = [
@@ -557,6 +566,7 @@ def test_exp3_summary_rejects_fault_timing_before_raw_persistence_and_model_fail
     zero_fault_with_records["fault_records"] = [
         _fault_record(
             index=0,
+            condition_id="fault_zero_with_record",
             original_output_ref={"artifact_id": "original_0"},
             mutated_output_ref={"artifact_id": "mutated_0"},
         )
@@ -621,8 +631,10 @@ def test_exp3_worker_death_summary_keeps_actual_dead_count_mismatch_failed() -> 
     assert good["required_slot_count"] == 4
     assert good["recovered_slot_count"] == 3
     assert good["result_completeness_rate"] == pytest.approx(0.75)
-    assert good["root_output_complete"] is True
-    assert good["accepted_validity"] is True
+    assert good["root_output_complete"] is False
+    assert good["accepted_validity"] is False
+    assert good["condition_included"] is False
+    assert good["failure_reason"] == "incomplete_recovery"
 
     assert mismatch["condition_included"] is False
     assert mismatch["run_status"] == "failed"
@@ -886,6 +898,509 @@ def test_exp3_module_protocol_run_condition_and_scripted_eligibility_guard() -> 
         module.summarize({"rate_fault_runs": [scripted], "worker_death_runs": []})
 
 
+def test_exp3_run_condition_rejects_all_canonical_input_drift_before_callback() -> None:
+    callback_calls: list[str] = []
+
+    def callback(*, condition, selection) -> PaperConditionResult:
+        callback_calls.append(condition.condition_id)
+        return PaperConditionResult(
+            condition_id=condition.condition_id,
+            status=PaperStatus.PLANNED,
+            repeat_count=1,
+            task_count=len(selection.ordered_case_ids),
+            completed_root_count=0,
+            failed_root_count=0,
+            blocked_root_count=0,
+            provider_attempt_count=0,
+            metrics_ref=None,
+        )
+
+    module = Experiment3FaultRecoveryModule()
+    context = replace(_context(), execution_callback=callback)
+    conditions = module.expand_conditions(context)
+    selections = module.freeze_case_selections(context, conditions)
+    condition = conditions[0]
+    selection = selections[0]
+
+    drifted_inputs = (
+        (replace(condition, seed=condition.seed + 1), selection, context),
+        (
+            condition,
+            replace(selection, ordered_case_ids=tuple(reversed(selection.ordered_case_ids))),
+            context,
+        ),
+        (
+            condition,
+            selection,
+            replace(
+                context,
+                catalog={**_catalog(), "catalog_digest": "sha256:" + "c" * 64},
+            ),
+        ),
+        (
+            condition,
+            selection,
+            replace(
+                context,
+                approved_endpoint_binding={
+                    **dict(context.approved_endpoint_binding),
+                    "provider_family": "openai",
+                    "provider_model_id": "drift-model",
+                    "request_limits": {
+                        "max_tokens": 1024,
+                        "timeout_seconds": 30,
+                        "max_provider_attempts": 1,
+                        "temperature": 0.9,
+                        "enable_thinking": True,
+                    },
+                },
+            ),
+        ),
+    )
+
+    for drifted_condition, drifted_selection, drifted_context in drifted_inputs:
+        with pytest.raises(ValueError):
+            module.run_condition(
+                drifted_context,
+                drifted_condition,
+                drifted_selection,
+            )
+
+    assert callback_calls == []
+
+
+def test_exp3_summary_rejects_incomplete_formal_matrix_and_attempt_transport_lie() -> None:
+    incomplete = _rate_fault_run(
+        condition_id="exp3_rate_fault_factorization__false_positive__r50__rep0",
+        matched_baseline_condition_id="baseline_incomplete",
+    )
+    incomplete["transport_kind"] = "ai_api"
+    incomplete["paper_eligible"] = True
+    with pytest.raises(ValueError, match="complete formal matrix"):
+        summarize_exp3({"rate_fault_runs": [incomplete], "worker_death_runs": []})
+
+    transport_lie = _rate_fault_run(
+        condition_id="fault_transport_lie",
+        matched_baseline_condition_id="baseline_transport_lie",
+    )
+    transport_lie["transport_kind"] = "ai_api"
+    transport_lie["attempts"][0]["transport_kind"] = "scripted"
+    with pytest.raises(ValueError, match="attempt transport"):
+        summarize_exp3(
+            {"rate_fault_runs": [transport_lie], "worker_death_runs": []}
+        )
+
+
+def test_exp3_formal_matrix_completeness_rejects_canonical_run_field_drift() -> None:
+    from tokenshare.experiments.paper_exp3_fault_recovery import (
+        _summary_matrix_complete,
+    )
+
+    context = _context()
+    module = Experiment3FaultRecoveryModule()
+    conditions = module.expand_conditions(context)
+    selections = module.freeze_case_selections(context, conditions)
+    plan = build_exp3_plan_manifest(
+        conditions,
+        selections,
+        catalog=context.catalog,
+    )
+    target_manifest_by_condition = {
+        row["condition_id"]: row for row in plan["fault_target_manifest"]
+    }
+    rate_runs: list[dict[str, Any]] = []
+    worker_runs: list[dict[str, Any]] = []
+    for condition, selection in zip(conditions, selections, strict=True):
+        run = {
+            "condition_id": condition.condition_id,
+            "domain": condition.domain,
+            "fault_type": condition.fault_type,
+            "fault_rate_percent": int(condition.fault_rate * 100),
+            "repeat_id": condition.repeat_id,
+            "task_count": len(selection.ordered_case_ids),
+            "condition_evidence": {
+                "condition_id": condition.condition_id,
+                "condition_digest": condition.condition_digest,
+                "selection_digest": selection.selection_digest,
+                "ordered_case_ids": list(selection.ordered_case_ids),
+                "repeat_id": condition.repeat_id,
+                "seed": condition.seed,
+                "worker_count": condition.worker_count,
+                "catalog_digest": condition.catalog_digest,
+                "provider_config_id": condition.provider_config_id,
+                "model_entry_id": condition.model_entry_id,
+                "provider_family": condition.provider_family,
+                "provider_model_id": condition.provider_model_id,
+                "reasoning_profile_id": condition.reasoning_profile_id,
+                "source_provider_config_digest": (
+                    condition.source_provider_config_digest
+                ),
+                "model_endpoint_identity_digest": (
+                    condition.model_endpoint_identity_digest
+                ),
+                "request_limits": dict(context.request_limits),
+            },
+        }
+        if condition.fault_type == "worker_death":
+            parts = condition.condition_id.split("__")
+            run["target_dead_worker_count"] = int(parts[-3].removeprefix("dead"))
+            run["target_kill_progress_percent"] = int(
+                parts[-2].removeprefix("p")
+            )
+            worker_runs.append(run)
+        else:
+            run["fault_target_manifest"] = dict(
+                target_manifest_by_condition[condition.condition_id]
+            )
+            rate_runs.append(run)
+
+    matrix_evidence = {
+        "conditions": conditions,
+        "selections": selections,
+        "catalog": context.catalog,
+    }
+    assert _summary_matrix_complete(
+        matrix_evidence,
+        rate_runs=rate_runs,
+        worker_runs=worker_runs,
+    ) is True
+
+    rate_runs[0]["repeat_id"] = 99
+    with pytest.raises(ValueError, match="canonical formal condition"):
+        _summary_matrix_complete(
+            matrix_evidence,
+            rate_runs=rate_runs,
+            worker_runs=worker_runs,
+        )
+    rate_runs[0]["repeat_id"] = conditions[0].repeat_id
+    rate_runs[0]["condition_evidence"]["selection_digest"] = (
+        "sha256:" + "f" * 64
+    )
+    with pytest.raises(ValueError, match="formal condition evidence"):
+        _summary_matrix_complete(
+            matrix_evidence,
+            rate_runs=rate_runs,
+            worker_runs=worker_runs,
+        )
+    rate_runs[0]["condition_evidence"]["selection_digest"] = selections[
+        0
+    ].selection_digest
+    rate_runs[0]["fault_target_manifest"]["selected_target_ai_unit_ids"] = [
+        "drifted_target"
+    ]
+    with pytest.raises(ValueError, match="frozen target manifest"):
+        _summary_matrix_complete(
+            matrix_evidence,
+            rate_runs=rate_runs,
+            worker_runs=worker_runs,
+        )
+
+
+def test_exp3_summary_binds_baseline_and_aggregate_usage_evidence() -> None:
+    baseline_drift = _rate_fault_run(
+        condition_id="fault_baseline_evidence_drift",
+        matched_baseline_condition_id="baseline_evidence_drift",
+    )
+    comparison = {
+        "selection_digest": "sha256:" + "1" * 64,
+        "ordered_case_ids": ["factor_rate_0"],
+        "repeat_id": 0,
+        "seed": 330001,
+        "worker_count": 10,
+        "catalog_digest": CATALOG_DIGEST,
+        "provider_config_id": "exp1_baseline_siliconflow",
+        "model_entry_id": BASELINE_MODEL_ENTRY_ID,
+        "provider_family": "siliconflow",
+        "provider_model_id": "zai-org/GLM-5.2",
+        "reasoning_profile_id": "temperature_0_thinking_false",
+        "source_provider_config_digest": SOURCE_CONFIG_DIGEST,
+        "model_endpoint_identity_digest": ENDPOINT_DIGEST,
+        "request_limits": dict(_context().request_limits),
+        "prompt_version": "prompt_exp3_v1",
+        "parser_version": "parser_v1",
+        "plugin_version": "plugin_v1",
+        "executor_version": "ai_api_executor_v1",
+    }
+    baseline_drift["condition_evidence"] = {
+        **comparison,
+        "condition_id": baseline_drift["condition_id"],
+        "condition_digest": "sha256:" + "2" * 64,
+    }
+    baseline_drift["baseline_evidence"] = {
+        **comparison,
+        "condition_id": baseline_drift["matched_baseline_condition_id"],
+        "condition_digest": "sha256:" + "3" * 64,
+        "selection_digest": "sha256:" + "4" * 64,
+    }
+    with pytest.raises(ValueError, match="baseline comparison"):
+        summarize_exp3(
+            {"rate_fault_runs": [baseline_drift], "worker_death_runs": []}
+        )
+
+    version_drift = _rate_fault_run(
+        condition_id="fault_baseline_version_drift",
+        matched_baseline_condition_id="baseline_version_drift",
+    )
+    version_drift["baseline_evidence"]["parser_version"] = "drifted_parser"
+    with pytest.raises(ValueError, match="baseline comparison"):
+        summarize_exp3(
+            {"rate_fault_runs": [version_drift], "worker_death_runs": []}
+        )
+
+    baseline_digest_drift = _rate_fault_run(
+        condition_id="fault_baseline_digest_drift",
+        matched_baseline_condition_id="baseline_digest_drift",
+    )
+    baseline_digest_drift["baseline_evidence"]["condition_digest"] = (
+        "sha256:" + "9" * 64
+    )
+    with pytest.raises(ValueError, match="expected baseline evidence"):
+        summarize_exp3(
+            {
+                "rate_fault_runs": [baseline_digest_drift],
+                "worker_death_runs": [],
+            }
+        )
+
+    token_drift = _rate_fault_run(
+        condition_id="fault_token_drift",
+        matched_baseline_condition_id="baseline_token_drift",
+    )
+    token_drift["attempts"][0]["total_tokens"] = 2
+    token_drift["attempts"][0]["cost_estimate"] = 0.01
+    token_drift["total_tokens"] = 999
+    with pytest.raises(ValueError, match="total_tokens"):
+        summarize_exp3(
+            {"rate_fault_runs": [token_drift], "worker_death_runs": []}
+        )
+
+
+def test_exp3_summary_requires_full_attempt_identity_and_real_artifact_evidence() -> None:
+    identity_drift = _rate_fault_run(
+        condition_id="fault_attempt_identity_drift",
+        matched_baseline_condition_id="baseline_attempt_identity_drift",
+    )
+    identity_drift["attempts"][0]["source_provider_config_digest"] = (
+        "sha256:" + "9" * 64
+    )
+    with pytest.raises(ValueError, match="attempt model identity"):
+        summarize_exp3(
+            {"rate_fault_runs": [identity_drift], "worker_death_runs": []}
+        )
+
+    fake_ai = _rate_fault_run(
+        condition_id="fault_fake_ai_attempt",
+        matched_baseline_condition_id="baseline_fake_ai_attempt",
+    )
+    fake_ai["transport_kind"] = "ai_api"
+    for attempt in (*fake_ai["attempts"], *fake_ai["baseline_attempts"]):
+        attempt["transport_kind"] = "ai_api"
+        attempt["paper_eligible"] = False
+    row = summarize_exp3(
+        {"rate_fault_runs": [fake_ai], "worker_death_runs": []}
+    ).rows[0]
+    assert row["paper_eligible"] is False
+    assert any(
+        "request_ref" in reason for reason in row["ineligibility_reasons"]
+    )
+
+
+def test_exp3_summary_binds_fault_type_to_injection_point_and_recovery_facts() -> None:
+    wrong_point = _rate_fault_run(
+        condition_id="fault_wrong_injection_point",
+        matched_baseline_condition_id="baseline_wrong_injection_point",
+    )
+    assert wrong_point["fault_type"] == "false_positive"
+    wrong_point["fault_records"][0]["injection_point"] = (
+        "after_raw_output_before_parser_bridge"
+    )
+    assert wrong_point["fault_records"][0]["injection_point"] == (
+        "after_raw_output_before_parser_bridge"
+    )
+    with pytest.raises(ValueError, match="injection point"):
+        summarize_exp3(
+            {"rate_fault_runs": [wrong_point], "worker_death_runs": []}
+        )
+
+    incomplete_recovery = _worker_death_run(
+        condition_id="worker_death_incomplete_recovery",
+        target_dead_worker_count=3,
+        actual_dead_worker_count=3,
+        required_slot_count=4,
+        recovered_slot_count=3,
+    )
+    row = summarize_exp3(
+        {"rate_fault_runs": [], "worker_death_runs": [incomplete_recovery]}
+    ).rows[0]
+    assert row["root_output_complete"] is False
+    assert row["accepted_validity"] is False
+    assert row["condition_included"] is False
+    assert row["paper_eligible"] is False
+
+
+def test_exp3_summary_binds_fault_records_to_frozen_target_manifest() -> None:
+    run = _rate_fault_run(
+        condition_id="fault_target_manifest_drift",
+        matched_baseline_condition_id="baseline_target_manifest_drift",
+        injected_fault_count=1,
+        detected_fault_count=1,
+        false_accept_count=0,
+        recoverable_fault_target_count=0,
+        recovered_fault_target_count=0,
+    )
+    run["fault_target_manifest"] = {
+        "condition_id": run["condition_id"],
+        "fault_type": run["fault_type"],
+        "fault_rate_percent": run["fault_rate_percent"],
+        "repeat_id": run["repeat_id"],
+        "selection_digest": run["condition_evidence"]["selection_digest"],
+        "target_seed": 300300,
+        "selected_target_ai_unit_ids": ["different_unit"],
+    }
+    with pytest.raises(ValueError, match="target manifest"):
+        summarize_exp3({"rate_fault_runs": [run], "worker_death_runs": []})
+
+
+def test_exp3_fault_adapter_requires_persisted_provenance_and_feeds_summary(
+    tmp_path,
+) -> None:
+    from tokenshare.experiments.paper_exp3_fault_recovery import (
+        inject_exp3_post_ai_fault,
+    )
+
+    store = ArtifactStore(tmp_path)
+    raw_ref = _save_test_artifact(
+        store,
+        artifact_id="exp3_raw_1",
+        artifact_type="RawModelOutput",
+        schema_id="phase7.raw_model_output",
+        created_at="2026-07-19T00:00:00Z",
+        body={"text": '{"result_kind":"no_factor"}'},
+    )
+    parsed_ref = _save_test_artifact(
+        store,
+        artifact_id="exp3_parsed_1",
+        artifact_type="ParsedModelOutput",
+        schema_id="phase7.parsed_model_output",
+        created_at="2026-07-19T00:00:00Z",
+        body={
+            "result_kind": "no_factor",
+            "target_n": "91",
+            "range_start": "2",
+            "range_end": "10",
+            "found_factor": None,
+            "cofactor": None,
+        },
+    )
+    provenance_ref = _save_test_artifact(
+        store,
+        artifact_id="exp3_provenance_1",
+        artifact_type="AIProviderCallProvenance",
+        schema_id="phase7.ai_provider_call_provenance",
+        created_at="2026-07-19T00:00:00Z",
+        body={"provider_family": "siliconflow"},
+    )
+    attempt = PaperAttemptResult(
+        condition_id="fault_primitive_integration",
+        repeat_id=0,
+        run_id="run_primitive_integration",
+        task_id="task_primitive_integration",
+        unit_id="unit_primitive_integration",
+        attempt_id="attempt_primitive_integration",
+        worker_id="worker_primitive_integration",
+        provider_attempt_index=0,
+        attempt_status=PaperAttemptStatus.SUCCEEDED,
+        provider="siliconflow",
+        model="zai-org/GLM-5.2",
+        entry_id=BASELINE_MODEL_ENTRY_ID,
+        request_ref={"artifact_id": "request_primitive_integration"},
+        raw_output_ref=raw_ref.to_dict(),
+        parsed_output_ref=parsed_ref.to_dict(),
+        parse_failure_ref=None,
+        provenance_ref=provenance_ref.to_dict(),
+        usage_ref={"artifact_id": "usage_primitive_integration"},
+        started_at="2026-07-19T00:00:00Z",
+        ended_at="2026-07-19T00:00:01Z",
+        latency_ms=1000,
+        prompt_tokens=20,
+        completion_tokens=25,
+        total_tokens=45,
+        cost_estimate=0.75,
+        error_kind=None,
+        fault_injection_ref=None,
+        paper_eligible=False,
+    )
+    missing_provenance = dict(provenance_ref.to_dict())
+    missing_provenance["artifact_id"] = "missing_provenance"
+    missing_provenance["uri"] = "artifacts/missing_provenance"
+    with pytest.raises(ValueError, match="persisted provenance"):
+        inject_exp3_post_ai_fault(
+            artifact_store=store,
+            attempt=replace(attempt, provenance_ref=missing_provenance),
+            fault_type="false_positive",
+            seed=300300,
+            created_at="2026-07-19T00:00:02Z",
+        )
+
+    outcome = inject_exp3_post_ai_fault(
+        artifact_store=store,
+        attempt=attempt,
+        fault_type="false_positive",
+        seed=300300,
+        created_at="2026-07-19T00:00:02Z",
+    )
+    assert outcome.primitive_outcome.record.to_dict()["fault_type"] == (
+        "false_positive"
+    )
+    assert outcome.record["original_provenance_ref"] == provenance_ref.to_dict()
+    assert outcome.record["mutated_provenance_ref"] == (
+        outcome.mutation_provenance_ref.to_dict()
+    )
+    assert outcome.record["provenance_persisted_at"] <= outcome.record["injected_at"]
+
+    run = _rate_fault_run(
+        condition_id="fault_primitive_integration",
+        matched_baseline_condition_id="baseline_primitive_integration",
+        injected_fault_count=1,
+        detected_fault_count=1,
+        false_accept_count=0,
+        recoverable_fault_target_count=0,
+        recovered_fault_target_count=0,
+    )
+    run["original_output_refs"] = [outcome.record["original_output_ref"]]
+    run["mutated_output_refs"] = [outcome.record["mutated_output_ref"]]
+    run["fault_records"] = [outcome.record]
+    run["fault_target_manifest"]["selected_target_ai_unit_ids"] = [
+        "unit_primitive_integration"
+    ]
+    row = summarize_exp3(
+        {"rate_fault_runs": [run], "worker_death_runs": []}
+    ).rows[0]
+    assert row["injected_fault_count"] == 1
+    assert row["paper_eligible"] is False
+
+
+def _save_test_artifact(
+    store: ArtifactStore,
+    *,
+    artifact_id: str,
+    artifact_type: str,
+    schema_id: str,
+    created_at: str,
+    body: dict[str, Any],
+):
+    return store.save_json(
+        body,
+        artifact_id=artifact_id,
+        artifact_type=artifact_type,
+        artifact_schema_id=schema_id,
+        artifact_schema_version="v1",
+        source={"kind": "ai_api_executor"},
+        metadata={},
+        created_at=created_at,
+    )
+
+
 def _context(catalog: dict[str, Any] | None = None) -> PaperExecutionContext:
     def callback(*, condition, selection) -> PaperConditionResult:
         return PaperConditionResult(
@@ -903,8 +1418,30 @@ def _context(catalog: dict[str, Any] | None = None) -> PaperExecutionContext:
     return PaperExecutionContext(
         context_id="exp3_test_context",
         catalog=catalog or _catalog(),
-        approved_endpoint_binding={"model_endpoint_identity_digest": ENDPOINT_DIGEST},
-        request_limits={"max_tokens": 1024},
+        approved_endpoint_binding={
+            "provider_config_id": "exp1_baseline_siliconflow",
+            "selected_entry_id": BASELINE_MODEL_ENTRY_ID,
+            "model_entry_id": BASELINE_MODEL_ENTRY_ID,
+            "provider_family": "siliconflow",
+            "provider_model_id": "zai-org/GLM-5.2",
+            "reasoning_profile_id": "temperature_0_thinking_false",
+            "source_provider_config_digest": SOURCE_CONFIG_DIGEST,
+            "model_endpoint_identity_digest": ENDPOINT_DIGEST,
+            "request_limits": {
+                "max_tokens": 1024,
+                "timeout_seconds": 30,
+                "max_provider_attempts": 1,
+                "temperature": 0.0,
+                "enable_thinking": False,
+            },
+        },
+        request_limits={
+            "max_tokens": 1024,
+            "timeout_seconds": 30,
+            "max_provider_attempts": 1,
+            "temperature": 0.0,
+            "enable_thinking": False,
+        },
         hard_limits={"max_total_provider_attempts": 0},
         output_root="outputs/experiments/exp3_test",
         artifact_store=object(),
@@ -963,6 +1500,36 @@ def _catalog() -> dict[str, Any]:
     return catalog
 
 
+def _comparison_evidence(
+    *,
+    condition_id: str,
+    condition_digest: str,
+    ordered_case_ids: list[str],
+) -> dict[str, Any]:
+    return {
+        "condition_id": condition_id,
+        "condition_digest": condition_digest,
+        "selection_digest": "sha256:" + "1" * 64,
+        "ordered_case_ids": ordered_case_ids,
+        "repeat_id": 0,
+        "seed": 330001,
+        "worker_count": 10,
+        "catalog_digest": CATALOG_DIGEST,
+        "provider_config_id": "exp1_baseline_siliconflow",
+        "model_entry_id": BASELINE_MODEL_ENTRY_ID,
+        "provider_family": "siliconflow",
+        "provider_model_id": "zai-org/GLM-5.2",
+        "reasoning_profile_id": "temperature_0_thinking_false",
+        "source_provider_config_digest": SOURCE_CONFIG_DIGEST,
+        "model_endpoint_identity_digest": ENDPOINT_DIGEST,
+        "request_limits": dict(_context().request_limits),
+        "prompt_version": "prompt_exp3_v1",
+        "parser_version": "parser_v1",
+        "plugin_version": "plugin_v1",
+        "executor_version": "ai_api_executor_v1",
+    }
+
+
 def _rate_fault_run(
     *,
     condition_id: str,
@@ -988,6 +1555,16 @@ def _rate_fault_run(
         {"artifact_id": f"mutated_{index}"}
         for index in range(injected_fault_count)
     ]
+    condition_evidence = _comparison_evidence(
+        condition_id=condition_id,
+        condition_digest="sha256:" + "5" * 64,
+        ordered_case_ids=[f"factor_rate_{index}" for index in range(5)],
+    )
+    baseline_evidence = {
+        **condition_evidence,
+        "condition_id": matched_baseline_condition_id,
+        "condition_digest": "sha256:" + "6" * 64,
+    }
     return {
         "condition_id": condition_id,
         "domain": "factorization",
@@ -1021,6 +1598,7 @@ def _rate_fault_run(
         "fault_records": [
             _fault_record(
                 index=index,
+                condition_id=condition_id,
                 original_output_ref=original_refs[index],
                 mutated_output_ref=mutated_refs[index],
             )
@@ -1028,12 +1606,58 @@ def _rate_fault_run(
         ],
         "attempts": [
             {
+                "attempt_id": f"attempt_{condition_id}",
+                "condition_id": condition_id,
+                "repeat_id": 0,
                 "entry_id": BASELINE_MODEL_ENTRY_ID,
+                "provider_config_id": "exp1_baseline_siliconflow",
                 "provider": "siliconflow",
                 "model": "zai-org/GLM-5.2",
                 "reasoning_profile_id": "temperature_0_thinking_false",
+                "source_provider_config_digest": SOURCE_CONFIG_DIGEST,
+                "model_endpoint_identity_digest": ENDPOINT_DIGEST,
+                "request_limits": dict(_context().request_limits),
+                "transport_kind": "scripted",
+                "paper_eligible": False,
+                "total_tokens": total_tokens,
+                "cost_estimate": cost_estimate,
+                "wasted_actual_tokens": 7,
             }
         ],
+        "baseline_attempts": [
+            {
+                "attempt_id": f"attempt_{matched_baseline_condition_id}",
+                "condition_id": matched_baseline_condition_id,
+                "repeat_id": 0,
+                "entry_id": BASELINE_MODEL_ENTRY_ID,
+                "provider_config_id": "exp1_baseline_siliconflow",
+                "provider": "siliconflow",
+                "model": "zai-org/GLM-5.2",
+                "reasoning_profile_id": "temperature_0_thinking_false",
+                "source_provider_config_digest": SOURCE_CONFIG_DIGEST,
+                "model_endpoint_identity_digest": ENDPOINT_DIGEST,
+                "request_limits": dict(_context().request_limits),
+                "transport_kind": "scripted",
+                "paper_eligible": False,
+                "total_tokens": baseline_total_tokens,
+                "cost_estimate": baseline_cost_estimate,
+                "wasted_actual_tokens": 0,
+            }
+        ],
+        "condition_evidence": condition_evidence,
+        "baseline_evidence": baseline_evidence,
+        "expected_baseline_evidence": dict(baseline_evidence),
+        "fault_target_manifest": {
+            "condition_id": condition_id,
+            "fault_type": "false_positive",
+            "fault_rate_percent": 50,
+            "repeat_id": 0,
+            "selection_digest": condition_evidence["selection_digest"],
+            "target_seed": 300300,
+            "selected_target_ai_unit_ids": [
+                f"unit_{index}" for index in range(injected_fault_count)
+            ],
+        },
         "transport_kind": "scripted",
         "paper_eligible": False,
     }
@@ -1042,16 +1666,36 @@ def _rate_fault_run(
 def _fault_record(
     *,
     index: int,
+    condition_id: str,
     original_output_ref: dict[str, str],
     mutated_output_ref: dict[str, str],
 ) -> dict[str, Any]:
+    target_context = {
+        "schema_version": "tokenshare.paper_fault_target.v1",
+        "target_kind": "ai_unit",
+        "unit_id": f"unit_{index}",
+        "attempt_id": f"attempt_{index}",
+    }
     return {
-        "injection_point": "after_raw_output_before_parser_bridge",
+        "condition_id": condition_id,
+        "repeat_id": 0,
+        "fault_type": "false_positive",
+        "seed": 300300,
+        "unit_id": f"unit_{index}",
+        "attempt_id": f"attempt_{index}",
+        "target_context": target_context,
+        "target_selection_digest": digest_json(target_context),
+        "injection_point": "after_parsed_candidate_before_verification",
         "original_raw_output_ref": {"artifact_id": f"raw_{index}"},
         "original_provenance_ref": {"artifact_id": f"provenance_{index}"},
         "original_output_ref": original_output_ref,
         "mutated_output_ref": mutated_output_ref,
         "mutated_provenance_ref": {"artifact_id": f"mutated_provenance_{index}"},
+        "raw_persisted_at": "2026-07-19T00:00:00Z",
+        "provenance_persisted_at": "2026-07-19T00:00:00Z",
+        "injected_at": "2026-07-19T00:00:01Z",
+        "mutation_provenance_persisted_at": "2026-07-19T00:00:01Z",
+        "canonical_pollution": False,
         "provider_tokens_attributed": 0,
     }
 
@@ -1077,6 +1721,17 @@ def _worker_death_run(
         )
         for index in range(actual_dead_worker_count)
     ]
+    complete = recovered_slot_count == required_slot_count
+    condition_evidence = _comparison_evidence(
+        condition_id=condition_id,
+        condition_digest="sha256:" + "7" * 64,
+        ordered_case_ids=[f"worker_case_{condition_id}"],
+    )
+    baseline_evidence = {
+        **condition_evidence,
+        "condition_id": matched_baseline_condition_id,
+        "condition_digest": "sha256:" + "8" * 64,
+    }
     return {
         "condition_id": condition_id,
         "domain": "lean_proof",
@@ -1089,11 +1744,17 @@ def _worker_death_run(
         "coordinator_continued": True,
         "required_slot_count": required_slot_count,
         "recovered_slot_count": recovered_slot_count,
-        "root_output_complete": True,
-        "accepted_validity": True,
+        "root_output_complete": complete,
+        "accepted_validity": complete,
+        "verifier_evidence": {
+            "artifact_ref": {"artifact_id": f"verifier_{condition_id}"},
+            "root_output_complete": complete,
+            "accepted_validity": complete,
+        },
         "recovery_latency_ms": 30,
         "retry_count": 1,
         "reassignment_count": 1,
+        "wasted_actual_tokens": 0,
         "wall_clock_ms": 200,
         "total_tokens": 61,
         "cost_estimate": 0.9,
@@ -1111,12 +1772,47 @@ def _worker_death_run(
         ),
         "attempts": [
             {
+                "attempt_id": f"attempt_{condition_id}",
+                "condition_id": condition_id,
+                "repeat_id": 0,
                 "entry_id": BASELINE_MODEL_ENTRY_ID,
+                "provider_config_id": "exp1_baseline_siliconflow",
                 "provider": "siliconflow",
                 "model": "zai-org/GLM-5.2",
                 "reasoning_profile_id": "temperature_0_thinking_false",
+                "source_provider_config_digest": SOURCE_CONFIG_DIGEST,
+                "model_endpoint_identity_digest": ENDPOINT_DIGEST,
+                "request_limits": dict(_context().request_limits),
+                "transport_kind": "scripted",
+                "paper_eligible": False,
+                "total_tokens": 61,
+                "cost_estimate": 0.9,
+                "wasted_actual_tokens": 0,
             }
         ],
+        "baseline_attempts": [
+            {
+                "attempt_id": f"attempt_{matched_baseline_condition_id}",
+                "condition_id": matched_baseline_condition_id,
+                "repeat_id": 0,
+                "entry_id": BASELINE_MODEL_ENTRY_ID,
+                "provider_config_id": "exp1_baseline_siliconflow",
+                "provider": "siliconflow",
+                "model": "zai-org/GLM-5.2",
+                "reasoning_profile_id": "temperature_0_thinking_false",
+                "source_provider_config_digest": SOURCE_CONFIG_DIGEST,
+                "model_endpoint_identity_digest": ENDPOINT_DIGEST,
+                "request_limits": dict(_context().request_limits),
+                "transport_kind": "scripted",
+                "paper_eligible": False,
+                "total_tokens": baseline_total_tokens,
+                "cost_estimate": baseline_cost_estimate,
+                "wasted_actual_tokens": 0,
+            }
+        ],
+        "condition_evidence": condition_evidence,
+        "baseline_evidence": baseline_evidence,
+        "expected_baseline_evidence": dict(baseline_evidence),
         "transport_kind": "scripted",
         "paper_eligible": False,
     }
