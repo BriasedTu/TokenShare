@@ -3,13 +3,14 @@ from __future__ import annotations
 import importlib
 import importlib.util
 import json
-from collections import defaultdict
+from collections import Counter, defaultdict
 from dataclasses import replace
 from typing import Any
 
 import pytest
 
 from tokenshare.experiments.paper_experiment_contracts import (
+    FrozenCaseSelection,
     PaperExecutionContext,
     PaperExperimentModule,
 )
@@ -34,7 +35,7 @@ def test_exp2_module_implements_contract_and_freezes_600_root_runs() -> None:
     selections = exp2.freeze_case_selections(context, conditions)
 
     assert isinstance(exp2, PaperExperimentModule)
-    assert len(conditions) == 240
+    assert len(conditions) == 120
     assert len(selections) == len(conditions)
     assert module.count_exp2_root_runs(conditions, selections) == 600
     assert {condition.worker_count for condition in conditions} == {1, 3, 10, 30}
@@ -52,7 +53,7 @@ def test_exp2_module_implements_contract_and_freezes_600_root_runs() -> None:
     assert all(condition.ablation_mode == "FULL" for condition in conditions)
 
 
-def test_lean_slice_ids_are_stable_2_2_1_across_worker_and_repeat() -> None:
+def test_lean_conditions_are_full_5_task_batches_stable_across_worker_and_repeat() -> None:
     module = _load_module()
     exp2 = module.Experiment2ScalabilityModule()
     context = _context()
@@ -65,30 +66,23 @@ def test_lean_slice_ids_are_stable_2_2_1_across_worker_and_repeat() -> None:
         "medium_lemma_dag": {"pure_logic": 1, "function_set": 2, "induction": 2},
         "hard_frontier": {"pure_logic": 2, "function_set": 1, "induction": 2},
     }
-    by_slice: dict[tuple[str, str], set[tuple[str, ...]]] = defaultdict(set)
-    by_digest: dict[tuple[str, str], set[str]] = defaultdict(set)
-    combined_digest_by_run: dict[tuple[str, int, int], set[str]] = defaultdict(set)
+    by_difficulty: dict[str, set[tuple[str, ...]]] = defaultdict(set)
+    by_digest: dict[str, set[str]] = defaultdict(set)
 
     for condition, selection in zip(conditions, selections, strict=True):
         if condition.domain != "lean_proof":
             continue
-        key = (condition.paper_difficulty, condition.topic_family)
-        by_slice[key].add(tuple(selection.ordered_case_ids))
-        by_digest[key].add(selection.selection_digest)
-        combined_digest_by_run[
-            (condition.paper_difficulty, condition.worker_count, condition.repeat_id)
-        ].add(selection.selection_digest)
+        by_difficulty[condition.paper_difficulty].add(tuple(selection.ordered_case_ids))
+        by_digest[condition.paper_difficulty].add(selection.selection_digest)
+        assert condition.topic_family is None
+        assert len(selection.ordered_case_ids) == 5
+        assert _topic_counts(selection.ordered_case_ids) == expected_allocations[
+            condition.paper_difficulty
+        ]
 
-    for paper_difficulty, topic_counts in expected_allocations.items():
-        for topic_family, expected_count in topic_counts.items():
-            key = (paper_difficulty, topic_family)
-            assert len(by_slice[key]) == 1
-            assert len(next(iter(by_slice[key]))) == expected_count
-            assert len(by_digest[key]) == 1
-
-    for paper_difficulty, _worker_count, _repeat_id in combined_digest_by_run:
-        expected_topic_count = len(expected_allocations[paper_difficulty])
-        assert len(combined_digest_by_run[(paper_difficulty, _worker_count, _repeat_id)]) == expected_topic_count
+    assert set(by_difficulty) == set(expected_allocations)
+    assert all(len(case_id_sets) == 1 for case_id_sets in by_difficulty.values())
+    assert all(len(digests) == 1 for digests in by_digest.values())
 
 
 def test_factorization_batches_are_stable_and_require_within_root_parallelism() -> None:
@@ -151,7 +145,7 @@ def test_optional_worker_levels_require_ai_units_quota_and_real_worker_preflight
     assert mixed_support[1]["status"] == "unsupported_worker_level"
 
 
-def test_run_condition_rejects_model_drift_before_callback() -> None:
+def test_run_condition_rejects_model_or_selection_drift_before_callback() -> None:
     module = _load_module()
     calls: list[str] = []
 
@@ -184,6 +178,40 @@ def test_run_condition_rejects_model_drift_before_callback() -> None:
     drifted = replace(condition, model_entry_id="qwen3_6_27b_siliconflow")
     with pytest.raises(ValueError, match="GLM-5.2 baseline model identity"):
         exp2.run_condition(context, drifted, selection)
+    assert calls == [condition.condition_id]
+
+    reversed_selection = FrozenCaseSelection(
+        selection_id=selection.selection_id,
+        experiment_id=selection.experiment_id,
+        suite_version=selection.suite_version,
+        catalog_version=selection.catalog_version,
+        domain=selection.domain,
+        paper_difficulty=selection.paper_difficulty,
+        topic_family=selection.topic_family,
+        ordered_case_ids=tuple(reversed(selection.ordered_case_ids)),
+        catalog_digest=selection.catalog_digest,
+        expected_ai_unit_count=selection.expected_ai_unit_count,
+        paper_eligible_required=selection.paper_eligible_required,
+    )
+    with pytest.raises(ValueError, match="canonical frozen selection"):
+        exp2.run_condition(context, condition, reversed_selection)
+    assert calls == [condition.condition_id]
+
+    wrong_digest_selection = FrozenCaseSelection(
+        selection_id=selection.selection_id,
+        experiment_id=selection.experiment_id,
+        suite_version=selection.suite_version,
+        catalog_version=selection.catalog_version,
+        domain=selection.domain,
+        paper_difficulty=selection.paper_difficulty,
+        topic_family=selection.topic_family,
+        ordered_case_ids=selection.ordered_case_ids,
+        catalog_digest="sha256:" + "9" * 64,
+        expected_ai_unit_count=selection.expected_ai_unit_count,
+        paper_eligible_required=selection.paper_eligible_required,
+    )
+    with pytest.raises(ValueError, match="canonical frozen selection"):
+        exp2.run_condition(context, condition, wrong_digest_selection)
     assert calls == [condition.condition_id]
 
 
@@ -247,6 +275,42 @@ def test_summary_uses_wall_clock_critical_path_and_not_provider_latency_sum() ->
     assert scaled["retry_count"] == 5
     assert scaled["rate_limit_sensitivity"] == "rate_limited"
     assert scaled["included_in_rate_limit_excluded_view"] is False
+    assert scaled["task_batch_id"] == scaled_selection.selection_id
+
+
+def test_summary_critical_path_includes_dependency_waiting_gap() -> None:
+    module = _load_module()
+    exp2 = module.Experiment2ScalabilityModule()
+    context = _context()
+    conditions = exp2.expand_conditions(context)
+    selections = exp2.freeze_case_selections(context, conditions)
+    condition, selection = _find_condition(
+        conditions,
+        selections,
+        domain="factorization",
+        paper_difficulty="easy",
+        worker_count=1,
+        repeat_id=0,
+    )
+
+    summary = exp2.summarize(
+        {
+            "condition_evidence": [
+                _condition_evidence(
+                    condition,
+                    selection,
+                    task_wall_clock_ms=600,
+                    task_critical_path_ms=100,
+                    merge_start_ms=500,
+                    merge_end_ms=600,
+                ),
+            ]
+        }
+    )
+    row = next(iter(summary.rows))
+
+    assert row["critical_path_ms"] == 600
+    assert row["critical_path_median_ms"] == 600
 
 
 def test_summary_rejects_scripted_evidence_claimed_as_paper_eligible() -> None:
@@ -275,6 +339,39 @@ def test_summary_rejects_scripted_evidence_claimed_as_paper_eligible() -> None:
 
     with pytest.raises(ValueError, match="scripted transport cannot be paper eligible"):
         exp2.summarize({"condition_evidence": [evidence]})
+
+
+def test_summary_requires_all_tasks_to_be_paper_eligible_for_batch_eligibility() -> None:
+    module = _load_module()
+    exp2 = module.Experiment2ScalabilityModule()
+    context = _context()
+    conditions = exp2.expand_conditions(context)
+    selections = exp2.freeze_case_selections(context, conditions)
+    condition, selection = _find_condition(
+        conditions,
+        selections,
+        domain="factorization",
+        paper_difficulty="easy",
+        worker_count=1,
+        repeat_id=0,
+    )
+    evidence = _condition_evidence(
+        condition,
+        selection,
+        task_wall_clock_ms=100,
+        task_critical_path_ms=100,
+        paper_eligible=True,
+        transport_kind="ai_api",
+    )
+    evidence["tasks"][1]["paper_eligible"] = False
+    evidence["tasks"][1]["transport_kind"] = "scripted"
+
+    summary = exp2.summarize({"condition_evidence": [evidence]})
+    row = next(iter(summary.rows))
+
+    assert row["paper_eligible"] is False
+    assert row["paper_eligible_task_count"] == 4
+    assert row["ineligible_task_count"] == 1
 
 
 def test_summary_zero_baseline_returns_null_without_nan_or_infinity() -> None:
@@ -328,6 +425,71 @@ def test_summary_zero_baseline_returns_null_without_nan_or_infinity() -> None:
     assert row["speedup_applicability"] == "zero_baseline_denominator"
     assert "NaN" not in encoded
     assert "Infinity" not in encoded
+
+
+def test_summary_aggregates_matched_five_repeats_with_median_and_iqr() -> None:
+    module = _load_module()
+    exp2 = module.Experiment2ScalabilityModule()
+    context = _context()
+    conditions = exp2.expand_conditions(context)
+    selections = exp2.freeze_case_selections(context, conditions)
+    evidence_rows = []
+    baseline_wall_clocks = [1000, 1100, 1200, 1300, 1400]
+    scaled_wall_clocks = [500, 550, 600, 650, 700]
+
+    for repeat_id, wall_clock in enumerate(baseline_wall_clocks):
+        condition, selection = _find_condition(
+            conditions,
+            selections,
+            domain="factorization",
+            paper_difficulty="medium",
+            worker_count=1,
+            repeat_id=repeat_id,
+        )
+        evidence_rows.append(
+            _condition_evidence(
+                condition,
+                selection,
+                task_wall_clock_ms=wall_clock,
+                task_critical_path_ms=wall_clock,
+            )
+        )
+    for repeat_id, wall_clock in enumerate(scaled_wall_clocks):
+        condition, selection = _find_condition(
+            conditions,
+            selections,
+            domain="factorization",
+            paper_difficulty="medium",
+            worker_count=3,
+            repeat_id=repeat_id,
+        )
+        evidence_rows.append(
+            _condition_evidence(
+                condition,
+                selection,
+                task_wall_clock_ms=wall_clock,
+                task_critical_path_ms=wall_clock,
+            )
+        )
+
+    summary = exp2.summarize({"condition_evidence": evidence_rows})
+    rows = {
+        row["worker_count"]: row
+        for row in summary.rows
+        if row["paper_difficulty"] == "medium"
+    }
+
+    assert len(rows) == 2
+    assert rows[1]["repeat_count"] == 5
+    assert rows[1]["wall_clock_median_ms"] == 1200
+    assert rows[1]["wall_clock_iqr_ms"] == 300
+    assert rows[3]["repeat_count"] == 5
+    assert rows[3]["wall_clock_median_ms"] == 600
+    assert rows[3]["wall_clock_iqr_ms"] == 150
+    assert rows[3]["speedup_median"] == 2.0
+    assert rows[3]["speedup_iqr"] == 0.0
+    assert rows[3]["task_batch_id"] == rows[1]["task_batch_id"]
+    assert rows[3]["root_run_count"] == 25
 
 
 def _load_module():
@@ -466,6 +628,8 @@ def _condition_evidence(
     provider_latency_ms_per_task: int = 100,
     paper_eligible: bool = False,
     transport_kind: str = "scripted",
+    merge_start_ms: int | None = None,
+    merge_end_ms: int | None = None,
 ) -> dict[str, Any]:
     tasks = []
     for index, case_id in enumerate(selection.ordered_case_ids):
@@ -502,8 +666,16 @@ def _condition_evidence(
                     {
                         "gate_id": f"{case_id}_merge",
                         "dependencies": [f"{case_id}_left", f"{case_id}_right"],
-                        "started_at_ms": task_critical_path_ms // 2,
-                        "ended_at_ms": task_critical_path_ms,
+                        "started_at_ms": (
+                            task_critical_path_ms // 2
+                            if merge_start_ms is None
+                            else merge_start_ms
+                        ),
+                        "ended_at_ms": (
+                            task_critical_path_ms
+                            if merge_end_ms is None
+                            else merge_end_ms
+                        ),
                     }
                 ],
             }
@@ -515,3 +687,13 @@ def _condition_evidence(
         "paper_eligible": paper_eligible,
         "tasks": tasks,
     }
+
+
+def _topic_counts(case_ids) -> dict[str, int]:
+    counts = Counter()
+    for case_id in case_ids:
+        for topic_family in ("pure_logic", "function_set", "induction"):
+            if f"_{topic_family}_" in case_id:
+                counts[topic_family] += 1
+                break
+    return dict(counts)

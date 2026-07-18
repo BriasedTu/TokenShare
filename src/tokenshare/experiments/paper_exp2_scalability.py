@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import Counter, defaultdict
 from collections.abc import Iterable, Mapping, Sequence
 from typing import Any
 
@@ -42,6 +43,7 @@ LEAN_TOPIC_ALLOCATIONS = {
     "medium_lemma_dag": {"pure_logic": 1, "function_set": 2, "induction": 2},
     "hard_frontier": {"pure_logic": 2, "function_set": 1, "induction": 2},
 }
+LEAN_BATCH_SELECTION_TOPIC_FAMILY = "pure_logic"
 
 
 class Experiment2ScalabilityModule:
@@ -65,7 +67,7 @@ class Experiment2ScalabilityModule:
         selection: FrozenCaseSelection,
     ) -> PaperConditionResult:
         validate_exp2_condition(context, condition)
-        _validate_selection_matches_condition(selection, condition)
+        _validate_canonical_selection(context, condition, selection)
         return context.execution_callback(
             context=context,
             condition=condition,
@@ -100,22 +102,19 @@ def expand_exp2_conditions(
                         )
             continue
         for paper_difficulty in LEAN_PAPER_DIFFICULTIES:
-            for topic_family in LEAN_TOPIC_FAMILIES:
-                for worker_count in MANDATORY_WORKER_LEVELS:
-                    for repeat_id in range(EXP2_REPEATS):
-                        conditions.append(
-                            _condition(
-                                domain=domain,
-                                difficulty=LEAN_CONDITION_DIFFICULTY[
-                                    paper_difficulty
-                                ],
-                                paper_difficulty=paper_difficulty,
-                                topic_family=topic_family,
-                                worker_count=worker_count,
-                                repeat_id=repeat_id,
-                                catalog_digest=catalog_digest,
-                            )
+            for worker_count in MANDATORY_WORKER_LEVELS:
+                for repeat_id in range(EXP2_REPEATS):
+                    conditions.append(
+                        _condition(
+                            domain=domain,
+                            difficulty=LEAN_CONDITION_DIFFICULTY[paper_difficulty],
+                            paper_difficulty=paper_difficulty,
+                            topic_family=None,
+                            worker_count=worker_count,
+                            repeat_id=repeat_id,
+                            catalog_digest=catalog_digest,
                         )
+                    )
     return tuple(conditions)
 
 
@@ -141,7 +140,7 @@ def count_exp2_root_runs(
         raise ValueError("conditions and selections must have the same length")
     total = 0
     for condition, selection in zip(conditions, selections, strict=True):
-        _validate_selection_matches_condition(selection, condition)
+        _validate_selection_condition_shape(selection, condition)
         if selection.is_executable:
             total += len(selection.ordered_case_ids)
     return total
@@ -210,20 +209,20 @@ def validate_exp2_condition(
         raise ValueError("domain must be factorization or lean_proof")
     if condition.paper_difficulty not in LEAN_PAPER_DIFFICULTIES:
         raise ValueError("Lean paper_difficulty is not valid for Experiment 2")
-    if condition.topic_family not in LEAN_TOPIC_FAMILIES:
-        raise ValueError("Lean condition must declare a valid topic_family")
+    if condition.topic_family is not None:
+        raise ValueError("Lean Experiment 2 condition must use one mixed 5-task batch")
 
 
 def summarize_exp2_scalability(evidence: Any) -> ExperimentSummaryRows:
     records = _condition_records(evidence)
-    rows = [_summarize_condition(record) for record in records]
+    repeat_rows = [_summarize_condition(record) for record in records]
     baseline_wall_clock = {
         _baseline_key(row): row["wall_clock_ms"]
-        for row in rows
+        for row in repeat_rows
         if row["worker_count"] == 1
     }
-    completed_rows: list[dict[str, Any]] = []
-    for row in rows:
+    scored_rows: list[dict[str, Any]] = []
+    for row in repeat_rows:
         row = dict(row)
         wall_clock_ms = row["wall_clock_ms"]
         if wall_clock_ms > 0:
@@ -257,7 +256,8 @@ def summarize_exp2_scalability(evidence: Any) -> ExperimentSummaryRows:
         row["included_in_rate_limit_excluded_view"] = (
             row["rate_limited_429_count"] == 0
         )
-        completed_rows.append(row)
+        scored_rows.append(row)
+    completed_rows = _aggregate_repeat_rows(scored_rows)
     return ExperimentSummaryRows(
         experiment_id=EXP2_EXPERIMENT_ID,
         rows=tuple(completed_rows),
@@ -335,25 +335,29 @@ def _lean_selection(
 ) -> FrozenCaseSelection:
     lean_catalog = _mapping(_exp2_catalog(context).get("lean_proof"))
     by_topic = _mapping(lean_catalog.get(condition.paper_difficulty))
-    cases = _case_list(by_topic.get(condition.topic_family))
-    expected_count = LEAN_TOPIC_ALLOCATIONS[str(condition.paper_difficulty)][
-        str(condition.topic_family)
-    ]
-    if len(cases) != expected_count:
-        raise ValueError("Experiment 2 Lean topic slice count drift")
+    cases: list[Mapping[str, Any]] = []
+    for topic_family, expected_count in LEAN_TOPIC_ALLOCATIONS[
+        str(condition.paper_difficulty)
+    ].items():
+        topic_cases = _case_list(by_topic.get(topic_family))
+        if len(topic_cases) != expected_count:
+            raise ValueError("Experiment 2 Lean topic slice count drift")
+        cases.extend(topic_cases)
     expected_ai_units = sum(
-        _positive_int(case.get("expected_ai_unit_count"))
-        for case in cases
+        _positive_int(case.get("expected_ai_unit_count")) for case in cases
     )
+    if len(cases) != 5:
+        raise ValueError("Experiment 2 Lean selection must contain 5 roots")
     return _selection(
         context,
         condition,
         selection_id=(
             f"{EXP2_EXPERIMENT_ID}:lean_proof:"
-            f"{condition.paper_difficulty}:{condition.topic_family}"
+            f"{condition.paper_difficulty}:topic_mixed_2_2_1"
         ),
         ordered_case_ids=[_case_id(case) for case in cases],
         expected_ai_unit_count=expected_ai_units,
+        selection_topic_family=LEAN_BATCH_SELECTION_TOPIC_FAMILY,
     )
 
 
@@ -364,6 +368,7 @@ def _selection(
     selection_id: str,
     ordered_case_ids: Sequence[str],
     expected_ai_unit_count: int,
+    selection_topic_family: str | None = None,
 ) -> FrozenCaseSelection:
     catalog = _catalog(context)
     return FrozenCaseSelection(
@@ -373,7 +378,9 @@ def _selection(
         catalog_version=str(catalog.get("catalog_version") or EXP2_CATALOG_VERSION),
         domain=condition.domain,
         paper_difficulty=str(condition.paper_difficulty),
-        topic_family=condition.topic_family,
+        topic_family=selection_topic_family
+        if selection_topic_family is not None
+        else condition.topic_family,
         ordered_case_ids=tuple(ordered_case_ids),
         catalog_digest=_catalog_digest(context),
         expected_ai_unit_count=expected_ai_unit_count,
@@ -381,7 +388,7 @@ def _selection(
     )
 
 
-def _validate_selection_matches_condition(
+def _validate_selection_condition_shape(
     selection: FrozenCaseSelection,
     condition: PaperExperimentCondition,
 ) -> None:
@@ -391,10 +398,53 @@ def _validate_selection_matches_condition(
         raise ValueError("selection domain does not match condition")
     if selection.paper_difficulty != condition.paper_difficulty:
         raise ValueError("selection difficulty does not match condition")
-    if selection.topic_family != condition.topic_family:
+    if (
+        condition.domain == "factorization"
+        and selection.topic_family != condition.topic_family
+    ):
         raise ValueError("selection topic_family does not match condition")
+    if (
+        condition.domain == "lean_proof"
+        and selection.topic_family not in LEAN_TOPIC_FAMILIES
+    ):
+        raise ValueError("Lean selection topic_family marker is invalid")
     if selection.is_blocked:
         raise ValueError("Experiment 2 executable condition cannot use blocked selection")
+
+
+def _validate_canonical_selection(
+    context: PaperExecutionContext,
+    condition: PaperExperimentCondition,
+    selection: FrozenCaseSelection,
+) -> None:
+    _validate_selection_condition_shape(selection, condition)
+    canonical = (
+        _factorization_selection(context, condition)
+        if condition.domain == "factorization"
+        else _lean_selection(context, condition)
+    )
+    observed = _selection_contract_body(selection)
+    expected = _selection_contract_body(canonical)
+    if observed != expected:
+        raise ValueError("selection does not match canonical frozen selection")
+
+
+def _selection_contract_body(selection: FrozenCaseSelection) -> dict[str, Any]:
+    return {
+        "selection_id": selection.selection_id,
+        "experiment_id": selection.experiment_id,
+        "suite_version": selection.suite_version,
+        "catalog_version": selection.catalog_version,
+        "domain": selection.domain,
+        "paper_difficulty": selection.paper_difficulty,
+        "topic_family": selection.topic_family,
+        "ordered_case_ids": tuple(selection.ordered_case_ids),
+        "catalog_digest": selection.catalog_digest,
+        "expected_ai_unit_count": selection.expected_ai_unit_count,
+        "paper_eligible_required": selection.paper_eligible_required,
+        "blocked_reason": selection.blocked_reason,
+        "selection_digest": selection.selection_digest,
+    }
 
 
 def _condition_records(evidence: Any) -> tuple[Mapping[str, Any], ...]:
@@ -428,12 +478,28 @@ def _summarize_condition(record: Mapping[str, Any]) -> dict[str, Any]:
         _non_negative_int(task.get("rate_limited_429_count")) for task in tasks
     )
     retry_count = sum(_non_negative_int(task.get("retry_count")) for task in tasks)
-    task_paper_eligible = any(task.get("paper_eligible") is True for task in tasks)
-    paper_eligible = record.get("paper_eligible") is True or task_paper_eligible
-    transport_kind = str(
-        record.get("transport_kind")
-        or next((task.get("transport_kind") for task in tasks if task.get("transport_kind")), "")
+    paper_eligible_task_count = sum(
+        1 for task in tasks if task.get("paper_eligible") is True
     )
+    transport_kinds = sorted(
+        {
+            str(task.get("transport_kind"))
+            for task in tasks
+            if task.get("transport_kind")
+        }
+    )
+    if record.get("transport_kind"):
+        transport_kinds.append(str(record["transport_kind"]))
+        transport_kinds = sorted(set(transport_kinds))
+    transport_kind = (
+        transport_kinds[0]
+        if len(transport_kinds) == 1
+        else "mixed"
+        if transport_kinds
+        else ""
+    )
+    all_tasks_eligible = task_count > 0 and paper_eligible_task_count == task_count
+    paper_eligible = all_tasks_eligible and record.get("paper_eligible") is not False
     condition_id = str(condition.get("condition_id") or "")
     domain = str(condition.get("domain") or "")
     paper_difficulty = str(condition.get("paper_difficulty") or condition.get("difficulty") or "")
@@ -443,13 +509,19 @@ def _summarize_condition(record: Mapping[str, Any]) -> dict[str, Any]:
     return {
         "experiment_id": EXP2_EXPERIMENT_ID,
         "condition_id": condition_id,
+        "condition_ids": (condition_id,),
         "domain": domain,
         "paper_difficulty": paper_difficulty,
         "topic_family": topic_family,
         "worker_count": worker_count,
         "repeat_id": repeat_id,
+        "repeat_ids": (repeat_id,),
         "selection_digest": str(selection.get("selection_digest") or ""),
+        "task_batch_id": str(selection.get("selection_id") or ""),
+        "ordered_case_ids": tuple(selection.get("ordered_case_ids", ())),
+        "topic_family_counts": _topic_family_counts(selection.get("ordered_case_ids", ())),
         "case_count": task_count,
+        "root_run_count": task_count,
         "completed_root_count": completed_root_count,
         "completion_rate": _ratio(completed_root_count, task_count),
         "accepted_validity_count": accepted_validity_count,
@@ -463,7 +535,133 @@ def _summarize_condition(record: Mapping[str, Any]) -> dict[str, Any]:
         "retry_count": retry_count,
         "transport_kind": transport_kind,
         "paper_eligible": paper_eligible,
+        "paper_eligible_task_count": paper_eligible_task_count,
+        "ineligible_task_count": task_count - paper_eligible_task_count,
     }
+
+
+def _aggregate_repeat_rows(rows: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
+    grouped: dict[tuple[Any, ...], list[dict[str, Any]]] = defaultdict(list)
+    for row in rows:
+        grouped[_aggregate_key(row)].append(row)
+    aggregated: list[dict[str, Any]] = []
+    for key in sorted(grouped, key=lambda item: tuple(str(part) for part in item)):
+        group = sorted(grouped[key], key=lambda row: row["repeat_id"])
+        base = dict(group[0])
+        condition_ids = tuple(row["condition_id"] for row in group)
+        repeat_ids = tuple(row["repeat_id"] for row in group)
+        task_count = sum(row["case_count"] for row in group)
+        completed = sum(row["completed_root_count"] for row in group)
+        accepted = sum(row["accepted_validity_count"] for row in group)
+        paper_eligible_tasks = sum(row["paper_eligible_task_count"] for row in group)
+        base.update(
+            {
+                "condition_id": condition_ids[0]
+                if len(condition_ids) == 1
+                else _summary_condition_id(group[0]),
+                "condition_ids": condition_ids,
+                "repeat_id": repeat_ids[0] if len(repeat_ids) == 1 else None,
+                "repeat_ids": repeat_ids,
+                "repeat_count": len(set(repeat_ids)),
+                "case_count": group[0]["case_count"],
+                "root_run_count": task_count,
+                "completed_root_count": completed,
+                "completion_rate": _ratio(completed, task_count),
+                "accepted_validity_count": accepted,
+                "accepted_validity_rate": _ratio(accepted, task_count),
+                "paper_eligible_task_count": paper_eligible_tasks,
+                "ineligible_task_count": task_count - paper_eligible_tasks,
+                "paper_eligible": all(row["paper_eligible"] for row in group),
+                "wall_clock_ms": _median(row["wall_clock_ms"] for row in group),
+                "wall_clock_median_ms": _median(
+                    row["wall_clock_ms"] for row in group
+                ),
+                "wall_clock_iqr_ms": _iqr(row["wall_clock_ms"] for row in group),
+                "critical_path_ms": _median(
+                    row["critical_path_ms"] for row in group
+                ),
+                "critical_path_median_ms": _median(
+                    row["critical_path_ms"] for row in group
+                ),
+                "critical_path_iqr_ms": _iqr(
+                    row["critical_path_ms"] for row in group
+                ),
+                "provider_latency_sum_ms": sum(
+                    row["provider_latency_sum_ms"] for row in group
+                ),
+                "total_tokens": sum(row["total_tokens"] for row in group),
+                "total_tokens_median": _median(row["total_tokens"] for row in group),
+                "total_tokens_iqr": _iqr(row["total_tokens"] for row in group),
+                "cost_estimate": sum(row["cost_estimate"] for row in group),
+                "cost_median": _median(row["cost_estimate"] for row in group),
+                "cost_iqr": _iqr(row["cost_estimate"] for row in group),
+                "rate_limited_429_count": sum(
+                    row["rate_limited_429_count"] for row in group
+                ),
+                "retry_count": sum(row["retry_count"] for row in group),
+                "throughput_completed_roots_per_second": _median(
+                    _numeric_values(
+                        row["throughput_completed_roots_per_second"] for row in group
+                    )
+                ),
+                "throughput_iqr": _iqr(
+                    _numeric_values(
+                        row["throughput_completed_roots_per_second"] for row in group
+                    )
+                ),
+                "speedup": _median(_numeric_values(row["speedup"] for row in group)),
+                "speedup_median": _median(
+                    _numeric_values(row["speedup"] for row in group)
+                ),
+                "speedup_iqr": _iqr(_numeric_values(row["speedup"] for row in group)),
+                "efficiency": _median(
+                    _numeric_values(row["efficiency"] for row in group)
+                ),
+                "efficiency_median": _median(
+                    _numeric_values(row["efficiency"] for row in group)
+                ),
+                "efficiency_iqr": _iqr(
+                    _numeric_values(row["efficiency"] for row in group)
+                ),
+            }
+        )
+        base["rate_limit_sensitivity"] = (
+            "rate_limited"
+            if base["rate_limited_429_count"] > 0
+            else "not_rate_limited"
+        )
+        base["included_in_rate_limit_excluded_view"] = (
+            base["rate_limited_429_count"] == 0
+        )
+        if all(row["speedup_applicability"] == "matched_baseline" for row in group):
+            base["speedup_applicability"] = "matched_baseline"
+        else:
+            base["speedup_applicability"] = next(
+                row["speedup_applicability"]
+                for row in group
+                if row["speedup_applicability"] != "matched_baseline"
+            )
+        aggregated.append(base)
+    return aggregated
+
+
+def _aggregate_key(row: Mapping[str, Any]) -> tuple[Any, ...]:
+    return (
+        row.get("domain"),
+        row.get("paper_difficulty"),
+        row.get("topic_family"),
+        row.get("worker_count"),
+        row.get("selection_digest"),
+        row.get("task_batch_id"),
+    )
+
+
+def _summary_condition_id(row: Mapping[str, Any]) -> str:
+    topic_part = f"_{row['topic_family']}" if row.get("topic_family") else ""
+    return (
+        f"exp2_summary_{row['domain']}_{row['paper_difficulty']}"
+        f"{topic_part}_w{row['worker_count']}"
+    )
 
 
 def _condition_wall_clock_ms(tasks: Sequence[Mapping[str, Any]]) -> int:
@@ -478,29 +676,29 @@ def _condition_wall_clock_ms(tasks: Sequence[Mapping[str, Any]]) -> int:
 
 
 def _task_critical_path_ms(task: Mapping[str, Any]) -> int:
-    nodes: dict[str, tuple[int, tuple[str, ...]]] = {}
+    nodes: dict[str, tuple[int, int, tuple[str, ...]]] = {}
     for unit in _list_of_mappings(task.get("ai_units")):
         unit_id = str(unit.get("unit_id") or "")
         if not unit_id:
             raise ValueError("ai unit must declare unit_id")
-        duration = _time_duration_ms(unit)
+        started, ended = _time_bounds_ms(unit)
         dependencies = tuple(str(item) for item in unit.get("dependencies", ()))
-        nodes[unit_id] = (duration, dependencies)
+        nodes[unit_id] = (started, ended, dependencies)
     for gate in _list_of_mappings(task.get("merge_gates")):
         gate_id = str(gate.get("gate_id") or "")
         if not gate_id:
             raise ValueError("merge gate must declare gate_id")
-        duration = _time_duration_ms(gate)
+        started, ended = _time_bounds_ms(gate)
         dependencies = tuple(str(item) for item in gate.get("dependencies", ()))
-        nodes[gate_id] = (duration, dependencies)
+        nodes[gate_id] = (started, ended, dependencies)
     if not nodes:
         return _non_negative_int(task.get("ended_at_ms")) - _non_negative_int(
             task.get("started_at_ms")
         )
-    cache: dict[str, int] = {}
+    cache: dict[str, tuple[int, int]] = {}
     visiting: set[str] = set()
 
-    def visit(node_id: str) -> int:
+    def visit(node_id: str) -> tuple[int, int]:
         if node_id in cache:
             return cache[node_id]
         if node_id in visiting:
@@ -508,13 +706,31 @@ def _task_critical_path_ms(task: Mapping[str, Any]) -> int:
         if node_id not in nodes:
             raise ValueError(f"missing dependency node: {node_id}")
         visiting.add(node_id)
-        duration, dependencies = nodes[node_id]
-        prefix = max((visit(dependency) for dependency in dependencies), default=0)
+        started, ended, dependencies = nodes[node_id]
+        if dependencies:
+            dependency_paths = [visit(dependency) for dependency in dependencies]
+            dependency_ends = [
+                nodes[dependency][1]
+                for dependency in dependencies
+                if dependency in nodes
+            ]
+            if dependency_ends and started < max(dependency_ends):
+                raise ValueError("dependent node starts before dependency ends")
+            best_start, _best_duration = max(
+                (
+                    (path_start, ended - path_start)
+                    for path_start, _path_duration in dependency_paths
+                ),
+                key=lambda item: item[1],
+            )
+            path_start = best_start
+        else:
+            path_start = started
         visiting.remove(node_id)
-        cache[node_id] = prefix + duration
+        cache[node_id] = (path_start, ended - path_start)
         return cache[node_id]
 
-    return max(visit(node_id) for node_id in nodes)
+    return max(visit(node_id)[1] for node_id in nodes)
 
 
 def _task_provider_latency_sum(task: Mapping[str, Any]) -> int:
@@ -524,12 +740,12 @@ def _task_provider_latency_sum(task: Mapping[str, Any]) -> int:
     return sum(_non_negative_int(unit.get("provider_latency_ms")) for unit in units)
 
 
-def _time_duration_ms(value: Mapping[str, Any]) -> int:
+def _time_bounds_ms(value: Mapping[str, Any]) -> tuple[int, int]:
     started = _non_negative_int(value.get("started_at_ms"))
     ended = _non_negative_int(value.get("ended_at_ms"))
     if ended < started:
         raise ValueError("ended_at_ms must be >= started_at_ms")
-    return ended - started
+    return started, ended
 
 
 def _baseline_key(row: Mapping[str, Any]) -> tuple[Any, ...]:
@@ -546,6 +762,51 @@ def _ratio(numerator: int, denominator: int) -> float | None:
     if denominator == 0:
         return None
     return numerator / denominator
+
+
+def _median(values: Iterable[float | int]) -> float | int | None:
+    ordered = sorted(values)
+    if not ordered:
+        return None
+    midpoint = len(ordered) // 2
+    if len(ordered) % 2:
+        return ordered[midpoint]
+    return (ordered[midpoint - 1] + ordered[midpoint]) / 2
+
+
+def _iqr(values: Iterable[float | int]) -> float | int | None:
+    ordered = sorted(values)
+    if len(ordered) < 2:
+        return 0 if ordered else None
+    midpoint = len(ordered) // 2
+    if len(ordered) % 2:
+        lower = ordered[:midpoint]
+        upper = ordered[midpoint + 1 :]
+    else:
+        lower = ordered[:midpoint]
+        upper = ordered[midpoint:]
+    q1 = _median(lower)
+    q3 = _median(upper)
+    if q1 is None or q3 is None:
+        return 0
+    return q3 - q1
+
+
+def _numeric_values(values: Iterable[Any]) -> tuple[float | int, ...]:
+    return tuple(value for value in values if isinstance(value, (float, int)))
+
+
+def _topic_family_counts(case_ids: Any) -> dict[str, int]:
+    if not isinstance(case_ids, (list, tuple)):
+        return {}
+    counts: Counter[str] = Counter()
+    for case_id in case_ids:
+        case_id_string = str(case_id)
+        for topic_family in LEAN_TOPIC_FAMILIES:
+            if f"_{topic_family}_" in case_id_string:
+                counts[topic_family] += 1
+                break
+    return dict(counts)
 
 
 def _catalog(context: PaperExecutionContext) -> Mapping[str, Any]:
