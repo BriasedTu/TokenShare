@@ -24,6 +24,7 @@ from tokenshare.experiments.paper_models import (
 MODULE_NAME = "tokenshare.experiments.paper_exp2_scalability"
 CATALOG_DIGEST = "sha256:" + "1" * 64
 ENDPOINT_DIGEST = "sha256:" + "2" * 64
+SOURCE_CONFIG_DIGEST = "sha256:" + "3" * 64
 
 
 def test_exp2_module_implements_contract_and_freezes_600_root_runs() -> None:
@@ -49,6 +50,22 @@ def test_exp2_module_implements_contract_and_freezes_600_root_runs() -> None:
     assert all(condition.model_entry_id == "glm_5_2_exp1_baseline" for condition in conditions)
     assert all(condition.provider_family == "siliconflow" for condition in conditions)
     assert all(condition.provider_model_id == "zai-org/GLM-5.2" for condition in conditions)
+    assert all(
+        condition.provider_config_id == "exp1_baseline_siliconflow"
+        for condition in conditions
+    )
+    assert all(
+        condition.reasoning_profile_id == "temperature_0_enable_thinking_false"
+        for condition in conditions
+    )
+    assert all(
+        condition.source_provider_config_digest == SOURCE_CONFIG_DIGEST
+        for condition in conditions
+    )
+    assert all(
+        condition.model_endpoint_identity_digest == ENDPOINT_DIGEST
+        for condition in conditions
+    )
     assert all(condition.fault_type == "none" for condition in conditions)
     assert all(condition.ablation_mode == "FULL" for condition in conditions)
 
@@ -75,8 +92,15 @@ def test_lean_conditions_are_full_5_task_batches_stable_across_worker_and_repeat
         by_difficulty[condition.paper_difficulty].add(tuple(selection.ordered_case_ids))
         by_digest[condition.paper_difficulty].add(selection.selection_digest)
         assert condition.topic_family is None
+        assert selection.topic_family is None
+        body = selection.to_dict()
+        assert body["topic_family"] is None
+        assert body["topic_family_marker"] == "mixed_2_2_1"
         assert len(selection.ordered_case_ids) == 5
         assert _topic_counts(selection.ordered_case_ids) == expected_allocations[
+            condition.paper_difficulty
+        ]
+        assert body["topic_family_counts"] == expected_allocations[
             condition.paper_difficulty
         ]
 
@@ -213,6 +237,68 @@ def test_run_condition_rejects_model_or_selection_drift_before_callback() -> Non
     with pytest.raises(ValueError, match="canonical frozen selection"):
         exp2.run_condition(context, condition, wrong_digest_selection)
     assert calls == [condition.condition_id]
+
+
+def test_run_condition_validates_approved_endpoint_binding_before_callback() -> None:
+    module = _load_module()
+    calls: list[str] = []
+
+    def callback(**kwargs: Any) -> PaperConditionResult:
+        calls.append(kwargs["condition"].condition_id)
+        return PaperConditionResult(
+            condition_id=kwargs["condition"].condition_id,
+            status=PaperStatus.BLOCKED,
+            repeat_count=1,
+            task_count=len(kwargs["selection"].ordered_case_ids),
+            completed_root_count=0,
+            failed_root_count=0,
+            blocked_root_count=len(kwargs["selection"].ordered_case_ids),
+            provider_attempt_count=0,
+            metrics_ref=None,
+        )
+
+    exp2 = module.Experiment2ScalabilityModule()
+    valid_context = _context(callback=callback)
+    conditions = exp2.expand_conditions(valid_context)
+    selections = exp2.freeze_case_selections(valid_context, conditions)
+    condition = conditions[0]
+    selection = selections[0]
+
+    incomplete_context = _context(
+        binding={"model_endpoint_identity_digest": ENDPOINT_DIGEST},
+        callback=callback,
+    )
+    with pytest.raises(ValueError, match="approved endpoint binding"):
+        exp2.run_condition(incomplete_context, condition, selection)
+    assert calls == []
+
+    drifted_reasoning = replace(condition, reasoning_profile_id="thinking_enabled")
+    with pytest.raises(ValueError, match="reasoning_profile_id"):
+        exp2.run_condition(valid_context, drifted_reasoning, selection)
+    assert calls == []
+
+    thinking_context = _context(
+        binding={
+            **_baseline_binding(),
+            "request_controls": {"temperature": 0.0, "enable_thinking": True},
+        },
+        callback=callback,
+    )
+    with pytest.raises(ValueError, match="approved endpoint binding"):
+        exp2.run_condition(thinking_context, condition, selection)
+    assert calls == []
+
+    temperature_context = _context(
+        request_limits={
+            "max_tokens": 1024,
+            "temperature": 0.7,
+            "enable_thinking": False,
+        },
+        callback=callback,
+    )
+    with pytest.raises(ValueError, match="request controls"):
+        exp2.run_condition(temperature_context, condition, selection)
+    assert calls == []
 
 
 def test_summary_uses_wall_clock_critical_path_and_not_provider_latency_sum() -> None:
@@ -364,7 +450,7 @@ def test_summary_requires_all_tasks_to_be_paper_eligible_for_batch_eligibility()
         transport_kind="ai_api",
     )
     evidence["tasks"][1]["paper_eligible"] = False
-    evidence["tasks"][1]["transport_kind"] = "scripted"
+    evidence["tasks"][1]["transport_kind"] = "ai_api"
 
     summary = exp2.summarize({"condition_evidence": [evidence]})
     row = next(iter(summary.rows))
@@ -372,6 +458,50 @@ def test_summary_requires_all_tasks_to_be_paper_eligible_for_batch_eligibility()
     assert row["paper_eligible"] is False
     assert row["paper_eligible_task_count"] == 4
     assert row["ineligible_task_count"] == 1
+
+
+def test_summary_rejects_record_task_transport_conflicts() -> None:
+    module = _load_module()
+    exp2 = module.Experiment2ScalabilityModule()
+    context = _context()
+    conditions = exp2.expand_conditions(context)
+    selections = exp2.freeze_case_selections(context, conditions)
+    condition, selection = _find_condition(
+        conditions,
+        selections,
+        domain="factorization",
+        paper_difficulty="easy",
+        worker_count=1,
+        repeat_id=0,
+    )
+    evidence = _condition_evidence(
+        condition,
+        selection,
+        task_wall_clock_ms=100,
+        task_critical_path_ms=100,
+        paper_eligible=True,
+        transport_kind="ai_api",
+    )
+    for task in evidence["tasks"]:
+        task["transport_kind"] = "scripted"
+
+    with pytest.raises(
+        ValueError,
+        match="transport conflict|transport cannot be paper eligible",
+    ):
+        exp2.summarize({"condition_evidence": [evidence]})
+
+    evidence = _condition_evidence(
+        condition,
+        selection,
+        task_wall_clock_ms=100,
+        task_critical_path_ms=100,
+        paper_eligible=False,
+        transport_kind="ai_api",
+    )
+    evidence["tasks"][0]["transport_kind"] = "scripted"
+    with pytest.raises(ValueError, match="transport conflict"):
+        exp2.summarize({"condition_evidence": [evidence]})
 
 
 def test_summary_zero_baseline_returns_null_without_nan_or_infinity() -> None:
@@ -492,6 +622,113 @@ def test_summary_aggregates_matched_five_repeats_with_median_and_iqr() -> None:
     assert rows[3]["root_run_count"] == 25
 
 
+def test_summary_marks_incomplete_repeat_groups_ineligible() -> None:
+    module = _load_module()
+    exp2 = module.Experiment2ScalabilityModule()
+    context = _context()
+    conditions = exp2.expand_conditions(context)
+    selections = exp2.freeze_case_selections(context, conditions)
+    evidence_rows = []
+
+    for repeat_id in range(4):
+        condition, selection = _find_condition(
+            conditions,
+            selections,
+            domain="factorization",
+            paper_difficulty="hard",
+            worker_count=1,
+            repeat_id=repeat_id,
+        )
+        evidence_rows.append(
+            _condition_evidence(
+                condition,
+                selection,
+                task_wall_clock_ms=1000 + repeat_id * 100,
+                task_critical_path_ms=1000 + repeat_id * 100,
+                paper_eligible=True,
+                transport_kind="ai_api",
+            )
+        )
+
+    summary = exp2.summarize({"condition_evidence": evidence_rows})
+    row = next(iter(summary.rows))
+
+    assert row["repeat_count"] == 4
+    assert row["repeat_set_status"] == "incomplete_or_duplicate"
+    assert row["expected_repeat_ids"] == (0, 1, 2, 3, 4)
+    assert row["missing_repeat_ids"] == (4,)
+    assert row["duplicate_repeat_ids"] == ()
+    assert row["expected_root_run_count"] == 25
+    assert row["root_run_count"] == 20
+    assert row["paper_eligible"] is False
+
+
+def test_summary_keeps_no_429_sensitivity_stats_for_complete_repeat_groups() -> None:
+    module = _load_module()
+    exp2 = module.Experiment2ScalabilityModule()
+    context = _context()
+    conditions = exp2.expand_conditions(context)
+    selections = exp2.freeze_case_selections(context, conditions)
+    evidence_rows = []
+
+    for repeat_id in range(5):
+        baseline_condition, baseline_selection = _find_condition(
+            conditions,
+            selections,
+            domain="factorization",
+            paper_difficulty="easy",
+            worker_count=1,
+            repeat_id=repeat_id,
+        )
+        scaled_condition, scaled_selection = _find_condition(
+            conditions,
+            selections,
+            domain="factorization",
+            paper_difficulty="easy",
+            worker_count=3,
+            repeat_id=repeat_id,
+        )
+        evidence_rows.append(
+            _condition_evidence(
+                baseline_condition,
+                baseline_selection,
+                task_wall_clock_ms=1000,
+                task_critical_path_ms=1000,
+                paper_eligible=True,
+                transport_kind="ai_api",
+            )
+        )
+        evidence_rows.append(
+            _condition_evidence(
+                scaled_condition,
+                scaled_selection,
+                task_wall_clock_ms=500,
+                task_critical_path_ms=500,
+                rate_limited_429_count=1 if repeat_id == 2 else 0,
+                paper_eligible=True,
+                transport_kind="ai_api",
+            )
+        )
+
+    summary = exp2.summarize({"condition_evidence": evidence_rows})
+    rows = {
+        row["worker_count"]: row
+        for row in summary.rows
+        if row["paper_difficulty"] == "easy"
+    }
+
+    assert rows[3]["repeat_set_status"] == "complete"
+    assert rows[3]["repeat_count"] == 5
+    assert rows[3]["root_run_count"] == 25
+    assert rows[3]["paper_eligible"] is True
+    assert rows[3]["rate_limit_sensitivity"] == "rate_limited"
+    assert rows[3]["included_in_rate_limit_excluded_view"] is False
+    assert rows[3]["rate_limit_excluded_repeat_count"] == 4
+    assert rows[3]["rate_limit_excluded_root_run_count"] == 20
+    assert rows[3]["rate_limit_excluded_wall_clock_median_ms"] == 500
+    assert rows[3]["rate_limit_excluded_speedup_median"] == 2.0
+
+
 def _load_module():
     spec = importlib.util.find_spec(MODULE_NAME)
     assert spec is not None, "Exp2 scalability module must exist"
@@ -501,8 +738,10 @@ def _load_module():
 def _context(
     *,
     catalog: dict[str, Any] | None = None,
+    binding: dict[str, Any] | None = None,
     callback=None,
     hard_limits: dict[str, Any] | None = None,
+    request_limits: dict[str, Any] | None = None,
 ) -> PaperExecutionContext:
     def default_callback(**kwargs: Any) -> PaperConditionResult:
         condition = kwargs["condition"]
@@ -522,14 +761,29 @@ def _context(
     return PaperExecutionContext(
         context_id="exp2_test_context",
         catalog=catalog or _catalog(),
-        approved_endpoint_binding={"model_endpoint_identity_digest": ENDPOINT_DIGEST},
-        request_limits={"max_tokens": 1024},
+        approved_endpoint_binding=binding or _baseline_binding(),
+        request_limits=request_limits
+        or {"max_tokens": 1024, "temperature": 0.0, "enable_thinking": False},
         hard_limits=hard_limits or {"max_total_provider_attempts": 0},
         output_root="outputs/experiments/exp2_test",
         artifact_store=object(),
         event_store=object(),
         execution_callback=callback or default_callback,
     )
+
+
+def _baseline_binding() -> dict[str, Any]:
+    return {
+        "provider_config_id": "exp1_baseline_siliconflow",
+        "selected_entry_id": "glm_5_2_exp1_baseline",
+        "model_entry_id": "glm_5_2_exp1_baseline",
+        "provider_family": "siliconflow",
+        "provider_model_id": "zai-org/GLM-5.2",
+        "reasoning_profile_id": "temperature_0_enable_thinking_false",
+        "source_provider_config_digest": SOURCE_CONFIG_DIGEST,
+        "model_endpoint_identity_digest": ENDPOINT_DIGEST,
+        "request_controls": {"temperature": 0.0, "enable_thinking": False},
+    }
 
 
 def _catalog() -> dict[str, Any]:
