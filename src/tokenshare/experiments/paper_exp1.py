@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections import Counter, defaultdict
 from collections.abc import Mapping, Sequence
-from math import ceil
+from math import ceil, isfinite
 from statistics import median
 from typing import Any
 
@@ -42,6 +42,16 @@ EXP1_BASELINE_ENTRY_ID = "glm_5_2_exp1_baseline"
 EXP1_BASELINE_PROVIDER_FAMILY = "siliconflow"
 EXP1_BASELINE_PROVIDER_MODEL_ID = "zai-org/GLM-5.2"
 EXP1_BASELINE_REASONING_PROFILE_ID = "temperature0_thinking_false"
+
+EXP1_FORMAL_REQUEST_CONTROLS: JsonObject = {
+    "max_tokens": 1024,
+    "timeout_seconds": 30,
+    "max_provider_attempts": 1,
+    "temperature": 0.0,
+    "enable_thinking": False,
+}
+_EXP1_FORMAL_EVIDENCE_SCHEMA_VERSION = "tokenshare.paper_exp1_formal_evidence.v1"
+_EXP1_SUPPORTED_CATALOG_VERSIONS = frozenset({"v1"})
 
 _LEAN_DIFFICULTY_TO_LEGACY_DIFFICULTY = {
     "simple": "easy",
@@ -192,8 +202,20 @@ class Exp1FormalModule:
         return result
 
     def summarize(self, evidence: Any) -> ExperimentSummaryRows:
-        records = _task_records(evidence)
-        _reject_scripted_paper_eligible_records(records)
+        formal_summary = isinstance(evidence, Mapping) and (
+            "condition_evidence" in evidence
+        )
+        if formal_summary:
+            records = _formal_task_records(evidence)
+        else:
+            records = _task_records(evidence)
+            _reject_scripted_paper_eligible_records(records)
+            if any(record.get("paper_eligible") is True for record in records):
+                raise ValueError(
+                    "paper-eligible Experiment 1 summary requires condition_evidence"
+                )
+            for record in records:
+                _validate_task_metrics_and_status(record, formal=False)
         highest_by_scope = _highest_valid_completion_by_scope(records)
         rows: list[JsonObject] = []
         for group_key, group_records in _grouped_task_records(records).items():
@@ -207,6 +229,7 @@ class Exp1FormalModule:
                     highest_observed_valid_completion_difficulty=highest_by_scope.get(
                         (domain, topic_family)
                     ),
+                    formal_summary=formal_summary,
                 )
             )
         return ExperimentSummaryRows(
@@ -474,19 +497,13 @@ def _fixed_request_controls(context: PaperExecutionContext) -> JsonObject:
         binding_controls,
         "approved binding request_controls",
     )
-    request_temperature = _required_temperature_control(request_limits)
-    binding_temperature = _required_temperature_control(binding_controls)
-    request_enable_thinking = _required_enable_thinking_control(request_limits)
-    binding_enable_thinking = _required_enable_thinking_control(binding_controls)
-    if (
-        request_temperature != binding_temperature
-        or request_enable_thinking is not binding_enable_thinking
-    ):
-        raise ValueError("Experiment 1 requires the fixed GLM-5.2 baseline")
-    return {
-        "temperature": request_temperature,
-        "enable_thinking": request_enable_thinking,
-    }
+    normalized_request_limits = _normalized_request_controls(request_limits)
+    normalized_binding_controls = _normalized_request_controls(binding_controls)
+    if normalized_request_limits != normalized_binding_controls:
+        raise ValueError(
+            "Experiment 1 requires fixed GLM-5.2 baseline request controls"
+        )
+    return normalized_request_limits
 
 
 def _required_controls_mapping(value: Any, field_name: str) -> Mapping[str, Any]:
@@ -495,21 +512,30 @@ def _required_controls_mapping(value: Any, field_name: str) -> Mapping[str, Any]
     return value
 
 
-def _required_temperature_control(controls: Mapping[str, Any]) -> float:
-    value = controls.get("temperature")
+def _normalized_request_controls(controls: Mapping[str, Any]) -> JsonObject:
+    if set(controls) != set(EXP1_FORMAL_REQUEST_CONTROLS):
+        raise ValueError(
+            "Experiment 1 requires fixed GLM-5.2 baseline request controls"
+        )
+    normalized = dict(controls)
+    for field_name in ("max_tokens", "timeout_seconds", "max_provider_attempts"):
+        value = normalized[field_name]
+        if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+            raise ValueError(
+                "Experiment 1 requires fixed GLM-5.2 baseline request controls"
+            )
+    temperature = normalized["temperature"]
     if (
-        not isinstance(value, (int, float))
-        or isinstance(value, bool)
-        or float(value) != 0.0
+        isinstance(temperature, bool)
+        or not isinstance(temperature, (int, float))
+        or float(temperature) != 0.0
+        or normalized["enable_thinking"] is not False
+        or normalized != EXP1_FORMAL_REQUEST_CONTROLS
     ):
-        raise ValueError("Experiment 1 requires the fixed GLM-5.2 baseline")
-    return 0.0
-
-
-def _required_enable_thinking_control(controls: Mapping[str, Any]) -> bool:
-    if controls.get("enable_thinking") is not False:
-        raise ValueError("Experiment 1 requires the fixed GLM-5.2 baseline")
-    return False
+        raise ValueError(
+            "Experiment 1 requires fixed GLM-5.2 baseline request controls"
+        )
+    return dict(EXP1_FORMAL_REQUEST_CONTROLS)
 
 
 def _catalog_cases(
@@ -644,7 +670,7 @@ def _validated_task15_budget_input(catalog: Any) -> JsonObject | None:
             return None
         for case_id in normalized_ids:
             if case_id in seen_ids:
-                raise ValueError(f"duplicate root case_id in Task14 selection: {case_id}")
+                return None
             seen_ids.add(case_id)
         normalized_by_cell[cell_key] = normalized_ids
     if len(seen_ids) != 135:
@@ -927,16 +953,493 @@ def _catalog_digest(catalog: Any) -> str:
 
 
 def _catalog_version(catalog: Any) -> str:
-    value = _field(catalog, "catalog_version")
-    if isinstance(value, str) and value:
-        return value
-    return "v1"
+    return _required_catalog_version(_field(catalog, "catalog_version"))
 
 
 def _field(value: Any, field_name: str) -> Any:
     if isinstance(value, Mapping):
         return value.get(field_name)
     return getattr(value, field_name, None)
+
+
+def _formal_task_records(evidence: Mapping[str, Any]) -> tuple[JsonObject, ...]:
+    _reject_nested_pilot_evidence(evidence)
+    if (
+        evidence.get("schema_version") != _EXP1_FORMAL_EVIDENCE_SCHEMA_VERSION
+        or evidence.get("experiment_id") != EXP1_FORMAL_EXPERIMENT_ID
+        or evidence.get("suite_version") != EXP1_FORMAL_SUITE_VERSION
+    ):
+        raise ValueError("Experiment 1 formal evidence wrapper is incomplete")
+    _require_formal_provenance(evidence, "Experiment 1 evidence")
+    catalog_digest = evidence.get("catalog_digest")
+    if not _is_complete_digest(catalog_digest):
+        raise ValueError("Experiment 1 formal evidence catalog_digest is required")
+    catalog_version = _required_catalog_version(evidence.get("catalog_version"))
+    condition_evidence = _mapping_sequence(
+        evidence.get("condition_evidence"),
+        "condition_evidence",
+    )
+    expected_condition_ids = _expected_formal_condition_ids()
+    if len(condition_evidence) != len(expected_condition_ids):
+        raise ValueError("Experiment 1 formal summary requires 36 canonical conditions")
+
+    selections: list[FrozenCaseSelection] = []
+    tasks: list[JsonObject] = []
+    observed_condition_ids: list[str] = []
+    source_config_digests: set[str] = set()
+    endpoint_identity_digests: set[str] = set()
+    for record, expected_condition_id in zip(
+        condition_evidence,
+        expected_condition_ids,
+        strict=True,
+    ):
+        _reject_nested_pilot_evidence(record)
+        _require_formal_provenance(record, "condition evidence")
+        condition = _validated_summary_condition(
+            record.get("condition"),
+            catalog_digest=str(catalog_digest),
+        )
+        if condition.condition_id != expected_condition_id:
+            raise ValueError("Experiment 1 formal condition order/inventory drift")
+        observed_condition_ids.append(condition.condition_id)
+        source_config_digests.add(str(condition.source_provider_config_digest))
+        endpoint_identity_digests.add(str(condition.model_endpoint_identity_digest))
+        selection = _validated_summary_selection(
+            record.get("selection"),
+            condition=condition,
+            catalog_version=catalog_version,
+        )
+        selections.append(selection)
+        tasks.extend(
+            _validated_condition_tasks(
+                record=record,
+                condition=condition,
+                selection=selection,
+                catalog_version=catalog_version,
+            )
+        )
+
+    if tuple(observed_condition_ids) != expected_condition_ids:
+        raise ValueError("Experiment 1 formal condition order/inventory drift")
+    if len(source_config_digests) != 1 or len(endpoint_identity_digests) != 1:
+        raise ValueError("Experiment 1 formal model identity digest drift")
+    _validate_selection_inventory(tuple(selections))
+    if len(tasks) != EXP1_EXPECTED_ROOT_RUNS:
+        raise ValueError("Experiment 1 formal summary requires 495 root-runs")
+    root_ids_by_repeat: dict[int, set[str]] = defaultdict(set)
+    task_keys: set[tuple[str, str]] = set()
+    for task in tasks:
+        condition_id = str(task["condition_id"])
+        case_id = str(task["case_id"])
+        task_key = (condition_id, case_id)
+        if task_key in task_keys:
+            raise ValueError("duplicate Experiment 1 condition/case task evidence")
+        task_keys.add(task_key)
+        root_ids_by_repeat[int(task["repeat_id"])].add(case_id)
+    if set(root_ids_by_repeat) != set(range(EXP1_FORMAL_REPEAT_COUNT)) or any(
+        len(case_ids) != EXP1_EXPECTED_UNIQUE_ROOTS
+        for case_ids in root_ids_by_repeat.values()
+    ):
+        raise ValueError("Experiment 1 formal summary requires 165 roots per repeat")
+    if len(set.union(*root_ids_by_repeat.values())) != EXP1_EXPECTED_UNIQUE_ROOTS:
+        raise ValueError("Experiment 1 formal summary unique root inventory drift")
+    return tuple(tasks)
+
+
+def _expected_formal_condition_ids() -> tuple[str, ...]:
+    condition_ids: list[str] = []
+    for repeat_id in range(EXP1_FORMAL_REPEAT_COUNT):
+        condition_ids.extend(
+            f"exp1_factorization_{difficulty}_w{EXP1_FORMAL_WORKER_COUNT}_r{repeat_id}"
+            for difficulty in PAPER_DIFFICULTIES
+        )
+        condition_ids.extend(
+            (
+                f"exp1_lean_{paper_difficulty}_{topic_family}"
+                f"_w{EXP1_FORMAL_WORKER_COUNT}_r{repeat_id}"
+            )
+            for paper_difficulty in LEAN_PAPER_DIFFICULTIES
+            for topic_family in LEAN_TOPIC_FAMILIES
+        )
+    return tuple(condition_ids)
+
+
+def _validated_summary_condition(
+    value: Any,
+    *,
+    catalog_digest: str,
+) -> PaperExperimentCondition:
+    if not isinstance(value, Mapping):
+        raise ValueError("Experiment 1 summary condition evidence is required")
+    expected_keys = set(PaperExperimentCondition.__dataclass_fields__) | {
+        "condition_digest"
+    }
+    if set(value) != expected_keys:
+        raise ValueError("Experiment 1 summary condition body is incomplete")
+    parsed = PaperExperimentCondition(
+        **{
+            field_name: value[field_name]
+            for field_name in PaperExperimentCondition.__dataclass_fields__
+        }
+    )
+    if dict(value) != parsed.to_dict():
+        raise ValueError("Experiment 1 summary condition digest mismatch")
+    expected_difficulty = (
+        str(parsed.paper_difficulty)
+        if parsed.domain == "factorization"
+        else _LEAN_DIFFICULTY_TO_LEGACY_DIFFICULTY.get(
+            str(parsed.paper_difficulty)
+        )
+    )
+    expected_topic_family = (
+        None if parsed.domain == "factorization" else parsed.topic_family
+    )
+    expected_condition_id = (
+        f"exp1_factorization_{parsed.paper_difficulty}"
+        f"_w{EXP1_FORMAL_WORKER_COUNT}_r{parsed.repeat_id}"
+        if parsed.domain == "factorization"
+        else (
+            f"exp1_lean_{parsed.paper_difficulty}_{parsed.topic_family}"
+            f"_w{EXP1_FORMAL_WORKER_COUNT}_r{parsed.repeat_id}"
+        )
+    )
+    if (
+        parsed.experiment_id != EXP1_FORMAL_EXPERIMENT_ID
+        or parsed.condition_id != expected_condition_id
+        or parsed.difficulty != expected_difficulty
+        or parsed.topic_family != expected_topic_family
+        or parsed.worker_count != EXP1_FORMAL_WORKER_COUNT
+        or parsed.fault_type != "none"
+        or float(parsed.fault_rate) != 0.0
+        or parsed.ablation_mode != "FULL"
+        or parsed.model_policy != "fixed_entry"
+        or parsed.provider_config_id != EXP1_BASELINE_PROVIDER_CONFIG_ID
+        or parsed.model_entry_id != EXP1_BASELINE_ENTRY_ID
+        or parsed.provider_family != EXP1_BASELINE_PROVIDER_FAMILY
+        or parsed.provider_model_id != EXP1_BASELINE_PROVIDER_MODEL_ID
+        or parsed.reasoning_profile_id != EXP1_BASELINE_REASONING_PROFILE_ID
+        or parsed.repeat_id not in range(EXP1_FORMAL_REPEAT_COUNT)
+        or parsed.seed != EXP1_FORMAL_SEED_FAMILY[parsed.repeat_id]
+        or parsed.catalog_digest != catalog_digest
+        or parsed.real_transport_required is not True
+        or parsed.paper_eligible_required is not True
+        or not _is_complete_digest(parsed.source_provider_config_digest)
+        or not _is_complete_digest(parsed.model_endpoint_identity_digest)
+    ):
+        raise ValueError("Experiment 1 summary condition fixed identity drift")
+    return parsed
+
+
+def _validated_summary_selection(
+    value: Any,
+    *,
+    condition: PaperExperimentCondition,
+    catalog_version: str,
+) -> FrozenCaseSelection:
+    if not isinstance(value, Mapping):
+        raise ValueError("Experiment 1 summary selection evidence is required")
+    selection = FrozenCaseSelection.from_dict(value)
+    if dict(value) != selection.to_dict():
+        raise ValueError("Experiment 1 summary selection body is incomplete")
+    expected_case_count = (
+        EXP1_FACTOR_CASES_PER_DIFFICULTY
+        if condition.domain == "factorization"
+        else EXP1_LEAN_CASES_PER_CELL
+    )
+    if (
+        selection.selection_id != f"{condition.condition_id}_selection_v1"
+        or selection.experiment_id != EXP1_FORMAL_EXPERIMENT_ID
+        or selection.suite_version != EXP1_FORMAL_SUITE_VERSION
+        or selection.catalog_version != catalog_version
+        or selection.domain != condition.domain
+        or selection.paper_difficulty != condition.paper_difficulty
+        or selection.topic_family != condition.topic_family
+        or selection.catalog_digest != condition.catalog_digest
+        or selection.paper_eligible_required is not True
+        or selection.is_blocked
+        or len(selection.ordered_case_ids) != expected_case_count
+        or selection.expected_ai_unit_count < expected_case_count
+    ):
+        raise ValueError("Experiment 1 summary selection does not match condition")
+    return selection
+
+
+def _validated_condition_tasks(
+    *,
+    record: Mapping[str, Any],
+    condition: PaperExperimentCondition,
+    selection: FrozenCaseSelection,
+    catalog_version: str,
+) -> tuple[JsonObject, ...]:
+    if (
+        record.get("catalog_digest") != condition.catalog_digest
+        or record.get("catalog_version") != catalog_version
+        or record.get("suite_version") != EXP1_FORMAL_SUITE_VERSION
+    ):
+        raise ValueError("Experiment 1 condition evidence catalog/suite drift")
+    record_transport = _formal_transport_kind(record, "condition evidence")
+    raw_tasks = _mapping_sequence(record.get("tasks"), "condition tasks")
+    if tuple(str(task.get("case_id") or "") for task in raw_tasks) != tuple(
+        selection.ordered_case_ids
+    ):
+        raise ValueError("actual task IDs must match frozen ordered_case_ids")
+    normalized_tasks: list[JsonObject] = []
+    observed_ai_units = 0
+    for task in raw_tasks:
+        normalized, ai_unit_count = _validated_formal_task(
+            task=task,
+            record=record,
+            record_transport=record_transport,
+            condition=condition,
+            selection=selection,
+            catalog_version=catalog_version,
+        )
+        observed_ai_units += ai_unit_count
+        normalized_tasks.append(normalized)
+    if observed_ai_units != selection.expected_ai_unit_count:
+        raise ValueError("task AI-unit inventory does not match frozen selection")
+    return tuple(normalized_tasks)
+
+
+def _validated_formal_task(
+    *,
+    task: Mapping[str, Any],
+    record: Mapping[str, Any],
+    record_transport: str,
+    condition: PaperExperimentCondition,
+    selection: FrozenCaseSelection,
+    catalog_version: str,
+) -> tuple[JsonObject, int]:
+    _require_formal_provenance(task, "task evidence")
+    task_id = _required_non_empty_string("task_id", task.get("task_id"))
+    case_id = _required_non_empty_string("case_id", task.get("case_id"))
+    if (
+        task.get("condition_id") != condition.condition_id
+        or task.get("condition_digest") != condition.condition_digest
+    ):
+        raise ValueError("task condition_id/digest does not match condition evidence")
+    if (
+        task.get("selection_id") != selection.selection_id
+        or task.get("selection_digest") != selection.selection_digest
+        or task.get("catalog_digest") != condition.catalog_digest
+        or task.get("catalog_version") != catalog_version
+        or task.get("suite_version") != EXP1_FORMAL_SUITE_VERSION
+        or task.get("repeat_id") != condition.repeat_id
+        or task.get("domain") != condition.domain
+        or task.get("paper_difficulty") != condition.paper_difficulty
+        or task.get("topic_family") != condition.topic_family
+        or task.get("model_entry_id") != EXP1_BASELINE_ENTRY_ID
+    ):
+        raise ValueError("task formal identity does not match selection/condition")
+    task_transport = _formal_transport_kind(task, "task evidence")
+    if task_transport != record_transport:
+        raise ValueError("condition/task transport conflict")
+    _validate_task_metrics_and_status(task, formal=True)
+    ai_units = _mapping_sequence(task.get("ai_units"), "task ai_units")
+    unit_ids = tuple(
+        _required_non_empty_string("unit_id", unit.get("unit_id"))
+        for unit in ai_units
+    )
+    if not unit_ids or len(set(unit_ids)) != len(unit_ids):
+        raise ValueError("task AI unit evidence must be non-empty and unique")
+    attempts = _mapping_sequence(task.get("attempts"), "task attempts")
+    attempt_ids: set[str] = set()
+    covered_units: set[str] = set()
+    all_attempts_eligible = True
+    attempt_token_total = 0
+    attempt_cost_total = 0.0
+    maximum_attempt_latency_ms = 0
+    for attempt in attempts:
+        attempt_id = _required_non_empty_string(
+            "attempt_id",
+            attempt.get("attempt_id"),
+        )
+        if attempt_id in attempt_ids:
+            raise ValueError("duplicate attempt evidence")
+        attempt_ids.add(attempt_id)
+        unit_id = _required_non_empty_string("unit_id", attempt.get("unit_id"))
+        if unit_id not in unit_ids or unit_id in covered_units:
+            raise ValueError("attempt evidence must cover each AI unit exactly once")
+        covered_units.add(unit_id)
+        attempt_tokens, attempt_cost, attempt_latency_ms = _validate_formal_attempt(
+            attempt=attempt,
+            task_id=task_id,
+            condition=condition,
+            selection=selection,
+            expected_transport=task_transport,
+        )
+        attempt_token_total += attempt_tokens
+        attempt_cost_total += attempt_cost
+        maximum_attempt_latency_ms = max(
+            maximum_attempt_latency_ms,
+            attempt_latency_ms,
+        )
+        all_attempts_eligible = (
+            all_attempts_eligible and attempt.get("paper_eligible") is True
+        )
+    if covered_units != set(unit_ids):
+        raise ValueError("attempt evidence must cover every AI unit")
+    if (
+        _required_non_negative_int("attempt_count", task.get("attempt_count"))
+        != len(attempts)
+        or _required_non_negative_int(
+            "provider_attempt_count",
+            task.get("provider_attempt_count"),
+        )
+        != len(attempts)
+    ):
+        raise ValueError("task attempt counts do not match attempt evidence")
+    if task.get("total_tokens") != attempt_token_total:
+        raise ValueError("task total_tokens does not match attempt evidence")
+    task_cost = _number(task.get("cost_estimate"), "cost_estimate")
+    if abs(task_cost - attempt_cost_total) > 1e-12:
+        raise ValueError("task cost_estimate does not match attempt evidence")
+    task_wall_clock = _number(task.get("wall_clock_ms"), "wall_clock_ms")
+    if task_wall_clock < maximum_attempt_latency_ms:
+        raise ValueError("task wall_clock_ms cannot be below attempt latency")
+    normalized = dict(task)
+    normalized["case_id"] = case_id
+    normalized["task_id"] = task_id
+    normalized["_exp1_derived_paper_eligible"] = bool(
+        record.get("paper_eligible") is True
+        and task.get("paper_eligible") is True
+        and all_attempts_eligible
+    )
+    return normalized, len(unit_ids)
+
+
+def _validate_formal_attempt(
+    *,
+    attempt: Mapping[str, Any],
+    task_id: str,
+    condition: PaperExperimentCondition,
+    selection: FrozenCaseSelection,
+    expected_transport: str,
+) -> tuple[int, float, int]:
+    attempt_transport = _formal_transport_kind(attempt, "attempt evidence")
+    if attempt_transport != expected_transport:
+        raise ValueError("attempt transport conflicts with task transport")
+    if (
+        attempt.get("condition_id") != condition.condition_id
+        or attempt.get("condition_digest") != condition.condition_digest
+        or attempt.get("selection_digest") != selection.selection_digest
+        or attempt.get("repeat_id") != condition.repeat_id
+        or attempt.get("task_id") != task_id
+    ):
+        raise ValueError("attempt task/condition identity mismatch")
+    if (
+        attempt.get("provider") != EXP1_BASELINE_PROVIDER_FAMILY
+        or attempt.get("provider_family") != EXP1_BASELINE_PROVIDER_FAMILY
+        or attempt.get("model") != EXP1_BASELINE_PROVIDER_MODEL_ID
+        or attempt.get("provider_model_id") != EXP1_BASELINE_PROVIDER_MODEL_ID
+        or attempt.get("entry_id") != EXP1_BASELINE_ENTRY_ID
+        or attempt.get("model_entry_id") != EXP1_BASELINE_ENTRY_ID
+        or attempt.get("reasoning_profile_id")
+        != EXP1_BASELINE_REASONING_PROFILE_ID
+        or attempt.get("source_provider_config_digest")
+        != condition.source_provider_config_digest
+        or attempt.get("model_endpoint_identity_digest")
+        != condition.model_endpoint_identity_digest
+    ):
+        raise ValueError("attempt model identity mismatch")
+    controls = _required_controls_mapping(
+        attempt.get("request_controls"),
+        "attempt request_controls",
+    )
+    _normalized_request_controls(controls)
+    for field_name in (
+        "request_ref",
+        "raw_output_ref",
+        "provenance_ref",
+        "usage_ref",
+        "model_execution_record_ref",
+    ):
+        _require_artifact_ref(attempt.get(field_name), field_name)
+    parsed_ref = attempt.get("parsed_output_ref")
+    parse_failure_ref = attempt.get("parse_failure_ref")
+    if (parsed_ref is None) == (parse_failure_ref is None):
+        raise ValueError(
+            "attempt must contain exactly one parsed output or parse failure ref"
+        )
+    _require_artifact_ref(
+        parsed_ref if parsed_ref is not None else parse_failure_ref,
+        "parsed_output_ref" if parsed_ref is not None else "parse_failure_ref",
+    )
+    latency_ms = _required_non_negative_int("latency_ms", attempt.get("latency_ms"))
+    prompt_tokens = _required_non_negative_int(
+        "prompt_tokens",
+        attempt.get("prompt_tokens"),
+    )
+    completion_tokens = _required_non_negative_int(
+        "completion_tokens",
+        attempt.get("completion_tokens"),
+    )
+    total_tokens = _required_non_negative_int(
+        "total_tokens",
+        attempt.get("total_tokens"),
+    )
+    if total_tokens != prompt_tokens + completion_tokens:
+        raise ValueError("attempt total_tokens does not match usage evidence")
+    cost_estimate = _number(attempt.get("cost_estimate"), "cost_estimate")
+    return total_tokens, cost_estimate, latency_ms
+
+
+def _formal_transport_kind(value: Mapping[str, Any], field_name: str) -> str:
+    transport_kind = value.get("transport_kind")
+    executor_kind = value.get("executor_kind")
+    if transport_kind != "ai_api":
+        label = transport_kind if isinstance(transport_kind, str) else "missing"
+        raise ValueError(f"{field_name} attempt transport {label} is not real AI API")
+    if executor_kind is not None and executor_kind not in {
+        "ai_api",
+        "ai_api_executor",
+    }:
+        raise ValueError(f"{field_name} executor is not real AI API")
+    return "ai_api"
+
+
+def _reject_nested_pilot_evidence(value: Any) -> None:
+    if isinstance(value, Mapping):
+        if (
+            value.get("pilot_only") is True
+            or value.get("run_kind") == "pilot"
+            or value.get("formal_run") is False
+            or value.get("formal") is False
+        ):
+            raise ValueError("pilot output cannot enter formal Experiment 1 summary")
+        for nested in value.values():
+            _reject_nested_pilot_evidence(nested)
+    elif isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
+        for nested in value:
+            _reject_nested_pilot_evidence(nested)
+
+
+def _require_formal_provenance(value: Mapping[str, Any], field_name: str) -> None:
+    if (
+        value.get("pilot_only") is not False
+        or value.get("formal_run") is not True
+        or value.get("run_kind") != "formal"
+        or ("formal" in value and value.get("formal") is not True)
+    ):
+        raise ValueError(f"{field_name} is not explicit formal evidence")
+
+
+def _mapping_sequence(value: Any, field_name: str) -> tuple[Mapping[str, Any], ...]:
+    if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
+        raise ValueError(f"{field_name} must be a sequence")
+    normalized: list[Mapping[str, Any]] = []
+    for item in value:
+        if not isinstance(item, Mapping):
+            raise ValueError(f"{field_name} entries must be mappings")
+        normalized.append(item)
+    return tuple(normalized)
+
+
+def _require_artifact_ref(value: Any, field_name: str) -> Mapping[str, Any]:
+    if not isinstance(value, Mapping):
+        raise ValueError(f"{field_name} artifact evidence is required")
+    _required_non_empty_string(f"{field_name}.artifact_id", value.get("artifact_id"))
+    return value
 
 
 def _task_records(evidence: Any) -> tuple[JsonObject, ...]:
@@ -955,9 +1458,8 @@ def _task_records(evidence: Any) -> tuple[JsonObject, ...]:
 
 
 def _reject_scripted_paper_eligible_records(records: tuple[JsonObject, ...]) -> None:
+    _reject_nested_pilot_evidence(records)
     for record in records:
-        if record.get("pilot_only") is True:
-            raise ValueError("pilot output cannot enter formal Experiment 1 summary")
         transport_kind = record.get("transport_kind")
         if (
             isinstance(transport_kind, str)
@@ -982,6 +1484,53 @@ def _grouped_task_records(
     return {key: tuple(value) for key, value in grouped.items()}
 
 
+def _validate_task_metrics_and_status(
+    record: Mapping[str, Any],
+    *,
+    formal: bool,
+) -> None:
+    _number(record.get("wall_clock_ms"), "wall_clock_ms")
+    _required_non_negative_int("total_tokens", record.get("total_tokens"))
+    _number(record.get("cost_estimate"), "cost_estimate")
+    root_status = record.get("root_status")
+    accepted_validity = record.get("accepted_validity")
+    failure_stage = record.get("failure_stage")
+    failure_kind = record.get("failure_kind")
+    if accepted_validity not in (True, False, None):
+        raise ValueError("accepted_validity must be bool or null")
+    for field_name, value in (
+        ("failure_stage", failure_stage),
+        ("failure_kind", failure_kind),
+    ):
+        if value is not None and (not isinstance(value, str) or not value):
+            raise ValueError(f"{field_name} must be a non-empty string or null")
+    if root_status == "completed":
+        if accepted_validity is not True:
+            raise ValueError("completed task must have accepted validity")
+        if failure_stage is not None or failure_kind is not None:
+            raise ValueError("completed task cannot declare failure provenance")
+        return
+    if root_status == "failed":
+        if accepted_validity is True:
+            raise ValueError("failed task cannot have accepted validity")
+        if failure_stage is None and failure_kind is None:
+            raise ValueError("failed task requires failure stage or kind")
+        if formal and (failure_stage is None or failure_kind is None):
+            raise ValueError("formal failed task requires failure stage and kind")
+        return
+    if root_status not in {
+        "blocked",
+        "timeout",
+        "budget_exhausted",
+        "ineligible",
+    }:
+        raise ValueError("root_status is not a supported paper task status")
+    if accepted_validity is True:
+        raise ValueError("non-completed task cannot have accepted validity")
+    if formal and (failure_stage is None or failure_kind is None):
+        raise ValueError("formal non-completed task requires failure stage and kind")
+
+
 def _summary_row(
     *,
     domain: str,
@@ -989,13 +1538,22 @@ def _summary_row(
     topic_family: str | None,
     records: tuple[JsonObject, ...],
     highest_observed_valid_completion_difficulty: str | None,
+    formal_summary: bool,
 ) -> JsonObject:
     completed = [record for record in records if record.get("root_status") == "completed"]
     accepted = [record for record in records if record.get("accepted_validity") is True]
     completed_count = len(completed)
-    wall_clock_values = [_number(record.get("wall_clock_ms")) for record in records]
-    token_values = [_number(record.get("total_tokens")) for record in records]
-    cost_values = [_number(record.get("cost_estimate")) for record in completed]
+    wall_clock_values = [
+        _number(record.get("wall_clock_ms"), "wall_clock_ms")
+        for record in records
+    ]
+    token_values = [
+        _number(record.get("total_tokens"), "total_tokens") for record in records
+    ]
+    cost_values = [
+        _number(record.get("cost_estimate"), "cost_estimate")
+        for record in completed
+    ]
     failure_breakdown = _failure_breakdown(records)
     return {
         "experiment_id": EXP1_FORMAL_EXPERIMENT_ID,
@@ -1023,7 +1581,12 @@ def _summary_row(
         "highest_observed_valid_completion_difficulty": (
             highest_observed_valid_completion_difficulty
         ),
-        "paper_eligible": all(record.get("paper_eligible") is True for record in records),
+        "paper_eligible": formal_summary
+        and bool(records)
+        and all(
+            record.get("_exp1_derived_paper_eligible") is True
+            for record in records
+        ),
         "transport_kind": _common_transport_kind(records),
     }
 
@@ -1116,10 +1679,33 @@ def _p90(values: list[float]) -> float | None:
     return ordered[ceil(0.9 * len(ordered)) - 1]
 
 
-def _number(value: Any) -> float:
+def _number(value: Any, field_name: str) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
-        return 0.0
-    return float(value)
+        raise ValueError(f"{field_name} must be numeric")
+    normalized = float(value)
+    if not isfinite(normalized) or normalized < 0:
+        raise ValueError(f"{field_name} must be finite and non-negative")
+    return normalized
+
+
+def _required_non_negative_int(field_name: str, value: Any) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise ValueError(f"{field_name} must be a non-negative integer")
+    return value
+
+
+def _required_non_empty_string(field_name: str, value: Any) -> str:
+    if not isinstance(value, str) or not value:
+        raise ValueError(f"{field_name} must be a non-empty string")
+    return value
+
+
+def _required_catalog_version(value: Any) -> str:
+    if not isinstance(value, str) or not value:
+        raise ValueError("catalog_version is required")
+    if value not in _EXP1_SUPPORTED_CATALOG_VERSIONS:
+        raise ValueError("catalog_version is not supported")
+    return value
 
 
 def _is_complete_digest(value: Any) -> bool:
