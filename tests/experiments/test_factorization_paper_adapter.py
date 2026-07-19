@@ -87,6 +87,47 @@ def test_factorization_paper_adapter_runs_range_children_through_ai_api_executor
     assert "direct_factorization_answer" not in provider_prompt
 
 
+def test_factorization_paper_adapter_can_execute_exactly_one_selected_ai_unit(
+    tmp_path,
+) -> None:
+    catalog = load_paper_catalogs(
+        factorization_path=FACTOR_CATALOG,
+        lean_path=LEAN_CATALOG,
+    )
+    case = catalog.cases_for(domain="factorization", difficulty="easy")[0]
+    condition = _condition(catalog.catalog_digest)
+    transport = ScriptedFactorizationRangeTransport()
+
+    result = run_factorization_paper_case(
+        case=case,
+        condition=condition,
+        output_root=tmp_path,
+        transport=transport,
+        real_transport=False,
+        entry_id="factorization_paper_scripted",
+        selected_ai_unit_id="range_0",
+    )
+
+    assert len(transport.calls) == 1
+    assert len(result.attempt_results) == 1
+    assert result.attempt_results[0].planned_ai_unit_id == "range_0"
+    assert result.merge_summary["status"] == "blocked"
+    assert result.task_result.root_status == PaperTaskStatus.FAILED
+
+    untouched_transport = ScriptedFactorizationRangeTransport()
+    with pytest.raises(ValueError, match="selected_ai_unit_id"):
+        run_factorization_paper_case(
+            case=case,
+            condition=condition,
+            output_root=tmp_path / "invalid-selection",
+            transport=untouched_transport,
+            real_transport=False,
+            entry_id="factorization_paper_scripted",
+            selected_ai_unit_id="range_99",
+        )
+    assert untouched_transport.calls == []
+
+
 def test_factorization_paper_adapter_blocks_merge_when_verifier_rejects_range_result(
     tmp_path,
 ) -> None:

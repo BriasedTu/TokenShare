@@ -41,6 +41,27 @@ def test_parse_range_result_rejects_freeform_factor_claim() -> None:
         parse_range_result("I found factor 3, so 21 = 3 * 7")
 
 
+def test_parse_range_result_rejects_missing_required_field_without_default_repair() -> None:
+    payload = {
+        "range_result_id": "range_result:unit_2:attempt_1:coverage_1:0",
+        "result_kind": "found_factor",
+        "target_n": "21",
+        "range_start": "2",
+        "range_end": "4",
+        "coverage_id": "coverage_1",
+        "child_index": 0,
+        "partition_params_digest": "sha256:params",
+        "found_factor": "3",
+        "cofactor": "7",
+        "checked_divisor_count": 4,
+        "executor_summary": {"checked": "bounded range"},
+        "created_at": CREATED_AT,
+    }
+
+    with pytest.raises(ValueError, match="missing required fields: schema_version"):
+        parse_range_result(json.dumps(payload))
+
+
 def test_build_factor_search_instruction_contains_bounded_range_only() -> None:
     range_input = FactorSearchRangeInput(
         target_n="221",

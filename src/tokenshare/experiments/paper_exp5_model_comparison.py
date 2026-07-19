@@ -11,6 +11,8 @@ from tokenshare.executors.ai_api_artifacts import read_raw_model_identity_eviden
 from tokenshare.experiments.paper_experiment_contracts import (
     ExperimentSummaryRows,
     FrozenCaseSelection,
+    FrozenCaseSelectionBatch,
+    FrozenConditionSelectionBinding,
     PaperExecutionContext,
 )
 from tokenshare.experiments.paper_model_identity import PaperModelEndpointIdentity
@@ -156,7 +158,7 @@ class Experiment5ModelComparisonModule:
         self,
         context: PaperExecutionContext,
         conditions: tuple[PaperExperimentCondition, ...],
-    ) -> tuple[FrozenCaseSelection, ...]:
+    ) -> FrozenCaseSelectionBatch:
         return freeze_exp5_case_selections(context, conditions)
 
     def run_condition(
@@ -285,17 +287,21 @@ def expand_exp5_conditions(
 def freeze_exp5_case_selections(
     context: PaperExecutionContext,
     conditions: Sequence[PaperExperimentCondition],
-) -> tuple[FrozenCaseSelection, ...]:
+) -> FrozenCaseSelectionBatch:
     canonical_conditions = expand_exp5_conditions(context)
     if tuple(condition.condition_digest for condition in conditions) != tuple(
         condition.condition_digest for condition in canonical_conditions
     ):
         raise ValueError("Experiment 5 condition order or identity drift")
     _validate_shared_slice(context.catalog)
-    selections = tuple(
-        _selection_for_condition(context, condition)
+    bindings = tuple(
+        FrozenConditionSelectionBinding.from_condition(
+            condition,
+            _selection_for_condition(context, condition),
+        )
         for condition in canonical_conditions
     )
+    selections = FrozenCaseSelectionBatch(bindings)
     count_exp5_root_runs(canonical_conditions, selections)
     return selections
 
@@ -352,7 +358,7 @@ def expand_conditions(
 def freeze_case_selections(
     context: PaperExecutionContext,
     conditions: tuple[PaperExperimentCondition, ...],
-) -> tuple[FrozenCaseSelection, ...]:
+) -> FrozenCaseSelectionBatch:
     return freeze_exp5_case_selections(context, conditions)
 
 

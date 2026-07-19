@@ -2,7 +2,12 @@ import json
 import os
 from pathlib import Path
 
+import pytest
+
 import tokenshare.experiments.run_paper_experiments as paper_cli
+from tokenshare.experiments.factorization_paper_adapter import (
+    ScriptedFactorizationRangeTransport,
+)
 from tokenshare.experiments.paper_budget import load_exp1_pilot_profile
 from tokenshare.experiments.run_paper_experiments import main
 
@@ -44,6 +49,12 @@ def test_paper_cli_plan_only_writes_budget_and_suite_manifest(tmp_path: Path) ->
     assert suite["paper_eligible"] is False
     assert budget["planned_experiments"] == ["exp1_real_ai_feasibility"]
     assert budget["quota_preflight"]["provider_calls_made"] == 0
+    assert budget["planned_root_runs"] == 495
+    dispatch = json.loads(
+        (tmp_path / "paper_dispatch_plans.json").read_text(encoding="utf-8")
+    )
+    assert dispatch["provider_calls_made"] == 0
+    assert dispatch["plans"][0]["condition_count"] == 36
 
 
 def test_paper_cli_plan_only_outputs_blocked_aware_lean_3x3_matrix(
@@ -411,6 +422,12 @@ def test_exp1_pilot_cli_routes_approved_limits_and_resume_to_orchestrator(
             "--cost-limit",
             "0.06",
             "--resume",
+            "--case-id",
+            "factor_easy_01",
+            "--ai-unit-id",
+            "range_0",
+            "--pilot-output-root",
+            str(tmp_path / "isolated-unit"),
         ]
     )
 
@@ -424,6 +441,293 @@ def test_exp1_pilot_cli_routes_approved_limits_and_resume_to_orchestrator(
     assert received["cost_limit"] == 0.06
     assert received["resume"] is True
     assert received["replay_only"] is False
+    assert received["case_id"] == "factor_easy_01"
+    assert received["ai_unit_id"] == "range_0"
+    assert received["execution_output_root"] == tmp_path / "isolated-unit"
+
+
+def test_general_gate_c_cli_routes_single_exp2_case_unit_through_shared_runner(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    plan_root = tmp_path / "plan"
+    assert main(
+        [
+            "--output-root",
+            str(plan_root),
+            "--experiments",
+            "exp2",
+            "--plan-only",
+        ]
+    ) == 0
+    budget = json.loads((plan_root / "run_budget.json").read_text(encoding="utf-8"))
+    dispatch_bundle = json.loads(
+        (plan_root / "paper_dispatch_plans.json").read_text(encoding="utf-8")
+    )
+    plan = dispatch_bundle["plans"][0]
+    pair = next(
+        (condition, selection)
+        for condition, selection in zip(
+            plan["conditions"],
+            plan["selections"],
+            strict=True,
+        )
+        if condition["domain"] == "factorization"
+        and condition["paper_difficulty"] == "easy"
+        and condition["worker_count"] == 1
+        and condition["repeat_id"] == 0
+    )
+    condition, selection = pair
+    observed: dict = {}
+
+    def fake_execute_gate_c_pilot_case(**kwargs):
+        observed.update(kwargs)
+        body = {
+            "schema_version": "tokenshare.paper_gate_c_pilot_execution_result.v1",
+            "suite_id": "gate_c_cli_exp2_test",
+            "experiment_id": "exp2_real_ai_scalability",
+            "condition_id": condition["condition_id"],
+            "case_id": selection["ordered_case_ids"][0],
+            "ai_unit_id": "range_0",
+            "status": "completed_with_failures",
+            "output_root": (tmp_path / "isolated-exp2").as_posix(),
+            "provider_calls_made": 0,
+            "transport_calls_observed": 0,
+            "paper_eligible": False,
+            "pilot_only": True,
+        }
+        return _FakeExecutionResult(body)
+
+    monkeypatch.setattr(
+        paper_cli,
+        "execute_gate_c_pilot_case",
+        fake_execute_gate_c_pilot_case,
+    )
+    pilot_root = tmp_path / "isolated-exp2"
+    exit_code = main(
+        [
+            "--output-root",
+            str(plan_root),
+            "--experiments",
+            "exp2",
+            "--pilot",
+            "--real-transport",
+            "--replay-only",
+            "--approve-budget-digest",
+            budget["budget_digest"],
+            "--condition-id",
+            condition["condition_id"],
+            "--case-id",
+            selection["ordered_case_ids"][0],
+            "--ai-unit-id",
+            "range_0",
+            "--pilot-output-root",
+            str(pilot_root),
+        ]
+    )
+
+    assert exit_code == 0
+    assert observed["experiment_id"] == "exp2_real_ai_scalability"
+    assert observed["condition_id"] == condition["condition_id"]
+    assert observed["case_id"] == selection["ordered_case_ids"][0]
+    assert observed["ai_unit_id"] == "range_0"
+    assert observed["approved_budget_digest"] == budget["budget_digest"]
+    assert observed["execution_output_root"] == pilot_root
+    assert observed["real_transport"] is True
+    assert observed["replay_only"] is True
+    assert observed["ai_api_configs"] == {}
+
+
+def test_general_gate_c_cli_reaches_registered_module_adapter_and_capture(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    plan_root = tmp_path / "plan-e2e"
+    assert main(
+        [
+            "--output-root",
+            str(plan_root),
+            "--experiments",
+            "exp2",
+            "--plan-only",
+        ]
+    ) == 0
+    budget = json.loads((plan_root / "run_budget.json").read_text(encoding="utf-8"))
+    plan = json.loads(
+        (plan_root / "paper_dispatch_plans.json").read_text(encoding="utf-8")
+    )["plans"][0]
+    condition, selection = next(
+        (condition, selection)
+        for condition, selection in zip(
+            plan["conditions"],
+            plan["selections"],
+            strict=True,
+        )
+        if condition["domain"] == "factorization"
+        and condition["paper_difficulty"] == "easy"
+        and condition["worker_count"] == 1
+        and condition["repeat_id"] == 0
+    )
+    profile = load_exp1_pilot_profile(
+        "benchmarks/paper/exp1_minimal_pilot_profile.v1.json"
+    )
+    entry = profile.source_provider_config.entries[0]
+    monkeypatch.setenv(entry.api_key_env, "gate-c-cli-e2e-capture-key")
+    transport = _CLICapturingTransport()
+    pilot_root = tmp_path / "pilot-e2e"
+
+    exit_code = main(
+        [
+            "--output-root",
+            str(plan_root),
+            "--experiments",
+            "exp2",
+            "--pilot",
+            "--real-transport",
+            "--approve-budget-digest",
+            budget["budget_digest"],
+            "--condition-id",
+            condition["condition_id"],
+            "--case-id",
+            selection["ordered_case_ids"][0],
+            "--pilot-output-root",
+            str(pilot_root),
+        ],
+        gate_c_transport=transport,
+        gate_c_ai_api_configs={
+            profile.model_endpoint_identity.provider_config_id: (
+                profile.source_provider_config
+            )
+        },
+    )
+
+    assert exit_code == 0
+    assert transport.calls
+    assert all(
+        call["response_format"] == {"type": "json_object"}
+        and call["temperature"] == 0
+        and call["enable_thinking"] is False
+        for call in transport.calls
+    )
+    suite = json.loads(
+        (pilot_root / "suite_manifest.json").read_text(encoding="utf-8")
+    )
+    assert suite["experiment_id"] == "exp2_real_ai_scalability"
+    assert suite["provider_calls_made"] == 0
+    assert suite["transport_calls_observed"] == len(transport.calls)
+    assert suite["paper_eligible"] is False
+
+
+def test_exp1_pilot_cli_rejects_unpaired_or_non_pilot_unit_selector(
+    tmp_path: Path,
+) -> None:
+    unpaired = main(
+        [
+            "--output-root",
+            str(tmp_path / "unpaired"),
+            "--experiments",
+            "exp1",
+            "--case-id",
+            "factor_easy_01",
+        ]
+    )
+    non_pilot = main(
+        [
+            "--output-root",
+            str(tmp_path / "non-pilot"),
+            "--experiments",
+            "exp1",
+            "--case-id",
+            "factor_easy_01",
+            "--ai-unit-id",
+            "range_0",
+            "--plan-only",
+        ]
+    )
+    missing_isolated_root = main(
+        [
+            "--output-root",
+            str(tmp_path / "missing-isolated-root"),
+            "--experiments",
+            "exp1",
+            "--pilot",
+            "--case-id",
+            "factor_easy_01",
+            "--ai-unit-id",
+            "range_0",
+        ]
+    )
+
+    assert unpaired == 3
+    assert non_pilot == 3
+    assert missing_isolated_root == 3
+    unpaired_suite = json.loads(
+        (tmp_path / "unpaired" / "suite_manifest.json").read_text(encoding="utf-8")
+    )
+    non_pilot_suite = json.loads(
+        (tmp_path / "non-pilot" / "suite_manifest.json").read_text(encoding="utf-8")
+    )
+    missing_root_suite = json.loads(
+        (tmp_path / "missing-isolated-root" / "suite_manifest.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert unpaired_suite["error_summary"][0]["failure_kind"] == "invalid_pilot_selector"
+    assert non_pilot_suite["error_summary"][0]["failure_kind"] == "invalid_pilot_selector"
+    assert missing_root_suite["error_summary"][0]["failure_kind"] == "invalid_pilot_selector"
+
+
+@pytest.mark.parametrize(
+    "root_relation",
+    ("equal", "parent", "child"),
+)
+def test_exp1_pilot_cli_rejects_canonical_selector_output_root_overlap(
+    tmp_path: Path,
+    root_relation: str,
+) -> None:
+    output_base = tmp_path / root_relation
+    canonical_root = output_base / "paper_exp1_minimal_pilot_v1"
+    pilot_output_root = {
+        "equal": canonical_root,
+        "parent": output_base,
+        "child": canonical_root / "selected-unit",
+    }[root_relation]
+
+    exit_code = main(
+        [
+            "--output-root",
+            str(output_base),
+            "--experiments",
+            "exp1",
+            "--exp1-pilot-profile",
+            "benchmarks/paper/exp1_minimal_pilot_profile.v1.json",
+            "--pilot",
+            "--real-transport",
+            "--approve-budget-digest",
+            APPROVED_EXP1_PILOT_DIGEST,
+            "--baseline-entry-id",
+            "glm_5_2_exp1_baseline",
+            "--resume",
+            "--case-id",
+            "factor_easy_01",
+            "--ai-unit-id",
+            "range_0",
+            "--pilot-output-root",
+            str(pilot_output_root),
+        ]
+    )
+
+    assert exit_code == 3
+    blocked_root = output_base / "paper_exp1_minimal_pilot_v1_blocked"
+    suite = json.loads(
+        (blocked_root / "suite_manifest.json").read_text(encoding="utf-8")
+    )
+    assert suite["error_summary"][0]["failure_kind"] == "invalid_pilot_selector"
+    assert "must not overlap canonical Exp1 pilot root" in suite["error_summary"][0][
+        "message"
+    ]
+    assert not (canonical_root / "execution_plan.json").exists()
+    assert not (canonical_root / "suite_manifest.json").exists()
 
 
 def test_exp1_pilot_cli_injects_matching_local_key_into_approved_env(
@@ -540,3 +844,22 @@ class _FakeExecutionResult:
 
     def to_dict(self) -> dict:
         return dict(self.body)
+
+
+class _CLICapturingTransport:
+    tokenshare_offline_capturing_transport = True
+
+    def __init__(self) -> None:
+        self.delegate = ScriptedFactorizationRangeTransport()
+        self.calls: list[dict] = []
+
+    def post_chat_completion(self, *, entry, api_key, body, timeout_seconds):
+        response = self.delegate.post_chat_completion(
+            entry=entry,
+            api_key=api_key,
+            body=body,
+            timeout_seconds=timeout_seconds,
+        )
+        response.body["model"] = entry.model
+        self.calls.append(json.loads(json.dumps(body)))
+        return response

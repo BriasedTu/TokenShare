@@ -24,6 +24,9 @@ PAPER_EXECUTION_CONTEXT_SCHEMA_VERSION = "tokenshare.paper_execution_context.v1"
 EXPERIMENT_SUMMARY_ROWS_SCHEMA_VERSION = (
     "tokenshare.paper_experiment_summary_rows.v1"
 )
+CONDITION_SELECTION_BINDING_SCHEMA_VERSION = (
+    "tokenshare.paper_condition_selection_binding.v1"
+)
 
 
 def canonical_contract_digest(value: Any) -> str:
@@ -100,6 +103,24 @@ class FrozenCaseSelection:
     def selection_digest(self) -> str:
         return canonical_contract_digest(self._body(include_digest=False))
 
+    @property
+    def case_selection_digest(self) -> str:
+        """跨实验比较用的 exact case slice digest，不含模块所有权字段。"""
+
+        return canonical_contract_digest(
+            {
+                "schema_version": "tokenshare.paper_case_selection_digest.v1",
+                "catalog_version": self.catalog_version,
+                "catalog_digest": self.catalog_digest,
+                "domain": self.domain,
+                "paper_difficulty": self.paper_difficulty,
+                "topic_family": self.topic_family,
+                "ordered_case_ids": list(self.ordered_case_ids),
+                "expected_ai_unit_count": self.expected_ai_unit_count,
+                "blocked_reason": self.blocked_reason,
+            }
+        )
+
     @classmethod
     def from_dict(cls, body: Mapping[str, Any]) -> FrozenCaseSelection:
         body = _require_mapping(body)
@@ -127,10 +148,17 @@ class FrozenCaseSelection:
         )
         if expected_digest != selection.selection_digest:
             raise ValueError("selection_digest mismatch")
+        expected_case_digest = body.get("case_selection_digest")
+        if (
+            expected_case_digest is not None
+            and expected_case_digest != selection.case_selection_digest
+        ):
+            raise ValueError("case_selection_digest mismatch")
         return selection
 
     def to_dict(self) -> JsonObject:
         body = self._body(include_digest=True)
+        body["case_selection_digest"] = self.case_selection_digest
         body["execution_status"] = (
             "structured_blocked" if self.is_blocked else "executable"
         )
@@ -157,6 +185,87 @@ class FrozenCaseSelection:
         if include_digest:
             body["selection_digest"] = self.selection_digest
         return body
+
+
+@dataclass(frozen=True, kw_only=True)
+class FrozenConditionSelectionBinding:
+    """由模块在生成 selection 时建立的完整 condition identity 绑定。"""
+
+    condition_id: str
+    condition_digest: str
+    selection: FrozenCaseSelection
+    schema_version: str = CONDITION_SELECTION_BINDING_SCHEMA_VERSION
+
+    def __post_init__(self) -> None:
+        if self.schema_version != CONDITION_SELECTION_BINDING_SCHEMA_VERSION:
+            raise ValueError(
+                "schema_version must be "
+                f"{CONDITION_SELECTION_BINDING_SCHEMA_VERSION}"
+            )
+        _require_non_empty("condition_id", self.condition_id)
+        _require_complete_digest("condition_digest", self.condition_digest)
+        if not isinstance(self.selection, FrozenCaseSelection):
+            raise ValueError("selection must be FrozenCaseSelection")
+
+    @classmethod
+    def from_condition(
+        cls,
+        condition: PaperExperimentCondition,
+        selection: FrozenCaseSelection,
+    ) -> FrozenConditionSelectionBinding:
+        if (
+            selection.experiment_id != condition.experiment_id
+            or selection.domain != condition.domain
+            or selection.paper_difficulty != condition.paper_difficulty
+            or selection.topic_family != condition.topic_family
+            or selection.catalog_digest != condition.catalog_digest
+        ):
+            raise ValueError("selection does not match bound condition")
+        return cls(
+            condition_id=condition.condition_id,
+            condition_digest=condition.condition_digest,
+            selection=selection,
+        )
+
+    def to_dict(self) -> JsonObject:
+        return {
+            "schema_version": self.schema_version,
+            "condition_id": self.condition_id,
+            "condition_digest": self.condition_digest,
+            "selection": self.selection.to_dict(),
+        }
+
+
+class FrozenCaseSelectionBatch(tuple):
+    """兼容旧 tuple API，并携带不依赖位置的 condition bindings。"""
+
+    condition_selection_bindings: tuple[FrozenConditionSelectionBinding, ...]
+
+    def __new__(
+        cls,
+        bindings: tuple[FrozenConditionSelectionBinding, ...]
+        | list[FrozenConditionSelectionBinding],
+    ) -> FrozenCaseSelectionBatch:
+        normalized = tuple(bindings)
+        if any(
+            not isinstance(binding, FrozenConditionSelectionBinding)
+            for binding in normalized
+        ):
+            raise ValueError(
+                "FrozenCaseSelectionBatch requires condition selection bindings"
+            )
+        condition_ids = [binding.condition_id for binding in normalized]
+        condition_digests = [binding.condition_digest for binding in normalized]
+        if len(set(condition_ids)) != len(condition_ids):
+            raise ValueError("duplicate condition selection binding condition_id")
+        if len(set(condition_digests)) != len(condition_digests):
+            raise ValueError("duplicate condition selection binding condition_digest")
+        instance = super().__new__(
+            cls,
+            (binding.selection for binding in normalized),
+        )
+        instance.condition_selection_bindings = normalized
+        return instance
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -265,7 +374,7 @@ class PaperExperimentModule(Protocol):
         self,
         context: PaperExecutionContext,
         conditions: tuple[PaperExperimentCondition, ...],
-    ) -> tuple[FrozenCaseSelection, ...]:
+    ) -> FrozenCaseSelectionBatch:
         ...
 
     def run_condition(
@@ -409,7 +518,9 @@ def _require_complete_digest(field_name: str, value: Any) -> None:
 
 __all__ = [
     "ExperimentSummaryRows",
+    "FrozenCaseSelectionBatch",
     "FrozenCaseSelection",
+    "FrozenConditionSelectionBinding",
     "PaperConditionResult",
     "PaperExecutionContext",
     "PaperExperimentModule",

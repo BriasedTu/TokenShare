@@ -30,8 +30,9 @@ def test_build_siliconflow_chat_body_uses_prompt_and_json_mode() -> None:
     assert body["messages"][1] == {"role": "user", "content": "Return JSON."}
     assert body["stream"] is False
     assert body["max_tokens"] == 64
-    assert body["temperature"] == 0.1
+    assert body["temperature"] == 0.0
     assert body["response_format"] == {"type": "json_object"}
+    assert body["enable_thinking"] is False
 
 
 def test_build_siliconflow_chat_body_disables_qwen_thinking_for_json_mode() -> None:
@@ -51,6 +52,30 @@ def test_build_siliconflow_chat_body_disables_qwen_thinking_for_json_mode() -> N
     assert "valid JSON object" in body["messages"][0]["content"]
     assert body["messages"][1] == {"role": "user", "content": "Return JSON."}
     assert body["enable_thinking"] is False
+
+
+def test_build_siliconflow_chat_body_rejects_thinking_override_in_json_mode() -> None:
+    config = load_ai_api_config(make_config_dict())
+    entry = replace(
+        config.entries[0],
+        request_overrides={
+            **config.entries[0].request_overrides,
+            "enable_thinking": True,
+        },
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="enable_thinking must be false when json mode is required",
+    ):
+        build_siliconflow_chat_body(
+            entry=entry,
+            prompt_text="Return JSON.",
+            defaults=config.defaults,
+            request_limits={"max_tokens": 1024},
+            soft_hints={"temperature": 0.0},
+            require_json_mode=True,
+        )
 
 
 def test_parse_siliconflow_response_extracts_content_and_usage() -> None:

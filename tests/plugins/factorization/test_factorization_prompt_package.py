@@ -83,6 +83,7 @@ def test_factorization_builds_plugin_owned_prompt_package_for_bounded_range() ->
     assert body["constraints"]["prompt_owner"] == "factorization_plugin"
     assert body["constraints"]["verification_authority"] == RANGE_RESULT_VALIDATOR_POLICY_ID
     assert body["constraints"]["strict_json_only"] is True
+    assert body["constraints"]["requires_json_mode"] is True
     assert body["constraints"]["executor_must_not"] == [
         "search_outside_assigned_range",
         "create_or_modify_task_graph",

@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+from functools import lru_cache
 from pathlib import Path
 from typing import Sequence
 
@@ -17,7 +18,10 @@ from tokenshare.experiments.paper_budget import (
     plan_exp1_pilot,
     plan_paper_suite,
 )
-from tokenshare.experiments.paper_catalog import load_paper_catalogs
+from tokenshare.experiments.paper_catalog import (
+    PaperInputCatalogManifest,
+    load_paper_catalogs,
+)
 from tokenshare.experiments.paper_model_policy import (
     build_model_endpoint_cohort_preflight,
     load_model_endpoint_cohort,
@@ -26,10 +30,14 @@ from tokenshare.experiments.paper_model_policy import (
 )
 from tokenshare.experiments.paper_models import PaperStatus, PaperSuiteResult
 from tokenshare.experiments.paper_runner import (
+    build_gate_c_dispatch_plans,
     build_lean_3x3_matrix_plan,
+    execute_gate_c_pilot_case,
     execute_exp1_pilot,
     expand_plan_conditions,
     normalize_experiment_ids,
+    validate_gate_c_pilot_output_root,
+    validate_exp1_selector_output_root,
 )
 
 
@@ -38,9 +46,17 @@ DEFAULT_LEAN_CATALOG = Path("benchmarks/paper/lean_catalog.v1.jsonl")
 DEFAULT_LEAN_LEMMA_GRAPH_CATALOG = Path(
     "benchmarks/paper/lean_lemma_graph_catalog.v1.jsonl"
 )
+DEFAULT_EXP1_PILOT_PROFILE = Path(
+    "benchmarks/paper/exp1_minimal_pilot_profile.v1.json"
+)
 
 
-def main(argv: Sequence[str] | None = None) -> int:
+def main(
+    argv: Sequence[str] | None = None,
+    *,
+    gate_c_transport=None,
+    gate_c_ai_api_configs: dict | None = None,
+) -> int:
     parser = argparse.ArgumentParser(
         description="Plan or run TokenShare paper real-AI experiments.",
     )
@@ -61,6 +77,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--replay-only", action="store_true")
     parser.add_argument("--approve-budget-digest", default=None)
     parser.add_argument("--exp1-pilot-profile", default=None)
+    parser.add_argument("--case-id", default=None)
+    parser.add_argument("--ai-unit-id", default=None)
+    parser.add_argument("--condition-id", default=None)
+    parser.add_argument("--pilot-output-root", default=None)
     parser.add_argument("--ai-api-config", default="local/ai_api_smoke.local.json")
     parser.add_argument("--model-cohort-file", default=None)
     parser.add_argument("--model-entry-map", default=None)
@@ -72,6 +92,37 @@ def main(argv: Sequence[str] | None = None) -> int:
     output_root = output_base
     pilot_blocked_output_root: Path | None = None
     experiment_ids = normalize_experiment_ids(tuple(args.experiments.split(",")))
+    selector_requested = any(
+        value is not None
+        for value in (args.condition_id, args.case_id, args.ai_unit_id)
+    )
+    profile_pilot_requested = args.exp1_pilot_profile is not None
+    invalid_profile_selector = profile_pilot_requested and (
+        (args.case_id is None) != (args.ai_unit_id is None)
+        or args.condition_id is not None
+    )
+    invalid_general_selector = not profile_pilot_requested and selector_requested and (
+        args.condition_id is None or args.case_id is None
+    )
+    if (
+        invalid_profile_selector
+        or invalid_general_selector
+        or (selector_requested and not args.pilot)
+        or (selector_requested and args.pilot_output_root is None)
+        or (args.pilot_output_root is not None and not args.pilot)
+    ):
+        _write_blocked_suite(
+            output_root=output_root,
+            experiment_ids=experiment_ids,
+            failure_kind="invalid_pilot_selector",
+            message=(
+                "profile pilots require paired --case-id/--ai-unit-id; general "
+                "Gate C pilots require --condition-id and --case-id with optional "
+                "--ai-unit-id. Selectors require --pilot and an independent "
+                "--pilot-output-root"
+            ),
+        )
+        return 3
     pilot_profile = _load_cli_pilot_profile(
         profile_path=args.exp1_pilot_profile,
         output_root=output_base,
@@ -102,12 +153,31 @@ def main(argv: Sequence[str] | None = None) -> int:
                 suite_id=f"{pilot_profile.body['suite_id']}_blocked",
             )
             return 3
-    if args.pilot and pilot_profile is None:
+        if selector_requested:
+            try:
+                validate_exp1_selector_output_root(
+                    output_base=output_base,
+                    suite_id=str(pilot_profile.body["suite_id"]),
+                    execution_output_root=Path(str(args.pilot_output_root)),
+                )
+            except ValueError as exc:
+                _write_blocked_suite(
+                    output_root=pilot_blocked_output_root or output_root,
+                    experiment_ids=experiment_ids,
+                    failure_kind="invalid_pilot_selector",
+                    message=str(exc),
+                    suite_id=f"{pilot_profile.body['suite_id']}_blocked",
+                )
+                return 3
+    if args.pilot and pilot_profile is None and not selector_requested:
         _write_blocked_suite(
             output_root=output_root,
             experiment_ids=experiment_ids,
             failure_kind="missing_pilot_profile",
-            message="--pilot requires --exp1-pilot-profile",
+            message=(
+                "general --pilot requires --condition-id, --case-id, and an "
+                "independent --pilot-output-root"
+            ),
         )
         return 3
     if args.pilot and args.plan_only:
@@ -136,7 +206,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             suite_id=f"{pilot_profile.body['suite_id']}_blocked",
         )
         return 3
-    if args.pilot and args.baseline_entry_id is None:
+    if args.pilot and pilot_profile is not None and args.baseline_entry_id is None:
         _write_blocked_suite(
             output_root=pilot_blocked_output_root or output_root,
             experiment_ids=experiment_ids,
@@ -147,6 +217,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 3
     if (
         args.pilot
+        and pilot_profile is not None
         and args.baseline_entry_id
         != pilot_profile.model_endpoint_identity.selected_entry_id
     ):
@@ -182,30 +253,47 @@ def main(argv: Sequence[str] | None = None) -> int:
             ),
         )
         return 1
-    catalog_manifest = load_paper_catalogs(
-        factorization_path=DEFAULT_FACTOR_CATALOG,
-        lean_path=DEFAULT_LEAN_CATALOG,
-        lean_lemma_graph_path=(
-            DEFAULT_LEAN_LEMMA_GRAPH_CATALOG
-            if DEFAULT_LEAN_LEMMA_GRAPH_CATALOG.exists()
-            else None
-        ),
-    )
+    catalog_manifest = _load_default_paper_catalogs()
     lean_3x3_matrix = build_lean_3x3_matrix_plan(
         catalog_manifest=catalog_manifest,
     )
-    conditions = (
-        ()
-        if pilot_profile is not None
-        else expand_plan_conditions(
-            catalog_manifest=catalog_manifest,
-            experiment_ids=experiment_ids,
-            worker_levels=_parse_int_tuple(args.worker_levels),
-            repeats=args.repeats,
-            seed_family=_parse_int_tuple(args.seed_family),
-            model_endpoint_cohort_preflight=model_endpoint_cohort_preflight,
+    dispatch_plans = ()
+    frozen_selection_commitments = None
+    if pilot_profile is None:
+        planning_profile = load_exp1_pilot_profile(DEFAULT_EXP1_PILOT_PROFILE)
+        try:
+            dispatch_plans = build_gate_c_dispatch_plans(
+                catalog_manifest=catalog_manifest,
+                lean_3x3_matrix=lean_3x3_matrix,
+                experiment_ids=experiment_ids,
+                baseline_endpoint_binding=_baseline_endpoint_binding(planning_profile),
+                model_endpoint_cohort_preflight=model_endpoint_cohort_preflight,
+                output_root=output_root,
+            )
+        except ValueError as exc:
+            _write_blocked_suite(
+                output_root=output_root,
+                experiment_ids=experiment_ids,
+                failure_kind="gate_c_plan_blocked",
+                message=str(exc),
+            )
+            return 3
+        conditions = tuple(
+            condition
+            for dispatch_plan in dispatch_plans
+            for condition in dispatch_plan.conditions
         )
-    )
+        frozen_selection_commitments = [
+            {
+                **selection.to_dict(),
+                "condition_id": condition.condition_id,
+                "condition_digest": condition.condition_digest,
+            }
+            for dispatch_plan in dispatch_plans
+            for condition, selection in dispatch_plan.bound_items()
+        ]
+    else:
+        conditions = ()
     del model_cohort
     model_policy_preflight = None
     try:
@@ -227,6 +315,39 @@ def main(argv: Sequence[str] | None = None) -> int:
                 lean_3x3_matrix=lean_3x3_matrix,
                 model_policy_preflight=model_policy_preflight,
                 model_endpoint_cohort_preflight=model_endpoint_cohort_preflight,
+                frozen_selections=frozen_selection_commitments,
+                endpoint_identity={
+                    "baseline": _baseline_endpoint_binding(
+                        load_exp1_pilot_profile(DEFAULT_EXP1_PILOT_PROFILE)
+                    ),
+                    "model_endpoint_cohort_preflight": (
+                        model_endpoint_cohort_preflight
+                    ),
+                },
+                request_limits={
+                    "max_provider_attempts": 1,
+                    "max_tokens": 1024,
+                    "timeout_seconds": 30,
+                    "temperature": 0.0,
+                    "top_p": 1.0,
+                    "stream": False,
+                    "enable_thinking": False,
+                },
+                suite_identity={
+                    "suite_version": "paper_v1",
+                    "execution_scope": "formal_matrix",
+                    "experiment_ids": list(experiment_ids),
+                },
+                output_identity={
+                    "output_root": output_root.resolve(strict=False).as_posix(),
+                    "per_experiment_roots": [
+                        (output_root / experiment_id).resolve(
+                            strict=False
+                        ).as_posix()
+                        for experiment_id in experiment_ids
+                    ],
+                    "cross_experiment_evidence_allowed": False,
+                },
                 approve_budget_digest=args.approve_budget_digest,
             )
         )
@@ -247,40 +368,129 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 2
 
     if args.pilot:
-        if not (args.resume or args.replay_only):
+        if pilot_profile is not None:
+            if not (args.resume or args.replay_only):
+                try:
+                    _inject_exp1_pilot_api_key(
+                        pilot_profile=pilot_profile,
+                        local_config_path=Path(args.ai_api_config),
+                    )
+                except (OSError, ValueError) as exc:
+                    _write_blocked_suite(
+                        output_root=pilot_blocked_output_root or output_root,
+                        experiment_ids=experiment_ids,
+                        failure_kind="missing_real_api_key",
+                        message=str(exc),
+                        suite_id=f"{pilot_profile.body['suite_id']}_blocked",
+                    )
+                    return 1
             try:
-                _inject_exp1_pilot_api_key(
+                execution_result = execute_exp1_pilot(
+                    catalog_manifest=catalog_manifest,
                     pilot_profile=pilot_profile,
-                    local_config_path=Path(args.ai_api_config),
+                    budget=budget,
+                    approved_budget_digest=str(args.approve_budget_digest),
+                    baseline_entry_id=str(args.baseline_entry_id),
+                    output_base=output_base,
+                    execution_output_root=(
+                        Path(args.pilot_output_root)
+                        if args.pilot_output_root is not None
+                        else None
+                    ),
+                    real_transport=args.real_transport,
+                    provider_attempt_limit=args.provider_attempt_limit,
+                    token_limit=args.token_limit,
+                    cost_limit=args.cost_limit,
+                    resume=args.resume,
+                    replay_only=args.replay_only,
+                    case_id=args.case_id,
+                    ai_unit_id=args.ai_unit_id,
                 )
-            except (OSError, ValueError) as exc:
+            except ValueError as exc:
+                if not selector_requested:
+                    raise
                 _write_blocked_suite(
-                    output_root=pilot_blocked_output_root or output_root,
+                    output_root=Path(str(args.pilot_output_root)),
                     experiment_ids=experiment_ids,
-                    failure_kind="missing_real_api_key",
+                    failure_kind="invalid_pilot_selector",
                     message=str(exc),
                     suite_id=f"{pilot_profile.body['suite_id']}_blocked",
                 )
-                return 1
-        execution_result = execute_exp1_pilot(
-            catalog_manifest=catalog_manifest,
-            pilot_profile=pilot_profile,
-            budget=budget,
-            approved_budget_digest=str(args.approve_budget_digest),
-            baseline_entry_id=str(args.baseline_entry_id),
-            output_base=output_base,
-            real_transport=args.real_transport,
-            provider_attempt_limit=args.provider_attempt_limit,
-            token_limit=args.token_limit,
-            cost_limit=args.cost_limit,
-            resume=args.resume,
-            replay_only=args.replay_only,
-        )
+                return 3
+        else:
+            if len(experiment_ids) != 1:
+                _write_blocked_suite(
+                    output_root=Path(str(args.pilot_output_root)),
+                    experiment_ids=experiment_ids,
+                    failure_kind="invalid_pilot_selector",
+                    message="general Gate C pilot requires exactly one experiment",
+                )
+                return 3
+            experiment_id = experiment_ids[0]
+            try:
+                validate_gate_c_pilot_output_root(
+                    output_base=output_base,
+                    experiment_id=experiment_id,
+                    execution_output_root=Path(str(args.pilot_output_root)),
+                )
+                if gate_c_ai_api_configs is not None:
+                    execution_configs = dict(gate_c_ai_api_configs)
+                elif args.resume or args.replay_only:
+                    execution_configs = {}
+                elif experiment_id == "exp5_real_ai_model_endpoint_comparison":
+                    execution_configs = load_provider_config_map(
+                        _parse_provider_config_args(tuple(args.provider_config))
+                    )
+                else:
+                    _inject_exp1_pilot_api_key(
+                        pilot_profile=planning_profile,
+                        local_config_path=Path(args.ai_api_config),
+                    )
+                    execution_configs = {
+                        planning_profile.model_endpoint_identity.provider_config_id: (
+                            planning_profile.source_provider_config
+                        )
+                    }
+                execution_result = execute_gate_c_pilot_case(
+                    catalog_manifest=catalog_manifest,
+                    lean_3x3_matrix=lean_3x3_matrix,
+                    experiment_id=experiment_id,
+                    baseline_endpoint_binding=_baseline_endpoint_binding(
+                        planning_profile
+                    ),
+                    model_endpoint_cohort_preflight=(
+                        model_endpoint_cohort_preflight
+                        if experiment_id
+                        == "exp5_real_ai_model_endpoint_comparison"
+                        else None
+                    ),
+                    budget=budget,
+                    approved_budget_digest=str(args.approve_budget_digest),
+                    condition_id=str(args.condition_id),
+                    case_id=str(args.case_id),
+                    ai_unit_id=args.ai_unit_id,
+                    execution_output_root=Path(str(args.pilot_output_root)),
+                    ai_api_configs=execution_configs,
+                    transport=gate_c_transport,
+                    real_transport=args.real_transport,
+                    resume=args.resume,
+                    replay_only=args.replay_only,
+                )
+            except (OSError, ValueError) as exc:
+                _write_blocked_suite(
+                    output_root=Path(str(args.pilot_output_root)),
+                    experiment_ids=experiment_ids,
+                    failure_kind="invalid_pilot_execution",
+                    message=str(exc),
+                )
+                return 3
         output_root = Path(str(execution_result.to_dict()["output_root"]))
         _write_plan_artifacts(
             output_root=output_root,
             budget=budget.to_dict(),
-            pilot_profile=pilot_profile.to_dict(),
+            pilot_profile=(
+                pilot_profile.to_dict() if pilot_profile is not None else None
+            ),
             lean_3x3_matrix=lean_3x3_matrix,
         )
         print(
@@ -301,6 +511,20 @@ def main(argv: Sequence[str] | None = None) -> int:
         ),
         lean_3x3_matrix=lean_3x3_matrix,
     )
+    if dispatch_plans:
+        (output_root / "paper_dispatch_plans.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": "tokenshare.paper_dispatch_plan_bundle.v1",
+                    "provider_calls_made": 0,
+                    "plans": [plan.to_dict() for plan in dispatch_plans],
+                },
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            ),
+            encoding="utf-8",
+        )
     if model_policy_preflight is not None:
         (output_root / "model_policy_plan.json").write_text(
             json.dumps(
@@ -321,11 +545,16 @@ def main(argv: Sequence[str] | None = None) -> int:
             ),
             encoding="utf-8",
         )
+    has_planned_dispatch = any(
+        plan.status == "planned" and bool(plan.conditions)
+        for plan in dispatch_plans
+    )
     suite_status = (
         PaperStatus.BLOCKED
         if (
             model_endpoint_cohort_preflight is not None
             and model_endpoint_cohort_preflight.get("status") == "blocked"
+            and not has_planned_dispatch
         )
         else PaperStatus.PLANNED
     )
@@ -375,6 +604,37 @@ def main(argv: Sequence[str] | None = None) -> int:
     _write_suite(output_root, suite)
     print(json.dumps(suite.to_dict(), ensure_ascii=False, indent=2, sort_keys=True))
     return 0
+
+
+def _baseline_endpoint_binding(profile: Exp1PilotProfile) -> dict:
+    identity = profile.model_endpoint_identity.to_dict()
+    request_controls = {
+        "max_tokens": 1024,
+        "timeout_seconds": 30,
+        "max_provider_attempts": 1,
+        "temperature": 0.0,
+        "top_p": 1.0,
+        "stream": False,
+        "enable_thinking": False,
+    }
+    return {
+        **identity,
+        "model_entry_id": identity["selected_entry_id"],
+        "request_controls": request_controls,
+    }
+
+
+@lru_cache(maxsize=1)
+def _load_default_paper_catalogs() -> PaperInputCatalogManifest:
+    return load_paper_catalogs(
+        factorization_path=DEFAULT_FACTOR_CATALOG,
+        lean_path=DEFAULT_LEAN_CATALOG,
+        lean_lemma_graph_path=(
+            DEFAULT_LEAN_LEMMA_GRAPH_CATALOG
+            if DEFAULT_LEAN_LEMMA_GRAPH_CATALOG.exists()
+            else None
+        ),
+    )
 
 
 def _inject_exp1_pilot_api_key(

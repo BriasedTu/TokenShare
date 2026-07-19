@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+import csv
 import json
 import math
 from pathlib import Path
@@ -107,6 +108,142 @@ class PaperMetricsResult:
             "summary_rows": [_json_copy(row) for row in self.summary_rows],
             "audit": _json_copy(self.audit),
         }
+
+
+def recompute_gate_c_pilot_metrics(suite_root: str | Path) -> JsonObject:
+    """从 Gate C 单 case pilot evidence 复算，不读取既有 CSV/summary。"""
+
+    root = Path(suite_root)
+    plan = _read_json(root / "execution_plan.json")
+    stored_digest = plan.get("execution_plan_digest")
+    digest_body = {
+        key: value
+        for key, value in plan.items()
+        if key != "execution_plan_digest"
+    }
+    if stored_digest != digest_json(digest_body):
+        raise ValueError("Gate C pilot execution plan digest is invalid")
+    tasks = _read_jsonl(root / "per_task_results.jsonl")
+    attempts = _read_jsonl(root / "per_attempt_results.jsonl")
+    events = _read_jsonl(root / "events" / "event_log.jsonl")
+    artifacts = _read_jsonl(root / "artifacts" / "artifact_index.jsonl")
+    if len(tasks) != 1:
+        raise ValueError("Gate C pilot metrics require exactly one task")
+    task = tasks[0]
+    if task.get("condition_id") != plan.get("condition_id"):
+        raise ValueError("Gate C pilot task condition binding drift")
+    if task.get("case_id") != plan.get("selected_case_id"):
+        raise ValueError("Gate C pilot task case binding drift")
+    attempt_ids = [str(attempt.get("attempt_id")) for attempt in attempts]
+    if len(attempt_ids) != len(set(attempt_ids)):
+        raise ValueError("Gate C pilot attempt IDs must be unique")
+    if any(
+        attempt.get("condition_id") != task.get("condition_id")
+        or attempt.get("task_id") != task.get("task_id")
+        or attempt.get("run_id") != task.get("run_id")
+        for attempt in attempts
+    ):
+        raise ValueError("Gate C pilot attempt binding drift")
+    event_types = {str(event.get("event_type")) for event in events}
+    if event_types != {
+        "suite_started",
+        "task_started",
+        "task_completed",
+        "suite_finished",
+    }:
+        raise ValueError("Gate C pilot event lifecycle is incomplete")
+    indexed_artifact_ids = {
+        str(record.get("artifact_ref", {}).get("artifact_id"))
+        for record in artifacts
+        if isinstance(record.get("artifact_ref"), dict)
+    }
+    for attempt in attempts:
+        for field_name in (
+            "request_ref",
+            "raw_output_ref",
+            "provenance_ref",
+            "usage_ref",
+        ):
+            ref = attempt.get(field_name)
+            if not isinstance(ref, dict) or str(ref.get("artifact_id")) not in (
+                indexed_artifact_ids
+            ):
+                raise ValueError(
+                    f"Gate C pilot attempt has unindexed {field_name}"
+                )
+        if not (
+            isinstance(attempt.get("parsed_output_ref"), dict)
+            or isinstance(attempt.get("parse_failure_ref"), dict)
+        ):
+            raise ValueError(
+                "Gate C pilot attempt requires parsed output or parse failure"
+            )
+    provider_attempt_count = sum(
+        1
+        for attempt in attempts
+        if attempt.get("attempt_status")
+        not in {"cancelled_by_budget", "lease_expired"}
+    )
+    row: JsonObject = {
+        "condition_id": task["condition_id"],
+        "run_id": task["run_id"],
+        "case_id": task["case_id"],
+        "domain": task["domain"],
+        "paper_difficulty": task["paper_difficulty"],
+        "root_status": task["root_status"],
+        "accepted_validity": task["accepted_validity"],
+        "attempt_count": len(attempts),
+        "provider_attempt_count": provider_attempt_count,
+        "parse_failure_count": sum(
+            attempt.get("attempt_status") == "parse_failed"
+            for attempt in attempts
+        ),
+        "verification_rejection_count": sum(
+            attempt.get("attempt_status") == "verification_rejected"
+            for attempt in attempts
+        ),
+        "checker_rejection_count": sum(
+            attempt.get("attempt_status") == "checker_rejected"
+            for attempt in attempts
+        ),
+        "total_tokens": sum(int(attempt.get("total_tokens", 0)) for attempt in attempts),
+        "cost_estimate": sum(
+            float(attempt.get("cost_estimate", 0.0)) for attempt in attempts
+        ),
+        "paper_eligible": False,
+        "pilot_only": True,
+    }
+    return {
+        "schema_version": "tokenshare.paper_gate_c_pilot_metrics.v1",
+        "suite_id": plan["suite_id"],
+        "execution_plan_digest": stored_digest,
+        "row": row,
+        "evidence_counts": {
+            "task_count": len(tasks),
+            "attempt_count": len(attempts),
+            "event_count": len(events),
+            "artifact_index_count": len(artifacts),
+        },
+        "paper_eligible": False,
+        "pilot_only": True,
+    }
+
+
+def write_gate_c_pilot_metrics(suite_root: str | Path) -> JsonObject:
+    root = Path(suite_root)
+    metrics = recompute_gate_c_pilot_metrics(root)
+    row = dict(metrics["row"])
+    path = root / "metrics" / "per_condition_summary.csv"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=list(row))
+        writer.writeheader()
+        writer.writerow(row)
+    (root / "metrics" / "gate_c_pilot_metrics.json").write_text(
+        json.dumps(metrics, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    return metrics
 
 
 def recompute_exp1_pilot_metrics(suite_root: str | Path) -> PaperMetricsResult:

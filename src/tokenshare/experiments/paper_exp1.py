@@ -12,6 +12,8 @@ from tokenshare.experiments.paper_catalog import estimated_ai_units_for_case
 from tokenshare.experiments.paper_experiment_contracts import (
     ExperimentSummaryRows,
     FrozenCaseSelection,
+    FrozenCaseSelectionBatch,
+    FrozenConditionSelectionBinding,
     PaperExecutionContext,
 )
 from tokenshare.experiments.paper_models import (
@@ -150,17 +152,21 @@ class Exp1FormalModule:
         self,
         context: PaperExecutionContext,
         conditions: tuple[PaperExperimentCondition, ...],
-    ) -> tuple[FrozenCaseSelection, ...]:
+    ) -> FrozenCaseSelectionBatch:
         expected_conditions = self.expand_conditions(context)
         if tuple(condition.condition_digest for condition in conditions) != tuple(
             condition.condition_digest for condition in expected_conditions
         ):
             raise ValueError("Experiment 1 formal condition order drift")
 
-        selections = tuple(
-            _selection_for_condition(context=context, condition=condition)
+        bindings = tuple(
+            FrozenConditionSelectionBinding.from_condition(
+                condition,
+                _selection_for_condition(context=context, condition=condition),
+            )
             for condition in conditions
         )
+        selections = FrozenCaseSelectionBatch(bindings)
         _validate_selection_inventory(selections)
         return selections
 
@@ -256,7 +262,7 @@ def expand_conditions(
 def freeze_case_selections(
     context: PaperExecutionContext,
     conditions: tuple[PaperExperimentCondition, ...],
-) -> tuple[FrozenCaseSelection, ...]:
+) -> FrozenCaseSelectionBatch:
     return Exp1FormalModule().freeze_case_selections(context, conditions)
 
 
@@ -488,6 +494,18 @@ def _baseline_identity(context: PaperExecutionContext) -> JsonObject:
         identity,
         "model_endpoint_identity_digest",
     )
+    model_cohort_id = _field(identity, "model_cohort_id")
+    model_cohort_digest = _field(identity, "model_cohort_digest")
+    cohort_member_id = _field(identity, "cohort_member_id")
+    cohort_values = (
+        model_cohort_id,
+        model_cohort_digest,
+        cohort_member_id,
+    )
+    if any(value is not None for value in cohort_values) and not all(
+        isinstance(value, str) and value for value in cohort_values
+    ):
+        raise ValueError("Experiment 1 baseline cohort identity is incomplete")
     if not _is_complete_digest(source_provider_config_digest) or not _is_complete_digest(
         model_endpoint_identity_digest
     ):
@@ -498,6 +516,9 @@ def _baseline_identity(context: PaperExecutionContext) -> JsonObject:
         "provider_family": EXP1_BASELINE_PROVIDER_FAMILY,
         "provider_model_id": EXP1_BASELINE_PROVIDER_MODEL_ID,
         "reasoning_profile_id": EXP1_BASELINE_REASONING_PROFILE_ID,
+        "model_cohort_id": model_cohort_id,
+        "model_cohort_digest": model_cohort_digest,
+        "cohort_member_id": cohort_member_id,
         "source_provider_config_digest": source_provider_config_digest,
         "model_endpoint_identity_digest": model_endpoint_identity_digest,
     }

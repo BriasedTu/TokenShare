@@ -60,7 +60,9 @@ def test_ai_api_executor_failover_after_rate_limit(tmp_path, monkeypatch) -> Non
         assert provider_request_identity["entry_id"] == call["entry_id"]
         assert provider_request_identity["configured_model"] == call["model"]
         assert provider_request_identity["requested_model"] == call["body"]["model"]
-        assert provider_request_identity["reasoning_controls"] == {}
+        assert provider_request_identity["reasoning_controls"] == {
+            "enable_thinking": False
+        }
         assert provider_request_identity["effective_request_controls_digest"].startswith(
             "sha256:"
         )

@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, replace
 from pathlib import Path
+from typing import Any
 
 from tokenshare.executors.ai_api_config import (
     AIAPIExecutorConfig,
@@ -308,6 +309,13 @@ def plan_paper_suite(
     lean_3x3_matrix: JsonObject | None = None,
     model_policy_preflight: JsonObject | None = None,
     model_endpoint_cohort_preflight: JsonObject | None = None,
+    frozen_selections: tuple[JsonObject, ...] | list[JsonObject] | None = None,
+    ai_unit_commitments: tuple[JsonObject, ...] | list[JsonObject] | None = None,
+    endpoint_identity: JsonObject | None = None,
+    request_limits: JsonObject | None = None,
+    hard_limits: JsonObject | None = None,
+    suite_identity: JsonObject | None = None,
+    output_identity: JsonObject | None = None,
     approve_budget_digest: str | None = None,
 ) -> PaperBudgetResult:
     if max_provider_attempts_per_ai_unit < 1:
@@ -317,19 +325,60 @@ def plan_paper_suite(
     if cost_upper_bound_per_provider_attempt < 0:
         raise ValueError("cost_upper_bound_per_provider_attempt must be >= 0")
     condition_tuple = tuple(conditions)
+    exact_selection_by_condition = _exact_selection_commitments(
+        frozen_selections,
+        conditions=condition_tuple,
+    )
+    all_cases_by_id = {
+        str(case["case_id"]): case
+        for case in (
+            catalog_manifest.factorization_cases
+            + catalog_manifest.lean_cases
+            + catalog_manifest.lean_lemma_graph_cases
+        )
+    }
     planned_root_runs = 0
     planned_ai_units = 0
+    derived_selections: list[JsonObject] = []
+    derived_ai_unit_commitments: list[JsonObject] = []
     for condition in condition_tuple:
         if condition.catalog_digest != catalog_manifest.catalog_digest:
             raise ValueError("condition catalog_digest does not match catalog manifest")
-        cases = catalog_manifest.cases_for(
-            domain=condition.domain,
-            difficulty=condition.difficulty,
-            paper_difficulty=condition.paper_difficulty,
-            topic_family=condition.topic_family,
-        )
-        cases = _budget_cases_for_condition(cases, condition=condition)
+        exact_selection = exact_selection_by_condition.get(condition.condition_id)
+        if exact_selection is not None:
+            ordered_case_ids = exact_selection.get("ordered_case_ids", ())
+            if exact_selection.get("blocked_reason") is not None:
+                cases = ()
+            else:
+                if not isinstance(ordered_case_ids, (list, tuple)):
+                    raise ValueError("frozen selection ordered_case_ids must be a list")
+                try:
+                    cases = tuple(
+                        all_cases_by_id[str(case_id)] for case_id in ordered_case_ids
+                    )
+                except KeyError as exc:
+                    raise ValueError(
+                        "frozen selection references an unknown catalog case"
+                    ) from exc
+        else:
+            cases = catalog_manifest.cases_for(
+                domain=condition.domain,
+                difficulty=condition.difficulty,
+                paper_difficulty=condition.paper_difficulty,
+                topic_family=condition.topic_family,
+            )
+            cases = _budget_cases_for_condition(cases, condition=condition)
         if not cases:
+            if exact_selection is not None and exact_selection.get("blocked_reason"):
+                derived_selections.append(
+                    {
+                        "condition_id": condition.condition_id,
+                        "condition_digest": condition.condition_digest,
+                        "ordered_case_ids": [],
+                        "blocked_reason": exact_selection["blocked_reason"],
+                    }
+                )
+                continue
             raise ValueError(
                 "insufficient catalog cases for condition "
                 f"{condition.condition_id}: domain={condition.domain} "
@@ -338,11 +387,99 @@ def plan_paper_suite(
                 f"topic_family={condition.topic_family}"
             )
         task_limit = PAPER_EXPERIMENT_TASK_LIMITS.get(condition.experiment_id)
-        if task_limit is not None:
+        if exact_selection is None and task_limit is not None:
             cases = cases[:task_limit]
+        derived_selections.append(
+            {
+                "condition_id": condition.condition_id,
+                "condition_digest": condition.condition_digest,
+                "ordered_case_ids": [str(case["case_id"]) for case in cases],
+            }
+        )
+        for case in cases:
+            split_profile = _deterministic_split_profile(case)
+            planned_ai_unit_ids = [
+                str(ai_unit_id) for ai_unit_id in split_profile["ai_unit_order"]
+            ]
+            derived_ai_unit_commitments.append(
+                {
+                    "condition_id": condition.condition_id,
+                    "condition_digest": condition.condition_digest,
+                    "case_id": str(case["case_id"]),
+                    "planned_ai_unit_ids": planned_ai_unit_ids,
+                    "case_digest": digest_json(case),
+                    "split_profile_digest": digest_json(split_profile),
+                    "commitment_digest": digest_json(
+                        {
+                            "case": case,
+                            "split_profile": split_profile,
+                            "seed": condition.seed,
+                        }
+                    ),
+                }
+            )
         planned_root_runs += len(cases)
         planned_ai_units += sum(estimated_ai_units_for_case(case) for case in cases)
     max_provider_attempts = planned_ai_units * max_provider_attempts_per_ai_unit
+    resolved_endpoint_identity = endpoint_identity or {
+        "condition_endpoint_identities": _condition_endpoint_identities(
+            condition_tuple
+        )
+    }
+    budget_commitments: JsonObject = {
+        "frozen_selections": _json_copy(
+            list(frozen_selections)
+            if frozen_selections is not None
+            else derived_selections
+        ),
+        "ai_unit_commitments": _json_copy(
+            list(ai_unit_commitments)
+            if ai_unit_commitments is not None
+            else derived_ai_unit_commitments
+        ),
+        "endpoint_identity": _json_copy(resolved_endpoint_identity),
+        "request_limits": _json_copy(
+            request_limits
+            or {
+                "max_provider_attempts_per_ai_unit": max_provider_attempts_per_ai_unit,
+                "token_upper_bound_per_provider_attempt": (
+                    token_upper_bound_per_provider_attempt
+                ),
+                "cost_upper_bound_per_provider_attempt": (
+                    cost_upper_bound_per_provider_attempt
+                ),
+            }
+        ),
+        "hard_limits": _json_copy(
+            hard_limits
+            or {
+                "max_provider_attempts": max_provider_attempts,
+                "token_upper_bound": (
+                    max_provider_attempts * token_upper_bound_per_provider_attempt
+                ),
+                "cost_upper_bound": (
+                    max_provider_attempts * cost_upper_bound_per_provider_attempt
+                ),
+            }
+        ),
+        "suite_identity": _json_copy(
+            suite_identity
+            or {
+                "suite_version": "paper_v1",
+                "execution_scope": "formal_matrix",
+                "experiment_ids": sorted(
+                    {condition.experiment_id for condition in condition_tuple}
+                ),
+            }
+        ),
+        "output_identity": _json_copy(
+            output_identity
+            or {
+                "root_policy": "caller_supplied_isolated_output_root",
+                "cross_experiment_evidence_allowed": False,
+            }
+        ),
+    }
     body: JsonObject = {
         "planned_experiments": sorted({item.experiment_id for item in condition_tuple}),
         "planned_conditions": len(condition_tuple),
@@ -353,6 +490,7 @@ def plan_paper_suite(
         "cost_upper_bound": max_provider_attempts * cost_upper_bound_per_provider_attempt,
         "catalog_digest": catalog_manifest.catalog_digest,
         "condition_digests": [item.condition_digest for item in condition_tuple],
+        "budget_commitments": budget_commitments,
     }
     if lean_3x3_matrix is not None:
         body["lean_3x3_matrix"] = lean_3x3_matrix
@@ -379,6 +517,7 @@ def plan_paper_suite(
             "status": "not_checked",
             "provider_calls_made": 0,
             "plan_only": plan_only,
+            "budget_commitments": budget_commitments,
             **(
                 {"lean_3x3_matrix": lean_3x3_matrix}
                 if lean_3x3_matrix is not None
@@ -753,7 +892,62 @@ def _case_domain(case: JsonObject) -> str:
     return "lean_proof"
 
 
-def _json_copy(body: JsonObject) -> JsonObject:
+def _exact_selection_commitments(
+    selections: tuple[JsonObject, ...] | list[JsonObject] | None,
+    *,
+    conditions: tuple[PaperExperimentCondition, ...],
+) -> dict[str, JsonObject]:
+    if selections is None:
+        return {}
+    records = list(selections)
+    if any(not isinstance(record, dict) for record in records):
+        raise ValueError("frozen selections must be JSON objects")
+    if not records or any("condition_id" not in record for record in records):
+        return {}
+    if len(records) != len(conditions):
+        raise ValueError("frozen selections must align with conditions")
+    result: dict[str, JsonObject] = {}
+    for condition, record in zip(conditions, records, strict=True):
+        if record.get("condition_id") != condition.condition_id:
+            raise ValueError("frozen selection condition order drift")
+        if record.get("condition_digest") != condition.condition_digest:
+            raise ValueError("frozen selection condition digest drift")
+        result[condition.condition_id] = record
+    return result
+
+
+def _condition_endpoint_identities(
+    conditions: tuple[PaperExperimentCondition, ...],
+) -> list[JsonObject]:
+    fields = (
+        "model_cohort_id",
+        "cohort_member_id",
+        "provider_config_id",
+        "model_entry_id",
+        "provider_family",
+        "provider_model_id",
+        "reasoning_profile_id",
+        "model_cohort_digest",
+        "source_provider_config_digest",
+        "model_endpoint_identity_digest",
+    )
+    identities: list[JsonObject] = []
+    seen: set[str] = set()
+    for condition in conditions:
+        identity = {
+            field_name: getattr(condition, field_name)
+            for field_name in fields
+            if getattr(condition, field_name) is not None
+        }
+        identity_digest = digest_json(identity)
+        if identity_digest in seen:
+            continue
+        seen.add(identity_digest)
+        identities.append(identity)
+    return identities
+
+
+def _json_copy(body: Any) -> Any:
     return json.loads(json.dumps(body, ensure_ascii=False))
 
 

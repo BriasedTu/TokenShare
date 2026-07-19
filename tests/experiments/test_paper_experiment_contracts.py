@@ -8,6 +8,8 @@ from tokenshare.experiments import paper_models
 from tokenshare.experiments.paper_experiment_contracts import (
     ExperimentSummaryRows,
     FrozenCaseSelection,
+    FrozenCaseSelectionBatch,
+    FrozenConditionSelectionBinding,
     PaperConditionResult,
     PaperExecutionContext,
     PaperExperimentModule,
@@ -280,8 +282,16 @@ def test_paper_experiment_module_protocol_conformance() -> None:
             self,
             context: PaperExecutionContext,
             conditions: tuple[PaperExperimentCondition, ...],
-        ) -> tuple[FrozenCaseSelection, ...]:
-            return (_selection(),)
+        ) -> FrozenCaseSelectionBatch:
+            selection = _selection()
+            return FrozenCaseSelectionBatch(
+                (
+                    FrozenConditionSelectionBinding.from_condition(
+                        conditions[0],
+                        selection,
+                    ),
+                )
+            )
 
         def run_condition(
             self,

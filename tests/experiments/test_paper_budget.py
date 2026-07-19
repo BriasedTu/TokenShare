@@ -114,6 +114,98 @@ def test_budget_approval_requires_matching_digest() -> None:
         )
 
 
+def test_budget_digest_covers_gate_c_execution_commitments() -> None:
+    catalog = load_paper_catalogs(
+        factorization_path=Path("benchmarks/paper/factorization_catalog.v1.jsonl"),
+        lean_path=Path("benchmarks/paper/lean_catalog.v1.jsonl"),
+    )
+    conditions = _sample_conditions(catalog.catalog_digest)
+    commitments = {
+        "frozen_selections": [
+            {
+                "selection_id": "selection_1",
+                "ordered_case_ids": ["factor_easy_01"],
+                "selection_digest": "sha256:" + "1" * 64,
+            }
+        ],
+        "ai_unit_commitments": [
+            {
+                "case_id": "factor_easy_01",
+                "planned_ai_unit_ids": ["range_0", "range_1"],
+                "commitment_digest": "sha256:" + "2" * 64,
+            }
+        ],
+        "endpoint_identity": {
+            "model_entry_id": "glm_5_2_exp1_baseline",
+            "model_endpoint_identity_digest": "sha256:" + "3" * 64,
+        },
+        "request_limits": {"max_tokens": 1024, "timeout_seconds": 30},
+        "hard_limits": {"max_total_provider_attempts": 40, "max_total_tokens": 40960},
+        "suite_identity": {
+            "suite_version": "paper_v1",
+            "execution_scope": "formal_matrix",
+            "experiment_ids": ["exp1_real_ai_feasibility"],
+        },
+        "output_identity": {
+            "output_root": "outputs/experiments/paper_v1/exp1",
+            "cross_experiment_evidence_allowed": False,
+        },
+    }
+
+    def plan(**overrides):
+        return plan_paper_suite(
+            catalog_manifest=catalog,
+            conditions=conditions,
+            max_provider_attempts_per_ai_unit=1,
+            token_upper_bound_per_provider_attempt=1024,
+            cost_upper_bound_per_provider_attempt=0.01,
+            plan_only=True,
+            **{**commitments, **overrides},
+        )
+
+    baseline = plan()
+    assert baseline.quota_preflight["budget_commitments"] == commitments
+    drifts = (
+        {
+            "frozen_selections": [
+                {
+                    **commitments["frozen_selections"][0],
+                    "ordered_case_ids": ["factor_easy_02"],
+                }
+            ]
+        },
+        {
+            "ai_unit_commitments": [
+                {
+                    **commitments["ai_unit_commitments"][0],
+                    "planned_ai_unit_ids": ["range_0"],
+                }
+            ]
+        },
+        {
+            "endpoint_identity": {
+                **commitments["endpoint_identity"],
+                "model_entry_id": "other",
+            }
+        },
+        {"request_limits": {**commitments["request_limits"], "max_tokens": 2048}},
+        {"hard_limits": {**commitments["hard_limits"], "max_total_tokens": 81920}},
+        {
+            "suite_identity": {
+                **commitments["suite_identity"],
+                "suite_version": "paper_v2",
+            }
+        },
+        {
+            "output_identity": {
+                **commitments["output_identity"],
+                "output_root": "outputs/experiments/paper_v1/other",
+            }
+        },
+    )
+    assert all(plan(**drift).budget_digest != baseline.budget_digest for drift in drifts)
+
+
 def test_exp5_source_config_drift_changes_budget_and_invalidates_old_approval() -> None:
     catalog = load_paper_catalogs(
         factorization_path=Path("benchmarks/paper/factorization_catalog.v1.jsonl"),

@@ -16,6 +16,8 @@ from tokenshare.experiments.paper_ablation import (
 from tokenshare.experiments.paper_experiment_contracts import (
     ExperimentSummaryRows,
     FrozenCaseSelection,
+    FrozenCaseSelectionBatch,
+    FrozenConditionSelectionBinding,
     PaperExecutionContext,
     canonical_contract_digest,
 )
@@ -210,7 +212,7 @@ class Experiment4AblationModule:
         self,
         context: PaperExecutionContext,
         conditions: tuple[PaperExperimentCondition, ...],
-    ) -> tuple[FrozenCaseSelection, ...]:
+    ) -> FrozenCaseSelectionBatch:
         return freeze_exp4_case_selections(context, conditions)
 
     def run_condition(
@@ -262,15 +264,22 @@ def expand_exp4_conditions(
 def freeze_exp4_case_selections(
     context: PaperExecutionContext,
     conditions: Sequence[PaperExperimentCondition],
-) -> tuple[FrozenCaseSelection, ...]:
-    selections: list[FrozenCaseSelection] = []
+) -> FrozenCaseSelectionBatch:
+    bindings: list[FrozenConditionSelectionBinding] = []
     for condition in conditions:
         canonical_condition = validate_exp4_condition(context, condition)
-        if canonical_condition.domain == "factorization":
-            selections.append(_factorization_selection(context, canonical_condition))
-        else:
-            selections.append(_lean_selection(context, canonical_condition))
-    return tuple(selections)
+        selection = (
+            _factorization_selection(context, canonical_condition)
+            if canonical_condition.domain == "factorization"
+            else _lean_selection(context, canonical_condition)
+        )
+        bindings.append(
+            FrozenConditionSelectionBinding.from_condition(
+                canonical_condition,
+                selection,
+            )
+        )
+    return FrozenCaseSelectionBatch(bindings)
 
 
 def count_exp4_root_runs(
@@ -1203,6 +1212,9 @@ def _condition(
         provider_family=BASELINE_PROVIDER_FAMILY,
         provider_model_id=BASELINE_PROVIDER_MODEL_ID,
         reasoning_profile_id=str(endpoint_binding["reasoning_profile_id"]),
+        model_cohort_id=endpoint_binding.get("model_cohort_id"),
+        model_cohort_digest=endpoint_binding.get("model_cohort_digest"),
+        cohort_member_id=endpoint_binding.get("cohort_member_id"),
         source_provider_config_digest=str(
             endpoint_binding["source_provider_config_digest"]
         ),

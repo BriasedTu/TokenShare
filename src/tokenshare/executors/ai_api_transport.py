@@ -91,14 +91,19 @@ def build_siliconflow_chat_body(
     if require_json_mode:
         if not entry.supports_json_mode:
             raise ValueError(f"entry does not support json mode: {entry.entry_id}")
+        body["temperature"] = 0.0
         body["response_format"] = {"type": "json_object"}
     thinking_override = entry.request_overrides.get("enable_thinking")
-    if thinking_override is not None:
-        if not isinstance(thinking_override, bool):
-            raise ValueError("request_overrides.enable_thinking must be a boolean")
-        body["enable_thinking"] = thinking_override
-    elif require_json_mode and _should_disable_thinking_for_json_mode(entry):
+    if thinking_override is not None and not isinstance(thinking_override, bool):
+        raise ValueError("request_overrides.enable_thinking must be a boolean")
+    if require_json_mode:
+        if thinking_override is True:
+            raise ValueError(
+                "request_overrides.enable_thinking must be false when json mode is required"
+            )
         body["enable_thinking"] = False
+    elif thinking_override is not None:
+        body["enable_thinking"] = thinking_override
     return body
 
 
@@ -145,6 +150,7 @@ def build_openai_chat_body(
     if require_json_mode:
         if not entry.supports_json_mode:
             raise ValueError(f"entry does not support json mode: {entry.entry_id}")
+        body["temperature"] = 0.0
         body["response_format"] = {"type": "json_object"}
     return body
 
@@ -252,12 +258,6 @@ def _openai_error_message(body: JsonObject, text: str, status_code: int) -> str:
     if isinstance(error, dict):
         return str(error.get("message") or error.get("type") or text or status_code)
     return str(body.get("message") or error or text or status_code)
-
-
-def _should_disable_thinking_for_json_mode(entry: AIAPIProviderEntry) -> bool:
-    model = entry.model.lower()
-    tags = {tag.lower() for tag in entry.tags}
-    return "qwen3" in model or "qwen" in tags or "reasoning" in tags
 
 
 class UrlLibSiliconFlowTransport:

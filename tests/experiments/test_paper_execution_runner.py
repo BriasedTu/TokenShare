@@ -1,16 +1,19 @@
 import json
 import math
+from functools import lru_cache
 from pathlib import Path
 
 import pytest
 
 import tokenshare.experiments.paper_report as paper_report
+import tokenshare.experiments.paper_runner as paper_runner
 from tokenshare.experiments.paper_budget import (
     Exp1PilotProfile,
     load_exp1_pilot_profile,
     plan_exp1_pilot,
 )
 from tokenshare.experiments.paper_catalog import (
+    PaperInputCatalogManifest,
     estimated_ai_units_for_case,
     load_paper_catalogs,
 )
@@ -23,7 +26,7 @@ from tokenshare.experiments.lean_paper_adapter import (
     run_lean_paper_case,
 )
 from tokenshare.experiments.paper_metrics import recompute_exp1_pilot_metrics
-from tokenshare.experiments.paper_models import PaperStatus
+from tokenshare.experiments.paper_models import PaperStatus, digest_json
 from tokenshare.experiments.paper_runner import (
     build_exp1_pilot_execution_plan,
     execute_exp1_pilot,
@@ -188,6 +191,145 @@ def test_exp1_pilot_dispatches_both_domains_and_persists_evidence(
     assert json.loads(
         (suite_root / "suite_manifest.json").read_text(encoding="utf-8")
     )["provider_attempt_count"] == 22
+
+
+def test_exp1_pilot_unit_selector_uses_dispatcher_and_independent_output_root(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    catalog, profile, budget = _approved_inputs_without_rechecking_lean()
+    monkeypatch.setenv("TOKENSHARE_EXP1_BASELINE_API_KEY", "offline-capturing-key")
+    calls: list[dict] = []
+
+    def fake_dispatch(**kwargs):
+        calls.append(kwargs)
+        adapter_root = Path(kwargs["output_root"]) / str(kwargs["case"]["case_id"])
+        adapter_root.mkdir(parents=True, exist_ok=True)
+        result = _FakeAdapterResult(
+            case=kwargs["case"],
+            condition=kwargs["condition"],
+            output_root=adapter_root,
+            ai_unit_count=0,
+        )
+        (adapter_root / "run_manifest.json").write_text(
+            json.dumps(result.to_dict(), ensure_ascii=False, indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
+        return result
+
+    monkeypatch.setattr(paper_runner, "dispatch_paper_case", fake_dispatch, raising=False)
+
+    class IneligibleReportResult:
+        paper_eligible = False
+        output_paths = ()
+
+    monkeypatch.setattr(
+        paper_report,
+        "write_exp1_pilot_report",
+        lambda _suite_root, *, secret_values=(): IneligibleReportResult(),
+    )
+    independent_root = tmp_path / "pilot-unit-factor-easy-01-range-0"
+
+    result = execute_exp1_pilot(
+        catalog_manifest=catalog,
+        pilot_profile=profile,
+        budget=budget,
+        approved_budget_digest=budget.budget_digest,
+        baseline_entry_id="glm_5_2_exp1_baseline",
+        output_base=tmp_path / "unused-base",
+        execution_output_root=independent_root,
+        real_transport=True,
+        case_id="factor_easy_01",
+        ai_unit_id="range_0",
+        transport=object(),
+    )
+
+    assert result.output_root == independent_root.as_posix()
+    assert result.condition_count == 1
+    assert result.run_count == 1
+    assert result.provider_calls_made == 0
+    assert len(calls) == 1
+    assert calls[0]["case"]["case_id"] == "factor_easy_01"
+    assert calls[0]["selected_ai_unit_id"] == "range_0"
+    assert calls[0]["real_transport"] is True
+    assert calls[0]["transport"] is not None
+    plan = json.loads(
+        (independent_root / "execution_plan.json").read_text(encoding="utf-8")
+    )
+    assert plan["planned_root_runs"] == 1
+    assert plan["planned_ai_units"] == 1
+    assert plan["tasks"][0]["ai_units"] == ["range_0"]
+    assert plan["pilot_only"] is True
+
+
+def test_exp1_pilot_unit_selector_rejects_partial_or_unknown_selection_before_dispatch(
+    tmp_path: Path,
+) -> None:
+    catalog, profile, budget = _approved_inputs_without_rechecking_lean()
+    common = {
+        "catalog_manifest": catalog,
+        "pilot_profile": profile,
+        "budget": budget,
+        "approved_budget_digest": budget.budget_digest,
+        "baseline_entry_id": "glm_5_2_exp1_baseline",
+        "output_base": tmp_path,
+        "real_transport": True,
+        "factorization_adapter": _forbidden_adapter,
+        "lean_adapter": _forbidden_adapter,
+    }
+
+    with pytest.raises(ValueError, match="case_id and ai_unit_id must be provided together"):
+        execute_exp1_pilot(**common, case_id="factor_easy_01")
+    with pytest.raises(ValueError, match="independent execution_output_root"):
+        execute_exp1_pilot(
+            **common,
+            case_id="factor_easy_01",
+            ai_unit_id="range_0",
+        )
+    with pytest.raises(ValueError, match="AI unit is not present in approved pilot plan"):
+        execute_exp1_pilot(
+            **common,
+            case_id="factor_easy_01",
+            ai_unit_id="range_not_approved",
+            execution_output_root=tmp_path / "unknown-unit",
+        )
+
+
+@pytest.mark.parametrize(
+    "root_relation",
+    ("equal", "parent", "child"),
+)
+def test_exp1_pilot_unit_selector_rejects_canonical_output_root_overlap(
+    tmp_path: Path,
+    root_relation: str,
+) -> None:
+    catalog, profile, budget = _approved_inputs_without_rechecking_lean()
+    output_base = tmp_path / root_relation
+    canonical_root = output_base / str(profile.body["suite_id"])
+    execution_root = {
+        "equal": canonical_root,
+        "parent": output_base,
+        "child": canonical_root / "selected-unit",
+    }[root_relation]
+
+    with pytest.raises(
+        ValueError,
+        match="must not overlap canonical Exp1 pilot root",
+    ):
+        execute_exp1_pilot(
+            catalog_manifest=catalog,
+            pilot_profile=profile,
+            budget=budget,
+            approved_budget_digest=budget.budget_digest,
+            baseline_entry_id="glm_5_2_exp1_baseline",
+            output_base=output_base,
+            execution_output_root=execution_root,
+            real_transport=True,
+            case_id="factor_easy_01",
+            ai_unit_id="range_0",
+            factorization_adapter=_forbidden_adapter,
+            lean_adapter=_forbidden_adapter,
+        )
 
 
 def test_exp1_pilot_persists_transport_and_pilot_only_report_contract(
@@ -979,11 +1121,73 @@ def test_exp1_runner_scripted_simple_lean_evidence_is_strict_but_ineligible(
     )
 
 
+@lru_cache(maxsize=1)
 def _approved_inputs():
     catalog = load_paper_catalogs(
         factorization_path=FACTOR_CATALOG,
         lean_path=LEAN_CATALOG,
         lean_lemma_graph_path=LEAN_LEMMA_GRAPH_CATALOG,
+    )
+    profile = load_exp1_pilot_profile(PILOT_PROFILE)
+    plan_only_budget = plan_exp1_pilot(
+        catalog_manifest=catalog,
+        pilot_profile=profile,
+        plan_only=True,
+    )
+    budget = plan_exp1_pilot(
+        catalog_manifest=catalog,
+        pilot_profile=profile,
+        plan_only=False,
+        approve_budget_digest=plan_only_budget.budget_digest,
+    )
+    return catalog, profile, budget
+
+
+@lru_cache(maxsize=1)
+def _approved_inputs_without_rechecking_lean():
+    factorization_cases = tuple(
+        {**case, "paper_difficulty": case["difficulty"]}
+        for case in _read_jsonl(FACTOR_CATALOG)
+    )
+    lean_cases = tuple(
+        {
+            **case,
+            "paper_difficulty": "simple",
+            "topic_family": "pure_logic",
+            "topic_family_version": "shallow_v1",
+        }
+        for case in _read_jsonl(LEAN_CATALOG)
+    )
+    lean_lemma_graph_cases = tuple(_read_jsonl(LEAN_LEMMA_GRAPH_CATALOG))
+    digest_body = {
+        "catalog_id": "tokenshare.paper.catalog",
+        "catalog_version": "v1",
+        "factorization_cases": factorization_cases,
+        "lean_cases": lean_cases,
+        "lean_lemma_graph_cases": lean_lemma_graph_cases,
+    }
+    catalog = PaperInputCatalogManifest(
+        catalog_id="tokenshare.paper.catalog",
+        catalog_version="v1",
+        catalog_digest=digest_json(digest_body),
+        generator_version="pilot_selector_test",
+        case_count=(
+            len(factorization_cases) + len(lean_cases) + len(lean_lemma_graph_cases)
+        ),
+        domain_counts={},
+        difficulty_counts={},
+        paper_difficulty_counts={},
+        topic_family_counts={},
+        paper_difficulty_topic_family_counts={},
+        oracle_validation_status="passed",
+        lean_preflight_status="passed",
+        lean_preflight_summary={},
+        lean_lemma_graph_preflight_summary={},
+        created_at="2026-07-19T00:00:00Z",
+        source_files=[],
+        factorization_cases=factorization_cases,
+        lean_cases=lean_cases,
+        lean_lemma_graph_cases=lean_lemma_graph_cases,
     )
     profile = load_exp1_pilot_profile(PILOT_PROFILE)
     plan_only_budget = plan_exp1_pilot(

@@ -8,9 +8,10 @@ from functools import lru_cache
 import json
 import math
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Mapping
 
 from tokenshare.core.models import ArtifactRef
+from tokenshare.executors.ai_api_config import AIAPIExecutorConfig
 from tokenshare.experiments.lean_paper_adapter import (
     build_lean_lemma_graph_oracle_evidence,
 )
@@ -27,15 +28,29 @@ from tokenshare.experiments.paper_models import (
     LEAN_TOPIC_FAMILIES,
     JsonObject,
     PaperBudgetResult,
+    PaperConditionResult,
     PaperExperimentCondition,
     PaperStatus,
+    PaperTaskStatus,
     digest_json,
 )
 from tokenshare.experiments.paper_model_identity import (
+    normalize_reasoning_identity,
     validate_fixed_entry_config_identity,
 )
 from tokenshare.experiments.paper_model_policy import (
     PAPER_MODEL_ENDPOINT_COHORT_MEMBER_IDS,
+)
+from tokenshare.experiments.paper_dispatcher import (
+    PaperExperimentDispatchPlan,
+    dispatch_paper_case,
+    dispatch_paper_condition,
+    plan_paper_experiment,
+)
+from tokenshare.experiments.paper_experiment_contracts import (
+    FrozenCaseSelection,
+    PaperExecutionContext,
+    canonical_contract_digest,
 )
 from tokenshare.experiments.paper_unit_commitments import (
     build_case_ai_unit_bindings,
@@ -51,6 +66,47 @@ EXPERIMENT_ALIASES = {
     "exp5": "exp5_real_ai_model_endpoint_comparison",
 }
 LEAN_3X3_TARGET_CASE_COUNT = 15
+
+
+@dataclass(frozen=True, kw_only=True)
+class _FormalPaperCatalogView:
+    manifest: PaperInputCatalogManifest
+    task15_budget_input: JsonObject
+    lean_task14_readiness: JsonObject
+    suite_version: str = "paper_v1"
+    lean_semantic_readiness_passed: bool = True
+    optional_worker_preflight: JsonObject | None = None
+
+    @property
+    def catalog_id(self) -> str:
+        return self.manifest.catalog_id
+
+    @property
+    def catalog_version(self) -> str:
+        return self.manifest.catalog_version
+
+    @property
+    def catalog_digest(self) -> str:
+        return self.manifest.catalog_digest
+
+    @property
+    def factorization_cases(self) -> tuple[JsonObject, ...]:
+        return self.manifest.factorization_cases
+
+    @property
+    def lean_cases(self) -> tuple[JsonObject, ...]:
+        return self.manifest.lean_cases
+
+    @property
+    def lean_lemma_graph_cases(self) -> tuple[JsonObject, ...]:
+        return self.manifest.lean_lemma_graph_cases
+
+    @property
+    def task14_readiness(self) -> JsonObject:
+        return self.lean_task14_readiness
+
+    def cases_for(self, **kwargs: Any) -> tuple[JsonObject, ...]:
+        return self.manifest.cases_for(**kwargs)
 
 
 @dataclass(frozen=True)
@@ -132,6 +188,143 @@ class Exp1PilotExecutionResult:
             "ended_at": self.ended_at,
             "pilot_only": self.pilot_only,
         }
+
+
+@dataclass(frozen=True, kw_only=True)
+class GateCPilotExecutionResult:
+    """单 condition/case 的 Gate C pilot-only 执行与 replay 摘要。"""
+
+    suite_id: str
+    experiment_id: str
+    condition_id: str
+    case_id: str
+    ai_unit_id: str | None
+    status: str
+    output_root: str
+    budget_digest: str
+    condition_digest: str
+    selection_digest: str
+    provider_attempt_count: int
+    provider_calls_made: int
+    transport_calls_observed: int
+    total_tokens: int
+    total_cost_estimate: float
+    paper_eligible: bool
+    replayed: bool
+    pilot_only: bool = True
+    schema_version: str = "tokenshare.paper_gate_c_pilot_execution_result.v1"
+
+    def to_dict(self) -> JsonObject:
+        return {
+            "schema_version": self.schema_version,
+            "suite_id": self.suite_id,
+            "experiment_id": self.experiment_id,
+            "condition_id": self.condition_id,
+            "case_id": self.case_id,
+            "ai_unit_id": self.ai_unit_id,
+            "status": self.status,
+            "output_root": self.output_root,
+            "budget_digest": self.budget_digest,
+            "condition_digest": self.condition_digest,
+            "selection_digest": self.selection_digest,
+            "provider_attempt_count": self.provider_attempt_count,
+            "provider_calls_made": self.provider_calls_made,
+            "transport_calls_observed": self.transport_calls_observed,
+            "total_tokens": self.total_tokens,
+            "total_cost_estimate": float(self.total_cost_estimate),
+            "paper_eligible": self.paper_eligible,
+            "replayed": self.replayed,
+            "pilot_only": self.pilot_only,
+        }
+
+
+@dataclass
+class _GateCCaseExecutionCallback:
+    catalog_manifest: PaperInputCatalogManifest
+    case_id: str
+    ai_unit_id: str | None
+    execution_output_root: Path
+    ai_api_configs: Mapping[str, AIAPIExecutorConfig]
+    transport: Any | None
+    real_transport: bool
+    adapter_result: Any | None = None
+    transport_calls_observed: int = 0
+
+    def __call__(self, **kwargs: Any) -> PaperConditionResult:
+        context = kwargs["context"]
+        condition = kwargs["condition"]
+        selection = kwargs["selection"]
+        if not isinstance(context, PaperExecutionContext):
+            raise ValueError("Gate C execution callback requires PaperExecutionContext")
+        if not isinstance(condition, PaperExperimentCondition):
+            raise ValueError("Gate C execution callback requires canonical condition")
+        if self.case_id not in selection.ordered_case_ids:
+            raise ValueError("selected case is not present in frozen selection")
+        cases_by_id = _paper_cases_by_id(self.catalog_manifest)
+        case = cases_by_id.get(self.case_id)
+        if case is None:
+            raise ValueError("selected case is not present in formal catalog")
+        planned_ai_unit_ids = tuple(_planned_ai_unit_ids(case))
+        if self.ai_unit_id is not None and self.ai_unit_id not in planned_ai_unit_ids:
+            raise ValueError("selected AI unit is not present in deterministic split")
+        _validate_gate_c_pilot_condition_scope(condition)
+        provider_config_id = condition.provider_config_id
+        if not isinstance(provider_config_id, str) or not provider_config_id:
+            raise ValueError("condition provider_config_id is required for execution")
+        config = self.ai_api_configs.get(provider_config_id)
+        if config is None:
+            raise ValueError("approved provider config is unavailable for condition")
+        _validate_gate_c_execution_config(condition=condition, config=config)
+        request_limits = dict(context.request_limits)
+        calls_before = _transport_call_count(self.transport)
+        adapter_condition = _condition_for_selected_case(
+            condition=condition,
+            case=case,
+        )
+        self.adapter_result = dispatch_paper_case(
+            case=case,
+            condition=adapter_condition,
+            output_root=(
+                self.execution_output_root / "runs" / condition.condition_id
+            ).as_posix(),
+            transport=self.transport,
+            real_transport=self.real_transport,
+            ai_api_config=config,
+            entry_id=condition.model_entry_id,
+            max_tokens=int(request_limits["max_tokens"]),
+            timeout_seconds=int(request_limits["timeout_seconds"]),
+            selected_ai_unit_id=self.ai_unit_id,
+        )
+        calls_after = _transport_call_count(self.transport)
+        self.transport_calls_observed = max(0, calls_after - calls_before)
+        task = self.adapter_result.task_result
+        completed = int(task.root_status == PaperTaskStatus.COMPLETED)
+        failed = int(task.root_status == PaperTaskStatus.FAILED)
+        blocked = int(task.root_status == PaperTaskStatus.BLOCKED)
+        status = (
+            PaperStatus.COMPLETED
+            if completed
+            else PaperStatus.BLOCKED
+            if blocked
+            else PaperStatus.COMPLETED_WITH_FAILURES
+        )
+        return PaperConditionResult(
+            condition_id=condition.condition_id,
+            status=status,
+            repeat_count=1,
+            task_count=1,
+            completed_root_count=completed,
+            failed_root_count=failed,
+            blocked_root_count=blocked,
+            provider_attempt_count=int(task.provider_attempt_count),
+            metrics_ref={
+                "transport_kind": self.adapter_result.run_evidence[
+                    "transport_evidence"
+                ]["transport_kind"],
+                "paper_eligible": False,
+                "pilot_only": True,
+            },
+        )
 
 
 def build_exp1_pilot_execution_plan(
@@ -295,11 +488,15 @@ def execute_exp1_pilot(
     baseline_entry_id: str,
     output_base: str | Path,
     real_transport: bool,
+    execution_output_root: str | Path | None = None,
     provider_attempt_limit: int | None = None,
     token_limit: int | None = None,
     cost_limit: float | None = None,
     resume: bool = False,
     replay_only: bool = False,
+    case_id: str | None = None,
+    ai_unit_id: str | None = None,
+    transport: Any | None = None,
     factorization_adapter: Callable[..., Any] | None = None,
     lean_adapter: Callable[..., Any] | None = None,
 ) -> Exp1PilotExecutionResult:
@@ -313,6 +510,29 @@ def execute_exp1_pilot(
         baseline_entry_id=baseline_entry_id,
         real_transport=real_transport,
     )
+    if (case_id is None) != (ai_unit_id is None):
+        raise ValueError("case_id and ai_unit_id must be provided together")
+    if case_id is not None and execution_output_root is None:
+        raise ValueError(
+            "case/unit selector requires an independent execution_output_root"
+        )
+    if case_id is not None and execution_output_root is not None:
+        validate_exp1_selector_output_root(
+            output_base=output_base,
+            suite_id=str(pilot_profile.body["suite_id"]),
+            execution_output_root=execution_output_root,
+        )
+    plan = build_exp1_pilot_execution_plan(
+        catalog_manifest=catalog_manifest,
+        pilot_profile=pilot_profile,
+        budget=budget,
+    )
+    if case_id is not None and ai_unit_id is not None:
+        plan = _select_exp1_pilot_unit_plan(
+            plan=plan,
+            case_id=case_id,
+            ai_unit_id=ai_unit_id,
+        )
     secret_values: tuple[str, ...] = ()
     if uses_default_adapter and not (resume or replay_only):
         secret_values = (
@@ -321,18 +541,17 @@ def execute_exp1_pilot(
                 baseline_entry_id=baseline_entry_id,
             ),
         )
-    plan = build_exp1_pilot_execution_plan(
-        catalog_manifest=catalog_manifest,
-        pilot_profile=pilot_profile,
-        budget=budget,
-    )
     hard_limits = _execution_hard_limits(
         budget=budget,
         provider_attempt_limit=provider_attempt_limit,
         token_limit=token_limit,
         cost_limit=cost_limit,
     )
-    suite_root = Path(output_base) / plan.suite_id
+    suite_root = (
+        Path(execution_output_root)
+        if execution_output_root is not None
+        else Path(output_base) / plan.suite_id
+    )
     plan_body = plan.to_dict()
     plan_body.update(
         {
@@ -347,6 +566,8 @@ def execute_exp1_pilot(
             "hard_limits": _json_copy(hard_limits),
             "stop_policy": "stop_after_current_task",
             "pilot_only": True,
+            "selected_case_id": case_id,
+            "selected_ai_unit_id": ai_unit_id,
         }
     )
     plan_body["execution_plan_digest"] = digest_json(plan_body)
@@ -390,15 +611,6 @@ def execute_exp1_pilot(
             secret_values=(),
             write_report=uses_default_adapter or result.paper_eligible,
         )
-
-    if factorization_adapter is None or lean_adapter is None:
-        from tokenshare.experiments.factorization_paper_adapter import (
-            run_factorization_paper_case,
-        )
-        from tokenshare.experiments.lean_paper_adapter import run_lean_paper_case
-
-        factorization_adapter = factorization_adapter or run_factorization_paper_case
-        lean_adapter = lean_adapter or run_lean_paper_case
 
     cases_by_id = _paper_cases_by_id(catalog_manifest)
     provider_calls_made = 0
@@ -519,16 +731,29 @@ def execute_exp1_pilot(
             if task["domain"] == "factorization"
             else lean_adapter
         )
-        adapter_result = adapter(
-            case=cases_by_id[str(task["case_id"])],
-            condition=condition,
-            output_root=suite_root / "runs" / run_id,
-            real_transport=real_transport,
-            ai_api_config=pilot_profile.source_provider_config,
-            entry_id=baseline_entry_id,
-            max_tokens=int(request_limits["max_tokens"]),
-            timeout_seconds=int(request_limits["timeout_seconds"]),
+        adapter_kwargs = {
+            "case": cases_by_id[str(task["case_id"])],
+            "condition": condition,
+            "output_root": suite_root / "runs" / run_id,
+            "real_transport": real_transport,
+            "ai_api_config": pilot_profile.source_provider_config,
+            "entry_id": baseline_entry_id,
+            "max_tokens": int(request_limits["max_tokens"]),
+            "timeout_seconds": int(request_limits["timeout_seconds"]),
+        }
+        selected_ai_unit_id = (
+            str(task["ai_units"][0]) if case_id is not None else None
         )
+        if adapter is None:
+            adapter_result = dispatch_paper_case(
+                **adapter_kwargs,
+                transport=transport,
+                selected_ai_unit_id=selected_ai_unit_id,
+            )
+        else:
+            if selected_ai_unit_id is not None:
+                adapter_kwargs["selected_ai_unit_id"] = selected_ai_unit_id
+            adapter_result = adapter(**adapter_kwargs)
         result_body = adapter_result.to_dict()
         task_result = _json_copy(result_body["task_result"])
         attempts = [_json_copy(item) for item in result_body["attempt_results"]]
@@ -626,6 +851,997 @@ def execute_exp1_pilot(
         secret_values=secret_values,
         write_report=uses_default_adapter or result.paper_eligible,
     )
+
+
+def _select_exp1_pilot_unit_plan(
+    *,
+    plan: Exp1PilotExecutionPlan,
+    case_id: str,
+    ai_unit_id: str,
+) -> Exp1PilotExecutionPlan:
+    matches = [
+        (condition, task)
+        for condition, task in zip(plan.conditions, plan.tasks, strict=True)
+        if task.get("case_id") == case_id
+    ]
+    if not matches:
+        raise ValueError("case is not present in approved pilot plan")
+    if len(matches) != 1:
+        raise ValueError("case selector must identify exactly one approved pilot run")
+    condition, task = matches[0]
+    ai_units = tuple(str(value) for value in task.get("ai_units", ()))
+    if ai_unit_id not in ai_units:
+        raise ValueError("AI unit is not present in approved pilot plan")
+    bindings = [
+        _json_copy(binding)
+        for binding in task.get("ai_unit_bindings", ())
+        if binding.get("planned_ai_unit_id") == ai_unit_id
+    ]
+    if len(bindings) != 1:
+        raise ValueError("approved pilot AI-unit binding is missing or ambiguous")
+    selected_task = _json_copy(task)
+    selected_task["ai_units"] = [ai_unit_id]
+    selected_task["ai_unit_bindings"] = bindings
+    selected_task["pilot_case_selector"] = case_id
+    selected_task["pilot_ai_unit_selector"] = ai_unit_id
+    selected_task["full_plan_ai_unit_count"] = len(ai_units)
+    selected_task["provider_attempt_upper_bound"] = max(
+        1,
+        math.ceil(int(task["provider_attempt_upper_bound"]) / len(ai_units)),
+    )
+    selected_task["token_upper_bound"] = max(
+        1,
+        math.ceil(int(task["token_upper_bound"]) / len(ai_units)),
+    )
+    selected_task["cost_upper_bound"] = float(task["cost_upper_bound"]) / len(
+        ai_units
+    )
+    return Exp1PilotExecutionPlan(
+        suite_id=plan.suite_id,
+        budget_digest=plan.budget_digest,
+        profile_digest=plan.profile_digest,
+        catalog_digest=plan.catalog_digest,
+        conditions=(condition,),
+        tasks=(selected_task,),
+    )
+
+
+def validate_exp1_selector_output_root(
+    *,
+    output_base: str | Path,
+    suite_id: str,
+    execution_output_root: str | Path,
+) -> None:
+    """拒绝与完整 pilot canonical tree 重叠的单 unit 输出目录。"""
+
+    canonical_root = (Path(output_base) / suite_id).resolve(strict=False)
+    selector_root = Path(execution_output_root).resolve(strict=False)
+    if (
+        selector_root == canonical_root
+        or selector_root in canonical_root.parents
+        or canonical_root in selector_root.parents
+    ):
+        raise ValueError(
+            "case/unit selector output root must not overlap canonical Exp1 pilot root"
+        )
+
+
+def validate_gate_c_pilot_output_root(
+    *,
+    output_base: str | Path,
+    experiment_id: str,
+    execution_output_root: str | Path,
+) -> None:
+    plan_root = Path(output_base).resolve(strict=False)
+    experiment_root = (Path(output_base) / experiment_id).resolve(strict=False)
+    pilot_root = Path(execution_output_root).resolve(strict=False)
+    if pilot_root == plan_root:
+        raise ValueError("Gate C pilot output root must differ from plan output root")
+    if (
+        pilot_root == experiment_root
+        or pilot_root in experiment_root.parents
+        or experiment_root in pilot_root.parents
+    ):
+        raise ValueError(
+            "Gate C pilot output root must not overlap canonical experiment root"
+        )
+
+
+def execute_gate_c_pilot_case(
+    *,
+    catalog_manifest: PaperInputCatalogManifest,
+    lean_3x3_matrix: JsonObject,
+    experiment_id: str,
+    baseline_endpoint_binding: JsonObject,
+    model_endpoint_cohort_preflight: JsonObject | None,
+    budget: PaperBudgetResult,
+    approved_budget_digest: str,
+    condition_id: str,
+    case_id: str,
+    ai_unit_id: str | None,
+    execution_output_root: str | Path,
+    ai_api_configs: Mapping[str, AIAPIExecutorConfig],
+    transport: Any | None,
+    real_transport: bool,
+    resume: bool = False,
+    replay_only: bool = False,
+) -> GateCPilotExecutionResult:
+    """经注册模块执行一个批准的 case，可选缩到一个 AI unit。"""
+
+    if not real_transport:
+        raise ValueError("Gate C pilot execution requires real_transport=True")
+    if resume and replay_only:
+        raise ValueError("resume and replay_only are mutually exclusive")
+    if approved_budget_digest != budget.budget_digest:
+        raise ValueError("budget digest mismatch")
+    if experiment_id not in budget.planned_experiments:
+        raise ValueError("approved budget does not include selected experiment")
+    output_root = Path(execution_output_root)
+    callback = _GateCCaseExecutionCallback(
+        catalog_manifest=catalog_manifest,
+        case_id=case_id,
+        ai_unit_id=ai_unit_id,
+        execution_output_root=output_root,
+        ai_api_configs=ai_api_configs,
+        transport=transport,
+        real_transport=real_transport,
+    )
+    context = _gate_c_context(
+        catalog_manifest=catalog_manifest,
+        lean_3x3_matrix=lean_3x3_matrix,
+        experiment_id=experiment_id,
+        baseline_endpoint_binding=baseline_endpoint_binding,
+        model_endpoint_cohort_preflight=model_endpoint_cohort_preflight,
+        output_root=output_root,
+        execution_callback=callback,
+        hard_limits={
+            "max_total_provider_attempts": budget.max_provider_attempts,
+            "max_total_tokens": budget.token_upper_bound,
+            "max_cost_estimate": budget.cost_upper_bound,
+        },
+    )
+    plan = plan_paper_experiment(context=context, experiment_id=experiment_id)
+    try:
+        condition, selection = plan.bound_condition(condition_id)
+    except ValueError as exc:
+        raise ValueError(
+            "condition is not present exactly once in canonical plan"
+        ) from exc
+    if selection.is_blocked:
+        raise ValueError("selected Gate C pilot condition is structured blocked")
+    if case_id not in selection.ordered_case_ids:
+        raise ValueError("selected case is not present in frozen selection")
+    _validate_gate_c_budget_commitment(
+        budget=budget,
+        condition=condition,
+        selection=selection,
+        case_id=case_id,
+        ai_unit_id=ai_unit_id,
+        request_limits=context.request_limits,
+    )
+    suite_id = (
+        f"gate_c_pilot_{experiment_id}_{condition_id}_{case_id}"
+        + (f"_{ai_unit_id}" if ai_unit_id is not None else "")
+    )
+    plan_body: JsonObject = {
+        "schema_version": "tokenshare.paper_gate_c_pilot_execution_plan.v1",
+        "suite_id": suite_id,
+        "experiment_id": experiment_id,
+        "budget_digest": budget.budget_digest,
+        "catalog_digest": catalog_manifest.catalog_digest,
+        "condition_id": condition.condition_id,
+        "condition_digest": condition.condition_digest,
+        "selection_id": selection.selection_id,
+        "selection_digest": selection.selection_digest,
+        "ordered_case_ids": list(selection.ordered_case_ids),
+        "selected_case_id": case_id,
+        "selected_ai_unit_id": ai_unit_id,
+        "request_limits": dict(context.request_limits),
+        "hard_limits": dict(context.hard_limits),
+        "output_root": output_root.as_posix(),
+        "pilot_only": True,
+        "provider_calls_made_before_execution": 0,
+    }
+    plan_body["execution_plan_digest"] = digest_json(plan_body)
+    if resume or replay_only:
+        return _replay_gate_c_pilot(
+            output_root=output_root,
+            expected_plan=plan_body,
+        )
+    if (output_root / "execution_plan.json").exists():
+        raise ValueError("Gate C pilot output root already contains execution evidence")
+
+    dispatch_result = dispatch_paper_condition(
+        context=context,
+        plan=plan,
+        condition_id=condition.condition_id,
+    )
+    if callback.adapter_result is None:
+        raise ValueError("registered module did not invoke Gate C execution callback")
+    if dispatch_result.condition_id != condition.condition_id:
+        raise ValueError("registered module returned a different condition")
+    result = _gate_c_result_from_adapter(
+        suite_id=suite_id,
+        condition=condition,
+        selection_digest=selection.selection_digest,
+        case_id=case_id,
+        ai_unit_id=ai_unit_id,
+        output_root=output_root,
+        budget=budget,
+        adapter_result=callback.adapter_result,
+        transport_calls_observed=callback.transport_calls_observed,
+        replayed=False,
+    )
+    _persist_gate_c_pilot_evidence(
+        output_root=output_root,
+        plan_body=plan_body,
+        catalog_manifest=catalog_manifest,
+        condition=condition,
+        selection=selection,
+        budget=budget,
+        result=result,
+        adapter_result=callback.adapter_result,
+    )
+    return result
+
+
+def build_gate_c_dispatch_plans(
+    *,
+    catalog_manifest: PaperInputCatalogManifest,
+    lean_3x3_matrix: JsonObject,
+    experiment_ids: tuple[str, ...],
+    baseline_endpoint_binding: JsonObject,
+    model_endpoint_cohort_preflight: JsonObject | None,
+    output_root: str | Path,
+) -> tuple[PaperExperimentDispatchPlan, ...]:
+    """通过各模块的 Gate B Protocol 实现生成共享调度计划。"""
+
+    base_output = Path(output_root)
+    plans: list[PaperExperimentDispatchPlan] = []
+    for experiment_id in experiment_ids:
+        context = _gate_c_context(
+            catalog_manifest=catalog_manifest,
+            lean_3x3_matrix=lean_3x3_matrix,
+            experiment_id=experiment_id,
+            baseline_endpoint_binding=baseline_endpoint_binding,
+            model_endpoint_cohort_preflight=model_endpoint_cohort_preflight,
+            output_root=base_output / experiment_id,
+            execution_callback=_forbidden_plan_execution,
+            hard_limits={"max_total_provider_attempts": 0},
+        )
+        plans.append(
+            plan_paper_experiment(
+                context=context,
+                experiment_id=experiment_id,
+            )
+        )
+    return tuple(plans)
+
+
+def _gate_c_context(
+    *,
+    catalog_manifest: PaperInputCatalogManifest,
+    lean_3x3_matrix: JsonObject,
+    experiment_id: str,
+    baseline_endpoint_binding: JsonObject,
+    model_endpoint_cohort_preflight: JsonObject | None,
+    output_root: str | Path,
+    execution_callback: Callable[..., PaperConditionResult],
+    hard_limits: Mapping[str, Any],
+) -> PaperExecutionContext:
+    task15_budget_input = lean_3x3_matrix.get("task15_budget_input")
+    if not isinstance(task15_budget_input, dict):
+        raise ValueError("Gate C planning requires Task14 task15_budget_input")
+    formal_catalog = _FormalPaperCatalogView(
+        manifest=catalog_manifest,
+        task15_budget_input=_json_copy(task15_budget_input),
+        lean_task14_readiness=_json_copy(lean_3x3_matrix),
+        optional_worker_preflight={},
+    )
+    if experiment_id == "exp3_real_ai_fault_recovery":
+        catalog: Any = _exp3_catalog_view(formal_catalog)
+    elif experiment_id == "exp4_real_ai_protocol_ablation":
+        catalog = _exp4_catalog_view(formal_catalog)
+    else:
+        catalog = formal_catalog
+    endpoint_binding = (
+        model_endpoint_cohort_preflight
+        if experiment_id == "exp5_real_ai_model_endpoint_comparison"
+        else baseline_endpoint_binding
+    )
+    if endpoint_binding is None:
+        endpoint_binding = {"status": "blocked", "provider_calls_made": 0}
+    return PaperExecutionContext(
+        context_id=f"gate_c_{experiment_id}",
+        catalog=catalog,
+        approved_endpoint_binding=endpoint_binding,
+        request_limits={
+            "max_tokens": 1024,
+            "timeout_seconds": 30,
+            "max_provider_attempts": 1,
+            "temperature": 0.0,
+            "top_p": 1.0,
+            "stream": False,
+            "enable_thinking": False,
+        },
+        hard_limits=dict(hard_limits),
+        output_root=Path(output_root).as_posix(),
+        artifact_store=object(),
+        event_store=object(),
+        execution_callback=execution_callback,
+    )
+
+
+def _validate_gate_c_execution_config(
+    *,
+    condition: PaperExperimentCondition,
+    config: AIAPIExecutorConfig,
+) -> None:
+    if condition.source_provider_config_digest != config.config_digest:
+        raise ValueError("source provider config digest drift before transport")
+    if condition.provider_family != config.provider_family:
+        raise ValueError("provider family drift before transport")
+    matching_entries = [
+        entry
+        for entry in config.entries
+        if entry.enabled and entry.entry_id == condition.model_entry_id
+    ]
+    if len(matching_entries) != 1:
+        raise ValueError("fixed model entry is unavailable before transport")
+    entry = matching_entries[0]
+    if entry.model != condition.provider_model_id:
+        raise ValueError("provider model drift before transport")
+    if not entry.supports_json_mode:
+        raise ValueError("fixed model entry must support JSON mode")
+    reasoning = normalize_reasoning_identity(
+        provider_family=config.provider_family,
+        request_overrides=entry.request_overrides,
+    )
+    if reasoning.reasoning_profile_id != condition.reasoning_profile_id:
+        raise ValueError("reasoning profile drift before transport")
+    if config.provider_family == "siliconflow" and (
+        entry.request_overrides.get("enable_thinking") is not False
+    ):
+        raise ValueError("SiliconFlow JSON mode requires enable_thinking=false")
+    temperature = entry.request_overrides.get(
+        "temperature",
+        config.defaults.get("temperature"),
+    )
+    if float(temperature) != 0.0:
+        raise ValueError("paper execution requires temperature=0")
+
+
+def _validate_gate_c_pilot_condition_scope(
+    condition: PaperExperimentCondition,
+) -> None:
+    if condition.experiment_id == "exp3_real_ai_fault_recovery" and (
+        condition.fault_type == "worker_death" or float(condition.fault_rate) != 0.0
+    ):
+        raise ValueError(
+            "Gate C pilot only wires the Exp3 zero-rate provider baseline; "
+            "fault/death execution belongs to Prompt K"
+        )
+    if (
+        condition.experiment_id == "exp4_real_ai_protocol_ablation"
+        and condition.ablation_mode != "FULL"
+    ):
+        raise ValueError(
+            "Gate C pilot only wires the Exp4 FULL provider baseline; "
+            "ablation execution belongs to Prompt L"
+        )
+
+
+def _condition_for_selected_case(
+    *,
+    condition: PaperExperimentCondition,
+    case: JsonObject,
+) -> PaperExperimentCondition:
+    if condition.domain != "lean_proof":
+        return condition
+    updates: dict[str, Any] = {}
+    for field_name in (
+        "topic_family",
+        "topic_family_version",
+        "construction_rule_id",
+        "oracle_package_group",
+        "proof_assembly_shape",
+    ):
+        condition_value = getattr(condition, field_name)
+        case_value = case.get(field_name)
+        if condition_value is not None and condition_value != case_value:
+            raise ValueError(
+                f"canonical condition {field_name} conflicts with frozen Lean case"
+            )
+        updates[field_name] = case_value
+    return replace(condition, **updates)
+
+
+def _transport_call_count(transport: Any | None) -> int:
+    if transport is None:
+        return 0
+    calls = getattr(transport, "calls", 0)
+    if isinstance(calls, list):
+        return len(calls)
+    if isinstance(calls, int) and not isinstance(calls, bool):
+        return calls
+    return 0
+
+
+def _exp3_catalog_view(catalog: _FormalPaperCatalogView) -> JsonObject:
+    factor_by_difficulty = {
+        difficulty: catalog.cases_for(
+            domain="factorization",
+            difficulty=difficulty,
+            paper_difficulty=difficulty,
+        )
+        for difficulty in ("easy", "medium", "hard")
+    }
+    medium_lean_by_topic = {
+        topic: catalog.cases_for(
+            domain="lean_proof",
+            difficulty="medium",
+            paper_difficulty="medium_lemma_dag",
+            topic_family=topic,
+        )
+        for topic in ("pure_logic", "function_set", "induction")
+    }
+    factor_rate = tuple(str(case["case_id"]) for case in factor_by_difficulty["medium"][:5])
+    rate_lean = {
+        topic: (str(cases[0]["case_id"]),)
+        for topic, cases in medium_lean_by_topic.items()
+        if cases
+    }
+    death_factor = {
+        difficulty: (str(cases[0]["case_id"]),)
+        for difficulty, cases in factor_by_difficulty.items()
+        if cases
+    }
+    death_lean = dict(rate_lean)
+    selected_case_ids = list(factor_rate)
+    selected_case_ids.extend(value[0] for value in rate_lean.values())
+    selected_case_ids.extend(value[0] for value in death_factor.values())
+    selected_case_ids.extend(value[0] for value in death_lean.values())
+    cases_by_id = {
+        str(case["case_id"]): case
+        for case in (
+            catalog.factorization_cases
+            + catalog.lean_cases
+            + catalog.lean_lemma_graph_cases
+        )
+    }
+    return {
+        "catalog_digest": catalog.catalog_digest,
+        "catalog_version": catalog.catalog_version,
+        "suite_version": catalog.suite_version,
+        "exp3_rate_fault_factorization_case_ids": factor_rate,
+        "exp3_rate_fault_lean_case_ids_by_topic": rate_lean,
+        "exp3_worker_death_factorization_case_ids_by_difficulty": death_factor,
+        "exp3_worker_death_lean_case_ids_by_topic": death_lean,
+        "ai_units_by_case_id": {
+            case_id: tuple(
+                f"{case_id}:{planned_ai_unit_id}"
+                for planned_ai_unit_id in _planned_ai_unit_ids(
+                    cases_by_id[case_id]
+                )
+            )
+            for case_id in dict.fromkeys(selected_case_ids)
+        },
+    }
+
+
+def _exp4_catalog_view(catalog: _FormalPaperCatalogView) -> JsonObject:
+    factorization_slices = {
+        difficulty: [
+            _case_plan_summary(case)
+            for case in catalog.cases_for(
+                domain="factorization",
+                difficulty=difficulty,
+                paper_difficulty=difficulty,
+            )[:5]
+        ]
+        for difficulty in ("easy", "medium", "hard")
+    }
+    allocations = {
+        "simple": {"pure_logic": 2, "function_set": 2, "induction": 1},
+        "medium_lemma_dag": {"pure_logic": 1, "function_set": 2, "induction": 2},
+        "hard_frontier": {"pure_logic": 2, "function_set": 1, "induction": 2},
+    }
+    selected_by_cell = catalog.task15_budget_input["selected_case_ids_by_cell"]
+    cases_by_id = {
+        str(case["case_id"]): case
+        for case in catalog.lean_cases + catalog.lean_lemma_graph_cases
+    }
+    shared_lean_slices: dict[str, dict[str, list[JsonObject]]] = {}
+    for paper_difficulty, topic_counts in allocations.items():
+        shared_lean_slices[paper_difficulty] = {}
+        for topic_family, count in topic_counts.items():
+            cell_key = f"{paper_difficulty}/{topic_family}"
+            shared_lean_slices[paper_difficulty][topic_family] = [
+                _case_plan_summary(cases_by_id[str(case_id)])
+                for case_id in selected_by_cell[cell_key][:count]
+            ]
+    shared_digests = {
+        paper_difficulty: canonical_contract_digest(
+            {
+                "paper_difficulty": paper_difficulty,
+                "topic_allocations": {
+                    topic: len(cases) for topic, cases in by_topic.items()
+                },
+                "ordered_cases": [
+                    case
+                    for topic in ("pure_logic", "function_set", "induction")
+                    for case in by_topic[topic]
+                ],
+            }
+        )
+        for paper_difficulty, by_topic in shared_lean_slices.items()
+    }
+    return {
+        "schema_version": "tokenshare.paper_exp4_catalog_view.v1",
+        "catalog_source_kind": "paper_input_catalog_manifest",
+        "suite_version": catalog.suite_version,
+        "catalog_version": catalog.catalog_version,
+        "catalog_digest": catalog.catalog_digest,
+        "lean_semantic_readiness_status": "ready",
+        "lean_semantic_readiness_reason": None,
+        "factorization_slices": factorization_slices,
+        "shared_lean_slice_experiment_ids": ["exp2", "exp4", "exp5"],
+        "shared_lean_slices": shared_lean_slices,
+        "shared_lean_slice_digests": shared_digests,
+    }
+
+
+def _case_plan_summary(case: JsonObject) -> JsonObject:
+    return {
+        "case_id": str(case["case_id"]),
+        "expected_ai_unit_count": estimated_ai_units_for_case(case),
+    }
+
+
+def _planned_ai_unit_ids(case: JsonObject) -> list[str]:
+    schema_version = str(case["schema_version"])
+    if schema_version == "tokenshare.paper_factorization_case.v1":
+        requested = int(case["split_params"]["requested_child_count"])
+        domain_size = int(case["candidate_end"]) - int(case["candidate_start"]) + 1
+        return [f"range_{index}" for index in range(min(requested, domain_size))]
+    if schema_version == "tokenshare.paper_lean_case.v1":
+        return [f"child_{index}" for index in range(int(case["expected_child_count"]))]
+    declared = case.get("merge_plan_shape", {}).get("dependency_order")
+    if isinstance(declared, list):
+        return [str(node_id) for node_id in declared]
+    return [str(node["node_id"]) for node in case["lemma_graph"]["nodes"]]
+
+
+def _validate_gate_c_budget_commitment(
+    *,
+    budget: PaperBudgetResult,
+    condition: PaperExperimentCondition,
+    selection: FrozenCaseSelection,
+    case_id: str,
+    ai_unit_id: str | None,
+    request_limits: Mapping[str, Any],
+) -> None:
+    commitments = budget.quota_preflight.get("budget_commitments")
+    if not isinstance(commitments, Mapping):
+        raise ValueError("approved budget is missing exact commitments")
+    frozen = commitments.get("frozen_selections")
+    if not isinstance(frozen, list):
+        raise ValueError("approved budget is missing frozen selections")
+    matching_selections = [
+        item
+        for item in frozen
+        if isinstance(item, Mapping)
+        and item.get("condition_id") == condition.condition_id
+    ]
+    if len(matching_selections) != 1:
+        raise ValueError("approved budget selection commitment is ambiguous")
+    approved_selection = matching_selections[0]
+    expected_selection = {
+        "condition_digest": condition.condition_digest,
+        "selection_digest": selection.selection_digest,
+        "catalog_digest": selection.catalog_digest,
+        "ordered_case_ids": list(selection.ordered_case_ids),
+        "expected_ai_unit_count": selection.expected_ai_unit_count,
+        "blocked_reason": selection.blocked_reason,
+    }
+    for field_name, expected in expected_selection.items():
+        if approved_selection.get(field_name) != expected:
+            raise ValueError(
+                f"approved budget frozen selection drift: {field_name}"
+            )
+    ai_commitments = commitments.get("ai_unit_commitments")
+    if not isinstance(ai_commitments, list):
+        raise ValueError("approved budget is missing AI-unit commitments")
+    matching_cases = [
+        item
+        for item in ai_commitments
+        if isinstance(item, Mapping)
+        and item.get("condition_id") == condition.condition_id
+        and item.get("case_id") == case_id
+    ]
+    if len(matching_cases) != 1:
+        raise ValueError("approved budget case commitment is ambiguous")
+    planned_ai_unit_ids = matching_cases[0].get("planned_ai_unit_ids")
+    if not isinstance(planned_ai_unit_ids, list) or not planned_ai_unit_ids:
+        raise ValueError("approved budget case has no AI-unit commitment")
+    if ai_unit_id is not None and ai_unit_id not in planned_ai_unit_ids:
+        raise ValueError("selected AI unit is outside approved budget commitment")
+    approved_request_limits = commitments.get("request_limits")
+    if approved_request_limits != dict(request_limits):
+        raise ValueError("approved budget request limits drift")
+
+
+def _gate_c_result_from_adapter(
+    *,
+    suite_id: str,
+    condition: PaperExperimentCondition,
+    selection_digest: str,
+    case_id: str,
+    ai_unit_id: str | None,
+    output_root: Path,
+    budget: PaperBudgetResult,
+    adapter_result: Any,
+    transport_calls_observed: int,
+    replayed: bool,
+) -> GateCPilotExecutionResult:
+    task = adapter_result.task_result
+    transport_evidence = adapter_result.run_evidence["transport_evidence"]
+    external_provider_calls = (
+        int(task.provider_attempt_count)
+        if transport_evidence.get("real_transport") is True
+        and transport_evidence.get("transport_kind") == "ai_api"
+        else 0
+    )
+    status = (
+        "completed"
+        if task.root_status == PaperTaskStatus.COMPLETED
+        else "blocked"
+        if task.root_status == PaperTaskStatus.BLOCKED
+        else "completed_with_failures"
+    )
+    return GateCPilotExecutionResult(
+        suite_id=suite_id,
+        experiment_id=condition.experiment_id,
+        condition_id=condition.condition_id,
+        case_id=case_id,
+        ai_unit_id=ai_unit_id,
+        status=status,
+        output_root=output_root.as_posix(),
+        budget_digest=budget.budget_digest,
+        condition_digest=condition.condition_digest,
+        selection_digest=selection_digest,
+        provider_attempt_count=int(task.provider_attempt_count),
+        provider_calls_made=external_provider_calls,
+        transport_calls_observed=transport_calls_observed,
+        total_tokens=int(task.total_tokens),
+        total_cost_estimate=float(task.cost_estimate),
+        paper_eligible=False,
+        replayed=replayed,
+    )
+
+
+def _persist_gate_c_pilot_evidence(
+    *,
+    output_root: Path,
+    plan_body: JsonObject,
+    catalog_manifest: PaperInputCatalogManifest,
+    condition: PaperExperimentCondition,
+    selection: FrozenCaseSelection,
+    budget: PaperBudgetResult,
+    result: GateCPilotExecutionResult,
+    adapter_result: Any,
+) -> None:
+    adapter_body = adapter_result.to_dict()
+    task = _json_copy(adapter_body["task_result"])
+    attempts = [_json_copy(item) for item in adapter_body["attempt_results"]]
+    run_id = f"{condition.condition_id}_{result.case_id}"
+    task.update(
+        {
+            "run_id": run_id,
+            "case_id": result.case_id,
+            "pilot_only": True,
+            "paper_eligible": False,
+        }
+    )
+    for attempt in attempts:
+        attempt["pilot_only"] = True
+        attempt["paper_eligible"] = False
+    transport_evidence = _json_copy(
+        adapter_body["run_evidence"]["transport_evidence"]
+    )
+    run_manifest: JsonObject = {
+        "schema_version": "tokenshare.paper_gate_c_pilot_run_manifest.v1",
+        "suite_id": result.suite_id,
+        "experiment_id": result.experiment_id,
+        "condition_id": result.condition_id,
+        "condition_digest": result.condition_digest,
+        "adapter_execution_condition_digest": adapter_body["condition"][
+            "condition_digest"
+        ],
+        "selection_digest": result.selection_digest,
+        "case_id": result.case_id,
+        "ai_unit_id": result.ai_unit_id,
+        "run_id": run_id,
+        "status": result.status,
+        "budget_digest": result.budget_digest,
+        "adapter_output_root": adapter_body["output_root"],
+        "artifact_root": f"runs/{condition.condition_id}/{result.case_id}/artifacts",
+        "event_log_ref": {"path": "events/event_log.jsonl"},
+        "transport_evidence": transport_evidence,
+        "paper_eligible": False,
+        "ineligibility_reasons": list(
+            dict.fromkeys(
+                [
+                    "pilot_only",
+                    *adapter_body["eligibility_report"].get(
+                        "ineligibility_reasons", []
+                    ),
+                ]
+            )
+        ),
+        "provider_calls_made": result.provider_calls_made,
+        "transport_calls_observed": result.transport_calls_observed,
+        "pilot_only": True,
+    }
+    run_result = {
+        **run_manifest,
+        "run_manifest_ref": {"path": "run_manifest.json"},
+        "per_task_results_ref": {"path": "per_task_results.jsonl"},
+        "per_attempt_results_ref": {"path": "per_attempt_results.jsonl"},
+        "fault_injections_ref": {"path": "fault_injections.jsonl"},
+    }
+    now = _utc_now()
+    events = [
+        {
+            "schema_version": "tokenshare.paper_gate_c_pilot_event.v1",
+            "event_id": f"{result.suite_id}:suite_started",
+            "event_type": "suite_started",
+            "timestamp": now,
+            "suite_id": result.suite_id,
+        },
+        {
+            "schema_version": "tokenshare.paper_gate_c_pilot_event.v1",
+            "event_id": f"{run_id}:task_started",
+            "event_type": "task_started",
+            "timestamp": now,
+            "suite_id": result.suite_id,
+            "condition_id": result.condition_id,
+            "run_id": run_id,
+            "case_id": result.case_id,
+        },
+        {
+            "schema_version": "tokenshare.paper_gate_c_pilot_event.v1",
+            "event_id": f"{run_id}:task_completed",
+            "event_type": "task_completed",
+            "timestamp": now,
+            "suite_id": result.suite_id,
+            "condition_id": result.condition_id,
+            "run_id": run_id,
+            "case_id": result.case_id,
+            "root_status": task["root_status"],
+        },
+        {
+            "schema_version": "tokenshare.paper_gate_c_pilot_event.v1",
+            "event_id": f"{result.suite_id}:suite_finished",
+            "event_type": "suite_finished",
+            "timestamp": now,
+            "suite_id": result.suite_id,
+            "status": result.status,
+        },
+    ]
+    artifacts = _artifact_index_records(
+        run_id=run_id,
+        task_result=task,
+        attempts=attempts,
+    )
+    adapter_run_root = Path(str(adapter_body["output_root"]))
+    adapter_store = ArtifactStore(adapter_run_root)
+    model_execution_records = [
+        json.loads(
+            adapter_store.read_bytes(
+                ArtifactRef.from_dict(attempt["model_execution_record_ref"])
+            ).decode("utf-8")
+        )
+        for attempt in attempts
+        if isinstance(attempt.get("model_execution_record_ref"), dict)
+    ]
+    output_root.mkdir(parents=True, exist_ok=True)
+    _write_json(output_root / "execution_plan.json", plan_body)
+    _write_json(output_root / "run_budget.json", budget.to_dict())
+    _write_json(
+        output_root / "input_catalog_manifest.json",
+        catalog_manifest.to_dict(),
+    )
+    _write_jsonl(output_root / "conditions.jsonl", [condition.to_dict()])
+    _write_json(output_root / "run_manifest.json", run_manifest)
+    _write_json(adapter_run_root / "run_manifest.json", run_manifest)
+    _write_jsonl(output_root / "run_results.jsonl", [run_result])
+    _write_jsonl(output_root / "per_task_results.jsonl", [task])
+    _write_jsonl(output_root / "per_attempt_results.jsonl", attempts)
+    _write_jsonl(output_root / "fault_injections.jsonl", [])
+    _write_jsonl(
+        output_root / "model_execution_records.jsonl",
+        model_execution_records,
+    )
+    _write_jsonl(output_root / "events" / "event_log.jsonl", events)
+    _write_jsonl(output_root / "artifacts" / "artifact_index.jsonl", artifacts)
+    from tokenshare.experiments.paper_metrics import write_gate_c_pilot_metrics
+
+    write_gate_c_pilot_metrics(output_root)
+    eligibility = {
+        **_json_copy(adapter_body["eligibility_report"]),
+        "paper_eligible": False,
+        "pilot_only": True,
+        "ineligibility_reasons": run_manifest["ineligibility_reasons"],
+        "provider_calls_made": result.provider_calls_made,
+    }
+    _write_json(
+        output_root / "audit" / "paper_eligibility_report.json",
+        eligibility,
+    )
+    secret_scan = _json_copy(
+        adapter_body["run_evidence"]["secret_scan_report"]
+    )
+    secret_scan["pilot_only"] = True
+    _write_json(
+        output_root / "audit" / "secret_scan_report.json",
+        secret_scan,
+    )
+    _write_json(output_root / "suite_manifest.json", result.to_dict())
+    _write_gate_c_evidence_manifest(
+        output_root,
+        provider_calls_made=result.provider_calls_made,
+    )
+
+
+_GATE_C_EVIDENCE_JSON_FILES = (
+    "execution_plan.json",
+    "run_budget.json",
+    "input_catalog_manifest.json",
+    "run_manifest.json",
+    "suite_manifest.json",
+)
+_GATE_C_EVIDENCE_JSONL_FILES = (
+    "conditions.jsonl",
+    "run_results.jsonl",
+    "per_task_results.jsonl",
+    "per_attempt_results.jsonl",
+    "fault_injections.jsonl",
+    "model_execution_records.jsonl",
+    "events/event_log.jsonl",
+    "artifacts/artifact_index.jsonl",
+)
+
+
+def _write_gate_c_evidence_manifest(
+    output_root: Path,
+    *,
+    provider_calls_made: int,
+) -> None:
+    files: JsonObject = {}
+    for relative_path in _GATE_C_EVIDENCE_JSON_FILES:
+        records = [_read_json(output_root / relative_path)]
+        files[relative_path] = {
+            "record_count": 1,
+            "records_digest": digest_json(records),
+        }
+    for relative_path in _GATE_C_EVIDENCE_JSONL_FILES:
+        records = _read_jsonl(output_root / relative_path)
+        files[relative_path] = {
+            "record_count": len(records),
+            "records_digest": digest_json(records),
+        }
+    manifest: JsonObject = {
+        "schema_version": "tokenshare.paper_gate_c_evidence_manifest.v1",
+        "execution_plan_digest": _read_json(
+            output_root / "execution_plan.json"
+        )["execution_plan_digest"],
+        "files": files,
+        "provider_calls_made": provider_calls_made,
+    }
+    manifest["evidence_manifest_digest"] = digest_json(manifest)
+    _write_json(output_root / "evidence_manifest.json", manifest)
+
+
+def _validate_gate_c_evidence_manifest(output_root: Path) -> None:
+    manifest = _read_json(output_root / "evidence_manifest.json")
+    stored_digest = manifest.get("evidence_manifest_digest")
+    body = {
+        key: value
+        for key, value in manifest.items()
+        if key != "evidence_manifest_digest"
+    }
+    if stored_digest != digest_json(body):
+        raise ValueError("Gate C evidence manifest digest is invalid")
+    expected_paths = set(_GATE_C_EVIDENCE_JSON_FILES) | set(
+        _GATE_C_EVIDENCE_JSONL_FILES
+    )
+    files = manifest.get("files")
+    if not isinstance(files, dict) or set(files) != expected_paths:
+        raise ValueError("Gate C evidence manifest file inventory is incomplete")
+    for relative_path in _GATE_C_EVIDENCE_JSON_FILES:
+        records = [_read_json(output_root / relative_path)]
+        actual = {
+            "record_count": 1,
+            "records_digest": digest_json(records),
+        }
+        if files[relative_path] != actual:
+            raise ValueError(f"Gate C evidence drift: {relative_path}")
+    for relative_path in _GATE_C_EVIDENCE_JSONL_FILES:
+        records = _read_jsonl(output_root / relative_path)
+        actual = {
+            "record_count": len(records),
+            "records_digest": digest_json(records),
+        }
+        if files[relative_path] != actual:
+            raise ValueError(f"Gate C evidence drift: {relative_path}")
+
+
+def _replay_gate_c_pilot(
+    *,
+    output_root: Path,
+    expected_plan: JsonObject,
+) -> GateCPilotExecutionResult:
+    required_paths = (
+        "execution_plan.json",
+        "suite_manifest.json",
+        "run_budget.json",
+        "input_catalog_manifest.json",
+        "conditions.jsonl",
+        "run_results.jsonl",
+        "per_task_results.jsonl",
+        "per_attempt_results.jsonl",
+        "fault_injections.jsonl",
+        "model_execution_records.jsonl",
+        "events/event_log.jsonl",
+        "artifacts/artifact_index.jsonl",
+        "metrics/per_condition_summary.csv",
+        "audit/paper_eligibility_report.json",
+        "audit/secret_scan_report.json",
+        "evidence_manifest.json",
+    )
+    for relative_path in required_paths:
+        if not (output_root / relative_path).is_file():
+            raise ValueError(
+                f"replay requires complete Gate C pilot evidence: {relative_path}"
+            )
+    stored_plan = _read_json(output_root / "execution_plan.json")
+    if stored_plan != expected_plan:
+        raise ValueError("replay execution plan drift")
+    _validate_gate_c_evidence_manifest(output_root)
+    from tokenshare.experiments.paper_metrics import (
+        recompute_gate_c_pilot_metrics,
+    )
+
+    recompute_gate_c_pilot_metrics(output_root)
+    suite = _read_json(output_root / "suite_manifest.json")
+    return GateCPilotExecutionResult(
+        suite_id=str(suite["suite_id"]),
+        experiment_id=str(suite["experiment_id"]),
+        condition_id=str(suite["condition_id"]),
+        case_id=str(suite["case_id"]),
+        ai_unit_id=(
+            str(suite["ai_unit_id"])
+            if suite.get("ai_unit_id") is not None
+            else None
+        ),
+        status=str(suite["status"]),
+        output_root=output_root.as_posix(),
+        budget_digest=str(suite["budget_digest"]),
+        condition_digest=str(suite["condition_digest"]),
+        selection_digest=str(suite["selection_digest"]),
+        provider_attempt_count=int(suite["provider_attempt_count"]),
+        provider_calls_made=0,
+        transport_calls_observed=0,
+        total_tokens=int(suite["total_tokens"]),
+        total_cost_estimate=float(suite["total_cost_estimate"]),
+        paper_eligible=False,
+        replayed=True,
+    )
+
+
+def _forbidden_plan_execution(**_kwargs: Any) -> PaperConditionResult:
+    raise AssertionError("Gate C plan-only must not execute a condition")
 
 
 def normalize_experiment_ids(values: list[str] | tuple[str, ...]) -> tuple[str, ...]:

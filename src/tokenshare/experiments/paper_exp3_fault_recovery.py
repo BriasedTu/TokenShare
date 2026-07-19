@@ -16,6 +16,8 @@ from tokenshare.core.models import ArtifactRef
 from tokenshare.experiments.paper_experiment_contracts import (
     ExperimentSummaryRows,
     FrozenCaseSelection,
+    FrozenCaseSelectionBatch,
+    FrozenConditionSelectionBinding,
     PaperExecutionContext,
 )
 from tokenshare.experiments.paper_faults import (
@@ -185,7 +187,7 @@ class Experiment3FaultRecoveryModule:
         self,
         context: PaperExecutionContext,
         conditions: tuple[PaperExperimentCondition, ...],
-    ) -> tuple[FrozenCaseSelection, ...]:
+    ) -> FrozenCaseSelectionBatch:
         return freeze_exp3_case_selections(context, conditions)
 
     def run_condition(
@@ -436,12 +438,16 @@ def expand_exp3_conditions(
 def freeze_exp3_case_selections(
     context: PaperExecutionContext,
     conditions: Sequence[PaperExperimentCondition],
-) -> tuple[FrozenCaseSelection, ...]:
+) -> FrozenCaseSelectionBatch:
     catalog = _catalog_mapping(context.catalog)
-    selections = tuple(
-        _selection_for_condition(condition, catalog=catalog)
+    bindings = tuple(
+        FrozenConditionSelectionBinding.from_condition(
+            condition,
+            _selection_for_condition(condition, catalog=catalog),
+        )
         for condition in conditions
     )
+    selections = FrozenCaseSelectionBatch(bindings)
     validate_exp3_condition_matrix(conditions, selections, catalog=catalog)
     return selections
 
@@ -1059,6 +1065,9 @@ def _condition_from_key(
         provider_model_id=BASELINE_PROVIDER_MODEL_ID,
         model_entry_id=BASELINE_MODEL_ENTRY_ID,
         reasoning_profile_id=BASELINE_REASONING_PROFILE_ID,
+        model_cohort_id=endpoint_identity.get("model_cohort_id"),
+        model_cohort_digest=endpoint_identity.get("model_cohort_digest"),
+        cohort_member_id=endpoint_identity.get("cohort_member_id"),
         source_provider_config_digest=str(
             endpoint_identity["source_provider_config_digest"]
         ),
@@ -1653,6 +1662,9 @@ def _identity_from_condition(
     condition: PaperExperimentCondition,
 ) -> JsonObject:
     return {
+        "model_cohort_id": condition.model_cohort_id,
+        "model_cohort_digest": condition.model_cohort_digest,
+        "cohort_member_id": condition.cohort_member_id,
         "provider_config_id": condition.provider_config_id,
         "selected_entry_id": condition.model_entry_id,
         "model_entry_id": condition.model_entry_id,

@@ -9,6 +9,8 @@ from typing import Any
 from tokenshare.experiments.paper_experiment_contracts import (
     ExperimentSummaryRows,
     FrozenCaseSelection,
+    FrozenCaseSelectionBatch,
+    FrozenConditionSelectionBinding,
     PaperExecutionContext,
     canonical_contract_digest,
 )
@@ -147,7 +149,7 @@ class Experiment2ScalabilityModule:
         self,
         context: PaperExecutionContext,
         conditions: tuple[PaperExperimentCondition, ...],
-    ) -> tuple[FrozenCaseSelection, ...]:
+    ) -> FrozenCaseSelectionBatch:
         return freeze_exp2_case_selections(context, conditions)
 
     def run_condition(
@@ -214,15 +216,19 @@ def expand_exp2_conditions(
 def freeze_exp2_case_selections(
     context: PaperExecutionContext,
     conditions: Sequence[PaperExperimentCondition],
-) -> tuple[FrozenCaseSelection, ...]:
-    selections: list[FrozenCaseSelection] = []
+) -> FrozenCaseSelectionBatch:
+    bindings: list[FrozenConditionSelectionBinding] = []
     for condition in conditions:
         validate_exp2_condition(context, condition)
-        if condition.domain == "factorization":
-            selections.append(_factorization_selection(context, condition))
-        else:
-            selections.append(_lean_selection(context, condition))
-    return tuple(selections)
+        selection = (
+            _factorization_selection(context, condition)
+            if condition.domain == "factorization"
+            else _lean_selection(context, condition)
+        )
+        bindings.append(
+            FrozenConditionSelectionBinding.from_condition(condition, selection)
+        )
+    return FrozenCaseSelectionBatch(bindings)
 
 
 def count_exp2_root_runs(
@@ -450,6 +456,9 @@ def _condition(
         provider_family=BASELINE_PROVIDER_FAMILY,
         provider_model_id=BASELINE_PROVIDER_MODEL_ID,
         reasoning_profile_id=BASELINE_REASONING_PROFILE_ID,
+        model_cohort_id=endpoint_binding.get("model_cohort_id"),
+        model_cohort_digest=endpoint_binding.get("model_cohort_digest"),
+        cohort_member_id=endpoint_binding.get("cohort_member_id"),
         source_provider_config_digest=str(
             endpoint_binding["source_provider_config_digest"]
         ),
@@ -910,6 +919,7 @@ def _validate_summary_selection(
         raise ValueError("summary selection_id drift")
     generated_fields = {
         "selection_digest",
+        "case_selection_digest",
         "execution_status",
         "paper_eligible_possible",
         "provider_calls_made",
@@ -2160,6 +2170,9 @@ def _validate_approved_endpoint_binding(
         "provider_family": BASELINE_PROVIDER_FAMILY,
         "provider_model_id": BASELINE_PROVIDER_MODEL_ID,
         "reasoning_profile_id": BASELINE_REASONING_PROFILE_ID,
+        "model_cohort_id": _field(identity, "model_cohort_id"),
+        "model_cohort_digest": _field(identity, "model_cohort_digest"),
+        "cohort_member_id": _field(identity, "cohort_member_id"),
         "source_provider_config_digest": source_digest,
         "model_endpoint_identity_digest": endpoint_digest,
         "request_controls": context_request_limits,

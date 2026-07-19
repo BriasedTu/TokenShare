@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import json
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from math import isqrt
 from pathlib import Path
 from typing import Any
@@ -207,6 +207,7 @@ def run_factorization_paper_case(
     entry_id: str | None = None,
     max_tokens: int = 512,
     timeout_seconds: int = 30,
+    selected_ai_unit_id: str | None = None,
 ) -> FactorizationPaperRunResult:
     """Run one factorization paper catalog case through range children."""
 
@@ -265,9 +266,28 @@ def run_factorization_paper_case(
         parser=parse_factorization_ai_output,
     )
 
+    indexed_ranges = list(enumerate(split_plan.partition.ranges))
+    available_ai_unit_ids = tuple(
+        f"range_{range_input.child_index}"
+        for _index, range_input in indexed_ranges
+    )
+    if (
+        selected_ai_unit_id is not None
+        and selected_ai_unit_id not in available_ai_unit_ids
+    ):
+        raise ValueError(
+            "selected_ai_unit_id is not present in factorization split plan"
+        )
+    if selected_ai_unit_id is not None:
+        indexed_ranges = [
+            (index, range_input)
+            for index, range_input in indexed_ranges
+            if f"range_{range_input.child_index}" == selected_ai_unit_id
+        ]
+
     range_records: list[JsonObject] = []
     attempts: list[PaperAttemptResult] = []
-    for index, range_input in enumerate(split_plan.partition.ranges):
+    for index, range_input in indexed_ranges:
         request = _build_range_execution_request(
             store=store,
             case=case,
@@ -311,6 +331,9 @@ def run_factorization_paper_case(
                 request_ref=request_ref,
                 submission=submission,
                 usage_ref=usage_ref,
+                paper_eligible_transport=not _is_offline_capturing_transport(
+                    active_transport
+                ),
             )
         )
         model_identity_mismatch = (
@@ -407,7 +430,8 @@ def run_factorization_paper_case(
     accepted_range_records = [
         item for item in range_records if item["verification"]["accepted"] is True
     ]
-    if len(accepted_range_records) == len(range_records):
+    all_ranges_executed = len(range_records) == len(split_plan.partition.ranges)
+    if all_ranges_executed and len(accepted_range_records) == len(range_records):
         merge_policy_result = merge_required_range_results(
             merge_plan=split_plan.merge_plan,
             slot_results=_slot_inputs_for_merge(split_plan, range_records),
@@ -428,6 +452,9 @@ def run_factorization_paper_case(
             "status": "blocked",
             "result_kind": None,
             "rejected_range_count": len(range_records) - len(accepted_range_records),
+            "unexecuted_range_count": (
+                len(split_plan.partition.ranges) - len(range_records)
+            ),
         }
 
     final_prime_factors = (
@@ -458,6 +485,7 @@ def run_factorization_paper_case(
         real_transport=real_transport,
         transport_kind="ai_api" if real_transport else "scripted",
         secret_values=secret_values,
+        transport=active_transport,
     )
     eligibility = evaluate_paper_eligibility(
         attempts=attempts,
@@ -810,7 +838,9 @@ def _validate_real_transport_mode(
     if transport is None:
         return
     expected_type = _real_transport_type(ai_api_config.provider_family)
-    if type(transport) is not expected_type:
+    if type(transport) is not expected_type and not _is_offline_capturing_transport(
+        transport
+    ):
         raise ValueError(
             "real transport factorization paper runs require "
             "UrlLibSiliconFlowTransport or UrlLibOpenAITransport matching "
@@ -911,6 +941,7 @@ def _save_model_execution_record(
     request_ref: ArtifactRef,
     submission,
     usage_ref: ArtifactRef,
+    paper_eligible_transport: bool,
 ):
     if binding is None:
         return None, None
@@ -944,6 +975,8 @@ def _save_model_execution_record(
         usage_ref=usage_ref.to_dict(),
         created_at=NOW,
     )
+    if not paper_eligible_transport and record.paper_eligible:
+        record = replace(record, paper_eligible=False)
     record_ref = store.save_json(
         record.to_dict(),
         artifact_id=f"paper_model_execution_{submission.submission_id}",
@@ -1120,15 +1153,22 @@ def _run_evidence(
     real_transport: bool,
     transport_kind: str,
     secret_values: tuple[str, ...],
+    transport: Any | None = None,
 ) -> JsonObject:
+    if _is_offline_capturing_transport(transport):
+        real_transport = False
+        transport_kind = "capturing"
+        config_source = "offline_capturing_config"
+    else:
+        config_source = (
+            "local_gitignored_config" if real_transport else "scripted_fixture"
+        )
     transport_ref = store.save_json(
         {
             "schema_version": "tokenshare.paper_transport_evidence.v1",
             "real_transport": real_transport,
             "transport_kind": transport_kind,
-            "config_source": (
-                "local_gitignored_config" if real_transport else "scripted_fixture"
-            ),
+            "config_source": config_source,
             "api_key_policy": "env_only",
             "executor_kind": "ai_api_executor",
         },
@@ -1171,9 +1211,7 @@ def _run_evidence(
             "schema_version": "tokenshare.paper_transport_evidence.v1",
             "real_transport": real_transport,
             "transport_kind": transport_kind,
-            "config_source": (
-                "local_gitignored_config" if real_transport else "scripted_fixture"
-            ),
+            "config_source": config_source,
             "api_key_policy": "env_only",
             "executor_kind": "ai_api_executor",
             "evidence_ref": transport_ref.to_dict(),
@@ -1184,6 +1222,14 @@ def _run_evidence(
         },
         "artifact_manifests": artifact_manifests,
     }
+
+
+def _is_offline_capturing_transport(transport: Any | None) -> bool:
+    return (
+        transport is not None
+        and getattr(transport, "tokenshare_offline_capturing_transport", False)
+        is True
+    )
 
 
 def _real_secret_values(config: AIAPIExecutorConfig) -> tuple[str, ...]:

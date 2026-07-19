@@ -1,3 +1,5 @@
+from dataclasses import replace
+
 import pytest
 
 from tests.phase7_fixtures import FakeProviderResponse, make_config_dict
@@ -43,7 +45,13 @@ def _openai_config():
 
 def test_build_openai_chat_body_uses_reasoning_effort_without_siliconflow_fields() -> None:
     config = _openai_config()
-    entry = config.entries[0]
+    entry = replace(
+        config.entries[0],
+        request_overrides={
+            **config.entries[0].request_overrides,
+            "temperature": 0.4,
+        },
+    )
 
     body = build_openai_chat_body(
         entry=entry,

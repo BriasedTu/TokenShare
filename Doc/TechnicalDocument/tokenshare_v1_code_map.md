@@ -832,6 +832,7 @@ Flow result 对象：
 
 - raw-only 不允许作为 successful output。
 - parser 只接受 structured JSON object。
+- parser 在构造 `RangeResult` 前显式要求完整 schema 字段，禁止数据类默认值静默补齐缺失 `schema_version`。
 - verifier 重新检查 child input alignment。
 - `found_factor` 必须在 range 内并整除 target。
 - `no_factor_in_range` 会在 budget 内 brute-force recheck。
@@ -850,6 +851,7 @@ Flow result 对象：
 
 - prompt package 由插件拥有。
 - prompt 包含 exact protocol-bound JSON field values。
+- constraints 同时固定 `strict_json_only=true` 与 `requires_json_mode=true`，防止真实 Factorization 请求退化到普通文本模式。
 - executor 不拥有 output schema。
 
 测试：
@@ -1320,7 +1322,7 @@ Phase 7 实验级 AI API executor source：
 - `src/tokenshare/executors/ai_api_selector.py`
 - `src/tokenshare/executors/ai_api_transport.py`
 
-这些文件仍使用 Phase 3 `ExecutionRequest` / `ExecutionSubmission` 契约，但真实 provider transport、local secret injection、model selection、raw persistence 和 replay guard 属于 Phase 7，而不是 Phase 1-6 协议内核。
+这些文件仍使用 Phase 3 `ExecutionRequest` / `ExecutionSubmission` 契约，但真实 provider transport、local secret injection、model selection、raw persistence 和 replay guard 属于 Phase 7，而不是 Phase 1-6 协议内核。2026-07-19 起 JSON mode 对 SiliconFlow/OpenAI 均固定 `temperature=0`；SiliconFlow builder 还对所有支持 JSON mode 的 entry 固定写入 `response_format={"type":"json_object"}` 与 `enable_thinking=false`，并在 transport 前拒绝显式 `enable_thinking=true`。该 transport contract 不包含任何 experiment-specific condition expansion。
 
 Phase 7 AI API executor tests：
 
@@ -1356,6 +1358,7 @@ Phase 8 / benchmark / paper experiment source：
 - `src/tokenshare/experiments/paper_models.py`
 - `src/tokenshare/experiments/paper_report.py`
 - `src/tokenshare/experiments/paper_runner.py`
+- `src/tokenshare/experiments/paper_dispatcher.py`
 - `src/tokenshare/experiments/paper_unit_commitments.py`
 - `src/tokenshare/experiments/report.py`
 - `src/tokenshare/experiments/run_ai_profile.py`
@@ -1368,7 +1371,15 @@ Phase 8 / benchmark / paper experiment source：
 
 这些文件承载 Phase 8 regression infrastructure、AI profile、direct factorization 500、Lean AI 50 和后续 `feat-011` paper experiments。2026-07-18 Task 14 的 Lean 3×3 catalog/readiness、checker-backed oracle feasibility、paper runner plan-only budget input 和 zero-call boundary 也属于这个范围外实验层；它们可以调用 Phase 1-6 protocol/plugin/executor surfaces，但不能重新定义协议权威事实。当前 Task 14 manifest 冻结 9 个 executable cells、0 个 blocked cells、每格 15 个 checker-backed selected case IDs、合计 135 个 Lean roots；`benchmarks/paper/lean_lemma_graph_catalog.v1.jsonl` 保留 hard/frontier no-oracle structured-blocked regression rows，但这些 rows 不计入 selected slice 或 golden readiness。
 
-2026-07-18 语义复核补充：上述 manifest 当前只能证明 135 个唯一 case IDs 和 checker-backed 机械 readiness，不能证明 135 个语义不同 roots。八个 v2 passed cells 每格只有一个 canonical theorem/DAG 形状，三个 hard checker pools 与对应 medium 模板相同，hard/function_set 与 hard/induction 还缺少逐格端到端 golden evidence。因此 Task 14 当前为 `semantic_blocked`；旧 digests 不得进入正式 Task 15，需在 semantic catalog repair 后重算。
+2026-07-19 范围外实验层更新：`paper_dispatcher.py` 通过统一 `PaperExperimentModule` Protocol 加载 Exp1–5，并把单个 paper case 路由到 Factorization/Lean adapter；`paper_runner.py` 为各模块构造 formal catalog view、冻结 exact selections，并为 pilot-only 执行选择一个 case/AI unit；`paper_budget.py` 将 exact selections、AI-unit commitments、endpoint identity、request/hard limits 纳入审批 digest；`run_paper_experiments.py` formal plan-only 使用该 dispatcher并输出零调用计划。当前 semantic-repair digests 为 catalog `sha256:a3b3713663a7d564eb5440f4bbec714cf600b24a80539c6a990746184f11134f`、matrix `sha256:43f1a3ab54c735cf34f9438d8b04899976bfc2d11afc47073c5822f4de2f8255`、selection `sha256:4b1b08cc8893045aa6206461f3b27563943a76022a77b29934d02d5044225d24`，冻结 135 个 Lean roots / 570 个 AI units。上述内容不改变 Phase 1–6 协议对象、事件或状态机。
+
+2026-07-19 Prompt H review hardening：所有 JSON-mode provider request 固定零 temperature；case/unit selector 强制独立 output root，并在 CLI/direct runner 两层拒绝 resolve 后与 canonical full-pilot tree 相等或祖先/子孙重叠；CLI 错误审计落到 sibling blocked root。incomplete Exp5 dispatch plan 带 `blocked/incomplete_model_cohort/paper_eligible_possible=false` 元数据，并且 combined suite 不让 optional P0-full Exp5 覆盖 planned P0-core Exp1。用户明确排除人为伪造/注入攻击模型，因此未在范围外实验层增加相应对抗逻辑。root-isolation TDD 为 `6 failed` -> `6 passed`，最终独立复审无 Critical/Important，Prompt H 已形成 reviewed integration checkpoint。最终全实验门禁为 `528 passed`，完整启动门禁收集 969 项并通过 `968 passed, 1 skipped`，最新零调用审计检查 553 个 call fields 与 10 个 suite attempt counters 并保持全部为 0；`feat-011` 仍为 `in-progress`。
+
+2026-07-19 Prompt H integration-owner closeout：范围外实验层 general CLI 现在有一条不 monkeypatch execution callback 的 Exp2 E2E 回归，实际到达注册模块、Factorization adapter、AIAPIExecutor、capturing request 和 verifier/evidence。`paper_runner._exp3_catalog_view()` 将 Exp3 condition-level fault target identity 固定为 `case_id:planned_ai_unit_id`，消除跨 case 局部 range ID 碰撞；H 仍不执行非零 fault/worker death。Exp2 summary 把派生 `case_selection_digest` 与模块所有权 `selection_digest` 分离重算，保证共享 slice 比较不破坏 C–G 原契约。最终 experiments 为 `541 passed`，完整启动门禁收集 982 项并通过 `981 passed, 1 skipped`；H 范围 3569 个 provider-call fields 全为 0，capturing evidence 仍不可 paper-eligible，未产生真实 pilot/formal 论文结果。
+
+2026-07-19 Prompt H exact-binding closeout：范围外实验层新增 `FrozenConditionSelectionBinding` 与 tuple-compatible `FrozenCaseSelectionBatch`，由 Exp1–5 在原完整 matrix freeze 内为每个 selection 同时写入完整 condition ID/digest；`PaperExperimentDispatchPlan` 升为 v2 并持久化显式 bindings。shared dispatcher、runner 和 CLI budget commitment 只按完整 identity 查找，不再把平行数组位置当作归属；duplicate/missing/extra/digest/wrong-selection 在 plan 期拒绝。该修复只补实验集成 identity contract，不改变 Phase 1–6 核心或 C–G 矩阵算法。专项复审无 Critical/Important/Minor；最终 targeted=`446 passed`、experiments=`543 passed`、impact=`211 passed, 1 skipped`、完整启动门禁=`983 passed, 1 skipped`（984 collected）。pytest-1452 H-scope/readiness audit 检查 774 个结构化 JSON/JSONL 的 4308 个 provider-call fields，全部为 0 且无解析遗漏；未产生 pilot/formal 论文结果，`feat-011` 仍为 `in-progress`。
+
+2026-07-18 历史语义复核补充（已由 2026-07-19 semantic repair 覆盖）：当时的 manifest 只能证明 135 个唯一 case IDs 和 checker-backed 机械 readiness，八个 v2 passed cells 每格只有一个 canonical theorem/DAG 形状，且三个 hard checker pools 与对应 medium 模板相同，因此旧 digests 当时不得进入正式 Task 15。该 blocker 已通过上段新 digests、每格 15 个不同 semantic fingerprints、hard/medium 分离和逐格 golden evidence 修复；本段仅保留为历史 review provenance，不再表示当前 Gate C 状态。
 
 Phase 8 / benchmark tests：
 
@@ -1380,6 +1391,8 @@ Phase 8 / benchmark tests：
 - `tests/experiments/test_lean_lemma_graph_catalog.py`
 - `tests/experiments/test_paper_budget.py`
 - `tests/experiments/test_paper_catalog.py`
+- `tests/experiments/test_paper_gate_c_dispatcher.py`
+- `tests/experiments/test_paper_gate_c_structured_output.py`
 - `tests/experiments/test_run_paper_experiments_cli.py`
 - `tests/experiments/test_phase8_default_suite.py`
 - `tests/experiments/test_phase8_models.py`

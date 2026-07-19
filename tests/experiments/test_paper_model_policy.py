@@ -548,7 +548,11 @@ def test_cli_plan_only_exp5_writes_fixed_endpoint_cohort_evidence_without_provid
         "qwen3_6_27b_siliconflow",
         "gpt_5_6_sol_high_openai",
     }
-    assert suite["condition_count"] == 18
+    assert suite["condition_count"] == 54
+    assert suite["run_count"] == 270
+    assert suite["task_count"] == 270
+    assert budget["planned_conditions"] == 54
+    assert budget["planned_root_runs"] == 270
 
 
 def test_cli_exp5_missing_member_is_structured_blocked_but_exp1_plan_still_succeeds(
@@ -596,6 +600,9 @@ def test_cli_exp5_missing_member_is_structured_blocked_but_exp1_plan_still_succe
     exp5_suite = json.loads(
         (tmp_path / "exp5" / "suite_manifest.json").read_text(encoding="utf-8")
     )
+    exp5_dispatch = json.loads(
+        (tmp_path / "exp5" / "paper_dispatch_plans.json").read_text(encoding="utf-8")
+    )
 
     assert exp5_exit == 0
     assert exp5_suite["status"] == "blocked"
@@ -603,6 +610,9 @@ def test_cli_exp5_missing_member_is_structured_blocked_but_exp1_plan_still_succe
     assert exp5_plan["blocked_reason"] == "incomplete_model_cohort"
     assert exp5_plan["paper_eligible_possible"] is False
     assert exp5_plan["provider_calls_made"] == 0
+    assert exp5_dispatch["plans"][0]["status"] == "blocked"
+    assert exp5_dispatch["plans"][0]["blocked_reason"] == "incomplete_model_cohort"
+    assert exp5_dispatch["plans"][0]["paper_eligible_possible"] is False
 
     exp1_exit = main(
         [
@@ -629,6 +639,42 @@ def test_cli_exp5_missing_member_is_structured_blocked_but_exp1_plan_still_succe
     assert exp1_suite["status"] == "planned"
     assert exp1_suite["condition_count"] > 0
     assert exp1_suite["model_endpoint_cohort_preflight"] is None
+
+    combined_exit = main(
+        [
+            "--output-root",
+            str(tmp_path / "combined"),
+            "--experiments",
+            "exp1,exp5",
+            "--plan-only",
+            "--model-cohort-file",
+            str(cohort_path),
+            "--model-entry-map",
+            str(entry_map_path),
+            "--provider-config",
+            f"siliconflow={sf_config_path}",
+            "--provider-config",
+            f"openai={openai_config_path}",
+        ]
+    )
+    combined_suite = json.loads(
+        (tmp_path / "combined" / "suite_manifest.json").read_text(encoding="utf-8")
+    )
+    combined_dispatch = json.loads(
+        (tmp_path / "combined" / "paper_dispatch_plans.json").read_text(
+            encoding="utf-8"
+        )
+    )
+
+    assert combined_exit == 0
+    assert combined_suite["status"] == "planned"
+    assert combined_suite["condition_count"] == 36
+    assert [plan["status"] for plan in combined_dispatch["plans"]] == [
+        "planned",
+        "blocked",
+    ]
+    assert combined_dispatch["plans"][1]["blocked_reason"] == "incomplete_model_cohort"
+    assert combined_dispatch["provider_calls_made"] == 0
 
 
 def test_formal_exp5_schema_and_cli_reject_legacy_strong_weak_mixed(

@@ -28,6 +28,24 @@ from tokenshare.plugins.factorization.schemas import (
 
 
 DEFAULT_NO_FACTOR_RECHECK_MAX_DIVISORS = 100_000
+RANGE_RESULT_REQUIRED_FIELDS = frozenset(
+    {
+        "schema_version",
+        "range_result_id",
+        "result_kind",
+        "target_n",
+        "range_start",
+        "range_end",
+        "coverage_id",
+        "child_index",
+        "partition_params_digest",
+        "found_factor",
+        "cofactor",
+        "checked_divisor_count",
+        "executor_summary",
+        "created_at",
+    }
+)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -60,6 +78,11 @@ def parse_range_result(payload: JsonObject | str) -> RangeResult:
     """只接受结构化 JSON object / dict，不从自然语言中抽取候选因子。"""
 
     body = _structured_json_object(payload)
+    missing_fields = sorted(RANGE_RESULT_REQUIRED_FIELDS.difference(body))
+    if missing_fields:
+        raise ValueError(
+            f"invalid structured range_result: missing required fields: {', '.join(missing_fields)}"
+        )
     try:
         return RangeResult(**body)
     except (TypeError, ValueError) as exc:

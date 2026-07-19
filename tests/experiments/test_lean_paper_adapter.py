@@ -112,6 +112,47 @@ def test_lean_paper_adapter_runs_split_children_through_ai_api_checker_and_merge
     assert "claim_checker_success" in provider_prompt
 
 
+def test_lean_paper_adapter_can_execute_exactly_one_selected_ai_unit(
+    tmp_path,
+) -> None:
+    catalog = load_paper_catalogs(
+        factorization_path=FACTOR_CATALOG,
+        lean_path=LEAN_CATALOG,
+    )
+    case = catalog.cases_for(domain="lean_proof", difficulty="easy")[0]
+    condition = _condition(catalog.catalog_digest)
+    transport = ScriptedLeanPaperProofTransport()
+
+    result = run_lean_paper_case(
+        case=case,
+        condition=condition,
+        output_root=tmp_path,
+        transport=transport,
+        real_transport=False,
+        entry_id="lean_paper_scripted",
+        selected_ai_unit_id="child_0",
+    )
+
+    assert len(transport.calls) == 1
+    assert len(result.attempt_results) == 1
+    assert result.attempt_results[0].planned_ai_unit_id == "child_0"
+    assert result.merge_summary["status"] == "blocked"
+    assert result.task_result.root_status == PaperTaskStatus.FAILED
+
+    untouched_transport = ScriptedLeanPaperProofTransport()
+    with pytest.raises(ValueError, match="selected_ai_unit_id"):
+        run_lean_paper_case(
+            case=case,
+            condition=condition,
+            output_root=tmp_path / "invalid-selection",
+            transport=untouched_transport,
+            real_transport=False,
+            entry_id="lean_paper_scripted",
+            selected_ai_unit_id="child_99",
+        )
+    assert untouched_transport.calls == []
+
+
 def test_lean_paper_adapter_runs_v2_medium_pure_logic_lemma_dag_nodes_through_ai_api_checker_and_merge(
     tmp_path,
 ) -> None:

@@ -89,6 +89,7 @@ def build_factor_search_prompt_package(
             "prompt_owner": "factorization_plugin",
             "verification_authority": RANGE_RESULT_VALIDATOR_POLICY_ID,
             "strict_json_only": True,
+            "requires_json_mode": True,
             "bounded_range_only": True,
             "executor_must_not": [
                 "search_outside_assigned_range",

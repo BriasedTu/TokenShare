@@ -13,7 +13,7 @@ import json
 import os
 import re
 import tempfile
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -239,6 +239,7 @@ def run_lean_paper_case(
     entry_id: str | None = None,
     max_tokens: int = 1024,
     timeout_seconds: int = 30,
+    selected_ai_unit_id: str | None = None,
 ) -> LeanPaperRunResult:
     """Run one Lean paper catalog case through split children and checker merge."""
 
@@ -292,6 +293,7 @@ def run_lean_paper_case(
             validated_binding=validated_binding,
             max_tokens=max_tokens,
             timeout_seconds=timeout_seconds,
+            selected_ai_unit_id=selected_ai_unit_id,
         )
 
     case_id = str(case["case_id"])
@@ -358,9 +360,24 @@ def run_lean_paper_case(
         str(slot["source_child_logical_key"]): str(slot["slot_key"])
         for slot in split_plan.merge_plan.required_slots
     }
-    for index, (child_key, child_payload_ref) in enumerate(
-        sorted(split_plan.child_payload_refs_by_logical_key.items())
+    indexed_children = list(
+        enumerate(sorted(split_plan.child_payload_refs_by_logical_key.items()))
+    )
+    available_ai_unit_ids = tuple(
+        f"child_{index}" for index, _child in indexed_children
+    )
+    if (
+        selected_ai_unit_id is not None
+        and selected_ai_unit_id not in available_ai_unit_ids
     ):
+        raise ValueError("selected_ai_unit_id is not present in Lean split plan")
+    if selected_ai_unit_id is not None:
+        indexed_children = [
+            (index, child)
+            for index, child in indexed_children
+            if f"child_{index}" == selected_ai_unit_id
+        ]
+    for index, (child_key, child_payload_ref) in indexed_children:
         child_result = _run_child_attempt(
             case=case,
             condition=condition,
@@ -372,6 +389,9 @@ def run_lean_paper_case(
             config=config,
             validated_binding=validated_binding,
             transport=active_transport,
+            paper_eligible_transport=not _is_offline_capturing_transport(
+                active_transport
+            ),
             index=index,
             timeout_seconds=timeout_seconds,
             max_tokens=max_tokens,
@@ -416,6 +436,7 @@ def run_lean_paper_case(
         real_transport=real_transport,
         transport_kind="ai_api" if real_transport else "scripted",
         secret_values=secret_values,
+        transport=active_transport,
     )
     eligibility = evaluate_paper_eligibility(
         attempts=attempts,
@@ -688,6 +709,7 @@ def _run_lean_lemma_graph_paper_case(
     validated_binding: ValidatedModelEndpointBinding | None,
     max_tokens: int,
     timeout_seconds: int,
+    selected_ai_unit_id: str | None,
 ) -> LeanPaperRunResult:
     paper_metadata = _validated_condition_paper_metadata(
         condition=condition,
@@ -787,7 +809,22 @@ def _run_lean_lemma_graph_paper_case(
     child_records: list[JsonObject] = []
     node_proofs: list[LeanLemmaGraphProofInput] = []
     nodes_by_id = {str(node["node_id"]): node for node in certificate.lemma_nodes}
-    for index, node_id in enumerate(_lemma_graph_topological_order(case)):
+    indexed_node_ids = list(enumerate(_lemma_graph_topological_order(case)))
+    available_ai_unit_ids = tuple(node_id for _index, node_id in indexed_node_ids)
+    if (
+        selected_ai_unit_id is not None
+        and selected_ai_unit_id not in available_ai_unit_ids
+    ):
+        raise ValueError(
+            "selected_ai_unit_id is not present in Lean lemma graph split plan"
+        )
+    if selected_ai_unit_id is not None:
+        indexed_node_ids = [
+            (index, node_id)
+            for index, node_id in indexed_node_ids
+            if node_id == selected_ai_unit_id
+        ]
+    for index, node_id in indexed_node_ids:
         node = nodes_by_id[node_id]
         node_payload_ref = split_plan.child_payload_refs_by_logical_key[node_id]
         node_result = _run_lemma_graph_node_attempt(
@@ -800,6 +837,9 @@ def _run_lean_lemma_graph_paper_case(
             config=config,
             validated_binding=validated_binding,
             transport=active_transport,
+            paper_eligible_transport=not _is_offline_capturing_transport(
+                active_transport
+            ),
             index=index,
             timeout_seconds=timeout_seconds,
             max_tokens=max_tokens,
@@ -840,6 +880,7 @@ def _run_lean_lemma_graph_paper_case(
         real_transport=real_transport,
         transport_kind="ai_api" if real_transport else "scripted",
         secret_values=secret_values,
+        transport=active_transport,
     )
     run_evidence["lean_lemma_graph"] = _lemma_graph_run_metadata(
         case=case,
@@ -907,6 +948,7 @@ def _run_child_attempt(
     config: AIAPIExecutorConfig,
     validated_binding: ValidatedModelEndpointBinding | None,
     transport: Any,
+    paper_eligible_transport: bool,
     index: int,
     timeout_seconds: int,
     max_tokens: int,
@@ -973,6 +1015,7 @@ def _run_child_attempt(
         request_ref=request_ref,
         submission=submission,
         usage_ref=usage_ref,
+        paper_eligible_transport=paper_eligible_transport,
     )
     model_identity_mismatch = (
         model_execution_record is not None
@@ -1059,6 +1102,7 @@ def _run_lemma_graph_node_attempt(
     config: AIAPIExecutorConfig,
     validated_binding: ValidatedModelEndpointBinding | None,
     transport: Any,
+    paper_eligible_transport: bool,
     index: int,
     timeout_seconds: int,
     max_tokens: int,
@@ -1143,6 +1187,7 @@ def _run_lemma_graph_node_attempt(
         request_ref=request_ref,
         submission=submission,
         usage_ref=usage_ref,
+        paper_eligible_transport=paper_eligible_transport,
     )
     model_identity_mismatch = (
         model_execution_record is not None
@@ -1567,7 +1612,9 @@ def _validate_real_transport_mode(
     if transport is None:
         return
     expected_type = _real_transport_type(ai_api_config.provider_family)
-    if type(transport) is not expected_type:
+    if type(transport) is not expected_type and not _is_offline_capturing_transport(
+        transport
+    ):
         raise ValueError(
             "real transport Lean paper runs require UrlLibSiliconFlowTransport "
             "or UrlLibOpenAITransport matching "
@@ -2348,6 +2395,7 @@ def _save_model_execution_record(
     request_ref: ArtifactRef,
     submission,
     usage_ref: ArtifactRef,
+    paper_eligible_transport: bool,
 ):
     if binding is None:
         return None, None
@@ -2381,6 +2429,8 @@ def _save_model_execution_record(
         usage_ref=usage_ref.to_dict(),
         created_at=NOW,
     )
+    if not paper_eligible_transport and record.paper_eligible:
+        record = replace(record, paper_eligible=False)
     record_ref = store.save_json(
         record.to_dict(),
         artifact_id=f"paper_model_execution_{submission.submission_id}",
@@ -2688,15 +2738,22 @@ def _run_evidence(
     real_transport: bool,
     transport_kind: str,
     secret_values: tuple[str, ...],
+    transport: Any | None = None,
 ) -> JsonObject:
+    if _is_offline_capturing_transport(transport):
+        real_transport = False
+        transport_kind = "capturing"
+        config_source = "offline_capturing_config"
+    else:
+        config_source = (
+            "local_gitignored_config" if real_transport else "scripted_fixture"
+        )
     transport_ref = store.save_json(
         {
             "schema_version": "tokenshare.paper_transport_evidence.v1",
             "real_transport": real_transport,
             "transport_kind": transport_kind,
-            "config_source": (
-                "local_gitignored_config" if real_transport else "scripted_fixture"
-            ),
+            "config_source": config_source,
             "api_key_policy": "env_only",
             "executor_kind": "ai_api_executor",
         },
@@ -2739,9 +2796,7 @@ def _run_evidence(
             "schema_version": "tokenshare.paper_transport_evidence.v1",
             "real_transport": real_transport,
             "transport_kind": transport_kind,
-            "config_source": (
-                "local_gitignored_config" if real_transport else "scripted_fixture"
-            ),
+            "config_source": config_source,
             "api_key_policy": "env_only",
             "executor_kind": "ai_api_executor",
             "evidence_ref": transport_ref.to_dict(),
@@ -2752,6 +2807,14 @@ def _run_evidence(
         },
         "artifact_manifests": artifact_manifests,
     }
+
+
+def _is_offline_capturing_transport(transport: Any | None) -> bool:
+    return (
+        transport is not None
+        and getattr(transport, "tokenshare_offline_capturing_transport", False)
+        is True
+    )
 
 
 def _real_secret_values(config: AIAPIExecutorConfig) -> tuple[str, ...]:
