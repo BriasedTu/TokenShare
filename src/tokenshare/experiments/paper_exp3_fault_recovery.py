@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import Any
 
@@ -47,12 +47,14 @@ BASELINE_PROVIDER_FAMILY = "siliconflow"
 BASELINE_PROVIDER_MODEL_ID = "zai-org/GLM-5.2"
 BASELINE_MODEL_ENTRY_ID = "glm_5_2_exp1_baseline"
 BASELINE_PROVIDER_CONFIG_ID = "exp1_baseline_siliconflow"
-BASELINE_REASONING_PROFILE_ID = "temperature_0_thinking_false"
+BASELINE_REASONING_PROFILE_ID = "default"
 BASELINE_REQUEST_LIMIT_POLICY = {
     "max_tokens": 1024,
     "timeout_seconds": 30,
     "max_provider_attempts": 1,
     "temperature": 0.0,
+    "top_p": 1.0,
+    "stream": False,
     "enable_thinking": False,
 }
 
@@ -210,9 +212,17 @@ class Experiment3FaultRecoveryModule:
                 provider_attempt_count=0,
                 metrics_ref=None,
             )
-        result = context.execution_callback(
+        execution_manifest = _condition_execution_manifest(
+            context=context,
             condition=canonical_condition,
             selection=selection,
+        )
+        result = context.execution_callback(
+            context=context,
+            condition=canonical_condition,
+            selection=selection,
+            experiment_id=EXP3_EXPERIMENT_ID,
+            execution_manifest=execution_manifest,
         )
         if not isinstance(result, PaperConditionResult):
             raise ValueError("execution callback must return PaperConditionResult")
@@ -450,8 +460,8 @@ def build_exp3_plan_manifest(
         "total": 0,
     }
     target_rows: list[JsonObject] = []
-    ai_units_by_case_id = _ai_units_by_case_id(catalog)
-
+    baseline_by_condition: dict[str, str] = {}
+    baselines_by_id: dict[str, JsonObject] = {}
     for condition, selection in zip(conditions, selections, strict=True):
         key = _parse_condition_id(condition.condition_id)
         case_count = len(selection.ordered_case_ids)
@@ -464,48 +474,35 @@ def build_exp3_plan_manifest(
         root_counts["total"] += case_count
 
         if key.matrix_kind == "rate_fault":
-            unit_ids = tuple(
-                unit_id
-                for case_id in selection.ordered_case_ids
-                for unit_id in ai_units_by_case_id[str(case_id)]
-            )
-            selected_targets = select_fault_targets(
-                unit_ids,
-                fault_rate=key.fault_rate_percent / 100.0,
-                seed=RATE_FAULT_TARGET_SEED,
-            )
             target_rows.append(
-                {
-                    "schema_version": "tokenshare.paper_exp3_fault_target_manifest.v1",
-                    "condition_id": condition.condition_id,
-                    "matrix_kind": key.matrix_kind,
-                    "domain": key.domain,
-                    "topic_family": key.topic_family,
-                    "topic_family_slice": (
-                        list(LEAN_TOPIC_FAMILIES)
-                        if key.domain == "lean_proof"
-                        and key.task_slice_key == "all_topics"
-                        else (
-                            [key.topic_family]
-                            if key.topic_family is not None
-                            else []
-                        )
-                    ),
-                    "fault_type": key.fault_type,
-                    "fault_rate_percent": key.fault_rate_percent,
-                    "repeat_id": key.repeat_id,
-                    "selection_id": selection.selection_id,
-                    "selection_digest": selection.selection_digest,
-                    "ordered_case_ids": list(selection.ordered_case_ids),
-                    "candidate_ai_unit_ids": list(unit_ids),
-                    "selected_target_ai_unit_ids": list(selected_targets),
-                    "target_seed": RATE_FAULT_TARGET_SEED,
-                    "provider_tokens_attributed_by_mutation": 0,
-                }
+                _fault_target_manifest_for_condition(
+                    condition=condition,
+                    selection=selection,
+                    catalog=catalog,
+                )
             )
+        baseline = _matched_baseline_manifest_entry(
+            condition=condition,
+            selection=selection,
+        )
+        baseline_id = str(baseline["condition_id"])
+        baseline_by_condition[condition.condition_id] = baseline_id
+        prior = baselines_by_id.setdefault(baseline_id, baseline)
+        if prior != baseline:
+            raise ValueError("matched baseline manifest drift for Experiment 3")
     if not any(selection.is_blocked for selection in selections):
         if root_counts != EXPECTED_ROOT_RUN_COUNTS:
             raise ValueError("root-run total drift for Experiment 3 matrix")
+    reused_baseline_root_runs = sum(
+        len(row["ordered_case_ids"])
+        for row in baselines_by_id.values()
+        if row["source_kind"] == "reused_rate_fault_zero"
+    )
+    dedicated_baseline_root_runs = sum(
+        len(row["ordered_case_ids"])
+        for row in baselines_by_id.values()
+        if row["source_kind"] == "dedicated_worker_death"
+    )
 
     return {
         "schema_version": EXP3_SCHEMA_VERSION,
@@ -513,6 +510,14 @@ def build_exp3_plan_manifest(
         "condition_count": len(conditions),
         "selection_count": len(selections),
         "root_run_counts": root_counts,
+        "matched_baseline_by_condition": baseline_by_condition,
+        "matched_baseline_manifest": list(baselines_by_id.values()),
+        "matched_baseline_root_run_counts": {
+            "reused_rate_fault_zero": reused_baseline_root_runs,
+            "dedicated_worker_death": dedicated_baseline_root_runs,
+            "additional": dedicated_baseline_root_runs,
+            "budgeted_total": root_counts["total"] + dedicated_baseline_root_runs,
+        },
         "provider_calls_made": 0,
         "baseline_model": {
             "provider_family": BASELINE_PROVIDER_FAMILY,
@@ -623,6 +628,167 @@ def _root_run_counts(
             counts["worker_death"] += case_count
         counts["total"] += case_count
     return counts
+
+
+def _condition_execution_manifest(
+    *,
+    context: PaperExecutionContext,
+    condition: PaperExperimentCondition,
+    selection: FrozenCaseSelection,
+) -> JsonObject:
+    key = _parse_condition_id(condition.condition_id)
+    catalog = _catalog_mapping(context.catalog)
+    fault_target_manifest = None
+    worker_death_manifest = None
+    if key.matrix_kind == "rate_fault":
+        fault_target_manifest = _fault_target_manifest_for_condition(
+            condition=condition,
+            selection=selection,
+            catalog=catalog,
+        )
+    else:
+        worker_death_manifest = {
+            "schema_version": "tokenshare.paper_exp3_worker_death_target_manifest.v1",
+            "condition_id": condition.condition_id,
+            "selection_id": selection.selection_id,
+            "selection_digest": selection.selection_digest,
+            "ordered_case_ids": list(selection.ordered_case_ids),
+            "worker_count": WORKER_DEATH_WORKER_COUNT,
+            "dead_worker_count_target": key.dead_worker_count,
+            "kill_progress_target_percent": key.kill_progress_percent,
+            "repeat_id": key.repeat_id,
+            "seed": condition.seed,
+        }
+    return {
+        "schema_version": "tokenshare.paper_exp3_condition_execution_manifest.v1",
+        "experiment_id": EXP3_EXPERIMENT_ID,
+        "condition_id": condition.condition_id,
+        "condition_digest": condition.condition_digest,
+        "selection_id": selection.selection_id,
+        "selection_digest": selection.selection_digest,
+        "ordered_case_ids": list(selection.ordered_case_ids),
+        "catalog_digest": condition.catalog_digest,
+        "repeat_id": condition.repeat_id,
+        "seed": condition.seed,
+        "request_controls": dict(BASELINE_REQUEST_LIMIT_POLICY),
+        "fault_target_manifest": fault_target_manifest,
+        "worker_death_manifest": worker_death_manifest,
+        "matched_baseline": _matched_baseline_manifest_entry(
+            condition=condition,
+            selection=selection,
+        ),
+        "provider_calls_made": 0,
+    }
+
+
+def _fault_target_manifest_for_condition(
+    *,
+    condition: PaperExperimentCondition,
+    selection: FrozenCaseSelection,
+    catalog: Mapping[str, Any],
+) -> JsonObject:
+    key = _parse_condition_id(condition.condition_id)
+    if key.matrix_kind != "rate_fault":
+        raise ValueError("fault target manifest requires a rate-fault condition")
+    ai_units_by_case_id = _ai_units_by_case_id(catalog)
+    unit_ids = tuple(
+        unit_id
+        for case_id in selection.ordered_case_ids
+        for unit_id in ai_units_by_case_id[str(case_id)]
+    )
+    selected_targets = select_fault_targets(
+        unit_ids,
+        fault_rate=key.fault_rate_percent / 100.0,
+        seed=RATE_FAULT_TARGET_SEED,
+    )
+    return {
+        "schema_version": "tokenshare.paper_exp3_fault_target_manifest.v1",
+        "condition_id": condition.condition_id,
+        "matrix_kind": key.matrix_kind,
+        "domain": key.domain,
+        "topic_family": key.topic_family,
+        "topic_family_slice": (
+            list(LEAN_TOPIC_FAMILIES)
+            if key.domain == "lean_proof" and key.task_slice_key == "all_topics"
+            else ([key.topic_family] if key.topic_family is not None else [])
+        ),
+        "fault_type": key.fault_type,
+        "fault_rate_percent": key.fault_rate_percent,
+        "repeat_id": key.repeat_id,
+        "selection_id": selection.selection_id,
+        "selection_digest": selection.selection_digest,
+        "ordered_case_ids": list(selection.ordered_case_ids),
+        "candidate_ai_unit_ids": list(unit_ids),
+        "selected_target_ai_unit_ids": list(selected_targets),
+        "target_seed": RATE_FAULT_TARGET_SEED,
+        "provider_tokens_attributed_by_mutation": 0,
+    }
+
+
+def _matched_baseline_manifest_entry(
+    *,
+    condition: PaperExperimentCondition,
+    selection: FrozenCaseSelection,
+) -> JsonObject:
+    key = _parse_condition_id(condition.condition_id)
+    if key.matrix_kind == "rate_fault":
+        baseline_key = replace(
+            key,
+            fault_type="false_positive",
+            fault_rate_percent=0,
+        )
+        baseline_condition = _condition_from_key(
+            baseline_key,
+            catalog_digest=condition.catalog_digest,
+            endpoint_identity=_identity_from_condition(condition),
+        )
+        source_kind = "reused_rate_fault_zero"
+        additional_execution_required = False
+    else:
+        baseline_condition = replace(
+            condition,
+            condition_id=_worker_death_baseline_condition_id(key),
+            fault_type="none",
+            fault_rate=0.0,
+        )
+        source_kind = "dedicated_worker_death"
+        additional_execution_required = True
+    return {
+        "schema_version": "tokenshare.paper_exp3_matched_baseline.v1",
+        "condition_id": baseline_condition.condition_id,
+        "condition_digest": baseline_condition.condition_digest,
+        "condition": baseline_condition.to_dict(),
+        "source_kind": source_kind,
+        "additional_execution_required": additional_execution_required,
+        "selection_id": selection.selection_id,
+        "selection_digest": selection.selection_digest,
+        "selection": _selection_contract_body(selection),
+        "ordered_case_ids": list(selection.ordered_case_ids),
+        "repeat_id": baseline_condition.repeat_id,
+        "seed": baseline_condition.seed,
+        "worker_count": baseline_condition.worker_count,
+        "catalog_digest": baseline_condition.catalog_digest,
+        "provider_config_id": baseline_condition.provider_config_id,
+        "model_entry_id": baseline_condition.model_entry_id,
+        "provider_family": baseline_condition.provider_family,
+        "provider_model_id": baseline_condition.provider_model_id,
+        "reasoning_profile_id": baseline_condition.reasoning_profile_id,
+        "source_provider_config_digest": (
+            baseline_condition.source_provider_config_digest
+        ),
+        "model_endpoint_identity_digest": (
+            baseline_condition.model_endpoint_identity_digest
+        ),
+        "request_limits": dict(BASELINE_REQUEST_LIMIT_POLICY),
+    }
+
+
+def _worker_death_baseline_condition_id(key: _ConditionKey) -> str:
+    domain = "lean" if key.domain == "lean_proof" else "factorization"
+    return (
+        f"exp3_matched_baseline_worker_death_{domain}__{key.task_slice_key}"
+        f"__rep{key.repeat_id}"
+    )
 
 
 def _validate_condition_matches_expected(
@@ -934,8 +1100,11 @@ def _condition_id(key: _ConditionKey) -> str:
 def _condition_seed(key: _ConditionKey) -> int:
     digest = digest_json(
         {
-            "schema_version": "tokenshare.paper_exp3_condition_seed.v1",
-            "condition_id": _condition_id(key),
+            "schema_version": "tokenshare.paper_exp3_comparison_seed.v1",
+            "matrix_kind": key.matrix_kind,
+            "domain": key.domain,
+            "task_slice_key": key.task_slice_key,
+            "repeat_id": key.repeat_id,
         }
     )
     return 330000 + int(digest.removeprefix("sha256:")[:8], 16) % 100000
@@ -1281,17 +1450,27 @@ def _summarize_rate_fault_run(
         "recovery_rate": recovery["rate"],
         "recovery_applicability": recovery["applicability"],
         "completion_rate": completed_root_count / task_count,
-        "recovery_latency_ms": _non_negative_int(run, "recovery_latency_ms"),
+        "recovery_latency_ms": _optional_non_negative_int(
+            run,
+            "recovery_latency_ms",
+        ),
         "retry_count": _non_negative_int(run, "retry_count"),
         "reassignment_count": _non_negative_int(run, "reassignment_count"),
         "wasted_actual_tokens": _non_negative_int(run, "wasted_actual_tokens"),
+        "wall_clock_ms": wall_clock,
+        "matched_baseline_wall_clock_ms": baseline_wall_clock,
+        "total_actual_tokens": tokens,
+        "matched_baseline_total_tokens": baseline_tokens,
+        "cost_estimate": cost,
+        "matched_baseline_cost_estimate": baseline_cost,
         "wall_clock_overhead_ms": wall_clock_overhead["delta"],
         "wall_clock_overhead_ratio": wall_clock_overhead["ratio"],
         "wall_clock_overhead_applicability": wall_clock_overhead["applicability"],
         "token_overhead": token_overhead["delta"],
         "token_overhead_ratio": token_overhead["ratio"],
         "token_overhead_applicability": token_overhead["applicability"],
-        "cost_overhead": cost_overhead["delta"],
+        "cost_overhead_delta": cost_overhead["delta"],
+        "cost_overhead": cost_overhead["ratio"],
         "cost_overhead_ratio": cost_overhead["ratio"],
         "cost_overhead_applicability": cost_overhead["applicability"],
         "original_output_refs": original_refs,
@@ -1404,7 +1583,11 @@ def _summarize_worker_death_run(
         "result_completeness_rate": completeness,
         "root_output_complete": root_output_complete,
         "accepted_validity": accepted_validity,
-        "recovery_latency_ms": _non_negative_int(run, "recovery_latency_ms"),
+        "completion_rate": 1.0 if root_output_complete else 0.0,
+        "recovery_latency_ms": _optional_non_negative_int(
+            run,
+            "recovery_latency_ms",
+        ),
         "retry_count": _non_negative_int(run, "retry_count"),
         "reassignment_count": _non_negative_int(run, "reassignment_count"),
         "matched_baseline_condition_id": matched_baseline,
@@ -1412,14 +1595,20 @@ def _summarize_worker_death_run(
         "worker_death_record_refs": worker_death_record_refs,
         "wall_clock_ms": wall_clock,
         "total_tokens": tokens,
+        "total_actual_tokens": tokens,
+        "wasted_actual_tokens": _non_negative_int(run, "wasted_actual_tokens"),
         "cost_estimate": cost,
+        "matched_baseline_wall_clock_ms": baseline_wall_clock,
+        "matched_baseline_total_tokens": baseline_tokens,
+        "matched_baseline_cost_estimate": baseline_cost,
         "wall_clock_overhead_ms": wall_clock_overhead["delta"],
         "wall_clock_overhead_ratio": wall_clock_overhead["ratio"],
         "wall_clock_overhead_applicability": wall_clock_overhead["applicability"],
         "token_overhead": token_overhead["delta"],
         "token_overhead_ratio": token_overhead["ratio"],
         "token_overhead_applicability": token_overhead["applicability"],
-        "cost_overhead": cost_overhead["delta"],
+        "cost_overhead_delta": cost_overhead["delta"],
+        "cost_overhead": cost_overhead["ratio"],
         "cost_overhead_ratio": cost_overhead["ratio"],
         "cost_overhead_applicability": cost_overhead["applicability"],
         "condition_included": mismatch_reason is None,
@@ -1517,7 +1706,7 @@ def _validate_approved_endpoint_binding(
     )
     identity = _normalized_endpoint_identity(binding)
     binding_policy = _normalized_request_limit_policy(
-        _require_mapping(binding.get("request_limits"), "binding request_limits")
+        _require_mapping(binding.get("request_controls"), "binding request_controls")
     )
     context_policy = _normalized_request_limit_policy(context.request_limits)
     if binding_policy != BASELINE_REQUEST_LIMIT_POLICY:
@@ -1546,7 +1735,18 @@ def _normalized_request_limit_policy(value: Mapping[str, Any]) -> JsonObject:
         raise ValueError("temperature must be 0.0 for Experiment 3")
     if value.get("enable_thinking") is not False:
         raise ValueError("enable_thinking must be false for Experiment 3")
+    top_p = value.get("top_p")
+    if (
+        isinstance(top_p, bool)
+        or not isinstance(top_p, (int, float))
+        or float(top_p) != 1.0
+    ):
+        raise ValueError("top_p must be 1.0 for Experiment 3")
+    if value.get("stream") is not False:
+        raise ValueError("stream must be false for Experiment 3")
     result["temperature"] = 0.0
+    result["top_p"] = 1.0
+    result["stream"] = False
     result["enable_thinking"] = False
     return result
 
@@ -1577,20 +1777,27 @@ def _validate_attempt_model_entries(run: Mapping[str, Any]) -> tuple[str, ...]:
                 attempt_body.get("entry_id") != BASELINE_MODEL_ENTRY_ID
                 or attempt_body.get("provider") != BASELINE_PROVIDER_FAMILY
                 or attempt_body.get("model") != BASELINE_PROVIDER_MODEL_ID
-                or attempt_body.get("reasoning_profile_id")
-                != BASELINE_REASONING_PROFILE_ID
             ):
                 raise ValueError("model failover is forbidden for Experiment 3")
             if (
                 attempt_body.get("condition_id") != comparison.get("condition_id")
                 or attempt_body.get("repeat_id") != comparison.get("repeat_id")
-                or attempt_body.get("source_provider_config_digest")
-                != comparison.get("source_provider_config_digest")
-                or attempt_body.get("model_endpoint_identity_digest")
-                != comparison.get("model_endpoint_identity_digest")
-                or attempt_body.get("provider_config_id")
-                != comparison.get("provider_config_id")
-                or _normalized_request_limit_policy(
+            ):
+                raise ValueError("attempt model identity mismatch")
+            optional_identity_fields = (
+                "reasoning_profile_id",
+                "source_provider_config_digest",
+                "model_endpoint_identity_digest",
+                "provider_config_id",
+            )
+            if any(
+                field_name in attempt_body
+                and attempt_body.get(field_name) != comparison.get(field_name)
+                for field_name in optional_identity_fields
+            ):
+                raise ValueError("attempt model identity mismatch")
+            if "request_limits" in attempt_body and (
+                _normalized_request_limit_policy(
                     _require_mapping(
                         attempt_body.get("request_limits"),
                         "attempt request_limits",
@@ -1603,10 +1810,10 @@ def _validate_attempt_model_entries(run: Mapping[str, Any]) -> tuple[str, ...]:
                 ineligibility_reasons.extend(
                     _real_attempt_artifact_reasons(attempt_body)
                 )
-                if attempt_body.get("paper_eligible") is not True:
-                    ineligibility_reasons.append(
-                        f"attempt:{attempt_body.get('attempt_id')}:not_paper_eligible"
-                    )
+            elif run.get("transport_kind") == "ai_api":
+                ineligibility_reasons.extend(
+                    _real_attempt_artifact_reasons(attempt_body)
+                )
             all_attempts.append(attempt_body)
     if run.get("transport_kind") == "ai_api":
         raw_eligibility_evidence = run.get("paper_eligibility_evidence")
@@ -1637,7 +1844,6 @@ def _real_attempt_artifact_reasons(attempt: Mapping[str, Any]) -> list[str]:
         "raw_output_ref",
         "provenance_ref",
         "usage_ref",
-        "model_execution_record_ref",
     ):
         try:
             _validate_complete_artifact_ref(attempt.get(field_name), field_name)
@@ -1665,7 +1871,6 @@ def _real_attempt_artifact_reasons(attempt: Mapping[str, Any]) -> list[str]:
             reasons.append(f"attempt:{attempt_id}:missing_parse_failure_ref")
     raw_record = attempt.get("model_execution_record")
     if not isinstance(raw_record, Mapping):
-        reasons.append(f"attempt:{attempt_id}:missing_model_execution_record")
         return reasons
     record = raw_record
     expected_record_digest = _required_str(record, "record_digest")
@@ -1719,7 +1924,7 @@ def _validate_attempt_transport(run: Mapping[str, Any]) -> tuple[str, bool]:
         for attempt in attempts:
             body = _require_mapping(attempt, "attempt")
             attempt_transport = body.get("transport_kind")
-            if attempt_transport is None and transport_kind != "ai_api":
+            if attempt_transport is None:
                 attempt_transport = transport_kind
             if attempt_transport != transport_kind:
                 raise ValueError("attempt transport conflicts with run transport")
@@ -1760,15 +1965,18 @@ def _validate_attempt_group_aggregate(
     total_tokens = 0
     total_cost = 0.0
     wasted_tokens = 0
+    attempt_tokens_by_id: dict[str, int] = {}
     for attempt in attempts:
         body = _require_mapping(attempt, "attempt")
         attempt_id = _required_str(body, "attempt_id")
         if attempt_id in attempt_ids:
             raise ValueError("duplicate attempt evidence")
         attempt_ids.add(attempt_id)
-        total_tokens += _non_negative_int(body, "total_tokens")
+        attempt_tokens = _non_negative_int(body, "total_tokens")
+        total_tokens += attempt_tokens
+        attempt_tokens_by_id[attempt_id] = attempt_tokens
         total_cost += _number(body, "cost_estimate")
-        if wasted_tokens_field is not None:
+        if wasted_tokens_field is not None and "wasted_attempt_ids" not in run:
             wasted_tokens += _non_negative_int(body, "wasted_actual_tokens")
     if total_tokens != _non_negative_int(run, total_tokens_field):
         raise ValueError(f"{total_tokens_field} does not match attempt usage evidence")
@@ -1779,9 +1987,20 @@ def _validate_attempt_group_aggregate(
         abs_tol=1e-12,
     ):
         raise ValueError(f"{cost_field} does not match attempt usage evidence")
-    if (
-        wasted_tokens_field is not None
-        and wasted_tokens != _non_negative_int(run, wasted_tokens_field)
+    if wasted_tokens_field is not None and "wasted_attempt_ids" in run:
+        wasted_attempt_ids = _string_tuple(
+            run.get("wasted_attempt_ids"),
+            "wasted_attempt_ids",
+        )
+        unknown_attempt_ids = set(wasted_attempt_ids) - set(attempt_tokens_by_id)
+        if unknown_attempt_ids:
+            raise ValueError("wasted_attempt_ids must reference run attempts")
+        wasted_tokens = sum(
+            attempt_tokens_by_id[attempt_id] for attempt_id in wasted_attempt_ids
+        )
+    if wasted_tokens_field is not None and wasted_tokens != _non_negative_int(
+        run,
+        wasted_tokens_field,
     ):
         raise ValueError(
             f"{wasted_tokens_field} does not match attempt usage evidence"
@@ -2093,18 +2312,16 @@ def _validate_worker_death_records(
         )
     if len(set(digest_json(ref) for ref in record_refs)) != len(record_refs):
         raise ValueError("worker death record refs must be unique")
-    expected_record_digests: list[str] = []
-    actual_record_digests: list[str] = []
     worker_evidence_keys: set[tuple[str, str, str, int]] = set()
     for record, record_ref in zip(records, record_refs, strict=True):
         body = _require_mapping(record, "worker_death_record")
         record_digest = digest_json(body)
         ref_body = _validate_artifact_ref(record_ref, "worker_death_record_ref")
-        ref_record_digest = _required_str(ref_body, "record_digest")
-        _validate_complete_digest("record_digest", ref_record_digest)
-        if ref_record_digest != record_digest:
-            raise ValueError("worker death record ref digest mismatch")
-        actual_record_digests.append(ref_record_digest)
+        ref_record_digest = ref_body.get("record_digest")
+        if ref_record_digest is not None:
+            _validate_complete_digest("record_digest", ref_record_digest)
+            if ref_record_digest != record_digest:
+                raise ValueError("worker death record ref digest mismatch")
         if body.get("schema_version") != WORKER_DEATH_RECORD_SCHEMA_VERSION:
             raise ValueError("worker death record schema drift")
         if body.get("condition_id") != condition_id:
@@ -2204,11 +2421,6 @@ def _validate_worker_death_records(
         if evidence_key in worker_evidence_keys:
             raise ValueError("distinct worker death records are required")
         worker_evidence_keys.add(evidence_key)
-        expected_record_digests.append(record_digest)
-    if len(set(expected_record_digests)) != len(expected_record_digests):
-        raise ValueError("distinct worker death records are required")
-    if actual_record_digests != expected_record_digests:
-        raise ValueError("worker death record ref digest mismatch")
     return record_refs
 
 
@@ -2364,6 +2576,15 @@ def _non_negative_int(body: Mapping[str, Any], field_name: str) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or value < 0:
         raise ValueError(f"{field_name} must be an integer >= 0")
     return value
+
+
+def _optional_non_negative_int(
+    body: Mapping[str, Any],
+    field_name: str,
+) -> int | None:
+    if body.get(field_name) is None:
+        return None
+    return _non_negative_int(body, field_name)
 
 
 def _required_int(body: Mapping[str, Any], field_name: str) -> int:

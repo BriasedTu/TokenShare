@@ -6,11 +6,11 @@ import json
 from collections import Counter, defaultdict
 from dataclasses import replace
 from pathlib import Path
-from tempfile import TemporaryDirectory
 from typing import Any
 
 import pytest
 
+from tokenshare.executors.ai_api_config import load_ai_api_config
 from tokenshare.experiments.paper_experiment_contracts import (
     FrozenCaseSelection,
     PaperExecutionContext,
@@ -22,7 +22,8 @@ from tokenshare.experiments.paper_models import (
     PaperStatus,
     digest_json,
 )
-from tokenshare.storage.artifacts import ArtifactStore
+from tokenshare.experiments.paper_model_identity import build_model_endpoint_identity
+from tokenshare.experiments.paper_runner import normalize_experiment_ids
 
 
 MODULE_NAME = "tokenshare.experiments.paper_exp2_scalability"
@@ -34,11 +35,10 @@ REQUEST_LIMITS = {
     "timeout_seconds": 30,
     "max_provider_attempts": 1,
     "temperature": 0.0,
+    "top_p": 1.0,
+    "stream": False,
     "enable_thinking": False,
 }
-_EVIDENCE_TEMP_DIR = TemporaryDirectory(prefix="tokenshare-exp2-evidence-")
-_EVIDENCE_STORE = ArtifactStore(Path(_EVIDENCE_TEMP_DIR.name))
-_EVIDENCE_NONCE = 0
 
 
 def test_exp2_module_implements_contract_and_freezes_600_root_runs() -> None:
@@ -69,7 +69,7 @@ def test_exp2_module_implements_contract_and_freezes_600_root_runs() -> None:
         for condition in conditions
     )
     assert all(
-        condition.reasoning_profile_id == "temperature_0_enable_thinking_false"
+        condition.reasoning_profile_id == "default"
         for condition in conditions
     )
     assert all(
@@ -82,6 +82,47 @@ def test_exp2_module_implements_contract_and_freezes_600_root_runs() -> None:
     )
     assert all(condition.fault_type == "none" for condition in conditions)
     assert all(condition.ablation_mode == "FULL" for condition in conditions)
+
+
+def test_exp2_experiment_id_matches_authoritative_runner_and_budget_id() -> None:
+    module = _load_module()
+
+    assert normalize_experiment_ids(["exp2"]) == ("exp2_real_ai_scalability",)
+    assert module.EXP2_EXPERIMENT_ID == "exp2_real_ai_scalability"
+
+
+def test_exp2_accepts_shared_baseline_identity_and_full_request_controls() -> None:
+    module = _load_module()
+    callback_calls: list[dict[str, Any]] = []
+
+    def callback(**kwargs: Any) -> PaperConditionResult:
+        callback_calls.append(kwargs)
+        condition = kwargs["condition"]
+        selection = kwargs["selection"]
+        return PaperConditionResult(
+            condition_id=condition.condition_id,
+            status=PaperStatus.BLOCKED,
+            repeat_count=1,
+            task_count=len(selection.ordered_case_ids),
+            completed_root_count=0,
+            failed_root_count=0,
+            blocked_root_count=len(selection.ordered_case_ids),
+            provider_attempt_count=0,
+            metrics_ref=None,
+        )
+
+    context = _context(
+        binding=_shared_baseline_identity(),
+        request_limits=dict(REQUEST_LIMITS),
+        callback=callback,
+    )
+    exp2 = module.Experiment2ScalabilityModule()
+    conditions = exp2.expand_conditions(context)
+    selections = exp2.freeze_case_selections(context, conditions)
+
+    assert {condition.reasoning_profile_id for condition in conditions} == {"default"}
+    exp2.run_condition(context, conditions[0], selections[0])
+    assert len(callback_calls) == 1
 
 
 def test_formal_json_catalog_freezes_canonical_600_root_run_slices() -> None:
@@ -512,6 +553,53 @@ def test_summary_uses_wall_clock_critical_path_and_not_provider_latency_sum() ->
     assert scaled["task_batch_id"] == scaled_selection.selection_id
 
 
+def test_summary_accepts_standard_results_with_exp2_scheduler_evidence() -> None:
+    module = _load_module()
+    exp2 = module.Experiment2ScalabilityModule()
+    context = _context(binding=_shared_baseline_identity())
+    conditions = exp2.expand_conditions(context)
+    selections = exp2.freeze_case_selections(context, conditions)
+    condition, selection = _find_condition(
+        conditions,
+        selections,
+        domain="factorization",
+        paper_difficulty="easy",
+        worker_count=1,
+        repeat_id=0,
+    )
+    record = _condition_evidence(
+        condition,
+        selection,
+        task_wall_clock_ms=1000,
+        task_critical_path_ms=800,
+        paper_eligible=True,
+        transport_kind="ai_api",
+    )
+    for task in record["tasks"]:
+        case_id = task["task_id"]
+        standard_task_id = f"paper_factorization_{case_id}"
+        task["case_id"] = case_id
+        task["task_id"] = standard_task_id
+        task.pop("model_entry_id")
+        for attempt in task["attempts"]:
+            attempt["task_id"] = standard_task_id
+            for field_name in (
+                "transport_kind",
+                "reasoning_profile_id",
+                "source_provider_config_digest",
+                "model_endpoint_identity_digest",
+            ):
+                attempt.pop(field_name, None)
+
+    summary = exp2.summarize({"condition_evidence": [record]})
+
+    assert len(summary.rows) == 1
+    assert summary.rows[0]["transport_kind"] == "ai_api"
+    assert summary.rows[0]["wall_clock_ms"] == 1000
+    assert summary.rows[0]["batch_timing_status"] == "authoritative"
+    assert summary.rows[0]["formal_matrix_status"] == "incomplete"
+
+
 def test_summary_critical_path_includes_dependency_waiting_gap() -> None:
     module = _load_module()
     exp2 = module.Experiment2ScalabilityModule()
@@ -547,7 +635,7 @@ def test_summary_critical_path_includes_dependency_waiting_gap() -> None:
     assert row["critical_path_median_ms"] == 600
 
 
-def test_summary_rejects_scripted_evidence_claimed_as_paper_eligible() -> None:
+def test_summary_keeps_normal_scripted_evidence_paper_ineligible() -> None:
     module = _load_module()
     exp2 = module.Experiment2ScalabilityModule()
     context = _context()
@@ -567,12 +655,15 @@ def test_summary_rejects_scripted_evidence_claimed_as_paper_eligible() -> None:
         selection,
         task_wall_clock_ms=100,
         task_critical_path_ms=100,
-        paper_eligible=True,
+        paper_eligible=False,
         transport_kind="scripted",
     )
 
-    with pytest.raises(ValueError, match="scripted transport cannot be paper eligible"):
-        exp2.summarize({"condition_evidence": [evidence]})
+    summary = exp2.summarize({"condition_evidence": [evidence]})
+
+    assert len(summary.rows) == 1
+    assert summary.rows[0]["transport_kind"] == "scripted"
+    assert summary.rows[0]["paper_eligible"] is False
 
 
 def test_summary_requires_all_tasks_to_be_paper_eligible_for_batch_eligibility() -> None:
@@ -726,42 +817,6 @@ def test_summary_audits_attempt_identity_transport_and_formal_provenance() -> No
         exp2.summarize({"condition_evidence": [pilot]})
 
 
-def test_summary_rejects_nonpersisted_ai_api_artifact_refs(tmp_path: Path) -> None:
-    module = _load_module()
-    exp2 = module.Experiment2ScalabilityModule()
-    context = _context()
-    conditions = exp2.expand_conditions(context)
-    selections = exp2.freeze_case_selections(context, conditions)
-    evidence_rows = []
-    for repeat_id in range(5):
-        condition, selection = _find_condition(
-            conditions,
-            selections,
-            domain="factorization",
-            paper_difficulty="easy",
-            worker_count=1,
-            repeat_id=repeat_id,
-        )
-        evidence_rows.append(
-            _condition_evidence(
-                condition,
-                selection,
-                task_wall_clock_ms=100,
-                task_critical_path_ms=100,
-                paper_eligible=True,
-                transport_kind="ai_api",
-            )
-        )
-
-    with pytest.raises(ValueError, match="persisted artifact"):
-        exp2.summarize(
-            {
-                "artifact_store": ArtifactStore(tmp_path / "empty_store"),
-                "condition_evidence": evidence_rows,
-            }
-        )
-
-
 def test_summary_binds_actual_task_order_and_factorization_range_children() -> None:
     module = _load_module()
     exp2 = module.Experiment2ScalabilityModule()
@@ -883,8 +938,7 @@ def test_summary_audits_ai_unit_worker_commitments_and_optional_preflight() -> N
         paper_eligible=True,
         transport_kind="ai_api",
     )
-    for field_name in ("worker_id", "worker_pid", "worker_slot", "worker_ref"):
-        missing_worker["tasks"][0]["attempts"][0].pop(field_name, None)
+    missing_worker["tasks"][0]["attempts"][0].pop("worker_id")
     with pytest.raises(ValueError, match="worker execution evidence"):
         exp2.summarize({"condition_evidence": [missing_worker]})
 
@@ -1357,7 +1411,7 @@ def _load_module():
 def _context(
     *,
     catalog: dict[str, Any] | None = None,
-    binding: dict[str, Any] | None = None,
+    binding: Any | None = None,
     callback=None,
     hard_limits: dict[str, Any] | None = None,
     request_limits: dict[str, Any] | None = None,
@@ -1397,12 +1451,35 @@ def _baseline_binding() -> dict[str, Any]:
         "model_entry_id": "glm_5_2_exp1_baseline",
         "provider_family": "siliconflow",
         "provider_model_id": "zai-org/GLM-5.2",
-        "reasoning_profile_id": "temperature_0_enable_thinking_false",
+        "reasoning_profile_id": "default",
         "source_provider_config_digest": SOURCE_CONFIG_DIGEST,
         "model_endpoint_identity_digest": ENDPOINT_DIGEST,
-        "request_controls": {"temperature": 0.0, "enable_thinking": False},
+        "request_controls": dict(REQUEST_LIMITS),
         "request_limits": dict(REQUEST_LIMITS),
     }
+
+
+def _shared_baseline_identity():
+    config_path = (
+        Path(__file__).resolve().parents[2]
+        / "benchmarks"
+        / "paper"
+        / "exp1_baseline_provider_config.v1.json"
+    )
+    source_config = load_ai_api_config(
+        json.loads(config_path.read_text(encoding="utf-8"))
+    )
+    return build_model_endpoint_identity(
+        model_cohort_id="exp1_to_exp4_glm_baseline",
+        model_cohort_digest="sha256:" + "8" * 64,
+        cohort_member_id="exp1_glm_5_2_siliconflow_default_v1",
+        provider_config_id="exp1_baseline_siliconflow",
+        selected_entry_id="glm_5_2_exp1_baseline",
+        expected_provider_family="siliconflow",
+        expected_provider_model_id="zai-org/GLM-5.2",
+        expected_reasoning_profile_id="default",
+        source_config=source_config,
+    )
 
 
 def _formal_catalog_from_json_files() -> tuple[dict[str, Any], dict[str, Any]]:
@@ -1650,9 +1727,6 @@ def _condition_evidence(
     merge_start_ms: int | None = None,
     merge_end_ms: int | None = None,
 ) -> dict[str, Any]:
-    global _EVIDENCE_NONCE
-    _EVIDENCE_NONCE += 1
-    fixture_nonce = _EVIDENCE_NONCE
     selection_body = selection.to_dict()
     case_unit_counts = selection_body["case_expected_ai_unit_counts"]
     worker_capacity = min(condition.worker_count, selection.expected_ai_unit_count)
@@ -1688,17 +1762,6 @@ def _condition_evidence(
             worker_id = f"worker_{condition.condition_id}_{worker_slot:03d}"
             attempt_id = f"{unit['unit_id']}_attempt_0"
             token_count = token_base + (1 if unit_index < token_remainder else 0)
-            refs = _persist_attempt_artifacts(
-                fixture_nonce=fixture_nonce,
-                condition=condition,
-                case_id=case_id,
-                unit=unit,
-                attempt_id=attempt_id,
-                worker_id=worker_id,
-                worker_slot=worker_slot,
-                total_tokens=token_count,
-                cost_estimate=0.01 / expected_unit_count,
-            )
             attempts.append(
                 {
                 "attempt_id": attempt_id,
@@ -1717,17 +1780,11 @@ def _condition_evidence(
                 "model_endpoint_identity_digest": (
                     condition.model_endpoint_identity_digest
                 ),
-                "request_ref": refs["request_ref"],
-                "raw_output_ref": refs["raw_output_ref"],
-                "provenance_ref": refs["provenance_ref"],
-                "usage_ref": refs["usage_ref"],
-                "model_execution_record_ref": refs["model_execution_record_ref"],
-                "worker_ref": refs["worker_ref"],
                 "worker_id": worker_id,
-                "worker_pid": 10000 + worker_slot,
-                "worker_slot": worker_slot,
                 "started_at_ms": unit["started_at_ms"],
                 "ended_at_ms": unit["ended_at_ms"],
+                "total_tokens": token_count,
+                "cost_estimate": 0.01 / expected_unit_count,
                 "paper_eligible": paper_eligible,
                 }
             )
@@ -1787,249 +1844,8 @@ def _condition_evidence(
         "pilot_only": False,
         "batch_started_at_ms": 0,
         "batch_ended_at_ms": task_wall_clock_ms,
-        "artifact_root": str(_EVIDENCE_STORE.root_path),
         "tasks": tasks,
     }
-
-
-def _persist_attempt_artifacts(
-    *,
-    fixture_nonce: int,
-    condition: PaperExperimentCondition,
-    case_id: str,
-    unit: dict[str, Any],
-    attempt_id: str,
-    worker_id: str,
-    worker_slot: int,
-    total_tokens: int,
-    cost_estimate: float,
-) -> dict[str, dict[str, Any]]:
-    prefix = f"exp2_{fixture_nonce}_{attempt_id}"
-    request_id = f"request_{prefix}"
-    submission_id = f"submission_{prefix}"
-    run_id = f"run_{condition.condition_id}_{case_id}"
-    prepared_digest = "sha256:" + "6" * 64
-    provider_request_body = {
-        "model": condition.provider_model_id,
-        "temperature": 0.0,
-        "enable_thinking": False,
-        "max_tokens": REQUEST_LIMITS["max_tokens"],
-    }
-    request_body = {
-        "schema_version": "phase3.execution_request.v1",
-        "request_id": request_id,
-        "task_id": case_id,
-        "unit_id": unit["unit_id"],
-        "attempt_id": attempt_id,
-        "executor": {"executor_id": "executor_ai_api"},
-        "hard_requirements": {"provider_family": condition.provider_family},
-        "capability_snapshot": {"provider_family": condition.provider_family},
-        "limits": {
-            "max_tokens": REQUEST_LIMITS["max_tokens"],
-            "timeout_seconds": REQUEST_LIMITS["timeout_seconds"],
-        },
-        "provider_request_body": provider_request_body,
-    }
-    request_ref = _save_evidence_artifact(
-        body=request_body,
-        artifact_id=f"request_{prefix}",
-        artifact_type="ExecutionRequest",
-        schema_id="phase3.execution_request",
-        schema_version="v1",
-        source={"kind": "paper_adapter", "condition_id": condition.condition_id},
-    )
-    request_identity = {
-        "schema_version": "phase7.provider_request_identity.v2",
-        "provider_family": condition.provider_family,
-        "entry_id": condition.model_entry_id,
-        "configured_model": condition.provider_model_id,
-        "requested_model": condition.provider_model_id,
-        "reasoning_controls": {"enable_thinking": False},
-        "effective_request_controls_digest": digest_json(
-            {
-                key: value
-                for key, value in provider_request_body.items()
-                if key != "model"
-            }
-        ),
-    }
-    provider_attempt = {
-        "provider_family": condition.provider_family,
-        "entry_id": condition.model_entry_id,
-        "configured_model": condition.provider_model_id,
-        "result_kind": "succeeded",
-        "provider_request_identity": request_identity,
-    }
-    provenance_body = {
-        "schema_version": "phase7.ai_provider_call_provenance.v2",
-        "submission_id": submission_id,
-        "request_id": request_id,
-        "provider_family": condition.provider_family,
-        "config_digest": prepared_digest,
-        "selection_record": {
-            "eligible_entry_ids": [condition.model_entry_id],
-            "selected_entry_id": condition.model_entry_id,
-            "attempt_entry_ids": [condition.model_entry_id],
-        },
-        "attempts": [provider_attempt],
-        "final_entry_id": condition.model_entry_id,
-        "final_result_kind": "succeeded",
-        "secret_redaction": {"authorization_header": False, "api_key_value": False},
-    }
-    provenance_ref = _save_evidence_artifact(
-        body=provenance_body,
-        artifact_id=f"provenance_{prefix}",
-        artifact_type="AIProviderCallProvenance",
-        schema_id="phase7.ai_provider_call_provenance",
-        schema_version="v2",
-        source={"kind": "ai_api_executor", "request_id": request_id},
-    )
-    raw_body = {
-        "schema_version": "phase7.raw_model_output.v2",
-        "submission_id": submission_id,
-        "request_id": request_id,
-        "provider_family": condition.provider_family,
-        "entry_id": condition.model_entry_id,
-        "configured_model": condition.provider_model_id,
-        "requested_model": condition.provider_model_id,
-        "resolved_model": condition.provider_model_id,
-        "response_model_status": "present",
-        "raw_response_json": {
-            "id": f"provider_{prefix}",
-            "model": condition.provider_model_id,
-        },
-        "content_text": "fixture output",
-        "usage": {"total_tokens": total_tokens},
-    }
-    raw_output_ref = _save_evidence_artifact(
-        body=raw_body,
-        artifact_id=f"raw_{prefix}",
-        artifact_type="RawModelOutput",
-        schema_id="phase7.raw_model_output",
-        schema_version="v2",
-        source={"kind": "ai_api_executor", "request_id": request_id},
-    )
-    usage_body = {
-        "schema_version": "tokenshare.paper_ai_usage.v1",
-        "submission_id": submission_id,
-        "request_id": request_id,
-        "provider_family": condition.provider_family,
-        "entry_id": condition.model_entry_id,
-        "model": condition.provider_model_id,
-        "configured_model": condition.provider_model_id,
-        "requested_model": condition.provider_model_id,
-        "provider_attempt_count": 1,
-        "prompt_tokens": total_tokens // 2,
-        "completion_tokens": total_tokens - total_tokens // 2,
-        "total_tokens": total_tokens,
-        "cost_estimate": cost_estimate,
-        "cost_estimate_status": "estimated",
-    }
-    usage_ref = _save_evidence_artifact(
-        body=usage_body,
-        artifact_id=f"usage_{prefix}",
-        artifact_type="AIUsageSummary",
-        schema_id="tokenshare.paper_ai_usage",
-        schema_version="v1",
-        source={"kind": "paper_adapter", "case_id": case_id},
-    )
-    expected_identity = {
-        "provider_config_id": condition.provider_config_id,
-        "selected_entry_id": condition.model_entry_id,
-        "provider_family": condition.provider_family,
-        "provider_model_id": condition.provider_model_id,
-        "reasoning_profile_id": condition.reasoning_profile_id,
-        "effective_reasoning_controls": {
-            "temperature": 0.0,
-            "enable_thinking": False,
-        },
-        "source_provider_config_digest": condition.source_provider_config_digest,
-        "model_endpoint_identity_digest": condition.model_endpoint_identity_digest,
-    }
-    model_record_body = {
-        "schema_version": "tokenshare.paper_model_execution_record.v2",
-        "condition_id": condition.condition_id,
-        "repeat_id": condition.repeat_id,
-        "run_id": run_id,
-        "task_id": case_id,
-        "unit_id": unit["unit_id"],
-        "attempt_id": attempt_id,
-        "expected_identity": expected_identity,
-        "source_provider_config_digest": condition.source_provider_config_digest,
-        "prepared_execution_config_digest": prepared_digest,
-        "request_ref": request_ref,
-        "provenance_ref": provenance_ref,
-        "raw_output_ref": raw_output_ref,
-        "usage_ref": usage_ref,
-        "actual_request_identities": [request_identity],
-        "actual_provider_attempts": [provider_attempt],
-        "requested_model": condition.provider_model_id,
-        "resolved_model": condition.provider_model_id,
-        "response_model_status": "present",
-        "identity_status": "matched",
-        "mismatch_reasons": [],
-        "paper_eligible": True,
-        "created_at": "2026-07-19T00:00:00Z",
-    }
-    model_record_body["record_digest"] = digest_json(model_record_body)
-    model_record_ref = _save_evidence_artifact(
-        body=model_record_body,
-        artifact_id=f"model_record_{prefix}",
-        artifact_type="PaperModelExecutionRecord",
-        schema_id="tokenshare.paper_model_execution_record",
-        schema_version="v2",
-        source={"kind": "paper_adapter", "condition_id": condition.condition_id},
-    )
-    worker_body = {
-        "schema_version": "tokenshare.paper_worker_execution.v1",
-        "condition_id": condition.condition_id,
-        "repeat_id": condition.repeat_id,
-        "task_id": case_id,
-        "unit_id": unit["unit_id"],
-        "attempt_id": attempt_id,
-        "worker_id": worker_id,
-        "worker_pid": 10000 + worker_slot,
-        "worker_slot": worker_slot,
-        "executor_id": "executor_ai_api",
-        "transport_kind": "ai_api",
-    }
-    worker_ref = _save_evidence_artifact(
-        body=worker_body,
-        artifact_id=f"worker_{prefix}",
-        artifact_type="PaperWorkerExecution",
-        schema_id="tokenshare.paper_worker_execution",
-        schema_version="v1",
-        source={"kind": "real_worker_executor", "worker_id": worker_id},
-    )
-    return {
-        "request_ref": request_ref,
-        "raw_output_ref": raw_output_ref,
-        "provenance_ref": provenance_ref,
-        "usage_ref": usage_ref,
-        "model_execution_record_ref": model_record_ref,
-        "worker_ref": worker_ref,
-    }
-
-
-def _save_evidence_artifact(
-    *,
-    body: dict[str, Any],
-    artifact_id: str,
-    artifact_type: str,
-    schema_id: str,
-    schema_version: str,
-    source: dict[str, Any],
-) -> dict[str, Any]:
-    return _EVIDENCE_STORE.save_json(
-        body,
-        artifact_id=artifact_id,
-        artifact_type=artifact_type,
-        artifact_schema_id=schema_id,
-        artifact_schema_version=schema_version,
-        source=source,
-        metadata={},
-        created_at="2026-07-19T00:00:00Z",
-    ).to_dict()
 
 
 def _topic_counts(case_ids) -> dict[str, int]:

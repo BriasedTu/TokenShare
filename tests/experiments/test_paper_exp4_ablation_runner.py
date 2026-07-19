@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import json
 from copy import deepcopy
 from dataclasses import replace
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -13,6 +15,7 @@ from tokenshare.experiments.paper_ablation import (
 from tokenshare.experiments.paper_experiment_contracts import (
     PaperExecutionContext,
     PaperExperimentModule,
+    canonical_contract_digest,
 )
 from tokenshare.experiments.paper_exp4_ablation_runner import (
     BASELINE_MODEL_ENTRY_ID,
@@ -83,6 +86,145 @@ def test_exp4_expands_frozen_six_mode_matrix_with_glm_baseline() -> None:
     assert all(condition.paper_eligible_required for condition in conditions)
 
 
+def test_exp4_accepts_complete_baseline_request_policy_and_normal_profile() -> None:
+    binding = _baseline_binding()
+    binding["reasoning_profile_id"] = "default"
+    binding["request_controls"] = _complete_request_controls()
+
+    conditions = expand_exp4_conditions(_context(binding=binding))
+
+    assert {condition.reasoning_profile_id for condition in conditions} == {"default"}
+
+
+def test_exp4_accepts_controls_resolved_from_actual_baseline_provider_config() -> None:
+    repo_root = Path(__file__).resolve().parents[2]
+    config = json.loads(
+        (repo_root / "benchmarks/paper/exp1_baseline_provider_config.v1.json")
+        .read_text(encoding="utf-8")
+    )
+    entry = next(
+        item
+        for item in config["entries"]
+        if item["entry_id"] == "glm_5_2_exp1_baseline"
+    )
+    resolved_controls = {
+        **config["defaults"],
+        **entry["request_overrides"],
+    }
+    assert resolved_controls == {
+        "max_tokens": 1024,
+        "timeout_seconds": 30,
+        "max_provider_attempts": 1,
+        "temperature": 0.0,
+        "top_p": 1.0,
+        "stream": False,
+        "enable_thinking": False,
+    }
+    binding = _baseline_binding()
+    binding["request_controls"] = resolved_controls
+    context = _context(binding=binding, request_limits=resolved_controls)
+
+    conditions = expand_exp4_conditions(context)
+    selections = freeze_exp4_case_selections(context, conditions)
+
+    assert len(conditions) == 108
+    assert count_exp4_root_runs(conditions, selections) == EXP4_ROOT_RUN_COUNT
+    assert all(selection.is_executable for selection in selections)
+
+
+@pytest.mark.parametrize(
+    ("field_name", "drifted_value"),
+    [
+        ("max_tokens", 2048),
+        ("timeout_seconds", 31),
+        ("max_provider_attempts", 2),
+        ("top_p", 0.9),
+        ("stream", True),
+    ],
+)
+def test_exp4_rejects_request_policy_drift_before_callback(
+    field_name: str,
+    drifted_value: Any,
+) -> None:
+    callback_count = 0
+
+    def callback(**kwargs: Any) -> PaperConditionResult:
+        nonlocal callback_count
+        callback_count += 1
+        raise AssertionError("request policy drift must not reach callback")
+
+    binding = _baseline_binding()
+    binding["reasoning_profile_id"] = "default"
+    binding["request_controls"] = _complete_request_controls()
+    request_limits = _complete_request_controls()
+    request_limits[field_name] = drifted_value
+
+    with pytest.raises(ValueError, match="context request controls drifted"):
+        expand_exp4_conditions(
+            _context(
+                binding=binding,
+                callback=callback,
+                request_limits=request_limits,
+            )
+        )
+    assert callback_count == 0
+
+
+def test_exp4_consumes_versioned_integration_prepared_catalog_view() -> None:
+    context = _context(catalog=_prepared_catalog())
+
+    conditions = expand_exp4_conditions(context)
+    selections = freeze_exp4_case_selections(context, conditions)
+
+    assert len(conditions) == 108
+    assert count_exp4_root_runs(conditions, selections) == EXP4_ROOT_RUN_COUNT
+    assert all(selection.is_executable for selection in selections)
+
+
+def test_exp4_prepared_view_blocks_lean_when_semantic_readiness_is_not_ready() -> None:
+    callback_count = 0
+
+    def callback(**kwargs: Any) -> PaperConditionResult:
+        nonlocal callback_count
+        callback_count += 1
+        raise AssertionError("unready Lean selection must not reach callback")
+
+    catalog = _prepared_catalog()
+    catalog["lean_semantic_readiness_status"] = "blocked"
+    catalog["lean_semantic_readiness_reason"] = "task15_budget_input_incomplete"
+    context = _context(catalog=catalog, callback=callback)
+    conditions = expand_exp4_conditions(context)
+    selections = freeze_exp4_case_selections(context, conditions)
+    lean_pairs = [
+        (condition, selection)
+        for condition, selection in zip(conditions, selections, strict=True)
+        if condition.domain == "lean_proof"
+    ]
+
+    assert len(lean_pairs) == 54
+    assert all(selection.is_blocked for _, selection in lean_pairs)
+    assert {
+        selection.blocked_reason for _, selection in lean_pairs
+    } == {"lean_semantic_readiness_not_passed:task15_budget_input_incomplete"}
+
+    condition, selection = lean_pairs[0]
+    result = run_exp4_condition(context, condition, selection)
+    assert result.status == PaperStatus.BLOCKED
+    assert result.provider_attempt_count == 0
+    assert callback_count == 0
+
+
+def test_exp4_prepared_view_rejects_shared_lean_slice_digest_drift() -> None:
+    catalog = _prepared_catalog()
+    catalog["shared_lean_slices"]["simple"]["pure_logic"][0]["case_id"] = (
+        "lean_simple_pure_logic_drift"
+    )
+    context = _context(catalog=catalog)
+
+    with pytest.raises(ValueError, match="shared Lean slice digest mismatch"):
+        freeze_exp4_case_selections(context, expand_exp4_conditions(context))
+
+
 def test_exp4_freezes_five_task_batches_and_exact_540_root_runs() -> None:
     context = _context()
     conditions = expand_exp4_conditions(context)
@@ -132,7 +274,7 @@ def test_exp4_lean_selection_reuses_exp2_exact_221_slice(
     expected_ids = tuple(
         case["case_id"]
         for topic_family in ("pure_logic", "function_set", "induction")
-        for case in context.catalog["exp2"]["lean_proof"][paper_difficulty][
+        for case in context.catalog["shared_lean_slices"][paper_difficulty][
             topic_family
         ]
     )
@@ -150,28 +292,26 @@ def test_exp4_lean_selection_reuses_exp2_exact_221_slice(
 
 
 def test_exp4_rejects_lean_slice_drift_from_exp2_reference() -> None:
-    catalog = deepcopy(_catalog())
-    catalog["exp4"]["lean_proof"] = deepcopy(catalog["exp4"]["lean_proof"])
-    catalog["exp4"]["lean_proof"]["simple"]["pure_logic"][0]["case_id"] = (
+    catalog = _prepared_catalog()
+    catalog["shared_lean_slices"]["simple"]["pure_logic"][0]["case_id"] = (
         "lean_simple_pure_logic_drift"
     )
     context = _context(catalog=catalog)
     conditions = expand_exp4_conditions(context)
 
-    with pytest.raises(ValueError, match="Lean slice drift"):
+    with pytest.raises(ValueError, match="shared Lean slice digest mismatch"):
         freeze_exp4_case_selections(context, conditions)
 
 
 def test_exp4_rejects_lean_ai_unit_drift_from_exp2_reference() -> None:
-    catalog = deepcopy(_catalog())
-    catalog["exp4"]["lean_proof"] = deepcopy(catalog["exp4"]["lean_proof"])
-    catalog["exp4"]["lean_proof"]["simple"]["pure_logic"][0][
+    catalog = _prepared_catalog()
+    catalog["shared_lean_slices"]["simple"]["pure_logic"][0][
         "expected_ai_unit_count"
     ] += 1
     context = _context(catalog=catalog)
     conditions = expand_exp4_conditions(context)
 
-    with pytest.raises(ValueError, match="Lean slice drift"):
+    with pytest.raises(ValueError, match="shared Lean slice digest mismatch"):
         freeze_exp4_case_selections(context, conditions)
 
 
@@ -183,9 +323,8 @@ def test_exp4_missing_formal_lean_slice_is_structured_blocked_with_zero_calls() 
         callback_count += 1
         raise AssertionError("blocked selection must not reach execution callback")
 
-    catalog = deepcopy(_catalog())
-    catalog["exp4"]["lean_proof"] = deepcopy(catalog["exp4"]["lean_proof"])
-    del catalog["exp4"]["lean_proof"]["hard_frontier"]
+    catalog = _prepared_catalog()
+    del catalog["shared_lean_slices"]["hard_frontier"]
     context = _context(catalog=catalog, callback=callback)
     conditions = expand_exp4_conditions(context)
     selections = freeze_exp4_case_selections(context, conditions)
@@ -225,6 +364,14 @@ def test_exp4_rejects_condition_model_drift_before_execution() -> None:
 
     with pytest.raises(ValueError, match="GLM-5.2 baseline model identity"):
         validate_exp4_condition(context, drifted)
+
+
+def test_exp4_requires_explicit_approved_selected_entry_id() -> None:
+    binding = _baseline_binding()
+    del binding["selected_entry_id"]
+
+    with pytest.raises(ValueError, match="baseline model entry"):
+        expand_exp4_conditions(_context(binding=binding))
 
 
 def test_exp4_mode_configs_isolate_output_roots_and_preserve_full_default() -> None:
@@ -336,10 +483,141 @@ def test_exp4_run_condition_rejects_selection_drift_before_callback() -> None:
     assert callback_count == 0
 
 
+def test_exp4_callback_receives_fresh_canonical_selection() -> None:
+    captured: list[Any] = []
+
+    def callback(**kwargs: Any) -> PaperConditionResult:
+        captured.append(kwargs["selection"])
+        condition = kwargs["condition"]
+        return PaperConditionResult(
+            condition_id=condition.condition_id,
+            status=PaperStatus.COMPLETED,
+            repeat_count=1,
+            task_count=5,
+            completed_root_count=5,
+            failed_root_count=0,
+            blocked_root_count=0,
+            provider_attempt_count=5,
+            metrics_ref=None,
+        )
+
+    context = _context(callback=callback)
+    condition = expand_exp4_conditions(context)[0]
+    frozen = freeze_exp4_case_selections(context, (condition,))[0]
+    deserialized_equivalent = replace(frozen)
+
+    run_exp4_condition(context, condition, deserialized_equivalent)
+
+    assert captured[0] == frozen
+    assert captured[0] is not deserialized_equivalent
+
+
+def test_exp4_summary_uses_authoritative_condition_bounds_and_repeat_statistics() -> None:
+    records = []
+    for repeat_id, condition_wall_clock_ms in enumerate((100, 200, 500)):
+        records.append(
+            _evidence_record(
+                mode=PaperAblationMode.NO_VERIFICATION,
+                repeat_id=repeat_id,
+                condition_wall_clock_ms=condition_wall_clock_ms,
+                tasks=tuple(
+                    _task_result(
+                        task_id=f"case_{index}",
+                        completed=True,
+                        accepted_validity=True,
+                        error_exposed=False,
+                        error_escaped=False,
+                        wall_clock_ms=10_000,
+                        total_tokens=repeat_id + 1,
+                        cost_estimate=(repeat_id + 1) / 100,
+                    )
+                    for index in range(5)
+                ),
+                transport_kind="ai_api",
+                paper_eligible=False,
+            )
+        )
+
+    row = summarize_exp4_ablation(_evidence(records, scope="pilot")).rows[0]
+
+    assert row["wall_clock_ms"] == 200
+    assert row["wall_clock_median_ms"] == 200
+    assert row["wall_clock_iqr_ms"] == 400
+    assert row["total_tokens"] == 30
+    assert row["total_tokens_median"] == 10
+    assert row["total_tokens_iqr"] == 10
+    assert row["cost_estimate"] == pytest.approx(0.3)
+    assert row["cost_median"] == pytest.approx(0.1)
+    assert row["cost_iqr"] == pytest.approx(0.1)
+
+
+def test_exp4_formal_summary_accepts_only_complete_540_root_matrix() -> None:
+    evidence = _formal_evidence()
+
+    summary = summarize_exp4_ablation(evidence)
+
+    assert len(summary.rows) == 36
+    assert sum(row["root_run_count"] for row in summary.rows) == 540
+    assert all(row["repeat_count"] == 3 for row in summary.rows)
+    assert all(row["repeat_set_status"] == "complete" for row in summary.rows)
+    assert all(row["paper_eligible"] is True for row in summary.rows)
+
+    incomplete = deepcopy(evidence)
+    incomplete["condition_results"].pop()
+    with pytest.raises(ValueError, match="formal evidence must contain 108 conditions"):
+        summarize_exp4_ablation(incomplete)
+
+
+def test_exp4_formal_summary_rejects_duplicate_repeat_with_complete_record_count() -> None:
+    evidence = _formal_evidence()
+    replacement = deepcopy(evidence["condition_results"][-1])
+    replacement["condition_id"] += "_duplicate"
+    replacement["condition_digest"] = canonical_contract_digest(
+        {"condition_id": replacement["condition_id"]}
+    )
+    replacement["repeat_id"] = 1
+    replacement["seed"] = 4001
+    evidence["condition_results"][-1] = replacement
+
+    with pytest.raises(ValueError, match="formal repeat set must be exactly 0, 1, 2"):
+        summarize_exp4_ablation(evidence)
+
+
+def test_exp4_pilot_scripted_evidence_cannot_enter_formal_summary() -> None:
+    scripted = _evidence_record(
+        mode=PaperAblationMode.FULL,
+        tasks=tuple(
+            _task_result(
+                task_id=f"scripted_case_{index}",
+                completed=True,
+                accepted_validity=True,
+                error_exposed=False,
+                error_escaped=False,
+            )
+            for index in range(5)
+        ),
+        transport_kind="scripted",
+        paper_eligible=False,
+    )
+
+    pilot_row = summarize_exp4_ablation(
+        _evidence([scripted], scope="pilot")
+    ).rows[0]
+    assert pilot_row["execution_scope"] == "pilot"
+    assert pilot_row["paper_eligible"] is False
+
+    formal = _formal_evidence()
+    formal["condition_results"][0]["transport_kind"] = "scripted"
+    formal["condition_results"][0]["paper_eligible"] = False
+    with pytest.raises(ValueError, match="formal evidence requires ai_api transport"):
+        summarize_exp4_ablation(formal)
+
+
 def test_exp4_summary_reports_protocol_outcomes_resources_and_escape_rates() -> None:
     evidence = [
         _evidence_record(
             mode=PaperAblationMode.NO_VERIFICATION,
+            condition_wall_clock_ms=400,
             tasks=(
                 _task_result(
                     task_id="task_nv_1",
@@ -433,7 +711,7 @@ def test_exp4_summary_reports_protocol_outcomes_resources_and_escape_rates() -> 
 
     rows = {
         row["ablation_mode"]: row
-        for row in summarize_exp4_ablation(evidence).rows
+        for row in summarize_exp4_ablation(_evidence(evidence)).rows
     }
     no_verification = rows[PaperAblationMode.NO_VERIFICATION.value]
     assert no_verification["root_run_count"] == 2
@@ -490,7 +768,7 @@ def test_exp4_summary_rejects_escape_without_exposure() -> None:
     ]
 
     with pytest.raises(ValueError, match="escaped error must be exposed"):
-        summarize_exp4_ablation(evidence)
+        summarize_exp4_ablation(_evidence(evidence))
 
 
 def test_exp4_summary_counts_multiple_exposed_objects_per_task() -> None:
@@ -504,17 +782,43 @@ def test_exp4_summary_counts_multiple_exposed_objects_per_task() -> None:
     task["exposed_error_count"] = 3
     task["escaped_error_count"] = 2
     summary = summarize_exp4_ablation(
-        [
-            _evidence_record(
-                mode=PaperAblationMode.NO_VERIFICATION,
-                tasks=(task,),
-            )
-        ]
+        _evidence(
+            [
+                _evidence_record(
+                    mode=PaperAblationMode.NO_VERIFICATION,
+                    tasks=(task,),
+                )
+            ]
+        )
     ).rows[0]
 
     assert summary["exposed_error_count"] == 3
     assert summary["escaped_error_count"] == 2
     assert summary["error_escape_rate"] == pytest.approx(2 / 3)
+
+
+@pytest.mark.parametrize("invalid_cost", [float("nan"), float("inf")])
+def test_exp4_summary_rejects_non_finite_cost(invalid_cost: float) -> None:
+    task = _task_result(
+        task_id="non_finite_cost",
+        completed=True,
+        accepted_validity=True,
+        error_exposed=False,
+        error_escaped=False,
+    )
+    task["cost_estimate"] = invalid_cost
+
+    with pytest.raises(ValueError, match="cost_estimate must be a number >= 0"):
+        summarize_exp4_ablation(
+            _evidence(
+                [
+                    _evidence_record(
+                        mode=PaperAblationMode.FULL,
+                        tasks=(task,),
+                    )
+                ]
+            )
+        )
 
 
 def test_exp4_scripted_summary_remains_paper_ineligible() -> None:
@@ -533,30 +837,10 @@ def test_exp4_scripted_summary_remains_paper_ineligible() -> None:
         paper_eligible=False,
     )
 
-    rows = summarize_exp4_ablation([scripted]).rows
+    rows = summarize_exp4_ablation(_evidence([scripted])).rows
 
     assert rows[0]["transport_kind"] == "scripted"
     assert rows[0]["paper_eligible"] is False
-    forged = dict(scripted)
-    forged["paper_eligible"] = True
-    with pytest.raises(ValueError, match="scripted transport cannot be paper eligible"):
-        summarize_exp4_ablation([forged])
-    real = _evidence_record(
-        mode=PaperAblationMode.FULL,
-        tasks=(
-            _task_result(
-                task_id="task_real",
-                completed=True,
-                accepted_validity=True,
-                error_exposed=False,
-                error_escaped=False,
-            ),
-        ),
-        transport_kind="ai_api",
-        paper_eligible=True,
-    )
-    with pytest.raises(ValueError, match="scripted transport cannot be paper eligible"):
-        summarize_exp4_ablation([forged, real])
 
 
 def _evidence_record(
@@ -565,16 +849,50 @@ def _evidence_record(
     tasks: tuple[dict[str, Any], ...],
     transport_kind: str = "scripted",
     paper_eligible: bool = False,
+    domain: str = "factorization",
+    paper_difficulty: str = "easy",
+    repeat_id: int = 0,
+    condition_id: str | None = None,
+    condition_digest: str | None = None,
+    selection_digest: str = "sha256:" + "4" * 64,
+    ordered_case_ids: tuple[str, ...] | None = None,
+    condition_wall_clock_ms: int = 10,
 ) -> dict[str, Any]:
+    resolved_condition_id = condition_id or (
+        f"condition_{domain}_{paper_difficulty}_{mode.value.lower()}_r{repeat_id}"
+    )
+    resolved_case_ids = ordered_case_ids or tuple(
+        str(task["case_id"]) for task in tasks
+    )
     return {
-        "condition_id": f"condition_{mode.value.lower()}",
-        "domain": "factorization",
-        "paper_difficulty": "easy",
+        "schema_version": "tokenshare.paper_exp4_condition_evidence.v1",
+        "condition_id": resolved_condition_id,
+        "condition_digest": condition_digest
+        or canonical_contract_digest({"condition_id": resolved_condition_id}),
+        "domain": domain,
+        "paper_difficulty": paper_difficulty,
         "ablation_mode": mode.value,
-        "repeat_id": 0,
-        "selection_digest": "sha256:" + "4" * 64,
+        "repeat_id": repeat_id,
+        "seed": 4000 + repeat_id,
+        "worker_count": 10,
+        "fault_type": "none",
+        "fault_rate": 0.0,
+        "selection_digest": selection_digest,
+        "ordered_case_ids": list(resolved_case_ids),
+        "catalog_digest": CATALOG_DIGEST,
+        "catalog_version": "v1",
+        "provider_config_id": "exp1_baseline_siliconflow",
+        "selected_entry_id": "glm_5_2_exp1_baseline",
+        "model_entry_id": "glm_5_2_exp1_baseline",
+        "provider_family": "siliconflow",
+        "provider_model_id": "zai-org/GLM-5.2",
+        "reasoning_profile_id": "default",
+        "source_provider_config_digest": SOURCE_CONFIG_DIGEST,
+        "model_endpoint_identity_digest": ENDPOINT_DIGEST,
+        "request_controls": _complete_request_controls(),
         "transport_kind": transport_kind,
         "paper_eligible": paper_eligible,
+        "condition_wall_clock_ms": condition_wall_clock_ms,
         "task_results": list(tasks),
     }
 
@@ -597,6 +915,7 @@ def _task_result(
 ) -> dict[str, Any]:
     return {
         "task_id": task_id,
+        "case_id": task_id,
         "root_status": "completed" if completed else "failed",
         "accepted_validity": accepted_validity,
         "wrong_canonical_acceptance": wrong_canonical_acceptance,
@@ -612,11 +931,61 @@ def _task_result(
     }
 
 
+def _evidence(
+    records: list[dict[str, Any]],
+    *,
+    scope: str = "pilot",
+) -> dict[str, Any]:
+    return {
+        "schema_version": "tokenshare.paper_exp4_ablation_evidence.v1",
+        "execution_scope": scope,
+        "suite_version": "paper_v1",
+        "catalog_digest": CATALOG_DIGEST,
+        "catalog_version": "v1",
+        "condition_results": records,
+    }
+
+
+def _formal_evidence() -> dict[str, Any]:
+    context = _context()
+    conditions = expand_exp4_conditions(context)
+    selections = freeze_exp4_case_selections(context, conditions)
+    records: list[dict[str, Any]] = []
+    for condition, selection in zip(conditions, selections, strict=True):
+        records.append(
+            _evidence_record(
+                mode=PaperAblationMode(condition.ablation_mode),
+                domain=condition.domain,
+                paper_difficulty=str(condition.paper_difficulty),
+                repeat_id=condition.repeat_id,
+                condition_id=condition.condition_id,
+                condition_digest=condition.condition_digest,
+                selection_digest=selection.selection_digest,
+                ordered_case_ids=selection.ordered_case_ids,
+                condition_wall_clock_ms=100 + condition.repeat_id,
+                tasks=tuple(
+                    _task_result(
+                        task_id=case_id,
+                        completed=True,
+                        accepted_validity=True,
+                        error_exposed=False,
+                        error_escaped=False,
+                    )
+                    for case_id in selection.ordered_case_ids
+                ),
+                transport_kind="ai_api",
+                paper_eligible=True,
+            )
+        )
+    return _evidence(records, scope="formal")
+
+
 def _context(
     *,
     catalog: dict[str, Any] | None = None,
     binding: dict[str, Any] | None = None,
     callback=None,
+    request_limits: dict[str, Any] | None = None,
     output_root: str = "outputs/experiments/exp4_test",
 ) -> PaperExecutionContext:
     def default_callback(**kwargs: Any) -> PaperConditionResult:
@@ -636,15 +1005,15 @@ def _context(
 
     return PaperExecutionContext(
         context_id="exp4_test_context",
-        catalog=catalog or _catalog(),
-        approved_endpoint_binding=binding or _baseline_binding(),
-        request_limits={
-            "max_tokens": 1024,
-            "timeout_seconds": 30,
-            "max_provider_attempts": 1,
-            "temperature": 0.0,
-            "enable_thinking": False,
-        },
+        catalog=_prepared_catalog() if catalog is None else catalog,
+        approved_endpoint_binding=(
+            _baseline_binding() if binding is None else binding
+        ),
+        request_limits=(
+            _complete_request_controls()
+            if request_limits is None
+            else request_limits
+        ),
         hard_limits={"max_total_provider_attempts": 0},
         output_root=output_root,
         artifact_store=object(),
@@ -660,11 +1029,74 @@ def _baseline_binding() -> dict[str, Any]:
         "model_entry_id": "glm_5_2_exp1_baseline",
         "provider_family": "siliconflow",
         "provider_model_id": "zai-org/GLM-5.2",
-        "reasoning_profile_id": "temperature_0_enable_thinking_false",
+        "reasoning_profile_id": "default",
         "source_provider_config_digest": SOURCE_CONFIG_DIGEST,
         "model_endpoint_identity_digest": ENDPOINT_DIGEST,
-        "request_controls": {"temperature": 0.0, "enable_thinking": False},
+        "request_controls": _complete_request_controls(),
     }
+
+
+def _complete_request_controls() -> dict[str, Any]:
+    return {
+        "max_tokens": 1024,
+        "timeout_seconds": 30,
+        "max_provider_attempts": 1,
+        "temperature": 0.0,
+        "top_p": 1.0,
+        "stream": False,
+        "enable_thinking": False,
+    }
+
+
+def _prepared_catalog() -> dict[str, Any]:
+    source = _catalog()
+    shared_lean_slices = deepcopy(source["exp2"]["lean_proof"])
+    return {
+        "schema_version": "tokenshare.paper_exp4_catalog_view.v1",
+        "catalog_source_kind": "paper_input_catalog_manifest",
+        "suite_version": source["suite_version"],
+        "catalog_version": source["catalog_version"],
+        "catalog_digest": source["catalog_digest"],
+        "lean_semantic_readiness_status": "ready",
+        "lean_semantic_readiness_reason": None,
+        "factorization_slices": deepcopy(source["exp4"]["factorization"]),
+        "shared_lean_slice_experiment_ids": ["exp2", "exp4", "exp5"],
+        "shared_lean_slices": shared_lean_slices,
+        "shared_lean_slice_digests": {
+            paper_difficulty: _shared_lean_slice_digest(
+                paper_difficulty,
+                shared_lean_slices[paper_difficulty],
+            )
+            for paper_difficulty in (
+                "simple",
+                "medium_lemma_dag",
+                "hard_frontier",
+            )
+        },
+    }
+
+
+def _shared_lean_slice_digest(
+    paper_difficulty: str,
+    by_topic: dict[str, list[dict[str, Any]]],
+) -> str:
+    return canonical_contract_digest(
+        {
+            "paper_difficulty": paper_difficulty,
+            "topic_allocations": {
+                topic_family: len(by_topic[topic_family])
+                for topic_family in ("pure_logic", "function_set", "induction")
+            },
+            "ordered_cases": [
+                {
+                    "case_id": case["case_id"],
+                    "expected_ai_unit_count": case["expected_ai_unit_count"],
+                }
+                for topic_family in ("pure_logic", "function_set", "induction")
+                for case in by_topic[topic_family]
+            ],
+        }
+    )
 
 
 def _catalog() -> dict[str, Any]:

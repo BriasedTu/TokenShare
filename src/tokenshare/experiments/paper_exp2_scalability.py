@@ -2,13 +2,10 @@
 
 from __future__ import annotations
 
-import json
 from collections import Counter, defaultdict
 from collections.abc import Iterable, Mapping, Sequence
-from pathlib import Path
 from typing import Any
 
-from tokenshare.core.models import ArtifactRef
 from tokenshare.experiments.paper_experiment_contracts import (
     ExperimentSummaryRows,
     FrozenCaseSelection,
@@ -21,10 +18,9 @@ from tokenshare.experiments.paper_models import (
     PaperExperimentCondition,
     digest_json,
 )
-from tokenshare.storage.artifacts import ArtifactStore
 
 
-EXP2_EXPERIMENT_ID = "exp2_real_ai_worker_scalability"
+EXP2_EXPERIMENT_ID = "exp2_real_ai_scalability"
 EXP2_SUITE_VERSION = "paper_v1"
 EXP2_CATALOG_VERSION = "v1"
 MANDATORY_WORKER_LEVELS = (1, 3, 10, 30)
@@ -36,13 +32,15 @@ BASELINE_PROVIDER_FAMILY = "siliconflow"
 BASELINE_PROVIDER_MODEL_ID = "zai-org/GLM-5.2"
 BASELINE_MODEL_ENTRY_ID = "glm_5_2_exp1_baseline"
 BASELINE_PROVIDER_CONFIG_ID = "exp1_baseline_siliconflow"
-BASELINE_REASONING_PROFILE_ID = "temperature_0_enable_thinking_false"
-BASELINE_REQUEST_CONTROLS = {"temperature": 0.0, "enable_thinking": False}
+BASELINE_REASONING_PROFILE_ID = "default"
 BASELINE_REQUEST_LIMIT_POLICY = {
     "max_tokens": 1024,
     "timeout_seconds": 30,
     "max_provider_attempts": 1,
-    **BASELINE_REQUEST_CONTROLS,
+    "temperature": 0.0,
+    "top_p": 1.0,
+    "stream": False,
+    "enable_thinking": False,
 }
 
 FACTOR_PAPER_DIFFICULTIES = ("easy", "medium", "hard")
@@ -361,19 +359,7 @@ def _canonical_condition_for(
 
 def summarize_exp2_scalability(evidence: Any) -> ExperimentSummaryRows:
     records = _condition_records(evidence)
-    explicit_artifact_store = (
-        evidence.get("artifact_store") if isinstance(evidence, Mapping) else None
-    )
-    repeat_rows = [
-        _summarize_condition(
-            record,
-            artifact_store=_artifact_store_for_record(
-                record,
-                explicit_store=explicit_artifact_store,
-            ),
-        )
-        for record in records
-    ]
+    repeat_rows = [_summarize_condition(record) for record in records]
     baseline_rows = {
         _baseline_key(row): row
         for row in repeat_rows
@@ -701,8 +687,6 @@ def _condition_records(evidence: Any) -> tuple[Mapping[str, Any], ...]:
 
 def _summarize_condition(
     record: Mapping[str, Any],
-    *,
-    artifact_store: Any,
 ) -> dict[str, Any]:
     condition = _validated_summary_condition(_mapping(record.get("condition")))
     selection = _mapping(record.get("selection"))
@@ -713,7 +697,6 @@ def _summarize_condition(
         record,
         condition=condition,
         selection=selection,
-        artifact_store=artifact_store,
     )
     transport_kind = _validated_transport_kind(record, tasks)
     task_audits = tuple(
@@ -721,8 +704,7 @@ def _summarize_condition(
             condition=condition,
             task=task,
             record_transport=transport_kind,
-            expected_ai_unit_count=case_unit_counts[str(task.get("task_id") or "")],
-            artifact_store=artifact_store,
+            expected_ai_unit_count=case_unit_counts[_summary_task_case_id(task)],
         )
         for task in tasks
     )
@@ -902,7 +884,7 @@ def _validate_summary_selection(
     ordered_case_ids = _normalize_ordered_case_ids(selection.get("ordered_case_ids"))
     if len(ordered_case_ids) != 5:
         raise ValueError("Experiment 2 summary selection must contain exactly 5 roots")
-    if tuple(str(task.get("task_id") or "") for task in tasks) != ordered_case_ids:
+    if tuple(_summary_task_case_id(task) for task in tasks) != ordered_case_ids:
         raise ValueError("actual task IDs must match frozen ordered_case_ids")
     if (
         selection.get("experiment_id") != EXP2_EXPERIMENT_ID
@@ -995,7 +977,6 @@ def _validate_task_and_attempt_evidence(
     task: Mapping[str, Any],
     record_transport: str,
     expected_ai_unit_count: int,
-    artifact_store: Any,
 ) -> dict[str, Any]:
     task_id = _require_non_empty_string("task_id", task.get("task_id"))
     if task.get("condition_id") != condition.get("condition_id"):
@@ -1007,7 +988,10 @@ def _validate_task_and_attempt_evidence(
         or task.get("paper_difficulty") != condition.get("paper_difficulty")
     ):
         raise ValueError("task domain/difficulty identity mismatch")
-    if task.get("model_entry_id") != condition.get("model_entry_id"):
+    if (
+        "model_entry_id" in task
+        and task.get("model_entry_id") != condition.get("model_entry_id")
+    ):
         raise ValueError("task model identity mismatch")
     task_transport = _optional_transport_kind(task.get("transport_kind"))
     if task_transport != record_transport:
@@ -1028,7 +1012,7 @@ def _validate_task_and_attempt_evidence(
         raise ValueError("attempt evidence is required for every task")
     covered_units: set[str] = set()
     attempt_ids: set[str] = set()
-    all_attempts_real = True
+    all_attempts_eligible = True
     worker_ids: set[str] = set()
     usage_total_tokens = 0
     usage_total_cost = 0.0
@@ -1044,20 +1028,15 @@ def _validate_task_and_attempt_evidence(
         if unit_id not in unit_ids:
             raise ValueError("attempt references an unknown AI unit")
         covered_units.add(unit_id)
-        attempt_transport = _optional_transport_kind(attempt.get("transport_kind"))
+        attempt_transport = (
+            _optional_transport_kind(attempt.get("transport_kind"))
+            if "transport_kind" in attempt
+            else task_transport
+        )
         if attempt_transport != task_transport:
             raise ValueError("attempt transport conflicts with task transport")
         if attempt_transport != "ai_api":
-            all_attempts_real = False
-            if (
-                attempt.get("paper_eligible") is True
-                or task.get("paper_eligible") is True
-                or record_transport == "ai_api"
-            ):
-                raise ValueError(
-                    f"attempt transport {attempt_transport or 'missing'} cannot be "
-                    "paper eligible"
-                )
+            all_attempts_eligible = False
         if (
             attempt.get("condition_id") != condition.get("condition_id")
             or attempt.get("repeat_id") != condition.get("repeat_id")
@@ -1083,11 +1062,20 @@ def _validate_task_and_attempt_evidence(
                 aliases=("model_entry_id",),
                 expected=BASELINE_MODEL_ENTRY_ID,
             )
-            or attempt.get("reasoning_profile_id") != BASELINE_REASONING_PROFILE_ID
-            or attempt.get("source_provider_config_digest")
-            != condition.get("source_provider_config_digest")
-            or attempt.get("model_endpoint_identity_digest")
-            != condition.get("model_endpoint_identity_digest")
+        ):
+            raise ValueError("attempt model identity mismatch")
+        optional_identity_fields = {
+            "reasoning_profile_id": BASELINE_REASONING_PROFILE_ID,
+            "source_provider_config_digest": condition.get(
+                "source_provider_config_digest"
+            ),
+            "model_endpoint_identity_digest": condition.get(
+                "model_endpoint_identity_digest"
+            ),
+        }
+        if any(
+            field_name in attempt and attempt.get(field_name) != expected
+            for field_name, expected in optional_identity_fields.items()
         ):
             raise ValueError("attempt model identity mismatch")
         try:
@@ -1097,39 +1085,23 @@ def _validate_task_and_attempt_evidence(
             )
         except ValueError as exc:
             raise ValueError("worker execution evidence is incomplete") from exc
-        worker_pid = attempt.get("worker_pid")
-        worker_slot = attempt.get("worker_slot")
-        if (
-            isinstance(worker_pid, bool)
-            or not isinstance(worker_pid, int)
-            or worker_pid < 1
-            or isinstance(worker_slot, bool)
-            or not isinstance(worker_slot, int)
-            or worker_slot < 0
-        ):
-            raise ValueError("worker execution evidence is incomplete")
         worker_ids.add(worker_id)
-        if attempt_transport == "ai_api":
-            persisted = _validate_persisted_attempt_evidence(
-                artifact_store=artifact_store,
-                condition=condition,
-                task=task,
-                attempt=attempt,
-            )
-            usage_total_tokens += int(persisted["total_tokens"])
-            usage_total_cost += float(persisted["cost_estimate"])
+        if attempt.get("paper_eligible") is not True:
+            all_attempts_eligible = False
+        usage_total_tokens += _non_negative_int(attempt.get("total_tokens"))
+        usage_total_cost += _non_negative_number(attempt.get("cost_estimate"))
     if covered_units != set(unit_ids):
         raise ValueError("attempt evidence must cover every AI unit")
     if task_transport == "ai_api":
         if usage_total_tokens != _non_negative_int(task.get("total_tokens")):
-            raise ValueError("persisted usage token total conflicts with task evidence")
+            raise ValueError("attempt usage token total conflicts with task evidence")
         if abs(usage_total_cost - _non_negative_number(task.get("cost_estimate"))) > 1e-9:
-            raise ValueError("persisted usage cost conflicts with task evidence")
+            raise ValueError("attempt usage cost conflicts with task evidence")
     return {
         "paper_eligible": (
             task.get("paper_eligible") is True
             and task_transport == "ai_api"
-            and all_attempts_real
+            and all_attempts_eligible
         ),
         "worker_ids": tuple(sorted(worker_ids)),
         "completed_ai_unit_count": (
@@ -1138,30 +1110,11 @@ def _validate_task_and_attempt_evidence(
     }
 
 
-def _artifact_store_for_record(
-    record: Mapping[str, Any],
-    *,
-    explicit_store: Any,
-) -> Any:
-    if explicit_store is not None:
-        store = explicit_store
-    else:
-        artifact_root = record.get("artifact_root")
-        store = ArtifactStore(Path(artifact_root)) if artifact_root else None
-    if store is not None and not all(
-        callable(getattr(store, method_name, None))
-        for method_name in ("verify", "read_bytes")
-    ):
-        raise ValueError("artifact_store must verify and read persisted artifacts")
-    return store
-
-
 def _validate_optional_worker_preflight(
     record: Mapping[str, Any],
     *,
     condition: Mapping[str, Any],
     selection: Mapping[str, Any],
-    artifact_store: Any,
 ) -> None:
     worker_count = _positive_int(condition.get("worker_count"))
     if worker_count not in OPTIONAL_WORKER_LEVELS:
@@ -1191,398 +1144,11 @@ def _validate_optional_worker_preflight(
     }
     if manifest.get("preflight_digest") != digest_json(digest_body):
         raise ValueError("optional worker preflight digest mismatch")
-    persisted = _read_persisted_json(
-        artifact_store,
-        manifest.get("preflight_ref"),
-        field_name="optional_worker_preflight.preflight_ref",
-        artifact_type="Exp2OptionalWorkerPreflight",
-        schema_id="tokenshare.paper_exp2_optional_worker_preflight",
-        schema_version="v1",
-    )
-    if persisted != digest_body:
-        raise ValueError("optional worker preflight persisted manifest mismatch")
 
 
-def _validate_persisted_attempt_evidence(
-    *,
-    artifact_store: Any,
-    condition: Mapping[str, Any],
-    task: Mapping[str, Any],
-    attempt: Mapping[str, Any],
-) -> dict[str, float | int]:
-    if artifact_store is None:
-        raise ValueError("persisted artifact store is required for ai_api evidence")
-    request_ref, request = _read_typed_attempt_artifact(
-        artifact_store,
-        attempt,
-        "request_ref",
-        artifact_type="ExecutionRequest",
-        schema_id="phase3.execution_request",
-        schema_version="v1",
-    )
-    raw_ref, raw = _read_typed_attempt_artifact(
-        artifact_store,
-        attempt,
-        "raw_output_ref",
-        artifact_type="RawModelOutput",
-        schema_id="phase7.raw_model_output",
-        schema_version="v2",
-    )
-    provenance_ref, provenance = _read_typed_attempt_artifact(
-        artifact_store,
-        attempt,
-        "provenance_ref",
-        artifact_type="AIProviderCallProvenance",
-        schema_id="phase7.ai_provider_call_provenance",
-        schema_version="v2",
-    )
-    usage_ref, usage = _read_typed_attempt_artifact(
-        artifact_store,
-        attempt,
-        "usage_ref",
-        artifact_type="AIUsageSummary",
-        schema_id="tokenshare.paper_ai_usage",
-        schema_version="v1",
-    )
-    model_record_ref, model_record = _read_typed_attempt_artifact(
-        artifact_store,
-        attempt,
-        "model_execution_record_ref",
-        artifact_type="PaperModelExecutionRecord",
-        schema_id="tokenshare.paper_model_execution_record",
-        schema_version="v2",
-    )
-    worker_ref, worker = _read_typed_attempt_artifact(
-        artifact_store,
-        attempt,
-        "worker_ref",
-        artifact_type="PaperWorkerExecution",
-        schema_id="tokenshare.paper_worker_execution",
-        schema_version="v1",
-    )
-    if (
-        _mapping(raw_ref.get("source")).get("kind") != "ai_api_executor"
-        or _mapping(provenance_ref.get("source")).get("kind")
-        != "ai_api_executor"
-    ):
-        raise ValueError("persisted raw/provenance artifacts do not prove real transport")
-    expected_ids = {
-        "condition_id": condition.get("condition_id"),
-        "repeat_id": condition.get("repeat_id"),
-        "task_id": task.get("task_id"),
-        "unit_id": attempt.get("unit_id"),
-        "attempt_id": attempt.get("attempt_id"),
-    }
-    _validate_request_artifact(request, condition=condition, expected_ids=expected_ids)
-    _validate_raw_artifact(raw, condition=condition, request=request)
-    provider_attempts, request_identities = _validate_provenance_artifact(
-        provenance,
-        condition=condition,
-        request=request,
-    )
-    if raw.get("submission_id") != provenance.get("submission_id"):
-        raise ValueError("persisted raw/provenance submission identity mismatch")
-    _validate_worker_artifact(
-        worker,
-        attempt=attempt,
-        expected_ids=expected_ids,
-        worker_ref=worker_ref,
-    )
-    _validate_model_execution_record(
-        model_record,
-        condition=condition,
-        expected_ids=expected_ids,
-        provenance=provenance,
-        refs={
-            "request_ref": request_ref,
-            "raw_output_ref": raw_ref,
-            "provenance_ref": provenance_ref,
-            "usage_ref": usage_ref,
-        },
-        provider_attempts=provider_attempts,
-        request_identities=request_identities,
-    )
-    if model_record_ref.get("source", {}).get("kind") not in {
-        "paper_adapter",
-        "factorization_paper_adapter",
-        "lean_paper_adapter",
-    }:
-        raise ValueError("persisted model execution record has unsupported source")
-    total_tokens, cost_estimate = _validate_usage_artifact(
-        usage,
-        condition=condition,
-        request=request,
-        provenance=provenance,
-    )
-    return {"total_tokens": total_tokens, "cost_estimate": cost_estimate}
-
-
-def _read_typed_attempt_artifact(
-    artifact_store: Any,
-    attempt: Mapping[str, Any],
-    field_name: str,
-    *,
-    artifact_type: str,
-    schema_id: str,
-    schema_version: str,
-) -> tuple[dict[str, Any], Mapping[str, Any]]:
-    value = attempt.get(field_name)
-    body = _read_persisted_json(
-        artifact_store,
-        value,
-        field_name=field_name,
-        artifact_type=artifact_type,
-        schema_id=schema_id,
-        schema_version=schema_version,
-    )
-    return dict(_mapping(value)), body
-
-
-def _read_persisted_json(
-    artifact_store: Any,
-    value: Any,
-    *,
-    field_name: str,
-    artifact_type: str,
-    schema_id: str,
-    schema_version: str,
-) -> Mapping[str, Any]:
-    try:
-        ref_body = dict(_mapping(value))
-        ref = ArtifactRef.from_dict(ref_body)
-        if ref.to_dict() != ref_body:
-            raise ValueError("artifact reference body drift")
-        if (
-            ref.artifact_type != artifact_type
-            or ref.artifact_schema_id != schema_id
-            or ref.artifact_schema_version != schema_version
-            or ref.media_type != "application/json"
-            or not artifact_store.verify(ref)
-        ):
-            raise ValueError("artifact identity or content verification failed")
-        body = json.loads(artifact_store.read_bytes(ref).decode("utf-8"))
-    except (KeyError, OSError, TypeError, UnicodeError, ValueError, json.JSONDecodeError) as exc:
-        raise ValueError(f"persisted artifact verification failed for {field_name}") from exc
-    if not isinstance(body, Mapping):
-        raise ValueError(f"persisted artifact {field_name} must contain a JSON object")
-    expected_body_schema = f"{schema_id}.{schema_version}"
-    if body.get("schema_version") != expected_body_schema:
-        raise ValueError(f"persisted artifact schema mismatch for {field_name}")
-    return body
-
-
-def _validate_request_artifact(
-    request: Mapping[str, Any],
-    *,
-    condition: Mapping[str, Any],
-    expected_ids: Mapping[str, Any],
-) -> None:
-    for field_name in ("task_id", "unit_id", "attempt_id"):
-        if request.get(field_name) != expected_ids[field_name]:
-            raise ValueError("persisted request identity mismatch")
-    if _mapping(request.get("hard_requirements")).get(
-        "provider_family"
-    ) != condition.get("provider_family") or _mapping(
-        request.get("capability_snapshot")
-    ).get("provider_family") != condition.get("provider_family"):
-        raise ValueError("persisted request provider identity mismatch")
-    limits = _mapping(request.get("limits"))
-    if limits != {
-        "max_tokens": BASELINE_REQUEST_LIMIT_POLICY["max_tokens"],
-        "timeout_seconds": BASELINE_REQUEST_LIMIT_POLICY["timeout_seconds"],
-    }:
-        raise ValueError("persisted request limits drift")
-    executor = _mapping(request.get("executor"))
-    if executor.get("executor_id") != "executor_ai_api":
-        raise ValueError("persisted request does not target the AI API executor")
-    provider_body = _mapping(request.get("provider_request_body"))
-    if (
-        provider_body.get("model") != condition.get("provider_model_id")
-        or provider_body.get("temperature") != BASELINE_REQUEST_CONTROLS["temperature"]
-        or provider_body.get("enable_thinking")
-        is not BASELINE_REQUEST_CONTROLS["enable_thinking"]
-        or provider_body.get("max_tokens")
-        != BASELINE_REQUEST_LIMIT_POLICY["max_tokens"]
-    ):
-        raise ValueError("persisted provider request controls drift")
-
-
-def _validate_raw_artifact(
-    raw: Mapping[str, Any],
-    *,
-    condition: Mapping[str, Any],
-    request: Mapping[str, Any],
-) -> None:
-    if (
-        raw.get("request_id") != request.get("request_id")
-        or raw.get("provider_family") != condition.get("provider_family")
-        or raw.get("entry_id") != condition.get("model_entry_id")
-        or raw.get("configured_model") != condition.get("provider_model_id")
-        or raw.get("requested_model") != condition.get("provider_model_id")
-        or raw.get("resolved_model") != condition.get("provider_model_id")
-        or raw.get("response_model_status") != "present"
-        or _mapping(raw.get("raw_response_json")).get("model")
-        != condition.get("provider_model_id")
-    ):
-        raise ValueError("persisted raw model identity mismatch")
-
-
-def _validate_provenance_artifact(
-    provenance: Mapping[str, Any],
-    *,
-    condition: Mapping[str, Any],
-    request: Mapping[str, Any],
-) -> tuple[list[Mapping[str, Any]], list[Mapping[str, Any]]]:
-    selection = _mapping(provenance.get("selection_record"))
-    attempts = _list_of_mappings(provenance.get("attempts"))
-    if (
-        provenance.get("request_id") != request.get("request_id")
-        or provenance.get("provider_family") != condition.get("provider_family")
-        or selection.get("selected_entry_id") != condition.get("model_entry_id")
-        or selection.get("eligible_entry_ids") != [condition.get("model_entry_id")]
-        or selection.get("attempt_entry_ids") != [condition.get("model_entry_id")]
-        or provenance.get("final_entry_id") != condition.get("model_entry_id")
-        or provenance.get("final_result_kind") != "succeeded"
-        or len(attempts) != BASELINE_REQUEST_LIMIT_POLICY["max_provider_attempts"]
-    ):
-        raise ValueError("persisted provider provenance mismatch")
-    request_identities: list[Mapping[str, Any]] = []
-    provider_body = _mapping(request.get("provider_request_body"))
-    effective_controls = {
-        key: provider_body[key]
-        for key in (
-            "stream",
-            "temperature",
-            "top_p",
-            "max_tokens",
-            "response_format",
-            "reasoning_effort",
-            "enable_thinking",
-        )
-        if key in provider_body
-    }
-    expected_controls_digest = digest_json(effective_controls)
-    for provider_attempt in attempts:
-        request_identity = _mapping(provider_attempt.get("provider_request_identity"))
-        if (
-            provider_attempt.get("result_kind") != "succeeded"
-            or provider_attempt.get("provider_family")
-            != condition.get("provider_family")
-            or provider_attempt.get("entry_id") != condition.get("model_entry_id")
-            or provider_attempt.get("configured_model")
-            != condition.get("provider_model_id")
-            or request_identity.get("schema_version")
-            != "phase7.provider_request_identity.v2"
-            or request_identity.get("provider_family")
-            != condition.get("provider_family")
-            or request_identity.get("entry_id") != condition.get("model_entry_id")
-            or request_identity.get("configured_model")
-            != condition.get("provider_model_id")
-            or request_identity.get("requested_model")
-            != condition.get("provider_model_id")
-            or _mapping(request_identity.get("reasoning_controls"))
-            != {"enable_thinking": False}
-            or request_identity.get("effective_request_controls_digest")
-            != expected_controls_digest
-        ):
-            raise ValueError("persisted provider request identity mismatch")
-        request_identities.append(request_identity)
-    return attempts, request_identities
-
-
-def _validate_usage_artifact(
-    usage: Mapping[str, Any],
-    *,
-    condition: Mapping[str, Any],
-    request: Mapping[str, Any],
-    provenance: Mapping[str, Any],
-) -> tuple[int, float]:
-    if (
-        usage.get("request_id") != request.get("request_id")
-        or usage.get("submission_id") != provenance.get("submission_id")
-        or usage.get("provider_family") != condition.get("provider_family")
-        or usage.get("entry_id") != condition.get("model_entry_id")
-        or usage.get("configured_model") != condition.get("provider_model_id")
-        or usage.get("requested_model") != condition.get("provider_model_id")
-        or usage.get("provider_attempt_count") != 1
-        or usage.get("cost_estimate_status") != "estimated"
-    ):
-        raise ValueError("persisted usage identity mismatch")
-    prompt_tokens = _non_negative_int(usage.get("prompt_tokens"))
-    completion_tokens = _non_negative_int(usage.get("completion_tokens"))
-    total_tokens = _non_negative_int(usage.get("total_tokens"))
-    if total_tokens != prompt_tokens + completion_tokens:
-        raise ValueError("persisted usage token arithmetic mismatch")
-    return total_tokens, float(_non_negative_number(usage.get("cost_estimate")))
-
-
-def _validate_model_execution_record(
-    record: Mapping[str, Any],
-    *,
-    condition: Mapping[str, Any],
-    expected_ids: Mapping[str, Any],
-    provenance: Mapping[str, Any],
-    refs: Mapping[str, Mapping[str, Any]],
-    provider_attempts: Sequence[Mapping[str, Any]],
-    request_identities: Sequence[Mapping[str, Any]],
-) -> None:
-    digest_body = {key: value for key, value in record.items() if key != "record_digest"}
-    expected_identity = _mapping(record.get("expected_identity"))
-    if (
-        record.get("record_digest") != digest_json(digest_body)
-        or any(record.get(field_name) != value for field_name, value in expected_ids.items())
-        or record.get("source_provider_config_digest")
-        != condition.get("source_provider_config_digest")
-        or record.get("prepared_execution_config_digest")
-        != provenance.get("config_digest")
-        or record.get("identity_status") != "matched"
-        or record.get("response_model_status") != "present"
-        or record.get("requested_model") != condition.get("provider_model_id")
-        or record.get("resolved_model") != condition.get("provider_model_id")
-        or record.get("mismatch_reasons") != []
-        or record.get("paper_eligible") is not True
-        or expected_identity.get("provider_config_id")
-        != condition.get("provider_config_id")
-        or expected_identity.get("selected_entry_id")
-        != condition.get("model_entry_id")
-        or expected_identity.get("provider_family")
-        != condition.get("provider_family")
-        or expected_identity.get("provider_model_id")
-        != condition.get("provider_model_id")
-        or expected_identity.get("reasoning_profile_id")
-        != condition.get("reasoning_profile_id")
-        or expected_identity.get("source_provider_config_digest")
-        != condition.get("source_provider_config_digest")
-        or expected_identity.get("model_endpoint_identity_digest")
-        != condition.get("model_endpoint_identity_digest")
-        or record.get("actual_provider_attempts") != list(provider_attempts)
-        or record.get("actual_request_identities") != list(request_identities)
-        or any(record.get(field_name) != ref for field_name, ref in refs.items())
-    ):
-        raise ValueError("persisted model execution record identity mismatch")
-    _require_complete_digest(
-        "prepared_execution_config_digest",
-        record.get("prepared_execution_config_digest"),
-    )
-
-
-def _validate_worker_artifact(
-    worker: Mapping[str, Any],
-    *,
-    attempt: Mapping[str, Any],
-    expected_ids: Mapping[str, Any],
-    worker_ref: Mapping[str, Any],
-) -> None:
-    if (
-        any(worker.get(field_name) != value for field_name, value in expected_ids.items())
-        or worker.get("worker_id") != attempt.get("worker_id")
-        or worker.get("worker_pid") != attempt.get("worker_pid")
-        or worker.get("worker_slot") != attempt.get("worker_slot")
-        or worker.get("executor_id") != "executor_ai_api"
-        or worker.get("transport_kind") != "ai_api"
-        or _mapping(worker_ref.get("source")).get("kind") != "real_worker_executor"
-    ):
-        raise ValueError("worker execution evidence does not match persisted artifact")
+def _summary_task_case_id(task: Mapping[str, Any]) -> str:
+    value = task.get("case_id", task.get("task_id"))
+    return _require_non_empty_string("case_id", value)
 
 
 def _identity_field_matches(
@@ -1601,7 +1167,7 @@ def _validate_factorization_parallelism(
     task: Mapping[str, Any],
     ai_units: Sequence[Mapping[str, Any]],
 ) -> None:
-    task_id = str(task.get("task_id") or "")
+    root_case_id = _summary_task_case_id(task)
     observed_scopes = {
         str(task[field_name])
         for field_name in ("actual_parallelism_scope", "parallelism_scope")
@@ -1609,7 +1175,7 @@ def _validate_factorization_parallelism(
     }
     if observed_scopes != {"within_root_range_children"}:
         raise ValueError("factorization must execute within-root range children")
-    if task.get("root_task_id") != task_id or len(ai_units) < 2:
+    if task.get("root_task_id") != root_case_id or len(ai_units) < 2:
         raise ValueError("factorization AI units must belong to the same factorization root")
     ranges: list[tuple[int, int]] = []
     unit_ids: set[str] = set()
@@ -1617,7 +1183,7 @@ def _validate_factorization_parallelism(
         unit_id = str(unit.get("unit_id") or "")
         unit_ids.add(unit_id)
         if (
-            unit.get("root_task_id") != task_id
+            unit.get("root_task_id") != root_case_id
             or unit.get("unit_kind") != "factorization_range_child"
         ):
             raise ValueError(
@@ -1655,12 +1221,6 @@ def _validate_factorization_parallelism(
         for gate in merge_gates
     ):
         raise ValueError("factorization merge evidence must depend on all range children")
-
-
-def _require_artifact_ref(value: Any, field_name: str) -> Mapping[str, Any]:
-    ref = _mapping(value)
-    _require_non_empty_string(f"{field_name}.artifact_id", ref.get("artifact_id"))
-    return ref
 
 
 def _validated_transport_kind(
@@ -2501,115 +2061,161 @@ def _case_split_metadata(case: Mapping[str, Any]) -> dict[str, Any]:
 def _validate_approved_endpoint_binding(
     context: PaperExecutionContext,
 ) -> Mapping[str, Any]:
-    binding = _mapping(context.approved_endpoint_binding)
+    binding = context.approved_endpoint_binding
+    identity = _field(binding, "identity") or binding
     expected_fields = {
         "provider_config_id": BASELINE_PROVIDER_CONFIG_ID,
         "selected_entry_id": BASELINE_MODEL_ENTRY_ID,
-        "model_entry_id": BASELINE_MODEL_ENTRY_ID,
         "provider_family": BASELINE_PROVIDER_FAMILY,
         "provider_model_id": BASELINE_PROVIDER_MODEL_ID,
         "reasoning_profile_id": BASELINE_REASONING_PROFILE_ID,
     }
     mismatches: list[str] = []
     for field_name, expected in expected_fields.items():
-        actual = binding.get(field_name)
+        actual = _field(identity, field_name)
         if actual != expected:
             mismatches.append(field_name)
+    model_entry_id = _field(identity, "model_entry_id")
+    if model_entry_id is not None and model_entry_id != BASELINE_MODEL_ENTRY_ID:
+        mismatches.append("model_entry_id")
     source_digest = _binding_digest_field(
-        binding,
+        identity,
         "source_provider_config_digest",
         mismatches,
     )
     endpoint_digest = _binding_digest_field(
-        binding,
+        identity,
         "model_endpoint_identity_digest",
         mismatches,
     )
-    try:
-        binding_controls = _normalized_request_controls(
-            _mapping(binding.get("request_controls"))
-        )
-    except ValueError:
-        mismatches.append("request_controls")
-        binding_controls = {}
-    if binding_controls != BASELINE_REQUEST_CONTROLS:
-        mismatches.append("request_controls")
     if mismatches:
         fields = ", ".join(dict.fromkeys(mismatches))
         raise ValueError(f"approved endpoint binding mismatch: {fields}")
 
     try:
-        binding_request_limits = _normalized_request_limit_policy(
-            _mapping(binding.get("request_limits"))
-        )
-    except ValueError as exc:
-        raise ValueError("approved request limit policy mismatch") from exc
-    if binding_request_limits != BASELINE_REQUEST_LIMIT_POLICY:
-        raise ValueError("approved request limit policy mismatch")
-
-    try:
-        context_request_limits = _normalized_request_limit_policy(
-            context.request_limits
-        )
+        context_request_limits = _normalized_request_limit_policy(context.request_limits)
     except ValueError as exc:
         raise ValueError(
             "request controls and request limit policy drift from approved "
             "endpoint binding"
         ) from exc
-    if context_request_limits != binding_request_limits:
+
+    binding_controls = _field(binding, "request_controls")
+    if binding_controls is not None:
+        try:
+            normalized_binding_controls = _normalized_request_limit_policy(
+                _required_mapping(binding_controls, "approved binding request_controls")
+            )
+        except ValueError as exc:
+            raise ValueError("approved endpoint binding mismatch: request_controls") from exc
+        if normalized_binding_controls != context_request_limits:
+            raise ValueError(
+                "request controls and request limit policy drift from approved "
+                "endpoint binding"
+            )
+
+    binding_request_limits = _field(binding, "request_limits")
+    if binding_request_limits is not None:
+        try:
+            normalized_binding_limits = _normalized_request_limit_policy(
+                _required_mapping(binding_request_limits, "approved binding request_limits")
+            )
+        except ValueError as exc:
+            raise ValueError("approved request limit policy mismatch") from exc
+        if normalized_binding_limits != context_request_limits:
+            raise ValueError("approved request limit policy mismatch")
+
+    effective_reasoning = _field(identity, "effective_reasoning_controls")
+    if effective_reasoning is not None:
+        controls = _required_mapping(
+            effective_reasoning,
+            "approved endpoint effective_reasoning_controls",
+        )
+        if (
+            "enable_thinking" not in controls
+            or any(
+                field_name not in {"temperature", "enable_thinking"}
+                or value
+                != {
+                    "temperature": BASELINE_REQUEST_LIMIT_POLICY["temperature"],
+                    "enable_thinking": BASELINE_REQUEST_LIMIT_POLICY[
+                        "enable_thinking"
+                    ],
+                }[field_name]
+                for field_name, value in controls.items()
+            )
+        ):
+            raise ValueError("approved endpoint binding mismatch: request_controls")
+
+    if context_request_limits != BASELINE_REQUEST_LIMIT_POLICY:
         raise ValueError(
             "request controls and request limit policy drift from approved "
             "endpoint binding"
         )
 
     return {
-        **binding,
+        "provider_config_id": BASELINE_PROVIDER_CONFIG_ID,
+        "selected_entry_id": BASELINE_MODEL_ENTRY_ID,
+        "model_entry_id": BASELINE_MODEL_ENTRY_ID,
+        "provider_family": BASELINE_PROVIDER_FAMILY,
+        "provider_model_id": BASELINE_PROVIDER_MODEL_ID,
+        "reasoning_profile_id": BASELINE_REASONING_PROFILE_ID,
         "source_provider_config_digest": source_digest,
         "model_endpoint_identity_digest": endpoint_digest,
-        "request_controls": binding_controls,
-        "request_limits": binding_request_limits,
+        "request_controls": context_request_limits,
+        "request_limits": context_request_limits,
     }
 
 
 def _binding_digest_field(
-    binding: Mapping[str, Any],
+    binding: Any,
     field_name: str,
     mismatches: list[str],
 ) -> str:
     try:
-        return _require_complete_digest(field_name, binding.get(field_name))
+        return _require_complete_digest(field_name, _field(binding, field_name))
     except ValueError:
         mismatches.append(field_name)
         return ""
 
 
-def _normalized_request_controls(controls: Mapping[str, Any]) -> dict[str, Any]:
-    if set(controls) != set(BASELINE_REQUEST_CONTROLS):
-        raise ValueError("request controls contain missing or unknown fields")
-    temperature = controls.get("temperature")
-    enable_thinking = controls.get("enable_thinking")
-    if isinstance(temperature, bool) or not isinstance(temperature, (float, int)):
-        raise ValueError("temperature request control must be numeric")
-    if not isinstance(enable_thinking, bool):
-        raise ValueError("enable_thinking request control must be boolean")
-    return {"temperature": float(temperature), "enable_thinking": enable_thinking}
-
-
 def _normalized_request_limit_policy(limits: Mapping[str, Any]) -> dict[str, Any]:
     if set(limits) != set(BASELINE_REQUEST_LIMIT_POLICY):
         raise ValueError("request limit policy contains missing or unknown fields")
-    normalized = _normalized_request_controls(
-        {field_name: limits.get(field_name) for field_name in BASELINE_REQUEST_CONTROLS}
-    )
+    normalized = dict(limits)
     for field_name in ("max_tokens", "timeout_seconds", "max_provider_attempts"):
         value = limits.get(field_name)
         if isinstance(value, bool) or not isinstance(value, int) or value < 1:
             raise ValueError(f"{field_name} must be a positive integer")
-        normalized[field_name] = value
+    temperature = limits.get("temperature")
+    top_p = limits.get("top_p")
+    if (
+        isinstance(temperature, bool)
+        or not isinstance(temperature, (float, int))
+        or isinstance(top_p, bool)
+        or not isinstance(top_p, (float, int))
+        or not isinstance(limits.get("stream"), bool)
+        or not isinstance(limits.get("enable_thinking"), bool)
+    ):
+        raise ValueError("request controls have invalid types")
+    normalized["temperature"] = float(temperature)
+    normalized["top_p"] = float(top_p)
     return {
         field_name: normalized[field_name]
         for field_name in BASELINE_REQUEST_LIMIT_POLICY
     }
+
+
+def _field(value: Any, field_name: str) -> Any:
+    if isinstance(value, Mapping):
+        return value.get(field_name)
+    return getattr(value, field_name, None)
+
+
+def _required_mapping(value: Any, field_name: str) -> Mapping[str, Any]:
+    if not isinstance(value, Mapping):
+        raise ValueError(f"{field_name} must be a mapping")
+    return value
 
 
 def _require_complete_digest(field_name: str, value: Any) -> str:

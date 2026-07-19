@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections import defaultdict
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from math import isfinite
 from typing import Any
 
 from tokenshare.experiments.paper_ablation import (
@@ -39,11 +40,22 @@ BASELINE_PROVIDER_CONFIG_ID = "exp1_baseline_siliconflow"
 BASELINE_MODEL_ENTRY_ID = "glm_5_2_exp1_baseline"
 BASELINE_PROVIDER_FAMILY = "siliconflow"
 BASELINE_PROVIDER_MODEL_ID = "zai-org/GLM-5.2"
-BASELINE_REASONING_PROFILE_ID = "temperature_0_enable_thinking_false"
 BASELINE_REQUEST_CONTROLS = {
+    "max_tokens": 1024,
+    "timeout_seconds": 30,
+    "max_provider_attempts": 1,
     "temperature": 0.0,
+    "top_p": 1.0,
+    "stream": False,
     "enable_thinking": False,
 }
+EXP4_CATALOG_VIEW_SCHEMA_VERSION = "tokenshare.paper_exp4_catalog_view.v1"
+EXP4_CATALOG_SOURCE_KIND = "paper_input_catalog_manifest"
+EXP4_SHARED_LEAN_SLICE_EXPERIMENT_IDS = ("exp2", "exp4", "exp5")
+EXP4_EVIDENCE_SCHEMA_VERSION = "tokenshare.paper_exp4_ablation_evidence.v1"
+EXP4_CONDITION_EVIDENCE_SCHEMA_VERSION = (
+    "tokenshare.paper_exp4_condition_evidence.v1"
+)
 
 EXP4_MODES = (
     PaperAblationMode.FULL,
@@ -297,7 +309,7 @@ def validate_exp4_condition(
         or condition.model_entry_id != BASELINE_MODEL_ENTRY_ID
         or condition.provider_family != BASELINE_PROVIDER_FAMILY
         or condition.provider_model_id != BASELINE_PROVIDER_MODEL_ID
-        or condition.reasoning_profile_id != BASELINE_REASONING_PROFILE_ID
+        or condition.reasoning_profile_id != endpoint_binding["reasoning_profile_id"]
     ):
         raise ValueError("Experiment 4 requires GLM-5.2 baseline model identity")
     if (
@@ -399,7 +411,7 @@ def run_exp4_condition(
     result = context.execution_callback(
         context=context,
         condition=canonical_condition,
-        selection=selection,
+        selection=canonical_selection,
         experiment_id=EXP4_EXPERIMENT_ID,
         mode_config=mode_config,
         ablation_profile=ablation_profile,
@@ -413,21 +425,56 @@ def run_exp4_condition(
 
 
 def summarize_exp4_ablation(evidence: Any) -> ExperimentSummaryRows:
-    records = _evidence_records(evidence)
+    execution_scope, catalog_digest, catalog_version, records = (
+        _exp4_evidence_envelope(evidence)
+    )
     grouped: dict[
         tuple[str, str, str],
         list[tuple[Mapping[str, Any], tuple[dict[str, Any], ...]]],
     ] = defaultdict(list)
+    condition_ids: set[str] = set()
+    condition_digests: set[str] = set()
+    identity_signatures: set[tuple[str, ...]] = set()
     for record in records:
+        if record.get("schema_version") != EXP4_CONDITION_EVIDENCE_SCHEMA_VERSION:
+            raise ValueError("unsupported Experiment 4 condition evidence schema")
         domain = _required_string(record, "domain")
         if domain not in {"factorization", "lean_proof"}:
             raise ValueError("evidence domain must be factorization or lean_proof")
         paper_difficulty = _required_string(record, "paper_difficulty")
         _validate_summary_difficulty(domain, paper_difficulty)
         mode = PaperAblationMode(_required_string(record, "ablation_mode")).value
-        _require_non_empty_string("condition_id", record.get("condition_id"))
-        _require_non_negative_int("repeat_id", record.get("repeat_id"))
+        condition_id = _required_string(record, "condition_id")
+        if condition_id in condition_ids:
+            raise ValueError("duplicate condition_id in Experiment 4 evidence")
+        condition_ids.add(condition_id)
+        condition_digest = record.get("condition_digest")
+        _require_complete_digest("condition_digest", condition_digest)
+        if condition_digest in condition_digests:
+            raise ValueError("duplicate condition_digest in Experiment 4 evidence")
+        condition_digests.add(str(condition_digest))
+        repeat_id = record.get("repeat_id")
+        _require_non_negative_int("repeat_id", repeat_id)
+        if repeat_id not in range(EXP4_REPEATS):
+            raise ValueError("Experiment 4 evidence repeat_id must be 0, 1, or 2")
+        if record.get("seed") != EXP4_SEED_BASE + repeat_id:
+            raise ValueError("Experiment 4 evidence seed drifted")
+        if record.get("worker_count") != EXP4_WORKER_COUNT:
+            raise ValueError("Experiment 4 evidence worker_count drifted")
+        if record.get("fault_type") != "none" or record.get("fault_rate") != 0.0:
+            raise ValueError("Experiment 4 evidence must not contain fault injection")
+        if record.get("catalog_digest") != catalog_digest:
+            raise ValueError("Experiment 4 evidence catalog_digest drifted")
+        if record.get("catalog_version") != catalog_version:
+            raise ValueError("Experiment 4 evidence catalog_version drifted")
         _require_complete_digest("selection_digest", record.get("selection_digest"))
+        ordered_case_ids = _normalize_ordered_case_ids(
+            record.get("ordered_case_ids")
+        )
+        if not ordered_case_ids:
+            raise ValueError("Experiment 4 evidence requires ordered case IDs")
+        identity_signature = _validate_summary_model_identity(record)
+        identity_signatures.add(identity_signature)
         transport_kind = _required_string(record, "transport_kind")
         if not isinstance(record.get("paper_eligible"), bool):
             raise ValueError("paper_eligible must be a bool")
@@ -438,11 +485,37 @@ def summarize_exp4_ablation(evidence: Any) -> ExperimentSummaryRows:
             raise ValueError(
                 f"{transport_kind} transport cannot be paper eligible"
             )
+        if execution_scope == "formal":
+            if transport_kind != "ai_api":
+                raise ValueError("formal evidence requires ai_api transport")
+            if record["paper_eligible"] is not True:
+                raise ValueError("formal evidence requires paper-eligible conditions")
+        elif record["paper_eligible"] is True:
+            raise ValueError("pilot evidence cannot be paper eligible")
+        _require_non_negative_int(
+            "condition_wall_clock_ms",
+            record.get("condition_wall_clock_ms"),
+        )
         tasks = _summary_task_results(record.get("task_results"))
+        if tuple(task["case_id"] for task in tasks) != ordered_case_ids:
+            raise ValueError(
+                "task result case IDs must match the frozen ordered case IDs"
+            )
         grouped[(domain, paper_difficulty, mode)].append((record, tasks))
 
+    if len(identity_signatures) != 1:
+        raise ValueError("Experiment 4 evidence model identity drifted across modes")
+    if execution_scope == "formal":
+        _validate_complete_formal_evidence(grouped, record_count=len(records))
+
     rows = [
-        _summarize_exp4_group(key, group_records)
+        _summarize_exp4_group(
+            key,
+            group_records,
+            execution_scope=execution_scope,
+            catalog_digest=catalog_digest,
+            catalog_version=catalog_version,
+        )
         for key, group_records in sorted(grouped.items())
     ]
     return ExperimentSummaryRows(
@@ -456,9 +529,32 @@ def _summarize_exp4_group(
     records: Sequence[
         tuple[Mapping[str, Any], tuple[dict[str, Any], ...]]
     ],
+    *,
+    execution_scope: str,
+    catalog_digest: str,
+    catalog_version: str,
 ) -> dict[str, Any]:
     domain, paper_difficulty, mode = key
     tasks = [task for _, record_tasks in records for task in record_tasks]
+    repeat_ids = sorted(record["repeat_id"] for record, _ in records)
+    if len(repeat_ids) != len(set(repeat_ids)):
+        raise ValueError("duplicate repeat_id in Experiment 4 summary group")
+    repeat_set_status = (
+        "complete"
+        if tuple(repeat_ids) == tuple(range(EXP4_REPEATS))
+        else "pilot_partial"
+    )
+    repeat_wall_clocks = [
+        record["condition_wall_clock_ms"] for record, _ in records
+    ]
+    repeat_token_counts = [
+        sum(task["total_tokens"] for task in record_tasks)
+        for _, record_tasks in records
+    ]
+    repeat_costs = [
+        sum(task["cost_estimate"] for task in record_tasks)
+        for _, record_tasks in records
+    ]
     root_run_count = len(tasks)
     completed_count = sum(task["root_status"] == "completed" for task in tasks)
     accepted_valid_count = sum(task["accepted_validity"] is True for task in tasks)
@@ -473,7 +569,18 @@ def _summarize_exp4_group(
         _required_string(record, "transport_kind")
         for record, _ in records
     }
+    selection_digests = {
+        _required_string(record, "selection_digest") for record, _ in records
+    }
+    ordered_case_id_sets = {
+        tuple(record["ordered_case_ids"]) for record, _ in records
+    }
+    if len(selection_digests) != 1 or len(ordered_case_id_sets) != 1:
+        raise ValueError("Experiment 4 selection drifted across repeats")
     return {
+        "execution_scope": execution_scope,
+        "catalog_digest": catalog_digest,
+        "catalog_version": catalog_version,
         "domain": domain,
         "paper_difficulty": paper_difficulty,
         "topic_family": (
@@ -482,15 +589,21 @@ def _summarize_exp4_group(
             else LEAN_BATCH_SELECTION_TOPIC_FAMILY_MARKER
         ),
         "ablation_mode": mode,
-        "repeat_count": len({record["repeat_id"] for record, _ in records}),
-        "unique_case_count": len({task["task_id"] for task in tasks}),
+        "condition_ids": [record["condition_id"] for record, _ in records],
+        "repeat_ids": repeat_ids,
+        "repeat_count": len(repeat_ids),
+        "expected_repeat_ids": list(range(EXP4_REPEATS)),
+        "repeat_set_status": repeat_set_status,
+        "selection_digest": next(iter(selection_digests)),
+        "ordered_case_ids": list(next(iter(ordered_case_id_sets))),
+        "unique_case_count": len({task["case_id"] for task in tasks}),
         "root_run_count": root_run_count,
         "completed_root_count": completed_count,
         "completion_rate": completed_count / root_run_count,
         "accepted_valid_count": accepted_valid_count,
         "accepted_validity_rate": (
-            accepted_valid_count / completed_count
-            if completed_count > 0
+            accepted_valid_count / root_run_count
+            if root_run_count > 0
             else None
         ),
         "wrong_canonical_acceptance_count": _flag_count(
@@ -515,9 +628,17 @@ def _summarize_exp4_group(
         "premature_merge_rate": _flag_rate(tasks, "premature_merge"),
         "slot_mismatch_count": _flag_count(tasks, "slot_mismatch"),
         "slot_mismatch_rate": _flag_rate(tasks, "slot_mismatch"),
-        "wall_clock_ms": sum(task["wall_clock_ms"] for task in tasks),
-        "total_tokens": sum(task["total_tokens"] for task in tasks),
-        "cost": sum(task["cost_estimate"] for task in tasks),
+        "wall_clock_ms": _median(repeat_wall_clocks),
+        "wall_clock_median_ms": _median(repeat_wall_clocks),
+        "wall_clock_iqr_ms": _iqr(repeat_wall_clocks),
+        "wall_clock_total_ms": sum(repeat_wall_clocks),
+        "total_tokens": sum(repeat_token_counts),
+        "total_tokens_median": _median(repeat_token_counts),
+        "total_tokens_iqr": _iqr(repeat_token_counts),
+        "cost": sum(repeat_costs),
+        "cost_estimate": sum(repeat_costs),
+        "cost_median": _median(repeat_costs),
+        "cost_iqr": _iqr(repeat_costs),
         "exposed_error_count": exposed_error_count,
         "escaped_error_count": escaped_error_count,
         "error_escape_rate": escape_rate,
@@ -530,7 +651,9 @@ def _summarize_exp4_group(
         "paper_eligible": all(
             record["paper_eligible"] is True
             for record, _ in records
-        ),
+        )
+        and execution_scope == "formal"
+        and repeat_set_status == "complete",
     }
 
 
@@ -549,11 +672,91 @@ def _error_escape_rate(
     return "applicable", escaped_error_count / exposed_error_count
 
 
+def _validate_summary_model_identity(record: Mapping[str, Any]) -> tuple[str, ...]:
+    expected = {
+        "provider_config_id": BASELINE_PROVIDER_CONFIG_ID,
+        "selected_entry_id": BASELINE_MODEL_ENTRY_ID,
+        "model_entry_id": BASELINE_MODEL_ENTRY_ID,
+        "provider_family": BASELINE_PROVIDER_FAMILY,
+        "provider_model_id": BASELINE_PROVIDER_MODEL_ID,
+    }
+    for field_name, expected_value in expected.items():
+        if record.get(field_name) != expected_value:
+            raise ValueError("Experiment 4 summary model identity drifted")
+    reasoning_profile_id = _required_string(record, "reasoning_profile_id")
+    source_digest = record.get("source_provider_config_digest")
+    endpoint_digest = record.get("model_endpoint_identity_digest")
+    _require_complete_digest("source_provider_config_digest", source_digest)
+    _require_complete_digest("model_endpoint_identity_digest", endpoint_digest)
+    controls = _validated_request_controls(
+        record.get("request_controls"),
+        field_name="summary request controls",
+        error_message="Experiment 4 summary request controls drifted",
+    )
+    return (
+        BASELINE_PROVIDER_CONFIG_ID,
+        BASELINE_MODEL_ENTRY_ID,
+        BASELINE_PROVIDER_FAMILY,
+        BASELINE_PROVIDER_MODEL_ID,
+        reasoning_profile_id,
+        str(source_digest),
+        str(endpoint_digest),
+        canonical_contract_digest(controls),
+    )
+
+
+def _validate_complete_formal_evidence(
+    grouped: Mapping[
+        tuple[str, str, str],
+        Sequence[tuple[Mapping[str, Any], tuple[dict[str, Any], ...]]],
+    ],
+    *,
+    record_count: int,
+) -> None:
+    if record_count != 108:
+        raise ValueError("formal evidence must contain 108 conditions")
+    expected_groups = {
+        (domain, paper_difficulty, mode.value)
+        for domain, difficulties in (
+            ("factorization", FACTOR_PAPER_DIFFICULTIES),
+            ("lean_proof", LEAN_PAPER_DIFFICULTIES),
+        )
+        for paper_difficulty in difficulties
+        for mode in EXP4_MODES
+    }
+    if set(grouped) != expected_groups:
+        raise ValueError("formal evidence must contain the complete Exp4 matrix")
+    root_run_count = 0
+    slice_signatures: dict[
+        tuple[str, str],
+        set[tuple[str, tuple[str, ...]]],
+    ] = defaultdict(set)
+    for (domain, paper_difficulty, _), records in grouped.items():
+        repeat_ids = sorted(record["repeat_id"] for record, _ in records)
+        if repeat_ids != list(range(EXP4_REPEATS)):
+            raise ValueError("formal repeat set must be exactly 0, 1, 2")
+        for record, tasks in records:
+            if len(tasks) != EXP4_TASKS_PER_DIFFICULTY:
+                raise ValueError("formal Experiment 4 conditions must contain 5 roots")
+            root_run_count += len(tasks)
+            slice_signatures[(domain, paper_difficulty)].add(
+                (
+                    str(record["selection_digest"]),
+                    tuple(record["ordered_case_ids"]),
+                )
+            )
+    if root_run_count != EXP4_ROOT_RUN_COUNT:
+        raise ValueError("formal Experiment 4 evidence must contain 540 root-runs")
+    if any(len(signatures) != 1 for signatures in slice_signatures.values()):
+        raise ValueError("formal Experiment 4 case selection drifted across modes")
+
+
 def _summary_task_results(value: Any) -> tuple[dict[str, Any], ...]:
     if not isinstance(value, (list, tuple)) or not value:
         raise ValueError("task_results must be a non-empty list or tuple")
     normalized: list[dict[str, Any]] = []
     task_ids: set[str] = set()
+    case_ids: set[str] = set()
     allowed_root_statuses = {
         "completed",
         "failed",
@@ -568,6 +771,10 @@ def _summary_task_results(value: Any) -> tuple[dict[str, Any], ...]:
         if task_id in task_ids:
             raise ValueError("duplicate task_id in one condition result")
         task_ids.add(task_id)
+        case_id = _required_string(task, "case_id")
+        if case_id in case_ids:
+            raise ValueError("duplicate case_id in one condition result")
+        case_ids.add(case_id)
         root_status = _required_string(task, "root_status")
         if root_status not in allowed_root_statuses:
             raise ValueError("task_result root_status is invalid")
@@ -603,12 +810,31 @@ def _summary_task_results(value: Any) -> tuple[dict[str, Any], ...]:
     return tuple(normalized)
 
 
-def _evidence_records(value: Any) -> tuple[Mapping[str, Any], ...]:
-    if isinstance(value, Mapping):
-        value = value.get("condition_results")
-    if not isinstance(value, (list, tuple)) or not value:
+def _exp4_evidence_envelope(
+    value: Any,
+) -> tuple[str, str, str, tuple[Mapping[str, Any], ...]]:
+    envelope = _mapping(value, "evidence")
+    if envelope.get("schema_version") != EXP4_EVIDENCE_SCHEMA_VERSION:
+        raise ValueError("unsupported Experiment 4 evidence schema")
+    execution_scope = envelope.get("execution_scope")
+    if execution_scope not in {"formal", "pilot"}:
+        raise ValueError("execution_scope must be formal or pilot")
+    if envelope.get("suite_version") != EXP4_SUITE_VERSION:
+        raise ValueError("Experiment 4 evidence suite_version drifted")
+    catalog_digest = envelope.get("catalog_digest")
+    _require_complete_digest("catalog_digest", catalog_digest)
+    catalog_version = envelope.get("catalog_version")
+    if catalog_version != EXP4_CATALOG_VERSION:
+        raise ValueError("Experiment 4 evidence catalog_version drifted")
+    records = envelope.get("condition_results")
+    if not isinstance(records, (list, tuple)) or not records:
         raise ValueError("evidence must contain condition results")
-    return tuple(_mapping(record, "condition_result") for record in value)
+    return (
+        str(execution_scope),
+        str(catalog_digest),
+        str(catalog_version),
+        tuple(_mapping(record, "condition_result") for record in records),
+    )
 
 
 def _validate_summary_difficulty(domain: str, paper_difficulty: str) -> None:
@@ -629,15 +855,46 @@ def _flag_rate(tasks: Sequence[Mapping[str, Any]], field_name: str) -> float:
     return _flag_count(tasks, field_name) / len(tasks)
 
 
+def _median(values: Sequence[float | int]) -> float | int | None:
+    ordered = sorted(values)
+    if not ordered:
+        return None
+    midpoint = len(ordered) // 2
+    if len(ordered) % 2:
+        return ordered[midpoint]
+    return (ordered[midpoint - 1] + ordered[midpoint]) / 2
+
+
+def _iqr(values: Sequence[float | int]) -> float | int | None:
+    ordered = sorted(values)
+    if len(ordered) < 2:
+        return 0 if ordered else None
+    midpoint = len(ordered) // 2
+    if len(ordered) % 2:
+        lower = ordered[:midpoint]
+        upper = ordered[midpoint + 1 :]
+    else:
+        lower = ordered[:midpoint]
+        upper = ordered[midpoint:]
+    q1 = _median(lower)
+    q3 = _median(upper)
+    if q1 is None or q3 is None:
+        return 0
+    return q3 - q1
+
+
 def _factorization_selection(
     context: PaperExecutionContext,
     condition: PaperExperimentCondition,
 ) -> FrozenCaseSelection:
-    exp4_catalog = _exp4_catalog(context)
-    by_difficulty = _mapping(exp4_catalog.get("factorization"), "exp4.factorization")
+    catalog_view = _exp4_catalog_view(context)
+    by_difficulty = _mapping(
+        catalog_view.get("factorization_slices"),
+        "catalog.factorization_slices",
+    )
     cases = _case_list(
         by_difficulty.get(condition.paper_difficulty),
-        field_name=f"exp4.factorization.{condition.paper_difficulty}",
+        field_name=f"catalog.factorization_slices.{condition.paper_difficulty}",
     )
     if len(cases) != EXP4_TASKS_PER_DIFFICULTY:
         raise ValueError("Experiment 4 factorization selection must contain 5 roots")
@@ -649,53 +906,41 @@ def _lean_selection(
     condition: PaperExperimentCondition,
 ) -> FrozenCaseSelection:
     paper_difficulty = str(condition.paper_difficulty)
-    exp4_lean_value = _exp4_catalog(context).get("lean_proof")
-    if exp4_lean_value is None:
+    catalog_view = _exp4_catalog_view(context)
+    readiness_status = catalog_view["lean_semantic_readiness_status"]
+    if readiness_status != "ready":
+        reason = str(catalog_view["lean_semantic_readiness_reason"])
         return _blocked_lean_selection(
             context,
             condition,
-            reason=f"missing_exp4_formal_lean_slice:{paper_difficulty}",
+            reason=f"lean_semantic_readiness_not_passed:{reason}",
         )
-    exp4_lean = _mapping(exp4_lean_value, "exp4.lean_proof")
-    exp2_lean_value = _exp2_catalog(context).get("lean_proof")
-    if exp2_lean_value is None:
+    shared_lean_value = catalog_view.get("shared_lean_slices")
+    if shared_lean_value is None:
         return _blocked_lean_selection(
             context,
             condition,
-            reason=f"missing_exp2_shared_lean_slice:{paper_difficulty}",
+            reason=f"missing_shared_lean_slice:{paper_difficulty}",
         )
-    exp2_lean = _mapping(exp2_lean_value, "exp2.lean_proof")
-    missing_exp4_reason = _missing_lean_slice_reason(
-        exp4_lean,
+    shared_lean = _mapping(shared_lean_value, "catalog.shared_lean_slices")
+    missing_reason = _missing_lean_slice_reason(
+        shared_lean,
         paper_difficulty,
-        source="exp4_formal",
+        source="shared",
     )
-    if missing_exp4_reason is not None:
+    if missing_reason is not None:
         return _blocked_lean_selection(
             context,
             condition,
-            reason=missing_exp4_reason,
+            reason=missing_reason,
         )
-    missing_exp2_reason = _missing_lean_slice_reason(
-        exp2_lean,
+    cases = _lean_slice_cases(shared_lean, paper_difficulty, source="shared")
+    _validate_shared_lean_slice_digest(
+        catalog_view,
         paper_difficulty,
-        source="exp2_shared",
+        shared_lean[paper_difficulty],
     )
-    if missing_exp2_reason is not None:
-        return _blocked_lean_selection(
-            context,
-            condition,
-            reason=missing_exp2_reason,
-        )
-    exp4_cases = _lean_slice_cases(exp4_lean, paper_difficulty, source="Exp4")
-    exp2_cases = _lean_slice_cases(exp2_lean, paper_difficulty, source="Exp2")
-    exp4_signature = tuple(_lean_case_signature(case) for case in exp4_cases)
-    exp2_signature = tuple(_lean_case_signature(case) for case in exp2_cases)
-    if exp4_signature != exp2_signature:
-        raise ValueError(
-            "Experiment 4 Lean slice drift from Experiment 2 exact reference"
-        )
-    return _selection_from_cases(context, condition, exp4_cases)
+    return _selection_from_cases(context, condition, cases)
 
 
 def _missing_lean_slice_reason(
@@ -820,18 +1065,86 @@ def _validate_selection_condition_shape(
         raise ValueError("selection catalog digest does not match condition")
 
 
-def _exp4_catalog(context: PaperExecutionContext) -> Mapping[str, Any]:
-    return _mapping(
-        _mapping(context.catalog, "catalog").get("exp4"),
-        "catalog.exp4",
-    )
+def _exp4_catalog_view(context: PaperExecutionContext) -> Mapping[str, Any]:
+    view = _mapping(context.catalog, "catalog")
+    if view.get("schema_version") != EXP4_CATALOG_VIEW_SCHEMA_VERSION:
+        raise ValueError("Experiment 4 requires the prepared catalog view v1")
+    if view.get("catalog_source_kind") != EXP4_CATALOG_SOURCE_KIND:
+        raise ValueError(
+            "Experiment 4 catalog view must derive from PaperInputCatalogManifest"
+        )
+    if view.get("suite_version") != EXP4_SUITE_VERSION:
+        raise ValueError("Experiment 4 catalog suite_version drifted")
+    if view.get("catalog_version") != EXP4_CATALOG_VERSION:
+        raise ValueError("Experiment 4 catalog_version drifted")
+    _require_complete_digest("catalog_digest", view.get("catalog_digest"))
+    experiment_ids = view.get("shared_lean_slice_experiment_ids")
+    if not isinstance(experiment_ids, (list, tuple)) or tuple(experiment_ids) != (
+        EXP4_SHARED_LEAN_SLICE_EXPERIMENT_IDS
+    ):
+        raise ValueError("Experiment 4 requires the shared Exp2/4/5 Lean slices")
+    readiness_status = view.get("lean_semantic_readiness_status")
+    if readiness_status not in {"ready", "blocked"}:
+        raise ValueError("lean_semantic_readiness_status must be ready or blocked")
+    readiness_reason = view.get("lean_semantic_readiness_reason")
+    if readiness_status == "ready":
+        if readiness_reason is not None:
+            raise ValueError("ready Lean catalog view must not declare a blocked reason")
+    else:
+        _require_non_empty_string("lean_semantic_readiness_reason", readiness_reason)
+    return view
 
 
-def _exp2_catalog(context: PaperExecutionContext) -> Mapping[str, Any]:
-    return _mapping(
-        _mapping(context.catalog, "catalog").get("exp2"),
-        "catalog.exp2",
+def _validate_shared_lean_slice_digest(
+    catalog_view: Mapping[str, Any],
+    paper_difficulty: str,
+    by_topic_value: Any,
+) -> None:
+    by_topic = _mapping(
+        by_topic_value,
+        f"catalog.shared_lean_slices.{paper_difficulty}",
     )
+    digests = _mapping(
+        catalog_view.get("shared_lean_slice_digests"),
+        "catalog.shared_lean_slice_digests",
+    )
+    expected_digest = digests.get(paper_difficulty)
+    _require_complete_digest("shared_lean_slice_digest", expected_digest)
+    ordered_cases = [
+        {
+            "case_id": _case_id(case),
+            "expected_ai_unit_count": _positive_int(
+                case.get("expected_ai_unit_count")
+            ),
+        }
+        for topic_family in ("pure_logic", "function_set", "induction")
+        for case in _case_list(
+            by_topic.get(topic_family),
+            field_name=(
+                f"catalog.shared_lean_slices.{paper_difficulty}.{topic_family}"
+            ),
+        )
+    ]
+    actual_digest = canonical_contract_digest(
+        {
+            "paper_difficulty": paper_difficulty,
+            "topic_allocations": {
+                topic_family: len(
+                    _case_list(
+                        by_topic.get(topic_family),
+                        field_name=(
+                            "catalog.shared_lean_slices."
+                            f"{paper_difficulty}.{topic_family}"
+                        ),
+                    )
+                )
+                for topic_family in ("pure_logic", "function_set", "induction")
+            },
+            "ordered_cases": ordered_cases,
+        }
+    )
+    if actual_digest != expected_digest:
+        raise ValueError("Experiment 4 shared Lean slice digest mismatch")
 
 
 def _case_list(value: Any, *, field_name: str) -> tuple[Mapping[str, Any], ...]:
@@ -847,13 +1160,6 @@ def _case_id(case: Mapping[str, Any]) -> str:
     value = case.get("case_id")
     _require_non_empty_string("case_id", value)
     return str(value)
-
-
-def _lean_case_signature(case: Mapping[str, Any]) -> tuple[str, int]:
-    return (
-        _case_id(case),
-        _positive_int(case.get("expected_ai_unit_count")),
-    )
 
 
 def _positive_int(value: Any) -> int:
@@ -896,7 +1202,7 @@ def _condition(
         model_entry_id=BASELINE_MODEL_ENTRY_ID,
         provider_family=BASELINE_PROVIDER_FAMILY,
         provider_model_id=BASELINE_PROVIDER_MODEL_ID,
-        reasoning_profile_id=BASELINE_REASONING_PROFILE_ID,
+        reasoning_profile_id=str(endpoint_binding["reasoning_profile_id"]),
         source_provider_config_digest=str(
             endpoint_binding["source_provider_config_digest"]
         ),
@@ -910,7 +1216,7 @@ def _condition(
 
 
 def _catalog_digest(context: PaperExecutionContext) -> str:
-    catalog = _mapping(context.catalog, "catalog")
+    catalog = _exp4_catalog_view(context)
     value = catalog.get("catalog_digest")
     _require_complete_digest("catalog_digest", value)
     return str(value)
@@ -927,17 +1233,15 @@ def _validate_approved_endpoint_binding(
         "provider_config_id": BASELINE_PROVIDER_CONFIG_ID,
         "provider_family": BASELINE_PROVIDER_FAMILY,
         "provider_model_id": BASELINE_PROVIDER_MODEL_ID,
-        "reasoning_profile_id": BASELINE_REASONING_PROFILE_ID,
     }
     for field_name, expected_value in expected.items():
         if binding.get(field_name) != expected_value:
             raise ValueError(
                 f"Experiment 4 requires GLM-5.2 baseline {field_name}"
             )
-    selected_entry_id = binding.get(
-        "selected_entry_id",
-        binding.get("model_entry_id"),
-    )
+    reasoning_profile_id = binding.get("reasoning_profile_id")
+    _require_non_empty_string("reasoning_profile_id", reasoning_profile_id)
+    selected_entry_id = binding.get("selected_entry_id")
     if selected_entry_id != BASELINE_MODEL_ENTRY_ID:
         raise ValueError("Experiment 4 requires GLM-5.2 baseline model entry")
     if binding.get("model_entry_id", selected_entry_id) != BASELINE_MODEL_ENTRY_ID:
@@ -947,13 +1251,51 @@ def _validate_approved_endpoint_binding(
         "model_endpoint_identity_digest",
     ):
         _require_complete_digest(field_name, binding.get(field_name))
-    request_controls = _mapping(binding.get("request_controls"), "request_controls")
-    if dict(request_controls) != BASELINE_REQUEST_CONTROLS:
-        raise ValueError("Experiment 4 baseline request controls drifted")
-    for field_name, expected_value in BASELINE_REQUEST_CONTROLS.items():
-        if context.request_limits.get(field_name) != expected_value:
-            raise ValueError("Experiment 4 context request controls drifted")
+    _validated_request_controls(
+        binding.get("request_controls"),
+        field_name="baseline request controls",
+        error_message="Experiment 4 baseline request controls drifted",
+    )
+    _validated_request_controls(
+        context.request_limits,
+        field_name="context request controls",
+        error_message="Experiment 4 context request controls drifted",
+    )
     return binding
+
+
+def _validated_request_controls(
+    value: Any,
+    *,
+    field_name: str,
+    error_message: str,
+) -> dict[str, Any]:
+    controls = _mapping(value, field_name)
+    if set(controls) != set(BASELINE_REQUEST_CONTROLS):
+        raise ValueError(error_message)
+    for integer_field in (
+        "max_tokens",
+        "timeout_seconds",
+        "max_provider_attempts",
+    ):
+        item = controls[integer_field]
+        if isinstance(item, bool) or not isinstance(item, int) or item < 1:
+            raise ValueError(error_message)
+    temperature = controls["temperature"]
+    top_p = controls["top_p"]
+    if (
+        isinstance(temperature, bool)
+        or not isinstance(temperature, (int, float))
+        or float(temperature) != 0.0
+        or isinstance(top_p, bool)
+        or not isinstance(top_p, (int, float))
+        or float(top_p) != 1.0
+        or controls["stream"] is not False
+        or controls["enable_thinking"] is not False
+        or dict(controls) != BASELINE_REQUEST_CONTROLS
+    ):
+        raise ValueError(error_message)
+    return dict(BASELINE_REQUEST_CONTROLS)
 
 
 def _mapping(value: Any, field_name: str) -> Mapping[str, Any]:
@@ -986,6 +1328,7 @@ def _require_non_negative_number(field_name: str, value: Any) -> None:
     if (
         isinstance(value, bool)
         or not isinstance(value, (float, int))
+        or not isfinite(value)
         or value < 0
     ):
         raise ValueError(f"{field_name} must be a number >= 0")
