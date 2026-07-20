@@ -548,6 +548,112 @@ def test_gate_c_pilot_executes_registered_module_and_replays_without_transport(
     assert task["root_status"] in csv_text
 
 
+def test_gate_c_metrics_accept_provider_error_without_response_artifacts(
+    tmp_path: Path,
+) -> None:
+    output_root = _gate_c_metrics_fixture(
+        tmp_path,
+        attempt_status="provider_error",
+    )
+
+    metrics = recompute_gate_c_pilot_metrics(output_root)
+
+    assert metrics["row"]["attempt_count"] == 1
+    assert metrics["row"]["provider_attempt_count"] == 1
+    assert metrics["row"]["total_tokens"] == 0
+
+
+@pytest.mark.parametrize(
+    "missing_ref",
+    (
+        "request_ref",
+        "provenance_ref",
+        "usage_ref",
+        "model_execution_record_ref",
+    ),
+)
+def test_gate_c_metrics_provider_error_still_requires_audit_artifacts(
+    tmp_path: Path,
+    missing_ref: str,
+) -> None:
+    output_root = _gate_c_metrics_fixture(
+        tmp_path,
+        attempt_status="provider_error",
+        missing_refs=(missing_ref,),
+    )
+
+    with pytest.raises(ValueError, match=f"unindexed {missing_ref}"):
+        recompute_gate_c_pilot_metrics(output_root)
+
+
+@pytest.mark.parametrize("attempt_status", ("succeeded", "verification_rejected"))
+def test_gate_c_metrics_response_attempts_still_require_raw_output(
+    tmp_path: Path,
+    attempt_status: str,
+) -> None:
+    output_root = _gate_c_metrics_fixture(
+        tmp_path,
+        attempt_status=attempt_status,
+        missing_refs=("raw_output_ref",),
+    )
+
+    with pytest.raises(ValueError, match="unindexed raw_output_ref"):
+        recompute_gate_c_pilot_metrics(output_root)
+
+
+@pytest.mark.parametrize(
+    ("missing_ref", "expected_error"),
+    (
+        ("raw_output_ref", "unindexed raw_output_ref"),
+        ("parse_failure_ref", "unindexed parse_failure_ref"),
+    ),
+)
+def test_gate_c_metrics_parse_failure_requires_raw_and_failure_artifacts(
+    tmp_path: Path,
+    missing_ref: str,
+    expected_error: str,
+) -> None:
+    output_root = _gate_c_metrics_fixture(
+        tmp_path,
+        attempt_status="parse_failed",
+        missing_refs=(missing_ref,),
+    )
+
+    with pytest.raises(ValueError, match=expected_error):
+        recompute_gate_c_pilot_metrics(output_root)
+
+
+@pytest.mark.parametrize("response_ref_kind", ("parsed", "parse_failure"))
+def test_gate_c_metrics_identity_mismatch_preserves_parser_evidence_kind(
+    tmp_path: Path,
+    response_ref_kind: str,
+) -> None:
+    output_root = _gate_c_metrics_fixture(
+        tmp_path,
+        attempt_status="model_identity_mismatch",
+        response_ref_kind=response_ref_kind,
+    )
+
+    metrics = recompute_gate_c_pilot_metrics(output_root)
+
+    assert metrics["row"]["attempt_count"] == 1
+    assert metrics["row"]["provider_attempt_count"] == 1
+
+
+def test_gate_c_metrics_reject_unindexed_optional_provider_error_artifact(
+    tmp_path: Path,
+) -> None:
+    output_root = _gate_c_metrics_fixture(
+        tmp_path,
+        attempt_status="provider_error",
+        provider_error_raw_output=True,
+        unindexed_refs=("raw_output_ref",),
+    )
+
+    with pytest.raises(ValueError, match="unindexed raw_output_ref"):
+        recompute_gate_c_pilot_metrics(output_root)
+
+
 @pytest.mark.parametrize("experiment_id", EXPERIMENT_IDS)
 def test_gate_c_each_registered_experiment_reaches_real_mode_capture(
     tmp_path: Path,
@@ -1645,3 +1751,127 @@ def _read_jsonl(path: str) -> list[dict]:
         for line in Path(path).read_text(encoding="utf-8").splitlines()
         if line.strip()
     ]
+
+
+def _gate_c_metrics_fixture(
+    tmp_path: Path,
+    *,
+    attempt_status: str,
+    missing_refs: tuple[str, ...] = (),
+    unindexed_refs: tuple[str, ...] = (),
+    provider_error_raw_output: bool = False,
+    response_ref_kind: str | None = None,
+) -> Path:
+    output_root = tmp_path / f"gate-c-metrics-{attempt_status}"
+    plan = {
+        "schema_version": "tokenshare.paper_gate_c_execution_plan.v1",
+        "suite_id": "gate_c_metrics_fixture",
+        "condition_id": "gate_c_condition",
+        "selected_case_id": "factor_v2_easy_001",
+    }
+    plan["execution_plan_digest"] = digest_json(plan)
+    refs = {
+        field_name: {"artifact_id": f"fixture_{field_name}"}
+        for field_name in (
+            "request_ref",
+            "raw_output_ref",
+            "parsed_output_ref",
+            "parse_failure_ref",
+            "provenance_ref",
+            "usage_ref",
+            "model_execution_record_ref",
+        )
+    }
+    has_raw_output = attempt_status != "provider_error" or provider_error_raw_output
+    if response_ref_kind is None:
+        response_ref_kind = (
+            "parse_failure" if attempt_status == "parse_failed" else "parsed"
+        )
+    attempt = {
+        "schema_version": "tokenshare.paper_attempt_result.v1",
+        "condition_id": "gate_c_condition",
+        "repeat_id": 0,
+        "run_id": "gate_c_run",
+        "task_id": "gate_c_task",
+        "unit_id": "range_0",
+        "attempt_id": "gate_c_attempt_0",
+        "attempt_status": attempt_status,
+        "request_ref": refs["request_ref"],
+        "raw_output_ref": refs["raw_output_ref"] if has_raw_output else None,
+        "parsed_output_ref": (
+            refs["parsed_output_ref"]
+            if attempt_status != "provider_error" and response_ref_kind == "parsed"
+            else None
+        ),
+        "parse_failure_ref": (
+            refs["parse_failure_ref"]
+            if attempt_status != "provider_error"
+            and response_ref_kind == "parse_failure"
+            else None
+        ),
+        "provenance_ref": refs["provenance_ref"],
+        "usage_ref": refs["usage_ref"],
+        "model_execution_record_ref": refs["model_execution_record_ref"],
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "total_tokens": 0,
+        "cost_estimate": 0.0,
+    }
+    for field_name in missing_refs:
+        attempt[field_name] = None
+    artifact_index = [
+        {
+            "schema_version": "tokenshare.paper_artifact_index_record.v1",
+            "artifact_ref": ref,
+        }
+        for field_name, ref in attempt.items()
+        if field_name.endswith("_ref")
+        and isinstance(ref, dict)
+        and field_name not in unindexed_refs
+    ]
+    task = {
+        "condition_id": "gate_c_condition",
+        "run_id": "gate_c_run",
+        "task_id": "gate_c_task",
+        "case_id": "factor_v2_easy_001",
+        "domain": "factorization",
+        "paper_difficulty": "easy",
+        "root_status": "failed",
+        "accepted_validity": False,
+    }
+    events = [
+        {"event_type": event_type}
+        for event_type in (
+            "suite_started",
+            "task_started",
+            "task_completed",
+            "suite_finished",
+        )
+    ]
+
+    def write_json(path: Path, body: dict) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps(body, ensure_ascii=False, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+
+    def write_jsonl(path: Path, rows: list[dict]) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            "".join(
+                json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n"
+                for row in rows
+            ),
+            encoding="utf-8",
+        )
+
+    write_json(output_root / "execution_plan.json", plan)
+    write_jsonl(output_root / "per_task_results.jsonl", [task])
+    write_jsonl(output_root / "per_attempt_results.jsonl", [attempt])
+    write_jsonl(output_root / "events" / "event_log.jsonl", events)
+    write_jsonl(
+        output_root / "artifacts" / "artifact_index.jsonl",
+        artifact_index,
+    )
+    return output_root

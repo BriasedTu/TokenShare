@@ -110,6 +110,64 @@ class PaperMetricsResult:
         }
 
 
+def _require_gate_c_indexed_attempt_ref(
+    attempt: JsonObject,
+    field_name: str,
+    indexed_artifact_ids: set[str],
+) -> None:
+    ref = attempt.get(field_name)
+    if not isinstance(ref, dict) or str(ref.get("artifact_id")) not in (
+        indexed_artifact_ids
+    ):
+        raise ValueError(f"Gate C pilot attempt has unindexed {field_name}")
+
+
+def _validate_gate_c_attempt_artifact_refs(
+    attempt: JsonObject,
+    indexed_artifact_ids: set[str],
+) -> None:
+    attempt_status = str(attempt.get("attempt_status"))
+    required_fields = [
+        "request_ref",
+        "provenance_ref",
+        "usage_ref",
+        "model_execution_record_ref",
+    ]
+    if attempt_status != "provider_error":
+        required_fields.append("raw_output_ref")
+    if attempt_status == "parse_failed":
+        required_fields.append("parse_failure_ref")
+    elif attempt_status in {
+        "succeeded",
+        "verification_rejected",
+        "checker_rejected",
+    }:
+        required_fields.append("parsed_output_ref")
+    elif attempt_status != "provider_error" and not (
+        isinstance(attempt.get("parsed_output_ref"), dict)
+        or isinstance(attempt.get("parse_failure_ref"), dict)
+    ):
+        raise ValueError(
+            "Gate C pilot attempt requires parsed output or parse failure"
+        )
+
+    for field_name in required_fields:
+        _require_gate_c_indexed_attempt_ref(
+            attempt,
+            field_name,
+            indexed_artifact_ids,
+        )
+
+    for field_name in ATTEMPT_REF_FIELDS:
+        if field_name in required_fields or attempt.get(field_name) is None:
+            continue
+        _require_gate_c_indexed_attempt_ref(
+            attempt,
+            field_name,
+            indexed_artifact_ids,
+        )
+
+
 def recompute_gate_c_pilot_metrics(suite_root: str | Path) -> JsonObject:
     """从 Gate C 单 case pilot evidence 复算，不读取既有 CSV/summary。"""
 
@@ -158,26 +216,7 @@ def recompute_gate_c_pilot_metrics(suite_root: str | Path) -> JsonObject:
         if isinstance(record.get("artifact_ref"), dict)
     }
     for attempt in attempts:
-        for field_name in (
-            "request_ref",
-            "raw_output_ref",
-            "provenance_ref",
-            "usage_ref",
-        ):
-            ref = attempt.get(field_name)
-            if not isinstance(ref, dict) or str(ref.get("artifact_id")) not in (
-                indexed_artifact_ids
-            ):
-                raise ValueError(
-                    f"Gate C pilot attempt has unindexed {field_name}"
-                )
-        if not (
-            isinstance(attempt.get("parsed_output_ref"), dict)
-            or isinstance(attempt.get("parse_failure_ref"), dict)
-        ):
-            raise ValueError(
-                "Gate C pilot attempt requires parsed output or parse failure"
-            )
+        _validate_gate_c_attempt_artifact_refs(attempt, indexed_artifact_ids)
     provider_attempt_count = sum(
         1
         for attempt in attempts

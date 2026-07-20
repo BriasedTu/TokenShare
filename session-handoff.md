@@ -1,5 +1,20 @@
 # Session Handoff
 
+## 2026-07-20 21:08 Gate C provider-error metrics blocker 离线修复（最新）
+
+- `src/tokenshare/experiments/paper_metrics.py` 已按 attempt outcome 校验 Gate C evidence：`provider_error` 不需要不存在的 raw/parsed/parse-failure，但仍强制索引 request/provenance/usage/model-execution；response attempt 仍强制 raw，`parse_failed` 强制 parse-failure，其他 parsed outcome 强制 parsed output，任何存在的可选 ref 也必须索引。
+- RED 精确复现旧错误，二次 RED 覆盖 identity-mismatch 对 parsed/parse-failure 的 override 边界；最终无 Lean 回归=`59 passed in 49.97s`（outcome/ref 12、Gate C capturing+replay 1、v2 500-root dispatcher 1、通用 paper metrics 45），compileall、feature JSON 和两次 diff check 均 exit 0。现存 v3 evidence 只读复算 exit 0：2 attempts / 2 provider attempts / 2,388 tokens / USD 0.002741 / 1 verification rejection。
+- 历史真实 pilot evidence 未改写。本轮新增 provider calls/tokens/cost=`0/0/0`；未运行 replay-only、Lean checker/preflight/init、Lean pilot、Exp1 formal 或 Exp2-5，没有新真实论文结果。
+- 下一步先按 `hard_stop_summary.json` 对相同 v3 root 运行 zero-call replay-only，核验 provider/transport calls=0 和 artifact refs；本轮只读 metrics 复算不能替代该步骤。通过后再决定是否继续最小 Factorization pilot 或 Exp1 formal。
+
+## 2026-07-20 20:53 Exp1 v3 真实 pilot evidence 硬停止（历史现场）
+
+- 新 Exp1 plan-only root 为 `outputs/experiments/night_20260720_v3/exp1_formal`，provider calls=0；digest=`sha256:4dd5319b97b1a94bb290d0e834fb609814881f26e2d2e68158772c86a0e18913`，36 conditions / 1,905 roots / 8,700 AI units / 8,700 max attempts / 142,540,800 tokens / USD 435。GLM-5.2 identity 唯一，Lean 9×15 全部通过 readiness。
+- Factor pilot `factor_v2_easy_001` 使用独立 root，PID `19512`、exit `3`，实际 2 attempts / 2,388 tokens / USD 0.002741。attempt 0 identity matched 且 evidence 完整但 verifier rejected；attempt 1 是 30,094 ms timeout，只有 provider-error provenance/usage，没有 raw/parsed output。
+- 原 run status=`completed_with_failures`；Gate C metrics 对所有 attempts 无条件要求 raw 和 parsed/parse-failure refs，因而最终 blocked：`Gate C pilot attempt has unindexed raw_output_ref`。这不是 catalog/domain blocker，而是 provider-error evidence audit contract 与允许失败语义不兼容。
+- 已按硬停止规则停止全部 I-M 推进：未启动 Lean pilot、Exp1 formal、Exp2-5；未尝试 resume，也不得在未修复审计器前运行 resume/formal。现场见 `outputs/experiments/night_20260720_v3/exp1_formal/supervisor/hard_stop_summary.json`。
+- 恢复步骤：先以 TDD 修复并独立 review `recompute_gate_c_pilot_metrics()` 对 timeout/provider-error evidence 的验证规则，保持当前 evidence 不变；再执行 hard-stop summary 中相同 root/digest 的 `--replay-only` 建议命令，必须证明 provider/transport calls 均为 0 且 artifact refs 全部有效。通过后才能重新决定是否继续 pilot/formal。
+
 ## 2026-07-20 20:06 Factorization v2 完整域离线修复（最新）
 
 - blocker 已在当前工作树离线修复：generator version=`tokenshare.paper_factorization_catalog.v2.full_domain.v1`，500/500 rows 使用完整 `[2,floor_sqrt(target_n)]` 域，hard 有恰好 7 个 prime/no-factor controls；catalog SHA-256=`sha256:9ce2b31a199455a37c0ca5afdee68e03540dc4912c4c4fe28e87ed3503467774`。
