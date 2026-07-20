@@ -230,3 +230,17 @@ Task 3 test addendum：`test_paper_model_policy.py` 现覆盖 sanitized endpoint
 - `src/tokenshare/experiments/paper_metrics.py` 当前共享执行复算仍以 Exp1 pilot contract 为主，formal matrix metrics/evidence writer 尚未实现。
 - `paper_exp3_fault_recovery.py` 和 `paper_exp4_ablation_runner.py` 已定义 formal plan、target/profile 与 summary audit contract，但 post-AI fault、worker-death 和六模式 ablation 尚未接入 shared formal execution callback。
 - 因此 2026-07-20 夜间流水线按硬停止条款停在 Exp1 formal 前；运行现场见 `outputs/experiments/night_20260720/exp1_plan_v3/supervisor/hard_stop_summary.json`。后续实现必须先补 checkpoint/resume、artifact/evidence 验证与 formal/pilot output isolation，再重新生成预算 digest。
+
+## 2026-07-20 Formal Experiment 1-5 设施完成附录
+
+本节覆盖上一节的“当前缺口”判断；上一节只保留为实现前的历史停止证据。
+
+- `paper_formal_runner.py` 提供与 pilot 分离的 `execute_paper_formal_suite()` 和 `replay_paper_formal_suite()`。runner 校验 suite/catalog/dispatch/budget/identity/request limits，遍历每个 dispatch plan 的实际 `bound_items()`，通过注册模块 `run_condition()` 执行完整 frozen selection，并按 experiment/condition/repeat/root 隔离输出。可选 hard limits 在 root 边界停止新任务并写 `budget_exhausted`；blocked condition 为零 transport 调用。
+- `paper_formal_evidence.py` 提供 formal 专用 suite/experiment/run/task/attempt/fault/event/artifact schema，使用不可变 generation 与原子 `CURRENT.json` checkpoint。resume 的完成身份包含 `(experiment_id, condition_id, repeat_id, task_id)`，因此跨 condition/repeat/experiment 重复 roots 不会被误去重；历史 identity 不一致或缺失必要 evidence 时 fail closed。
+- `paper_formal_callbacks.py` 提供 Exp1 full-selection、Exp2 actual worker scheduling、Exp3 post-raw fault 与 process worker-death、Exp4 six-mode boundary wrapper、Exp5 fixed-entry identity 策略。Exp3 的 raw/provenance/usage 在 fault hook 之前持久化；worker death 调用真实本地 process harness；Exp5 replacement/initial attempts 都保持批准 entry，不 failover。
+- `paper_formal_metrics.py` 从 immutable checkpoint evidence 复算 Exp1 feasibility、Exp2 scalability/critical path、Exp3 robustness/recovery、Exp4 ablation escape/applicability 和 Exp5 endpoint/model identity 指标；`paper_formal_report.py` 先执行 secret scan，再生成 eligibility audit。capturing 只生成 regression report，明确 `paper_eligible=false`，不生成正式论文表。
+- `run_paper_experiments.py` 统一支持 `--experiments`、`--plan-only`、`--real-transport`、`--resume`、`--replay-only`、可选 budget approval gate 和 hard-limit flags。预算默认 `approval_mode=user_bypassed`，但 `run_budget.json`、digest、计划上界和实际 usage 始终保留。
+- 当前 Factorization v2 + Lean frozen plans 由 `bound_items()` 复算为 Exp1=`1,905`、Exp2=`10,300`、Exp3=`61,734`（rate-fault=`52,680`、worker-death=`9,054`）、Exp4=`9,270`、Exp5=`4,635`，P0-core=`83,209`、P0-full=`87,844`。生产 runner 未硬编码这些验收数。
+- offline/capturing probes 已证明 execute -> complete resume -> replay-only，后两者 transport calls 均为 0。capturing evidence 是 formal-matrix regression，不是论文结果。本任务真实 provider calls=`0`，尚未产生新的真实 formal 论文结果；唯一后续外部步骤是未来真实 provider Exp1–5 formal run。
+- 根据用户范围，本轮以设施完整执行为第一目标，没有新增外部注入攻击防护或类似加固；只保留 checkpoint/resume/replay 正确性所需的 evidence identity/完整性验证。
+- 最终 runtime review 修复：Exp2 在 parallel root dispatch 前以 frozen AI-unit/budget 上界做共享原子 reservation，完成后以 actual attempts/tokens/cost 结算；Exp4 mode 在正式 adapter/wrapper 生命周期内生效，runner 不再事后伪造 completed。正常 rejection 走 nested replacement adapter attempt，`NO_REQUEUE` 在同一边界禁止 replacement 并派生 stuck；budget 不改变 planned AI units/root-runs，只增加 Exp4 非 `NO_REQUEUE` 的一次 replacement provider-attempt/token/cost 上界。独立最终 re-review 为 PASS，无 Critical/Important。

@@ -145,6 +145,45 @@ def test_plan_only_budget_expands_conditions_without_provider_calls() -> None:
     assert body["budget_digest"].startswith("sha256:")
 
 
+def test_exp4_budget_counts_requeue_upper_bound_without_inflating_ai_units() -> None:
+    catalog = load_paper_catalogs(
+        factorization_path=Path("benchmarks/paper/factorization_catalog.v1.jsonl"),
+        lean_path=Path("benchmarks/paper/lean_catalog.v1.jsonl"),
+    )
+    base = _sample_conditions(catalog.catalog_digest)[0]
+    conditions = (
+        replace(
+            base,
+            experiment_id="exp4_real_ai_protocol_ablation",
+            condition_id="exp4-factor-easy-full",
+            ablation_mode="FULL",
+        ),
+        replace(
+            base,
+            experiment_id="exp4_real_ai_protocol_ablation",
+            condition_id="exp4-factor-easy-no-requeue",
+            ablation_mode="NO_REQUEUE",
+        ),
+    )
+
+    budget = plan_paper_suite(
+        catalog_manifest=catalog,
+        conditions=conditions,
+        max_provider_attempts_per_ai_unit=1,
+        token_upper_bound_per_provider_attempt=100,
+        cost_upper_bound_per_provider_attempt=0.01,
+        plan_only=True,
+    )
+
+    assert budget.planned_ai_units == 20
+    assert budget.max_provider_attempts == 30
+    assert budget.token_upper_bound == 3000
+    assert budget.cost_upper_bound == pytest.approx(0.3)
+    assert budget.quota_preflight["budget_commitments"][
+        "exp4_requeue_ai_unit_upper_bound"
+    ] == 10
+
+
 def test_budget_approval_requires_matching_digest() -> None:
     catalog = load_paper_catalogs(
         factorization_path=Path("benchmarks/paper/factorization_catalog.v1.jsonl"),

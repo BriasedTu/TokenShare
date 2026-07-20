@@ -1,11 +1,26 @@
 # Session Handoff
 
+## 2026-07-20 Formal Experiment 1-5 设施交接（当前）
+
+- 下方“I-M 夜间监督硬停止”记录保留为历史现场，但其代码缺口已经被本轮实现取代。`run_paper_experiments.py` 的非 pilot/non-plan-only 路径现在调用独立 `execute_paper_formal_suite()`；plan-only、pilot 和 formal evidence 仍明确隔离。
+- 新设施文件为 `paper_formal_runner.py`、`paper_formal_evidence.py`、`paper_formal_callbacks.py`、`paper_formal_metrics.py`、`paper_formal_report.py`。统一 dispatcher 仍从各 C-G 模块取得 exact condition/selection bindings，root 内领域 split/parser/verifier/checker/canonical/merge 仍由正式 adapter/plugin 完成。
+- Exp1–5 runtime 已接通：Exp2 使用 condition worker slots 并复算 critical path；Exp3 post-raw fault/replacement 与真实 process worker-death recovery 已持久化；Exp4 六 mode 只在实验 wrapper 改变目标边界；Exp5 固定 member identity 且不 failover，并输出 model execution records。
+- 每 root checkpoint；resume 使用 `(experiment_id, condition_id, repeat_id, task_id)` 识别已完成 root，完整 resume 不调用 transport；replay-only 只读历史冻结 evidence，不解析当前 provider config、不运行 Lean checker、transport calls=0；缺失 checkpoint/artifact/event/attempt 时 fail closed。
+- evidence/metrics/report contract 已实现。capturing/in-memory suite 是 formal-matrix regression evidence，但永远 `paper_eligible=false`、`regression_only=true`，只生成 audit/regression report，不生成可写入论文的 formal table。
+- 当前 v2 plan 从实际 `bound_items()` 复算为 Exp1=`1,905`、Exp2=`10,300`、Exp3=`61,734`、Exp4=`9,270`、Exp5=`4,635`，P0-core=`83,209`、P0-full=`87,844`。这些不是 runner 内硬编码常量。
+- 预算不再默认要求人工批准：继续保存 `run_budget.json`、budget digest、计划上界和实际 usage，默认结构化 `approval_mode=user_bypassed`；只有显式 `--require-budget-approval` 才恢复 approval digest gate。未配置 hard limit 不缩小矩阵。
+- 本任务真实 provider 调用数为 `0`，没有新的真实 formal 论文结果。唯一剩余外部步骤是未来配置真实 provider 后直接执行 Exp1–5 formal suite；无需人工预算批准，但仍记录预算和实际 usage。
+- 用户明确要求优先保证实验设施完整运行，不做外部注入攻击防护或类似加固。本轮没有新增该类范围；checkpoint/resume/replay 所需的 evidence identity 与完整性校验继续保留。
+- 最终独立 review 的首轮两个 blocker 已闭合：Exp2 parallel hard limits 使用原子 root upper-bound reservation；Exp4 mode 在 adapter/wrapper 生命周期内实际禁用边界，正常 rejection 有 nested replacement，`NO_REQUEUE` 零 replacement/stuck，预算额外覆盖 replacement attempts 而不增加 planned AI units。最终 re-review 为 `PASS`，无 Critical/Important。
+- 最终不运行完整 Lean checker 的验证：formal facilities `99 passed`；轻量 CLI `5 passed, 16 deselected`；runtime impact `176 passed, 1 skipped`；Exp4 budget subset `4 passed, 9 deselected`；500-root plan `1 passed, 18 deselected`；`compileall`、feature JSON、UTF-8/BOM、`bound_items()` 算术和 `git diff --check` 均退出 0。唯一 skip 是默认关闭的真实 provider smoke。
+- 最终快速 `.\init.ps1` 为 `288 passed, 1 skipped in 14.38s`。按用户限制没有运行 `-Full` 或完整 Lean checker；一次预算全文件检查进入慢速预检后已按精确进程停止，受影响的纯预算选择集随后通过且无残留进程。
+
 ## 2026-07-20 Factorization 500 矩阵交接（当前）
 
 - 正式默认 catalog 已迁移到 `benchmarks/paper/factorization_catalog.v2.jsonl`：500 roots，easy/medium/hard=`167/167/166`，范围 `[1_000_000,100_000_000_000)`；`factorization_catalog.v1.jsonl` 仅保留历史回归。
 - Exp1–5 离线冻结 root-runs 分别为 `1,905/10,300/61,734/9,270/4,635`，P0-core=`83,209`，P0-full=`87,844`。Exp3 rate-fault=`52,680`；worker-death=`9,054`，Factorization worker-death 按 difficulty 分区而不是每个 condition 500 题。
 - `paper_budget.py` library 默认仍要求 approval，CLI 则显式传 `budget_approval_required=False`，记录 `approval_mode=user_bypassed` 和 budget digest；`--require-budget-approval` 可恢复旧门禁，显式错误 digest 永远拒绝。
-- 本任务没有调用真实 provider，`provider_calls_made=0`；没有执行完整矩阵，也没有产生 pilot/formal 论文结果。另一 agent 的 `paper_formal_runner.py`、formal runner tests/plan 属于独立设施任务，本任务不得覆盖或代替提交。
+- Factorization 500 子任务没有调用真实 provider，`provider_calls_made=0`；没有执行完整矩阵，也没有产生 pilot/formal 论文结果。当时并行开发的 `paper_formal_runner.py` 与 formal tests 现已由顶部 formal 设施交接记录完成集成。
 - 用户要求后续不要为本 Factorization 任务启动 Lean 初始化；验证应使用 generator、纯 JSON manifest、dispatcher 静态 readiness 和内存 budget/CLI 边界测试。
 - 最终无 Lean 初始化验证：上述纯测试 `9 passed in 21.16s`；500 行 JSON/difficulty/range/digest 探针、`compileall -q src tests`、feature JSON、stale active wording 和 `git diff --check` 全部通过。未运行 `init.ps1` / `-Full`，这是用户显式限制，不是绿色门禁声明。
 
@@ -15,7 +30,7 @@
 - 开始基线 `.\init.ps1` 已通过：`288 passed, 1 skipped in 14.19s`。
 - Exp1 有效 plan root 为 `outputs/experiments/night_20260720/exp1_plan_v3`，digest 为 `sha256:392d183cf0f1c02397bc9324f7028b0e1de975f4b499061c159489a64a982d31`，provider calls 0。
 - Factorization 与 Lean 最小真实 pilot 均 `completed`；合计 4 attempts、6,777 tokens、USD 0.008161。两个 replay-only 审计均为零新 provider calls，且 artifact/evidence manifest 校验通过。
-- 当前必须停止在 Exp1 formal 前：`run_paper_experiments.py` 的非 pilot 分支只写 `planned` suite 后返回；没有 formal orchestrator/checkpoint/resume/evidence/metrics。Exp3 fault/worker-death 与 Exp4 ablation 也没有 formal execution callback，不能把 pilot loop 重新标记为 formal。
+- 历史停点：当时必须停止在 Exp1 formal 前，因为 `run_paper_experiments.py` 的非 pilot 分支只写 `planned` suite 后返回，且尚无 formal orchestrator/checkpoint/resume/evidence/metrics 或 Exp3/Exp4 formal callback。该运行时缺口现已被顶部交接记录的独立 formal 设施补全，旧 pilot evidence 没有被重新标记为 formal。
 - 未启动 Exp1 formal 或 Exp2-5；未尝试 resume，因为 pilot 正常退出且没有 formal suite；当前没有残留实验/provider/Lean 进程。
 - 完整停止记录：`outputs/experiments/night_20260720/exp1_plan_v3/supervisor/hard_stop_summary.json` 和同目录 `hard_stop_summary.md`。
 - 下一步不是直接执行当前批准 digest。先以 TDD 实现并独立 review formal runner、formal evidence/metrics、Exp3 与 Exp4 正式执行语义；随后使用新的 formal output root 重新 plan-only，并核对新 exact digest 后再恢复串行 Exp1-5。

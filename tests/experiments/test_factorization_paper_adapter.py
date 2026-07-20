@@ -185,6 +185,78 @@ def test_factorization_paper_adapter_reports_parse_failure_stage(tmp_path) -> No
     )
 
 
+@pytest.mark.parametrize(
+    "mode",
+    (
+        "FULL",
+        "NO_VERIFICATION",
+        "NO_PARSER_POLICY",
+        "NO_REQUEUE",
+        "NO_MERGE_GATE",
+        "NO_SLOT_INTEGRITY",
+    ),
+)
+def test_factorization_exp4_ablation_modes_execute_inside_adapter_lifecycle(
+    tmp_path: Path,
+    mode: str,
+) -> None:
+    catalog = load_paper_catalogs(
+        factorization_path=FACTOR_CATALOG,
+        lean_path=LEAN_CATALOG,
+    )
+    case = catalog.cases_for(domain="factorization", difficulty="easy")[0]
+    condition = _condition(catalog.catalog_digest)
+    transport = (
+        _InvalidJsonTransport()
+        if mode == "NO_PARSER_POLICY"
+        else ScriptedFactorizationRangeTransport(
+            force_false_negative_child_indices=(
+                {0}
+                if mode in {"NO_VERIFICATION", "NO_MERGE_GATE"}
+                else set()
+            )
+        )
+    )
+
+    result = run_factorization_paper_case(
+        case=case,
+        condition=condition,
+        output_root=tmp_path / mode,
+        transport=transport,
+        real_transport=False,
+        entry_id="factorization_paper_scripted",
+        ablation_mode=mode,
+    )
+
+    runtime = result.run_evidence["ablation_runtime"]
+    assert runtime["mode"] == mode
+    assert runtime["applied_before_adapter_completion"] is True
+    if mode == "FULL":
+        assert result.task_result.root_status == PaperTaskStatus.COMPLETED
+        assert runtime["disabled_mechanism"] is None
+    elif mode == "NO_VERIFICATION":
+        assert any(
+            item["verification"]["status"] == "skipped_by_ablation"
+            and item["canonical_output_ref"] is not None
+            for item in result.range_results
+        )
+        assert result.task_result.accepted_validity is False
+    elif mode == "NO_PARSER_POLICY":
+        assert all(item.parsed_output_ref is None for item in result.attempt_results)
+        assert runtime["raw_only_exposed"] is True
+    elif mode == "NO_REQUEUE":
+        assert runtime["replacement_attempts_allowed"] is False
+        assert result.task_result.attempt_count == result.split_summary[
+            "range_child_count"
+        ]
+    elif mode == "NO_MERGE_GATE":
+        assert result.merge_summary["premature_merge_attempted"] is True
+        assert result.merge_summary["root_validity_audit_passed"] is False
+    else:
+        assert result.merge_summary["slot_integrity_violation"] is True
+        assert result.merge_summary["root_validity_audit_passed"] is False
+
+
 def test_factorization_paper_adapter_reports_provider_failure_stage(tmp_path) -> None:
     catalog = load_paper_catalogs(
         factorization_path=FACTOR_CATALOG,

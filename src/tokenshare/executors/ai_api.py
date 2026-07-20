@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import json
 import os
+from collections.abc import Mapping
 from hashlib import sha256
 from inspect import Parameter, signature
 from time import perf_counter
-from typing import Callable
+from typing import Any, Callable
 
 from tokenshare.core.models import ArtifactRef, JsonObject
 from tokenshare.executors.ai_api_artifacts import (
@@ -76,6 +77,7 @@ class AIAPIExecutor:
         config: AIAPIExecutorConfig,
         transport,
         parser: Callable[..., object] | None = None,
+        post_raw_output_hook: Callable[..., Mapping[str, Any] | None] | None = None,
     ) -> None:
         self.executor_id = executor_id
         self.executor_version = executor_version
@@ -83,6 +85,7 @@ class AIAPIExecutor:
         self._config = config
         self._transport = transport
         self._parser = parser
+        self._post_raw_output_hook = post_raw_output_hook
 
     def execute(
         self,
@@ -365,6 +368,84 @@ class AIAPIExecutor:
             metadata={"executor_id": self.executor_id, "entry_id": final_entry.entry_id},
             created_at=submitted_at,
         )
+        parser_input_text = final_result.content_text
+        usage_summary = _usage_summary(
+            self._config.provider_family,
+            final_entry,
+            requested_model=str(final_request_identity["requested_model"]),
+            usage=final_result.usage,
+            attempt_count=len(attempts),
+        )
+        hook_result_kind: str | None = None
+        if self._post_raw_output_hook is not None:
+            response_provenance_ref = self._save_response_provenance(
+                submission_id=submission_id,
+                request=request,
+                selection=selection.to_dict(),
+                attempts=attempts,
+                final_entry_id=final_entry.entry_id,
+                raw_output_ref=raw_ref,
+                submitted_at=submitted_at,
+            )
+            response_usage_ref = self._save_response_usage(
+                submission_id=submission_id,
+                request=request,
+                raw_output_ref=raw_ref,
+                usage_summary=usage_summary,
+                submitted_at=submitted_at,
+            )
+            hook_result = self._post_raw_output_hook(
+                artifact_store=self._artifact_store,
+                request=request,
+                submission_id=submission_id,
+                raw_output_ref=raw_ref,
+                provenance_ref=response_provenance_ref,
+                usage_ref=response_usage_ref,
+                provider_family=self._config.provider_family,
+                model=final_entry.model,
+                entry_id=final_entry.entry_id,
+                content_text=final_result.content_text,
+                usage_summary=usage_summary,
+                submitted_at=submitted_at,
+            )
+            if hook_result is not None:
+                if not isinstance(hook_result, Mapping):
+                    raise ValueError("post_raw_output_hook must return a mapping or None")
+                replacement_text = hook_result.get("content_text")
+                if replacement_text is not None and not isinstance(replacement_text, str):
+                    raise ValueError("post_raw_output_hook content_text must be a string")
+                if isinstance(replacement_text, str):
+                    parser_input_text = replacement_text
+                result_kind_value = hook_result.get("result_kind")
+                if result_kind_value is not None:
+                    hook_result_kind = str(result_kind_value)
+        if hook_result_kind in {
+            "no_return",
+            "late_submission",
+            "executor_error",
+        }:
+            provenance_ref = self._save_provenance(
+                submission_id=submission_id,
+                request=request,
+                selection=selection.to_dict(),
+                attempts=attempts,
+                final_entry_id=final_entry.entry_id,
+                final_result_kind=hook_result_kind,
+                submitted_at=submitted_at,
+            )
+            return self._submission(
+                request=request,
+                submission_id=submission_id,
+                submitted_at=submitted_at,
+                result_kind=hook_result_kind,
+                raw_output_ref=raw_ref,
+                parsed_output_ref=None,
+                candidate_output_refs={},
+                parse_failure_ref=None,
+                provenance_ref=provenance_ref,
+                usage_summary=usage_summary,
+                error={"kind": hook_result_kind, "source": "post_raw_output_hook"},
+            )
         parsed_ref = None
         candidate_refs: dict[str, ArtifactRef] = {}
         parse_failure_ref = None
@@ -372,7 +453,7 @@ class AIAPIExecutor:
         if self._parser is not None:
             try:
                 parsed = self._call_parser(
-                    final_result.content_text,
+                    parser_input_text,
                     raw_output_ref=raw_ref,
                     submitted_at=submitted_at,
                 )
@@ -460,13 +541,6 @@ class AIAPIExecutor:
                     error={"kind": "parse_failed", "reason": "plugin_parser_rejected_output"},
                 )
 
-        usage_summary = _usage_summary(
-            self._config.provider_family,
-            final_entry,
-            requested_model=str(final_request_identity["requested_model"]),
-            usage=final_result.usage,
-            attempt_count=len(attempts),
-        )
         provenance_ref = self._save_provenance(
             submission_id=submission_id,
             request=request,
@@ -630,6 +704,70 @@ class AIAPIExecutor:
             artifact_type="AIProviderCallProvenance",
             artifact_schema_id="phase7.ai_provider_call_provenance",
             artifact_schema_version="v2",
+            source={"kind": "ai_api_executor", "request_id": request.request_id},
+            metadata={"executor_id": self.executor_id},
+            created_at=submitted_at,
+        )
+
+    def _save_response_provenance(
+        self,
+        *,
+        submission_id: str,
+        request: ExecutionRequest,
+        selection: JsonObject,
+        attempts: list[JsonObject],
+        final_entry_id: str,
+        raw_output_ref: ArtifactRef,
+        submitted_at: str,
+    ) -> ArtifactRef:
+        """为实验 post-raw hook 保存 parser 前 provider provenance。"""
+
+        return self._artifact_store.save_json(
+            {
+                "schema_version": "phase7.ai_provider_response_provenance.v1",
+                "submission_id": submission_id,
+                "request_id": request.request_id,
+                "provider_family": self._config.provider_family,
+                "config_digest": self._config.config_digest,
+                "selection_record": selection,
+                "attempts": attempts,
+                "final_entry_id": final_entry_id,
+                "raw_output_ref": raw_output_ref.to_dict(),
+                "lifecycle_stage": "provider_response_persisted_before_parser",
+            },
+            artifact_id=f"ai_provider_response_provenance_{submission_id}",
+            artifact_type="AIProviderResponseProvenance",
+            artifact_schema_id="phase7.ai_provider_response_provenance",
+            artifact_schema_version="v1",
+            source={"kind": "ai_api_executor", "request_id": request.request_id},
+            metadata={"executor_id": self.executor_id},
+            created_at=submitted_at,
+        )
+
+    def _save_response_usage(
+        self,
+        *,
+        submission_id: str,
+        request: ExecutionRequest,
+        raw_output_ref: ArtifactRef,
+        usage_summary: JsonObject,
+        submitted_at: str,
+    ) -> ArtifactRef:
+        """为实验 post-raw hook 保存 parser 前 usage snapshot。"""
+
+        return self._artifact_store.save_json(
+            {
+                "schema_version": "phase7.ai_provider_response_usage.v1",
+                "submission_id": submission_id,
+                "request_id": request.request_id,
+                "raw_output_ref": raw_output_ref.to_dict(),
+                "usage_summary": usage_summary,
+                "lifecycle_stage": "provider_response_persisted_before_parser",
+            },
+            artifact_id=f"ai_provider_response_usage_{submission_id}",
+            artifact_type="AIProviderResponseUsage",
+            artifact_schema_id="phase7.ai_provider_response_usage",
+            artifact_schema_version="v1",
             source={"kind": "ai_api_executor", "request_id": request.request_id},
             metadata={"executor_id": self.executor_id},
             created_at=submitted_at,

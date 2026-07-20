@@ -29,6 +29,18 @@ from tokenshare.experiments.paper_model_policy import (
     load_provider_config_map,
 )
 from tokenshare.experiments.paper_models import PaperStatus, PaperSuiteResult
+from tokenshare.experiments.paper_formal_runner import (
+    APPROVED_ENDPOINT_BINDINGS_KEY,
+    execute_paper_formal_suite,
+    replay_paper_formal_suite,
+)
+from tokenshare.experiments.paper_formal_evidence import FormalEvidenceStore
+from tokenshare.experiments.paper_formal_metrics import (
+    recompute_paper_formal_metrics,
+)
+from tokenshare.experiments.paper_formal_report import (
+    generate_paper_formal_report,
+)
 from tokenshare.experiments.paper_runner import (
     build_gate_c_dispatch_plans,
     build_lean_3x3_matrix_plan,
@@ -78,6 +90,10 @@ def main(
     parser.add_argument("--provider-attempt-limit", type=int, default=None)
     parser.add_argument("--token-limit", type=int, default=None)
     parser.add_argument("--cost-limit", type=float, default=None)
+    parser.add_argument("--max-total-provider-attempts", type=int, default=None)
+    parser.add_argument("--max-total-tokens", type=int, default=None)
+    parser.add_argument("--max-cost-estimate", type=float, default=None)
+    parser.add_argument("--stop-after-current-task", action="store_true")
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--replay-only", action="store_true")
     parser.add_argument("--approve-budget-digest", default=None)
@@ -195,12 +211,12 @@ def main(
             suite_id=f"{pilot_profile.body['suite_id']}_blocked",
         )
         return 3
-    if (args.resume or args.replay_only) and not args.pilot:
+    if (args.resume or args.replay_only) and args.plan_only:
         _write_blocked_suite(
             output_root=output_root,
             experiment_ids=experiment_ids,
             failure_kind="invalid_resume_mode",
-            message="--resume and --replay-only require --pilot",
+            message="--resume and --replay-only cannot be combined with --plan-only",
         )
         return 3
     if args.resume and args.replay_only:
@@ -237,6 +253,38 @@ def main(
             suite_id=f"{pilot_profile.body['suite_id']}_blocked",
         )
         return 3
+    if args.replay_only and not args.pilot:
+        try:
+            execution_result = replay_paper_formal_suite(output_root=output_root)
+            metrics = recompute_paper_formal_metrics(output_root)
+            generate_paper_formal_report(
+                output_root=output_root,
+                metrics=metrics,
+                secret_values=(),
+            )
+            FormalEvidenceStore(output_root)._refresh_evidence_manifest()
+        except (OSError, ValueError) as exc:
+            print(
+                json.dumps(
+                    {
+                        "status": "failed",
+                        "failure_kind": "formal_replay_failed",
+                        "message": str(exc),
+                    },
+                    ensure_ascii=False,
+                    sort_keys=True,
+                )
+            )
+            return 3
+        print(
+            json.dumps(
+                execution_result.to_dict(),
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return 0
     model_endpoint_cohort_preflight, model_cohort = (
         _model_endpoint_cohort_preflight_for_suite(
             experiment_ids=experiment_ids,
@@ -246,7 +294,7 @@ def main(
         )
     )
 
-    if not args.plan_only and not args.real_transport:
+    if not args.plan_only and not args.real_transport and not args.replay_only:
         _write_blocked_suite(
             output_root=pilot_blocked_output_root or output_root,
             experiment_ids=experiment_ids,
@@ -523,6 +571,115 @@ def main(
         )
         return 0
 
+    if not args.plan_only:
+        if gate_c_ai_api_configs is not None:
+            execution_configs = dict(gate_c_ai_api_configs)
+        elif args.replay_only:
+            execution_configs = {}
+        else:
+            execution_configs = {}
+            if any(
+                experiment_id
+                != "exp5_real_ai_model_endpoint_comparison"
+                for experiment_id in experiment_ids
+            ):
+                _inject_exp1_pilot_api_key(
+                    pilot_profile=planning_profile,
+                    local_config_path=Path(args.ai_api_config),
+                )
+                execution_configs[
+                    planning_profile.model_endpoint_identity.provider_config_id
+                ] = planning_profile.source_provider_config
+            if "exp5_real_ai_model_endpoint_comparison" in experiment_ids:
+                execution_configs.update(
+                    load_provider_config_map(
+                        _parse_provider_config_args(tuple(args.provider_config))
+                    )
+                )
+                execution_configs[APPROVED_ENDPOINT_BINDINGS_KEY] = {
+                    "exp5_real_ai_model_endpoint_comparison": (
+                        model_endpoint_cohort_preflight
+                    )
+                }
+        hard_limits = {
+            key: value
+            for key, value in (
+                (
+                    "max_total_provider_attempts",
+                    args.max_total_provider_attempts,
+                ),
+                ("max_total_tokens", args.max_total_tokens),
+                ("max_cost_estimate", args.max_cost_estimate),
+                (
+                    "stop_after_current_task",
+                    True if args.stop_after_current_task else None,
+                ),
+            )
+            if value is not None
+        }
+        budget_approval = dict(
+            budget.quota_preflight.get(
+                "budget_approval",
+                {
+                    "approval_mode": (
+                        "digest_approved"
+                        if args.require_budget_approval
+                        else "user_bypassed"
+                    ),
+                    "budget_digest": budget.budget_digest,
+                },
+            )
+        )
+        budget_approval.setdefault("budget_digest", budget.budget_digest)
+        execution_result = execute_paper_formal_suite(
+            dispatch_plans=dispatch_plans,
+            catalog_manifest=catalog_manifest,
+            budget=budget,
+            budget_approval=budget_approval,
+            output_root=output_root,
+            ai_api_configs=execution_configs,
+            transport=gate_c_transport,
+            real_transport=args.real_transport,
+            hard_limits=hard_limits,
+            resume=args.resume,
+            replay_only=args.replay_only,
+        )
+        budget_path = output_root / "run_budget.json"
+        if not budget_path.is_file():
+            budget_path.write_text(
+                json.dumps(
+                    budget.to_dict(),
+                    ensure_ascii=False,
+                    indent=2,
+                    sort_keys=True,
+                ),
+                encoding="utf-8",
+            )
+        suite_manifest_path = output_root / "suite_manifest.json"
+        if not suite_manifest_path.is_file():
+            _write_suite(output_root, execution_result)
+        else:
+            suite_manifest = json.loads(
+                suite_manifest_path.read_text(encoding="utf-8")
+            )
+            if suite_manifest.get("formal") is True:
+                metrics = recompute_paper_formal_metrics(output_root)
+                generate_paper_formal_report(
+                    output_root=output_root,
+                    metrics=metrics,
+                    secret_values=_configured_secret_values(execution_configs),
+                )
+                FormalEvidenceStore(output_root)._refresh_evidence_manifest()
+        print(
+            json.dumps(
+                execution_result.to_dict(),
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return 0
+
     _write_plan_artifacts(
         output_root=output_root,
         budget=budget.to_dict(),
@@ -711,6 +868,20 @@ def _inject_exp1_pilot_api_key(
             "Exp1 pilot local config has no enabled key for the approved provider/model"
         )
     os.environ[approved_entry.api_key_env] = candidates[0].resolve_api_key()
+
+
+def _configured_secret_values(configs: dict) -> tuple[str, ...]:
+    """向报告 secret scan 提供本次实际配置引用的环境变量值。"""
+
+    values: list[str] = []
+    for config in configs.values():
+        entries = getattr(config, "entries", ())
+        for entry in entries:
+            api_key_env = getattr(entry, "api_key_env", None)
+            value = os.environ.get(api_key_env) if isinstance(api_key_env, str) else None
+            if value:
+                values.append(value)
+    return tuple(sorted(set(values)))
 
 
 def _load_cli_pilot_profile(

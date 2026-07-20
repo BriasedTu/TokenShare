@@ -9,6 +9,8 @@ from tokenshare.experiments.factorization_paper_adapter import (
     ScriptedFactorizationRangeTransport,
 )
 from tokenshare.experiments.paper_budget import load_exp1_pilot_profile
+from tokenshare.experiments.paper_catalog import PaperInputCatalogManifest
+from tokenshare.experiments.paper_models import PaperStatus, PaperSuiteResult
 from tokenshare.experiments.run_paper_experiments import main
 
 
@@ -212,7 +214,11 @@ def test_paper_cli_rejects_formal_run_without_real_transport(tmp_path: Path) -> 
     assert suite["error_summary"][0]["failure_kind"] == "missing_real_transport"
 
 
-def test_paper_cli_requires_budget_digest_for_formal_run(tmp_path: Path) -> None:
+def test_paper_cli_requires_budget_digest_only_when_policy_flag_is_set(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_budget_policy_cli_boundaries(monkeypatch)
     exit_code = main(
         [
             "--output-root",
@@ -228,6 +234,185 @@ def test_paper_cli_requires_budget_digest_for_formal_run(tmp_path: Path) -> None
     assert exit_code == 2
     assert suite["status"] == "blocked"
     assert suite["error_summary"][0]["failure_kind"] == "missing_budget_approval"
+
+
+def test_paper_cli_bypasses_manual_budget_approval_by_default(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_budget_policy_cli_boundaries(monkeypatch)
+    exit_code = main(
+        [
+            "--output-root",
+            str(tmp_path),
+            "--experiments",
+            "exp1",
+            "--real-transport",
+        ]
+    )
+
+    budget = json.loads((tmp_path / "run_budget.json").read_text(encoding="utf-8"))
+    approval = budget["quota_preflight"]["budget_approval"]
+    assert exit_code == 0
+    assert approval == {
+        "approval_required": False,
+        "approval_mode": "user_bypassed",
+        "authorization_source": "project_policy",
+        "budget_digest": budget["budget_digest"],
+        "provided_approval_digest": None,
+    }
+    assert budget["quota_preflight"]["provider_calls_made"] == 0
+
+
+def test_paper_cli_routes_formal_capturing_run_to_formal_suite(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_budget_policy_cli_boundaries(monkeypatch)
+    calls: list[dict] = []
+
+    def capture_formal_suite(**kwargs):
+        calls.append(kwargs)
+        return PaperSuiteResult(
+            suite_id="paper_v1_formal_capture",
+            status=PaperStatus.COMPLETED,
+            output_root=Path(kwargs["output_root"]).as_posix(),
+            started_at="2026-07-20T00:00:00Z",
+            ended_at="2026-07-20T00:00:01Z",
+            experiment_ids=["exp1_real_ai_feasibility"],
+            condition_count=1,
+            run_count=1,
+            task_count=1,
+            provider_attempt_count=1,
+            total_tokens=8,
+            total_cost_estimate=0.0,
+            paper_eligible=False,
+            eligibility_report_ref=None,
+            budget_ref=kwargs["budget"].to_dict(),
+            metrics_refs=[],
+            audit_refs=[],
+            error_summary=[],
+        )
+
+    capturing_transport = object()
+    capturing_configs = {"capture": object()}
+    monkeypatch.setattr(
+        paper_cli,
+        "execute_paper_formal_suite",
+        capture_formal_suite,
+        raising=False,
+    )
+
+    run_root = tmp_path / "run"
+    exit_code = main(
+        [
+            "--output-root",
+            str(run_root),
+            "--experiments",
+            "exp1",
+            "--real-transport",
+            "--max-total-provider-attempts",
+            "2",
+            "--max-total-tokens",
+            "64",
+            "--max-cost-estimate",
+            "1.5",
+            "--stop-after-current-task",
+        ],
+        gate_c_transport=capturing_transport,
+        gate_c_ai_api_configs=capturing_configs,
+    )
+
+    assert exit_code == 0
+    assert len(calls) == 1
+    assert calls[0]["transport"] is capturing_transport
+    assert calls[0]["ai_api_configs"] == capturing_configs
+    assert calls[0]["hard_limits"] == {
+        "max_total_provider_attempts": 2,
+        "max_total_tokens": 64,
+        "max_cost_estimate": 1.5,
+        "stop_after_current_task": True,
+    }
+    suite = json.loads((run_root / "suite_manifest.json").read_text(encoding="utf-8"))
+    assert suite["status"] == "completed"
+    assert suite["paper_eligible"] is False
+
+
+def test_paper_cli_formal_replay_skips_catalog_and_provider_config_loading(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[str] = []
+    replay_result = PaperSuiteResult(
+        suite_id="formal-replay-test",
+        status=PaperStatus.COMPLETED,
+        output_root=tmp_path.as_posix(),
+        started_at="2026-07-20T00:00:00Z",
+        ended_at="2026-07-20T00:00:01Z",
+        experiment_ids=["exp5_real_ai_model_endpoint_comparison"],
+        condition_count=1,
+        run_count=1,
+        task_count=1,
+        provider_attempt_count=1,
+        total_tokens=10,
+        total_cost_estimate=0.1,
+        paper_eligible=False,
+        eligibility_report_ref=None,
+        budget_ref=None,
+        metrics_refs=[],
+        audit_refs=[],
+        error_summary=[],
+    )
+
+    monkeypatch.setattr(
+        paper_cli,
+        "replay_paper_formal_suite",
+        lambda **_kwargs: calls.append("replay") or replay_result,
+    )
+    monkeypatch.setattr(
+        paper_cli,
+        "_load_default_paper_catalogs",
+        lambda: (_ for _ in ()).throw(AssertionError("catalog must not load")),
+    )
+    monkeypatch.setattr(
+        paper_cli,
+        "_model_endpoint_cohort_preflight_for_suite",
+        lambda **_kwargs: (_ for _ in ()).throw(
+            AssertionError("provider cohort config must not load")
+        ),
+    )
+    monkeypatch.setattr(
+        paper_cli,
+        "recompute_paper_formal_metrics",
+        lambda _root: calls.append("metrics") or object(),
+    )
+    monkeypatch.setattr(
+        paper_cli,
+        "generate_paper_formal_report",
+        lambda **_kwargs: calls.append("report"),
+    )
+
+    class _EvidenceStore:
+        def __init__(self, _root):
+            pass
+
+        def _refresh_evidence_manifest(self):
+            calls.append("refresh")
+
+    monkeypatch.setattr(paper_cli, "FormalEvidenceStore", _EvidenceStore)
+
+    exit_code = main(
+        [
+            "--output-root",
+            str(tmp_path),
+            "--experiments",
+            "exp5",
+            "--replay-only",
+        ]
+    )
+
+    assert exit_code == 0
+    assert calls == ["replay", "metrics", "report", "refresh"]
 
 
 def test_exp1_pilot_cli_plan_only_writes_independent_zero_call_budget(
@@ -679,6 +864,90 @@ def test_exp1_pilot_cli_rejects_unpaired_or_non_pilot_unit_selector(
     assert unpaired_suite["error_summary"][0]["failure_kind"] == "invalid_pilot_selector"
     assert non_pilot_suite["error_summary"][0]["failure_kind"] == "invalid_pilot_selector"
     assert missing_root_suite["error_summary"][0]["failure_kind"] == "invalid_pilot_selector"
+
+
+def test_paper_cli_defaults_to_factorization_catalog_v2() -> None:
+    assert paper_cli.DEFAULT_FACTOR_CATALOG == Path(
+        "benchmarks/paper/factorization_catalog.v2.jsonl"
+    )
+    assert paper_cli.DEFAULT_EXP1_PILOT_FACTOR_CATALOG == Path(
+        "benchmarks/paper/factorization_catalog.v1.jsonl"
+    )
+
+
+def _patch_budget_policy_cli_boundaries(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    catalog = PaperInputCatalogManifest(
+        catalog_id="tokenshare.paper.catalog",
+        catalog_version="v2",
+        catalog_digest="sha256:" + "1" * 64,
+        generator_version="budget_policy_cli_fixture",
+        case_count=0,
+        domain_counts={},
+        difficulty_counts={},
+        paper_difficulty_counts={},
+        topic_family_counts={},
+        paper_difficulty_topic_family_counts={},
+        oracle_validation_status="passed",
+        lean_preflight_status="passed",
+        lean_preflight_summary={},
+        lean_lemma_graph_preflight_summary={},
+        created_at="2026-07-20T00:00:00Z",
+        source_files=[],
+        factorization_cases=(),
+        lean_cases=(),
+        lean_lemma_graph_cases=(),
+    )
+    monkeypatch.setattr(
+        paper_cli,
+        "_load_default_paper_catalogs",
+        lambda: catalog,
+    )
+    monkeypatch.setattr(
+        paper_cli,
+        "build_lean_3x3_matrix_plan",
+        lambda **_kwargs: {
+            "schema_version": "tokenshare.lean_3x3_matrix_plan.v1",
+            "catalog_digest": catalog.catalog_digest,
+            "matrix_digest": "sha256:" + "2" * 64,
+            "provider_calls_made": 0,
+        },
+    )
+    monkeypatch.setattr(
+        paper_cli,
+        "build_gate_c_dispatch_plans",
+        lambda **_kwargs: (),
+    )
+
+    def fake_formal_suite(**kwargs):
+        return PaperSuiteResult(
+            suite_id="paper_v2_budget_policy_fixture",
+            status=PaperStatus.COMPLETED,
+            output_root=Path(kwargs["output_root"]).as_posix(),
+            started_at="2026-07-20T00:00:00Z",
+            ended_at="2026-07-20T00:00:01Z",
+            experiment_ids=["exp1_real_ai_feasibility"],
+            condition_count=0,
+            run_count=0,
+            task_count=0,
+            provider_attempt_count=0,
+            total_tokens=0,
+            total_cost_estimate=0.0,
+            paper_eligible=False,
+            eligibility_report_ref=None,
+            budget_ref=kwargs["budget"].to_dict(),
+            metrics_refs=[],
+            audit_refs=[],
+            error_summary=[],
+        )
+
+    monkeypatch.setattr(
+        paper_cli,
+        "execute_paper_formal_suite",
+        fake_formal_suite,
+        raising=False,
+    )
 
 
 @pytest.mark.parametrize(

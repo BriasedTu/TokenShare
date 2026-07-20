@@ -344,6 +344,7 @@ def plan_paper_suite(
     }
     planned_root_runs = 0
     planned_ai_units = 0
+    exp4_requeue_ai_unit_upper_bound = 0
     derived_selections: list[JsonObject] = []
     derived_ai_unit_commitments: list[JsonObject] = []
     for condition in condition_tuple:
@@ -423,9 +424,20 @@ def plan_paper_suite(
                     ),
                 }
             )
+        condition_ai_units = sum(
+            estimated_ai_units_for_case(case) for case in cases
+        )
         planned_root_runs += len(cases)
-        planned_ai_units += sum(estimated_ai_units_for_case(case) for case in cases)
-    max_provider_attempts = planned_ai_units * max_provider_attempts_per_ai_unit
+        planned_ai_units += condition_ai_units
+        if (
+            condition.experiment_id == "exp4_real_ai_protocol_ablation"
+            and condition.ablation_mode != "NO_REQUEUE"
+        ):
+            exp4_requeue_ai_unit_upper_bound += condition_ai_units
+    max_provider_attempts = (
+        planned_ai_units * max_provider_attempts_per_ai_unit
+        + exp4_requeue_ai_unit_upper_bound
+    )
     resolved_endpoint_identity = endpoint_identity or {
         "condition_endpoint_identities": _condition_endpoint_identities(
             condition_tuple
@@ -497,6 +509,13 @@ def plan_paper_suite(
         "condition_digests": [item.condition_digest for item in condition_tuple],
         "budget_commitments": budget_commitments,
     }
+    if exp4_requeue_ai_unit_upper_bound:
+        budget_commitments["exp4_requeue_ai_unit_upper_bound"] = (
+            exp4_requeue_ai_unit_upper_bound
+        )
+        body["exp4_requeue_ai_unit_upper_bound"] = (
+            exp4_requeue_ai_unit_upper_bound
+        )
     if lean_3x3_matrix is not None:
         body["lean_3x3_matrix"] = _lean_matrix_budget_identity(lean_3x3_matrix)
     if model_policy_preflight is not None:

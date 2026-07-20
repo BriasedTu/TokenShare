@@ -208,10 +208,13 @@ def run_factorization_paper_case(
     max_tokens: int = 512,
     timeout_seconds: int = 30,
     selected_ai_unit_id: str | None = None,
+    post_raw_output_hook: Any | None = None,
+    ablation_mode: str | None = None,
 ) -> FactorizationPaperRunResult:
     """Run one factorization paper catalog case through range children."""
 
     _validate_factorization_case_for_adapter(case)
+    normalized_ablation_mode = _normalize_ablation_mode(ablation_mode)
     if condition.domain != "factorization":
         raise ValueError("condition domain must be factorization")
     if condition.difficulty != case["difficulty"]:
@@ -263,7 +266,12 @@ def run_factorization_paper_case(
         artifact_store=store,
         config=config,
         transport=active_transport,
-        parser=parse_factorization_ai_output,
+        parser=(
+            None
+            if normalized_ablation_mode == "NO_PARSER_POLICY"
+            else parse_factorization_ai_output
+        ),
+        post_raw_output_hook=post_raw_output_hook,
     )
 
     indexed_ranges = list(enumerate(split_plan.partition.ranges))
@@ -347,6 +355,7 @@ def run_factorization_paper_case(
             else submission.candidate_output_refs.get("range_result")
         )
         verification = None
+        verification_body: JsonObject | None = None
         range_result_body: JsonObject | None = None
         canonical_output_ref = None
         attempt_status = _attempt_status_from_submission(submission.result_kind)
@@ -354,11 +363,29 @@ def run_factorization_paper_case(
             attempt_status = PaperAttemptStatus.MODEL_IDENTITY_MISMATCH
         if candidate_ref is not None:
             range_result_body = _read_json_ref(store, candidate_ref)
-            verification = verify_range_result(range_result_body, child_input=range_input)
-            if verification.accepted:
+            if normalized_ablation_mode == "NO_VERIFICATION":
                 canonical_output_ref = candidate_ref.to_dict()
+                verification_body = {
+                    "accepted": True,
+                    "status": "skipped_by_ablation",
+                    "layer_summary": {"verification_executed": False},
+                    "failure_summary": None,
+                }
             else:
-                attempt_status = PaperAttemptStatus.VERIFICATION_REJECTED
+                verification = verify_range_result(
+                    range_result_body,
+                    child_input=range_input,
+                )
+                verification_body = {
+                    "accepted": verification.accepted,
+                    "status": verification.status,
+                    "layer_summary": verification.layer_summary,
+                    "failure_summary": verification.failure_summary,
+                }
+                if verification.accepted:
+                    canonical_output_ref = candidate_ref.to_dict()
+                else:
+                    attempt_status = PaperAttemptStatus.VERIFICATION_REJECTED
         attempts.append(
             _paper_attempt_result(
                 store=store,
@@ -385,13 +412,8 @@ def run_factorization_paper_case(
                 "submission_result_kind": submission.result_kind,
                 "range_result": range_result_body,
                 "verification": (
-                    {
-                        "accepted": verification.accepted,
-                        "status": verification.status,
-                        "layer_summary": verification.layer_summary,
-                        "failure_summary": verification.failure_summary,
-                    }
-                    if verification is not None
+                    verification_body
+                    if verification_body is not None
                     else (
                         {
                             "accepted": False,
@@ -431,22 +453,50 @@ def run_factorization_paper_case(
         item for item in range_records if item["verification"]["accepted"] is True
     ]
     all_ranges_executed = len(range_records) == len(split_plan.partition.ranges)
-    if all_ranges_executed and len(accepted_range_records) == len(range_records):
-        merge_policy_result = merge_required_range_results(
-            merge_plan=split_plan.merge_plan,
-            slot_results=_slot_inputs_for_merge(split_plan, range_records),
-            merge_unit_id=f"paper_merge_unit_{case_id}",
-            created_at=NOW,
-        )
-        prime_result = merge_policy_result.prime_factorization_result
-        merge_summary = {
-            "status": "completed" if prime_result is not None else "blocked",
-            "result_kind": merge_policy_result.merge_result.result_kind,
-            "merge_result": merge_policy_result.merge_result.to_dict(),
-            "expected_output_resolvable": merge_policy_result.expected_output_resolvable,
-        }
-        if prime_result is not None:
-            _save_prime_factorization_result(store=store, case_id=case_id, result=prime_result)
+    merge_gate_ready = (
+        all_ranges_executed
+        and len(accepted_range_records) == len(range_records)
+    )
+    premature_merge = (
+        normalized_ablation_mode == "NO_MERGE_GATE"
+        and all_ranges_executed
+        and not merge_gate_ready
+    )
+    if merge_gate_ready or premature_merge:
+        try:
+            slot_inputs = _slot_inputs_for_merge(split_plan, range_records)
+            if normalized_ablation_mode == "NO_SLOT_INTEGRITY" and slot_inputs:
+                slot_inputs[0] = replace(
+                    slot_inputs[0],
+                    slot_key=f"ablation_wrong_slot:{slot_inputs[0].slot_key}",
+                )
+            merge_policy_result = merge_required_range_results(
+                merge_plan=split_plan.merge_plan,
+                slot_results=slot_inputs,
+                merge_unit_id=f"paper_merge_unit_{case_id}",
+                created_at=NOW,
+            )
+            prime_result = merge_policy_result.prime_factorization_result
+            merge_summary = {
+                "status": "completed" if prime_result is not None else "blocked",
+                "result_kind": merge_policy_result.merge_result.result_kind,
+                "merge_result": merge_policy_result.merge_result.to_dict(),
+                "expected_output_resolvable": (
+                    merge_policy_result.expected_output_resolvable
+                ),
+            }
+            if prime_result is not None:
+                _save_prime_factorization_result(
+                    store=store,
+                    case_id=case_id,
+                    result=prime_result,
+                )
+        except (KeyError, TypeError, ValueError) as exc:
+            merge_summary = {
+                "status": "failed",
+                "result_kind": None,
+                "merge_error": str(exc),
+            }
     else:
         merge_summary = {
             "status": "blocked",
@@ -463,6 +513,15 @@ def run_factorization_paper_case(
         else []
     )
     accepted_validity = _prime_factors_match_oracle(final_prime_factors, case)
+    merge_summary.update(
+        {
+            "premature_merge_attempted": premature_merge,
+            "slot_integrity_violation": (
+                normalized_ablation_mode == "NO_SLOT_INTEGRITY"
+            ),
+            "root_validity_audit_passed": accepted_validity,
+        }
+    )
     task_status = (
         PaperTaskStatus.COMPLETED
         if prime_result is not None and accepted_validity
@@ -486,6 +545,11 @@ def run_factorization_paper_case(
         transport_kind="ai_api" if real_transport else "scripted",
         secret_values=secret_values,
         transport=active_transport,
+    )
+    run_evidence["ablation_runtime"] = _ablation_runtime_evidence(
+        mode=normalized_ablation_mode,
+        attempts=attempts,
+        merge_summary=merge_summary,
     )
     eligibility = evaluate_paper_eligibility(
         attempts=attempts,
@@ -537,6 +601,62 @@ def run_factorization_paper_case(
     )
     _write_case_outputs(run_root, result)
     return result
+
+
+def _normalize_ablation_mode(value: str | None) -> str:
+    mode = "FULL" if value is None else str(value).upper()
+    supported = {
+        "FULL",
+        "NO_VERIFICATION",
+        "NO_PARSER_POLICY",
+        "NO_REQUEUE",
+        "NO_MERGE_GATE",
+        "NO_SLOT_INTEGRITY",
+    }
+    if mode not in supported:
+        raise ValueError("unsupported Experiment 4 ablation mode")
+    return mode
+
+
+def _ablation_runtime_evidence(
+    *,
+    mode: str,
+    attempts: list[PaperAttemptResult],
+    merge_summary: JsonObject,
+) -> JsonObject:
+    disabled = {
+        "FULL": None,
+        "NO_VERIFICATION": "verification",
+        "NO_PARSER_POLICY": "parser_policy",
+        "NO_REQUEUE": "requeue",
+        "NO_MERGE_GATE": "merge_gate",
+        "NO_SLOT_INTEGRITY": "slot_integrity",
+    }[mode]
+    return {
+        "schema_version": "tokenshare.paper_ablation_runtime.v1",
+        "mode": mode,
+        "disabled_mechanism": disabled,
+        "applied_before_adapter_completion": True,
+        "parser_policy_enabled": mode != "NO_PARSER_POLICY",
+        "verification_enabled": mode != "NO_VERIFICATION",
+        "replacement_attempts_allowed": mode != "NO_REQUEUE",
+        "merge_gate_enabled": mode != "NO_MERGE_GATE",
+        "slot_integrity_enabled": mode != "NO_SLOT_INTEGRITY",
+        "raw_only_exposed": (
+            mode == "NO_PARSER_POLICY"
+            and any(attempt.raw_output_ref is not None for attempt in attempts)
+            and all(attempt.parsed_output_ref is None for attempt in attempts)
+        ),
+        "premature_merge_attempted": bool(
+            merge_summary.get("premature_merge_attempted")
+        ),
+        "slot_integrity_violation": bool(
+            merge_summary.get("slot_integrity_violation")
+        ),
+        "root_validity_audit_passed": bool(
+            merge_summary.get("root_validity_audit_passed")
+        ),
+    }
 
 
 def _validate_factorization_case_for_adapter(case: JsonObject) -> None:

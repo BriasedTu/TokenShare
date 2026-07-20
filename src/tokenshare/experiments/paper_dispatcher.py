@@ -274,6 +274,8 @@ def dispatch_paper_case(
     max_tokens: int,
     timeout_seconds: int,
     selected_ai_unit_id: str | None = None,
+    post_raw_output_hook: Any | None = None,
+    ablation_mode: str | None = None,
 ) -> Any:
     """把一个冻结 paper case 路由到所属插件的 adapter。"""
 
@@ -293,6 +295,8 @@ def dispatch_paper_case(
         max_tokens=max_tokens,
         timeout_seconds=timeout_seconds,
         selected_ai_unit_id=selected_ai_unit_id,
+        post_raw_output_hook=post_raw_output_hook,
+        ablation_mode=ablation_mode,
     )
 
 

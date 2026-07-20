@@ -240,9 +240,12 @@ def run_lean_paper_case(
     max_tokens: int = 1024,
     timeout_seconds: int = 30,
     selected_ai_unit_id: str | None = None,
+    post_raw_output_hook: Any | None = None,
+    ablation_mode: str | None = None,
 ) -> LeanPaperRunResult:
     """Run one Lean paper catalog case through split children and checker merge."""
 
+    normalized_ablation_mode = _normalize_ablation_mode(ablation_mode)
     is_lemma_graph_case = case.get("schema_version") == LEAN_V2_SCHEMA_VERSION
     if is_lemma_graph_case:
         _validate_lean_lemma_graph_case_for_adapter(case)
@@ -294,6 +297,8 @@ def run_lean_paper_case(
             max_tokens=max_tokens,
             timeout_seconds=timeout_seconds,
             selected_ai_unit_id=selected_ai_unit_id,
+            post_raw_output_hook=post_raw_output_hook,
+            ablation_mode=normalized_ablation_mode,
         )
 
     case_id = str(case["case_id"])
@@ -396,6 +401,8 @@ def run_lean_paper_case(
             timeout_seconds=timeout_seconds,
             max_tokens=max_tokens,
             environment_manifest=environment_manifest,
+            post_raw_output_hook=post_raw_output_hook,
+            ablation_mode=normalized_ablation_mode,
         )
         attempts.append(child_result["attempt"])
         child_records.append(child_result["record"])
@@ -410,6 +417,11 @@ def run_lean_paper_case(
         if child_result["model_identity_mismatch"]:
             break
 
+    if normalized_ablation_mode == "NO_SLOT_INTEGRITY" and child_proofs:
+        child_proofs[0] = replace(
+            child_proofs[0],
+            slot_key=f"ablation_wrong_slot:{child_proofs[0].slot_key}",
+        )
     merge_summary = _merge_children_if_ready(
         split_plan=split_plan,
         parent_payload_ref=parent_payload_ref,
@@ -417,6 +429,7 @@ def run_lean_paper_case(
         store=store,
         environment_manifest=environment_manifest,
         case_id=case_id,
+        force=normalized_ablation_mode == "NO_MERGE_GATE",
     )
     accepted_validity = merge_summary.get("root_checker_accepted") is True
     task_status = (
@@ -437,6 +450,12 @@ def run_lean_paper_case(
         transport_kind="ai_api" if real_transport else "scripted",
         secret_values=secret_values,
         transport=active_transport,
+    )
+    run_evidence["ablation_runtime"] = _lean_ablation_runtime_evidence(
+        mode=normalized_ablation_mode,
+        attempts=attempts,
+        merge_summary=merge_summary,
+        root_validity=accepted_validity,
     )
     eligibility = evaluate_paper_eligibility(
         attempts=attempts,
@@ -710,6 +729,8 @@ def _run_lean_lemma_graph_paper_case(
     max_tokens: int,
     timeout_seconds: int,
     selected_ai_unit_id: str | None,
+    post_raw_output_hook: Any | None,
+    ablation_mode: str,
 ) -> LeanPaperRunResult:
     paper_metadata = _validated_condition_paper_metadata(
         condition=condition,
@@ -844,6 +865,8 @@ def _run_lean_lemma_graph_paper_case(
             timeout_seconds=timeout_seconds,
             max_tokens=max_tokens,
             environment_manifest=environment_manifest,
+            post_raw_output_hook=post_raw_output_hook,
+            ablation_mode=ablation_mode,
         )
         attempts.append(node_result["attempt"])
         child_records.append(node_result["record"])
@@ -853,6 +876,11 @@ def _run_lean_lemma_graph_paper_case(
         if node_result["model_identity_mismatch"]:
             break
 
+    if ablation_mode == "NO_SLOT_INTEGRITY" and node_proofs:
+        node_proofs[0] = replace(
+            node_proofs[0],
+            slot_key=f"ablation_wrong_slot:{node_proofs[0].slot_key}",
+        )
     merge_summary = _merge_lemma_graph_if_ready(
         split_plan=split_plan,
         certificate=certificate,
@@ -861,6 +889,7 @@ def _run_lean_lemma_graph_paper_case(
         store=store,
         environment_manifest=environment_manifest,
         case_id=case_id,
+        force=ablation_mode == "NO_MERGE_GATE",
     )
     accepted_validity = merge_summary.get("root_checker_accepted") is True
     task_status = (
@@ -887,6 +916,12 @@ def _run_lean_lemma_graph_paper_case(
         certificate=certificate,
         certificate_ref=certificate_ref,
         split_plan=split_plan,
+    )
+    run_evidence["ablation_runtime"] = _lean_ablation_runtime_evidence(
+        mode=ablation_mode,
+        attempts=attempts,
+        merge_summary=merge_summary,
+        root_validity=accepted_validity,
     )
     eligibility = evaluate_paper_eligibility(
         attempts=attempts,
@@ -936,6 +971,57 @@ def _run_lean_lemma_graph_paper_case(
     return result
 
 
+def _normalize_ablation_mode(value: str | None) -> str:
+    mode = "FULL" if value is None else str(value).upper()
+    if mode not in {
+        "FULL",
+        "NO_VERIFICATION",
+        "NO_PARSER_POLICY",
+        "NO_REQUEUE",
+        "NO_MERGE_GATE",
+        "NO_SLOT_INTEGRITY",
+    }:
+        raise ValueError("unsupported Experiment 4 ablation mode")
+    return mode
+
+
+def _lean_ablation_runtime_evidence(
+    *,
+    mode: str,
+    attempts: list[PaperAttemptResult],
+    merge_summary: JsonObject,
+    root_validity: bool,
+) -> JsonObject:
+    return {
+        "schema_version": "tokenshare.paper_ablation_runtime.v1",
+        "mode": mode,
+        "disabled_mechanism": {
+            "FULL": None,
+            "NO_VERIFICATION": "verification",
+            "NO_PARSER_POLICY": "parser_policy",
+            "NO_REQUEUE": "requeue",
+            "NO_MERGE_GATE": "merge_gate",
+            "NO_SLOT_INTEGRITY": "slot_integrity",
+        }[mode],
+        "applied_before_adapter_completion": True,
+        "parser_policy_enabled": mode != "NO_PARSER_POLICY",
+        "verification_enabled": mode != "NO_VERIFICATION",
+        "replacement_attempts_allowed": mode != "NO_REQUEUE",
+        "merge_gate_enabled": mode != "NO_MERGE_GATE",
+        "slot_integrity_enabled": mode != "NO_SLOT_INTEGRITY",
+        "raw_only_exposed": (
+            mode == "NO_PARSER_POLICY"
+            and any(attempt.raw_output_ref is not None for attempt in attempts)
+            and all(attempt.parsed_output_ref is None for attempt in attempts)
+        ),
+        "premature_merge_attempted": bool(
+            merge_summary.get("premature_merge_attempted")
+        ),
+        "slot_integrity_violation": mode == "NO_SLOT_INTEGRITY",
+        "root_validity_audit_passed": root_validity,
+    }
+
+
 def _run_child_attempt(
     *,
     case: JsonObject,
@@ -953,6 +1039,8 @@ def _run_child_attempt(
     timeout_seconds: int,
     max_tokens: int,
     environment_manifest: LeanEnvironmentManifest,
+    post_raw_output_hook: Any | None,
+    ablation_mode: str,
 ) -> JsonObject:
     del ledger
     case_id = str(case["case_id"])
@@ -987,12 +1075,17 @@ def _run_child_attempt(
         artifact_store=store,
         config=config,
         transport=transport,
-        parser=lambda raw, *, raw_output_ref_summary, created_at: parse_lean_proof_candidate_ai_output(
-            raw,
-            theorem_payload=child_payload,
-            raw_output_ref_summary=raw_output_ref_summary,
-            created_at=created_at,
+        parser=(
+            None
+            if ablation_mode == "NO_PARSER_POLICY"
+            else lambda raw, *, raw_output_ref_summary, created_at: parse_lean_proof_candidate_ai_output(
+                raw,
+                theorem_payload=child_payload,
+                raw_output_ref_summary=raw_output_ref_summary,
+                created_at=created_at,
+            )
         ),
+        post_raw_output_hook=post_raw_output_hook,
     )
     submission = executor.execute(
         request,
@@ -1030,7 +1123,7 @@ def _run_child_attempt(
     attempt_status = _attempt_status_from_submission(submission.result_kind)
     if model_identity_mismatch:
         attempt_status = PaperAttemptStatus.MODEL_IDENTITY_MISMATCH
-    if proof_candidate_ref is not None:
+    if proof_candidate_ref is not None and ablation_mode != "NO_VERIFICATION":
         proof_result = check_lean_child_proof(
             child_logical_key=child_key,
             split_certificate=split_certificate,
@@ -1083,6 +1176,13 @@ def _run_child_attempt(
         if model_execution_record is not None
         else None
     )
+    if proof_candidate_ref is not None and ablation_mode == "NO_VERIFICATION":
+        record["canonical_output_ref"] = proof_candidate_ref.to_dict()
+        record["verification"] = {
+            "accepted": True,
+            "status": "skipped_by_ablation",
+            "checker_executed": False,
+        }
     return {
         "attempt": attempt,
         "record": record,
@@ -1107,6 +1207,8 @@ def _run_lemma_graph_node_attempt(
     timeout_seconds: int,
     max_tokens: int,
     environment_manifest: LeanEnvironmentManifest,
+    post_raw_output_hook: Any | None,
+    ablation_mode: str,
 ) -> JsonObject:
     case_id = str(case["case_id"])
     node_id = str(node["node_id"])
@@ -1159,12 +1261,17 @@ def _run_lemma_graph_node_attempt(
         artifact_store=store,
         config=config,
         transport=transport,
-        parser=lambda raw, *, raw_output_ref_summary, created_at: parse_lean_proof_candidate_ai_output(
-            raw,
-            theorem_payload=node_payload,
-            raw_output_ref_summary=raw_output_ref_summary,
-            created_at=created_at,
+        parser=(
+            None
+            if ablation_mode == "NO_PARSER_POLICY"
+            else lambda raw, *, raw_output_ref_summary, created_at: parse_lean_proof_candidate_ai_output(
+                raw,
+                theorem_payload=node_payload,
+                raw_output_ref_summary=raw_output_ref_summary,
+                created_at=created_at,
+            )
         ),
+        post_raw_output_hook=post_raw_output_hook,
     )
     submission = executor.execute(
         request,
@@ -1202,7 +1309,7 @@ def _run_lemma_graph_node_attempt(
     attempt_status = _attempt_status_from_submission(submission.result_kind)
     if model_identity_mismatch:
         attempt_status = PaperAttemptStatus.MODEL_IDENTITY_MISMATCH
-    if proof_candidate_ref is not None:
+    if proof_candidate_ref is not None and ablation_mode != "NO_VERIFICATION":
         checker_report = check_lean_proof(
             LeanCheckerRequest(
                 request_id=f"paper_lean_lemma_node_checker_{case_id}_{_safe_id(node_id)}",
@@ -1281,6 +1388,13 @@ def _run_lemma_graph_node_attempt(
         if model_execution_record is not None
         else None
     )
+    if proof_candidate_ref is not None and ablation_mode == "NO_VERIFICATION":
+        record["canonical_output_ref"] = proof_candidate_ref.to_dict()
+        record["verification"] = {
+            "accepted": True,
+            "status": "skipped_by_ablation",
+            "checker_executed": False,
+        }
     return {
         "attempt": attempt,
         "record": record,
@@ -2166,9 +2280,10 @@ def _merge_lemma_graph_if_ready(
     store: ArtifactStore,
     environment_manifest: LeanEnvironmentManifest,
     case_id: str,
+    force: bool = False,
 ) -> JsonObject:
     required_slot_count = len(split_plan.merge_plan.required_slots)
-    if len(node_proofs) != required_slot_count:
+    if len(node_proofs) != required_slot_count and not force:
         return {
             "status": "blocked",
             "required_slot_count": required_slot_count,
@@ -2194,6 +2309,7 @@ def _merge_lemma_graph_if_ready(
             "merge_error": str(exc),
             "root_checker_accepted": False,
             "environment_digest": environment_manifest.environment_digest,
+            "premature_merge_attempted": force,
         }
     return {
         "status": "completed" if result.accepted else "failed",
@@ -2601,8 +2717,12 @@ def _merge_children_if_ready(
     store: ArtifactStore,
     environment_manifest: LeanEnvironmentManifest,
     case_id: str,
+    force: bool = False,
 ) -> JsonObject:
-    if len(child_proofs) != len(split_plan.merge_plan.required_slots):
+    if (
+        len(child_proofs) != len(split_plan.merge_plan.required_slots)
+        and not force
+    ):
         return {
             "status": "blocked",
             "required_slot_count": len(split_plan.merge_plan.required_slots),
@@ -2626,6 +2746,7 @@ def _merge_children_if_ready(
             "merge_error": str(exc),
             "root_checker_accepted": False,
             "environment_digest": environment_manifest.environment_digest,
+            "premature_merge_attempted": force,
         }
     return {
         "status": "completed" if result.accepted else "failed",

@@ -81,6 +81,29 @@ from tokenshare.experiments.paper_report import (
     PaperReportResult,
     write_exp1_pilot_report,
 )
+from tokenshare.experiments.paper_formal_evidence import FormalEvidenceStore
+from tokenshare.experiments.paper_formal_runner import (
+    execute_paper_formal_suite,
+    replay_paper_formal_suite,
+)
+from tokenshare.experiments.paper_formal_callbacks import (
+    FormalAblationResult,
+    FormalStrategyResult,
+    run_exp1_normal_strategy,
+    run_exp3_post_ai_strategy,
+    run_exp3_worker_death_strategy,
+    run_exp4_ablation_strategy,
+    run_exp5_identity_strategy,
+    run_scheduled_cases,
+)
+from tokenshare.experiments.paper_formal_metrics import (
+    FormalMetricsResult,
+    recompute_paper_formal_metrics,
+)
+from tokenshare.experiments.paper_formal_report import (
+    FormalReportResult,
+    generate_paper_formal_report,
+)
 from tokenshare.experiments.paper_runner import expand_plan_conditions
 from tokenshare.experiments.paper_workers import (
     PaperAIUnit,
@@ -109,6 +132,11 @@ __all__ = [
     "FaultInjectionOutcome",
     "FaultInjectionRecord",
     "FaultTargetDescriptor",
+    "FormalAblationResult",
+    "FormalEvidenceStore",
+    "FormalMetricsResult",
+    "FormalReportResult",
+    "FormalStrategyResult",
     "FrozenCaseSelectionBatch",
     "FrozenConditionSelectionBinding",
     "LeanProofExperimentAdapter",
@@ -148,8 +176,10 @@ __all__ = [
     "dispatch_paper_case",
     "dispatch_paper_condition",
     "evaluate_paper_eligibility",
+    "execute_paper_formal_suite",
     "expand_plan_conditions",
     "generate_lean_ai_benchmark_cases",
+    "generate_paper_formal_report",
     "inject_post_ai_fault",
     "load_paper_catalogs",
     "load_paper_experiment_module",
@@ -163,6 +193,14 @@ __all__ = [
     "run_phase8_default_suite",
     "recompute_exp1_pilot_metrics",
     "recompute_gate_c_pilot_metrics",
+    "recompute_paper_formal_metrics",
+    "replay_paper_formal_suite",
+    "run_exp1_normal_strategy",
+    "run_exp3_post_ai_strategy",
+    "run_exp3_worker_death_strategy",
+    "run_exp4_ablation_strategy",
+    "run_exp5_identity_strategy",
+    "run_scheduled_cases",
     "run_worker_death_harness",
     "select_fault_target_descriptors",
     "select_fault_targets",
