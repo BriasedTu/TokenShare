@@ -41,7 +41,10 @@ from tokenshare.experiments.paper_runner import (
 )
 
 
-DEFAULT_FACTOR_CATALOG = Path("benchmarks/paper/factorization_catalog.v1.jsonl")
+DEFAULT_FACTOR_CATALOG = Path("benchmarks/paper/factorization_catalog.v2.jsonl")
+DEFAULT_EXP1_PILOT_FACTOR_CATALOG = Path(
+    "benchmarks/paper/factorization_catalog.v1.jsonl"
+)
 DEFAULT_LEAN_CATALOG = Path("benchmarks/paper/lean_catalog.v1.jsonl")
 DEFAULT_LEAN_LEMMA_GRAPH_CATALOG = Path(
     "benchmarks/paper/lean_lemma_graph_catalog.v1.jsonl"
@@ -49,6 +52,8 @@ DEFAULT_LEAN_LEMMA_GRAPH_CATALOG = Path(
 DEFAULT_EXP1_PILOT_PROFILE = Path(
     "benchmarks/paper/exp1_minimal_pilot_profile.v1.json"
 )
+FORMAL_TOKEN_UPPER_BOUND_PER_PROVIDER_ATTEMPT = 16_384
+FORMAL_COST_UPPER_BOUND_PER_PROVIDER_ATTEMPT = 0.05
 
 
 def main(
@@ -76,6 +81,7 @@ def main(
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--replay-only", action="store_true")
     parser.add_argument("--approve-budget-digest", default=None)
+    parser.add_argument("--require-budget-approval", action="store_true")
     parser.add_argument("--exp1-pilot-profile", default=None)
     parser.add_argument("--case-id", default=None)
     parser.add_argument("--ai-unit-id", default=None)
@@ -253,7 +259,11 @@ def main(
             ),
         )
         return 1
-    catalog_manifest = _load_default_paper_catalogs()
+    catalog_manifest = (
+        _load_exp1_pilot_paper_catalogs()
+        if pilot_profile is not None
+        else _load_default_paper_catalogs()
+    )
     lean_3x3_matrix = build_lean_3x3_matrix_plan(
         catalog_manifest=catalog_manifest,
     )
@@ -303,14 +313,19 @@ def main(
                 pilot_profile=pilot_profile,
                 plan_only=args.plan_only,
                 approve_budget_digest=args.approve_budget_digest,
+                budget_approval_required=args.require_budget_approval,
             )
             if pilot_profile is not None
             else plan_paper_suite(
                 catalog_manifest=catalog_manifest,
                 conditions=conditions,
                 max_provider_attempts_per_ai_unit=1,
-                token_upper_bound_per_provider_attempt=2048,
-                cost_upper_bound_per_provider_attempt=0.01,
+                token_upper_bound_per_provider_attempt=(
+                    FORMAL_TOKEN_UPPER_BOUND_PER_PROVIDER_ATTEMPT
+                ),
+                cost_upper_bound_per_provider_attempt=(
+                    FORMAL_COST_UPPER_BOUND_PER_PROVIDER_ATTEMPT
+                ),
                 plan_only=args.plan_only,
                 lean_3x3_matrix=lean_3x3_matrix,
                 model_policy_preflight=model_policy_preflight,
@@ -349,6 +364,7 @@ def main(
                     "cross_experiment_evidence_allowed": False,
                 },
                 approve_budget_digest=args.approve_budget_digest,
+                budget_approval_required=args.require_budget_approval,
             )
         )
     except PaperBudgetApprovalError as exc:
@@ -366,6 +382,10 @@ def main(
             ),
         )
         return 2
+
+    effective_budget_digest = (
+        args.approve_budget_digest or budget.budget_digest
+    )
 
     if args.pilot:
         if pilot_profile is not None:
@@ -389,7 +409,7 @@ def main(
                     catalog_manifest=catalog_manifest,
                     pilot_profile=pilot_profile,
                     budget=budget,
-                    approved_budget_digest=str(args.approve_budget_digest),
+                    approved_budget_digest=effective_budget_digest,
                     baseline_entry_id=str(args.baseline_entry_id),
                     output_base=output_base,
                     execution_output_root=(
@@ -465,7 +485,7 @@ def main(
                         else None
                     ),
                     budget=budget,
-                    approved_budget_digest=str(args.approve_budget_digest),
+                    approved_budget_digest=effective_budget_digest,
                     condition_id=str(args.condition_id),
                     case_id=str(args.case_id),
                     ai_unit_id=args.ai_unit_id,
@@ -628,6 +648,18 @@ def _baseline_endpoint_binding(profile: Exp1PilotProfile) -> dict:
 def _load_default_paper_catalogs() -> PaperInputCatalogManifest:
     return load_paper_catalogs(
         factorization_path=DEFAULT_FACTOR_CATALOG,
+        lean_path=DEFAULT_LEAN_CATALOG,
+        lean_lemma_graph_path=(
+            DEFAULT_LEAN_LEMMA_GRAPH_CATALOG
+            if DEFAULT_LEAN_LEMMA_GRAPH_CATALOG.exists()
+            else None
+        ),
+    )
+
+
+def _load_exp1_pilot_paper_catalogs() -> PaperInputCatalogManifest:
+    return load_paper_catalogs(
+        factorization_path=DEFAULT_EXP1_PILOT_FACTOR_CATALOG,
         lean_path=DEFAULT_LEAN_CATALOG,
         lean_lemma_graph_path=(
             DEFAULT_LEAN_LEMMA_GRAPH_CATALOG

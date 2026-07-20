@@ -12,6 +12,10 @@ from math import isqrt
 from pathlib import Path
 from typing import Any
 
+from tokenshare.experiments.paper_factorization_catalog import (
+    CATALOG_GENERATOR_VERSION as FACTORIZATION_V2_GENERATOR_VERSION,
+    is_prime_64,
+)
 from tokenshare.experiments.paper_models import (
     LEAN_PAPER_DIFFICULTIES,
     LEAN_TOPIC_FAMILIES,
@@ -34,6 +38,7 @@ from tokenshare.plugins.lean_proof.environment import (
 from tokenshare.plugins.lean_proof.fixtures import default_lean_fixture_project_path
 from tokenshare.plugins.lean_proof.models import LeanTheoremPayload
 from tokenshare.plugins.lean_proof.preflight import run_lean_preflight
+from tokenshare.plugins.factorization.split_strategy import partition_candidate_ranges
 from tokenshare.storage.artifacts import ArtifactStore
 
 
@@ -175,8 +180,17 @@ def load_paper_catalogs(
         _validate_lean_case(case)
     for case in lean_lemma_graph_cases:
         _validate_lean_lemma_graph_case(case)
-    _validate_distribution("factorization", factorization_cases)
-    _validate_distribution("lean_proof", lean_cases)
+    factorization_profile = _factorization_catalog_profile(factorization_cases)
+    _validate_distribution(
+        "factorization",
+        factorization_cases,
+        expected_counts=dict(factorization_profile["difficulty_counts"]),
+    )
+    _validate_distribution(
+        "lean_proof",
+        lean_cases,
+        expected_counts={difficulty: 10 for difficulty in DIFFICULTIES},
+    )
     lean_preflight_summary = _run_lean_catalog_preflight(lean_cases)
     expected_lean_environment_digest = str(lean_preflight_summary["environment_digest"])
     _validate_lean_environment_digest(
@@ -194,7 +208,7 @@ def load_paper_catalogs(
 
     body = {
         "catalog_id": "tokenshare.paper.catalog",
-        "catalog_version": "v1",
+        "catalog_version": factorization_profile["catalog_version"],
         "factorization_cases": factorization_cases,
         "lean_cases": lean_cases,
         "lean_lemma_graph_cases": lean_lemma_graph_cases,
@@ -225,9 +239,9 @@ def load_paper_catalogs(
         source_files.append(Path(lean_lemma_graph_path).as_posix())
     return PaperInputCatalogManifest(
         catalog_id="tokenshare.paper.catalog",
-        catalog_version="v1",
+        catalog_version=str(factorization_profile["catalog_version"]),
         catalog_digest=digest_json(body),
-        generator_version="tokenshare.paper_catalog.static.v1",
+        generator_version=str(factorization_profile["generator_version"]),
         case_count=len(factorization_cases) + len(lean_cases) + len(lean_lemma_graph_cases),
         domain_counts=domain_counts,
         difficulty_counts=difficulty_counts,
@@ -441,13 +455,134 @@ def _validate_unique_case_ids(cases: tuple[JsonObject, ...]) -> None:
         seen.add(case_id)
 
 
-def _validate_distribution(domain: str, cases: tuple[JsonObject, ...]) -> None:
-    if len(cases) != 30:
-        raise ValueError(f"{domain} catalog must contain exactly 30 cases")
+def _validate_distribution(
+    domain: str,
+    cases: tuple[JsonObject, ...],
+    *,
+    expected_counts: dict[str, int],
+) -> None:
+    expected_total = sum(expected_counts.values())
+    if len(cases) != expected_total:
+        raise ValueError(f"{domain} catalog must contain exactly {expected_total} cases")
     counts = _difficulty_counts(cases)
-    expected = {difficulty: 10 for difficulty in DIFFICULTIES}
-    if counts != expected:
-        raise ValueError(f"{domain} catalog must contain 10 cases per difficulty")
+    if counts != expected_counts:
+        raise ValueError(
+            f"{domain} catalog difficulty distribution must be {expected_counts}"
+        )
+
+
+def _factorization_catalog_profile(cases: tuple[JsonObject, ...]) -> JsonObject:
+    generator_versions = {
+        str(case.get("generator_version"))
+        for case in cases
+        if case.get("generator_version") is not None
+    }
+    if len(cases) == 30 and not generator_versions:
+        return {
+            "catalog_version": "v1",
+            "generator_version": "tokenshare.paper_catalog.static.v1",
+            "difficulty_counts": {difficulty: 10 for difficulty in DIFFICULTIES},
+        }
+    if len(cases) != 500 or generator_versions != {FACTORIZATION_V2_GENERATOR_VERSION}:
+        raise ValueError(
+            "factorization catalog must be historical v1 or frozen 500-root v2"
+        )
+    _validate_factorization_v2_inventory(cases)
+    return {
+        "catalog_version": "v2",
+        "generator_version": FACTORIZATION_V2_GENERATOR_VERSION,
+        "difficulty_counts": {"easy": 167, "medium": 167, "hard": 166},
+    }
+
+
+def _validate_factorization_v2_inventory(cases: tuple[JsonObject, ...]) -> None:
+    target_values = [int(case["target_n"]) for case in cases]
+    if len(set(target_values)) != 500:
+        raise ValueError("factorization v2 target_n values must be unique")
+    ordinals = [case.get("catalog_ordinal") for case in cases]
+    if ordinals != list(range(500)):
+        raise ValueError("factorization v2 catalog ordinals must be contiguous")
+    magnitudes_by_difficulty = {difficulty: set() for difficulty in DIFFICULTIES}
+    positions_by_difficulty = {
+        difficulty: {position: 0 for position in ("early", "middle", "late", "no_factor")}
+        for difficulty in DIFFICULTIES
+    }
+    expected_children = {"easy": 2, "medium": 4, "hard": 8}
+    expected_candidate_bounds = {
+        "easy": (8, 32),
+        "medium": (33, 128),
+        "hard": (129, 512),
+    }
+    for case in cases:
+        target_n = int(case["target_n"])
+        if not 1_000_000 <= target_n < 100_000_000_000:
+            raise ValueError("factorization v2 target_n is outside frozen range")
+        difficulty = str(case["difficulty"])
+        magnitudes_by_difficulty[difficulty].add(len(str(target_n)) - 1)
+        position = str(case["factor_position_quantile"])
+        if position not in positions_by_difficulty[difficulty]:
+            raise ValueError("factorization v2 factor position is invalid")
+        positions_by_difficulty[difficulty][position] += 1
+        candidate_count = int(case["candidate_divisor_count"])
+        minimum, maximum = expected_candidate_bounds[difficulty]
+        if not minimum <= candidate_count <= maximum:
+            raise ValueError("factorization v2 candidate count is outside difficulty bounds")
+        split_params = case["split_params"]
+        requested_children = int(split_params["requested_child_count"])
+        if requested_children != expected_children[difficulty]:
+            raise ValueError("factorization v2 requested child count drift")
+        partition = partition_candidate_ranges(
+            target_n=target_n,
+            requested_child_count=requested_children,
+            max_children_per_unit=requested_children,
+            min_divisor=case["candidate_start"],
+            max_divisor=case["candidate_end"],
+        )
+        if not (
+            partition.coverage_proof.no_gap
+            and partition.coverage_proof.no_overlap
+            and partition.coverage_proof.full_domain_covered
+            and len(partition.ranges) == requested_children
+        ):
+            raise ValueError("factorization v2 range partition coverage failed")
+        in_range_factors = [
+            int(factor["prime"])
+            for factor in case["oracle_prime_factors"]
+            if int(case["candidate_start"])
+            <= int(factor["prime"])
+            <= int(case["candidate_end"])
+        ]
+        if position == "no_factor":
+            if difficulty != "hard" or in_range_factors:
+                raise ValueError("factorization v2 no-factor semantics drift")
+        else:
+            if len(in_range_factors) != 1:
+                raise ValueError("factorization v2 factor position requires one in-range factor")
+            start = int(case["candidate_start"])
+            end = int(case["candidate_end"])
+            ratio = (in_range_factors[0] - start) / (end - start)
+            actual_position = (
+                "early"
+                if ratio <= 1 / 3
+                else "middle"
+                if ratio <= 2 / 3
+                else "late"
+            )
+            if actual_position != position:
+                raise ValueError("factorization v2 factor position does not match oracle")
+    if any(values != {6, 7, 8, 9, 10} for values in magnitudes_by_difficulty.values()):
+        raise ValueError("factorization v2 magnitude coverage is incomplete")
+    for difficulty in ("easy", "medium"):
+        counts = [
+            positions_by_difficulty[difficulty][position]
+            for position in ("early", "middle", "late")
+        ]
+        if positions_by_difficulty[difficulty]["no_factor"] or max(counts) - min(counts) > 1:
+            raise ValueError("factorization v2 factor positions are unbalanced")
+    hard = positions_by_difficulty["hard"]
+    hard_counts = [hard[position] for position in ("early", "middle", "late")]
+    if not 1 <= hard["no_factor"] <= 10 or max(hard_counts) - min(hard_counts) > 1:
+        raise ValueError("factorization v2 hard positions are unbalanced")
 
 
 def _difficulty_counts(cases: tuple[JsonObject, ...]) -> dict[str, int]:
@@ -1264,16 +1399,7 @@ def _require_digest(field_name: str, value: str) -> None:
 
 
 def _is_prime(value: int) -> bool:
-    if value < 2:
-        return False
-    if value % 2 == 0:
-        return value == 2
-    divisor = 3
-    while divisor * divisor <= value:
-        if value % divisor == 0:
-            return False
-        divisor += 2
-    return True
+    return is_prime_64(value)
 
 
 def _file_digest(path: Path) -> str:

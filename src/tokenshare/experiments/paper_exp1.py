@@ -34,10 +34,10 @@ EXP1_FORMAL_SUITE_VERSION = "paper_v1"
 EXP1_FORMAL_REPEAT_COUNT = 3
 EXP1_FORMAL_WORKER_COUNT = 10
 EXP1_FORMAL_SEED_FAMILY = (1, 2, 3)
-EXP1_FACTOR_CASES_PER_DIFFICULTY = 10
+EXP1_FACTOR_CASE_COUNTS_BY_DIFFICULTY = {"easy": 167, "medium": 167, "hard": 166}
 EXP1_LEAN_CASES_PER_CELL = 15
-EXP1_EXPECTED_UNIQUE_ROOTS = 165
-EXP1_EXPECTED_ROOT_RUNS = 495
+EXP1_EXPECTED_UNIQUE_ROOTS = 635
+EXP1_EXPECTED_ROOT_RUNS = 1_905
 
 EXP1_BASELINE_PROVIDER_CONFIG_ID = "exp1_baseline_siliconflow"
 EXP1_BASELINE_ENTRY_ID = "glm_5_2_exp1_baseline"
@@ -58,7 +58,7 @@ _EXP1_FORMAL_SUMMARY_INPUT_SCHEMA_VERSION = (
     "tokenshare.paper_exp1_summary_input.v1"
 )
 _PAPER_TASK_METRICS_SCHEMA_VERSION = "tokenshare.paper_task_metrics.v1"
-_EXP1_SUPPORTED_CATALOG_VERSIONS = frozenset({"v1"})
+_EXP1_SUPPORTED_CATALOG_VERSIONS = frozenset({"v1", "v2"})
 
 _LEAN_DIFFICULTY_TO_LEGACY_DIFFICULTY = {
     "simple": "easy",
@@ -291,10 +291,14 @@ def _selection_for_condition(
             paper_difficulty=condition.paper_difficulty,
             topic_family=None,
         )
-        if len(cases) != EXP1_FACTOR_CASES_PER_DIFFICULTY:
+        expected_case_count = _factor_case_count(
+            _catalog_version(context.catalog),
+            str(condition.paper_difficulty),
+        )
+        if len(cases) != expected_case_count:
             raise ValueError(
                 "Experiment 1 factorization catalog must contain exactly "
-                f"{EXP1_FACTOR_CASES_PER_DIFFICULTY} cases per difficulty"
+                f"{expected_case_count} cases for {condition.paper_difficulty}"
             )
         return _executable_selection(
             context=context,
@@ -394,9 +398,15 @@ def _validate_selection_inventory(selections: tuple[FrozenCaseSelection, ...]) -
 
     if blocked_count:
         return
-    if len(unique_root_owner) != EXP1_EXPECTED_UNIQUE_ROOTS:
+    catalog_versions = {selection.catalog_version for selection in selections}
+    if len(catalog_versions) != 1:
+        raise ValueError("Experiment 1 formal catalog version drift")
+    catalog_version = next(iter(catalog_versions))
+    expected_unique_roots = _expected_unique_roots(catalog_version)
+    expected_root_runs = _expected_root_runs(catalog_version)
+    if len(unique_root_owner) != expected_unique_roots:
         raise ValueError("Experiment 1 formal unique root count drift")
-    if root_run_count != EXP1_EXPECTED_ROOT_RUNS:
+    if root_run_count != expected_root_runs:
         raise ValueError("Experiment 1 formal root-run count drift")
 
 
@@ -1123,8 +1133,12 @@ def _formal_task_records(evidence: Mapping[str, Any]) -> tuple[JsonObject, ...]:
         evidence.get("task_metrics"),
         "task_metrics",
     )
-    if len(raw_task_metrics) != EXP1_EXPECTED_ROOT_RUNS:
-        raise ValueError("Experiment 1 formal summary requires 495 root-runs")
+    expected_root_runs = _expected_root_runs(catalog_version)
+    expected_unique_roots = _expected_unique_roots(catalog_version)
+    if len(raw_task_metrics) != expected_root_runs:
+        raise ValueError(
+            f"Experiment 1 formal summary requires {expected_root_runs} root-runs"
+        )
     conditions_by_id = {
         condition.condition_id: condition for condition in conditions
     }
@@ -1171,11 +1185,13 @@ def _formal_task_records(evidence: Mapping[str, Any]) -> tuple[JsonObject, ...]:
         case_id = str(task["case_id"])
         root_ids_by_repeat[int(task["repeat_id"])].add(case_id)
     if set(root_ids_by_repeat) != set(range(EXP1_FORMAL_REPEAT_COUNT)) or any(
-        len(case_ids) != EXP1_EXPECTED_UNIQUE_ROOTS
+        len(case_ids) != expected_unique_roots
         for case_ids in root_ids_by_repeat.values()
     ):
-        raise ValueError("Experiment 1 formal summary requires 165 roots per repeat")
-    if len(set.union(*root_ids_by_repeat.values())) != EXP1_EXPECTED_UNIQUE_ROOTS:
+        raise ValueError(
+            f"Experiment 1 formal summary requires {expected_unique_roots} roots per repeat"
+        )
+    if len(set.union(*root_ids_by_repeat.values())) != expected_unique_roots:
         raise ValueError("Experiment 1 formal summary unique root inventory drift")
     matrix_paper_eligible = bool(tasks) and all(
         task.get("_exp1_derived_paper_eligible") is True for task in tasks
@@ -1361,7 +1377,7 @@ def _validated_summary_selection(
     if dict(value) != selection.to_dict():
         raise ValueError("Experiment 1 summary selection body is incomplete")
     expected_case_count = (
-        EXP1_FACTOR_CASES_PER_DIFFICULTY
+        _factor_case_count(catalog_version, str(condition.paper_difficulty))
         if condition.domain == "factorization"
         else EXP1_LEAN_CASES_PER_CELL
     )
@@ -1666,6 +1682,23 @@ def _required_non_negative_int(field_name: str, value: Any) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or value < 0:
         raise ValueError(f"{field_name} must be a non-negative integer")
     return value
+
+
+def _factor_case_count(catalog_version: str, paper_difficulty: str) -> int:
+    if catalog_version == "v1":
+        return 10
+    try:
+        return EXP1_FACTOR_CASE_COUNTS_BY_DIFFICULTY[paper_difficulty]
+    except KeyError as exc:
+        raise ValueError("unsupported Factorization paper difficulty") from exc
+
+
+def _expected_unique_roots(catalog_version: str) -> int:
+    return 165 if catalog_version == "v1" else EXP1_EXPECTED_UNIQUE_ROOTS
+
+
+def _expected_root_runs(catalog_version: str) -> int:
+    return _expected_unique_roots(catalog_version) * EXP1_FORMAL_REPEAT_COUNT
 
 
 def _required_non_empty_string(field_name: str, value: Any) -> str:

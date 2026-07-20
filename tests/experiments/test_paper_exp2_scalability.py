@@ -1199,6 +1199,7 @@ def test_formal_matrix_audit_accepts_exact_24_group_600_root_run_matrix() -> Non
                 rows.append(
                     {
                         "domain": domain,
+                        "catalog_version": "v1",
                         "paper_difficulty": difficulty,
                         "worker_count": worker_count,
                         "condition_ids": tuple(

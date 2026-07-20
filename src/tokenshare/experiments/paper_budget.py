@@ -141,6 +141,7 @@ def plan_exp1_pilot(
     pilot_profile: Exp1PilotProfile,
     plan_only: bool,
     approve_budget_digest: str | None = None,
+    budget_approval_required: bool = True,
 ) -> PaperBudgetResult:
     """按冻结 profile 复算最小 Exp1 pilot，不进行任何 provider 调用。"""
 
@@ -233,6 +234,12 @@ def plan_exp1_pilot(
         plan_only=plan_only,
         approve_budget_digest=approve_budget_digest,
         budget_digest=budget_digest,
+        budget_approval_required=budget_approval_required,
+    )
+    budget_approval = _budget_approval_record(
+        budget_digest=budget_digest,
+        approve_budget_digest=approve_budget_digest,
+        budget_approval_required=budget_approval_required,
     )
 
     pilot_summary: JsonObject = {
@@ -263,11 +270,7 @@ def plan_exp1_pilot(
             "wall_clock": "sequential sum of provider timeout ceilings; local checker time is reported separately by later execution evidence",
             "disk": "base suite allowance plus fixed per-root and per-executable-AI-unit allowances",
         },
-        "approval_status": (
-            "approved"
-            if approve_budget_digest == budget_digest
-            else "awaiting_user_approval"
-        ),
+        "approval_status": budget_approval["approval_mode"],
     }
     return PaperBudgetResult(
         budget_digest=budget_digest,
@@ -283,6 +286,7 @@ def plan_exp1_pilot(
             "status": "planned",
             "provider_calls_made": 0,
             "plan_only": plan_only,
+            "budget_approval": budget_approval,
             "exp1_pilot": pilot_summary,
         },
         rate_limit_preflight={
@@ -317,6 +321,7 @@ def plan_paper_suite(
     suite_identity: JsonObject | None = None,
     output_identity: JsonObject | None = None,
     approve_budget_digest: str | None = None,
+    budget_approval_required: bool = True,
 ) -> PaperBudgetResult:
     if max_provider_attempts_per_ai_unit < 1:
         raise ValueError("max_provider_attempts_per_ai_unit must be >= 1")
@@ -493,16 +498,23 @@ def plan_paper_suite(
         "budget_commitments": budget_commitments,
     }
     if lean_3x3_matrix is not None:
-        body["lean_3x3_matrix"] = lean_3x3_matrix
+        body["lean_3x3_matrix"] = _lean_matrix_budget_identity(lean_3x3_matrix)
     if model_policy_preflight is not None:
         body["model_policy_preflight"] = model_policy_preflight
     if model_endpoint_cohort_preflight is not None:
         body["model_endpoint_cohort_preflight"] = model_endpoint_cohort_preflight
     budget_digest = digest_json(body)
-    if not plan_only and approve_budget_digest is None:
-        raise PaperBudgetApprovalError("budget approval digest is required")
-    if approve_budget_digest is not None and approve_budget_digest != budget_digest:
-        raise PaperBudgetApprovalError("budget digest mismatch")
+    _validate_budget_approval(
+        plan_only=plan_only,
+        approve_budget_digest=approve_budget_digest,
+        budget_digest=budget_digest,
+        budget_approval_required=budget_approval_required,
+    )
+    budget_approval = _budget_approval_record(
+        budget_digest=budget_digest,
+        approve_budget_digest=approve_budget_digest,
+        budget_approval_required=budget_approval_required,
+    )
     return PaperBudgetResult(
         budget_digest=budget_digest,
         planned_experiments=body["planned_experiments"],
@@ -517,6 +529,7 @@ def plan_paper_suite(
             "status": "not_checked",
             "provider_calls_made": 0,
             "plan_only": plan_only,
+            "budget_approval": budget_approval,
             "budget_commitments": budget_commitments,
             **(
                 {"lean_3x3_matrix": lean_3x3_matrix}
@@ -539,6 +552,27 @@ def plan_paper_suite(
             "bytes": max(4096, planned_root_runs * 2048 + planned_ai_units * 1024)
         },
         status=PaperStatus.PLANNED,
+    )
+
+
+def _lean_matrix_budget_identity(lean_3x3_matrix: JsonObject) -> JsonObject:
+    """预算只绑定冻结矩阵身份，不绑定每次 preflight 生成的运行期 artifact。"""
+
+    task15_budget_input = lean_3x3_matrix.get("task15_budget_input")
+    if not isinstance(task15_budget_input, dict):
+        return _json_copy(lean_3x3_matrix)
+    return _json_copy(
+        {
+            "schema_version": lean_3x3_matrix.get("schema_version"),
+            "catalog_digest": lean_3x3_matrix.get("catalog_digest"),
+            "matrix_digest": lean_3x3_matrix.get("matrix_digest"),
+            "environment_digest": lean_3x3_matrix.get("environment_digest"),
+            "oracle_package_digests": lean_3x3_matrix.get(
+                "oracle_package_digests"
+            ),
+            "target_case_count": lean_3x3_matrix.get("target_case_count"),
+            "task15_budget_input": task15_budget_input,
+        }
     )
 
 
@@ -873,11 +907,42 @@ def _validate_budget_approval(
     plan_only: bool,
     approve_budget_digest: str | None,
     budget_digest: str,
+    budget_approval_required: bool,
 ) -> None:
-    if not plan_only and approve_budget_digest is None:
+    if not isinstance(budget_approval_required, bool):
+        raise ValueError("budget_approval_required must be a bool")
+    if (
+        not plan_only
+        and budget_approval_required
+        and approve_budget_digest is None
+    ):
         raise PaperBudgetApprovalError("budget approval digest is required")
     if approve_budget_digest is not None and approve_budget_digest != budget_digest:
         raise PaperBudgetApprovalError("budget digest mismatch")
+
+
+def _budget_approval_record(
+    *,
+    budget_digest: str,
+    approve_budget_digest: str | None,
+    budget_approval_required: bool,
+) -> JsonObject:
+    if not budget_approval_required and approve_budget_digest is None:
+        approval_mode = "user_bypassed"
+        authorization_source = "project_policy"
+    elif approve_budget_digest == budget_digest:
+        approval_mode = "approved"
+        authorization_source = "provided_digest"
+    else:
+        approval_mode = "awaiting_user_approval"
+        authorization_source = "user_required"
+    return {
+        "approval_required": budget_approval_required,
+        "approval_mode": approval_mode,
+        "authorization_source": authorization_source,
+        "budget_digest": budget_digest,
+        "provided_approval_digest": approve_budget_digest,
+    }
 
 
 def _require_non_empty_string(body: JsonObject, field_name: str) -> None:

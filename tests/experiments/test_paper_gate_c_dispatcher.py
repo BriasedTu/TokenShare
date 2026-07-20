@@ -138,6 +138,89 @@ def test_gate_c_plans_all_real_modules_from_frozen_formal_catalog(tmp_path) -> N
         )
 
 
+def test_gate_c_v2_plans_use_all_500_factorization_roots_in_every_experiment(
+    tmp_path: Path,
+) -> None:
+    catalog = _frozen_formal_catalog_v2()
+    readiness = json.loads(
+        Path("benchmarks/paper/lean_task14_3x3_readiness.v1.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    profile = load_exp1_pilot_profile(
+        "benchmarks/paper/exp1_minimal_pilot_profile.v1.json"
+    )
+    cohort_preflight, _configs = _complete_cohort_preflight()
+    plans = build_gate_c_dispatch_plans(
+        catalog_manifest=catalog,
+        lean_3x3_matrix=readiness,
+        experiment_ids=EXPERIMENT_IDS,
+        baseline_endpoint_binding=_baseline_binding(profile),
+        model_endpoint_cohort_preflight=cohort_preflight,
+        output_root=tmp_path,
+    )
+
+    root_runs = [
+        sum(len(selection.ordered_case_ids) for selection in plan.selections)
+        for plan in plans
+    ]
+    assert root_runs == [1_905, 10_300, 61_734, 9_270, 4_635]
+    assert sum(root_runs[:4]) == 83_209
+    assert sum(root_runs) == 87_844
+
+    all_factor_ids = {
+        str(case["case_id"]) for case in catalog.factorization_cases
+    }
+    expected_sizes = {"easy": 167, "medium": 167, "hard": 166}
+    for plan in (plans[0], plans[1], plans[3], plans[4]):
+        grouped: dict[str, set[tuple[str, ...]]] = {}
+        for condition, selection in plan.bound_items():
+            if condition.domain != "factorization":
+                continue
+            grouped.setdefault(str(condition.paper_difficulty), set()).add(
+                tuple(selection.ordered_case_ids)
+            )
+        assert set(grouped) == set(expected_sizes)
+        assert all(len(selections) == 1 for selections in grouped.values())
+        selected_union: set[str] = set()
+        for difficulty, selections in grouped.items():
+            ordered_ids = next(iter(selections))
+            assert len(ordered_ids) == expected_sizes[difficulty]
+            selected_union.update(ordered_ids)
+        assert selected_union == all_factor_ids
+
+    exp3_rate_selections = {
+        tuple(selection.ordered_case_ids)
+        for condition, selection in plans[2].bound_items()
+        if condition.domain == "factorization"
+        and condition.fault_type != "worker_death"
+    }
+    assert len(exp3_rate_selections) == 1
+    assert set(next(iter(exp3_rate_selections))) == all_factor_ids
+
+    exp3_death_by_difficulty: dict[str, set[tuple[str, ...]]] = {}
+    for condition, selection in plans[2].bound_items():
+        if (
+            condition.domain != "factorization"
+            or condition.fault_type != "worker_death"
+        ):
+            continue
+        exp3_death_by_difficulty.setdefault(
+            str(condition.paper_difficulty), set()
+        ).add(tuple(selection.ordered_case_ids))
+    assert set(exp3_death_by_difficulty) == set(expected_sizes)
+    assert all(
+        len(selections) == 1
+        for selections in exp3_death_by_difficulty.values()
+    )
+    exp3_death_union: set[str] = set()
+    for difficulty, selections in exp3_death_by_difficulty.items():
+        ordered_ids = next(iter(selections))
+        assert len(ordered_ids) == expected_sizes[difficulty]
+        exp3_death_union.update(ordered_ids)
+    assert exp3_death_union == all_factor_ids
+
+
 def test_gate_c_dispatcher_delegates_plan_and_run_without_copying_module_logic(
     monkeypatch,
 ) -> None:
@@ -1496,6 +1579,56 @@ def _frozen_formal_catalog() -> PaperInputCatalogManifest:
         lean_lemma_graph_preflight_summary={},
         created_at="2026-07-19T00:00:00Z",
         source_files=[],
+        factorization_cases=factorization_cases,
+        lean_cases=lean_cases,
+        lean_lemma_graph_cases=lean_lemma_graph_cases,
+    )
+
+
+def _frozen_formal_catalog_v2() -> PaperInputCatalogManifest:
+    factorization_cases = tuple(
+        _read_jsonl("benchmarks/paper/factorization_catalog.v2.jsonl")
+    )
+    lean_cases = tuple(
+        {
+            **case,
+            "paper_difficulty": "simple",
+            "topic_family": "pure_logic",
+            "topic_family_version": "shallow_v1",
+        }
+        for case in _read_jsonl("benchmarks/paper/lean_catalog.v1.jsonl")
+    )
+    lean_lemma_graph_cases = tuple(
+        _read_jsonl("benchmarks/paper/lean_lemma_graph_catalog.v1.jsonl")
+    )
+    digest_body = {
+        "catalog_id": "tokenshare.paper.catalog",
+        "catalog_version": "v2",
+        "factorization_cases": factorization_cases,
+        "lean_cases": lean_cases,
+        "lean_lemma_graph_cases": lean_lemma_graph_cases,
+    }
+    return PaperInputCatalogManifest(
+        catalog_id="tokenshare.paper.catalog",
+        catalog_version="v2",
+        catalog_digest=digest_json(digest_body),
+        generator_version="tokenshare.paper_factorization_catalog.v2",
+        case_count=(
+            len(factorization_cases) + len(lean_cases) + len(lean_lemma_graph_cases)
+        ),
+        domain_counts={"factorization": 500, "lean_proof": 195},
+        difficulty_counts={
+            "factorization": {"easy": 167, "medium": 167, "hard": 166}
+        },
+        paper_difficulty_counts={},
+        topic_family_counts={},
+        paper_difficulty_topic_family_counts={},
+        oracle_validation_status="passed",
+        lean_preflight_status="passed",
+        lean_preflight_summary={},
+        lean_lemma_graph_preflight_summary={},
+        created_at="2026-07-20T00:00:00Z",
+        source_files=["benchmarks/paper/factorization_catalog.v2.jsonl"],
         factorization_cases=factorization_cases,
         lean_cases=lean_cases,
         lean_lemma_graph_cases=lean_lemma_graph_cases,

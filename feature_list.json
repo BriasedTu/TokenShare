@@ -252,14 +252,51 @@
         {
             "id": "feat-011",
             "name": "Paper Real AI Experiments",
-            "description": "Implement and run the current real-AI paper experiment plan from tokenshare_latest_real_plugin_experiment_design.md: paper catalogs, real-transport gate, budget approval, factorization and Lean adapters, post-AI faults, worker death, ablation, metrics, reports, paper eligibility, and final paper tables/figures.",
+            "description": "Implement and run the current real-AI paper experiment plan from tokenshare_latest_real_plugin_experiment_design.md: 500-root Factorization v2 catalog, real-transport gate, budget recording with optional approval policy, factorization and Lean adapters, post-AI faults, worker death, ablation, metrics, reports, paper eligibility, and final paper tables/figures.",
             "dependencies": [
                 "feat-009"
             ],
             "status": "in-progress",
+            "night_supervision": {
+                "recorded_at": "2026-07-20T04:11:21.7110435+08:00",
+                "status": "hard_stopped_before_exp1_formal",
+                "budget_digest": "sha256:392d183cf0f1c02397bc9324f7028b0e1de975f4b499061c159489a64a982d31",
+                "pilot_provider_attempts": 4,
+                "pilot_total_tokens": 6777,
+                "pilot_total_cost_estimate": 0.008161,
+                "replay_provider_calls_made": 0,
+                "formal_provider_calls_made": 0,
+                "resume_count": 0,
+                "blocker": "formal runner/checkpoint/evidence/metrics and Exp3/Exp4 formal execution callbacks are not implemented",
+                "summary_path": "outputs/experiments/night_20260720/exp1_plan_v3/supervisor/hard_stop_summary.json"
+            },
+            "factorization_v2_matrix": {
+                "recorded_at": "2026-07-20T00:00:00+08:00",
+                "status": "implemented_offline",
+                "catalog_path": "benchmarks/paper/factorization_catalog.v2.jsonl",
+                "catalog_case_count": 500,
+                "difficulty_counts": {
+                    "easy": 167,
+                    "medium": 167,
+                    "hard": 166
+                },
+                "root_run_counts": {
+                    "exp1": 1905,
+                    "exp2": 10300,
+                    "exp3": 61734,
+                    "exp4": 9270,
+                    "exp5": 4635,
+                    "p0_core": 83209,
+                    "p0_full": 87844
+                },
+                "budget_approval_default": "user_bypassed",
+                "provider_calls_made": 0,
+                "formal_matrix_executed": false,
+                "remaining_prerequisite": "formal execution infrastructure completion and later real-provider runs"
+            },
             "done_criteria": [
-                "Frozen factorization catalog and Lean paper catalogs exist and validate against the latest experiment design, including exactly 15 checker-backed cases in each simple/medium/hard x pure_logic/function_set/induction Lean matrix cell (135 Lean cases total)",
-                "run_paper_experiments supports plan-only budget generation, explicit budget approval, real-transport-only paper eligibility, and no scripted fallback for paper runs",
+                "Frozen Factorization v2 catalog contains exactly 500 roots split 167/167/166 across easy/medium/hard, and Lean paper catalogs include exactly 15 checker-backed cases in each simple/medium/hard x pure_logic/function_set/induction cell (135 Lean cases total)",
+                "run_paper_experiments supports plan-only budget generation, default user_bypassed budget recording, optional explicit digest approval, real-transport-only paper eligibility, and no scripted fallback for paper runs",
                 "Experiment 1-4 P0-core paper outputs use only the fixed SiliconFlow zai-org/GLM-5.2 / glm_5_2_exp1_baseline entry, and Experiment 5 P0-full outputs compare the pre-registered GLM-5.2/SiliconFlow, Qwen3.6-27B/SiliconFlow, and GPT-5.6-Sol-high/OpenAI endpoint cohort; all are generated from real AI API calls with provider/model/reasoning-profile/usage/latency/cost/raw-output evidence and secret scan reports",
                 "Fault injection and worker-death experiments mutate or terminate only after real provider output evidence is persisted, and report matched-baseline time/token overhead plus single/multiple worker-death continuation, recovery, reassignment, completeness, and validity fields",
                 "Metrics, CSVs, failure examples, and paper text are derived from per-task/per-attempt evidence and the append-only artifacts/events, including explicit ablation error-escape counts/rates, not from hard-coded regression summaries",

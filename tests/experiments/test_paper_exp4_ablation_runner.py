@@ -24,6 +24,7 @@ from tokenshare.experiments.paper_exp4_ablation_runner import (
     EXP4_EXPERIMENT_ID,
     EXP4_REPEATS,
     EXP4_ROOT_RUN_COUNT,
+    EXP4_V1_ROOT_RUN_COUNT,
     Experiment4AblationModule,
     build_exp4_mode_execution_config,
     count_exp4_root_runs,
@@ -48,7 +49,8 @@ def test_exp4_module_conforms_to_gate_b_protocol() -> None:
 def test_exp4_expands_frozen_six_mode_matrix_with_glm_baseline() -> None:
     conditions = expand_exp4_conditions(_context())
 
-    assert EXP4_ROOT_RUN_COUNT == 540
+    assert EXP4_ROOT_RUN_COUNT == 9_270
+    assert EXP4_V1_ROOT_RUN_COUNT == 540
     assert EXP4_REPEATS == 3
     assert len(conditions) == 108
     assert len({condition.condition_id for condition in conditions}) == 108
@@ -128,7 +130,7 @@ def test_exp4_accepts_controls_resolved_from_actual_baseline_provider_config() -
     selections = freeze_exp4_case_selections(context, conditions)
 
     assert len(conditions) == 108
-    assert count_exp4_root_runs(conditions, selections) == EXP4_ROOT_RUN_COUNT
+    assert count_exp4_root_runs(conditions, selections) == EXP4_V1_ROOT_RUN_COUNT
     assert all(selection.is_executable for selection in selections)
 
 
@@ -177,7 +179,7 @@ def test_exp4_consumes_versioned_integration_prepared_catalog_view() -> None:
     selections = freeze_exp4_case_selections(context, conditions)
 
     assert len(conditions) == 108
-    assert count_exp4_root_runs(conditions, selections) == EXP4_ROOT_RUN_COUNT
+    assert count_exp4_root_runs(conditions, selections) == EXP4_V1_ROOT_RUN_COUNT
     assert all(selection.is_executable for selection in selections)
 
 
@@ -231,7 +233,7 @@ def test_exp4_freezes_five_task_batches_and_exact_540_root_runs() -> None:
     selections = freeze_exp4_case_selections(context, conditions)
 
     assert len(selections) == len(conditions)
-    assert count_exp4_root_runs(conditions, selections) == EXP4_ROOT_RUN_COUNT
+    assert count_exp4_root_runs(conditions, selections) == EXP4_V1_ROOT_RUN_COUNT
     assert all(len(selection.ordered_case_ids) == 5 for selection in selections)
     assert all(selection.is_executable for selection in selections)
 

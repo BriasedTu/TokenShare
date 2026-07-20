@@ -31,11 +31,18 @@ from tokenshare.experiments.paper_models import (
 
 EXP4_EXPERIMENT_ID = "exp4_real_ai_protocol_ablation"
 EXP4_SUITE_VERSION = "paper_v1"
-EXP4_CATALOG_VERSION = "v1"
+EXP4_CATALOG_VERSION = "v2"
+EXP4_SUPPORTED_CATALOG_VERSIONS = ("v1", "v2")
 EXP4_REPEATS = 3
 EXP4_WORKER_COUNT = 10
 EXP4_TASKS_PER_DIFFICULTY = 5
-EXP4_ROOT_RUN_COUNT = 540
+EXP4_FACTOR_CASE_COUNTS_BY_DIFFICULTY = {
+    "easy": 167,
+    "medium": 167,
+    "hard": 166,
+}
+EXP4_V1_ROOT_RUN_COUNT = 540
+EXP4_ROOT_RUN_COUNT = 9_270
 EXP4_SEED_BASE = 4000
 
 BASELINE_PROVIDER_CONFIG_ID = "exp1_baseline_siliconflow"
@@ -292,8 +299,13 @@ def count_exp4_root_runs(
     for condition, selection in zip(conditions, selections, strict=True):
         _validate_selection_condition_shape(selection, condition)
         if selection.is_executable:
-            if len(selection.ordered_case_ids) != EXP4_TASKS_PER_DIFFICULTY:
-                raise ValueError("Experiment 4 selections must contain 5 roots")
+            expected_count = _selection_case_count(
+                catalog_version=selection.catalog_version,
+                domain=condition.domain,
+                paper_difficulty=str(condition.paper_difficulty),
+            )
+            if len(selection.ordered_case_ids) != expected_count:
+                raise ValueError("Experiment 4 selection count drift")
             total += len(selection.ordered_case_ids)
     return total
 
@@ -515,7 +527,11 @@ def summarize_exp4_ablation(evidence: Any) -> ExperimentSummaryRows:
     if len(identity_signatures) != 1:
         raise ValueError("Experiment 4 evidence model identity drifted across modes")
     if execution_scope == "formal":
-        _validate_complete_formal_evidence(grouped, record_count=len(records))
+        _validate_complete_formal_evidence(
+            grouped,
+            record_count=len(records),
+            catalog_version=catalog_version,
+        )
 
     rows = [
         _summarize_exp4_group(
@@ -721,6 +737,7 @@ def _validate_complete_formal_evidence(
     ],
     *,
     record_count: int,
+    catalog_version: str,
 ) -> None:
     if record_count != 108:
         raise ValueError("formal evidence must contain 108 conditions")
@@ -745,8 +762,13 @@ def _validate_complete_formal_evidence(
         if repeat_ids != list(range(EXP4_REPEATS)):
             raise ValueError("formal repeat set must be exactly 0, 1, 2")
         for record, tasks in records:
-            if len(tasks) != EXP4_TASKS_PER_DIFFICULTY:
-                raise ValueError("formal Experiment 4 conditions must contain 5 roots")
+            expected_count = _selection_case_count(
+                catalog_version=catalog_version,
+                domain=domain,
+                paper_difficulty=paper_difficulty,
+            )
+            if len(tasks) != expected_count:
+                raise ValueError("formal Experiment 4 condition count drift")
             root_run_count += len(tasks)
             slice_signatures[(domain, paper_difficulty)].add(
                 (
@@ -754,8 +776,9 @@ def _validate_complete_formal_evidence(
                     tuple(record["ordered_case_ids"]),
                 )
             )
-    if root_run_count != EXP4_ROOT_RUN_COUNT:
-        raise ValueError("formal Experiment 4 evidence must contain 540 root-runs")
+    expected_root_runs = _expected_root_runs(catalog_version)
+    if root_run_count != expected_root_runs:
+        raise ValueError("formal Experiment 4 root-run count drift")
     if any(len(signatures) != 1 for signatures in slice_signatures.values()):
         raise ValueError("formal Experiment 4 case selection drifted across modes")
 
@@ -833,7 +856,7 @@ def _exp4_evidence_envelope(
     catalog_digest = envelope.get("catalog_digest")
     _require_complete_digest("catalog_digest", catalog_digest)
     catalog_version = envelope.get("catalog_version")
-    if catalog_version != EXP4_CATALOG_VERSION:
+    if catalog_version not in EXP4_SUPPORTED_CATALOG_VERSIONS:
         raise ValueError("Experiment 4 evidence catalog_version drifted")
     records = envelope.get("condition_results")
     if not isinstance(records, (list, tuple)) or not records:
@@ -854,6 +877,30 @@ def _validate_summary_difficulty(domain: str, paper_difficulty: str) -> None:
     )
     if paper_difficulty not in allowed:
         raise ValueError("paper_difficulty does not match evidence domain")
+
+
+def _selection_case_count(
+    *,
+    catalog_version: str,
+    domain: str,
+    paper_difficulty: str,
+) -> int:
+    if domain == "lean_proof" or catalog_version == "v1":
+        return EXP4_TASKS_PER_DIFFICULTY
+    if catalog_version == "v2" and domain == "factorization":
+        try:
+            return EXP4_FACTOR_CASE_COUNTS_BY_DIFFICULTY[paper_difficulty]
+        except KeyError as exc:
+            raise ValueError("unsupported Factorization paper difficulty") from exc
+    raise ValueError("Experiment 4 supports only catalog v1 or v2")
+
+
+def _expected_root_runs(catalog_version: str) -> int:
+    if catalog_version == "v1":
+        return EXP4_V1_ROOT_RUN_COUNT
+    if catalog_version == "v2":
+        return EXP4_ROOT_RUN_COUNT
+    raise ValueError("Experiment 4 supports only catalog v1 or v2")
 
 
 def _flag_count(tasks: Sequence[Mapping[str, Any]], field_name: str) -> int:
@@ -905,8 +952,13 @@ def _factorization_selection(
         by_difficulty.get(condition.paper_difficulty),
         field_name=f"catalog.factorization_slices.{condition.paper_difficulty}",
     )
-    if len(cases) != EXP4_TASKS_PER_DIFFICULTY:
-        raise ValueError("Experiment 4 factorization selection must contain 5 roots")
+    expected_count = _selection_case_count(
+        catalog_version=str(catalog_view.get("catalog_version")),
+        domain="factorization",
+        paper_difficulty=str(condition.paper_difficulty),
+    )
+    if len(cases) != expected_count:
+        raise ValueError("Experiment 4 factorization selection count drift")
     return _selection_from_cases(context, condition, cases)
 
 
@@ -1084,7 +1136,7 @@ def _exp4_catalog_view(context: PaperExecutionContext) -> Mapping[str, Any]:
         )
     if view.get("suite_version") != EXP4_SUITE_VERSION:
         raise ValueError("Experiment 4 catalog suite_version drifted")
-    if view.get("catalog_version") != EXP4_CATALOG_VERSION:
+    if view.get("catalog_version") not in EXP4_SUPPORTED_CATALOG_VERSIONS:
         raise ValueError("Experiment 4 catalog_version drifted")
     _require_complete_digest("catalog_digest", view.get("catalog_digest"))
     experiment_ids = view.get("shared_lean_slice_experiment_ids")
@@ -1378,6 +1430,7 @@ __all__ = [
     "EXP4_EXPERIMENT_ID",
     "EXP4_REPEATS",
     "EXP4_ROOT_RUN_COUNT",
+    "EXP4_V1_ROOT_RUN_COUNT",
     "Exp4ModeExecutionConfig",
     "Exp4MixedLeanCaseSelection",
     "Experiment4AblationModule",

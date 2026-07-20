@@ -25,6 +25,13 @@ from tokenshare.experiments.paper_models import (
 EXP2_EXPERIMENT_ID = "exp2_real_ai_scalability"
 EXP2_SUITE_VERSION = "paper_v1"
 EXP2_CATALOG_VERSION = "v1"
+EXP2_FACTOR_CASE_COUNTS_BY_DIFFICULTY = {
+    "easy": 167,
+    "medium": 167,
+    "hard": 166,
+}
+EXP2_V1_EXPECTED_ROOT_RUNS = 600
+EXP2_EXPECTED_ROOT_RUNS = 10_300
 MANDATORY_WORKER_LEVELS = (1, 3, 10, 30)
 OPTIONAL_WORKER_LEVELS = (100, 300)
 EXP2_REPEATS = 5
@@ -475,14 +482,26 @@ def _factorization_selection(
     context: PaperExecutionContext,
     condition: PaperExperimentCondition,
 ) -> FrozenCaseSelection:
-    cases = tuple(
+    available_cases = tuple(
         case
         for case in _catalog_cases(context, domain="factorization")
         if case.get("paper_difficulty", case.get("difficulty"))
         == condition.paper_difficulty
-    )[:5]
-    if len(cases) != 5:
-        raise ValueError("Experiment 2 factorization selection must contain 5 roots")
+    )
+    catalog_version = str(_catalog(context).get("catalog_version") or "v1")
+    expected_case_count = _factor_case_count(
+        catalog_version,
+        str(condition.paper_difficulty),
+    )
+    cases = (
+        available_cases[:expected_case_count]
+        if catalog_version == "v1"
+        else available_cases
+    )
+    if len(cases) != expected_case_count:
+        raise ValueError(
+            "Experiment 2 factorization selection count drift for frozen catalog"
+        )
     expected_ai_units = 0
     case_ids: list[str] = []
     for case in cases:
@@ -792,6 +811,7 @@ def _summarize_condition(
         "repeat_id": repeat_id,
         "repeat_ids": (repeat_id,),
         "selection_digest": str(selection.get("selection_digest") or ""),
+        "catalog_version": str(selection.get("catalog_version") or ""),
         "task_batch_id": str(selection.get("selection_id") or ""),
         "ordered_case_ids": tuple(selection.get("ordered_case_ids", ())),
         "topic_family_counts": _topic_family_counts(selection.get("ordered_case_ids", ())),
@@ -1506,14 +1526,29 @@ def _apply_formal_matrix_audit(
         for domain, paper_difficulty, worker_count in expected_group_keys
         for repeat_id in range(EXP2_REPEATS)
     }
+    catalog_versions = {
+        str(row.get("catalog_version")) for row in mandatory_rows
+    }
+    catalog_version = (
+        next(iter(catalog_versions)) if len(catalog_versions) == 1 else ""
+    )
+    expected_root_run_count = _expected_root_runs(catalog_version)
     matrix_complete = (
         observed_group_keys == expected_group_keys
         and len(mandatory_rows) == len(expected_group_keys)
         and all(row.get("repeat_set_status") == "complete" for row in mandatory_rows)
-        and all(row.get("root_run_count") == 25 for row in mandatory_rows)
+        and all(
+            row.get("root_run_count")
+            == _expected_group_root_runs(
+                catalog_version=catalog_version,
+                domain=str(row.get("domain")),
+                paper_difficulty=str(row.get("paper_difficulty")),
+            )
+            for row in mandatory_rows
+        )
         and len(condition_ids) == len(set(condition_ids))
         and set(condition_ids) == expected_condition_ids
-        and root_run_count == 600
+        and root_run_count == expected_root_run_count
     )
     audit = {
         "formal_matrix_status": "complete" if matrix_complete else "incomplete",
@@ -1522,7 +1557,7 @@ def _apply_formal_matrix_audit(
         "formal_matrix_condition_count": len(set(condition_ids)),
         "expected_formal_matrix_condition_count": len(expected_condition_ids),
         "formal_matrix_root_run_count": root_run_count,
-        "expected_formal_matrix_root_run_count": 600,
+        "expected_formal_matrix_root_run_count": expected_root_run_count,
     }
     audited_rows: list[dict[str, Any]] = []
     for row in rows:
@@ -1530,6 +1565,39 @@ def _apply_formal_matrix_audit(
         audited["paper_eligible"] = bool(row.get("paper_eligible")) and matrix_complete
         audited_rows.append(audited)
     return audited_rows
+
+
+def _factor_case_count(catalog_version: str, paper_difficulty: str) -> int:
+    if catalog_version == "v1":
+        return 5
+    if catalog_version == "v2":
+        try:
+            return EXP2_FACTOR_CASE_COUNTS_BY_DIFFICULTY[paper_difficulty]
+        except KeyError as exc:
+            raise ValueError("unsupported Factorization paper difficulty") from exc
+    raise ValueError("Experiment 2 supports only catalog v1 or v2")
+
+
+def _expected_group_root_runs(
+    *,
+    catalog_version: str,
+    domain: str,
+    paper_difficulty: str,
+) -> int:
+    per_condition = (
+        _factor_case_count(catalog_version, paper_difficulty)
+        if domain == "factorization"
+        else 5
+    )
+    return per_condition * EXP2_REPEATS
+
+
+def _expected_root_runs(catalog_version: str) -> int:
+    if catalog_version == "v1":
+        return EXP2_V1_EXPECTED_ROOT_RUNS
+    if catalog_version == "v2":
+        return EXP2_EXPECTED_ROOT_RUNS
+    raise ValueError("Experiment 2 supports only catalog v1 or v2")
 
 
 def _expected_formal_condition_id(
@@ -2330,6 +2398,7 @@ __all__ = [
     "BASELINE_PROVIDER_FAMILY",
     "BASELINE_PROVIDER_MODEL_ID",
     "EXP2_EXPERIMENT_ID",
+    "EXP2_EXPECTED_ROOT_RUNS",
     "Experiment2ScalabilityModule",
     "evaluate_exp2_optional_worker_levels",
     "count_exp2_root_runs",

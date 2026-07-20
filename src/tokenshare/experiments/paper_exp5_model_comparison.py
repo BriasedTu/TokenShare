@@ -33,13 +33,19 @@ from tokenshare.experiments.paper_models import (
 
 EXP5_EXPERIMENT_ID = "exp5_real_ai_model_endpoint_comparison"
 EXP5_SUITE_VERSION = "paper_v1"
-EXP5_CATALOG_VERSION = "v1"
+EXP5_CATALOG_VERSION = "v2"
 EXP5_REPEAT_COUNT = 3
 EXP5_WORKER_COUNT = 10
 EXP5_SEED_FAMILY = (5001, 5002, 5003)
 EXP5_TASKS_PER_CONDITION = 5
+EXP5_FACTOR_CASE_COUNTS_BY_DIFFICULTY = {
+    "easy": 167,
+    "medium": 167,
+    "hard": 166,
+}
 EXP5_EXPECTED_CONDITION_COUNT = 54
-EXP5_EXPECTED_ROOT_RUNS = 270
+EXP5_V1_EXPECTED_ROOT_RUNS = 270
+EXP5_EXPECTED_ROOT_RUNS = 4_635
 EXP5_INCOMPLETE_COHORT_REASON = "incomplete_model_cohort"
 EXP5_MIXED_TOPIC_FAMILY_MARKER = "mixed_topic_family"
 
@@ -236,10 +242,7 @@ def build_exp5_single_member_pilot_plan(
             "model_endpoint_identity_digest"
         ],
         "condition_count": 2 * 3 * EXP5_REPEAT_COUNT,
-        "root_run_count": 2
-        * 3
-        * EXP5_REPEAT_COUNT
-        * EXP5_TASKS_PER_CONDITION,
+        "root_run_count": _single_member_root_run_count(context.catalog),
         "provider_attempt_count": 0,
         "provider_calls_made": 0,
     }
@@ -317,8 +320,13 @@ def count_exp5_root_runs(
         _validate_selection_shape(condition, selection)
         if selection.is_executable:
             total += len(selection.ordered_case_ids)
-    if conditions and total != EXP5_EXPECTED_ROOT_RUNS:
-        raise ValueError("Experiment 5 root-run count drift")
+    if conditions:
+        catalog_versions = {selection.catalog_version for selection in selections}
+        if len(catalog_versions) != 1:
+            raise ValueError("Experiment 5 catalog version drift")
+        expected_root_runs = _expected_root_runs(next(iter(catalog_versions)))
+        if total != expected_root_runs:
+            raise ValueError("Experiment 5 root-run count drift")
     return total
 
 
@@ -974,8 +982,12 @@ def _selection_for_condition(
         cases = _case_list(
             _mapping(exp2.get("factorization")).get(condition.paper_difficulty)
         )
-        if len(cases) != EXP5_TASKS_PER_CONDITION:
-            raise ValueError("Experiment 5 factorization slice must contain 5 roots")
+        expected_count = _factor_case_count(
+            _catalog_string(context.catalog, "catalog_version"),
+            str(condition.paper_difficulty),
+        )
+        if len(cases) != expected_count:
+            raise ValueError("Experiment 5 factorization slice count drift")
         for case in cases:
             split_params = _mapping(case.get("split_params"))
             nested_parallelism_valid = (
@@ -1059,8 +1071,16 @@ def _validate_selection_shape(
         raise ValueError("selection domain does not match condition")
     if selection.paper_difficulty != condition.paper_difficulty:
         raise ValueError("selection difficulty does not match condition")
-    if len(selection.ordered_case_ids) != EXP5_TASKS_PER_CONDITION:
-        raise ValueError("Experiment 5 selection must contain exactly 5 roots")
+    expected_count = (
+        _factor_case_count(
+            selection.catalog_version,
+            str(condition.paper_difficulty),
+        )
+        if condition.domain == "factorization"
+        else EXP5_TASKS_PER_CONDITION
+    )
+    if len(selection.ordered_case_ids) != expected_count:
+        raise ValueError("Experiment 5 selection count drift")
     if selection.is_blocked:
         raise ValueError("formal Experiment 5 condition cannot use blocked selection")
     if condition.domain == "lean_proof":
@@ -1360,20 +1380,56 @@ def _shared_exp2_slice(catalog: Any) -> Mapping[str, Any]:
     raise ValueError("Experiment 5 requires the shared Experiment 2 slice")
 
 
+def _factor_case_count(catalog_version: str, paper_difficulty: str) -> int:
+    if catalog_version == "v1":
+        return EXP5_TASKS_PER_CONDITION
+    if catalog_version == "v2":
+        try:
+            return EXP5_FACTOR_CASE_COUNTS_BY_DIFFICULTY[paper_difficulty]
+        except KeyError as exc:
+            raise ValueError("unsupported Factorization paper difficulty") from exc
+    raise ValueError("Experiment 5 supports only catalog v1 or v2")
+
+
+def _expected_root_runs(catalog_version: str) -> int:
+    if catalog_version == "v1":
+        return EXP5_V1_EXPECTED_ROOT_RUNS
+    if catalog_version == "v2":
+        return EXP5_EXPECTED_ROOT_RUNS
+    raise ValueError("Experiment 5 supports only catalog v1 or v2")
+
+
+def _single_member_root_run_count(catalog: Any) -> int:
+    exp2 = _shared_exp2_slice(catalog)
+    factorization = _mapping(exp2.get("factorization"))
+    lean = _mapping(exp2.get("lean_proof"))
+    per_repeat = sum(
+        len(_case_list(factorization.get(difficulty)))
+        for difficulty in FACTOR_PAPER_DIFFICULTIES
+    )
+    per_repeat += sum(
+        len(_case_list(_mapping(lean.get(difficulty)).get(topic_family)))
+        for difficulty in LEAN_PAPER_DIFFICULTIES
+        for topic_family in LEAN_TOPIC_FAMILIES
+    )
+    return per_repeat * EXP5_REPEAT_COUNT
+
+
 def _formal_exp2_slice(catalog: Mapping[str, Any]) -> JsonObject:
     factorization_cases = _formal_catalog_cases(catalog, domain="factorization")
     lean_cases = _formal_catalog_cases(catalog, domain="lean_proof")
     factorization: dict[str, list[Mapping[str, Any]]] = {}
+    catalog_version = str(catalog.get("catalog_version") or EXP5_CATALOG_VERSION)
     for difficulty in FACTOR_PAPER_DIFFICULTIES:
-        selected = [
+        available = [
             case
             for case in factorization_cases
             if case.get("paper_difficulty", case.get("difficulty")) == difficulty
-        ][:EXP5_TASKS_PER_CONDITION]
-        if len(selected) != EXP5_TASKS_PER_CONDITION:
-            raise ValueError(
-                "formal factorization catalog must expose 5 roots per difficulty"
-            )
+        ]
+        expected_count = _factor_case_count(catalog_version, difficulty)
+        selected = available[:expected_count] if catalog_version == "v1" else available
+        if len(selected) != expected_count:
+            raise ValueError("formal factorization catalog slice count drift")
         factorization[difficulty] = selected
 
     readiness = _validated_readiness_selection(catalog)

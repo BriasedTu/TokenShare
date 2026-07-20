@@ -3,8 +3,10 @@ from pathlib import Path
 
 import pytest
 
+import tokenshare.experiments.paper_catalog as paper_catalog_module
 from tokenshare.experiments.paper_budget import plan_paper_suite
 from tokenshare.experiments.paper_catalog import load_paper_catalogs
+from tokenshare.experiments.paper_factorization_catalog import is_prime_64
 from tokenshare.experiments.paper_models import PaperExperimentCondition
 
 
@@ -41,6 +43,32 @@ def test_paper_catalogs_load_30_factorization_and_30_lean_cases() -> None:
         factorization_path=Path("benchmarks/paper/factorization_catalog.v1.jsonl"),
         lean_path=Path("benchmarks/paper/lean_catalog.v1.jsonl"),
     ).catalog_digest
+
+
+def test_paper_catalog_loads_the_frozen_500_root_factorization_v2(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(paper_catalog_module, "_is_prime", is_prime_64)
+
+    manifest = load_paper_catalogs(
+        factorization_path=Path("benchmarks/paper/factorization_catalog.v2.jsonl"),
+        lean_path=Path("benchmarks/paper/lean_catalog.v1.jsonl"),
+    )
+
+    body = manifest.to_dict()
+    assert body["catalog_version"] == "v2"
+    assert body["generator_version"] == "tokenshare.paper_factorization_catalog.v2"
+    assert body["case_count"] == 530
+    assert body["domain_counts"] == {"factorization": 500, "lean_proof": 30}
+    assert body["difficulty_counts"]["factorization"] == {
+        "easy": 167,
+        "medium": 167,
+        "hard": 166,
+    }
+    assert len({case["target_n"] for case in manifest.factorization_cases}) == 500
+    assert [case["catalog_ordinal"] for case in manifest.factorization_cases] == list(
+        range(500)
+    )
 
 
 def test_loads_legal_lean_v2_lemma_dag_catalog_fixture() -> None:

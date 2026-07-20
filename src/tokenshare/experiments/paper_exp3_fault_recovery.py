@@ -90,11 +90,22 @@ WORKER_DEATH_WORKER_COUNT = 10
 WORKER_DEATH_COUNTS = (1, 3)
 WORKER_DEATH_KILL_PROGRESS_PERCENT = (25, 50, 75)
 RATE_FAULT_TARGET_SEED = 300300
-EXPECTED_ROOT_RUN_COUNTS = {
+V1_EXPECTED_ROOT_RUN_COUNTS = {
     "rate_fault_factorization": 525,
     "rate_fault_lean_proof": 180,
     "worker_death": 108,
     "total": 813,
+}
+EXPECTED_ROOT_RUN_COUNTS = {
+    "rate_fault_factorization": 52_500,
+    "rate_fault_lean_proof": 180,
+    "worker_death": 9_054,
+    "total": 61_734,
+}
+V2_FACTOR_CASE_COUNTS_BY_DIFFICULTY = {
+    "easy": 167,
+    "medium": 167,
+    "hard": 166,
 }
 
 _FACTOR_DIFFICULTIES = ("easy", "medium", "hard")
@@ -452,6 +463,15 @@ def freeze_exp3_case_selections(
     return selections
 
 
+def _expected_root_run_counts(catalog: Mapping[str, Any]) -> Mapping[str, int]:
+    catalog_version = str(catalog.get("catalog_version") or "v1")
+    if catalog_version == "v1":
+        return V1_EXPECTED_ROOT_RUN_COUNTS
+    if catalog_version == "v2":
+        return EXPECTED_ROOT_RUN_COUNTS
+    raise ValueError("Experiment 3 supports only catalog v1 or v2")
+
+
 def build_exp3_plan_manifest(
     conditions: Sequence[PaperExperimentCondition],
     selections: Sequence[FrozenCaseSelection],
@@ -497,7 +517,7 @@ def build_exp3_plan_manifest(
         if prior != baseline:
             raise ValueError("matched baseline manifest drift for Experiment 3")
     if not any(selection.is_blocked for selection in selections):
-        if root_counts != EXPECTED_ROOT_RUN_COUNTS:
+        if root_counts != _expected_root_run_counts(catalog):
             raise ValueError("root-run total drift for Experiment 3 matrix")
     reused_baseline_root_runs = sum(
         len(row["ordered_case_ids"])
@@ -609,7 +629,7 @@ def validate_exp3_condition_matrix(
             raise ValueError("Exp3 selections must require paper eligibility")
     if not any(selection.is_blocked for selection in selections):
         root_counts = _root_run_counts(conditions, selections)
-        if root_counts != EXPECTED_ROOT_RUN_COUNTS:
+        if root_counts != _expected_root_run_counts(catalog):
             raise ValueError("root-run total drift for Experiment 3 matrix")
 
 
@@ -997,7 +1017,7 @@ def _summary_matrix_complete(
         "worker_death": sum(_positive_int(run, "task_count") for run in worker_runs),
     }
     counts["total"] = sum(counts.values())
-    if counts != EXPECTED_ROOT_RUN_COUNTS:
+    if counts != _expected_root_run_counts(catalog):
         raise ValueError("Experiment 3 summary root-run total drift")
     return True
 
@@ -1260,6 +1280,7 @@ def _expected_case_ids_for_condition(
     catalog: Mapping[str, Any],
 ) -> tuple[str, ...]:
     key = _parse_condition_id(condition.condition_id)
+    catalog_version = str(catalog.get("catalog_version") or "v1")
     if key.matrix_kind == "rate_fault" and key.domain == "factorization":
         case_ids = _case_tuple(
             _required_catalog_value(
@@ -1267,8 +1288,11 @@ def _expected_case_ids_for_condition(
                 "exp3_rate_fault_factorization_case_ids",
             )
         )
-        if len(case_ids) != 5:
-            raise ValueError("factorization rate-fault slice must contain 5 cases")
+        expected_count = 5 if catalog_version == "v1" else 500
+        if catalog_version not in {"v1", "v2"} or len(case_ids) != expected_count:
+            raise ValueError(
+                "factorization rate-fault slice count drift for frozen catalog"
+            )
         return case_ids
     if key.matrix_kind == "rate_fault" and key.domain == "lean_proof":
         by_topic = _mapping(
@@ -1305,8 +1329,15 @@ def _expected_case_ids_for_condition(
                 key.task_slice_key,
             )
         )
-        if len(case_ids) != 1:
-            raise ValueError("worker-death factorization slice must contain 1 case")
+        expected_count = (
+            1
+            if catalog_version == "v1"
+            else V2_FACTOR_CASE_COUNTS_BY_DIFFICULTY.get(key.task_slice_key)
+        )
+        if expected_count is None or len(case_ids) != expected_count:
+            raise ValueError(
+                "worker-death factorization slice count drift for frozen catalog"
+            )
         return case_ids
     case_ids = _case_tuple(
         _required_catalog_value(

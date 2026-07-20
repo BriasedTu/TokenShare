@@ -1129,13 +1129,17 @@ def _gate_c_context(
     execution_callback: Callable[..., PaperConditionResult],
     hard_limits: Mapping[str, Any],
 ) -> PaperExecutionContext:
-    task15_budget_input = lean_3x3_matrix.get("task15_budget_input")
+    bound_lean_matrix = _bind_lean_matrix_to_catalog(
+        lean_3x3_matrix,
+        catalog_manifest=catalog_manifest,
+    )
+    task15_budget_input = bound_lean_matrix.get("task15_budget_input")
     if not isinstance(task15_budget_input, dict):
         raise ValueError("Gate C planning requires Task14 task15_budget_input")
     formal_catalog = _FormalPaperCatalogView(
         manifest=catalog_manifest,
         task15_budget_input=_json_copy(task15_budget_input),
-        lean_task14_readiness=_json_copy(lean_3x3_matrix),
+        lean_task14_readiness=_json_copy(bound_lean_matrix),
         optional_worker_preflight={},
     )
     if experiment_id == "exp3_real_ai_fault_recovery":
@@ -1170,6 +1174,54 @@ def _gate_c_context(
         event_store=object(),
         execution_callback=execution_callback,
     )
+
+
+def _bind_lean_matrix_to_catalog(
+    lean_3x3_matrix: Mapping[str, Any],
+    *,
+    catalog_manifest: PaperInputCatalogManifest,
+) -> JsonObject:
+    bound = _json_copy(lean_3x3_matrix)
+    task15 = bound.get("task15_budget_input")
+    if not isinstance(task15, dict):
+        raise ValueError("Gate C planning requires Task14 task15_budget_input")
+    source_matrix_digest = digest_json(_lean_matrix_digest_body(bound))
+    if (
+        bound.get("matrix_digest") != source_matrix_digest
+        or task15.get("matrix_digest") != source_matrix_digest
+    ):
+        raise ValueError("Lean readiness matrix digest drift")
+    if (
+        bound.get("catalog_digest") == catalog_manifest.catalog_digest
+        and task15.get("catalog_digest") == catalog_manifest.catalog_digest
+    ):
+        return bound
+    if catalog_manifest.catalog_version != "v2":
+        raise ValueError("Lean readiness catalog digest drift")
+
+    task15["catalog_digest"] = catalog_manifest.catalog_digest
+    selection_digest = digest_json(
+        {
+            "schema_version": "tokenshare.lean_task14_selected_cases.v1",
+            "catalog_digest": catalog_manifest.catalog_digest,
+            "environment_digest": task15.get("environment_digest"),
+            "oracle_package_digests": task15.get("oracle_package_digests"),
+            "target_case_count": task15.get("target_case_count"),
+            "selected_case_ids_by_cell": task15.get("selected_case_ids_by_cell"),
+            "semantic_fingerprint_digests_by_cell": task15.get(
+                "semantic_fingerprint_digests_by_cell"
+            ),
+            "golden_case_ids_by_cell": task15.get("golden_case_ids_by_cell"),
+        }
+    )
+    task15["selection_digest"] = selection_digest
+    task15["catalog_slice_digest"] = selection_digest
+    bound["catalog_digest"] = catalog_manifest.catalog_digest
+    bound["catalog_version"] = catalog_manifest.catalog_version
+    matrix_digest = digest_json(_lean_matrix_digest_body(bound))
+    bound["matrix_digest"] = matrix_digest
+    task15["matrix_digest"] = matrix_digest
+    return bound
 
 
 def _validate_gate_c_execution_config(
@@ -1285,14 +1337,25 @@ def _exp3_catalog_view(catalog: _FormalPaperCatalogView) -> JsonObject:
         )
         for topic in ("pure_logic", "function_set", "induction")
     }
-    factor_rate = tuple(str(case["case_id"]) for case in factor_by_difficulty["medium"][:5])
+    if catalog.catalog_version == "v2":
+        factor_rate = tuple(
+            str(case["case_id"]) for case in catalog.factorization_cases
+        )
+    else:
+        factor_rate = tuple(
+            str(case["case_id"])
+            for case in factor_by_difficulty["medium"][:5]
+        )
     rate_lean = {
         topic: (str(cases[0]["case_id"]),)
         for topic, cases in medium_lean_by_topic.items()
         if cases
     }
     death_factor = {
-        difficulty: (str(cases[0]["case_id"]),)
+        difficulty: tuple(
+            str(case["case_id"])
+            for case in (cases if catalog.catalog_version == "v2" else cases[:1])
+        )
         for difficulty, cases in factor_by_difficulty.items()
         if cases
     }
@@ -1337,7 +1400,7 @@ def _exp4_catalog_view(catalog: _FormalPaperCatalogView) -> JsonObject:
                 domain="factorization",
                 difficulty=difficulty,
                 paper_difficulty=difficulty,
-            )[:5]
+            )[: (None if catalog.catalog_version == "v2" else 5)]
         ]
         for difficulty in ("easy", "medium", "hard")
     }
@@ -2214,9 +2277,26 @@ def build_lean_3x3_matrix_plan(
 
 
 def _lean_matrix_digest_body(body: JsonObject) -> JsonObject:
-    digest_body = {
-        key: value for key, value in body.items() if key != "matrix_digest"
+    ignored_wrapper_fields = {
+        "blocked_cell_map",
+        "catalog_path",
+        "catalog_version",
+        "executable_cell_map",
+        "matrix_digest",
     }
+    digest_body = {
+        key: value
+        for key, value in body.items()
+        if key not in ignored_wrapper_fields
+    }
+    digest_body["schema_version"] = "tokenshare.lean_3x3_matrix_plan.v1"
+    task15_budget_input = digest_body.get("task15_budget_input")
+    if isinstance(task15_budget_input, Mapping):
+        digest_body["task15_budget_input"] = {
+            key: value
+            for key, value in task15_budget_input.items()
+            if key != "matrix_digest"
+        }
     digest_body["cells"] = [
         _lean_cell_digest_projection(cell) for cell in body["cells"]
     ]

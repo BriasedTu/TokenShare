@@ -10,8 +10,15 @@ from tokenshare.experiments.paper_budget import (
     plan_exp1_pilot,
     plan_paper_suite,
 )
-from tokenshare.experiments.paper_catalog import load_paper_catalogs
-from tokenshare.experiments.paper_models import PaperExperimentCondition, PaperStatus
+from tokenshare.experiments.paper_catalog import (
+    PaperInputCatalogManifest,
+    load_paper_catalogs,
+)
+from tokenshare.experiments.paper_models import (
+    PaperExperimentCondition,
+    PaperStatus,
+    digest_json,
+)
 from tokenshare.experiments.paper_runner import expand_plan_conditions
 
 
@@ -46,6 +53,69 @@ def _sample_conditions(catalog_digest: str) -> tuple[PaperExperimentCondition, .
             catalog_digest=catalog_digest,
         ),
     )
+
+
+def _raw_paper_catalog_manifest() -> PaperInputCatalogManifest:
+    factorization_cases = tuple(
+        {**case, "paper_difficulty": case["difficulty"]}
+        for case in _read_jsonl(
+            Path("benchmarks/paper/factorization_catalog.v1.jsonl")
+        )
+    )
+    lean_cases = tuple(
+        {
+            **case,
+            "paper_difficulty": "simple",
+            "topic_family": "pure_logic",
+            "topic_family_version": "shallow_v1",
+        }
+        for case in _read_jsonl(Path("benchmarks/paper/lean_catalog.v1.jsonl"))
+    )
+    lean_lemma_graph_cases = tuple(
+        _read_jsonl(
+            Path("benchmarks/paper/lean_lemma_graph_catalog.v1.jsonl")
+        )
+    )
+    digest_body = {
+        "catalog_id": "tokenshare.paper.catalog",
+        "catalog_version": "v1",
+        "factorization_cases": factorization_cases,
+        "lean_cases": lean_cases,
+        "lean_lemma_graph_cases": lean_lemma_graph_cases,
+    }
+    return PaperInputCatalogManifest(
+        catalog_id="tokenshare.paper.catalog",
+        catalog_version="v1",
+        catalog_digest=digest_json(digest_body),
+        generator_version="budget_json_fixture",
+        case_count=(
+            len(factorization_cases)
+            + len(lean_cases)
+            + len(lean_lemma_graph_cases)
+        ),
+        domain_counts={},
+        difficulty_counts={},
+        paper_difficulty_counts={},
+        topic_family_counts={},
+        paper_difficulty_topic_family_counts={},
+        oracle_validation_status="passed",
+        lean_preflight_status="passed",
+        lean_preflight_summary={},
+        lean_lemma_graph_preflight_summary={},
+        created_at="2026-07-20T00:00:00Z",
+        source_files=[],
+        factorization_cases=factorization_cases,
+        lean_cases=lean_cases,
+        lean_lemma_graph_cases=lean_lemma_graph_cases,
+    )
+
+
+def _read_jsonl(path: Path) -> list[dict]:
+    return [
+        json.loads(line)
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
 
 
 def test_plan_only_budget_expands_conditions_without_provider_calls() -> None:
@@ -110,6 +180,40 @@ def test_budget_approval_requires_matching_digest() -> None:
             token_upper_bound_per_provider_attempt=100,
             cost_upper_bound_per_provider_attempt=0.01,
             plan_only=False,
+            approve_budget_digest="sha256:" + "0" * 64,
+        )
+
+
+def test_budget_approval_can_be_bypassed_without_changing_budget_identity() -> None:
+    catalog = _raw_paper_catalog_manifest()
+    conditions = _sample_conditions(catalog.catalog_digest)
+    plan_kwargs = {
+        "catalog_manifest": catalog,
+        "conditions": conditions,
+        "max_provider_attempts_per_ai_unit": 1,
+        "token_upper_bound_per_provider_attempt": 100,
+        "cost_upper_bound_per_provider_attempt": 0.01,
+    }
+    planned = plan_paper_suite(**plan_kwargs, plan_only=True)
+    bypassed = plan_paper_suite(
+        **plan_kwargs,
+        plan_only=False,
+        budget_approval_required=False,
+    )
+
+    assert bypassed.budget_digest == planned.budget_digest
+    assert bypassed.quota_preflight["budget_approval"] == {
+        "approval_required": False,
+        "approval_mode": "user_bypassed",
+        "authorization_source": "project_policy",
+        "budget_digest": bypassed.budget_digest,
+        "provided_approval_digest": None,
+    }
+    with pytest.raises(PaperBudgetApprovalError, match="budget digest mismatch"):
+        plan_paper_suite(
+            **plan_kwargs,
+            plan_only=False,
+            budget_approval_required=False,
             approve_budget_digest="sha256:" + "0" * 64,
         )
 
@@ -204,6 +308,80 @@ def test_budget_digest_covers_gate_c_execution_commitments() -> None:
         },
     )
     assert all(plan(**drift).budget_digest != baseline.budget_digest for drift in drifts)
+
+
+def test_budget_digest_uses_stable_lean_matrix_identity() -> None:
+    catalog = load_paper_catalogs(
+        factorization_path=Path("benchmarks/paper/factorization_catalog.v1.jsonl"),
+        lean_path=Path("benchmarks/paper/lean_catalog.v1.jsonl"),
+    )
+    conditions = _sample_conditions(catalog.catalog_digest)
+    matrix = {
+        "schema_version": "tokenshare.lean_3x3_matrix_plan.v1",
+        "catalog_digest": catalog.catalog_digest,
+        "matrix_digest": "sha256:" + "1" * 64,
+        "environment_digest": "sha256:" + "2" * 64,
+        "oracle_package_digests": ["sha256:" + "3" * 64],
+        "target_case_count": 15,
+        "task15_budget_input": {
+            "selection_digest": "sha256:" + "4" * 64,
+            "selected_case_ids_by_cell": {
+                "simple/pure_logic": ["lean_case_01"],
+            },
+        },
+        "cells": [
+            {
+                "paper_difficulty": "simple",
+                "topic_family": "pure_logic",
+                "golden_evidence_by_case_id": {
+                    "lean_case_01": {
+                        "root_checker_report_ref": {
+                            "content_hash": "sha256:" + "5" * 64,
+                        },
+                    },
+                },
+            },
+        ],
+    }
+
+    def plan(lean_matrix):
+        return plan_paper_suite(
+            catalog_manifest=catalog,
+            conditions=conditions,
+            max_provider_attempts_per_ai_unit=1,
+            token_upper_bound_per_provider_attempt=1024,
+            cost_upper_bound_per_provider_attempt=0.01,
+            plan_only=True,
+            lean_3x3_matrix=lean_matrix,
+        )
+
+    baseline = plan(matrix)
+    refreshed_evidence = {
+        **matrix,
+        "cells": [
+            {
+                **matrix["cells"][0],
+                "golden_evidence_by_case_id": {
+                    "lean_case_01": {
+                        "root_checker_report_ref": {
+                            "content_hash": "sha256:" + "6" * 64,
+                        },
+                    },
+                },
+            },
+        ],
+    }
+    changed_matrix = {
+        **refreshed_evidence,
+        "matrix_digest": "sha256:" + "7" * 64,
+    }
+
+    assert plan(refreshed_evidence).budget_digest == baseline.budget_digest
+    assert plan(changed_matrix).budget_digest != baseline.budget_digest
+    assert (
+        plan(refreshed_evidence).quota_preflight["lean_3x3_matrix"]
+        == refreshed_evidence
+    )
 
 
 def test_exp5_source_config_drift_changes_budget_and_invalidates_old_approval() -> None:
@@ -477,6 +655,32 @@ def test_exp1_minimal_pilot_budget_uses_frozen_case_order_and_real_request_profi
     assert blocked["provider_attempt_upper_bound"] == 0
     assert blocked["token_upper_bound"] == 0
     assert blocked["cost_upper_bound"] == 0.0
+
+
+def test_exp1_pilot_budget_bypass_records_policy_without_digest_drift() -> None:
+    catalog = _raw_paper_catalog_manifest()
+    profile = load_exp1_pilot_profile(
+        Path("benchmarks/paper/exp1_minimal_pilot_profile.v1.json")
+    )
+    planned = plan_exp1_pilot(
+        catalog_manifest=catalog,
+        pilot_profile=profile,
+        plan_only=True,
+    )
+    bypassed = plan_exp1_pilot(
+        catalog_manifest=catalog,
+        pilot_profile=profile,
+        plan_only=False,
+        budget_approval_required=False,
+    )
+
+    assert bypassed.budget_digest == planned.budget_digest
+    assert bypassed.quota_preflight["budget_approval"]["approval_mode"] == (
+        "user_bypassed"
+    )
+    assert bypassed.quota_preflight["exp1_pilot"]["approval_status"] == (
+        "user_bypassed"
+    )
 
 
 def test_exp1_pilot_budget_digest_is_stable_and_invalidates_drifted_approval(

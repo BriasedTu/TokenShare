@@ -20,13 +20,13 @@
 
 本版固定以下一致性决议：
 
-1.  Experiment 1 正式输入固定为 30 个 Factorization roots（每档 10 个）和 135 个 Lean roots（3 个 `paper_difficulty` × 3 个 `topic_family` × 每格恰好 15 个），合计 165 个唯一 roots；每题 3 次 repeat，共 495 个 root-runs。每格 15 道是冻结的正式样本量，不再使用“10–20 道”区间，也不得从完整矩阵中临时抽 10 道冒充正式 Experiment 1。
+1.  Experiment 1 正式输入固定为 500 个 Factorization roots（easy/medium/hard=`167/167/166`）和 135 个 Lean roots（3 个 `paper_difficulty` × 3 个 `topic_family` × 每格恰好 15 个），合计 635 个唯一 roots；每题 3 次 repeat，共 1,905 个 root-runs。500 个 Factorization roots 和每格 15 道 Lean 都是冻结的正式样本量，不得临时抽样冒充正式 Experiment 1。
 
-2.  Experiment 2 P0-core scaling 使用两个 domain、三个 paper difficulty、每档固定 5-task batch、4 个强制 worker levels（1, 3, 10, 30）和 5 次 repeat，共 600 个 root-runs。factorization 的三档是 easy / medium / hard；Lean 的三档是 simple / medium lemma-DAG / hard-frontier，当前 shallow v1 只能填 simple。Lean 每个 5-task batch 必须覆盖全部三个 `topic_family`，使用预注册的 2/2/1 分层分配：simple=`pure_logic:2,function_set:2,induction:1`，medium=`pure_logic:1,function_set:2,induction:2`，hard=`pure_logic:2,function_set:1,induction:2`；condition manifest 保存具体 task ids 和 slice digest，且同一对比组完全复用。100 和 300 worker levels 是 preflight-gated extension：quota、AI unit 数量和机器资源都满足时运行；不满足时输出 `unsupported_worker_level`，不补造曲线。
+2.  Experiment 2 P0-core scaling 的 Factorization 每个 difficulty condition 使用该档全部 roots（`167/167/166`），Lean 每档仍使用固定 5-task batch；4 个强制 worker levels（1, 3, 10, 30）和 5 次 repeat 合计 10,300 个 root-runs。Lean 每个 5-task batch 必须覆盖全部三个 `topic_family`，使用预注册的 2/2/1 分层分配：simple=`pure_logic:2,function_set:2,induction:1`，medium=`pure_logic:1,function_set:2,induction:2`，hard=`pure_logic:2,function_set:1,induction:2`；condition manifest 保存具体 task ids 和 slice digest，且同一对比组完全复用。100 和 300 worker levels 是 preflight-gated extension：quota、AI unit 数量和机器资源都满足时运行；不满足时输出 `unsupported_worker_level`，不补造曲线。
 
-3.  Experiment 3 的 rate-fault 矩阵只包含 5 类非死亡故障：`false_positive`、`false_negative`、`no_return`、`late_submission`、`executor_error`。`worker_death` 永远单独进入 worker-death 矩阵，避免被 rate-fault 统计重复计算。worker-death P0 固定 `worker_count=10`、`dead_worker_count ∈ {1,3}` 和 25% / 50% / 75% 三个 kill positions。
+3.  Experiment 3 的 rate-fault 矩阵只包含 5 类非死亡故障：`false_positive`、`false_negative`、`no_return`、`late_submission`、`executor_error`。Factorization rate-fault condition 使用全部 500 roots；`worker_death` 永远单独进入 worker-death 矩阵，Factorization worker-death condition 按 difficulty 使用 `167/167/166`，每组 death-count/kill-position/repeat 的三档并集为全部 500 roots。worker-death P0 固定 `worker_count=10`、`dead_worker_count ∈ {1,3}` 和 25% / 50% / 75% 三个 kill positions。rate-fault 共 52,680 root-runs，worker-death 共 9,054，Experiment 3 合计 61,734。
 
-4.  Experiment 4 P0-core ablation 使用每个 domain / paper difficulty 固定 5 个 tasks、6 个模式和 3 次 repeat，共 540 个 root-runs。Lean slice 同样使用预注册的 2/2/1 topic-family 分层分配。旧的 3-task 数字不再作为正式 P0 口径；若 Lean medium lemma-DAG / hard-frontier catalog 未完成，Lean 对应难度的 ablation claim 必须 blocked 或降级。
+4.  Experiment 4 P0-core ablation 的 Factorization 每个 difficulty 使用全部 `167/167/166` roots，Lean 每档使用固定 5-task 2/2/1 slice；6 个模式和 3 次 repeat 共 9,270 个 root-runs。旧的 3-task/5-task Factorization 子样本不再作为正式 P0 口径。
 
 5.  Experiment 5 改为预注册的三模型 model-provider endpoint comparison：SiliconFlow `zai-org/GLM-5.2`、SiliconFlow `Qwen/Qwen3.6-27B`、OpenAI `gpt-5.6-sol` with `reasoning_effort=high`。三个真实 entry、provider transport、reasoning profile 和 smoke evidence 都可用时纳入 P0-full；缺少任一 cohort member 时输出结构化 `blocked`，不算协议失败，也不影响 Experiment 1-4 的主张。
 
@@ -121,9 +121,9 @@ Experiment 1–4 的模型控制变量不是运行时任选值：必须解析到
 
 # 输入 catalog 与难度定义
 
-## Factorization catalog v1
+## Factorization catalog v2
 
-新建并冻结 `benchmarks/paper/factorization_catalog.v1.jsonl`。主实验使用 30 个 root tasks，每档 10 个；另保留现有 500 输入作为 appendix/model-quality sanity check，不作为协议主结果。
+冻结 `benchmarks/paper/factorization_catalog.v2.jsonl` 作为论文 CLI 默认 Factorization catalog，共 500 个 root tasks，easy/medium/hard=`167/167/166`，目标整数覆盖 `[1_000_000,100_000_000_000)` 且每档覆盖 10^6 至 10^10 数量级。`factorization_catalog.v1.jsonl` 的 30 题只保留为历史回归输入，不进入新的正式矩阵。
 
 factorization 难度不用十进制位数单独定义，而用插件实际搜索工作量定义：
 
@@ -181,7 +181,7 @@ medium lemma-DAG / hard-frontier catalog 每行至少包含：`case_id,paper_dif
 |:---|:---|
 | domains | `factorization`, `lean_proof` |
 | paper difficulty | factorization 使用 easy / medium / hard；Lean 使用 simple / medium lemma-DAG / hard-frontier 三档 |
-| tasks | Factorization 每个 difficulty 10 个，共 30 个；Lean 每个 `(paper_difficulty,topic_family)` 15 个，共 135 个；合计 165 个唯一 root tasks。若任一 Lean cell 未达到 15 个 checker-backed cases，正式 Experiment 1 不得启动，不得用其他 cell 或 shallow v1 补齐 |
+| tasks | Factorization easy/medium/hard=`167/167/166`，共 500 个；Lean 每个 `(paper_difficulty,topic_family)` 15 个，共 135 个；合计 635 个唯一 root tasks。若任一 Lean cell 未达到 15 个 checker-backed cases，正式 Experiment 1 不得启动，不得用其他 cell 或 shallow v1 补齐 |
 | repeats | 论文 run 每个 task 3 次；pilot 只跑 1 次且不进入主表 |
 | worker count | 固定 10；若 provider preflight 不允许 10，并发改为可用上限且整个实验保持一致 |
 | model | 固定 SiliconFlow `zai-org/GLM-5.2`，entry id `glm_5_2_exp1_baseline`，`temperature=0.0`、`enable_thinking=false`；不得自动替换模型 |
@@ -205,7 +205,7 @@ TokenShare 的关键价值主张之一是把可拆任务分派给多个 worker�
 
 强制 worker levels 为 `1, 3, 10, 30`。`100, 300` 是扩展点：只有当输入至少产生相同数量的可运行 AI units、provider quota preflight 通过、没有把线程数冒充逻辑 worker 数时才运行。否则报告 `unsupported_worker_level`，不能补造曲线。
 
-每个 worker level 在每个 domain 的每个 paper difficulty 各取固定 5-task batch：factorization 使用 easy / medium / hard；Lean 使用 simple / medium lemma-DAG / hard-frontier，并在每档按预注册的 2/2/1 分配覆盖 `pure_logic/function_set/induction`，当前 shallow v1 不得冒充 Lean medium / hard-frontier。所有 batch 使用完全相同的 catalog digest、任务顺序集合、SiliconFlow `zai-org/GLM-5.2` baseline、prompt、timeout 和 seed family，重复 5 次；时间比较报告 median 和 IQR。factorization 主 scaling case 必须是同一 root 内的 range children 并行，不得用当前 direct 500 中“多个独立整数同时跑”替代。Lean scaling 同时报告 root throughput、child-proof throughput 和 lemma-DAG critical path。
+每个 worker level 的 Factorization easy / medium / hard condition 分别使用冻结的全部 `167/167/166` roots；Lean simple / medium lemma-DAG / hard-frontier 每档仍使用预注册 5-task 2/2/1 slice。所有 comparison group 使用完全相同的 catalog digest、任务顺序集合、SiliconFlow `zai-org/GLM-5.2` baseline、prompt、timeout 和 seed family，重复 5 次；时间比较报告 median 和 IQR。每个 Factorization root 都必须测试同一 root 内的 range children 并行，不得把多个独立整数当成一个 root 的并行。Lean scaling 同时报告 root throughput、child-proof throughput 和 lemma-DAG critical path。
 
 ## 输出与公式
 
@@ -285,7 +285,7 @@ actual token 只来自 provider usage。注入变换的 synthetic work 另写 `s
 | NO_MERGE_GATE | required slots 未齐时允许 merge 尝试 | premature merge、root checker/merge failure。 |
 | NO_SLOT_INTEGRITY | child output 可绑定到错误 slot | slot mismatch acceptance 和错误 merge 风险。 |
 
-每个 domain 从三档 paper difficulty 各取固定 5 个 tasks；Lean 每档按预注册的 2/2/1 分层 slice 覆盖三个 topic families。所有模式重复 3 次，并固定使用 SiliconFlow `zai-org/GLM-5.2` / `glm_5_2_exp1_baseline`。报告 completion、accepted validity、wrong canonical acceptance、raw-only acceptance、stuck task、premature merge、slot mismatch、time、token 和 cost。消融实现必须在实验 wrapper/adapter 中，不修改协议 core 的默认 FULL 语义。
+Factorization 三档分别使用全部 `167/167/166` roots；Lean 每档按预注册的 2/2/1 分层固定 5-task slice 覆盖三个 topic families。所有模式重复 3 次，并固定使用 SiliconFlow `zai-org/GLM-5.2` / `glm_5_2_exp1_baseline`。报告 completion、accepted validity、wrong canonical acceptance、raw-only acceptance、stuck task、premature merge、slot mismatch、time、token 和 cost。消融实现必须在实验 wrapper/adapter 中，不修改协议 core 的默认 FULL 语义。
 
 消融还必须输出 `exposed_error_count,escaped_error_count,error_escape_rate,error_escape_applicability`。其中 `exposed_error_count` 是到达被关闭机制、且 FULL 模式本应拒绝或隔离的无效候选/不完整状态数量；`escaped_error_count` 是这些对象中继续进入 canonical、merge 或被错误标记为 terminal success 的数量；`error_escape_rate = escaped_error_count / exposed_error_count`。若某 mode 没有可适用的 gate（例如 NO_REQUEUE 主要观察 stuck/completion）或分母为 0，rate 写 `null`，并把 applicability 写为 `not_applicable` 或 `zero_denominator`，不得用 0 假装“没有逃逸”。
 
@@ -309,7 +309,7 @@ actual token 只来自 provider usage。注入变换的 synthetic work 另写 `s
 
 ## 设计与输出
 
-使用 Experiment 1 catalog slice，每个 domain / paper difficulty 固定 5 个 tasks；Lean 使用与 Experiment 2/4 相同的预注册 2/2/1 topic-family 分层和 task ids。三个 cohort member 各自作为 `model_policy="fixed_entry"` 的独立 condition，使用相同 task order、prompt/parser/plugin version、worker count、timeout、request-limit policy 和 repeat/seed family，每个 condition 重复 3 次。AI unit 在整个首次/恢复 attempt 链中保持同一 cohort member，不按 difficulty 换模型，也不在失败后升级到另一个模型。
+使用 Experiment 1 的完整 catalog：Factorization 三档分别使用全部 `167/167/166` roots，Lean 使用与 Experiment 2/4 相同的预注册 2/2/1 固定 5-task slice。三个 cohort member 各自作为 `model_policy="fixed_entry"` 的独立 condition，使用相同 task order、prompt/parser/plugin version、worker count、timeout、request-limit policy 和 repeat/seed family，每个 condition 重复 3 次。AI unit 在整个首次/恢复 attempt 链中保持同一 cohort member，不按 difficulty 换模型，也不在失败后升级到另一个模型。
 
 输出 completion、accepted validity、tokens、cost、latency、provider errors、recovery attempts 和 `model_execution_records`。运行时首先为每个正式 AI unit 保存 `tokenshare.paper_model_execution_record.v2` identity artifact；正式 runner/report 再把该 artifact 与 `PaperAttemptResult` / usage evidence 连接成 `model_execution_records.jsonl`，补齐 `model_policy,latency_ms,total_tokens,cost_estimate` 等统计列。历史 v1 artifact 不重写，新 reader 必须按 schema version 保守读取。论文以 completion / accepted validity 作为主要跨端点结果；latency、cost 和 rate-limit 结果必须按 provider 分层或标注 provider confounding。
 
@@ -477,18 +477,18 @@ CLI exit code 固定为：0 表示 runner 正常结束或按预算上限结构�
 
 # API、时间、token、成本和人工投入
 
-正式 P0 的最小执行规模固定如下；agent 不得自行扩大，扩大前必须重新生成预算并由用户批准：
+正式 P0 的执行规模固定如下；不得自行缩小。运行前必须重新生成并记录预算 digest 和硬上限，但当前本地研究原型默认不要求人工批准 digest：
 
 | 实验 | 最小正式规模 | root-run 数量 |
 |---|---:|---:|
-| Experiment 1 | Factorization: 3 difficulties × 10 tasks；Lean: 3 difficulties × 3 topic families × 15 tasks；共 165 unique roots × 3 repeats | 495 |
-| Experiment 2 | 2 domains × 3 difficulties × 每档固定 5-task batch × 4 worker levels × 5 repeats | 600 |
-| Experiment 3 rate faults | Factorization: 5 tasks × 5 fault types × 7 rates × 3 repeats；Lean: 3 tasks × 5 fault types × 4 rates × 3 repeats | 705 |
-| Experiment 3 worker death | 2 domains × 3 tasks × 2 death counts（1/3）× 3 kill positions × 3 repeats | 108 |
-| Experiment 4 | 2 domains × 3 difficulties × 5 tasks × 6 modes × 3 repeats | 540 |
-| Experiment 5（三模型 cohort 完整时纳入 P0-full） | 2 domains × 3 difficulties × 5 tasks × 3 fixed model-provider endpoints × 3 repeats | 270 |
+| Experiment 1 | Factorization 500 + Lean 135 = 635 unique roots × 3 repeats | 1,905 |
+| Experiment 2 | Factorization 500 × 4 worker levels × 5 repeats；Lean 15 × 4 × 5 | 10,300 |
+| Experiment 3 rate faults | Factorization 500 × 5 fault types × 7 rates × 3 repeats；Lean 3 × 5 × 4 × 3 | 52,680 |
+| Experiment 3 worker death | Factorization 三档并集 500 × 2 death counts × 3 kill positions × 3 repeats；Lean 3 × 2 × 3 × 3 | 9,054 |
+| Experiment 4 | Factorization 500 × 6 modes × 3 repeats；Lean 15 × 6 × 3 | 9,270 |
+| Experiment 5（三模型 cohort 完整时纳入 P0-full） | (Factorization 500 + Lean 15) × 3 endpoints × 3 repeats | 4,635 |
 
-P0-core（Experiment 1-4）合计 2448 个 root-runs；P0-full（Experiment 1-5 且三模型 cohort / provider preflight 通过）合计 2718 个 root-runs。100 / 300 worker extension 若 preflight 通过，最多额外增加 300 个 root-runs，并必须在 suite manifest 中标记为 extension，不并入 P0-core 或 P0-full 主统计。root-run 数量不等于 provider calls。Factorization root 可能拆成多个 range AI units，Lean root 可能拆成多个 proof AI units；真实 provider-attempt 上界必须由 split preflight 精确展开。若预算上限无法覆盖计划，runner 写 `budget_exhausted` 并停止启动新 task；不得静默减少样本、删 mode、删 difficulty、删 topic family 或把 Lean 每格 15 道减为子样本。任何缩小矩阵都必须作为新的用户批准 suite version 记录。
+P0-core（Experiment 1-4）合计 83,209 个 root-runs；P0-full（Experiment 1-5 且三模型 cohort / provider preflight 通过）合计 87,844 个 root-runs。100 / 300 worker extension 必须在 suite manifest 中标记为 extension，不并入 P0-core 或 P0-full 主统计。root-run 数量不等于 provider calls。Factorization root 可能拆成多个 range AI units，Lean root 可能拆成多个 proof AI units；真实 provider-attempt 上界必须由 split preflight 精确展开。若预算上限无法覆盖计划，runner 写 `budget_exhausted` 并停止启动新 task；不得静默减少样本、删 mode、删 difficulty、删 topic family 或把 Lean 每格 15 道减为子样本。
 
 ## 运行前预算门禁
 
@@ -499,7 +499,7 @@ N_{calls}^{max}=\sum_{conditions}\sum_{tasks}
   N_{AI\ units}(task)\times repeats\times maxProviderAttempts
 ```
 
-预算文件至少包含 planned root tasks、AI units、provider attempts 上界、token 上界、cost estimate 上界、预计 wall-clock、provider/model、并发、quota/rate-limit preflight 和磁盘空间估计。正式运行需要显式 `--approve-budget-digest`，避免配置变化后误花费。
+预算文件至少包含 planned root tasks、AI units、provider attempts 上界、token 上界、cost estimate 上界、预计 wall-clock、provider/model、并发、quota/rate-limit preflight 和磁盘空间估计。CLI 默认使用 `approval_mode=user_bypassed` 直接执行，同时记录 budget digest、`authorization_source=project_policy` 和实际 usage；如需恢复旧的人工门禁，显式传 `--require-budget-approval`，此时才要求匹配的 `--approve-budget-digest`。即使 bypass，任何显式提供但不匹配的 digest 仍必须在 transport 前拒绝。
 
 CLI 必须支持 `--max-total-provider-attempts`、`--max-total-tokens`、`--max-cost-estimate` 和 `--stop-after-current-task`。超过任一上限时写结构化 `budget_exhausted`，不启动新 task；已完成 evidence 保留。
 
@@ -523,7 +523,8 @@ CLI 必须支持 `--max-total-provider-attempts`、`--max-total-tokens`、`--max
 
 | 文件 | 职责 |
 |:---|:---|
-| `benchmarks/paper/factorization_catalog.v1.jsonl` | 冻结的 factorization 30-task catalog。 |
+| `benchmarks/paper/factorization_catalog.v2.jsonl` | 正式默认的 factorization 500-task catalog，easy/medium/hard=`167/167/166`。 |
+| `benchmarks/paper/factorization_catalog.v1.jsonl` | 历史 30-task 回归 catalog，不进入新正式矩阵。 |
 | `benchmarks/paper/lean_catalog.v1.jsonl` | 冻结的 Lean simple/shallow 30-task catalog；历史 easy/medium/hard 只保留为 shallow-v1 标签。 |
 | `benchmarks/paper/lean_lemma_graph_catalog.v1.jsonl` 或 `benchmarks/paper/lean_catalog.v2.jsonl` | 后续必须新增的 medium recursive lemma-DAG / hard-frontier catalog，用于正式 Lean 复杂度主张。 |
 | `src/tokenshare/experiments/paper_models.py` | `PaperExperimentCondition`、`PaperModelExecutionRecord`、budget、fault record、paper eligibility schema 和 digest。 |
@@ -557,7 +558,7 @@ CLI 必须支持 `--max-total-provider-attempts`、`--max-total-tokens`、`--max
 
 ## 实施顺序与测试
 
-1.  先写 paper model/catalog/budget 的失败测试，验证 digest、难度字段、30+30 catalog、plan-only 和 budget approval。
+1.  先写 paper model/catalog/budget 的失败测试，验证 digest、500 题 Factorization v2、v1 严格回归、plan-only、预算记录和可选人工 approval policy。
 
 2.  实现真实 API paper eligibility gate；测试 scripted/fake/deterministic run 必须被拒绝为论文结果。
 

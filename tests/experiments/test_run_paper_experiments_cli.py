@@ -49,7 +49,10 @@ def test_paper_cli_plan_only_writes_budget_and_suite_manifest(tmp_path: Path) ->
     assert suite["paper_eligible"] is False
     assert budget["planned_experiments"] == ["exp1_real_ai_feasibility"]
     assert budget["quota_preflight"]["provider_calls_made"] == 0
-    assert budget["planned_root_runs"] == 495
+    assert budget["planned_root_runs"] == 1_905
+    assert budget["planned_ai_units"] == 8_700
+    assert budget["token_upper_bound"] == 142_540_800
+    assert budget["cost_upper_bound"] == pytest.approx(435.0)
     dispatch = json.loads(
         (tmp_path / "paper_dispatch_plans.json").read_text(encoding="utf-8")
     )
@@ -217,6 +220,7 @@ def test_paper_cli_requires_budget_digest_for_formal_run(tmp_path: Path) -> None
             "--experiments",
             "exp1",
             "--real-transport",
+            "--require-budget-approval",
         ]
     )
 

@@ -21,7 +21,7 @@ Gate B 通过并形成 checkpoint 后，可并发启动 Prompt C–G：
 - Prompt F：Experiment 4 ablation module。
 - Prompt G：Experiment 5 endpoint comparison module。
 
-五个模块与 Task 14 semantic repair 都通过审核后，串行执行 Prompt H 集成。之后按 Prompt I–M 的顺序逐个完成 plan-only、预算批准、pilot 和正式实验。最后执行 Prompt N 联合审计。
+五个模块与 Task 14 semantic repair 都通过审核后，串行执行 Prompt H 集成。之后按 Prompt I–M 的顺序逐个完成 plan-only、预算记录、pilot 和正式实验；本地原型默认 `approval_mode=user_bypassed`，只有显式 `--require-budget-approval` 才要求人工 digest。最后执行 Prompt N 联合审计。
 
 如果并发槽不足，优先顺序为 A + B，然后 C/D/E，再 F/G。任何并发开发 prompt 都不授权真实 API 调用。
 
@@ -136,9 +136,9 @@ Gate B 通过并形成 checkpoint 后，可并发启动 Prompt C–G：
 
     实现 Gate B 的四个入口。冻结正式矩阵：
 
-    - Factorization：easy/medium/hard 各 10 roots，共 30。
+    - Factorization：easy/medium/hard=`167/167/166`，共 500，全部进入正式矩阵。
     - Lean：simple/medium_lemma_dag/hard_frontier × pure_logic/function_set/induction，每格 15，共 135。
-    - 合计 165 unique roots，3 repeats，495 root-runs。
+    - 合计 635 unique roots，3 repeats，1,905 root-runs。
     - worker_count=10；model 固定 SiliconFlow zai-org/GLM-5.2、entry glm_5_2_exp1_baseline、temperature=0.0、enable_thinking=false。
     - fault=none，ablation=FULL。
 
@@ -146,7 +146,7 @@ Gate B 通过并形成 checkpoint 后，可并发启动 Prompt C–G：
 
     summary 输入/输出至少覆盖 per domain/paper_difficulty/topic_family 的 case_count、completion、accepted_validity、wall-clock median/P90、tokens median/P90、cost per completed task、failure breakdown，以及 highest_observed_valid_completion_difficulty。不要在模块内写 CSV；返回规范 rows 供 integration owner 汇总。
 
-    RED 覆盖 165/495 算术、缺任一 Lean cell、重复 root、model drift、repeat/order drift、pilot/formal 混入、scripted evidence paper eligibility。GREEN 后运行 owned tests、contracts tests、paper budget/models impact tests和完整 init.ps1。只提交 owned files。
+    RED 覆盖 635/1,905 算术、缺任一 Lean cell、重复 root、model drift、repeat/order drift、pilot/formal 混入、scripted evidence paper eligibility。GREEN 后运行 owned tests、contracts tests、paper budget/models impact tests和完整 init.ps1。只提交 owned files。
 
 ## Prompt D：Experiment 2 scalability module
 
@@ -160,7 +160,7 @@ Gate B 通过并形成 checkpoint 后，可并发启动 Prompt C–G：
     冻结：
 
     - 强制 worker levels 1、3、10、30；100、300 只有 AI-unit 数、quota 和真实 worker preflight 都满足时才支持，否则输出 unsupported_worker_level。
-    - 2 domains × 3 difficulties × 5-task batch × 4 worker levels × 5 repeats = 600 root-runs。
+    - Factorization 三档分别使用全部 `167/167/166` roots，Lean 三档各 5-task；4 worker levels × 5 repeats = 10,300 root-runs。
     - Lean 5-task slice：simple 2/2/1、medium 1/2/2、hard 2/1/2，具体 task IDs 和 selection digest 在所有 worker/repeat 间完全相同。
     - Factorization 必须测同一 root 内 range children 并行，不得把多个独立整数冒充同一 root scaling。
     - Exp1–4 baseline model identity固定为 GLM-5.2 entry，不随 worker level 改变。
@@ -181,16 +181,16 @@ Gate B 通过并形成 checkpoint 后，可并发启动 Prompt C–G：
     Rate-fault 冻结：
 
     - fault types：false_positive、false_negative、no_return、late_submission、executor_error。
-    - Factorization rates：0、1、5、10、25、50、100 percent；固定 5 tasks。
+    - Factorization rates：0、1、5、10、25、50、100 percent；每个 condition 固定全部 500 roots。
     - Lean rates：0、10、50、100 percent；固定 3 tasks，pure_logic/function_set/induction 各 1。
     - 每 condition 3 repeats。
-    - root-runs：Factorization 525，Lean 180，合计 705。
+    - root-runs：Factorization 52,500，Lean 180，合计 52,680。
     - target IDs 由固定 seed 从 AI units 选择并写 manifest；不同 fault/rate/repeat 不得重抽 task slice。
 
     Worker-death 冻结：
 
     - worker_count=10，dead_worker_count target 为 1 和 3，kill progress target 为 25/50/75 percent。
-    - 2 domains × 3 tasks × 2 death counts × 3 positions × 3 repeats = 108 root-runs。
+    - Factorization 按 difficulty 使用 `167/167/166`，每组 death-count/position/repeat 的三档并集为 500；Lean 三个 topic 各 1。合计 9,054 root-runs。
     - coordinator 必须继续；实际终止的是独立 executor worker process。
     - actual dead count 不等于 target 时 run failed，不能并入该 condition。
 
@@ -198,7 +198,7 @@ Gate B 通过并形成 checkpoint 后，可并发启动 Prompt C–G：
 
     输出结构至少包含 original/mutated refs、matched_baseline_condition_id、detection/false-accept/recovery/completion、recovery latency、retry/reassignment、wasted actual tokens、wall-clock/token/cost overhead；worker death 另含 actual dead count、target/actual kill progress、coordinator_continued、required/recovered slots、completeness、root_output_complete、accepted_validity。零 baseline 分母返回 null + zero_baseline_denominator，不得产生 NaN/Infinity。synthetic mutation 不得伪造 tokens。
 
-    RED 覆盖 705/108 算术、fault injection 早于 raw persistence、baseline 不匹配、actual dead count 不符、错误分母、model failover、slice drift 和 scripted eligibility。GREEN 后运行 owned tests、contracts、现有 fault/worker tests和完整 init.ps1。只提交 owned files。
+    RED 覆盖 52,680/9,054/61,734 算术、fault injection 早于 raw persistence、baseline 不匹配、actual dead count 不符、错误分母、model failover、slice drift 和 scripted eligibility。GREEN 后运行 owned tests、contracts、现有 fault/worker tests和完整 init.ps1。只提交 owned files。
 
 ## Prompt F：Experiment 4 ablation module
 
@@ -209,7 +209,7 @@ Gate B 通过并形成 checkpoint 后，可并发启动 Prompt C–G：
     - src/tokenshare/experiments/paper_exp4_ablation_runner.py
     - tests/experiments/test_paper_exp4_ablation_runner.py
 
-    六个模式固定为 FULL、NO_VERIFICATION、NO_PARSER_POLICY、NO_REQUEUE、NO_MERGE_GATE、NO_SLOT_INTEGRITY。每个 domain、每个 difficulty 固定 5 tasks；Lean 使用与 Exp2/5 完全相同的 2/2/1 exact slices；6 modes × 3 repeats，共 540 root-runs。所有模式固定 GLM-5.2 entry。
+    六个模式固定为 FULL、NO_VERIFICATION、NO_PARSER_POLICY、NO_REQUEUE、NO_MERGE_GATE、NO_SLOT_INTEGRITY。Factorization 三档分别使用全部 `167/167/166` roots；Lean 使用与 Exp2/5 完全相同的 2/2/1 五题 slices；6 modes × 3 repeats，共 9,270 root-runs。所有模式固定 GLM-5.2 entry。
 
     每个 mode 使用独立 output root；模块返回 mode-specific wrapper/config，不修改协议默认配置。summary 至少覆盖 completion、accepted validity、wrong canonical acceptance、raw-only acceptance、stuck task、premature merge、slot mismatch、wall-clock、tokens、cost。
 
@@ -220,7 +220,7 @@ Gate B 通过并形成 checkpoint 后，可并发启动 Prompt C–G：
     - error_escape_rate=escaped/exposed。
     - 不适用或 exposed=0 时 rate=null，applicability 分别为 not_applicable 或 zero_denominator；不得用 0 伪装。
 
-    RED 覆盖 mode 之间 output root 污染、FULL 默认语义被改、slice/model drift、540 算术、错误 denominator、NO_REQUEUE 被伪报 0 escape、scripted eligibility。GREEN 后运行 owned tests、contracts、现有 ablation tests和完整 init.ps1。只提交 owned files。
+    RED 覆盖 mode 之间 output root 污染、FULL 默认语义被改、slice/model drift、9,270 算术、错误 denominator、NO_REQUEUE 被伪报 0 escape、scripted eligibility。GREEN 后运行 owned tests、contracts、现有 ablation tests和完整 init.ps1。只提交 owned files。
 
 ## Prompt G：Experiment 5 endpoint comparison module
 
@@ -237,13 +237,13 @@ Gate B 通过并形成 checkpoint 后，可并发启动 Prompt C–G：
     - qwen3_6_27b_siliconflow：SiliconFlow，Qwen/Qwen3.6-27B。
     - gpt_5_6_sol_high_openai：OpenAI，gpt-5.6-sol，reasoning_effort=high。
 
-    不使用 strong/weak/mixed 标签。每个 domain/difficulty 固定 5 tasks；Lean 与 Exp2/4 复用完全相同 2/2/1 task IDs；3 endpoints × 3 repeats，共 270 root-runs。首次/恢复链保持同一 fixed entry，不得失败后换 endpoint。
+    不使用 strong/weak/mixed 标签。Factorization 三档分别使用全部 `167/167/166` roots；Lean 与 Exp2/4 复用完全相同 2/2/1 五题 IDs；3 endpoints × 3 repeats，共 4,635 root-runs。首次/恢复链保持同一 fixed entry，不得失败后换 endpoint。
 
     formal expansion 必须要求完整三成员 cohort、provider_config_id + selected_entry_id、cohort digest、source config digest、endpoint identity digest 和 reasoning controls。缺任一 member 时整个 formal Exp5 structured blocked，reason=incomplete_model_cohort，attempt count=0；单成员只能 pilot_only。
 
     返回 model_execution_records join 所需字段：condition/task/unit/attempt identity、configured/requested/resolved model、response model status、source/prepared config digests、reasoning controls、latency/tokens/cost、provider errors、paper eligibility。resolved model 只能来自持久化 raw response，缺失或 mismatch 必须保留稳定 failure reason，不得从 config/request 回填。
 
-    RED 覆盖 270 算术、cohort 不完整、entry namespace 冲突、reasoning drift、source config drift、resolved model 缺失/mismatch、endpoint failover、slice drift、v1 artifact 保守读取和 scripted eligibility。GREEN 后运行 owned tests、contracts、model identity/policy/executor transport impact tests和完整 init.ps1。只提交 owned files。
+    RED 覆盖 4,635 算术、cohort 不完整、entry namespace 冲突、reasoning drift、source config drift、resolved model 缺失/mismatch、endpoint failover、slice drift、v1 artifact 保守读取和 scripted eligibility。GREEN 后运行 owned tests、contracts、model identity/policy/executor transport impact tests和完整 init.ps1。只提交 owned files。
 
 ## Prompt H：Gate C 串行集成
 
@@ -275,54 +275,56 @@ Gate B 通过并形成 checkpoint 后，可并发启动 Prompt C–G：
 
     若 Task 14 semantic repair 尚未通过，可以完成代码集成，但正式 Lean selections、formal budget 和 provider path 必须保持 semantic_blocked。不得沿用旧 480-AI-unit digest。
 
+    Factorization 正式 catalog 固定为 v2 的 500 roots，所有 Exp1–5 适用矩阵必须使用完整 difficulty slice。冻结 root-runs 为 Exp1=1,905、Exp2=10,300、Exp3=61,734、Exp4=9,270、Exp5=4,635，P0-core=83,209，P0-full=87,844。CLI 默认免人工预算批准，但必须记录 budget digest、估算/实际 usage 和 `approval_mode=user_bypassed`；显式错误 digest 仍在 transport 前拒绝。
+
     增加跨实验 contract/integration tests，运行 tests/experiments、相关 executor/factorization/Lean plugin suites、compileall 和完整 init.ps1。然后更新中文状态文档和 code map，记录仍未调用 provider。请求独立 review，通过后形成 reviewed integration checkpoint。
 
-## Prompt I：Experiment 1 plan、批准、pilot 与 formal run
+## Prompt I：Experiment 1 plan、预算记录、pilot 与 formal run
 
     只执行 Experiment 1。开始前必须确认 Task 14 semantic repair、Gate C、完整 init.ps1 和独立 review 均通过；当前 catalog/selection digests 必须是修复后的新值。
 
     第一阶段只运行 plan-only：
 
-    - 冻结 30 Factorization + 135 Lean = 165 unique roots，3 repeats = 495 root-runs。
+    - 冻结 500 Factorization + 135 Lean = 635 unique roots，3 repeats = 1,905 root-runs。
     - 验证 Lean 九格每格 15 个语义不同、checker-backed roots。
     - 固定 worker_count、GLM-5.2 entry、request profile、seed/order、timeout 和 hard limits。
     - 展开 provider-attempt/token/cost/time/disk 上界，生成 exact budget digest。
     - provider_calls_made 必须为 0。
 
-    输出预算摘要和 digest 后停止，向用户请求对该 exact digest 的明确批准。未批准不得 smoke/pilot/formal。
+    输出预算摘要和 digest，记录 `approval_mode=user_bypassed` 后可直接进入 pilot/formal；只有用户显式要求 `--require-budget-approval` 时才停止等待匹配 digest。
 
-    获得同一任务中的明确批准后：
+    预算记录完成后：
 
     1. 运行最小真实 pilot，pilot_only=true，不进入主表。
     2. 审计 raw/provenance/usage/artifact/event、checker/verifier、resume/replay 零调用和报告行。
-    3. pilot 暴露问题时只修直接问题；任何 catalog/config/condition/limit drift 都使旧批准失效，重新 plan并再次请求批准。
+    3. pilot 暴露问题时只修直接问题；任何 catalog/config/condition/limit drift 都必须重新 plan 并生成新 budget digest。
     4. 在 hard limits 内运行正式 Exp1。
     5. 生成 feasibility rows、difficulty boundary、失败示例和完整 audit。
     6. 运行验证并更新状态，停在 Experiment 2 run 前。
 
-## Prompt J：Experiment 2 plan、批准、pilot 与 formal run
+## Prompt J：Experiment 2 plan、预算记录、pilot 与 formal run
 
-    只执行 Experiment 2，并要求 Experiment 1 已完成审计。先 plan-only 冻结 600 root-runs、worker levels 1/3/10/30、exact 5-task batches、5 repeats、GLM-5.2 identity、request/hard limits和预算 digest。100/300 只做 preflight，条件不满足就输出 unsupported_worker_level。provider_calls_made=0 后停止请求用户批准。
+    只执行 Experiment 2，并要求 Experiment 1 已完成审计。先 plan-only 冻结 10,300 root-runs：Factorization 三档全部 `167/167/166` roots，Lean 三档各 5 题，worker levels 1/3/10/30、5 repeats、GLM-5.2 identity、request/hard limits和预算 digest。100/300 只做 preflight，条件不满足就输出 unsupported_worker_level。记录 `approval_mode=user_bypassed` 后可继续。
 
-    批准后先跑小 pilot，验证真实 worker 并发、同一 root child parallelism、timestamps/dependency critical path、429 记录、output isolation和resume/replay。drift 时重新批准。正式运行后输出 wall-clock、critical path、throughput、speedup、efficiency、tokens/cost、completion、429/retry和限流敏感性分析。验证并更新状态，停在 Experiment 3 run 前。
+    先跑小 pilot，验证真实 worker 并发、同一 root child parallelism、timestamps/dependency critical path、429 记录、output isolation和resume/replay。drift 时重新 plan。正式运行后输出 wall-clock、critical path、throughput、speedup、efficiency、tokens/cost、completion、429/retry和限流敏感性分析。验证并更新状态，停在 Experiment 3 run 前。
 
-## Prompt K：Experiment 3 plan、批准、pilot 与 formal run
+## Prompt K：Experiment 3 plan、预算记录、pilot 与 formal run
 
-    只执行 Experiment 3，并要求 Experiment 2 已完成审计。先 plan-only 冻结 rate-fault 705 root-runs、worker-death 108 root-runs、exact task/AI-unit target IDs、fault rates、death counts、kill positions、matched baselines、GLM-5.2 identity、hard limits和预算 digest。provider_calls_made=0 后停止请求用户批准。
+    只执行 Experiment 3，并要求 Experiment 2 已完成审计。先 plan-only 冻结 rate-fault 52,680 root-runs、worker-death 9,054 root-runs、合计 61,734；同时冻结 exact task/AI-unit target IDs、fault rates、death counts、kill positions、matched baselines、GLM-5.2 identity、hard limits和预算 digest。记录 `approval_mode=user_bypassed` 后可继续。
 
-    批准后 pilot 必须证明 raw output 先落盘再注入、原始/变异 refs 可追踪、replacement attempt 真实调用、独立 worker process 可实际终止且 coordinator 继续。drift 时重新批准。正式运行后输出 detection/false accept/recovery/completion、matched wall-clock/token/cost overhead、actual dead count、target/actual kill progress、reassignment、slot/root completeness、accepted validity，并保留至少一个可恢复和一个不可恢复/代价过高案例。验证并更新状态，停在 Experiment 4 run 前。
+    pilot 必须证明 raw output 先落盘再注入、原始/变异 refs 可追踪、replacement attempt 真实调用、独立 worker process 可实际终止且 coordinator 继续。drift 时重新 plan。正式运行后输出 detection/false accept/recovery/completion、matched wall-clock/token/cost overhead、actual dead count、target/actual kill progress、reassignment、slot/root completeness、accepted validity，并保留至少一个可恢复和一个不可恢复/代价过高案例。验证并更新状态，停在 Experiment 4 run 前。
 
-## Prompt L：Experiment 4 plan、批准、pilot 与 formal run
+## Prompt L：Experiment 4 plan、预算记录、pilot 与 formal run
 
-    只执行 Experiment 4，并要求 Experiment 3 已完成审计。先 plan-only 冻结 540 root-runs、六 modes、exact 5-task slices、3 repeats、独立 output roots、GLM-5.2 identity、hard limits和预算 digest。provider_calls_made=0 后停止请求用户批准。
+    只执行 Experiment 4，并要求 Experiment 3 已完成审计。先 plan-only 冻结 9,270 root-runs、六 modes、Factorization 全部 500 roots、Lean exact 5-task slices、3 repeats、独立 output roots、GLM-5.2 identity、hard limits和预算 digest。记录 `approval_mode=user_bypassed` 后可继续。
 
-    批准后 pilot 验证每个 mode 只关闭一个实验边界、FULL 默认语义未改变、错误 evidence 不跨 output root 污染。drift 时重新批准。正式运行输出 completion/validity、wrong canonical/raw-only/stuck/premature merge/slot mismatch，以及 exposed_error_count、escaped_error_count、error_escape_rate/applicability、time/tokens/cost。验证并更新状态，停在 Experiment 5 run 前。
+    pilot 验证每个 mode 只关闭一个实验边界、FULL 默认语义未改变、错误 evidence 不跨 output root 污染。drift 时重新 plan。正式运行输出 completion/validity、wrong canonical/raw-only/stuck/premature merge/slot mismatch，以及 exposed_error_count、escaped_error_count、error_escape_rate/applicability、time/tokens/cost。验证并更新状态，停在 Experiment 5 run 前。
 
-## Prompt M：Experiment 5 plan、批准、pilot 与 formal run
+## Prompt M：Experiment 5 plan、预算记录、pilot 与 formal run
 
-    只执行 Experiment 5，并要求 Experiment 4 已完成审计。先 plan-only 验证完整三成员 cohort、各 provider config/key env/real smoke、reasoning controls、source/prepared/endpoint/cohort digests、exact shared slices、270 root-runs和hard limits。缺任一 member 时整体 incomplete_model_cohort blocked、零调用；不得用两模型或单模型生成主表。完整时生成预算 digest，provider_calls_made=0 后停止请求用户批准。
+    只执行 Experiment 5，并要求 Experiment 4 已完成审计。先 plan-only 验证完整三成员 cohort、各 provider config/key env/real smoke、reasoning controls、source/prepared/endpoint/cohort digests、Factorization 全部 500 roots、Lean exact shared slices、4,635 root-runs和hard limits。缺任一 member 时整体 incomplete_model_cohort blocked、零调用；不得用两模型或单模型生成主表。完整时生成预算 digest 并记录 `approval_mode=user_bypassed`。
 
-    批准后先分别做最小 endpoint pilot，核对 configured/requested/resolved model、reasoning、usage、latency/cost和identity mismatch stop。任何 config/model/reasoning drift 重新 plan/批准。正式运行后输出 model_execution_records.jsonl 和按 endpoint/provider 分层的 completion、accepted validity、tokens、cost、latency、provider error、recovery，并明确 provider confounding。验证并更新状态，停在联合审计前。
+    先分别做最小 endpoint pilot，核对 configured/requested/resolved model、reasoning、usage、latency/cost和identity mismatch stop。任何 config/model/reasoning drift 重新 plan 并生成新 digest。正式运行后输出 model_execution_records.jsonl 和按 endpoint/provider 分层的 completion、accepted validity、tokens、cost、latency、provider error、recovery，并明确 provider confounding。验证并更新状态，停在联合审计前。
 
 ## Prompt N：五实验联合审计与论文输入
 
