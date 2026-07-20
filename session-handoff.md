@@ -1,6 +1,14 @@
 # Session Handoff
 
-## 2026-07-20 21:08 Gate C provider-error metrics blocker 离线修复（最新）
+## 2026-07-20 21:27 Exp1 v3 无 Lean replay audit（最新）
+
+- 审计本身无需 Lean；但 hard-stop 推荐 CLI 在 replay 前仍加载完整 catalog/Lean matrix，会触发 Lean preflight，并且缺少当前 replay gate 要求的 `--real-transport`。本轮没有执行该包装命令，而是在禁用 external process/network 的环境中运行底层只读 checks。
+- 已通过：Gate C metrics=`2 attempts / 2 provider attempts / 2,388 tokens / USD 0.002741 / 1 verification rejection`；execution-plan digest valid；plan/budget/run digest 三方一致；evidence refs=`11/11`；adapter manifests=`20 scanned / 0 integrity failures`；高置信 key pattern=`56 files / 0 findings`；evidence 前后 hashes 无变化。
+- 未能追溯证明：exact-secret attestation。replay 不得重读 API key，当前 `secret_checked_count=0`，所以只能报告 pattern findings=0，不能声称原 exact-secret scan passed。
+- 完整 replay BLOCKED：缺 `metrics/per_condition_summary.csv`、`audit/paper_eligibility_report.json`、`audit/secret_scan_report.json`、`evidence_manifest.json`；`suite_manifest.json` 已被首次异常处理覆盖为 `paper_v1_blocked`。底层 replay 首个错误为 `replay requires complete Gate C pilot evidence: metrics/per_condition_summary.csv`。
+- 本轮 Lean checker/preflight/init、provider、transport calls=`0/0/0`。继续 formal 前需要独立处理 partial-failure replay recovery；不能在 immutable root 中补造缺失 evidence 后宣称原运行完整通过。
+
+## 2026-07-20 21:08 Gate C provider-error metrics blocker 离线修复（历史上一状态）
 
 - `src/tokenshare/experiments/paper_metrics.py` 已按 attempt outcome 校验 Gate C evidence：`provider_error` 不需要不存在的 raw/parsed/parse-failure，但仍强制索引 request/provenance/usage/model-execution；response attempt 仍强制 raw，`parse_failed` 强制 parse-failure，其他 parsed outcome 强制 parsed output，任何存在的可选 ref 也必须索引。
 - RED 精确复现旧错误，二次 RED 覆盖 identity-mismatch 对 parsed/parse-failure 的 override 边界；最终无 Lean 回归=`59 passed in 49.97s`（outcome/ref 12、Gate C capturing+replay 1、v2 500-root dispatcher 1、通用 paper metrics 45），compileall、feature JSON 和两次 diff check 均 exit 0。现存 v3 evidence 只读复算 exit 0：2 attempts / 2 provider attempts / 2,388 tokens / USD 0.002741 / 1 verification rejection。
