@@ -472,20 +472,24 @@ def _validate_distribution(
 
 
 def _factorization_catalog_profile(cases: tuple[JsonObject, ...]) -> JsonObject:
-    generator_versions = {
-        str(case.get("generator_version"))
-        for case in cases
-        if case.get("generator_version") is not None
-    }
-    if len(cases) == 30 and not generator_versions:
+    generator_versions = [case.get("generator_version") for case in cases]
+    if len(cases) == 30 and all(version is None for version in generator_versions):
         return {
             "catalog_version": "v1",
             "generator_version": "tokenshare.paper_catalog.static.v1",
             "difficulty_counts": {difficulty: 10 for difficulty in DIFFICULTIES},
         }
-    if len(cases) != 500 or generator_versions != {FACTORIZATION_V2_GENERATOR_VERSION}:
+    if len(cases) != 500:
         raise ValueError(
             "factorization catalog must be historical v1 or frozen 500-root v2"
+        )
+    if any(
+        version != FACTORIZATION_V2_GENERATOR_VERSION
+        for version in generator_versions
+    ):
+        raise ValueError(
+            "factorization v2 every row must use generator version "
+            f"{FACTORIZATION_V2_GENERATOR_VERSION}"
         )
     _validate_factorization_v2_inventory(cases)
     return {
@@ -508,11 +512,13 @@ def _validate_factorization_v2_inventory(cases: tuple[JsonObject, ...]) -> None:
         for difficulty in DIFFICULTIES
     }
     expected_children = {"easy": 2, "medium": 4, "hard": 8}
-    expected_candidate_bounds = {
-        "easy": (8, 32),
-        "medium": (33, 128),
-        "hard": (129, 512),
-    }
+    expected_case_ids = [
+        f"factor_v2_{difficulty}_{index:03d}"
+        for difficulty, count in (("easy", 167), ("medium", 167), ("hard", 166))
+        for index in range(1, count + 1)
+    ]
+    if [str(case["case_id"]) for case in cases] != expected_case_ids:
+        raise ValueError("factorization v2 case ids must preserve frozen order")
     for case in cases:
         target_n = int(case["target_n"])
         if not 1_000_000 <= target_n < 100_000_000_000:
@@ -523,10 +529,16 @@ def _validate_factorization_v2_inventory(cases: tuple[JsonObject, ...]) -> None:
         if position not in positions_by_difficulty[difficulty]:
             raise ValueError("factorization v2 factor position is invalid")
         positions_by_difficulty[difficulty][position] += 1
+        candidate_start = int(case["candidate_start"])
+        candidate_end = int(case["candidate_end"])
         candidate_count = int(case["candidate_divisor_count"])
-        minimum, maximum = expected_candidate_bounds[difficulty]
-        if not minimum <= candidate_count <= maximum:
-            raise ValueError("factorization v2 candidate count is outside difficulty bounds")
+        if candidate_start != 2 or candidate_end != isqrt(target_n):
+            raise ValueError(
+                "factorization v2 requires complete candidate domain "
+                "[2, floor_sqrt(target_n)]"
+            )
+        if candidate_count != candidate_end - candidate_start + 1:
+            raise ValueError("factorization v2 candidate count does not match complete domain")
         split_params = case["split_params"]
         requested_children = int(split_params["requested_child_count"])
         if requested_children != expected_children[difficulty]:
@@ -553,7 +565,12 @@ def _validate_factorization_v2_inventory(cases: tuple[JsonObject, ...]) -> None:
             <= int(case["candidate_end"])
         ]
         if position == "no_factor":
-            if difficulty != "hard" or in_range_factors:
+            if (
+                difficulty != "hard"
+                or in_range_factors
+                or case["oracle_prime_factors"]
+                != [{"prime": str(target_n), "exponent": 1}]
+            ):
                 raise ValueError("factorization v2 no-factor semantics drift")
         else:
             if len(in_range_factors) != 1:
@@ -581,7 +598,7 @@ def _validate_factorization_v2_inventory(cases: tuple[JsonObject, ...]) -> None:
             raise ValueError("factorization v2 factor positions are unbalanced")
     hard = positions_by_difficulty["hard"]
     hard_counts = [hard[position] for position in ("early", "middle", "late")]
-    if not 1 <= hard["no_factor"] <= 10 or max(hard_counts) - min(hard_counts) > 1:
+    if hard["no_factor"] != 7 or max(hard_counts) - min(hard_counts) > 1:
         raise ValueError("factorization v2 hard positions are unbalanced")
 
 

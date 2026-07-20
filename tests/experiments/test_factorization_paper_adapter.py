@@ -12,9 +12,13 @@ from tokenshare.executors.ai_api_transport import (
 from tokenshare.executors.registry import ExecutorRegistry
 from tokenshare.experiments.factorization_paper_adapter import (
     ScriptedFactorizationRangeTransport,
+    _validate_factorization_case_for_adapter,
     run_factorization_paper_case,
 )
 from tokenshare.experiments.paper_catalog import load_paper_catalogs
+from tokenshare.experiments.paper_factorization_catalog import (
+    generate_factorization_paper_cases,
+)
 from tokenshare.experiments.paper_model_identity import (
     PaperModelIdentityMismatch,
     build_model_endpoint_identity,
@@ -26,10 +30,135 @@ from tokenshare.experiments.paper_models import (
     PaperFailureStage,
     PaperTaskStatus,
 )
+from tokenshare.plugins.factorization.split_strategy import partition_candidate_ranges
 
 
 FACTOR_CATALOG = "benchmarks/paper/factorization_catalog.v1.jsonl"
 LEAN_CATALOG = "benchmarks/paper/lean_catalog.v1.jsonl"
+
+
+def test_factorization_v2_all_500_cases_pass_adapter_complete_domain_preflight() -> None:
+    cases = generate_factorization_paper_cases()
+
+    for case in cases:
+        _validate_factorization_case_for_adapter(case)
+
+    assert len(cases) == 500
+
+
+def test_factorization_v2_easy_semiprime_completes_parser_verifier_canonical_and_merge(
+    tmp_path,
+) -> None:
+    case = next(
+        case
+        for case in generate_factorization_paper_cases()
+        if case["difficulty"] == "easy"
+        and case["factor_position_quantile"] != "no_factor"
+    )
+    transport = ScriptedFactorizationRangeTransport()
+
+    result = run_factorization_paper_case(
+        case=case,
+        condition=_v2_condition(case),
+        output_root=tmp_path,
+        transport=transport,
+        real_transport=False,
+        entry_id="factorization_paper_scripted",
+    )
+
+    assert len(transport.calls) == 2
+    assert result.task_result.root_status == PaperTaskStatus.COMPLETED
+    assert result.task_result.accepted_validity is True
+    assert result.final_prime_factors == case["oracle_prime_factors"]
+    assert result.merge_summary["result_kind"] == "prime_factorization_result"
+    assert all(item["verification"]["accepted"] for item in result.range_results)
+    assert all(item["canonical_output_ref"] for item in result.range_results)
+
+
+def test_factorization_v2_hard_prime_control_merges_complete_no_factor_ranges(
+    tmp_path,
+) -> None:
+    case = next(
+        case
+        for case in generate_factorization_paper_cases()
+        if case["difficulty"] == "hard"
+        and case["factor_position_quantile"] == "no_factor"
+    )
+    transport = ScriptedFactorizationRangeTransport()
+
+    result = run_factorization_paper_case(
+        case=case,
+        condition=_v2_condition(case),
+        output_root=tmp_path,
+        transport=transport,
+        real_transport=False,
+        entry_id="factorization_paper_scripted",
+    )
+
+    assert len(transport.calls) == 8
+    assert all(
+        call["range_result"]["result_kind"] == "no_factor_in_range"
+        for call in transport.calls
+    )
+    assert all(item["verification"]["accepted"] for item in result.range_results)
+    assert result.task_result.root_status == PaperTaskStatus.COMPLETED
+    assert result.final_prime_factors == [
+        {"prime": case["target_n"], "exponent": 1}
+    ]
+
+
+def test_factorization_v2_large_no_factor_range_uses_canonical_child_length_as_budget(
+    tmp_path,
+) -> None:
+    case, child_index, child_length = _v2_case_with_large_no_factor_range()
+    transport = ScriptedFactorizationRangeTransport()
+
+    result = run_factorization_paper_case(
+        case=case,
+        condition=_v2_condition(case),
+        output_root=tmp_path,
+        transport=transport,
+        real_transport=False,
+        entry_id="factorization_paper_scripted",
+        selected_ai_unit_id=f"range_{child_index}",
+    )
+
+    assert child_length > 100_000
+    assert transport.calls[0]["range_result"]["result_kind"] == "no_factor_in_range"
+    assert result.range_results[0]["verification"]["accepted"] is True
+    assert (
+        result.range_results[0]["verification"]["layer_summary"]["details"]
+        ["checked_divisor_count"]
+        == child_length
+    )
+
+
+def test_factorization_v2_large_range_false_no_factor_is_rejected_after_full_recheck(
+    tmp_path,
+) -> None:
+    case, child_index, child_length = _v2_case_with_large_factor_range()
+    transport = ScriptedFactorizationRangeTransport(
+        force_false_negative_child_indices={child_index}
+    )
+
+    result = run_factorization_paper_case(
+        case=case,
+        condition=_v2_condition(case),
+        output_root=tmp_path,
+        transport=transport,
+        real_transport=False,
+        entry_id="factorization_paper_scripted",
+        selected_ai_unit_id=f"range_{child_index}",
+    )
+
+    assert child_length > 100_000
+    assert result.range_results[0]["verification"]["accepted"] is False
+    assert (
+        result.range_results[0]["verification"]["layer_summary"]["reason_code"]
+        == "divisor_exists_in_range"
+    )
+    assert result.task_result.failure_stage == PaperFailureStage.VERIFICATION
+    assert result.task_result.failure_kind == PaperFailureKind.VERIFIER_REJECTED
 
 
 def test_factorization_paper_adapter_runs_range_children_through_ai_api_executor_and_merges(
@@ -781,6 +910,66 @@ class _MissingResolvedModelFactorizationTransport(
         response.body.pop("model", None)
         response.text = json.dumps(response.body, ensure_ascii=False)
         return response
+
+
+def _v2_condition(case: dict) -> PaperExperimentCondition:
+    difficulty = str(case["difficulty"])
+    return PaperExperimentCondition(
+        experiment_id="exp1_real_ai_feasibility",
+        condition_id=f"exp1_factorization_{difficulty}_v2_r0",
+        domain="factorization",
+        difficulty=difficulty,
+        paper_difficulty=difficulty,
+        worker_count=10,
+        fault_type="none",
+        fault_rate=0.0,
+        ablation_mode="FULL",
+        model_policy="fixed_entry",
+        repeat_id=0,
+        seed=1,
+        catalog_digest="sha256:" + "0" * 64,
+    )
+
+
+def _v2_case_with_large_no_factor_range() -> tuple[dict, int, int]:
+    for case in generate_factorization_paper_cases():
+        partition = _v2_partition(case)
+        oracle_primes = {int(item["prime"]) for item in case["oracle_prime_factors"]}
+        for range_input in partition.ranges:
+            start = int(range_input.range_start)
+            end = int(range_input.range_end)
+            child_length = end - start + 1
+            if child_length > 100_000 and not any(
+                start <= prime <= end for prime in oracle_primes
+            ):
+                return case, range_input.child_index, child_length
+    raise AssertionError("generated v2 catalog must contain a >100,000 no-factor child range")
+
+
+def _v2_case_with_large_factor_range() -> tuple[dict, int, int]:
+    for case in generate_factorization_paper_cases():
+        partition = _v2_partition(case)
+        oracle_primes = {int(item["prime"]) for item in case["oracle_prime_factors"]}
+        for range_input in partition.ranges:
+            start = int(range_input.range_start)
+            end = int(range_input.range_end)
+            child_length = end - start + 1
+            if child_length > 100_000 and any(
+                start <= prime <= end for prime in oracle_primes
+            ):
+                return case, range_input.child_index, child_length
+    raise AssertionError("generated v2 catalog must contain a >100,000 factor child range")
+
+
+def _v2_partition(case: dict):
+    requested_children = int(case["split_params"]["requested_child_count"])
+    return partition_candidate_ranges(
+        target_n=case["target_n"],
+        requested_child_count=requested_children,
+        max_children_per_unit=requested_children,
+        min_divisor=case["candidate_start"],
+        max_divisor=case["candidate_end"],
+    )
 
 
 def _condition(catalog_digest: str) -> PaperExperimentCondition:

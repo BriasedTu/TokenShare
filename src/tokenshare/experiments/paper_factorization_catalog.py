@@ -7,13 +7,16 @@ import json
 import random
 from collections.abc import Mapping, Sequence
 from hashlib import sha256
+from math import isqrt
 from pathlib import Path
 from typing import Any
 
 from tokenshare.experiments.paper_models import JsonObject
 
 
-CATALOG_GENERATOR_VERSION = "tokenshare.paper_factorization_catalog.v2"
+CATALOG_GENERATOR_VERSION = (
+    "tokenshare.paper_factorization_catalog.v2.full_domain.v1"
+)
 DEFAULT_CATALOG_COUNT = 500
 DEFAULT_CATALOG_SEED = 20260720
 MIN_TARGET_N = 1_000_000
@@ -24,21 +27,16 @@ _POSITION_NAMES = ("early", "middle", "late")
 _MAGNITUDE_EXPONENTS = (6, 7, 8, 9, 10)
 _DIFFICULTY_PROFILES: dict[str, JsonObject] = {
     "easy": {
-        "minimum_candidate_count": 8,
-        "maximum_candidate_count": 32,
         "requested_child_count": 2,
     },
     "medium": {
-        "minimum_candidate_count": 33,
-        "maximum_candidate_count": 128,
         "requested_child_count": 4,
     },
     "hard": {
-        "minimum_candidate_count": 129,
-        "maximum_candidate_count": 512,
         "requested_child_count": 8,
     },
 }
+_SEMIPRIME_FACTOR_RATIOS = {"early": 16, "middle": 4, "late": 2}
 _MILLER_RABIN_BASES_64 = (2, 325, 9375, 28178, 450775, 9780504, 1795265022)
 
 
@@ -158,14 +156,7 @@ def _generate_case(
     used_targets: set[int],
 ) -> JsonObject:
     profile = _DIFFICULTY_PROFILES[difficulty]
-    candidate_count, factor = _candidate_profile(
-        difficulty=difficulty,
-        local_index=local_index,
-        seed=seed,
-        position=position,
-    )
     candidate_start = 2
-    candidate_end = candidate_start + candidate_count - 1
     rng = random.Random(seed * 1_000_003 + ordinal * 97_409 + 17)
     lower = 10**magnitude_exponent
     upper = 10 ** (magnitude_exponent + 1)
@@ -179,22 +170,21 @@ def _generate_case(
         )
         oracle = [{"prime": str(target_n), "exponent": 1}]
     else:
-        if factor is None:
-            raise AssertionError("factor case requires an in-range factor")
-        large_factor = _large_prime_factor(
+        factor, large_factor, target_n = _semiprime_in_interval(
             desired=desired,
-            small_factor=factor,
             lower=lower,
             upper=upper,
+            position=position,
             forbidden_targets=used_targets,
         )
-        target_n = factor * large_factor
         oracle = [
             {"prime": str(factor), "exponent": 1},
             {"prime": str(large_factor), "exponent": 1},
         ]
     if not MIN_TARGET_N <= target_n < MAX_TARGET_N_EXCLUSIVE:
         raise AssertionError("generated target is outside the frozen range")
+    candidate_end = isqrt(target_n)
+    candidate_count = candidate_end - candidate_start + 1
     requested_child_count = int(profile["requested_child_count"])
     return {
         "candidate_divisor_count": candidate_count,
@@ -218,61 +208,40 @@ def _generate_case(
     }
 
 
-def _candidate_profile(
-    *,
-    difficulty: str,
-    local_index: int,
-    seed: int,
-    position: str,
-) -> tuple[int, int | None]:
-    profile = _DIFFICULTY_PROFILES[difficulty]
-    minimum = int(profile["minimum_candidate_count"])
-    maximum = int(profile["maximum_candidate_count"])
-    span = maximum - minimum + 1
-    proposed = minimum + ((local_index * 37 + seed) % span)
-    if position == "no_factor":
-        return proposed, None
-    for offset in range(span):
-        candidate_count = minimum + ((proposed - minimum + offset) % span)
-        candidate_end = candidate_count + 1
-        primes = [
-            prime
-            for prime in _small_primes(candidate_end)
-            if _factor_position(prime, start=2, end=candidate_end) == position
-        ]
-        if primes:
-            return candidate_count, primes[local_index % len(primes)]
-    raise AssertionError(f"no {position} prime is available for {difficulty}")
-
-
 def _factor_position(factor: int, *, start: int, end: int) -> str:
     ratio = (factor - start) / (end - start)
     return "early" if ratio <= 1 / 3 else "middle" if ratio <= 2 / 3 else "late"
 
 
-def _small_primes(maximum: int) -> tuple[int, ...]:
-    return tuple(value for value in range(2, maximum + 1) if is_prime_64(value))
-
-
-def _large_prime_factor(
+def _semiprime_in_interval(
     *,
     desired: int,
-    small_factor: int,
     lower: int,
     upper: int,
+    position: str,
     forbidden_targets: set[int],
-) -> int:
-    minimum_factor = max(small_factor + 1, (lower + small_factor - 1) // small_factor)
-    maximum_factor = (upper - 1) // small_factor
-    candidate = max(minimum_factor, desired // small_factor)
-    prime = _next_prime(candidate)
-    if prime > maximum_factor:
-        prime = _previous_prime(maximum_factor)
-    while prime >= minimum_factor:
-        target_n = small_factor * prime
-        if target_n not in forbidden_targets and prime != small_factor:
-            return prime
-        prime = _previous_prime(prime - 1)
+) -> tuple[int, int, int]:
+    factor_ratio = _SEMIPRIME_FACTOR_RATIOS[position]
+    small_factor = _next_prime(max(2, isqrt(desired // factor_ratio)))
+    for _small_attempt in range(256):
+        large_factor = _next_prime(max(small_factor + 1, desired // small_factor))
+        for _large_attempt in range(256):
+            target_n = small_factor * large_factor
+            if target_n >= upper:
+                break
+            if (
+                target_n >= lower
+                and target_n not in forbidden_targets
+                and _factor_position(
+                    small_factor,
+                    start=2,
+                    end=isqrt(target_n),
+                )
+                == position
+            ):
+                return small_factor, large_factor, target_n
+            large_factor = _next_prime(large_factor + 1)
+        small_factor = _next_prime(small_factor + 1)
     raise ValueError("unable to generate a unique semiprime in magnitude interval")
 
 

@@ -275,7 +275,9 @@ Gate B 通过并形成 checkpoint 后，可并发启动 Prompt C–G：
 
     若 Task 14 semantic repair 尚未通过，可以完成代码集成，但正式 Lean selections、formal budget 和 provider path 必须保持 semantic_blocked。不得沿用旧 480-AI-unit digest。
 
-    Factorization 正式 catalog 固定为 v2 的 500 roots，所有 Exp1–5 适用矩阵必须使用完整 difficulty slice。冻结 root-runs 为 Exp1=1,905、Exp2=10,300、Exp3=61,734、Exp4=9,270、Exp5=4,635，P0-core=83,209，P0-full=87,844。CLI 默认免人工预算批准，但必须记录 budget digest、估算/实际 usage 和 `approval_mode=user_bypassed`；显式错误 digest 仍在 transport 前拒绝。
+    Factorization 正式 catalog 固定为 v2 的 500 roots，所有 Exp1–5 适用矩阵必须使用完整 difficulty slice。每个 root 的 candidate domain 必须是 `[2,floor_sqrt(target_n)]`，easy/medium/hard 只用固定 2/4/8 children 分区完整域，不得恢复 8–512 divisor 的局部窗口，也不得放松 adapter/split/merge/verifier 的完整域语义。generator version 固定为 `tokenshare.paper_factorization_catalog.v2.full_domain.v1`，hard 保留恰好 7 个完整域 no-factor prime controls。冻结 root-runs 为 Exp1=1,905、Exp2=10,300、Exp3=61,734、Exp4=9,270、Exp5=4,635，P0-core=83,209，P0-full=87,844；Exp1 planned AI units 仍为 8,700。CLI 默认免人工预算批准，但必须记录 budget digest、估算/实际 usage 和 `approval_mode=user_bypassed`；显式错误 digest 仍在 transport 前拒绝。
+
+    2026-07-20 旧局部窗口 catalog 已离线修复并重生成。旧 catalog 派生的 selection、condition 和 budget digest（包括 `sha256:732196d576ba1a7245cda06576533695e6cbf627383f5f0570fd195ea49adddc`）全部作废；Prompt I 必须用新 output root 重新 plan-only，之后才可运行最小真实 Factorization pilot，禁止复用旧 output root 或旧批准 identity。离线 scripted/capturing 验证不属于真实 pilot 或论文结果。
 
     增加跨实验 contract/integration tests，运行 tests/experiments、相关 executor/factorization/Lean plugin suites、compileall 和完整 init.ps1。然后更新中文状态文档和 code map，记录仍未调用 provider。请求独立 review，通过后形成 reviewed integration checkpoint。
 

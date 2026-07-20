@@ -1,5 +1,23 @@
 # Session Handoff
 
+## 2026-07-20 20:06 Factorization v2 完整域离线修复（最新）
+
+- blocker 已在当前工作树离线修复：generator version=`tokenshare.paper_factorization_catalog.v2.full_domain.v1`，500/500 rows 使用完整 `[2,floor_sqrt(target_n)]` 域，hard 有恰好 7 个 prime/no-factor controls；catalog SHA-256=`sha256:9ce2b31a199455a37c0ca5afdee68e03540dc4912c4c4fe28e87ed3503467774`。
+- adapter 不改插件全局 verifier 默认值，只从 split strategy 产生的 canonical child range 取得本次 `no_factor_recheck_max_divisors`。scripted transport 已证明 easy semiprime 和 hard prime control 完成 parser/verifier/canonical/merge；149,875 长度 no-factor range 可完整复核，含 divisor 的伪造 no-factor 仍被拒绝。500/500 cases 通过 adapter 完整域 preflight。
+- JSON 探针为 rows/unique IDs/targets=`500/500/500`、difficulty=`167/167/166`、complete/incomplete=`500/0`、target min/max=`1,946,677/89,850,437,009`、candidate count min/max=`1,394/299,749`、最大 child range=`149,875`。Exp1 AI units 仍为 `8,700`，Exp1–5/P0 root-run 算术不变。
+- 定向验证：catalog `6 passed`（含逐行 generator provenance fail-closed）、adapter v2 nodes `5 passed`、Factorization plugin `47 passed`、Gate C v2 500-root `1 passed`、纯内存 budget bypass `2 passed`、v2 CLI `3 passed`；compileall、feature JSON 和 diff check 退出 0。
+- 本修复只使用 scripted/capturing 与纯内存/JSON 验证；Lean checker/preflight/init calls=`0`，provider calls/tokens/cost=`0/0/0`，没有新的真实 pilot/formal 论文结果。用户明确禁止的完整 init 未运行，不能据此声称完整 init 通过。
+- 旧 catalog/selection/condition/budget identity 均已失效；旧 digest `sha256:732196d576ba1a7245cda06576533695e6cbf627383f5f0570fd195ea49adddc` 禁止复用。下一步使用新 output root 重新执行 Exp1 plan-only，再运行最小真实 Factorization pilot。
+
+## 2026-07-20 18:56 Exp1 v2 真实 pilot 硬停止（历史现场）
+
+- 当前 formal 设施已存在，但 500-root Factorization v2 catalog 与正式 adapter contract 不兼容。
+- Exp1 v2 plan-only 通过并零调用：36 conditions、1,905 roots、8,700 AI units，digest `sha256:732196d576ba1a7245cda06576533695e6cbf627383f5f0570fd195ea49adddc`，GLM-5.2 identity 唯一。
+- Factor pilot `factor_v2_easy_001` 在 provider 前 blocked：`candidate_end=29`，但 adapter 要求 `floor_sqrt(8273638)=2876`。PID `40840`、exit `3`、provider attempts/tokens/cost 均为 0。
+- 全 500 cases 的 `candidate_end == floor_sqrt(target_n)` 命中数为 0；7 个 `no_factor` cases 进一步说明不能简单删除 adapter 校验。formal runner 所有路径调用同一 adapter。
+- 按 pilot 硬停止规则，未启动 Lean pilot、Exp1 formal、Exp2-5 或 resume。完整现场在 `outputs/experiments/night_20260720_v2/exp1_formal/supervisor/hard_stop_summary.json`。
+- 恢复前必须决定并独立 review：是让 catalog 覆盖完整试除域，还是重新定义局部候选窗口下的 root-validity/oracle 语义。两者都会改变 catalog/condition/budget digest；修复后使用新 output root 重新 plan-only，不能直接复用当前 digest。
+
 ## 2026-07-20 Formal Experiment 1-5 设施交接（当前）
 
 - 下方“I-M 夜间监督硬停止”记录保留为历史现场，但其代码缺口已经被本轮实现取代。`run_paper_experiments.py` 的非 pilot/non-plan-only 路径现在调用独立 `execute_paper_formal_suite()`；plan-only、pilot 和 formal evidence 仍明确隔离。

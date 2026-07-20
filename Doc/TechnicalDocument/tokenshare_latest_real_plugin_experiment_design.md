@@ -123,17 +123,19 @@ Experiment 1–4 的模型控制变量不是运行时任选值：必须解析到
 
 ## Factorization catalog v2
 
-冻结 `benchmarks/paper/factorization_catalog.v2.jsonl` 作为论文 CLI 默认 Factorization catalog，共 500 个 root tasks，easy/medium/hard=`167/167/166`，目标整数覆盖 `[1_000_000,100_000_000_000)` 且每档覆盖 10^6 至 10^10 数量级。`factorization_catalog.v1.jsonl` 的 30 题只保留为历史回归输入，不进入新的正式矩阵。
+冻结 `benchmarks/paper/factorization_catalog.v2.jsonl` 作为论文 CLI 默认 Factorization catalog，共 500 个 root tasks，easy/medium/hard=`167/167/166`，目标整数覆盖 `[1_000_000,100_000_000_000)` 且每档覆盖 10^6 至 10^10 数量级。文件名和 `catalog_version=v2` 保持不变；当前 generator version 固定为 `tokenshare.paper_factorization_catalog.v2.full_domain.v1`。`factorization_catalog.v1.jsonl` 的 30 题只保留为历史回归输入，不进入新的正式矩阵。
 
-factorization 难度不用十进制位数单独定义，而用插件实际搜索工作量定义：
+Factorization v2 的 root-validity 依赖完整试除域。每个 case 必须满足 `candidate_start=2`、`candidate_end=floor_sqrt(target_n)`、`candidate_divisor_count=candidate_end-candidate_start+1`；不得再用按 difficulty 截断的局部 candidate window。difficulty 表示固定的确定性 range partition 粒度和并发形状，不改变完整域：
 
-| 难度 | candidate divisor count | factor position | 目的 |
-|:---|:---|:---|:---|
-| easy | 1–32 | early/middle/late 均衡 | 验证基本真实 API + parser/verifier/merge 闭环。 |
-| medium | 33–128 | early/middle/late 均衡 | 测试更多 range units 和适度并发。 |
-| hard | 129–512 | early/middle/late 均衡，并含 no-factor/prime case | 观察成本、失败和饱和，不追求全对。 |
+| 难度 | 完整 candidate domain | requested children | factor position | 目的 |
+|:---|:---|:---|:---|:---|
+| easy | `[2,floor_sqrt(target_n)]` | 2 | early/middle/late 均衡 | 验证基本真实 API + parser/verifier/merge 闭环。 |
+| medium | `[2,floor_sqrt(target_n)]` | 4 | early/middle/late 均衡 | 测试更多 range units 和适度并发。 |
+| hard | `[2,floor_sqrt(target_n)]` | 8 | early/middle/late 均衡；另有恰好 7 个 no-factor prime controls | 观察成本、失败和饱和，不追求全对。 |
 
-每行至少包含：`case_id,target_n,oracle_prime_factors,candidate_start,candidate_end,candidate_divisor_count,factor_position_quantile,difficulty,split_params,source_seed`。target 和 oracle 由 deterministic generator 生成并在运行前验证，但候选执行必须走真实 AI API。
+每行至少包含：`case_id,target_n,oracle_prime_factors,candidate_start,candidate_end,candidate_divisor_count,factor_position_quantile,difficulty,split_params,source_seed,generator_version`，且 500 行的 `generator_version` 必须全部精确等于当前冻结版本，缺失、`null` 或漂移均使 catalog freeze 失败。semiprime 的较小质因子必须相对完整 `[2,floor_sqrt(target_n)]` 域计算 early/middle/late，三类在每个 difficulty 内均衡；7 个 hard controls 的 target 本身为质数，完整域内确实无因子。case ID 和 ordinal 固定为 `factor_v2_easy_001...`、`factor_v2_medium_001...`、`factor_v2_hard_001...` 的连续顺序。target 和 oracle 由 deterministic generator 生成并在运行前验证，但候选执行必须走真实 AI API，catalog oracle 不得替代 AI candidate 或 verifier evidence。
+
+2026-07-20 完整域重生成使旧 catalog、selection、condition 和 budget identity 全部失效；旧 Exp1 budget digest `sha256:732196d576ba1a7245cda06576533695e6cbf627383f5f0570fd195ea49adddc` 明确不得复用。下一次真实 pilot 必须使用新的 output root 重新执行 plan-only，再以新 digest 和冻结 identity 进入最小 Factorization pilot。完整域修复不改变 2/4/8 AI-unit 算术、Exp1=`1,905` root-runs / `8,700` planned AI units 或 P0-full=`87,844` root-runs。
 
 ## Lean catalog 分层要求
 

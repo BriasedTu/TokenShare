@@ -375,6 +375,11 @@ def run_factorization_paper_case(
                 verification = verify_range_result(
                     range_result_body,
                     child_input=range_input,
+                    no_factor_recheck_max_divisors=(
+                        int(range_input.range_end)
+                        - int(range_input.range_start)
+                        + 1
+                    ),
                 )
                 verification_body = {
                     "accepted": verification.accepted,

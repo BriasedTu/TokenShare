@@ -6,7 +6,10 @@ import pytest
 import tokenshare.experiments.paper_catalog as paper_catalog_module
 from tokenshare.experiments.paper_budget import plan_paper_suite
 from tokenshare.experiments.paper_catalog import load_paper_catalogs
-from tokenshare.experiments.paper_factorization_catalog import is_prime_64
+from tokenshare.experiments.paper_factorization_catalog import (
+    CATALOG_GENERATOR_VERSION as FACTORIZATION_V2_GENERATOR_VERSION,
+    is_prime_64,
+)
 from tokenshare.experiments.paper_models import PaperExperimentCondition
 
 
@@ -57,7 +60,7 @@ def test_paper_catalog_loads_the_frozen_500_root_factorization_v2(
 
     body = manifest.to_dict()
     assert body["catalog_version"] == "v2"
-    assert body["generator_version"] == "tokenshare.paper_factorization_catalog.v2"
+    assert body["generator_version"] == FACTORIZATION_V2_GENERATOR_VERSION
     assert body["case_count"] == 530
     assert body["domain_counts"] == {"factorization": 500, "lean_proof": 30}
     assert body["difficulty_counts"]["factorization"] == {

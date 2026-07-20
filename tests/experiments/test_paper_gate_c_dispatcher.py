@@ -17,6 +17,9 @@ from tokenshare.experiments.paper_budget import (
     plan_paper_suite,
 )
 from tokenshare.experiments.paper_catalog import PaperInputCatalogManifest
+from tokenshare.experiments.paper_factorization_catalog import (
+    CATALOG_GENERATOR_VERSION as FACTORIZATION_V2_GENERATOR_VERSION,
+)
 from tokenshare.experiments.paper_experiment_contracts import (
     ExperimentSummaryRows,
     FrozenCaseSelection,
@@ -142,6 +145,7 @@ def test_gate_c_v2_plans_use_all_500_factorization_roots_in_every_experiment(
     tmp_path: Path,
 ) -> None:
     catalog = _frozen_formal_catalog_v2()
+    assert catalog.generator_version == FACTORIZATION_V2_GENERATOR_VERSION
     readiness = json.loads(
         Path("benchmarks/paper/lean_task14_3x3_readiness.v1.json").read_text(
             encoding="utf-8"
@@ -1612,7 +1616,7 @@ def _frozen_formal_catalog_v2() -> PaperInputCatalogManifest:
         catalog_id="tokenshare.paper.catalog",
         catalog_version="v2",
         catalog_digest=digest_json(digest_body),
-        generator_version="tokenshare.paper_factorization_catalog.v2",
+        generator_version=FACTORIZATION_V2_GENERATOR_VERSION,
         case_count=(
             len(factorization_cases) + len(lean_cases) + len(lean_lemma_graph_cases)
         ),
