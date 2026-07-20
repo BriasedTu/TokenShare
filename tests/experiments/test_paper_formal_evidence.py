@@ -54,6 +54,78 @@ def test_initialize_writes_required_formal_capturing_manifests(
     )
 
 
+def test_initialize_promotes_matching_zero_call_plan_only_root(
+    tmp_path: Path,
+) -> None:
+    bodies = _suite_bodies()
+    plan_budget = {
+        **bodies["budget"],
+        "quota_preflight": {
+            "plan_only": True,
+            "provider_calls_made": 0,
+        },
+    }
+    _write_json(
+        tmp_path / "suite_manifest.json",
+        {
+            "suite_id": "paper_v1_plan",
+            "status": "planned",
+            "experiment_ids": bodies["suite"]["experiment_ids"],
+            "provider_attempt_count": 0,
+            "total_tokens": 0,
+            "total_cost_estimate": 0.0,
+            "budget_ref": plan_budget,
+        },
+    )
+    _write_json(tmp_path / "run_budget.json", plan_budget)
+    _write_json(
+        tmp_path / "paper_dispatch_plans.json",
+        {
+            "schema_version": "tokenshare.paper_dispatch_plan_bundle.v1",
+            "provider_calls_made": 0,
+            "plans": bodies["dispatch"]["plans"],
+        },
+    )
+    _write_json(
+        tmp_path / "lean_3x3_matrix.json",
+        {
+            "catalog_digest": bodies["catalog"]["catalog_digest"],
+            "provider_calls_made": 0,
+        },
+    )
+
+    FormalEvidenceStore.initialize(
+        output_root=tmp_path,
+        **bodies,
+        capturing=False,
+    )
+
+    suite_manifest = _read_json(tmp_path / "suite_manifest.json")
+    assert suite_manifest["status"] == "running"
+    assert suite_manifest["formal"] is True
+    assert _read_json(tmp_path / "run_budget.json") == bodies["budget"]
+    assert _read_json(tmp_path / "paper_dispatch_plans.json") == bodies["dispatch"]
+    assert (tmp_path / "lean_3x3_matrix.json").is_file()
+
+
+def test_initialize_rejects_non_plan_entries_without_overwriting_them(
+    tmp_path: Path,
+) -> None:
+    marker = tmp_path / "supervisor" / "runner.log"
+    marker.parent.mkdir()
+    marker.write_text("preserve me", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="non-plan entries"):
+        FormalEvidenceStore.initialize(
+            output_root=tmp_path,
+            **_suite_bodies(),
+            capturing=False,
+        )
+
+    assert marker.read_text(encoding="utf-8") == "preserve me"
+    assert not (tmp_path / "evidence_manifest.json").exists()
+
+
 def test_checkpoint_preserves_artifact_and_loads_completed_task(
     tmp_path: Path,
 ) -> None:

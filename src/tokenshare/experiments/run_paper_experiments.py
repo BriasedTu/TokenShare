@@ -211,6 +211,15 @@ def main(
             suite_id=f"{pilot_profile.body['suite_id']}_blocked",
         )
         return 3
+    if pilot_profile is not None and not args.plan_only and not args.pilot:
+        _write_blocked_suite(
+            output_root=output_root,
+            experiment_ids=experiment_ids,
+            failure_kind="invalid_pilot_mode",
+            message="--exp1-pilot-profile execution requires --pilot",
+            suite_id=f"{pilot_profile.body['suite_id']}_blocked",
+        )
+        return 3
     if (args.resume or args.replay_only) and args.plan_only:
         _write_blocked_suite(
             output_root=output_root,

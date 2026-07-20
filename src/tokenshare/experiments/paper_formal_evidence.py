@@ -51,6 +51,16 @@ _SUITE_RUNTIME_FIELDS = frozenset(
 _ROOT_LOCKS_GUARD = threading.Lock()
 _ROOT_LOCKS: dict[str, threading.RLock] = {}
 _LOCK_FILE_NAME = ".formal-evidence.lock"
+_PLAN_ONLY_ROOT_FILES = frozenset(
+    {
+        "lean_3x3_matrix.json",
+        "model_endpoint_cohort_plan.json",
+        "model_policy_plan.json",
+        "paper_dispatch_plans.json",
+        "run_budget.json",
+        "suite_manifest.json",
+    }
+)
 _CURRENT_KEYS = {
     "schema_version",
     "generation_id",
@@ -106,9 +116,6 @@ class FormalEvidenceStore:
         root = Path(output_root).resolve(strict=False)
         if not isinstance(capturing, bool):
             raise ValueError("capturing must be a boolean")
-        if root.exists() and any(root.iterdir()):
-            raise ValueError("formal evidence output_root must be empty")
-        root.mkdir(parents=True, exist_ok=True)
         bodies = {
             "suite": _json_value(suite),
             "dispatch": _json_value(dispatch),
@@ -118,6 +125,9 @@ class FormalEvidenceStore:
             "request_limits": _json_value(request_limits),
             "hard_limits": _json_value(hard_limits),
         }
+        if root.exists() and any(root.iterdir()):
+            _validate_promotable_plan_only_root(root, bodies=bodies)
+        root.mkdir(parents=True, exist_ok=True)
         if not isinstance(bodies["suite"], dict):
             raise ValueError("suite body must be a JSON object")
         conditions_by_experiment = _conditions_by_experiment(bodies["dispatch"])
@@ -996,6 +1006,83 @@ def _dispatch_plans(dispatch: Any) -> list[dict[str, Any]]:
         plan["experiment_id"] = experiment_id
         result.append(plan)
     return result
+
+
+def _validate_promotable_plan_only_root(
+    root: Path,
+    *,
+    bodies: Mapping[str, Any],
+) -> None:
+    entries = tuple(root.iterdir())
+    if any(not entry.is_file() for entry in entries):
+        raise ValueError("formal evidence output_root contains non-plan entries")
+    names = {entry.name for entry in entries}
+    required = {
+        "lean_3x3_matrix.json",
+        "paper_dispatch_plans.json",
+        "run_budget.json",
+        "suite_manifest.json",
+    }
+    if not required <= names or not names <= _PLAN_ONLY_ROOT_FILES:
+        raise ValueError("formal evidence output_root contains non-plan entries")
+
+    suite = _read_json(root / "suite_manifest.json")
+    budget = _read_json(root / "run_budget.json")
+    dispatch = _read_json(root / "paper_dispatch_plans.json")
+    matrix = _read_json(root / "lean_3x3_matrix.json")
+    expected_suite = _require_object(bodies.get("suite"), "suite")
+    expected_budget = _require_object(bodies.get("budget"), "budget")
+    expected_dispatch = _require_object(bodies.get("dispatch"), "dispatch")
+    expected_catalog = _require_object(bodies.get("catalog"), "catalog")
+
+    if suite.get("suite_id") != "paper_v1_plan" or suite.get("status") != "planned":
+        raise ValueError("formal evidence output_root is not a plan-only suite")
+    expected_experiment_ids = expected_suite.get("experiment_ids")
+    if suite.get("experiment_ids") != expected_experiment_ids:
+        raise ValueError("plan-only suite experiment identity drift")
+    for field_name in (
+        "provider_attempt_count",
+        "total_tokens",
+        "total_cost_estimate",
+    ):
+        if suite.get(field_name) != 0:
+            raise ValueError("plan-only suite contains provider usage")
+
+    expected_budget_digest = expected_budget.get("budget_digest")
+    if (
+        not isinstance(expected_budget_digest, str)
+        or budget.get("budget_digest") != expected_budget_digest
+    ):
+        raise ValueError("plan-only budget identity drift")
+    quota = budget.get("quota_preflight")
+    if not isinstance(quota, Mapping) or quota.get("provider_calls_made") != 0:
+        raise ValueError("plan-only budget contains provider calls")
+    suite_budget = suite.get("budget_ref")
+    if (
+        not isinstance(suite_budget, Mapping)
+        or suite_budget.get("budget_digest") != expected_budget_digest
+    ):
+        raise ValueError("plan-only suite budget identity drift")
+
+    if dispatch.get("provider_calls_made") != 0:
+        raise ValueError("plan-only dispatch contains provider calls")
+    if _canonical_bytes(dispatch.get("plans")) != _canonical_bytes(
+        expected_dispatch.get("plans")
+    ):
+        raise ValueError("plan-only dispatch identity drift")
+    if matrix.get("provider_calls_made") != 0:
+        raise ValueError("plan-only Lean matrix contains provider calls")
+    if matrix.get("catalog_digest") != expected_catalog.get("catalog_digest"):
+        raise ValueError("plan-only catalog identity drift")
+
+    for optional_name in (
+        "model_endpoint_cohort_plan.json",
+        "model_policy_plan.json",
+    ):
+        if optional_name in names:
+            optional_body = _read_json(root / optional_name)
+            if optional_body.get("provider_calls_made") != 0:
+                raise ValueError("plan-only model preflight contains provider calls")
 
 
 def _validate_context(

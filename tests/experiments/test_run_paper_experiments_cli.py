@@ -455,7 +455,7 @@ def test_exp1_pilot_cli_plan_only_writes_independent_zero_call_budget(
     assert '"api_key":' not in json.dumps(frozen_profile)
 
 
-def test_exp1_pilot_cli_unapproved_execution_stops_before_provider_calls(
+def test_exp1_pilot_profile_execution_requires_pilot_mode_before_provider_calls(
     tmp_path: Path,
 ) -> None:
     exit_code = main(
@@ -473,12 +473,12 @@ def test_exp1_pilot_cli_unapproved_execution_stops_before_provider_calls(
     suite = json.loads(
         (tmp_path / "suite_manifest.json").read_text(encoding="utf-8")
     )
-    assert exit_code == 2
+    assert exit_code == 3
     assert suite["suite_id"] == "paper_exp1_minimal_pilot_v1_blocked"
     assert suite["status"] == "blocked"
     assert suite["provider_attempt_count"] == 0
     assert suite["total_tokens"] == 0
-    assert suite["error_summary"][0]["failure_kind"] == "missing_budget_approval"
+    assert suite["error_summary"][0]["failure_kind"] == "invalid_pilot_mode"
 
 
 def test_exp1_pilot_cli_requires_frozen_baseline_entry_before_execution(
