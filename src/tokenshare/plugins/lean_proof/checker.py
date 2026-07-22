@@ -135,7 +135,7 @@ def check_lean_proof(
     proof_source = _validated_proof_source(proof_body, theorem_payload=theorem_payload)
     forbidden_placeholder = _forbidden_proof_placeholder(proof_source)
 
-    generated_source = _render_lean_source(theorem_payload, proof_source)
+    generated_source = render_lean_source(theorem_payload, proof_source)
     normalized_theorem_digest = canonical_json_digest(
         {
             "theorem_name": theorem_payload.theorem_name,
@@ -293,7 +293,7 @@ def check_lean_proof(
     )
 
 
-def _render_lean_source(payload: LeanTheoremPayload, proof_source: str) -> str:
+def render_lean_source(payload: LeanTheoremPayload, proof_source: str) -> str:
     lines: list[str] = [f"import {item}" for item in payload.imports]
     options = {"autoImplicit": False, **payload.options}
     for key, value in sorted(options.items()):
@@ -315,6 +315,10 @@ def _render_lean_source(payload: LeanTheoremPayload, proof_source: str) -> str:
         lines.append(f"end {payload.namespace}")
     lines.append("")
     return "\n".join(lines)
+
+
+# 保留原有 private 名称，避免历史内部引用在迁移期间失效。
+_render_lean_source = render_lean_source
 
 
 def _load_json_object(text: str, *, artifact_name: str) -> JsonObject:
