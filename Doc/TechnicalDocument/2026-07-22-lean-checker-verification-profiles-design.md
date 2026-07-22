@@ -2,7 +2,7 @@
 
 日期：2026-07-22
 
-状态：已获用户方向批准，等待书面规格复核
+状态：用户已批准，作为通用 Lean 验证方案进入实施
 
 适用 feature：`feat-011` Paper Real AI Experiments 的 Lean catalog、Lean checker 回归和仓库验证流程优化。本文不改变论文实验样本、正式 checker 证据或协议生命周期边界。
 
@@ -57,6 +57,8 @@
 
 除 Lean catalog/plugin/toolchain 相关改动和发布论文实验外，feature 完成使用 Full 即可。
 
+Full 不能只信任 tracked manifest。即使所有摘要均未变化，也必须运行固定、确定性的真实 Lean canary 集合。canary 选择按 `paper_difficulty + topic_family + construction_rule_id + checker_mode + proof_assembly_shape` 覆盖，而不是随机抽样；至少覆盖九个 3×3 cell、direct/child/merge/root-recheck、accepted/rejected、`sorry`/`admit` 和 timeout 行为。canary 数量必须是与 catalog 总 case/node 数无关的小常数。
+
 ### 3.3 LeanAudit
 
 新增 `.\init.ps1 -Full -LeanAudit` / `./init.sh --full --lean-audit`。它在 Full 后显式重新执行完整 catalog preflight，并把临时生成的 manifest 与 tracked manifest 比较；验证模式不得修改 tracked 文件。
@@ -95,6 +97,34 @@
 
 manifest 只保存确定性摘要和覆盖证据，不保存临时 artifact 路径。完整 audit 的 stdout/stderr/checker reports 写入被 gitignore 的 audit output root；tracked manifest 用摘要引用它们的语义结果。
 
+### 4.1 每条 entry 的增量真实检查
+
+tracked manifest 的每条 direct case 或 lemma-graph node 都必须有独立 cache key：
+
+```text
+sha256(
+  generated_source_digest,
+  oracle_proof_digest,
+  environment_digest,
+  checker_implementation_digest,
+  checker_mode,
+  resource_limits
+)
+```
+
+每次 Full 或 LeanAudit 都先枚举完整 expected coverage 并重算全部 cache key。匹配条目复用以前真实 Lean 检查的确定性证据；缺失或不匹配条目立即重新执行真实 Lean。复用不是跳过验证：当前运行必须重新验证 manifest 自摘要、entry key、coverage 和缓存 artifact hash。
+
+`checker_implementation_digest` 由实际参与 source rendering、placeholder policy、subprocess、child/merge/root assembly 和 environment resolution 的 source files 内容计算，不依赖人工记得升级版本号。`environment_digest` 必须覆盖 `lean-toolchain`、lakefile、`lake-manifest.json`、Lean/Lake executable/version、fixture helper source tree、import set 和运行平台。若实现无法证明某个输入是否影响结果，必须 fail closed，把相关 scope 视为失效；不允许用路径白名单猜测“应该无关”。
+
+失效范围固定如下：
+
+- 单个 catalog/oracle/generated source 改变：只重检对应 direct case 或 node，以及依赖该 node 的 assembly/root canary。
+- checker、environment resolution、Lean toolchain、lakefile/manifest、fixture helper 或共享 assembly/merge 逻辑改变：全量 entry 失效。
+- runtime/core/experiment orchestration 改变但 Lean source/checker 输入未变：复用 catalog proof evidence，同时运行穷举 checker-call 契约测试和真实 end-to-end canary。
+- 未识别或无法归类的依赖改变：全量 entry 失效。
+
+LeanAudit 默认使用增量模式并报告 `reused_entry_count`、`rechecked_entry_count`、`canary_entry_count` 和 `invalidated_by[]`。发布论文实验、修改共享 checker/toolchain/helper 或显式传入 `--force-all` 时，必须忽略 entry cache 重检完整 coverage。
+
 ## 5. Checker 注入边界
 
 新增最小 `LeanChecker` callable protocol，签名与当前 `check_lean_proof(request, *, artifact_store, environment_manifest)` 相同。生产默认值始终是真实 subprocess checker。
@@ -104,6 +134,8 @@ manifest 只保存确定性摘要和覆盖证据，不保存临时 artifact 路�
 测试目录提供 deterministic fake checker。它生成与 `LeanCheckerReport` 契约一致的 report、log 和 proof artifact，以便测试 orchestration、artifact linkage、failure propagation 和 paper-result projection；测试用例显式选择 accepted/rejected/timeout 结果。fake report 的 command summary 标记 `backend=test_fake`，且 paper eligibility 审计必须把该 backend 判为 regression-only。
 
 绝大多数 adapter/runner 测试使用 injected fake checker。真实 subprocess 只保留在 Full smoke 和 LeanAudit，从而避免单元测试按 child/node 数重复启动 Lean。
+
+所有使用 fake checker 的 runtime/adapter 测试必须同时使用 spy 断言预期 unit、checker mode、调用次数和 artifact binding。这样可以发现“代码忘记调用 checker”或“rejected result 仍进入 canonical/merge”的 bug，而不是只验证 fake 返回值。真实 canary 再验证 fake 契约没有与 subprocess backend 漂移。
 
 ## 6. Lean Subprocess 启动优化
 
@@ -126,7 +158,7 @@ catalog batching 暂不进入本 feature。分批编译会改变 per-entry failu
 1. JSON/SQLite 可用性和 harness 文件检查；
 2. 调用当前解释器完成排除 `reference_repos/` 的 compileall；
 3. 根据 fast/full 选择 pytest 参数；
-4. 根据 `--lean-audit` 调用只读 catalog audit；
+4. Full 固定运行真实 canary；根据 `--lean-audit` 调用增量或 `--force-all` catalog audit；
 5. 保留现有清晰的退出码和摘要输出。
 
 PowerShell/Bash 只负责参数解析、环境变量和调用，不重复实现验证规则。若已经处于目标 conda environment，仍可直接使用当前 Python，但该优化不能改变默认环境名或 `TOKENSHARE_CONDA_ENV` 覆盖规则。
@@ -143,6 +175,8 @@ PowerShell/Bash 只负责参数解析、环境变量和调用，不重复实现�
 6. RED：direct configured Lean 无法导入 fixture helper；GREEN：与 `lake env lean` 行为等价。
 7. RED：验证脚本产生多次 conda 环境启动；GREEN：PowerShell/Bash 各只有一个默认 conda Python 入口。
 8. Fast、Full、Full+LeanAudit 的选择逻辑和帮助文本有回归测试。
+9. entry key 的每个依赖分别发生变化时，受影响范围按第 4.1 节失效；未知依赖触发全量失效。
+10. fake checker spy 能发现缺失 checker 调用、错误 checker mode、rejected canonical pollution 和缺失 artifact binding。
 
 最终验证顺序：定向 RED/GREEN、Lean plugin impact、paper catalog/adapter impact、`tests/experiments`、Fast、Full、Full+LeanAudit。最后同步 `AGENTS.md`、`README.md`、`Doc/agent-navigation.md`、`tokenshare_v1_code_map.md`、`feature_list.json`、`progress.md` 和 `session-handoff.md`，明确新的完成与发布门槛。
 
@@ -151,6 +185,8 @@ PowerShell/Bash 只负责参数解析、环境变量和调用，不重复实现�
 - Fast 和普通 catalog/model/runner 单元测试不启动 Lean。
 - Full 的真实 checker 调用数量为固定小常数，而不是随 catalog case/node 数增长。
 - LeanAudit 对当前 600-entry coverage 产生与 tracked manifest 一致的结果，provider calls 为 0。
+- 增量 audit 对未变化 entry 复用真实历史证据，对变化 entry 执行真实 Lean；`--force-all` 不复用任何 entry。
+- Full 每次真实运行固定 canary，并通过 spy/fake 契约覆盖所有 checker 调用分支。
 - 正式 AI Lean execution 仍逐 attempt 使用真实 checker，并保留现有 artifact/event/evidence 契约。
 - 日常验证墙钟显著下降；最终状态文档记录优化前后实测值，不预设必须达到的绝对秒数。
 - 未修改 Lean 3×3 selection、正式实验条件、论文样本量或 replay 规则。
