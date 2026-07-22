@@ -16,6 +16,15 @@ from tokenshare.experiments.paper_factorization_catalog import (
     CATALOG_GENERATOR_VERSION as FACTORIZATION_V2_GENERATOR_VERSION,
     is_prime_64,
 )
+from tokenshare.experiments.lean_catalog_audit import (
+    LeanCatalogAuditCandidate,
+    LeanCatalogPreflightEntry,
+    LeanCatalogPreflightManifest,
+    build_lean_catalog_preflight_manifest,
+    lean_checker_implementation_digest,
+    validate_lean_catalog_preflight_manifest,
+    validate_manifest_against_candidates,
+)
 from tokenshare.experiments.paper_models import (
     LEAN_PAPER_DIFFICULTIES,
     LEAN_TOPIC_FAMILIES,
@@ -55,6 +64,10 @@ LEAN_VERSION = "Lean (version 4.8.0, x86_64-w64-windows-gnu, commit df668f00e6c0
 LAKE_VERSION = "Lake version 5.0.0-df668f0 (Lean version 4.8.0)"
 _LEAN_PREFLIGHT_CACHE: dict[str, JsonObject] = {}
 _LEAN_LEMMA_GRAPH_PREFLIGHT_CACHE: dict[str, JsonObject] = {}
+_REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
+DEFAULT_LEAN_CATALOG_PREFLIGHT_MANIFEST_PATH = (
+    _REPOSITORY_ROOT / "benchmarks/paper/lean_checker_preflight.v1.json"
+)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -156,6 +169,9 @@ def load_paper_catalogs(
     factorization_path: str | Path,
     lean_path: str | Path,
     lean_lemma_graph_path: str | Path | None = None,
+    lean_preflight_manifest_path: str | Path = (
+        DEFAULT_LEAN_CATALOG_PREFLIGHT_MANIFEST_PATH
+    ),
 ) -> PaperInputCatalogManifest:
     factor_path = Path(factorization_path)
     lean_catalog_path = Path(lean_path)
@@ -191,8 +207,8 @@ def load_paper_catalogs(
         lean_cases,
         expected_counts={difficulty: 10 for difficulty in DIFFICULTIES},
     )
-    lean_preflight_summary = _run_lean_catalog_preflight(lean_cases)
-    expected_lean_environment_digest = str(lean_preflight_summary["environment_digest"])
+    environment_manifest = _current_lean_environment_manifest_without_preflight()
+    expected_lean_environment_digest = str(environment_manifest.environment_digest)
     _validate_lean_environment_digest(
         lean_cases,
         expected_digest=expected_lean_environment_digest,
@@ -201,9 +217,20 @@ def load_paper_catalogs(
         lean_lemma_graph_cases,
         expected_digest=expected_lean_environment_digest,
     )
-    lean_lemma_graph_preflight_summary = _run_lean_lemma_graph_preflight(
+    audit_manifest, matched_entries = _load_matching_lean_preflight_evidence(
+        lean_cases=lean_cases,
+        lean_lemma_graph_cases=lean_lemma_graph_cases,
+        manifest_path=Path(lean_preflight_manifest_path),
+        environment_digest=expected_lean_environment_digest,
+    )
+    lean_preflight_summary = _direct_preflight_summary_from_entries(
+        matched_entries,
+        environment_digest=audit_manifest.environment_digest,
+    )
+    lean_lemma_graph_preflight_summary = _graph_preflight_summary_from_entries(
         lean_lemma_graph_cases,
-        expected_environment_digest=expected_lean_environment_digest,
+        matched_entries,
+        environment_digest=audit_manifest.environment_digest,
     )
 
     body = {
@@ -971,6 +998,235 @@ def _validate_lean_lemma_graph_environment_digest(
             raise ValueError(
                 "Lean lemma graph case environment_digest does not match checker environment"
             )
+
+
+def _load_matching_lean_preflight_evidence(
+    *,
+    lean_cases: tuple[JsonObject, ...],
+    lean_lemma_graph_cases: tuple[JsonObject, ...],
+    manifest_path: Path,
+    environment_digest: str,
+) -> tuple[LeanCatalogPreflightManifest, tuple[LeanCatalogPreflightEntry, ...]]:
+    try:
+        body = json.loads(manifest_path.read_text(encoding="utf-8"))
+        if not isinstance(body, dict):
+            raise ValueError("manifest root must be an object")
+        manifest = validate_lean_catalog_preflight_manifest(body)
+    except (FileNotFoundError, json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
+        raise ValueError(
+            f"Lean catalog preflight manifest is stale: {manifest_path}: {exc}"
+        ) from exc
+    if manifest.environment_digest != environment_digest:
+        raise ValueError(
+            "Lean catalog preflight manifest is stale: environment_digest changed"
+        )
+
+    candidates = _lean_catalog_audit_candidates(
+        lean_cases=lean_cases,
+        lean_lemma_graph_cases=lean_lemma_graph_cases,
+        environment_digest=environment_digest,
+    )
+    matched = validate_manifest_against_candidates(
+        manifest,
+        candidates=candidates,
+    )
+    return manifest, matched
+
+
+def _lean_catalog_audit_candidates(
+    *,
+    lean_cases: tuple[JsonObject, ...],
+    lean_lemma_graph_cases: tuple[JsonObject, ...],
+    environment_digest: str,
+) -> tuple[LeanCatalogAuditCandidate, ...]:
+    checker_digest = lean_checker_implementation_digest()
+    candidates: list[LeanCatalogAuditCandidate] = []
+    for case in lean_cases:
+        case_id = str(case["case_id"])
+        candidates.append(
+            LeanCatalogAuditCandidate(
+                entry_id=f"direct:{case_id}",
+                case_id=case_id,
+                node_id=None,
+                theorem_payload=_lean_theorem_payload_from_case(case),
+                proof_source=str(case["oracle_proof_ref"]["proof_source"]),
+                environment_digest=environment_digest,
+                checker_implementation_digest=checker_digest,
+                checker_mode=LeanCheckerMode.DIRECT_PROOF.value,
+                resource_limits=dict(LEAN_RESOURCE_LIMITS),
+            )
+        )
+
+    for case in lean_lemma_graph_cases:
+        if case.get("oracle_proof_package_ref") is None:
+            continue
+        oracle_ref = _validate_lean_lemma_graph_oracle_ref(case)
+        node_proof_sources = dict(oracle_ref["node_proof_sources"])
+        case_id = str(case["case_id"])
+        for node in case["lemma_graph"]["nodes"]:
+            node_id = str(node["node_id"])
+            proof_source = node_proof_sources.get(node_id)
+            if not isinstance(proof_source, str) or not proof_source:
+                raise ValueError("oracle proof package missing node proof source")
+            candidates.append(
+                LeanCatalogAuditCandidate(
+                    entry_id=f"graph:{case_id}:{node_id}",
+                    case_id=case_id,
+                    node_id=node_id,
+                    theorem_payload=_lean_theorem_payload_from_payload(
+                        node["theorem_payload"],
+                        case_id=case_id,
+                        node_id=node_id,
+                    ),
+                    proof_source=proof_source,
+                    environment_digest=environment_digest,
+                    checker_implementation_digest=checker_digest,
+                    checker_mode=LeanCheckerMode.DIRECT_PROOF.value,
+                    resource_limits=dict(LEAN_RESOURCE_LIMITS),
+                )
+            )
+    return tuple(candidates)
+
+
+def _direct_preflight_summary_from_entries(
+    entries: tuple[LeanCatalogPreflightEntry, ...],
+    *,
+    environment_digest: str,
+) -> JsonObject:
+    direct_entries = tuple(entry for entry in entries if entry.node_id is None)
+    return {
+        "schema_version": "tokenshare.paper_lean_preflight_summary.v1",
+        "status": "passed",
+        "checked_case_count": len(direct_entries),
+        "accepted_case_count": len(direct_entries),
+        "checker_mode": LeanCheckerMode.DIRECT_PROOF.value,
+        "environment_digest": environment_digest,
+        "proof_digest_bundle": digest_json(
+            [
+                {
+                    "case_id": entry.case_id,
+                    "status": entry.status,
+                    "proof_digest": entry.proof_digest,
+                    "normalized_theorem_digest": entry.normalized_theorem_digest,
+                }
+                for entry in direct_entries
+            ]
+        ),
+    }
+
+
+def _graph_preflight_summary_from_entries(
+    lean_lemma_graph_cases: tuple[JsonObject, ...],
+    entries: tuple[LeanCatalogPreflightEntry, ...],
+    *,
+    environment_digest: str,
+) -> JsonObject:
+    if not lean_lemma_graph_cases:
+        return {
+            "schema_version": "tokenshare.paper_lean_lemma_graph_preflight_summary.v1",
+            "status": "not_applicable",
+            "checked_case_count": 0,
+            "accepted_case_count": 0,
+            "blocked_case_count": 0,
+            "accepted_node_count_by_case": {},
+            "environment_digest": environment_digest,
+        }
+    accepted_node_count_by_case: dict[str, int] = {}
+    for entry in entries:
+        if entry.node_id is not None:
+            accepted_node_count_by_case[entry.case_id] = (
+                accepted_node_count_by_case.get(entry.case_id, 0) + 1
+            )
+    blocked_case_count = sum(
+        1
+        for case in lean_lemma_graph_cases
+        if case.get("oracle_proof_package_ref") is None
+    )
+    return {
+        "schema_version": "tokenshare.paper_lean_lemma_graph_preflight_summary.v1",
+        "status": "passed",
+        "checked_case_count": len(lean_lemma_graph_cases),
+        "accepted_case_count": len(accepted_node_count_by_case),
+        "blocked_case_count": blocked_case_count,
+        "accepted_node_count_by_case": accepted_node_count_by_case,
+        "checker_mode": LeanCheckerMode.DIRECT_PROOF.value,
+        "environment_digest": environment_digest,
+    }
+
+
+def _current_lean_environment_manifest_without_preflight() -> LeanEnvironmentManifest:
+    """重算可内容寻址的环境摘要，但不探测版本或启动 Lean/Lake。"""
+
+    tools_root = Path.home() / "AppData" / "Local" / "TokenShare" / "LeanToolchain"
+    elan_bin = tools_root / "elan-home" / "bin"
+    return LeanEnvironmentManifest.from_project(
+        project_root=default_lean_fixture_project_path(),
+        lean_executable=elan_bin / "lean.exe",
+        lake_executable=elan_bin / "lake.exe",
+        lean_version=LEAN_VERSION,
+        lake_version=LAKE_VERSION,
+        resource_limits=LEAN_RESOURCE_LIMITS,
+        created_at=CREATED_AT,
+    )
+
+
+def audit_lean_catalog_preflight_manifest(
+    *,
+    lean_path: str | Path,
+    lean_lemma_graph_path: str | Path | None = None,
+    generated_at: str = CREATED_AT,
+) -> LeanCatalogPreflightManifest:
+    """显式运行真实 Lean checker，并在全部接受后返回可跟踪证据。"""
+
+    lean_catalog_path = Path(lean_path)
+    graph_catalog_path = (
+        Path(lean_lemma_graph_path) if lean_lemma_graph_path is not None else None
+    )
+    lean_cases = tuple(
+        _with_lean_v1_paper_difficulty(case)
+        for case in _load_jsonl(lean_catalog_path)
+    )
+    graph_cases = (
+        tuple(_load_lean_lemma_graph_cases(graph_catalog_path))
+        if graph_catalog_path is not None
+        else ()
+    )
+    _validate_unique_case_ids(lean_cases + graph_cases)
+    for case in lean_cases:
+        _validate_lean_case(case)
+    for case in graph_cases:
+        _validate_lean_lemma_graph_case(case)
+
+    environment_manifest = _default_lean_environment_manifest()
+    environment_digest = str(environment_manifest.environment_digest)
+    _validate_lean_environment_digest(lean_cases, expected_digest=environment_digest)
+    _validate_lean_lemma_graph_environment_digest(
+        graph_cases,
+        expected_digest=environment_digest,
+    )
+    candidates = _lean_catalog_audit_candidates(
+        lean_cases=lean_cases,
+        lean_lemma_graph_cases=graph_cases,
+        environment_digest=environment_digest,
+    )
+
+    # 只有这条显式审计路径可以运行批量真实 checker；普通 loader 不会调用它。
+    _run_lean_catalog_preflight(lean_cases)
+    _run_lean_lemma_graph_preflight(
+        graph_cases,
+        expected_environment_digest=environment_digest,
+    )
+    source_digests = {"lean_catalog": _file_digest(lean_catalog_path)}
+    if graph_catalog_path is not None:
+        source_digests["lean_lemma_graph_catalog"] = _file_digest(graph_catalog_path)
+    checker_digest = lean_checker_implementation_digest()
+    return build_lean_catalog_preflight_manifest(
+        entries=(candidate.accepted_entry() for candidate in candidates),
+        source_digests=source_digests,
+        environment_digest=environment_digest,
+        checker_implementation_digest=checker_digest,
+        generated_at=generated_at,
+    )
 
 
 def _run_lean_catalog_preflight(lean_cases: tuple[JsonObject, ...]) -> JsonObject:

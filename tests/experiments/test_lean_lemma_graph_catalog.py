@@ -3,6 +3,7 @@ from hashlib import sha256
 from pathlib import Path
 import pytest
 
+import tokenshare.experiments.paper_catalog as paper_catalog_module
 from tokenshare.experiments.paper_catalog import (
     default_lean_paper_environment_manifest,
     lean_case_semantic_fingerprint as production_lean_case_semantic_fingerprint,
@@ -206,6 +207,7 @@ def test_medium_lemma_dag_preflight_rejects_bad_oracle_package_hash(
 
 def test_medium_lemma_dag_preflight_rejects_bad_node_oracle_proof(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     case = _single_medium_case(_load_catalog_with_lemma_graph(), topic_family="induction")
     bad_ref = {
@@ -217,7 +219,15 @@ def test_medium_lemma_dag_preflight_rejects_bad_node_oracle_proof(
     }
     graph_path = _write_graph_catalog(tmp_path, {**case, "oracle_proof_package_ref": bad_ref})
 
-    with pytest.raises(ValueError, match="Lean lemma graph preflight rejected"):
+    monkeypatch.setattr(
+        paper_catalog_module,
+        "check_lean_proof",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("stale graph evidence must not run checker")
+        ),
+    )
+
+    with pytest.raises(ValueError, match="manifest is stale.*graph:"):
         load_paper_catalogs(
             factorization_path=FACTOR_CATALOG,
             lean_path=LEAN_V1_CATALOG,

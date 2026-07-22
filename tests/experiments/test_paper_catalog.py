@@ -48,6 +48,72 @@ def test_paper_catalogs_load_30_factorization_and_30_lean_cases() -> None:
     ).catalog_digest
 
 
+def test_catalog_load_uses_matching_manifest_without_checker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def unexpected_lean_startup(*args: object, **kwargs: object) -> object:
+        raise AssertionError("普通 catalog load 不应启动 Lean 或 checker")
+
+    monkeypatch.setattr(
+        paper_catalog_module,
+        "_default_lean_environment_manifest",
+        unexpected_lean_startup,
+    )
+    monkeypatch.setattr(
+        paper_catalog_module,
+        "check_lean_proof",
+        unexpected_lean_startup,
+    )
+
+    manifest = load_paper_catalogs(
+        factorization_path=Path("benchmarks/paper/factorization_catalog.v1.jsonl"),
+        lean_path=Path("benchmarks/paper/lean_catalog.v1.jsonl"),
+    )
+
+    assert manifest.lean_preflight_status == "passed"
+    assert manifest.lean_preflight_summary["checked_case_count"] == 30
+
+
+def test_catalog_load_rejects_stale_manifest_without_running_checker(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    body = json.loads(
+        paper_catalog_module.DEFAULT_LEAN_CATALOG_PREFLIGHT_MANIFEST_PATH.read_text(
+            encoding="utf-8"
+        )
+    )
+    body["entries"][0]["entry_key"] = "sha256:" + "0" * 64
+    stale_path = tmp_path / "stale_lean_checker_preflight.v1.json"
+    stale_path.write_text(
+        json.dumps(body, ensure_ascii=False, sort_keys=True),
+        encoding="utf-8",
+    )
+
+    def unexpected_lean_startup(*args: object, **kwargs: object) -> object:
+        raise AssertionError("stale manifest 必须 fail closed，不能回退启动 checker")
+
+    monkeypatch.setattr(
+        paper_catalog_module,
+        "_default_lean_environment_manifest",
+        unexpected_lean_startup,
+    )
+    monkeypatch.setattr(
+        paper_catalog_module,
+        "check_lean_proof",
+        unexpected_lean_startup,
+    )
+
+    with pytest.raises(ValueError, match="Lean catalog preflight manifest is stale"):
+        load_paper_catalogs(
+            factorization_path=Path(
+                "benchmarks/paper/factorization_catalog.v1.jsonl"
+            ),
+            lean_path=Path("benchmarks/paper/lean_catalog.v1.jsonl"),
+            lean_preflight_manifest_path=stale_path,
+        )
+
+
 def test_paper_catalog_loads_the_frozen_500_root_factorization_v2(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -463,7 +529,10 @@ def test_catalog_loader_rejects_duplicate_case_ids(tmp_path: Path) -> None:
         )
 
 
-def test_lean_catalog_preflight_rejects_bad_embedded_oracle_proof(tmp_path: Path) -> None:
+def test_lean_catalog_loader_rejects_bad_oracle_as_stale_evidence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     source_path = Path("benchmarks/paper/lean_catalog.v1.jsonl")
     rows = source_path.read_text(encoding="utf-8").splitlines()
     first = json.loads(rows[0])
@@ -480,7 +549,18 @@ def test_lean_catalog_preflight_rejects_bad_embedded_oracle_proof(tmp_path: Path
         encoding="utf-8",
     )
 
-    with pytest.raises(ValueError, match="Lean preflight rejected case lean_easy_01"):
+    monkeypatch.setattr(
+        paper_catalog_module,
+        "check_lean_proof",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("stale oracle evidence must not run checker")
+        ),
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="manifest is stale.*direct:lean_easy_01",
+    ):
         load_paper_catalogs(
             factorization_path=Path("benchmarks/paper/factorization_catalog.v1.jsonl"),
             lean_path=bad_path,

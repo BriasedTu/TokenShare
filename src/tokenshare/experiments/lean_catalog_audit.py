@@ -3,14 +3,30 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from hashlib import sha256
+from pathlib import Path
 from typing import Iterable
 
 from tokenshare.core.models import JsonObject
 from tokenshare.experiments.paper_models import digest_json
+from tokenshare.plugins.lean_proof.checker import render_lean_source
+from tokenshare.plugins.lean_proof.models import (
+    LeanTheoremPayload,
+    canonical_json_digest,
+)
 
 
 LEAN_CATALOG_PREFLIGHT_MANIFEST_SCHEMA_VERSION = (
     "tokenshare.lean_catalog_preflight_manifest.v1"
+)
+_REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
+_DEFAULT_CHECKER_IMPLEMENTATION_PATHS = (
+    Path(__file__).resolve(),
+    _REPOSITORY_ROOT / "src/tokenshare/experiments/paper_catalog.py",
+    _REPOSITORY_ROOT / "src/tokenshare/plugins/lean_proof/checker.py",
+    _REPOSITORY_ROOT / "src/tokenshare/plugins/lean_proof/environment.py",
+    _REPOSITORY_ROOT / "src/tokenshare/plugins/lean_proof/models.py",
+    _REPOSITORY_ROOT / "src/tokenshare/plugins/lean_proof/preflight.py",
 )
 
 
@@ -35,6 +51,81 @@ def lean_preflight_entry_key(
             "resource_limits": dict(resource_limits),
         }
     )
+
+
+@dataclass(frozen=True, kw_only=True)
+class LeanCatalogAuditCandidate:
+    """One deterministic Lean invocation before checker evidence is attached."""
+
+    entry_id: str
+    case_id: str
+    node_id: str | None
+    theorem_payload: LeanTheoremPayload
+    proof_source: str
+    environment_digest: str
+    checker_implementation_digest: str
+    checker_mode: str
+    resource_limits: JsonObject
+
+    @property
+    def generated_source_digest(self) -> str:
+        source = render_lean_source(self.theorem_payload, self.proof_source)
+        return _bytes_digest(source.encode("utf-8"))
+
+    @property
+    def oracle_proof_digest(self) -> str:
+        return canonical_json_digest({"proof_source": self.proof_source})
+
+    @property
+    def normalized_theorem_digest(self) -> str:
+        return canonical_json_digest(
+            {
+                "theorem_name": self.theorem_payload.theorem_name,
+                "imports": self.theorem_payload.imports,
+                "namespace": self.theorem_payload.namespace,
+                "parameters_source": self.theorem_payload.parameters_source,
+                "statement_source": self.theorem_payload.statement_source,
+            }
+        )
+
+    @property
+    def proof_digest(self) -> str:
+        return canonical_json_digest(
+            {
+                "theorem_payload_digest": self.theorem_payload.payload_digest,
+                "proof_source": self.proof_source,
+            }
+        )
+
+    @property
+    def entry_key(self) -> str:
+        return lean_preflight_entry_key(
+            generated_source_digest=self.generated_source_digest,
+            oracle_proof_digest=self.oracle_proof_digest,
+            environment_digest=self.environment_digest,
+            checker_implementation_digest=self.checker_implementation_digest,
+            checker_mode=self.checker_mode,
+            resource_limits=self.resource_limits,
+        )
+
+    def accepted_entry(self) -> "LeanCatalogPreflightEntry":
+        """Materialize evidence only after the caller observed checker acceptance."""
+
+        return LeanCatalogPreflightEntry(
+            entry_id=self.entry_id,
+            case_id=self.case_id,
+            node_id=self.node_id,
+            checker_mode=self.checker_mode,
+            generated_source_digest=self.generated_source_digest,
+            oracle_proof_digest=self.oracle_proof_digest,
+            environment_digest=self.environment_digest,
+            checker_implementation_digest=self.checker_implementation_digest,
+            resource_limits=dict(self.resource_limits),
+            entry_key=self.entry_key,
+            normalized_theorem_digest=self.normalized_theorem_digest,
+            proof_digest=self.proof_digest,
+            status="accepted",
+        )
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -234,6 +325,49 @@ def validate_lean_catalog_preflight_manifest(
     return manifest
 
 
+def validate_manifest_against_candidates(
+    manifest: LeanCatalogPreflightManifest,
+    *,
+    candidates: Iterable[LeanCatalogAuditCandidate],
+) -> tuple[LeanCatalogPreflightEntry, ...]:
+    """Fail closed unless every requested candidate has matching accepted evidence."""
+
+    entries_by_id = {entry.entry_id: entry for entry in manifest.entries}
+    matched: list[LeanCatalogPreflightEntry] = []
+    for candidate in candidates:
+        entry = entries_by_id.get(candidate.entry_id)
+        if entry is None:
+            raise ValueError(
+                f"Lean catalog preflight manifest is stale: missing {candidate.entry_id}"
+            )
+        expected = candidate.accepted_entry()
+        if entry.to_dict() != expected.to_dict():
+            raise ValueError(
+                "Lean catalog preflight manifest is stale: "
+                f"checker inputs changed for {candidate.entry_id}"
+            )
+        matched.append(entry)
+    return tuple(matched)
+
+
+def lean_checker_implementation_digest(
+    paths: Iterable[str | Path] | None = None,
+) -> str:
+    """Digest checker and source-assembly code by content, not a manual version tag."""
+
+    selected = tuple(Path(path).resolve() for path in paths) if paths else (
+        _DEFAULT_CHECKER_IMPLEMENTATION_PATHS
+    )
+    body: dict[str, str] = {}
+    for path in selected:
+        try:
+            relative = path.relative_to(_REPOSITORY_ROOT).as_posix()
+        except ValueError:
+            relative = path.as_posix()
+        body[relative] = _bytes_digest(path.read_bytes())
+    return digest_json(dict(sorted(body.items())))
+
+
 def _proof_digest_bundle(entries: Iterable[LeanCatalogPreflightEntry]) -> str:
     return digest_json(
         [
@@ -246,3 +380,7 @@ def _proof_digest_bundle(entries: Iterable[LeanCatalogPreflightEntry]) -> str:
             for entry in entries
         ]
     )
+
+
+def _bytes_digest(data: bytes) -> str:
+    return f"sha256:{sha256(data).hexdigest()}"
