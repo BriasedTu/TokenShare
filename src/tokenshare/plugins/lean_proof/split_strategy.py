@@ -334,6 +334,7 @@ def build_lean_split_plan(
     expansion_decision_id: str,
     created_at: str,
     executor_decomposition_authority_ref: ArtifactRef | None = None,
+    proof_executor_requirements: JsonObject | None = None,
 ) -> LeanSplitPlanResult:
     if executor_decomposition_authority_ref is not None:
         raise ValueError("AI output cannot define Lean decomposition")
@@ -353,6 +354,7 @@ def build_lean_split_plan(
             expansion_scope_hash=expansion_scope_hash,
             expansion_decision_id=expansion_decision_id,
             created_at=created_at,
+            proof_executor_requirements=proof_executor_requirements,
         )
     if certificate.split_kind == "unsupported":
         raise ValueError("unsupported Lean split certificate cannot create a split plan")
@@ -388,6 +390,7 @@ def build_lean_split_plan(
         created_at=created_at,
         proposal_id="lean_decomposition_proposal_pending",
         proposal_digest="sha256:pending_proposal_digest",
+        proof_executor_requirements=proof_executor_requirements,
     )
     proposal_digest = digest_decomposition_proposal_body(proposal)
     proposal_id = f"lean_decomposition_proposal_{proposal_digest.removeprefix('sha256:')}"
@@ -404,6 +407,7 @@ def build_lean_split_plan(
         created_at=created_at,
         proposal_id=proposal_id,
         proposal_digest=proposal_digest,
+        proof_executor_requirements=proof_executor_requirements,
     )
 
     child_unit_ids = {
@@ -465,6 +469,7 @@ def _build_lean_lemma_graph_split_plan(
     expansion_scope_hash: str,
     expansion_decision_id: str,
     created_at: str,
+    proof_executor_requirements: JsonObject | None,
 ) -> LeanSplitPlanResult:
     if certificate.parent_theorem_payload_ref is None:
         raise ValueError("Lean lemma graph certificate requires parent theorem payload ref")
@@ -502,6 +507,7 @@ def _build_lean_lemma_graph_split_plan(
         created_at=created_at,
         proposal_id="lean_decomposition_proposal_pending",
         proposal_digest="sha256:pending_proposal_digest",
+        proof_executor_requirements=proof_executor_requirements,
     )
     proposal_digest = digest_decomposition_proposal_body(proposal)
     proposal_id = f"lean_decomposition_proposal_{proposal_digest.removeprefix('sha256:')}"
@@ -519,6 +525,7 @@ def _build_lean_lemma_graph_split_plan(
         created_at=created_at,
         proposal_id=proposal_id,
         proposal_digest=proposal_digest,
+        proof_executor_requirements=proof_executor_requirements,
     )
 
     child_unit_ids = {
@@ -971,6 +978,7 @@ def _build_proposal(
     created_at: str,
     proposal_id: str,
     proposal_digest: str,
+    proof_executor_requirements: JsonObject | None,
 ) -> DecompositionProposal:
     merge_slots = [_proposal_merge_slot(child) for child in certificate.child_goals]
     return DecompositionProposal(
@@ -991,7 +999,11 @@ def _build_proposal(
             "created_at": created_at,
         },
         child_specs=[
-            _child_spec(child, child_payload_refs[child["child_logical_key"]])
+            _child_spec(
+                child,
+                child_payload_refs[child["child_logical_key"]],
+                proof_executor_requirements=proof_executor_requirements,
+            )
             for child in certificate.child_goals
         ],
         dependency_edges=[],
@@ -1040,6 +1052,7 @@ def _build_lemma_graph_proposal(
     created_at: str,
     proposal_id: str,
     proposal_digest: str,
+    proof_executor_requirements: JsonObject | None,
 ) -> DecompositionProposal:
     merge_slots = [_lemma_graph_proposal_merge_slot(node, certificate) for node in certificate.lemma_nodes]
     root_slot_id = f"{certificate.root_node_id}:{PROOF_ARTIFACT_OUTPUT_NAME}"
@@ -1066,6 +1079,7 @@ def _build_lemma_graph_proposal(
                 node_payload_refs[str(node["node_id"])],
                 node_payload_digests[str(node["node_id"])],
                 certificate,
+                proof_executor_requirements=proof_executor_requirements,
             )
             for node in certificate.lemma_nodes
         ],
@@ -1108,7 +1122,12 @@ def _build_lemma_graph_proposal(
     )
 
 
-def _child_spec(child: JsonObject, child_payload_ref: ArtifactRef) -> JsonObject:
+def _child_spec(
+    child: JsonObject,
+    child_payload_ref: ArtifactRef,
+    *,
+    proof_executor_requirements: JsonObject | None,
+) -> JsonObject:
     return {
         "child_logical_key": child["child_logical_key"],
         "unit_type": "lean_proof_subgoal",
@@ -1131,10 +1150,9 @@ def _child_spec(child: JsonObject, child_payload_ref: ArtifactRef) -> JsonObject
         "budget_limit": None,
         "deadline": None,
         "weight": 1.0,
-        "required_capabilities": {
-            "executor": "deterministic_local_lean_checker",
-            "lean_checker": True,
-        },
+        "required_capabilities": _proof_executor_capabilities(
+            proof_executor_requirements
+        ),
         "plugin_payload": {
             "schema_version": "lean_proof.subgoal_plugin_payload.v1",
             "summary": {
@@ -1159,6 +1177,8 @@ def _lemma_graph_child_spec(
     node_payload_ref: ArtifactRef,
     node_payload_digest: str,
     certificate: LeanLemmaGraphCertificate,
+    *,
+    proof_executor_requirements: JsonObject | None,
 ) -> JsonObject:
     node_id = str(node["node_id"])
     return {
@@ -1183,10 +1203,9 @@ def _lemma_graph_child_spec(
         "budget_limit": None,
         "deadline": None,
         "weight": 1.0,
-        "required_capabilities": {
-            "executor": "deterministic_local_lean_checker",
-            "lean_checker": True,
-        },
+        "required_capabilities": _proof_executor_capabilities(
+            proof_executor_requirements
+        ),
         "plugin_payload": {
             "schema_version": "lean_proof.lemma_graph_node_plugin_payload.v2",
             "summary": {
@@ -1209,6 +1228,22 @@ def _lemma_graph_child_spec(
         },
         "promotion_guard_ref": None,
     }
+
+
+def _proof_executor_capabilities(
+    proof_executor_requirements: JsonObject | None,
+) -> JsonObject:
+    if proof_executor_requirements is None:
+        return {
+            "executor": "deterministic_local_lean_checker",
+            "lean_checker": True,
+        }
+    requirements = dict(proof_executor_requirements)
+    if not requirements:
+        raise ValueError("proof_executor_requirements cannot be empty")
+    if requirements.get("executor") != "ai_api":
+        raise ValueError("Lean proof candidate executor must be ai_api")
+    return requirements
 
 
 def _lemma_graph_dependency_edge(

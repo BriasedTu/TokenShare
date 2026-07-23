@@ -7,6 +7,7 @@ from dataclasses import dataclass
 
 from tokenshare.core.models import ArtifactRef, JsonObject
 from tokenshare.plugins.lean_proof.checker import (
+    LeanChecker,
     LeanCheckerMode,
     LeanCheckerReport,
     LeanCheckerRequest,
@@ -44,6 +45,7 @@ def check_lean_child_proof(
     environment_manifest: LeanEnvironmentManifest,
     request_id: str,
     created_at: str,
+    checker: LeanChecker = check_lean_proof,
 ) -> LeanChildProofResult:
     """Check one child proof against certificate-bound child payload metadata."""
 
@@ -72,7 +74,7 @@ def check_lean_child_proof(
             context_digest=child.get("context_digest"),
         )
 
-    report = check_lean_proof(
+    report = checker(
         LeanCheckerRequest(
             request_id=request_id,
             theorem_payload_ref=child_payload_ref,

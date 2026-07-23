@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from tokenshare.core.expansion import MergePlan
 from tokenshare.core.models import ArtifactRef, JsonObject
 from tokenshare.plugins.lean_proof.checker import (
+    LeanChecker,
     LeanCheckerMode,
     LeanCheckerReport,
     LeanCheckerRequest,
@@ -83,6 +84,7 @@ def merge_lean_child_proofs(
     merge_unit_id: str,
     request_id: str,
     created_at: str,
+    checker: LeanChecker = check_lean_proof,
 ) -> LeanProofMergeResult:
     """Build a root merge proof from child proof evidence and re-check it."""
 
@@ -125,7 +127,7 @@ def merge_lean_child_proofs(
         metadata={"merge_rule_id": merge_rule_id, "merge_unit_id": merge_unit_id},
         created_at=created_at,
     )
-    checker_report = check_lean_proof(
+    checker_report = checker(
         LeanCheckerRequest(
             request_id=request_id,
             theorem_payload_ref=parent_theorem_payload_ref,
@@ -188,6 +190,7 @@ def merge_lean_lemma_graph_proofs(
     merge_unit_id: str,
     request_id: str,
     created_at: str,
+    checker: LeanChecker = check_lean_proof,
 ) -> LeanLemmaGraphMergeResult:
     """Assemble accepted lemma-DAG node proof artifacts and re-check the root."""
 
@@ -246,7 +249,7 @@ def merge_lean_lemma_graph_proofs(
         },
         created_at=created_at,
     )
-    checker_report = check_lean_proof(
+    checker_report = checker(
         LeanCheckerRequest(
             request_id=request_id,
             theorem_payload_ref=parent_theorem_payload_ref,

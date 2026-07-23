@@ -56,6 +56,16 @@ class TaskGraph:
                 ready.append(unit_id)
         return ready
 
+    def activatable_unit_ids(self) -> list[str]:
+        """返回依赖已 canonical、可由协议推进到 Ready 的 Blocked units。"""
+
+        return [
+            unit_id
+            for unit_id, unit in self.units.items()
+            if unit.state == TaskState.BLOCKED
+            and self._dependencies_are_satisfied(unit_id)
+        ]
+
     def _validate_units(self, units: dict[str, TaskUnit]) -> None:
         for unit_id, unit in units.items():
             if unit_id != unit.unit_id:

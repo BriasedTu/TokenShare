@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, replace
+from datetime import datetime, timedelta
 from enum import Enum
 from math import ceil
 from typing import Any, Iterable
@@ -19,6 +20,11 @@ from tokenshare.experiments.paper_models import (
     PaperAttemptResult,
     PaperAttemptStatus,
     digest_json,
+)
+from tokenshare.local_runtime import (
+    NoOpRuntimeHooks,
+    RawOutputContext,
+    RawOutputDirective,
 )
 from tokenshare.storage.artifacts import ArtifactStore
 
@@ -190,6 +196,202 @@ class FaultInjectionOutcome:
             "mutated_output_ref": self.mutated_output_ref.to_dict(),
             "mutated_attempt": self.mutated_attempt.to_dict(),
         }
+
+
+class PaperFaultRuntimeHooks(NoOpRuntimeHooks):
+    """把冻结的 Exp3 fault target 接到真实 provider-output gate。"""
+
+    def __init__(
+        self,
+        *,
+        artifact_store: ArtifactStore,
+        condition_id: str,
+        repeat_id: int,
+        fault_type: PaperFaultType | str,
+        seed: int,
+        selected_unit_ids: Iterable[str],
+    ) -> None:
+        self._artifact_store = artifact_store
+        self._condition_id = _required_non_empty_str(condition_id, "condition_id")
+        if not isinstance(repeat_id, int) or isinstance(repeat_id, bool) or repeat_id < 0:
+            raise ValueError("repeat_id must be a non-negative integer")
+        self._repeat_id = repeat_id
+        self._fault_type = PaperFaultType(fault_type)
+        self._seed = seed
+        self._selected_unit_ids = frozenset(
+            _required_non_empty_str(str(unit_id), "selected_unit_ids")
+            for unit_id in selected_unit_ids
+        )
+        self._injected_unit_ids: set[str] = set()
+        self._records: list[JsonObject] = []
+        self._events: list[JsonObject] = []
+
+    @property
+    def records(self) -> tuple[JsonObject, ...]:
+        return tuple(dict(record) for record in self._records)
+
+    @property
+    def events(self) -> tuple[JsonObject, ...]:
+        return tuple(dict(event) for event in self._events)
+
+    def after_raw_output_persisted(
+        self,
+        context: RawOutputContext,
+    ) -> RawOutputDirective | None:
+        if context.unit_id not in self._selected_unit_ids:
+            return None
+        if context.unit_id in self._injected_unit_ids:
+            return None
+        raw_ref = _required_runtime_ref(
+            self._artifact_store, context.raw_output_ref, "persisted raw output"
+        )
+        provenance_ref = _required_runtime_ref(
+            self._artifact_store, context.provenance_ref, "persisted provenance"
+        )
+        usage_ref = _required_runtime_ref(
+            self._artifact_store, context.usage_ref, "persisted usage"
+        )
+        parsed_ref = None
+        if self._fault_type in {
+            PaperFaultType.FALSE_POSITIVE,
+            PaperFaultType.FALSE_NEGATIVE,
+        }:
+            try:
+                parsed_body = json.loads(context.content_text)
+            except json.JSONDecodeError:
+                parsed_body = {"candidate": context.content_text}
+            if not isinstance(parsed_body, dict):
+                parsed_body = {"candidate": parsed_body}
+            parsed_ref = self._artifact_store.save_json(
+                parsed_body,
+                artifact_id=f"pre_fault_candidate_{_safe_fault_id(context.attempt_id)}",
+                artifact_type="PreFaultCandidate",
+                artifact_schema_id="tokenshare.paper_fault_pre_candidate",
+                artifact_schema_version="v1",
+                source={"kind": "paper_fault_runtime_hook"},
+                metadata={"unit_id": context.unit_id},
+                created_at=context.submitted_at,
+            )
+        late_submitted_at = (
+            _timestamp_after(context.lease_deadline_at)
+            if self._fault_type == PaperFaultType.LATE_SUBMISSION
+            else context.submitted_at
+        )
+        attempt = PaperAttemptResult(
+            condition_id=self._condition_id,
+            repeat_id=self._repeat_id,
+            run_id=context.run_id,
+            task_id=context.task_id,
+            unit_id=context.unit_id,
+            attempt_id=context.attempt_id,
+            worker_id=context.worker_id,
+            provider_attempt_index=1,
+            attempt_status=PaperAttemptStatus.SUCCEEDED,
+            provider=context.provider,
+            model=context.model,
+            entry_id=context.entry_id,
+            request_ref=None,
+            raw_output_ref=raw_ref.to_dict(),
+            parsed_output_ref=parsed_ref.to_dict() if parsed_ref is not None else None,
+            parse_failure_ref=None,
+            provenance_ref=provenance_ref.to_dict(),
+            usage_ref=usage_ref.to_dict(),
+            started_at=context.submitted_at,
+            ended_at=context.submitted_at,
+            latency_ms=0,
+            prompt_tokens=int(context.usage_summary.get("prompt_tokens", 0)),
+            completion_tokens=int(context.usage_summary.get("completion_tokens", 0)),
+            total_tokens=int(context.usage_summary.get("total_tokens", 0)),
+            cost_estimate=float(context.usage_summary.get("cost_estimate", 0.0)),
+            error_kind=None,
+            fault_injection_ref=None,
+            paper_eligible=False,
+        )
+        outcome = inject_post_ai_fault(
+            artifact_store=self._artifact_store,
+            attempt=attempt,
+            fault_type=self._fault_type,
+            seed=self._seed,
+            created_at=context.submitted_at,
+            lease_deadline_at=context.lease_deadline_at,
+            submitted_at=late_submitted_at,
+            fault_target={
+                "unit_id": context.unit_id,
+                "attempt_id": context.attempt_id,
+                "artifact_ref": (
+                    parsed_ref.to_dict() if parsed_ref is not None else raw_ref.to_dict()
+                ),
+            },
+        )
+        record = {
+            **outcome.record.to_dict(),
+            "fault_injection_id": outcome.record.fault_id,
+            "requires_replacement": True,
+            "original_provenance_ref": provenance_ref.to_dict(),
+            "pre_fault_usage_ref": usage_ref.to_dict(),
+            "primitive_fault_record_ref": outcome.record_ref.to_dict(),
+            "hook_stage": "after_raw_provenance_usage_before_parser",
+        }
+        runtime_record_ref = self._artifact_store.save_json(
+            record,
+            artifact_id=f"{outcome.record.fault_id}_runtime_hook_record",
+            artifact_type="RuntimeFaultInjectionRecord",
+            artifact_schema_id="tokenshare.paper_runtime_fault_injection",
+            artifact_schema_version="v1",
+            source={"kind": "paper_fault_runtime_hook"},
+            metadata={"condition_id": self._condition_id, "unit_id": context.unit_id},
+            created_at=context.submitted_at,
+        )
+        record["record_ref"] = runtime_record_ref.to_dict()
+        event = {
+            "event_type": "EXPERIMENT_FAULT_INJECTED",
+            "condition_id": self._condition_id,
+            "run_id": context.run_id,
+            "task_id": context.task_id,
+            "unit_id": context.unit_id,
+            "attempt_id": context.attempt_id,
+            "fault_type": self._fault_type.value,
+            "protocol_event_refs": [],
+            "artifact_refs": [
+                raw_ref.to_dict(),
+                provenance_ref.to_dict(),
+                usage_ref.to_dict(),
+                outcome.mutated_output_ref.to_dict(),
+                runtime_record_ref.to_dict(),
+            ],
+            "occurred_at": context.submitted_at,
+        }
+        self._injected_unit_ids.add(context.unit_id)
+        self._records.append(record)
+        self._events.append(event)
+        replacement_text = None
+        if self._fault_type in {
+            PaperFaultType.FALSE_POSITIVE,
+            PaperFaultType.FALSE_NEGATIVE,
+        }:
+            mutation_body = _read_json_ref(
+                self._artifact_store, outcome.mutated_output_ref
+            )
+            replacement_text = json.dumps(
+                mutation_body["mutated_payload"],
+                ensure_ascii=False,
+                sort_keys=True,
+            )
+        result_kind = (
+            self._fault_type.value
+            if self._fault_type
+            in {
+                PaperFaultType.NO_RETURN,
+                PaperFaultType.LATE_SUBMISSION,
+                PaperFaultType.EXECUTOR_ERROR,
+            }
+            else None
+        )
+        return RawOutputDirective(
+            content_text=replacement_text,
+            result_kind=result_kind,
+            experiment_records=(event,),
+        )
 
 
 def select_fault_targets(
@@ -889,3 +1091,24 @@ def _enum_value(value: Any) -> Any:
     if isinstance(value, Enum):
         return value.value
     return value
+
+
+def _required_runtime_ref(
+    artifact_store: ArtifactStore,
+    value: ArtifactRef | None,
+    label: str,
+) -> ArtifactRef:
+    if not isinstance(value, ArtifactRef) or not artifact_store.verify(value):
+        raise ValueError(f"fault injection requires {label}")
+    return value
+
+
+def _timestamp_after(value: str | None) -> str:
+    if value is None:
+        raise ValueError("late_submission requires lease_deadline_at")
+    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    return (parsed + timedelta(microseconds=1)).isoformat().replace("+00:00", "Z")
+
+
+def _safe_fault_id(value: str) -> str:
+    return "".join(character if character.isalnum() else "_" for character in value)

@@ -123,6 +123,18 @@ def test_attempt_state_machine_allows_phase3_submission_but_rejects_verifying_st
     assert submitted.environment_summary == {"runtime": "python"}
     assert submitted.finished_at is None
 
+    failed = transition_attempt(
+        submitted,
+        new_state=AttemptState.FAILED,
+        changed_at="2026-06-08T00:03:00Z",
+        reason="executor_error",
+        failure_kind="executor_error",
+        failure_reason="executor returned failure",
+    )
+    assert failed.state == AttemptState.FAILED
+    assert failed.finished_at == "2026-06-08T00:03:00Z"
+    assert failed.failure_kind == "executor_error"
+
     with pytest.raises(ValueError, match="illegal Attempt transition"):
         transition_attempt(
             submitted,

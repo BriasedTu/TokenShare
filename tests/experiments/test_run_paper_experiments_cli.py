@@ -17,8 +17,8 @@ from tokenshare.experiments.run_paper_experiments import main
 APPROVED_EXP1_PILOT_DIGEST = (
     # Current schema digest for mock-approved CLI routing tests. The historical
     # real pilot approval digest remains immutable in existing evidence.
-    "sha256:fae72f83a8f6c9c4987377282b9f5e770"
-    "f361526d957b556c50b32c2b3f4ca83"
+    "sha256:6815a90bad32bb71b53b5ee80d7b103"
+    "6ee86c2223f0f3d626908298c8a3c481e"
 )
 
 

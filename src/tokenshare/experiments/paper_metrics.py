@@ -955,12 +955,9 @@ def _validate_artifacts(
         if not isinstance(soft_hints, dict):
             raise ValueError("paper attempt request planned AI unit binding is missing")
         if (
-            soft_hints.get("paper_condition_id") != condition_id
-            or soft_hints.get("planned_ai_unit_id")
+            soft_hints.get("planned_ai_unit_id")
             != attempt.get("planned_ai_unit_id")
             or soft_hints.get("planned_ai_unit_id") not in planned["ai_units"]
-            or soft_hints.get("paper_provider_attempt_index")
-            != attempt.get("provider_attempt_index")
         ):
             raise ValueError(
                 "paper attempt/execution plan AI unit binding conflicts "

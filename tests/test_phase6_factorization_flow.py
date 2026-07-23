@@ -55,6 +55,27 @@ def test_factorization_prime_fixture_expands_ranges_merges_prime_certificate_and
     assert EventType.EXPECTED_OUTPUT_RESOLVED in event_types
     assert EventType.CONTRIBUTION_STATE_CHANGED in event_types
     assert EventType.SETTLEMENT_RECORDED in event_types
+    events = result.ledger.read_all()
+    for execution in result.range_executions:
+        unit_id = execution.unit.unit_id
+        assert any(
+            event.event_type == EventType.LEASE_STATE_CHANGED
+            and event.payload.get("lease", {}).get("unit_id") == unit_id
+            and event.payload.get("scheduling_decision", {}).get("unit_id") == unit_id
+            for event in events
+        )
+        assert {
+            event.event_type
+            for event in events
+            if event.payload.get("unit_id") == unit_id
+        }.issuperset(
+            {
+                EventType.EXECUTION_REQUEST_RECORDED,
+                EventType.EXECUTION_SUBMISSION_RECORDED,
+                EventType.VERIFICATION_RECORDED,
+                EventType.CANONICAL_OUTPUTS_BOUND,
+            }
+        )
 
 
 def test_factorization_root_subject_is_canonical_under_subject_output_name(tmp_path) -> None:

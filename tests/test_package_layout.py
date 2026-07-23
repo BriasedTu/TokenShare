@@ -11,5 +11,6 @@ def test_tokenshare_package_layout_imports() -> None:
     assert (package_root / "storage").is_dir()
     assert (package_root / "plugins").is_dir()
     assert (package_root / "executors").is_dir()
+    assert (package_root / "local_runtime").is_dir()
     assert (package_root / "replay").is_dir()
     assert (package_root / "experiments").is_dir()

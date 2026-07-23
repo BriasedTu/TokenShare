@@ -2,6 +2,12 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use `superpowers:subagent-driven-development` (recommended) or `superpowers:executing-plans` to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking. Every feature or bug fix must follow `superpowers:test-driven-development`; every completion claim must follow `superpowers:verification-before-completion`.
 
+> **2026-07-22 架构覆盖条款：** Experiment 1–5 的矩阵、样本、模型、预算和报告要求继续使用本文；但本文中让 paper adapter/runner 直接执行 canonical、requeue、worker recovery、merge/completion 的落地方式已被 `2026-07-22-feat-011-system-runtime-paper-experiment-migration-plan.md` 覆盖。后续 agent 必须先完成系统 runtime 迁移，让实验只设条件和观察结果，再运行新的正式实验。Lean 保留 catalog/脚本预写的固定 lemma-DAG，由 Lean 插件校验并生成 certificate，不要求改成通用自动 theorem 拆分。
+
+> **2026-07-23 当前状态覆盖条款：** system runtime 迁移 Task 1-9 已落地；正常 FULL/fault/ablation 由 `paper_dispatcher` 进入 `local_runtime` / `ProtocolEngine`。公开 adapter direct API 仅作 deprecated 历史/selector regression 兼容。本文下方仍用“当前”“尚未”描述 adapter、formal runner、worker harness 或旧 catalog 的段落，均是迁移前的历史实施快照，不代表 2026-07-23 当前生命周期所有权或完成状态。
+
+> **2026-07-22 安全范围覆盖条款：** 本地研究原型不做 external-input attack、tamper/fabrication、path/injection、security fuzzing、auth/signature/ACL、恶意 plugin/executor/worker 或 Byzantine hardening。错误处理只实现 `false_positive,false_negative,no_return,late_submission,executor_error` 五类 rate-fault；worker death 和 ablation 仅按已冻结实验矩阵执行。本文历史 Task 中已有的 evidence consistency/tamper regression 只保留为既有正常流程回归，不授权新增攻击防护。
+
 **Goal:** 在不删减 Experiment 1–5、也不跳过 Lean 3×3 正式实验前置能力的前提下，用最少的工程 Task 完成真实 AI API 实验、审计输出和论文表格。
 
 **Architecture:** 复用已完成的 catalog/adapters、fault/worker/ablation support、fixed-entry identity、budget gate 和 Exp1 orchestrator。2026-07-18 审核后采用“Task 14 语义修复 + 公共契约薄层冻结、Exp1–5 独立模块并行开发、共享入口串行集成、预算/pilot/formal run 串行执行”的调度。当前 9×15 manifest 只满足机械计数，不满足 135 个语义不同 roots 与 hard/medium 难度分层，因此正式预算和 provider 调用继续 blocked。Experiment 1–4 固定使用 SiliconFlow GLM-5.2，Experiment 5 才执行三端点对比。`tokenshare_latest_real_plugin_experiment_design.md` 是实验口径唯一权威，本文把关键冻结字段、依赖和执行顺序落实为 agent 可直接执行的清单。

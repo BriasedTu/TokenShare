@@ -3,6 +3,7 @@ __pycache__/
 
 fixtures/lean_proof_project/.lake/
 local/*.local.json
+local/cache/
 outputs/
 out/
 

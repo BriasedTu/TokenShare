@@ -53,9 +53,42 @@ def test_fast_manifest_excludes_known_long_running_suites() -> None:
 def test_both_startup_scripts_expose_full_mode_and_share_manifest() -> None:
     powershell = (ROOT / "init.ps1").read_text(encoding="utf-8")
     bash = (ROOT / "init.sh").read_text(encoding="utf-8")
+    runner = (ROOT / "verification" / "run_verification.py").read_text(
+        encoding="utf-8"
+    )
 
     assert "[switch] $Full" in powershell
-    assert '"verification/fast-tests.txt"' in powershell
     assert "--full" in bash
-    assert 'verification/fast-tests.txt' in bash
+    assert "verification/fast-tests.txt" in runner
+
+
+def test_startup_scripts_use_one_conda_python_verification_entry() -> None:
+    powershell = (ROOT / "init.ps1").read_text(encoding="utf-8")
+    bash = (ROOT / "init.sh").read_text(encoding="utf-8")
+
+    assert powershell.count("conda run") == 1
+    assert bash.count('run -n "$CONDA_ENV" python') == 1
+    assert "verification/run_verification.py" in powershell
+    assert "verification/run_verification.py" in bash
+
+
+def test_profiles_expose_lean_audit_and_real_canary_manifest() -> None:
+    powershell = (ROOT / "init.ps1").read_text(encoding="utf-8")
+    bash = (ROOT / "init.sh").read_text(encoding="utf-8")
+    runner = (ROOT / "verification" / "run_verification.py").read_text(
+        encoding="utf-8"
+    )
+    canaries = ROOT / "verification" / "lean-canary-tests.txt"
+
+    assert "[switch] $LeanAudit" in powershell
+    assert "[switch] $ForceAllLeanAudit" in powershell
+    assert "--lean-audit" in bash
+    assert "--force-all-lean-audit" in bash
+    assert "verification/lean-canary-tests.txt" in runner
+    assert '"--only-lean-canary"' in runner
+    assert canaries.is_file()
+    assert any(
+        line.strip() and not line.lstrip().startswith("#")
+        for line in canaries.read_text(encoding="utf-8").splitlines()
+    )
 

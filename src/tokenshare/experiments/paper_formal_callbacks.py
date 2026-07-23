@@ -3,18 +3,17 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict, dataclass, is_dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from threading import Lock, current_thread
-from time import perf_counter
 from typing import Any
 
+from tokenshare.experiments.paper_models import digest_json
 from tokenshare.experiments.paper_workers import (
     PaperAIUnit,
     WorkerDeathKillPoint,
-    run_worker_death_harness,
+    freeze_worker_death_plan,
+    record_worker_death_observation,
 )
 from tokenshare.storage.artifacts import ArtifactStore
 
@@ -44,7 +43,7 @@ class FormalAblationResult:
 def run_exp1_normal_strategy(
     *,
     ordered_case_ids: Sequence[str],
-    execute_case: Callable[[str, str], Any],
+    execute_case: Callable[[str, int], Any],
 ) -> FormalStrategyResult:
     """按冻结顺序执行完整 Exp1 selection。"""
 
@@ -59,10 +58,10 @@ def run_scheduled_cases(
     *,
     ordered_case_ids: Sequence[str],
     worker_count: int,
-    execute_case: Callable[[str, str], Any],
+    execute_case: Callable[[str, int], Any],
     supported_worker_counts: Sequence[int] | None = None,
 ) -> FormalStrategyResult:
-    """用实际线程 slot 调度 root cases，并保留冻结返回顺序。"""
+    """把 worker_count 传给每个 root runtime，并从 unit 事实派生指标。"""
 
     case_ids = tuple(str(case_id) for case_id in ordered_case_ids)
     if worker_count < 1:
@@ -101,90 +100,43 @@ def run_scheduled_cases(
             },
         )
 
-    state_lock = Lock()
-    events_by_index: dict[int, tuple[dict[str, Any], dict[str, Any]]] = {}
-    outcomes_by_index: dict[int, Any] = {}
-    active_slots = 0
-    observed_max_slots = 0
-
-    def run_one(index: int, case_id: str) -> Any:
-        nonlocal active_slots, observed_max_slots
-        worker_id = current_thread().name
-        started_at = _utc_now()
-        started_tick = perf_counter()
-        with state_lock:
-            active_slots += 1
-            observed_max_slots = max(observed_max_slots, active_slots)
-        start_event = {
-            "event_type": "AI_UNIT_STARTED",
-            "case_id": case_id,
-            "unit_id": case_id,
-            "worker_id": worker_id,
-            "started_at": started_at,
-            "dependencies": [],
-        }
-        try:
-            outcome = execute_case(case_id, worker_id)
-            return outcome
-        finally:
-            ended_at = _utc_now()
-            duration_ms = max(0.001, (perf_counter() - started_tick) * 1000.0)
-            end_event = {
-                "event_type": "AI_UNIT_ENDED",
-                "case_id": case_id,
-                "unit_id": case_id,
-                "worker_id": worker_id,
-                "started_at": started_at,
-                "ended_at": ended_at,
-                "duration_ms": duration_ms,
-                "dependencies": [],
-            }
-            with state_lock:
-                active_slots -= 1
-                events_by_index[index] = (start_event, end_event)
-
-    condition_started_at = _utc_now()
-    condition_started_tick = perf_counter()
-    with ThreadPoolExecutor(
-        max_workers=worker_count,
-        thread_name_prefix="paper-formal-worker",
-    ) as executor:
-        futures = {
-            executor.submit(run_one, index, case_id): index
-            for index, case_id in enumerate(case_ids)
-        }
-        for future in as_completed(futures):
-            outcomes_by_index[futures[future]] = future.result()
-    merge_started_at = _utc_now()
-    merge_started_tick = perf_counter()
-    merge_ended_at = _utc_now()
-    merge_duration_ms = max(0.001, (perf_counter() - merge_started_tick) * 1000.0)
-    wall_clock_ms = max(0.001, (perf_counter() - condition_started_tick) * 1000.0)
-    condition_ended_at = _utc_now()
-
-    ordered_outcomes = tuple(outcomes_by_index[index] for index in range(len(case_ids)))
+    ordered_outcomes = tuple(
+        execute_case(case_id, worker_count) for case_id in case_ids
+    )
+    records_by_case = {
+        case_id: _runtime_records(outcome)
+        for case_id, outcome in zip(case_ids, ordered_outcomes, strict=True)
+    }
+    all_records = tuple(
+        record for case_id in case_ids for record in records_by_case[case_id]
+    )
     ordered_events = tuple(
         event
-        for index in range(len(case_ids))
-        for event in events_by_index[index]
+        for outcome in ordered_outcomes
+        for event in _protocol_events(outcome)
     )
-    merge_events = (
-        {
-            "event_type": "MERGE_GATE_OPENED",
-            "started_at": merge_started_at,
-            "dependencies": list(case_ids),
-        },
-        {
-            "event_type": "MERGE_GATE_COMPLETED",
-            "started_at": merge_started_at,
-            "ended_at": merge_ended_at,
-            "duration_ms": merge_duration_ms,
-            "dependencies": list(case_ids),
-        },
+    intervals = tuple(
+        (_timestamp(record["started_at"]), _timestamp(record["ended_at"]))
+        for record in all_records
     )
-    longest_unit_ms = max(
-        float(events_by_index[index][1]["duration_ms"])
-        for index in range(len(case_ids))
+    observed_max_slots = _observed_parallel_slots(intervals)
+    if observed_max_slots > worker_count:
+        raise ValueError("runtime facts exceed configured worker capacity")
+    wall_clock_ms = (
+        round(
+            (
+                max(end for _start, end in intervals)
+                - min(start for start, _end in intervals)
+            )
+            * 1000.0,
+            3,
+        )
+        if intervals
+        else 0.0
+    )
+    critical_path_ms = round(
+        sum(_critical_path_ms(records_by_case[case_id]) for case_id in case_ids),
+        3,
     )
     provider_latency_sum_ms = sum(
         _numeric_field(outcome, "provider_latency_ms") for outcome in ordered_outcomes
@@ -196,21 +148,40 @@ def run_scheduled_cases(
     return FormalStrategyResult(
         ordered_case_ids=case_ids,
         outcomes=ordered_outcomes,
-        events=ordered_events + merge_events,
+        events=ordered_events,
         metrics={
             "worker_count": worker_count,
             "observed_max_parallel_slots": observed_max_slots,
-            "condition_started_at": condition_started_at,
-            "condition_ended_at": condition_ended_at,
+            "condition_started_at": (
+                min(record["started_at"] for record in all_records)
+                if all_records
+                else None
+            ),
+            "condition_ended_at": (
+                max(record["ended_at"] for record in all_records)
+                if all_records
+                else None
+            ),
             "wall_clock_ms": wall_clock_ms,
-            "critical_path_ms": longest_unit_ms + merge_duration_ms,
+            "critical_path_ms": critical_path_ms,
             "provider_latency_sum_ms": provider_latency_sum_ms,
             "provider_error_count": provider_error_count,
+            "throughput_completed_units_per_second": (
+                sum(record.get("result_kind") == "succeeded" for record in all_records)
+                / (wall_clock_ms / 1000.0)
+                if wall_clock_ms > 0
+                else 0.0
+            ),
             "dependency_edges": [
-                {"source_unit_id": case_id, "target_unit_id": "merge_gate"}
+                {
+                    "case_id": case_id,
+                    "source_unit_id": dependency,
+                    "target_unit_id": record["unit_id"],
+                }
                 for case_id in case_ids
+                for record in records_by_case[case_id]
+                for dependency in record["dependencies"]
             ],
-            "merge_gate_duration_ms": merge_duration_ms,
             "applicability": "supported",
         },
     )
@@ -241,7 +212,7 @@ def run_exp3_post_ai_strategy(
             raise ValueError("fault injection requires persisted raw and provenance refs")
         events.append(
             {
-                "event_type": "PROVIDER_RAW_PERSISTED",
+                "event_type": "EXPERIMENT_PROVIDER_RAW_OBSERVED",
                 "attempt_id": _required_field(attempt, "attempt_id"),
                 "unit_id": unit_id,
                 "raw_output_ref": dict(raw_ref),
@@ -255,7 +226,7 @@ def run_exp3_post_ai_strategy(
         faults.append(fault)
         events.append(
             {
-                "event_type": "FAULT_INJECTED",
+                "event_type": "EXPERIMENT_FAULT_INJECTED",
                 "attempt_id": _required_field(attempt, "attempt_id"),
                 "unit_id": unit_id,
                 "fault_type": fault_type,
@@ -266,7 +237,7 @@ def run_exp3_post_ai_strategy(
         if execute_replacement is None:
             events.append(
                 {
-                    "event_type": "REPLACEMENT_REQUIRED",
+                    "event_type": "EXPERIMENT_REPLACEMENT_REQUIRED",
                     "attempt_id": _required_field(attempt, "attempt_id"),
                     "unit_id": unit_id,
                 }
@@ -278,12 +249,12 @@ def run_exp3_post_ai_strategy(
         events.extend(
             (
                 {
-                    "event_type": "REPLACEMENT_ATTEMPT_STARTED",
+                    "event_type": "EXPERIMENT_REPLACEMENT_ATTEMPT_STARTED",
                     "attempt_id": _required_field(replacement, "attempt_id"),
                     "unit_id": unit_id,
                 },
                 {
-                    "event_type": "REPLACEMENT_ACCEPTED",
+                    "event_type": "EXPERIMENT_REPLACEMENT_ACCEPTED",
                     "attempt_id": _required_field(replacement, "attempt_id"),
                     "unit_id": unit_id,
                 },
@@ -314,13 +285,14 @@ def run_exp3_worker_death_strategy(
     kill_point: WorkerDeathKillPoint | str,
     started_at: str,
     process_tick_seconds: float = 0.01,
+    runtime_observations: Sequence[Mapping[str, Any]] | None = None,
 ) -> FormalStrategyResult:
-    """通过现有独立 process harness 执行 worker death/reassignment。"""
+    """冻结 kill plan，并只从 runtime/backend 事实投影实验记录。"""
 
+    del process_tick_seconds
     unit_ids = tuple(str(item) for item in ai_unit_ids)
     if dead_worker_count < 1 or dead_worker_count > len(unit_ids):
         raise ValueError("dead_worker_count exceeds available AI units")
-    store = ArtifactStore(Path(artifact_root))
     units = tuple(
         PaperAIUnit(
             task_id=task_id,
@@ -331,51 +303,73 @@ def run_exp3_worker_death_strategy(
         )
         for unit_id in unit_ids
     )
+    plan = freeze_worker_death_plan(
+        condition_id=condition_id,
+        repeat_id=repeat_id,
+        run_id=f"{condition_id}-{task_id}-worker-death",
+        ai_units=units,
+        target_unit_ids=unit_ids[:dead_worker_count],
+        kill_point=kill_point,
+    )
+    plan_body = plan.to_dict()
+    plan_event = {
+        "event_type": "EXPERIMENT_WORKER_DEATH_PLAN_FROZEN",
+        "condition_id": condition_id,
+        "task_id": task_id,
+        "plan_digest": digest_json(plan_body),
+        "selected_target_unit_ids": list(plan.selected_target_unit_ids),
+        "occurred_at": started_at,
+    }
+    if runtime_observations is None:
+        return FormalStrategyResult(
+            ordered_case_ids=(task_id,),
+            outcomes=(),
+            events=(plan_event,),
+            metrics={
+                "worker_death_target_count": dead_worker_count,
+                "worker_death_count": 0,
+                "replacement_attempt_count": 0,
+                "coordinator_survived": False,
+                "applicability": "awaiting_runtime_evidence",
+            },
+            status="planned",
+        )
+    observations = tuple(runtime_observations)
+    if len(observations) != dead_worker_count:
+        raise ValueError("runtime observation count must match dead_worker_count")
+    store = ArtifactStore(Path(artifact_root))
     records: list[dict[str, Any]] = []
-    events: list[dict[str, Any]] = []
-    for index, target_unit_id in enumerate(unit_ids[:dead_worker_count]):
-        outcome = run_worker_death_harness(
+    events: list[dict[str, Any]] = [plan_event]
+    replacements: list[dict[str, Any]] = []
+    for target_unit_id, observation in zip(
+        plan.selected_target_unit_ids,
+        observations,
+        strict=True,
+    ):
+        outcome = record_worker_death_observation(
             artifact_store=store,
-            condition_id=condition_id,
-            repeat_id=repeat_id,
-            run_id=f"{condition_id}-{task_id}-death-{index}",
-            ai_units=units,
+            plan=plan,
             target_unit_id=target_unit_id,
-            kill_point=kill_point,
-            started_at=started_at,
-            process_tick_seconds=process_tick_seconds,
+            worker_fact=_required_field(observation, "worker_fact"),
+            replacement_fact=_required_field(observation, "replacement_fact"),
+            protocol_events=_required_field(observation, "protocol_events"),
+            coordinator_pid=int(_required_field(observation, "coordinator_pid")),
+            created_at=str(_field(observation, "created_at") or started_at),
         )
         record = outcome.record.to_dict()
         record["record_ref"] = outcome.record_ref.to_dict()
         records.append(record)
-        events.extend(
-            (
-                {
-                    "event_type": "WORKER_TERMINATED",
-                    "unit_id": target_unit_id,
-                    "worker_pid": record["worker_pid"],
-                    "exitcode": record["worker_process_exitcode"],
-                    "occurred_at": record["killed_at"],
-                },
-                {
-                    "event_type": "LEASE_EXPIRED",
-                    "unit_id": target_unit_id,
-                    "attempt_id": record["dead_attempt"]["attempt_id"],
-                    "occurred_at": record["lease_expiry"]["expired_at"],
-                },
-                {
-                    "event_type": "UNIT_REASSIGNED",
-                    "unit_id": target_unit_id,
-                    "attempt_id": record["replacement_attempt"]["attempt_id"],
-                    "occurred_at": record["reassignment"]["reassigned_at"],
-                },
-                {
-                    "event_type": "REPLACEMENT_ACCEPTED",
-                    "unit_id": target_unit_id,
-                    "attempt_id": record["replacement_attempt"]["attempt_id"],
-                    "occurred_at": record["replacement_attempt"]["ended_at"],
-                },
-            )
+        replacements.append(dict(record["replacement_attempt"]))
+        events.append(
+            {
+                "event_type": "EXPERIMENT_WORKER_DEATH_OBSERVED",
+                "condition_id": condition_id,
+                "task_id": task_id,
+                "unit_id": target_unit_id,
+                "record_ref": outcome.record_ref.to_dict(),
+                "protocol_event_refs": list(record["protocol_event_refs"]),
+                "occurred_at": record["created_at"],
+            }
         )
     return FormalStrategyResult(
         ordered_case_ids=(task_id,),
@@ -387,8 +381,10 @@ def run_exp3_worker_death_strategy(
             "coordinator_survived": all(
                 record["coordinator"]["survived"] is True for record in records
             ),
+            "applicability": "runtime_evidence_observed",
         },
         fault_records=tuple(records),
+        replacement_attempts=tuple(replacements),
     )
 
 
@@ -431,10 +427,20 @@ def run_exp4_ablation_strategy(
         and adapter_observation.get("deterministic_validity") is False
     )
     event = {
-        "event_type": "ABLATION_BOUNDARY_APPLIED",
+        "event_type": "EXPERIMENT_ABLATION_OBSERVED",
         "mode": normalized_mode,
         "disabled_mechanism": _disabled_mechanism(normalized_mode),
         "applicable": applicable,
+        "protocol_event_refs": [
+            dict(ref)
+            for ref in adapter_observation.get("protocol_event_refs", ())
+            if isinstance(ref, Mapping)
+        ],
+        "artifact_refs": [
+            dict(ref)
+            for ref in adapter_observation.get("artifact_refs", ())
+            if isinstance(ref, Mapping)
+        ],
         "deterministic_validity": adapter_observation.get(
             "deterministic_validity"
         ),
@@ -532,6 +538,113 @@ def _validate_fixed_identity(attempt: Any, approved: Mapping[str, Any]) -> None:
             raise ValueError(f"approved identity is missing {field_name}")
         if _field(attempt, field_name) != expected_value:
             raise ValueError(f"model failover detected for {field_name}")
+
+
+def _runtime_records(outcome: Any) -> tuple[dict[str, Any], ...]:
+    raw_records = _field(outcome, "runtime_records") or ()
+    records: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for raw in raw_records:
+        if isinstance(raw, Mapping):
+            record = dict(raw)
+        else:
+            to_dict = getattr(raw, "to_dict", None)
+            if not callable(to_dict) or not isinstance(to_dict(), Mapping):
+                raise TypeError("runtime record must be a mapping or expose to_dict")
+            record = dict(to_dict())
+        unit_id = record.get("unit_id")
+        if not isinstance(unit_id, str) or not unit_id:
+            raise ValueError("runtime record unit_id is required")
+        if unit_id in seen:
+            raise ValueError("runtime record unit_id must be unique within one root")
+        seen.add(unit_id)
+        for timestamp_field in ("started_at", "ended_at"):
+            if not isinstance(record.get(timestamp_field), str):
+                raise ValueError(f"runtime record {timestamp_field} is required")
+            _timestamp(record[timestamp_field])
+        if _timestamp(record["ended_at"]) < _timestamp(record["started_at"]):
+            raise ValueError("runtime record ended_at precedes started_at")
+        dependencies = record.get("dependencies", ())
+        if not isinstance(dependencies, (list, tuple)):
+            raise ValueError("runtime record dependencies must be a sequence")
+        record["dependencies"] = [str(item) for item in dependencies]
+        records.append(record)
+    return tuple(records)
+
+
+def _protocol_events(outcome: Any) -> tuple[dict[str, Any], ...]:
+    raw_events = _field(outcome, "protocol_events") or ()
+    events: list[dict[str, Any]] = []
+    for raw in raw_events:
+        if isinstance(raw, Mapping):
+            events.append(dict(raw))
+            continue
+        to_dict = getattr(raw, "to_dict", None)
+        if not callable(to_dict):
+            raise TypeError("protocol event must be a mapping or expose to_dict")
+        body = to_dict()
+        if not isinstance(body, Mapping):
+            raise TypeError("protocol event to_dict must return a mapping")
+        events.append(dict(body))
+    return tuple(events)
+
+
+def _observed_parallel_slots(intervals: Sequence[tuple[float, float]]) -> int:
+    boundaries = sorted(
+        (
+            boundary
+            for started_at, ended_at in intervals
+            for boundary in ((started_at, 1), (ended_at, -1))
+        ),
+        key=lambda item: (item[0], item[1]),
+    )
+    active = 0
+    observed = 0
+    for _timestamp_value, delta in boundaries:
+        active += delta
+        observed = max(observed, active)
+    return observed
+
+
+def _critical_path_ms(records: Sequence[Mapping[str, Any]]) -> float:
+    if not records:
+        return 0.0
+    by_id = {str(record["unit_id"]): record for record in records}
+    memo: dict[str, float] = {}
+    visiting: set[str] = set()
+
+    def visit(unit_id: str) -> float:
+        if unit_id in memo:
+            return memo[unit_id]
+        if unit_id in visiting:
+            raise ValueError("runtime dependency graph contains a cycle")
+        visiting.add(unit_id)
+        record = by_id[unit_id]
+        dependency_costs: list[float] = []
+        for dependency in record["dependencies"]:
+            if dependency not in by_id:
+                raise ValueError("runtime dependency graph references an unknown unit")
+            dependency_costs.append(visit(dependency))
+        duration_ms = round(
+            (
+                _timestamp(str(record["ended_at"]))
+                - _timestamp(str(record["started_at"]))
+            )
+            * 1000.0,
+            3,
+        )
+        visiting.remove(unit_id)
+        memo[unit_id] = duration_ms + max(dependency_costs, default=0.0)
+        return memo[unit_id]
+
+    return max(visit(unit_id) for unit_id in by_id)
+
+
+def _timestamp(value: str) -> float:
+    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.timestamp()
 
 
 def _field(value: Any, field_name: str) -> Any:

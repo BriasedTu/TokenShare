@@ -1,9 +1,8 @@
-"""Factorization paper experiment adapter.
+"""Factorization paper experiment compatibility adapter.
 
-该模块只做实验层编排：catalog case -> 插件确定性 range split ->
-AIAPIExecutor provider attempt -> 插件 parser/verifier -> 插件 merge policy。
-它不把 factorization 领域规则写进协议核心，也不把 scripted transport 标成
-论文可采信真实结果。
+正常 FULL 路径把 catalog case/config 交给 Factorization runtime bridge 与 system
+coordinator，再从权威 ledger/artifacts 投影旧结果。保留的 selector 直连分支只供
+历史回归使用；scripted/capturing transport 始终不能成为论文可采信结果。
 """
 
 from __future__ import annotations
@@ -13,18 +12,25 @@ import os
 from dataclasses import dataclass, replace
 from math import isqrt
 from pathlib import Path
+from threading import Lock
 from typing import Any
 
-from tokenshare.core.models import ArtifactRef, JsonObject, TaskState, TaskUnit
+from tokenshare.core.models import ArtifactRef, JsonObject, ProtocolConfig, TaskState, TaskUnit
 from tokenshare.executors.ai_api import AIAPIExecutor
 from tokenshare.executors.ai_api_config import AIAPIExecutorConfig, load_ai_api_config
 from tokenshare.executors.ai_api_transport import (
     UrlLibOpenAITransport,
     UrlLibSiliconFlowTransport,
 )
-from tokenshare.executors.contracts import EnvironmentRef, ExecutionRequest
+from tokenshare.executors.contracts import (
+    EnvironmentRef,
+    ExecutionRequest,
+    ExecutionSubmission,
+)
 from tokenshare.experiments.paper_model_identity import (
     ValidatedModelEndpointBinding,
+    build_fixed_entry_executor_requirements,
+    prepare_fixed_entry_execution_config,
     validate_condition_fixed_entry_identity,
     validate_fixed_entry_submission_identity,
 )
@@ -40,14 +46,26 @@ from tokenshare.experiments.paper_models import (
     evaluate_paper_eligibility,
 )
 from tokenshare.experiments.paper_report import scan_artifact_store_for_secrets
+from tokenshare.experiments.paper_projection import project_paper_protocol_run
+from tokenshare.experiments.paper_ablation import runtime_controls_for_mode
 from tokenshare.experiments.paper_unit_commitments import (
     factorization_range_plugin_payload,
+)
+from tokenshare.local_runtime import (
+    ProtocolRunCoordinator,
+    ProtocolRunRequest,
+    SequentialWorkerBackend,
+    ThreadWorkerBackend,
 )
 from tokenshare.plugins.contracts import OutputContract
 from tokenshare.plugins.factorization.descriptor import build_factorization_plugin_descriptor
 from tokenshare.plugins.factorization.merge_policy import (
     RangeSlotMergeInput,
     merge_required_range_results,
+)
+from tokenshare.plugins.factorization.runtime_adapter import (
+    FactorizationExecutionBridge,
+    FactorizationRuntimeAdapter,
 )
 from tokenshare.plugins.factorization.models import (
     FactorIntegerSubject,
@@ -87,6 +105,8 @@ from tokenshare.plugins.factorization.validator import (
     verify_range_result,
 )
 from tokenshare.storage.artifacts import ArtifactStore
+from tokenshare.storage.events import EventLedger
+from tokenshare.protocol_engine import ProtocolEngine
 
 
 NOW = "2026-07-14T00:00:00Z"
@@ -109,6 +129,7 @@ class FactorizationPaperRunResult:
     final_prime_factors: list[JsonObject]
     run_evidence: JsonObject
     output_root: str
+    event_records: tuple[JsonObject, ...] = ()
     schema_version: str = "tokenshare.factorization_paper_run.v1"
 
     def to_dict(self) -> JsonObject:
@@ -125,6 +146,7 @@ class FactorizationPaperRunResult:
             "final_prime_factors": [dict(item) for item in self.final_prime_factors],
             "run_evidence": dict(self.run_evidence),
             "output_root": self.output_root,
+            "event_records": [dict(item) for item in self.event_records],
         }
 
 
@@ -210,8 +232,13 @@ def run_factorization_paper_case(
     selected_ai_unit_id: str | None = None,
     post_raw_output_hook: Any | None = None,
     ablation_mode: str | None = None,
+    protocol_run_dispatcher: Any | None = None,
 ) -> FactorizationPaperRunResult:
-    """Run one factorization paper catalog case through range children."""
+    """Deprecated compatibility API for historical/selector regressions.
+
+    正常 FULL 调用应经 ``paper_dispatcher.dispatch_paper_case()`` 进入 system
+    coordinator；本函数暂时保留旧调用形状，不发出运行时 warning。
+    """
 
     _validate_factorization_case_for_adapter(case)
     normalized_ablation_mode = _normalize_ablation_mode(ablation_mode)
@@ -257,6 +284,25 @@ def run_factorization_paper_case(
             else ScriptedFactorizationRangeTransport()
         )
 
+    if selected_ai_unit_id is None:
+        return _run_factorization_full_via_coordinator(
+            case=case,
+            condition=condition,
+            run_root=run_root,
+            store=store,
+            active_transport=active_transport,
+            real_transport=real_transport,
+            config=config,
+            validated_binding=validated_binding,
+            secret_values=secret_values,
+            max_tokens=max_tokens,
+            timeout_seconds=timeout_seconds,
+            post_raw_output_hook=post_raw_output_hook,
+            protocol_run_dispatcher=protocol_run_dispatcher,
+            ablation_mode=normalized_ablation_mode,
+        )
+
+    # selector 直连兼容只用于历史 regression；正式 FULL/fault/ablation 已走 runtime。
     root_input_ref = _save_root_input(store, case)
     subject = _factor_integer_subject(case=case, root_input_ref=root_input_ref)
     split_plan = _build_split_plan(case=case, subject=subject)
@@ -608,6 +654,530 @@ def run_factorization_paper_case(
     return result
 
 
+@dataclass(frozen=True, kw_only=True)
+class _CapturedRangeCall:
+    request: ExecutionRequest
+    submission: ExecutionSubmission
+    request_ref: ArtifactRef
+    usage_ref: ArtifactRef
+    model_execution_record: Any | None
+    model_execution_record_ref: ArtifactRef | None
+
+
+class _FixedIdentityRangeExecutor:
+    """注入的 range executor policy：调用前核对 request，调用后审计身份。"""
+
+    def __init__(
+        self,
+        executor: AIAPIExecutor,
+        *,
+        store: ArtifactStore,
+        condition: PaperExperimentCondition,
+        binding: ValidatedModelEndpointBinding,
+        config: AIAPIExecutorConfig,
+        executor_requirements: JsonObject,
+        case_id: str,
+        paper_eligible_transport: bool,
+    ) -> None:
+        self.executor = executor
+        self.store = store
+        self.condition = condition
+        self.binding = binding
+        self.config = config
+        self.executor_requirements = dict(executor_requirements)
+        self.case_id = case_id
+        self.paper_eligible_transport = paper_eligible_transport
+        self.calls: list[_CapturedRangeCall] = []
+        self._calls_lock = Lock()
+        self._next_call_index = 0
+
+    def execute(self, request, *, submission_id: str, submitted_at: str):
+        request_ref = self.store.save_json(
+            request.to_dict(),
+            artifact_id=request.request_id,
+            artifact_type="ExecutionRequest",
+            artifact_schema_id="phase3.execution_request",
+            artifact_schema_version="v1",
+            source={"kind": "protocol_engine"},
+            metadata={"task_id": request.task_id, "attempt_id": request.attempt_id},
+            created_at=request.created_at,
+        )
+        with self._calls_lock:
+            index = self._next_call_index
+            self._next_call_index += 1
+        requirement_mismatches = _executor_requirement_mismatches(
+            request=request,
+            expected=self.executor_requirements,
+            executor_id=self.executor.executor_id,
+            executor_version=self.executor.executor_version,
+        )
+        if requirement_mismatches:
+            submission = ExecutionSubmission(
+                submission_id=submission_id,
+                request_id=request.request_id,
+                task_id=request.task_id,
+                unit_id=request.unit_id,
+                attempt_id=request.attempt_id,
+                lease_id=request.lease_id,
+                fencing_token=request.fencing_token,
+                executor_id=self.executor.executor_id,
+                executor_version=self.executor.executor_version,
+                result_kind="fatal_executor_error",
+                raw_output_ref=None,
+                parsed_output_ref=None,
+                candidate_output_refs={},
+                parse_failure_ref=None,
+                log_ref=None,
+                environment_ref=request.environment_ref,
+                environment_summary={"runtime": "fixed_identity_policy"},
+                provenance_ref=None,
+                usage_summary={"provider_attempt_count": 0},
+                error={
+                    "kind": "executor_requirement_mismatch",
+                    "reasons": requirement_mismatches,
+                },
+                submitted_at=submitted_at,
+            )
+        else:
+            submission = self.executor.execute(
+                request,
+                submission_id=submission_id,
+                submitted_at=submitted_at,
+            )
+        usage_ref = _save_usage_artifact(
+            store=self.store,
+            case_id=self.case_id,
+            index=index,
+            submission=submission,
+        )
+        if requirement_mismatches:
+            # provider 尚未调用，不能伪造 provenance 或 response identity evidence。
+            model_record = None
+            record_ref = None
+        else:
+            model_record, record_ref = _save_model_execution_record(
+                store=self.store,
+                condition=self.condition,
+                binding=self.binding,
+                prepared_config=self.config,
+                case_id=self.case_id,
+                request=request,
+                request_ref=request_ref,
+                submission=submission,
+                usage_ref=usage_ref,
+                paper_eligible_transport=self.paper_eligible_transport,
+            )
+        if (
+            model_record is not None
+            and model_record.identity_status == "model_identity_mismatch"
+        ):
+            submission = replace(
+                submission,
+                result_kind="fatal_executor_error",
+                candidate_output_refs={},
+                error={
+                    "kind": "model_identity_mismatch",
+                    "reasons": list(model_record.mismatch_reasons),
+                },
+            )
+        with self._calls_lock:
+            self.calls.append(
+                _CapturedRangeCall(
+                    request=request,
+                    submission=submission,
+                    request_ref=request_ref,
+                    usage_ref=usage_ref,
+                    model_execution_record=model_record,
+                    model_execution_record_ref=record_ref,
+                )
+            )
+        return submission
+
+
+def _executor_requirement_mismatches(
+    *,
+    request: ExecutionRequest,
+    expected: JsonObject,
+    executor_id: str,
+    executor_version: str,
+) -> list[str]:
+    mismatches = [
+        f"hard_requirement:{name}"
+        for name, expected_value in expected.items()
+        if request.hard_requirements.get(name) != expected_value
+    ]
+    if request.executor.get("executor_id") != executor_id:
+        mismatches.append("executor_id")
+    if request.executor.get("executor_version") != executor_version:
+        mismatches.append("executor_version")
+    return mismatches
+
+
+def _fixed_entry_executor_requirements(
+    *,
+    config: AIAPIExecutorConfig,
+    binding: ValidatedModelEndpointBinding | None,
+) -> JsonObject:
+    """返回可安全持久化、足以固定模型端点的调度约束。"""
+
+    return build_fixed_entry_executor_requirements(
+        config=config,
+        binding=binding,
+    )
+
+
+def _paper_task_status_from_runtime(
+    runtime_status: str,
+    *,
+    accepted_validity: bool,
+) -> PaperTaskStatus:
+    """只把协议终态投影到 paper task；非终态/未知值一律拒绝。"""
+
+    if runtime_status == "completed":
+        return (
+            PaperTaskStatus.COMPLETED
+            if accepted_validity
+            else PaperTaskStatus.FAILED
+        )
+    if runtime_status == "failed":
+        return PaperTaskStatus.FAILED
+    raise ValueError("paper projection requires a terminal runtime status")
+
+
+def _run_factorization_full_via_coordinator(
+    *,
+    case: JsonObject,
+    condition: PaperExperimentCondition,
+    run_root: Path,
+    store: ArtifactStore,
+    active_transport: Any,
+    real_transport: bool,
+    config: AIAPIExecutorConfig,
+    validated_binding: ValidatedModelEndpointBinding,
+    secret_values: tuple[str, ...],
+    max_tokens: int,
+    timeout_seconds: int,
+    post_raw_output_hook: Any | None,
+    protocol_run_dispatcher: Any | None,
+    ablation_mode: str,
+) -> FactorizationPaperRunResult:
+    """FULL 兼容壳：只配置 runtime、调用 coordinator、投影旧 result shape。"""
+
+    case_id = str(case["case_id"])
+    task_id = f"paper_factorization_{case_id}"
+    ledger = EventLedger(run_root / "events" / f"{task_id}.jsonl")
+    protocol_config = replace(
+        ProtocolConfig.default(
+            config_id=f"factorization_runtime_{case_id}",
+            artifact_store_uri="file://artifacts",
+            event_log_uri=f"file://events/{task_id}.jsonl",
+            metadata={"paper_factorization": True, "case_id": case_id},
+        ),
+        max_retries=1 if post_raw_output_hook is not None else 0,
+    )
+    executor_requirements = _fixed_entry_executor_requirements(
+        config=config,
+        binding=validated_binding,
+    )
+    plugin_runtime = FactorizationRuntimeAdapter(
+        provider_family=config.provider_family,
+        seed=condition.seed,
+        protocol_config=protocol_config,
+        executor_requirements=executor_requirements,
+        max_tokens=max_tokens,
+        timeout_seconds=timeout_seconds,
+        created_at=NOW,
+    )
+    ai_executor = AIAPIExecutor(
+        executor_id=AI_EXECUTOR_ID,
+        executor_version=AI_EXECUTOR_VERSION,
+        artifact_store=store,
+        config=config,
+        transport=active_transport,
+        parser=parse_factorization_ai_output,
+        post_raw_output_hook=post_raw_output_hook,
+    )
+    capturing_executor = _FixedIdentityRangeExecutor(
+        ai_executor,
+        store=store,
+        condition=condition,
+        binding=validated_binding,
+        config=config,
+        executor_requirements=executor_requirements,
+        case_id=case_id,
+        paper_eligible_transport=not _is_offline_capturing_transport(
+            active_transport
+        ),
+    )
+    coordinator = ProtocolRunCoordinator(
+        engine=ProtocolEngine(
+            event_ledger=ledger,
+            protocol_config=protocol_config,
+            artifact_store=store,
+        ),
+        artifact_store=store,
+        event_ledger=ledger,
+        now=lambda: NOW,
+    )
+    controls = runtime_controls_for_mode(ablation_mode)
+    execution_bridge = FactorizationExecutionBridge(
+        plugin_runtime=plugin_runtime,
+        range_executor=capturing_executor,
+    )
+    worker_backend = (
+        SequentialWorkerBackend(
+            executor=execution_bridge,
+            submitted_at=lambda: NOW,
+        )
+        if condition.worker_count == 1
+        else ThreadWorkerBackend(
+            executor=execution_bridge,
+            capacity=condition.worker_count,
+            submitted_at=lambda: NOW,
+        )
+    )
+    protocol_request = ProtocolRunRequest(
+        run_id=f"{condition.condition_id}_{case_id}",
+        root_input=case,
+        plugin_runtime=plugin_runtime,
+        worker_backend=worker_backend,
+        mechanism_policy=controls.mechanism_policy,
+        hooks=controls.hooks,
+        continue_after_terminal_child_failure=True,
+    )
+    runtime_result = (
+        coordinator.run_root(protocol_request)
+        if protocol_run_dispatcher is None
+        else protocol_run_dispatcher(
+            coordinator=coordinator,
+            request=protocol_request,
+        )
+    )
+
+    runtime_events = ledger.read_all()
+    request_refs_by_id = {
+        str(event.payload["request_id"]): ArtifactRef.from_dict(
+            event.payload["request_ref"]
+        )
+        for event in runtime_events
+        if event.event_type == "EXECUTION_REQUEST_RECORDED"
+    }
+    verification_by_unit = {
+        str(event.payload["unit_id"]): dict(event.payload["verification_report"])
+        for event in runtime_events
+        if event.event_type == "VERIFICATION_RECORDED"
+    }
+    canonical_range_refs_by_unit = {
+        str(event.payload["unit_id"]): ArtifactRef.from_dict(
+            event.payload["canonical_output_refs"]["range_result"]
+        )
+        for event in runtime_events
+        if event.event_type == "CANONICAL_OUTPUTS_BOUND"
+        and "range_result" in event.payload["canonical_output_refs"]
+    }
+    attempts: list[PaperAttemptResult] = []
+    projection_metadata_by_unit: dict[str, JsonObject] = {}
+    range_records: list[JsonObject] = []
+    for index, captured in enumerate(capturing_executor.calls):
+        request = captured.request
+        submission = captured.submission
+        request_ref = captured.request_ref
+        if request_refs_by_id[request.request_id] != request_ref:
+            raise ValueError("runtime request artifact diverged from executor policy")
+        usage_ref = captured.usage_ref
+        model_record = captured.model_execution_record
+        model_record_ref = captured.model_execution_record_ref
+        model_mismatch = (
+            model_record is not None
+            and model_record.identity_status == "model_identity_mismatch"
+        )
+        status = _attempt_status_from_submission(submission.result_kind)
+        if model_mismatch:
+            status = PaperAttemptStatus.MODEL_IDENTITY_MISMATCH
+        range_input_ref = request.input_artifact_refs["range_input"]
+        range_input_body = _read_json_ref(store, range_input_ref)
+        projection_metadata_by_unit[request.unit_id] = {
+            "planned_ai_unit_id": f"range_{range_input_body['child_index']}"
+        }
+        candidate_ref = submission.candidate_output_refs.get("range_result")
+        range_result_body = (
+            _read_json_ref(store, candidate_ref) if candidate_ref is not None else None
+        )
+        recorded_verification = verification_by_unit.get(request.unit_id, {})
+        recorded_status = str(recorded_verification.get("status", "error"))
+        if recorded_status == "rejected" and not model_mismatch:
+            status = PaperAttemptStatus.VERIFICATION_REJECTED
+        accepted = (
+            candidate_ref is not None
+            and not model_mismatch
+            and recorded_status in {"passed", "accepted"}
+        )
+        verification_body: JsonObject
+        if recorded_verification and not model_mismatch:
+            layer_results = dict(recorded_verification.get("layer_results", {}))
+            verification_body = {
+                "accepted": accepted,
+                "status": recorded_status,
+                "layer_summary": layer_results,
+                "metadata": dict(recorded_verification.get("metadata", {})),
+                "verification_environment": dict(
+                    recorded_verification.get("verification_environment", {})
+                ),
+                "failure_summary": (
+                    None
+                    if accepted
+                    else {
+                        "kind": "verification_rejected",
+                        "report_id": recorded_verification.get(
+                            "verification_report_id"
+                        ),
+                    }
+                ),
+            }
+        else:
+            verification_body = {
+                "accepted": False,
+                "status": (
+                    "model_identity_mismatch"
+                    if model_mismatch
+                    else "missing_candidate"
+                ),
+                "layer_summary": {},
+                "failure_summary": submission.error,
+            }
+        attempts.append(
+            _paper_attempt_result(
+                store=store,
+                condition=condition,
+                case_id=case_id,
+                index=index,
+                request=request,
+                request_ref=request_ref,
+                submission=submission,
+                usage_ref=usage_ref,
+                attempt_status=status,
+                planned_ai_unit_id=f"range_{range_input_body['child_index']}",
+                model_execution_record_ref=model_record_ref,
+                error_kind_override=(
+                    "model_identity_mismatch" if model_mismatch else None
+                ),
+            )
+        )
+        range_records.append(
+            {
+                "unit_id": request.unit_id,
+                "child_index": range_input_body["child_index"],
+                "range_input": range_input_body,
+                "submission_result_kind": submission.result_kind,
+                "range_result": range_result_body,
+                "verification": verification_body,
+                "canonical_output_ref": (
+                    canonical_range_refs_by_unit[request.unit_id].to_dict()
+                    if accepted
+                    else None
+                ),
+                "model_execution_record_ref": (
+                    model_record_ref.to_dict() if model_record_ref is not None else None
+                ),
+            }
+        )
+
+    prime_ref = plugin_runtime.merge_candidate_refs.get(
+        REQUESTED_OUTPUT_PRIME_FACTORIZATION
+    )
+    prime_body = _read_json_ref(store, prime_ref) if prime_ref is not None else None
+    final_prime_factors = (
+        [dict(item) for item in prime_body["prime_factors"]]
+        if prime_body is not None
+        else []
+    )
+    accepted_validity = _prime_factors_match_oracle(final_prime_factors, case)
+    merge_summary: JsonObject = {
+        "status": "completed" if prime_ref is not None else "blocked",
+        "result_kind": (
+            "prime_factorization_result" if prime_ref is not None else None
+        ),
+        "expected_output_resolvable": prime_ref is not None,
+        "premature_merge_attempted": False,
+        "slot_integrity_violation": False,
+        "root_validity_audit_passed": accepted_validity,
+    }
+    projection = project_paper_protocol_run(
+        condition=condition,
+        case=case,
+        runtime_result=runtime_result,
+        protocol_events=runtime_events,
+        artifact_store=store,
+        accepted_validity=accepted_validity,
+        attempt_metadata_by_unit=projection_metadata_by_unit,
+    )
+    attempts = list(projection.attempt_results)
+    run_evidence = _run_evidence(
+        store=store,
+        real_transport=real_transport,
+        transport_kind="ai_api" if real_transport else "scripted",
+        secret_values=secret_values,
+        transport=active_transport,
+    )
+    run_evidence["protocol_runtime"] = {
+        "run_id": runtime_result.run_id,
+        "task_id": runtime_result.task_id,
+        "root_unit_id": runtime_result.root_unit_id,
+        "status": runtime_result.status,
+        "event_count": len(runtime_result.event_refs),
+        "lifecycle_coverage": projection.lifecycle_coverage,
+        "generation_identity": projection.runtime_generation_identity,
+    }
+    run_evidence["ablation_runtime"] = _ablation_runtime_evidence(
+        mode=ablation_mode,
+        attempts=attempts,
+        merge_summary=merge_summary,
+        hook_observations=tuple(
+            dict(item)
+            for item in runtime_result.summary.get(
+                "runtime_hook_observations", ()
+            )
+        ),
+    )
+    eligibility = evaluate_paper_eligibility(
+        attempts=attempts,
+        run_evidence=run_evidence,
+    )
+    combined_reasons = tuple(
+        dict.fromkeys(
+            (
+                *eligibility.ineligibility_reasons,
+                *projection.ineligibility_reasons,
+            )
+        )
+    )
+    eligibility = replace(
+        eligibility,
+        paper_eligible=not combined_reasons,
+        ineligibility_reasons=combined_reasons,
+    )
+    task_result = replace(
+        projection.task_result,
+        paper_eligible=eligibility.paper_eligible,
+    )
+    result = FactorizationPaperRunResult(
+        condition=condition,
+        case_id=case_id,
+        task_result=task_result,
+        attempt_results=tuple(attempts),
+        eligibility_report=eligibility,
+        split_summary=_split_summary(plugin_runtime.planned_split_plan),
+        range_results=tuple(range_records),
+        merge_summary=merge_summary,
+        final_prime_factors=final_prime_factors,
+        run_evidence=run_evidence,
+        output_root=run_root.as_posix(),
+        event_records=tuple(event.to_dict() for event in runtime_events),
+    )
+    _write_case_outputs(run_root, result)
+    return result
+
+
 def _normalize_ablation_mode(value: str | None) -> str:
     mode = "FULL" if value is None else str(value).upper()
     supported = {
@@ -628,6 +1198,7 @@ def _ablation_runtime_evidence(
     mode: str,
     attempts: list[PaperAttemptResult],
     merge_summary: JsonObject,
+    hook_observations: tuple[JsonObject, ...] = (),
 ) -> JsonObject:
     disabled = {
         "FULL": None,
@@ -637,6 +1208,11 @@ def _ablation_runtime_evidence(
         "NO_MERGE_GATE": "merge_gate",
         "NO_SLOT_INTEGRITY": "slot_integrity",
     }[mode]
+    observed_mechanisms = {
+        str(item.get("disabled_mechanism"))
+        for item in hook_observations
+        if item.get("event_type") == "EXPERIMENT_ABLATION_GATE_APPLIED"
+    }
     return {
         "schema_version": "tokenshare.paper_ablation_runtime.v1",
         "mode": mode,
@@ -650,17 +1226,28 @@ def _ablation_runtime_evidence(
         "raw_only_exposed": (
             mode == "NO_PARSER_POLICY"
             and any(attempt.raw_output_ref is not None for attempt in attempts)
-            and all(attempt.parsed_output_ref is None for attempt in attempts)
+            and all(
+                attempt.parsed_output_ref is None
+                or (
+                    attempt.raw_output_ref is not None
+                    and attempt.parsed_output_ref.get("content_hash")
+                    == attempt.raw_output_ref.get("content_hash")
+                )
+                for attempt in attempts
+            )
         ),
         "premature_merge_attempted": bool(
             merge_summary.get("premature_merge_attempted")
+            or "merge_gate" in observed_mechanisms
         ),
         "slot_integrity_violation": bool(
             merge_summary.get("slot_integrity_violation")
+            or "slot_integrity" in observed_mechanisms
         ),
         "root_validity_audit_passed": bool(
             merge_summary.get("root_validity_audit_passed")
         ),
+        "hook_observations": [dict(item) for item in hook_observations],
     }
 
 
@@ -906,10 +1493,15 @@ def _prepare_config(
     timeout_seconds: int,
 ) -> AIAPIExecutorConfig:
     if validated_binding is not None:
-        entries = [validated_binding.selected_entry]
-    else:
-        entries = list(config.entries)
-    if validated_binding is None and entry_id is not None:
+        return prepare_fixed_entry_execution_config(
+            source_config=config,
+            binding=validated_binding,
+            max_tokens=max_tokens,
+            timeout_seconds=timeout_seconds,
+            adapter_metadata_key="factorization_paper_adapter",
+        )
+    entries = list(config.entries)
+    if entry_id is not None:
         entries = [entry for entry in entries if entry.entry_id == entry_id]
         if not entries:
             raise ValueError(f"missing ai api entry id: {entry_id}")

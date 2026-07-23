@@ -23,6 +23,7 @@ from tokenshare.experiments.paper_models import (
     digest_json,
 )
 from tokenshare.experiments.paper_model_identity import build_model_endpoint_identity
+from tokenshare.experiments.paper_formal_callbacks import run_scheduled_cases
 from tokenshare.experiments.paper_runner import normalize_experiment_ids
 
 
@@ -39,6 +40,84 @@ REQUEST_LIMITS = {
     "stream": False,
     "enable_thinking": False,
 }
+
+
+def test_exp2_runtime_capacity_and_metrics_come_from_same_root_unit_facts() -> None:
+    calls: list[tuple[str, int]] = []
+
+    def execute(case_id: str, worker_capacity: int) -> dict[str, Any]:
+        calls.append((case_id, worker_capacity))
+        return {
+            "case_id": case_id,
+            "provider_latency_ms": 9000,
+            "runtime_records": (
+                _runtime_record(
+                    "root",
+                    "2026-07-22T00:00:00.000Z",
+                    "2026-07-22T00:00:00.100Z",
+                ),
+                _runtime_record(
+                    "child-left",
+                    "2026-07-22T00:00:00.100Z",
+                    "2026-07-22T00:00:00.300Z",
+                    dependencies=("root",),
+                ),
+                _runtime_record(
+                    "child-right",
+                    "2026-07-22T00:00:00.100Z",
+                    "2026-07-22T00:00:00.250Z",
+                    dependencies=("root",),
+                ),
+                _runtime_record(
+                    "merge",
+                    "2026-07-22T00:00:00.300Z",
+                    "2026-07-22T00:00:00.350Z",
+                    dependencies=("child-left", "child-right"),
+                ),
+            ),
+            "protocol_events": (
+                {"event_id": "event-lease", "event_type": "LEASE_STATE_CHANGED"},
+            ),
+        }
+
+    result = run_scheduled_cases(
+        ordered_case_ids=("case-one-root",),
+        worker_count=3,
+        execute_case=execute,
+    )
+
+    assert calls == [("case-one-root", 3)]
+    assert result.metrics["worker_count"] == 3
+    assert result.metrics["observed_max_parallel_slots"] == 2
+    assert result.metrics["wall_clock_ms"] == 350
+    assert result.metrics["critical_path_ms"] == 350
+    assert result.metrics["provider_latency_sum_ms"] == 9000
+    assert result.metrics["throughput_completed_units_per_second"] == pytest.approx(
+        4 / 0.35
+    )
+    assert result.events == (
+        {"event_id": "event-lease", "event_type": "LEASE_STATE_CHANGED"},
+    )
+    assert not any(
+        event.get("event_type") in {"AI_UNIT_STARTED", "AI_UNIT_ENDED"}
+        for event in result.events
+    )
+
+
+def _runtime_record(
+    unit_id: str,
+    started_at: str,
+    ended_at: str,
+    *,
+    dependencies: tuple[str, ...] = (),
+) -> dict[str, Any]:
+    return {
+        "unit_id": unit_id,
+        "started_at": started_at,
+        "ended_at": ended_at,
+        "dependencies": list(dependencies),
+        "result_kind": "succeeded",
+    }
 
 
 def test_exp2_module_implements_contract_and_freezes_600_root_runs() -> None:

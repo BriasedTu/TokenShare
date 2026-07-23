@@ -252,6 +252,8 @@ class SQLiteMaterializedIndex:
                 submission_digest text,
                 result_kind text,
                 submitted_at text,
+                acceptance_status text,
+                rejection_reason text,
                 payload_json text not null
             );
 
@@ -946,8 +948,8 @@ class SQLiteMaterializedIndex:
                 insert or replace into execution_submissions (
                     submission_id, request_id, task_id, unit_id, attempt_id, lease_id,
                     submission_artifact_id, submission_digest, result_kind,
-                    submitted_at, payload_json
-                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    submitted_at, acceptance_status, rejection_reason, payload_json
+                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     submission_record["submission_id"],
@@ -960,6 +962,8 @@ class SQLiteMaterializedIndex:
                     submission_record.get("submission_digest"),
                     submission_record.get("result_kind"),
                     submission_record.get("submitted_at"),
+                    submission_record.get("acceptance_status"),
+                    submission_record.get("rejection_reason"),
                     _payload_json(submission_record),
                 ),
             )

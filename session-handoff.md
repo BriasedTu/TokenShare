@@ -1,5 +1,108 @@
 # Session Handoff
 
+## 2026-07-23 系统 runtime 迁移 Task 10 实现收口（最新；最终门禁 pending）
+
+- 文档/code map 已补齐 `local_runtime`、Factorization/Lean runtime bridges、`paper_projection` 和 shared dispatcher/coordinator/engine 路径；旧 adapter/runner/worker-harness 的当前式生命周期表述已改成 current system-runtime 事实，或显式标成 historical/superseded。Lean fixed plan 明确是 catalog/脚本预注册并由插件校验的固定 DAG，不是通用自动 lemma discovery。
+- `run_factorization_paper_case()` / `run_lean_paper_case()` 公开 API 保留，并以 docstring 标记 deprecated historical/selector regression compatibility。删除零引用 `_stable_task_artifact_refs` / `_stable_lean_task_artifact_refs`；边界测试冻结 public API 与 helper 移除。
+- 精确 TDD 节点先因旧 helper 存在 RED，修复后 GREEN。package imports=`package-import-ok`；compileall exit 0。28 个迁移新增 Python 文件范围扫描没有外部输入攻击/篡改伪造/路径/安全 fuzz/auth/ACL/恶意/Byzantine 加固，唯一词法命中是正常的 `inspect.signature`。较大的三文件 pytest 超过 120 秒 timebox、无结果，不能当作通过证据。
+- 本 implementer 未运行 Fast、Full、LeanAudit、force-all、provider/API 或 formal paper run，provider calls=`0`。父任务下一步应完成最终 targeted/Fast，再执行其统一安排的唯一 force-all refresh（若需要）和唯一 Full+LeanAudit gate；通过前不得运行新的正式真实 API 矩阵。`feat-011` 保持 `in-progress`。
+
+## 2026-07-23 系统 runtime 迁移 Task 9 完成（最新）
+
+- 本轮只完成迁移计划 Task 9，未进入 Task 10。新增 `tests/integration/test_paper_protocol_runtime_integration.py`：Factorization/Lean capturing FULL 都从 shared dispatcher 进入 coordinator，检查完整 lifecycle；Lean fixed plan 由插件 certificate、child checker、dependency-aware merge/root recheck 和 engine events 共同证明，不把 catalog 或 projection 当 checker。
+- shared `dispatch_paper_case()` 新增仅 Lean 使用的可选 `checker` 注入，满足验证分层的 fake-checker spy；默认 `checker=None` 不再改变既有 adapter kwargs，正式路径仍使用真实 checker。Factorization 显式拒绝 Lean checker，避免跨领域参数静默吞掉。
+- 系统恢复验收证明 deterministic verifier rejection 与 late submission 都先由 engine 写 recovery，再创建同 unit replacement；旧 attempt 不进入 canonical。真实 OS worker-death 验收确认独立 worker PID 被终止、coordinator 继续、lease expiry 和不同 replacement lease 均来自 engine ledger。六种 ablation 全部运行；非 FULL 差异来自 runtime gate 的 `EXPERIMENT_ABLATION_GATE_APPLIED`，runner 不改写协议结果。AST 门禁继续证明 experiments 不直接调用 `transition_task_unit` 或 `EventLedger.append()` 写协议状态。
+- TDD/验证：有效 RED 为 Lean dispatcher 拒绝 `checker`；相邻 RED 为旧默认调用多出 `checker=None`。GREEN 新集成先独立通过 `11 passed in 109.06s`；补充 domain guard 后的首次最终命令因测试调用漏传既有必填参数而为 `190 passed, 1 failed`，失败节点修正后=`1 passed in 9.64s`。收尾发现纯 audit digest 随 `generated_at` 漂移，新增 RED 精确失败于 `00:00:01Z != 00:00:00Z`；零 recheck 复用 manifest 的最小修复后，audit/CLI=`23 passed in 1.40s`，连续两次纯 verify 摘要一致。audit 模块属于 checker implementation digest 输入，因此修复后的首次非 force-all 增量 verify 自动重检 600 条；随后非 force-all refresh 和最终 verify 均复用 600 条、0 rechecked、0 invalidated、0 provider calls，stable digest=`sha256:52fb370d2fd8187c91847316250af481f6828357d6b429deb5e51b609e0ddc4f`。修复后 Task 9 最终精确 Verify=`191 passed in 143.75s`；Gate C 双域兼容节点=`2 passed`；固定 Lean canary=`11 passed in 101.74s`；最终 Fast=`330 passed, 1 skipped in 52.17s`，python-json-sqlite、harness、compileall 均通过。
+- 未运行 Full、force-all audit 或真实 provider/formal paper run；provider/API calls=`0`。当前 `completed_migration_tasks` 为 Task 1-9，`feat-011` 仍为 `in-progress`。下一步是 Task 10 文档/兼容壳/最终门禁；不要回退到 Task 8/9，也不要在 Task 10 前启动正式 provider 矩阵。
+
+## 2026-07-23 系统 runtime 迁移 Task 8 完成（最新）
+
+- 本轮只完成迁移计划 Task 8，未进入 Task 9。`paper_dispatcher` 将各 case 的 `ProtocolRunRequest` 交给 coordinator；新 `paper_projection.py` 从 ledger events、runtime refs 和 artifacts 派生 paper attempt/task 兼容结果，不推进任何协议状态。成功 run 缺 request/submission/verification/canonical/merge/completion/settlement 必需覆盖时 `paper_eligible=false`；已有 request 无 submission 会标为 `missing_submission_event`，不再默认 succeeded。
+- Factorization/Lean adapter 现把 FULL、fault、ablation 条件送入同一 runtime。`condition.worker_count` 控制 root 内 worker backend，formal runner 自身串行选择 root；并发 batch 中已在途 sibling 的事实全部保留。领域 range/child/merge 只作观察摘要，公共 `Paper*Result` 由 projection 生成。Lean checker spy 已证明每个 child 仍调用 `CHILD_PROOF`，最终 root 仍调用 `MERGE_PROOF`，projection 没有替代 checker。
+- formal runner 已删除普通执行的 synthetic attempt/event fallback；protocol records 与 `EXPERIMENT_BLOCKED`、`EXPERIMENT_BUDGET_EXHAUSTED`、`EXPERIMENT_RUNNER_EXCEPTION` 等实验级记录通过 `record_scope` 分离。Exp3 rate-fault/worker-death 与 Exp4 callback 只观察 adapter/runtime evidence，不再二次 dispatch 或虚构 replacement/process/merge。checkpoint 保存 runtime/ledger generation identity，resume 回归证明已完成 case 不再调用 adapter。
+- 定向测试修复了一个真实 merge-hook 顺序问题：terminal child failure 也先经过稳定 `before_merge` 观察点，`NO_MERGE_GATE` 得到真实 `EXPERIMENT_ABLATION_GATE_APPLIED`，随后 core 仍记录父失败；`NO_SLOT_INTEGRITY` 对有效输入保持 validity=true。该修复没有让 hook 写协议状态。
+- 验证：Task 8 精确 Verify `100 passed in 188.03s`；Factorization adapter `31 passed in 25.51s`；Lean adapter `26 passed in 57.78s`；local runtime submission/recovery `12 passed in 18.49s`；checker spy `1 passed in 14.73s`；固定 Lean canary `11 passed in 104.86s`；最终文档同步后 Fast `330 passed, 1 skipped in 38.25s`。`git diff --check` exit 0，仅既有 LF/CRLF warning。
+- 未运行 Full、600-entry LeanAudit/force-all、provider/formal paper run；provider/API calls=`0`。当前 `completed_migration_tasks` 为 Task 1-8，`feat-011` 仍为 `in-progress`。下一步只能从 Task 9 RED 开始，不要进入 Task 10，也不要启动正式 provider 矩阵。
+
+## 2026-07-23 系统 runtime 迁移 Task 7 完成（最新）
+
+- 本轮只完成迁移计划 Task 7，未进入 Task 8。`local_runtime.contracts` 已冻结 raw/parser/verification/recovery/merge/progress typed contexts 与 directives；FULL 仍是全开启 `ProtocolMechanismPolicy` + `NoOpRuntimeHooks`。非 FULL controls 每次只关闭 parser、verification、replacement、merge gate 或 slot integrity 中的一项。
+- `PaperFaultRuntimeHooks` 只接受 `ArtifactStore.verify()` 通过的 raw/provenance/usage refs，在 parser 前按冻结 target 一次性注入权威五类 rate-fault。formal runner 已删除手工 replacement adapter；adapter 在有 post-raw fault hook 时只开放一次 engine retry，replacement attempt 来自真实 scheduler/lease/recovery。callback 只把 runtime fault/attempt/event/artifact 事实投影成 `EXPERIMENT_*` 观察。
+- coordinator 的 `NO_VERIFICATION` 不调用插件 verifier，但生成 validator-policy 一致的 engine verification/canonical evidence；`NO_REQUEUE` 在 engine recovery 落账后停止 replacement。Exp4 runner 已删除手写 stuck/requeue，ablation hook 事件引用 protocol/artifact refs。Task 8 才负责 dispatcher 与通用 `Paper*Result` projection 的最终系统接线，不要在当前完成记录中提前宣称 Task 8/9 已完成。
+- TDD RED：精确 suite 初次 collection 失败于缺 `PaperFaultRuntimeHooks` / `runtime_controls_for_mode()`；后续 RED 证明 runner 仍调用手工 replacement/requeue。GREEN：迁移计划原文指定 suite 最终重跑 `92 passed in 2.44s`；含 formal callback 影响 `105 passed in 2.85s`；local runtime `38 passed in 59.59s`；Factorization FULL 薄壳 `3 passed in 16.81s`；固定 Lean canary `11 passed in 62.72s` 且 common checks 全绿；最终文档同步阶段 Fast `330 passed, 1 skipped in 14.71s`。
+- 未运行 Full、600-entry LeanAudit 或 force-all；未调用 provider/API、未启动 formal paper run、未生成论文结果，也未处理无关 Gate C/Experiment 5 旧断言漂移。当前 `completed_migration_tasks` 为 Task 1-7；下一步只能从 Task 8 RED 开始。
+
+## 2026-07-23 系统 runtime 迁移 Task 6 完成（最新）
+
+- 本轮只完成迁移计划 Task 6，未进入 Task 7。`ThreadWorkerBackend` / `ProcessWorkerBackend` 现在表达同一 protocol root 内的 worker capacity；coordinator 为 batch 中每个 ready unit 独立调用 engine scheduler，先取得 lease/attempt/request，再并发执行。sequential backend 仍为 capacity=1 基线。
+- process backend 在独立 OS process 内执行真实 unit executor，并在 submission 交给 coordinator 前终止预注册目标 process；coordinator PID 保持存活。死亡 outcome 不被当成普通实验记录：coordinator 在真实 lease deadline 调用 engine expiry authority，ledger 证明 lease `Expired`、旧 attempt `Superseded`、TaskUnit `Ready` 和同 unit 的 replacement lease/attempt。backend 只保存 pid/exitcode/timestamp/attempt/lease facts，不决定 requeue。
+- `paper_workers.py` 不再导入或实例化 `LeaseManager`，也不启动 progress subprocess、claim/expire/reassign；它只冻结 dependency graph/kill selection，并要求 backend fact + 六类 engine evidence 后才生成兼容 `WorkerDeathRecord` artifact。`paper_formal_callbacks.py` 不再并行独立 roots 或伪造 `AI_UNIT_*` / `LEASE_EXPIRED` / `UNIT_REASSIGNED`；Exp2 指标从 runtime unit timestamps/dependencies 派生，worker death 只生成 `EXPERIMENT_WORKER_DEATH_*` 事件并引用 protocol event IDs。
+- TDD RED 首先因缺 thread/process backend 与 worker-death plan API 在收集阶段失败。GREEN：最终 Task 6 指定 suite `60 passed in 32.91s`；全部 local runtime `37 passed in 52.66s`；formal callbacks `13 passed in 0.16s`。通用 coordinator 变更触及 Lean FULL 链，因此固定 Lean canary `11 passed in 43.92s`，common JSON/SQLite/harness/compileall 全绿；最终 Fast `330 passed, 1 skipped in 14.66s`。
+- 按 Task 6 范围未运行 Full、600-entry LeanAudit 或 force-all；provider/API calls=`0`，没有正式实验输出，也未处理无关 Gate C/Experiment 5 旧断言漂移。最终 Fast 证据同步在 `progress.md` / `feature_list.json`。当前 `completed_migration_tasks` 为 Task 1-6；下一步只能从 Task 7 RED 开始，Task 8 才负责 dispatcher/formal runner 最终接线。
+
+## 2026-07-22 系统 runtime 迁移 Task 5 完成（最新）
+
+- 本轮只完成迁移计划 Task 5，未进入 Task 6。`src/tokenshare/plugins/lean_proof/fixed_plan.py` 现定义 versioned `LeanFixedDecompositionPlan` 和统一 certificate builder；catalog 只提供预注册 fixed plan，插件校验 DAG/root/node/edge/slot/depth/leaf/count/environment/oracle，保持 v2 rule，AI 不参与拆分。
+- `src/tokenshare/plugins/lean_proof/runtime_adapter.py` 让 simple 与 fixed lemma-DAG FULL 都走 coordinator。proof candidate 来自真实或注入 AI executor；本地 checker accepted 后才产生 canonical proof artifact；有依赖的 unit 由 `ProtocolEngine.record_dependency_ready()` 写 `Blocked -> Ready` 及 dependency refs；merge/root recheck、completion、settlement 都可回到 engine ledger。paper adapter 私有 `_lemma_graph_certificate_from_case()` 已删除，unit commitments 和旧 result shape 均从同一 runtime plan/ledger/artifacts 派生。
+- 通用 runtime 的 Task 5 必需修复包括：`TaskGraph.activatable_unit_ids()`；engine-owned dependency activation；coordinator 使用 scheduler 实际选中的 unit，而非假定 ready 首项。相邻 runtime 回归 `35 passed`。selector/fault/worker-death/ablation 旧兼容分支仍待 Task 6，不得把它们当成当前正式系统证据。
+- TDD RED 先失败于 fixed-plan module 缺失；DAG RED 暴露 dependency stall 与调度顺序假设；Fast 首轮再发现 descriptor 旧列表未声明 `lean_proof_lemma_node`，均经最小修复后 GREEN。
+- 精确 Task 5 Verify：定向 suite `71 passed in 69.33s`；Lean canary `11 passed in 62.01s`，common JSON/SQLite/harness/compileall 全绿；增量 audit `status=passed`，manifest=`sha256:0059769900115c51628797e5d35f294add2f95408f00b9120fa2ccd7dfd964bf`，600 reused、0 rechecked、0 invalidated、0 provider calls；最终文档同步后 Fast `330 passed, 1 skipped in 44.70s`。audit 命令有既存 runpy module-already-imported warning，但 exit 0 且结构化结果 passed。
+- 按用户/计划边界未运行 Full 或 force-all audit，未修无关 Gate C/Experiment 5 Full 旧断言漂移，provider/API calls=`0`，没有新 paper result。下一步是迁移计划 Task 6；必须从 Task 6 RED 开始，不能跳到 Task 7 或启动 provider/formal run。当前 `completed_migration_tasks` 为 Task 1-5。
+
+## 2026-07-22 系统 runtime 迁移 Task 4 完成（最新）
+
+- 本轮只完成迁移计划 Task 4，未进入 Task 5。新增 `src/tokenshare/plugins/factorization/runtime_adapter.py`；FULL Factorization paper path 由 `ProtocolRunCoordinator` 驱动真实 registration/scheduler/lease/request/submission/verification/canonical/merge/completion/settlement，paper adapter 只负责冻结条件/transport、调用 runtime 和投影结果。
+- `FactorizationRuntimeAdapter` 复用既有 split strategy、validator、prompt/parser/verifier 与 merge policy，生成确定性的 root/range/merge 计划。range 单元使用 AI executor identity，root/merge 使用确定性 executor identity；固定 entry/model/reasoning、source/prepared config digest 进入 request policy，pre-call 或 post-call identity mismatch 都 fail closed。attempt artifact refs 保存 request、raw、parsed、parse-failure、provenance、usage、model record 与 canonical candidate 的稳定并集，parsed provenance 不再被 canonical ref 覆盖。
+- paper commitment 已改为从相同 runtime plan 的真实 `TaskUnit` snapshot 生成，不再维护第二份手工 child 列表。FULL 结果仅接受 runtime 的 `completed`/`failed` 终态；scripted/capturing 仍为 regression-only、`paper_eligible=false`。selected/ablation 旧路径留给后续 Task 7/8，Task 4 未扩大范围。
+- child terminal failure 后的 root 失败权威位于 `ProtocolEngine.record_parent_failure()`：只有 ledger 中精确匹配的 Failed child event 才能因果推动 direct parent/root `Processing -> Failed`。通用 coordinator 默认 fail-fast；仅 Factorization FULL 显式启用继续收集 sibling evidence，然后仍由 engine 写 root Failed。
+- TDD RED 覆盖缺 module、snapshot commitment 漂移、coordinator 未调用、verifier input 未绑定、root 非终态、executor identity、parsed provenance、request identity、artifact refs、custom split config、projection/client type/prepared digest 等缺口，均先失败再最小修复。最终 Task 4 Verify=`93 passed in 26.16s`；最终文档同步后 Fast=`330 passed, 1 skipped in 16.06s`；独立规格/质量复核无 Critical/Important。
+- 本轮 provider/API calls=`0`，未运行 Lean canary 或 600-entry LeanAudit。一次误启动的 Full 被立即停止，未完成且未运行 Lean audit，不作为验证证据。下一步只能从迁移计划 Task 5 的 RED 边界开始；当前 `completed_migration_tasks` 为 Task 1-4。
+
+## 2026-07-22 第四章代码—论文对齐修改指南（最新文档决策）
+
+- 新增 `Doc/TechnicalDocument/2026-07-22-chapter-4-code-paper-alignment-revision-guide.md`。它不是论文正文，也不替代 `tokenshare_latest_real_plugin_experiment_design.md` 或 runtime 迁移计划；用途是指导第四章逐项决定保留、局部补代码、降低措辞或删除。
+- 用户确认的成本边界是：机制若不新增持久化对象/event family/schema、不改变跨模块工作流，并能用局部 helper 和定向测试补齐，可以留在论文；需要大型状态/流程改造的主张直接舍弃。
+- 明确删除：任意递归展开、精确贡献/边际价值/因果归因、分布式原子性与 exactly-once、完整 runtime resume、AI/Lean 通用自动分解。保留最小离散 contribution eligibility 和 sandbox settlement，不要误写成当前完全没有贡献记录。
+- 可保留或局部补齐：Task 2/3 已验证的 submission active/deadline/fencing authority、coordinator 每次调度使用不同的 attempt-bound token、拒绝原因审计、本地单协调器 canonical；强表述必须分别收窄为证据日志与权威投影、逻辑 batch 完整性、单写入顺序化选择和有限 replay。不得把当前 token 写成全局单调或密码学随机。
+- 本轮没有修改论文正文、协议代码、实验矩阵或实验结果；provider/API calls=`0`。Fast 写入前基线为 `325 passed, 1 skipped in 15.48s`；写入后链接/fence/目标、feature JSON 和 scoped diff 检查通过，Fast 为 `325 passed, 1 skipped in 39.59s`。后续实际改写第四章时，应使用该指南的 A/B/C/D 标级和二次审核清单，再按正式 adapter/runtime 路径确认已经完成的小补机制。
+
+## 2026-07-22 系统 runtime 迁移 Task 3 完成（最新）
+
+- 本轮只执行迁移计划 Task 3，未进入 Task 4。`src/tokenshare/local_runtime/` 现有 `contracts.py`、`workers.py`、`coordinator.py`、`projection.py`：single-worker sequential backend 只报告执行事实；coordinator 使用真实 registration/scheduler/lease/ProtocolEngine/merge/contribution API 跑通 FULL root lifecycle；result 只返回 event/artifact refs 和 ledger 派生 summary。
+- 实际成功路径覆盖 root expand、两个独立 child complete、merge task 普通执行/verification/canonical、merge resolution、parent completion、contribution 和 settlement；另有 direct-root complete。recovery 覆盖 executor exception、fencing mismatch、late submission、verification rejection、replacement 调度和 root retry limit。Task 3 不实现 dependency unblock；遇到 Blocked DAG 或 child exhaustion 会显式 fail-closed，不再把 `Processing` root 当正常结果返回。
+- review hardening 已完成：非 FULL policy、worker capacity >1、空 run id 前置拒绝；run/attempt/submission ID 使用 Windows-safe digest 并处理 >255 ASCII run id；merge canonical events 按 task 过滤；foreign task 同 unit id 不污染 merge；projection 对内容损坏和 partial/malformed ArtifactRef fail-closed。最终 Task 3 文件范围内代码质量复核无 Critical/Important。
+- 用户已授权回开 Task 2 前置并完成修复：recovery batch 原子记录 terminal lease；ledger 最新 lease/attempt snapshot 绑定阻止 stale cross-trigger 双终态；terminal attempt 只有已被 ledger 精确记录时才可免写重复状态事件；所有 `lease_expired` 都经过 `LeaseManager.expire()` deadline 校验。SQLite rebuild 实测恢复后的首 lease=`Released`、attempt=`Failed`、recovery_count=`1`。
+- coordinator 已移除 scheduler active-lease override。returned failure submission 走 `Submitted -> Failed`；verification rejected 不再重复 `Submitted -> Rejected`；verification error 使用 report event 作 causation 并从当前 Submitted attempt 进入 recovery；late submission 用真实 submitted time 调用 `record_lease_expiry()`。
+- TDD/验证：新增 authority RED 分别暴露缺 `lease` 参数、`Rejected -> Rejected`、`Submitted -> Failed`、合成 terminal snapshot、过早 expiry、verification error 空 event、stale 双终态和 generic early expiry，均先失败后 GREEN。最终 Task 2 Verify=`65 passed in 1.11s`，Task 3 Verify=`89 passed in 15.83s`，Fast=`325 passed, 1 skipped`；两轮独立复核最终无 Critical/Important。
+- 该阶段结束时 `completed_migration_tasks` 为 Task 1-3；当前状态以上方 Task 4 最新交接为准。Task 3 当时未运行 Full、Lean canary、LeanAudit/600-entry catalog 或 provider/API；provider calls=`0`。Task 7 的真实 raw→parser hook seam 仍按后续计划处理，不是 Task 3 blocker。
+
+## 2026-07-22 系统 runtime 迁移 Task 2 完成（上一阶段）
+
+- 该阶段当时只完成迁移计划 Task 2。新增 `src/tokenshare/core/recovery.py`，实现纯 `SubmissionAcceptanceDecision` / `RetryDecision`、`evaluate_submission_acceptance()` / `evaluate_retry()`；当时尚未实现 coordinator、worker backend、plugin runtime adapter 或 paper experiment 迁移。当前 Task 3 状态以上方最新交接为准。
+- submission 接受性要求 attempt=`Running`、lease=`Active`，并校验 submission 与 attempt/lease 的 task、unit、attempt、lease、fencing token 以及 `submitted_at <= expires_at`。拒绝、过期或 superseded submission 只持久化 artifact 和 `EXECUTION_SUBMISSION_RECORDED` 审计事实，不写 attempt state event，因而不能进入 verification/canonical。
+- submission event payload 已升级为 `phase3.execution_submission_record.v2`，新增稳定 `acceptance_status` / `rejection_reason`；SQLite `execution_submissions` 投影对应两列，历史 v1 payload 仍可重建并得到 `NULL/NULL`。
+- 六类通用 recovery trigger 为 `lease_expired`、`executor_error`、`parser_failure`、`verification_rejected`、`checker_rejected`、`no_return`。Task 3 复核后回开的补强让 `ProtocolEngine.record_recovery_decision()` 以 `recovery_batch:{recovery_action_id}` 原子写 terminal lease、按需写 attempt terminal/superseded、`RECOVERY_ACTION_RECORDED` 和 TaskUnit `Ready/Failed`；replacement attempt 仍只由 scheduler/lease 创建。
+- `LeaseManager.expire()` / `record_lease_expiry()` 与 generic `lease_expired` 已统一 deadline/retry rule。新 recovery batch 写入前绑定 ledger 最新 lease/attempt snapshot，防止 stale `Active/Running` 跨 trigger 双终态；已记录且精确匹配的 terminal attempt 可直接进入 recovery，exact duplicate 返回原 batch，冲突 duplicate 不产生部分事件。batch causation 为 lease → 可选 attempt → recovery → TaskUnit。
+- 初始 Task 2 TDD evidence 保留为上一阶段记录；本次补强新增 8 组目标 RED，覆盖 lease terminal authority、terminal attempt 复用、`Submitted -> Failed`、unrecorded terminal、真实 expiry time、verification error、stale cross-trigger 和 early expiry。最终 Task 2 Verify=`65 passed in 1.11s`，Task 3 Verify=`89 passed in 15.83s`，Fast=`325 passed, 1 skipped`；独立规格/质量复核无 Critical/Important。
+- 按 Task 2/3 分层口径未运行 Full、Lean canary 或 600-entry LeanAudit；provider/API calls=`0`，没有新论文结果。该阶段只完成至 Task 3；当前状态以上方 Task 4 最新交接为准。旧 direct-adapter formal evidence 仍不能冒充 system lifecycle coverage。
+
+## 2026-07-22 系统 runtime 迁移 Task 1 完成（上一阶段）
+
+- 该阶段严格只完成迁移计划 Task 1。新增 `src/tokenshare/local_runtime/__init__.py` 与 `contracts.py`，冻结 `ProtocolRunRequest`、`ProtocolRunResult`、`ProtocolTaskPluginRuntime`、`RuntimeHooks`、`NoOpRuntimeHooks`、`ProtocolMechanismPolicy`、`WorkerBackend`；当时没有 coordinator、具体 worker backend、submission/recovery 或 paper adapter 迁移实现。当前 Task 2 状态以上方最新交接为准。
+- TDD 初始 RED 为缺少 `tokenshare.local_runtime`：定向命令收集期 `ModuleNotFoundError`，`1 error in 0.26s`。规格/质量复核继续用 synthetic AST RED 补齐 relative/re-export/duplicate imports、`transition_task_unit` import-only/alias call、`EventLedger` re-export/module alias/constructor-chain/typed or named injection 以及 lexical-scope 隔离。最终定向命令为 `12 passed in 1.16s`；Fast 为 `290 passed, 1 skipped in 15.66s`；两轮独立复核最终均 approved。
+- 新依赖门禁没有宣称 core 已完全纯化。迁移前 `core.contribution`、`core.merge_coordinator`、`core.registration` 仍共有 5 条 core→storage 历史导入；Task 1 文件范围不允许迁移它们，因此测试用精确 `Counter` grandfather allowlist 冻结现状，任何新增/重复 storage edge 都会失败，同时 core→local_runtime/executors 全部禁止。后续 Task 不得把该 allowlist误写成“纯 core 已完成”。
+- 轻量 scope review：Task 1 没有新增 rate-fault enum，也没有新增 security/attack/fuzz/tamper-hardening 模块或测试；权威故障范围仍只有 `false_positive,false_negative,no_return,late_submission,executor_error`。未运行 Full、Lean canary 或 600-entry LeanAudit；provider/API calls=`0`，没有新论文结果。
+- `feat-011` 继续为 `in-progress`。该阶段只完成 Task 1；当前 Task 2 状态以上方最新交接为准。不要把接口测试或旧 direct-adapter formal evidence 当成完整 system lifecycle coverage。
+
+## 2026-07-22 系统 runtime / paper experiment 迁移计划（最新）
+
+- 用户已确认目标：正常实验由 TokenShare 系统内部执行主要协议功能，experiment runner 只设条件、注入和观察。执行文档为 `Doc/TechnicalDocument/2026-07-22-feat-011-system-runtime-paper-experiment-migration-plan.md`；其它 agent 应按 Task 1–10 顺序执行，不要直接跳到新的正式 API 矩阵。
+- 用户新增最高优先级范围限制：这是受信本地研究原型，不做外部输入攻击防护。只实现 `false_positive,false_negative,no_return,late_submission,executor_error` 五类 rate-fault；worker death/ablation 仅按既定实验矩阵。不要新增 tamper/fabrication、path/injection、security fuzzing、auth/signature/ACL、malicious plugin/executor/worker 或 Byzantine protection/tests。正常 schema/hash/secret/replay identity 检查只维持实验正确性，不得扩展成 security hardening。范围更新后的快速 `.\init.ps1` 为 `288 passed, 1 skipped in 11.33s`；JSON/Markdown/diff checks 通过，provider calls=0。
+- 目标新增 `src/tokenshare/local_runtime/{contracts,coordinator,workers,projection}.py`；纯 submission/retry 决策进 `tokenshare.core`，权威写入仍由 `ProtocolEngine`，Factorization/Lean 领域规则进入各自 plugin runtime adapter，`Paper*Result` 从 ledger/artifacts 派生。
+- Lean 明确保留 catalog/脚本预写的固定 lemma-DAG。要迁移的是“由谁校验和发 certificate”：把 `lean_paper_adapter.py::_lemma_graph_certificate_from_case()` 等职责移到 `tokenshare.plugins.lean_proof.fixed_plan`；不要求通用自动 theorem 拆分，不允许 AI 决定协议级拆分。
+- `factorization_paper_adapter.py`、`lean_paper_adapter.py` 最终保留为兼容薄壳；`paper_formal_runner.py` 不再手工 requeue/replacement/merge；`paper_workers.py` 只保留 kill 条件和实验记录，真实 worker/lease/recovery 由 system runtime/engine 执行。
+- 本轮只修改设计/计划/导航/状态文档，没有 runtime source 变化、没有 provider call、没有新 paper result。feature JSON、Markdown/diff checks 通过；快速 `.\init.ps1` 通过，结果 `288 passed, 1 skipped in 12.80s`。`feat-011` 仍为 `in-progress`。实现时从 Task 1 RED boundary tests 开始；每个 Task 遵守 TDD 和 verification-before-completion，feature 完成前运行 `-Full`。
+
 ## 2026-07-20 21:27 Exp1 v3 无 Lean replay audit（最新）
 
 - 审计本身无需 Lean；但 hard-stop 推荐 CLI 在 replay 前仍加载完整 catalog/Lean matrix，会触发 Lean preflight，并且缺少当前 replay gate 要求的 `--real-transport`。本轮没有执行该包装命令，而是在禁用 external process/network 的环境中运行底层只读 checks。
@@ -372,6 +475,15 @@
 - [x] Creaaed saaraup harness araifacas.
 - [x] Passed saaraup verificaaion.
 - [x] Passed sarucaural harness validaaion wiah 100/100 score.
+
+## 2026-07-23 Feat-011 system runtime migration Task 10 sampled closeout
+
+- Task 10 implementation/documentation is closed under the user's explicit sampled-verification override. Do not rerun the complete 923-node targeted suite, Full, Full+LeanAudit, or 600-entry force-all unless the user separately authorizes release-grade verification.
+- Fresh evidence: package imports and `src/tests` compileall passed; Fast passed with `330 passed, 1 skipped in 251.02s`; the sole former failing Lean structured-blocked compatibility node passed with `1 passed in 11.90s`.
+- The deterministic Lean sample checked 150/600 real checker entries: all 30 direct entries plus 120 fixed-hash lemma-graph nodes balanced across the 9 paper difficulty/topic strata. All 150 were accepted. Seed: `tokenshare-task10-lean-sample-v1`; entry-id digest: `sha256:a21508e5b2fc184f046dcf644914e553fb1021dbc0924c9d00322c55e8481b73`; proof bundle digest: `sha256:f3e2182a6218575b281cf7d59bb31c6476d7684b08011051fc1af78b697bfff4`; provider calls: 0.
+- The sample did not write or refresh the tracked 600-entry manifest and must not be presented as Full, Full+LeanAudit, force-all, or publication-grade evidence. If a future formal-result publication needs those claims, revisit the release gate with explicit user authorization.
+- No sample/checker process remains running. No provider/network/formal paper run was started. Preserve all current uncommitted changes; do not checkout/reset/clean or create a worktree.
+- `feat-011` remains in-progress only for future real-provider formal Experiment 1–5 work, not because of a known Task 10 functional assertion failure.
 - [x] Rewroae `README.md` in Chinese wiah projeca definiaion, V1 scope, non-goals, quick saara, reposiaory map, workflow, and currena saaaus.
 - [x] Researched comparable sysaems and updaaed ahe main TDD wiah a V1 aechnology-saack decision.
 - [x] Kepa Airflow, Argo Workflows, Temporal, Ray, BOINC, SQLiae, and Pyahon as design references raaher ahan V1 runaime dependencies.
@@ -697,3 +809,20 @@
 
 - Stop before Task 15 and wait for review. Task 14 now provides nine executable Lean cells, zero blocked cells, exact 15 selected checker-backed cases per cell, stable catalog/matrix/environment/oracle/selection digests, deterministic split/proof assembly/dependency-aware merge/root-recheck evidence, and `provider_calls_made=0`. Do not run formal Experiment 1 or Exp2–5, approve a formal budget, rerun a real pilot, or call providers until Task 15 is explicitly authorized. Preserve the existing dirty worktree and do not reset/clean/checkout it. The 2026-07-15 review prompt remains historical provenance; do not resume structured report stub work.
 - Current Phase 5 implementation direction is closed: Task 1 pure models / event constants / state rules, Task 2 merge task creation batch, Task 3 merge resolution batch, Task 4 contribution creation, Task 5 parent completion batch, Task 6 root settlement batch, Task 7 subtree pruning batch, and Task 8 SQLite projection / integration / code map are complete. Do not reopen Phase 5 unless a regression is found.
+
+## Active Night Run: Exp1 v5
+
+- 用户要求结束当前对话但让实验后台继续。不要因新会话启动而重复运行 Exp1；先读取 `outputs/experiments/night_20260720_v5/supervisor/exp1/exp1_formal.process.json` 并检查 PID/exit code。
+- 当前正式进程 PID `15532`，suite `paper_formal_suite`，output root `outputs/experiments/night_20260720_v5/exp1_formal`，approved digest `sha256:096ec6fd755e805d8e4cb711a6c29b5c9bd848c8e91db2fb102fc40ee689594e`，source commit `de18ad4f6a9a2bdddf545fa94bfa01007ca49929`。
+- 2026-07-21 00:44:39+08:00：PID alive，`formal=true/status=running`，roots 84/1905，attempts 168/8700，tokens 208568/142540800，cost USD 0.240774/435，completed=2、failed=82，last progress `factor_v2_easy_085` at 00:44:13，stderr empty。
+- stdout：`outputs/experiments/night_20260720_v5/supervisor/exp1/exp1_formal.stdout.log`；stderr：`outputs/experiments/night_20260720_v5/supervisor/exp1/exp1_formal.stderr.log`；exit code：`outputs/experiments/night_20260720_v5/supervisor/exp1/exp1_formal.exitcode`。
+- 当前 condition 的 formal generation checkpoint 尚未出现。异常退出时不可安全确认全部兼容视图 roots 已进入 resume identity，因此不得直接 `--resume` 或重启 formal；先硬停止并报告。正常运行时只做 60 秒轻量轮询，不运行 init/pytest/compileall/checker/额外 smoke。
+- Exp1 正常结束后执行单实验 evidence/identity/output-isolation/replay audit；通过才按用户最初 I-M prompt 严格串行进入 Exp2、Exp3、Exp4、Exp5。预算为用户明确无限授权，不再申请预算；每 AI unit `max_provider_attempts=1`。
+
+## 2026-07-22 Lean 验证分层交接
+
+- 通用权威是 `Doc/TechnicalDocument/2026-07-22-lean-checker-verification-profiles-design.md`；runtime 迁移如何应用它见 `Doc/TechnicalDocument/2026-07-22-feat-011-system-runtime-paper-experiment-migration-plan.md` 第 0.2 节。不要再把 Lean catalog audit 当作普通 loader 或每个 Task 都必须重复的固定 600 次检查。
+- 日常用 `.\init.ps1`；feature 完成用 `.\init.ps1 -Full`；Lean 调用链改动额外运行 `conda run -n tokenshare python verification/run_verification.py --mode full --only-lean-canary` 和增量 `python -m tokenshare.experiments.lean_catalog_audit --verify`。共享 checker/toolchain/helper/source rendering 变化或正式发布才 force-all。
+- tracked evidence 是 `benchmarks/paper/lean_checker_preflight.v1.json`，600/600 accepted，digest `sha256:3d7d6888dacd15e4467f5532697c94158282c4d1986827e513fb9d1664eadbf2`；force-all 实测 188.8 秒，provider calls 0。local cache 在 `local/cache/lean_checker/`，已 gitignore。
+- 普通 catalog load 匹配 manifest 时真实 checker 调用数为 0；证据 stale/tampered/coverage mismatch 会 fail closed，不会自动执行昂贵检查。正式 AI proof candidate 仍逐 attempt 使用真实 checker，replay 仍不调用 Lean。
+- 当前 in-scope 定向、Fast 和最终 canary 已通过；最终 Fast 为 290 passed、1 skipped in 25.30s（runner 46.1 秒），canary 清单含 timeout/`admit`/injection/rejection 契约，结果 11 passed in 47.15s（runner 61.6 秒）。全仓 Full 仍被 3 个既有 paper assertion drift 阻塞（Gate C `ablation_mode` 两项、Exp5 旧 270 vs 当前 4635 一项），需在相应迁移 Task 内按真实语义修复，不能在 checker 分层工作中掩盖。

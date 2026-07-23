@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import json
 from copy import deepcopy
 from dataclasses import replace
@@ -35,11 +36,38 @@ from tokenshare.experiments.paper_exp4_ablation_runner import (
     validate_exp4_condition,
 )
 from tokenshare.experiments.paper_models import PaperConditionResult, PaperStatus
+from tokenshare.experiments.paper_formal_callbacks import run_exp4_ablation_strategy
+from tokenshare.experiments.paper_formal_runner import (
+    _FormalConditionExecutionCallback,
+)
 
 
 CATALOG_DIGEST = "sha256:" + "1" * 64
 SOURCE_CONFIG_DIGEST = "sha256:" + "2" * 64
 ENDPOINT_DIGEST = "sha256:" + "3" * 64
+
+
+def test_task7_formal_exp4_observes_runtime_without_manual_requeue() -> None:
+    source = inspect.getsource(_FormalConditionExecutionCallback._apply_exp4_mode)
+
+    assert "_apply_exp4_requeue_boundary" not in source
+    assert "dispatch_paper_case" not in source
+
+
+def test_task7_ablation_callback_uses_experiment_event_namespace() -> None:
+    result = run_exp4_ablation_strategy(
+        mode="NO_VERIFICATION",
+        adapter_observation={
+            "candidate_rejected": True,
+            "deterministic_validity": False,
+        },
+    )
+
+    assert result.events
+    assert all(
+        event["event_type"].startswith("EXPERIMENT_")
+        for event in result.events
+    )
 
 
 def test_exp4_module_conforms_to_gate_b_protocol() -> None:

@@ -3,14 +3,16 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
+import sys
 import tempfile
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 from time import monotonic
-from typing import Any
+from typing import Any, Protocol
 
 from tokenshare.core.models import ArtifactRef, JsonObject
 from tokenshare.executors.contracts import EnvironmentRef
@@ -48,6 +50,22 @@ _PROOF_CANDIDATE_REQUIRED_FIELDS = (
 _FORBIDDEN_PROOF_PLACEHOLDER_PATTERN = re.compile(
     r"(?<![A-Za-z0-9_'.])(?P<placeholder>sorry|admit)(?![A-Za-z0-9_'.])"
 )
+_LEAN_ENVIRONMENT_ALLOWLIST = (
+    "ELAN_HOME",
+    "LAKE_HOME",
+    "LEAN_AR",
+    "LEAN_CC",
+    "LEAN_CXX",
+    "LEAN_PATH",
+    "LEAN_SRC_PATH",
+    "LEAN_SYSROOT",
+    "PATH",
+)
+_PREPARED_LEAN_ENVIRONMENT_CACHE: dict[tuple[str, str, str, str], dict[str, str]] = {}
+
+
+class LeanEnvironmentBootstrapError(RuntimeError):
+    pass
 
 
 @dataclass(frozen=True)
@@ -118,6 +136,16 @@ class LeanCheckerReport:
         return body
 
 
+class LeanChecker(Protocol):
+    def __call__(
+        self,
+        request: LeanCheckerRequest,
+        *,
+        artifact_store: ArtifactStore,
+        environment_manifest: LeanEnvironmentManifest,
+    ) -> LeanCheckerReport: ...
+
+
 def check_lean_proof(
     request: LeanCheckerRequest,
     *,
@@ -172,12 +200,13 @@ def check_lean_proof(
     failure_message: str | None = None
     status: LeanCheckerStatus
     command = [
-        environment_manifest.lake_executable,
-        "env",
-        "lean",
+        environment_manifest.lean_executable,
         str(_temporary_source_path(request.request_id)),
     ]
     try:
+        prepared_environment = prepared_lean_environment(environment_manifest)
+        checker_environment = dict(os.environ)
+        checker_environment.update(prepared_environment)
         with tempfile.TemporaryDirectory(prefix="tokenshare_lean_") as temp_dir:
             source_path = Path(temp_dir) / "TokenShareGeneratedCheck.lean"
             source_path.write_text(generated_source, encoding="utf-8")
@@ -190,7 +219,7 @@ def check_lean_proof(
                 errors="replace",
                 capture_output=True,
                 timeout=request.timeout_seconds,
-                env=_subprocess_env(environment_manifest),
+                env=checker_environment,
                 check=False,
             )
             exit_code = completed.returncode
@@ -210,6 +239,12 @@ def check_lean_proof(
                     "Lean proof candidate contains forbidden placeholder: "
                     f"{blocked_placeholder}"
                 )
+    except LeanEnvironmentBootstrapError as exc:
+        status = LeanCheckerStatus.ENVIRONMENT_ERROR
+        exit_code = None
+        failure_kind = "lean_environment_bootstrap_failed"
+        failure_message = str(exc)
+        stderr = str(exc)[: request.max_output_bytes]
     except subprocess.TimeoutExpired as exc:
         stdout = (exc.stdout or "")[: request.max_output_bytes]
         stderr = (exc.stderr or "")[: request.max_output_bytes]
@@ -269,8 +304,9 @@ def check_lean_proof(
         proof_digest=proof_digest if status == LeanCheckerStatus.ACCEPTED else None,
         environment_ref=request.environment_ref,
         command_summary={
-            "executable": environment_manifest.lake_executable,
-            "args": ["env", "lean", "<generated_source>"],
+            "backend": "lean_direct_cached_environment",
+            "executable": environment_manifest.lean_executable,
+            "args": ["<generated_source>"],
             "cwd": environment_manifest.project_root,
         },
         duration_ms=duration_ms,
@@ -319,6 +355,70 @@ def render_lean_source(payload: LeanTheoremPayload, proof_source: str) -> str:
 
 # 保留原有 private 名称，避免历史内部引用在迁移期间失效。
 _render_lean_source = render_lean_source
+
+
+def prepared_lean_environment(
+    manifest: LeanEnvironmentManifest,
+) -> dict[str, str]:
+    """Ask Lake for its environment once and retain only fixed allowlisted keys."""
+
+    cache_key = (
+        str(manifest.environment_digest),
+        manifest.lake_executable,
+        manifest.lean_executable,
+        manifest.project_root,
+    )
+    cached = _PREPARED_LEAN_ENVIRONMENT_CACHE.get(cache_key)
+    if cached is not None:
+        return dict(cached)
+
+    script = (
+        "import json, os; "
+        f"keys={list(_LEAN_ENVIRONMENT_ALLOWLIST)!r}; "
+        "print(json.dumps({key: os.environ[key] for key in keys if key in os.environ}))"
+    )
+    try:
+        completed = subprocess.run(
+            [manifest.lake_executable, "env", sys.executable, "-c", script],
+            cwd=manifest.project_root,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            capture_output=True,
+            timeout=int(manifest.resource_limits.get("timeout_seconds", 30)),
+            env=_subprocess_env(manifest),
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise LeanEnvironmentBootstrapError(
+            f"Lake environment bootstrap failed: {exc}"
+        ) from exc
+    if completed.returncode != 0:
+        excerpt = (completed.stdout + completed.stderr)[:1200]
+        raise LeanEnvironmentBootstrapError(
+            f"Lake environment bootstrap exited {completed.returncode}: {excerpt}"
+        )
+    try:
+        raw_environment = json.loads(completed.stdout)
+    except json.JSONDecodeError as exc:
+        raise LeanEnvironmentBootstrapError(
+            "Lake environment bootstrap returned invalid JSON"
+        ) from exc
+    if not isinstance(raw_environment, dict):
+        raise LeanEnvironmentBootstrapError(
+            "Lake environment bootstrap must return a JSON object"
+        )
+    prepared = {
+        key: str(raw_environment[key])
+        for key in _LEAN_ENVIRONMENT_ALLOWLIST
+        if key in raw_environment and isinstance(raw_environment[key], str)
+    }
+    _PREPARED_LEAN_ENVIRONMENT_CACHE[cache_key] = dict(prepared)
+    return prepared
+
+
+def _clear_prepared_lean_environment_cache() -> None:
+    _PREPARED_LEAN_ENVIRONMENT_CACHE.clear()
 
 
 def _load_json_object(text: str, *, artifact_name: str) -> JsonObject:
@@ -426,8 +526,6 @@ def _save_text_artifact(
 
 
 def _subprocess_env(manifest: LeanEnvironmentManifest) -> dict[str, str]:
-    import os
-
     env = dict(os.environ)
     lean_exe = Path(manifest.lean_executable)
     elan_home = lean_exe.parent.parent

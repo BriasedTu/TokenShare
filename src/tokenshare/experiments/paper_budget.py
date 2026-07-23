@@ -19,7 +19,10 @@ from tokenshare.experiments.paper_catalog import (
 )
 from tokenshare.experiments.paper_model_identity import (
     PaperModelEndpointIdentity,
+    build_fixed_entry_executor_requirements,
     build_model_endpoint_identity,
+    prepare_fixed_entry_execution_config,
+    validate_fixed_entry_config_identity,
 )
 from tokenshare.experiments.paper_models import (
     JsonObject,
@@ -149,6 +152,30 @@ def plan_exp1_pilot(
     request_policy = dict(profile_body["request_policy"])
     disk_policy = dict(profile_body["disk_policy"])
     selected_entry = _selected_entry(pilot_profile)
+    validated_binding = validate_fixed_entry_config_identity(
+        expected_identity=pilot_profile.model_endpoint_identity,
+        provider_config_id=pilot_profile.model_endpoint_identity.provider_config_id,
+        source_config=pilot_profile.source_provider_config,
+    )
+    executor_requirements_by_domain: dict[str, JsonObject] = {}
+    for domain, adapter_metadata_key in (
+        ("factorization", "factorization_paper_adapter"),
+        ("lean_proof", "lean_paper_adapter"),
+    ):
+        limits = dict(request_policy["domain_limits"][domain])
+        prepared_config = prepare_fixed_entry_execution_config(
+            source_config=pilot_profile.source_provider_config,
+            binding=validated_binding,
+            max_tokens=int(limits["max_tokens"]),
+            timeout_seconds=int(limits["timeout_seconds"]),
+            adapter_metadata_key=adapter_metadata_key,
+        )
+        executor_requirements_by_domain[domain] = (
+            build_fixed_entry_executor_requirements(
+                config=prepared_config,
+                binding=validated_binding,
+            )
+        )
     cases_by_id = {
         str(case["case_id"]): case
         for case in (
@@ -173,6 +200,9 @@ def plan_exp1_pilot(
                 request_policy=request_policy,
                 selected_entry=selected_entry,
                 disk_policy=disk_policy,
+                executor_requirements=executor_requirements_by_domain[
+                    _case_domain(case)
+                ],
             )
         )
 
@@ -794,6 +824,7 @@ def _case_request_profile(
     request_policy: JsonObject,
     selected_entry: AIAPIProviderEntry,
     disk_policy: JsonObject,
+    executor_requirements: JsonObject,
 ) -> JsonObject:
     domain = _case_domain(case)
     limits = dict(request_policy["domain_limits"][domain])
@@ -853,6 +884,7 @@ def _case_request_profile(
             "temperature": request_policy["temperature"],
             "stream": request_policy["stream"],
         },
+        "executor_requirements": dict(executor_requirements),
         "split_profile": _deterministic_split_profile(case),
         "ai_unit_bindings": (
             []
@@ -860,6 +892,7 @@ def _case_request_profile(
             else build_case_ai_unit_bindings(
                 case,
                 include_request_artifacts=False,
+                executor_requirements=executor_requirements,
             )
         ),
     }

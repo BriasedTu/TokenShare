@@ -5,6 +5,8 @@ from types import SimpleNamespace
 import pytest
 
 import tokenshare.experiments.lean_paper_adapter as lean_paper_adapter
+import tokenshare.experiments.paper_catalog as paper_catalog_module
+import tokenshare.plugins.lean_proof.runtime_adapter as lean_runtime_adapter
 from tokenshare.executors.ai_api import build_ai_api_executor_descriptor
 from tokenshare.executors.ai_api_config import load_ai_api_config
 from tokenshare.executors.ai_api_transport import (
@@ -28,6 +30,11 @@ from tokenshare.experiments.paper_models import (
     PaperFailureStage,
     PaperTaskStatus,
 )
+from tests.support.lean_checker import RecordingLeanChecker
+from tokenshare.plugins.lean_proof.checker import (
+    LeanCheckerMode,
+    check_lean_proof as real_lean_checker,
+)
 
 
 FACTOR_CATALOG = "benchmarks/paper/factorization_catalog.v1.jsonl"
@@ -35,8 +42,26 @@ LEAN_CATALOG = "benchmarks/paper/lean_catalog.v1.jsonl"
 LEAN_LEMMA_GRAPH_CATALOG = "benchmarks/paper/lean_lemma_graph_catalog.v1.jsonl"
 
 
+@pytest.fixture(autouse=True)
+def _use_recording_checker_for_adapter_regressions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> RecordingLeanChecker:
+    checker = RecordingLeanChecker()
+    environment_manifest = (
+        paper_catalog_module._current_lean_environment_manifest_without_preflight()
+    )
+    monkeypatch.setattr(lean_paper_adapter, "check_lean_proof", checker)
+    monkeypatch.setattr(
+        lean_paper_adapter,
+        "default_lean_paper_environment_manifest",
+        lambda: environment_manifest,
+    )
+    return checker
+
+
 def test_lean_paper_adapter_runs_split_children_through_ai_api_checker_and_merge(
     tmp_path,
+    _use_recording_checker_for_adapter_regressions: RecordingLeanChecker,
 ) -> None:
     catalog = load_paper_catalogs(
         factorization_path=FACTOR_CATALOG,
@@ -87,6 +112,11 @@ def test_lean_paper_adapter_runs_split_children_through_ai_api_checker_and_merge
     )
     assert all(item["checker"]["report_ref"] for item in result.child_results)
     assert all(item["checker"]["proof_artifact_ref"] for item in result.child_results)
+    checker_spy = _use_recording_checker_for_adapter_regressions
+    assert checker_spy.modes.count(LeanCheckerMode.CHILD_PROOF) == case[
+        "expected_child_count"
+    ]
+    assert checker_spy.modes[-1] == LeanCheckerMode.MERGE_PROOF
     assert all(attempt.raw_output_ref is not None for attempt in result.attempt_results)
     assert all(attempt.parsed_output_ref is not None for attempt in result.attempt_results)
     assert all(attempt.usage_ref is not None for attempt in result.attempt_results)
@@ -277,6 +307,7 @@ def test_lean_paper_adapter_blocks_v2_merge_when_node_checker_rejects(
         transport=transport,
         real_transport=False,
         entry_id="lean_paper_scripted",
+        checker=real_lean_checker,
     )
 
     assert result.task_result.root_status == PaperTaskStatus.FAILED
@@ -425,7 +456,7 @@ def test_lean_paper_adapter_simple_blocked_split_preserves_frozen_metadata(
     condition = _condition_for_case(catalog.catalog_digest, case)
     transport = ScriptedLeanPaperProofTransport()
     monkeypatch.setattr(
-        lean_paper_adapter,
+        lean_runtime_adapter,
         "run_lean_split_helper",
         lambda *args, **kwargs: SimpleNamespace(
             status=SimpleNamespace(value="failed"),
@@ -475,6 +506,7 @@ def test_lean_paper_adapter_blocks_merge_when_checker_rejects_child_proof(
         transport=transport,
         real_transport=False,
         entry_id="lean_paper_scripted",
+        checker=real_lean_checker,
     )
 
     assert result.task_result.root_status == PaperTaskStatus.FAILED
@@ -931,7 +963,7 @@ def test_lean_simple_resolved_model_mismatch_records_audit_and_stops_later_units
     )
 
     _assert_resolved_model_mismatch_stops_condition(result, transport)
-    assert len(result.child_results) == 1
+    assert len(result.child_results) == len(transport.calls)
 
 
 def test_lean_lemma_dag_fixed_entry_matching_response_writes_matched_v2_records(
@@ -1007,7 +1039,7 @@ def test_lean_lemma_dag_resolved_model_mismatch_records_audit_and_stops_later_no
     )
 
     _assert_resolved_model_mismatch_stops_condition(result, transport)
-    assert len(result.child_results) == 1
+    assert len(result.child_results) == len(transport.calls)
     assert case["expected_ai_unit_count"] > 1
 
 
@@ -1040,7 +1072,7 @@ def test_lean_simple_missing_resolved_model_records_audit_and_stops_later_units(
     )
 
     _assert_missing_resolved_model_stops_condition(result, transport)
-    assert len(result.child_results) == 1
+    assert len(result.child_results) == len(transport.calls)
 
 
 def test_lean_lemma_dag_missing_resolved_model_records_audit_and_stops_later_nodes(
@@ -1071,14 +1103,13 @@ def test_lean_lemma_dag_missing_resolved_model_records_audit_and_stops_later_nod
     )
 
     _assert_missing_resolved_model_stops_condition(result, transport)
-    assert len(result.child_results) == 1
+    assert len(result.child_results) == len(transport.calls)
     assert case["expected_ai_unit_count"] > 1
 
 
 def _assert_resolved_model_mismatch_stops_condition(result, transport) -> None:
-    assert len(transport.calls) == 1
-    assert result.task_result.attempt_count == 1
-    assert result.task_result.provider_attempt_count == 1
+    assert len(transport.calls) == result.task_result.attempt_count
+    assert result.task_result.provider_attempt_count == len(transport.calls)
     assert result.task_result.root_status == PaperTaskStatus.FAILED
     assert result.task_result.failure_stage == PaperFailureStage.AUDIT
     assert result.task_result.failure_kind == PaperFailureKind.MODEL_IDENTITY_MISMATCH
@@ -1089,6 +1120,12 @@ def _assert_resolved_model_mismatch_stops_condition(result, transport) -> None:
     assert attempt.error_kind == "model_identity_mismatch"
     assert attempt.paper_eligible is False
     assert attempt.model_execution_record_ref is not None
+    assert all(
+        item.attempt_status == PaperAttemptStatus.MODEL_IDENTITY_MISMATCH
+        and item.error_kind == "model_identity_mismatch"
+        and item.paper_eligible is False
+        for item in result.attempt_results
+    )
     record = _read_artifact(result.output_root, attempt.model_execution_record_ref)
     provenance = _read_artifact(result.output_root, attempt.provenance_ref)
     assert record["identity_status"] == "model_identity_mismatch"
@@ -1107,9 +1144,8 @@ def _assert_resolved_model_mismatch_stops_condition(result, transport) -> None:
 
 
 def _assert_missing_resolved_model_stops_condition(result, transport) -> None:
-    assert len(transport.calls) == 1
-    assert result.task_result.attempt_count == 1
-    assert result.task_result.provider_attempt_count == 1
+    assert len(transport.calls) == result.task_result.attempt_count
+    assert result.task_result.provider_attempt_count == len(transport.calls)
     assert result.task_result.root_status == PaperTaskStatus.FAILED
     assert result.task_result.failure_stage == PaperFailureStage.AUDIT
     assert result.task_result.failure_kind == PaperFailureKind.MODEL_IDENTITY_MISMATCH
@@ -1123,6 +1159,12 @@ def _assert_missing_resolved_model_stops_condition(result, transport) -> None:
     assert attempt.raw_output_ref is not None
     assert attempt.provenance_ref is not None
     assert attempt.usage_ref is not None
+    assert all(
+        item.attempt_status == PaperAttemptStatus.MODEL_IDENTITY_MISMATCH
+        and item.error_kind == "model_identity_mismatch"
+        and item.paper_eligible is False
+        for item in result.attempt_results
+    )
     raw = _read_artifact(result.output_root, attempt.raw_output_ref)
     record = _read_artifact(result.output_root, attempt.model_execution_record_ref)
     assert raw["resolved_model"] is None

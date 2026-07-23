@@ -16,6 +16,15 @@ from tokenshare.experiments.paper_models import (
     PaperAttemptResult,
     digest_json,
 )
+from tokenshare.local_runtime import (
+    GateDirective,
+    MergeContext,
+    NoOpRuntimeHooks,
+    ParserContext,
+    ProtocolMechanismPolicy,
+    RecoveryContext,
+    VerificationContext,
+)
 
 
 ABLATION_SCOPE = "experiment_boundary"
@@ -235,6 +244,99 @@ class PaperAblationSummary:
         }
 
 
+@dataclass(frozen=True, kw_only=True)
+class PaperAblationRuntimeControls:
+    """一个 ablation mode 对应的稳定 runtime policy/hooks。"""
+
+    mode: PaperAblationMode
+    mechanism_policy: ProtocolMechanismPolicy
+    hooks: NoOpRuntimeHooks | "PaperAblationRuntimeHooks"
+
+
+class PaperAblationRuntimeHooks(NoOpRuntimeHooks):
+    """只在声明的稳定 gate 返回 directive，并保存实验观察。"""
+
+    def __init__(self, mode: PaperAblationMode | str) -> None:
+        self.mode = PaperAblationMode(mode)
+        self._events: list[JsonObject] = []
+
+    @property
+    def events(self) -> tuple[JsonObject, ...]:
+        return tuple(dict(event) for event in self._events)
+
+    def before_parser(self, context: ParserContext) -> GateDirective | None:
+        if self.mode != PaperAblationMode.NO_PARSER_POLICY:
+            return None
+        return self._directive(
+            mechanism="parser_policy",
+            protocol_event_refs=(),
+            bypass=True,
+        )
+
+    def before_verification(
+        self,
+        context: VerificationContext,
+    ) -> GateDirective | None:
+        if self.mode != PaperAblationMode.NO_VERIFICATION:
+            return None
+        return self._directive(
+            mechanism="verification",
+            protocol_event_refs=(),
+            bypass=True,
+        )
+
+    def before_requeue(self, context: RecoveryContext) -> GateDirective | None:
+        if self.mode != PaperAblationMode.NO_REQUEUE:
+            return None
+        return self._directive(
+            mechanism="requeue",
+            protocol_event_refs=context.recovery_event_refs,
+            stop=True,
+        )
+
+    def before_merge(self, context: MergeContext) -> GateDirective | None:
+        if (
+            self.mode == PaperAblationMode.NO_MERGE_GATE
+            and not context.gate_satisfied
+        ):
+            return self._directive(
+                mechanism="merge_gate",
+                protocol_event_refs=context.protocol_event_refs,
+                bypass=True,
+            )
+        if (
+            self.mode == PaperAblationMode.NO_SLOT_INTEGRITY
+            and context.gate_satisfied
+        ):
+            return self._directive(
+                mechanism="slot_integrity",
+                protocol_event_refs=context.protocol_event_refs,
+                bypass=True,
+            )
+        return None
+
+    def _directive(
+        self,
+        *,
+        mechanism: str,
+        protocol_event_refs: tuple[JsonObject, ...],
+        bypass: bool = False,
+        stop: bool = False,
+    ) -> GateDirective:
+        event = {
+            "event_type": "EXPERIMENT_ABLATION_GATE_APPLIED",
+            "ablation_mode": self.mode.value,
+            "disabled_mechanism": mechanism,
+            "protocol_event_refs": [dict(ref) for ref in protocol_event_refs],
+        }
+        self._events.append(event)
+        return GateDirective(
+            bypass=bypass,
+            stop=stop,
+            experiment_records=(event,),
+        )
+
+
 def ablation_profile_for_mode(
     mode: PaperAblationMode | str,
 ) -> PaperAblationProfile:
@@ -249,6 +351,40 @@ def ablation_profile_for_mode(
 
 def ablation_modes() -> tuple[PaperAblationMode, ...]:
     return tuple(PaperAblationMode)
+
+
+def runtime_controls_for_mode(
+    mode: PaperAblationMode | str,
+) -> PaperAblationRuntimeControls:
+    """关闭且只关闭一个 runtime mechanism；FULL 保持 NoOp。"""
+
+    normalized = PaperAblationMode(mode)
+    disabled_field = {
+        PaperAblationMode.FULL: None,
+        PaperAblationMode.NO_PARSER_POLICY: "parser_policy_enabled",
+        PaperAblationMode.NO_VERIFICATION: "verification_enabled",
+        PaperAblationMode.NO_REQUEUE: "replacement_attempts_allowed",
+        PaperAblationMode.NO_MERGE_GATE: "merge_gate_enabled",
+        PaperAblationMode.NO_SLOT_INTEGRITY: "slot_integrity_enabled",
+    }[normalized]
+    values = {
+        "parser_policy_enabled": True,
+        "verification_enabled": True,
+        "replacement_attempts_allowed": True,
+        "merge_gate_enabled": True,
+        "slot_integrity_enabled": True,
+    }
+    if disabled_field is not None:
+        values[disabled_field] = False
+    return PaperAblationRuntimeControls(
+        mode=normalized,
+        mechanism_policy=ProtocolMechanismPolicy(**values),
+        hooks=(
+            NoOpRuntimeHooks()
+            if normalized == PaperAblationMode.FULL
+            else PaperAblationRuntimeHooks(normalized)
+        ),
+    )
 
 
 def validate_ablation_attempt_coverage(

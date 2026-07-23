@@ -117,6 +117,26 @@ def test_formal_runner_checkpoints_required_evidence_and_reuses_it(
         "artifacts/case-1/request.json",
     ):
         assert (run_root / relative_path).is_file(), relative_path
+    current = json.loads((run_root / "CURRENT.json").read_text(encoding="utf-8"))
+    checkpoint_task = json.loads(
+        (
+            run_root
+            / ".generations"
+            / current["generation_id"]
+            / "per_task_results.jsonl"
+        ).read_text(encoding="utf-8")
+    )
+    assert checkpoint_task["runtime_generation_identity"] == {
+        "schema_version": "tokenshare.paper_runtime_generation_identity.v1",
+        "run_id": "run-case-1",
+        "task_id": "case-1",
+        "root_unit_id": "root-case-1",
+        "event_count": 1,
+        "first_event_id": "event-case-1",
+        "last_event_id": "event-case-1",
+        "last_event_hash": "sha256:event-case-1",
+        "ledger_digest": "sha256:ledger-case-1",
+    }
 
     resumed = formal_runner.execute_paper_formal_suite(**kwargs, resume=True)
     assert resumed.to_dict() == executed.to_dict()
@@ -129,6 +149,60 @@ def test_formal_runner_checkpoints_required_evidence_and_reuses_it(
     assert replayed.to_dict() == executed.to_dict()
     assert adapter_calls == ["case-1"]
 
+
+def test_formal_runner_rejects_completed_protocol_result_without_real_evidence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = _ai_config()
+    plan = _planned_dispatch_plan(tmp_path, config=config)
+
+    class CallbackModule:
+        def expand_conditions(self, context):
+            raise AssertionError("formal execution consumes the frozen plan")
+
+        def freeze_case_selections(self, context, conditions):
+            return FrozenCaseSelectionBatch(())
+
+        def run_condition(self, context, condition, selection):
+            return context.execution_callback(
+                context=context,
+                condition=condition,
+                selection=selection,
+            )
+
+        def summarize(self, evidence):
+            return ExperimentSummaryRows(experiment_id=EXPERIMENT_ID, rows=())
+
+    def missing_evidence_dispatch(**kwargs):
+        result = _complete_adapter_result(
+            output_root=Path(kwargs["output_root"]),
+            condition=kwargs["condition"],
+            case_id=kwargs["case"]["case_id"],
+        )
+        result.attempt_results = []
+        result.event_records = []
+        result.task_result.event_refs = []
+        return result
+
+    monkeypatch.setitem(
+        formal_runner.dispatch_paper_condition.__globals__,
+        "_MODULES",
+        ((EXPERIMENT_ID, CallbackModule()),),
+    )
+    monkeypatch.setattr(
+        formal_runner,
+        "dispatch_paper_case",
+        missing_evidence_dispatch,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="protocol checkpoint requires real attempt evidence",
+    ):
+        formal_runner.execute_paper_formal_suite(
+            **_formal_execution_kwargs(tmp_path=tmp_path, config=config, plan=plan)
+        )
 
 def test_formal_runner_dispatches_planned_conditions_with_isolated_root(
     tmp_path: Path,
@@ -559,7 +633,7 @@ def test_formal_runner_checkpoints_adapter_runtime_error_as_failed_root(
     assert (run_root / "artifacts" / "case-1" / "runner-error.json").is_file()
 
 
-def test_formal_runner_exp2_uses_condition_worker_count_for_actual_scheduling(
+def test_formal_runner_exp2_delegates_worker_count_to_protocol_runtime(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -647,7 +721,7 @@ def test_formal_runner_exp2_uses_condition_worker_count_for_actual_scheduling(
     suite = formal_runner.execute_paper_formal_suite(**kwargs)
 
     assert suite.status == PaperStatus.COMPLETED
-    assert observed_max == 2
+    assert observed_max == 1
     run_root = (
         tmp_path
         / "experiments"
@@ -664,8 +738,9 @@ def test_formal_runner_exp2_uses_condition_worker_count_for_actual_scheduling(
         / "events"
         / "event_log.jsonl"
     ).read_text(encoding="utf-8")
-    assert "AI_UNIT_STARTED" in event_log
-    assert "MERGE_GATE_COMPLETED" in event_log
+    assert event_log.count('"event_type":"TASK_COMPLETED"') == 2
+    assert "AI_UNIT_STARTED" not in event_log
+    assert "MERGE_GATE_COMPLETED" not in event_log
 
 
 def test_formal_runner_exp2_reserves_hard_limit_before_parallel_dispatch(
@@ -832,7 +907,7 @@ def test_formal_runner_does_not_deduplicate_same_root_across_conditions(
     assert calls == [("condition-1", "case-1"), ("condition-2", "case-1")]
 
 
-def test_formal_runner_exp3_consumes_post_ai_fault_manifest_and_replaces_attempt(
+def test_formal_runner_exp3_passes_fault_hook_without_synthetic_replacement(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -846,7 +921,7 @@ def test_formal_runner_exp3_consumes_post_ai_fault_manifest_and_replaces_attempt
         fault_type="false_positive",
         fault_rate=1.0,
     )
-    adapter_calls: list[str | None] = []
+    adapter_calls: list[tuple[str | None, bool]] = []
 
     class Exp3CallbackModule:
         def expand_conditions(self, context):
@@ -875,7 +950,9 @@ def test_formal_runner_exp3_consumes_post_ai_fault_manifest_and_replaces_attempt
 
     def fake_case_dispatch(**kwargs):
         selected_unit_id = kwargs.get("selected_ai_unit_id")
-        adapter_calls.append(selected_unit_id)
+        adapter_calls.append(
+            (selected_unit_id, callable(kwargs.get("post_raw_output_hook")))
+        )
         return _faultable_adapter_result(
             output_root=Path(kwargs["output_root"]),
             condition=kwargs["condition"],
@@ -902,7 +979,7 @@ def test_formal_runner_exp3_consumes_post_ai_fault_manifest_and_replaces_attempt
     )
 
     assert suite.status == PaperStatus.COMPLETED
-    assert adapter_calls == [None, "unit-case-1"]
+    assert adapter_calls == [(None, True)]
     attempts = _generation_records(
         tmp_path, experiment_id, "condition-exp3-rate-fault", "per_attempt_results.jsonl"
     )
@@ -917,16 +994,15 @@ def test_formal_runner_exp3_consumes_post_ai_fault_manifest_and_replaces_attempt
     )
     assert {attempt["attempt_id"] for attempt in attempts} == {
         "attempt-case-1-original",
-        "attempt-case-1-replacement",
     }
-    assert faults[0]["original_output_ref"]["artifact_id"] == "parsed-case-1-original"
-    assert faults[0]["mutated_output_ref"]["artifact_id"].endswith("mutated_output")
-    event_types = [event["event_type"] for event in events]
-    assert event_types.index("PROVIDER_RAW_PERSISTED") < event_types.index("FAULT_INJECTED")
-    assert event_types.index("FAULT_INJECTED") < event_types.index("REPLACEMENT_ACCEPTED")
+    assert faults == []
+    assert all(
+        event["event_type"] not in {"FAULT_INJECTED", "REPLACEMENT_ACCEPTED"}
+        for event in events
+    )
 
 
-def test_formal_runner_exp3_worker_death_persists_real_process_recovery(
+def test_formal_runner_exp3_worker_death_does_not_fabricate_process_recovery(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -996,10 +1072,13 @@ def test_formal_runner_exp3_worker_death_persists_real_process_recovery(
     faults = _generation_records(
         tmp_path, experiment_id, "condition-exp3-worker-death", "fault_injections.jsonl"
     )
-    record = faults[0]
-    assert record["worker_process_exitcode"] not in (0, None)
-    assert record["replacement_process_exitcode"] == 0
-    assert record["coordinator"]["survived"] is True
+    task = _generation_records(
+        tmp_path, experiment_id, "condition-exp3-worker-death", "per_task_results.jsonl"
+    )[0]
+    assert faults == []
+    assert task["worker_death_count"] == 0
+    assert task["worker_replacement_count"] == 0
+    assert task["worker_death_evidence_complete"] is False
 
 
 def test_formal_runner_exp4_persists_mode_specific_wrapper_evidence(
@@ -1064,7 +1143,7 @@ def test_formal_runner_exp4_persists_mode_specific_wrapper_evidence(
     )
 
     assert suite.status == PaperStatus.COMPLETED_WITH_FAILURES
-    assert dispatched_modes == ["NO_VERIFICATION", "NO_VERIFICATION"]
+    assert dispatched_modes == ["NO_VERIFICATION"]
     task = _generation_records(
         tmp_path, experiment_id, "condition-exp4-no-verification", "per_task_results.jsonl"
     )[0]
@@ -1077,23 +1156,24 @@ def test_formal_runner_exp4_persists_mode_specific_wrapper_evidence(
     assert task["root_status"] == "failed"
     assert task["ablation_runtime_flags"]["wrong_canonical_exposed"] is True
     assert task["final_deterministic_validity"] is False
-    assert any(event["event_type"] == "ABLATION_BOUNDARY_APPLIED" for event in events)
+    assert any(
+        event["event_type"] == "EXPERIMENT_ABLATION_OBSERVED"
+        for event in events
+    )
 
 
 @pytest.mark.parametrize(
-    ("mode", "expected_calls", "expected_status", "expected_stuck"),
+    ("mode", "expected_status"),
     (
-        ("FULL", 2, PaperStatus.COMPLETED, False),
-        ("NO_REQUEUE", 1, PaperStatus.COMPLETED_WITH_FAILURES, True),
+        ("FULL", PaperStatus.COMPLETED_WITH_FAILURES),
+        ("NO_REQUEUE", PaperStatus.COMPLETED_WITH_FAILURES),
     ),
 )
-def test_formal_runner_exp4_no_requeue_changes_replacement_lifecycle(
+def test_formal_runner_exp4_observes_without_synthetic_replacement_lifecycle(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     mode: str,
-    expected_calls: int,
     expected_status: PaperStatus,
-    expected_stuck: bool,
 ) -> None:
     experiment_id = "exp4_real_ai_protocol_ablation"
     config = _ai_config()
@@ -1158,12 +1238,12 @@ def test_formal_runner_exp4_no_requeue_changes_replacement_lifecycle(
                 planned_conditions=1,
                 planned_root_runs=1,
                 planned_ai_units=1,
-                max_provider_attempts=expected_calls,
+                max_provider_attempts=1,
             ),
         }
     )
 
-    assert len(dispatch_calls) == expected_calls
+    assert len(dispatch_calls) == 1
     assert suite.status == expected_status
     task = _generation_records(
         tmp_path,
@@ -1171,8 +1251,10 @@ def test_formal_runner_exp4_no_requeue_changes_replacement_lifecycle(
         f"condition-exp4-{mode.lower()}",
         "per_task_results.jsonl",
     )[0]
-    assert task["stuck_after_rejection"] is expected_stuck
-    assert task["replacement_attempt_count"] == expected_calls - 1
+    assert task["root_status"] == "failed"
+    assert task["ablation_mode"] == mode
+    assert "stuck_after_rejection" not in task
+    assert "replacement_attempt_count" not in task
 
 
 def test_formal_runner_exp5_persists_fixed_entry_model_execution_records(
@@ -1573,6 +1655,21 @@ def _complete_adapter_result(
         fault_records=[],
         event_records=[{"event_id": f"event-{case_id}", "event_type": "TASK_COMPLETED"}],
         eligibility_report=SimpleNamespace(paper_eligible=False),
+        run_evidence={
+            "protocol_runtime": {
+                "generation_identity": {
+                    "schema_version": "tokenshare.paper_runtime_generation_identity.v1",
+                    "run_id": f"run-{case_id}",
+                    "task_id": case_id,
+                    "root_unit_id": f"root-{case_id}",
+                    "event_count": 1,
+                    "first_event_id": f"event-{case_id}",
+                    "last_event_id": f"event-{case_id}",
+                    "last_event_hash": f"sha256:event-{case_id}",
+                    "ledger_digest": f"sha256:ledger-{case_id}",
+                }
+            }
+        },
     )
 
 

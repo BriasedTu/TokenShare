@@ -13,6 +13,9 @@ from typing import Any
 
 JsonObject = dict[str, Any]
 
+EXECUTION_SUBMISSION_RECORD_SCHEMA_V1 = "phase3.execution_submission_record.v1"
+EXECUTION_SUBMISSION_RECORD_SCHEMA_V2 = "phase3.execution_submission_record.v2"
+
 
 class EventType(str, Enum):
     """Event type constants used by the current protocol phases."""

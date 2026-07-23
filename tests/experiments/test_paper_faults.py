@@ -1,10 +1,12 @@
 import json
+from dataclasses import replace
 
 import pytest
 
 from tokenshare.core.models import ArtifactRef
 from tokenshare.experiments.paper_faults import (
     FaultTargetDescriptor,
+    PaperFaultRuntimeHooks,
     PaperFaultType,
     inject_post_ai_fault,
     select_fault_target_descriptors,
@@ -15,11 +17,93 @@ from tokenshare.experiments.paper_models import (
     PaperAttemptStatus,
 )
 from tokenshare.storage.artifacts import ArtifactStore
+from tokenshare.local_runtime import RawOutputContext
 
 
 NOW = "2026-07-15T00:00:00Z"
 DEADLINE = "2026-07-15T00:00:10Z"
 LATE_SUBMITTED_AT = "2026-07-15T00:00:11Z"
+
+
+def test_runtime_fault_hook_waits_for_raw_provenance_and_usage_artifacts(
+    tmp_path,
+) -> None:
+    store = ArtifactStore(tmp_path)
+    raw_ref = _save_raw(store, "runtime_raw")
+    provenance_ref = store.save_json(
+        {"schema_version": "test.provenance.v1", "provider": "siliconflow"},
+        artifact_id="runtime_provenance",
+        artifact_type="ProviderProvenance",
+        artifact_schema_id="test.provenance",
+        artifact_schema_version="v1",
+        source={"kind": "pytest"},
+        metadata={},
+        created_at=NOW,
+    )
+    usage_ref = store.save_json(
+        {"schema_version": "test.usage.v1", "total_tokens": 17},
+        artifact_id="runtime_usage",
+        artifact_type="ProviderUsage",
+        artifact_schema_id="test.usage",
+        artifact_schema_version="v1",
+        source={"kind": "pytest"},
+        metadata={},
+        created_at=NOW,
+    )
+    context = RawOutputContext(
+        run_id="run-runtime-fault",
+        task_id="task-runtime-fault",
+        unit_id="unit_1",
+        attempt_id="attempt_1",
+        worker_id="worker_1",
+        raw_output_ref=raw_ref,
+        provenance_ref=provenance_ref,
+        usage_ref=usage_ref,
+        content_text=json.dumps({"candidate": 7}),
+        provider="siliconflow",
+        model="zai-org/GLM-5.2",
+        entry_id="glm_5_2_exp1_baseline",
+        usage_summary={"total_tokens": 17},
+        submitted_at=NOW,
+        lease_deadline_at=DEADLINE,
+    )
+    hooks = PaperFaultRuntimeHooks(
+        artifact_store=store,
+        condition_id="condition-runtime-fault",
+        repeat_id=0,
+        fault_type=PaperFaultType.NO_RETURN,
+        seed=19,
+        selected_unit_ids=("unit_1",),
+    )
+
+    directive = hooks.after_raw_output_persisted(context)
+
+    assert directive is not None
+    assert directive.result_kind == "no_return"
+    assert len(hooks.records) == 1
+    assert hooks.records[0]["original_raw_output_ref"] == raw_ref.to_dict()
+    assert hooks.records[0]["original_provenance_ref"] == provenance_ref.to_dict()
+    assert hooks.records[0]["pre_fault_usage_ref"] == usage_ref.to_dict()
+    assert hooks.events[0]["event_type"] == "EXPERIMENT_FAULT_INJECTED"
+    assert hooks.events[0]["artifact_refs"]
+
+    replacement_context = replace(context, attempt_id="attempt_2")
+    assert hooks.after_raw_output_persisted(replacement_context) is None
+    assert len(hooks.records) == 1
+
+    missing_usage_hooks = PaperFaultRuntimeHooks(
+        artifact_store=store,
+        condition_id="condition-missing-usage",
+        repeat_id=0,
+        fault_type=PaperFaultType.NO_RETURN,
+        seed=19,
+        selected_unit_ids=("unit_1",),
+    )
+    with pytest.raises(ValueError, match="persisted usage"):
+        missing_usage_hooks.after_raw_output_persisted(
+            replace(context, usage_ref=None)
+        )
+    assert missing_usage_hooks.records == ()
 
 
 def test_select_fault_targets_is_deterministic_for_seed_and_rate() -> None:

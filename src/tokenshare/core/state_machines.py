@@ -35,6 +35,7 @@ _ATTEMPT_TRANSITIONS = {
     (AttemptState.RUNNING, AttemptState.SUPERSEDED),
     (AttemptState.SUBMITTED, AttemptState.VERIFIED),
     (AttemptState.SUBMITTED, AttemptState.REJECTED),
+    (AttemptState.SUBMITTED, AttemptState.FAILED),
     (AttemptState.VERIFIED, AttemptState.CANONICAL),
 }
 

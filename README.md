@@ -53,7 +53,7 @@ V1 是本地可复现实验用的协议内核，范围包括：
 V1 当前计划包含两类实验插件，实验设计和论文实验口径以 `Doc/TechnicalDocument/tokenshare_latest_real_plugin_experiment_design.md` 为唯一权威。所有可写入论文的新实验必须实际调用真实 AI API；旧 deterministic/scripted、toy/stub 或 direct benchmark 只能用于回归、输入来源和成本校准。
 
 - **factorization**：验证普通可拆分计算任务。当前规划的插件就是主 TDD 第 14.1 节的整数分解插件；第一版字段规格已收束为候选因子搜索空间分区、bounded range search、结果验证、all-required merge、prime / semiprime fixture 闭环。`one_success`、提前完成、sibling pruning 和 composite cofactor 的完整递归 resolution 已明确不属于第一切片。
-- **Lean formal proof**：验证真实形式化证明工作流。它接收 Lean theorem / proof-state 代码 artifact，由插件内确定性拆分算法自动识别目标结构并生成子任务；候选 proof artifact 必须通过固定本地 Lean/lake/toolchain/library 环境真实检查，checker 日志和环境身份持久化，replay 不重新运行 Lean 补历史事实。
+- **Lean formal proof**：验证真实形式化证明工作流。simple case 可使用插件内确定性 helper；medium/hard case 使用 catalog/脚本预注册、版本化的固定 lemma-DAG，由 Lean 插件校验并生成 certificate。当前实现不从任意 theorem 通用自动发现 lemma-DAG，AI 只生成被分派 proof unit 的候选证明；候选 proof artifact 必须通过固定本地 Lean/lake/toolchain/library 环境真实检查，checker 日志和环境身份持久化，replay 不重新运行 Lean 补历史事实。
 已剔除：
 
 - **structured report stub**：曾用于规划大型自然语言任务的结构化拆分、弱验证、覆盖率检查和 `MergePlan` 合并流程；2026-06-29 起不再作为 Phase 6 待开发插件。
@@ -62,7 +62,7 @@ V1 当前计划包含两类实验插件，实验设计和论文实验口径以 `
 
 最新实验设计把论文实验分成五组：
 
-- **Experiment 1 - 真实 AI 跨领域可行性与难度**：factorization 使用三档各 10 道，Lean 使用 3 个 paper difficulty × 3 个 topic family × 每格固定 15 道，分别报告完成率、accepted result validity、时间、token、成本和失败边界。
+- **Experiment 1 - 真实 AI 跨领域可行性与难度**：factorization 使用 easy/medium/hard=`167/167/166`、合计 500 道，Lean 使用 3 个 paper difficulty × 3 个 topic family × 每格固定 15 道、合计 135 道，分别报告完成率、accepted result validity、时间、token、成本和失败边界。
 - **Experiment 2 - 真实 AI worker 扩展性**：固定任务和模型，比较 1/3/10/30 workers；100/300 只在任务粒度和 provider quota 允许时扩展。
 - **Experiment 3 - 真实 AI 故障注入与 worker death 恢复**：真实 API 输出后注入 false positive、false negative、不返回、延迟、executor error 和独立 worker process death，报告检测、恢复和成本曲线。
 - **Experiment 4 - 真实 AI 协议消融**：每次只关闭 verification、parser policy、requeue、merge gate 或 slot integrity 中的一个机制。
@@ -94,6 +94,8 @@ Windows PowerShell：
 .\init.ps1
 # feature 完成、提交/合并或发布实验结果前
 .\init.ps1 -Full
+# Lean 相关完成门禁（增量）；共享 checker/toolchain/helper 变化或正式发布再追加 -ForceAllLeanAudit
+.\init.ps1 -Full -LeanAudit
 ```
 
 Bash、Git Bash 或 WSL：
@@ -102,20 +104,23 @@ Bash、Git Bash 或 WSL：
 ./init.sh
 # feature 完成、提交/合并或发布实验结果前
 ./init.sh --full
+# Lean 相关完成门禁（增量）；共享 checker/toolchain/helper 变化或正式发布再追加 --force-all-lean-audit
+./init.sh --full --lean-audit
 ```
 
-默认快速档和完整档都会运行：
+两个 wrapper 都只启动一次目标 conda Python，并把验证交给统一入口：
 
 ```bash
-conda run -n tokenshare python -c "import json, sqlite3; print('python-json-sqlite-ok')"
-conda run -n tokenshare python -m compileall -x "reference_repos" .
+conda run -n tokenshare python verification/run_verification.py --mode fast
 ```
 
-默认快速档随后运行 `verification/fast-tests.txt` 维护的无网络 smoke/regression suite；完整档运行 `PYTHONPATH=src ... pytest tests`。`init.ps1` 和 `init.sh` 默认使用 `conda` 环境 `tokenshare`，可通过 `TOKENSHARE_CONDA_ENV` 临时覆盖环境名。Python 依赖可通过 `pip install -r requirements.txt` 安装。`reference_repos/` 保存外部参考源码，不参与 `compileall`。默认快速档用于启动和开发循环，不能替代 feature 完成、提交/合并或实验发布前的完整验证。
+统一入口运行 JSON/SQLite、harness、排除 `reference_repos/` 的 `compileall`，随后由 `verification/fast-tests.txt` 或完整 `pytest tests` 选择测试。Fast 不启动真实 Lean；Full 包含固定小常数的真实 Lean canary，但不默认重跑 600-entry catalog audit；`LeanAudit` 用内容寻址 manifest 只重检失效 entry。普通 catalog load 只验证 tracked evidence，stale 时 fail closed，不会为“省事”跳过错误或隐式触发几分钟的全量 Lean。通用规则见 `Doc/TechnicalDocument/2026-07-22-lean-checker-verification-profiles-design.md`。
+
+`init.ps1` 和 `init.sh` 默认使用 conda 环境 `tokenshare`，可通过 `TOKENSHARE_CONDA_ENV` 临时覆盖环境名。Python 依赖可通过 `pip install -r requirements.txt` 安装。默认快速档用于启动和开发循环，不能替代 feature 完成、提交/合并或实验发布前的完整验证。
 
 ## Run Experiments
 
-以下现有命令属于 Phase 8 回归与校准入口，不是 2026-07-12 新论文主实验入口。新论文 runner 的实现规格、预算门禁和正式 CLI 见唯一权威实验设计；在 `run_paper_experiments` 落地前，不得把这些旧命令输出写成新实验结论。
+以下现有命令属于 Phase 8 回归与校准入口，不是 2026-07-12 新论文主实验入口。新论文 runner 已落地为 `tokenshare.experiments.run_paper_experiments`，正常执行通过 `paper_dispatcher`、`tokenshare.local_runtime` 和 `ProtocolEngine` 推进生命周期；正式运行仍必须满足唯一权威设计中的 real-transport、catalog、预算、provider evidence 和最终验证门禁。旧命令输出不得写成新实验结论。
 
 当前旧 Experiment 1-4 regression suite 可一条命令运行，输出会写入被忽略的 `outputs/experiments/`：
 
@@ -221,6 +226,10 @@ conda run -n tokenshare python -m pytest tests\executors\test_ai_api_siliconflow
 - `init.ps1`：Windows PowerShell 启动验证。
 - `init.sh`：Bash/Git Bash/WSL 启动验证。
 - `src/tokenshare/`：TokenShare Python package，实现协议核心、存储、插件、执行器、重放和实验模块边界。
+- `src/tokenshare/local_runtime/`：本地系统应用协调层，统一驱动 scheduler、lease、executor、plugin 和 `ProtocolEngine`；不承载论文矩阵或领域算法。
+- `src/tokenshare/plugins/factorization/runtime_adapter.py`：Factorization runtime bridge，提供 range plan、request/parser/verifier 与 merge 领域规则。
+- `src/tokenshare/plugins/lean_proof/{fixed_plan,runtime_adapter}.py`：Lean 预注册 fixed plan 校验/certificate 与 proof-unit/checker/merge runtime bridge。
+- `src/tokenshare/experiments/paper_projection.py`：从系统 ledger/artifacts 只读派生 `PaperTaskResult` / `PaperAttemptResult`，不参与协议决策。
 - `src/tokenshare/experiments/factorization_500_ai.py`：direct 500-number AI factorization benchmark，实现输入生成、真实/脚本 transport、逐题 artifact/event 记录、oracle 校验和准确率报告。
 - `src/tokenshare/experiments/run_factorization_500_ai.py`：direct 500-number benchmark CLI，默认 scripted transport，`--real-transport` 才调用真实 SiliconFlow API，并支持 `--entry-id` / `--worker-count` 控制真实模型和并发。
 - `src/tokenshare/experiments/lean_ai_benchmark.py`：Lean AI 50 benchmark 实现，生成当前 helper 支持的 50 个证明任务并经 AI executor、parser、checker、merge 写出报告。
@@ -261,7 +270,7 @@ conda run -n tokenshare python -m pytest tests\executors\test_ai_api_siliconflow
 
 ## Current Status
 
-当前日期状态：2026-07-13。
+当前日期状态：2026-07-23。
 
 已完成：
 
@@ -269,7 +278,7 @@ conda run -n tokenshare python -m pytest tests\executors\test_ai_api_siliconflow
 - `init.ps1` / `init.sh` 基线验证已建立。
 - V1 路线图已写入 `feature_list.json`。
 - 当前项目边界已写入 `AGENTS.md`。
-- package layout 已确定并创建：`src/tokenshare/{core,storage,plugins,executors,replay,experiments}` 与镜像 `tests/`。
+- package layout 已确定并创建：`src/tokenshare/{core,storage,plugins,executors,local_runtime,replay,experiments}` 与镜像 `tests/`。
 - Phase 1 协议基础对象与本地存储已实现：root task registration、artifact save/read/hash、JSONL event append/read/hash chain、SQLite 可重建索引。
 - Phase 2 最小协议内核已实现：`TaskGraph`、`TaskUnit` / `Lease` / `Attempt` 状态机、FIFO `Scheduler`、`LeaseManager`、Phase 2 event type、SQLite `leases` / `attempts` / `recovery_actions` 投影，以及顶层 `ProtocolEngine` 调度、heartbeat 和 lease expiry 事件流。
 - Phase 3 插件与执行器契约已实现：`PluginRegistry`、`PluginDescriptor` / `SplitStrategyContract`、`ExecutorRegistry`、`ExecutionRequest`、`ExecutionSubmission`、`MockAIExecutor`、`DeterministicLocalExecutor`、Phase 3 event type、`Attempt.Running -> Submitted` 状态推进，以及 SQLite `registry_snapshots` / `execution_requests` / `execution_submissions` / `executor_statuses` index-only 投影。
@@ -285,6 +294,7 @@ conda run -n tokenshare python -m pytest tests\executors\test_ai_api_siliconflow
 - 2026-06-28 Phase 7 实验级 AI API executor 已完成并映射：SiliconFlow-only 第一版、request-scoped provider failover、artifact-backed raw/parsed/parse-failure/provenance/usage/cost、secret redaction、plugin parser bridge 和 replay no-call guard 已实现。
 - 2026-07-12 新真实 AI API 论文实验设计已设为唯一权威：后续 paper runner、difficulty catalog、worker scaling、post-AI fault/worker death、ablation、预算、metrics 和论文表图都以 `tokenshare_latest_real_plugin_experiment_design.md` 为准。
 - 2026-06-29 Phase 8 实验基础设施已完成并标记 done：code map 记录旧通用 runner、Experiment 1-4 regression suite、failure/ablation 报告、metrics/report、AI usage/cost 和 Lean adapter ready path；这些旧 suite 不再是新论文主实验。
+- 2026-07-23 feat-011 system runtime 迁移 Task 1-9 已完成：Factorization/Lean 正常 FULL 路径共用 `ProtocolRunCoordinator` / `ProtocolEngine`，worker/fault/ablation 通过 runtime backend/hooks 注入，paper results 从 ledger/artifacts 投影；Task 10 负责文档、兼容壳与最终门禁。
 
 当前进行中：
 
@@ -295,8 +305,8 @@ conda run -n tokenshare python -m pytest tests\executors\test_ai_api_siliconflow
 - Phase 6 Lean track：已完成 direct proof、decomposition/child proof/merge、Phase 8 adapter ready path 和 replay/evidence guard；后续只在发现回归或新论文实验需要小范围补证时返回。
 - Phase 8 track：已完成通用实验基础设施；后续只在发现回归或新论文实验 runner 需要复用 artifacts/events/metrics 边界时做小范围扩展。
 - factorization 第一版只承诺 prime / semiprime fixture 端到端闭环；不宣称 early success、sibling pruning 或完整 composite cofactor recursive resolution。
-- Lean 插件必须接入本地真实 Lean checker，并用无 AI 介入的确定性拆分算法生成 proof subtask；旧 `Lean stub proof` 路线已废弃。
-- 实验 runner 必须通过 `PluginExperimentAdapter` 兼容 factorization 和真实 Lean proof plugin；Lean adapter 默认使用真实 checker evidence，且仍保留结构化 blocked / pending regression path，不能用 stub 替代。
+- Lean 插件必须接入本地真实 Lean checker；simple helper 或预注册 fixed lemma-DAG 的拆分都不由 AI 决定，且后者必须由插件校验并生成 certificate。旧 `Lean stub proof` 路线已废弃。
+- 正式实验 runner 通过 `paper_dispatcher` 构造 `ProtocolRunRequest`，由 system coordinator 调用 Factorization/Lean runtime bridge；两个 public paper adapter 只保留历史/selector regression 兼容入口，不能用 stub 或兼容直连分支替代正式系统证据。
 
 `feat-008` / Phase 7 Experimental AI API Executor 已完成：
 
@@ -311,7 +321,7 @@ conda run -n tokenshare python -m pytest tests\executors\test_ai_api_siliconflow
 
 当前已进入 `feat-011` / Paper Real AI Experiments。
 
-当前尚未完成最新真实 AI 论文实验的 paper runner、正式真实 API 实验运行、指标/CSV/图表和论文结果收尾；`feat-010` replay / audit 已从当前必做开发路径中延后。真实 executor 网络、生产级 AI API 平台或真实链上结算仍属于 V1 范围外。`feat-007` 真实 Lean proof plugin、`feat-008` 实验级 AI API executor 和 `feat-009` 实验基础设施已完成。structured report stub 已从 Phase 6 开发计划剔除。
+当前 paper runner 与 system runtime 迁移实现已落地；尚未完成的是 Task 10 最终 targeted/Fast 与唯一 Full+LeanAudit 门禁、正式真实 API Experiment 1-5 运行、指标/CSV/图表和论文结果收尾。`feat-010` replay / audit 已从当前必做开发路径中延后。真实分布式 executor 网络、生产级 AI API 平台或真实链上结算仍属于 V1 范围外。`feat-007` 真实 Lean proof plugin、`feat-008` 实验级 AI API executor 和 `feat-009` 实验基础设施已完成。structured report stub 已从 Phase 6 开发计划剔除。
 
 当前仍需注意：
 

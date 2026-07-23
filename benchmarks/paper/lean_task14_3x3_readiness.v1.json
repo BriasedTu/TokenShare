@@ -49,7 +49,7 @@
             "artifact_schema_id": "lean_proof.merge_result",
             "artifact_schema_version": "v1",
             "artifact_type": "LeanLemmaGraphMergeResult",
-            "content_hash": "sha256:857500d0a1354393cad89139f5e5f34be27f3a6b179bd38f1d326836b776ffca",
+            "content_hash": "sha256:40e4e6b8d3ead82a1480008d1f3687dae281cc2f1472f0ac3ea421fb20e746d3",
             "created_at": "2026-07-14T00:00:00Z",
             "media_type": "application/json",
             "metadata": {
@@ -71,7 +71,7 @@
               "artifact_schema_id": "lean_proof.checker_report",
               "artifact_schema_version": "v1",
               "artifact_type": "LeanCheckerReport",
-              "content_hash": "sha256:77dec56bf5c335b386702806b128816483dbb3a5b25af3ebf5b868aac9c058db",
+              "content_hash": "sha256:2065989f9bc0fce7df1137a8adef75cbbc469d06b161ff1e5e820c6f425cdc25",
               "created_at": "2026-07-14T00:00:00Z",
               "media_type": "application/json",
               "metadata": {
@@ -79,7 +79,7 @@
                 "status": "accepted"
               },
               "schema_version": "ArtifactRef.v1",
-              "size_bytes": 6900,
+              "size_bytes": 6931,
               "source": {
                 "kind": "lean_checker",
                 "request_id": "task14_golden_checker_lean_v2_simple_pure_logic_direct_prop_01_pure_simple_leaf_01"
@@ -91,7 +91,7 @@
               "artifact_schema_id": "lean_proof.checker_report",
               "artifact_schema_version": "v1",
               "artifact_type": "LeanCheckerReport",
-              "content_hash": "sha256:fbe1f505c70b6987140d39a2e9e1dbec9d2b4697c9f6ebf6c5ab6faf3e3549a0",
+              "content_hash": "sha256:a64f5a02dde0b0d8c61233215f86ccd321d1c4f249f075f968093c6c7a32ccfe",
               "created_at": "2026-07-14T00:00:00Z",
               "media_type": "application/json",
               "metadata": {
@@ -99,7 +99,7 @@
                 "status": "accepted"
               },
               "schema_version": "ArtifactRef.v1",
-              "size_bytes": 6900,
+              "size_bytes": 6931,
               "source": {
                 "kind": "lean_checker",
                 "request_id": "task14_golden_checker_lean_v2_simple_pure_logic_direct_prop_01_pure_simple_root_01"
@@ -200,7 +200,7 @@
             "artifact_schema_id": "lean_proof.checker_report",
             "artifact_schema_version": "v1",
             "artifact_type": "LeanCheckerReport",
-            "content_hash": "sha256:6ee78a550e232f773328380f84a96f89efe25da88c34b8a5b05f509ade86f2d0",
+            "content_hash": "sha256:2138259ac790d9379ba63b2f91db47d952eb3ff7e3fcf3e07001cd7c55030520",
             "created_at": "2026-07-14T00:00:00Z",
             "media_type": "application/json",
             "metadata": {
@@ -208,7 +208,7 @@
               "status": "accepted"
             },
             "schema_version": "ArtifactRef.v1",
-            "size_bytes": 6873,
+            "size_bytes": 6904,
             "source": {
               "kind": "lean_checker",
               "request_id": "task14_golden_lemma_graph_merge_request_lean_v2_simple_pure_logic_direct_prop_01"
@@ -237,13 +237,13 @@
           },
           "root_recheck": "passed",
           "schema_version": "tokenshare.lean_task14_golden_evidence.v1",
-          "split_certificate_digest": "sha256:26ad8333fd53c34431566bfa5396258223c7fabdff19e4a795007d1465799069",
+          "split_certificate_digest": "sha256:ed6bf1cb5a327177ddb5d01683ea886fbf5c75a885839b8a21f979429e9aa232",
           "split_certificate_ref": {
             "artifact_id": "paper_lean_lemma_graph_certificate_lean_v2_simple_pure_logic_direct_prop_01",
             "artifact_schema_id": "lean_proof.lemma_graph_certificate",
             "artifact_schema_version": "v2",
             "artifact_type": "LeanLemmaGraphCertificate",
-            "content_hash": "sha256:da1e867874ae188959befb8bf06f64c5fd4302694976e3a5a5258ad7cf03042b",
+            "content_hash": "sha256:b03895b352cc34b394b58b0478649e7708753c29d28b64a43265c0d061f97a67",
             "created_at": "2026-07-14T00:00:00Z",
             "media_type": "application/json",
             "metadata": {
@@ -253,7 +253,7 @@
               "topic_family": "pure_logic"
             },
             "schema_version": "ArtifactRef.v1",
-            "size_bytes": 4726,
+            "size_bytes": 4882,
             "source": {
               "case_id": "lean_v2_simple_pure_logic_direct_prop_01",
               "kind": "lean_paper_adapter"
@@ -274,7 +274,7 @@
             "artifact_schema_id": "lean_proof.merge_result",
             "artifact_schema_version": "v1",
             "artifact_type": "LeanLemmaGraphMergeResult",
-            "content_hash": "sha256:f2b973630fae8feb1a0f1eaaf5222f6b8ec855f84639a312d4714dc821a7fec2",
+            "content_hash": "sha256:cc7563b26dfea83045de924cfe2e3af7e94292fcbe0255c2ae00a262f2b93753",
             "created_at": "2026-07-14T00:00:00Z",
             "media_type": "application/json",
             "metadata": {
@@ -296,7 +296,7 @@
               "artifact_schema_id": "lean_proof.checker_report",
               "artifact_schema_version": "v1",
               "artifact_type": "LeanCheckerReport",
-              "content_hash": "sha256:e0676f1f8b3abc6d3f255c354442380ebe5ac10e2b0264c7fe7851d5e97bc1ac",
+              "content_hash": "sha256:733b8a09e57d048994bbf2b3ed03f2088334054fb0eec6846275f3d1a44a0e13",
               "created_at": "2026-07-14T00:00:00Z",
               "media_type": "application/json",
               "metadata": {
@@ -304,7 +304,7 @@
                 "status": "accepted"
               },
               "schema_version": "ArtifactRef.v1",
-              "size_bytes": 6900,
+              "size_bytes": 6931,
               "source": {
                 "kind": "lean_checker",
                 "request_id": "task14_golden_checker_lean_v2_simple_pure_logic_direct_prop_02_pure_simple_leaf_02"
@@ -316,7 +316,7 @@
               "artifact_schema_id": "lean_proof.checker_report",
               "artifact_schema_version": "v1",
               "artifact_type": "LeanCheckerReport",
-              "content_hash": "sha256:ea94b182013d8777c197ea4bda6310fbac82c4f5fe7fce74058da4f2108365d9",
+              "content_hash": "sha256:d386a2f14a959410218d1f8e2378eb60c8621eb350733dea409598f6f7113f0e",
               "created_at": "2026-07-14T00:00:00Z",
               "media_type": "application/json",
               "metadata": {
@@ -324,7 +324,7 @@
                 "status": "accepted"
               },
               "schema_version": "ArtifactRef.v1",
-              "size_bytes": 6900,
+              "size_bytes": 6930,
               "source": {
                 "kind": "lean_checker",
                 "request_id": "task14_golden_checker_lean_v2_simple_pure_logic_direct_prop_02_pure_simple_root_02"
@@ -425,7 +425,7 @@
             "artifact_schema_id": "lean_proof.checker_report",
             "artifact_schema_version": "v1",
             "artifact_type": "LeanCheckerReport",
-            "content_hash": "sha256:ca00b7bc3f4fd81f3c4c4446011e51b11914dc85a2b8942e562ba4002f96092e",
+            "content_hash": "sha256:218af8b093c852ac30519bde462a910ce6b45727c095726fb0b26deb8e9c4fd5",
             "created_at": "2026-07-14T00:00:00Z",
             "media_type": "application/json",
             "metadata": {
@@ -433,7 +433,7 @@
               "status": "accepted"
             },
             "schema_version": "ArtifactRef.v1",
-            "size_bytes": 6873,
+            "size_bytes": 6903,
             "source": {
               "kind": "lean_checker",
               "request_id": "task14_golden_lemma_graph_merge_request_lean_v2_simple_pure_logic_direct_prop_02"
@@ -462,13 +462,13 @@
           },
           "root_recheck": "passed",
           "schema_version": "tokenshare.lean_task14_golden_evidence.v1",
-          "split_certificate_digest": "sha256:18cc133244ebf36b5c1c9a113920069ffc81c8fe156f6e6856e6f36df7c1f43c",
+          "split_certificate_digest": "sha256:cfde5f992dc208fc669644ce48f9920399f298ef2b66af353fce366d029dcbb4",
           "split_certificate_ref": {
             "artifact_id": "paper_lean_lemma_graph_certificate_lean_v2_simple_pure_logic_direct_prop_02",
             "artifact_schema_id": "lean_proof.lemma_graph_certificate",
             "artifact_schema_version": "v2",
             "artifact_type": "LeanLemmaGraphCertificate",
-            "content_hash": "sha256:1a50719d9e0ca93836ce66a042843e15042945340da4ab307f3ae38d3eb2f5e0",
+            "content_hash": "sha256:bec4d1b632f709748aca681d3e8dfd432e01d479f0193628ae265f2de3b46d28",
             "created_at": "2026-07-14T00:00:00Z",
             "media_type": "application/json",
             "metadata": {
@@ -478,7 +478,7 @@
               "topic_family": "pure_logic"
             },
             "schema_version": "ArtifactRef.v1",
-            "size_bytes": 4726,
+            "size_bytes": 4882,
             "source": {
               "case_id": "lean_v2_simple_pure_logic_direct_prop_02",
               "kind": "lean_paper_adapter"
@@ -575,7 +575,7 @@
             "artifact_schema_id": "lean_proof.merge_result",
             "artifact_schema_version": "v1",
             "artifact_type": "LeanLemmaGraphMergeResult",
-            "content_hash": "sha256:23fd1196557da3a1471204800c8a106e5e3ab20de2483053719182c794cd9ee1",
+            "content_hash": "sha256:d5cb1b23aa723bfc0d99bbeb804fa21ddf663c2a968cc87323a4b4c7f2f8f636",
             "created_at": "2026-07-14T00:00:00Z",
             "media_type": "application/json",
             "metadata": {
@@ -597,7 +597,7 @@
               "artifact_schema_id": "lean_proof.checker_report",
               "artifact_schema_version": "v1",
               "artifact_type": "LeanCheckerReport",
-              "content_hash": "sha256:9350a86d2794091b306a0d146a48140adbf02af43e4c287c667ea9bc00e6d5e1",
+              "content_hash": "sha256:cb50c8c60117eb6ea194de56c01983417ee9e54596ac26e2e61c245636653306",
               "created_at": "2026-07-14T00:00:00Z",
               "media_type": "application/json",
               "metadata": {
@@ -605,7 +605,7 @@
                 "status": "accepted"
               },
               "schema_version": "ArtifactRef.v1",
-              "size_bytes": 7068,
+              "size_bytes": 7098,
               "source": {
                 "kind": "lean_checker",
                 "request_id": "task14_golden_checker_lean_v2_simple_function_set_direct_subset_01_function_set_simple_root_01"
@@ -665,7 +665,7 @@
             "artifact_schema_id": "lean_proof.checker_report",
             "artifact_schema_version": "v1",
             "artifact_type": "LeanCheckerReport",
-            "content_hash": "sha256:11b4937e7f89157b48b3c8f3607ca4531f59e4d06577b0e8cd0acdbb33ccf526",
+            "content_hash": "sha256:bf740a63dad3364e32c6abc6693408505bf606480dcf02517873c38a4e43e401",
             "created_at": "2026-07-14T00:00:00Z",
             "media_type": "application/json",
             "metadata": {
@@ -673,7 +673,7 @@
               "status": "accepted"
             },
             "schema_version": "ArtifactRef.v1",
-            "size_bytes": 6929,
+            "size_bytes": 6959,
             "source": {
               "kind": "lean_checker",
               "request_id": "task14_golden_lemma_graph_merge_request_lean_v2_simple_function_set_direct_subset_01"
@@ -702,13 +702,13 @@
           },
           "root_recheck": "passed",
           "schema_version": "tokenshare.lean_task14_golden_evidence.v1",
-          "split_certificate_digest": "sha256:969e598ff87044027a7197c20f0558e1f415c5ae8e7bf1453b725f20578cd4be",
+          "split_certificate_digest": "sha256:06cefebab536bc060f7851ecdfbf2a90843211fc18a6b35b824223facfab07f7",
           "split_certificate_ref": {
             "artifact_id": "paper_lean_lemma_graph_certificate_lean_v2_simple_function_set_direct_subset_01",
             "artifact_schema_id": "lean_proof.lemma_graph_certificate",
             "artifact_schema_version": "v2",
             "artifact_type": "LeanLemmaGraphCertificate",
-            "content_hash": "sha256:6c101f652b598d466be07a09b941c64a817024512a4e6b26854111256c25eee5",
+            "content_hash": "sha256:782462a63550d44830b5567c9f57c56590acca7611d80b0ceecaac174aeb3e1d",
             "created_at": "2026-07-14T00:00:00Z",
             "media_type": "application/json",
             "metadata": {
@@ -718,7 +718,7 @@
               "topic_family": "function_set"
             },
             "schema_version": "ArtifactRef.v1",
-            "size_bytes": 3439,
+            "size_bytes": 3599,
             "source": {
               "case_id": "lean_v2_simple_function_set_direct_subset_01",
               "kind": "lean_paper_adapter"
@@ -739,7 +739,7 @@
             "artifact_schema_id": "lean_proof.merge_result",
             "artifact_schema_version": "v1",
             "artifact_type": "LeanLemmaGraphMergeResult",
-            "content_hash": "sha256:5116a2f1bbdce02c3f2abfd54cf53c6a76e75f1f8527da67b877781bf359b979",
+            "content_hash": "sha256:bc5be2b8c40335d32873cf27d30b5c2d737b23f5e16610c941d655a9e60459ba",
             "created_at": "2026-07-14T00:00:00Z",
             "media_type": "application/json",
             "metadata": {
@@ -761,7 +761,7 @@
               "artifact_schema_id": "lean_proof.checker_report",
               "artifact_schema_version": "v1",
               "artifact_type": "LeanCheckerReport",
-              "content_hash": "sha256:3e9ad5dce1c4ae99a9e9bc12dc3fb464c5374f420656807aaac11b27adb6624f",
+              "content_hash": "sha256:d2b2345888085114157afc15e3315d5bb672eff5156a3fda35871f56c56b3385",
               "created_at": "2026-07-14T00:00:00Z",
               "media_type": "application/json",
               "metadata": {
@@ -769,7 +769,7 @@
                 "status": "accepted"
               },
               "schema_version": "ArtifactRef.v1",
-              "size_bytes": 7068,
+              "size_bytes": 7098,
               "source": {
                 "kind": "lean_checker",
                 "request_id": "task14_golden_checker_lean_v2_simple_function_set_direct_subset_02_function_set_simple_root_02"
@@ -829,7 +829,7 @@
             "artifact_schema_id": "lean_proof.checker_report",
             "artifact_schema_version": "v1",
             "artifact_type": "LeanCheckerReport",
-            "content_hash": "sha256:792ec4dfa106089efa35f12a556bd4fb0c04b46a2e5ff2545082d9914d6044a2",
+            "content_hash": "sha256:e3e8ae867f0037d2f9d46ef69af752721c0185e07c76ec423510defe46ca2cf3",
             "created_at": "2026-07-14T00:00:00Z",
             "media_type": "application/json",
             "metadata": {
@@ -837,7 +837,7 @@
               "status": "accepted"
             },
             "schema_version": "ArtifactRef.v1",
-            "size_bytes": 6929,
+            "size_bytes": 6959,
             "source": {
               "kind": "lean_checker",
               "request_id": "task14_golden_lemma_graph_merge_request_lean_v2_simple_function_set_direct_subset_02"
@@ -866,13 +866,13 @@
           },
           "root_recheck": "passed",
           "schema_version": "tokenshare.lean_task14_golden_evidence.v1",
-          "split_certificate_digest": "sha256:958405b6b89eaae0d413e834c8ca79326b3ee59ec96b9c78613a23ce74d8175c",
+          "split_certificate_digest": "sha256:fe806c5f2291f6f688ae41b4af6432acee4bed9cb1a2b79ca9342eaee2381576",
           "split_certificate_ref": {
             "artifact_id": "paper_lean_lemma_graph_certificate_lean_v2_simple_function_set_direct_subset_02",
             "artifact_schema_id": "lean_proof.lemma_graph_certificate",
             "artifact_schema_version": "v2",
             "artifact_type": "LeanLemmaGraphCertificate",
-            "content_hash": "sha256:38574d53f429b5812feada6b10f99472a3a7d790d587429ead4a7af020b69c54",
+            "content_hash": "sha256:cc1f521fc46e7b198420b6d9e12d563adee3d4b8299ccf110ffc8ea2dcf73b6c",
             "created_at": "2026-07-14T00:00:00Z",
             "media_type": "application/json",
             "metadata": {
@@ -882,7 +882,7 @@
               "topic_family": "function_set"
             },
             "schema_version": "ArtifactRef.v1",
-            "size_bytes": 3439,
+            "size_bytes": 3599,
             "source": {
               "case_id": "lean_v2_simple_function_set_direct_subset_02",
               "kind": "lean_paper_adapter"
@@ -979,7 +979,7 @@
             "artifact_schema_id": "lean_proof.merge_result",
             "artifact_schema_version": "v1",
             "artifact_type": "LeanLemmaGraphMergeResult",
-            "content_hash": "sha256:8e4b814e1fb10ac740a09cb3b48afc630335640a3e5767344530147fbd2a3b28",
+            "content_hash": "sha256:8e12840df1caf488bd3e119f972b0d5fec3adfca9a4ae3dbe447d5233e2b7244",
             "created_at": "2026-07-14T00:00:00Z",
             "media_type": "application/json",
             "metadata": {
@@ -1001,7 +1001,7 @@
               "artifact_schema_id": "lean_proof.checker_report",
               "artifact_schema_version": "v1",
               "artifact_type": "LeanCheckerReport",
-              "content_hash": "sha256:54b1d680d3182cc847c330ef580314fa97b600832f6225e3882cc9ccae6f42be",
+              "content_hash": "sha256:e6295fc92bd3c18019a1bebd14c41a89c00339ceb6f3d0ab7e955de38f906164",
               "created_at": "2026-07-14T00:00:00Z",
               "media_type": "application/json",
               "metadata": {
@@ -1009,7 +1009,7 @@
                 "status": "accepted"
               },
               "schema_version": "ArtifactRef.v1",
-              "size_bytes": 6514,
+              "size_bytes": 6544,
               "source": {
                 "kind": "lean_checker",
                 "request_id": "task14_golden_checker_lean_v2_simple_induction_direct_nat_01_induction_simple_root_01"
@@ -1069,7 +1069,7 @@
             "artifact_schema_id": "lean_proof.checker_report",
             "artifact_schema_version": "v1",
             "artifact_type": "LeanCheckerReport",
-            "content_hash": "sha256:ed0df1c1f7c280a777e3f4ded5785b1fc07ddfe579bb6efddcc9ec7a93d5379b",
+            "content_hash": "sha256:56894c14cf2d40c8f5ed94dac1c9d296ca72d03a52a241b245d09b22808cd02f",
             "created_at": "2026-07-14T00:00:00Z",
             "media_type": "application/json",
             "metadata": {
@@ -1077,7 +1077,7 @@
               "status": "accepted"
             },
             "schema_version": "ArtifactRef.v1",
-            "size_bytes": 6417,
+            "size_bytes": 6448,
             "source": {
               "kind": "lean_checker",
               "request_id": "task14_golden_lemma_graph_merge_request_lean_v2_simple_induction_direct_nat_01"
@@ -1106,13 +1106,13 @@
           },
           "root_recheck": "passed",
           "schema_version": "tokenshare.lean_task14_golden_evidence.v1",
-          "split_certificate_digest": "sha256:8011ce8fc7e289a9681fdba37ce33959a1e0a8d2b0773e6ba90869f06ce008f7",
+          "split_certificate_digest": "sha256:b3eadbccac10e17c0aad736e47546866a5fb97e5cf21d5aca17656851505759f",
           "split_certificate_ref": {
             "artifact_id": "paper_lean_lemma_graph_certificate_lean_v2_simple_induction_direct_nat_01",
             "artifact_schema_id": "lean_proof.lemma_graph_certificate",
             "artifact_schema_version": "v2",
             "artifact_type": "LeanLemmaGraphCertificate",
-            "content_hash": "sha256:8a3e68680562019005e2372fe01e352b4946c587296f77355b2a625eeccf4231",
+            "content_hash": "sha256:24b0ccc03777acf59222352b43ce9100467dabddf2e32341842920ca89b06257",
             "created_at": "2026-07-14T00:00:00Z",
             "media_type": "application/json",
             "metadata": {
@@ -1122,7 +1122,7 @@
               "topic_family": "induction"
             },
             "schema_version": "ArtifactRef.v1",
-            "size_bytes": 3490,
+            "size_bytes": 3644,
             "source": {
               "case_id": "lean_v2_simple_induction_direct_nat_01",
               "kind": "lean_paper_adapter"
@@ -1143,7 +1143,7 @@
             "artifact_schema_id": "lean_proof.merge_result",
             "artifact_schema_version": "v1",
             "artifact_type": "LeanLemmaGraphMergeResult",
-            "content_hash": "sha256:1188f712cd602346642ec4aa043d63fefea282b9d29eb79ec191eae1e080ab12",
+            "content_hash": "sha256:2ef37b7bc0e58c587250c343ab3dde6f30de4b9e920f9d382edfa7ab3080e73b",
             "created_at": "2026-07-14T00:00:00Z",
             "media_type": "application/json",
             "metadata": {
@@ -1165,7 +1165,7 @@
               "artifact_schema_id": "lean_proof.checker_report",
               "artifact_schema_version": "v1",
               "artifact_type": "LeanCheckerReport",
-              "content_hash": "sha256:d870244efaed9fa4315e98507ceb2301c285c9fb7cb85b5dbe7fcf2e19f00c67",
+              "content_hash": "sha256:72f39bffc9fa50bfd36209c87d81340a8d06b9cc6971d1bcb49491bfffd77d37",
               "created_at": "2026-07-14T00:00:00Z",
               "media_type": "application/json",
               "metadata": {
@@ -1173,7 +1173,7 @@
                 "status": "accepted"
               },
               "schema_version": "ArtifactRef.v1",
-              "size_bytes": 6514,
+              "size_bytes": 6544,
               "source": {
                 "kind": "lean_checker",
                 "request_id": "task14_golden_checker_lean_v2_simple_induction_direct_nat_02_induction_simple_root_02"
@@ -1233,7 +1233,7 @@
             "artifact_schema_id": "lean_proof.checker_report",
             "artifact_schema_version": "v1",
             "artifact_type": "LeanCheckerReport",
-            "content_hash": "sha256:fb8ec7f63c4e21c88519b2eb177e59f07a2b951c2a36e46ab8eb52bd4c4b2e92",
+            "content_hash": "sha256:dbb2017b8542b4a7ba7b4deaff8a9a1eb31be5251203d0461aa41d14017ec682",
             "created_at": "2026-07-14T00:00:00Z",
             "media_type": "application/json",
             "metadata": {
@@ -1241,7 +1241,7 @@
               "status": "accepted"
             },
             "schema_version": "ArtifactRef.v1",
-            "size_bytes": 6417,
+            "size_bytes": 6448,
             "source": {
               "kind": "lean_checker",
               "request_id": "task14_golden_lemma_graph_merge_request_lean_v2_simple_induction_direct_nat_02"
@@ -1270,13 +1270,13 @@
           },
           "root_recheck": "passed",
           "schema_version": "tokenshare.lean_task14_golden_evidence.v1",
-          "split_certificate_digest": "sha256:df4595802bb9da05f25f47e75df4fc33b6418bc5aea29ef9600df233fe0549f8",
+          "split_certificate_digest": "sha256:04c5dfb63d41dd929e0028687231ebb9aca0065e106bfb2b699e3b0ec09dcf52",
           "split_certificate_ref": {
             "artifact_id": "paper_lean_lemma_graph_certificate_lean_v2_simple_induction_direct_nat_02",
             "artifact_schema_id": "lean_proof.lemma_graph_certificate",
             "artifact_schema_version": "v2",
             "artifact_type": "LeanLemmaGraphCertificate",
-            "content_hash": "sha256:de4bc3e52e85dadc8be9d73c33dee80a51f8f2905ec5500d4dfc2ae09b764a11",
+            "content_hash": "sha256:b4d64eeca22c822d0ca8f2131c1f23fac78e619eb37c6ccdde5c70d9c5ab1e46",
             "created_at": "2026-07-14T00:00:00Z",
             "media_type": "application/json",
             "metadata": {
@@ -1286,7 +1286,7 @@
               "topic_family": "induction"
             },
             "schema_version": "ArtifactRef.v1",
-            "size_bytes": 3490,
+            "size_bytes": 3644,
             "source": {
               "case_id": "lean_v2_simple_induction_direct_nat_02",
               "kind": "lean_paper_adapter"
@@ -1383,7 +1383,7 @@
             "artifact_schema_id": "lean_proof.merge_result",
             "artifact_schema_version": "v1",
             "artifact_type": "LeanLemmaGraphMergeResult",
-            "content_hash": "sha256:ed48c75ee3588353c3c391bbc975f91038ad04c634ef9767e4e2758d97aba6ae",
+            "content_hash": "sha256:27e4758a534f73b4f19a94f96990b50861807af14adfd68bbee78cd5c605a44d",
             "created_at": "2026-07-14T00:00:00Z",
             "media_type": "application/json",
             "metadata": {
@@ -1405,7 +1405,7 @@
               "artifact_schema_id": "lean_proof.checker_report",
               "artifact_schema_version": "v1",
               "artifact_type": "LeanCheckerReport",
-              "content_hash": "sha256:b202f89203966abc54bd20482c6db6f4c13912ea6b4be26b139cc97398e89d89",
+              "content_hash": "sha256:4327e4615d46ec2a4a99402041363bd4f2d4effd0ba427d215cb9887c90331be",
               "created_at": "2026-07-14T00:00:00Z",
               "media_type": "application/json",
               "metadata": {
@@ -1413,7 +1413,7 @@
                 "status": "accepted"
               },
               "schema_version": "ArtifactRef.v1",
-              "size_bytes": 7183,
+              "size_bytes": 7213,
               "source": {
                 "kind": "lean_checker",
                 "request_id": "task14_golden_checker_lean_v2_medium_lemma_dag_01_pure_medium_leaf_a_01"
@@ -1425,7 +1425,7 @@
               "artifact_schema_id": "lean_proof.checker_report",
               "artifact_schema_version": "v1",
               "artifact_type": "LeanCheckerReport",
-              "content_hash": "sha256:0feff27eeb112a6e15b72d727955fee6369e129ed2bf17ca35c967b10ec86a8c",
+              "content_hash": "sha256:8b88510e8081e27d926a21c55183937f5a05f15911155ee63b6e5e0225196d27",
               "created_at": "2026-07-14T00:00:00Z",
               "media_type": "application/json",
               "metadata": {
@@ -1433,7 +1433,7 @@
                 "status": "accepted"
               },
               "schema_version": "ArtifactRef.v1",
-              "size_bytes": 7195,
+              "size_bytes": 7225,
               "source": {
                 "kind": "lean_checker",
                 "request_id": "task14_golden_checker_lean_v2_medium_lemma_dag_01_pure_medium_leaf_ab_01"
@@ -1445,7 +1445,7 @@
               "artifact_schema_id": "lean_proof.checker_report",
               "artifact_schema_version": "v1",
               "artifact_type": "LeanCheckerReport",
-              "content_hash": "sha256:03ecad304f151d6cbb5e672f607c533775ae677dfab7bc2ef7147ccc419c0832",
+              "content_hash": "sha256:0563a09dce4ad568e45260ea44d41d2d8d734f312908988d9b6a366c9d8de987",
               "created_at": "2026-07-14T00:00:00Z",
               "media_type": "application/json",
               "metadata": {
@@ -1453,7 +1453,7 @@
                 "status": "accepted"
               },
               "schema_version": "ArtifactRef.v1",
-              "size_bytes": 7195,
+              "size_bytes": 7225,
               "source": {
                 "kind": "lean_checker",
                 "request_id": "task14_golden_checker_lean_v2_medium_lemma_dag_01_pure_medium_leaf_bc_01"
@@ -1465,7 +1465,7 @@
               "artifact_schema_id": "lean_proof.checker_report",
               "artifact_schema_version": "v1",
               "artifact_type": "LeanCheckerReport",
-              "content_hash": "sha256:efb637ca107bfff65381dc3438aa77e50c26e63674eea9c9a088f926dc3a8fff",
+              "content_hash": "sha256:3bdd19eb42f3cd0da39deefb6a45397b631e5dac5ff2ac5891cb92226227dc94",
               "created_at": "2026-07-14T00:00:00Z",
               "media_type": "application/json",
               "metadata": {
@@ -1473,7 +1473,7 @@
                 "status": "accepted"
               },
               "schema_version": "ArtifactRef.v1",
-              "size_bytes": 6736,
+              "size_bytes": 6766,
               "source": {
                 "kind": "lean_checker",
                 "request_id": "task14_golden_checker_lean_v2_medium_lemma_dag_01_pure_medium_mid_b_01"
@@ -1485,7 +1485,7 @@
               "artifact_schema_id": "lean_proof.checker_report",
               "artifact_schema_version": "v1",
               "artifact_type": "LeanCheckerReport",
-              "content_hash": "sha256:8a257edf40f1b687e056add5efd649d4bfc1c9d1e323325709fcc2bc1ffb84eb",
+              "content_hash": "sha256:36dfbce642e671074906ee7a7825e25b67f896f7f7e9b138663bb496de419fa8",
               "created_at": "2026-07-14T00:00:00Z",
               "media_type": "application/json",
               "metadata": {
@@ -1493,7 +1493,7 @@
                 "status": "accepted"
               },
               "schema_version": "ArtifactRef.v1",
-              "size_bytes": 6290,
+              "size_bytes": 6321,
               "source": {
                 "kind": "lean_checker",
                 "request_id": "task14_golden_checker_lean_v2_medium_lemma_dag_01_pure_medium_root_01"
@@ -1717,7 +1717,7 @@
             "artifact_schema_id": "lean_proof.checker_report",
             "artifact_schema_version": "v1",
             "artifact_type": "LeanCheckerReport",
-            "content_hash": "sha256:79b61b575118ce280d8090ad1a8cc7d0d906b02d9e5221a202089140b0240337",
+            "content_hash": "sha256:2ef7109fbf5a1c4e58fece7aebba45e364bf933e9f9b071e2b68af7f9fc78e6d",
             "created_at": "2026-07-14T00:00:00Z",
             "media_type": "application/json",
             "metadata": {
@@ -1725,7 +1725,7 @@
               "status": "accepted"
             },
             "schema_version": "ArtifactRef.v1",
-            "size_bytes": 6263,
+            "size_bytes": 6294,
             "source": {
               "kind": "lean_checker",
               "request_id": "task14_golden_lemma_graph_merge_request_lean_v2_medium_lemma_dag_01"
@@ -1754,13 +1754,13 @@
           },
           "root_recheck": "passed",
           "schema_version": "tokenshare.lean_task14_golden_evidence.v1",
-          "split_certificate_digest": "sha256:b5ce4c388b60e4ab7efe2635b12016cb634b7b3823e6c1902258dc26314f73c7",
+          "split_certificate_digest": "sha256:f8086b0d58cf047aadbb33799d97c27f746bb1dbf9a1e0c868540d922354bc53",
           "split_certificate_ref": {
             "artifact_id": "paper_lean_lemma_graph_certificate_lean_v2_medium_lemma_dag_01",
             "artifact_schema_id": "lean_proof.lemma_graph_certificate",
             "artifact_schema_version": "v2",
             "artifact_type": "LeanLemmaGraphCertificate",
-            "content_hash": "sha256:72767a620afafeac60e2330c435e7417ff58c08d3029bfff34c32f60a64337b3",
+            "content_hash": "sha256:d05d22df4f62439438b71275962a223d88b15d0311d4f789d22cde845b20d249",
             "created_at": "2026-07-14T00:00:00Z",
             "media_type": "application/json",
             "metadata": {
@@ -1770,7 +1770,7 @@
               "topic_family": "pure_logic"
             },
             "schema_version": "ArtifactRef.v1",
-            "size_bytes": 8829,
+            "size_bytes": 8972,
             "source": {
               "case_id": "lean_v2_medium_lemma_dag_01",
               "kind": "lean_paper_adapter"
@@ -1791,7 +1791,7 @@
             "artifact_schema_id": "lean_proof.merge_result",
             "artifact_schema_version": "v1",
             "artifact_type": "LeanLemmaGraphMergeResult",
-            "content_hash": "sha256:a43e42a4b81e3dedfe7fd0c5bee96565d477631de614c1a62b8dbd76779423ab",
+            "content_hash": "sha256:d338467d491c2968675945eb4a65ac197879fcf9f8109225217469ad846e0dbd",
             "created_at": "2026-07-14T00:00:00Z",
             "media_type": "application/json",
             "metadata": {
@@ -1813,7 +1813,7 @@
               "artifact_schema_id": "lean_proof.checker_report",
               "artifact_schema_version": "v1",
               "artifact_type": "LeanCheckerReport",
-              "content_hash": "sha256:4bbae6b02c4fa6b40a4c8462ede30064210866a785b7f1850f0b76426f27ae3b",
+              "content_hash": "sha256:699e1519e45eaa9a3f7aab86f42fc08b2050c91facdc17271ad293153a0596a4",
               "created_at": "2026-07-14T00:00:00Z",
               "media_type": "application/json",
               "metadata": {
@@ -1821,7 +1821,7 @@
                 "status": "accepted"
               },
               "schema_version": "ArtifactRef.v1",
-              "size_bytes": 7183,
+              "size_bytes": 7214,
               "source": {
                 "kind": "lean_checker",
                 "request_id": "task14_golden_checker_lean_v2_medium_lemma_dag_02_pure_medium_leaf_a_02"
@@ -1833,7 +1833,7 @@
               "artifact_schema_id": "lean_proof.checker_report",
               "artifact_schema_version": "v1",
               "artifact_type": "LeanCheckerReport",
-              "content_hash": "sha256:4638dd21211182382b588504cabd866635c9aa1a305271c30d579363042221fb",
+              "content_hash": "sha256:611c324e2218cd5fa70bff850850703f94ccc45e4433169c9c6347fc9e39e32e",
               "created_at": "2026-07-14T00:00:00Z",
               "media_type": "application/json",
               "metadata": {
@@ -1841,7 +1841,7 @@
                 "status": "accepted"
               },
               "schema_version": "ArtifactRef.v1",
-              "size_bytes": 7195,
+              "size_bytes": 7225,
               "source": {
                 "kind": "lean_checker",
                 "request_id": "task14_golden_checker_lean_v2_medium_lemma_dag_02_pure_medium_leaf_ab_02"
@@ -1853,7 +1853,7 @@
               "artifact_schema_id": "lean_proof.checker_report",
               "artifact_schema_version": "v1",
               "artifact_type": "LeanCheckerReport",
-              "content_hash": "sha256:cbef58f5d6cc935a6db7eeab1cfd0d41b77158df93b2080a59e7382ef12c6e0e",
+              "content_hash": "sha256:c3884f41aef5297e6704c8d9057ed826bf8ba847a5e9996ac932b235593046fd",
               "created_at": "2026-07-14T00:00:00Z",
               "media_type": "application/json",
               "metadata": {
@@ -1861,7 +1861,7 @@
                 "status": "accepted"
               },
               "schema_version": "ArtifactRef.v1",
-              "size_bytes": 7195,
+              "size_bytes": 7225,
               "source": {
                 "kind": "lean_checker",
                 "request_id": "task14_golden_checker_lean_v2_medium_lemma_dag_02_pure_medium_leaf_bc_02"
@@ -1873,7 +1873,7 @@
               "artifact_schema_id": "lean_proof.checker_report",
               "artifact_schema_version": "v1",
               "artifact_type": "LeanCheckerReport",
-              "content_hash": "sha256:e597ec47a3715b3766201974837a16b566c96f91d326a74df04a4ee05c5673ab",
+              "content_hash": "sha256:fd1699c41e2bd4ef7a15c7369855b1ecd20c55366d3a7fc91b29e0e6becdf540",
               "created_at": "2026-07-14T00:00:00Z",
               "media_type": "application/json",
               "metadata": {
@@ -1881,7 +1881,7 @@
                 "status": "accepted"
               },
               "schema_version": "ArtifactRef.v1",
-              "size_bytes": 6736,
+              "size_bytes": 6767,
               "source": {
                 "kind": "lean_checker",
                 "request_id": "task14_golden_checker_lean_v2_medium_lemma_dag_02_pure_medium_mid_b_02"
@@ -1893,7 +1893,7 @@
               "artifact_schema_id": "lean_proof.checker_report",
               "artifact_schema_version": "v1",
               "artifact_type": "LeanCheckerReport",
-              "content_hash": "sha256:3db309e5d6123997eb4f994aeb1a47b63a51e39dde3c410ea36f06aded983b5d",
+              "content_hash": "sha256:3a706a7aadb7561b073f665c33017e64680239519d0903891925d73cc41d45c6",
               "created_at": "2026-07-14T00:00:00Z",
               "media_type": "application/json",
               "metadata": {
@@ -1901,7 +1901,7 @@
                 "status": "accepted"
               },
               "schema_version": "ArtifactRef.v1",
-              "size_bytes": 6290,
+              "size_bytes": 6321,
               "source": {
                 "kind": "lean_checker",
                 "request_id": "task14_golden_checker_lean_v2_medium_lemma_dag_02_pure_medium_root_02"
@@ -2125,7 +2125,7 @@
             "artifact_schema_id": "lean_proof.checker_report",
             "artifact_schema_version": "v1",
             "artifact_type": "LeanCheckerReport",
-            "content_hash": "sha256:f8e5b8352c05069398b0a0267dd3da7611a8875ec6bc49a997ffbb7eaddf2c1c",
+            "content_hash": "sha256:72e1f9f65f6b0aa92b62026fb78f0af379a6a3a3bf89376af389bfebd2d35321",
             "created_at": "2026-07-14T00:00:00Z",
             "media_type": "application/json",
             "metadata": {
@@ -2133,7 +2133,7 @@
               "status": "accepted"
             },
             "schema_version": "ArtifactRef.v1",
-            "size_bytes": 6263,
+            "size_bytes": 6294,
             "source": {
               "kind": "lean_checker",
               "request_id": "task14_golden_lemma_graph_merge_request_lean_v2_medium_lemma_dag_02"
@@ -2162,13 +2162,13 @@
           },
           "root_recheck": "passed",
           "schema_version": "tokenshare.lean_task14_golden_evidence.v1",
-          "split_certificate_digest": "sha256:309933953e0ffda75dfc7931b5e72555bdd1c6fa98dbd835a67acaaf37818b7f",
+          "split_certificate_digest": "sha256:fb94eae264f907f365528925c3fc0bbd87d0622370363917735239b9a75cfc29",
           "split_certificate_ref": {
             "artifact_id": "paper_lean_lemma_graph_certificate_lean_v2_medium_lemma_dag_02",
             "artifact_schema_id": "lean_proof.lemma_graph_certificate",
             "artifact_schema_version": "v2",
             "artifact_type": "LeanLemmaGraphCertificate",
-            "content_hash": "sha256:c966b9ea957750deb492f100b76f7a8b904fecdf811bbeba5bf0eddf3f6efab7",
+            "content_hash": "sha256:0026cb60ce7ac1e04e4f839d42e260f20b9c6ddaeca43909e84b8ab81c9f5d64",
             "created_at": "2026-07-14T00:00:00Z",
             "media_type": "application/json",
             "metadata": {
@@ -2178,7 +2178,7 @@
               "topic_family": "pure_logic"
             },
             "schema_version": "ArtifactRef.v1",
-            "size_bytes": 8836,
+            "size_bytes": 8979,
             "source": {
               "case_id": "lean_v2_medium_lemma_dag_02",
               "kind": "lean_paper_adapter"
@@ -2275,7 +2275,7 @@
             "artifact_schema_id": "lean_proof.merge_result",
             "artifact_schema_version": "v1",
             "artifact_type": "LeanLemmaGraphMergeResult",
-            "content_hash": "sha256:ee1b86ebfaea5bd3d0f24aa1f5aec6afd2db8fdfc17e548375c787a8f48d3525",
+            "content_hash": "sha256:4ff0dbf2ca212fe5ac241d28413fdb282484c953b885f994ac3d188c733f3fef",
             "created_at": "2026-07-14T00:00:00Z",
             "media_type": "application/json",
             "metadata": {
@@ -2297,7 +2297,7 @@
               "artifact_schema_id": "lean_proof.checker_report",
               "artifact_schema_version": "v1",
               "artifact_type": "LeanCheckerReport",
-              "content_hash": "sha256:8b635d231820e361fc8ca5c3318ec60800952e2b9016cf95489ee21cd91320c4",
+              "content_hash": "sha256:78a1d4c422e71c3cb4cdb6876282eda666bc78343b88a79d9caa29a5d2013374",
               "created_at": "2026-07-14T00:00:00Z",
               "media_type": "application/json",
               "metadata": {
@@ -2305,7 +2305,7 @@
                 "status": "accepted"
               },
               "schema_version": "ArtifactRef.v1",
-              "size_bytes": 7074,
+              "size_bytes": 7104,
               "source": {
                 "kind": "lean_checker",
                 "request_id": "task14_golden_checker_lean_v2_medium_function_set_dx_subset_chain_01_function_set_medium_ab_01"
@@ -2317,7 +2317,7 @@
               "artifact_schema_id": "lean_proof.checker_report",
               "artifact_schema_version": "v1",
               "artifact_type": "LeanCheckerReport",
-              "content_hash": "sha256:50a09c34f7b28cc8e79ca49b38d076245bc8057b357bcdfd89562e53d3934df0",
+              "content_hash": "sha256:9339310a448af1778883d250aefe33fb0d44950e8d72c48cfe7e3b7edbf3ca8e",
               "created_at": "2026-07-14T00:00:00Z",
               "media_type": "application/json",
               "metadata": {
@@ -2325,7 +2325,7 @@
                 "status": "accepted"
               },
               "schema_version": "ArtifactRef.v1",
-              "size_bytes": 6640,
+              "size_bytes": 6670,
               "source": {
                 "kind": "lean_checker",
                 "request_id": "task14_golden_checker_lean_v2_medium_function_set_dx_subset_chain_01_function_set_medium_ac_01"
@@ -2337,7 +2337,7 @@
               "artifact_schema_id": "lean_proof.checker_report",
               "artifact_schema_version": "v1",
               "artifact_type": "LeanCheckerReport",
-              "content_hash": "sha256:07bee1aa3bd24eb6367ca150c47b41292d3616ce549da36fc8fc2c0640c31299",
+              "content_hash": "sha256:724d59f475b6d56635da99335df59fcb472ad83fe0af365700a2c799e80ffe82",
               "created_at": "2026-07-14T00:00:00Z",
               "media_type": "application/json",
               "metadata": {
@@ -2345,7 +2345,7 @@
                 "status": "accepted"
               },
               "schema_version": "ArtifactRef.v1",
-              "size_bytes": 7072,
+              "size_bytes": 7102,
               "source": {
                 "kind": "lean_checker",
                 "request_id": "task14_golden_checker_lean_v2_medium_function_set_dx_subset_chain_01_function_set_medium_bc_01"
@@ -2357,7 +2357,7 @@
               "artifact_schema_id": "lean_proof.checker_report",
               "artifact_schema_version": "v1",
               "artifact_type": "LeanCheckerReport",
-              "content_hash": "sha256:82d243a3ac7bf501b0919f5fb2ce6267a3c990ce69f1b004217145ebd6c28239",
+              "content_hash": "sha256:09d3dc203954d76f695b8ef223566cc9ae244db8f17f5d6831ac045fa71f29a6",
               "created_at": "2026-07-14T00:00:00Z",
               "media_type": "application/json",
               "metadata": {
@@ -2365,7 +2365,7 @@
                 "status": "accepted"
               },
               "schema_version": "ArtifactRef.v1",
-              "size_bytes": 6668,
+              "size_bytes": 6698,
               "source": {
                 "kind": "lean_checker",
                 "request_id": "task14_golden_checker_lean_v2_medium_function_set_dx_subset_chain_01_function_set_medium_root_01"
@@ -2548,7 +2548,7 @@
             "artifact_schema_id": "lean_proof.checker_report",
             "artifact_schema_version": "v1",
             "artifact_type": "LeanCheckerReport",
-            "content_hash": "sha256:3253239f05bd8c4b22ab5607b7dd3c233ae4b992d5afba93783165b233a1551f",
+            "content_hash": "sha256:7e4c8e5db7cdb0e4afe9ffcba1c83daa364ed73eb728c63a0012aa4b621eb659",
             "created_at": "2026-07-14T00:00:00Z",
             "media_type": "application/json",
             "metadata": {
@@ -2556,7 +2556,7 @@
               "status": "accepted"
             },
             "schema_version": "ArtifactRef.v1",
-            "size_bytes": 6529,
+            "size_bytes": 6561,
             "source": {
               "kind": "lean_checker",
               "request_id": "task14_golden_lemma_graph_merge_request_lean_v2_medium_function_set_dx_subset_chain_01"
@@ -2585,13 +2585,13 @@
           },
           "root_recheck": "passed",
           "schema_version": "tokenshare.lean_task14_golden_evidence.v1",
-          "split_certificate_digest": "sha256:79a541e8f2fc98ff4ab445c9804919d70fb7703c4bebde8b2e221f552f2bb05b",
+          "split_certificate_digest": "sha256:d7a6380b847ad984dffbe5d2eadef07bd4042ae841c17784a285b7ce12768f1b",
           "split_certificate_ref": {
             "artifact_id": "paper_lean_lemma_graph_certificate_lean_v2_medium_function_set_dx_subset_chain_01",
             "artifact_schema_id": "lean_proof.lemma_graph_certificate",
             "artifact_schema_version": "v2",
             "artifact_type": "LeanLemmaGraphCertificate",
-            "content_hash": "sha256:9c70d57b504eea25efaeb34c60bb0d2e9f420cd88259aa374a9f7c7748732cd8",
+            "content_hash": "sha256:ea0130aacd53eb954aa4802d7a01be4dafc12c301469c07272518922debe0bcb",
             "created_at": "2026-07-14T00:00:00Z",
             "media_type": "application/json",
             "metadata": {
@@ -2601,7 +2601,7 @@
               "topic_family": "function_set"
             },
             "schema_version": "ArtifactRef.v1",
-            "size_bytes": 8286,
+            "size_bytes": 8448,
             "source": {
               "case_id": "lean_v2_medium_function_set_dx_subset_chain_01",
               "kind": "lean_paper_adapter"
@@ -2622,7 +2622,7 @@
             "artifact_schema_id": "lean_proof.merge_result",
             "artifact_schema_version": "v1",
             "artifact_type": "LeanLemmaGraphMergeResult",
-            "content_hash": "sha256:12ebf963bd5c11d3c94581999996f128648fe626222b75e806974d0a7b77983e",
+            "content_hash": "sha256:60acb89be42116c0842b69ede51e7fc4562670c37f24c41b3c2ebc7d180996a2",
             "created_at": "2026-07-14T00:00:00Z",
             "media_type": "application/json",
             "metadata": {
@@ -2644,7 +2644,7 @@
               "artifact_schema_id": "lean_proof.checker_report",
               "artifact_schema_version": "v1",
               "artifact_type": "LeanCheckerReport",
-              "content_hash": "sha256:f312db656122eee4e3723ec2c0b9b6cc23289a5cd8395d369df17460b4eab04c",
+              "content_hash": "sha256:e287790b9de2c75835250dfd2bfec467a5b8462ad5afbb67e1929a47f62120c7",
               "created_at": "2026-07-14T00:00:00Z",
               "media_type": "application/json",
               "metadata": {
@@ -2652,7 +2652,7 @@
                 "status": "accepted"
               },
               "schema_version": "ArtifactRef.v1",
-              "size_bytes": 7074,
+              "size_bytes": 7104,
               "source": {
                 "kind": "lean_checker",
                 "request_id": "task14_golden_checker_lean_v2_medium_function_set_dx_subset_chain_02_function_set_medium_ab_02"
@@ -2664,7 +2664,7 @@
               "artifact_schema_id": "lean_proof.checker_report",
               "artifact_schema_version": "v1",
               "artifact_type": "LeanCheckerReport",
-              "content_hash": "sha256:5a4bb4799785adb0c0adbe875c3e0ab4d3ab097d2dae718602682c80802196b4",
+              "content_hash": "sha256:0fdc5e6dc58876a62161af1e476c3a794dcae1f5f15a1e914db0a491a751b63f",
               "created_at": "2026-07-14T00:00:00Z",
               "media_type": "application/json",
               "metadata": {
@@ -2672,7 +2672,7 @@
                 "status": "accepted"
               },
               "schema_version": "ArtifactRef.v1",
-              "size_bytes": 6640,
+              "size_bytes": 6670,
               "source": {
                 "kind": "lean_checker",
                 "request_id": "task14_golden_checker_lean_v2_medium_function_set_dx_subset_chain_02_function_set_medium_ac_02"
@@ -2684,7 +2684,7 @@
               "artifact_schema_id": "lean_proof.checker_report",
               "artifact_schema_version": "v1",
               "artifact_type": "LeanCheckerReport",
-              "content_hash": "sha256:bc35e746dfded8f242e3e323476d05cce664ddab7ca5ed00f1b7d2996a679f95",
+              "content_hash": "sha256:d39b49ac92890865556dfe8ad79fde8935cdf66f07a77ff4999243287adf88e7",
               "created_at": "2026-07-14T00:00:00Z",
               "media_type": "application/json",
               "metadata": {
@@ -2692,7 +2692,7 @@
                 "status": "accepted"
               },
               "schema_version": "ArtifactRef.v1",
-              "size_bytes": 7072,
+              "size_bytes": 7102,
               "source": {
                 "kind": "lean_checker",
                 "request_id": "task14_golden_checker_lean_v2_medium_function_set_dx_subset_chain_02_function_set_medium_bc_02"
@@ -2704,7 +2704,7 @@
               "artifact_schema_id": "lean_proof.checker_report",
               "artifact_schema_version": "v1",
               "artifact_type": "LeanCheckerReport",
-              "content_hash": "sha256:e7f853b361ac02d44fed8e89a64ff4389520266079ba855d8d0f532f37406551",
+              "content_hash": "sha256:614c0167241a0ed98dc43b7616f8ff6ccdde8ff7a97515f167e4b2c9c3bd8322",
               "created_at": "2026-07-14T00:00:00Z",
               "media_type": "application/json",
               "metadata": {
@@ -2712,7 +2712,7 @@
                 "status": "accepted"
               },
               "schema_version": "ArtifactRef.v1",
-              "size_bytes": 6668,
+              "size_bytes": 6698,
               "source": {
                 "kind": "lean_checker",
                 "request_id": "task14_golden_checker_lean_v2_medium_function_set_dx_subset_chain_02_function_set_medium_root_02"
@@ -2895,7 +2895,7 @@
             "artifact_schema_id": "lean_proof.checker_report",
             "artifact_schema_version": "v1",
             "artifact_type": "LeanCheckerReport",
-            "content_hash": "sha256:54ba26b2ffaccb79dee9de6140786b786cf47860ed605bffa00ed653b5d34caf",
+            "content_hash": "sha256:da7908586d6d62f7ee74241fc99eddddce3c1ccf42233f71437619c39b8426b1",
             "created_at": "2026-07-14T00:00:00Z",
             "media_type": "application/json",
             "metadata": {
@@ -2903,7 +2903,7 @@
               "status": "accepted"
             },
             "schema_version": "ArtifactRef.v1",
-            "size_bytes": 6529,
+            "size_bytes": 6559,
             "source": {
               "kind": "lean_checker",
               "request_id": "task14_golden_lemma_graph_merge_request_lean_v2_medium_function_set_dx_subset_chain_02"
@@ -2932,13 +2932,13 @@
           },
           "root_recheck": "passed",
           "schema_version": "tokenshare.lean_task14_golden_evidence.v1",
-          "split_certificate_digest": "sha256:c87c97faa4c030a9f979827cf4675e873b1ee43ba37a597bc6498fc7f2f3c638",
+          "split_certificate_digest": "sha256:91ff5d3466bcd7d35890641f34037fcc37dc14469904a8288144feec9b07e2ab",
           "split_certificate_ref": {
             "artifact_id": "paper_lean_lemma_graph_certificate_lean_v2_medium_function_set_dx_subset_chain_02",
             "artifact_schema_id": "lean_proof.lemma_graph_certificate",
             "artifact_schema_version": "v2",
             "artifact_type": "LeanLemmaGraphCertificate",
-            "content_hash": "sha256:bb849907e1b6b8c875ac7192f73de9ebe662f0a8e6fb63a1e0981503d8c1b690",
+            "content_hash": "sha256:ceff5684309398080c0e289a788ceaef717e47774437eea83f7debec8f220d96",
             "created_at": "2026-07-14T00:00:00Z",
             "media_type": "application/json",
             "metadata": {
@@ -2948,7 +2948,7 @@
               "topic_family": "function_set"
             },
             "schema_version": "ArtifactRef.v1",
-            "size_bytes": 8292,
+            "size_bytes": 8454,
             "source": {
               "case_id": "lean_v2_medium_function_set_dx_subset_chain_02",
               "kind": "lean_paper_adapter"
@@ -3045,7 +3045,7 @@
             "artifact_schema_id": "lean_proof.merge_result",
             "artifact_schema_version": "v1",
             "artifact_type": "LeanLemmaGraphMergeResult",
-            "content_hash": "sha256:f4ce3194f95931e6cf7c86caea747f52731ebb2ad2c898e3a83f438628828d14",
+            "content_hash": "sha256:47d180a3d468bdf1461bfafc0471a91987244723a79d87f79cda03dbd134afcc",
             "created_at": "2026-07-14T00:00:00Z",
             "media_type": "application/json",
             "metadata": {
@@ -3067,7 +3067,7 @@
               "artifact_schema_id": "lean_proof.checker_report",
               "artifact_schema_version": "v1",
               "artifact_type": "LeanCheckerReport",
-              "content_hash": "sha256:52369db29cdcfdf458ec2dfdce6d675c88d831650e71ffb7cda21a47b437be62",
+              "content_hash": "sha256:24d6720adc000c3a5d7e1f6cdf0de3b8a91c989571f959628d58f2868c2c6e3a",
               "created_at": "2026-07-14T00:00:00Z",
               "media_type": "application/json",
               "metadata": {
@@ -3075,7 +3075,7 @@
                 "status": "accepted"
               },
               "schema_version": "ArtifactRef.v1",
-              "size_bytes": 7038,
+              "size_bytes": 7068,
               "source": {
                 "kind": "lean_checker",
                 "request_id": "task14_golden_checker_lean_v2_medium_induction_nat_predicate_chain_01_induction_medium_a_01"
@@ -3087,7 +3087,7 @@
               "artifact_schema_id": "lean_proof.checker_report",
               "artifact_schema_version": "v1",
               "artifact_type": "LeanCheckerReport",
-              "content_hash": "sha256:477ec262cb252eef2c253c8e4f860999268bc6362070a4fa35dbf8aad7ca4ced",
+              "content_hash": "sha256:24660a0df6c20e2b192874a73d170e8b208643611079eead1c7289c028b51345",
               "created_at": "2026-07-14T00:00:00Z",
               "media_type": "application/json",
               "metadata": {
@@ -3095,7 +3095,7 @@
                 "status": "accepted"
               },
               "schema_version": "ArtifactRef.v1",
-              "size_bytes": 7485,
+              "size_bytes": 7515,
               "source": {
                 "kind": "lean_checker",
                 "request_id": "task14_golden_checker_lean_v2_medium_induction_nat_predicate_chain_01_induction_medium_ab_01"
@@ -3107,7 +3107,7 @@
               "artifact_schema_id": "lean_proof.checker_report",
               "artifact_schema_version": "v1",
               "artifact_type": "LeanCheckerReport",
-              "content_hash": "sha256:41b4d4e6b63800b65bb2cff35e9c750898c73175138c915a5b2bee9d601c934a",
+              "content_hash": "sha256:793c86b7978618c37a102a4f5ac4b5d5b28e21fa8750e96e11329245e250d94a",
               "created_at": "2026-07-14T00:00:00Z",
               "media_type": "application/json",
               "metadata": {
@@ -3115,7 +3115,7 @@
                 "status": "accepted"
               },
               "schema_version": "ArtifactRef.v1",
-              "size_bytes": 6605,
+              "size_bytes": 6635,
               "source": {
                 "kind": "lean_checker",
                 "request_id": "task14_golden_checker_lean_v2_medium_induction_nat_predicate_chain_01_induction_medium_b_01"
@@ -3127,7 +3127,7 @@
               "artifact_schema_id": "lean_proof.checker_report",
               "artifact_schema_version": "v1",
               "artifact_type": "LeanCheckerReport",
-              "content_hash": "sha256:332123ccdfbb0c720bb6ad051f302d3bafdd389f669d0fb8a687c110bb80189e",
+              "content_hash": "sha256:8aa85cebf3bb8e539139b5bd2632ac1e15ac1ed86aca4c8f9b6c7f00596f2054",
               "created_at": "2026-07-14T00:00:00Z",
               "media_type": "application/json",
               "metadata": {
@@ -3135,7 +3135,7 @@
                 "status": "accepted"
               },
               "schema_version": "ArtifactRef.v1",
-              "size_bytes": 7485,
+              "size_bytes": 7515,
               "source": {
                 "kind": "lean_checker",
                 "request_id": "task14_golden_checker_lean_v2_medium_induction_nat_predicate_chain_01_induction_medium_bc_01"
@@ -3147,7 +3147,7 @@
               "artifact_schema_id": "lean_proof.checker_report",
               "artifact_schema_version": "v1",
               "artifact_type": "LeanCheckerReport",
-              "content_hash": "sha256:d5089d5c0b462ca94d9795e3faaf31d3ae81be156ed3df4ba92b7e2c87b7b1a0",
+              "content_hash": "sha256:fa3422a07869d43bc37f2a0ca3803f634f2c9f21d457873328894f1bf7045628",
               "created_at": "2026-07-14T00:00:00Z",
               "media_type": "application/json",
               "metadata": {
@@ -3155,7 +3155,7 @@
                 "status": "accepted"
               },
               "schema_version": "ArtifactRef.v1",
-              "size_bytes": 6213,
+              "size_bytes": 6243,
               "source": {
                 "kind": "lean_checker",
                 "request_id": "task14_golden_checker_lean_v2_medium_induction_nat_predicate_chain_01_induction_medium_root_01"
@@ -3379,7 +3379,7 @@
             "artifact_schema_id": "lean_proof.checker_report",
             "artifact_schema_version": "v1",
             "artifact_type": "LeanCheckerReport",
-            "content_hash": "sha256:2b1f960d2ace64229c1f0c38d44cd7dc407631f34cb36f0bcc96726e018eaeb5",
+            "content_hash": "sha256:52848307c88efc28269b7611b12e86c9ee1032b4d0ef6775d75e65ec55f39d53",
             "created_at": "2026-07-14T00:00:00Z",
             "media_type": "application/json",
             "metadata": {
@@ -3387,7 +3387,7 @@
               "status": "accepted"
             },
             "schema_version": "ArtifactRef.v1",
-            "size_bytes": 6116,
+            "size_bytes": 6145,
             "source": {
               "kind": "lean_checker",
               "request_id": "task14_golden_lemma_graph_merge_request_lean_v2_medium_induction_nat_predicate_chain_01"
@@ -3416,13 +3416,13 @@
           },
           "root_recheck": "passed",
           "schema_version": "tokenshare.lean_task14_golden_evidence.v1",
-          "split_certificate_digest": "sha256:933821b7cb59403a48b6db7610111f05d2d1dc547c59db518142e222db632a2e",
+          "split_certificate_digest": "sha256:71e188683a5fb1569ad78006267440465425a22399ed5b013e6a9d13270fbc7b",
           "split_certificate_ref": {
             "artifact_id": "paper_lean_lemma_graph_certificate_lean_v2_medium_induction_nat_predicate_chain_01",
             "artifact_schema_id": "lean_proof.lemma_graph_certificate",
             "artifact_schema_version": "v2",
             "artifact_type": "LeanLemmaGraphCertificate",
-            "content_hash": "sha256:05cdcc17d6bc759e305afe50ba99599f267c666aacfd86e842fd5f9c9b85d335",
+            "content_hash": "sha256:a8bfde5b18871fcd8ff967d39767c590f05b687de6f9766a975944fd047126a6",
             "created_at": "2026-07-14T00:00:00Z",
             "media_type": "application/json",
             "metadata": {
@@ -3432,7 +3432,7 @@
               "topic_family": "induction"
             },
             "schema_version": "ArtifactRef.v1",
-            "size_bytes": 10058,
+            "size_bytes": 10221,
             "source": {
               "case_id": "lean_v2_medium_induction_nat_predicate_chain_01",
               "kind": "lean_paper_adapter"
@@ -3453,7 +3453,7 @@
             "artifact_schema_id": "lean_proof.merge_result",
             "artifact_schema_version": "v1",
             "artifact_type": "LeanLemmaGraphMergeResult",
-            "content_hash": "sha256:7d400b02b18c9dffa0306acb753a165c52b27155582514f3a37782de8750c351",
+            "content_hash": "sha256:f370d43f27837ae800d9f727100c71e1bade2cd81d576127c399dcfb8771302a",
             "created_at": "2026-07-14T00:00:00Z",
             "media_type": "application/json",
             "metadata": {
@@ -3475,7 +3475,7 @@
               "artifact_schema_id": "lean_proof.checker_report",
               "artifact_schema_version": "v1",
               "artifact_type": "LeanCheckerReport",
-              "content_hash": "sha256:b17b5b722e438aa9518f52584433ef5915d5197350561393bd1081eb0664fbb8",
+              "content_hash": "sha256:71f715f9f8eefd2eb21b5c864f4eec584be42b764835784bc09e2bae1fe60b59",
               "created_at": "2026-07-14T00:00:00Z",
               "media_type": "application/json",
               "metadata": {
@@ -3483,7 +3483,7 @@
                 "status": "accepted"
               },
               "schema_version": "ArtifactRef.v1",
-              "size_bytes": 7038,
+              "size_bytes": 7068,
               "source": {
                 "kind": "lean_checker",
                 "request_id": "task14_golden_checker_lean_v2_medium_induction_nat_predicate_chain_02_induction_medium_a_02"
@@ -3495,7 +3495,7 @@
               "artifact_schema_id": "lean_proof.checker_report",
               "artifact_schema_version": "v1",
               "artifact_type": "LeanCheckerReport",
-              "content_hash": "sha256:752784b108a089918e6c6374a6b2fe0df036febc7be7da06234f9c8cca208223",
+              "content_hash": "sha256:5910e3eef99b6e8a16c3edd2ca02073952257551e9ae3623d9003b469efeb997",
               "created_at": "2026-07-14T00:00:00Z",
               "media_type": "application/json",
               "metadata": {
@@ -3503,7 +3503,7 @@
                 "status": "accepted"
               },
               "schema_version": "ArtifactRef.v1",
-              "size_bytes": 7485,
+              "size_bytes": 7515,
               "source": {
                 "kind": "lean_checker",
                 "request_id": "task14_golden_checker_lean_v2_medium_induction_nat_predicate_chain_02_induction_medium_ab_02"
@@ -3515,7 +3515,7 @@
               "artifact_schema_id": "lean_proof.checker_report",
               "artifact_schema_version": "v1",
               "artifact_type": "LeanCheckerReport",
-              "content_hash": "sha256:f9a1535b028bb68e18136ffc9688791cb4feb528a39d3c5c5d78afd81cae2b34",
+              "content_hash": "sha256:de7db9cfdad3aa7927a24e1b9740ecffea93b4285efbc3406c4658a766f55ff2",
               "created_at": "2026-07-14T00:00:00Z",
               "media_type": "application/json",
               "metadata": {
@@ -3523,7 +3523,7 @@
                 "status": "accepted"
               },
               "schema_version": "ArtifactRef.v1",
-              "size_bytes": 6605,
+              "size_bytes": 6635,
               "source": {
                 "kind": "lean_checker",
                 "request_id": "task14_golden_checker_lean_v2_medium_induction_nat_predicate_chain_02_induction_medium_b_02"
@@ -3535,7 +3535,7 @@
               "artifact_schema_id": "lean_proof.checker_report",
               "artifact_schema_version": "v1",
               "artifact_type": "LeanCheckerReport",
-              "content_hash": "sha256:70e0c3cc3fa750c584feda0223aff003bf7acc81c14214a510694bb570259d52",
+              "content_hash": "sha256:582d76c9436b3de8df36d7ff71818740915aa1a1432fdb28dcec63071d083266",
               "created_at": "2026-07-14T00:00:00Z",
               "media_type": "application/json",
               "metadata": {
@@ -3543,7 +3543,7 @@
                 "status": "accepted"
               },
               "schema_version": "ArtifactRef.v1",
-              "size_bytes": 7485,
+              "size_bytes": 7515,
               "source": {
                 "kind": "lean_checker",
                 "request_id": "task14_golden_checker_lean_v2_medium_induction_nat_predicate_chain_02_induction_medium_bc_02"
@@ -3555,7 +3555,7 @@
               "artifact_schema_id": "lean_proof.checker_report",
               "artifact_schema_version": "v1",
               "artifact_type": "LeanCheckerReport",
-              "content_hash": "sha256:984401a724d8fd8745e4f0d2020f8482bbb069e311d8d83fb75dd584cefba13a",
+              "content_hash": "sha256:92c569560424b4758556617075f03e068f681628b8ea70607040471fdd6d5a78",
               "created_at": "2026-07-14T00:00:00Z",
               "media_type": "application/json",
               "metadata": {
@@ -3563,7 +3563,7 @@
                 "status": "accepted"
               },
               "schema_version": "ArtifactRef.v1",
-              "size_bytes": 6213,
+              "size_bytes": 6243,
               "source": {
                 "kind": "lean_checker",
                 "request_id": "task14_golden_checker_lean_v2_medium_induction_nat_predicate_chain_02_induction_medium_root_02"
@@ -3787,7 +3787,7 @@
             "artifact_schema_id": "lean_proof.checker_report",
             "artifact_schema_version": "v1",
             "artifact_type": "LeanCheckerReport",
-            "content_hash": "sha256:f85a568af275598efd89e641bcf5ee7f845590a5ffb3b436b016437b279cc382",
+            "content_hash": "sha256:f06b560cc7afacb4d6ee10bd5158cfe121501c07203916dfe85f65e7a18f8227",
             "created_at": "2026-07-14T00:00:00Z",
             "media_type": "application/json",
             "metadata": {
@@ -3795,7 +3795,7 @@
               "status": "accepted"
             },
             "schema_version": "ArtifactRef.v1",
-            "size_bytes": 6115,
+            "size_bytes": 6145,
             "source": {
               "kind": "lean_checker",
               "request_id": "task14_golden_lemma_graph_merge_request_lean_v2_medium_induction_nat_predicate_chain_02"
@@ -3824,13 +3824,13 @@
           },
           "root_recheck": "passed",
           "schema_version": "tokenshare.lean_task14_golden_evidence.v1",
-          "split_certificate_digest": "sha256:5e175140919461d4b9fbc88a419d53629ddc37fcba11796b6106ee12e63af537",
+          "split_certificate_digest": "sha256:7e6f1db5a8e64450825f7b44c65fdffee7bf046c25f6b5e72de2f3f64abb4a99",
           "split_certificate_ref": {
             "artifact_id": "paper_lean_lemma_graph_certificate_lean_v2_medium_induction_nat_predicate_chain_02",
             "artifact_schema_id": "lean_proof.lemma_graph_certificate",
             "artifact_schema_version": "v2",
             "artifact_type": "LeanLemmaGraphCertificate",
-            "content_hash": "sha256:0391c111fc2eeae0aac4af4b9c3b99ca5259153a512255f7d86f4eca70cb043d",
+            "content_hash": "sha256:2256fde1e690f355c55387d4a649a8358cb3bb41687bdfa297bb2a2b5468548b",
             "created_at": "2026-07-14T00:00:00Z",
             "media_type": "application/json",
             "metadata": {
@@ -3840,7 +3840,7 @@
               "topic_family": "induction"
             },
             "schema_version": "ArtifactRef.v1",
-            "size_bytes": 10057,
+            "size_bytes": 10220,
             "source": {
               "case_id": "lean_v2_medium_induction_nat_predicate_chain_02",
               "kind": "lean_paper_adapter"
@@ -3937,7 +3937,7 @@
             "artifact_schema_id": "lean_proof.merge_result",
             "artifact_schema_version": "v1",
             "artifact_type": "LeanLemmaGraphMergeResult",
-            "content_hash": "sha256:f86c07c7e1104db1abcac257aa831191c3b60e575250bcae66b8644fbb1e7b5d",
+            "content_hash": "sha256:0535c7d55ee0e806dd982094c8450ba4fd76b0ee755e8a33ffa30fb4628f10c5",
             "created_at": "2026-07-14T00:00:00Z",
             "media_type": "application/json",
             "metadata": {
@@ -3959,7 +3959,7 @@
               "artifact_schema_id": "lean_proof.checker_report",
               "artifact_schema_version": "v1",
               "artifact_type": "LeanCheckerReport",
-              "content_hash": "sha256:9eb6ccd000c9144d5d55859f7e58063947f16d6defd7cb5c2cfce905f8331c39",
+              "content_hash": "sha256:4b8ce993599193c8ab789b38ffc59ad98a4dbb937377d79dc7eda7641b4a47bf",
               "created_at": "2026-07-14T00:00:00Z",
               "media_type": "application/json",
               "metadata": {
@@ -3967,7 +3967,7 @@
                 "status": "accepted"
               },
               "schema_version": "ArtifactRef.v1",
-              "size_bytes": 6954,
+              "size_bytes": 6984,
               "source": {
                 "kind": "lean_checker",
                 "request_id": "task14_golden_checker_lean_v2_hard_frontier_pure_logic_checker_01_pure_hard_leaf_a_01"
@@ -3979,7 +3979,7 @@
               "artifact_schema_id": "lean_proof.checker_report",
               "artifact_schema_version": "v1",
               "artifact_type": "LeanCheckerReport",
-              "content_hash": "sha256:12618642d2805ef14301a6e7aa845d708eae7abcdc045a760ae609916ad21267",
+              "content_hash": "sha256:bac3c1397fe6a35c5eca7148595d12806b7e1f751b1a801662f50c9b60aa2a07",
               "created_at": "2026-07-14T00:00:00Z",
               "media_type": "application/json",
               "metadata": {
@@ -3987,7 +3987,7 @@
                 "status": "accepted"
               },
               "schema_version": "ArtifactRef.v1",
-              "size_bytes": 6966,
+              "size_bytes": 6996,
               "source": {
                 "kind": "lean_checker",
                 "request_id": "task14_golden_checker_lean_v2_hard_frontier_pure_logic_checker_01_pure_hard_leaf_ab_01"
@@ -3999,7 +3999,7 @@
               "artifact_schema_id": "lean_proof.checker_report",
               "artifact_schema_version": "v1",
               "artifact_type": "LeanCheckerReport",
-              "content_hash": "sha256:e07787338534c818b5198aab8974f850d60e0becc04b262560a8334e6088c328",
+              "content_hash": "sha256:f81df1d2b64fc74d34352041bc4f04957e2c64086eaba4b5ea4a6af38a082c53",
               "created_at": "2026-07-14T00:00:00Z",
               "media_type": "application/json",
               "metadata": {
@@ -4007,7 +4007,7 @@
                 "status": "accepted"
               },
               "schema_version": "ArtifactRef.v1",
-              "size_bytes": 6966,
+              "size_bytes": 6996,
               "source": {
                 "kind": "lean_checker",
                 "request_id": "task14_golden_checker_lean_v2_hard_frontier_pure_logic_checker_01_pure_hard_leaf_bc_01"
@@ -4019,7 +4019,7 @@
               "artifact_schema_id": "lean_proof.checker_report",
               "artifact_schema_version": "v1",
               "artifact_type": "LeanCheckerReport",
-              "content_hash": "sha256:997c11a51bb71ff193dfd9263334ed1d57cbbba4d5a5c03267eb7e7a0a0444cb",
+              "content_hash": "sha256:0a8dc1481f817cf7f48f165645e563d300c98b396475d5506ad9a82ac8f94529",
               "created_at": "2026-07-14T00:00:00Z",
               "media_type": "application/json",
               "metadata": {
@@ -4027,7 +4027,7 @@
                 "status": "accepted"
               },
               "schema_version": "ArtifactRef.v1",
-              "size_bytes": 6966,
+              "size_bytes": 6996,
               "source": {
                 "kind": "lean_checker",
                 "request_id": "task14_golden_checker_lean_v2_hard_frontier_pure_logic_checker_01_pure_hard_leaf_cd_01"
@@ -4039,7 +4039,7 @@
               "artifact_schema_id": "lean_proof.checker_report",
               "artifact_schema_version": "v1",
               "artifact_type": "LeanCheckerReport",
-              "content_hash": "sha256:1458a54139d281a0d157bcdfca27f5dbbf43321d9c4115960c82233fc1f8dd3e",
+              "content_hash": "sha256:76d9ebcdac3c1e7695c5097b9d34242e7968910c0fc135948a835daa6b71feb9",
               "created_at": "2026-07-14T00:00:00Z",
               "media_type": "application/json",
               "metadata": {
@@ -4047,7 +4047,7 @@
                 "status": "accepted"
               },
               "schema_version": "ArtifactRef.v1",
-              "size_bytes": 6508,
+              "size_bytes": 6538,
               "source": {
                 "kind": "lean_checker",
                 "request_id": "task14_golden_checker_lean_v2_hard_frontier_pure_logic_checker_01_pure_hard_mid_b_01"
@@ -4059,7 +4059,7 @@
               "artifact_schema_id": "lean_proof.checker_report",
               "artifact_schema_version": "v1",
               "artifact_type": "LeanCheckerReport",
-              "content_hash": "sha256:2db1f414dec801999062a04382aa6e0e98a1d4e207c80d81db83768d182f3b9b",
+              "content_hash": "sha256:6814f392fc58fe7d4d8c359f832002e974c48e0392d7a3500908f7a8b2ba1ec6",
               "created_at": "2026-07-14T00:00:00Z",
               "media_type": "application/json",
               "metadata": {
@@ -4067,7 +4067,7 @@
                 "status": "accepted"
               },
               "schema_version": "ArtifactRef.v1",
-              "size_bytes": 6076,
+              "size_bytes": 6106,
               "source": {
                 "kind": "lean_checker",
                 "request_id": "task14_golden_checker_lean_v2_hard_frontier_pure_logic_checker_01_pure_hard_mid_c_01"
@@ -4079,7 +4079,7 @@
               "artifact_schema_id": "lean_proof.checker_report",
               "artifact_schema_version": "v1",
               "artifact_type": "LeanCheckerReport",
-              "content_hash": "sha256:7d326c982f01ba31d2caa9110f8821e14b1b5ed9cb5d882efbd937de09040786",
+              "content_hash": "sha256:0abd2dc6007f38d411a90d5f2b5c823fafc34f71bad41af3511fd1e5207f2376",
               "created_at": "2026-07-14T00:00:00Z",
               "media_type": "application/json",
               "metadata": {
@@ -4087,7 +4087,7 @@
                 "status": "accepted"
               },
               "schema_version": "ArtifactRef.v1",
-              "size_bytes": 5630,
+              "size_bytes": 5660,
               "source": {
                 "kind": "lean_checker",
                 "request_id": "task14_golden_checker_lean_v2_hard_frontier_pure_logic_checker_01_pure_hard_root_01"
@@ -4393,7 +4393,7 @@
             "artifact_schema_id": "lean_proof.checker_report",
             "artifact_schema_version": "v1",
             "artifact_type": "LeanCheckerReport",
-            "content_hash": "sha256:28c95eac1ebffaf35283d2a8fee753105c5f7d1cfc7987e99d07c44c81fa4d8d",
+            "content_hash": "sha256:53687f53a69c81f66ca37534f3c099a655c373d6e309e4d4084f22ca87c3924b",
             "created_at": "2026-07-14T00:00:00Z",
             "media_type": "application/json",
             "metadata": {
@@ -4401,7 +4401,7 @@
               "status": "accepted"
             },
             "schema_version": "ArtifactRef.v1",
-            "size_bytes": 5631,
+            "size_bytes": 5662,
             "source": {
               "kind": "lean_checker",
               "request_id": "task14_golden_lemma_graph_merge_request_lean_v2_hard_frontier_pure_logic_checker_01"
@@ -4430,13 +4430,13 @@
           },
           "root_recheck": "passed",
           "schema_version": "tokenshare.lean_task14_golden_evidence.v1",
-          "split_certificate_digest": "sha256:d81739329210bdff85870c7b9f2597fb7e1762a237c2b66d4f2cdc22f803aa0c",
+          "split_certificate_digest": "sha256:80d678bf0763944038784336f52aa9b468cfe921017ba734bdd64b29d9db4b3a",
           "split_certificate_ref": {
             "artifact_id": "paper_lean_lemma_graph_certificate_lean_v2_hard_frontier_pure_logic_checker_01",
             "artifact_schema_id": "lean_proof.lemma_graph_certificate",
             "artifact_schema_version": "v2",
             "artifact_type": "LeanLemmaGraphCertificate",
-            "content_hash": "sha256:d531bb299c0ee8df90cbbdcd34dd5b7ed9f53090a26bf61c58b447f6a92d6e23",
+            "content_hash": "sha256:6d86985cada79c406e231234a62d9c46779dd9b267627931b7cfee41b77586e4",
             "created_at": "2026-07-14T00:00:00Z",
             "media_type": "application/json",
             "metadata": {
@@ -4446,7 +4446,7 @@
               "topic_family": "pure_logic"
             },
             "schema_version": "ArtifactRef.v1",
-            "size_bytes": 12043,
+            "size_bytes": 12202,
             "source": {
               "case_id": "lean_v2_hard_frontier_pure_logic_checker_01",
               "kind": "lean_paper_adapter"
@@ -4467,7 +4467,7 @@
             "artifact_schema_id": "lean_proof.merge_result",
             "artifact_schema_version": "v1",
             "artifact_type": "LeanLemmaGraphMergeResult",
-            "content_hash": "sha256:a0e9bba041eb8a42afec01ff18208bcc4aea049f6b9060c8e34411408cebcbb9",
+            "content_hash": "sha256:54066be160d6ed5381f3199ddb228a119d6083a79c76953486091c2d5e0c62f7",
             "created_at": "2026-07-14T00:00:00Z",
             "media_type": "application/json",
             "metadata": {
@@ -4489,7 +4489,7 @@
               "artifact_schema_id": "lean_proof.checker_report",
               "artifact_schema_version": "v1",
               "artifact_type": "LeanCheckerReport",
-              "content_hash": "sha256:a83c464f78df9f3e36df2964d4bf3c1ca3fa7b00455a84b702bd82ea8fb3af3d",
+              "content_hash": "sha256:41a43d383ea27753c2e2b352fd225df93f025b56490a417904063149b9773d49",
               "created_at": "2026-07-14T00:00:00Z",
               "media_type": "application/json",
               "metadata": {
@@ -4497,7 +4497,7 @@
                 "status": "accepted"
               },
               "schema_version": "ArtifactRef.v1",
-              "size_bytes": 7813,
+              "size_bytes": 7843,
               "source": {
                 "kind": "lean_checker",
                 "request_id": "task14_golden_checker_lean_v2_hard_frontier_pure_logic_checker_02_pure_hard_leaf_a_02"
@@ -4509,7 +4509,7 @@
               "artifact_schema_id": "lean_proof.checker_report",
               "artifact_schema_version": "v1",
               "artifact_type": "LeanCheckerReport",
-              "content_hash": "sha256:09f58464cfc37fcb9167c6453a21cb940b807f1733183195b412477f0a67da23",
+              "content_hash": "sha256:7d8de0c6ea0946a0aaaaec43b72e4a6aa48a7100d0113d377cabd42775caf7cd",
               "created_at": "2026-07-14T00:00:00Z",
               "media_type": "application/json",
               "metadata": {
@@ -4517,7 +4517,7 @@
                 "status": "accepted"
               },
               "schema_version": "ArtifactRef.v1",
-              "size_bytes": 7825,
+              "size_bytes": 7855,
               "source": {
                 "kind": "lean_checker",
                 "request_id": "task14_golden_checker_lean_v2_hard_frontier_pure_logic_checker_02_pure_hard_leaf_ab_02"
@@ -4529,7 +4529,7 @@
               "artifact_schema_id": "lean_proof.checker_report",
               "artifact_schema_version": "v1",
               "artifact_type": "LeanCheckerReport",
-              "content_hash": "sha256:3a4b3eecc7c17f984e8b7fb803c1a813d43acec93ed3e0cd3a8ea178f9cf6d02",
+              "content_hash": "sha256:55b735495d42ed9dbe0f2d1e8eba0bef200836e0c8aa2a38d957f5533cbe6cff",
               "created_at": "2026-07-14T00:00:00Z",
               "media_type": "application/json",
               "metadata": {
@@ -4537,7 +4537,7 @@
                 "status": "accepted"
               },
               "schema_version": "ArtifactRef.v1",
-              "size_bytes": 7825,
+              "size_bytes": 7855,
               "source": {
                 "kind": "lean_checker",
                 "request_id": "task14_golden_checker_lean_v2_hard_frontier_pure_logic_checker_02_pure_hard_leaf_bc_02"
@@ -4549,7 +4549,7 @@
               "artifact_schema_id": "lean_proof.checker_report",
               "artifact_schema_version": "v1",
               "artifact_type": "LeanCheckerReport",
-              "content_hash": "sha256:269f5278c97ff66976dc04f3ec1a6f695188303986c21432b64b5a18bcfe9be6",
+              "content_hash": "sha256:7abbcb7f198b99b5d133c3798cb2bfe31b35a64e7eeb194ce29596b74a08721a",
               "created_at": "2026-07-14T00:00:00Z",
               "media_type": "application/json",
               "metadata": {
@@ -4557,7 +4557,7 @@
                 "status": "accepted"
               },
               "schema_version": "ArtifactRef.v1",
-              "size_bytes": 7823,
+              "size_bytes": 7853,
               "source": {
                 "kind": "lean_checker",
                 "request_id": "task14_golden_checker_lean_v2_hard_frontier_pure_logic_checker_02_pure_hard_leaf_cd_02"
@@ -4569,7 +4569,7 @@
               "artifact_schema_id": "lean_proof.checker_report",
               "artifact_schema_version": "v1",
               "artifact_type": "LeanCheckerReport",
-              "content_hash": "sha256:ddd8333e5cd1372b37c50c6ad0ac74001d6f39cc3557c8482689e4a88fa62a7e",
+              "content_hash": "sha256:5864aa8532c44b70fbe270cad91c54e4fdcf6d4bbcb4465c30105dfe6c294cd2",
               "created_at": "2026-07-14T00:00:00Z",
               "media_type": "application/json",
               "metadata": {
@@ -4577,7 +4577,7 @@
                 "status": "accepted"
               },
               "schema_version": "ArtifactRef.v1",
-              "size_bytes": 7367,
+              "size_bytes": 7397,
               "source": {
                 "kind": "lean_checker",
                 "request_id": "task14_golden_checker_lean_v2_hard_frontier_pure_logic_checker_02_pure_hard_mid_b_02"
@@ -4589,7 +4589,7 @@
               "artifact_schema_id": "lean_proof.checker_report",
               "artifact_schema_version": "v1",
               "artifact_type": "LeanCheckerReport",
-              "content_hash": "sha256:c8add1344d0c22b775d705463a526b0922d428a52d5424359da98b8fafad995a",
+              "content_hash": "sha256:72bd7c8a16d5fa22edc55c43e2bbc6502669f95aa7386e781000f856272cec95",
               "created_at": "2026-07-14T00:00:00Z",
               "media_type": "application/json",
               "metadata": {
@@ -4597,7 +4597,7 @@
                 "status": "accepted"
               },
               "schema_version": "ArtifactRef.v1",
-              "size_bytes": 6934,
+              "size_bytes": 6964,
               "source": {
                 "kind": "lean_checker",
                 "request_id": "task14_golden_checker_lean_v2_hard_frontier_pure_logic_checker_02_pure_hard_mid_c_02"
@@ -4609,7 +4609,7 @@
               "artifact_schema_id": "lean_proof.checker_report",
               "artifact_schema_version": "v1",
               "artifact_type": "LeanCheckerReport",
-              "content_hash": "sha256:d8bfac5c5569ff9b4e08e283bf9acbef7ca00d2502d79a3b27d8affc965f8af9",
+              "content_hash": "sha256:b8c04fbbe09694c31eaec300d3c8810700581f9f105918c34aae842cb61d129f",
               "created_at": "2026-07-14T00:00:00Z",
               "media_type": "application/json",
               "metadata": {
@@ -4617,7 +4617,7 @@
                 "status": "accepted"
               },
               "schema_version": "ArtifactRef.v1",
-              "size_bytes": 6486,
+              "size_bytes": 6517,
               "source": {
                 "kind": "lean_checker",
                 "request_id": "task14_golden_checker_lean_v2_hard_frontier_pure_logic_checker_02_pure_hard_root_02"
@@ -4923,7 +4923,7 @@
             "artifact_schema_id": "lean_proof.checker_report",
             "artifact_schema_version": "v1",
             "artifact_type": "LeanCheckerReport",
-            "content_hash": "sha256:d532428b532639c764ca07431932549061669a39cdb41574ff7b572e9935b853",
+            "content_hash": "sha256:3d2b05e67e0eeb6d7c125bf9dffca5995aa0ec886f46e5a2d6ccfbf94bddecc9",
             "created_at": "2026-07-14T00:00:00Z",
             "media_type": "application/json",
             "metadata": {
@@ -4931,7 +4931,7 @@
               "status": "accepted"
             },
             "schema_version": "ArtifactRef.v1",
-            "size_bytes": 6487,
+            "size_bytes": 6517,
             "source": {
               "kind": "lean_checker",
               "request_id": "task14_golden_lemma_graph_merge_request_lean_v2_hard_frontier_pure_logic_checker_02"
@@ -4960,13 +4960,13 @@
           },
           "root_recheck": "passed",
           "schema_version": "tokenshare.lean_task14_golden_evidence.v1",
-          "split_certificate_digest": "sha256:63fee5caa403a50c2b7625620a2f0edd2c2337abfe8021d8d3ed7a7b91fb62a9",
+          "split_certificate_digest": "sha256:46ad71e61e6972ebd3be0fc98ed2a7aebdd1030ea3140e3dd0f0c026c8346c9b",
           "split_certificate_ref": {
             "artifact_id": "paper_lean_lemma_graph_certificate_lean_v2_hard_frontier_pure_logic_checker_02",
             "artifact_schema_id": "lean_proof.lemma_graph_certificate",
             "artifact_schema_version": "v2",
             "artifact_type": "LeanLemmaGraphCertificate",
-            "content_hash": "sha256:99b1de6d81580a9c82e05f223eb785ee85bef4e2e3f352964a567df3072cfdca",
+            "content_hash": "sha256:34a7ed3e7dd19f1a7963ab95656e32f596a175d9d70026b5f572eb62b716a001",
             "created_at": "2026-07-14T00:00:00Z",
             "media_type": "application/json",
             "metadata": {
@@ -4976,7 +4976,7 @@
               "topic_family": "pure_logic"
             },
             "schema_version": "ArtifactRef.v1",
-            "size_bytes": 12199,
+            "size_bytes": 12358,
             "source": {
               "case_id": "lean_v2_hard_frontier_pure_logic_checker_02",
               "kind": "lean_paper_adapter"
@@ -5073,7 +5073,7 @@
             "artifact_schema_id": "lean_proof.merge_result",
             "artifact_schema_version": "v1",
             "artifact_type": "LeanLemmaGraphMergeResult",
-            "content_hash": "sha256:4e7dad490f939df2a4406b4efb35640c21e190d228b3a0f71cfe1a5d6e8b4de2",
+            "content_hash": "sha256:4def918417342501b98c97ff26459ea1f4df7530ee0e3cf93233bcb81d9e2615",
             "created_at": "2026-07-14T00:00:00Z",
             "media_type": "application/json",
             "metadata": {
@@ -5095,7 +5095,7 @@
               "artifact_schema_id": "lean_proof.checker_report",
               "artifact_schema_version": "v1",
               "artifact_type": "LeanCheckerReport",
-              "content_hash": "sha256:ef0f1de93408c8a5d3cddfafbbc83185b902d50948b511ab9daf1c9207bc98e1",
+              "content_hash": "sha256:98d2668f05f88c6480f20b59160ca29d3a6d306d4c5c6752ecc006009db97221",
               "created_at": "2026-07-14T00:00:00Z",
               "media_type": "application/json",
               "metadata": {
@@ -5103,7 +5103,7 @@
                 "status": "accepted"
               },
               "schema_version": "ArtifactRef.v1",
-              "size_bytes": 6610,
+              "size_bytes": 6640,
               "source": {
                 "kind": "lean_checker",
                 "request_id": "task14_golden_checker_lean_v2_hard_frontier_function_set_checker_01_function_set_hard_ab_01"
@@ -5115,7 +5115,7 @@
               "artifact_schema_id": "lean_proof.checker_report",
               "artifact_schema_version": "v1",
               "artifact_type": "LeanCheckerReport",
-              "content_hash": "sha256:25e6910d57038419d39a96ccabac8ecb310480c71e4de287e140bfb37b593a65",
+              "content_hash": "sha256:610ca6de8da1e79ead520f8266d61940c54cfc890d11ce43c8055b8432737028",
               "created_at": "2026-07-14T00:00:00Z",
               "media_type": "application/json",
               "metadata": {
@@ -5123,7 +5123,7 @@
                 "status": "accepted"
               },
               "schema_version": "ArtifactRef.v1",
-              "size_bytes": 6176,
+              "size_bytes": 6206,
               "source": {
                 "kind": "lean_checker",
                 "request_id": "task14_golden_checker_lean_v2_hard_frontier_function_set_checker_01_function_set_hard_ac_01"
@@ -5135,7 +5135,7 @@
               "artifact_schema_id": "lean_proof.checker_report",
               "artifact_schema_version": "v1",
               "artifact_type": "LeanCheckerReport",
-              "content_hash": "sha256:71355bb43009f0324de28ae7cac6c1f81efd667b4b6483e7d41756090f22aaa9",
+              "content_hash": "sha256:1b176b56765d2083f2290103f116c9a132a8605b5d8da5e6174284f61e0bbfe0",
               "created_at": "2026-07-14T00:00:00Z",
               "media_type": "application/json",
               "metadata": {
@@ -5143,7 +5143,7 @@
                 "status": "accepted"
               },
               "schema_version": "ArtifactRef.v1",
-              "size_bytes": 5742,
+              "size_bytes": 5772,
               "source": {
                 "kind": "lean_checker",
                 "request_id": "task14_golden_checker_lean_v2_hard_frontier_function_set_checker_01_function_set_hard_ad_01"
@@ -5155,7 +5155,7 @@
               "artifact_schema_id": "lean_proof.checker_report",
               "artifact_schema_version": "v1",
               "artifact_type": "LeanCheckerReport",
-              "content_hash": "sha256:e3d0f5e276c8a25bea3ef88d455a41b580a558c0849ba700721b7b58f91bac94",
+              "content_hash": "sha256:1ce2cf30b31aebd9fb597837714e6a74e6a0139bfe4db3c3a30a96617450454a",
               "created_at": "2026-07-14T00:00:00Z",
               "media_type": "application/json",
               "metadata": {
@@ -5163,7 +5163,7 @@
                 "status": "accepted"
               },
               "schema_version": "ArtifactRef.v1",
-              "size_bytes": 6608,
+              "size_bytes": 6638,
               "source": {
                 "kind": "lean_checker",
                 "request_id": "task14_golden_checker_lean_v2_hard_frontier_function_set_checker_01_function_set_hard_bc_01"
@@ -5175,7 +5175,7 @@
               "artifact_schema_id": "lean_proof.checker_report",
               "artifact_schema_version": "v1",
               "artifact_type": "LeanCheckerReport",
-              "content_hash": "sha256:c5c9a0192e5666183ca7c3e1f808149ca03522a91af5520346c06542c70f32ff",
+              "content_hash": "sha256:5a9f548a67b8a0e195eeda4c6b2bbec4cf78ea4be4668fbfe57538d61919615b",
               "created_at": "2026-07-14T00:00:00Z",
               "media_type": "application/json",
               "metadata": {
@@ -5183,7 +5183,7 @@
                 "status": "accepted"
               },
               "schema_version": "ArtifactRef.v1",
-              "size_bytes": 6608,
+              "size_bytes": 6638,
               "source": {
                 "kind": "lean_checker",
                 "request_id": "task14_golden_checker_lean_v2_hard_frontier_function_set_checker_01_function_set_hard_cd_01"
@@ -5195,7 +5195,7 @@
               "artifact_schema_id": "lean_proof.checker_report",
               "artifact_schema_version": "v1",
               "artifact_type": "LeanCheckerReport",
-              "content_hash": "sha256:09932f98cc0c84bbbec7c05e98fa65074aa4be2aa306b74f6341d93cd98175a1",
+              "content_hash": "sha256:1f062fa24d2e26ac4e351948d414dd66a12bbde650b424469241ba3197447527",
               "created_at": "2026-07-14T00:00:00Z",
               "media_type": "application/json",
               "metadata": {
@@ -5203,7 +5203,7 @@
                 "status": "accepted"
               },
               "schema_version": "ArtifactRef.v1",
-              "size_bytes": 5770,
+              "size_bytes": 5800,
               "source": {
                 "kind": "lean_checker",
                 "request_id": "task14_golden_checker_lean_v2_hard_frontier_function_set_checker_01_function_set_hard_root_01"
@@ -5468,7 +5468,7 @@
             "artifact_schema_id": "lean_proof.checker_report",
             "artifact_schema_version": "v1",
             "artifact_type": "LeanCheckerReport",
-            "content_hash": "sha256:13c988ce5a0fca79c134269f5f4eeba2f69de5ef9444e67da93aed72a636ff26",
+            "content_hash": "sha256:187853416dc83eb5c1b4771126c6a303c51bdb5dfced097432cbcc27f706c0f4",
             "created_at": "2026-07-14T00:00:00Z",
             "media_type": "application/json",
             "metadata": {
@@ -5476,7 +5476,7 @@
               "status": "accepted"
             },
             "schema_version": "ArtifactRef.v1",
-            "size_bytes": 5660,
+            "size_bytes": 5690,
             "source": {
               "kind": "lean_checker",
               "request_id": "task14_golden_lemma_graph_merge_request_lean_v2_hard_frontier_function_set_checker_01"
@@ -5505,13 +5505,13 @@
           },
           "root_recheck": "passed",
           "schema_version": "tokenshare.lean_task14_golden_evidence.v1",
-          "split_certificate_digest": "sha256:70829dafcb95dc3d9728095bdd053fad77d67d7c70044f2748be931ad4e8ea74",
+          "split_certificate_digest": "sha256:60c71961f3bb79edef84820ed8fc18c734700ac7c218b93064051996e7053411",
           "split_certificate_ref": {
             "artifact_id": "paper_lean_lemma_graph_certificate_lean_v2_hard_frontier_function_set_checker_01",
             "artifact_schema_id": "lean_proof.lemma_graph_certificate",
             "artifact_schema_version": "v2",
             "artifact_type": "LeanLemmaGraphCertificate",
-            "content_hash": "sha256:b75b7e9abebc36424aded8408810b194dba3e77f63edbc31618ca84c10931409",
+            "content_hash": "sha256:23ab7e3a03730dfb404c7c716c48c6c0242fa64953cb69700d3d13799501c502",
             "created_at": "2026-07-14T00:00:00Z",
             "media_type": "application/json",
             "metadata": {
@@ -5521,7 +5521,7 @@
               "topic_family": "function_set"
             },
             "schema_version": "ArtifactRef.v1",
-            "size_bytes": 11653,
+            "size_bytes": 11814,
             "source": {
               "case_id": "lean_v2_hard_frontier_function_set_checker_01",
               "kind": "lean_paper_adapter"
@@ -5542,7 +5542,7 @@
             "artifact_schema_id": "lean_proof.merge_result",
             "artifact_schema_version": "v1",
             "artifact_type": "LeanLemmaGraphMergeResult",
-            "content_hash": "sha256:3c4e1faa9ef02eae648bdc482fd20a81577a5ddd42edc9d614371f96a285c52d",
+            "content_hash": "sha256:138b402a90da2f2569760ab95495e469c834af9b7af7b541e510adb33b23ac4e",
             "created_at": "2026-07-14T00:00:00Z",
             "media_type": "application/json",
             "metadata": {
@@ -5564,7 +5564,7 @@
               "artifact_schema_id": "lean_proof.checker_report",
               "artifact_schema_version": "v1",
               "artifact_type": "LeanCheckerReport",
-              "content_hash": "sha256:9557c9cdf5734687faf23a98673cce4731d8f2caa63bb1a34cbaeffd608abb1b",
+              "content_hash": "sha256:af31e507159e42a6334b6a64eb66df4fcfe463a9629a5584bb8ac1031f6321fd",
               "created_at": "2026-07-14T00:00:00Z",
               "media_type": "application/json",
               "metadata": {
@@ -5572,7 +5572,7 @@
                 "status": "accepted"
               },
               "schema_version": "ArtifactRef.v1",
-              "size_bytes": 7467,
+              "size_bytes": 7497,
               "source": {
                 "kind": "lean_checker",
                 "request_id": "task14_golden_checker_lean_v2_hard_frontier_function_set_checker_02_function_set_hard_ab_02"
@@ -5584,7 +5584,7 @@
               "artifact_schema_id": "lean_proof.checker_report",
               "artifact_schema_version": "v1",
               "artifact_type": "LeanCheckerReport",
-              "content_hash": "sha256:8480303801058d73b73313475e9ca1235b729bc7dd2b761e6ca4aad270a61a19",
+              "content_hash": "sha256:3fb602e048f15f5b9854ec63049a39e9c771279b235fed91df2aecdabd1dff79",
               "created_at": "2026-07-14T00:00:00Z",
               "media_type": "application/json",
               "metadata": {
@@ -5592,7 +5592,7 @@
                 "status": "accepted"
               },
               "schema_version": "ArtifactRef.v1",
-              "size_bytes": 7032,
+              "size_bytes": 7062,
               "source": {
                 "kind": "lean_checker",
                 "request_id": "task14_golden_checker_lean_v2_hard_frontier_function_set_checker_02_function_set_hard_ac_02"
@@ -5604,7 +5604,7 @@
               "artifact_schema_id": "lean_proof.checker_report",
               "artifact_schema_version": "v1",
               "artifact_type": "LeanCheckerReport",
-              "content_hash": "sha256:253fc7ff7a53de4afed72f0db8981fd6f23a6071767f38a6f4f4a0da0be5987c",
+              "content_hash": "sha256:ed5529cbd49e05c38b17f1a9b9433e0839b752fc5f90cbccffbd56c1d1e94bf9",
               "created_at": "2026-07-14T00:00:00Z",
               "media_type": "application/json",
               "metadata": {
@@ -5612,7 +5612,7 @@
                 "status": "accepted"
               },
               "schema_version": "ArtifactRef.v1",
-              "size_bytes": 6598,
+              "size_bytes": 6628,
               "source": {
                 "kind": "lean_checker",
                 "request_id": "task14_golden_checker_lean_v2_hard_frontier_function_set_checker_02_function_set_hard_ad_02"
@@ -5624,7 +5624,7 @@
               "artifact_schema_id": "lean_proof.checker_report",
               "artifact_schema_version": "v1",
               "artifact_type": "LeanCheckerReport",
-              "content_hash": "sha256:ff1ad57a1c82c232ebf4a68e02b8df5d9b5ada4fed62cab56ac6c7167f25b40d",
+              "content_hash": "sha256:9b6ec97b084210731a9a9d572ff665145b0c6a4c5d71ce2b6fc7dcafc765cc27",
               "created_at": "2026-07-14T00:00:00Z",
               "media_type": "application/json",
               "metadata": {
@@ -5632,7 +5632,7 @@
                 "status": "accepted"
               },
               "schema_version": "ArtifactRef.v1",
-              "size_bytes": 7465,
+              "size_bytes": 7495,
               "source": {
                 "kind": "lean_checker",
                 "request_id": "task14_golden_checker_lean_v2_hard_frontier_function_set_checker_02_function_set_hard_bc_02"
@@ -5644,7 +5644,7 @@
               "artifact_schema_id": "lean_proof.checker_report",
               "artifact_schema_version": "v1",
               "artifact_type": "LeanCheckerReport",
-              "content_hash": "sha256:4c9fe63e08db62de65f740c5c046f0470a35b400359a0a2c0021c0efca47e769",
+              "content_hash": "sha256:4a29e28bd629c10b6942691b0fad58883cb89040042aacda58abd1a97f03c6a5",
               "created_at": "2026-07-14T00:00:00Z",
               "media_type": "application/json",
               "metadata": {
@@ -5652,7 +5652,7 @@
                 "status": "accepted"
               },
               "schema_version": "ArtifactRef.v1",
-              "size_bytes": 7465,
+              "size_bytes": 7495,
               "source": {
                 "kind": "lean_checker",
                 "request_id": "task14_golden_checker_lean_v2_hard_frontier_function_set_checker_02_function_set_hard_cd_02"
@@ -5664,7 +5664,7 @@
               "artifact_schema_id": "lean_proof.checker_report",
               "artifact_schema_version": "v1",
               "artifact_type": "LeanCheckerReport",
-              "content_hash": "sha256:3c67946459943df2ad4ecf9bf917a1fce72cfed44b2b260b125d34b99c2b2946",
+              "content_hash": "sha256:d70f47511e32f9d96981e40a663d98b3c55aab7cf5b5d44a4f19c17e74237008",
               "created_at": "2026-07-14T00:00:00Z",
               "media_type": "application/json",
               "metadata": {
@@ -5672,7 +5672,7 @@
                 "status": "accepted"
               },
               "schema_version": "ArtifactRef.v1",
-              "size_bytes": 6626,
+              "size_bytes": 6656,
               "source": {
                 "kind": "lean_checker",
                 "request_id": "task14_golden_checker_lean_v2_hard_frontier_function_set_checker_02_function_set_hard_root_02"
@@ -5937,7 +5937,7 @@
             "artifact_schema_id": "lean_proof.checker_report",
             "artifact_schema_version": "v1",
             "artifact_type": "LeanCheckerReport",
-            "content_hash": "sha256:762f3ca19ceea09c438d589a1fb362f841cea7c57b58f2355708f570ff27f605",
+            "content_hash": "sha256:f27af5c67530adb7eba6e115f031f4db65f849c27020c895008f99aca5a3a050",
             "created_at": "2026-07-14T00:00:00Z",
             "media_type": "application/json",
             "metadata": {
@@ -5945,7 +5945,7 @@
               "status": "accepted"
             },
             "schema_version": "ArtifactRef.v1",
-            "size_bytes": 6516,
+            "size_bytes": 6547,
             "source": {
               "kind": "lean_checker",
               "request_id": "task14_golden_lemma_graph_merge_request_lean_v2_hard_frontier_function_set_checker_02"
@@ -5974,13 +5974,13 @@
           },
           "root_recheck": "passed",
           "schema_version": "tokenshare.lean_task14_golden_evidence.v1",
-          "split_certificate_digest": "sha256:8a2ff0d852b65a417bdee388d7f832a12daff5dde185cc76af557f5283e26074",
+          "split_certificate_digest": "sha256:6b6fe30918283a7496de2263e4d01574d937830b82d814601d2ec1ff2f9c3367",
           "split_certificate_ref": {
             "artifact_id": "paper_lean_lemma_graph_certificate_lean_v2_hard_frontier_function_set_checker_02",
             "artifact_schema_id": "lean_proof.lemma_graph_certificate",
             "artifact_schema_version": "v2",
             "artifact_type": "LeanLemmaGraphCertificate",
-            "content_hash": "sha256:0263a3d43dac3c6540b8261c2fc3b90946c0733cbe06503c951e469c891d714b",
+            "content_hash": "sha256:5b3368a93cc45bb42acde19a6451aaa427c69fdb9dbde8f37f8dfccb8540deb1",
             "created_at": "2026-07-14T00:00:00Z",
             "media_type": "application/json",
             "metadata": {
@@ -5990,7 +5990,7 @@
               "topic_family": "function_set"
             },
             "schema_version": "ArtifactRef.v1",
-            "size_bytes": 11883,
+            "size_bytes": 12044,
             "source": {
               "case_id": "lean_v2_hard_frontier_function_set_checker_02",
               "kind": "lean_paper_adapter"
@@ -6087,7 +6087,7 @@
             "artifact_schema_id": "lean_proof.merge_result",
             "artifact_schema_version": "v1",
             "artifact_type": "LeanLemmaGraphMergeResult",
-            "content_hash": "sha256:6cdad80c322464c1432ab928e29af66bad50f554d9b504b7aee69c6390b87a6e",
+            "content_hash": "sha256:a170755954af15b1dd31a2f0ce7cf5eef2e52372fb2540ceabbfcf0b5d495c71",
             "created_at": "2026-07-14T00:00:00Z",
             "media_type": "application/json",
             "metadata": {
@@ -6109,7 +6109,7 @@
               "artifact_schema_id": "lean_proof.checker_report",
               "artifact_schema_version": "v1",
               "artifact_type": "LeanCheckerReport",
-              "content_hash": "sha256:ef36111ac43c37d2ec373b266f5d19220131d7e9555634553669b24222a039cf",
+              "content_hash": "sha256:6427825ed195f9271a5b7cfa97b2e31ade1f35fb1d331d84e724f609b9e785d5",
               "created_at": "2026-07-14T00:00:00Z",
               "media_type": "application/json",
               "metadata": {
@@ -6117,7 +6117,7 @@
                 "status": "accepted"
               },
               "schema_version": "ArtifactRef.v1",
-              "size_bytes": 6518,
+              "size_bytes": 6548,
               "source": {
                 "kind": "lean_checker",
                 "request_id": "task14_golden_checker_lean_v2_hard_frontier_induction_checker_01_induction_hard_a_01"
@@ -6129,7 +6129,7 @@
               "artifact_schema_id": "lean_proof.checker_report",
               "artifact_schema_version": "v1",
               "artifact_type": "LeanCheckerReport",
-              "content_hash": "sha256:cd1eec2dacbf27890540e443e1a6a038164a5097ce4d191c772b4d43ad080e23",
+              "content_hash": "sha256:794a72424222e64a1f7b97a9010a37c016e670947b33e976440ac34e5c76cd49",
               "created_at": "2026-07-14T00:00:00Z",
               "media_type": "application/json",
               "metadata": {
@@ -6137,7 +6137,7 @@
                 "status": "accepted"
               },
               "schema_version": "ArtifactRef.v1",
-              "size_bytes": 6964,
+              "size_bytes": 6994,
               "source": {
                 "kind": "lean_checker",
                 "request_id": "task14_golden_checker_lean_v2_hard_frontier_induction_checker_01_induction_hard_ab_01"
@@ -6149,7 +6149,7 @@
               "artifact_schema_id": "lean_proof.checker_report",
               "artifact_schema_version": "v1",
               "artifact_type": "LeanCheckerReport",
-              "content_hash": "sha256:ec13a25393cf486a66e53203f528c6764059e9485e4029a479eee79b30683564",
+              "content_hash": "sha256:f02910536177c60427bba450d94843b4a6bff3d1921ea43883db1a47237a09af",
               "created_at": "2026-07-14T00:00:00Z",
               "media_type": "application/json",
               "metadata": {
@@ -6157,7 +6157,7 @@
                 "status": "accepted"
               },
               "schema_version": "ArtifactRef.v1",
-              "size_bytes": 6085,
+              "size_bytes": 6115,
               "source": {
                 "kind": "lean_checker",
                 "request_id": "task14_golden_checker_lean_v2_hard_frontier_induction_checker_01_induction_hard_b_01"
@@ -6169,7 +6169,7 @@
               "artifact_schema_id": "lean_proof.checker_report",
               "artifact_schema_version": "v1",
               "artifact_type": "LeanCheckerReport",
-              "content_hash": "sha256:770ea8ea4822c2a9ef9a9983149f167cedabb90963a0dcd328933bad94fc76e2",
+              "content_hash": "sha256:8888c7c1b4a5a6bec8176b55dd5956f128aaa6cd0475c7e96ddcc0df0272353d",
               "created_at": "2026-07-14T00:00:00Z",
               "media_type": "application/json",
               "metadata": {
@@ -6177,7 +6177,7 @@
                 "status": "accepted"
               },
               "schema_version": "ArtifactRef.v1",
-              "size_bytes": 6964,
+              "size_bytes": 6994,
               "source": {
                 "kind": "lean_checker",
                 "request_id": "task14_golden_checker_lean_v2_hard_frontier_induction_checker_01_induction_hard_bc_01"
@@ -6189,7 +6189,7 @@
               "artifact_schema_id": "lean_proof.checker_report",
               "artifact_schema_version": "v1",
               "artifact_type": "LeanCheckerReport",
-              "content_hash": "sha256:2dd9f6a02a1a3d96f4050ef7f12c93cb689d14fd1d6f7c17d40af55c8dede882",
+              "content_hash": "sha256:8d7e084c3784fa113ef6a61319e01a59baf090d60e8eb685b69fbc9ee13a8e22",
               "created_at": "2026-07-14T00:00:00Z",
               "media_type": "application/json",
               "metadata": {
@@ -6197,7 +6197,7 @@
                 "status": "accepted"
               },
               "schema_version": "ArtifactRef.v1",
-              "size_bytes": 5651,
+              "size_bytes": 5681,
               "source": {
                 "kind": "lean_checker",
                 "request_id": "task14_golden_checker_lean_v2_hard_frontier_induction_checker_01_induction_hard_c_01"
@@ -6209,7 +6209,7 @@
               "artifact_schema_id": "lean_proof.checker_report",
               "artifact_schema_version": "v1",
               "artifact_type": "LeanCheckerReport",
-              "content_hash": "sha256:b7dcb890723e54c9389e1faa5bcf3bf9b8f4b43b98ec6389fedd539b2fdc3079",
+              "content_hash": "sha256:7fbba8bc2b93494a1b8788acc278b49f8cf341512b6f5454e36572aa021e4952",
               "created_at": "2026-07-14T00:00:00Z",
               "media_type": "application/json",
               "metadata": {
@@ -6217,7 +6217,7 @@
                 "status": "accepted"
               },
               "schema_version": "ArtifactRef.v1",
-              "size_bytes": 6964,
+              "size_bytes": 6995,
               "source": {
                 "kind": "lean_checker",
                 "request_id": "task14_golden_checker_lean_v2_hard_frontier_induction_checker_01_induction_hard_cd_01"
@@ -6229,7 +6229,7 @@
               "artifact_schema_id": "lean_proof.checker_report",
               "artifact_schema_version": "v1",
               "artifact_type": "LeanCheckerReport",
-              "content_hash": "sha256:ce1cae503ef7d9d520e45486474bf40579678abd6b499a624d1420fa12207d99",
+              "content_hash": "sha256:399ec7f1a0f47238bf701b45bc00ac22e6337c3eaf830c8fd41b47f71670c3c5",
               "created_at": "2026-07-14T00:00:00Z",
               "media_type": "application/json",
               "metadata": {
@@ -6237,7 +6237,7 @@
                 "status": "accepted"
               },
               "schema_version": "ArtifactRef.v1",
-              "size_bytes": 5257,
+              "size_bytes": 5288,
               "source": {
                 "kind": "lean_checker",
                 "request_id": "task14_golden_checker_lean_v2_hard_frontier_induction_checker_01_induction_hard_root_01"
@@ -6543,7 +6543,7 @@
             "artifact_schema_id": "lean_proof.checker_report",
             "artifact_schema_version": "v1",
             "artifact_type": "LeanCheckerReport",
-            "content_hash": "sha256:78c12c1305c37031bee22bcf589c64ecb6c95c790b9d697644e32359c3a47309",
+            "content_hash": "sha256:0d60727e2ab7c597db6063b967c04d23e188bce241882002463e0ae6633eaa4d",
             "created_at": "2026-07-14T00:00:00Z",
             "media_type": "application/json",
             "metadata": {
@@ -6551,7 +6551,7 @@
               "status": "accepted"
             },
             "schema_version": "ArtifactRef.v1",
-            "size_bytes": 5188,
+            "size_bytes": 5218,
             "source": {
               "kind": "lean_checker",
               "request_id": "task14_golden_lemma_graph_merge_request_lean_v2_hard_frontier_induction_checker_01"
@@ -6580,13 +6580,13 @@
           },
           "root_recheck": "passed",
           "schema_version": "tokenshare.lean_task14_golden_evidence.v1",
-          "split_certificate_digest": "sha256:0d3e9f5aef342b4ec1f3848287541d17cfbef5ecabb638d92661b5efeadd2b7b",
+          "split_certificate_digest": "sha256:d0ea604e5b8e80e34b655fa62fe08c9399f1180fea53e29ab60fa177bac8a67c",
           "split_certificate_ref": {
             "artifact_id": "paper_lean_lemma_graph_certificate_lean_v2_hard_frontier_induction_checker_01",
             "artifact_schema_id": "lean_proof.lemma_graph_certificate",
             "artifact_schema_version": "v2",
             "artifact_type": "LeanLemmaGraphCertificate",
-            "content_hash": "sha256:0d59c6f5e053a7e43869725931fc69b0c78cadc5e59df67564ab8da8f8d6817a",
+            "content_hash": "sha256:710049b91150957bb0e2f534e2d31611a3b282868b434aeb15bbcb3758c74b4d",
             "created_at": "2026-07-14T00:00:00Z",
             "media_type": "application/json",
             "metadata": {
@@ -6596,7 +6596,7 @@
               "topic_family": "induction"
             },
             "schema_version": "ArtifactRef.v1",
-            "size_bytes": 13397,
+            "size_bytes": 13555,
             "source": {
               "case_id": "lean_v2_hard_frontier_induction_checker_01",
               "kind": "lean_paper_adapter"
@@ -6617,7 +6617,7 @@
             "artifact_schema_id": "lean_proof.merge_result",
             "artifact_schema_version": "v1",
             "artifact_type": "LeanLemmaGraphMergeResult",
-            "content_hash": "sha256:0374eb7b16d5f6d2bc1850acfbed661881f9b2028a59e6b9ebb8b8635bb47d15",
+            "content_hash": "sha256:27f9b2e4c3b2ba9bce28f9acc28720aa17e7d627e648c4c88ee498467157c0dd",
             "created_at": "2026-07-14T00:00:00Z",
             "media_type": "application/json",
             "metadata": {
@@ -6639,7 +6639,7 @@
               "artifact_schema_id": "lean_proof.checker_report",
               "artifact_schema_version": "v1",
               "artifact_type": "LeanCheckerReport",
-              "content_hash": "sha256:4108e98969330021cfa5489457791d34bc55738c2cd8638ac25418d0d252df36",
+              "content_hash": "sha256:507f88ebb8e2cf1eb0725700def6cf5e8cf62d5af56c742037877a185d2cac2b",
               "created_at": "2026-07-14T00:00:00Z",
               "media_type": "application/json",
               "metadata": {
@@ -6647,7 +6647,7 @@
                 "status": "accepted"
               },
               "schema_version": "ArtifactRef.v1",
-              "size_bytes": 7375,
+              "size_bytes": 7405,
               "source": {
                 "kind": "lean_checker",
                 "request_id": "task14_golden_checker_lean_v2_hard_frontier_induction_checker_02_induction_hard_a_02"
@@ -6659,7 +6659,7 @@
               "artifact_schema_id": "lean_proof.checker_report",
               "artifact_schema_version": "v1",
               "artifact_type": "LeanCheckerReport",
-              "content_hash": "sha256:6880f1c1ad531bcc0553d6757a2dc9f2ab29a73aacf7e58c68c44571d2019c28",
+              "content_hash": "sha256:98de77c9fa4981d30316993fe317498b067c6f57ceaccd9549c6b1e4a46c13fb",
               "created_at": "2026-07-14T00:00:00Z",
               "media_type": "application/json",
               "metadata": {
@@ -6667,7 +6667,7 @@
                 "status": "accepted"
               },
               "schema_version": "ArtifactRef.v1",
-              "size_bytes": 7821,
+              "size_bytes": 7851,
               "source": {
                 "kind": "lean_checker",
                 "request_id": "task14_golden_checker_lean_v2_hard_frontier_induction_checker_02_induction_hard_ab_02"
@@ -6679,7 +6679,7 @@
               "artifact_schema_id": "lean_proof.checker_report",
               "artifact_schema_version": "v1",
               "artifact_type": "LeanCheckerReport",
-              "content_hash": "sha256:b95ace7071309c5101f1c9feb75a1955f58b869a4fde214221c9e436794ceba8",
+              "content_hash": "sha256:bdaed5b1d4d9e7103ab70165cd1e9cac0e412a4e9b4e9a2d6cdb59b8d1dc5b82",
               "created_at": "2026-07-14T00:00:00Z",
               "media_type": "application/json",
               "metadata": {
@@ -6687,7 +6687,7 @@
                 "status": "accepted"
               },
               "schema_version": "ArtifactRef.v1",
-              "size_bytes": 6941,
+              "size_bytes": 6972,
               "source": {
                 "kind": "lean_checker",
                 "request_id": "task14_golden_checker_lean_v2_hard_frontier_induction_checker_02_induction_hard_b_02"
@@ -6699,7 +6699,7 @@
               "artifact_schema_id": "lean_proof.checker_report",
               "artifact_schema_version": "v1",
               "artifact_type": "LeanCheckerReport",
-              "content_hash": "sha256:0c7e7bf0a0a89575940fc2b6e07644f81bb27add13414054b6cb9137d8356316",
+              "content_hash": "sha256:ef506738d788e688367a93f470f3ea5aa00f1cd30661ec64e3ac0a0686fecee0",
               "created_at": "2026-07-14T00:00:00Z",
               "media_type": "application/json",
               "metadata": {
@@ -6707,7 +6707,7 @@
                 "status": "accepted"
               },
               "schema_version": "ArtifactRef.v1",
-              "size_bytes": 7821,
+              "size_bytes": 7852,
               "source": {
                 "kind": "lean_checker",
                 "request_id": "task14_golden_checker_lean_v2_hard_frontier_induction_checker_02_induction_hard_bc_02"
@@ -6719,7 +6719,7 @@
               "artifact_schema_id": "lean_proof.checker_report",
               "artifact_schema_version": "v1",
               "artifact_type": "LeanCheckerReport",
-              "content_hash": "sha256:95c9100cdb096c6445e4ba00b6dd460520738f8dbfc187da30b6b47aab13b7c1",
+              "content_hash": "sha256:98247f05ee7c01209b52530967259e5061ce73c6d3fc6ace569e454118b9ff48",
               "created_at": "2026-07-14T00:00:00Z",
               "media_type": "application/json",
               "metadata": {
@@ -6727,7 +6727,7 @@
                 "status": "accepted"
               },
               "schema_version": "ArtifactRef.v1",
-              "size_bytes": 6507,
+              "size_bytes": 6537,
               "source": {
                 "kind": "lean_checker",
                 "request_id": "task14_golden_checker_lean_v2_hard_frontier_induction_checker_02_induction_hard_c_02"
@@ -6739,7 +6739,7 @@
               "artifact_schema_id": "lean_proof.checker_report",
               "artifact_schema_version": "v1",
               "artifact_type": "LeanCheckerReport",
-              "content_hash": "sha256:19eca66d18b3259fa7d611a23e8ad686fd3e52fc86534a6ec7ab116bafff85d1",
+              "content_hash": "sha256:73f02b63e4081bd162ee9945b766698163e954b9cde987cd4f62fa2c3dc7704b",
               "created_at": "2026-07-14T00:00:00Z",
               "media_type": "application/json",
               "metadata": {
@@ -6747,7 +6747,7 @@
                 "status": "accepted"
               },
               "schema_version": "ArtifactRef.v1",
-              "size_bytes": 7821,
+              "size_bytes": 7851,
               "source": {
                 "kind": "lean_checker",
                 "request_id": "task14_golden_checker_lean_v2_hard_frontier_induction_checker_02_induction_hard_cd_02"
@@ -6759,7 +6759,7 @@
               "artifact_schema_id": "lean_proof.checker_report",
               "artifact_schema_version": "v1",
               "artifact_type": "LeanCheckerReport",
-              "content_hash": "sha256:40a26344490549d4def7ef0f909e451f60b503c897892e4290c45ab74f24510e",
+              "content_hash": "sha256:8d1af4f386ed9282ff624af95ec0d857e624f453e1fac9facc87fcdb912a927c",
               "created_at": "2026-07-14T00:00:00Z",
               "media_type": "application/json",
               "metadata": {
@@ -6767,7 +6767,7 @@
                 "status": "accepted"
               },
               "schema_version": "ArtifactRef.v1",
-              "size_bytes": 6115,
+              "size_bytes": 6145,
               "source": {
                 "kind": "lean_checker",
                 "request_id": "task14_golden_checker_lean_v2_hard_frontier_induction_checker_02_induction_hard_root_02"
@@ -7073,7 +7073,7 @@
             "artifact_schema_id": "lean_proof.checker_report",
             "artifact_schema_version": "v1",
             "artifact_type": "LeanCheckerReport",
-            "content_hash": "sha256:089221914da93fd49c6bdfde30dfa4361e1ce5ed020df9743fe3aee018f95066",
+            "content_hash": "sha256:3e959f6e95ac79c9deb2e1b977c0f6385532ed6fdeb1ee974e3d0e1ed8257c9d",
             "created_at": "2026-07-14T00:00:00Z",
             "media_type": "application/json",
             "metadata": {
@@ -7081,7 +7081,7 @@
               "status": "accepted"
             },
             "schema_version": "ArtifactRef.v1",
-            "size_bytes": 6046,
+            "size_bytes": 6076,
             "source": {
               "kind": "lean_checker",
               "request_id": "task14_golden_lemma_graph_merge_request_lean_v2_hard_frontier_induction_checker_02"
@@ -7110,13 +7110,13 @@
           },
           "root_recheck": "passed",
           "schema_version": "tokenshare.lean_task14_golden_evidence.v1",
-          "split_certificate_digest": "sha256:8ae4b6adb6e8f9ad5ad5d1624c35b465c40ce57f2cf2a5f9663979170a34d9e6",
+          "split_certificate_digest": "sha256:249d26ccd00c5bb2231fc00b96c3762294ab483b2f94a6b33db381f893e2e381",
           "split_certificate_ref": {
             "artifact_id": "paper_lean_lemma_graph_certificate_lean_v2_hard_frontier_induction_checker_02",
             "artifact_schema_id": "lean_proof.lemma_graph_certificate",
             "artifact_schema_version": "v2",
             "artifact_type": "LeanLemmaGraphCertificate",
-            "content_hash": "sha256:1aa950ac9c87edd921988c38d217b0adfe603963e0ccdc34ea36963acdf496d0",
+            "content_hash": "sha256:3bdcca2bbb787b4a31cf71686cc9d7edeb1c6c63962f115463c81cc0e514f185",
             "created_at": "2026-07-14T00:00:00Z",
             "media_type": "application/json",
             "metadata": {
@@ -7126,7 +7126,7 @@
               "topic_family": "induction"
             },
             "schema_version": "ArtifactRef.v1",
-            "size_bytes": 13605,
+            "size_bytes": 13763,
             "source": {
               "case_id": "lean_v2_hard_frontier_induction_checker_02",
               "kind": "lean_paper_adapter"
@@ -7194,7 +7194,7 @@
     "simple/induction": true,
     "simple/pure_logic": true
   },
-  "matrix_digest": "sha256:43f1a3ab54c735cf34f9438d8b04899976bfc2d11afc47073c5822f4de2f8255",
+  "matrix_digest": "sha256:b13c142a5f112072a09d34bc4a812563ea481f54b88f6be5039a09d213d3abdc",
   "oracle_package_digests": {
     "lean_lemma_graph_oracle.function_set.v1": "sha256:4af791228bd24f4ea6d92fed511be8eee4f29d1ba8db5c6102968e743a8047ca",
     "lean_lemma_graph_oracle.induction.v1": "sha256:4af791228bd24f4ea6d92fed511be8eee4f29d1ba8db5c6102968e743a8047ca",
@@ -7272,7 +7272,7 @@
         "lean_v2_simple_pure_logic_direct_prop_02"
       ]
     },
-    "matrix_digest": "sha256:43f1a3ab54c735cf34f9438d8b04899976bfc2d11afc47073c5822f4de2f8255",
+    "matrix_digest": "sha256:b13c142a5f112072a09d34bc4a812563ea481f54b88f6be5039a09d213d3abdc",
     "oracle_package_digests": {
       "lean_lemma_graph_oracle.function_set.v1": "sha256:4af791228bd24f4ea6d92fed511be8eee4f29d1ba8db5c6102968e743a8047ca",
       "lean_lemma_graph_oracle.induction.v1": "sha256:4af791228bd24f4ea6d92fed511be8eee4f29d1ba8db5c6102968e743a8047ca",

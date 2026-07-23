@@ -549,10 +549,10 @@ def test_cli_plan_only_exp5_writes_fixed_endpoint_cohort_evidence_without_provid
         "gpt_5_6_sol_high_openai",
     }
     assert suite["condition_count"] == 54
-    assert suite["run_count"] == 270
-    assert suite["task_count"] == 270
+    assert suite["run_count"] == 4_635
+    assert suite["task_count"] == 4_635
     assert budget["planned_conditions"] == 54
-    assert budget["planned_root_runs"] == 270
+    assert budget["planned_root_runs"] == 4_635
 
 
 def test_cli_exp5_missing_member_is_structured_blocked_but_exp1_plan_still_succeeds(

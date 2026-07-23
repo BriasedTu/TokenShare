@@ -15,6 +15,7 @@ TokenShare 是一个早期本地研究原型，目标是验证一种协议：把
    - PowerShell 默认快速档：`.\init.ps1`
    - Bash/Git Bash/WSL 默认快速档：`./init.sh`
    - feature 完成、提交/合并或发布实验结果前，运行完整档：`.\init.ps1 -Full` 或 `./init.sh --full`
+   - 涉及 Lean catalog/checker/toolchain/fixture helper 或发布 Lean 论文结果时，按 `2026-07-22-lean-checker-verification-profiles-design.md` 追加增量 `-LeanAudit` / `--lean-audit`；共享 checker/toolchain/helper 变化或正式发布才使用 force-all
 5. 阅读 `feature_list.json`，确认当前 active track。若 `active_features` 同时列出 Phase 6 Lean 插件和 Phase 8 实验基础设施，本轮仍只选择其中一个 track 实施，除非用户明确要求做跨 track 状态同步。
 6. 阅读 `progress.md` 和 `session-handoff.md`，确认当前状态和未解决决策。
 7. 如果需要判断代码应该放在哪个模块、哪些外部参考资料可借鉴，先看 `Doc/agent-navigation.md`。
@@ -32,10 +33,10 @@ V1 范围内：
 - 使用本地文件系统、SQLite、JSON、JSONL 做 artifact 和事件存储。
 - 带固定版本的插件注册表和执行器注册表。
 - factorization 插件和真实 Lean 形式化证明插件，作为协议实验对象；structured report stub 已从 Phase 6 开发计划剔除。
-- 真实 Lean 形式化证明插件必须使用固定本地 Lean/lake/toolchain/library 环境做 proof artifact 检查；拆分算法必须由插件内确定性规则自动识别 Lean theorem / proof-state 结构并生成子任务，不得由 AI 决定协议级拆分。
+- 真实 Lean 形式化证明插件必须使用固定本地 Lean/lake/toolchain/library 环境做 proof artifact 检查；拆分必须来自插件内确定性规则，或来自 formal catalog/脚本预注册并由 Lean 插件校验的固定 lemma-DAG，不要求运行时从任意 Lean theorem 自动发现全部中间引理，不得由 AI 决定协议级拆分。
 - 实验级 AI API 执行器，用于在受控 fixture / benchmark 下验证真实模型输出效果；标准 executor config 只保存 `api_key_env`，真实 API smoke 可从被 gitignore 的 `local/ai_api_smoke.local.json` 读取明文 key 并仅注入当前进程环境变量，调用结果必须持久化为 artifact，event/artifact/SQLite/log/config digest 不得保存 secret，replay 不得重新调用 API。
 - 实验设计必须优先遵守 `tokenshare_latest_real_plugin_experiment_design.md`：Experiment 1 真实 AI 跨领域可行性与难度、Experiment 2 真实 AI worker 扩展性、Experiment 3 真实 AI 故障注入与 worker death 恢复、Experiment 4 真实 AI 协议消融、Experiment 5 预注册三模型 model-provider endpoint comparison。正式 Lean catalog 固定为 3 个 paper difficulty × 3 个 topic family × 每格 15 道，共 135 道；不得缩成 10–20 道区间或用 shallow case 补格。除 Experiment 5 外，Experiment 1–4 的 pilot、正式条件、故障恢复和消融均固定使用 SiliconFlow `zai-org/GLM-5.2` / `glm_5_2_exp1_baseline`，不得自动换模型。Experiment 5 不再使用 strong/weak/mixed 标签；固定比较 SiliconFlow GLM-5.2、SiliconFlow Qwen3.6-27B 和 OpenAI GPT-5.6 Sol high 三个端点，外部榜单分数只作背景 metadata。所有可写入论文的新实验都必须实际调用真实 AI API；旧 deterministic/scripted suite、direct 500 benchmark、toy demo 或 `lean_stub` 只能作为回归、输入来源或成本校准。
-- offline、slow、executor_error、invalid_output、late_submission 五类故障模拟。
+- 当前论文 Experiment 3 的 rate-fault 只实现 `false_positive`、`false_negative`、`no_return`、`late_submission`、`executor_error` 五类；`worker_death` 是单独预注册的实验条件，Experiment 4 ablation 不是新增故障类型。
 - 指标报告、状态重放、审计重放、sandbox 结算。
 
 V1 范围外：
@@ -43,6 +44,7 @@ V1 范围外：
 - 真实区块链、钱包、智能合约或真实代币支付。
 - 真实分布式网络、HTTP worker pool 或 P2P runtime。
 - 生产级身份、权限、反女巫或拜占庭容错系统。
+- 外部不可信输入或主动攻击防护，包括恶意手工篡改/伪造、路径或链接攻击、SQL/JSON/命令注入、schema/security fuzzing、对抗性插件/executor/provider envelope、签名鉴权和攻击者模型。V1 假设受信本地研究工作流；除权威实验设计的五类 rate-fault 外，不新增故障/攻击类型或对应加固任务。已有正常路径 schema、artifact hash、secret 不落盘和 replay/checkpoint 一致性检查只维持实验正确性，不扩展成安全工程。
 - 完整 Web UI、动态第三方插件市场、生产级 AI API 平台、多租户 provider 管理、生产级 theorem-proving 平台、LeanDojo 训练/检索平台或动态 Lean 服务。
 
 ## 语言要求（Language Policy）
@@ -73,7 +75,7 @@ V1 范围外：
 - 验证证据已经写入 `feature_list.json` 或 `progress.md`。
 - 如果修改了协议、event、artifact schema，必须同步记录。
 - 如果使用了联网资料，论文/报告已经下载或转写到 `Doc/TechnicalDocument/tokenshare-paper-tex/` 并更新论文映射；开源项目已经浅克隆或 sparse checkout 到 `reference_repos/` 并更新 `reference_repos/README.md`；普通在线文档已经记录来源、访问日期、本地摘要和影响范围。
-- 仓库仍然可以通过 `.\init.ps1` 或 `./init.sh` 完成默认快速启动验证，并在 feature 完成、提交/合并或发布实验结果前通过 `.\init.ps1 -Full` 或 `./init.sh --full` 完整验证，保持 restartable 和 clean。
+- 仓库仍然可以通过 `.\init.ps1` 或 `./init.sh` 完成默认快速启动验证，并在 feature 完成、提交/合并或发布实验结果前通过 `.\init.ps1 -Full` 或 `./init.sh --full` 完整验证，保持 restartable 和 clean；Lean 相关变更还必须按通用分层设计运行 canary/LeanAudit，不能用普通 catalog load 代替正式 checker evidence。
 
 ## 验证命令（Verification Commands）
 
@@ -97,7 +99,19 @@ V1 范围外：
 ./init.sh --full
 ```
 
-`init.ps1` 和 `init.sh` 默认使用 `conda run -n tokenshare python`；可通过 `TOKENSHARE_CONDA_ENV` 临时覆盖环境名。两个档位都会运行 Python JSON/SQLite、harness 文件检查和排除 `reference_repos/` 的全仓 `compileall`。默认快速档随后执行 `verification/fast-tests.txt` 中的无网络 smoke/regression tests；完整档执行 `pytest tests`。改动相关的定向测试仍需单独运行，默认快速档不能替代 feature 完成证据。
+Lean 增量审计与显式全量审计：
+
+```powershell
+.\init.ps1 -Full -LeanAudit
+.\init.ps1 -Full -LeanAudit -ForceAllLeanAudit
+```
+
+```bash
+./init.sh --full --lean-audit
+./init.sh --full --lean-audit --force-all-lean-audit
+```
+
+`init.ps1` 和 `init.sh` 默认只执行一次 `conda run -n tokenshare python verification/run_verification.py`；可通过 `TOKENSHARE_CONDA_ENV` 临时覆盖环境名。两个档位都会运行 Python JSON/SQLite、harness 文件检查和排除 `reference_repos/` 的全仓 `compileall`。默认快速档随后执行 `verification/fast-tests.txt` 中的无网络 smoke/regression tests；完整档执行 `pytest tests`，但不会默认重跑全部 600 条 Lean catalog entry。改动相关的定向测试仍需单独运行。LeanAudit 默认内容寻址增量重检，只有共享 Lean 输入变化、正式发布或显式 force-all 才重检全部 entry；普通 catalog load 只验证 tracked manifest 并在 stale 时 fail closed。
 
 ## 结束会话（End of Session / Before ending）
 

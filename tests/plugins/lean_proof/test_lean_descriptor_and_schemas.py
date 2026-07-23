@@ -75,11 +75,15 @@ def test_lean_descriptor_declares_split_strategy_validator_and_merge_policy() ->
         "root",
         "lean_theorem",
         "lean_proof_subgoal",
+        "lean_proof_lemma_node",
         "lean_proof_merge",
     ]
     assert body["validator_policy_id"] == "lean_proof.checker.validator.v1"
     assert body["merge_policy_id"] == "lean_proof.verified_merge.v1"
-    assert strategy["allowed_unit_types"] == ["lean_proof_subgoal"]
+    assert strategy["allowed_unit_types"] == [
+        "lean_proof_subgoal",
+        "lean_proof_lemma_node",
+    ]
     assert strategy["validator_policy_id"] == "lean_proof.checker.validator.v1"
     assert strategy["merge_policy_id"] == "lean_proof.verified_merge.v1"
     assert strategy["durable_subgoal_policy"]["only_promote_helper_certificate_children"] is True

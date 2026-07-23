@@ -42,6 +42,7 @@ from tokenshare.experiments.paper_models import (
     PaperConditionResult,
     PaperExperimentCondition,
 )
+from tokenshare.local_runtime import ProtocolRunRequest, ProtocolRunResult
 
 
 _MODULES: tuple[tuple[str, PaperExperimentModule], ...] = (
@@ -276,15 +277,11 @@ def dispatch_paper_case(
     selected_ai_unit_id: str | None = None,
     post_raw_output_hook: Any | None = None,
     ablation_mode: str | None = None,
+    checker: Any | None = None,
 ) -> Any:
     """把一个冻结 paper case 路由到所属插件的 adapter。"""
 
-    adapter = (
-        run_factorization_paper_case
-        if condition.domain == "factorization"
-        else run_lean_paper_case
-    )
-    return adapter(
+    adapter_kwargs = dict(
         case=case,
         condition=condition,
         output_root=output_root,
@@ -297,7 +294,33 @@ def dispatch_paper_case(
         selected_ai_unit_id=selected_ai_unit_id,
         post_raw_output_hook=post_raw_output_hook,
         ablation_mode=ablation_mode,
+        protocol_run_dispatcher=execute_protocol_request,
     )
+    if condition.domain == "factorization":
+        if checker is not None:
+            raise ValueError("Factorization paper dispatch does not accept a Lean checker")
+        return run_factorization_paper_case(**adapter_kwargs)
+    if checker is None:
+        return run_lean_paper_case(**adapter_kwargs)
+    return run_lean_paper_case(**adapter_kwargs, checker=checker)
+
+
+def execute_protocol_request(
+    *,
+    coordinator: Any,
+    request: ProtocolRunRequest,
+) -> ProtocolRunResult:
+    """校验共享 request 边界，并由 dispatcher 调用系统 coordinator。"""
+
+    if not isinstance(request, ProtocolRunRequest):
+        raise TypeError("paper dispatcher requires ProtocolRunRequest")
+    run_root = getattr(coordinator, "run_root", None)
+    if not callable(run_root):
+        raise TypeError("paper dispatcher requires ProtocolRunCoordinator-compatible object")
+    result = run_root(request)
+    if not isinstance(result, ProtocolRunResult):
+        raise TypeError("paper coordinator must return ProtocolRunResult")
+    return result
 
 
 def _validate_bound_selection(

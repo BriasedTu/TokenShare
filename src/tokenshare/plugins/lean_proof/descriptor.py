@@ -11,6 +11,7 @@ from tokenshare.plugins.lean_proof.schemas import (
     LEAN_FAILURE_REPORT_SCHEMA_VERSION,
     LEAN_MERGE_RESULT_SCHEMA_VERSION,
     LEAN_PROOF_ARTIFACT_SCHEMA_VERSION,
+    LEAN_PROOF_LEMMA_NODE_TASK_TYPE,
     LEAN_PROOF_CANDIDATE_SCHEMA_VERSION,
     LEAN_SPLIT_CERTIFICATE_SCHEMA_VERSION,
     LEAN_THEOREM_PAYLOAD_SCHEMA_VERSION,
@@ -93,19 +94,30 @@ def build_lean_proof_plugin_descriptor() -> PluginDescriptor:
             DETERMINISTIC_TACTIC_SPLIT_STRATEGY_ID: SplitStrategyContract(
                 split_strategy_id=DETERMINISTIC_TACTIC_SPLIT_STRATEGY_ID,
                 params_schema_ref=schema_ref("lean_proof.deterministic_tactic_split_params.v1"),
-                allowed_unit_types=["lean_proof_subgoal"],
+                allowed_unit_types=[
+                    "lean_proof_subgoal",
+                    LEAN_PROOF_LEMMA_NODE_TASK_TYPE,
+                ],
                 child_input_port_schema_refs={
                     "child_theorem_payload": schema_ref(
                         LEAN_CHILD_THEOREM_PAYLOAD_SCHEMA_VERSION
                     )
                 },
                 child_output_contract_refs={
-                    "lean_proof_subgoal": {"output_contract_id": PROOF_ARTIFACT_CONTRACT_ID}
+                    "lean_proof_subgoal": {
+                        "output_contract_id": PROOF_ARTIFACT_CONTRACT_ID
+                    },
+                    LEAN_PROOF_LEMMA_NODE_TASK_TYPE: {
+                        "output_contract_id": PROOF_ARTIFACT_CONTRACT_ID
+                    },
                 },
                 validator_policy_id=CHECKER_VALIDATOR_POLICY_ID,
                 merge_policy_id=VERIFIED_MERGE_POLICY_ID,
                 durable_subgoal_policy={
-                    "only_promote_unit_types": ["lean_proof_subgoal"],
+                    "only_promote_unit_types": [
+                        "lean_proof_subgoal",
+                        LEAN_PROOF_LEMMA_NODE_TASK_TYPE,
+                    ],
                     "only_promote_helper_certificate_children": True,
                     "requires_split_certificate": True,
                     "executor_may_define_task_graph": False,

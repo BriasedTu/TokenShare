@@ -5,6 +5,7 @@ from tokenshare.experiments.paper_ablation import (
     PaperAblationMode,
     PaperAblationProfile,
     ablation_profile_for_mode,
+    runtime_controls_for_mode,
     summarize_ablation_evidence,
     validate_ablation_attempt_coverage,
 )
@@ -15,6 +16,78 @@ from tokenshare.experiments.paper_workers import (
     PaperAIUnit,
     validate_ai_unit_dependency_graph,
 )
+from tokenshare.local_runtime import MergeContext, NoOpRuntimeHooks
+
+
+@pytest.mark.parametrize(
+    ("mode", "disabled_field"),
+    [
+        (PaperAblationMode.NO_PARSER_POLICY, "parser_policy_enabled"),
+        (PaperAblationMode.NO_VERIFICATION, "verification_enabled"),
+        (PaperAblationMode.NO_REQUEUE, "replacement_attempts_allowed"),
+        (PaperAblationMode.NO_MERGE_GATE, "merge_gate_enabled"),
+        (PaperAblationMode.NO_SLOT_INTEGRITY, "slot_integrity_enabled"),
+    ],
+)
+def test_ablation_modes_disable_exactly_one_runtime_mechanism(
+    mode: PaperAblationMode,
+    disabled_field: str,
+) -> None:
+    controls = runtime_controls_for_mode(mode)
+    policy = controls.mechanism_policy
+    values = {
+        "parser_policy_enabled": policy.parser_policy_enabled,
+        "verification_enabled": policy.verification_enabled,
+        "replacement_attempts_allowed": policy.replacement_attempts_allowed,
+        "merge_gate_enabled": policy.merge_gate_enabled,
+        "slot_integrity_enabled": policy.slot_integrity_enabled,
+    }
+
+    assert values[disabled_field] is False
+    assert all(
+        value is True
+        for field_name, value in values.items()
+        if field_name != disabled_field
+    )
+
+
+def test_full_ablation_controls_are_noop_runtime_defaults() -> None:
+    controls = runtime_controls_for_mode(PaperAblationMode.FULL)
+
+    assert all(
+        (
+            controls.mechanism_policy.parser_policy_enabled,
+            controls.mechanism_policy.verification_enabled,
+            controls.mechanism_policy.replacement_attempts_allowed,
+            controls.mechanism_policy.merge_gate_enabled,
+            controls.mechanism_policy.slot_integrity_enabled,
+        )
+    )
+    assert isinstance(controls.hooks, NoOpRuntimeHooks)
+
+
+def test_merge_ablation_hook_emits_experiment_observation_with_protocol_refs() -> None:
+    controls = runtime_controls_for_mode(PaperAblationMode.NO_MERGE_GATE)
+    context = MergeContext(
+        parent=object(),
+        canonical_children=(object(),),
+        required_child_unit_ids=("child_1", "child_2"),
+        gate_satisfied=False,
+        protocol_event_refs=(
+            {"event_id": "event-canonical-1", "event_seq": 7},
+        ),
+    )
+
+    directive = controls.hooks.before_merge(context)
+
+    assert directive is not None
+    assert directive.bypass is True
+    assert directive.experiment_records[0]["event_type"] == (
+        "EXPERIMENT_ABLATION_GATE_APPLIED"
+    )
+    assert directive.experiment_records[0]["protocol_event_refs"] == [
+        {"event_id": "event-canonical-1", "event_seq": 7}
+    ]
 
 
 def test_exp4_condition_expansion_includes_all_protocol_ablation_modes() -> None:

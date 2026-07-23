@@ -30,15 +30,32 @@ from tokenshare.core.contribution import (
 from tokenshare.core.leases import LeaseManager
 from tokenshare.core.merge import ExpectedOutputResolution, MergeRecord
 from tokenshare.core.models import ArtifactRef, Attempt, AttemptState, ClientRecord, JsonObject, Lease, LeaseState, ProtocolConfig, TaskRelation, TaskState, TaskUnit
+from tokenshare.core.recovery import (
+    ACCEPTED,
+    RetryDecision,
+    SubmissionAcceptanceDecision,
+    evaluate_retry,
+    evaluate_submission_acceptance,
+)
 from tokenshare.core.scheduling import Scheduler, SchedulingDecision
-from tokenshare.core.state_machines import transition_attempt, transition_task_unit
+from tokenshare.core.state_machines import (
+    transition_attempt,
+    transition_lease,
+    transition_task_unit,
+)
 from tokenshare.core.task_graph import TaskGraph
 from tokenshare.core.verification import CanonicalSelection, VerificationReport, digest_json, select_first_verified_bundle
 from tokenshare.executors.contracts import ExecutionRequest, ExecutionSubmission
 from tokenshare.executors.registry import ExecutorRegistry
 from tokenshare.plugins.registry import PluginRegistry, RegistrySnapshot
 from tokenshare.storage.artifacts import ArtifactStore
-from tokenshare.storage.events import EventDraft, EventLedger, EventType, LedgerEvent
+from tokenshare.storage.events import (
+    EXECUTION_SUBMISSION_RECORD_SCHEMA_V2,
+    EventDraft,
+    EventLedger,
+    EventType,
+    LedgerEvent,
+)
 
 
 @dataclass(frozen=True)
@@ -84,8 +101,18 @@ class ExecutionSubmissionFlowResult:
     submission: ExecutionSubmission
     submission_ref: object
     event: LedgerEvent
+    acceptance_decision: SubmissionAcceptanceDecision
     attempt: Attempt | None
     attempt_event: LedgerEvent | None
+
+
+@dataclass(frozen=True)
+class RecoveryFlowResult:
+    lease: Lease
+    attempt: Attempt
+    task_unit: TaskUnit
+    recovery_action: JsonObject
+    events: tuple[LedgerEvent, ...]
 
 
 @dataclass(frozen=True)
@@ -142,6 +169,18 @@ class ParentCompletionFlowResult:
     resolved_output_set_digest: str
     expand_contributions: tuple[ContributionRecord, ...]
     events: tuple[LedgerEvent, ...]
+
+
+@dataclass(frozen=True)
+class ParentFailureFlowResult:
+    task_unit: TaskUnit
+    event: LedgerEvent
+
+
+@dataclass(frozen=True)
+class DependencyReadyFlowResult:
+    task_unit: TaskUnit
+    event: LedgerEvent
 
 
 @dataclass(frozen=True)
@@ -290,6 +329,11 @@ class ProtocolEngine:
         causation_event_id: str | None = None,
     ) -> ExecutionSubmissionFlowResult:
         artifact_store = self._require_artifact_store()
+        acceptance_decision = evaluate_submission_acceptance(
+            submission=submission,
+            attempt=attempt,
+            lease=lease,
+        )
         submission_ref = artifact_store.save_json(
             submission.to_dict(),
             artifact_id=submission.submission_id,
@@ -310,7 +354,7 @@ class ProtocolEngine:
             causation_event_id=causation_event_id,
             idempotency_key=f"execution_submission:{submission.submission_id}",
             payload={
-                "schema_version": "phase3.execution_submission_record.v1",
+                "schema_version": EXECUTION_SUBMISSION_RECORD_SCHEMA_V2,
                 "submission_id": submission.submission_id,
                 "request_id": submission.request_id,
                 "task_id": submission.task_id,
@@ -321,18 +365,17 @@ class ProtocolEngine:
                 "submission_digest": submission_ref.content_hash,
                 "result_kind": submission.result_kind,
                 "submitted_at": submission.submitted_at,
+                "acceptance_status": acceptance_decision.acceptance_status,
+                "rejection_reason": acceptance_decision.rejection_reason,
             },
             occurred_at=submission.submitted_at,
         )
-        if attempt.state != AttemptState.RUNNING or not _submission_matches_attempt_lease(
-            submission=submission,
-            attempt=attempt,
-            lease=lease,
-        ):
+        if acceptance_decision.acceptance_status != ACCEPTED:
             return ExecutionSubmissionFlowResult(
                 submission=submission,
                 submission_ref=submission_ref,
                 event=event,
+                acceptance_decision=acceptance_decision,
                 attempt=None,
                 attempt_event=None,
             )
@@ -371,6 +414,7 @@ class ProtocolEngine:
             submission=submission,
             submission_ref=submission_ref,
             event=event,
+            acceptance_decision=acceptance_decision,
             attempt=submitted_attempt,
             attempt_event=attempt_event,
         )
@@ -1188,6 +1232,168 @@ class ProtocolEngine:
             events=tuple(batch_events),
         )
 
+    def record_parent_failure(
+        self,
+        *,
+        parent_unit: TaskUnit,
+        failed_child: TaskUnit,
+        graph: TaskGraph,
+        child_failure_event: LedgerEvent,
+        now: str,
+        correlation_id: str,
+    ) -> ParentFailureFlowResult:
+        """由已落账的直接 child 失败事实推进 parent 到 Failed。"""
+
+        recorded_child_event = next(
+            (
+                event
+                for event in self._event_ledger.read_all()
+                if event.event_id == child_failure_event.event_id
+            ),
+            None,
+        )
+        if (
+            recorded_child_event is None
+            or recorded_child_event.event_seq != child_failure_event.event_seq
+            or recorded_child_event.event_hash != child_failure_event.event_hash
+        ):
+            raise ValueError("recorded child failure event is required")
+        child_failure_event = recorded_child_event
+        if graph.task_id != parent_unit.task_id or failed_child.task_id != graph.task_id:
+            raise ValueError("parent failure units must belong to the graph task")
+        if graph.units.get(parent_unit.unit_id) != parent_unit:
+            raise ValueError("parent failure requires the current parent graph snapshot")
+        if graph.units.get(failed_child.unit_id) != failed_child:
+            raise ValueError("parent failure requires the current failed child snapshot")
+        if failed_child.parent_unit_id != parent_unit.unit_id:
+            raise ValueError("failed child must be a direct child of the parent")
+        if failed_child.state != TaskState.FAILED:
+            raise ValueError("parent failure requires a Failed child")
+        child_event_unit = child_failure_event.payload.get("task_unit")
+        if (
+            child_failure_event.event_type != EventType.TASK_UNIT_STATE_CHANGED
+            or child_failure_event.task_id != graph.task_id
+            or child_failure_event.object_id != failed_child.unit_id
+            or not isinstance(child_event_unit, dict)
+            or child_event_unit.get("unit_id") != failed_child.unit_id
+            or child_event_unit.get("state") != TaskState.FAILED.value
+        ):
+            raise ValueError("child_failure_event must record the failed child snapshot")
+
+        failed_parent = transition_task_unit(
+            parent_unit,
+            new_state=TaskState.FAILED,
+            reason="terminal_child_failure",
+            trigger="terminal_child_failure",
+            changed_at=now,
+        )
+        event = self._event_ledger.append(
+            event_type=EventType.TASK_UNIT_STATE_CHANGED,
+            object_type="TaskUnit",
+            object_id=failed_parent.unit_id,
+            task_id=failed_parent.task_id,
+            actor={"kind": "protocol_engine"},
+            correlation_id=correlation_id,
+            causation_event_id=child_failure_event.event_id,
+            idempotency_key=(
+                f"task_unit:state:{failed_parent.unit_id}:"
+                f"{parent_unit.state.value}:Failed:{correlation_id}"
+            ),
+            payload={
+                "task_unit_state_change": _task_unit_state_change(
+                    task_unit=failed_parent,
+                    old_state=parent_unit.state,
+                    new_state=TaskState.FAILED,
+                    reason="terminal_child_failure",
+                    trigger="terminal_child_failure",
+                    correlation_id=correlation_id,
+                    causation_event_id=child_failure_event.event_id,
+                    changed_at=now,
+                    state_context={"failed_child_unit_id": failed_child.unit_id},
+                ),
+                "task_unit": failed_parent.to_dict(),
+            },
+            occurred_at=now,
+        )
+        return ParentFailureFlowResult(task_unit=failed_parent, event=event)
+
+    def record_dependency_ready(
+        self,
+        *,
+        unit: TaskUnit,
+        graph: TaskGraph,
+        now: str,
+        correlation_id: str,
+    ) -> DependencyReadyFlowResult:
+        """依赖输出全部 canonical 后，原子记录 Blocked -> Ready。"""
+
+        if graph.units.get(unit.unit_id) != unit:
+            raise ValueError("dependency activation requires current graph snapshot")
+        if unit.state != TaskState.BLOCKED:
+            raise ValueError("dependency activation requires a Blocked unit")
+        if unit.unit_id not in graph.activatable_unit_ids():
+            raise ValueError("dependency activation requires canonical dependency outputs")
+        dependency_refs: dict[str, JsonObject] = {}
+        dependency_unit_ids: list[str] = []
+        causation_event_id = None
+        events = self._event_ledger.read_all()
+        for relation in graph.in_edges_by_unit_id.get(unit.unit_id, []):
+            if relation.relation_type != "depends_on_output":
+                continue
+            dependency_unit_ids.append(relation.source_unit_id)
+            source_refs = graph.canonical_outputs_by_unit_id.get(
+                relation.source_unit_id,
+                graph.units[relation.source_unit_id].canonical_output_refs,
+            )
+            source_ref = source_refs[str(relation.source_output_name)]
+            dependency_refs[str(relation.target_input_name)] = source_ref.to_dict()
+            for event in reversed(events):
+                if (
+                    event.event_type == EventType.CANONICAL_OUTPUTS_BOUND
+                    and event.object_id == relation.source_unit_id
+                ):
+                    causation_event_id = causation_event_id or event.event_id
+                    break
+        ready_unit = transition_task_unit(
+            unit,
+            new_state=TaskState.READY,
+            reason="dependency_outputs_canonical",
+            trigger="dependency_resolution",
+            changed_at=now,
+        )
+        event = self._event_ledger.append(
+            event_type=EventType.TASK_UNIT_STATE_CHANGED,
+            object_type="TaskUnit",
+            object_id=ready_unit.unit_id,
+            task_id=ready_unit.task_id,
+            actor={"kind": "protocol_engine"},
+            correlation_id=correlation_id,
+            causation_event_id=causation_event_id,
+            idempotency_key=(
+                f"task_unit:state:{ready_unit.unit_id}:"
+                f"Blocked:Ready:{correlation_id}"
+            ),
+            payload={
+                "task_unit_state_change": _task_unit_state_change(
+                    task_unit=ready_unit,
+                    old_state=TaskState.BLOCKED,
+                    new_state=TaskState.READY,
+                    reason="dependency_outputs_canonical",
+                    trigger="dependency_resolution",
+                    correlation_id=correlation_id,
+                    causation_event_id=causation_event_id,
+                    changed_at=now,
+                    state_context={
+                        "dependency_source_unit_ids": dependency_unit_ids,
+                        "dependency_output_refs": dependency_refs,
+                    },
+                ),
+                "task_unit": ready_unit.to_dict(),
+            },
+            occurred_at=now,
+        )
+        return DependencyReadyFlowResult(task_unit=ready_unit, event=event)
+
     def record_root_settlement(
         self,
         *,
@@ -1593,6 +1799,243 @@ class ProtocolEngine:
         )
         return LeaseHeartbeatFlowResult(lease=heartbeat_lease, event=heartbeat_event)
 
+    def record_recovery_decision(
+        self,
+        *,
+        decision: RetryDecision,
+        attempt: Attempt,
+        lease: Lease,
+        task_unit: TaskUnit,
+        recovery_action_id: str,
+        now: str,
+        correlation_id: str,
+        causation_event_id: str | None = None,
+    ) -> RecoveryFlowResult:
+        """原子记录 attempt 终态、recovery 事实和 TaskUnit 结论。"""
+
+        canonical_decision = evaluate_retry(
+            trigger=decision.trigger,
+            retry_count=decision.retry_count,
+            max_retries=self._protocol_config.max_retries,
+        )
+        if decision != canonical_decision:
+            raise ValueError("recovery decision does not match protocol config")
+        decision = canonical_decision
+
+        if attempt.task_id != task_unit.task_id or attempt.unit_id != task_unit.unit_id:
+            raise ValueError("recovery attempt does not match task unit")
+        if lease.task_id != attempt.task_id or lease.unit_id != attempt.unit_id:
+            raise ValueError("recovery lease does not match task unit")
+        if lease.attempt_id != attempt.attempt_id:
+            raise ValueError("recovery lease does not match attempt")
+        if lease.lease_id != attempt.lease_id:
+            raise ValueError("recovery lease does not match attempt")
+        if lease.client_id != attempt.client_id:
+            raise ValueError("recovery lease does not match attempt client")
+
+        batch_id = f"recovery_batch:{recovery_action_id}"
+        current_events = self._event_ledger.read_all()
+        existing_batch_event_id = _first_event_id_for_batch(
+            events=current_events,
+            batch_id=batch_id,
+        )
+        attempt_was_terminal = attempt.state == decision.superseded_attempt_state
+        if existing_batch_event_id is None:
+            latest_lease = _latest_lease_snapshot(current_events, lease.lease_id)
+            if latest_lease is not None and latest_lease != lease.to_dict():
+                raise ValueError("recovery lease is not latest in the ledger")
+            latest_attempt = _latest_attempt_snapshot(current_events, attempt.attempt_id)
+            if latest_attempt is not None and latest_attempt != attempt.to_dict():
+                raise ValueError("recovery attempt is not latest in the ledger")
+            if attempt_was_terminal and latest_attempt is None:
+                raise ValueError("terminal attempt is not recorded in the ledger")
+
+        if decision.trigger == "lease_expired":
+            expiry = self._lease_manager.expire(
+                lease=lease,
+                attempt=attempt,
+                task_unit=task_unit,
+                now=now,
+                recovery_action_id=recovery_action_id,
+                retry_count=decision.retry_count,
+            )
+            if expiry.retry_decision != decision:
+                raise ValueError("lease expiry decision does not match recovery decision")
+            recovered_lease = expiry.lease
+            recovered_attempt = expiry.attempt
+        else:
+            recovered_lease = transition_lease(
+                lease,
+                new_state=LeaseState.RELEASED,
+                changed_at=now,
+                reason=decision.trigger,
+            )
+            recovered_attempt = (
+                attempt
+                if attempt_was_terminal
+                else transition_attempt(
+                    attempt,
+                    new_state=decision.superseded_attempt_state,
+                    changed_at=now,
+                    reason=decision.trigger,
+                    failure_kind=(
+                        decision.trigger
+                        if decision.superseded_attempt_state == AttemptState.FAILED
+                        else "invalid_output"
+                        if decision.superseded_attempt_state == AttemptState.REJECTED
+                        else None
+                    ),
+                    failure_reason=(
+                        decision.reason
+                        if decision.superseded_attempt_state
+                        in {AttemptState.FAILED, AttemptState.REJECTED}
+                        else None
+                    ),
+                )
+            )
+        recovered_unit = transition_task_unit(
+            task_unit,
+            new_state=decision.next_task_state,
+            reason=decision.reason,
+            trigger="recovery",
+            changed_at=now,
+        )
+        recovery_action = {
+            "schema_version": "phase2.recovery_action.v1",
+            "recovery_action_id": recovery_action_id,
+            "task_id": task_unit.task_id,
+            "unit_id": task_unit.unit_id,
+            "trigger": decision.trigger,
+            "lease_id": lease.lease_id,
+            "attempt_id": attempt.attempt_id,
+            "old_task_state": task_unit.state.value,
+            "new_task_state": recovered_unit.state.value,
+            "retry_count": decision.retry_count,
+            "retry_allowed": decision.retry_allowed,
+            "reason": decision.reason,
+            "created_at": now,
+            "metadata": {},
+        }
+
+        first_event_id = _first_event_id_for_batch(
+            events=current_events,
+            batch_id=batch_id,
+        ) or f"event_{len(current_events) + 1:012d}"
+        first_event_seq = int(first_event_id.removeprefix("event_"))
+        attempt_event_id = f"event_{first_event_seq + 1:012d}"
+        recovery_event_id = (
+            f"event_{first_event_seq + (1 if attempt_was_terminal else 2):012d}"
+        )
+
+        drafts = [
+            EventDraft(
+                event_type=EventType.LEASE_STATE_CHANGED,
+                object_type="Lease",
+                object_id=recovered_lease.lease_id,
+                task_id=recovered_lease.task_id,
+                actor={"kind": "protocol_engine"},
+                correlation_id=correlation_id,
+                causation_event_id=causation_event_id,
+                idempotency_key=(
+                    f"lease:terminal:{recovered_lease.lease_id}:"
+                    f"{recovered_lease.state.value}"
+                ),
+                payload={
+                    "old_state": lease.state.value,
+                    "new_state": recovered_lease.state.value,
+                    "lease": recovered_lease.to_dict(),
+                    "reason": decision.trigger,
+                    "correlation_id": correlation_id,
+                },
+                occurred_at=now,
+            )
+        ]
+        if not attempt_was_terminal:
+            drafts.append(
+                EventDraft(
+                    event_type=EventType.ATTEMPT_STATE_CHANGED,
+                    object_type="Attempt",
+                    object_id=recovered_attempt.attempt_id,
+                    task_id=recovered_attempt.task_id,
+                    actor={"kind": "protocol_engine"},
+                    correlation_id=correlation_id,
+                    causation_event_id=first_event_id,
+                    idempotency_key=(
+                        f"attempt:state:{attempt.attempt_id}:{attempt.state.value}:"
+                        f"{recovered_attempt.state.value}:{correlation_id}"
+                    ),
+                    payload={
+                        "old_state": attempt.state.value,
+                        "new_state": recovered_attempt.state.value,
+                        "attempt": recovered_attempt.to_dict(),
+                        "reason": decision.trigger,
+                        "correlation_id": correlation_id,
+                    },
+                    occurred_at=now,
+                )
+            )
+        drafts.extend(
+            [
+                EventDraft(
+                    event_type=EventType.RECOVERY_ACTION_RECORDED,
+                    object_type="RecoveryAction",
+                    object_id=recovery_action_id,
+                    task_id=task_unit.task_id,
+                    actor={"kind": "protocol_engine"},
+                    correlation_id=correlation_id,
+                    causation_event_id=(
+                        first_event_id if attempt_was_terminal else attempt_event_id
+                    ),
+                    idempotency_key=(
+                        f"recovery:{task_unit.unit_id}:{decision.trigger}:"
+                        f"{attempt.attempt_id}:{decision.retry_count}"
+                    ),
+                    payload={"recovery_action": recovery_action},
+                    occurred_at=now,
+                ),
+                EventDraft(
+                    event_type=EventType.TASK_UNIT_STATE_CHANGED,
+                    object_type="TaskUnit",
+                    object_id=recovered_unit.unit_id,
+                    task_id=recovered_unit.task_id,
+                    actor={"kind": "protocol_engine"},
+                    correlation_id=correlation_id,
+                    causation_event_id=recovery_event_id,
+                    idempotency_key=(
+                        f"task_unit:state:{recovered_unit.unit_id}:{task_unit.state.value}:"
+                        f"{recovered_unit.state.value}:{correlation_id}"
+                    ),
+                    payload={
+                        "task_unit_state_change": _task_unit_state_change(
+                            task_unit=recovered_unit,
+                            old_state=task_unit.state,
+                            new_state=recovered_unit.state,
+                            reason=decision.reason,
+                            trigger="recovery",
+                            correlation_id=correlation_id,
+                            causation_event_id=recovery_event_id,
+                            changed_at=now,
+                            state_context={"retry_count": decision.retry_count},
+                        ),
+                        "task_unit": recovered_unit.to_dict(),
+                    },
+                    occurred_at=now,
+                ),
+            ]
+        )
+
+        events = self._event_ledger.append_batch(
+            drafts,
+            batch_id=batch_id,
+        )
+        return RecoveryFlowResult(
+            lease=recovered_lease,
+            attempt=recovered_attempt,
+            task_unit=recovered_unit,
+            recovery_action=recovery_action,
+            events=events,
+        )
+
     def record_lease_expiry(
         self,
         *,
@@ -1603,110 +2046,28 @@ class ProtocolEngine:
         correlation_id: str,
         recovery_action_id: str,
         retry_count: int,
+        causation_event_id: str | None = None,
     ) -> LeaseExpiryFlowResult:
-        expiry = self._lease_manager.expire(
-            lease=lease,
+        recovery = self.record_recovery_decision(
+            decision=evaluate_retry(
+                trigger="lease_expired",
+                retry_count=retry_count,
+                max_retries=self._protocol_config.max_retries,
+            ),
             attempt=attempt,
+            lease=lease,
             task_unit=task_unit,
-            now=now,
             recovery_action_id=recovery_action_id,
-            retry_count=retry_count,
-        )
-        reason = expiry.recovery_action["reason"]
-        recovered_unit = transition_task_unit(
-            task_unit,
-            new_state=expiry.next_task_state,
-            reason=reason,
-            trigger="recovery",
-            changed_at=now,
-        )
-
-        lease_event = self._event_ledger.append(
-            event_type=EventType.LEASE_STATE_CHANGED,
-            object_type="Lease",
-            object_id=expiry.lease.lease_id,
-            task_id=expiry.lease.task_id,
-            actor={"kind": "protocol_engine"},
+            now=now,
             correlation_id=correlation_id,
-            idempotency_key=f"lease:terminal:{expiry.lease.lease_id}:Expired",
-            payload={
-                "old_state": LeaseState.ACTIVE.value,
-                "new_state": LeaseState.EXPIRED.value,
-                "lease": expiry.lease.to_dict(),
-                "reason": "lease_expired",
-                "correlation_id": correlation_id,
-            },
-            occurred_at=now,
-        )
-        attempt_event = self._event_ledger.append(
-            event_type=EventType.ATTEMPT_STATE_CHANGED,
-            object_type="Attempt",
-            object_id=expiry.attempt.attempt_id,
-            task_id=expiry.attempt.task_id,
-            actor={"kind": "protocol_engine"},
-            correlation_id=correlation_id,
-            causation_event_id=lease_event.event_id,
-            idempotency_key=(
-                f"attempt:state:{expiry.attempt.attempt_id}:Running:Superseded:{correlation_id}"
-            ),
-            payload={
-                "old_state": AttemptState.RUNNING.value,
-                "new_state": AttemptState.SUPERSEDED.value,
-                "attempt": expiry.attempt.to_dict(),
-                "reason": "lease_expired",
-                "correlation_id": correlation_id,
-            },
-            occurred_at=now,
-        )
-        recovery_event = self._event_ledger.append(
-            event_type=EventType.RECOVERY_ACTION_RECORDED,
-            object_type="RecoveryAction",
-            object_id=expiry.recovery_action["recovery_action_id"],
-            task_id=expiry.recovery_action["task_id"],
-            actor={"kind": "protocol_engine"},
-            correlation_id=correlation_id,
-            causation_event_id=attempt_event.event_id,
-            idempotency_key=(
-                f"recovery:{expiry.recovery_action['unit_id']}:lease_expired:"
-                f"{expiry.recovery_action['attempt_id']}:{expiry.recovery_action['retry_count']}"
-            ),
-            payload={"recovery_action": expiry.recovery_action},
-            occurred_at=now,
-        )
-        task_event = self._event_ledger.append(
-            event_type=EventType.TASK_UNIT_STATE_CHANGED,
-            object_type="TaskUnit",
-            object_id=recovered_unit.unit_id,
-            task_id=recovered_unit.task_id,
-            actor={"kind": "protocol_engine"},
-            correlation_id=correlation_id,
-            causation_event_id=recovery_event.event_id,
-            idempotency_key=(
-                f"task_unit:state:{recovered_unit.unit_id}:{task_unit.state.value}:"
-                f"{recovered_unit.state.value}:{correlation_id}"
-            ),
-            payload={
-                "task_unit_state_change": _task_unit_state_change(
-                    task_unit=recovered_unit,
-                    old_state=task_unit.state,
-                    new_state=recovered_unit.state,
-                    reason=reason,
-                    trigger="recovery",
-                    correlation_id=correlation_id,
-                    causation_event_id=recovery_event.event_id,
-                    changed_at=now,
-                    state_context={"retry_count": retry_count},
-                ),
-                "task_unit": recovered_unit.to_dict(),
-            },
-            occurred_at=now,
+            causation_event_id=causation_event_id,
         )
         return LeaseExpiryFlowResult(
-            lease=expiry.lease,
-            attempt=expiry.attempt,
-            task_unit=recovered_unit,
-            recovery_action=expiry.recovery_action,
-            events=(lease_event, attempt_event, recovery_event, task_event),
+            lease=recovery.lease,
+            attempt=recovery.attempt,
+            task_unit=recovery.task_unit,
+            recovery_action=recovery.recovery_action,
+            events=recovery.events,
         )
 
     def _require_artifact_store(self) -> ArtifactStore:
@@ -1764,6 +2125,31 @@ def _active_leases_by_unit_id_from_events(events: Iterable[LedgerEvent]) -> dict
     return active_by_unit_id
 
 
+def _latest_attempt_snapshot(
+    events: Iterable[LedgerEvent],
+    attempt_id: str,
+) -> JsonObject | None:
+    for event in reversed(tuple(events)):
+        if (
+            event.event_type == EventType.ATTEMPT_STATE_CHANGED
+            and event.object_id == attempt_id
+        ):
+            attempt = event.payload.get("attempt")
+            return dict(attempt) if isinstance(attempt, dict) else None
+    return None
+
+
+def _latest_lease_snapshot(
+    events: Iterable[LedgerEvent],
+    lease_id: str,
+) -> JsonObject | None:
+    for event in reversed(tuple(events)):
+        if event.event_type == EventType.LEASE_STATE_CHANGED and event.object_id == lease_id:
+            lease = event.payload.get("lease")
+            return dict(lease) if isinstance(lease, dict) else None
+    return None
+
+
 def _merge_active_lease_maps(
     ledger_active: dict[str, list[str]],
     supplied_active: dict[str, object],
@@ -1772,25 +2158,6 @@ def _merge_active_lease_maps(
     for unit_id, value in supplied_active.items():
         active[unit_id] = value
     return active
-
-
-def _submission_matches_attempt_lease(
-    *,
-    submission: ExecutionSubmission,
-    attempt: Attempt,
-    lease: Lease,
-) -> bool:
-    return (
-        submission.task_id == attempt.task_id
-        and submission.unit_id == attempt.unit_id
-        and submission.attempt_id == attempt.attempt_id
-        and submission.lease_id == attempt.lease_id
-        and lease.task_id == attempt.task_id
-        and lease.unit_id == attempt.unit_id
-        and lease.attempt_id == attempt.attempt_id
-        and submission.lease_id == lease.lease_id
-        and submission.fencing_token == lease.fencing_token
-    )
 
 
 def _validate_verification_report_for_attempt(

@@ -418,6 +418,9 @@ def build_exp1_pilot_execution_plan(
                     case,
                     seed=seed,
                     include_request_artifacts=True,
+                    executor_requirements=dict(
+                        case_profile["executor_requirements"]
+                    ),
                 )
             )
             if [item["planned_ai_unit_id"] for item in ai_unit_bindings] != ai_units:

@@ -44,6 +44,7 @@ from tokenshare.experiments.paper_metrics import (
 )
 from tokenshare.experiments import paper_runner
 from tokenshare.experiments.paper_runner import build_gate_c_dispatch_plans
+from tokenshare.local_runtime import ProtocolRunRequest, ProtocolRunResult
 
 
 EXPERIMENT_IDS = (
@@ -1097,17 +1098,37 @@ def test_gate_c_budget_selection_and_identity_drift_stop_before_transport(
         ("lean_proof", "run_lean_paper_case"),
     ),
 )
-def test_gate_c_case_dispatcher_routes_to_domain_adapter(
+def test_gate_c_case_dispatcher_routes_protocol_request_through_coordinator(
     monkeypatch,
     domain: str,
     adapter_name: str,
 ) -> None:
     dispatch_case = getattr(paper_dispatcher, "dispatch_paper_case", None)
     calls: list[dict] = []
+    request = ProtocolRunRequest(
+        run_id="run_1",
+        root_input={"case_id": "case_1"},
+        plugin_runtime=object(),
+        worker_backend=object(),
+    )
+    runtime_result = ProtocolRunResult(run_id="run_1", status="completed")
+
+    class CoordinatorSpy:
+        def __init__(self) -> None:
+            self.requests = []
+
+        def run_root(self, received):
+            self.requests.append(received)
+            return runtime_result
+
+    coordinator = CoordinatorSpy()
 
     def adapter(**kwargs):
         calls.append(kwargs)
-        return {"adapter": adapter_name}
+        return kwargs["protocol_run_dispatcher"](
+            coordinator=coordinator,
+            request=request,
+        )
 
     monkeypatch.setattr(
         paper_dispatcher,
@@ -1131,7 +1152,8 @@ def test_gate_c_case_dispatcher_routes_to_domain_adapter(
         selected_ai_unit_id="unit_1",
     )
 
-    assert result == {"adapter": adapter_name}
+    assert result is runtime_result
+    assert coordinator.requests == [request]
     assert calls == [
         {
             "case": {"case_id": "case_1"},
@@ -1144,6 +1166,9 @@ def test_gate_c_case_dispatcher_routes_to_domain_adapter(
             "max_tokens": 123,
             "timeout_seconds": 17,
             "selected_ai_unit_id": "unit_1",
+            "post_raw_output_hook": None,
+            "ablation_mode": None,
+            "protocol_run_dispatcher": paper_dispatcher.execute_protocol_request,
         }
     ]
 

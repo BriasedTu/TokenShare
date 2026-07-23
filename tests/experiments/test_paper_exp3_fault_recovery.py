@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 from dataclasses import replace
 from typing import Any
 
@@ -27,14 +28,29 @@ from tokenshare.experiments.paper_models import digest_json
 from tokenshare.experiments.paper_workers import (
     PaperAIUnit,
     WorkerDeathKillPoint,
-    run_worker_death_harness,
+    freeze_worker_death_plan,
+    record_worker_death_observation,
+)
+from tokenshare.experiments.paper_formal_runner import (
+    _FormalConditionExecutionCallback,
 )
 from tokenshare.storage.artifacts import ArtifactStore
+from tests.experiments.test_paper_workers import _protocol_events
 
 
 CATALOG_DIGEST = "sha256:" + "a" * 64
 ENDPOINT_DIGEST = "sha256:" + "b" * 64
 SOURCE_CONFIG_DIGEST = "sha256:" + "d" * 64
+
+
+def test_task7_formal_exp3_does_not_launch_manual_replacement_adapter() -> None:
+    source = inspect.getsource(
+        _FormalConditionExecutionCallback._apply_exp3_rate_fault
+    )
+
+    assert "execute_replacement" not in source
+    assert "replacement_root" not in source
+    assert "dispatch_paper_case" not in source
 
 
 def test_exp3_expands_rate_fault_and_worker_death_root_run_counts() -> None:
@@ -1574,15 +1590,14 @@ def test_exp3_fault_adapter_requires_persisted_provenance_and_feeds_summary(
 def test_exp3_summary_accepts_public_worker_death_primitive_output(tmp_path) -> None:
     store = ArtifactStore(tmp_path)
     condition_id = "worker_death_primitive_integration"
-    outcome = run_worker_death_harness(
-        artifact_store=store,
+    plan = freeze_worker_death_plan(
         condition_id=condition_id,
         repeat_id=0,
         run_id="run_worker_death_primitive_integration",
         ai_units=(
             PaperAIUnit(
                 task_id="task_worker_death_primitive_integration",
-                unit_id="unit_worker_death_primitive_integration",
+                unit_id="unit_lemma_join",
                 unit_kind="generic_ai_unit",
                 dependencies=(),
                 depth=0,
@@ -1590,11 +1605,39 @@ def test_exp3_summary_accepts_public_worker_death_primitive_output(tmp_path) -> 
                 metadata={},
             ),
         ),
-        target_unit_id="unit_worker_death_primitive_integration",
+        target_unit_ids=("unit_lemma_join",),
         kill_point=WorkerDeathKillPoint.PROGRESS_25,
-        started_at="2026-07-19T00:00:00Z",
-        process_tick_seconds=0.001,
-        lease_ttl_seconds=1,
+    )
+    outcome = record_worker_death_observation(
+        artifact_store=store,
+        plan=plan,
+        target_unit_id="unit_lemma_join",
+        worker_fact={
+            "unit_id": "unit_lemma_join",
+            "attempt_id": "attempt_initial",
+            "lease_id": "lease_initial",
+            "worker_id": "process-worker-1",
+            "worker_pid": 1001,
+            "process_exitcode": -15,
+            "result_kind": "worker_terminated",
+            "kill_point": "progress_25",
+            "started_at": "2026-07-19T00:00:00Z",
+            "ended_at": "2026-07-19T00:00:01Z",
+        },
+        replacement_fact={
+            "unit_id": "unit_lemma_join",
+            "attempt_id": "attempt_replacement",
+            "lease_id": "lease_replacement",
+            "worker_id": "process-worker-2",
+            "worker_pid": 1002,
+            "process_exitcode": 0,
+            "result_kind": "succeeded",
+            "started_at": "2026-07-19T00:00:10Z",
+            "ended_at": "2026-07-19T00:00:11Z",
+        },
+        protocol_events=_protocol_events(),
+        coordinator_pid=999,
+        created_at="2026-07-19T00:00:11Z",
     )
     run = _worker_death_run(
         condition_id=condition_id,

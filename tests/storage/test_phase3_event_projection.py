@@ -84,6 +84,30 @@ def test_sqlite_index_rebuilds_phase3_indexes_without_storing_full_bodies(tmp_pa
         idempotency_key="execution_submission:submission_1",
         occurred_at="2026-06-23T00:00:03Z",
     )
+    rejected_submission_ref = make_artifact_ref("submission_rejected")
+    ledger.append(
+        event_type=EventType.EXECUTION_SUBMISSION_RECORDED,
+        object_type="ExecutionSubmission",
+        object_id="submission_rejected",
+        task_id="task_demo",
+        payload={
+            "schema_version": "phase3.execution_submission_record.v2",
+            "submission_id": "submission_rejected",
+            "request_id": "request_1",
+            "task_id": "task_demo",
+            "unit_id": "unit_ready",
+            "attempt_id": "attempt_1",
+            "lease_id": "lease_1",
+            "submission_ref": rejected_submission_ref.to_dict(),
+            "submission_digest": rejected_submission_ref.content_hash,
+            "result_kind": "succeeded",
+            "submitted_at": "2026-06-23T00:06:00Z",
+            "acceptance_status": "rejected",
+            "rejection_reason": "lease_deadline_exceeded",
+        },
+        idempotency_key="execution_submission:submission_rejected",
+        occurred_at="2026-06-23T00:06:00Z",
+    )
 
     index = SQLiteMaterializedIndex(tmp_path / "tokenshare.sqlite")
     index.rebuild_from_events(ledger.read_all())
@@ -107,11 +131,20 @@ def test_sqlite_index_rebuilds_phase3_indexes_without_storing_full_bodies(tmp_pa
         ).fetchone()
         submission_row = connection.execute(
             """
-            select request_id, attempt_id, submission_artifact_id, result_kind
+            select request_id, attempt_id, submission_artifact_id, result_kind,
+                   acceptance_status, rejection_reason
             from execution_submissions
             where submission_id = ?
             """,
             ("submission_1",),
+        ).fetchone()
+        rejected_submission_row = connection.execute(
+            """
+            select acceptance_status, rejection_reason
+            from execution_submissions
+            where submission_id = ?
+            """,
+            ("submission_rejected",),
         ).fetchone()
         status_row = connection.execute(
             """
@@ -130,5 +163,13 @@ def test_sqlite_index_rebuilds_phase3_indexes_without_storing_full_bodies(tmp_pa
         "structured_report_stub",
         "executor_mock_ai",
     )
-    assert submission_row == ("request_1", "attempt_1", submission_ref.artifact_id, "succeeded")
+    assert submission_row == (
+        "request_1",
+        "attempt_1",
+        submission_ref.artifact_id,
+        "succeeded",
+        None,
+        None,
+    )
+    assert rejected_submission_row == ("rejected", "lease_deadline_exceeded")
     assert status_row == ("0.1.0", "Available", "sha256:executor")

@@ -1,6 +1,6 @@
 # TokenShare Agent 导航
 
-日期：2026-07-13
+日期：2026-07-23
 
 状态：工作流导航文档。本文只回答“新 AI 遇到问题应先看哪里、代码应放到哪个模块、外部参考资料应如何落库和使用”。本文不是协议设计规格，不替代 `AGENTS.md`、`feature_list.json`、`progress.md` 或 `session-handoff.md`。
 
@@ -27,15 +27,17 @@
 5. `Doc/TechnicalDocument/tokenshare_v1_complete_spec.md`：Phase 1-6 收敛后的完整说明，接管旧 Phase 1-6 默认说明入口。
 6. `Doc/TechnicalDocument/tokenshare_v1_code_map.md`：Phase 1-6 收敛后的代码映射，以当前 `src/` 和 `tests/` 为准。
 7. `Doc/TechnicalDocument/tokenshare_latest_real_plugin_experiment_design.md`：唯一权威实验设计；用于全部新论文实验、真实 AI API 门槛、Experiment 1-5、输入 catalog、runner 改造、failure/ablation、metrics/report、预算和论文结果口径。
-8. `Doc/TechnicalDocument/2026-07-13-feat-011-paper-real-ai-experiments-implementation-plan.md`：feat-011 实施顺序与边界清单；只说明落地顺序，不替代唯一权威实验设计。
-9. `Doc/TechnicalDocument/2026-07-15-feat-011-lean-3x3-topic-template-design.md`：Lean 3×3 topic-family / paper-difficulty theorem template 设计记录；用于 case selection、oracle package 和能力缺口判断，不表示 runner 已支持完整 3×3 执行矩阵。
-10. `Doc/TechnicalDocument/2026-06-28-phase-7-ai-api-executor-field-spec.md`、`Doc/TechnicalDocument/2026-06-28-phase-7-ai-api-executor-tdd-plan.md`、`Doc/TechnicalDocument/2026-06-28-phase-7-ai-api-executor-code-map.md`：Phase 7 实验级 AI API executor 已实现边界。
-11. `Doc/TechnicalDocument/2026-06-29-phase-8-experiment-infrastructure-code-map.md`：Phase 8 第一版 regression infrastructure 的 source/tests/边界和验证证据映射；不是新论文实验设计权威。
-12. `README.md`：人类入口、运行命令和仓库地图。
-13. `Doc/TechnicalDocument/2026-06-04-tokenshare-paper-module-map.md`：论文、技术报告和本地 TeX/OCR 映射；用于追踪研究依据。
-14. `Doc/TechnicalDocument/2026-06-22-p01-p12-tokenshare-candidate-mechanism-spec.md`：P01-P22 机制整合记录；只用于追溯取舍理由，不覆盖当前实现规格。
-15. `Doc/TechnicalDocument/2026-06-02-tokenshare-protocol-kernel-revised-draft.md`：历史讨论稿；只用于理解早期设计原因。
-16. `reference_repos/`：外部参考源码；只能用于借鉴模式，不属于 TokenShare runtime。
+8. `Doc/TechnicalDocument/2026-07-22-feat-011-system-runtime-paper-experiment-migration-plan.md`：把 paper adapter/runner 的协议生命周期职责迁回系统的文件级执行计划；明确新增 `tokenshare.local_runtime`、插件 runtime bridge、实验 hooks/projection，以及保留 Lean 预写固定 lemma-DAG 的边界。
+9. `Doc/TechnicalDocument/2026-07-22-lean-checker-verification-profiles-design.md`：通用 Lean 验证分层权威；定义 Fast、Full canary、内容寻址 LeanAudit、checker 注入和 600-entry evidence 的失效/refresh 规则。
+10. `Doc/TechnicalDocument/2026-07-13-feat-011-paper-real-ai-experiments-implementation-plan.md`：feat-011 实验矩阵实施顺序与边界清单；其中 adapter/runner 生命周期所有权已被 2026-07-22 迁移计划覆盖。
+11. `Doc/TechnicalDocument/2026-07-15-feat-011-lean-3x3-topic-template-design.md`：Lean 3×3 topic-family / paper-difficulty theorem template 设计记录；用于 case selection、oracle package 和能力缺口判断，不表示 runner 已支持完整 3×3 执行矩阵。
+12. `Doc/TechnicalDocument/2026-06-28-phase-7-ai-api-executor-field-spec.md`、`Doc/TechnicalDocument/2026-06-28-phase-7-ai-api-executor-tdd-plan.md`、`Doc/TechnicalDocument/2026-06-28-phase-7-ai-api-executor-code-map.md`：Phase 7 实验级 AI API executor 已实现边界。
+13. `Doc/TechnicalDocument/2026-06-29-phase-8-experiment-infrastructure-code-map.md`：Phase 8 第一版 regression infrastructure 的 source/tests/边界和验证证据映射；不是新论文实验设计权威。
+14. `README.md`：人类入口、运行命令和仓库地图。
+15. `Doc/TechnicalDocument/2026-06-04-tokenshare-paper-module-map.md`：论文、技术报告和本地 TeX/OCR 映射；用于追踪研究依据。
+16. `Doc/TechnicalDocument/2026-06-22-p01-p12-tokenshare-candidate-mechanism-spec.md`：P01-P22 机制整合记录；只用于追溯取舍理由，不覆盖当前实现规格。
+17. `Doc/TechnicalDocument/2026-06-02-tokenshare-protocol-kernel-revised-draft.md`：历史讨论稿；只用于理解早期设计原因。
+18. `reference_repos/`：外部参考源码；只能用于借鉴模式，不属于 TokenShare runtime。
 
 旧 Phase 1-6 文档已移动到 `Doc/TechnicalDocument/phase-1-6-archive/`。该目录只作普通历史归档，不写单独索引，也不作为默认阅读入口。如果新文档和旧归档冲突，应相信新文档和当前代码；必要时把冲突记录到 `progress.md` 或 `session-handoff.md`。
 
@@ -44,13 +46,16 @@
 | 问题 | 首先阅读 | 辅助阅读 | 注意事项 |
 |---|---|---|---|
 | 当前要做哪个 feature / track | `feature_list.json` | `progress.md`、`session-handoff.md` | 当前 active feature 是 `feat-011` Paper Real AI Experiments。`feat-007` 真实 Lean proof plugin、`feat-008` Phase 7 AI API executor、`feat-009` Phase 8 已完成；`feat-010` replay/audit 已延后。 |
-| 启动和验证怎么跑 | `AGENTS.md` | `init.ps1`、`init.sh`、`verification/fast-tests.txt`、`README.md` | 默认档运行公共检查、`compileall` 和共享 smoke suite；feature 完成、提交/合并或实验发布前用 `-Full` / `--full` 运行 `pytest tests`。 |
+| 启动和验证怎么跑 | `AGENTS.md` | `init.ps1`、`init.sh`、`verification/run_verification.py`、`verification/fast-tests.txt`、`README.md` | 两个 wrapper 只启动一次 conda Python；默认档运行公共检查、`compileall` 和共享 smoke suite，Full 运行 `pytest tests`。 |
+| Lean checker / catalog 检查太慢或该跑哪一档 | `Doc/TechnicalDocument/2026-07-22-lean-checker-verification-profiles-design.md` | `verification/lean-canary-tests.txt`、`src/tokenshare/experiments/lean_catalog_audit.py`、2026-07-22 runtime 迁移计划第 0.2 节 | 普通 load 只静态校验 manifest；Lean 相关 Task 用固定 canary + 增量 audit；共享 checker/toolchain/helper 变化或正式发布才 force-all，不能通过跳过 checker 换速度。 |
+| Lean fixed plan / system runtime 在哪里 | `src/tokenshare/plugins/lean_proof/fixed_plan.py`、`src/tokenshare/plugins/lean_proof/runtime_adapter.py` | `src/tokenshare/local_runtime/{coordinator,workers}.py`、`src/tokenshare/protocol_engine.py`、`src/tokenshare/experiments/paper_workers.py`、Phase 6 Lean code map、Phase 8 code map | catalog 只提供预注册 node/edge/merge shape；插件校验 certificate，coordinator/engine 记录依赖解阻、同 root worker capacity、lease-expiry/replacement 与完整生命周期。experiments 只冻结 kill plan/投影 event refs，不拥有 lease authority；不要把 fixed plan 写成通用自动 lemma discovery。 |
 | Phase 1-6 V1 协议在做什么 | `Doc/TechnicalDocument/tokenshare_v1_complete_spec.md` | `README.md` | 只覆盖 Phase 1-6 协议内核、存储、插件和执行器契约。 |
 | Phase 1-6 代码在哪、测试在哪 | `Doc/TechnicalDocument/tokenshare_v1_code_map.md` | `src/tokenshare/`、`tests/` | code map 必须以当前实现为准；不要从旧归档文档倒推。 |
-| 最新真实 AI 论文实验 | `Doc/TechnicalDocument/tokenshare_latest_real_plugin_experiment_design.md` | `Doc/TechnicalDocument/2026-07-13-feat-011-paper-real-ai-experiments-implementation-plan.md`、`Doc/TechnicalDocument/2026-07-15-feat-011-lean-3x3-topic-template-design.md`、`src/tokenshare/experiments/` | 所有可写入论文的新实验必须真实调用 AI API。旧 deterministic/scripted suite、direct 500 和 Lean 50 只能作为 regression/calibration；Lean 3×3 模板设计不等于完整 runner 已可执行。 |
+| 最新真实 AI 论文实验 | `Doc/TechnicalDocument/tokenshare_latest_real_plugin_experiment_design.md` | `Doc/TechnicalDocument/2026-07-22-feat-011-system-runtime-paper-experiment-migration-plan.md`、`Doc/TechnicalDocument/2026-07-13-feat-011-paper-real-ai-experiments-implementation-plan.md`、`Doc/TechnicalDocument/2026-07-15-feat-011-lean-3x3-topic-template-design.md` | system runtime 迁移 Task 1-9 已落地；正常 FULL 经 `paper_dispatcher`、`local_runtime` 和 `ProtocolEngine`，公开 adapter direct API 只作 deprecated 历史/selector regression 兼容。所有可写入论文的新实验必须真实调用 AI API；实验只设条件和观察。Lean 可保留预注册固定拆分图，由插件校验，不要求通用自动拆分。 |
+| 第四章方法主张如何与代码对齐 | `Doc/TechnicalDocument/2026-07-22-chapter-4-code-paper-alignment-revision-guide.md` | `tokenshare_v1_code_map.md`、当前 `src/` 和 `tests/` | 这是论文修改决策记录，不是论文正文或实验权威；按“保留并局部补齐 / 收窄措辞 / 删除大型机制”审核第四章。 |
 | Phase 7 AI API executor | Phase 7 field spec / TDD plan / code map | `src/tokenshare/executors/ai_api*.py`、`tests/executors/test_ai_api_*.py` | 保持 artifact/provenance/secret/replay 边界；标准 config 只保存 `api_key_env`。 |
 | Phase 8 regression infrastructure | `Doc/TechnicalDocument/2026-06-29-phase-8-experiment-infrastructure-code-map.md` | `src/tokenshare/experiments/`、`tests/experiments/` | Phase 8 code map 不是最新论文实验设计。 |
-| V1 做什么、不做什么 | `AGENTS.md` | `tokenshare_v1_complete_spec.md`、`README.md` | 不做真实区块链、真实分布式 network、生产级 AI 平台或生产级 theorem-proving 平台。 |
+| V1 做什么、不做什么 | `AGENTS.md` | `tokenshare_v1_complete_spec.md`、`README.md`、2026-07-22 runtime 迁移计划 | 不做真实区块链、真实分布式 network、生产级 AI/theorem 平台，也不做外部不可信输入/主动攻击防护。错误处理只覆盖权威设计五类 rate-fault；worker death/ablation 仅按既定实验矩阵。 |
 | 具体代码应该放哪个模块 | 本文第 5 节 | `tokenshare_v1_code_map.md` | 守住协议框架、任务插件、执行器三层边界。 |
 | 需要联网查找资料 | 本文第 6 节 | paper module map、`reference_repos/README.md` | 被用于项目决策的外部资料必须本地落库并同步索引。 |
 | 需要更新状态 | `progress.md` | `feature_list.json`、`session-handoff.md` | 没有验证证据，不要标记完成。 |
@@ -88,6 +93,7 @@ src/
       lean_proof/
       lean_stub/
     executors/
+    local_runtime/
     replay/
     experiments/
 
@@ -99,7 +105,9 @@ tests/
     lean_proof/
     lean_stub/
   executors/
+  local_runtime/
   replay/
+  integration/
   experiments/
 ```
 
@@ -112,9 +120,12 @@ tests/
 | `tokenshare.plugins` | 插件契约、descriptor、factorization PoC、真实 Lean proof 插件；`lean_stub` 只作历史 compatibility。 | 协议状态机推进、租约调度、正式输出绑定、结算。 |
 | `tokenshare.executors` | 执行器契约、mock executor、确定性程序执行器、Phase 7 实验级 AI API executor。 | 任务图修改、验证结论绑定、结算逻辑、生产级 AI 平台或 secret 持久化。 |
 | `tokenshare.protocol_engine` | storage-writing application flow：调度、request/submission、verification、canonical binding、split/expand、merge、completion、settlement、pruning。 | 领域算法、provider transport、真实网络 runtime。 |
+| `tokenshare.local_runtime` | 本地应用协调层：调用 `ProtocolEngine` 推进 scheduler、lease、submission、verification、canonical、recovery、completion 和 settlement，并协调 executor/plugin bridge 与本地 worker capacity/liveness。 | 领域算法、论文矩阵/指标、生产网络；不得直接创建协议状态事实或成为第二套协议状态机。 |
 | `tokenshare.replay` | 后续 replay / audit hardening 的 package 边界。 | 重新调用 AI 或 executor 来生成历史输出。 |
-| `tokenshare.experiments` | experiment runner、fault simulation、metrics/report、AI profile、benchmarks 和 paper experiments。 | 协议核心不可替代的状态事实；不得重新定义插件验证权威或 replay 历史事实。 |
+| `tokenshare.experiments` | experiment runner、catalog/condition、fault/ablation/worker-kill hooks、metrics/report、AI profile、benchmarks 和 paper result projection。 | 协议核心不可替代的状态事实；不得自己决定 canonical/requeue/merge/completion，不得重新定义插件验证权威或 replay 历史事实。 |
 | `tests/*` | 与 `src/tokenshare/*` 镜像的单元、集成、故障和 regression 测试。 | 外部参考项目测试。 |
+
+安全范围固定为受信本地研究工作流。不要创建通用 `security`/`attack`/`hardening` package，也不要增加 tamper/fabrication、path/injection、security fuzzing、auth/signature/ACL、恶意 plugin/executor/worker 或 Byzantine tests。正常 schema/parser/verifier/checker、lease/fencing/deadline、artifact hash、secret 不落盘和 checkpoint/replay identity 检查可以保留，但只作为实验正确性/可复现性要求。Experiment 3 rate-fault 只认 `false_positive,false_negative,no_return,late_submission,executor_error`；worker death 和 Experiment 4 ablation 不得被扩展成一般安全模型。
 
 ## 6. 外部参考资料落库与使用规则
 

@@ -156,6 +156,66 @@ class ValidatedModelEndpointBinding:
         }
 
 
+def prepare_fixed_entry_execution_config(
+    *,
+    source_config: AIAPIExecutorConfig,
+    binding: ValidatedModelEndpointBinding,
+    max_tokens: int,
+    timeout_seconds: int,
+    adapter_metadata_key: str,
+) -> AIAPIExecutorConfig:
+    """构造预算预检与真实 adapter 共用的单 entry 安全配置。"""
+
+    if adapter_metadata_key not in {
+        "factorization_paper_adapter",
+        "lean_paper_adapter",
+    }:
+        raise ValueError("paper adapter metadata key is not supported")
+    defaults = {
+        **dict(source_config.defaults),
+        "max_tokens": max_tokens,
+        "timeout_seconds": timeout_seconds,
+        "temperature": 0.0,
+        "max_provider_attempts": 1,
+    }
+    return AIAPIExecutorConfig(
+        schema_version=source_config.schema_version,
+        executor_id=source_config.executor_id,
+        provider_family=source_config.provider_family,
+        selection_policy=dict(source_config.selection_policy),
+        defaults=defaults,
+        entries=[binding.selected_entry],
+        local_concurrency=dict(source_config.local_concurrency),
+        metadata={**dict(source_config.metadata), adapter_metadata_key: True},
+    )
+
+
+def build_fixed_entry_executor_requirements(
+    *,
+    config: AIAPIExecutorConfig,
+    binding: ValidatedModelEndpointBinding | None,
+) -> dict[str, Any]:
+    """返回可持久化且足以固定论文模型端点的调度约束。"""
+
+    if binding is None:
+        return {
+            "executor": "ai_api",
+            "provider_family": config.provider_family,
+        }
+    identity = binding.identity
+    return {
+        "executor": "ai_api",
+        "provider_family": identity.provider_family,
+        "provider_config_id": identity.provider_config_id,
+        "source_provider_config_digest": identity.source_provider_config_digest,
+        "prepared_execution_config_digest": config.config_digest,
+        "selected_entry_id": identity.selected_entry_id,
+        "provider_model_id": identity.provider_model_id,
+        "reasoning_profile_id": identity.reasoning_profile_id,
+        "model_endpoint_identity_digest": identity.model_endpoint_identity_digest,
+    }
+
+
 def normalize_reasoning_identity(
     *,
     provider_family: str,

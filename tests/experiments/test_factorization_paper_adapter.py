@@ -3,6 +3,7 @@ from pathlib import Path
 
 import pytest
 
+import tokenshare.experiments.factorization_paper_adapter as factorization_paper_adapter_module
 from tokenshare.executors.ai_api import build_ai_api_executor_descriptor
 from tokenshare.executors.ai_api_config import load_ai_api_config
 from tokenshare.executors.ai_api_transport import (
@@ -12,9 +13,19 @@ from tokenshare.executors.ai_api_transport import (
 from tokenshare.executors.registry import ExecutorRegistry
 from tokenshare.experiments.factorization_paper_adapter import (
     ScriptedFactorizationRangeTransport,
+    _paper_task_status_from_runtime,
+    _prepare_config,
     _validate_factorization_case_for_adapter,
     run_factorization_paper_case,
 )
+from tokenshare.experiments.paper_unit_commitments import (
+    build_case_ai_unit_bindings,
+    task_unit_snapshot_commitment,
+)
+from tokenshare.plugins.factorization.runtime_adapter import (
+    FactorizationRuntimeAdapter,
+)
+from tokenshare.storage.artifacts import ArtifactStore
 from tokenshare.experiments.paper_catalog import load_paper_catalogs
 from tokenshare.experiments.paper_factorization_catalog import (
     generate_factorization_paper_cases,
@@ -31,6 +42,8 @@ from tokenshare.experiments.paper_models import (
     PaperTaskStatus,
 )
 from tokenshare.plugins.factorization.split_strategy import partition_candidate_ranges
+from tokenshare.local_runtime import ProtocolRunCoordinator
+from tokenshare.storage.events import EventLedger, EventType
 
 
 FACTOR_CATALOG = "benchmarks/paper/factorization_catalog.v1.jsonl"
@@ -44,6 +57,27 @@ def test_factorization_v2_all_500_cases_pass_adapter_complete_domain_preflight()
         _validate_factorization_case_for_adapter(case)
 
     assert len(cases) == 500
+
+
+def test_factorization_runtime_status_projection_is_terminal_and_fail_closed() -> None:
+    assert (
+        _paper_task_status_from_runtime("completed", accepted_validity=True)
+        == PaperTaskStatus.COMPLETED
+    )
+    assert (
+        _paper_task_status_from_runtime("completed", accepted_validity=False)
+        == PaperTaskStatus.FAILED
+    )
+    assert (
+        _paper_task_status_from_runtime("failed", accepted_validity=True)
+        == PaperTaskStatus.FAILED
+    )
+    for invalid_status in ("processing", "unknown"):
+        with pytest.raises(ValueError, match="terminal runtime status"):
+            _paper_task_status_from_runtime(
+                invalid_status,
+                accepted_validity=False,
+            )
 
 
 def test_factorization_v2_easy_semiprime_completes_parser_verifier_canonical_and_merge(
@@ -365,25 +399,51 @@ def test_factorization_exp4_ablation_modes_execute_inside_adapter_lifecycle(
         assert runtime["disabled_mechanism"] is None
     elif mode == "NO_VERIFICATION":
         assert any(
-            item["verification"]["status"] == "skipped_by_ablation"
+            item["verification"]["status"] == "passed"
+            and item["verification"]["metadata"] == {
+                "ablation_mode": "NO_VERIFICATION",
+                "domain_verifier_invoked": False,
+            }
             and item["canonical_output_ref"] is not None
             for item in result.range_results
         )
+        assert any(
+            observation["disabled_mechanism"] == "verification"
+            for observation in runtime["hook_observations"]
+        )
         assert result.task_result.accepted_validity is False
     elif mode == "NO_PARSER_POLICY":
-        assert all(item.parsed_output_ref is None for item in result.attempt_results)
+        assert all(
+            item.raw_output_ref is not None
+            and item.parsed_output_ref is not None
+            and item.parsed_output_ref["content_hash"]
+            == item.raw_output_ref["content_hash"]
+            for item in result.attempt_results
+        )
         assert runtime["raw_only_exposed"] is True
+        assert any(
+            observation["disabled_mechanism"] == "parser_policy"
+            for observation in runtime["hook_observations"]
+        )
     elif mode == "NO_REQUEUE":
         assert runtime["replacement_attempts_allowed"] is False
         assert result.task_result.attempt_count == result.split_summary[
             "range_child_count"
         ]
     elif mode == "NO_MERGE_GATE":
-        assert result.merge_summary["premature_merge_attempted"] is True
-        assert result.merge_summary["root_validity_audit_passed"] is False
+        assert runtime["premature_merge_attempted"] is True
+        assert runtime["root_validity_audit_passed"] is False
+        assert any(
+            observation["disabled_mechanism"] == "merge_gate"
+            for observation in runtime["hook_observations"]
+        )
     else:
-        assert result.merge_summary["slot_integrity_violation"] is True
-        assert result.merge_summary["root_validity_audit_passed"] is False
+        assert runtime["slot_integrity_violation"] is True
+        assert runtime["root_validity_audit_passed"] is True
+        assert any(
+            observation["disabled_mechanism"] == "slot_integrity"
+            for observation in runtime["hook_observations"]
+        )
 
 
 def test_factorization_paper_adapter_reports_provider_failure_stage(tmp_path) -> None:
@@ -666,9 +726,9 @@ def test_factorization_resolved_model_mismatch_records_audit_and_stops_later_uni
         entry_id="gpt-entry",
     )
 
-    assert len(transport.calls) == 1
-    assert result.task_result.attempt_count == 1
-    assert result.task_result.provider_attempt_count == 1
+    assert len(transport.calls) == result.split_summary["range_child_count"]
+    assert result.task_result.attempt_count == len(transport.calls)
+    assert result.task_result.provider_attempt_count == len(transport.calls)
     assert result.task_result.root_status == PaperTaskStatus.FAILED
     assert result.task_result.failure_stage == PaperFailureStage.AUDIT
     assert result.task_result.failure_kind == PaperFailureKind.MODEL_IDENTITY_MISMATCH
@@ -679,6 +739,11 @@ def test_factorization_resolved_model_mismatch_records_audit_and_stops_later_uni
     assert attempt.error_kind == "model_identity_mismatch"
     assert attempt.paper_eligible is False
     assert attempt.model_execution_record_ref is not None
+    assert all(
+        item.attempt_status == PaperAttemptStatus.MODEL_IDENTITY_MISMATCH
+        and item.paper_eligible is False
+        for item in result.attempt_results
+    )
 
     record = _read_artifact(result.output_root, attempt.model_execution_record_ref)
     provenance = _read_artifact(result.output_root, attempt.provenance_ref)
@@ -783,7 +848,7 @@ def test_factorization_missing_resolved_model_records_audit_and_stops_later_unit
         entry_id="gpt-entry",
     )
 
-    assert len(transport.calls) == 1
+    assert len(transport.calls) == result.split_summary["range_child_count"]
     assert result.task_result.failure_stage == PaperFailureStage.AUDIT
     assert result.task_result.failure_kind == PaperFailureKind.MODEL_IDENTITY_MISMATCH
     assert result.merge_summary["status"] == "blocked"
@@ -797,6 +862,11 @@ def test_factorization_missing_resolved_model_records_audit_and_stops_later_unit
     assert attempt.usage_ref is not None
     assert attempt.model_execution_record_ref is not None
     assert attempt.model_execution_record_ref["artifact_schema_version"] == "v2"
+    assert all(
+        item.attempt_status == PaperAttemptStatus.MODEL_IDENTITY_MISMATCH
+        and item.paper_eligible is False
+        for item in result.attempt_results
+    )
     raw = _read_artifact(result.output_root, attempt.raw_output_ref)
     record = _read_artifact(result.output_root, attempt.model_execution_record_ref)
     assert raw["resolved_model"] is None
@@ -1237,3 +1307,294 @@ def _registry_provider_matches(request: dict) -> list[str]:
             request_schema_version=request["schema_version"],
         )
     ]
+def test_factorization_budget_commitments_use_runtime_plan_unit_snapshots(
+    tmp_path,
+) -> None:
+    case = generate_factorization_paper_cases()[0]
+    adapter = FactorizationRuntimeAdapter(provider_family="siliconflow", seed=7)
+    planned_units = adapter.plan_units(case, artifact_store=ArtifactStore(tmp_path))
+
+    bindings = build_case_ai_unit_bindings(case, seed=7)
+
+    assert {
+        binding["unit_id"]: binding["task_unit_snapshot_commitment"]
+        for binding in bindings
+    } == {
+        unit.unit_id: task_unit_snapshot_commitment(unit.to_dict())
+        for unit in planned_units
+    }
+
+
+def test_factorization_full_adapter_is_coordinator_thin_shell_with_event_refs(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    case = generate_factorization_paper_cases()[0]
+    calls = 0
+    original = ProtocolRunCoordinator.run_root
+
+    def recording(self, request):
+        nonlocal calls
+        calls += 1
+        return original(self, request)
+
+    monkeypatch.setattr(ProtocolRunCoordinator, "run_root", recording)
+
+    result = run_factorization_paper_case(
+        case=case,
+        condition=_v2_condition(case),
+        output_root=tmp_path,
+        transport=ScriptedFactorizationRangeTransport(),
+        real_transport=False,
+        entry_id="factorization_paper_scripted",
+    )
+
+    assert calls == 1
+    assert result.task_result.event_refs
+    assert result.eligibility_report.paper_eligible is False
+
+
+def test_factorization_full_preserves_ai_parsed_provenance_before_canonicalization(
+    tmp_path,
+) -> None:
+    case = generate_factorization_paper_cases()[0]
+    result = run_factorization_paper_case(
+        case=case,
+        condition=_v2_condition(case),
+        output_root=tmp_path,
+        transport=ScriptedFactorizationRangeTransport(),
+        real_transport=False,
+        entry_id="factorization_paper_scripted",
+    )
+
+    ranges_by_unit = {item["unit_id"]: item for item in result.range_results}
+    for attempt in result.attempt_results:
+        assert attempt.parsed_output_ref is not None
+        assert attempt.parsed_output_ref["artifact_type"] == "ParsedModelOutput"
+        canonical_ref = ranges_by_unit[attempt.unit_id]["canonical_output_ref"]
+        assert canonical_ref is not None
+        assert canonical_ref["artifact_type"] == "canonical_output"
+        assert canonical_ref["artifact_id"] != attempt.parsed_output_ref["artifact_id"]
+        canonical_body_ref = next(
+            ref
+            for ref in result.task_result.artifact_refs
+            if ref["artifact_id"] == canonical_ref["artifact_id"]
+        )
+        source = canonical_body_ref["source"]
+        assert source["parsed_output_ref"] == attempt.parsed_output_ref
+        assert source["raw_output_ref"] == attempt.raw_output_ref
+        assert source["candidate_output_ref"]["artifact_type"] == "CandidateOutput"
+
+
+def test_factorization_full_task_artifacts_include_stable_attempt_evidence(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("TOKENSHARE_IDENTITY_TEST_KEY", "fake-identity-test-key")
+    case = generate_factorization_paper_cases()[0]
+    approved_config = _identity_config(
+        provider_family="openai",
+        model="gpt-5.6-sol",
+        reasoning_effort="high",
+    )
+    result = run_factorization_paper_case(
+        case=case,
+        condition=_formal_exp5_condition(
+            catalog_digest=f"sha256:{'3' * 64}",
+            domain="factorization",
+            difficulty=str(case["difficulty"]),
+            approved_config=approved_config,
+        ),
+        output_root=tmp_path,
+        transport=ScriptedFactorizationRangeTransport(),
+        real_transport=False,
+        ai_api_config=approved_config,
+        entry_id="gpt-entry",
+    )
+
+    task_keys = [
+        (ref["artifact_id"], ref["content_hash"])
+        for ref in result.task_result.artifact_refs
+    ]
+    assert len(task_keys) == len(set(task_keys))
+    task_key_set = set(task_keys)
+    for attempt in result.attempt_results:
+        required_refs = (
+            attempt.request_ref,
+            attempt.raw_output_ref,
+            attempt.parsed_output_ref,
+            attempt.provenance_ref,
+            attempt.usage_ref,
+            attempt.model_execution_record_ref,
+        )
+        assert all(ref is not None for ref in required_refs)
+        assert {
+            (ref["artifact_id"], ref["content_hash"])
+            for ref in required_refs
+            if ref is not None
+        }.issubset(task_key_set)
+
+
+def test_fixed_identity_is_request_policy_and_mismatch_is_fatal_submission(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("TOKENSHARE_IDENTITY_TEST_KEY", "fake-identity-test-key")
+    case = generate_factorization_paper_cases()[0]
+    approved_config = _identity_config(
+        provider_family="openai",
+        model="gpt-5.6-sol",
+        reasoning_effort="high",
+    )
+    condition = _formal_exp5_condition(
+        catalog_digest=f"sha256:{'2' * 64}",
+        domain="factorization",
+        difficulty=str(case["difficulty"]),
+        approved_config=approved_config,
+    )
+    result = run_factorization_paper_case(
+        case=case,
+        condition=condition,
+        output_root=tmp_path,
+        transport=_ResolvedModelMismatchFactorizationTransport(
+            resolved_model="gpt-5.6-sol-versioned"
+        ),
+        real_transport=False,
+        ai_api_config=approved_config,
+        entry_id="gpt-entry",
+    )
+
+    attempt = result.attempt_results[0]
+    request = _read_artifact(result.output_root, attempt.request_ref)
+    assert request["hard_requirements"] == {
+        "executor": "ai_api",
+        "provider_family": "openai",
+        "provider_config_id": "openai",
+        "source_provider_config_digest": approved_config.config_digest,
+        "prepared_execution_config_digest": _prepare_config(
+            approved_config,
+            entry_id="gpt-entry",
+            max_tokens=512,
+            timeout_seconds=30,
+        ).config_digest,
+        "selected_entry_id": "gpt-entry",
+        "provider_model_id": "gpt-5.6-sol",
+        "reasoning_profile_id": "high",
+        "model_endpoint_identity_digest": condition.model_endpoint_identity_digest,
+    }
+    serialized_requirements = json.dumps(request["hard_requirements"], sort_keys=True)
+    assert "api_key" not in serialized_requirements
+    assert "prompt" not in serialized_requirements
+    ledger = EventLedger(
+        Path(result.output_root)
+        / "events"
+        / f"paper_factorization_{case['case_id']}.jsonl"
+    )
+    events = ledger.read_all()
+    submission_event = next(
+        event
+        for event in events
+        if event.event_type == EventType.EXECUTION_SUBMISSION_RECORDED
+        and event.payload["request_id"] == request["request_id"]
+    )
+    submission = _read_artifact(
+        result.output_root,
+        submission_event.payload["submission_ref"],
+    )
+    assert submission["result_kind"] == "fatal_executor_error"
+    assert submission["candidate_output_refs"] == {}
+    assert not any(
+        event.event_type == EventType.VERIFICATION_RECORDED
+        and event.payload["unit_id"] == attempt.unit_id
+        for event in events
+    )
+    assert not any(
+        event.event_type == EventType.CANONICAL_OUTPUTS_BOUND
+        and event.payload["unit_id"] == attempt.unit_id
+        for event in events
+    )
+    assert result.run_evidence["protocol_runtime"]["status"] == "failed"
+
+
+def test_fixed_identity_request_mismatch_is_fatal_without_provider_call(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("TOKENSHARE_IDENTITY_TEST_KEY", "fake-identity-test-key")
+    case = generate_factorization_paper_cases()[0]
+    approved_config = _identity_config(
+        provider_family="openai",
+        model="gpt-5.6-sol",
+        reasoning_effort="high",
+    )
+    condition = _formal_exp5_condition(
+        catalog_digest=f"sha256:{'4' * 64}",
+        domain="factorization",
+        difficulty=str(case["difficulty"]),
+        approved_config=approved_config,
+    )
+    transport = ScriptedFactorizationRangeTransport()
+    executor_type = factorization_paper_adapter_module._FixedIdentityRangeExecutor
+    original_init = executor_type.__init__
+
+    def initialize_with_drifted_requirement(self, *args, **kwargs):
+        original_init(self, *args, **kwargs)
+        self.executor_requirements = {
+            **self.executor_requirements,
+            "provider_model_id": "wrong-model",
+        }
+
+    monkeypatch.setattr(
+        executor_type,
+        "__init__",
+        initialize_with_drifted_requirement,
+    )
+
+    result = run_factorization_paper_case(
+        case=case,
+        condition=condition,
+        output_root=tmp_path,
+        transport=transport,
+        real_transport=False,
+        ai_api_config=approved_config,
+        entry_id="gpt-entry",
+    )
+
+    assert transport.calls == []
+    assert result.run_evidence["protocol_runtime"]["status"] == "failed"
+    assert result.task_result.root_status == PaperTaskStatus.FAILED
+    assert result.attempt_results
+    assert all(
+        attempt.attempt_status == PaperAttemptStatus.PROVIDER_ERROR
+        and attempt.error_kind
+        in {"executor_requirement_mismatch", "missing_submission_event"}
+        and attempt.provenance_ref is None
+        and attempt.model_execution_record_ref is None
+        and attempt.paper_eligible is False
+        for attempt in result.attempt_results
+    )
+    assert {
+        attempt.error_kind for attempt in result.attempt_results
+    } == {"executor_requirement_mismatch", "missing_submission_event"}
+    ledger = EventLedger(
+        Path(result.output_root)
+        / "events"
+        / f"paper_factorization_{case['case_id']}.jsonl"
+    )
+    submission_events = [
+        event
+        for event in ledger.read_all()
+        if event.event_type == EventType.EXECUTION_SUBMISSION_RECORDED
+        and event.payload["unit_id"] in {
+            attempt.unit_id for attempt in result.attempt_results
+        }
+    ]
+    assert len(submission_events) == 1
+    for event in submission_events:
+        submission = _read_artifact(
+            result.output_root,
+            event.payload["submission_ref"],
+        )
+        assert submission["result_kind"] == "fatal_executor_error"
+        assert submission["candidate_output_refs"] == {}
+        assert submission["provenance_ref"] is None

@@ -6,6 +6,7 @@ from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 
 from tokenshare.core.models import Attempt, AttemptState, JsonObject, Lease, LeaseState, ProtocolConfig, TaskState, TaskUnit
+from tokenshare.core.recovery import RetryDecision, evaluate_retry
 from tokenshare.core.scheduling import SchedulingDecision
 from tokenshare.core.state_machines import transition_attempt, transition_lease
 
@@ -27,6 +28,7 @@ class LeaseExpiryDecision:
     attempt: Attempt
     recovery_action: JsonObject
     next_task_state: TaskState
+    retry_decision: RetryDecision
 
 
 class LeaseManager:
@@ -105,6 +107,22 @@ class LeaseManager:
         recovery_action_id: str,
         retry_count: int,
     ) -> LeaseExpiryDecision:
+        if (
+            lease.task_id != attempt.task_id
+            or task_unit.task_id != attempt.task_id
+        ):
+            raise ValueError("lease recovery task_id does not match attempt and task unit")
+        if (
+            lease.unit_id != attempt.unit_id
+            or task_unit.unit_id != attempt.unit_id
+        ):
+            raise ValueError("lease recovery unit_id does not match attempt and task unit")
+        if lease.attempt_id != attempt.attempt_id:
+            raise ValueError("lease recovery attempt_id does not match attempt")
+        if lease.lease_id != attempt.lease_id:
+            raise ValueError("lease recovery lease_id does not match attempt")
+        if lease.client_id != attempt.client_id:
+            raise ValueError("lease recovery client_id does not match attempt")
         if lease.state != LeaseState.ACTIVE:
             raise ValueError(f"only Active leases can expire: {lease.state.value}")
         if _parse_utc(now) < _parse_utc(lease.expires_at):
@@ -112,6 +130,11 @@ class LeaseManager:
         if attempt.state not in {AttemptState.CREATED, AttemptState.RUNNING}:
             raise ValueError(f"only Created or Running attempts can be superseded: {attempt.state.value}")
 
+        retry_decision = evaluate_retry(
+            trigger="lease_expired",
+            retry_count=retry_count,
+            max_retries=self.protocol_config.max_retries,
+        )
         expired_lease = transition_lease(
             lease,
             new_state=LeaseState.EXPIRED,
@@ -120,13 +143,10 @@ class LeaseManager:
         )
         superseded_attempt = transition_attempt(
             attempt,
-            new_state=AttemptState.SUPERSEDED,
+            new_state=retry_decision.superseded_attempt_state,
             changed_at=now,
             reason="lease_expired",
         )
-        retry_allowed = retry_count < self.protocol_config.max_retries
-        next_task_state = TaskState.READY if retry_allowed else TaskState.FAILED
-        reason = "lease_expired_retry" if retry_allowed else "retry_limit_reached"
         recovery_action = {
             "schema_version": "phase2.recovery_action.v1",
             "recovery_action_id": recovery_action_id,
@@ -136,10 +156,10 @@ class LeaseManager:
             "lease_id": lease.lease_id,
             "attempt_id": attempt.attempt_id,
             "old_task_state": task_unit.state.value,
-            "new_task_state": next_task_state.value,
+            "new_task_state": retry_decision.next_task_state.value,
             "retry_count": retry_count,
-            "retry_allowed": retry_allowed,
-            "reason": reason,
+            "retry_allowed": retry_decision.retry_allowed,
+            "reason": retry_decision.reason,
             "created_at": now,
             "metadata": {},
         }
@@ -147,7 +167,8 @@ class LeaseManager:
             lease=expired_lease,
             attempt=superseded_attempt,
             recovery_action=recovery_action,
-            next_task_state=next_task_state,
+            next_task_state=retry_decision.next_task_state,
+            retry_decision=retry_decision,
         )
 
 

@@ -1,12 +1,13 @@
 import pytest
 
-from tokenshare.core.models import Attempt, AttemptState
+from tokenshare.core.models import Attempt, AttemptState, Lease, LeaseState, TaskState
+from tokenshare.core.recovery import evaluate_retry
 from tokenshare.core.verification import REQUIRED_VERIFICATION_LAYERS, VerificationReport, build_verification_report
 from tokenshare.protocol_engine import ProtocolEngine
 from tokenshare.storage.artifacts import ArtifactStore
 from tokenshare.storage.events import EventLedger, EventType
 
-from tests.phase2_fixtures import make_artifact_ref, make_config
+from tests.phase2_fixtures import make_artifact_ref, make_config, make_unit
 
 
 NOW = "2026-06-24T00:00:00Z"
@@ -73,6 +74,100 @@ def test_record_rejected_verification_advances_attempt_to_rejected(tmp_path) -> 
         EventType.VERIFICATION_RECORDED,
         EventType.ATTEMPT_STATE_CHANGED,
     ]
+
+
+def test_recovery_consumes_rejected_verification_attempt_without_duplicate_transition(
+    tmp_path,
+) -> None:
+    engine, ledger = _make_engine(tmp_path)
+    answer_ref = make_artifact_ref("artifact_answer")
+    submitted_attempt = _submitted_attempt(candidate_output_refs={"answer": answer_ref})
+    report = _verification_report(
+        "verification_report_recovery",
+        submitted_attempt,
+        status="rejected",
+        plugin_domain_status="rejected",
+    )
+    verification = engine.record_verification(
+        report=report,
+        attempt=submitted_attempt,
+        correlation_id="corr_verify_for_recovery",
+    )
+
+    recovery_arguments = {
+        "decision": evaluate_retry(
+            trigger="verification_rejected",
+            retry_count=1,
+            max_retries=3,
+        ),
+        "attempt": verification.attempt,
+        "lease": _active_lease_for(verification.attempt),
+        "task_unit": make_unit(state=TaskState.PROCESSING),
+        "recovery_action_id": "recovery_after_verification_rejection",
+        "now": "2026-06-24T00:00:04Z",
+        "correlation_id": "corr_recover_verification",
+        "causation_event_id": verification.attempt_event.event_id,
+    }
+    recovery = engine.record_recovery_decision(**recovery_arguments)
+    repeated = engine.record_recovery_decision(**recovery_arguments)
+
+    assert repeated.events == recovery.events
+    assert [event.batch_index for event in recovery.events] == [1, 2, 3]
+    assert {event.batch_size for event in recovery.events} == {3}
+    lease_event, recovery_event, task_event = recovery.events
+    assert lease_event.causation_event_id == verification.attempt_event.event_id
+    assert recovery_event.causation_event_id == lease_event.event_id
+    assert task_event.causation_event_id == recovery_event.event_id
+    assert (
+        task_event.payload["task_unit_state_change"]["causation_event_id"]
+        == recovery_event.event_id
+    )
+
+    assert recovery.attempt == verification.attempt
+    assert recovery.lease.state == LeaseState.RELEASED
+    assert [event.event_type for event in recovery.events] == [
+        EventType.LEASE_STATE_CHANGED,
+        EventType.RECOVERY_ACTION_RECORDED,
+        EventType.TASK_UNIT_STATE_CHANGED,
+    ]
+    attempt_events = [
+        event
+        for event in ledger.read_all()
+        if event.event_type == EventType.ATTEMPT_STATE_CHANGED
+    ]
+    assert len(attempt_events) == 1
+    assert attempt_events[0].payload["old_state"] == "Submitted"
+    assert attempt_events[0].payload["new_state"] == "Rejected"
+
+
+def test_recovery_rejects_unrecorded_terminal_attempt_without_writes(tmp_path) -> None:
+    engine, ledger = _make_engine(tmp_path)
+    rejected_attempt = Attempt(
+        **{
+            **_submitted_attempt().to_dict(),
+            "state": AttemptState.REJECTED,
+            "finished_at": "2026-06-24T00:00:03Z",
+            "failure_kind": "invalid_output",
+            "failure_reason": "verification rejected",
+        }
+    )
+
+    with pytest.raises(ValueError, match="terminal attempt is not recorded"):
+        engine.record_recovery_decision(
+            decision=evaluate_retry(
+                trigger="verification_rejected",
+                retry_count=1,
+                max_retries=3,
+            ),
+            attempt=rejected_attempt,
+            lease=_active_lease_for(rejected_attempt),
+            task_unit=make_unit(state=TaskState.PROCESSING),
+            recovery_action_id="recovery_unrecorded_terminal",
+            now="2026-06-24T00:00:04Z",
+            correlation_id="corr_unrecorded_terminal",
+        )
+
+    assert ledger.read_all() == []
 
 
 def test_verification_error_records_event_without_attempt_state_change(tmp_path) -> None:
@@ -262,6 +357,26 @@ def _submitted_attempt(
             if candidate_output_refs is None
             else candidate_output_refs
         ),
+        metadata={},
+    )
+
+
+def _active_lease_for(attempt: Attempt) -> Lease:
+    return Lease(
+        lease_id=attempt.lease_id,
+        task_id=attempt.task_id,
+        unit_id=attempt.unit_id,
+        attempt_id=attempt.attempt_id,
+        client_id=attempt.client_id,
+        state=LeaseState.ACTIVE,
+        fencing_token="token_1",
+        issued_at="2026-06-24T00:00:00Z",
+        expires_at="2026-06-24T00:05:00Z",
+        last_heartbeat_at=None,
+        heartbeat_count=0,
+        lease_kind="primary",
+        terminated_at=None,
+        terminated_reason=None,
         metadata={},
     )
 

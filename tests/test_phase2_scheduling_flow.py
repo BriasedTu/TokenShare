@@ -62,6 +62,14 @@ def test_phase2_schedule_and_lease_expiry_flow_writes_ordered_events(tmp_path) -
     ]
     assert events[4].payload["old_state"] == "Active"
     assert events[4].payload["new_state"] == "Active"
+    assert [event.batch_id for event in events[-4:]] == [
+        "recovery_batch:recovery_1",
+        "recovery_batch:recovery_1",
+        "recovery_batch:recovery_1",
+        "recovery_batch:recovery_1",
+    ]
+    assert [event.batch_index for event in events[-4:]] == [1, 2, 3, 4]
+    assert {event.batch_size for event in events[-4:]} == {4}
     assert all(event.correlation_id for event in events)
 
 

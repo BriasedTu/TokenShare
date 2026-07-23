@@ -60,13 +60,37 @@
 
 4.  输出中不存在 API key；event、artifact、SQLite、日志、config digest 和论文 CSV 均不得包含 secret。
 
-5.  AI 不决定协议级拆分。factorization 和 Lean 的拆分仍由插件确定性规则生成。
+5.  AI 不决定协议级拆分。factorization 的 range split 由插件确定性规则生成；Lean 允许保留 catalog/脚本预先写好的、版本化的固定 lemma-DAG，由 Lean 插件在运行时校验、规范化并生成拆分 certificate。这里不要求运行时自动发现任意 theorem 的全部中间引理。
 
 6.  factorization 结果必须经插件 parser/verifier；Lean proof 必须经固定本地 Lean/lake/toolchain/project checker。
 
 7.  replay/metrics/report 阶段不重新调用 AI API，也不重新调用 Lean 来补写历史成功事实。
 
 任何缺少真实 provider attempt 的 run 都必须输出 `paper_eligible=false` 和具体 `ineligibility_reasons`。现有 `run_all` 默认 suite、scripted Lean 50、scripted AI profile 和 deterministic fixture 即使测试通过，也只能标记 `regression_only=true`。
+
+## 系统执行权威与实验边界
+
+正常 `FULL` 论文 run 必须由 TokenShare 系统应用层驱动协议生命周期。目标边界如下：
+
+1.  `tokenshare.core` 只保存协议对象、不变量和 submission/retry/merge 等纯决策，不负责线程、进程、provider、文件或实验矩阵。
+2.  `ProtocolEngine` 是协议事实写入权威，负责把调度、lease、submission、verification、canonical、split/expand、recovery、merge、completion 和 settlement 写入 ledger/artifacts。
+3.  新增 `tokenshare.local_runtime` 作为本地应用协调层，循环调用 scheduler、lease、executor、插件和 `ProtocolEngine`；它不是生产网络 runtime。
+4.  Factorization/Lean 插件继续拥有领域拆分、parser/verifier/checker 和 merge 规则；Lean 固定 lemma-DAG 的 plan body 可以来自预注册 catalog，但 certificate/proposal/merge plan 必须由 Lean 插件校验后产生。
+5.  `tokenshare.experiments` 只选择 catalog/condition/repeat/model，注入 fault/ablation/worker-kill 条件，并从权威 ledger/artifacts 派生 `PaperTaskResult`、metrics 和 report。实验结果对象不得反过来决定 canonical、requeue、merge 或 root completion。
+
+2026-07-23 system runtime 迁移 Task 1-9 已完成：正常 FULL 路径统一进入 `paper_dispatcher`、`ProtocolRunCoordinator` 和 `ProtocolEngine`。迁移前由 `factorization_paper_adapter.py`、`lean_paper_adapter.py` 或 `paper_formal_runner.py` 直接推进生命周期的结果只作为 **historical** 模型效果或回归资料，不能单独证明“协议系统本体执行了对应生命周期”。正式迁移与最终门禁仍以 `2026-07-22-feat-011-system-runtime-paper-experiment-migration-plan.md` 为准。
+
+## 受信本地原型与安全非目标
+
+TokenShare V1 假设实验人员、catalog、配置、插件、executor registry、本地文件和启动命令均属于受信研究环境。本项目不面向外部不可信输入或主动攻击者，feat-011 和 system runtime 迁移不得新增攻击防护或安全加固工作流。
+
+故障处理范围严格限于 Experiment 3 的五类 rate-fault：`false_positive`、`false_negative`、`no_return`、`late_submission`、`executor_error`。`worker_death` 是同一实验中单独预注册的进程终止条件，只测试既定 lease expiry/reassignment，不扩展为任意 crash、恶意 worker 或拜占庭容错；Experiment 4 ablation 是机制关闭实验，不增加故障类型。
+
+正常执行中自然出现的 `provider_error`、`rate_limited`、`parse_failure`、`verifier_rejected`、`checker_rejected`、`budget_limit` 或 `internal_error` 仍按事实进入 failure taxonomy 和报告；它们不是新增的 fault-injection 类型，也不授权单独建设安全/恢复子系统。
+
+明确不做：恶意手工篡改/伪造 event、artifact、manifest 或 checkpoint 的对抗防护；path traversal、symlink、SQL/JSON/command injection、反序列化和资源耗尽攻击加固；schema/security fuzzing；不可信 plugin/executor/provider envelope；身份、权限、签名、ACL、生产 sandbox 或攻击者模型。不得为这些范围新增代码、测试、报告或论文主张。
+
+现有正常路径 schema/type 校验、parser/verifier/checker、lease/fencing/deadline 不变量、artifact content hash、secret 不落盘和 checkpoint/replay 身份一致性继续保留，因为它们保证受信实验的正确性与可复现性；不得把它们继续扩展或表述为 adversarial security guarantee。
 
 ## 受控故障仍必须经过真实 API
 
@@ -82,19 +106,20 @@
 
 因此，论文必须把“自然模型错误”和“真实输出后的受控注入错误”分开统计。注入变换本身消耗 0 个 provider token；原始调用和恢复调用的实际 token 必须全部计入。
 
-# 当前系统事实与关键缺口
+# 当前系统事实与剩余实验门槛
 
 | 组件 | 当前已有能力 | 新实验缺口 |
 |:---|:---|:---|
-| Phase 7 AI executor | 真实 SiliconFlow-compatible transport；raw/parsed/error/usage/latency/cost/provenance artifact；secret 和 replay guard。 | 新论文 runner 必须强制 real transport、预算门禁、固定模型策略和每个 AI unit 的 provider-attempt coverage。 |
+| Phase 7 AI executor | 真实 SiliconFlow-compatible 与 OpenAI Chat Completions transport；raw/parsed/error/usage/latency/cost/provenance artifact；secret 和 replay guard。 | 新论文 runner 必须强制 real transport、预算门禁、固定模型策略和每个 AI unit 的 provider-attempt coverage。 |
 | Phase 8 default suite | 通用 runner、adapter、simulation、metrics/report；默认 Experiment 1–4。 | 默认使用 deterministic/scripted 路径，旧 case 不再是论文实验；`SimulationProfile` 也没有 fault rate、worker count、difficulty、repeat、model policy。 |
 | Factorization 500 benchmark | 500 个 deterministic semiprime、真实 API direct answer、并发、准确率、token/cost/latency。 | 它直接让模型给完整分解，`worker_count` 并发的是独立整数，不是协议内部 range workers；不能单独证明协议 lifecycle 或 worker scaling。 |
-| Factorization adapter | 真实插件 fixture、deterministic split/verifier/merge。 | 缺少“协议 range child 全部由真实 API 执行”的批量论文路径、难度 catalog、factor position 控制和同一 root 内 worker 并发。 |
-| Lean AI 50 | 50 个 `P ∧ Q` / `P ↔ Q` 任务；真实 API child proof、parser、checker、merge/root recheck。 | 仅两种浅层结构、没有难度标签、固定顺序、没有 worker/model/request-limit CLI、缺少故障和消融入口，容易出现接近全对而无区分度。 |
-| Task 14 readiness 草稿 | 当前工作树已有 `benchmarks/paper/lean_task14_3x3_readiness.v1.json` 和 `tests/experiments/test_lean_task14_readiness.py`，能描述九格 readiness。 | 草稿仍把 `target_case_count` 固定为 10，现有测试也断言 10；它不满足本版每格 15 道的新冻结契约。Task 14 必须先把测试改成 15 的 RED，再扩 catalog、重生成 manifest 并通过 checker preflight；当前全量测试通过不能证明新样本契约已实现。 |
+| Factorization paper adapter | 500-root catalog、真实 AI range child、插件 parser/verifier/merge 已接入 Factorization runtime bridge；正常 FULL/fault/ablation 路径由 system coordinator/`ProtocolEngine` 推进 canonical/recovery/merge/completion，并从 ledger/artifacts 投影旧 result shape。 | public adapter 与 selected-unit 直连分支仅作 historical/selector regression 兼容；正式论文矩阵仍需通过 Task 10 最终门禁并实际运行真实 provider。 |
+| Lean paper adapter | simple helper 与预注册 fixed lemma-DAG 都已接入 Lean runtime bridge；插件校验 fixed plan/certificate，真实 checker、dependency-aware merge/root recheck 和 system coordinator FULL 生命周期已完成。 | public adapter 与 selected-unit 直连分支仅作 historical/selector regression 兼容；当前能力不是任意 theorem 的通用自动 lemma discovery，正式矩阵仍需真实 provider evidence。 |
+| Paper formal runner/adapters | 已通过 shared dispatcher/system runtime 执行 FULL、五类 rate-fault、worker death、六种 ablation，并从权威 ledger/artifacts 派生 paper projection；runner 不再决定 canonical、replacement、merge/completion。 | 迁移后的捕获式/脚本式结果仍是 regression-only；Task 10 最终门禁和新的正式真实-provider Experiment 1–5 尚未执行。 |
+| Task 14 readiness | `benchmarks/paper/lean_task14_3x3_readiness.v1.json` 已冻结九格×每格 15、合计 135 个 selected checker-backed cases；Task 5 已由 Lean 插件校验 fixed plan、生成 certificate，并由 system runtime/`ProtocolEngine` 记录 FULL 生命周期。 | readiness 和本地 checker 回归仍不等于正式真实-provider实验结果；正式矩阵还必须通过后续 runtime hooks、预算和 provider evidence gate。 |
 | Metrics | 可从 events/artifacts 复算 event coverage 和 AI usage/cost。 | 某些旧 helper 把 canonical pollution、requeue、premature merge 等固定写成 0/1；新论文指标必须从实际事件、attempt、verification 和 fault record 复算。 |
-| Worker fault | 旧 wrapper 可记录 offline/slow/executor_error/invalid_output/late_submission 决策。 | 只是报告层决策；缺少真实 API 后注入、故障率选择、真实 worker process 终止、lease expiry 和 replacement attempt 证据。 |
-| Report | JSON/CSV/run manifest。 | 缺少按条件聚合、重复统计、置信区间、论文图数据、预算报告、paper eligibility 和 secret scan report。 |
+| Worker fault | 实验层只冻结 kill plan/selection 与观察字段；runtime process backend 终止真实 worker，coordinator/engine 记录 lease expiry、recovery 和 replacement。 | 正式 worker-death 论文结果尚未运行；捕获式系统测试不能替代真实-provider condition。 |
+| Report | formal evidence、metrics/report、预算、paper eligibility、secret scan 和论文 CSV 生成路径已实现。 | 尚缺迁移最终门禁后的正式真实-provider 数据；没有数据前不得预写论文结论。 |
 
 # 统一术语、实验单位和控制变量
 
@@ -151,7 +176,7 @@ Factorization v2 的 root-validity 依赖完整试除域。每个 case 必须满
 
 medium lemma-DAG / hard-frontier catalog 每行至少包含：`case_id,paper_difficulty,root_theorem_payload,lemma_graph,dependency_edges,expected_depth,expected_leaf_count,expected_ai_unit_count,merge_plan_shape,oracle_proof_package_ref,environment_digest,preflight_status`。catalog freeze 前必须运行本地 Lean preflight，确保所有纳入 `paper_eligible` 的 theorem / lemma / root assembly 都可由固定 Lean/lake/toolchain/library 环境验证；AI 是否能找到 proof 不能作为纳入/排除条件，避免按结果挑题。
 
-为了支持 medium lemma-DAG / hard-frontier，Lean 插件能力也必须随 catalog 提升：支持递归 lemma graph split、proof-file assembly、per-lemma checker evidence、multi-level merge/root recheck、dependency-aware slot integrity，以及必要的 deterministic split/merge 规则，例如 implication introduction、forall introduction、nested conjunction/iff、induction/rewrite skeleton。仍然禁止让 AI 决定协议级拆分；AI 输出只能作为 proof candidate，经 parser/checker 后进入 evidence。
+为了支持 medium lemma-DAG / hard-frontier，Lean 插件能力也必须随 catalog 提升：读取并校验预注册递归 lemma graph、生成 split certificate、执行 proof-file assembly、per-lemma checker evidence、multi-level merge/root recheck 和 dependency-aware slot integrity。固定 plan 可以由 catalog/生成脚本预先给出 implication introduction、forall introduction、nested conjunction/iff、induction/rewrite skeleton；本阶段不要求运行时从任意 theorem 自动发现这些 lemma。仍然禁止让 AI 决定协议级拆分；AI 输出只能作为 proof candidate，经 parser/checker 后进入 evidence。
 
 ### Lean catalog 题型矩阵目标
 
@@ -165,11 +190,11 @@ medium lemma-DAG / hard-frontier catalog 每行至少包含：`case_id,paper_dif
 
 用户最新决策是：当前正式实验目标要覆盖上述 Lean 3 × 3 题型矩阵，而不是把它只当远期 catalog pool。每个 `(paper_difficulty, topic_family)` 单元固定为 **恰好 15 道** checker-backed、可审计 case，完整 Lean 正式 catalog 因而固定为 135 道。扩大后的 suite version、构造/抽样规则、预算审批和输出表格必须显式记录，不得静默沿用旧 P0 口径，也不得用当前 shallow v1 Lean case 补齐 medium / hard。
 
-该决策目前是文档层要求，不表示 runner、paper adapter 或 Lean plugin 已具备执行能力。进入实现前必须先完成题库与拆分机制复核：每个题型/难度先做 1-2 个 checker-backed golden case；明确 `topic_family` schema、deterministic catalog rule / Lean plugin rule / fixed oracle package 的责任边界；确认 recursive lemma-DAG split、proof-file assembly、dependency-aware merge/root recheck、preflight 时间和真实 AI provider 预算。只有这些复核通过后，才能按 TDD 扩成正式批量题库并修改 runner / adapter；不能先写实验层代码假装这些题已经可拆、可合并或可 paper-eligible。
+该决策要求题库和执行系统分别给出证据：每个题型/难度有 checker-backed golden case；`topic_family` schema、预注册 fixed plan、Lean plugin validation 和 fixed oracle package 的责任边界明确；recursive lemma-DAG certificate、proof-file assembly、dependency-aware merge/root recheck、preflight 时间和真实 AI provider 预算可审计。2026-07-22 Task 5 已完成 fixed-plan/runtime FULL 主路径，2026-07-23 Task 6-9 又完成 worker/fault/ablation hooks、paper projection 与双领域系统验收：catalog 只提供预注册数据，Lean 插件校验 fixed plan 并生成 certificate，system coordinator/`ProtocolEngine` 推进 FULL 生命周期，paper adapter 从 ledger/artifacts 投影兼容结果。该实现不是通用自动 lemma discovery。
 
-扩展 schema 必须显式记录 `topic_family`、`topic_family_version`、`construction_rule_id`、`matrix_cell_id`，并继续要求 `environment_digest`、`preflight_status`、oracle package hash 和 checker evidence。catalog manifest 必须证明九个 cell 的 `case_count` 均为 15；多一个、少一个、重复 case 或 preflight 不通过都使正式 catalog freeze 失败。当前已存在的 `lean_catalog.v1.jsonl` 仍只算 simple/shallow 过渡输入；当前 `lean_lemma_graph_catalog.v1.jsonl` 只有最小 medium golden fixture，不满足上述完整矩阵。
+扩展 schema 必须显式记录 `topic_family`、`topic_family_version`、`construction_rule_id`、`matrix_cell_id`，并继续要求 `environment_digest`、`preflight_status`、oracle package hash 和 checker evidence。catalog manifest 必须证明九个 cell 的 `case_count` 均为 15；多一个、少一个、重复 case 或 preflight 不通过都使正式 catalog freeze 失败。`lean_catalog.v1.jsonl` 仍只算 simple/shallow 输入；当前正式 135 道 selection 由 `lean_lemma_graph_catalog.v1.jsonl` 的 pool 和 `lean_task14_3x3_readiness.v1.json` 冻结，后续不得在 runtime 迁移时改写这些 case 的预注册拆分图。
 
-后续 reviewer 应先使用 `Doc/TechnicalDocument/2026-07-15-feat-011-lean-tiered-topic-catalog-review-prompt.md` 复核矩阵可行性、Lean 规则成本、oracle package 组织方式、正式实验扩大后的预算影响和 runner / adapter 实现顺序，再进入实现。
+`Doc/TechnicalDocument/2026-07-15-feat-011-lean-tiered-topic-catalog-review-prompt.md` 保留为题库构造和语义复核的历史 provenance；当前 runtime 迁移的实现顺序以 2026-07-22 迁移计划为准。
 
 # Experiment 1: 真实 AI 跨领域可行性与难度
 
@@ -287,7 +312,7 @@ actual token 只来自 provider usage。注入变换的 synthetic work 另写 `s
 | NO_MERGE_GATE | required slots 未齐时允许 merge 尝试 | premature merge、root checker/merge failure。 |
 | NO_SLOT_INTEGRITY | child output 可绑定到错误 slot | slot mismatch acceptance 和错误 merge 风险。 |
 
-Factorization 三档分别使用全部 `167/167/166` roots；Lean 每档按预注册的 2/2/1 分层固定 5-task slice 覆盖三个 topic families。所有模式重复 3 次，并固定使用 SiliconFlow `zai-org/GLM-5.2` / `glm_5_2_exp1_baseline`。报告 completion、accepted validity、wrong canonical acceptance、raw-only acceptance、stuck task、premature merge、slot mismatch、time、token 和 cost。消融实现必须在实验 wrapper/adapter 中，不修改协议 core 的默认 FULL 语义。
+Factorization 三档分别使用全部 `167/167/166` roots；Lean 每档按预注册的 2/2/1 分层固定 5-task slice 覆盖三个 topic families。所有模式重复 3 次，并固定使用 SiliconFlow `zai-org/GLM-5.2` / `glm_5_2_exp1_baseline`。报告 completion、accepted validity、wrong canonical acceptance、raw-only acceptance、stuck task、premature merge、slot mismatch、time、token 和 cost。消融条件由实验层选择，但必须通过 `tokenshare.local_runtime` 的稳定 hook / `ProtocolMechanismPolicy` 在真实生命周期 gate 注入；不得让 paper runner 事后改写结果，也不得修改协议 core 的默认 FULL 语义。
 
 消融还必须输出 `exposed_error_count,escaped_error_count,error_escape_rate,error_escape_applicability`。其中 `exposed_error_count` 是到达被关闭机制、且 FULL 模式本应拒绝或隔离的无效候选/不完整状态数量；`escaped_error_count` 是这些对象中继续进入 canonical、merge 或被错误标记为 terminal success 的数量；`error_escape_rate = escaped_error_count / exposed_error_count`。若某 mode 没有可适用的 gate（例如 NO_REQUEUE 主要观察 stuck/completion）或分母为 0，rate 写 `null`，并把 applicability 写为 `not_applicable` 或 `zero_denominator`，不得用 0 假装“没有逃逸”。
 
@@ -528,17 +553,25 @@ CLI 必须支持 `--max-total-provider-attempts`、`--max-total-tokens`、`--max
 | `benchmarks/paper/factorization_catalog.v2.jsonl` | 正式默认的 factorization 500-task catalog，easy/medium/hard=`167/167/166`。 |
 | `benchmarks/paper/factorization_catalog.v1.jsonl` | 历史 30-task 回归 catalog，不进入新正式矩阵。 |
 | `benchmarks/paper/lean_catalog.v1.jsonl` | 冻结的 Lean simple/shallow 30-task catalog；历史 easy/medium/hard 只保留为 shallow-v1 标签。 |
-| `benchmarks/paper/lean_lemma_graph_catalog.v1.jsonl` 或 `benchmarks/paper/lean_catalog.v2.jsonl` | 后续必须新增的 medium recursive lemma-DAG / hard-frontier catalog，用于正式 Lean 复杂度主张。 |
+| `benchmarks/paper/lean_lemma_graph_catalog.v1.jsonl` | 已冻结的 medium recursive lemma-DAG / hard-frontier catalog；正式 135 道 selection 另由 readiness manifest 固定。 |
 | `src/tokenshare/experiments/paper_models.py` | `PaperExperimentCondition`、`PaperModelExecutionRecord`、budget、fault record、paper eligibility schema 和 digest。 |
 | `src/tokenshare/experiments/paper_model_identity.py` | Experiment-layer endpoint identity、provider-specific reasoning normalization、condition-to-config pre-call binding 和 submission post-call audit；不得导入 runner/adapter 或硬编码 cohort member 列表。 |
-| `src/tokenshare/experiments/paper_catalog.py` | 加载、校验和 digest paper catalogs；本地 oracle/Lean preflight；后续必须区分 Lean `paper_difficulty` 与 shallow-v1 legacy difficulty。 |
-| `src/tokenshare/experiments/factorization_paper_adapter.py` | 从 root split 到 range children，所有 range candidate 经真实 `AIAPIExecutor`、插件 parser/verifier、canonical/merge。 |
-| `src/tokenshare/experiments/lean_paper_adapter.py` | 执行分难度 Lean catalog，真实 API child/direct proof、checker、merge/root recheck，并支持 model/worker config。 |
+| `src/tokenshare/experiments/paper_catalog.py` | 加载、校验和 digest paper catalogs；本地 oracle/Lean preflight；显式区分 Lean `paper_difficulty` 与 shallow-v1 legacy difficulty。 |
+| `src/tokenshare/local_runtime/contracts.py` | 系统 runtime 的 run/plugin/hook/worker 稳定接口；不得导入 experiment schema。 |
+| `src/tokenshare/local_runtime/coordinator.py` | 本地完整协议生命周期协调器；通过 scheduler/lease、executor、plugin 和 `ProtocolEngine` 推进状态。 |
+| `src/tokenshare/local_runtime/workers.py` | sequential/thread/process worker capacity、liveness、heartbeat/death 事实；不自行决定 requeue。 |
+| `src/tokenshare/local_runtime/projection.py` | 从 ledger/artifacts 派生通用 runtime run/unit/attempt 视图。 |
+| `src/tokenshare/plugins/factorization/runtime_adapter.py` | Factorization runtime bridge：range split、request/domain payload、parser/verifier 和 merge 规则。 |
+| `src/tokenshare/plugins/lean_proof/fixed_plan.py` | 校验预注册固定 lemma-DAG plan 并生成 Lean certificate；不执行 AI 拆分，也不要求通用自动 lemma discovery。 |
+| `src/tokenshare/plugins/lean_proof/runtime_adapter.py` | Lean runtime bridge：proof-unit request、checker、proof assembly、dependency-aware merge/root recheck。 |
+| `src/tokenshare/experiments/factorization_paper_adapter.py` | 兼容薄壳：把 paper case/config 转成 `ProtocolRunRequest`，调用系统 coordinator，再投影旧 result shape。不得保留第二套生命周期。 |
+| `src/tokenshare/experiments/lean_paper_adapter.py` | 兼容薄壳：选择 Lean case/fixed plan/config，调用系统 coordinator，再投影旧 result shape。不得自行生成权威 certificate/canonical/merge。 |
 | `src/tokenshare/experiments/paper_faults.py` | 在真实 output 后执行 deterministic fault selection/mutation，写 `FaultInjectionRecord`。 |
-| `src/tokenshare/experiments/paper_workers.py` | 独立 worker process、kill point、lease expiry、replacement attempt 和进程 evidence。 |
+| `src/tokenshare/experiments/paper_workers.py` | worker-death 条件、kill target/progress 和实验 record；真实 worker/process/lease/replacement 由 `local_runtime`/`ProtocolEngine` 执行。 |
 | `src/tokenshare/experiments/paper_model_policy.py` | 加载/校验三模型 cohort snapshot 与 local entry map，构造批准的 fixed-entry member plans；不在 executor 内解释模型强弱。 |
 | `src/tokenshare/experiments/paper_budget.py` | plan-only provider/token/cost/time/space 预算及硬上限。 |
 | `src/tokenshare/experiments/paper_runner.py` | 展开 Experiment 1–5 conditions、repeat/seed、resume、budget gate、paper eligibility。 |
+| `src/tokenshare/experiments/paper_projection.py` | 从系统 projection、events 和 artifacts 派生 `PaperTaskResult` / `PaperAttemptResult`；这些对象不参与协议决策。 |
 | `src/tokenshare/experiments/paper_metrics.py` | 从 events/artifacts/attempts/fault records 复算逐条件统计、quantile、speedup、recovery、ablation。 |
 | `src/tokenshare/experiments/paper_report.py` | 写统一目录、逐 task/attempt JSONL、论文 CSV、audit reports。 |
 | `src/tokenshare/experiments/run_paper_experiments.py` | 唯一论文实验 CLI；默认拒绝 scripted transport。 |
@@ -556,7 +589,7 @@ CLI 必须支持 `--max-total-provider-attempts`、`--max-total-tokens`、`--max
 
 - `src/tokenshare/experiments/simulation.py`：旧 v1 决策保留回归；paper faults 使用新 v2 record，不用只写“selected fault”的报告层模拟。
 
-- `src/tokenshare/executors/ai_api.py`、`ai_api_config.py`、`ai_api_transport.py`：为 Task 10 增加独立 OpenAI Chat Completions provider family 和动态 provider provenance，同时保持 SiliconFlow v1 兼容；不把 cohort、外部分数、fault、worker 或 experiment policy 放入 executor。
+- `src/tokenshare/executors/ai_api.py`、`ai_api_config.py`、`ai_api_transport.py`：2026-07-16 旧 feat-011 实施计划 Task 10A 已完成独立 OpenAI Chat Completions provider family 和动态 provider provenance，同时保持 SiliconFlow v1 兼容；该编号不是 2026-07-22 system runtime 迁移 Task 10。executor 不承载 cohort、外部分数、fault、worker 或 experiment policy。
 
 ## 实施顺序与测试
 
@@ -564,17 +597,19 @@ CLI 必须支持 `--max-total-provider-attempts`、`--max-total-tokens`、`--max
 
 2.  实现真实 API paper eligibility gate；测试 scripted/fake/deterministic run 必须被拒绝为论文结果。
 
-3.  实现 factorization paper adapter；用注入 fake transport 做测试，但正式 CLI 必须 real transport。验证每个 range AI unit 都有 provider attempt、raw/parsed/verifier evidence。
+3.  补齐 core/`ProtocolEngine` 的 late-submission 接受性和通用 retry/recovery 原子事实，再实现 `tokenshare.local_runtime` 的单 worker FULL 生命周期；不得先让 paper runner 继续承担 requeue/canonical/merge。
 
-4.  实现 Lean paper adapter 和难度 catalog；本地 Lean checker 测试不依赖网络，正式候选生成走真实 API。
+4.  （已完成）迁移 Factorization runtime bridge，paper adapter 变成 coordinator 兼容薄壳；注入 fake transport 只作回归，正式 CLI 必须 real transport。每个 range AI unit 都有协议 scheduler/lease/request/submission/verification/canonical 事实。
 
-5.  实现 post-AI fault mutation 和 worker process death；测试 original/mutated refs、lease expiry、replacement attempt 和 no canonical pollution。
+5.  （已完成）保留 Lean catalog 中预写固定 lemma-DAG，把 fixed plan 校验/certificate 生成和 proof-unit/merge 领域逻辑迁入 Lean 插件；paper adapter 作为 coordinator 兼容薄壳从 ledger/artifacts 投影结果。本地 Lean checker 测试不依赖网络，正式候选生成仍必须走真实 API。
 
-6.  实现 paper metrics/report；用手工构造 event/artifact fixture 验证统计，不硬写 pass。
+6.  （已完成）把 worker capacity/death、post-AI fault 和 ablation 接到 runtime hooks；测试 original/mutated refs、真实 worker termination、协议 lease expiry/replacement 和 no canonical pollution。
 
-7.  运行 targeted tests，再运行 `tests/experiments`、executor/plugin impact suite 和完整 `init.ps1`。
+7.  （已完成）实现 paper projection/metrics/report；`Paper*Result` 从权威 events/artifacts 派生，用 event/artifact fixture 验证统计，不硬写 pass。
 
-8.  执行 plan-only、pilot、正式 P0、ablation；Experiment 5 只有在三模型 cohort、OpenAI/SiliconFlow provider preflight 和预算都通过时进入 P0-full，不得阻塞 P0-core。
+8.  （Task 10 精确兼容契约、package import 与 compile 已完成；最终 targeted/Fast 和唯一 Full+LeanAudit 门禁待执行）运行 runtime、targeted、`tests/experiments`、executor/plugin impact suite 和完整 `init.ps1`。
+
+9.  只有系统生命周期覆盖审计通过后，才执行新的 plan-only、pilot、正式 P0、ablation；Experiment 5 只有在三模型 cohort、OpenAI/SiliconFlow provider preflight 和预算都通过时进入 P0-full，不得阻塞 P0-core。
 
 建议验证命令：
 
@@ -647,18 +682,18 @@ CLI 若未给 `--real-transport`、Experiment 1-4 baseline 不能从 `benchmarks
 
 1.  本 Markdown 是唯一权威设计；旧 `.tex/.pdf` 和 Phase 8 实验设计文稿已删除，导航和 README 不再把旧 Experiment 1-4 当论文主口径。
 
-2.  新 paper runner 没有 scripted fallback；所有论文 run 的 `paper_eligible=true` 可由真实 provider attempts 和 raw artifacts 证明。
+2.  新 paper runner 没有 scripted fallback；所有论文 run 的 `paper_eligible=true` 可由真实 provider attempts、raw artifacts 和系统 ledger 中完整的协议 lifecycle coverage 证明。
 
 3.  factorization 主实验走协议 range children、parser/verifier/canonical/merge，不用 direct 500 准确率替代。
 
-4.  Lean 主实验必须区分 simple shallow、medium recursive lemma-DAG 和 hard/frontier stress 层级：当前 `lean_catalog.v1.jsonl` 全部只能算 simple，正式递归证明拆分主张至少需要 medium lemma-DAG；所有可采信 proof case 都必须有真实 AI proof candidates、真实 checker、merge/root recheck，不能用 50 个近似同难度 shallow 题替代。
+4.  Lean 主实验必须区分 simple shallow、medium recursive lemma-DAG 和 hard/frontier stress 层级：当前 `lean_catalog.v1.jsonl` 全部只能算 simple，正式递归证明拆分主张至少需要 medium lemma-DAG；允许使用 catalog/脚本预注册的固定拆分图，但必须由 Lean 插件校验并生成 certificate，再由协议系统 ledger 记录 split/expand、依赖解阻、checker/canonical、merge/root recheck 和 completion；所有可采信 proof case 都必须有真实 AI proof candidates，不能用 50 个近似同难度 shallow 题替代，也不能把当前 fixed-plan 能力表述为尚未实现的通用自动 lemma discovery。
 
 5.  worker scaling 测同一 root/task batch 的协议 worker，并记录 provider 限流混杂。
 
 6.  故障注入引用原始真实输出，实际 token 与 synthetic mutation 分开；worker death 是真实独立 worker process 终止。
 
-7.  metrics 从 events/artifacts/attempts/fault records 复算；逐 task/attempt 数据能支撑每个论文汇总值。
+7.  metrics 从权威 protocol events/artifacts/attempts/fault records 复算；`PaperTaskResult`/`PaperAttemptResult` 只作派生报表，逐 task/attempt 数据能支撑每个论文汇总值。
 
 8.  输出包含预算、paper eligibility、secret scan、图表 CSV、正负 failure examples 和稳定 schema version。
 
-9.  targeted tests、影响范围 tests、`compileall`、完整 `init.ps1` 通过，并把证据同步到 code map、feature list、progress 和 handoff。
+9.  `tokenshare.experiments` 的 FULL 路径不直接推进 canonical/requeue/merge/completion，worker pool 只提供容量，所有 unit 都通过系统 scheduler/lease；targeted tests、影响范围 tests、`compileall`、完整 `init.ps1` 通过，并把证据同步到 code map、feature list、progress 和 handoff。

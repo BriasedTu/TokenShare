@@ -23,24 +23,20 @@ from tokenshare.experiments.paper_dispatcher import (
 from tokenshare.experiments.paper_experiment_contracts import PaperExecutionContext
 from tokenshare.experiments.paper_formal_evidence import FormalEvidenceStore
 from tokenshare.experiments.paper_formal_callbacks import (
-    run_exp3_post_ai_strategy,
-    run_exp3_worker_death_strategy,
     run_exp4_ablation_strategy,
     run_exp5_identity_strategy,
     run_scheduled_cases,
 )
-from tokenshare.experiments.paper_exp3_fault_recovery import (
-    inject_exp3_post_ai_fault,
-)
+from tokenshare.experiments.paper_faults import PaperFaultRuntimeHooks
 from tokenshare.experiments.paper_exp2_scalability import EXP2_EXPERIMENT_ID
 from tokenshare.experiments.paper_models import (
-    PaperAttemptResult,
     PaperBudgetResult,
     PaperConditionResult,
     PaperStatus,
     PaperSuiteResult,
 )
 from tokenshare.storage.artifacts import ArtifactStore
+from tokenshare.local_runtime import RawOutputContext
 
 
 EXP5_EXPERIMENT_ID = "exp5_real_ai_model_endpoint_comparison"
@@ -569,11 +565,8 @@ class _FormalConditionExecutionCallback:
         )
         if self.hard_limits.get("stop_after_current_task") is True:
             pending_case_ids = pending_case_ids[:1]
-        worker_count = (
-            condition.worker_count
-            if condition.experiment_id == EXP2_EXPERIMENT_ID
-            else 1
-        )
+        # root case 始终由 runner 顺序观察；condition.worker_count 交给 runtime backend。
+        worker_count = 1
         strategy = run_scheduled_cases(
             ordered_case_ids=pending_case_ids,
             worker_count=worker_count,
@@ -834,6 +827,8 @@ class _FormalConditionExecutionCallback:
         callback_kwargs: Mapping[str, Any],
         runtime_records: list[dict[str, Any]],
     ) -> Any | None:
+        """把 executor 的 post-raw boundary 适配到稳定 runtime hook。"""
+
         if condition.experiment_id != "exp3_real_ai_fault_recovery":
             return None
         manifest = callback_kwargs.get("execution_manifest")
@@ -842,145 +837,85 @@ class _FormalConditionExecutionCallback:
         target_manifest = manifest.get("fault_target_manifest")
         if not isinstance(target_manifest, Mapping):
             return None
-        selected = set(
-            _string_sequence(
-                target_manifest.get("selected_target_ai_unit_ids", ()),
-                "selected_target_ai_unit_ids",
-            )
+        selected = _string_sequence(
+            target_manifest.get("selected_target_ai_unit_ids", ()),
+            "selected_target_ai_unit_ids",
         )
-        fault_type = str(
-            target_manifest.get("fault_type") or condition.fault_type
-        )
+        fault_type = str(target_manifest.get("fault_type") or condition.fault_type)
+        runtime_hook: PaperFaultRuntimeHooks | None = None
 
         def hook(**context: Any) -> Mapping[str, Any] | None:
+            nonlocal runtime_hook
             request = context["request"]
-            if request.unit_id not in selected:
-                return None
             artifact_store = context["artifact_store"]
             if not isinstance(artifact_store, ArtifactStore):
                 raise ValueError("Exp3 post-raw hook requires ArtifactStore")
-            parsed_ref = None
-            if fault_type in {"false_positive", "false_negative"}:
-                try:
-                    parsed_body = json.loads(str(context["content_text"]))
-                except json.JSONDecodeError:
-                    parsed_body = {"candidate": str(context["content_text"])}
-                if not isinstance(parsed_body, dict):
-                    parsed_body = {"candidate": parsed_body}
-                parsed_ref = artifact_store.save_json(
-                    parsed_body,
-                    artifact_id=(
-                        f"exp3_pre_fault_candidate_{context['submission_id']}"
+            if runtime_hook is None:
+                runtime_hook = PaperFaultRuntimeHooks(
+                    artifact_store=artifact_store,
+                    condition_id=condition.condition_id,
+                    repeat_id=condition.repeat_id,
+                    fault_type=fault_type,
+                    seed=int(condition.seed),
+                    selected_unit_ids=selected,
+                )
+            submitted_at = str(context["submitted_at"])
+            lease_deadline_at = None
+            if fault_type == "late_submission":
+                submitted = datetime.fromisoformat(
+                    submitted_at.replace("Z", "+00:00")
+                )
+                lease_deadline_at = (
+                    submitted - timedelta(seconds=1)
+                ).isoformat().replace("+00:00", "Z")
+            before_count = len(runtime_hook.records)
+            usage = dict(context["usage_summary"])
+            directive = runtime_hook.after_raw_output_persisted(
+                RawOutputContext(
+                    run_id=f"{condition.condition_id}_{case_id}",
+                    task_id=request.task_id,
+                    unit_id=request.unit_id,
+                    attempt_id=request.attempt_id,
+                    worker_id=str(
+                        request.allocation_decision.get(
+                            "worker_id",
+                            request.allocation_decision.get(
+                                "client_id", "formal-worker"
+                            ),
+                        )
                     ),
-                    artifact_type="Exp3PreFaultCandidate",
-                    artifact_schema_id="tokenshare.paper_exp3_pre_fault_candidate",
-                    artifact_schema_version="v1",
-                    source={
-                        "kind": "paper_formal_exp3_post_raw_hook",
-                        "request_id": request.request_id,
+                    raw_output_ref=context["raw_output_ref"],
+                    provenance_ref=context["provenance_ref"],
+                    usage_ref=context["usage_ref"],
+                    content_text=str(context["content_text"]),
+                    provider=str(context["provider_family"]),
+                    model=str(context["model"]),
+                    entry_id=str(context["entry_id"]),
+                    usage_summary={
+                        **usage,
+                        "prompt_tokens": usage.get(
+                            "prompt_tokens", usage.get("input_tokens", 0)
+                        ),
+                        "completion_tokens": usage.get(
+                            "completion_tokens", usage.get("output_tokens", 0)
+                        ),
                     },
-                    metadata={"unit_id": request.unit_id},
-                    created_at=str(context["submitted_at"]),
+                    submitted_at=submitted_at,
+                    lease_deadline_at=lease_deadline_at,
                 )
-            usage = context["usage_summary"]
-            injected_at = datetime.now(timezone.utc)
-            late = fault_type == "late_submission"
-            attempt = PaperAttemptResult(
-                condition_id=condition.condition_id,
-                repeat_id=condition.repeat_id,
-                run_id=f"formal-{condition.condition_id}-{case_id}",
-                task_id=case_id,
-                unit_id=request.unit_id,
-                attempt_id=request.attempt_id,
-                worker_id=str(
-                    request.allocation_decision.get("worker_id", "formal-worker")
-                ),
-                provider_attempt_index=1,
-                attempt_status="succeeded",
-                provider=str(context["provider_family"]),
-                model=str(context["model"]),
-                entry_id=str(context["entry_id"]),
-                request_ref=None,
-                raw_output_ref=context["raw_output_ref"].to_dict(),
-                parsed_output_ref=(
-                    parsed_ref.to_dict() if parsed_ref is not None else None
-                ),
-                parse_failure_ref=None,
-                provenance_ref=context["provenance_ref"].to_dict(),
-                usage_ref=context["usage_ref"].to_dict(),
-                started_at=str(context["submitted_at"]),
-                ended_at=str(context["submitted_at"]),
-                latency_ms=0,
-                prompt_tokens=int(
-                    usage.get("prompt_tokens", usage.get("input_tokens", 0))
-                ),
-                completion_tokens=int(
-                    usage.get(
-                        "completion_tokens",
-                        usage.get("output_tokens", 0),
-                    )
-                ),
-                total_tokens=int(usage.get("total_tokens", 0)),
-                cost_estimate=float(usage.get("cost_estimate", 0.0)),
-                error_kind=None,
-                fault_injection_ref=None,
-                paper_eligible=False,
             )
-            injected_at_text = injected_at.isoformat().replace("+00:00", "Z")
-            fault_outcome = inject_exp3_post_ai_fault(
-                artifact_store=artifact_store,
-                attempt=attempt,
-                fault_type=fault_type,
-                seed=int(condition.seed),
-                created_at=injected_at_text,
-                lease_deadline_at=(
-                    (injected_at - timedelta(seconds=2))
-                    .isoformat()
-                    .replace("+00:00", "Z")
-                    if late
-                    else None
-                ),
-                submitted_at=(
-                    (injected_at - timedelta(seconds=1))
-                    .isoformat()
-                    .replace("+00:00", "Z")
-                    if late
-                    else None
-                ),
-                fault_target={
-                    "unit_id": request.unit_id,
-                    "attempt_id": request.attempt_id,
-                    "artifact_ref": (
-                        parsed_ref.to_dict()
-                        if parsed_ref is not None
-                        else context["raw_output_ref"].to_dict()
-                    ),
-                },
+            runtime_records.extend(
+                dict(record) for record in runtime_hook.records[before_count:]
             )
-            record = dict(fault_outcome.record)
-            record.update(
-                {
-                    "fault_injection_id": str(record["fault_id"]),
-                    "requires_replacement": True,
-                    "record_ref": fault_outcome.record_ref.to_dict(),
-                    "pre_fault_usage_ref": context["usage_ref"].to_dict(),
-                    "hook_stage": "after_raw_provenance_usage_before_parser",
-                }
-            )
-            runtime_records.append(record)
-            if fault_type in {"no_return", "late_submission", "executor_error"}:
-                return {"result_kind": fault_type}
-            mutated_body = json.loads(
-                artifact_store.read_bytes(
-                    fault_outcome.primitive_outcome.mutated_output_ref
-                ).decode("utf-8")
-            )
+            if directive is None:
+                return None
             return {
-                "content_text": json.dumps(
-                    mutated_body,
-                    ensure_ascii=False,
-                    sort_keys=True,
-                )
+                key: value
+                for key, value in {
+                    "content_text": directive.content_text,
+                    "result_kind": directive.result_kind,
+                }.items()
+                if value is not None
             }
 
         return hook
@@ -993,180 +928,100 @@ class _FormalConditionExecutionCallback:
         outcome: "_RootExecutionOutcome",
         manifest: Mapping[str, Any],
     ) -> "_RootExecutionOutcome":
+        """只投影 runtime 已执行的 fault/recovery，不再次调用 adapter。"""
+
+        del case
         target_manifest = _required_mapping(
             manifest.get("fault_target_manifest"),
             "Exp3 fault_target_manifest",
         )
-        selected_unit_ids = _string_sequence(
-            target_manifest.get("selected_target_ai_unit_ids"),
-            "selected_target_ai_unit_ids",
+        selected_unit_ids = set(
+            _string_sequence(
+                target_manifest.get("selected_target_ai_unit_ids"),
+                "selected_target_ai_unit_ids",
+            )
         )
+        if not selected_unit_ids:
+            return outcome
         attempts = _sequence_field(
             outcome.adapter_result,
             "attempt_results",
             "attempts",
         )
-        if not selected_unit_ids:
-            return outcome
-        artifact_store = ArtifactStore(
-            _adapter_store_root(
-                adapter_root=outcome.adapter_root,
-                case_id=outcome.case_id,
-                attempts=attempts,
-            )
-        )
-        fault_type = str(target_manifest.get("fault_type") or condition.fault_type)
-        injected_at = datetime.now(timezone.utc)
-        injected_at_text = injected_at.isoformat().replace("+00:00", "Z")
-        replacement_results: list[Any] = []
-        runtime_faults_by_unit = {
-            str(record.get("unit_id")): record
+        runtime_faults = tuple(
+            dict(record)
             for record in outcome.runtime_records
-            if record.get("unit_id") is not None
+            if str(record.get("unit_id")) in selected_unit_ids
+        )
+        fault_attempt_ids = {
+            str(record.get("attempt_id"))
+            for record in runtime_faults
+            if record.get("attempt_id") is not None
         }
-
-        def inject_fault(attempt: Any, selected_fault_type: str) -> Mapping[str, Any]:
-            runtime_record = runtime_faults_by_unit.get(
-                str(_required_field(attempt, "unit_id"))
-            )
-            if runtime_record is not None:
-                return runtime_record
-            if not isinstance(attempt, PaperAttemptResult):
-                raise ValueError("Exp3 adapter attempts must be PaperAttemptResult")
-            late = selected_fault_type == "late_submission"
-            primitive = inject_exp3_post_ai_fault(
-                artifact_store=artifact_store,
-                attempt=attempt,
-                fault_type=selected_fault_type,
-                seed=int(condition.seed),
-                created_at=injected_at_text,
-                lease_deadline_at=(
-                    (injected_at - timedelta(seconds=2))
-                    .isoformat()
-                    .replace("+00:00", "Z")
-                    if late
-                    else None
-                ),
-                submitted_at=(
-                    (injected_at - timedelta(seconds=1))
-                    .isoformat()
-                    .replace("+00:00", "Z")
-                    if late
-                    else None
-                ),
-                fault_target={
-                    "unit_id": attempt.unit_id,
-                    "attempt_id": attempt.attempt_id,
-                    "artifact_ref": attempt.parsed_output_ref
-                    or attempt.raw_output_ref,
-                },
-            )
-            record = dict(primitive.record)
-            record["fault_injection_id"] = str(
-                record.get("fault_id", f"fault-{attempt.attempt_id}")
-            )
-            record["requires_replacement"] = True
-            record["record_ref"] = primitive.record_ref.to_dict()
-            return record
-
-        def execute_replacement(attempt: Any) -> Any:
-            replacement_root = (
-                outcome.adapter_root
-                / "recovery"
-                / _artifact_task_directory(str(_required_field(attempt, "attempt_id")))
-            )
-            replacement_result = dispatch_paper_case(
-                case=dict(case),
-                condition=condition,
-                output_root=replacement_root.as_posix(),
-                transport=self.transport,
-                real_transport=self.real_transport,
-                ai_api_config=self.config,
-                entry_id=condition.model_entry_id,
-                max_tokens=int(self.request_limits["max_tokens"]),
-                timeout_seconds=int(self.request_limits["timeout_seconds"]),
-                selected_ai_unit_id=str(_required_field(attempt, "unit_id")),
-            )
-            replacement_results.append(replacement_result)
-            replacement_task = _required_field(replacement_result, "task_result")
-            provider_attempt_count = int(
-                _required_field(replacement_task, "provider_attempt_count")
-            )
-            total_tokens = int(_optional_field(replacement_task, "total_tokens") or 0)
-            cost_estimate = float(
-                _optional_field(replacement_task, "cost_estimate") or 0.0
-            )
-            with self.usage_lock:
-                self.usage.provider_attempt_count += provider_attempt_count
-                self.usage.total_tokens += total_tokens
-                self.usage.total_cost_estimate += cost_estimate
-            replacement_attempts = _sequence_field(
-                replacement_result,
-                "attempt_results",
-                "attempts",
-            )
-            if not replacement_attempts:
-                raise ValueError("Exp3 replacement produced no attempt evidence")
-            return replacement_attempts[0]
-
-        strategy = run_exp3_post_ai_strategy(
-            attempts=attempts,
-            selected_target_ai_unit_ids=selected_unit_ids,
-            fault_type=fault_type,
-            inject_fault=inject_fault,
-            execute_replacement=execute_replacement,
-            approved_identity={
-                "provider_family": condition.provider_family,
-                "provider_model_id": condition.provider_model_id,
-                "model_entry_id": condition.model_entry_id,
-            },
+        replacement_attempts = tuple(
+            attempt
+            for attempt in attempts
+            if str(_required_field(attempt, "unit_id")) in selected_unit_ids
+            and str(_required_field(attempt, "attempt_id")) not in fault_attempt_ids
         )
-        replacement_tasks = [
-            _required_field(result, "task_result") for result in replacement_results
-        ]
+        approved_identity = {
+            "provider_family": condition.provider_family,
+            "provider_model_id": condition.provider_model_id,
+            "model_entry_id": condition.model_entry_id,
+        }
+        for attempt in replacement_attempts:
+            _validate_runtime_attempt_identity(attempt, approved_identity)
         task_body = _as_json(outcome.task)
-        task_body["provider_attempt_count"] = outcome.provider_attempt_count + sum(
-            int(_required_field(task, "provider_attempt_count"))
-            for task in replacement_tasks
-        )
-        task_body["total_tokens"] = outcome.total_tokens + sum(
-            int(_optional_field(task, "total_tokens") or 0)
-            for task in replacement_tasks
-        )
-        task_body["cost_estimate"] = outcome.cost_estimate + sum(
-            float(_optional_field(task, "cost_estimate") or 0.0)
-            for task in replacement_tasks
-        )
-        task_body["fault_injected"] = bool(strategy.fault_records)
+        task_body["fault_injected"] = bool(runtime_faults)
         task_body["recovered_fault_target_count"] = len(
-            strategy.replacement_attempts
+            {
+                str(_required_field(attempt, "unit_id"))
+                for attempt in replacement_attempts
+            }
         )
         if isinstance(manifest.get("matched_baseline"), Mapping):
-            task_body["matched_baseline"] = _as_json(
-                manifest["matched_baseline"]
-            )
+            task_body["matched_baseline"] = _as_json(manifest["matched_baseline"])
+        protocol_event_refs = tuple(
+            dict(ref)
+            for ref in task_body.get("event_refs", ())
+            if isinstance(ref, Mapping)
+        )
+        observation_events = tuple(
+            {
+                "event_type": "EXPERIMENT_FAULT_OBSERVED",
+                "condition_id": condition.condition_id,
+                "unit_id": record.get("unit_id"),
+                "attempt_id": record.get("attempt_id"),
+                "fault_type": record.get("fault_type"),
+                "protocol_event_refs": list(protocol_event_refs),
+                "artifact_refs": [
+                    dict(ref)
+                    for ref in (
+                        record.get("original_output_ref"),
+                        record.get("original_provenance_ref"),
+                        record.get("pre_fault_usage_ref"),
+                        record.get("mutated_output_ref"),
+                        record.get("record_ref"),
+                    )
+                    if isinstance(ref, Mapping)
+                ],
+            }
+            for record in runtime_faults
+        )
         adapter_result = _adapter_result_with(
             outcome.adapter_result,
             task_result=task_body,
-            attempts=tuple(attempts) + strategy.replacement_attempts,
+            attempts=attempts,
             faults=(
                 *_sequence_field(outcome.adapter_result, "fault_records", "faults"),
-                *strategy.fault_records,
+                *runtime_faults,
             ),
             events=(
                 *_sequence_field(outcome.adapter_result, "event_records"),
-                *strategy.events,
+                *observation_events,
             ),
         )
-        return replace(
-            outcome,
-            task=task_body,
-            adapter_result=adapter_result,
-            root_status=str(task_body.get("root_status", outcome.root_status)),
-            provider_attempt_count=int(task_body["provider_attempt_count"]),
-            total_tokens=int(task_body["total_tokens"]),
-            cost_estimate=float(task_body["cost_estimate"]),
-        )
+        return replace(outcome, task=task_body, adapter_result=adapter_result)
 
     def _apply_exp3_worker_death(
         self,
@@ -1176,6 +1031,7 @@ class _FormalConditionExecutionCallback:
         outcome: "_RootExecutionOutcome",
         manifest: Mapping[str, Any],
     ) -> "_RootExecutionOutcome":
+        del case_id
         worker_manifest = _required_mapping(
             manifest.get("worker_death_manifest"),
             "Exp3 worker_death_manifest",
@@ -1185,56 +1041,40 @@ class _FormalConditionExecutionCallback:
             "attempt_results",
             "attempts",
         )
-        unit_ids = tuple(
-            str(_required_field(attempt, "unit_id")) for attempt in attempts
-        )
-        dead_worker_count = int(worker_manifest["dead_worker_count_target"])
-        if dead_worker_count > len(unit_ids):
-            unit_ids += tuple(
-                f"{case_id}-formal-unit-{index}"
-                for index in range(len(unit_ids), dead_worker_count)
-            )
-        strategy = run_exp3_worker_death_strategy(
-            artifact_root=outcome.adapter_root / "worker-death",
-            condition_id=condition.condition_id,
-            repeat_id=condition.repeat_id,
-            task_id=case_id,
-            ai_unit_ids=unit_ids,
-            dead_worker_count=dead_worker_count,
-            kill_point=(
-                f"progress_{int(worker_manifest['kill_progress_target_percent'])}"
-            ),
-            started_at=_utc_now(),
-            process_tick_seconds=0.005,
-        )
-        replacement_attempts = tuple(
-            {
-                **dict(record["replacement_attempt"]),
-                "attempt_status": "succeeded",
-                "provider": condition.provider_family,
-                "model": condition.provider_model_id,
-                "entry_id": condition.model_entry_id,
-            }
-            for record in strategy.fault_records
-        )
         faults = tuple(
-            {
-                **record,
-                "fault_injection_id": (
-                    f"worker-death-{condition.condition_id}-"
-                    f"{record['target_ai_unit']['unit_id']}"
-                ),
-            }
-            for record in strategy.fault_records
+            item
+            for item in _sequence_field(
+                outcome.adapter_result,
+                "fault_records",
+                "faults",
+            )
+            if _optional_field(item, "fault_type") == "worker_death"
+            or _optional_field(item, "schema_version")
+            == "tokenshare.paper_worker_death.v1"
         )
+        dead_attempt_units = {
+            str(_required_field(attempt, "unit_id"))
+            for attempt in attempts
+            if _status_value(_optional_field(attempt, "attempt_status") or "")
+            == "worker_died"
+        }
+        recovered_units = {
+            str(_required_field(attempt, "unit_id"))
+            for attempt in attempts
+            if _status_value(_optional_field(attempt, "attempt_status") or "")
+            == "succeeded"
+            and str(_required_field(attempt, "unit_id")) in dead_attempt_units
+        }
+        target_count = int(worker_manifest["dead_worker_count_target"])
+        evidence_complete = len(faults) >= target_count and len(recovered_units) >= target_count
         task_body = _as_json(outcome.task)
         task_body.update(
             {
                 "worker_death_count": len(faults),
-                "worker_replacement_count": len(replacement_attempts),
-                "coordinator_survived": strategy.metrics[
-                    "coordinator_survived"
-                ],
+                "worker_replacement_count": len(recovered_units),
+                "coordinator_survived": evidence_complete
+                and outcome.root_status == "completed",
+                "worker_death_evidence_complete": evidence_complete,
                 "matched_baseline_provider_attempt_count": (
                     outcome.provider_attempt_count
                 ),
@@ -1255,15 +1095,13 @@ class _FormalConditionExecutionCallback:
         adapter_result = _adapter_result_with(
             outcome.adapter_result,
             task_result=task_body,
-            attempts=tuple(attempts) + replacement_attempts,
-            faults=(
-                *_sequence_field(outcome.adapter_result, "fault_records", "faults"),
-                *faults,
+            attempts=attempts,
+            faults=_sequence_field(
+                outcome.adapter_result,
+                "fault_records",
+                "faults",
             ),
-            events=(
-                *_sequence_field(outcome.adapter_result, "event_records"),
-                *strategy.events,
-            ),
+            events=_sequence_field(outcome.adapter_result, "event_records"),
         )
         return replace(outcome, task=task_body, adapter_result=adapter_result)
 
@@ -1279,11 +1117,6 @@ class _FormalConditionExecutionCallback:
             _optional_field(mode_config, "ablation_mode")
             or condition.ablation_mode
         )
-        outcome = self._apply_exp4_requeue_boundary(
-            condition=condition,
-            outcome=outcome,
-            mode=str(mode),
-        )
         attempts = _sequence_field(
             outcome.adapter_result,
             "attempt_results",
@@ -1296,6 +1129,16 @@ class _FormalConditionExecutionCallback:
         run_evidence = _optional_field(outcome.adapter_result, "run_evidence")
         runtime = _optional_field(run_evidence, "ablation_runtime")
         observation = {
+            "protocol_event_refs": tuple(
+                dict(ref)
+                for ref in (_optional_field(outcome.task, "event_refs") or ())
+                if isinstance(ref, Mapping)
+            ),
+            "artifact_refs": tuple(
+                dict(ref)
+                for ref in (_optional_field(outcome.task, "artifact_refs") or ())
+                if isinstance(ref, Mapping)
+            ),
             "candidate_rejected": bool(
                 statuses & {"verification_rejected", "checker_rejected"}
             ),
@@ -1360,173 +1203,6 @@ class _FormalConditionExecutionCallback:
             root_status=outcome.root_status,
         )
 
-    def _apply_exp4_requeue_boundary(
-        self,
-        *,
-        condition: Any,
-        outcome: "_RootExecutionOutcome",
-        mode: str,
-    ) -> "_RootExecutionOutcome":
-        attempts = _sequence_field(
-            outcome.adapter_result,
-            "attempt_results",
-            "attempts",
-        )
-        rejected = any(
-            _status_value(_optional_field(attempt, "attempt_status") or "")
-            in {"parse_failed", "verification_rejected", "checker_rejected"}
-            for attempt in attempts
-        )
-        if not rejected:
-            return outcome
-        if mode == "NO_REQUEUE":
-            task_body = _as_json(outcome.task)
-            task_body.update(
-                {
-                    "requeue_suppressed_by_ablation": True,
-                    "stuck_after_rejection": True,
-                    "replacement_attempt_count": 0,
-                }
-            )
-            adapter_result = _adapter_result_with(
-                outcome.adapter_result,
-                task_result=task_body,
-                attempts=attempts,
-                faults=_sequence_field(
-                    outcome.adapter_result,
-                    "fault_records",
-                    "faults",
-                ),
-                events=(
-                    *_sequence_field(outcome.adapter_result, "event_records"),
-                    {
-                        "event_type": "REQUEUE_SUPPRESSED_BY_ABLATION",
-                        "ablation_mode": mode,
-                    },
-                ),
-            )
-            return replace(outcome, task=task_body, adapter_result=adapter_result)
-
-        case = _catalog_cases_by_id(self.catalog_manifest)[outcome.case_id]
-        reservation = _root_budget_reservation(
-            case=case,
-            request_limits=self.request_limits,
-            budget=self.budget,
-        )
-        with self.usage_lock:
-            reserved = _reserve_hard_limit_capacity(
-                usage=self.usage,
-                reservation=reservation,
-                hard_limits=self.hard_limits,
-            )
-        if not reserved:
-            return outcome
-        replacement_root = outcome.adapter_root / "requeue-1"
-        try:
-            replacement_result = dispatch_paper_case(
-                case=case,
-                condition=condition,
-                output_root=replacement_root.as_posix(),
-                transport=self.transport,
-                real_transport=self.real_transport,
-                ai_api_config=self.config,
-                entry_id=condition.model_entry_id,
-                max_tokens=int(self.request_limits["max_tokens"]),
-                timeout_seconds=int(self.request_limits["timeout_seconds"]),
-                ablation_mode=mode,
-            )
-        except (RuntimeError, OSError, TimeoutError):
-            with self.usage_lock:
-                _settle_hard_limit_reservation(
-                    usage=self.usage,
-                    reservation=reservation,
-                )
-            return outcome
-        replacement_task = _required_field(replacement_result, "task_result")
-        replacement_attempt_count = int(
-            _required_field(replacement_task, "provider_attempt_count")
-        )
-        replacement_tokens = int(
-            _optional_field(replacement_task, "total_tokens") or 0
-        )
-        replacement_cost = float(
-            _optional_field(replacement_task, "cost_estimate") or 0.0
-        )
-        with self.usage_lock:
-            _settle_hard_limit_reservation(
-                usage=self.usage,
-                reservation=reservation,
-                provider_attempt_count=replacement_attempt_count,
-                total_tokens=replacement_tokens,
-                total_cost_estimate=replacement_cost,
-            )
-        replacement_attempts = tuple(
-            {
-                **_as_json(attempt),
-                "attempt_id": (
-                    f"{str(_required_field(attempt, 'attempt_id'))}:requeue-1"
-                ),
-                "replacement_for_attempt_id": (
-                    str(_required_field(attempts[0], "attempt_id"))
-                    if attempts
-                    else None
-                ),
-            }
-            for attempt in _sequence_field(
-                replacement_result,
-                "attempt_results",
-                "attempts",
-            )
-        )
-        task_body = _as_json(replacement_task)
-        task_body.update(
-            {
-                "requeue_created": True,
-                "stuck_after_rejection": False,
-                "replacement_attempt_count": len(replacement_attempts),
-            }
-        )
-        combined_result = _adapter_result_with(
-            replacement_result,
-            task_result=task_body,
-            attempts=tuple(attempts) + replacement_attempts,
-            faults=(
-                *_sequence_field(outcome.adapter_result, "fault_records", "faults"),
-                *_sequence_field(replacement_result, "fault_records", "faults"),
-            ),
-            events=(
-                *_sequence_field(outcome.adapter_result, "event_records"),
-                {
-                    "event_type": "REQUEUE_CREATED",
-                    "ablation_mode": mode,
-                    "replacement_attempt_count": len(replacement_attempts),
-                },
-                *_sequence_field(replacement_result, "event_records"),
-            ),
-        )
-        replacement_status = _status_value(
-            _required_field(replacement_task, "root_status")
-        )
-        replacement_eligibility = _optional_field(
-            replacement_result,
-            "eligibility_report",
-        )
-        return replace(
-            outcome,
-            root_status=replacement_status,
-            task=task_body,
-            adapter_result=combined_result,
-            provider_attempt_count=(
-                outcome.provider_attempt_count + replacement_attempt_count
-            ),
-            total_tokens=outcome.total_tokens + replacement_tokens,
-            cost_estimate=outcome.cost_estimate + replacement_cost,
-            paper_eligible=(
-                outcome.paper_eligible
-                and _optional_field(replacement_eligibility, "paper_eligible") is True
-            ),
-        )
-
     def _apply_exp5_identity(
         self,
         *,
@@ -1588,6 +1264,23 @@ class _FormalConditionExecutionCallback:
             condition=condition,
             task_id=task_id,
         )
+        run_evidence = _optional_field(adapter_result, "run_evidence")
+        protocol_runtime = (
+            run_evidence.get("protocol_runtime")
+            if isinstance(run_evidence, Mapping)
+            and isinstance(run_evidence.get("protocol_runtime"), Mapping)
+            else None
+        )
+        generation_identity = (
+            protocol_runtime.get("generation_identity")
+            if protocol_runtime is not None
+            else None
+        )
+        if isinstance(generation_identity, Mapping):
+            task_body["runtime_generation_identity"] = dict(generation_identity)
+        task_body["record_scope"] = (
+            "protocol" if protocol_runtime is not None else "experiment"
+        )
         task_body.update(_evidence_flags())
         attempt_values = _sequence_field(adapter_result, "attempt_results", "attempts")
         attempts = [
@@ -1595,34 +1288,54 @@ class _FormalConditionExecutionCallback:
             for item in attempt_values
         ]
         if not attempts:
-            attempts = [
-                _record_with_context(
-                    _synthetic_attempt(condition=condition, task_id=task_id),
+            if protocol_runtime is not None:
+                raise ValueError(
+                    "protocol checkpoint requires real attempt evidence"
+                )
+            attempts = [_record_with_context(
+                _experiment_attempt_record(
                     condition=condition,
                     task_id=task_id,
-                )
-            ]
+                    status="blocked",
+                    error_kind="experiment_blocked",
+                ),
+                condition=condition,
+                task_id=task_id,
+            )]
         for attempt in attempts:
+            attempt.setdefault("record_scope", task_body["record_scope"])
             attempt.update(_evidence_flags())
+        protocol_event_values = _sequence_field(adapter_result, "event_records")
+        if protocol_runtime is not None and not protocol_event_values:
+            raise ValueError("protocol checkpoint requires real lifecycle events")
         events = [
             _record_with_context(item, condition=condition, task_id=task_id)
-            for item in (
-                *_sequence_field(adapter_result, "event_records"),
-                *extra_events,
-            )
+            for item in protocol_event_values
         ]
         if not events:
-            events = [
-                _record_with_context(
-                    _event_record(
-                        condition=condition,
-                        task_id=task_id,
-                        event_type="TASK_RECORDED",
-                    ),
+            events = [_record_with_context(
+                _experiment_event_record(
                     condition=condition,
                     task_id=task_id,
-                )
-            ]
+                    event_type="EXPERIMENT_BLOCKED",
+                ),
+                condition=condition,
+                task_id=task_id,
+            )]
+        for event in events:
+            event.setdefault(
+                "record_scope",
+                "experiment"
+                if str(event.get("event_type", "")).startswith("EXPERIMENT_")
+                else task_body["record_scope"],
+            )
+        experiment_events = [
+            _record_with_context(item, condition=condition, task_id=task_id)
+            for item in extra_events
+        ]
+        for event in experiment_events:
+            event.setdefault("record_scope", "experiment")
+        events.extend(experiment_events)
         for index, event in enumerate(events):
             event.setdefault(
                 "event_id",
@@ -1675,23 +1388,33 @@ class _FormalConditionExecutionCallback:
         extra_events: Sequence[Mapping[str, Any]] = (),
     ) -> None:
         task = _record_with_context(
-            {"task_id": task_id, "root_status": "failed", "error_kind": type(error).__name__},
+            {
+                "task_id": task_id,
+                "root_status": "failed",
+                "error_kind": type(error).__name__,
+                "record_scope": "experiment",
+            },
             condition=condition,
             task_id=task_id,
         )
         task.update(_evidence_flags())
         attempt = _record_with_context(
-            _synthetic_attempt(condition=condition, task_id=task_id),
+            _experiment_attempt_record(
+                condition=condition,
+                task_id=task_id,
+                status="failed",
+                error_kind=type(error).__name__,
+            ),
             condition=condition,
             task_id=task_id,
         )
         attempt.update({"attempt_status": "failed", "error_kind": type(error).__name__, **_evidence_flags()})
         events = [
             _record_with_context(
-                _event_record(
+                _experiment_event_record(
                     condition=condition,
                     task_id=task_id,
-                    event_type="RUNNER_EXCEPTION",
+                    event_type="EXPERIMENT_RUNNER_EXCEPTION",
                 ),
                 condition=condition,
                 task_id=task_id,
@@ -1745,13 +1468,19 @@ class _FormalConditionExecutionCallback:
                 "task_id": task_id,
                 "root_status": "budget_exhausted",
                 "error_kind": "budget_limit",
+                "record_scope": "experiment",
             },
             condition=condition,
             task_id=task_id,
         )
         task.update(_evidence_flags())
         attempt = _record_with_context(
-            _synthetic_attempt(condition=condition, task_id=task_id),
+            _experiment_attempt_record(
+                condition=condition,
+                task_id=task_id,
+                status="cancelled_by_budget",
+                error_kind="budget_limit",
+            ),
             condition=condition,
             task_id=task_id,
         )
@@ -1769,7 +1498,8 @@ class _FormalConditionExecutionCallback:
                         f"formal-budget-exhausted-{condition.condition_id}-"
                         f"{condition.repeat_id}-{task_id}"
                     ),
-                    "event_type": "BUDGET_EXHAUSTED",
+                    "event_type": "EXPERIMENT_BUDGET_EXHAUSTED",
+                    "record_scope": "experiment",
                 },
                 condition=condition,
                 task_id=task_id,
@@ -2177,19 +1907,34 @@ def _sequence_field(value: Any, *field_names: str) -> tuple[Any, ...]:
     return ()
 
 
-def _synthetic_attempt(*, condition: Any, task_id: str) -> dict[str, Any]:
+def _experiment_attempt_record(
+    *,
+    condition: Any,
+    task_id: str,
+    status: str,
+    error_kind: str,
+) -> dict[str, Any]:
     return {
-        "attempt_id": f"runner-{condition.condition_id}-{condition.repeat_id}-{task_id}",
-        "attempt_status": "failed",
+        "attempt_id": (
+            f"experiment-{condition.condition_id}-{condition.repeat_id}-{task_id}"
+        ),
+        "attempt_status": status,
         "provider_attempt_index": 0,
-        "error_kind": "runner_checkpoint",
+        "error_kind": error_kind,
+        "record_scope": "experiment",
     }
 
 
-def _event_record(*, condition: Any, task_id: str, event_type: str) -> dict[str, Any]:
+def _experiment_event_record(
+    *, condition: Any, task_id: str, event_type: str
+) -> dict[str, Any]:
     return {
-        "event_id": f"runner-{event_type.lower()}-{condition.condition_id}-{condition.repeat_id}-{task_id}",
+        "event_id": (
+            f"experiment-{event_type.lower()}-{condition.condition_id}-"
+            f"{condition.repeat_id}-{task_id}"
+        ),
         "event_type": event_type,
+        "record_scope": "experiment",
     }
 
 
@@ -2399,6 +2144,8 @@ def _adapter_result_with(
         "fault_records": tuple(faults),
         "event_records": tuple(events),
         "eligibility_report": _optional_field(original, "eligibility_report"),
+        "run_evidence": _optional_field(original, "run_evidence"),
+        "output_root": _optional_field(original, "output_root"),
     }
 
 
@@ -2515,6 +2262,20 @@ def _required_field(value: Any, field_name: str) -> Any:
     if result is None:
         raise ValueError(f"adapter result requires {field_name}")
     return result
+
+
+def _validate_runtime_attempt_identity(
+    attempt: Any,
+    approved_identity: Mapping[str, Any],
+) -> None:
+    expected_by_field = {
+        "provider": approved_identity.get("provider_family"),
+        "model": approved_identity.get("provider_model_id"),
+        "entry_id": approved_identity.get("model_entry_id"),
+    }
+    for field_name, expected in expected_by_field.items():
+        if expected is None or _required_field(attempt, field_name) != expected:
+            raise ValueError(f"runtime replacement identity drift: {field_name}")
 
 
 def _optional_field(value: Any, field_name: str) -> Any:

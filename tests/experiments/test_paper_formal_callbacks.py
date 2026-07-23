@@ -2,8 +2,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from threading import Barrier, Lock
-from time import sleep
 from typing import Any
 
 import pytest
@@ -27,6 +25,7 @@ from tokenshare.experiments.paper_formal_callbacks import (
 )
 from tokenshare.experiments.paper_workers import WorkerDeathKillPoint
 from tokenshare.storage.artifacts import ArtifactStore
+from tests.experiments.test_paper_workers import _protocol_events
 
 
 @dataclass(frozen=True)
@@ -40,6 +39,19 @@ class _Attempt:
     provenance_ref: dict[str, Any] | None = None
 
 
+def _replace_unit_id(value: Any, unit_id: str) -> Any:
+    if isinstance(value, dict):
+        return {
+            key: _replace_unit_id(item, unit_id)
+            for key, item in value.items()
+        }
+    if isinstance(value, tuple):
+        return tuple(_replace_unit_id(item, unit_id) for item in value)
+    if isinstance(value, list):
+        return [_replace_unit_id(item, unit_id) for item in value]
+    return unit_id if value == "unit_lemma_join" else value
+
+
 def test_exp1_strategy_consumes_complete_frozen_order() -> None:
     calls: list[str] = []
 
@@ -51,50 +63,56 @@ def test_exp1_strategy_consumes_complete_frozen_order() -> None:
     assert calls == ["case-c", "case-a", "case-b"]
     assert result.ordered_case_ids == ("case-c", "case-a", "case-b")
     assert result.outcomes == ("case-c", "case-a", "case-b")
-    assert result.metrics["observed_max_parallel_slots"] == 1
+    assert result.metrics["observed_max_parallel_slots"] == 0
 
 
-def test_exp2_scheduler_changes_actual_parallel_slots_and_preserves_order() -> None:
-    lock = Lock()
-    active = 0
-    observed = 0
+def test_exp2_scheduler_delegates_capacity_to_one_root_runtime() -> None:
+    capacities: list[int] = []
 
-    def execute(case_id: str, worker_id: str) -> dict[str, Any]:
-        nonlocal active, observed
-        with lock:
-            active += 1
-            observed = max(observed, active)
-        sleep(0.03)
-        with lock:
-            active -= 1
+    def execute(case_id: str, worker_capacity: int) -> dict[str, Any]:
+        capacities.append(worker_capacity)
         return {
             "case_id": case_id,
-            "worker_id": worker_id,
-            "provider_latency_ms": 7,
-            "provider_error_kind": "rate_limited" if case_id == "case-2" else None,
+            "provider_latency_ms": 28,
+            "provider_error_kind": "rate_limited",
+            "runtime_records": (
+                {
+                    "unit_id": "child-left",
+                    "started_at": "2026-07-20T00:00:00.000Z",
+                    "ended_at": "2026-07-20T00:00:00.200Z",
+                    "dependencies": [],
+                    "result_kind": "succeeded",
+                },
+                {
+                    "unit_id": "child-right",
+                    "started_at": "2026-07-20T00:00:00.000Z",
+                    "ended_at": "2026-07-20T00:00:00.150Z",
+                    "dependencies": [],
+                    "result_kind": "succeeded",
+                },
+                {
+                    "unit_id": "merge",
+                    "started_at": "2026-07-20T00:00:00.200Z",
+                    "ended_at": "2026-07-20T00:00:00.250Z",
+                    "dependencies": ["child-left", "child-right"],
+                    "result_kind": "succeeded",
+                },
+            ),
         }
 
-    serial = run_scheduled_cases(
-        ordered_case_ids=("case-1", "case-2", "case-3", "case-4"),
-        worker_count=1,
-        execute_case=execute,
-    )
     parallel = run_scheduled_cases(
-        ordered_case_ids=("case-1", "case-2", "case-3", "case-4"),
+        ordered_case_ids=("case-1",),
         worker_count=2,
         execute_case=execute,
     )
 
-    assert serial.metrics["observed_max_parallel_slots"] == 1
+    assert capacities == [2]
     assert parallel.metrics["observed_max_parallel_slots"] == 2
-    assert observed == 2
-    assert parallel.ordered_case_ids == ("case-1", "case-2", "case-3", "case-4")
+    assert parallel.ordered_case_ids == ("case-1",)
     assert tuple(item["case_id"] for item in parallel.outcomes) == parallel.ordered_case_ids
-    unit_events = [event for event in parallel.events if event["event_type"] == "AI_UNIT_ENDED"]
-    assert len(unit_events) == 4
-    assert all(event["started_at"] < event["ended_at"] for event in unit_events)
-    assert all(event["worker_id"] for event in unit_events)
-    assert parallel.metrics["wall_clock_ms"] >= parallel.metrics["critical_path_ms"]
+    assert parallel.events == ()
+    assert parallel.metrics["wall_clock_ms"] == 250
+    assert parallel.metrics["critical_path_ms"] == 250
     assert parallel.metrics["provider_latency_sum_ms"] == 28
     assert parallel.metrics["provider_latency_sum_ms"] != parallel.metrics["wall_clock_ms"]
     assert parallel.metrics["provider_error_count"] == 1
@@ -163,8 +181,8 @@ def test_exp3_post_ai_fault_is_injected_after_raw_and_uses_fixed_identity() -> N
     assert result.fault_records[0]["original_output_ref"]["artifact_id"] == "raw-original"
     assert result.fault_records[0]["mutated_output_ref"]["artifact_id"] == "mutated-output"
     assert result.replacement_attempts == (replacement,)
-    assert result.events[0]["event_type"] == "PROVIDER_RAW_PERSISTED"
-    assert result.events[-1]["event_type"] == "REPLACEMENT_ACCEPTED"
+    assert result.events[0]["event_type"] == "EXPERIMENT_PROVIDER_RAW_OBSERVED"
+    assert result.events[-1]["event_type"] == "EXPERIMENT_REPLACEMENT_ACCEPTED"
 
 
 def test_ai_executor_post_raw_hook_runs_after_persistence_and_before_parser(
@@ -227,7 +245,7 @@ def test_ai_executor_post_raw_hook_runs_after_persistence_and_before_parser(
     assert order == ["fault_hook", "parser"]
 
 
-def test_exp3_worker_death_strategy_uses_process_harness_and_orders_recovery(
+def test_exp3_worker_death_strategy_projects_runtime_evidence_without_fake_protocol(
     tmp_path: Path,
 ) -> None:
     result = run_exp3_worker_death_strategy(
@@ -240,6 +258,35 @@ def test_exp3_worker_death_strategy_uses_process_harness_and_orders_recovery(
         kill_point=WorkerDeathKillPoint.PROGRESS_25,
         started_at="2026-07-20T00:00:00Z",
         process_tick_seconds=0.005,
+        runtime_observations=(
+            {
+                "worker_fact": {
+                    "unit_id": "unit-1",
+                    "attempt_id": "attempt_initial",
+                    "lease_id": "lease_initial",
+                    "worker_id": "process-worker-1",
+                    "worker_pid": 1001,
+                    "process_exitcode": -15,
+                    "result_kind": "worker_terminated",
+                    "started_at": "2026-07-20T00:00:00Z",
+                    "ended_at": "2026-07-20T00:00:01Z",
+                },
+                "replacement_fact": {
+                    "unit_id": "unit-1",
+                    "attempt_id": "attempt_replacement",
+                    "lease_id": "lease_replacement",
+                    "worker_id": "process-worker-2",
+                    "worker_pid": 1002,
+                    "process_exitcode": 0,
+                    "result_kind": "succeeded",
+                    "started_at": "2026-07-20T00:00:10Z",
+                    "ended_at": "2026-07-20T00:00:11Z",
+                },
+                "protocol_events": _replace_unit_id(_protocol_events(), "unit-1"),
+                "coordinator_pid": 999,
+                "created_at": "2026-07-20T00:00:11Z",
+            },
+        ),
     )
 
     record = result.fault_records[0]
@@ -248,11 +295,10 @@ def test_exp3_worker_death_strategy_uses_process_harness_and_orders_recovery(
     assert record["coordinator"]["survived"] is True
     assert record["worker_pid"] != record["replacement_worker_pid"]
     assert [event["event_type"] for event in result.events] == [
-        "WORKER_TERMINATED",
-        "LEASE_EXPIRED",
-        "UNIT_REASSIGNED",
-        "REPLACEMENT_ACCEPTED",
+        "EXPERIMENT_WORKER_DEATH_PLAN_FROZEN",
+        "EXPERIMENT_WORKER_DEATH_OBSERVED",
     ]
+    assert result.events[-1]["protocol_event_refs"] == record["protocol_event_refs"]
 
 
 @pytest.mark.parametrize(
