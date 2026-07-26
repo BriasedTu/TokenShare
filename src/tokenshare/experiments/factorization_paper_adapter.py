@@ -51,11 +51,18 @@ from tokenshare.experiments.paper_ablation import runtime_controls_for_mode
 from tokenshare.experiments.paper_unit_commitments import (
     factorization_range_plugin_payload,
 )
+from tokenshare.experiments.paper_workers import (
+    PaperAIUnit,
+    project_worker_death_records,
+)
 from tokenshare.local_runtime import (
+    ProcessWorkerBackend,
+    ProtocolExecutionScope,
     ProtocolRunCoordinator,
     ProtocolRunRequest,
     SequentialWorkerBackend,
     ThreadWorkerBackend,
+    WorkerTerminationPolicy,
 )
 from tokenshare.plugins.contracts import OutputContract
 from tokenshare.plugins.factorization.descriptor import build_factorization_plugin_descriptor
@@ -98,6 +105,7 @@ from tokenshare.plugins.factorization.schemas import (
 from tokenshare.plugins.factorization.split_strategy import (
     FactorizationSplitPlanResult,
     build_factorization_split_plan,
+    resolve_requested_child_count,
 )
 from tokenshare.plugins.factorization.validator import (
     build_factor_search_instruction,
@@ -130,6 +138,7 @@ class FactorizationPaperRunResult:
     run_evidence: JsonObject
     output_root: str
     event_records: tuple[JsonObject, ...] = ()
+    fault_records: tuple[JsonObject, ...] = ()
     schema_version: str = "tokenshare.factorization_paper_run.v1"
 
     def to_dict(self) -> JsonObject:
@@ -147,6 +156,7 @@ class FactorizationPaperRunResult:
             "run_evidence": dict(self.run_evidence),
             "output_root": self.output_root,
             "event_records": [dict(item) for item in self.event_records],
+            "fault_records": [dict(item) for item in self.fault_records],
         }
 
 
@@ -232,6 +242,7 @@ def run_factorization_paper_case(
     selected_ai_unit_id: str | None = None,
     post_raw_output_hook: Any | None = None,
     ablation_mode: str | None = None,
+    worker_termination_policy: WorkerTerminationPolicy | None = None,
     protocol_run_dispatcher: Any | None = None,
 ) -> FactorizationPaperRunResult:
     """Deprecated compatibility API for historical/selector regressions.
@@ -284,25 +295,26 @@ def run_factorization_paper_case(
             else ScriptedFactorizationRangeTransport()
         )
 
-    if selected_ai_unit_id is None:
-        return _run_factorization_full_via_coordinator(
-            case=case,
-            condition=condition,
-            run_root=run_root,
-            store=store,
-            active_transport=active_transport,
-            real_transport=real_transport,
-            config=config,
-            validated_binding=validated_binding,
-            secret_values=secret_values,
-            max_tokens=max_tokens,
-            timeout_seconds=timeout_seconds,
-            post_raw_output_hook=post_raw_output_hook,
-            protocol_run_dispatcher=protocol_run_dispatcher,
-            ablation_mode=normalized_ablation_mode,
-        )
+    return _run_factorization_full_via_coordinator(
+        case=case,
+        condition=condition,
+        run_root=run_root,
+        store=store,
+        active_transport=active_transport,
+        real_transport=real_transport,
+        config=config,
+        validated_binding=validated_binding,
+        secret_values=secret_values,
+        max_tokens=max_tokens,
+        timeout_seconds=timeout_seconds,
+        post_raw_output_hook=post_raw_output_hook,
+        protocol_run_dispatcher=protocol_run_dispatcher,
+        ablation_mode=normalized_ablation_mode,
+        worker_termination_policy=worker_termination_policy,
+        selected_ai_unit_id=selected_ai_unit_id,
+    )
 
-    # selector 直连兼容只用于历史 regression；正式 FULL/fault/ablation 已走 runtime。
+    # 以下旧 selector lifecycle 已与当前入口隔离，仅保留历史输出 reader provenance。
     root_input_ref = _save_root_input(store, case)
     subject = _factor_integer_subject(case=case, root_input_ref=root_input_ref)
     split_plan = _build_split_plan(case=case, subject=subject)
@@ -690,6 +702,44 @@ class _FixedIdentityRangeExecutor:
         self.calls: list[_CapturedRangeCall] = []
         self._calls_lock = Lock()
         self._next_call_index = 0
+        self._process_call_indexes: dict[str, int] = {}
+
+    def __getstate__(self):
+        state = dict(self.__dict__)
+        state.pop("_calls_lock", None)
+        return state
+
+    def __setstate__(self, state):
+        self.__dict__.update(state)
+        self._calls_lock = Lock()
+
+    def prepare_process_execution(
+        self,
+        request: ExecutionRequest,
+        execution_index: int,
+    ) -> None:
+        self._process_call_indexes[request.attempt_id] = execution_index
+
+    def export_process_result(
+        self,
+        request: ExecutionRequest,
+        submission: ExecutionSubmission,
+    ) -> _CapturedRangeCall:
+        del submission
+        return next(
+            call
+            for call in reversed(self.calls)
+            if call.request.attempt_id == request.attempt_id
+        )
+
+    def ingest_process_result(self, captured: _CapturedRangeCall) -> None:
+        with self._calls_lock:
+            if any(
+                call.request.attempt_id == captured.request.attempt_id
+                for call in self.calls
+            ):
+                return
+            self.calls.append(captured)
 
     def execute(self, request, *, submission_id: str, submitted_at: str):
         request_ref = self.store.save_json(
@@ -703,8 +753,11 @@ class _FixedIdentityRangeExecutor:
             created_at=request.created_at,
         )
         with self._calls_lock:
-            index = self._next_call_index
-            self._next_call_index += 1
+            index = self._process_call_indexes.pop(
+                request.attempt_id,
+                self._next_call_index,
+            )
+            self._next_call_index = max(self._next_call_index + 1, index + 1)
         requirement_mismatches = _executor_requirement_mismatches(
             request=request,
             expected=self.executor_requirements,
@@ -860,6 +913,8 @@ def _run_factorization_full_via_coordinator(
     post_raw_output_hook: Any | None,
     protocol_run_dispatcher: Any | None,
     ablation_mode: str,
+    worker_termination_policy: WorkerTerminationPolicy | None,
+    selected_ai_unit_id: str | None,
 ) -> FactorizationPaperRunResult:
     """FULL 兼容壳：只配置 runtime、调用 coordinator、投影旧 result shape。"""
 
@@ -873,7 +928,15 @@ def _run_factorization_full_via_coordinator(
             event_log_uri=f"file://events/{task_id}.jsonl",
             metadata={"paper_factorization": True, "case_id": case_id},
         ),
-        max_retries=1 if post_raw_output_hook is not None else 0,
+        max_retries=(
+            worker_termination_policy.termination_limit + 1
+            if worker_termination_policy is not None
+            else 1
+            if condition.experiment_id == "exp4_real_ai_protocol_ablation"
+            else 2
+            if post_raw_output_hook is not None
+            else 0
+        ),
     )
     executor_requirements = _fixed_entry_executor_requirements(
         config=config,
@@ -925,6 +988,14 @@ def _run_factorization_full_via_coordinator(
         range_executor=capturing_executor,
     )
     worker_backend = (
+        ProcessWorkerBackend(
+            executor=execution_bridge,
+            capacity=condition.worker_count,
+            submitted_at=lambda: NOW,
+            termination_policy=worker_termination_policy,
+        )
+        if worker_termination_policy is not None
+        else
         SequentialWorkerBackend(
             executor=execution_bridge,
             submitted_at=lambda: NOW,
@@ -942,8 +1013,26 @@ def _run_factorization_full_via_coordinator(
         plugin_runtime=plugin_runtime,
         worker_backend=worker_backend,
         mechanism_policy=controls.mechanism_policy,
-        hooks=controls.hooks,
+        hooks=(
+            post_raw_output_hook
+            if callable(
+                getattr(
+                    post_raw_output_hook,
+                    "after_parsed_candidate_persisted",
+                    None,
+                )
+            )
+            else controls.hooks
+        ),
         continue_after_terminal_child_failure=True,
+        execution_scope=(
+            ProtocolExecutionScope()
+            if selected_ai_unit_id is None
+            else ProtocolExecutionScope(
+                mode="selected_ai_units",
+                selected_ai_unit_ids=(selected_ai_unit_id,),
+            )
+        ),
     )
     runtime_result = (
         coordinator.run_root(protocol_request)
@@ -967,6 +1056,18 @@ def _run_factorization_full_via_coordinator(
         for event in runtime_events
         if event.event_type == "VERIFICATION_RECORDED"
     }
+    submitted_candidate_refs_by_attempt = {
+        str(event.payload["attempt_id"]): {
+            name: ArtifactRef.from_dict(ref)
+            for name, ref in _read_json_ref(
+                store,
+                ArtifactRef.from_dict(event.payload["submission_ref"]),
+            ).get("candidate_output_refs", {}).items()
+        }
+        for event in runtime_events
+        if event.event_type == "EXECUTION_SUBMISSION_RECORDED"
+        and event.payload.get("acceptance_status") == "accepted"
+    }
     canonical_range_refs_by_unit = {
         str(event.payload["unit_id"]): ArtifactRef.from_dict(
             event.payload["canonical_output_refs"]["range_result"]
@@ -975,7 +1076,17 @@ def _run_factorization_full_via_coordinator(
         if event.event_type == "CANONICAL_OUTPUTS_BOUND"
         and "range_result" in event.payload["canonical_output_refs"]
     }
+    canonical_refs_by_attempt = {
+        str(event.payload["selected_attempt_id"]): {
+            name: ArtifactRef.from_dict(ref)
+            for name, ref in event.payload["canonical_output_refs"].items()
+        }
+        for event in runtime_events
+        if event.event_type == "CANONICAL_OUTPUTS_BOUND"
+        and isinstance(event.payload.get("selected_attempt_id"), str)
+    }
     attempts: list[PaperAttemptResult] = []
+    independent_validity_by_attempt: dict[str, bool] = {}
     projection_metadata_by_unit: dict[str, JsonObject] = {}
     range_records: list[JsonObject] = []
     for index, captured in enumerate(capturing_executor.calls):
@@ -999,10 +1110,24 @@ def _run_factorization_full_via_coordinator(
         projection_metadata_by_unit[request.unit_id] = {
             "planned_ai_unit_id": f"range_{range_input_body['child_index']}"
         }
-        candidate_ref = submission.candidate_output_refs.get("range_result")
+        candidate_ref = submitted_candidate_refs_by_attempt.get(
+            request.attempt_id,
+            submission.candidate_output_refs,
+        ).get("range_result")
         range_result_body = (
             _read_json_ref(store, candidate_ref) if candidate_ref is not None else None
         )
+        try:
+            independent_validity_by_attempt[request.attempt_id] = (
+                range_result_body is not None
+                and verify_range_result(
+                    range_result_body,
+                    child_input=FactorSearchRangeInput(**range_input_body),
+                ).status
+                == "passed"
+            )
+        except (KeyError, TypeError, ValueError):
+            independent_validity_by_attempt[request.attempt_id] = False
         recorded_verification = verification_by_unit.get(request.unit_id, {})
         recorded_status = str(recorded_verification.get("status", "error"))
         if recorded_status == "rejected" and not model_mismatch:
@@ -1015,11 +1140,21 @@ def _run_factorization_full_via_coordinator(
         verification_body: JsonObject
         if recorded_verification and not model_mismatch:
             layer_results = dict(recorded_verification.get("layer_results", {}))
+            verification_metadata = dict(
+                recorded_verification.get("metadata", {})
+            )
+            plugin_domain_layer = verification_metadata.get(
+                "plugin_domain_layer"
+            )
             verification_body = {
                 "accepted": accepted,
                 "status": recorded_status,
-                "layer_summary": layer_results,
-                "metadata": dict(recorded_verification.get("metadata", {})),
+                "layer_summary": (
+                    dict(plugin_domain_layer)
+                    if isinstance(plugin_domain_layer, dict)
+                    else layer_results
+                ),
+                "metadata": verification_metadata,
                 "verification_environment": dict(
                     recorded_verification.get("verification_environment", {})
                 ),
@@ -1091,15 +1226,33 @@ def _run_factorization_full_via_coordinator(
         if prime_body is not None
         else []
     )
-    accepted_validity = _prime_factors_match_oracle(final_prime_factors, case)
+    is_partial = runtime_result.status == "partial"
+    accepted_validity = (
+        None
+        if is_partial
+        else _prime_factors_match_oracle(final_prime_factors, case)
+    )
     merge_summary: JsonObject = {
-        "status": "completed" if prime_ref is not None else "blocked",
+        "status": (
+            "partial"
+            if is_partial
+            else "completed"
+            if prime_ref is not None
+            else "blocked"
+        ),
         "result_kind": (
             "prime_factorization_result" if prime_ref is not None else None
         ),
         "expected_output_resolvable": prime_ref is not None,
         "premature_merge_attempted": False,
-        "slot_integrity_violation": False,
+        "slot_integrity_violation": (
+            plugin_runtime.slot_integrity_violation_applied
+        ),
+        "slot_binding_applied_by": (
+            "local_runtime_policy"
+            if plugin_runtime.slot_integrity_violation_applied
+            else None
+        ),
         "root_validity_audit_passed": accepted_validity,
     }
     projection = project_paper_protocol_run(
@@ -1112,6 +1265,69 @@ def _run_factorization_full_via_coordinator(
         attempt_metadata_by_unit=projection_metadata_by_unit,
     )
     attempts = list(projection.attempt_results)
+    fault_records: tuple[JsonObject, ...] = ()
+    if worker_termination_policy is not None:
+        ai_units_by_id: dict[str, PaperAIUnit] = {}
+        actual_unit_id_by_planned: dict[str, str] = {}
+        provider_tokens_by_attempt_id: dict[str, int] = {}
+        for captured in capturing_executor.calls:
+            planned_ai_unit_id = captured.request.soft_hints.get(
+                "planned_ai_unit_id"
+            )
+            if not isinstance(planned_ai_unit_id, str):
+                continue
+            actual_unit_id_by_planned[planned_ai_unit_id] = (
+                captured.request.unit_id
+            )
+            ai_units_by_id[captured.request.unit_id] = PaperAIUnit(
+                task_id=captured.request.task_id,
+                unit_id=captured.request.unit_id,
+                unit_kind="factorization_range",
+                domain="factorization",
+                metadata={"planned_ai_unit_id": planned_ai_unit_id},
+            )
+            provider_tokens_by_attempt_id[captured.request.attempt_id] = (
+                _int_metric(
+                    (captured.submission.usage_summary or {}).get(
+                        "total_tokens"
+                    )
+                )
+            )
+        missing_targets = [
+            planned
+            for planned in worker_termination_policy.target_planned_ai_unit_ids
+            if planned not in actual_unit_id_by_planned
+        ]
+        if missing_targets:
+            raise ValueError(
+                f"worker-death targets were not dispatched: {missing_targets}"
+            )
+        fault_records = project_worker_death_records(
+            artifact_store=store,
+            condition_id=condition.condition_id,
+            repeat_id=condition.repeat_id,
+            run_id=runtime_result.run_id,
+            ai_units=tuple(ai_units_by_id.values()),
+            selected_target_unit_ids=tuple(
+                actual_unit_id_by_planned[planned]
+                for planned in worker_termination_policy.target_planned_ai_unit_ids
+            ),
+            kill_point=worker_termination_policy.kill_point,
+            worker_facts=worker_backend.execution_facts,
+            protocol_events=runtime_events,
+            coordinator_pid=os.getpid(),
+            created_at=NOW,
+            provider_tokens_by_attempt_id=provider_tokens_by_attempt_id,
+        )
+        attempts = _enrich_worker_death_attempts(
+            attempts=attempts,
+            captured_calls=capturing_executor.calls,
+            worker_facts=worker_backend.execution_facts,
+            fault_records=fault_records,
+            store=store,
+            condition=condition,
+            case_id=case_id,
+        )
     run_evidence = _run_evidence(
         store=store,
         real_transport=real_transport,
@@ -1127,11 +1343,23 @@ def _run_factorization_full_via_coordinator(
         "event_count": len(runtime_result.event_refs),
         "lifecycle_coverage": projection.lifecycle_coverage,
         "generation_identity": projection.runtime_generation_identity,
+        "runtime_observation": projection.runtime_observation,
+        "case_id": case_id,
+        "factor_position_quantile": case.get("factor_position_quantile"),
+        "execution_scope": protocol_request.execution_scope.mode,
+        "selected_ai_unit_ids": list(
+            protocol_request.execution_scope.selected_ai_unit_ids
+        ),
     }
     run_evidence["ablation_runtime"] = _ablation_runtime_evidence(
         mode=ablation_mode,
         attempts=attempts,
         merge_summary=merge_summary,
+        max_retries=protocol_config.max_retries,
+        submitted_candidate_refs_by_attempt=submitted_candidate_refs_by_attempt,
+        canonical_refs_by_attempt=canonical_refs_by_attempt,
+        independent_validity_by_attempt=independent_validity_by_attempt,
+        final_validity=accepted_validity,
         hook_observations=tuple(
             dict(item)
             for item in runtime_result.summary.get(
@@ -1143,11 +1371,22 @@ def _run_factorization_full_via_coordinator(
         attempts=attempts,
         run_evidence=run_evidence,
     )
+    projection_ineligibility_reasons = projection.ineligibility_reasons
+    if (
+        worker_termination_policy is not None
+        and attempts
+        and all(attempt.paper_eligible for attempt in attempts)
+    ):
+        projection_ineligibility_reasons = tuple(
+            reason
+            for reason in projection_ineligibility_reasons
+            if reason != "incomplete_attempt_evidence"
+        )
     combined_reasons = tuple(
         dict.fromkeys(
             (
                 *eligibility.ineligibility_reasons,
-                *projection.ineligibility_reasons,
+                *projection_ineligibility_reasons,
             )
         )
     )
@@ -1173,9 +1412,94 @@ def _run_factorization_full_via_coordinator(
         run_evidence=run_evidence,
         output_root=run_root.as_posix(),
         event_records=tuple(event.to_dict() for event in runtime_events),
+        fault_records=fault_records,
     )
     _write_case_outputs(run_root, result)
     return result
+
+
+def _enrich_worker_death_attempts(
+    *,
+    attempts: list[PaperAttemptResult],
+    captured_calls: list[_CapturedRangeCall],
+    worker_facts: tuple[Any, ...],
+    fault_records: tuple[JsonObject, ...],
+    store: ArtifactStore,
+    condition: PaperExperimentCondition,
+    case_id: str,
+) -> list[PaperAttemptResult]:
+    """用真实子进程 sidecar 补齐 ledger 中无 submission 的死亡 attempt。"""
+
+    killed_facts = {
+        str(fact.attempt_id): fact
+        for fact in worker_facts
+        if fact.result_kind == "worker_terminated" and fact.attempt_id
+    }
+    calls_by_attempt = {
+        captured.request.attempt_id: captured for captured in captured_calls
+    }
+    record_ref_by_attempt = {
+        str(record["dead_attempt"]["attempt_id"]): dict(record["record_ref"])
+        for record in fault_records
+    }
+    enriched: list[PaperAttemptResult] = []
+    for attempt in attempts:
+        fact = killed_facts.get(attempt.attempt_id)
+        captured = calls_by_attempt.get(attempt.attempt_id)
+        if fact is None or captured is None:
+            enriched.append(attempt)
+            continue
+        planned_ai_unit_id = str(
+            captured.request.soft_hints["planned_ai_unit_id"]
+        )
+        captured_attempt = _paper_attempt_result(
+            store=store,
+            condition=condition,
+            case_id=case_id,
+            index=fact.execution_index,
+            request=captured.request,
+            request_ref=captured.request_ref,
+            submission=captured.submission,
+            usage_ref=captured.usage_ref,
+            attempt_status=PaperAttemptStatus.WORKER_DIED,
+            planned_ai_unit_id=planned_ai_unit_id,
+            model_execution_record_ref=(
+                captured.model_execution_record_ref
+            ),
+            error_kind_override="worker_died",
+        )
+        model_record_eligible = bool(
+            captured.model_execution_record is not None
+            and captured.model_execution_record.paper_eligible
+        )
+        enriched.append(
+            replace(
+                attempt,
+                worker_id=str(fact.worker_id or attempt.worker_id),
+                attempt_status=PaperAttemptStatus.WORKER_DIED,
+                request_ref=captured_attempt.request_ref,
+                raw_output_ref=captured_attempt.raw_output_ref,
+                parsed_output_ref=captured_attempt.parsed_output_ref,
+                parse_failure_ref=captured_attempt.parse_failure_ref,
+                provenance_ref=captured_attempt.provenance_ref,
+                usage_ref=captured_attempt.usage_ref,
+                started_at=str(fact.started_at or attempt.started_at),
+                ended_at=str(fact.ended_at or attempt.ended_at),
+                latency_ms=captured_attempt.latency_ms,
+                prompt_tokens=captured_attempt.prompt_tokens,
+                completion_tokens=captured_attempt.completion_tokens,
+                total_tokens=captured_attempt.total_tokens,
+                cost_estimate=captured_attempt.cost_estimate,
+                error_kind="worker_died",
+                fault_injection_ref=record_ref_by_attempt.get(attempt.attempt_id),
+                paper_eligible=model_record_eligible,
+                model_execution_record_ref=(
+                    captured_attempt.model_execution_record_ref
+                ),
+                planned_ai_unit_id=planned_ai_unit_id,
+            )
+        )
+    return enriched
 
 
 def _normalize_ablation_mode(value: str | None) -> str:
@@ -1198,8 +1522,20 @@ def _ablation_runtime_evidence(
     mode: str,
     attempts: list[PaperAttemptResult],
     merge_summary: JsonObject,
+    max_retries: int = 0,
+    submitted_candidate_refs_by_attempt: (
+        dict[str, dict[str, ArtifactRef]] | None
+    ) = None,
+    canonical_refs_by_attempt: dict[str, dict[str, ArtifactRef]] | None = None,
+    independent_validity_by_attempt: dict[str, bool] | None = None,
+    final_validity: bool | None = None,
     hook_observations: tuple[JsonObject, ...] = (),
 ) -> JsonObject:
+    submitted_candidate_refs_by_attempt = (
+        submitted_candidate_refs_by_attempt or {}
+    )
+    canonical_refs_by_attempt = canonical_refs_by_attempt or {}
+    independent_validity_by_attempt = independent_validity_by_attempt or {}
     disabled = {
         "FULL": None,
         "NO_VERIFICATION": "verification",
@@ -1218,6 +1554,7 @@ def _ablation_runtime_evidence(
         "mode": mode,
         "disabled_mechanism": disabled,
         "applied_before_adapter_completion": True,
+        "max_retries": max_retries,
         "parser_policy_enabled": mode != "NO_PARSER_POLICY",
         "verification_enabled": mode != "NO_VERIFICATION",
         "replacement_attempts_allowed": mode != "NO_REQUEUE",
@@ -1247,6 +1584,38 @@ def _ablation_runtime_evidence(
         "root_validity_audit_passed": bool(
             merge_summary.get("root_validity_audit_passed")
         ),
+        "attempt_observations": [
+            {
+                "attempt_id": attempt.attempt_id,
+                "unit_id": attempt.unit_id,
+                "raw_output_ref": attempt.raw_output_ref,
+                "candidate_output_ref": (
+                    next(
+                        iter(
+                            submitted_candidate_refs_by_attempt.get(
+                                attempt.attempt_id,
+                                {},
+                            ).values()
+                        ),
+                        None,
+                    ).to_dict()
+                    if submitted_candidate_refs_by_attempt.get(attempt.attempt_id)
+                    else None
+                ),
+                "canonical_output_refs": {
+                    name: ref.to_dict()
+                    for name, ref in canonical_refs_by_attempt.get(
+                        attempt.attempt_id,
+                        {},
+                    ).items()
+                },
+                "independent_candidate_validity": (
+                    independent_validity_by_attempt.get(attempt.attempt_id)
+                ),
+                "final_validity": final_validity,
+            }
+            for attempt in attempts
+        ],
         "hook_observations": [dict(item) for item in hook_observations],
     }
 
@@ -1301,7 +1670,7 @@ def _build_split_plan(
     subject: FactorIntegerSubject,
 ) -> FactorizationSplitPlanResult:
     descriptor = build_factorization_plugin_descriptor()
-    requested_child_count = int(case["split_params"]["requested_child_count"])
+    requested_child_count = resolve_requested_child_count(case["split_params"])
     return build_factorization_split_plan(
         subject=subject,
         canonical_selection_id=f"paper_canonical_root_{case['case_id']}",

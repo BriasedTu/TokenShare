@@ -84,10 +84,18 @@ class MergeTaskLink:
     readiness_reason: str
     created_at: str
     coordinator: JsonObject
+    readiness_decision: JsonObject | None = None
     schema_version: str = "phase5.merge_task_link.v1"
 
     def __post_init__(self) -> None:
-        _require_schema_version(self.schema_version, "phase5.merge_task_link.v1")
+        if self.schema_version not in {
+            "phase5.merge_task_link.v1",
+            "phase5.merge_task_link.v2",
+        }:
+            raise ValueError(
+                "invalid schema_version: expected phase5.merge_task_link.v1 "
+                f"or phase5.merge_task_link.v2, got {self.schema_version}"
+            )
         _require_non_empty(
             {
                 "merge_task_link_id": self.merge_task_link_id,
@@ -104,8 +112,18 @@ class MergeTaskLink:
                 "created_at": self.created_at,
             }
         )
-        if self.readiness_reason != "all_required_slots_canonical":
-            raise ValueError("readiness_reason must be all_required_slots_canonical")
+        if self.schema_version == "phase5.merge_task_link.v1":
+            if self.readiness_reason != "all_required_slots_canonical":
+                raise ValueError(
+                    "readiness_reason must be all_required_slots_canonical"
+                )
+            if self.readiness_decision is not None:
+                raise ValueError("v1 merge task link cannot carry readiness_decision")
+        else:
+            _validate_readiness_decision(
+                self.readiness_decision,
+                readiness_reason=self.readiness_reason,
+            )
         if self.source_merge_plan_event_seq <= 0 or self.source_task_expanded_event_seq <= 0:
             raise ValueError("source event seq fields must be positive")
         if not isinstance(self.merge_input_bundle_ref, dict):
@@ -118,6 +136,15 @@ class MergeTaskLink:
         expected_digest = digest_required_slot_bindings(bindings)
         if self.required_slot_bindings_digest != expected_digest:
             raise ValueError("required_slot_bindings_digest mismatch")
+        if self.readiness_decision is not None:
+            selected = set(
+                self.readiness_decision.get("selected_child_unit_ids", [])
+            )
+            bound = {binding.source_child_unit_id for binding in bindings}
+            if selected != bound:
+                raise ValueError(
+                    "readiness selected child units must match slot bindings"
+                )
         object.__setattr__(self, "required_slot_bindings", list(_sort_bindings(bindings)))
 
     def to_dict(self) -> JsonObject:
@@ -279,6 +306,37 @@ def _reject_duplicate_slots(bindings: tuple[RequiredSlotBinding, ...]) -> None:
         if binding.slot_key in seen:
             raise ValueError(f"duplicate required slot: {binding.slot_key}")
         seen.add(binding.slot_key)
+
+
+def _validate_readiness_decision(
+    decision: JsonObject | None,
+    *,
+    readiness_reason: str,
+) -> None:
+    if not isinstance(decision, dict):
+        raise ValueError("v2 merge task link requires readiness_decision")
+    if decision.get("schema_version") != "tokenshare.merge_readiness_decision.v1":
+        raise ValueError("unsupported merge readiness decision schema")
+    if decision.get("status") != "ready":
+        raise ValueError("merge task link requires a ready decision")
+    if decision.get("reason") != readiness_reason:
+        raise ValueError("readiness_reason must match readiness_decision")
+    digest = decision.get("decision_digest")
+    body = {
+        key: value
+        for key, value in decision.items()
+        if key != "decision_digest"
+    }
+    if digest != digest_json(body):
+        raise ValueError("merge readiness decision digest mismatch")
+    selected = decision.get("selected_child_unit_ids")
+    if (
+        not isinstance(selected, list)
+        or not selected
+        or any(not isinstance(item, str) or not item for item in selected)
+        or len(set(selected)) != len(selected)
+    ):
+        raise ValueError("ready decision must select unique child units")
 
 
 def _require_schema_version(actual: str, expected: str) -> None:

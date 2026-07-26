@@ -329,10 +329,13 @@ class ProtocolEngine:
         causation_event_id: str | None = None,
     ) -> ExecutionSubmissionFlowResult:
         artifact_store = self._require_artifact_store()
+        current_events = self._event_ledger.read_all()
+        authoritative_attempt = _authoritative_attempt(current_events, attempt)
+        authoritative_lease = _authoritative_lease(current_events, lease)
         acceptance_decision = evaluate_submission_acceptance(
             submission=submission,
-            attempt=attempt,
-            lease=lease,
+            attempt=authoritative_attempt,
+            lease=authoritative_lease,
         )
         submission_ref = artifact_store.save_json(
             submission.to_dict(),
@@ -380,7 +383,7 @@ class ProtocolEngine:
                 attempt_event=None,
             )
         submitted_attempt = transition_attempt(
-            attempt,
+            authoritative_attempt,
             new_state=AttemptState.SUBMITTED,
             changed_at=submission.submitted_at,
             reason="execution_submission_recorded",
@@ -1645,6 +1648,7 @@ class ProtocolEngine:
         attempt_id: str,
         fencing_token: str,
         active_leases_by_unit_id: dict[str, object] | None = None,
+        allowed_unit_ids: Iterable[str] | None = None,
     ) -> SchedulingFlowResult:
         active_leases = _merge_active_lease_maps(
             _active_leases_by_unit_id_from_events(self._event_ledger.read_all()),
@@ -1657,6 +1661,7 @@ class ProtocolEngine:
             active_leases_by_unit_id=active_leases,
             now=now,
             decision_id=decision_id,
+            allowed_unit_ids=allowed_unit_ids,
         )
         if decision is None:
             raise ValueError("no schedulable ready unit")
@@ -1777,7 +1782,12 @@ class ProtocolEngine:
         now: str,
         correlation_id: str,
     ) -> LeaseHeartbeatFlowResult:
-        heartbeat_lease = self._lease_manager.heartbeat(lease, now=now)
+        current_events = self._event_ledger.read_all()
+        authoritative_lease = _authoritative_lease(current_events, lease)
+        heartbeat_lease = self._lease_manager.heartbeat(
+            authoritative_lease,
+            now=now,
+        )
         heartbeat_event = self._event_ledger.append(
             event_type=EventType.LEASE_STATE_CHANGED,
             object_type="Lease",
@@ -2135,7 +2145,9 @@ def _latest_attempt_snapshot(
             and event.object_id == attempt_id
         ):
             attempt = event.payload.get("attempt")
-            return dict(attempt) if isinstance(attempt, dict) else None
+            if not isinstance(attempt, dict):
+                raise ValueError("latest attempt snapshot is malformed")
+            return dict(attempt)
     return None
 
 
@@ -2146,8 +2158,168 @@ def _latest_lease_snapshot(
     for event in reversed(tuple(events)):
         if event.event_type == EventType.LEASE_STATE_CHANGED and event.object_id == lease_id:
             lease = event.payload.get("lease")
-            return dict(lease) if isinstance(lease, dict) else None
+            if not isinstance(lease, dict):
+                raise ValueError("latest lease snapshot is malformed")
+            return dict(lease)
     return None
+
+
+def _snapshot_required_string(snapshot: JsonObject, field_name: str) -> str:
+    value = snapshot.get(field_name)
+    if not isinstance(value, str) or not value:
+        raise ValueError(
+            f"latest snapshot field must be a non-empty string: {field_name}"
+        )
+    return value
+
+
+def _snapshot_optional_string(
+    snapshot: JsonObject,
+    field_name: str,
+) -> str | None:
+    value = snapshot.get(field_name)
+    if value is not None and not isinstance(value, str):
+        raise ValueError(
+            f"latest snapshot field must be a string or null: {field_name}"
+        )
+    return value
+
+
+def _snapshot_json_object(snapshot: JsonObject, field_name: str) -> JsonObject:
+    value = snapshot.get(field_name)
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        raise ValueError(f"latest snapshot field must be an object: {field_name}")
+    return dict(value)
+
+
+def _snapshot_optional_artifact_ref(
+    snapshot: JsonObject,
+    field_name: str,
+) -> ArtifactRef | None:
+    value = snapshot.get(field_name)
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise ValueError(f"latest snapshot artifact ref is malformed: {field_name}")
+    return ArtifactRef.from_dict(dict(value))
+
+
+def _snapshot_artifact_refs(
+    snapshot: JsonObject,
+    field_name: str,
+) -> dict[str, ArtifactRef]:
+    value = snapshot.get(field_name)
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        raise ValueError(
+            f"latest snapshot artifact refs are malformed: {field_name}"
+        )
+    for output_name, ref_data in value.items():
+        if not isinstance(output_name, str) or not isinstance(ref_data, dict):
+            raise ValueError(
+                f"latest snapshot artifact refs are malformed: {field_name}"
+            )
+    return _artifact_refs_from_dict(dict(value))
+
+
+def _attempt_from_snapshot(snapshot: JsonObject) -> Attempt:
+    return Attempt(
+        attempt_id=_snapshot_required_string(snapshot, "attempt_id"),
+        task_id=_snapshot_required_string(snapshot, "task_id"),
+        unit_id=_snapshot_required_string(snapshot, "unit_id"),
+        lease_id=_snapshot_required_string(snapshot, "lease_id"),
+        client_id=_snapshot_required_string(snapshot, "client_id"),
+        state=AttemptState(_snapshot_required_string(snapshot, "state")),
+        attempt_kind=_snapshot_required_string(snapshot, "attempt_kind"),
+        created_at=_snapshot_required_string(snapshot, "created_at"),
+        started_at=_snapshot_optional_string(snapshot, "started_at"),
+        submitted_at=_snapshot_optional_string(snapshot, "submitted_at"),
+        finished_at=_snapshot_optional_string(snapshot, "finished_at"),
+        environment_summary=_snapshot_json_object(
+            snapshot,
+            "environment_summary",
+        ),
+        input_artifact_refs=_snapshot_artifact_refs(
+            snapshot,
+            "input_artifact_refs",
+        ),
+        raw_output_ref=_snapshot_optional_artifact_ref(
+            snapshot,
+            "raw_output_ref",
+        ),
+        parsed_output_ref=_snapshot_optional_artifact_ref(
+            snapshot,
+            "parsed_output_ref",
+        ),
+        candidate_output_refs=_snapshot_artifact_refs(
+            snapshot,
+            "candidate_output_refs",
+        ),
+        log_ref=_snapshot_optional_artifact_ref(snapshot, "log_ref"),
+        failure_kind=_snapshot_optional_string(snapshot, "failure_kind"),
+        failure_reason=_snapshot_optional_string(snapshot, "failure_reason"),
+        superseded_by_attempt_id=_snapshot_optional_string(
+            snapshot,
+            "superseded_by_attempt_id",
+        ),
+        metadata=_snapshot_json_object(snapshot, "metadata"),
+        schema_version=_snapshot_required_string(snapshot, "schema_version"),
+    )
+
+
+def _lease_from_snapshot(snapshot: JsonObject) -> Lease:
+    heartbeat_count = snapshot.get("heartbeat_count")
+    if (
+        isinstance(heartbeat_count, bool)
+        or not isinstance(heartbeat_count, int)
+        or heartbeat_count < 0
+    ):
+        raise ValueError(
+            "latest snapshot field must be a non-negative integer: heartbeat_count"
+        )
+    return Lease(
+        lease_id=_snapshot_required_string(snapshot, "lease_id"),
+        task_id=_snapshot_required_string(snapshot, "task_id"),
+        unit_id=_snapshot_required_string(snapshot, "unit_id"),
+        attempt_id=_snapshot_required_string(snapshot, "attempt_id"),
+        client_id=_snapshot_required_string(snapshot, "client_id"),
+        state=LeaseState(_snapshot_required_string(snapshot, "state")),
+        fencing_token=_snapshot_required_string(snapshot, "fencing_token"),
+        issued_at=_snapshot_required_string(snapshot, "issued_at"),
+        expires_at=_snapshot_required_string(snapshot, "expires_at"),
+        last_heartbeat_at=_snapshot_optional_string(
+            snapshot,
+            "last_heartbeat_at",
+        ),
+        heartbeat_count=heartbeat_count,
+        lease_kind=_snapshot_required_string(snapshot, "lease_kind"),
+        terminated_at=_snapshot_optional_string(snapshot, "terminated_at"),
+        terminated_reason=_snapshot_optional_string(
+            snapshot,
+            "terminated_reason",
+        ),
+        metadata=_snapshot_json_object(snapshot, "metadata"),
+        schema_version=_snapshot_required_string(snapshot, "schema_version"),
+    )
+
+
+def _authoritative_attempt(
+    events: Iterable[LedgerEvent],
+    supplied_attempt: Attempt,
+) -> Attempt:
+    snapshot = _latest_attempt_snapshot(events, supplied_attempt.attempt_id)
+    return supplied_attempt if snapshot is None else _attempt_from_snapshot(snapshot)
+
+
+def _authoritative_lease(
+    events: Iterable[LedgerEvent],
+    supplied_lease: Lease,
+) -> Lease:
+    snapshot = _latest_lease_snapshot(events, supplied_lease.lease_id)
+    return supplied_lease if snapshot is None else _lease_from_snapshot(snapshot)
 
 
 def _merge_active_lease_maps(

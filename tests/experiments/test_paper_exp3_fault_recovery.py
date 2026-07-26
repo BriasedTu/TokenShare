@@ -67,13 +67,15 @@ def test_exp3_expands_rate_fault_and_worker_death_root_run_counts() -> None:
 
     assert manifest["experiment_id"] == EXP3_EXPERIMENT_ID
     assert manifest["provider_calls_made"] == 0
-    assert manifest["condition_count"] == 273
+    assert manifest["condition_count"] == 182
     assert manifest["root_run_counts"] == {
-        "rate_fault_factorization": 525,
-        "rate_fault_lean_proof": 180,
-        "worker_death": 108,
-        "total": 813,
+        "rate_fault_factorization": 350,
+        "rate_fault_lean_proof": 120,
+        "worker_death": 72,
+        "total": 542,
     }
+    assert manifest["rate_fault"]["repeats"] == [0, 1]
+    assert manifest["worker_death"]["repeats"] == [0, 1]
     assert manifest["rate_fault"]["fault_types"] == [
         "false_positive",
         "false_negative",
@@ -105,6 +107,28 @@ def test_exp3_expands_rate_fault_and_worker_death_root_run_counts() -> None:
         "exp3_rate_fault_factorization__false_positive__r0__rep0"
     )
     assert conditions[0].seed == _expected_condition_seed(conditions[0].condition_id)
+    assert {condition.repeat_id for condition in conditions} == {0, 1}
+
+
+def test_exp3_v2_matrix_freezes_the_preregistered_two_repeat_root_counts() -> None:
+    context = _context(catalog=_catalog_v2())
+    module = Experiment3FaultRecoveryModule()
+
+    conditions = module.expand_conditions(context)
+    selections = module.freeze_case_selections(context, conditions)
+    manifest = build_exp3_plan_manifest(
+        conditions,
+        selections,
+        catalog=context.catalog,
+    )
+
+    assert manifest["condition_count"] == 182
+    assert manifest["root_run_counts"] == {
+        "rate_fault_factorization": 35_000,
+        "rate_fault_lean_proof": 120,
+        "worker_death": 6_036,
+        "total": 41_156,
+    }
 
 
 def test_exp3_freezes_task_slices_and_fault_target_manifest_without_resampling() -> None:
@@ -135,7 +159,7 @@ def test_exp3_freezes_task_slices_and_fault_target_manifest_without_resampling()
         for condition_id, selection in by_condition_id.items()
         if condition_id.startswith("exp3_rate_fault_lean__all_topics__")
     }
-    assert len(lean_rate_selections) == 60
+    assert len(lean_rate_selections) == 40
     assert {selection.selection_digest for selection in lean_rate_selections.values()} == {
         next(iter(lean_rate_selections.values())).selection_digest
     }
@@ -363,6 +387,9 @@ def test_exp3_summary_computes_matched_baseline_overhead_and_zero_denominator() 
     ]
     assert positive["provider_tokens_attributed_by_mutation"] == 0
     assert positive["injected_fault_count"] == 4
+    assert positive["candidate_target_count"] == 4
+    assert positive["eligible_target_count"] == 4
+    assert positive["injection_denominator"] == 4
     assert positive["detection_rate"] == pytest.approx(0.75)
     assert positive["false_accept_rate"] == pytest.approx(0.25)
     assert positive["recoverable_fault_target_count"] == 2
@@ -397,6 +424,45 @@ def test_exp3_summary_computes_matched_baseline_overhead_and_zero_denominator() 
     assert zero_fault["false_accept_applicability"] == "zero_fault_denominator"
     assert zero_fault["recovery_rate"] is None
     assert zero_fault["recovery_applicability"] == "zero_recoverable_denominator"
+
+    insufficient_eligible = _rate_fault_run(
+        condition_id="fault_false_negative_insufficient_eligible",
+        matched_baseline_condition_id=(
+            "baseline_false_negative_insufficient_eligible"
+        ),
+        injected_fault_count=1,
+        detected_fault_count=1,
+        false_accept_count=0,
+        recoverable_fault_target_count=0,
+        recovered_fault_target_count=0,
+    )
+    insufficient_eligible.update(
+        {
+            "candidate_target_count": 3,
+            "selected_target_count": 2,
+            "eligible_target_count": 1,
+            "not_applicable_target_count": 2,
+            "injection_denominator": 1,
+        }
+    )
+    insufficient_eligible["fault_target_manifest"].update(
+        {
+            "candidate_target_count": 3,
+            "selected_target_count": 2,
+            "selected_target_ai_unit_ids": ["unit_0", "unit_1"],
+            "reserve_target_ai_unit_ids": ["unit_2"],
+        }
+    )
+    applicability_row = summarize_exp3(
+        {
+            "rate_fault_runs": [insufficient_eligible],
+            "worker_death_runs": [],
+        }
+    ).rows[0]
+    assert applicability_row["candidate_target_count"] == 3
+    assert applicability_row["eligible_target_count"] == 1
+    assert applicability_row["not_applicable_target_count"] == 2
+    assert applicability_row["injection_denominator"] == 1
 
     worker_death = summarize_exp3(
         {
@@ -929,7 +995,7 @@ def test_exp3_accepts_integration_prepared_baseline_endpoint_view() -> None:
 
     conditions = module.expand_conditions(context)
 
-    assert len(conditions) == 273
+    assert len(conditions) == 182
     assert {condition.reasoning_profile_id for condition in conditions} == {"default"}
     assert {
         condition.source_provider_config_digest for condition in conditions
@@ -1003,6 +1069,72 @@ def test_exp3_run_condition_passes_frozen_execution_manifest_to_callback() -> No
     )
 
 
+def test_exp3_worker_death_manifest_can_target_three_processes_on_two_units() -> None:
+    callback_calls: list[dict[str, Any]] = []
+
+    def callback(**kwargs) -> PaperConditionResult:
+        callback_calls.append(kwargs)
+        condition = kwargs["condition"]
+        selection = kwargs["selection"]
+        return PaperConditionResult(
+            condition_id=condition.condition_id,
+            status=PaperStatus.PLANNED,
+            repeat_count=1,
+            task_count=len(selection.ordered_case_ids),
+            completed_root_count=0,
+            failed_root_count=0,
+            blocked_root_count=0,
+            provider_attempt_count=0,
+            metrics_ref=None,
+        )
+
+    module = Experiment3FaultRecoveryModule()
+    context = replace(_integration_context(), execution_callback=callback)
+    conditions = module.expand_conditions(context)
+    selections = module.freeze_case_selections(context, conditions)
+    index = next(
+        index
+        for index, condition in enumerate(conditions)
+        if condition.condition_id
+        == "exp3_worker_death_factorization__easy__dead3__p25__rep0"
+    )
+
+    module.run_condition(context, conditions[index], selections[index])
+
+    worker_manifest = callback_calls[0]["execution_manifest"][
+        "worker_death_manifest"
+    ]
+    assert worker_manifest["dead_worker_count_target"] == 3
+    assert all(
+        len(targets) == 2
+        for targets in worker_manifest[
+            "selected_target_ai_unit_ids_by_case"
+        ].values()
+    )
+
+    p75_index = next(
+        index
+        for index, condition in enumerate(conditions)
+        if condition.condition_id
+        == "exp3_worker_death_factorization__easy__dead3__p75__rep0"
+    )
+    module.run_condition(
+        context,
+        conditions[p75_index],
+        selections[p75_index],
+    )
+    p75_manifest = callback_calls[1]["execution_manifest"][
+        "worker_death_manifest"
+    ]
+    assert p75_manifest["dead_worker_count_target"] == 3
+    assert all(
+        len(targets) == 1
+        for targets in p75_manifest[
+            "selected_target_ai_unit_ids_by_case"
+        ].values()
+    )
+
+
 def test_exp3_plan_freezes_matched_baselines_and_comparison_seeds() -> None:
     module = Experiment3FaultRecoveryModule()
     context = _integration_context()
@@ -1015,12 +1147,12 @@ def test_exp3_plan_freezes_matched_baselines_and_comparison_seeds() -> None:
     assert set(baseline_by_condition) == {
         condition.condition_id for condition in conditions
     }
-    assert len(plan["matched_baseline_manifest"]) == 24
+    assert len(plan["matched_baseline_manifest"]) == 16
     assert plan["matched_baseline_root_run_counts"] == {
-        "reused_rate_fault_zero": 24,
-        "dedicated_worker_death": 18,
-        "additional": 18,
-        "budgeted_total": 831,
+        "reused_rate_fault_zero": 16,
+        "dedicated_worker_death": 12,
+        "additional": 12,
+        "budgeted_total": 554,
     }
     rate_group = [
         condition
@@ -1623,6 +1755,12 @@ def test_exp3_summary_accepts_public_worker_death_primitive_output(tmp_path) -> 
             "kill_point": "progress_25",
             "started_at": "2026-07-19T00:00:00Z",
             "ended_at": "2026-07-19T00:00:01Z",
+            "kill_progress_target_ratio": 0.25,
+            "kill_progress_completed_ai_unit_count": 1,
+            "kill_progress_total_ai_unit_count": 1,
+            "kill_progress_actual_ratio": 1.0,
+            "kill_progress_observed_at": "2026-07-19T00:00:01Z",
+            "kill_progress_error": None,
         },
         replacement_fact={
             "unit_id": "unit_lemma_join",
@@ -1647,7 +1785,7 @@ def test_exp3_summary_accepts_public_worker_death_primitive_output(tmp_path) -> 
         recovered_slot_count=1,
     )
     run["target_kill_progress_percent"] = 25
-    run["actual_kill_progress_percent"] = 25
+    run["actual_kill_progress_percent"] = 100
     run["worker_death_records"] = [outcome.record.to_dict()]
     run["worker_death_record_refs"] = [outcome.record_ref.to_dict()]
 
@@ -1718,7 +1856,7 @@ def _context(catalog: dict[str, Any] | None = None) -> PaperExecutionContext:
             "model_endpoint_identity_digest": ENDPOINT_DIGEST,
             "request_controls": {
                 "max_tokens": 1024,
-                "timeout_seconds": 30,
+                "timeout_seconds": 100,
                 "max_provider_attempts": 1,
                 "temperature": 0.0,
                 "top_p": 1.0,
@@ -1728,7 +1866,7 @@ def _context(catalog: dict[str, Any] | None = None) -> PaperExecutionContext:
         },
         request_limits={
             "max_tokens": 1024,
-            "timeout_seconds": 30,
+            "timeout_seconds": 100,
             "max_provider_attempts": 1,
             "temperature": 0.0,
             "top_p": 1.0,
@@ -1746,7 +1884,7 @@ def _context(catalog: dict[str, Any] | None = None) -> PaperExecutionContext:
 def _integration_context() -> PaperExecutionContext:
     request_controls = {
         "max_tokens": 1024,
-        "timeout_seconds": 30,
+        "timeout_seconds": 100,
         "max_provider_attempts": 1,
         "temperature": 0.0,
         "top_p": 1.0,
@@ -1874,6 +2012,40 @@ def _catalog() -> dict[str, Any]:
     for values in catalog[
         "exp3_worker_death_factorization_case_ids_by_difficulty"
     ].values():
+        case_ids.extend(values)
+    for values in catalog["exp3_worker_death_lean_case_ids_by_topic"].values():
+        case_ids.extend(values)
+    catalog["ai_units_by_case_id"] = {
+        case_id: (f"{case_id}_unit_0", f"{case_id}_unit_1")
+        for case_id in case_ids
+    }
+    return catalog
+
+
+def _catalog_v2() -> dict[str, Any]:
+    catalog = dict(_catalog())
+    factor_rate_cases = tuple(f"factor_rate_v2_{index}" for index in range(500))
+    factor_death_by_difficulty = {
+        "easy": tuple(f"factor_death_v2_easy_{index}" for index in range(167)),
+        "medium": tuple(
+            f"factor_death_v2_medium_{index}" for index in range(167)
+        ),
+        "hard": tuple(f"factor_death_v2_hard_{index}" for index in range(166)),
+    }
+    catalog.update(
+        {
+            "catalog_version": "v2",
+            "suite_version": "paper_v2",
+            "exp3_rate_fault_factorization_case_ids": factor_rate_cases,
+            "exp3_worker_death_factorization_case_ids_by_difficulty": (
+                factor_death_by_difficulty
+            ),
+        }
+    )
+    case_ids = list(factor_rate_cases)
+    for values in catalog["exp3_rate_fault_lean_case_ids_by_topic"].values():
+        case_ids.extend(values)
+    for values in factor_death_by_difficulty.values():
         case_ids.extend(values)
     for values in catalog["exp3_worker_death_lean_case_ids_by_topic"].values():
         case_ids.extend(values)
@@ -2079,7 +2251,6 @@ def _fault_record(
         "provenance_persisted_at": "2026-07-19T00:00:00Z",
         "injected_at": "2026-07-19T00:00:01Z",
         "mutation_provenance_persisted_at": "2026-07-19T00:00:01Z",
-        "canonical_pollution": False,
         "provider_tokens_attributed": 0,
     }
 
@@ -2227,8 +2398,8 @@ def _worker_death_record(
         "dependency_graph": {
             "schema_version": "tokenshare.paper_ai_dependency_graph.v1",
             "task_id": f"task_{index}",
-            "expected_ai_unit_count": 1,
-            "unit_ids": [f"unit_{index}"],
+            "expected_ai_unit_count": 4,
+            "unit_ids": [f"unit_{index}_{slot}" for slot in range(4)],
             "graph_digest": "sha256:" + f"{index:064x}"[-64:],
         },
         "worker_id": f"worker_{index}_initial",
@@ -2236,6 +2407,15 @@ def _worker_death_record(
         "worker_process_exitcode": -15,
         "kill_point": f"progress_{target_progress}",
         "progress_before_kill": target_progress,
+        "completed_ai_unit_count_before_kill": target_progress // 25,
+        "total_ai_unit_count": 4,
+        "observed_progress_percent_before_kill": target_progress,
+        "kill_progress_target_ratio": target_progress / 100,
+        "kill_progress_completed_ai_unit_count": target_progress // 25,
+        "kill_progress_total_ai_unit_count": 4,
+        "kill_progress_actual_ratio": target_progress / 100,
+        "kill_progress_observed_at": "2026-07-15T00:00:01Z",
+        "kill_progress_error": None,
         "worker_started_at": "2026-07-15T00:00:00Z",
         "killed_at": "2026-07-15T00:00:01Z",
         "initial_lease": {"lease_id": f"lease_{index}_initial"},

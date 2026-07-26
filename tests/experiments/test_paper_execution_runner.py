@@ -193,7 +193,7 @@ def test_exp1_pilot_dispatches_both_domains_and_persists_evidence(
     )["provider_attempt_count"] == 22
 
 
-def test_exp1_pilot_unit_selector_uses_dispatcher_and_independent_output_root(
+def test_exp1_pilot_selector_uses_partial_runtime_scope_and_independent_output_root(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -253,12 +253,18 @@ def test_exp1_pilot_unit_selector_uses_dispatcher_and_independent_output_root(
     assert calls[0]["selected_ai_unit_id"] == "range_0"
     assert calls[0]["real_transport"] is True
     assert calls[0]["transport"] is not None
+    planned_ai_units = paper_runner._planned_ai_unit_ids(calls[0]["case"])
     plan = json.loads(
         (independent_root / "execution_plan.json").read_text(encoding="utf-8")
     )
     assert plan["planned_root_runs"] == 1
-    assert plan["planned_ai_units"] == 1
-    assert plan["tasks"][0]["ai_units"] == ["range_0"]
+    assert plan["planned_ai_units"] == len(planned_ai_units)
+    assert plan["tasks"][0]["ai_units"] == planned_ai_units
+    assert plan["tasks"][0]["requested_ai_unit_id"] == "range_0"
+    assert plan["tasks"][0]["selector_execution_scope"] == (
+        "selected_ai_unit_protocol"
+    )
+    assert plan["execution_scope"] == "selected_ai_unit_protocol"
     assert plan["pilot_only"] is True
 
 

@@ -28,7 +28,11 @@ from tokenshare.experiments.paper_model_policy import (
     load_model_entry_map,
     load_provider_config_map,
 )
-from tokenshare.experiments.paper_models import PaperStatus, PaperSuiteResult
+from tokenshare.experiments.paper_models import (
+    PAPER_FORMAL_AI_TIMEOUT_SECONDS,
+    PaperStatus,
+    PaperSuiteResult,
+)
 from tokenshare.experiments.paper_formal_runner import (
     APPROVED_ENDPOINT_BINDINGS_KEY,
     execute_paper_formal_suite,
@@ -141,7 +145,8 @@ def main(
                 "profile pilots require paired --case-id/--ai-unit-id; general "
                 "Gate C pilots require --condition-id and --case-id with optional "
                 "--ai-unit-id. Selectors require --pilot and an independent "
-                "--pilot-output-root"
+                "--pilot-output-root. --ai-unit-id selects the frozen runtime "
+                "diagnostic scope inside the system coordinator"
             ),
         )
         return 3
@@ -399,7 +404,7 @@ def main(
                 request_limits={
                     "max_provider_attempts": 1,
                     "max_tokens": 1024,
-                    "timeout_seconds": 30,
+                    "timeout_seconds": PAPER_FORMAL_AI_TIMEOUT_SECONDS,
                     "temperature": 0.0,
                     "top_p": 1.0,
                     "stream": False,
@@ -796,7 +801,7 @@ def _baseline_endpoint_binding(profile: Exp1PilotProfile) -> dict:
     identity = profile.model_endpoint_identity.to_dict()
     request_controls = {
         "max_tokens": 1024,
-        "timeout_seconds": 30,
+        "timeout_seconds": PAPER_FORMAL_AI_TIMEOUT_SECONDS,
         "max_provider_attempts": 1,
         "temperature": 0.0,
         "top_p": 1.0,

@@ -4,6 +4,7 @@
 > 日期：2026-07-15
 > 权威边界：本文服从 `Doc/TechnicalDocument/tokenshare_latest_real_plugin_experiment_design.md`。如两者冲突，以唯一权威实验设计为准。
 > 2026-07-18 Task 14 二次审核备注：本文中“只有一个 medium_lemma_dag golden case”“adapter 不能执行 v2 recursive lemma-DAG”“proof-file assembly / dependency-aware merge/root recheck 未完成”等描述是 2026-07-15 当时的设计背景，已被 Task 14 当前代码、catalog、tests、`benchmarks/paper/lean_task14_3x3_readiness.v1.json`、`progress.md` 和 Phase 8 code map 更新覆盖。保留旧描述只作为设计 provenance，不应作为当前实现事实。
+> 2026-07-24 EPD-004 覆盖：本文若出现 Experiment 3 每 condition 3 repeats，只作历史口径；当前 rate-fault 与 worker-death 均为 2 repeats，Lean fault/rate/task slice 本身不变。
 
 ## 结论
 

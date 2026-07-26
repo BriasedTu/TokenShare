@@ -138,6 +138,104 @@ def test_model_endpoint_cohort_preflight_selects_explicit_fixed_entries_and_bloc
     assert "gpt_5_6_sol_high_openai" in incomplete["missing_members"]
 
 
+def test_exp5_preflight_normalizes_and_compares_public_request_controls(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    policy = _policy_module()
+    for env_name in (
+        "TOKENSHARE_GLM_KEY",
+        "TOKENSHARE_QWEN_KEY",
+        "TOKENSHARE_GPT_KEY",
+    ):
+        monkeypatch.setenv(env_name, "test-key")
+    cohort = policy.load_model_endpoint_cohort(
+        _write_cohort(tmp_path / "cohort-controls.json")
+    )
+    entry_map = policy.load_model_entry_map(
+        _write_entry_map(
+            tmp_path / "entry-map-controls.json",
+            include_gpt=True,
+        )
+    )
+    config_paths = _valid_provider_config_paths(tmp_path)
+    configs = policy.load_provider_config_map(config_paths)
+
+    planned = policy.build_model_endpoint_cohort_preflight(
+        cohort=cohort,
+        entry_map=entry_map,
+        provider_configs=configs,
+    )
+
+    assert planned["status"] == "planned"
+    snapshots = [
+        plan["request_controls"]
+        for plan in planned["member_plans"].values()
+    ]
+    assert len(
+        {
+            json.dumps(
+                snapshot["comparable"],
+                sort_keys=True,
+            )
+            for snapshot in snapshots
+        }
+    ) == 1
+    common = snapshots[0]["comparable"]
+    assert common["temperature"] == 0.0
+    assert common["top_p"] == 0.9
+    assert common["stream"] is False
+    assert common["timeout_seconds"] == 100
+    assert common["max_tokens"] == 512
+    assert common["max_provider_attempts"] == 1
+    assert set(common["domain_contracts"]) == {
+        "factorization",
+        "lean_proof",
+    }
+    assert planned["member_plans"]["gpt_5_6_sol_high_openai"][
+        "request_controls"
+    ]["provider_specific_reasoning"] == {"reasoning_effort": "high"}
+
+    siliconflow_body = json.loads(
+        config_paths["siliconflow"].read_text(encoding="utf-8")
+    )
+    next(
+        entry
+        for entry in siliconflow_body["entries"]
+        if entry["entry_id"] == "qwen-entry"
+    )["request_overrides"]["top_p"] = 0.8
+    config_paths["siliconflow"].write_text(
+        json.dumps(siliconflow_body),
+        encoding="utf-8",
+    )
+    drifted = policy.build_model_endpoint_cohort_preflight(
+        cohort=cohort,
+        entry_map=entry_map,
+        provider_configs=policy.load_provider_config_map(config_paths),
+    )
+
+    assert drifted["status"] == "blocked"
+    assert "cross_member_request_controls_mismatch" in drifted[
+        "cohort_level_reasons"
+    ]
+
+    timeout_drift_paths = _valid_provider_config_paths(
+        tmp_path,
+        timeout_seconds=30,
+    )
+    timeout_drifted = policy.build_model_endpoint_cohort_preflight(
+        cohort=cohort,
+        entry_map=entry_map,
+        provider_configs=policy.load_provider_config_map(timeout_drift_paths),
+    )
+
+    assert timeout_drifted["status"] == "blocked"
+    assert all(
+        "formal_ai_timeout_seconds_mismatch" in member["blocked_reasons"]
+        for member in timeout_drifted["member_plans"].values()
+    )
+
+
 def test_model_endpoint_cohort_preflight_blocks_identity_entry_map_and_smoke_tampering(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -548,11 +646,13 @@ def test_cli_plan_only_exp5_writes_fixed_endpoint_cohort_evidence_without_provid
         "qwen3_6_27b_siliconflow",
         "gpt_5_6_sol_high_openai",
     }
-    assert suite["condition_count"] == 54
-    assert suite["run_count"] == 4_635
-    assert suite["task_count"] == 4_635
-    assert budget["planned_conditions"] == 54
-    assert budget["planned_root_runs"] == 4_635
+    assert suite["condition_count"] == 36
+    assert suite["run_count"] == 1_899
+    assert suite["task_count"] == 1_899
+    assert budget["planned_conditions"] == 36
+    assert budget["planned_root_runs"] == 1_899
+    assert budget["planned_ai_units"] == 14_652
+    assert cohort_plan["request_controls_snapshot_digest"].startswith("sha256:")
 
 
 def test_cli_exp5_missing_member_is_structured_blocked_but_exp1_plan_still_succeeds(
@@ -668,7 +768,7 @@ def test_cli_exp5_missing_member_is_structured_blocked_but_exp1_plan_still_succe
 
     assert combined_exit == 0
     assert combined_suite["status"] == "planned"
-    assert combined_suite["condition_count"] == 36
+    assert combined_suite["condition_count"] == 12
     assert [plan["status"] for plan in combined_dispatch["plans"]] == [
         "planned",
         "blocked",
@@ -1002,6 +1102,7 @@ def _valid_provider_config_paths(
     *,
     glm_model: str = "zai-org/GLM-5.2",
     openai_entries: dict[str, tuple[str, str]] | None = None,
+    timeout_seconds: int = 100,
 ) -> dict[str, Path]:
     return {
         "siliconflow": _write_provider_config(
@@ -1011,12 +1112,14 @@ def _valid_provider_config_paths(
                 "glm-entry": (glm_model, "TOKENSHARE_GLM_KEY"),
                 "qwen-entry": ("Qwen/Qwen3.6-27B", "TOKENSHARE_QWEN_KEY"),
             },
+            timeout_seconds=timeout_seconds,
         ),
         "openai": _write_provider_config(
             tmp_path / f"openai_{len(list(tmp_path.glob('openai_*.json')))}.json",
             provider_family="openai",
             entries=openai_entries
             or {"gpt-entry": ("gpt-5.6-sol", "TOKENSHARE_GPT_KEY")},
+            timeout_seconds=timeout_seconds,
         ),
     }
 
@@ -1027,6 +1130,7 @@ def _write_provider_config(
     provider_family: str,
     entries: dict[str, tuple[str, str]],
     metadata: dict | None = None,
+    timeout_seconds: int = 100,
 ) -> Path:
     body = {
         "schema_version": "phase7.ai_api_executor_config.v1",
@@ -1037,7 +1141,7 @@ def _write_provider_config(
             "seed_source": "request_or_environment_seed",
         },
         "defaults": {
-            "timeout_seconds": 30,
+            "timeout_seconds": timeout_seconds,
             "max_tokens": 512,
             "temperature": 0.0,
             "top_p": 0.9,

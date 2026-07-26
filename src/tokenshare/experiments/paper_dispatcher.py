@@ -42,6 +42,9 @@ from tokenshare.experiments.paper_models import (
     PaperConditionResult,
     PaperExperimentCondition,
 )
+from tokenshare.experiments.paper_catalog_execution_view import (
+    freeze_catalog_execution_view,
+)
 from tokenshare.local_runtime import ProtocolRunRequest, ProtocolRunResult
 
 
@@ -64,7 +67,8 @@ class PaperExperimentDispatchPlan:
     blocked_reason: str | None = None
     paper_eligible_possible: bool = True
     provider_calls_made: int = 0
-    schema_version: str = "tokenshare.paper_experiment_dispatch_plan.v2"
+    catalog_execution_view: dict[str, Any] | None = None
+    schema_version: str = "tokenshare.paper_experiment_dispatch_plan.v3"
 
     def __post_init__(self) -> None:
         if not self.experiment_id:
@@ -84,6 +88,10 @@ class PaperExperimentDispatchPlan:
             raise ValueError("planned dispatch plan must not declare blocked_reason")
         if self.provider_calls_made != 0:
             raise ValueError("Gate C dispatch planning must not call providers")
+        if self.catalog_execution_view is not None:
+            view_digest = self.catalog_execution_view.get("view_digest")
+            if not isinstance(view_digest, str) or not view_digest:
+                raise ValueError("catalog execution view digest is required")
         conditions_by_id: dict[str, PaperExperimentCondition] = {}
         condition_digests: set[str] = set()
         for condition in self.conditions:
@@ -181,6 +189,11 @@ class PaperExperimentDispatchPlan:
             "condition_selection_bindings": [
                 binding.to_dict() for binding in ordered_bindings
             ],
+            "catalog_execution_view": (
+                dict(self.catalog_execution_view)
+                if self.catalog_execution_view is not None
+                else None
+            ),
         }
 
 
@@ -245,6 +258,7 @@ def plan_paper_experiment(
         status=status,
         blocked_reason=blocked_reason,
         paper_eligible_possible=paper_eligible_possible,
+        catalog_execution_view=freeze_catalog_execution_view(context.catalog),
     )
 
 
@@ -277,6 +291,7 @@ def dispatch_paper_case(
     selected_ai_unit_id: str | None = None,
     post_raw_output_hook: Any | None = None,
     ablation_mode: str | None = None,
+    worker_termination_policy: Any | None = None,
     checker: Any | None = None,
 ) -> Any:
     """把一个冻结 paper case 路由到所属插件的 adapter。"""
@@ -294,6 +309,7 @@ def dispatch_paper_case(
         selected_ai_unit_id=selected_ai_unit_id,
         post_raw_output_hook=post_raw_output_hook,
         ablation_mode=ablation_mode,
+        worker_termination_policy=worker_termination_policy,
         protocol_run_dispatcher=execute_protocol_request,
     )
     if condition.domain == "factorization":

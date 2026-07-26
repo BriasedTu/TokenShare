@@ -18,6 +18,7 @@ PAPER_DIFFICULTY_VALUES = PAPER_DIFFICULTIES + LEAN_PAPER_DIFFICULTIES
 LEAN_TOPIC_FAMILIES = ("pure_logic", "function_set", "induction")
 PAPER_MODEL_POLICIES = ("fixed_entry",)
 FORMAL_MODEL_ENDPOINT_EXPERIMENT_ID = "exp5_real_ai_model_endpoint_comparison"
+PAPER_FORMAL_AI_TIMEOUT_SECONDS = 100
 UNSUPPORTED_PAPER_TRANSPORTS = frozenset({"scripted", "fake", "deterministic", "mock"})
 
 
@@ -38,6 +39,7 @@ class PaperTaskStatus(str, Enum):
     TIMEOUT = "timeout"
     BUDGET_EXHAUSTED = "budget_exhausted"
     INELIGIBLE = "ineligible"
+    PARTIAL = "partial"
 
 
 class PaperAttemptStatus(str, Enum):
@@ -470,6 +472,7 @@ class PaperAttemptResult:
     fault_injection_ref: JsonObject | None
     paper_eligible: bool
     model_execution_record_ref: JsonObject | None = None
+    provider_attempt_count: int = 0
     paper_difficulty: str | None = None
     topic_family: str | None = None
     topic_family_version: str | None = None
@@ -520,6 +523,7 @@ class PaperAttemptResult:
             "model_execution_record_ref": _json_value(
                 self.model_execution_record_ref
             ),
+            "provider_attempt_count": self.provider_attempt_count,
             "paper_difficulty": self.paper_difficulty,
             "topic_family": self.topic_family,
             "topic_family_version": self.topic_family_version,

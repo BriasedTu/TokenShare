@@ -1,5 +1,50 @@
 # Session Handoff
 
+## 2026-07-26 feat-011 反伪造 blocker 修复（当前）
+
+- 正式资格已收敛为唯一持久化链 `attempt → task → condition → experiment → suite → report`。runner checkpoint 按真实 transport、whole-root protocol scope、状态、artifact/event refs 与 synthetic 禁止项计算 task/attempt 资格；metrics 自下聚合；report 再独立核对所有 condition/experiment/task/attempt row 和 ref inventory。capturing/scripted/selected-unit partial/synthetic、缺 task/attempt/ref 或任一下层不合格时只生成 `formal_regression_report.md`。
+- Exp2 的 wall clock、provider latency sum 和 critical path 已分离。critical path 只由 root registration、unit dependency/creation、attempt start/end、canonical selection、merge gate/record 和 root completion 事件构图；缺边或时间戳即 `critical_path_ms=null`、Exp2 `paper_eligible=false`。该资格要求不用于 Exp1/3/4/5；这些实验的 checker rejection、未恢复故障、消融失败、provider/model failure 只要 terminal task/attempt 与专项 evidence 完整，仍是 paper-eligible 负面结果，不能从 completion/failure 分母移除。429 all-runs 保留全部原始 run；sensitivity 只按实际带 429 的持久化 run id 排除并列明 condition/reason。
+- Exp3 worker-death 字段已进入逐 task、repeat condition、两遍 aggregate 和 robustness CSV；`coordinator_continued` 必须由 death 后调度/lease event 证明，required/recovered slots、completeness、root output 和 validity 均来自 task graph/canonical/merge/root-check/terminal refs。metrics 层新增 self-baseline 拒绝；runner 继续严格验证 distinct no-kill baseline 的 case/repeat/seed/worker/model/request limits。
+- Exp4 非 FULL 行必须通过 runtime schema/condition/case/repeat/mode、真实 target hook input/result/ref、attempt inventory 和 FULL case×repeat 配对；空 observation、错 mode、缺/不合格 FULL、NO_MERGE_GATE 未真实执行 premature merge 均不合格，零分母为 null + applicability。Exp5 denominator 使用完整 expected provider-attempt inventory，missing/duplicate/orphan/mismatch/provider retry coverage 任一异常均不合格。
+- Gate C 已按唯一权威参数更新：Exp2 hard-only 166×20-way×6 workers×2 repeats；Exp4 五模式；Exp5 catalog v2 且使用 Exp1 hard selection，没有恢复旧 easy/v1/旧 condition 数。负面终局门禁 RED=`4 failed, 1 passed`、GREEN=`5 passed`，完整 formal metrics=`28 passed in 3.15s`；用户指定九文件最低验收=`251 passed in 120.27s`；最终 Fast=`331 passed, 1 skipped in 15.77s`，JSON/SQLite、harness、compileall 均通过。
+- 本轮没有真实 API/provider 调用，没有 pilot 或正式 Experiment 1–5，没有 Full、LeanAudit、force-all 或全量 Lean。capturing 仅作 regression evidence。`feat-011` 保持 `in-progress`；剩余 blocker 是按单独授权配置真实密钥/新 approval 后运行正式 provider 实验，以及随后按发布要求执行 Full/必要审计并审查真实负面/429 数据，不能缩小分母或删除失败题。
+
+## 2026-07-25 feat-011 实验设施补全 Task 10 完成（当前）
+
+- Exp5 formal runner 会验证并读取每个 attempt 的 v2 model-execution、request、raw、provenance 和 usage artifacts；task 保存可重算 strict join input，attempt 保存 v2 observed `identity_status`，不再使用 `fixed_entry_match` 伪装 identity truth。
+- formal metrics 对这些 inputs 调用 `build_exp5_model_execution_rows()`，输出只含正确 `model_execution_record_ref` 的严格 JSONL。resolved-model mismatch 即使 display provider/model/entry 未变，也会降低 identity match rate 并使相关行不具论文资格。
+- 正式 endpoint comparison 表含逐 endpoint/domain/topic/repeat 的 completion、validity、tokens、cost、真实 wall-clock、provider latency/errors/429、retries 与 identity；三遍 aggregate 和 `model_provider_endpoint_pair` confounding 均已显式输出。兼容旧文件名的表仍保留。
+- formal endpoint binding 现消费 Task 9 normalized controls：公共 controls/domain contracts 与 cohort snapshot 必须一致，provider 专有 reasoning 也必须匹配。验证 RED=`4 failed, 83 passed`，精确 GREEN=`87 passed in 9.71s`；provider calls/tokens/cost=`0/0/0`。未运行 Full suite、LeanAudit、正式 pilot 或 Experiment 1–5。下一步直接进入 Task 11。
+
+## 2026-07-25 feat-011 实验设施补全 Task 9 完成（当前）
+
+- Experiment 5 不再复用 Experiment 2 selection：直接冻结 Exp1 formal hard view 的 166 道 Factorization 和 45 道 Lean hard_frontier roots；Factorization 保持 8-way、Lean 保持插件校验的预注册固定 lemma-DAG。
+- 正式矩阵为 36 conditions / 1,899 root-runs / 14,652 planned first-attempt AI units。预算已删除旧 Exp5 五题 cap，selection 与 budget digest 都绑定 hard-only execution view。
+- 三个 cohort member 都持久化 normalized `request_controls`；公共 temperature/top_p/stream/timeout/max_tokens/provider-attempt limits 和同域 prompt/parser/plugin contract 必须一致，provider 专有 reasoning 字段按已批准端点身份保留。
+- 验证：RED=`4 failed, 77 passed`；精确 GREEN=`81 passed in 58.79s`；formal plan-only 复算 36/1,899/14,652，provider calls=`0`。未运行 Full suite、LeanAudit、正式 pilot 或 Experiment 1–5。下一步直接进入 Task 10 的 v2 observed identity、strict join 和正式 endpoint comparison CSV。
+
+## 2026-07-25 feat-011 实验设施补全 Task 8 完成（当前）
+
+- Experiment 4 专项 count/rate/applicability 已从 mode/expected-risk flags 解耦，只消费逐 attempt 的 raw/candidate/canonical/independent-validity 链和 recovery/merge hook observation。
+- `paper_table_ablation.csv` 同时含逐 task、逐 repeat condition、三遍 aggregate；每个 mode 的 task 行按 `case_id × repeat_id` 引用对应 FULL condition，报告也固定声明配对口径。
+- 要求的 12 个字段全部接通，并保留旧字段别名供历史 summary fixture 使用；旧 formal metrics 测试已迁移到真实 `ablation_runtime` evidence，不再依靠手写 exposed/escaped 或 `ablation_runtime_flags`。
+- 验证：RED=`4 failed, 44 passed`；原文精确 GREEN=`48 passed in 1.85s`。provider calls/tokens/cost=`0/0/0`；未运行 Full suite、LeanAudit、正式 pilot 或 Experiment 1–5。下一步直接进入 Task 9 的 Exp5 hard-only selection 与公平控制变量。
+
+## 2026-07-25 feat-011 实验设施补全 Task 7 完成（当前）
+
+- Experiment 4 正式矩阵已收敛为五模式、90 conditions、7,725 个 v2 roots；历史 `NO_SLOT_INTEGRITY` 仅保留兼容枚举/旧夹具，不进入正式 condition、budget 或 report。
+- `ProtocolConfig.max_retries=1` 现在等于一次 replacement。FULL 故障 fixture 会恢复并完成；`NO_REQUEUE` 使用同一预算但在 engine recovery 落账后阻止 replacement，因此 stuck 来自真实 gate 差异。
+- `NO_VERIFICATION` 和 `NO_PARSER_POLICY` 都保存逐 attempt 的 raw/candidate/canonical/final-validity 链与独立 validity；`NO_MERGE_GATE` 会真实调用插件 merge、保存失败 artifact，但不伪造 slots 或改写 FULL/core merge gate。
+- 验证：RED=`9 failed, 62 passed`；原文精确 GREEN=`71 passed in 40.17s`；含 retry 合约回归=`113 passed in 59.24s`；固定 Lean canary=`11 passed in 48.85s`。provider calls/tokens/cost=`0/0/0`；未运行 Full suite、LeanAudit、正式 pilot 或 Experiment 1–5。下一步直接进入 Task 8 的 evidence-derived 专项指标。
+
+## 2026-07-25 feat-011 实验设施补全 Task 6 完成（当前）
+
+- worker-death progress gate 已改为真实 `completed/planned AI units`：只有达到冻结 25%/50%/75% 后才终止 executor process，并持久化 target ratio、actual completed/total、actual ratio、timestamp/error，不再使用 execution index 或目标值回填 observed progress。
+- 逻辑 target 从 progress anchor 及其后冻结；backend 先让每个唯一 target 各死亡一次，再允许在 replacement process 上继续死亡以满足 `dead_worker_count=3`。不同死亡均有独立 PID/attempt/lease expiry/recovery，少于 3 个逻辑 unit 的 root 也不会伪造 target。
+- formal runner 会先执行 distinct no-kill baseline，严格匹配 case/repeat/seed/worker/request limits；fault condition 只保存 baseline condition id/evidence ref，缺失、自引用或身份不符均 fail closed。Exp3 正式指标从真实 verification/canonical/recovery/replacement/completion/timing/usage/baseline refs 派生，缺 evidence 为 null/ineligible。
+- 收口时发现并修复 candidate alias bug：parser artifact 与协议 candidate artifact 可 content-identical 但 `ArtifactRef` 不同；parsed fault 现在按 `content_hash` 连接实际 candidate，完全无匹配时 fail closed。
+- 验证：Task 6 原文精确 suite `64 passed in 23.04s`；协议集成 `14 passed in 38.10s`；Factorization adapter `45 passed in 69.57s`；fault hook `13 passed`；Lean worker-death 定向通过。provider calls/tokens/cost=`0/0/0`；未运行 Full、LeanAudit、正式 pilot 或 Experiment 1–5。下一步直接进入 Task 7，不回退到旧 worker harness 语义。
+
 ## 2026-07-23 系统 runtime 迁移 Task 10 实现收口（最新；最终门禁 pending）
 
 - 文档/code map 已补齐 `local_runtime`、Factorization/Lean runtime bridges、`paper_projection` 和 shared dispatcher/coordinator/engine 路径；旧 adapter/runner/worker-harness 的当前式生命周期表述已改成 current system-runtime 事实，或显式标成 historical/superseded。Lean fixed plan 明确是 catalog/脚本预注册并由插件校验的固定 DAG，不是通用自动 lemma discovery。
@@ -484,6 +529,16 @@
 - The sample did not write or refresh the tracked 600-entry manifest and must not be presented as Full, Full+LeanAudit, force-all, or publication-grade evidence. If a future formal-result publication needs those claims, revisit the release gate with explicit user authorization.
 - No sample/checker process remains running. No provider/network/formal paper run was started. Preserve all current uncommitted changes; do not checkout/reset/clean or create a worktree.
 - `feat-011` remains in-progress only for future real-provider formal Experiment 1–5 work, not because of a known Task 10 functional assertion failure.
+
+## 2026-07-23 Ledger-authoritative execution callback completion
+
+- The chapter-4 implementation patch is complete. `ProtocolEngine.record_execution_submission()` and `record_lease_heartbeat()` now restore the latest matching `Attempt`/`Lease` snapshot from one ledger read before applying the existing pure core rules.
+- The submission RED reproduced an accepted stale callback after recovery; GREEN rejects it as `attempt_not_running`, keeps the audit artifact/event, writes no `Running -> Submitted`, and SQLite rebuild remains `Attempt=Failed`, `Lease=Released`. The submission/recovery target passed 33 tests.
+- Two heartbeat REDs reproduced terminal lease reactivation and a repeated count=1 idempotency conflict. The full Phase 2 scheduling file now passes 4 tests: a terminal stale heartbeat adds no event, and repeated callbacks using the original Active object advance from the latest ledger snapshot to counts 1 and 2.
+- The real OS worker-death integration now explicitly checks distinct replacement lease, attempt, and fencing token. Targeted core/storage/local-runtime passed 68; Factorization/Lean/recovery system integration passed 5; fixed Lean canary passed 11 in 118.55s.
+- Final gates passed: post-document Fast `330 passed, 1 skipped in 15.92s` (the earlier run was also 330/1 in 17.28s); Full collected 1303 and produced `1302 passed, 1 skipped in 1082.59s`; JSON/SQLite, harness, and compileall passed in both profiles.
+- Scope remains normal trusted-local timing correctness. No external-input/human-attack hardening, auth/signature/ACL, new fault type, distributed authority, UUID/global token guarantee, provider call, or formal Experiment 1-5 run was added. `provider_calls_made=0`; 600-entry force-all was not run because checker/catalog/toolchain inputs were unchanged.
+- `feat-011` remains in-progress only for real-provider formal Experiment 1-5 and paper-result closure. The callback patch itself is complete.
 - [x] Rewroae `README.md` in Chinese wiah projeca definiaion, V1 scope, non-goals, quick saara, reposiaory map, workflow, and currena saaaus.
 - [x] Researched comparable sysaems and updaaed ahe main TDD wiah a V1 aechnology-saack decision.
 - [x] Kepa Airflow, Argo Workflows, Temporal, Ray, BOINC, SQLiae, and Pyahon as design references raaher ahan V1 runaime dependencies.
@@ -795,7 +850,7 @@
 3. Run `.\init.ps1` on Windows or `./init.sh` in Bash. Both default to the `tokenshare` conda environment.
 4. Read `feature_list.json`, `progress.md`, and this `session-handoff.md`.
 5. If the work touches experiments, paper tables, runner/metrics/fault simulation/ablation, worker scaling, or the three-model endpoint cohort, read `Doc/TechnicalDocument/tokenshare_latest_real_plugin_experiment_design.md` first and treat it as the sole authority.
-6. For feat-011 implementation order and boundary decisions, read `Doc/TechnicalDocument/2026-07-13-feat-011-paper-real-ai-experiments-implementation-plan.md`; it does not override the latest experiment design.
+6. For current Exp2–Exp5 behavior/metrics completion, first read `Doc/TechnicalDocument/2026-07-24-feat-011-exp2-exp5-experiment-facility-completion-implementation-plan.md`. The older `2026-07-13-feat-011-paper-real-ai-experiments-implementation-plan.md` remains historical and does not override the latest experiment design or EPD-001～EPD-006.
 7. For routine repository reads/searches, follow `Doc/agent-navigation.md` section 4: PowerShell plus explicit UTF-8, no default `rg`.
 8. If using online research, first follow `Doc/agent-navigation.md` section 6 to materialize and index the source material.
 9. Current active track is `feat-011` Paper Real AI Experiments. `feat-007` real Lean proof plugin, `feat-008` AI API executor, and `feat-009` experiment infrastructure are done; `feat-010` replay/audit is deferred from the current completion path. Return to completed tracks only for regressions or tightly scoped integration fixes required by the paper experiments.
@@ -804,6 +859,18 @@
 12. The AI API executor belongs to completed `feat-008` / Phase 7; its current authorities are `Doc/TechnicalDocument/2026-06-28-phase-7-ai-api-executor-field-spec.md`, `Doc/TechnicalDocument/2026-06-28-phase-7-ai-api-executor-tdd-plan.md`, and `Doc/TechnicalDocument/2026-06-28-phase-7-ai-api-executor-code-map.md`. Experiment infrastructure belongs to completed `feat-009` / Phase 8 and is mapped by its code map; all new paper experiment design and implementation work must follow `Doc/TechnicalDocument/tokenshare_latest_real_plugin_experiment_design.md`.
 13. Do not restart structured report stub work; it was removed from the Phase 6 plan on 2026-06-29.
 14. Use archived Phase 5 documents only as historical provenance. The default Phase 5 merge/contribution/settlement behavior is summarized in `Doc/TechnicalDocument/tokenshare_v1_complete_spec.md` and mapped to current code in `Doc/TechnicalDocument/tokenshare_v1_code_map.md`.
+
+## 2026-07-24 实验参数决策台账交接
+
+- 后续凡是用户确认修改题目数、repeat、worker、fault rate、模型、token/cost 上限或其他实验参数，都追加到 `Doc/TechnicalDocument/tokenshare_experiment_parameter_decision_log.md`，使用递增 `EPD-XXX`，保留旧决定并通过 `superseded` 指向新决定。
+- EPD-001 当前是 `design_synced`：正式 Exp1 的 Factorization 500 题和 Lean 135 题都只运行 1 次，目标为 635 root-runs / 2,900 首轮 AI units。代码 `paper_exp1.py` 仍是统一 3 repeats / 1,905 root-runs，必须先按 TDD 同步 runner、预算、测试并重新 plan-only，才能运行正式 Exp1。
+- EPD-002 记录预算不是实际 token：实际 usage 必须继续来自 provider response artifacts。plan-only 对 Exp1/2/3/5 replacement reserve 不完整仍是待决定/修复项。
+- EPD-003 当前为 `design_synced`：用户已确认 Exp2 只使用全部 166 道 hard Factorization、20-way deterministic range split、worker `1/3/7/10/30/50`、每档 2 遍，Lean 退出；正式规模为 1,992 root-runs / 39,840 planned AI units。目标语义要求 verifier-accepted factor-witness 后停止尚未发送的 sibling；2026-07-24 代码审计确认当前 coordinator 尚未实现该早停，会先调度完 Ready sibling。完整题库分布为 `early=53/middle=53/late=53/no_factor=7`，不得只挑有利样本。两遍报告保留原始值、min/max、相对差和 paired per-root speedup，不把 `n=2` IQR 当稳定性证据。runner/预算/测试/plan-only 尚未同步，一般 composite cofactor 仍没有递归解析闭包。
+- EPD-004 当前为 `design_synced`：Experiment 3 的五类 rate-fault 和 worker-death 所有 condition 均从 3 repeats 改为 2 repeats，除此之外不改 fault/rate、题库、worker/death/kill、模型、注入、恢复或报告语义。新规模为 rate-fault 35,120、worker-death 6,036、Exp3 合计 41,156 root-runs；P0-core/P0-full 为 53,053/57,688。两遍保留原始值、min/max 和相对差，不使用 `n=2` IQR；runner/预算/测试/plan-only 尚未同步。
+- EPD-005 当前为 `design_synced`：正式 Exp4 删除 `NO_SLOT_INTEGRITY`，只保留 `FULL + NO_VERIFICATION + NO_PARSER_POLICY + NO_REQUEUE + NO_MERGE_GATE`，每 mode 仍为 3 repeats。Exp4 新规模为 90 formal conditions / 7,725 root-runs；P0-core=51,508。EPD-005 当时的 P0-full=56,143 已被 EPD-006 更新为 53,407。代码仍是 legacy 6-mode/108-condition/9,270-root，必须先同步 runner、预算、校验、报告和测试。
+- EPD-006 当前为 `design_synced`：Exp5 独立使用 Exp1 全部 hard roots，Factorization 166 + Lean hard_frontier 45；3 endpoints × 3 repeats，共 36 conditions / 1,899 root-runs / 14,652 planned first-attempt AI units。不得再调用 Exp2 shared slice 或继承 Exp2 20-way profile。runner、preflight、budget、strict v2 join、comparison CSV 和 tests 尚未实现。
+- Exp4 实际输出审计发现正式运行 blocker：通用 completion/validity/time/provider usage/cost 可输出；wrong-canonical 没有真实 canonical-derived producer，raw-only/stuck/premature counts 当前按 mode flag 计数，formal CSV 缺 error-escape rate/applicability 和四种专项 rate。FULL 的 `max_retries=0` 使 NO_REQUEUE 无有效 baseline；NO_MERGE_GATE 在 readiness 不满足时尚未真正调用 plugin merge。不要因为 `summarize_exp4_ablation()` 声明了完整字段就误判 formal CSV 已接线。
+- 唯一权威仍是 `tokenshare_latest_real_plugin_experiment_design.md`；参数台账负责 provenance 和同步状态，不形成第二套可执行权威。
 
 ## Recommended Next Step
 
@@ -819,6 +886,15 @@
 - 当前 condition 的 formal generation checkpoint 尚未出现。异常退出时不可安全确认全部兼容视图 roots 已进入 resume identity，因此不得直接 `--resume` 或重启 formal；先硬停止并报告。正常运行时只做 60 秒轻量轮询，不运行 init/pytest/compileall/checker/额外 smoke。
 - Exp1 正常结束后执行单实验 evidence/identity/output-isolation/replay audit；通过才按用户最初 I-M prompt 严格串行进入 Exp2、Exp3、Exp4、Exp5。预算为用户明确无限授权，不再申请预算；每 AI unit `max_provider_attempts=1`。
 
+## 2026-07-23 正式实验运行补缝交接（覆盖旧 partial-unit/runtime-fault 表述）
+
+- 2026-07-24 当前式覆盖：正式 `dispatch_paper_case()` 接受非空 `selected_ai_unit_id`，并将其作为通用 `ProtocolExecutionScope` 交给 coordinator/engine。插件仍 plan/split 完整 root，engine 仍创建真实协议事实，scheduler 只领取选中 unit；结果必须是 partial/paper-ineligible observation，未选 sibling 不执行，root 不产生 merge/completion/settlement。2026-07-23 的“拒绝 selector、执行完整 root”只作历史状态，不得恢复。
+- 五类 rate-fault 使用 `case_id:planned_ai_unit_id` 选择实验 target，并在 raw/provenance/usage 持久化后映射到真实 protocol unit。replacement 必须来自 engine recovery；不要让 formal runner 再调用 adapter 或生成 synthetic attempts/events。late submission 使用 protocol request 的真实 lease deadline。
+- worker death manifest 已含 per-case 唯一 planned targets；`WorkerTerminationPolicy.termination_count_target` 驱动 process backend 终止 1/3 个真实 executor processes。若 root 只有两个逻辑 AI units，`dead3` 会先终止两个初始 process，再终止其中一个 replacement process；每次死亡都必须关联独立 dead attempt/artifact 和 engine lease expiry/recovery，最终再由 scheduler 分配成功 replacement。`paper_workers.py` 只投影 worker facts + protocol events。
+- `NO_SLOT_INTEGRITY` 曾由 `ProtocolMechanismPolicy` 下沉到 local runtime/plugin merge，这是当前代码的历史实现事实；EPD-005 已将它从正式 Exp4 删除，后续应清理 formal matrix/controls/tests，而不是继续运行或报告该 mode。
+- Lean 的 fixed lemma-DAG 继续使用 catalog/脚本预注册数据，由 Lean 插件校验并生成 certificate；没有要求运行时自动发现引理。
+- 最终组合定向回归分三组通过 67 项：`17 passed in 59.23s`、`27 passed in 37.36s`、`23 passed in 102.74s`。Fast 通过 JSON/SQLite、harness、compileall，结果 `330 passed, 1 skipped in 20.34s`；按用户要求未运行 Full、全量 Lean audit 或正式实验。未联网、provider calls=0、没有新增攻击防护。
+
 ## 2026-07-22 Lean 验证分层交接
 
 - 通用权威是 `Doc/TechnicalDocument/2026-07-22-lean-checker-verification-profiles-design.md`；runtime 迁移如何应用它见 `Doc/TechnicalDocument/2026-07-22-feat-011-system-runtime-paper-experiment-migration-plan.md` 第 0.2 节。不要再把 Lean catalog audit 当作普通 loader 或每个 Task 都必须重复的固定 600 次检查。
@@ -826,3 +902,53 @@
 - tracked evidence 是 `benchmarks/paper/lean_checker_preflight.v1.json`，600/600 accepted，digest `sha256:3d7d6888dacd15e4467f5532697c94158282c4d1986827e513fb9d1664eadbf2`；force-all 实测 188.8 秒，provider calls 0。local cache 在 `local/cache/lean_checker/`，已 gitignore。
 - 普通 catalog load 匹配 manifest 时真实 checker 调用数为 0；证据 stale/tampered/coverage mismatch 会 fail closed，不会自动执行昂贵检查。正式 AI proof candidate 仍逐 attempt 使用真实 checker，replay 仍不调用 Lean。
 - 当前 in-scope 定向、Fast 和最终 canary 已通过；最终 Fast 为 290 passed、1 skipped in 25.30s（runner 46.1 秒），canary 清单含 timeout/`admit`/injection/rejection 契约，结果 11 passed in 47.15s（runner 61.6 秒）。全仓 Full 仍被 3 个既有 paper assertion drift 阻塞（Gate C `ablation_mode` 两项、Exp5 旧 270 vs 当前 4635 一项），需在相应迁移 Task 内按真实语义修复，不能在 checker 分层工作中掩盖。
+
+## 2026-07-24 Feat-011 三个 system-native 阻塞问题交接（当前覆盖）
+
+- Catalog execution view：`experiments/paper_catalog_execution_view.py` 提供 `tokenshare.paper_catalog_execution_view.v1`；dispatch plan v3 冻结 planning view，formal execution/resume/replay 恢复同一 body/digest，canonical selection strict validation 保留。Exp1 Factorization→Lean mismatch 回归已通过，正常 callback=1，replay provider/transport calls=0。
+- Selected-unit：`ProtocolExecutionScope.v1` 是当前唯一 selector 语义。Factorization/Lean CLI/dispatcher/adapter 都进入 coordinator/engine，只调度指定 planned AI unit；结果为 partial/paper-ineligible，sibling 不执行，root 不 merge/complete/settle。不得恢复 2026-07-23 的“拒绝 selector/执行整 root”或 adapter-owned lifecycle。
+- Factorization：`MergeReadinessDecision.v1` 保持 runtime 领域无关；插件 `factorization.factor_witness_or_all_ranges.v2` 对 verifier-accepted canonical witness 使用 OR，对 no-factor/prime 使用全部 required ranges AND。terminal sibling failure 不推翻有效 witness；没有 witness 的 terminal failure 仍使 root failed；不做 sibling cancellation。
+- 最终证据：合并影响集 `336 passed in 382.46s`；Full 首轮暴露 3 条旧 whole-root selector 断言（`1321 passed, 1 skipped, 3 failed`），修正后精确 3 节点 `3 passed in 37.33s`、两个完整影响文件 `50 passed in 279.28s`；实现后 Fast `330 passed, 1 skipped in 18.68s`，证据回填后 Fast `330 passed, 1 skipped in 17.72s`；固定 Lean canary `11 passed in 46.62s`；最终 Full `1324 passed, 1 skipped in 1099.38s`。
+- 边界：真实 provider calls/tokens/cost=`0/0/0`；未运行 force-all、正式 Experiment 1、论文结果或历史 output 清理；未改 timeout/retry、模型、prompt、catalog 数量/矩阵；未增加安全工程。三个本轮实现阻塞已清除，但 `feat-011` 仍因真实-provider 正式实验与报告未执行而保持 `in-progress`。
+
+## 2026-07-24 Exp2–4 行为/指标审计交接（历史快照；已由 2026-07-26 顶部交接覆盖）
+
+- 唯一权威设计已新增 Exp2、Exp3 的实现审计和 Exp2–4 分实验修复清单；参数台账已同步审计摘要。不要只看 `summarize_exp2_scalability()`、`summarize_exp3()`、`summarize_exp4_ablation()` 的字段声明：正式 CLI 实际调用 `paper_formal_metrics.py` 的简化 `_exp2_rows/_exp3_rows/_exp4_rows`，三者目前没有接入那些完整 summarizer。
+- Exp2 真实部分：`ThreadWorkerBackend(capacity=condition.worker_count)`、scheduler/lease/attempt/provider/verifier/canonical 都是真实执行。blocker：旧双 domain/三难度/`1/3/10/30`/5-repeat 矩阵；无 20-way profile；coordinator 在 merge readiness 前发完 Ready sibling，无自然早停；normal evidence 不含 worker execution facts；fixed `NOW` 使 formal wall-clock/critical path/peak concurrency/utilization 不可采信。
+- Exp3 真实部分：五类 fault 在 raw/provenance/usage 保存后注入，replacement 来自系统 recovery；process worker death、lease expiry、不同 PID replacement 均真实。blocker：仍为 3 repeats；false-positive/negative 实际在正式 domain parser 前注入，却把 record stage 标成 parsed 后/verification 前；false-negative 无候选 target 会抛错；fault outcome 预填 `canonical_pollution=false`/统一 `requires_replacement=true`；formal recovery 查找不存在的 `REPLACEMENT_ACCEPTED`；25/50/75 kill 未按实际完成进度触发；dedicated worker baseline 未执行且使用 self-baseline。
+- Exp4 blocker：除了删除 `NO_SLOT_INTEGRITY`，还需让 wrong-canonical/raw-only/stuck/premature-merge 从实际 runtime facts 产生。FULL 当前 `max_retries=0`，不能对照 NO_REQUEUE；NO_MERGE_GATE 仅观察 bypass 后 break，没有真正执行 premature plugin merge。
+- 推荐实现顺序：先修共享真实 timing/worker-fact projection和正式 metrics 单路径；再做 Exp2 20-way+早停；再做 Exp3 applicability/真实 kill progress/baseline；最后做 Exp4 四 mode 真实行为和专项 metrics。每一步先写 RED integration test，禁止用 synthetic task flag、mode 常量、固定时间或 self-baseline 填论文数字。
+- 本轮没有改代码、没有调用 provider、没有跑 pytest/Full/LeanAudit/正式实验，也没有增加外部输入攻击防护。Exp2、Exp3、Exp4 当前都不可直接启动正式真实 API 矩阵。
+
+## 2026-07-24 Exp1 参数同步与 Exp2–Exp5 设施补全计划交接（最新覆盖）
+
+- 当前统一实施入口是 `Doc/TechnicalDocument/2026-07-24-feat-011-exp2-exp5-experiment-facility-completion-implementation-plan.md`。它已升级为单文件开工包：集中给出 Exp1–5 的模型/request controls、seed、题库、split、worker、repeat、condition/root/AI-unit 公式、旧值→目标值、正式输出、共享文件锁、TDD Task、验证命令和最终验收。
+- 用户离线连续执行入口是 `Doc/TechnicalDocument/2026-07-24-feat-011-experiment-facility-autonomous-execution-prompt.md`。把该文件全文作为下一位主 agent 的初始 Prompt；它已授权连续执行和受控单层子 agent，但每个子 agent 必须显式使用 `gpt-5.6-sol` + `reasoning_effort=ultra`，不支持时由主 agent 串行完成、不得降级。该 Prompt没有授权真实 API/费用、Full、全量 Lean、攻击防护、destructive/git publish 操作。
+- 实施顺序固定为：Exp1 单次运行参数 Task A → 共享真实 runtime timing/worker facts/eligibility → 单一 formal metrics 路径 → Exp2 → Exp3 → Exp4 → Exp5 → plan-only/capturing/Fast。不要先跑真实 API 矩阵来“看看能不能用”。
+- 预算必须区分 headline 与 supporting execution：Exp3 headline=41,156 roots，dedicated worker-death baselines=1,006 roots，实际调度=42,162；P0-core/P0-full headline=51,508/53,407，实际调度=52,514/54,413。Exp4 五个 mode 的 `max_retries=1`，NO_REQUEUE 只关闭 replacement gate。
+- Exp5 核心 runtime binding 真实存在，但正式报告有五个 blocker：硬编码 match；strict v2 join 未接线且 ref 字段错；无独立 comparison CSV/aggregate/confounding；固定协议时间和硬编码 eligibility；跨 endpoint request controls 未比较。
+- Exp5 selection 不再视为 blocker 待讨论：EPD-006 已明确从 Exp1 取全部 hard 166+45，并与 Exp2 完全解耦。当前代码仍是旧 54 conditions / 4,635 roots / Exp2 slice，必须按计划 TDD 修改。
+- 用户硬约束：以跑通实验并得到有价值数据为目标；不新增人为输入攻击防护；尽量不用全量 Lean。共享 Lean parser/checker/merge 调用链变化只跑固定 canary，tracked Lean 输入变化才做增量 audit，不默认 600-entry force-all。
+- 本轮为文档/状态变更，没有代码、provider 或正式实验。修改前 Fast 为 `330 passed, 1 skipped in 29.16s`；修改后静态 JSON/Markdown/ref/diff 检查通过，Fast 再次为 `330 passed, 1 skipped in 14.93s`。未运行 Full、LeanAudit、force-all 或全量/正式实验。
+- 单文件参数快照补齐后 Fast 通过 `330 passed, 1 skipped in 34.51s`，状态写回后的最终 Fast 再通过 `330 passed, 1 skipped in 16.08s`；静态参数锚点、64 个 Markdown fence、JSON、authority sync 和 `git diff --check` 通过。未运行 Full、Lean checker/audit、provider 或正式实验。
+- autonomous execution Prompt 的模型/连续执行/边界锚点和 14 个 Markdown fence 已通过静态检查；新增 Prompt 后 Fast 通过 `330 passed, 1 skipped in 15.12s`。未运行 Full、LeanAudit、provider 或正式实验。
+2026-07-25 当前连续执行状态：统一实施计划 Task A–Task 5 已完成，Task 6 进行中。Task 5 已把 Exp3 false-positive/false-negative 接到真实 parsed-candidate→submission/verifier 边界，完成两遍矩阵与 false-negative applicability/reserve 证据；精确套件 `52 passed`，固定 Lean canary `11 passed`。继续做真实 kill progress、dedicated no-kill baseline、event-derived recovery outcome 和 robustness CSV；不要运行 Full、全量 LeanAudit、真实 API 或正式实验。
+
+## 2026-07-25 Task A–11 完成交接（当前覆盖）
+
+- `Doc/TechnicalDocument/2026-07-24-feat-011-exp2-exp5-experiment-facility-completion-implementation-plan.md` 的 Task A–11 和最终验收清单已全部完成；上方“Task 6 进行中”、Exp2–5“尚未实现”和 Exp5“五 blocker”等内容只保留历史 provenance，均由本节覆盖。
+- 当前 plan-only 预算：P0-core/P0-full actual roots=`52,514/54,413`，first-attempt AI units=`275,126/289,778`，Exp3/Exp4 replacement reserves=`411,704/28,728`，provider-attempt 上界=`715,558/730,210`。P0-core digest=`sha256:5e40ecfc3a4c59fba9b6a5e1e2fc06f88ed43c98d855f15fde49af1f7d4344a1`；任何旧 digest 都必须在 dispatch 前拒绝，不能自动迁移批准。
+- Capturing E2E 已证明 formal runner、Factorization system runtime、artifact/ref discovery、strict evidence join 和完整回归表生成可执行；它明确 `paper_eligible=false`，不能作为论文结果。真实 provider calls/tokens/cost 始终为 `0/0/0`。
+- 最终证据：修复 Fast 暴露的三项集成回归后，Task 11 规定组合=`286 passed in 162.67s`；文档同步后最终 Fast=`331 passed, 1 skipped in 15.27s`，JSON/SQLite、harness、compileall 通过；`git diff --check` 无 whitespace error。Task 11 未触及 Lean 调用链，未重复 canary；没有运行 Full、LeanAudit、force-all、真实 API、pilot 或正式矩阵。
+- 后续唯一工作是用户另行授权的真实 provider pilot/formal Experiment 1–5、完成后 evidence/replay/secret/output-isolation 审计和论文结果发布。启动前必须重新生成当前 plan-only/budget identity，并按当时实际配置显式批准；不得复用历史 digest 或把 capturing 输出升级为 paper evidence。
+- 工作树仍包含用户和本轮的大量未提交变更；不要 reset/clean/checkout、不要擅自 stage/commit/push。`feat-011` 状态保持 `in-progress`，因为真实论文实验尚未执行。
+
+## 2026-07-26 EPD-007 正式 AI timeout 交接（当前覆盖）
+
+- 正式 Experiment 1–5 provider request timeout 已从 30 改为 100 秒。共享所有者为 `paper_models.PAPER_FORMAL_AI_TIMEOUT_SECONDS`；Exp1–4、formal CLI、Gate C、tracked Exp1 baseline/pilot 和 Exp5 preflight 已同步。
+- Exp5 三端点即使共同为 30 也会以 member reason `formal_ai_timeout_seconds_mismatch` 整体 blocked；正式运行前各本地 provider config 必须显式为 100，不能依赖通用 executor 的 30 秒 fallback。
+- worker-death process guard 仍为 `max(30, request timeout + 30)`，所以正式配置为 130 秒；这是子进程卡死保护，不是 AI 响应上限。lease=300、Lean checker=30、通用 executor/adapter fallback=30、旧 direct benchmark=60 不变。
+- 所有 30 秒下的 provider/profile/condition/budget/approval digest 均已失效。新 Exp1 pilot mock plan-only digest=`sha256:898e723087546edc8154edd0077c435a5b74e7340d861398551c030f1b28a346`，仅供测试使用，不得作为真实 pilot 批准。
+- 验证：核心 RED→GREEN 后 `2 passed`；timeout 直接影响集 `218 passed in 84.77s`；最终 Fast `331 passed, 1 skipped in 14.83s`。真实 provider calls/tokens/cost=`0/0/0`，未运行 Full、LeanAudit、pilot 或正式矩阵。
+- 额外 Gate C 诊断批次为 `244 passed, 7 failed`。7 条失败发生在 timeout 校验以后，来自旧 condition count、Exp2 easy 选择和 Exp5 catalog v1 断言，与本 timeout 变更无因果关系；不要把它们伪报为通过，feat-011 完成/Full 前需另行按 Task A–11 当前矩阵修复。
+- 工作树仍有大量既有未提交改动；继续禁止 reset/clean/checkout，以及未授权 stage/commit/push。

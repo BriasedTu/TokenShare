@@ -23,7 +23,7 @@ from tokenshare.plugins.factorization.models import (
     canonical_json_digest,
 )
 from tokenshare.plugins.factorization.schemas import (
-    ALL_REQUIRED_RANGE_MERGE_POLICY_ID,
+    FACTOR_WITNESS_OR_ALL_RANGES_MERGE_POLICY_ID,
     CANDIDATE_RANGE_PARTITION_STRATEGY_ID,
     FACTOR_SEARCH_RANGE_INPUT_SCHEMA_VERSION,
     FACTOR_SEARCH_RANGE_TASK_TYPE,
@@ -37,6 +37,11 @@ from tokenshare.plugins.factorization.schemas import (
     TRIAL_DIVISION_PRIMALITY_POLICY_ID,
     schema_ref,
 )
+
+EXP2_CONTIGUOUS_20WAY_PROFILE_ID = "factorization.exp2_contiguous_20way.v1"
+SPLIT_PROFILE_REQUESTED_CHILD_COUNTS = {
+    EXP2_CONTIGUOUS_20WAY_PROFILE_ID: 20,
+}
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -85,6 +90,25 @@ class FactorizationSplitStrategyActionResult:
                 else None
             ),
         }
+
+
+def resolve_requested_child_count(split_params: dict[str, object]) -> int:
+    """由插件解析固定 split profile，实验层不复制 range partition 规则。"""
+
+    profile_id = split_params.get("split_profile_id")
+    if profile_id is not None:
+        if not isinstance(profile_id, str) or profile_id not in (
+            SPLIT_PROFILE_REQUESTED_CHILD_COUNTS
+        ):
+            raise ValueError("unsupported factorization split_profile_id")
+        if "requested_child_count" in split_params:
+            raise ValueError(
+                "split profile and requested_child_count are mutually exclusive"
+            )
+        return SPLIT_PROFILE_REQUESTED_CHILD_COUNTS[profile_id]
+    requested = split_params.get("requested_child_count")
+    _require_positive_count("requested_child_count", requested)  # type: ignore[arg-type]
+    return int(requested)
 
 
 def partition_candidate_ranges(
@@ -442,7 +466,7 @@ def _build_proposal(
                 "child_key": None,
                 "child_output_name": None,
                 "merge_slot_id": merge_slots[0]["slot_id"],
-                "merge_slot_policy": "all_required_slots",
+                "merge_slot_policy": "factor_witness_or_all_ranges",
                 "merge_slot_count": len(merge_slots),
                 "merge_slot_keys": [slot["slot_id"] for slot in merge_slots],
                 "required": True,
@@ -547,8 +571,8 @@ def _build_merge_plan(
         merge_policy_ref={
             "plugin_id": PLUGIN_ID,
             "plugin_version": PLUGIN_VERSION,
-            "merge_policy_id": ALL_REQUIRED_RANGE_MERGE_POLICY_ID,
-            "merge_policy_version": "v1",
+            "merge_policy_id": FACTOR_WITNESS_OR_ALL_RANGES_MERGE_POLICY_ID,
+            "merge_policy_version": "v2",
             "merge_policy_descriptor_digest": plugin_descriptor_digest,
             "merge_policy_params_digest": partition.params.params_digest,
         },
@@ -568,14 +592,16 @@ def _build_merge_plan(
             "record_merge_input_bundle_digest": True,
         },
         merge_validation_requirements={
-            "all_required_slots_canonical": True,
+            "all_required_slots_canonical": False,
+            "verified_factor_witness_sufficient": True,
+            "all_required_slots_canonical_for_no_factor": True,
             "slot_schema_check_required": True,
             "merged_output_schema_check_required": True,
             "plugin_merge_validator_policy_id": "factorization.merge_result.validator.v1",
         },
         plugin_payload={
             "plugin_defined_schema_ref": schema_ref(
-                "factorization.merge_plan_plugin_payload.v1"
+                "factorization.merge_plan_plugin_payload.v2"
             ),
             "plugin_defined_body_digest": canonical_json_digest(plugin_defined_body),
             "plugin_defined_body": plugin_defined_body,
@@ -623,9 +649,9 @@ def _child_plugin_payload(range_input: FactorSearchRangeInput) -> JsonObject:
 
 def _merge_plugin_defined_body(partition: CandidateRangePartitionResult) -> JsonObject:
     return {
-        "schema_version": "factorization.merge_plan_plugin_payload.v1",
+        "schema_version": "factorization.merge_plan_plugin_payload.v2",
         "summary": {
-            "merge_policy": "all_required_range_merge",
+            "merge_policy": "factor_witness_or_all_ranges",
             "target_n": partition.params.target_n,
             "coverage_id": partition.coverage_proof.coverage_id,
             "range_count": len(partition.ranges),
@@ -636,7 +662,8 @@ def _merge_plugin_defined_body(partition: CandidateRangePartitionResult) -> Json
             "factorization_coverage_check_required": True,
             "coverage_id_consistency_required": True,
             "partition_params_digest_consistency_required": True,
-            "all_required_range_slots_required": True,
+            "verified_factor_witness_sufficient": True,
+            "all_required_range_slots_required_for_no_factor": True,
             "range_result_schema_version": RANGE_RESULT_SCHEMA_VERSION,
         },
     }

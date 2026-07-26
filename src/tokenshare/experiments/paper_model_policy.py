@@ -19,7 +19,11 @@ from tokenshare.experiments.paper_model_identity import (
     build_model_endpoint_identity,
     validate_fixed_entry_config_identity,
 )
-from tokenshare.experiments.paper_models import JsonObject, digest_json
+from tokenshare.experiments.paper_models import (
+    PAPER_FORMAL_AI_TIMEOUT_SECONDS,
+    JsonObject,
+    digest_json,
+)
 
 
 POLICY_STATUS_PLANNED = "planned"
@@ -53,6 +57,26 @@ PAPER_MODEL_ENDPOINT_COHORT_MEMBERS = {
         "provider_family": "openai",
         "provider_model_id": "gpt-5.6-sol",
         "reasoning_profile_id": "high",
+    },
+}
+EXP5_COMPARABLE_REQUEST_CONTROL_FIELDS = (
+    "temperature",
+    "top_p",
+    "stream",
+    "timeout_seconds",
+    "max_tokens",
+    "max_provider_attempts",
+)
+EXP5_DOMAIN_EXECUTION_CONTRACTS = {
+    "factorization": {
+        "prompt_profile": "factorization.bounded_range_prompt.v1",
+        "parser_id": "factorization.range_result.parser.v1",
+        "plugin_version": "0.1.0",
+    },
+    "lean_proof": {
+        "prompt_profile": "lean_proof.proof_candidate_prompt.v1",
+        "parser_id": "lean_proof.proof_candidate.parser.v1",
+        "plugin_version": "0.1.0",
     },
 }
 
@@ -221,6 +245,24 @@ def build_model_endpoint_cohort_preflight(
                 blocked_reasons.extend(smoke_reasons)
 
         blocked_reasons = list(dict.fromkeys(blocked_reasons))
+        request_controls = (
+            _normalized_exp5_request_controls(
+                config=config,
+                selected_entry=selected_entry,
+                endpoint_identity=endpoint_identity,
+            )
+            if config is not None
+            and selected_entry is not None
+            and endpoint_identity is not None
+            else None
+        )
+        if request_controls is None:
+            blocked_reasons.append("missing_comparable_request_controls")
+        elif (
+            request_controls["comparable"]["timeout_seconds"]
+            != PAPER_FORMAL_AI_TIMEOUT_SECONDS
+        ):
+            blocked_reasons.append("formal_ai_timeout_seconds_mismatch")
         plan = {
             "schema_version": "tokenshare.paper_model_endpoint_member_plan.v1",
             "cohort_id": PAPER_MODEL_ENDPOINT_COHORT_ID,
@@ -245,6 +287,7 @@ def build_model_endpoint_cohort_preflight(
             "endpoint_identity": (
                 endpoint_identity.to_dict() if endpoint_identity is not None else None
             ),
+            "request_controls": request_controls,
             "smoke_evidence_ref": spec.get("smoke_evidence_ref"),
             "external_benchmark": {
                 "source": member.get("external_benchmark_source"),
@@ -266,6 +309,25 @@ def build_model_endpoint_cohort_preflight(
                     "blocked_reasons": blocked_reasons,
                 }
             )
+
+    comparable_snapshots = [
+        plan["request_controls"]["comparable"]
+        for plan in member_plans.values()
+        if isinstance(plan.get("request_controls"), dict)
+        and isinstance(plan["request_controls"].get("comparable"), dict)
+    ]
+    request_controls_snapshot = (
+        comparable_snapshots[0]
+        if len(comparable_snapshots) == len(PAPER_MODEL_ENDPOINT_COHORT_MEMBER_IDS)
+        else None
+    )
+    if request_controls_snapshot is not None and len(
+        {digest_json(snapshot) for snapshot in comparable_snapshots}
+    ) != 1:
+        cohort_level_reasons.append(
+            "cross_member_request_controls_mismatch"
+        )
+        request_controls_snapshot = None
 
     blocked = bool(
         cohort_level_reasons
@@ -297,6 +359,47 @@ def build_model_endpoint_cohort_preflight(
         "missing_entry_ids": sorted({item for item in missing_entry_ids if item}),
         "ineligible_members": ineligible_members,
         "member_plans": member_plans,
+        "request_controls_snapshot": request_controls_snapshot,
+        "request_controls_snapshot_digest": (
+            digest_json(request_controls_snapshot)
+            if request_controls_snapshot is not None
+            else None
+        ),
+    }
+
+
+def _normalized_exp5_request_controls(
+    *,
+    config: AIAPIExecutorConfig,
+    selected_entry: AIAPIProviderEntry,
+    endpoint_identity: PaperModelEndpointIdentity,
+) -> JsonObject:
+    effective = {
+        **dict(config.defaults),
+        **dict(selected_entry.request_overrides),
+    }
+    comparable: JsonObject = {}
+    for field_name in EXP5_COMPARABLE_REQUEST_CONTROL_FIELDS:
+        if field_name not in effective:
+            raise ValueError(
+                f"missing Experiment 5 request control: {field_name}"
+            )
+        comparable[field_name] = effective[field_name]
+    comparable["domain_contracts"] = {
+        domain: dict(contract)
+        for domain, contract in EXP5_DOMAIN_EXECUTION_CONTRACTS.items()
+    }
+    provider_specific_reasoning = dict(
+        endpoint_identity.effective_reasoning_controls
+    )
+    return {
+        "schema_version": "tokenshare.paper_exp5_request_controls.v1",
+        "comparable": comparable,
+        "comparable_digest": digest_json(comparable),
+        "provider_specific_reasoning": provider_specific_reasoning,
+        "provider_specific_reasoning_digest": digest_json(
+            provider_specific_reasoning
+        ),
     }
 
 

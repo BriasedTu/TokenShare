@@ -348,7 +348,7 @@ Phase 1-6 的核心代码在：
 关键机制：
 
 - `RequiredSlotBinding` 必须来自 `canonical_output`，且 canonical event seq 为正。
-- `MergeTaskLink` 要求 `readiness_reason=all_required_slots_canonical`。
+- `MergeTaskLink` v1 要求 `readiness_reason=all_required_slots_canonical`；v2 绑定版本化、领域无关的 readiness decision/digest，并要求实际 slot bindings 精确等于 decision 选中的 canonical unit 集。
 - required slot bindings 会排序并 digest；重复 slot 会失败。
 - `MergeRecord` 记录 merge unit canonical output 形成的 merge commitment。
 - `ExpectedOutputResolution` v1 只支持 `resolution_source_type=merge_record`。
@@ -717,7 +717,7 @@ Flow result 对象：
 
 - registry snapshot：`REGISTRY_SNAPSHOT_RECORDED`
 - request：`EXECUTION_REQUEST_RECORDED`
-- submission：`EXECUTION_SUBMISSION_RECORDED` v2 显式记录 accepted/rejected 及稳定 reason；只有 accepted 才再写 `ATTEMPT_STATE_CHANGED Running -> Submitted`
+- submission：`record_execution_submission()` 在 storage-writing boundary 从同一次 ledger read 恢复最新 `Attempt`/`Lease`，再调用 core 的纯 `evaluate_submission_acceptance()`；`EXECUTION_SUBMISSION_RECORDED` v2 始终显式记录 accepted/rejected 及稳定 reason，被拒绝的 stale submission 保留 artifact/event 但不推进 attempt，只有 accepted 才再写 `ATTEMPT_STATE_CHANGED Running -> Submitted`
 - generic recovery：`recovery_batch:{recovery_action_id}` 原子写 terminal lease、按需写 attempt terminal/superseded、`RECOVERY_ACTION_RECORDED` 和 TaskUnit `Ready/Failed`；engine 使用自身 config 复核 retry decision。新 batch 必须绑定 ledger 最新 lease/attempt snapshot；已权威记录的匹配 terminal attempt 不重复写状态事件；exact duplicate 仍由完整 batch 签名保持幂等
 - verification：`VERIFICATION_RECORDED`，根据 status 写 attempt state change
 - canonical：`CANONICAL_OUTPUTS_BOUND` 和 winner attempt `Verified -> Canonical`
@@ -729,6 +729,7 @@ Flow result 对象：
 - root settlement：`settlement_batch:{task_id}`
 - subtree pruning：`subtree_pruning_batch:*`
 - scheduling：`LEASE_STATE_CHANGED`、`ATTEMPT_STATE_CHANGED`、`TASK_UNIT_STATE_CHANGED`
+- heartbeat：`record_lease_heartbeat()` 先从 ledger 恢复最新 lease；latest Active heartbeat 从最新 count/expiry 连续推进，Released/Expired 等 terminal lease 的 stale heartbeat 在纯 `LeaseManager` 规则处拒绝且不写新 event
 - lease expiry：`record_lease_expiry()` 委托 generic recovery，generic recovery 统一调用 `LeaseManager.expire()` 校验 deadline，并在同一个 recovery batch 写 `LEASE_STATE_CHANGED Active -> Expired`、attempt superseded、recovery action 和 TaskUnit 结论
 
 测试：
@@ -895,13 +896,14 @@ Flow result 对象：
 
 ### `src/tokenshare/plugins/factorization/merge_policy.py`
 
-职责：factorization all-required merge policy。
+职责：factorization witness-OR / no-factor-AND merge policy。
 
 关键机制：
 
-- 所有 range slots canonical 后才能合并。
+- parser/verifier accepted 且 canonical 的有效 factor witness 可以单 slot 进入 merge。
+- 没有有效 witness 时，所有 required range slots 必须 accepted/canonical 且 coverage 完整，才能生成 no-factor/prime 结论。
 - merge validator 重新检查 coverage、range result schema 和 factor correctness。
-- 第一切片不做 early success 或 sibling pruning。
+- 不做 sibling cancellation/pruning；已经启动或完成的 sibling evidence 保留。
 
 测试：
 
@@ -1377,7 +1379,7 @@ Phase 6 Lean proof：
 Feat-011 system runtime 迁移 Task 1-9 与 Task 10 收口实现：
 
 - `src/tokenshare/local_runtime/contracts.py`
-  - 冻结本地应用协调层接口：`ProtocolRunRequest`、`ProtocolRunResult`、`ProtocolTaskPluginRuntime`、`RuntimeHooks`、`NoOpRuntimeHooks`、`ProtocolMechanismPolicy`、`WorkerBackend`，以及 root/complete/expand/raw/parser/verification/recovery/merge/progress typed action/context/directive contracts。
+  - 冻结本地应用协调层接口：`ProtocolRunRequest`、`ProtocolExecutionScope`、`ProtocolRunResult`、`ProtocolTaskPluginRuntime`、`MergeReadinessContext`、`MergeReadinessDecision`、`RuntimeHooks`、`NoOpRuntimeHooks`、`ProtocolMechanismPolicy`、`WorkerBackend`，以及 root/complete/expand/raw/parser/verification/recovery/merge/progress typed action/context/directive contracts。
   - `NoOpRuntimeHooks` 与全开启 mechanism policy 表示 FULL 默认语义；Task 7 起，非 FULL policy 在 parser、verification、replacement、merge gate、slot integrity 五个稳定 gate 中精确关闭一个机制。
   - `continue_after_terminal_child_failure` 默认 `false`；只有 Task 4 Factorization FULL 显式启用它来收集 sibling failure evidence，不能作为通用 runtime 的默认恢复策略。
   - runtime contract 可以依赖 core、storage 和 executor contract，但不得导入 experiment schema。
@@ -1391,15 +1393,18 @@ Feat-011 system runtime 迁移 Task 1-9 与 Task 10 收口实现：
   - FULL 机制仍是默认边界；Task 6 起，coordinator 会在 backend capacity 内逐个调用 engine scheduler，让每个 ready unit 先取得独立 lease/attempt/request，再批量执行。多容量 backend 必须显式实现 batch 边界；`worker_terminated` 在真实 lease deadline 进入 `record_lease_expiry()`，由 engine 写 `Expired`、`Superseded`、TaskUnit `Ready`，replacement 仍只由后续 scheduler/lease 创建。
   - Task 5 起 coordinator 会查询 graph 中依赖已具备 canonical output 的 Blocked unit，并调用 engine authority 记录 `Blocked -> Ready` 后再调度。其它非终态停滞仍 fail-closed。terminal child failure 默认立即抛出；若 plugin 显式继续 sibling，最终仍调用 engine authority 写 parent/root Failed。
   - 调度后必须使用 scheduler 实际选中的 unit 构造 attempt/request，不能假设它等于 ready list 首项；该约束支持多层 Lean DAG。
+  - `ProtocolExecutionScope` 只限制 scheduler 可执行的已规划 unit，不改变插件 split/graph；partial run 保留所选 unit 的 engine ledger evidence，但不创建 root merge/completion/settlement，也不为 sibling 伪造状态。
+  - coordinator 只消费版本化、领域无关的 `MergeReadinessDecision`。默认 fallback 仍是全部 required slots；领域插件可选择已满足条件的 canonical slots，core/coordinator 不识别 factor witness。
   - Task 7 gate 只在真实 runtime stage 生效：raw hook 位于 raw/provenance/usage artifacts 持久化之后；`NO_VERIFICATION` 跳过插件 verifier，但 verification/canonical evidence 仍由 engine 记录；`NO_REQUEUE` 只在 engine recovery event 落账后停止 replacement；merge hook 接收真实 canonical protocol event refs。hook observation 只进入 result summary，不拥有协议事件或状态迁移权威。
 - `src/tokenshare/plugins/factorization/runtime_adapter.py`
   - `FactorizationRuntimeAdapter` 用既有 split strategy 生成 root、完整 range child 列表和 merge plan；plan/commitment 共用同一 `_build_split_action`，自定义 split config 不会漂移。
   - `FactorizationExecutionBridge` 复用 validator、prompt/parser/verifier 与 merge policy。range 使用固定 AI executor identity，root/merge 使用确定性 executor identity；request policy 固定 entry/model/reasoning 以及 source/prepared config digest，pre-call/post-call identity mismatch 均 fail closed。
   - verification 绑定真实 `ExecutionRequest.input_refs`；attempt refs 保留 request/raw/parsed/parse-failure/provenance/usage/model/candidate 的稳定去重并集，canonical candidate 不覆盖 parsed provenance。
   - bridge 只提供领域计划/执行/验证/合并规则；同 root worker capacity、recovery 和 lifecycle 由 `local_runtime`/`ProtocolEngine` 拥有。
+  - 当前论文 runtime 策略为 `factorization.factor_witness_or_all_ranges.v2`：只从 parser/verifier accepted 且 canonical 的 range result 选择有效 factor witness；任一 witness 足以 ready，其他 sibling failure 不推翻它。没有 witness 时必须全部 required ranges accepted/canonical、slot/coverage 完整才 ready；否则 terminal failure 使 root failed。
 - `src/tokenshare/experiments/factorization_paper_adapter.py`
   - FULL 路径只冻结条件/transport、构造 runtime adapter/backend、调用 coordinator 并把 ledger/artifact projection 转为 `FactorizationPaperRunResult`。
-  - 只接受 runtime `completed`/`failed` 终态；`Processing` 或未知状态 fail closed。scripted/capturing transport 永远 `paper_eligible=false`；public `run_factorization_paper_case()` 已标记 deprecated，仅保留 historical/selector regression compatibility，正常 FULL/fault/ablation 已走 system runtime。
+  - FULL 接受 runtime `completed`/`failed` 终态；selected-unit 接受明确 `partial` observation。scripted/capturing transport 永远 `paper_eligible=false`；当前 dispatcher 可达 selector 和 FULL/fault/ablation 全部走 system runtime。
 - `src/tokenshare/experiments/paper_unit_commitments.py`
   - Factorization 与 Lean AI-unit commitment 都从对应 runtime plan 的真实 `TaskUnit` snapshot 与 request artifact commitments 派生，不再维护另一份手工 child / lemma-node 计划；structured-blocked Lean case 不生成可执行 binding。
 - `src/tokenshare/protocol_engine.py`
@@ -1412,7 +1417,7 @@ Feat-011 system runtime 迁移 Task 1-9 与 Task 10 收口实现：
 - `src/tokenshare/plugins/lean_proof/runtime_adapter.py`
   - `LeanRuntimeAdapter` / `LeanExecutionBridge` 统一规划 simple 与 v2 lemma-DAG protocol units，请求 AI proof candidate，经真实 checker accepted 后才提升 canonical proof artifact，并复用既有 merge policy 完成 dependency-aware assembly/root recheck。
 - `src/tokenshare/experiments/lean_paper_adapter.py`
-  - FULL 主路径只适配 case/config、调用 coordinator，并从 ledger/artifacts 投影旧 `LeanPaperRunResult`；structured-blocked 保持零 provider attempt。public `run_lean_paper_case()` 已标记 deprecated，仅保留 historical/selector regression compatibility，正常 FULL/fault/ablation 已走 system runtime。
+  - FULL 主路径只适配 case/config、调用 coordinator，并从 ledger/artifacts 投影旧 `LeanPaperRunResult`；selected-unit 同样通过 coordinator/checker 输出 partial observation，structured-blocked 保持零 provider attempt。当前 dispatcher 可达 selector 和 FULL/fault/ablation 全部走 system runtime。
 - `src/tokenshare/experiments/paper_workers.py`、`src/tokenshare/experiments/paper_formal_callbacks.py`
   - Task 6 后 experiments 不再实例化 lease authority 或启动独立 progress harness。`paper_workers` 只冻结 generic dependency graph/kill selection，并从 backend facts + engine event refs 投影 worker-death artifact；缺 `Expired/Superseded/Ready/replacement lease` 任一证据即 fail-closed。
   - Exp2 callback 把 capacity 交给单 root runtime，并从 unit timestamps/dependencies 派生 parallelism、throughput、wall clock/critical path；不再用独立 root threads 或伪造 protocol lifecycle event。worker-death callback 只生成 `EXPERIMENT_WORKER_DEATH_*` 计划/观察事件。
@@ -1464,6 +1469,22 @@ Task 9 新增 `tests/integration/test_paper_protocol_runtime_integration.py`，�
 ### Feat-011 Task 10 收口映射（用户批准抽样验证）
 
 Task 10 已把 `local_runtime`、Factorization/Lean runtime bridges 与 `paper_projection` 补入 README、导航和两份 code map；公开 adapter API 以 docstring 标记 deprecated，两个零引用的旧私有 artifact-ref helper 已删除。迁移新增 source/tests 的范围扫描只保留权威五类 `FaultInjectionRecord`、正常 `inspect.signature` 和 schema/hash/secret/replay correctness，不新增外部输入攻击或安全加固。静态边界门禁同时覆盖 `EventLedger.append()` 与 `append_batch()`，防止 experiments 直接写协议权威事件。2026-07-23 收口证据为 package import/compile、原唯一失败节点、Fast `330 passed, 1 skipped` 和确定性 150-entry Lean real-checker 抽样 `150/150 accepted`、provider calls=0。按用户明确决定，本轮未运行完整 923-node targeted、Full、Full+LeanAudit 或 600-entry force-all；抽样不写 tracked manifest，也不得被表述成发布级全量证据。
+
+### Feat-011 正式运行补缝（2026-07-23）
+
+- `experiments/paper_faults.py` 使用 `experiment_unit_id=case_id:planned_ai_unit_id` 把冻结 fault target 映射到 scheduler 实际创建的 protocol unit；五类 rate-fault 只在 raw/provenance/usage 已持久化后注入，后续 reject、lease expiry、recovery、requeue 和 replacement 由 `ProtocolEngine`/coordinator 产生。`late_submission` 按解析后的 ISO timestamp 比较，不能再受 `Z` 与 `+00:00` 字符串排序影响。
+- `local_runtime/workers.py` 的 `ProcessWorkerBackend` 接受 `WorkerTerminationPolicy`，按 `termination_count_target` 终止预注册的 1 个或 3 个真实 executor processes，并把子进程已持久化的 executor/plugin state 回传父 coordinator。逻辑 unit 少于死亡进程数时，后续终止命中同一 unit 的 replacement process；adapter 只据计划死亡数配置足够的协议 retry budget。死亡 attempt 没有 submission；lease 到期后由 engine 写 `Expired/Superseded/Ready`，replacement 重新取得不同 lease/attempt/fencing token。`experiments/paper_workers.py` 为每个死亡 attempt 保存独立 artifact，并只从 backend facts 和 ledger events 投影实验记录。
+- `ProtocolMechanismPolicy.slot_integrity_enabled` 由 coordinator 传给 plugin runtime merge。Factorization/Lean runtime 在 `NO_SLOT_INTEGRITY` 下故意把已 canonical 的 child proof/result 绑定到错误 required slot；plugin merge policy只关闭 slot-binding 检查，其余集合、领域验证与 Lean root checker 保持开启。Lean 固定 lemma-DAG 仍来自 catalog/脚本预注册，未改成 AI 或通用自动拆分。
+- `experiments/paper_dispatcher.py` 接受非空 `selected_ai_unit_id`，把它作为 `ProtocolExecutionScope` 随 `ProtocolRunRequest` 交给 coordinator；正式 Exp1/Gate C pilot 只执行选中协议 unit并输出 partial/paper-ineligible observation，不执行 sibling，不产生 root merge/completion/settlement。
+- `experiments/paper_catalog_execution_view.py` 提供 `tokenshare.paper_catalog_execution_view.v1`；dispatch plan v3 冻结 manifest/Exp3/Exp4 catalog view 的 body/digest，formal execution、resume/replay 从 plan 恢复同一对象，不再使用原始 manifest 重新计算不同 selection。
+- 定向回归分三组为 `17 passed in 59.23s`、`27 passed in 37.36s`、`23 passed in 102.74s`，合计 67 项通过；Fast 为 `330 passed, 1 skipped in 20.34s`。本轮没有 provider call、Full、全量 Lean audit 或正式实验。
+
+### Feat-011 三项 system-native 补缝（2026-07-24）
+
+- dispatch plan v3 冻结 `PaperCatalogExecutionView.v1`，formal execution/resume/replay 恢复同一 body/digest；Exp1 从 Factorization 切到 Lean 时不再因 `task15_budget_input` 丢失而 selection drift。
+- `ProtocolExecutionScope.v1` 让 selected-unit pilot 继续经过插件 plan/split、coordinator、scheduler/lease 和 `ProtocolEngine`，只返回 partial/paper-ineligible observation；未选 sibling 不执行，root 不 merge/complete/settle。
+- `MergeReadinessDecision.v1` 为通用 plugin readiness contract；Factorization 使用 `factorization.factor_witness_or_all_ranges.v2`，有效 witness OR-ready，无 witness 时全部 required ranges AND-ready。merge task link v2 绑定 decision/digest 和实际选择的 canonical slots，core 不含 Factorization 领域判断。
+- 最终验证：合并影响集 `336 passed`，execution-runner/CLI `50 passed`，证据回填后 Fast `330 passed, 1 skipped`，固定 Lean canary `11 passed`，Full `1324 passed, 1 skipped`。真实 provider calls/tokens/cost=`0/0/0`；未运行 force-all 或正式实验。
 
 Phase 7 实验级 AI API executor source：
 
@@ -1604,3 +1625,34 @@ python-json-sqlite-ok
 harness-files-ok
 387 passed, 1 skipped in 170.77s
 ```
+
+## 2026-07-25 Feat-011 Task A–11 当前映射
+
+实验设施补全保持协议核心、plugin runtime 和 experiments 三层边界：
+
+- `local_runtime/coordinator.py`/workers 提供真实 observation clock、worker execution facts、batch 后 plugin readiness、未调度 sibling early stop、process death/lease recovery 和稳定 ablation gate；experiments 只选择条件、注入预注册 hook 并投影事实。
+- Factorization plugin 的 `factorization.exp2_contiguous_20way.v1` 是 Exp2 20-way 拆分的唯一领域所有者；`runtime_adapter.py` 只为该显式 profile 提升 child cap，并用真实 range 长度绑定 no-factor recheck。
+- `experiments/paper_budget.py` 统一冻结 headline/supporting/actual root/AI-unit identity 和 replacement reserve；P0-core/P0-full actual roots=`52,514/54,413`，provider-attempt 上界=`715,558/730,210`。
+- `experiments/paper_formal_runner.py`、`paper_formal_metrics.py`、`paper_formal_report.py` 形成正式证据/指标/报告单路径；Exp5 从持久化 v2 model execution record 严格连接 request/raw/provenance/usage，生成 endpoint comparison 和 provider-confounding 输出。
+- Task 11 指定组合回归=`286 passed`，Fast=`331 passed, 1 skipped`，capturing provider calls/tokens/cost=`0/0/0` 且 `paper_eligible=false`。没有运行真实 formal 实验、Full、LeanAudit 或 force-all；该映射证明设施完成，不代表 `feat-011` 的论文结果已经完成。
+
+## 2026-07-26 正式 AI timeout 控制
+
+- 实验层共享常量 `paper_models.PAPER_FORMAL_AI_TIMEOUT_SECONDS=100` 统一驱动正式 Exp1–4 controls、formal CLI、Gate C 和 Exp5 preflight；tracked baseline/pilot 配置也固定为 100。Exp5 的三个 endpoint 只“彼此相等”不够，任一不是 100 都以 `formal_ai_timeout_seconds_mismatch` 整体阻塞。
+- worker-death 外层 process guard 仍按请求 timeout 加 30 秒清理余量，故正式值为 130 秒；provider 响应上限仍是 100 秒。协议 lease、Lean checker、通用 executor/adapter fallback 和历史 benchmark timeout 均保持原值。
+- 新 timeout 进入 config/profile/condition/budget identity，旧批准 digest 全部失效。验证为 timeout 直接影响集 `218 passed`、最终 Fast `331 passed, 1 skipped in 14.83s`；没有 provider、Full、LeanAudit 或正式实验调用。
+
+## 2026-07-26 正式实验证据真实性与指标完整性门禁
+
+- `src/tokenshare/experiments/paper_formal_runner.py`
+  - checkpoint 不再复制 adapter/suite 的预判布尔值；attempt/task 资格由 real transport、whole-root protocol execution scope、持久化状态、evidence refs、artifact/event inventory 和 synthetic 禁止项计算。`_finalize_formal_manifests()` 只聚合已 checkpoint 的 condition/task/attempt evidence。
+  - `_materialize_artifacts()` 保留原 artifact identity；持久化审计解析 task/attempt refs，无法回到本 generation 的 protocol event 或 artifact 时 fail closed。
+- `src/tokenshare/experiments/paper_formal_metrics.py`
+  - 顶层资格唯一聚合 condition rows 和各 active experiment rows，不再复制 suite 的旧 adapter 资格。Exp2 critical path 由 root registration、unit creation/dependency、attempt interval、canonical、merge gate/record、root completion evidence 构图；缺证据不回退到 wall clock、provider latency 或最长 attempt。关键路径完整性只作为 Exp2 专项资格门禁；Exp1/3/4/5 的 checker rejection、未恢复故障、消融失败或 provider/model failure 只要下层终局与专项 evidence 完整，仍是可进入正式分母的负面结果，不因缺少成功 merge/root-completion 路径而失格。
+  - Exp2 同时输出 all-runs 与 rate-limit-excluded sensitivity，排除项按 persisted run id/condition id/reason 列出且不修改主视图。Exp3 worker-death 字段覆盖 task、repeat condition、aggregate 和 robustness CSV，并禁止 matched baseline 自引用。
+  - Exp4 审计 runtime schema/condition/case/repeat/mode、目标 hook input/result/ref、attempt inventory、NO_MERGE_GATE 实际 premature merge 结果及同 case×repeat 合格 FULL 配对；零分母写 null/applicability。Exp5 以全部应有 provider-attempt 为 identity denominator，检查 missing/duplicate/orphan/mismatch 与 retry 展开。
+- `src/tokenshare/experiments/paper_formal_report.py`
+  - report 独立重读 suite/experiment/condition/task/attempt/event/artifact inventory 并解析 refs；任一 lower evidence 不合格、缺失或 capturing/regression 时删除/拒绝正式 paper report，只生成 `formal_regression_report.md`。
+- `src/tokenshare/experiments/paper_ablation.py`
+  - ablation hook observation 保存真实 hook input/result、artifact refs 和 protocol refs，空列表或仅凭 mode 名称不再表示“效果为零”。
+- 反伪造回归集中在 `tests/experiments/test_paper_formal_runner.py`、`test_paper_formal_metrics.py`、`test_paper_formal_report.py` 以及 Exp2–5/Gate C/integration 文件。负面终局门禁 TDD 为 `4 failed, 1 passed`（RED）到 `5 passed`（GREEN），完整 metrics 文件为 `28 passed`；用户指定九文件最低验收为 `251 passed`，最终 Fast 为 `331 passed, 1 skipped`。capturing 始终 paper-ineligible；本轮没有真实 API、正式实验、Full 或 LeanAudit，故 `feat-011` 仍为 `in-progress`。

@@ -8,6 +8,7 @@ from types import SimpleNamespace
 import pytest
 
 import tokenshare.experiments.paper_formal_runner as formal_runner
+from tokenshare.core.models import ArtifactRef
 from tokenshare.executors.ai_api_config import (
     AIAPIExecutorConfig,
     AIAPIProviderEntry,
@@ -24,9 +25,11 @@ from tokenshare.experiments.paper_models import (
     PaperBudgetResult,
     PaperConditionResult,
     PaperExperimentCondition,
+    PaperModelExecutionRecord,
     PaperStatus,
     PaperTaskStatus,
 )
+from tokenshare.local_runtime import ParsedCandidateContext, WorkerTerminationPolicy
 from tokenshare.storage.artifacts import ArtifactStore
 
 
@@ -137,6 +140,11 @@ def test_formal_runner_checkpoints_required_evidence_and_reuses_it(
         "last_event_hash": "sha256:event-case-1",
         "ledger_digest": "sha256:ledger-case-1",
     }
+    assert checkpoint_task["case_id"] == "case-1"
+    assert checkpoint_task["factor_position_quantile"] == "early"
+    assert checkpoint_task["runtime_observation"][
+        "planned_ai_unit_ids"
+    ] == ["range_0"]
 
     resumed = formal_runner.execute_paper_formal_suite(**kwargs, resume=True)
     assert resumed.to_dict() == executed.to_dict()
@@ -250,6 +258,116 @@ def test_formal_runner_dispatches_planned_conditions_with_isolated_root(
     assert suite.condition_count == len(plan.bound_items())
     assert suite.paper_eligible is False
     assert suite.provider_attempt_count == 1
+
+
+def test_formal_runner_accepts_frozen_supporting_baseline_budget_identity(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = _ai_config()
+    plan = _planned_dispatch_plan(tmp_path, config=config)
+    budget = replace(
+        _budget(
+            planned_conditions=1,
+            planned_root_runs=2,
+            planned_ai_units=3,
+        ),
+        quota_preflight={
+            "provider_calls_made": 0,
+            "budget_commitments": {
+                "experiment_budget_identity": {
+                    "schema_version": (
+                        "tokenshare.paper_experiment_budget_identity.v1"
+                    ),
+                    "headline_root_runs_by_experiment": {EXPERIMENT_ID: 1},
+                    "supporting_baseline_root_runs_by_experiment": {
+                        EXPERIMENT_ID: 1
+                    },
+                    "actual_scheduled_root_runs_by_experiment": {
+                        EXPERIMENT_ID: 2
+                    },
+                    "headline_ai_units_by_experiment": {EXPERIMENT_ID: 1},
+                    "supporting_baseline_ai_units_by_experiment": {
+                        EXPERIMENT_ID: 2
+                    },
+                    "planned_first_attempt_ai_units_by_experiment": {
+                        EXPERIMENT_ID: 3
+                    },
+                }
+            },
+        },
+    )
+    monkeypatch.setattr(
+        formal_runner,
+        "dispatch_paper_condition",
+        lambda *, context, plan, condition_id: PaperConditionResult(
+            condition_id=condition_id,
+            status=PaperStatus.COMPLETED,
+            repeat_count=1,
+            task_count=1,
+            completed_root_count=1,
+            failed_root_count=0,
+            blocked_root_count=0,
+            provider_attempt_count=0,
+            metrics_ref=None,
+        ),
+    )
+
+    suite = formal_runner.execute_paper_formal_suite(
+        dispatch_plans=(plan,),
+        catalog_manifest=SimpleNamespace(catalog_digest=CATALOG_DIGEST),
+        budget=budget,
+        budget_approval={
+            "approval_mode": "user_bypassed",
+            "budget_digest": BUDGET_DIGEST,
+        },
+        output_root=tmp_path,
+        ai_api_configs={PROVIDER_CONFIG_ID: config},
+        transport=object(),
+        real_transport=False,
+        hard_limits={"stop_after_current_task": True},
+    )
+
+    assert suite.status == PaperStatus.COMPLETED
+    persisted_budget = json.loads(
+        (tmp_path / "run_budget.json").read_text(encoding="utf-8")
+    )
+    assert persisted_budget["planned_root_runs"] == 2
+    assert persisted_budget["planned_ai_units"] == 3
+
+
+def test_formal_runner_materializes_nested_windows_ads_artifact_name(
+    tmp_path: Path,
+) -> None:
+    adapter_root = tmp_path / "adapter"
+    nested_artifacts = adapter_root / "case-1" / "artifacts"
+    nested_artifacts.mkdir(parents=True)
+    artifact_name = "merge_input_bundle:merge_plan_1"
+    source = nested_artifacts / artifact_name
+    source.write_bytes(b"nested-merge-input")
+
+    refs = formal_runner._materialize_artifacts(
+        suite_root=tmp_path / "suite",
+        condition=SimpleNamespace(
+            experiment_id=EXPERIMENT_ID,
+            condition_id="condition-1",
+            repeat_id=0,
+        ),
+        task_id="case-1",
+        adapter_root=adapter_root,
+        source_refs=(
+            {
+                "uri": f"artifacts/{artifact_name}",
+                "content_hash": formal_runner._sha256_bytes(
+                    b"nested-merge-input"
+                ),
+            },
+        ),
+    )
+
+    assert len(refs) == 1
+    copied = tmp_path / "suite" / refs[0]["path"]
+    assert copied.read_bytes() == b"nested-merge-input"
 
 
 def test_formal_runner_builds_endpoint_context_through_registered_module(
@@ -414,10 +532,7 @@ def test_exp5_endpoint_contract_rejects_cohort_or_control_drift(
         model_cohort_digest=MODEL_COHORT_DIGEST,
         cohort_member_id=COHORT_MEMBER_ID,
     )
-    request_controls = {
-        **config.defaults,
-        **config.entries[0].request_overrides,
-    }
+    request_controls = _normalized_exp5_request_controls(config)
     member_plan = {
         "cohort_id": MODEL_COHORT_ID,
         "model_cohort_digest": MODEL_COHORT_DIGEST,
@@ -436,16 +551,17 @@ def test_exp5_endpoint_contract_rejects_cohort_or_control_drift(
         "cohort_id": MODEL_COHORT_ID,
         "model_cohort_digest": MODEL_COHORT_DIGEST,
         "member_plans": {COHORT_MEMBER_ID: member_plan},
+        "request_controls_snapshot": request_controls["comparable"],
+        "request_controls_snapshot_digest": request_controls[
+            "comparable_digest"
+        ],
     }
     if drift == "preflight_cohort_digest":
         approved_binding["model_cohort_digest"] = "sha256:" + "9" * 64
     elif drift == "member_cohort_digest":
         member_plan["model_cohort_digest"] = "sha256:" + "9" * 64
     else:
-        member_plan["request_controls"] = {
-            **request_controls,
-            "max_tokens": 2048,
-        }
+        member_plan["request_controls"]["comparable"]["max_tokens"] = 2048
 
     with pytest.raises(ValueError, match="Exp5"):
         formal_runner._condition_endpoint_contract(
@@ -907,7 +1023,7 @@ def test_formal_runner_does_not_deduplicate_same_root_across_conditions(
     assert calls == [("condition-1", "case-1"), ("condition-2", "case-1")]
 
 
-def test_formal_runner_exp3_passes_fault_hook_without_synthetic_replacement(
+def test_formal_runner_exp3_maps_planned_target_to_protocol_unit_and_recovery(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -939,7 +1055,7 @@ def test_formal_runner_exp3_passes_fault_hook_without_synthetic_replacement(
                 execution_manifest={
                     "fault_target_manifest": {
                         "fault_type": "false_positive",
-                        "selected_target_ai_unit_ids": ["unit-case-1"],
+                        "selected_target_ai_unit_ids": ["case-1:range_0"],
                     },
                     "worker_death_manifest": None,
                 },
@@ -953,11 +1069,91 @@ def test_formal_runner_exp3_passes_fault_hook_without_synthetic_replacement(
         adapter_calls.append(
             (selected_unit_id, callable(kwargs.get("post_raw_output_hook")))
         )
-        return _faultable_adapter_result(
+        original = _faultable_adapter_result(
             output_root=Path(kwargs["output_root"]),
             condition=kwargs["condition"],
             case_id=kwargs["case"]["case_id"],
-            attempt_suffix="replacement" if selected_unit_id else "original",
+            attempt_suffix="original",
+        )
+        original_attempt = original.attempt_results[0]
+        raw_directive = kwargs["post_raw_output_hook"](
+            request=SimpleNamespace(
+                task_id=original_attempt.task_id,
+                unit_id=original_attempt.unit_id,
+                attempt_id=original_attempt.attempt_id,
+                allocation_decision={"worker_id": original_attempt.worker_id},
+                soft_hints={"planned_ai_unit_id": "range_0"},
+            ),
+            artifact_store=ArtifactStore(Path(kwargs["output_root"])),
+            submitted_at=original_attempt.ended_at,
+            usage_summary={
+                "prompt_tokens": original_attempt.prompt_tokens,
+                "completion_tokens": original_attempt.completion_tokens,
+                "total_tokens": original_attempt.total_tokens,
+                "cost_estimate": original_attempt.cost_estimate,
+            },
+            raw_output_ref=ArtifactRef.from_dict(original_attempt.raw_output_ref),
+            provenance_ref=ArtifactRef.from_dict(original_attempt.provenance_ref),
+            usage_ref=ArtifactRef.from_dict(original_attempt.usage_ref),
+            content_text='{"result_kind":"no_factor"}',
+            provider_family=original_attempt.provider,
+            model=original_attempt.model,
+            entry_id=original_attempt.entry_id,
+        )
+        assert raw_directive is None
+        directive = kwargs[
+            "post_raw_output_hook"
+        ].after_parsed_candidate_persisted(
+            ParsedCandidateContext(
+                run_id=original_attempt.run_id,
+                task_id=original_attempt.task_id,
+                unit_id=original_attempt.unit_id,
+                attempt_id=original_attempt.attempt_id,
+                lease_id="lease-original",
+                worker_id=original_attempt.worker_id,
+                raw_output_ref=ArtifactRef.from_dict(
+                    original_attempt.raw_output_ref
+                ),
+                original_parsed_output_ref=ArtifactRef.from_dict(
+                    original_attempt.parsed_output_ref
+                ),
+                candidate_output_refs={
+                    "result": ArtifactRef.from_dict(
+                        original_attempt.parsed_output_ref
+                    )
+                },
+                submitted_at=original_attempt.ended_at,
+                experiment_unit_id="range_0",
+            )
+        )
+        assert directive is not None
+        replacement = _faultable_adapter_result(
+            output_root=Path(kwargs["output_root"]),
+            condition=kwargs["condition"],
+            case_id=kwargs["case"]["case_id"],
+            attempt_suffix="replacement",
+        )
+        task = SimpleNamespace(
+            **{
+                **vars(original.task_result),
+                "provider_attempt_count": 2,
+                "total_tokens": 22,
+                "cost_estimate": 0.25,
+            }
+        )
+        return SimpleNamespace(
+            **{
+                **vars(original),
+                "task_result": task,
+                "attempt_results": [
+                    original_attempt,
+                    replacement.attempt_results[0],
+                ],
+                "event_records": [
+                    *original.event_records,
+                    *replacement.event_records,
+                ],
+            }
         )
 
     monkeypatch.setitem(
@@ -994,10 +1190,21 @@ def test_formal_runner_exp3_passes_fault_hook_without_synthetic_replacement(
     )
     assert {attempt["attempt_id"] for attempt in attempts} == {
         "attempt-case-1-original",
+        "attempt-case-1-replacement",
     }
-    assert faults == []
-    assert all(
-        event["event_type"] not in {"FAULT_INJECTED", "REPLACEMENT_ACCEPTED"}
+    assert len(faults) == 1
+    assert faults[0]["unit_id"] == "unit-case-1"
+    assert faults[0]["selected_target_ai_unit_id"] == "case-1:range_0"
+    task = _generation_records(
+        tmp_path,
+        experiment_id,
+        "condition-exp3-rate-fault",
+        "per_task_results.jsonl",
+    )[0]
+    assert task["fault_injected"] is True
+    assert task["recovered_fault_target_count"] == 1
+    assert any(
+        event["event_type"] == "EXPERIMENT_FAULT_OBSERVED"
         for event in events
     )
 
@@ -1016,6 +1223,8 @@ def test_formal_runner_exp3_worker_death_does_not_fabricate_process_recovery(
         fault_type="worker_death",
         fault_rate=0.0,
     )
+    termination_policies: list[WorkerTerminationPolicy | None] = []
+    dispatched_condition_ids: list[str] = []
 
     class Exp3WorkerCallbackModule:
         def expand_conditions(self, context):
@@ -1025,6 +1234,14 @@ def test_formal_runner_exp3_worker_death_does_not_fabricate_process_recovery(
             return FrozenCaseSelectionBatch(())
 
         def run_condition(self, context, condition, selection):
+            baseline_condition = replace(
+                condition,
+                condition_id=(
+                    "exp3_matched_baseline_worker_death_factorization__easy__rep0"
+                ),
+                fault_type="none",
+                fault_rate=0.0,
+            )
             return context.execution_callback(
                 context=context,
                 condition=condition,
@@ -1033,8 +1250,35 @@ def test_formal_runner_exp3_worker_death_does_not_fabricate_process_recovery(
                 execution_manifest={
                     "fault_target_manifest": None,
                     "worker_death_manifest": {
-                        "dead_worker_count_target": 1,
+                        "dead_worker_count_target": 3,
                         "kill_progress_target_percent": 25,
+                        "selected_target_ai_unit_ids_by_case": {
+                            "case-1": [
+                                "case-1:range_0",
+                                "case-1:range_1",
+                            ]
+                        },
+                        "planned_ai_unit_count_by_case": {"case-1": 20},
+                    },
+                    "matched_baseline": {
+                        "schema_version": "tokenshare.paper_exp3_matched_baseline.v1",
+                        "condition_id": baseline_condition.condition_id,
+                        "condition_digest": baseline_condition.condition_digest,
+                        "condition": baseline_condition.to_dict(),
+                        "source_kind": "dedicated_worker_death",
+                        "additional_execution_required": True,
+                        "repeat_id": baseline_condition.repeat_id,
+                        "seed": baseline_condition.seed,
+                        "worker_count": baseline_condition.worker_count,
+                        "request_limits": {
+                            "max_tokens": 1024,
+                            "timeout_seconds": 30,
+                            "max_provider_attempts": 1,
+                            "temperature": 0.0,
+                            "top_p": 1.0,
+                            "stream": False,
+                            "enable_thinking": False,
+                        },
                     },
                 },
             )
@@ -1047,14 +1291,19 @@ def test_formal_runner_exp3_worker_death_does_not_fabricate_process_recovery(
         "_MODULES",
         ((experiment_id, Exp3WorkerCallbackModule()),),
     )
-    monkeypatch.setattr(
-        formal_runner,
-        "dispatch_paper_case",
-        lambda **kwargs: _complete_adapter_result(
+    def complete_without_runtime_death(**kwargs):
+        dispatched_condition_ids.append(kwargs["condition"].condition_id)
+        termination_policies.append(kwargs.get("worker_termination_policy"))
+        return _complete_adapter_result(
             output_root=Path(kwargs["output_root"]),
             condition=kwargs["condition"],
             case_id=kwargs["case"]["case_id"],
-        ),
+        )
+
+    monkeypatch.setattr(
+        formal_runner,
+        "dispatch_paper_case",
+        complete_without_runtime_death,
     )
     suite = formal_runner.execute_paper_formal_suite(
         **{
@@ -1069,6 +1318,18 @@ def test_formal_runner_exp3_worker_death_does_not_fabricate_process_recovery(
     )
 
     assert suite.status == PaperStatus.COMPLETED
+    assert dispatched_condition_ids == [
+        "exp3_matched_baseline_worker_death_factorization__easy__rep0",
+        "condition-exp3-worker-death",
+    ]
+    assert termination_policies[0] is None
+    assert termination_policies[1] == WorkerTerminationPolicy(
+        target_planned_ai_unit_ids=("range_0", "range_1"),
+        termination_count_target=3,
+        kill_point="progress_25",
+        total_planned_ai_unit_count=20,
+        process_timeout_seconds=60.0,
+    )
     faults = _generation_records(
         tmp_path, experiment_id, "condition-exp3-worker-death", "fault_injections.jsonl"
     )
@@ -1079,6 +1340,13 @@ def test_formal_runner_exp3_worker_death_does_not_fabricate_process_recovery(
     assert task["worker_death_count"] == 0
     assert task["worker_replacement_count"] == 0
     assert task["worker_death_evidence_complete"] is False
+    assert task["matched_baseline_condition_id"] == (
+        "exp3_matched_baseline_worker_death_factorization__easy__rep0"
+    )
+    assert task["matched_baseline_evidence_ref"]["path"].endswith(
+        "baseline_evidence.json"
+    )
+    assert "matched_baseline_total_tokens" not in task
 
 
 def test_formal_runner_exp4_persists_mode_specific_wrapper_evidence(
@@ -1257,7 +1525,7 @@ def test_formal_runner_exp4_observes_without_synthetic_replacement_lifecycle(
     assert "replacement_attempt_count" not in task
 
 
-def test_formal_runner_exp5_persists_fixed_entry_model_execution_records(
+def test_formal_runner_exp5_persists_v2_observed_identity_without_fixed_entry_override(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1282,7 +1550,7 @@ def test_formal_runner_exp5_persists_fixed_entry_model_execution_records(
             FrozenConditionSelectionBinding.from_condition(condition, selection),
         ),
     )
-    request_controls = {**config.defaults, **config.entries[0].request_overrides}
+    request_controls = _normalized_exp5_request_controls(config)
     member_plan = {
         "cohort_id": MODEL_COHORT_ID,
         "model_cohort_digest": MODEL_COHORT_DIGEST,
@@ -1323,10 +1591,11 @@ def test_formal_runner_exp5_persists_fixed_entry_model_execution_records(
     monkeypatch.setattr(
         formal_runner,
         "dispatch_paper_case",
-        lambda **kwargs: _complete_adapter_result(
+        lambda **kwargs: _exp5_adapter_result(
             output_root=Path(kwargs["output_root"]),
             condition=kwargs["condition"],
             case_id=kwargs["case"]["case_id"],
+            resolved_model="unexpected/resolved-model",
         ),
     )
     suite = formal_runner.execute_paper_formal_suite(
@@ -1340,6 +1609,12 @@ def test_formal_runner_exp5_persists_fixed_entry_model_execution_records(
                         "cohort_id": MODEL_COHORT_ID,
                         "model_cohort_digest": MODEL_COHORT_DIGEST,
                         "member_plans": {COHORT_MEMBER_ID: member_plan},
+                        "request_controls_snapshot": request_controls[
+                            "comparable"
+                        ],
+                        "request_controls_snapshot_digest": request_controls[
+                            "comparable_digest"
+                        ],
                     }
                 },
             },
@@ -1362,8 +1637,15 @@ def test_formal_runner_exp5_persists_fixed_entry_model_execution_records(
         condition.condition_id,
         "per_attempt_results.jsonl",
     )[0]
-    assert task["model_execution_records"][0]["entry_id"] == MODEL_ENTRY_ID
-    assert attempt["model_identity_audit"] == "fixed_entry_match"
+    model_input = task["model_execution_records"][0]
+    assert (
+        model_input["record"]["schema_version"]
+        == "tokenshare.paper_model_execution_record.v2"
+    )
+    assert model_input["record"]["identity_status"] == "model_identity_mismatch"
+    assert "resolved_model_mismatch" in model_input["record"]["mismatch_reasons"]
+    assert attempt["model_identity_audit"] == "model_identity_mismatch"
+    assert attempt["model_identity_audit"] != "fixed_entry_match"
     assert attempt["cohort_member_id"] == COHORT_MEMBER_ID
 
 
@@ -1580,6 +1862,196 @@ def _formal_execution_kwargs(
     }
 
 
+def _normalized_exp5_request_controls(
+    config: AIAPIExecutorConfig,
+) -> dict[str, object]:
+    effective = {
+        **config.defaults,
+        **config.entries[0].request_overrides,
+    }
+    comparable = {
+        field_name: effective[field_name]
+        for field_name in formal_runner.EXP5_COMPARABLE_REQUEST_CONTROL_FIELDS
+    }
+    comparable["domain_contracts"] = {
+        domain: dict(contract)
+        for domain, contract in (
+            formal_runner.EXP5_DOMAIN_EXECUTION_CONTRACTS.items()
+        )
+    }
+    reasoning = {"enable_thinking": effective["enable_thinking"]}
+    return {
+        "schema_version": "tokenshare.paper_exp5_request_controls.v1",
+        "comparable": comparable,
+        "comparable_digest": formal_runner.digest_json(comparable),
+        "provider_specific_reasoning": reasoning,
+        "provider_specific_reasoning_digest": formal_runner.digest_json(
+            reasoning
+        ),
+    }
+
+
+def _exp5_adapter_result(
+    *,
+    output_root: Path,
+    condition: PaperExperimentCondition,
+    case_id: str,
+    resolved_model: str,
+) -> SimpleNamespace:
+    base = _complete_adapter_result(
+        output_root=output_root,
+        condition=condition,
+        case_id=case_id,
+    )
+    store = ArtifactStore(output_root)
+    created_at = "2026-07-20T00:00:00Z"
+    request_ref = store.save_json(
+        {"model": PROVIDER_MODEL_ID},
+        artifact_id="exp5-request.json",
+        artifact_type="AIRequest",
+        artifact_schema_id="test.exp5.request",
+        artifact_schema_version="v1",
+        source={"test": "formal-runner-exp5"},
+        metadata={},
+        created_at=created_at,
+    )
+    raw_body = {
+        "schema_version": "phase7.raw_model_output.v2",
+        "provider_family": "siliconflow",
+        "entry_id": MODEL_ENTRY_ID,
+        "configured_model": PROVIDER_MODEL_ID,
+        "requested_model": PROVIDER_MODEL_ID,
+        "resolved_model": resolved_model,
+        "response_model_status": "present",
+        "raw_response_json": {"model": resolved_model},
+    }
+    raw_ref = store.save_json(
+        raw_body,
+        artifact_id="exp5-raw.json",
+        artifact_type="RawModelOutput",
+        artifact_schema_id="phase7.raw_model_output",
+        artifact_schema_version="v2",
+        source={"test": "formal-runner-exp5"},
+        metadata={},
+        created_at=created_at,
+    )
+    provenance_ref = store.save_json(
+        {
+            "provider_family": "siliconflow",
+            "entry_id": MODEL_ENTRY_ID,
+            "configured_model": PROVIDER_MODEL_ID,
+        },
+        artifact_id="exp5-provenance.json",
+        artifact_type="AIProviderCallProvenance",
+        artifact_schema_id="test.exp5.provenance",
+        artifact_schema_version="v1",
+        source={"test": "formal-runner-exp5"},
+        metadata={},
+        created_at=created_at,
+    )
+    usage_ref = store.save_json(
+        {"total_tokens": 11, "cost_estimate": 0.125},
+        artifact_id="exp5-usage.json",
+        artifact_type="AIUsage",
+        artifact_schema_id="test.exp5.usage",
+        artifact_schema_version="v1",
+        source={"test": "formal-runner-exp5"},
+        metadata={},
+        created_at=created_at,
+    )
+    expected_identity = {
+        "model_cohort_id": MODEL_COHORT_ID,
+        "model_cohort_digest": MODEL_COHORT_DIGEST,
+        "cohort_member_id": COHORT_MEMBER_ID,
+        "provider_config_id": PROVIDER_CONFIG_ID,
+        "selected_entry_id": MODEL_ENTRY_ID,
+        "provider_family": "siliconflow",
+        "provider_model_id": PROVIDER_MODEL_ID,
+        "reasoning_profile_id": "default",
+        "effective_reasoning_controls": {"enable_thinking": False},
+    }
+    record = PaperModelExecutionRecord(
+        condition_id=condition.condition_id,
+        repeat_id=condition.repeat_id,
+        run_id=f"run-{case_id}",
+        task_id=case_id,
+        unit_id=f"unit-{case_id}",
+        attempt_id=f"attempt-{case_id}",
+        expected_identity=expected_identity,
+        source_provider_config_digest="sha256:" + "5" * 64,
+        prepared_execution_config_digest="sha256:" + "6" * 64,
+        request_ref=request_ref.to_dict(),
+        provenance_ref=provenance_ref.to_dict(),
+        raw_output_ref=raw_ref.to_dict(),
+        usage_ref=usage_ref.to_dict(),
+        actual_request_identities=[
+            {
+                "schema_version": "phase7.provider_request_identity.v2",
+                "provider_family": "siliconflow",
+                "entry_id": MODEL_ENTRY_ID,
+                "configured_model": PROVIDER_MODEL_ID,
+                "requested_model": PROVIDER_MODEL_ID,
+                "reasoning_controls": {"enable_thinking": False},
+                "effective_request_controls_digest": "sha256:" + "7" * 64,
+            }
+        ],
+        actual_provider_attempts=[
+            {
+                "provider_family": "siliconflow",
+                "entry_id": MODEL_ENTRY_ID,
+                "configured_model": PROVIDER_MODEL_ID,
+                "result_kind": "succeeded",
+            }
+        ],
+        requested_model=PROVIDER_MODEL_ID,
+        resolved_model=resolved_model,
+        response_model_status="present",
+        identity_status="model_identity_mismatch",
+        mismatch_reasons=["resolved_model_mismatch"],
+        paper_eligible=False,
+        created_at=created_at,
+    )
+    model_ref = store.save_json(
+        record.to_dict(),
+        artifact_id="exp5-model-execution.json",
+        artifact_type="PaperModelExecutionRecord",
+        artifact_schema_id="tokenshare.paper_model_execution_record",
+        artifact_schema_version="v2",
+        source={"test": "formal-runner-exp5"},
+        metadata={"identity_status": record.identity_status},
+        created_at=created_at,
+    )
+    original_attempt = base.attempt_results[0]
+    attempt = replace(
+        original_attempt,
+        request_ref=request_ref.to_dict(),
+        raw_output_ref=raw_ref.to_dict(),
+        provenance_ref=provenance_ref.to_dict(),
+        usage_ref=usage_ref.to_dict(),
+        model_execution_record_ref=model_ref.to_dict(),
+    )
+    task = SimpleNamespace(
+        **{
+            **vars(base.task_result),
+            "paper_eligible": False,
+            "artifact_refs": [
+                request_ref.to_dict(),
+                raw_ref.to_dict(),
+                provenance_ref.to_dict(),
+                usage_ref.to_dict(),
+                model_ref.to_dict(),
+            ],
+        }
+    )
+    return SimpleNamespace(
+        **{
+            **vars(base),
+            "task_result": task,
+            "attempt_results": [attempt],
+        }
+    )
+
+
 def _complete_adapter_result(
     *,
     output_root: Path,
@@ -1657,6 +2129,23 @@ def _complete_adapter_result(
         eligibility_report=SimpleNamespace(paper_eligible=False),
         run_evidence={
             "protocol_runtime": {
+                "case_id": case_id,
+                "factor_position_quantile": "early",
+                "runtime_observation": {
+                    "schema_version": "tokenshare.protocol_runtime_observation.v1",
+                    "run_id": f"run-{case_id}",
+                    "runtime_started_at": "2026-07-20T00:00:00Z",
+                    "runtime_ended_at": "2026-07-20T00:00:01Z",
+                    "runtime_wall_clock_ms": 1000,
+                    "planned_ai_unit_ids": ["range_0"],
+                    "dispatched_ai_unit_ids": ["range_0"],
+                    "completed_ai_unit_ids": ["range_0"],
+                    "unscheduled_ai_unit_ids": [],
+                    "in_flight_ai_unit_ids_at_witness": [],
+                    "witness_observed_at": "2026-07-20T00:00:01Z",
+                    "worker_execution_facts": [],
+                    "observed_peak_concurrency": 1,
+                },
                 "generation_identity": {
                     "schema_version": "tokenshare.paper_runtime_generation_identity.v1",
                     "run_id": f"run-{case_id}",

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass, field, is_dataclass, replace
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from enum import Enum
 import hashlib
 import json
@@ -15,6 +15,10 @@ from typing import Any
 
 from tokenshare.executors.ai_api_config import AIAPIExecutorConfig
 from tokenshare.experiments.paper_catalog import estimated_ai_units_for_case
+from tokenshare.experiments.paper_catalog import PaperInputCatalogManifest
+from tokenshare.experiments.paper_catalog_execution_view import (
+    restore_catalog_execution_view,
+)
 from tokenshare.experiments.paper_dispatcher import (
     PaperExperimentDispatchPlan,
     dispatch_paper_case,
@@ -29,18 +33,178 @@ from tokenshare.experiments.paper_formal_callbacks import (
 )
 from tokenshare.experiments.paper_faults import PaperFaultRuntimeHooks
 from tokenshare.experiments.paper_exp2_scalability import EXP2_EXPERIMENT_ID
+from tokenshare.experiments.paper_model_policy import (
+    EXP5_COMPARABLE_REQUEST_CONTROL_FIELDS,
+    EXP5_DOMAIN_EXECUTION_CONTRACTS,
+)
 from tokenshare.experiments.paper_models import (
     PaperBudgetResult,
     PaperConditionResult,
+    PaperExperimentCondition,
     PaperStatus,
     PaperSuiteResult,
+    digest_json,
 )
 from tokenshare.storage.artifacts import ArtifactStore
-from tokenshare.local_runtime import RawOutputContext
+from tokenshare.local_runtime import (
+    NoOpRuntimeHooks,
+    ParsedCandidateContext,
+    ParsedCandidateDirective,
+    RawOutputContext,
+    WorkerTerminationPolicy,
+)
 
 
 EXP5_EXPERIMENT_ID = "exp5_real_ai_model_endpoint_comparison"
 APPROVED_ENDPOINT_BINDINGS_KEY = "__approved_endpoint_bindings__"
+
+
+class _Exp3RuntimeHookBridge(NoOpRuntimeHooks):
+    """同一 Exp3 hook 同时跨接 executor raw 点与 coordinator parsed 点。"""
+
+    def __init__(
+        self,
+        *,
+        condition: Any,
+        case_id: str,
+        fault_type: str,
+        selected_unit_ids: Sequence[str],
+        reserve_unit_ids: Sequence[str],
+        runtime_records: list[dict[str, Any]],
+    ) -> None:
+        self._condition = condition
+        self._case_id = case_id
+        self._fault_type = fault_type
+        self._selected_unit_ids = tuple(selected_unit_ids)
+        self._reserve_unit_ids = tuple(reserve_unit_ids)
+        self._runtime_records = runtime_records
+        self._runtime_hook: PaperFaultRuntimeHooks | None = None
+        self._lock = Lock()
+
+    def __call__(self, **context: Any) -> Mapping[str, Any] | None:
+        with self._lock:
+            return self._after_raw_output(**context)
+
+    def _after_raw_output(self, **context: Any) -> Mapping[str, Any] | None:
+        request = context["request"]
+        artifact_store = context["artifact_store"]
+        runtime_hook = self._ensure_runtime_hook(artifact_store)
+        submitted_at = str(context["submitted_at"])
+        lease_deadline_at = request.soft_hints.get("lease_deadline_at")
+        if self._fault_type in {"no_return", "late_submission"} and (
+            not isinstance(lease_deadline_at, str)
+            or not lease_deadline_at
+        ):
+            raise ValueError(f"{self._fault_type} requires protocol lease deadline")
+        usage = dict(context["usage_summary"])
+        before_count = len(runtime_hook.records)
+        directive = runtime_hook.after_raw_output_persisted(
+            RawOutputContext(
+                run_id=f"{self._condition.condition_id}_{self._case_id}",
+                task_id=request.task_id,
+                unit_id=request.unit_id,
+                attempt_id=request.attempt_id,
+                worker_id=str(
+                    request.allocation_decision.get(
+                        "worker_id",
+                        request.allocation_decision.get(
+                            "client_id",
+                            "formal-worker",
+                        ),
+                    )
+                ),
+                raw_output_ref=context["raw_output_ref"],
+                provenance_ref=context["provenance_ref"],
+                usage_ref=context["usage_ref"],
+                content_text=str(context["content_text"]),
+                provider=str(context["provider_family"]),
+                model=str(context["model"]),
+                entry_id=str(context["entry_id"]),
+                usage_summary={
+                    **usage,
+                    "prompt_tokens": usage.get(
+                        "prompt_tokens",
+                        usage.get("input_tokens", 0),
+                    ),
+                    "completion_tokens": usage.get(
+                        "completion_tokens",
+                        usage.get("output_tokens", 0),
+                    ),
+                },
+                submitted_at=submitted_at,
+                experiment_unit_id=self._experiment_unit_id(request),
+                lease_deadline_at=lease_deadline_at,
+            )
+        )
+        self._capture_new_records(runtime_hook, before_count)
+        if directive is None:
+            return None
+        return {
+            key: value
+            for key, value in {
+                "content_text": directive.content_text,
+                "result_kind": directive.result_kind,
+            }.items()
+            if value is not None
+        }
+
+    def after_parsed_candidate_persisted(
+        self,
+        context: ParsedCandidateContext,
+    ) -> ParsedCandidateDirective | None:
+        with self._lock:
+            if self._runtime_hook is None:
+                raise ValueError(
+                    "Exp3 parsed-candidate hook requires prior raw observation"
+                )
+            before_count = len(self._runtime_hook.records)
+            directive = self._runtime_hook.after_parsed_candidate_persisted(
+                replace(
+                    context,
+                    experiment_unit_id=(
+                        f"{self._case_id}:{context.experiment_unit_id}"
+                        if context.experiment_unit_id
+                        else None
+                    ),
+                )
+            )
+            self._capture_new_records(self._runtime_hook, before_count)
+            return directive
+
+    def _ensure_runtime_hook(
+        self,
+        artifact_store: ArtifactStore,
+    ) -> PaperFaultRuntimeHooks:
+        if not isinstance(artifact_store, ArtifactStore):
+            raise ValueError("Exp3 post-raw hook requires ArtifactStore")
+        if self._runtime_hook is None:
+            self._runtime_hook = PaperFaultRuntimeHooks(
+                artifact_store=artifact_store,
+                condition_id=self._condition.condition_id,
+                repeat_id=self._condition.repeat_id,
+                fault_type=self._fault_type,
+                seed=int(self._condition.seed),
+                selected_unit_ids=self._selected_unit_ids,
+                reserve_unit_ids=self._reserve_unit_ids,
+            )
+        return self._runtime_hook
+
+    def _experiment_unit_id(self, request: Any) -> str | None:
+        planned_ai_unit_id = request.soft_hints.get("planned_ai_unit_id")
+        return (
+            f"{self._case_id}:{planned_ai_unit_id}"
+            if isinstance(planned_ai_unit_id, str) and planned_ai_unit_id
+            else None
+        )
+
+    def _capture_new_records(
+        self,
+        runtime_hook: PaperFaultRuntimeHooks,
+        before_count: int,
+    ) -> None:
+        self._runtime_records.extend(
+            dict(record) for record in runtime_hook.records[before_count:]
+        )
 
 
 def replay_paper_formal_suite(*, output_root: str | Path) -> PaperSuiteResult:
@@ -117,6 +281,8 @@ def execute_paper_formal_suite(
         completed_task_keys = set()
         usage = _UsageTotals()
     results: list[PaperConditionResult] = []
+    baseline_lock = Lock()
+    baseline_evidence_by_key: dict[tuple[str, str], dict[str, Any]] = {}
 
     for plan, bound_items in bound_plans:
         if plan.status == "blocked":
@@ -129,11 +295,15 @@ def execute_paper_formal_suite(
                 condition=condition,
                 ai_api_configs=ai_api_configs,
             )
+            context_catalog = _execution_catalog_for_plan(
+                plan=plan,
+                catalog_manifest=catalog_manifest,
+            )
             context = PaperExecutionContext(
                 context_id=(
                     f"paper_formal_{plan.experiment_id}_{condition.condition_id}"
                 ),
-                catalog=catalog_manifest,
+                catalog=context_catalog,
                 approved_endpoint_binding=endpoint_binding,
                 request_limits=request_limits,
                 hard_limits=dict(hard_limits),
@@ -152,6 +322,8 @@ def execute_paper_formal_suite(
                     usage=usage,
                     budget=budget,
                     hard_limits=hard_limits,
+                    baseline_lock=baseline_lock,
+                    baseline_evidence_by_key=baseline_evidence_by_key,
                 ),
             )
             result = dispatch_paper_condition(
@@ -206,6 +378,26 @@ def execute_paper_formal_suite(
     # runner 结果同样属于可 replay 的 suite evidence，写入后刷新索引。
     FormalEvidenceStore(suite_root)._refresh_evidence_manifest()
     return suite_result
+
+
+def _execution_catalog_for_plan(
+    *,
+    plan: PaperExperimentDispatchPlan,
+    catalog_manifest: Any,
+) -> Any:
+    """从 plan 冻结 identity 恢复执行 view；旧 synthetic plan 保持兼容。"""
+
+    frozen = plan.catalog_execution_view
+    if frozen is None:
+        return catalog_manifest
+    if not isinstance(catalog_manifest, PaperInputCatalogManifest):
+        raise ValueError(
+            "frozen catalog execution view requires PaperInputCatalogManifest"
+        )
+    return restore_catalog_execution_view(
+        frozen,
+        catalog_manifest=catalog_manifest,
+    )
 
 
 def _validate_suite_inputs(
@@ -295,15 +487,151 @@ def _validate_suite_inputs(
         raise ValueError("budget planned experiments mismatch")
     if budget.planned_conditions != len(planned_items):
         raise ValueError("budget planned condition count mismatch")
-    if budget.planned_root_runs != sum(
-        len(selection.ordered_case_ids) for _condition, selection in planned_items
-    ):
-        raise ValueError("budget planned root run count mismatch")
-    if budget.planned_ai_units != sum(
-        selection.expected_ai_unit_count for _condition, selection in planned_items
-    ):
-        raise ValueError("budget planned AI unit count mismatch")
+    headline_root_runs_by_experiment = {
+        plan.experiment_id: sum(
+            len(selection.ordered_case_ids) for _condition, selection in items
+        )
+        for plan, items in bound_plans
+        if plan.status == "planned"
+    }
+    headline_ai_units_by_experiment = {
+        plan.experiment_id: sum(
+            selection.expected_ai_unit_count
+            for _condition, selection in items
+        )
+        for plan, items in bound_plans
+        if plan.status == "planned"
+    }
+    _validate_budget_execution_totals(
+        budget=budget,
+        planned_experiment_ids=tuple(
+            plan.experiment_id for plan in planned
+        ),
+        headline_root_runs_by_experiment=headline_root_runs_by_experiment,
+        headline_ai_units_by_experiment=headline_ai_units_by_experiment,
+    )
     return tuple(bound_plans)
+
+
+def _validate_budget_execution_totals(
+    *,
+    budget: PaperBudgetResult,
+    planned_experiment_ids: tuple[str, ...],
+    headline_root_runs_by_experiment: Mapping[str, int],
+    headline_ai_units_by_experiment: Mapping[str, int],
+) -> None:
+    """校验 headline plan 与额外支撑执行共同组成的冻结预算身份。"""
+
+    quota_preflight = budget.quota_preflight
+    commitments = (
+        quota_preflight.get("budget_commitments")
+        if isinstance(quota_preflight, Mapping)
+        else None
+    )
+    identity = (
+        commitments.get("experiment_budget_identity")
+        if isinstance(commitments, Mapping)
+        else None
+    )
+    if identity is None:
+        if budget.planned_root_runs != sum(
+            headline_root_runs_by_experiment.values()
+        ):
+            raise ValueError("budget planned root run count mismatch")
+        if budget.planned_ai_units != sum(
+            headline_ai_units_by_experiment.values()
+        ):
+            raise ValueError("budget planned AI unit count mismatch")
+        return
+    if not isinstance(identity, Mapping):
+        raise ValueError("budget experiment identity must be a mapping")
+    if (
+        identity.get("schema_version")
+        != "tokenshare.paper_experiment_budget_identity.v1"
+    ):
+        raise ValueError("unsupported budget experiment identity schema")
+
+    experiment_ids = set(planned_experiment_ids)
+
+    def require_count_map(
+        field_name: str,
+        *,
+        allow_omitted_zeroes: bool = False,
+    ) -> dict[str, int]:
+        value = identity.get(field_name)
+        if (
+            not isinstance(value, Mapping)
+            or (
+                set(value) > experiment_ids
+                if allow_omitted_zeroes
+                else set(value) != experiment_ids
+            )
+        ):
+            raise ValueError(
+                f"budget experiment identity {field_name} coverage mismatch"
+            )
+        result: dict[str, int] = (
+            {experiment_id: 0 for experiment_id in experiment_ids}
+            if allow_omitted_zeroes
+            else {}
+        )
+        for experiment_id, count in value.items():
+            if (
+                not isinstance(experiment_id, str)
+                or not isinstance(count, int)
+                or isinstance(count, bool)
+                or count < 0
+            ):
+                raise ValueError(
+                    f"budget experiment identity {field_name} is invalid"
+                )
+            result[experiment_id] = count
+        return result
+
+    frozen_headline_roots = require_count_map(
+        "headline_root_runs_by_experiment"
+    )
+    supporting_roots = require_count_map(
+        "supporting_baseline_root_runs_by_experiment",
+        allow_omitted_zeroes=True,
+    )
+    actual_roots = require_count_map(
+        "actual_scheduled_root_runs_by_experiment"
+    )
+    frozen_headline_ai_units = require_count_map(
+        "headline_ai_units_by_experiment"
+    )
+    supporting_ai_units = require_count_map(
+        "supporting_baseline_ai_units_by_experiment",
+        allow_omitted_zeroes=True,
+    )
+    first_attempt_ai_units = require_count_map(
+        "planned_first_attempt_ai_units_by_experiment"
+    )
+    if frozen_headline_roots != dict(headline_root_runs_by_experiment):
+        raise ValueError("budget headline root run identity mismatch")
+    if frozen_headline_ai_units != dict(headline_ai_units_by_experiment):
+        raise ValueError("budget headline AI unit identity mismatch")
+    if actual_roots != {
+        experiment_id: (
+            frozen_headline_roots[experiment_id]
+            + supporting_roots[experiment_id]
+        )
+        for experiment_id in planned_experiment_ids
+    }:
+        raise ValueError("budget actual scheduled root run identity mismatch")
+    if first_attempt_ai_units != {
+        experiment_id: (
+            frozen_headline_ai_units[experiment_id]
+            + supporting_ai_units[experiment_id]
+        )
+        for experiment_id in planned_experiment_ids
+    }:
+        raise ValueError("budget first-attempt AI unit identity mismatch")
+    if budget.planned_root_runs != sum(actual_roots.values()):
+        raise ValueError("budget planned root run count mismatch")
+    if budget.planned_ai_units != sum(first_attempt_ai_units.values()):
+        raise ValueError("budget planned AI unit count mismatch")
 
 
 def _suite_status(
@@ -338,11 +666,267 @@ def _suite_paper_eligible(
         return False
     if not results or any(not plan.paper_eligible_possible for plan in plans):
         return False
+    expected_condition_ids = {
+        condition.condition_id
+        for plan in plans
+        if plan.status != "blocked"
+        for condition in plan.conditions
+    }
+    if {result.condition_id for result in results} != expected_condition_ids:
+        return False
     return all(
         isinstance(result.metrics_ref, Mapping)
         and result.metrics_ref.get("paper_eligible") is True
+        and bool(result.metrics_ref.get("evidence_refs"))
+        and int(result.metrics_ref.get("task_evidence_count", 0))
+        == result.task_count
+        and int(result.metrics_ref.get("attempt_evidence_count", 0)) > 0
         for result in results
     )
+
+
+def _audit_persisted_condition_evidence(
+    *,
+    suite_root: Path,
+    experiment_id: str,
+    condition_id: str,
+    repeat_id: int,
+    expected_task_ids: Sequence[str],
+) -> dict[str, Any]:
+    """从已提交 generation 聚合 attempt→task→condition，不读取 adapter 汇总布尔值。"""
+
+    reasons: list[str] = []
+    run_root = (
+        suite_root
+        / "experiments"
+        / experiment_id
+        / "runs"
+        / condition_id
+        / str(repeat_id)
+    )
+    try:
+        tasks = FormalEvidenceStore(suite_root)._validate_run(
+            run_root,
+            experiment_id=experiment_id,
+        )
+        pointer = json.loads((run_root / "CURRENT.json").read_text(encoding="utf-8"))
+        generation_root = run_root / ".generations" / str(pointer["generation_id"])
+        attempts = _read_jsonl_records(
+            generation_root / "per_attempt_results.jsonl"
+        )
+        events = _read_jsonl_records(generation_root / "events" / "event_log.jsonl")
+        artifacts = _read_jsonl_records(
+            generation_root / "artifacts" / "artifact_index.jsonl"
+        )
+    except (KeyError, OSError, TypeError, ValueError, json.JSONDecodeError):
+        tasks, attempts, events, artifacts = [], [], [], []
+        generation_root = run_root
+        reasons.append("persisted_condition_evidence_invalid")
+
+    expected = tuple(str(task_id) for task_id in expected_task_ids)
+    actual = tuple(str(task.get("task_id")) for task in tasks)
+    if len(set(expected)) != len(expected) or set(actual) != set(expected):
+        reasons.append("condition_task_inventory_mismatch")
+    if not tasks or any(task.get("paper_eligible") is not True for task in tasks):
+        reasons.append("persisted_task_not_paper_eligible")
+    if any(task.get("record_scope") != "protocol" for task in tasks):
+        reasons.append("persisted_task_not_protocol_scoped")
+    if not attempts or any(
+        attempt.get("paper_eligible") is not True for attempt in attempts
+    ):
+        reasons.append("persisted_attempt_not_paper_eligible")
+    if any(attempt.get("record_scope") != "protocol" for attempt in attempts):
+        reasons.append("persisted_attempt_not_protocol_scoped")
+    task_ids = set(actual)
+    if not events or any(
+        event.get("task_id") not in task_ids for event in events
+    ):
+        reasons.append("persisted_event_inventory_incomplete")
+    artifact_task_ids = {
+        str(artifact.get("task_id")) for artifact in artifacts if artifact.get("task_id")
+    }
+    if not artifacts or not task_ids.issubset(artifact_task_ids):
+        reasons.append("persisted_artifact_inventory_incomplete")
+    event_ids = {
+        str(event.get("event_id"))
+        for event in events
+        if isinstance(event.get("event_id"), str) and event.get("event_id")
+    }
+    if any(
+        not _persisted_task_refs_resolve(
+            task,
+            event_ids=event_ids,
+            artifacts=artifacts,
+        )
+        for task in tasks
+    ) or any(
+        not _persisted_attempt_refs_resolve(attempt, artifacts=artifacts)
+        for attempt in attempts
+    ):
+        reasons.append("persisted_evidence_ref_unresolved")
+
+    completed = sum(
+        _status_value(task.get("root_status") or "") == "completed" for task in tasks
+    )
+    blocked = sum(
+        _status_value(task.get("root_status") or "") == "blocked" for task in tasks
+    )
+    failed = len(expected) - completed - blocked
+    evidence_refs: list[dict[str, Any]] = []
+    for relative in (
+        "per_task_results.jsonl",
+        "per_attempt_results.jsonl",
+        "events/event_log.jsonl",
+        "artifacts/artifact_index.jsonl",
+    ):
+        path = generation_root / relative
+        if not path.is_file():
+            reasons.append("persisted_condition_evidence_ref_missing")
+            continue
+        evidence_refs.append(
+            {
+                "path": path.relative_to(suite_root).as_posix(),
+                "content_hash": _sha256_bytes(path.read_bytes()),
+            }
+        )
+    stable_reasons = list(dict.fromkeys(reasons))
+    return {
+        "paper_eligible": not stable_reasons,
+        "paper_ineligibility_reasons": stable_reasons,
+        "task_evidence_count": len(tasks),
+        "attempt_evidence_count": len(attempts),
+        "completed_root_count": completed,
+        "failed_root_count": max(0, failed),
+        "blocked_root_count": blocked,
+        "provider_attempt_count": _persisted_provider_attempt_count(attempts),
+        "evidence_refs": evidence_refs,
+    }
+
+
+def _read_jsonl_records(path: Path) -> list[dict[str, Any]]:
+    if not path.is_file():
+        return []
+    return [
+        json.loads(line)
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+
+
+def _persisted_provider_attempt_count(
+    attempts: Sequence[Mapping[str, Any]],
+) -> int:
+    """只统计 protocol attempt 中实际持久化的 provider 调用 inventory。"""
+
+    count = 0
+    for attempt in attempts:
+        if attempt.get("record_scope") != "protocol":
+            continue
+        provider_attempts = attempt.get("provider_attempts")
+        if isinstance(provider_attempts, Sequence) and not isinstance(
+            provider_attempts,
+            (str, bytes, bytearray),
+        ):
+            count += len(provider_attempts)
+            continue
+        persisted_count = attempt.get("provider_attempt_count")
+        if (
+            isinstance(persisted_count, int)
+            and not isinstance(persisted_count, bool)
+            and persisted_count > 0
+        ):
+            count += persisted_count
+            continue
+        provider_attempt_index = attempt.get("provider_attempt_index")
+        if (
+            isinstance(provider_attempt_index, int)
+            and not isinstance(provider_attempt_index, bool)
+            and provider_attempt_index > 0
+            and isinstance(attempt.get("provider"), str)
+            and bool(attempt.get("provider"))
+        ):
+            count += 1
+    return count
+
+
+def _persisted_task_refs_resolve(
+    task: Mapping[str, Any],
+    *,
+    event_ids: set[str],
+    artifacts: Sequence[Mapping[str, Any]],
+) -> bool:
+    event_refs = task.get("event_refs")
+    artifact_refs = task.get("evidence_artifact_refs") or task.get("artifact_refs")
+    if (
+        not isinstance(event_refs, Sequence)
+        or isinstance(event_refs, (str, bytes))
+        or not event_refs
+        or not isinstance(artifact_refs, Sequence)
+        or isinstance(artifact_refs, (str, bytes))
+        or not artifact_refs
+    ):
+        return False
+    return all(
+        isinstance(ref, Mapping) and ref.get("event_id") in event_ids
+        for ref in event_refs
+    ) and all(
+        _persisted_artifact_ref_resolves(ref, artifacts)
+        for ref in artifact_refs
+    )
+
+
+def _persisted_attempt_refs_resolve(
+    attempt: Mapping[str, Any],
+    *,
+    artifacts: Sequence[Mapping[str, Any]],
+) -> bool:
+    field_names = [
+        "request_ref",
+        "provenance_ref",
+        "usage_ref",
+        "model_execution_record_ref",
+    ]
+    status = _status_value(attempt.get("attempt_status") or "")
+    if status in {
+        "succeeded",
+        "parse_failed",
+        "verification_rejected",
+        "checker_rejected",
+        "late_rejected",
+        "model_identity_mismatch",
+    }:
+        field_names.append("raw_output_ref")
+    if status == "parse_failed":
+        field_names.append("parse_failure_ref")
+    return all(
+        _persisted_artifact_ref_resolves(attempt.get(field_name), artifacts)
+        for field_name in field_names
+    )
+
+
+def _persisted_artifact_ref_resolves(
+    value: Any,
+    artifacts: Sequence[Mapping[str, Any]],
+) -> bool:
+    if not isinstance(value, Mapping) or not value:
+        return False
+    for artifact in artifacts:
+        if value.get("artifact_id") is not None and (
+            artifact.get("artifact_id") != value.get("artifact_id")
+        ):
+            continue
+        if value.get("path") is not None and artifact.get("path") != value.get("path"):
+            continue
+        if value.get("content_hash") is not None and (
+            artifact.get("content_hash") != value.get("content_hash")
+        ):
+            continue
+        if any(
+            value.get(field_name) is not None
+            for field_name in ("artifact_id", "path", "uri")
+        ):
+            return True
+    return False
 
 
 def _is_offline_capturing_transport(transport: Any) -> bool:
@@ -494,11 +1078,47 @@ def _validate_exp5_binding(
     if member_plan.get("cohort_member_id") != condition.cohort_member_id:
         raise ValueError("Exp5 approved member ID mismatch")
     member_controls = member_plan.get("request_controls")
-    if member_controls is not None:
-        if not isinstance(member_controls, Mapping):
-            raise ValueError("Exp5 approved member request controls are invalid")
-        if dict(member_controls) != dict(derived_binding["request_controls"]):
-            raise ValueError("Exp5 approved member request controls mismatch")
+    if not isinstance(member_controls, Mapping):
+        raise ValueError("Exp5 approved member request controls are invalid")
+    comparable = member_controls.get("comparable")
+    if not isinstance(comparable, Mapping):
+        raise ValueError("Exp5 approved member comparable controls are missing")
+    expected_comparable = {
+        field_name: derived_binding["request_controls"].get(field_name)
+        for field_name in EXP5_COMPARABLE_REQUEST_CONTROL_FIELDS
+    }
+    expected_comparable["domain_contracts"] = {
+        domain: dict(contract)
+        for domain, contract in EXP5_DOMAIN_EXECUTION_CONTRACTS.items()
+    }
+    if dict(comparable) != expected_comparable:
+        raise ValueError("Exp5 approved member request controls mismatch")
+    if member_controls.get("comparable_digest") != digest_json(
+        expected_comparable
+    ):
+        raise ValueError("Exp5 approved member request controls digest mismatch")
+    reasoning_controls = member_controls.get("provider_specific_reasoning")
+    if not isinstance(reasoning_controls, Mapping):
+        raise ValueError("Exp5 approved member reasoning controls are missing")
+    expected_reasoning_controls = {
+        field_name: derived_binding["request_controls"][field_name]
+        for field_name in ("enable_thinking", "reasoning_effort")
+        if field_name in derived_binding["request_controls"]
+    }
+    if dict(reasoning_controls) != expected_reasoning_controls:
+        raise ValueError("Exp5 approved member reasoning controls mismatch")
+    if member_controls.get("provider_specific_reasoning_digest") != digest_json(
+        expected_reasoning_controls
+    ):
+        raise ValueError("Exp5 approved member reasoning digest mismatch")
+    snapshot = approved_binding.get("request_controls_snapshot")
+    if (
+        not isinstance(snapshot, Mapping)
+        or dict(snapshot) != expected_comparable
+        or approved_binding.get("request_controls_snapshot_digest")
+        != digest_json(expected_comparable)
+    ):
+        raise ValueError("Exp5 approved cohort request controls snapshot mismatch")
     for field_name in (
         "provider_config_id",
         "selected_entry_id",
@@ -528,6 +1148,8 @@ class _RootExecutionOutcome:
     provider_error_kind: str | None = None
     error: Exception | None = None
     runtime_records: tuple[dict[str, Any], ...] = ()
+    experiment_records: tuple[dict[str, Any], ...] = ()
+    matched_baseline_evidence_ref: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -544,6 +1166,12 @@ class _FormalConditionExecutionCallback:
     budget: PaperBudgetResult
     hard_limits: Mapping[str, Any]
     usage_lock: Lock = field(default_factory=Lock, compare=False, repr=False)
+    baseline_lock: Lock = field(default_factory=Lock, compare=False, repr=False)
+    baseline_evidence_by_key: dict[tuple[str, str], dict[str, Any]] = field(
+        default_factory=dict,
+        compare=False,
+        repr=False,
+    )
 
     def __call__(self, **kwargs: Any) -> PaperConditionResult:
         condition = kwargs["condition"]
@@ -556,7 +1184,6 @@ class _FormalConditionExecutionCallback:
         blocked = 0
         failed = 0
         provider_attempts = 0
-        adapter_eligible: list[bool] = []
         budget_exhausted = False
         pending_case_ids = tuple(
             case_id
@@ -572,6 +1199,7 @@ class _FormalConditionExecutionCallback:
             worker_count=worker_count,
             execute_case=lambda case_id, worker_id: self._dispatch_root_case(
                 condition=condition,
+                selection=selection,
                 case_id=case_id,
                 case=cases_by_id.get(case_id),
                 worker_id=worker_id,
@@ -626,7 +1254,6 @@ class _FormalConditionExecutionCallback:
             else:
                 failed += 1
             provider_attempts += outcome.provider_attempt_count
-            adapter_eligible.append(outcome.paper_eligible)
             self._checkpoint_adapter_result(
                 condition=condition,
                 task_id=case_id,
@@ -638,6 +1265,17 @@ class _FormalConditionExecutionCallback:
 
         self._publish_compatibility_view(condition=condition)
 
+        persisted = _audit_persisted_condition_evidence(
+            suite_root=self.evidence_store.output_root,
+            experiment_id=condition.experiment_id,
+            condition_id=condition.condition_id,
+            repeat_id=condition.repeat_id,
+            expected_task_ids=selection.ordered_case_ids,
+        )
+        completed = int(persisted["completed_root_count"])
+        failed = int(persisted["failed_root_count"])
+        blocked = int(persisted["blocked_root_count"])
+        provider_attempts = int(persisted["provider_attempt_count"])
         status = (
             PaperStatus.BUDGET_EXHAUSTED
             if budget_exhausted
@@ -657,7 +1295,13 @@ class _FormalConditionExecutionCallback:
             blocked_root_count=blocked,
             provider_attempt_count=provider_attempts,
             metrics_ref={
-                "paper_eligible": bool(adapter_eligible) and all(adapter_eligible),
+                "paper_eligible": persisted["paper_eligible"],
+                "paper_ineligibility_reasons": persisted[
+                    "paper_ineligibility_reasons"
+                ],
+                "task_evidence_count": persisted["task_evidence_count"],
+                "attempt_evidence_count": persisted["attempt_evidence_count"],
+                "evidence_refs": persisted["evidence_refs"],
                 **strategy.metrics,
             },
         )
@@ -666,6 +1310,7 @@ class _FormalConditionExecutionCallback:
         self,
         *,
         condition: Any,
+        selection: Any,
         case_id: str,
         case: Any,
         worker_id: str,
@@ -673,6 +1318,24 @@ class _FormalConditionExecutionCallback:
     ) -> "_RootExecutionOutcome":
         if case is None:
             raise ValueError("frozen selection case is absent from catalog")
+        case = _case_with_selection_split_profile(case, selection)
+        try:
+            matched_baseline_evidence_ref = (
+                self._ensure_exp3_worker_death_baseline(
+                    condition=condition,
+                    case_id=case_id,
+                    case=case,
+                    callback_kwargs=callback_kwargs,
+                )
+            )
+        except (RuntimeError, OSError, TimeoutError, ValueError) as error:
+            return _RootExecutionOutcome(
+                case_id=case_id,
+                root_status="failed",
+                adapter_root=self.output_root,
+                worker_id=worker_id,
+                error=error,
+            )
         reservation = (
             _root_budget_reservation(
                 case=case,
@@ -695,12 +1358,12 @@ class _FormalConditionExecutionCallback:
                     worker_id=worker_id,
                 )
         adapter_root = self.output_root / "runs" / condition.condition_id / case_id
-        runtime_records: list[dict[str, Any]] = []
+        experiment_records: list[dict[str, Any]] = []
         post_raw_output_hook = self._exp3_post_raw_output_hook(
             condition=condition,
             case_id=case_id,
             callback_kwargs=callback_kwargs,
-            runtime_records=runtime_records,
+            runtime_records=experiment_records,
         )
         ablation_mode = None
         if condition.experiment_id == "exp4_real_ai_protocol_ablation":
@@ -709,6 +1372,11 @@ class _FormalConditionExecutionCallback:
                 _optional_field(mode_config, "ablation_mode")
                 or condition.ablation_mode
             )
+        worker_termination_policy = self._exp3_worker_termination_policy(
+            condition=condition,
+            case_id=case_id,
+            callback_kwargs=callback_kwargs,
+        )
         try:
             adapter_result = dispatch_paper_case(
                 case=case,
@@ -722,6 +1390,7 @@ class _FormalConditionExecutionCallback:
                 timeout_seconds=int(self.request_limits["timeout_seconds"]),
                 post_raw_output_hook=post_raw_output_hook,
                 ablation_mode=ablation_mode,
+                worker_termination_policy=worker_termination_policy,
             )
         except (RuntimeError, OSError, TimeoutError) as error:
             with self.usage_lock:
@@ -775,8 +1444,201 @@ class _FormalConditionExecutionCallback:
                 ),
                 None,
             ),
-            runtime_records=tuple(runtime_records),
+            experiment_records=tuple(experiment_records),
+            matched_baseline_evidence_ref=matched_baseline_evidence_ref,
         )
+
+    def _ensure_exp3_worker_death_baseline(
+        self,
+        *,
+        condition: Any,
+        case_id: str,
+        case: Mapping[str, Any],
+        callback_kwargs: Mapping[str, Any],
+    ) -> dict[str, Any] | None:
+        if condition.experiment_id != "exp3_real_ai_fault_recovery":
+            return None
+        execution_manifest = callback_kwargs.get("execution_manifest")
+        if not isinstance(execution_manifest, Mapping):
+            return None
+        if not isinstance(execution_manifest.get("worker_death_manifest"), Mapping):
+            return None
+        baseline_manifest = _required_mapping(
+            execution_manifest.get("matched_baseline"),
+            "Exp3 worker-death matched_baseline",
+        )
+        if (
+            baseline_manifest.get("source_kind") != "dedicated_worker_death"
+            or baseline_manifest.get("additional_execution_required") is not True
+        ):
+            raise ValueError(
+                "worker-death condition requires a dedicated no-kill baseline"
+            )
+        baseline_condition = _paper_condition_from_manifest(baseline_manifest)
+        _validate_worker_death_baseline_identity(
+            fault_condition=condition,
+            baseline_condition=baseline_condition,
+            baseline_manifest=baseline_manifest,
+            request_limits=self.request_limits,
+        )
+        cache_key = (baseline_condition.condition_id, case_id)
+        baseline_root = (
+            self.output_root
+            / "supporting_baselines"
+            / baseline_condition.condition_id
+            / case_id
+        )
+        with self.baseline_lock:
+            cached = self.baseline_evidence_by_key.get(cache_key)
+            if cached is not None:
+                _validate_baseline_evidence_ref(
+                    suite_root=self.output_root,
+                    reference=cached,
+                    expected_condition_id=baseline_condition.condition_id,
+                    expected_case_id=case_id,
+                )
+                return dict(cached)
+            evidence_path = baseline_root / "baseline_evidence.json"
+            if evidence_path.is_file():
+                existing_reference = {
+                    "path": evidence_path.relative_to(
+                        self.output_root
+                    ).as_posix(),
+                    "content_hash": _sha256_bytes(evidence_path.read_bytes()),
+                    "condition_id": baseline_condition.condition_id,
+                    "condition_digest": baseline_condition.condition_digest,
+                    "case_id": case_id,
+                }
+                existing_body = _validate_baseline_evidence_ref(
+                    suite_root=self.output_root,
+                    reference=existing_reference,
+                    expected_condition_id=baseline_condition.condition_id,
+                    expected_case_id=case_id,
+                )
+                if (
+                    existing_body.get("condition_digest")
+                    != baseline_condition.condition_digest
+                    or existing_body.get("repeat_id")
+                    != baseline_condition.repeat_id
+                    or existing_body.get("seed") != baseline_condition.seed
+                    or existing_body.get("worker_count")
+                    != baseline_condition.worker_count
+                    or existing_body.get("request_limits")
+                    != dict(self.request_limits)
+                ):
+                    raise ValueError(
+                        "existing worker-death baseline evidence identity mismatch"
+                    )
+                self.baseline_evidence_by_key[cache_key] = dict(
+                    existing_reference
+                )
+                return existing_reference
+
+            reservation = (
+                _root_budget_reservation(
+                    case=case,
+                    request_limits=self.request_limits,
+                    budget=self.budget,
+                )
+                if _has_resource_hard_limit(self.hard_limits)
+                else _RootBudgetReservation(0, 0, 0.0)
+            )
+            with self.usage_lock:
+                if not _reserve_hard_limit_capacity(
+                    usage=self.usage,
+                    reservation=reservation,
+                    hard_limits=self.hard_limits,
+                ):
+                    raise RuntimeError(
+                        "dedicated worker-death baseline exceeds hard limits"
+                    )
+            try:
+                adapter_result = dispatch_paper_case(
+                    case=case,
+                    condition=baseline_condition,
+                    output_root=baseline_root.as_posix(),
+                    transport=self.transport,
+                    real_transport=self.real_transport,
+                    ai_api_config=self.config,
+                    entry_id=baseline_condition.model_entry_id,
+                    max_tokens=int(self.request_limits["max_tokens"]),
+                    timeout_seconds=int(self.request_limits["timeout_seconds"]),
+                    post_raw_output_hook=None,
+                    ablation_mode=None,
+                    worker_termination_policy=None,
+                )
+            except Exception:
+                with self.usage_lock:
+                    _settle_hard_limit_reservation(
+                        usage=self.usage,
+                        reservation=reservation,
+                    )
+                raise
+            task = _required_field(adapter_result, "task_result")
+            attempts = _sequence_field(
+                adapter_result,
+                "attempt_results",
+                "attempts",
+            )
+            events = _sequence_field(adapter_result, "event_records")
+            if (
+                _status_value(_required_field(task, "root_status")) != "completed"
+                or not attempts
+                or not events
+            ):
+                with self.usage_lock:
+                    _settle_hard_limit_reservation(
+                        usage=self.usage,
+                        reservation=reservation,
+                    )
+                raise ValueError(
+                    "dedicated worker-death baseline evidence is incomplete"
+                )
+            provider_attempt_count = int(
+                _required_field(task, "provider_attempt_count")
+            )
+            total_tokens = int(_optional_field(task, "total_tokens") or 0)
+            total_cost_estimate = float(
+                _optional_field(task, "cost_estimate") or 0.0
+            )
+            with self.usage_lock:
+                _settle_hard_limit_reservation(
+                    usage=self.usage,
+                    reservation=reservation,
+                    provider_attempt_count=provider_attempt_count,
+                    total_tokens=total_tokens,
+                    total_cost_estimate=total_cost_estimate,
+                )
+            evidence_body = {
+                "schema_version": "tokenshare.paper_exp3_baseline_evidence.v1",
+                "condition_id": baseline_condition.condition_id,
+                "condition_digest": baseline_condition.condition_digest,
+                "condition": baseline_condition.to_dict(),
+                "case_id": case_id,
+                "repeat_id": baseline_condition.repeat_id,
+                "seed": baseline_condition.seed,
+                "worker_count": baseline_condition.worker_count,
+                "request_limits": dict(self.request_limits),
+                "task_result": _as_json(task),
+                "attempt_results": _as_json(attempts),
+                "event_records": _as_json(events),
+                "eligibility_report": _as_json(
+                    _optional_field(adapter_result, "eligibility_report")
+                ),
+                "run_evidence": _as_json(
+                    _optional_field(adapter_result, "run_evidence")
+                ),
+            }
+            _write_json(evidence_path, evidence_body)
+            reference = {
+                "path": evidence_path.relative_to(self.output_root).as_posix(),
+                "content_hash": _sha256_bytes(evidence_path.read_bytes()),
+                "condition_id": baseline_condition.condition_id,
+                "condition_digest": baseline_condition.condition_digest,
+                "case_id": case_id,
+            }
+            self.baseline_evidence_by_key[cache_key] = dict(reference)
+            return reference
 
     def _apply_experiment_runtime(
         self,
@@ -827,7 +1689,7 @@ class _FormalConditionExecutionCallback:
         callback_kwargs: Mapping[str, Any],
         runtime_records: list[dict[str, Any]],
     ) -> Any | None:
-        """把 executor 的 post-raw boundary 适配到稳定 runtime hook。"""
+        """构造同时覆盖 raw 与 parsed-candidate 边界的稳定 runtime hook。"""
 
         if condition.experiment_id != "exp3_real_ai_fault_recovery":
             return None
@@ -841,84 +1703,69 @@ class _FormalConditionExecutionCallback:
             target_manifest.get("selected_target_ai_unit_ids", ()),
             "selected_target_ai_unit_ids",
         )
+        reserve = _string_sequence(
+            target_manifest.get("reserve_target_ai_unit_ids", ()),
+            "reserve_target_ai_unit_ids",
+        )
         fault_type = str(target_manifest.get("fault_type") or condition.fault_type)
-        runtime_hook: PaperFaultRuntimeHooks | None = None
+        return _Exp3RuntimeHookBridge(
+            condition=condition,
+            case_id=case_id,
+            fault_type=fault_type,
+            selected_unit_ids=selected,
+            reserve_unit_ids=reserve,
+            runtime_records=runtime_records,
+        )
 
-        def hook(**context: Any) -> Mapping[str, Any] | None:
-            nonlocal runtime_hook
-            request = context["request"]
-            artifact_store = context["artifact_store"]
-            if not isinstance(artifact_store, ArtifactStore):
-                raise ValueError("Exp3 post-raw hook requires ArtifactStore")
-            if runtime_hook is None:
-                runtime_hook = PaperFaultRuntimeHooks(
-                    artifact_store=artifact_store,
-                    condition_id=condition.condition_id,
-                    repeat_id=condition.repeat_id,
-                    fault_type=fault_type,
-                    seed=int(condition.seed),
-                    selected_unit_ids=selected,
-                )
-            submitted_at = str(context["submitted_at"])
-            lease_deadline_at = None
-            if fault_type == "late_submission":
-                submitted = datetime.fromisoformat(
-                    submitted_at.replace("Z", "+00:00")
-                )
-                lease_deadline_at = (
-                    submitted - timedelta(seconds=1)
-                ).isoformat().replace("+00:00", "Z")
-            before_count = len(runtime_hook.records)
-            usage = dict(context["usage_summary"])
-            directive = runtime_hook.after_raw_output_persisted(
-                RawOutputContext(
-                    run_id=f"{condition.condition_id}_{case_id}",
-                    task_id=request.task_id,
-                    unit_id=request.unit_id,
-                    attempt_id=request.attempt_id,
-                    worker_id=str(
-                        request.allocation_decision.get(
-                            "worker_id",
-                            request.allocation_decision.get(
-                                "client_id", "formal-worker"
-                            ),
-                        )
-                    ),
-                    raw_output_ref=context["raw_output_ref"],
-                    provenance_ref=context["provenance_ref"],
-                    usage_ref=context["usage_ref"],
-                    content_text=str(context["content_text"]),
-                    provider=str(context["provider_family"]),
-                    model=str(context["model"]),
-                    entry_id=str(context["entry_id"]),
-                    usage_summary={
-                        **usage,
-                        "prompt_tokens": usage.get(
-                            "prompt_tokens", usage.get("input_tokens", 0)
-                        ),
-                        "completion_tokens": usage.get(
-                            "completion_tokens", usage.get("output_tokens", 0)
-                        ),
-                    },
-                    submitted_at=submitted_at,
-                    lease_deadline_at=lease_deadline_at,
-                )
+    def _exp3_worker_termination_policy(
+        self,
+        *,
+        condition: Any,
+        case_id: str,
+        callback_kwargs: Mapping[str, Any],
+    ) -> WorkerTerminationPolicy | None:
+        if condition.experiment_id != "exp3_real_ai_fault_recovery":
+            return None
+        manifest = callback_kwargs.get("execution_manifest")
+        if not isinstance(manifest, Mapping):
+            return None
+        worker_manifest = manifest.get("worker_death_manifest")
+        if not isinstance(worker_manifest, Mapping):
+            return None
+        targets_by_case = _required_mapping(
+            worker_manifest.get("selected_target_ai_unit_ids_by_case"),
+            "selected_target_ai_unit_ids_by_case",
+        )
+        frozen_targets = _string_sequence(
+            targets_by_case.get(case_id),
+            f"selected worker death targets for {case_id}",
+        )
+        prefix = f"{case_id}:"
+        planned_targets = tuple(
+            target[len(prefix) :] if target.startswith(prefix) else target
+            for target in frozen_targets
+        )
+        expected_count = int(worker_manifest["dead_worker_count_target"])
+        if not planned_targets or len(planned_targets) > expected_count:
+            raise ValueError(
+                "worker death planned targets do not fit manifest condition"
             )
-            runtime_records.extend(
-                dict(record) for record in runtime_hook.records[before_count:]
-            )
-            if directive is None:
-                return None
-            return {
-                key: value
-                for key, value in {
-                    "content_text": directive.content_text,
-                    "result_kind": directive.result_kind,
-                }.items()
-                if value is not None
-            }
-
-        return hook
+        progress = int(worker_manifest["kill_progress_target_percent"])
+        return WorkerTerminationPolicy(
+            target_planned_ai_unit_ids=planned_targets,
+            termination_count_target=expected_count,
+            kill_point=f"progress_{progress}",
+            total_planned_ai_unit_count=int(
+                _required_mapping(
+                    worker_manifest.get("planned_ai_unit_count_by_case"),
+                    "planned_ai_unit_count_by_case",
+                )[case_id]
+            ),
+            process_timeout_seconds=max(
+                30.0,
+                float(self.request_limits["timeout_seconds"]) + 30.0,
+            ),
+        )
 
     def _apply_exp3_rate_fault(
         self,
@@ -941,8 +1788,15 @@ class _FormalConditionExecutionCallback:
                 "selected_target_ai_unit_ids",
             )
         )
+        reserve_unit_ids = set(
+            _string_sequence(
+                target_manifest.get("reserve_target_ai_unit_ids", ()),
+                "reserve_target_ai_unit_ids",
+            )
+        )
         if not selected_unit_ids:
             return outcome
+        candidate_target_ids = selected_unit_ids | reserve_unit_ids
         attempts = _sequence_field(
             outcome.adapter_result,
             "attempt_results",
@@ -950,18 +1804,33 @@ class _FormalConditionExecutionCallback:
         )
         runtime_faults = tuple(
             dict(record)
-            for record in outcome.runtime_records
-            if str(record.get("unit_id")) in selected_unit_ids
+            for record in outcome.experiment_records
+            if str(record.get("selected_target_ai_unit_id"))
+            in candidate_target_ids
+            and record.get("applicability_status", "injected") == "injected"
+        )
+        not_applicable_records = tuple(
+            dict(record)
+            for record in outcome.experiment_records
+            if str(record.get("selected_target_ai_unit_id"))
+            in candidate_target_ids
+            and record.get("applicability_status") == "not_applicable"
         )
         fault_attempt_ids = {
             str(record.get("attempt_id"))
             for record in runtime_faults
             if record.get("attempt_id") is not None
         }
+        faulted_protocol_unit_ids = {
+            str(record.get("unit_id"))
+            for record in runtime_faults
+            if record.get("unit_id") is not None
+        }
         replacement_attempts = tuple(
             attempt
             for attempt in attempts
-            if str(_required_field(attempt, "unit_id")) in selected_unit_ids
+            if str(_required_field(attempt, "unit_id"))
+            in faulted_protocol_unit_ids
             and str(_required_field(attempt, "attempt_id")) not in fault_attempt_ids
         )
         approved_identity = {
@@ -973,6 +1842,28 @@ class _FormalConditionExecutionCallback:
             _validate_runtime_attempt_identity(attempt, approved_identity)
         task_body = _as_json(outcome.task)
         task_body["fault_injected"] = bool(runtime_faults)
+        task_body["fault_applicability"] = {
+            "candidate_target_count": int(
+                target_manifest.get(
+                    "candidate_target_count",
+                    len(candidate_target_ids),
+                )
+            ),
+            "selected_target_count": int(
+                target_manifest.get(
+                    "selected_target_count",
+                    len(selected_unit_ids),
+                )
+            ),
+            "eligible_target_count": len(runtime_faults),
+            "injected_target_count": len(runtime_faults),
+            "not_applicable_target_count": len(not_applicable_records),
+            "injection_denominator": len(runtime_faults),
+            "denominator_kind": "eligible_parsed_candidates",
+        }
+        task_body["fault_applicability_records"] = list(
+            not_applicable_records
+        )
         task_body["recovered_fault_target_count"] = len(
             {
                 str(_required_field(attempt, "unit_id"))
@@ -991,6 +1882,9 @@ class _FormalConditionExecutionCallback:
                 "event_type": "EXPERIMENT_FAULT_OBSERVED",
                 "condition_id": condition.condition_id,
                 "unit_id": record.get("unit_id"),
+                "selected_target_ai_unit_id": record.get(
+                    "selected_target_ai_unit_id"
+                ),
                 "attempt_id": record.get("attempt_id"),
                 "fault_type": record.get("fault_type"),
                 "protocol_event_refs": list(protocol_event_refs),
@@ -1052,11 +1946,15 @@ class _FormalConditionExecutionCallback:
             or _optional_field(item, "schema_version")
             == "tokenshare.paper_worker_death.v1"
         )
-        dead_attempt_units = {
-            str(_required_field(attempt, "unit_id"))
+        dead_attempts = tuple(
+            attempt
             for attempt in attempts
             if _status_value(_optional_field(attempt, "attempt_status") or "")
             == "worker_died"
+        )
+        dead_attempt_units = {
+            str(_required_field(attempt, "unit_id"))
+            for attempt in dead_attempts
         }
         recovered_units = {
             str(_required_field(attempt, "unit_id"))
@@ -1065,33 +1963,67 @@ class _FormalConditionExecutionCallback:
             == "succeeded"
             and str(_required_field(attempt, "unit_id")) in dead_attempt_units
         }
+        attempt_count_by_dead_unit = {
+            unit_id: sum(
+                1
+                for attempt in attempts
+                if str(_required_field(attempt, "unit_id")) == unit_id
+            )
+            for unit_id in dead_attempt_units
+        }
+        replacement_process_count = sum(
+            max(0, count - 1)
+            for count in attempt_count_by_dead_unit.values()
+        )
         target_count = int(worker_manifest["dead_worker_count_target"])
-        evidence_complete = len(faults) >= target_count and len(recovered_units) >= target_count
+        coordinator_survived = bool(faults) and all(
+            _optional_field(
+                _required_mapping(
+                    _optional_field(record, "coordinator"),
+                    "worker death coordinator evidence",
+                ),
+                "survived",
+            )
+            is True
+            for record in faults
+        )
+        evidence_complete = (
+            len(faults) == target_count
+            and len(dead_attempts) == target_count
+            and recovered_units == dead_attempt_units
+            and replacement_process_count >= target_count
+            and coordinator_survived
+        )
         task_body = _as_json(outcome.task)
         task_body.update(
             {
+                "dead_worker_count_target": target_count,
+                "kill_progress_target_percent": int(
+                    worker_manifest["kill_progress_target_percent"]
+                ),
                 "worker_death_count": len(faults),
-                "worker_replacement_count": len(recovered_units),
-                "coordinator_survived": evidence_complete
-                and outcome.root_status == "completed",
+                "worker_replacement_count": replacement_process_count,
+                "coordinator_survived": coordinator_survived,
                 "worker_death_evidence_complete": evidence_complete,
-                "matched_baseline_provider_attempt_count": (
-                    outcome.provider_attempt_count
-                ),
-                "matched_baseline_total_tokens": outcome.total_tokens,
-                "matched_baseline_cost_estimate": outcome.cost_estimate,
-                "matched_baseline_provider_latency_ms": (
-                    outcome.provider_latency_ms
-                ),
-                "matched_baseline_wall_clock_ms": float(
-                    _optional_field(outcome.task, "wall_clock_ms") or 0.0
-                ),
             }
         )
-        if isinstance(manifest.get("matched_baseline"), Mapping):
-            task_body["matched_baseline"] = _as_json(
-                manifest["matched_baseline"]
+        baseline_manifest = _required_mapping(
+            manifest.get("matched_baseline"),
+            "Exp3 worker-death matched_baseline",
+        )
+        baseline_ref = outcome.matched_baseline_evidence_ref
+        if baseline_ref is None:
+            raise ValueError(
+                "worker-death result is missing dedicated baseline evidence"
             )
+        if baseline_ref.get("condition_id") != baseline_manifest.get(
+            "condition_id"
+        ):
+            raise ValueError("worker-death baseline reference identity mismatch")
+        task_body["matched_baseline_condition_id"] = str(
+            baseline_manifest["condition_id"]
+        )
+        task_body["matched_baseline_evidence_ref"] = dict(baseline_ref)
         adapter_result = _adapter_result_with(
             outcome.adapter_result,
             task_result=task_body,
@@ -1181,7 +2113,63 @@ class _FormalConditionExecutionCallback:
                 ],
             }
         )
-        task_body["ablation_runtime"] = _as_json(runtime or {})
+        runtime_body = _as_json(runtime or {})
+        if not isinstance(runtime_body, Mapping):
+            runtime_body = {}
+        hook_observations = [
+            {**dict(item), "ablation_mode": strategy.mode}
+            for item in runtime_body.get("hook_observations", ())
+            if isinstance(item, Mapping)
+        ]
+        target_mechanism = {
+            "NO_VERIFICATION": "verification",
+            "NO_PARSER_POLICY": "parser_policy",
+            "NO_REQUEUE": "requeue",
+            "NO_MERGE_GATE": "merge_gate",
+        }.get(strategy.mode)
+        target_observed = any(
+            item.get("disabled_mechanism") == target_mechanism
+            for item in hook_observations
+        )
+        if (
+            target_mechanism is not None
+            and not target_observed
+            and strategy.metrics.get("applicable") is False
+        ):
+            hook_observations.append(
+                {
+                    "event_type": "EXPERIMENT_ABLATION_NOT_APPLICABLE",
+                    "ablation_mode": strategy.mode,
+                    "disabled_mechanism": target_mechanism,
+                    "applicability": "not_applicable",
+                    "not_applicable_reason": "target_lifecycle_boundary_not_reached",
+                    "protocol_event_refs": list(
+                        observation["protocol_event_refs"]
+                    ),
+                    "artifact_refs": list(observation["artifact_refs"]),
+                    "hook_input": {
+                        key: value
+                        for key, value in observation.items()
+                        if key
+                        not in {"protocol_event_refs", "artifact_refs"}
+                    },
+                    "hook_result": {"applicable": False},
+                }
+            )
+        runtime_body = {
+            **dict(runtime_body),
+            "condition_id": condition.condition_id,
+            "case_id": outcome.case_id,
+            "repeat_id": condition.repeat_id,
+            "mode": strategy.mode,
+            "attempt_observations": [
+                {**dict(item), "ablation_mode": strategy.mode}
+                for item in runtime_body.get("attempt_observations", ())
+                if isinstance(item, Mapping)
+            ],
+            "hook_observations": hook_observations,
+        }
+        task_body["ablation_runtime"] = runtime_body
         adapter_result = _adapter_result_with(
             outcome.adapter_result,
             task_result=task_body,
@@ -1214,6 +2202,12 @@ class _FormalConditionExecutionCallback:
             "attempt_results",
             "attempts",
         )
+        task_body = _record_with_context(
+            outcome.task,
+            condition=condition,
+            task_id=outcome.case_id,
+        )
+        task_body.setdefault("paper_eligible", outcome.paper_eligible)
         strategy = run_exp5_identity_strategy(
             attempts=attempts,
             approved_identity={
@@ -1223,16 +2217,25 @@ class _FormalConditionExecutionCallback:
             },
             condition_id=condition.condition_id,
             cohort_member_id=str(condition.cohort_member_id),
+            adapter_root=outcome.adapter_root,
+            task=task_body,
+            transport_kind=("ai_api" if self.real_transport else "capturing"),
+            model_policy=str(condition.model_policy),
+            pilot_only=False,
         )
+        identity_status_by_attempt = strategy.metrics[
+            "identity_status_by_attempt"
+        ]
         enriched_attempts = tuple(
             {
                 **_as_json(attempt),
                 "cohort_member_id": condition.cohort_member_id,
-                "model_identity_audit": "fixed_entry_match",
+                "model_identity_audit": identity_status_by_attempt[
+                    str(_required_field(attempt, "attempt_id"))
+                ],
             }
             for attempt in attempts
         )
-        task_body = _as_json(outcome.task)
         task_body["model_execution_records"] = list(
             strategy.model_execution_records
         )
@@ -1258,7 +2261,7 @@ class _FormalConditionExecutionCallback:
         adapter_result: Any,
         adapter_root: Path,
         extra_events: Sequence[Mapping[str, Any]] = (),
-    ) -> None:
+    ) -> bool:
         task_body = _record_with_context(
             task,
             condition=condition,
@@ -1278,10 +2281,29 @@ class _FormalConditionExecutionCallback:
         )
         if isinstance(generation_identity, Mapping):
             task_body["runtime_generation_identity"] = dict(generation_identity)
+        runtime_observation = (
+            protocol_runtime.get("runtime_observation")
+            if protocol_runtime is not None
+            else None
+        )
+        if isinstance(runtime_observation, Mapping):
+            task_body["runtime_observation"] = dict(runtime_observation)
+        if protocol_runtime is not None:
+            for field_name in (
+                "case_id",
+                "factor_position_quantile",
+                "execution_scope",
+                "selected_ai_unit_ids",
+            ):
+                value = protocol_runtime.get(field_name)
+                if value is not None:
+                    task_body[field_name] = value
         task_body["record_scope"] = (
             "protocol" if protocol_runtime is not None else "experiment"
         )
-        task_body.update(_evidence_flags())
+        source_task_eligible = task_body.get("paper_eligible") is True
+        task_body.update(_evidence_flags(paper_eligible=False))
+        task_body["source_projection_paper_eligible"] = source_task_eligible
         attempt_values = _sequence_field(adapter_result, "attempt_results", "attempts")
         attempts = [
             _record_with_context(item, condition=condition, task_id=task_id)
@@ -1304,7 +2326,17 @@ class _FormalConditionExecutionCallback:
             )]
         for attempt in attempts:
             attempt.setdefault("record_scope", task_body["record_scope"])
-            attempt.update(_evidence_flags())
+            source_attempt_eligible = attempt.get("paper_eligible") is True
+            attempt_reasons = _attempt_checkpoint_ineligibility_reasons(
+                attempt=attempt,
+                protocol_runtime=protocol_runtime,
+                real_transport=self.real_transport,
+                transport=self.transport,
+                source_attempt_eligible=source_attempt_eligible,
+            )
+            attempt.update(_evidence_flags(paper_eligible=not attempt_reasons))
+            attempt["source_projection_paper_eligible"] = source_attempt_eligible
+            attempt["paper_ineligibility_reasons"] = attempt_reasons
         protocol_event_values = _sequence_field(adapter_result, "event_records")
         if protocol_runtime is not None and not protocol_event_values:
             raise ValueError("protocol checkpoint requires real lifecycle events")
@@ -1344,13 +2376,21 @@ class _FormalConditionExecutionCallback:
                     f"{condition.condition_id}-{condition.repeat_id}-{task_id}-{index}"
                 ),
             )
-            event.update(_evidence_flags())
+            event.update(
+                _evidence_flags(
+                    paper_eligible=(
+                        event.get("record_scope") == "protocol"
+                        and isinstance(event.get("event_id"), str)
+                        and bool(event.get("event_id"))
+                    )
+                )
+            )
         faults = [
             _record_with_context(item, condition=condition, task_id=task_id)
             for item in _sequence_field(adapter_result, "fault_records", "faults")
         ]
         for fault in faults:
-            fault.update(_evidence_flags())
+            fault.update(_evidence_flags(paper_eligible=False))
         artifact_refs = _materialize_artifacts(
             suite_root=self.evidence_store.output_root,
             condition=condition,
@@ -1366,6 +2406,19 @@ class _FormalConditionExecutionCallback:
                 artifact_name="task-record.json",
                 body=task_body,
             )]
+        task_body["evidence_artifact_refs"] = list(artifact_refs)
+        task_reasons = _task_checkpoint_ineligibility_reasons(
+            task=task_body,
+            attempts=attempts,
+            events=events,
+            protocol_runtime=protocol_runtime,
+            real_transport=self.real_transport,
+            transport=self.transport,
+            source_task_eligible=source_task_eligible,
+        )
+        task_body.update(_evidence_flags(paper_eligible=not task_reasons))
+        task_body["source_projection_paper_eligible"] = source_task_eligible
+        task_body["paper_ineligibility_reasons"] = task_reasons
         self.evidence_store.checkpoint_root(
             experiment_id=condition.experiment_id,
             condition=_as_json(condition),
@@ -1378,6 +2431,7 @@ class _FormalConditionExecutionCallback:
         )
         if _status_value(task_body.get("root_status", "failed")) == "completed":
             self.completed_task_keys.add(_formal_task_key(condition, task_id))
+        return task_body["paper_eligible"] is True
 
     def _checkpoint_exception(
         self,
@@ -1892,8 +2946,141 @@ def _record_with_context(value: Any, *, condition: Any, task_id: str) -> dict[st
     }
 
 
-def _evidence_flags() -> dict[str, bool]:
-    return {"formal": True, "pilot_only": False, "paper_eligible": False}
+def _attempt_checkpoint_ineligibility_reasons(
+    *,
+    attempt: Mapping[str, Any],
+    protocol_runtime: Mapping[str, Any] | None,
+    real_transport: bool,
+    transport: Any,
+    source_attempt_eligible: bool,
+) -> list[str]:
+    reasons: list[str] = []
+    if not real_transport or _is_offline_capturing_transport(transport):
+        reasons.append("capturing_or_non_real_transport")
+    if protocol_runtime is None or attempt.get("record_scope") != "protocol":
+        reasons.append("attempt_not_from_protocol_runtime")
+    if protocol_runtime is not None and (
+        protocol_runtime.get("execution_scope") != "whole_root"
+        or bool(protocol_runtime.get("selected_ai_unit_ids"))
+    ):
+        reasons.append("partial_or_selected_unit_execution_scope")
+    if not source_attempt_eligible:
+        reasons.append("source_attempt_evidence_incomplete")
+    for field_name in (
+        "run_id",
+        "task_id",
+        "unit_id",
+        "attempt_id",
+        "worker_id",
+        "started_at",
+        "ended_at",
+    ):
+        if not isinstance(attempt.get(field_name), str) or not attempt.get(field_name):
+            reasons.append(f"missing_attempt_{field_name}")
+    for field_name in (
+        "request_ref",
+        "provenance_ref",
+        "usage_ref",
+        "model_execution_record_ref",
+    ):
+        if not _complete_evidence_ref(attempt.get(field_name)):
+            reasons.append(f"missing_attempt_{field_name}")
+    status = _status_value(attempt.get("attempt_status") or "")
+    if status in {
+        "succeeded",
+        "parse_failed",
+        "verification_rejected",
+        "checker_rejected",
+        "late_rejected",
+        "model_identity_mismatch",
+    } and not _complete_evidence_ref(attempt.get("raw_output_ref")):
+        reasons.append("missing_attempt_raw_output_ref")
+    if status == "parse_failed" and not _complete_evidence_ref(
+        attempt.get("parse_failure_ref")
+    ):
+        reasons.append("missing_attempt_parse_failure_ref")
+    provider_attempt_count = attempt.get("provider_attempt_count")
+    if (
+        isinstance(provider_attempt_count, bool)
+        or not isinstance(provider_attempt_count, int)
+        or provider_attempt_count < 1
+    ):
+        reasons.append("missing_provider_attempt_inventory")
+    if attempt.get("synthetic") is True or attempt.get("synthetic_fallback") is True:
+        reasons.append("synthetic_attempt_forbidden")
+    return list(dict.fromkeys(reasons))
+
+
+def _task_checkpoint_ineligibility_reasons(
+    *,
+    task: Mapping[str, Any],
+    attempts: Sequence[Mapping[str, Any]],
+    events: Sequence[Mapping[str, Any]],
+    protocol_runtime: Mapping[str, Any] | None,
+    real_transport: bool,
+    transport: Any,
+    source_task_eligible: bool,
+) -> list[str]:
+    reasons: list[str] = []
+    if not real_transport or _is_offline_capturing_transport(transport):
+        reasons.append("capturing_or_non_real_transport")
+    if protocol_runtime is None or task.get("record_scope") != "protocol":
+        reasons.append("task_not_from_protocol_runtime")
+    if protocol_runtime is not None and (
+        protocol_runtime.get("execution_scope") != "whole_root"
+        or bool(protocol_runtime.get("selected_ai_unit_ids"))
+    ):
+        reasons.append("partial_or_selected_unit_execution_scope")
+    if not source_task_eligible:
+        reasons.append("source_task_evidence_incomplete")
+    if _status_value(task.get("root_status") or "") == "partial":
+        reasons.append("partial_root_result")
+    if not attempts or any(
+        attempt.get("paper_eligible") is not True for attempt in attempts
+    ):
+        reasons.append("attempt_evidence_incomplete")
+    protocol_events = [
+        event
+        for event in events
+        if event.get("record_scope") == "protocol"
+        and isinstance(event.get("event_id"), str)
+        and event.get("event_id")
+    ]
+    if not protocol_events:
+        reasons.append("missing_protocol_lifecycle_events")
+    refs = task.get("evidence_artifact_refs")
+    if (
+        not isinstance(refs, Sequence)
+        or isinstance(refs, (str, bytes))
+        or not refs
+        or any(not _complete_evidence_ref(ref) for ref in refs)
+    ):
+        reasons.append("missing_task_artifact_evidence_refs")
+    if task.get("synthetic") is True or task.get("synthetic_fallback") is True:
+        reasons.append("synthetic_task_forbidden")
+    return list(dict.fromkeys(reasons))
+
+
+def _complete_evidence_ref(value: Any) -> bool:
+    if not isinstance(value, Mapping) or not value:
+        return False
+    return bool(
+        value.get("artifact_id")
+        or (
+            isinstance(value.get("path"), str)
+            and value.get("path")
+            and isinstance(value.get("content_hash"), str)
+            and value.get("content_hash")
+        )
+    )
+
+
+def _evidence_flags(*, paper_eligible: bool = False) -> dict[str, bool]:
+    return {
+        "formal": True,
+        "pilot_only": False,
+        "paper_eligible": paper_eligible,
+    }
 
 
 def _sequence_field(value: Any, *field_names: str) -> tuple[Any, ...]:
@@ -1955,6 +3142,7 @@ def _adapter_artifact_refs(
             "parse_failure_ref",
             "provenance_ref",
             "usage_ref",
+            "model_execution_record_ref",
             "fault_injection_ref",
         ):
             ref = attempt.get(field_name)
@@ -2011,20 +3199,17 @@ def _materialize_artifacts(
         uri = source_ref.get("uri")
         if not isinstance(uri, str) or not uri:
             continue
-        source = (adapter_root / uri).resolve(strict=False)
+        source = adapter_root / uri
         if not source.is_file():
-            matches = [
-                candidate
-                for candidate in adapter_root.rglob(Path(uri).name)
-                if candidate.is_file()
-                and (
-                    not isinstance(source_ref.get("content_hash"), str)
-                    or _sha256_bytes(candidate.read_bytes())
-                    == source_ref["content_hash"]
-                )
-            ]
+            matches = _find_nested_adapter_artifacts(
+                adapter_root=adapter_root,
+                uri=uri,
+                expected_content_hash=source_ref.get("content_hash"),
+            )
             if len(matches) != 1:
-                raise ValueError("adapter artifact evidence is missing")
+                raise ValueError(
+                    f"adapter artifact evidence is missing: {uri}"
+                )
             source = matches[0]
         name = Path(uri).name or f"artifact-{index}"
         if name in names:
@@ -2032,17 +3217,53 @@ def _materialize_artifacts(
         names.add(name)
         target = artifact_root / name
         shutil.copyfile(source, target)
-        result.append(
-            {
-                "experiment_id": condition.experiment_id,
-                "condition_id": condition.condition_id,
-                "repeat_id": condition.repeat_id,
-                "task_id": task_id,
-                "path": target.relative_to(suite_root).as_posix(),
-                "content_hash": _sha256_bytes(target.read_bytes()),
-            }
-        )
+        materialized_ref = {
+            "experiment_id": condition.experiment_id,
+            "condition_id": condition.condition_id,
+            "repeat_id": condition.repeat_id,
+            "task_id": task_id,
+            "path": target.relative_to(suite_root).as_posix(),
+            "content_hash": _sha256_bytes(target.read_bytes()),
+        }
+        if isinstance(source_ref.get("artifact_id"), str) and source_ref.get(
+            "artifact_id"
+        ):
+            materialized_ref["artifact_id"] = source_ref["artifact_id"]
+        result.append(materialized_ref)
     return result
+
+
+def _find_nested_adapter_artifacts(
+    *,
+    adapter_root: Path,
+    uri: str,
+    expected_content_hash: Any,
+) -> list[Path]:
+    """定位 adapter 内层 run root；显式构造路径以兼容 Windows ADS 名称。"""
+
+    uri_path = Path(uri)
+    parts = uri_path.parts
+    candidates: list[Path] = []
+    if parts:
+        for anchor in adapter_root.rglob(parts[0]):
+            if anchor.is_dir():
+                candidates.append(anchor.joinpath(*parts[1:]))
+    candidates.extend(adapter_root.rglob(uri_path.name))
+    matches: list[Path] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        candidate_key = str(candidate)
+        if candidate_key in seen or not candidate.is_file():
+            continue
+        seen.add(candidate_key)
+        if (
+            isinstance(expected_content_hash, str)
+            and _sha256_bytes(candidate.read_bytes())
+            != expected_content_hash
+        ):
+            continue
+        matches.append(candidate)
+    return matches
 
 
 def _write_runner_artifact(
@@ -2103,6 +3324,114 @@ def _required_mapping(value: Any, label: str) -> Mapping[str, Any]:
     if not isinstance(value, Mapping):
         raise ValueError(f"{label} must be a mapping")
     return value
+
+
+def _paper_condition_from_manifest(
+    baseline_manifest: Mapping[str, Any],
+) -> PaperExperimentCondition:
+    body = dict(
+        _required_mapping(
+            baseline_manifest.get("condition"),
+            "matched baseline condition",
+        )
+    )
+    claimed_digest = body.pop("condition_digest", None)
+    condition = PaperExperimentCondition(**body)
+    if (
+        claimed_digest != condition.condition_digest
+        or baseline_manifest.get("condition_digest")
+        != condition.condition_digest
+        or baseline_manifest.get("condition_id") != condition.condition_id
+    ):
+        raise ValueError("matched baseline condition identity mismatch")
+    return condition
+
+
+def _validate_worker_death_baseline_identity(
+    *,
+    fault_condition: Any,
+    baseline_condition: PaperExperimentCondition,
+    baseline_manifest: Mapping[str, Any],
+    request_limits: Mapping[str, Any],
+) -> None:
+    if (
+        baseline_condition.condition_id == fault_condition.condition_id
+        or baseline_condition.fault_type != "none"
+        or baseline_condition.fault_rate != 0.0
+    ):
+        raise ValueError("worker-death baseline must be a distinct no-kill condition")
+    for field_name in (
+        "experiment_id",
+        "domain",
+        "difficulty",
+        "paper_difficulty",
+        "topic_family",
+        "worker_count",
+        "model_policy",
+        "provider_config_id",
+        "model_entry_id",
+        "provider_family",
+        "provider_model_id",
+        "reasoning_profile_id",
+        "repeat_id",
+        "seed",
+        "catalog_digest",
+        "source_provider_config_digest",
+        "model_endpoint_identity_digest",
+    ):
+        if getattr(baseline_condition, field_name) != getattr(
+            fault_condition,
+            field_name,
+        ):
+            raise ValueError(
+                f"worker-death baseline {field_name} does not match fault condition"
+            )
+    manifest_limits = _required_mapping(
+        baseline_manifest.get("request_limits"),
+        "matched baseline request_limits",
+    )
+    if dict(manifest_limits) != dict(request_limits):
+        raise ValueError("worker-death baseline request limits mismatch")
+    if (
+        baseline_manifest.get("repeat_id") != baseline_condition.repeat_id
+        or baseline_manifest.get("seed") != baseline_condition.seed
+        or baseline_manifest.get("worker_count")
+        != baseline_condition.worker_count
+    ):
+        raise ValueError("worker-death baseline manifest identity mismatch")
+
+
+def _validate_baseline_evidence_ref(
+    *,
+    suite_root: Path,
+    reference: Mapping[str, Any],
+    expected_condition_id: str,
+    expected_case_id: str,
+) -> Mapping[str, Any]:
+    relative_path = reference.get("path")
+    if not isinstance(relative_path, str) or not relative_path:
+        raise ValueError("baseline evidence reference path is missing")
+    evidence_path = suite_root / relative_path
+    if (
+        not evidence_path.is_file()
+        or reference.get("content_hash")
+        != _sha256_bytes(evidence_path.read_bytes())
+    ):
+        raise ValueError("baseline evidence reference does not verify")
+    body = _required_mapping(
+        json.loads(evidence_path.read_text(encoding="utf-8")),
+        "baseline evidence",
+    )
+    if (
+        body.get("schema_version")
+        != "tokenshare.paper_exp3_baseline_evidence.v1"
+        or body.get("condition_id") != expected_condition_id
+        or body.get("case_id") != expected_case_id
+        or reference.get("condition_id") != expected_condition_id
+        or reference.get("case_id") != expected_case_id
+    ):
+        raise ValueError("baseline evidence reference identity mismatch")
+    return body
 
 
 def _string_sequence(value: Any, label: str) -> tuple[str, ...]:
@@ -2199,10 +3528,19 @@ def _finalize_formal_manifests(
         )
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         manifest["status"] = _status_value(experiment_status)
-        manifest["paper_eligible"] = bool(plan_results) and all(
-            isinstance(result.metrics_ref, Mapping)
-            and result.metrics_ref.get("paper_eligible") is True
-            for result in plan_results
+        expected_ids = {condition.condition_id for condition in plan.conditions}
+        actual_ids = {result.condition_id for result in plan_results}
+        manifest["paper_eligible"] = (
+            plan.paper_eligible_possible
+            and plan.status != "blocked"
+            and bool(expected_ids)
+            and actual_ids == expected_ids
+            and all(
+                isinstance(result.metrics_ref, Mapping)
+                and result.metrics_ref.get("paper_eligible") is True
+                and bool(result.metrics_ref.get("evidence_refs"))
+                for result in plan_results
+            )
         )
         _write_json(manifest_path, manifest)
         for condition in plan.conditions:
@@ -2255,6 +3593,26 @@ def _catalog_cases_by_id(catalog_manifest: Any) -> dict[str, dict[str, Any]]:
                 raise ValueError("duplicate case_id in formal catalog")
             cases[case_id] = dict(case)
     return cases
+
+
+def _case_with_selection_split_profile(
+    case: Mapping[str, Any],
+    selection: Any,
+) -> dict[str, Any]:
+    profile_id = getattr(selection, "split_profile_id", None)
+    if profile_id is None:
+        return dict(case)
+    split_params = case.get("split_params")
+    if not isinstance(split_params, Mapping):
+        raise ValueError("split profile requires factorization split_params")
+    return {
+        **dict(case),
+        "split_params": {
+            "strategy_id": split_params.get("strategy_id"),
+            "range_policy": split_params.get("range_policy"),
+            "split_profile_id": profile_id,
+        },
+    }
 
 
 def _required_field(value: Any, field_name: str) -> Any:

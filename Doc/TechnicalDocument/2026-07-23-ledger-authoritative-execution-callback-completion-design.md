@@ -1,7 +1,7 @@
 # Ledger 权威执行回调小补丁设计
 
 日期：2026-07-23  
-状态：设计已确认，等待实施计划  
+状态：已实现并验证
 所属 feature：`feat-011` Paper Real AI Experiments  
 适用范围：第四章代码—论文对齐指南中 submission、lease、replacement token 与单协调器权威边界的小补丁
 
@@ -188,3 +188,16 @@ safe(run_id) + schedule_ordinal
 - docs/code map/feature/progress/handoff 已同步；
 - provider/API calls 为 0；
 - 没有增加人为攻击防护或新的故障类型。
+
+## 12. 实施与验证记录
+
+- stale submission RED：旧实现错误返回 `acceptance_status=accepted`；修复后精确节点、late/expired acceptance 与 core recovery 合计 `33 passed in 0.59s`。
+- stale heartbeat RED：旧实现不会拒绝 `Released` lease，且第二次使用原始 lease heartbeat 会产生 count=1 幂等键冲突；修复后 Phase 2 scheduling 文件 `4 passed in 0.37s`。
+- replacement token：真实 OS worker-death 精确集成节点 `1 passed in 16.96s`，并显式断言 replacement lease、attempt、fencing token 均不同。
+- 定向影响面：core recovery/lease、Phase 2/3、SQLite projection、local runtime 共 `68 passed in 8.13s`；Factorization FULL、Lean fixed-plan FULL、late/rejection recovery、worker death 与写入权威边界共 `5 passed in 43.38s`。
+- 固定 Lean canary：`11 passed in 118.55s`，并通过 JSON/SQLite、harness、compileall。
+- Fast：最终文档回填后 `330 passed, 1 skipped in 15.92s`；回填前同为 330/1，耗时 17.28s。
+- Full：收集 1303 项，`1302 passed, 1 skipped in 1082.59s`。
+- provider/API calls：0。
+- 未运行：600-entry Lean `--refresh --force-all`、真实 provider、正式 Experiment 1–5。
+- 范围确认：未增加人为攻击防护、新 fault、分布式授权或全局 token 语义。

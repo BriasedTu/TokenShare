@@ -68,7 +68,9 @@ def test_factorization_descriptor_declares_unit_types_contracts_and_policies() -
     split_strategy = body["split_strategies"]["factorization.candidate_range_partition.v1"]
     assert split_strategy["allowed_unit_types"] == ["factor_search_range"]
     assert split_strategy["validator_policy_id"] == "factorization.range_result.validator.v1"
-    assert split_strategy["merge_policy_id"] == "factorization.all_required_range_merge.v1"
+    assert split_strategy["merge_policy_id"] == (
+        "factorization.factor_witness_or_all_ranges.v2"
+    )
     assert split_strategy["durable_subgoal_policy"] == {
         "only_promote_unit_types": ["factor_search_range"],
         "requires_bounded_candidate_range": True,
@@ -83,7 +85,9 @@ def test_factorization_descriptor_declares_unit_types_contracts_and_policies() -
     }
 
     assert body["validator_policy_id"] == "factorization.range_result.validator.v1"
-    assert body["merge_policy_id"] == "factorization.all_required_range_merge.v1"
+    assert body["merge_policy_id"] == (
+        "factorization.factor_witness_or_all_ranges.v2"
+    )
     assert set(body["execution_contracts"]) == {
         "deterministic_local",
         "mock_ai_bounded_search",

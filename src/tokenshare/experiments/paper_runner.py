@@ -26,6 +26,7 @@ from tokenshare.experiments.paper_ablation import ablation_modes
 from tokenshare.experiments.paper_models import (
     LEAN_PAPER_DIFFICULTIES,
     LEAN_TOPIC_FAMILIES,
+    PAPER_FORMAL_AI_TIMEOUT_SECONDS,
     JsonObject,
     PaperBudgetResult,
     PaperConditionResult,
@@ -51,6 +52,12 @@ from tokenshare.experiments.paper_experiment_contracts import (
     FrozenCaseSelection,
     PaperExecutionContext,
     canonical_contract_digest,
+)
+from tokenshare.experiments.paper_catalog_execution_view import (
+    EXP3_VIEW_KIND,
+    EXP4_VIEW_KIND,
+    build_manifest_execution_view,
+    build_prepared_mapping_execution_view,
 )
 from tokenshare.experiments.paper_unit_commitments import (
     build_case_ai_unit_bindings,
@@ -517,7 +524,8 @@ def execute_exp1_pilot(
         raise ValueError("case_id and ai_unit_id must be provided together")
     if case_id is not None and execution_output_root is None:
         raise ValueError(
-            "case/unit selector requires an independent execution_output_root"
+            "case selector requires an independent execution_output_root for "
+            "whole-root execution; ai_unit_id only validates the frozen split plan"
         )
     if case_id is not None and execution_output_root is not None:
         validate_exp1_selector_output_root(
@@ -531,7 +539,7 @@ def execute_exp1_pilot(
         budget=budget,
     )
     if case_id is not None and ai_unit_id is not None:
-        plan = _select_exp1_pilot_unit_plan(
+        plan = _select_exp1_pilot_root_plan(
             plan=plan,
             case_id=case_id,
             ai_unit_id=ai_unit_id,
@@ -570,7 +578,16 @@ def execute_exp1_pilot(
             "stop_policy": "stop_after_current_task",
             "pilot_only": True,
             "selected_case_id": case_id,
-            "selected_ai_unit_id": ai_unit_id,
+            "requested_ai_unit_id": ai_unit_id,
+            "execution_scope": (
+                "selected_ai_unit_protocol"
+                if ai_unit_id is not None
+                else (
+                    "whole_root_protocol"
+                    if case_id is not None
+                    else "approved_pilot_matrix"
+                )
+            ),
         }
     )
     plan_body["execution_plan_digest"] = digest_json(plan_body)
@@ -743,19 +760,14 @@ def execute_exp1_pilot(
             "entry_id": baseline_entry_id,
             "max_tokens": int(request_limits["max_tokens"]),
             "timeout_seconds": int(request_limits["timeout_seconds"]),
+            "selected_ai_unit_id": task.get("requested_ai_unit_id"),
         }
-        selected_ai_unit_id = (
-            str(task["ai_units"][0]) if case_id is not None else None
-        )
         if adapter is None:
             adapter_result = dispatch_paper_case(
                 **adapter_kwargs,
                 transport=transport,
-                selected_ai_unit_id=selected_ai_unit_id,
             )
         else:
-            if selected_ai_unit_id is not None:
-                adapter_kwargs["selected_ai_unit_id"] = selected_ai_unit_id
             adapter_result = adapter(**adapter_kwargs)
         result_body = adapter_result.to_dict()
         task_result = _json_copy(result_body["task_result"])
@@ -856,7 +868,7 @@ def execute_exp1_pilot(
     )
 
 
-def _select_exp1_pilot_unit_plan(
+def _select_exp1_pilot_root_plan(
     *,
     plan: Exp1PilotExecutionPlan,
     case_id: str,
@@ -875,30 +887,17 @@ def _select_exp1_pilot_unit_plan(
     ai_units = tuple(str(value) for value in task.get("ai_units", ()))
     if ai_unit_id not in ai_units:
         raise ValueError("AI unit is not present in approved pilot plan")
-    bindings = [
-        _json_copy(binding)
+    selected_bindings = [
+        binding
         for binding in task.get("ai_unit_bindings", ())
         if binding.get("planned_ai_unit_id") == ai_unit_id
     ]
-    if len(bindings) != 1:
+    if len(selected_bindings) != 1:
         raise ValueError("approved pilot AI-unit binding is missing or ambiguous")
     selected_task = _json_copy(task)
-    selected_task["ai_units"] = [ai_unit_id]
-    selected_task["ai_unit_bindings"] = bindings
     selected_task["pilot_case_selector"] = case_id
-    selected_task["pilot_ai_unit_selector"] = ai_unit_id
-    selected_task["full_plan_ai_unit_count"] = len(ai_units)
-    selected_task["provider_attempt_upper_bound"] = max(
-        1,
-        math.ceil(int(task["provider_attempt_upper_bound"]) / len(ai_units)),
-    )
-    selected_task["token_upper_bound"] = max(
-        1,
-        math.ceil(int(task["token_upper_bound"]) / len(ai_units)),
-    )
-    selected_task["cost_upper_bound"] = float(task["cost_upper_bound"]) / len(
-        ai_units
-    )
+    selected_task["requested_ai_unit_id"] = ai_unit_id
+    selected_task["selector_execution_scope"] = "selected_ai_unit_protocol"
     return Exp1PilotExecutionPlan(
         suite_id=plan.suite_id,
         budget_digest=plan.budget_digest,
@@ -915,7 +914,7 @@ def validate_exp1_selector_output_root(
     suite_id: str,
     execution_output_root: str | Path,
 ) -> None:
-    """拒绝与完整 pilot canonical tree 重叠的单 unit 输出目录。"""
+    """拒绝与完整 pilot canonical tree 重叠的单 case 整 root 输出目录。"""
 
     canonical_root = (Path(output_base) / suite_id).resolve(strict=False)
     selector_root = Path(execution_output_root).resolve(strict=False)
@@ -925,7 +924,8 @@ def validate_exp1_selector_output_root(
         or canonical_root in selector_root.parents
     ):
         raise ValueError(
-            "case/unit selector output root must not overlap canonical Exp1 pilot root"
+            "whole-root case selector output root must not overlap canonical "
+            "Exp1 pilot root"
         )
 
 
@@ -969,7 +969,7 @@ def execute_gate_c_pilot_case(
     resume: bool = False,
     replay_only: bool = False,
 ) -> GateCPilotExecutionResult:
-    """经注册模块执行一个批准的 case，可选缩到一个 AI unit。"""
+    """经注册模块执行一个批准的完整 root；AI unit 参数只校验冻结计划。"""
 
     if not real_transport:
         raise ValueError("Gate C pilot execution requires real_transport=True")
@@ -1038,7 +1038,12 @@ def execute_gate_c_pilot_case(
         "selection_digest": selection.selection_digest,
         "ordered_case_ids": list(selection.ordered_case_ids),
         "selected_case_id": case_id,
-        "selected_ai_unit_id": ai_unit_id,
+        "requested_ai_unit_id": ai_unit_id,
+        "execution_scope": (
+            "selected_ai_unit_protocol"
+            if ai_unit_id is not None
+            else "whole_root_protocol"
+        ),
         "request_limits": dict(context.request_limits),
         "hard_limits": dict(context.hard_limits),
         "output_root": output_root.as_posix(),
@@ -1145,12 +1150,26 @@ def _gate_c_context(
         lean_task14_readiness=_json_copy(bound_lean_matrix),
         optional_worker_preflight={},
     )
+    manifest_view = build_manifest_execution_view(
+        manifest=catalog_manifest,
+        task15_budget_input=task15_budget_input,
+        lean_task14_readiness=bound_lean_matrix,
+        optional_worker_preflight={},
+    )
     if experiment_id == "exp3_real_ai_fault_recovery":
-        catalog: Any = _exp3_catalog_view(formal_catalog)
+        catalog: Any = build_prepared_mapping_execution_view(
+            view_kind=EXP3_VIEW_KIND,
+            catalog_manifest_digest=catalog_manifest.catalog_digest,
+            view_body=_exp3_catalog_view(formal_catalog),
+        )
     elif experiment_id == "exp4_real_ai_protocol_ablation":
-        catalog = _exp4_catalog_view(formal_catalog)
+        catalog = build_prepared_mapping_execution_view(
+            view_kind=EXP4_VIEW_KIND,
+            catalog_manifest_digest=catalog_manifest.catalog_digest,
+            view_body=_exp4_catalog_view(formal_catalog),
+        )
     else:
-        catalog = formal_catalog
+        catalog = manifest_view
     endpoint_binding = (
         model_endpoint_cohort_preflight
         if experiment_id == "exp5_real_ai_model_endpoint_comparison"
@@ -1164,7 +1183,7 @@ def _gate_c_context(
         approved_endpoint_binding=endpoint_binding,
         request_limits={
             "max_tokens": 1024,
-            "timeout_seconds": 30,
+            "timeout_seconds": PAPER_FORMAL_AI_TIMEOUT_SECONDS,
             "max_provider_attempts": 1,
             "temperature": 0.0,
             "top_p": 1.0,

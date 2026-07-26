@@ -82,6 +82,49 @@ def test_factorization_proposal_records_coverage_proof() -> None:
     ] == digest_decomposition_proposal_body(result.proposal)
 
 
+def test_exp2_20way_profile_is_plugin_owned_stable_and_complete() -> None:
+    split_params = {
+        "strategy_id": "factorization.candidate_range_partition.v1",
+        "range_policy": "contiguous",
+        "split_profile_id": factor_split.EXP2_CONTIGUOUS_20WAY_PROFILE_ID,
+    }
+    requested = factor_split.resolve_requested_child_count(split_params)
+    first = factor_split.partition_candidate_ranges(
+        target_n="1000000007",
+        requested_child_count=requested,
+        max_children_per_unit=requested,
+    )
+    second = factor_split.partition_candidate_ranges(
+        target_n="1000000007",
+        requested_child_count=requested,
+        max_children_per_unit=requested,
+    )
+
+    assert requested == 20
+    assert len(first.ranges) == 20
+    assert first.to_dict() == second.to_dict()
+    assert first.coverage_proof.to_dict() == second.coverage_proof.to_dict()
+    assert first.coverage_proof.domain_start == "2"
+    assert first.coverage_proof.domain_end == "31622"
+    assert first.coverage_proof.no_gap is True
+    assert first.coverage_proof.no_overlap is True
+    assert first.coverage_proof.full_domain_covered is True
+    assert [
+        (int(item.range_start), int(item.range_end)) for item in first.ranges
+    ][0][0] == 2
+    assert [
+        (int(item.range_start), int(item.range_end)) for item in first.ranges
+    ][-1][1] == 31622
+    assert all(
+        int(left.range_end) + 1 == int(right.range_start)
+        for left, right in zip(first.ranges, first.ranges[1:], strict=False)
+    )
+    descriptor = build_factorization_plugin_descriptor()
+    assert descriptor.metadata["split_profiles"][
+        factor_split.EXP2_CONTIGUOUS_20WAY_PROFILE_ID
+    ]["requested_child_count"] == 20
+
+
 def test_factorization_merge_slots_match_children_one_to_one() -> None:
     result = _build_split_plan()
     child_keys = [spec["child_logical_key"] for spec in result.proposal.child_specs]
@@ -112,7 +155,7 @@ def test_factorization_merge_slots_match_children_one_to_one() -> None:
     ]
     expected_output = result.proposal.expected_outputs[0]
     assert expected_output["merge_slot_id"] == proposal_slots[0]["slot_id"]
-    assert expected_output["merge_slot_policy"] == "all_required_slots"
+    assert expected_output["merge_slot_policy"] == "factor_witness_or_all_ranges"
     assert expected_output["merge_slot_count"] == len(proposal_slots)
     assert expected_output["merge_slot_keys"] == [
         slot["slot_id"] for slot in proposal_slots

@@ -48,6 +48,18 @@ def _case() -> dict[str, object]:
     }
 
 
+def _prime_case() -> dict[str, object]:
+    case = _case()
+    case.update(
+        {
+            "case_id": "factor_runtime_97",
+            "target_n": "97",
+            "oracle_prime_factors": [{"prime": "97", "exponent": 1}],
+        }
+    )
+    return case
+
+
 def test_plan_units_are_real_factorization_child_snapshots(tmp_path: Path) -> None:
     adapter = FactorizationRuntimeAdapter(
         provider_family="siliconflow",
@@ -185,9 +197,10 @@ def test_coordinator_records_full_protocol_chain_for_every_range_child(
     )
     range_executor = _RangeExecutor(store)
     clock = _Clock()
+    case = _prime_case()
     planned_snapshots = {
         unit.unit_id: unit.to_dict()
-        for unit in adapter.plan_units(_case(), artifact_store=store)
+        for unit in adapter.plan_units(case, artifact_store=store)
     }
 
     result = ProtocolRunCoordinator(
@@ -202,7 +215,7 @@ def test_coordinator_records_full_protocol_chain_for_every_range_child(
     ).run_root(
         ProtocolRunRequest(
             run_id="factor_runtime_91",
-            root_input=_case(),
+            root_input=case,
             plugin_runtime=adapter,
             worker_backend=SequentialWorkerBackend(
                 executor=FactorizationExecutionBridge(

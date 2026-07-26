@@ -17,7 +17,7 @@ from tokenshare.experiments.paper_models import (
     PaperAttemptStatus,
 )
 from tokenshare.storage.artifacts import ArtifactStore
-from tokenshare.local_runtime import RawOutputContext
+from tokenshare.local_runtime import ParsedCandidateContext, RawOutputContext
 
 
 NOW = "2026-07-15T00:00:00Z"
@@ -104,6 +104,240 @@ def test_runtime_fault_hook_waits_for_raw_provenance_and_usage_artifacts(
             replace(context, usage_ref=None)
         )
     assert missing_usage_hooks.records == ()
+
+
+def test_runtime_fault_hook_maps_frozen_planned_target_to_real_protocol_unit(
+    tmp_path,
+) -> None:
+    store = ArtifactStore(tmp_path)
+    raw_ref = _save_raw(store, "mapped_runtime_raw")
+    provenance_ref = store.save_json(
+        {"schema_version": "test.provenance.v1", "provider": "siliconflow"},
+        artifact_id="mapped_runtime_provenance",
+        artifact_type="ProviderProvenance",
+        artifact_schema_id="test.provenance",
+        artifact_schema_version="v1",
+        source={"kind": "pytest"},
+        metadata={},
+        created_at=NOW,
+    )
+    usage_ref = store.save_json(
+        {"schema_version": "test.usage.v1", "total_tokens": 17},
+        artifact_id="mapped_runtime_usage",
+        artifact_type="ProviderUsage",
+        artifact_schema_id="test.usage",
+        artifact_schema_version="v1",
+        source={"kind": "pytest"},
+        metadata={},
+        created_at=NOW,
+    )
+    hooks = PaperFaultRuntimeHooks(
+        artifact_store=store,
+        condition_id="condition-runtime-mapped-fault",
+        repeat_id=0,
+        fault_type=PaperFaultType.NO_RETURN,
+        seed=19,
+        selected_unit_ids=("case-1:range_0",),
+    )
+    context = RawOutputContext(
+        run_id="run-runtime-mapped-fault",
+        task_id="task-runtime-mapped-fault",
+        unit_id="unit_root_digest_range_0",
+        experiment_unit_id="case-1:range_0",
+        attempt_id="attempt_1",
+        worker_id="worker_1",
+        raw_output_ref=raw_ref,
+        provenance_ref=provenance_ref,
+        usage_ref=usage_ref,
+        content_text=json.dumps({"candidate": 7}),
+        provider="siliconflow",
+        model="zai-org/GLM-5.2",
+        entry_id="glm_5_2_exp1_baseline",
+        usage_summary={"total_tokens": 17},
+        submitted_at=NOW,
+        lease_deadline_at=DEADLINE,
+    )
+
+    directive = hooks.after_raw_output_persisted(context)
+
+    assert directive is not None
+    assert directive.result_kind == "no_return"
+    assert hooks.records[0]["unit_id"] == "unit_root_digest_range_0"
+    assert hooks.records[0]["selected_target_ai_unit_id"] == "case-1:range_0"
+    assert hooks.events[0]["unit_id"] == "unit_root_digest_range_0"
+    assert hooks.events[0]["selected_target_ai_unit_id"] == "case-1:range_0"
+    assert hooks.after_raw_output_persisted(
+        replace(context, attempt_id="attempt_2")
+    ) is None
+
+
+def test_false_negative_runtime_hook_mutates_only_after_real_parser_candidate(
+    tmp_path,
+) -> None:
+    store = ArtifactStore(tmp_path)
+    raw_ref = _save_raw(store, "runtime_false_negative_raw")
+    parsed_ref = _save_parsed(
+        store,
+        "runtime_false_negative_parsed",
+        {
+            "schema_version": "factorization.range_result.v1",
+            "result_kind": "found_factor",
+            "target_n": "91",
+            "range_start": "2",
+            "range_end": "10",
+            "found_factor": "7",
+            "cofactor": "13",
+        },
+    )
+    candidate_alias_ref = _save_parsed(
+        store,
+        "runtime_false_negative_candidate_alias",
+        _read_json(store, parsed_ref.to_dict()),
+    )
+    provenance_ref = _save_parsed(
+        store,
+        "runtime_false_negative_provenance",
+        {"schema_version": "test.provenance.v1"},
+    )
+    usage_ref = _save_parsed(
+        store,
+        "runtime_false_negative_usage",
+        {"schema_version": "test.usage.v1", "total_tokens": 17},
+    )
+    hooks = PaperFaultRuntimeHooks(
+        artifact_store=store,
+        condition_id="condition-runtime-false-negative",
+        repeat_id=0,
+        fault_type=PaperFaultType.FALSE_NEGATIVE,
+        seed=23,
+        selected_unit_ids=("case-1:range_0",),
+    )
+    raw_context = RawOutputContext(
+        run_id="run-runtime-false-negative",
+        task_id="task-runtime-false-negative",
+        unit_id="protocol_range_0",
+        attempt_id="attempt_1",
+        worker_id="worker_1",
+        raw_output_ref=raw_ref,
+        provenance_ref=provenance_ref,
+        usage_ref=usage_ref,
+        content_text=json.dumps({"found_factor": "7"}),
+        provider="siliconflow",
+        model="zai-org/GLM-5.2",
+        entry_id="glm_5_2_exp1_baseline",
+        usage_summary={"total_tokens": 17},
+        submitted_at=NOW,
+        experiment_unit_id="case-1:range_0",
+        lease_deadline_at=DEADLINE,
+    )
+
+    assert hooks.after_raw_output_persisted(raw_context) is None
+    assert hooks.records == ()
+
+    directive = hooks.after_parsed_candidate_persisted(
+        ParsedCandidateContext(
+            run_id=raw_context.run_id,
+            task_id=raw_context.task_id,
+            unit_id=raw_context.unit_id,
+            attempt_id=raw_context.attempt_id,
+            lease_id="lease_1",
+            worker_id=raw_context.worker_id,
+            raw_output_ref=raw_ref,
+            original_parsed_output_ref=parsed_ref,
+            candidate_output_refs={"range_result": candidate_alias_ref},
+            submitted_at=NOW,
+            experiment_unit_id="case-1:range_0",
+        )
+    )
+
+    assert directive is not None
+    mutated_ref = directive.replacement_candidate_output_refs["range_result"]
+    assert mutated_ref != parsed_ref
+    assert mutated_ref != candidate_alias_ref
+    assert _read_json(store, mutated_ref.to_dict())["result_kind"] == "no_factor"
+    assert hooks.records[0]["hook_stage"] == (
+        "after_parsed_candidate_before_submission_and_verification"
+    )
+    assert hooks.records[0]["original_output_ref"] == parsed_ref.to_dict()
+    assert "canonical_pollution" not in hooks.records[0]
+    assert "detected" not in hooks.records[0]
+    assert "recovered" not in hooks.records[0]
+    assert "requires_replacement" not in hooks.records[0]
+
+
+def test_false_negative_runtime_hook_records_not_applicable_and_uses_reserve_order(
+    tmp_path,
+) -> None:
+    store = ArtifactStore(tmp_path)
+    no_factor_ref = _save_parsed(
+        store,
+        "runtime_false_negative_no_factor",
+        {
+            "schema_version": "factorization.range_result.v1",
+            "result_kind": "no_factor",
+            "target_n": "91",
+            "range_start": "2",
+            "range_end": "5",
+            "found_factor": None,
+            "cofactor": None,
+        },
+    )
+    found_ref = _save_parsed(
+        store,
+        "runtime_false_negative_found",
+        {
+            "schema_version": "factorization.range_result.v1",
+            "result_kind": "found_factor",
+            "target_n": "91",
+            "range_start": "6",
+            "range_end": "10",
+            "found_factor": "7",
+            "cofactor": "13",
+        },
+    )
+    hooks = PaperFaultRuntimeHooks(
+        artifact_store=store,
+        condition_id="condition-runtime-false-negative-reserve",
+        repeat_id=0,
+        fault_type=PaperFaultType.FALSE_NEGATIVE,
+        seed=29,
+        selected_unit_ids=("case-1:range_0",),
+        reserve_unit_ids=("case-1:range_1",),
+    )
+
+    first = hooks.after_parsed_candidate_persisted(
+        _parsed_candidate_context(
+            raw_ref=no_factor_ref,
+            parsed_ref=no_factor_ref,
+            experiment_unit_id="case-1:range_0",
+            unit_id="protocol_range_0",
+            attempt_id="attempt_0",
+        )
+    )
+    second = hooks.after_parsed_candidate_persisted(
+        _parsed_candidate_context(
+            raw_ref=found_ref,
+            parsed_ref=found_ref,
+            experiment_unit_id="case-1:range_1",
+            unit_id="protocol_range_1",
+            attempt_id="attempt_1",
+        )
+    )
+
+    assert first is None
+    assert second is not None
+    assert hooks.records[0]["applicability_status"] == "not_applicable"
+    assert hooks.records[0]["selected_target_ai_unit_id"] == "case-1:range_0"
+    assert hooks.records[1]["applicability_status"] == "injected"
+    assert hooks.records[1]["selected_target_ai_unit_id"] == "case-1:range_1"
+    assert hooks.applicability_counts == {
+        "candidate_target_count": 2,
+        "selected_target_count": 1,
+        "eligible_target_count": 1,
+        "injected_target_count": 1,
+        "not_applicable_target_count": 1,
+        "injection_denominator": 1,
+    }
 
 
 def test_select_fault_targets_is_deterministic_for_seed_and_rate() -> None:
@@ -447,6 +681,29 @@ def test_fault_injection_rejects_attempt_without_persisted_raw_output(tmp_path) 
             created_at=NOW,
             lease_deadline_at=DEADLINE,
         )
+
+
+def _parsed_candidate_context(
+    *,
+    raw_ref: ArtifactRef,
+    parsed_ref: ArtifactRef,
+    experiment_unit_id: str,
+    unit_id: str,
+    attempt_id: str,
+) -> ParsedCandidateContext:
+    return ParsedCandidateContext(
+        run_id="run-runtime-false-negative-reserve",
+        task_id="task-runtime-false-negative-reserve",
+        unit_id=unit_id,
+        attempt_id=attempt_id,
+        lease_id=f"lease_{attempt_id}",
+        worker_id="worker_1",
+        raw_output_ref=raw_ref,
+        original_parsed_output_ref=parsed_ref,
+        candidate_output_refs={"range_result": parsed_ref},
+        submitted_at=NOW,
+        experiment_unit_id=experiment_unit_id,
+    )
 
 
 def _attempt(

@@ -34,6 +34,7 @@ class PaperProtocolProjection:
     attempt_results: tuple[PaperAttemptResult, ...]
     lifecycle_coverage: JsonObject
     runtime_generation_identity: JsonObject
+    runtime_observation: JsonObject
     ineligibility_reasons: tuple[str, ...]
     schema_version: str = "tokenshare.paper_protocol_projection.v1"
 
@@ -44,6 +45,7 @@ class PaperProtocolProjection:
             "attempt_results": [item.to_dict() for item in self.attempt_results],
             "lifecycle_coverage": dict(self.lifecycle_coverage),
             "runtime_generation_identity": dict(self.runtime_generation_identity),
+            "runtime_observation": dict(self.runtime_observation),
             "ineligibility_reasons": list(self.ineligibility_reasons),
         }
 
@@ -83,6 +85,14 @@ def project_paper_protocol_run(
     }
     recovery_by_attempt = _recovery_events_by_attempt(events)
     metadata_by_unit = attempt_metadata_by_unit or {}
+    runtime_observation = _runtime_observation(runtime_result)
+    worker_fact_by_attempt = {
+        str(fact["attempt_id"]): fact
+        for fact in runtime_observation.get("worker_execution_facts", ())
+        if isinstance(fact, Mapping)
+        and isinstance(fact.get("attempt_id"), str)
+        and fact["attempt_id"]
+    }
 
     attempts: list[PaperAttemptResult] = []
     next_provider_attempt_index_by_unit: dict[str, int] = {}
@@ -127,6 +137,7 @@ def project_paper_protocol_run(
         snapshot = attempt_snapshots.get(attempt_id, {})
         verification = verification_by_attempt.get(attempt_id, {})
         recovery = recovery_by_attempt.get(attempt_id, {})
+        worker_fact = worker_fact_by_attempt.get(attempt_id, {})
         status, error_kind = _attempt_status(
             condition=condition,
             submission_event=submission_event,
@@ -157,6 +168,7 @@ def project_paper_protocol_run(
                 usage_ref is not None,
                 model_record_ref is not None,
                 model_record.get("paper_eligible") is True,
+                bool(provider_attempts),
             )
         )
         attempts.append(
@@ -167,7 +179,11 @@ def project_paper_protocol_run(
                 task_id=runtime_result.task_id,
                 unit_id=unit_id,
                 attempt_id=attempt_id,
-                worker_id=str(snapshot.get("client_id") or "unknown"),
+                worker_id=str(
+                    worker_fact.get("worker_id")
+                    or snapshot.get("client_id")
+                    or "unknown"
+                ),
                 provider_attempt_index=provider_attempt_index,
                 attempt_status=status,
                 provider=str(
@@ -196,9 +212,15 @@ def project_paper_protocol_run(
                 provenance_ref=provenance_ref,
                 usage_ref=usage_ref,
                 model_execution_record_ref=model_record_ref,
-                started_at=str(request.get("created_at") or events[0]["occurred_at"]),
+                provider_attempt_count=len(provider_attempts),
+                started_at=str(
+                    worker_fact.get("started_at")
+                    or request.get("created_at")
+                    or events[0]["occurred_at"]
+                ),
                 ended_at=str(
-                    submission.get("submitted_at")
+                    worker_fact.get("ended_at")
+                    or submission.get("submitted_at")
                     or snapshot.get("finished_at")
                     or events[-1]["occurred_at"]
                 ),
@@ -243,6 +265,8 @@ def project_paper_protocol_run(
         reasons.append("incomplete_attempt_evidence")
     if root_status == PaperTaskStatus.COMPLETED and not attempts:
         reasons.append("missing_provider_attempt")
+    if root_status == PaperTaskStatus.PARTIAL:
+        reasons.append("partial_pilot_observation")
     paper_eligible = not reasons and bool(attempts)
     failure_stage, failure_kind = _task_failure(attempts, events, root_status)
     all_artifact_refs = _stable_artifact_refs(
@@ -267,7 +291,7 @@ def project_paper_protocol_run(
         failure_kind=failure_kind,
         attempt_count=len(attempts),
         provider_attempt_count=len(attempts),
-        wall_clock_ms=_wall_clock_ms(events),
+        wall_clock_ms=_runtime_wall_clock_ms(runtime_observation, events),
         total_tokens=sum(attempt.total_tokens for attempt in attempts),
         cost_estimate=sum(attempt.cost_estimate for attempt in attempts),
         event_refs=[_event_ref(event) for event in events],
@@ -284,12 +308,16 @@ def project_paper_protocol_run(
         "last_event_id": str(events[-1]["event_id"]),
         "last_event_hash": events[-1].get("event_hash"),
         "ledger_digest": digest_json(list(events)),
+        "runtime_observation_digest": (
+            digest_json(runtime_observation) if runtime_observation else None
+        ),
     }
     return PaperProtocolProjection(
         task_result=task_result,
         attempt_results=tuple(attempts),
         lifecycle_coverage=lifecycle_coverage,
         runtime_generation_identity=generation_identity,
+        runtime_observation=runtime_observation,
         ineligibility_reasons=tuple(reasons),
     )
 
@@ -520,6 +548,7 @@ def _paper_task_status(status: str) -> PaperTaskStatus:
         "timeout": PaperTaskStatus.TIMEOUT,
         "budget_exhausted": PaperTaskStatus.BUDGET_EXHAUSTED,
         "ineligible": PaperTaskStatus.INELIGIBLE,
+        "partial": PaperTaskStatus.PARTIAL,
         "processing": PaperTaskStatus.BLOCKED,
         "ready": PaperTaskStatus.BLOCKED,
         "pending": PaperTaskStatus.BLOCKED,
@@ -669,6 +698,44 @@ def _wall_clock_ms(events: Sequence[JsonObject]) -> int:
     except ValueError:
         return 0
     return max(0, int((ended - started).total_seconds() * 1000))
+
+
+def _runtime_observation(runtime_result: ProtocolRunResult) -> JsonObject:
+    value = runtime_result.summary.get("runtime_observation")
+    if value is None:
+        return {}
+    if not isinstance(value, Mapping):
+        raise ValueError("runtime_observation must be a mapping")
+    observation = dict(value)
+    if observation.get("schema_version") != (
+        "tokenshare.protocol_runtime_observation.v1"
+    ):
+        raise ValueError("runtime_observation schema is unsupported")
+    if observation.get("run_id") != runtime_result.run_id:
+        raise ValueError("runtime_observation run_id mismatch")
+    _timestamp(str(observation.get("runtime_started_at")))
+    _timestamp(str(observation.get("runtime_ended_at")))
+    wall_clock_ms = observation.get("runtime_wall_clock_ms")
+    if (
+        isinstance(wall_clock_ms, bool)
+        or not isinstance(wall_clock_ms, (int, float))
+        or wall_clock_ms < 0
+    ):
+        raise ValueError("runtime_observation wall clock is invalid")
+    facts = observation.get("worker_execution_facts")
+    if not isinstance(facts, list):
+        raise ValueError("runtime_observation worker facts are required")
+    return observation
+
+
+def _runtime_wall_clock_ms(
+    runtime_observation: Mapping[str, Any],
+    events: Sequence[JsonObject],
+) -> int:
+    value = runtime_observation.get("runtime_wall_clock_ms")
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return max(0, int(value))
+    return _wall_clock_ms(events)
 
 
 def _timestamp(value: str) -> datetime:

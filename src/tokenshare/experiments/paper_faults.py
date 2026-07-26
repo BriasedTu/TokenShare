@@ -23,6 +23,8 @@ from tokenshare.experiments.paper_models import (
 )
 from tokenshare.local_runtime import (
     NoOpRuntimeHooks,
+    ParsedCandidateContext,
+    ParsedCandidateDirective,
     RawOutputContext,
     RawOutputDirective,
 )
@@ -210,6 +212,7 @@ class PaperFaultRuntimeHooks(NoOpRuntimeHooks):
         fault_type: PaperFaultType | str,
         seed: int,
         selected_unit_ids: Iterable[str],
+        reserve_unit_ids: Iterable[str] = (),
     ) -> None:
         self._artifact_store = artifact_store
         self._condition_id = _required_non_empty_str(condition_id, "condition_id")
@@ -222,7 +225,20 @@ class PaperFaultRuntimeHooks(NoOpRuntimeHooks):
             _required_non_empty_str(str(unit_id), "selected_unit_ids")
             for unit_id in selected_unit_ids
         )
+        self._reserve_unit_ids = tuple(
+            dict.fromkeys(
+                _required_non_empty_str(str(unit_id), "reserve_unit_ids")
+                for unit_id in reserve_unit_ids
+                if str(unit_id) not in self._selected_unit_ids
+            )
+        )
+        self._active_target_ids = set(self._selected_unit_ids)
+        self._remaining_reserve_unit_ids = list(self._reserve_unit_ids)
         self._injected_unit_ids: set[str] = set()
+        self._observed_unit_ids: set[str] = set()
+        self._eligible_target_count = 0
+        self._not_applicable_target_count = 0
+        self._raw_context_by_attempt_id: dict[str, RawOutputContext] = {}
         self._records: list[JsonObject] = []
         self._events: list[JsonObject] = []
 
@@ -234,13 +250,33 @@ class PaperFaultRuntimeHooks(NoOpRuntimeHooks):
     def events(self) -> tuple[JsonObject, ...]:
         return tuple(dict(event) for event in self._events)
 
+    @property
+    def applicability_counts(self) -> JsonObject:
+        return {
+            "candidate_target_count": (
+                len(self._selected_unit_ids) + len(self._reserve_unit_ids)
+            ),
+            "selected_target_count": len(self._selected_unit_ids),
+            "eligible_target_count": self._eligible_target_count,
+            "injected_target_count": len(self._injected_unit_ids),
+            "not_applicable_target_count": self._not_applicable_target_count,
+            "injection_denominator": self._eligible_target_count,
+        }
+
     def after_raw_output_persisted(
         self,
         context: RawOutputContext,
     ) -> RawOutputDirective | None:
-        if context.unit_id not in self._selected_unit_ids:
+        selected_target_id = context.experiment_unit_id or context.unit_id
+        if selected_target_id not in self._selected_unit_ids:
             return None
-        if context.unit_id in self._injected_unit_ids:
+        if selected_target_id in self._injected_unit_ids:
+            return None
+        if self._fault_type in {
+            PaperFaultType.FALSE_POSITIVE,
+            PaperFaultType.FALSE_NEGATIVE,
+        }:
+            self._raw_context_by_attempt_id[context.attempt_id] = context
             return None
         raw_ref = _required_runtime_ref(
             self._artifact_store, context.raw_output_ref, "persisted raw output"
@@ -252,26 +288,6 @@ class PaperFaultRuntimeHooks(NoOpRuntimeHooks):
             self._artifact_store, context.usage_ref, "persisted usage"
         )
         parsed_ref = None
-        if self._fault_type in {
-            PaperFaultType.FALSE_POSITIVE,
-            PaperFaultType.FALSE_NEGATIVE,
-        }:
-            try:
-                parsed_body = json.loads(context.content_text)
-            except json.JSONDecodeError:
-                parsed_body = {"candidate": context.content_text}
-            if not isinstance(parsed_body, dict):
-                parsed_body = {"candidate": parsed_body}
-            parsed_ref = self._artifact_store.save_json(
-                parsed_body,
-                artifact_id=f"pre_fault_candidate_{_safe_fault_id(context.attempt_id)}",
-                artifact_type="PreFaultCandidate",
-                artifact_schema_id="tokenshare.paper_fault_pre_candidate",
-                artifact_schema_version="v1",
-                source={"kind": "paper_fault_runtime_hook"},
-                metadata={"unit_id": context.unit_id},
-                created_at=context.submitted_at,
-            )
         late_submitted_at = (
             _timestamp_after(context.lease_deadline_at)
             if self._fault_type == PaperFaultType.LATE_SUBMISSION
@@ -326,12 +342,14 @@ class PaperFaultRuntimeHooks(NoOpRuntimeHooks):
         record = {
             **outcome.record.to_dict(),
             "fault_injection_id": outcome.record.fault_id,
-            "requires_replacement": True,
+            "selected_target_ai_unit_id": selected_target_id,
             "original_provenance_ref": provenance_ref.to_dict(),
             "pre_fault_usage_ref": usage_ref.to_dict(),
             "primitive_fault_record_ref": outcome.record_ref.to_dict(),
             "hook_stage": "after_raw_provenance_usage_before_parser",
+            "applicability_status": "injected",
         }
+        record.pop("canonical_pollution", None)
         runtime_record_ref = self._artifact_store.save_json(
             record,
             artifact_id=f"{outcome.record.fault_id}_runtime_hook_record",
@@ -339,7 +357,11 @@ class PaperFaultRuntimeHooks(NoOpRuntimeHooks):
             artifact_schema_id="tokenshare.paper_runtime_fault_injection",
             artifact_schema_version="v1",
             source={"kind": "paper_fault_runtime_hook"},
-            metadata={"condition_id": self._condition_id, "unit_id": context.unit_id},
+            metadata={
+                "condition_id": self._condition_id,
+                "unit_id": context.unit_id,
+                "selected_target_ai_unit_id": selected_target_id,
+            },
             created_at=context.submitted_at,
         )
         record["record_ref"] = runtime_record_ref.to_dict()
@@ -349,6 +371,7 @@ class PaperFaultRuntimeHooks(NoOpRuntimeHooks):
             "run_id": context.run_id,
             "task_id": context.task_id,
             "unit_id": context.unit_id,
+            "selected_target_ai_unit_id": selected_target_id,
             "attempt_id": context.attempt_id,
             "fault_type": self._fault_type.value,
             "protocol_event_refs": [],
@@ -361,7 +384,7 @@ class PaperFaultRuntimeHooks(NoOpRuntimeHooks):
             ],
             "occurred_at": context.submitted_at,
         }
-        self._injected_unit_ids.add(context.unit_id)
+        self._injected_unit_ids.add(selected_target_id)
         self._records.append(record)
         self._events.append(event)
         replacement_text = None
@@ -392,6 +415,302 @@ class PaperFaultRuntimeHooks(NoOpRuntimeHooks):
             result_kind=result_kind,
             experiment_records=(event,),
         )
+
+    def after_parsed_candidate_persisted(
+        self,
+        context: ParsedCandidateContext,
+    ) -> ParsedCandidateDirective | None:
+        if self._fault_type not in {
+            PaperFaultType.FALSE_POSITIVE,
+            PaperFaultType.FALSE_NEGATIVE,
+        }:
+            return None
+        selected_target_id = context.experiment_unit_id or context.unit_id
+        if (
+            selected_target_id not in self._active_target_ids
+            or selected_target_id in self._observed_unit_ids
+        ):
+            return None
+        parsed_ref = _required_runtime_ref(
+            self._artifact_store,
+            context.original_parsed_output_ref,
+            "persisted parsed candidate",
+        )
+        candidate_refs = {
+            name: _required_runtime_ref(
+                self._artifact_store,
+                ref,
+                f"persisted candidate {name}",
+            )
+            for name, ref in context.candidate_output_refs.items()
+        }
+        if not candidate_refs:
+            raise ValueError("parsed-candidate hook requires candidate refs")
+        parsed_body = _read_json_ref(self._artifact_store, parsed_ref)
+        self._observed_unit_ids.add(selected_target_id)
+        if (
+            self._fault_type == PaperFaultType.FALSE_NEGATIVE
+            and not _false_negative_is_applicable(parsed_body)
+        ):
+            self._not_applicable_target_count += 1
+            record = self._record_not_applicable(
+                context=context,
+                selected_target_id=selected_target_id,
+                parsed_ref=parsed_ref,
+            )
+            self._records.append(record)
+            self._active_target_ids.discard(selected_target_id)
+            if self._remaining_reserve_unit_ids:
+                self._active_target_ids.add(
+                    self._remaining_reserve_unit_ids.pop(0)
+                )
+            return None
+        self._eligible_target_count += 1
+        raw_context = self._raw_context_by_attempt_id.get(context.attempt_id)
+        raw_ref = _required_runtime_ref(
+            self._artifact_store,
+            (
+                raw_context.raw_output_ref
+                if raw_context is not None
+                else context.raw_output_ref
+            ),
+            "persisted raw output",
+        )
+        attempt = _paper_attempt_from_parsed_context(
+            condition_id=self._condition_id,
+            repeat_id=self._repeat_id,
+            context=context,
+            raw_context=raw_context,
+            raw_ref=raw_ref,
+            parsed_ref=parsed_ref,
+        )
+        outcome = inject_post_ai_fault(
+            artifact_store=self._artifact_store,
+            attempt=attempt,
+            fault_type=self._fault_type,
+            seed=self._seed,
+            created_at=context.submitted_at,
+            fault_target={
+                "unit_id": context.unit_id,
+                "attempt_id": context.attempt_id,
+                "artifact_ref": parsed_ref.to_dict(),
+            },
+        )
+        mutation_body = _read_json_ref(
+            self._artifact_store,
+            outcome.mutated_output_ref,
+        )
+        mutated_candidate_ref = self._artifact_store.save_json(
+            mutation_body["mutated_payload"],
+            artifact_id=(
+                f"{outcome.record.fault_id}_parsed_candidate_replacement"
+            ),
+            artifact_type="FaultMutatedCandidate",
+            artifact_schema_id="tokenshare.paper_fault_mutated_candidate",
+            artifact_schema_version="v1",
+            source={
+                "kind": "paper_fault_runtime_hook",
+                "primitive_fault_record_ref": outcome.record_ref.to_dict(),
+            },
+            metadata={
+                "condition_id": self._condition_id,
+                "unit_id": context.unit_id,
+                "selected_target_ai_unit_id": selected_target_id,
+            },
+            created_at=context.submitted_at,
+        )
+        # 插件可把 parser 产物按输出契约另存为 content-identical artifact；
+        # fault 必须沿实际 candidate ref 注入，不能依赖 ArtifactRef 对象全等。
+        matching_output_names = {
+            name
+            for name, ref in candidate_refs.items()
+            if ref.content_hash == parsed_ref.content_hash
+        }
+        if not matching_output_names:
+            raise ValueError(
+                "parsed-candidate fault requires a candidate ref matching "
+                "the original parsed content"
+            )
+        replacement_refs = {
+            name: (
+                mutated_candidate_ref
+                if name in matching_output_names
+                else ref
+            )
+            for name, ref in candidate_refs.items()
+        }
+        record = {
+            **outcome.record.to_dict(),
+            "fault_injection_id": outcome.record.fault_id,
+            "selected_target_ai_unit_id": selected_target_id,
+            "original_output_ref": parsed_ref.to_dict(),
+            "mutated_output_ref": mutated_candidate_ref.to_dict(),
+            "primitive_mutated_output_ref": outcome.mutated_output_ref.to_dict(),
+            "primitive_fault_record_ref": outcome.record_ref.to_dict(),
+            "hook_stage": (
+                "after_parsed_candidate_before_submission_and_verification"
+            ),
+            "applicability_status": "injected",
+        }
+        record.pop("canonical_pollution", None)
+        if raw_context is not None:
+            record["original_provenance_ref"] = (
+                raw_context.provenance_ref.to_dict()
+            )
+            if raw_context.usage_ref is not None:
+                record["pre_fault_usage_ref"] = raw_context.usage_ref.to_dict()
+        runtime_record_ref = self._artifact_store.save_json(
+            record,
+            artifact_id=f"{outcome.record.fault_id}_runtime_hook_record",
+            artifact_type="RuntimeFaultInjectionRecord",
+            artifact_schema_id="tokenshare.paper_runtime_fault_injection",
+            artifact_schema_version="v1",
+            source={"kind": "paper_fault_runtime_hook"},
+            metadata={
+                "condition_id": self._condition_id,
+                "unit_id": context.unit_id,
+                "selected_target_ai_unit_id": selected_target_id,
+            },
+            created_at=context.submitted_at,
+        )
+        record["record_ref"] = runtime_record_ref.to_dict()
+        event = {
+            "event_type": "EXPERIMENT_FAULT_INJECTED",
+            "condition_id": self._condition_id,
+            "run_id": context.run_id,
+            "task_id": context.task_id,
+            "unit_id": context.unit_id,
+            "selected_target_ai_unit_id": selected_target_id,
+            "attempt_id": context.attempt_id,
+            "fault_type": self._fault_type.value,
+            "protocol_event_refs": [],
+            "artifact_refs": [
+                raw_ref.to_dict(),
+                parsed_ref.to_dict(),
+                outcome.mutated_output_ref.to_dict(),
+                mutated_candidate_ref.to_dict(),
+                runtime_record_ref.to_dict(),
+            ],
+            "occurred_at": context.submitted_at,
+        }
+        self._injected_unit_ids.add(selected_target_id)
+        self._active_target_ids.discard(selected_target_id)
+        self._records.append(record)
+        self._events.append(event)
+        return ParsedCandidateDirective(
+            replacement_candidate_output_refs=replacement_refs,
+            experiment_records=(event,),
+        )
+
+    def _record_not_applicable(
+        self,
+        *,
+        context: ParsedCandidateContext,
+        selected_target_id: str,
+        parsed_ref: ArtifactRef,
+    ) -> JsonObject:
+        record = {
+            "schema_version": "tokenshare.paper_fault_applicability.v1",
+            "condition_id": self._condition_id,
+            "repeat_id": self._repeat_id,
+            "run_id": context.run_id,
+            "task_id": context.task_id,
+            "unit_id": context.unit_id,
+            "attempt_id": context.attempt_id,
+            "lease_id": context.lease_id,
+            "fault_type": self._fault_type.value,
+            "selected_target_ai_unit_id": selected_target_id,
+            "original_output_ref": parsed_ref.to_dict(),
+            "applicability_status": "not_applicable",
+            "applicability_reason": "original_output_has_no_factor_or_proof_candidate",
+            "hook_stage": (
+                "after_parsed_candidate_before_submission_and_verification"
+            ),
+            "created_at": context.submitted_at,
+        }
+        record_ref = self._artifact_store.save_json(
+            record,
+            artifact_id=(
+                "fault_applicability_"
+                f"{_safe_fault_id(context.attempt_id)}"
+            ),
+            artifact_type="FaultApplicabilityRecord",
+            artifact_schema_id="tokenshare.paper_fault_applicability",
+            artifact_schema_version="v1",
+            source={"kind": "paper_fault_runtime_hook"},
+            metadata={
+                "condition_id": self._condition_id,
+                "unit_id": context.unit_id,
+                "selected_target_ai_unit_id": selected_target_id,
+            },
+            created_at=context.submitted_at,
+        )
+        return {**record, "record_ref": record_ref.to_dict()}
+
+
+def _paper_attempt_from_parsed_context(
+    *,
+    condition_id: str,
+    repeat_id: int,
+    context: ParsedCandidateContext,
+    raw_context: RawOutputContext | None,
+    raw_ref: ArtifactRef,
+    parsed_ref: ArtifactRef,
+) -> PaperAttemptResult:
+    usage = dict(raw_context.usage_summary) if raw_context is not None else {}
+    return PaperAttemptResult(
+        condition_id=condition_id,
+        repeat_id=repeat_id,
+        run_id=context.run_id,
+        task_id=context.task_id,
+        unit_id=context.unit_id,
+        attempt_id=context.attempt_id,
+        worker_id=context.worker_id,
+        provider_attempt_index=1,
+        attempt_status=PaperAttemptStatus.SUCCEEDED,
+        provider=(
+            raw_context.provider if raw_context is not None else "runtime_unknown"
+        ),
+        model=raw_context.model if raw_context is not None else "runtime_unknown",
+        entry_id=(
+            raw_context.entry_id if raw_context is not None else "runtime_unknown"
+        ),
+        request_ref=None,
+        raw_output_ref=raw_ref.to_dict(),
+        parsed_output_ref=parsed_ref.to_dict(),
+        parse_failure_ref=None,
+        provenance_ref=(
+            raw_context.provenance_ref.to_dict()
+            if raw_context is not None
+            else None
+        ),
+        usage_ref=(
+            raw_context.usage_ref.to_dict()
+            if raw_context is not None and raw_context.usage_ref is not None
+            else None
+        ),
+        started_at=context.submitted_at,
+        ended_at=context.submitted_at,
+        latency_ms=0,
+        prompt_tokens=int(usage.get("prompt_tokens", 0)),
+        completion_tokens=int(usage.get("completion_tokens", 0)),
+        total_tokens=int(usage.get("total_tokens", 0)),
+        cost_estimate=float(usage.get("cost_estimate", 0.0)),
+        error_kind=None,
+        fault_injection_ref=None,
+        paper_eligible=False,
+    )
+
+
+def _false_negative_is_applicable(payload: JsonObject) -> bool:
+    if _is_factorization_range_result(payload):
+        return (
+            payload.get("result_kind") == "found_factor"
+            and bool(payload.get("found_factor"))
+        )
+    if _is_lean_proof_candidate(payload):
+        return bool(str(payload.get("proof_source") or "").strip())
+    return _has_generic_candidate(payload)
 
 
 def select_fault_targets(
@@ -721,7 +1040,9 @@ def _build_mutation_body(
         _require_lease_deadline(fault_type, lease_deadline_at)
         if submitted_at is None:
             raise ValueError("late_submission requires submitted_at")
-        if submitted_at <= str(lease_deadline_at):
+        if _parse_timestamp(submitted_at) <= _parse_timestamp(
+            str(lease_deadline_at)
+        ):
             raise ValueError("late_submission submitted_at must be after lease_deadline_at")
         body = _base_mutation_body(
             fault_id=fault_id,
@@ -1106,8 +1427,12 @@ def _required_runtime_ref(
 def _timestamp_after(value: str | None) -> str:
     if value is None:
         raise ValueError("late_submission requires lease_deadline_at")
-    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    parsed = _parse_timestamp(value)
     return (parsed + timedelta(microseconds=1)).isoformat().replace("+00:00", "Z")
+
+
+def _parse_timestamp(value: str) -> datetime:
+    return datetime.fromisoformat(value.replace("Z", "+00:00"))
 
 
 def _safe_fault_id(value: str) -> str:

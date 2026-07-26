@@ -35,6 +35,8 @@ from tokenshare.local_runtime.contracts import (
     ExpandAction,
     MergeAction,
     MergeExecutionContext,
+    MergeReadinessContext,
+    MergeReadinessDecision,
     MergeResolutionAction,
     RootProtocolPlan,
 )
@@ -59,6 +61,7 @@ from tokenshare.plugins.factorization.prompt_builder import (
 )
 from tokenshare.plugins.factorization.schemas import (
     CANDIDATE_RANGE_PARTITION_STRATEGY_ID,
+    FACTOR_WITNESS_OR_ALL_RANGES_MERGE_POLICY_ID,
     FACTORIZATION_MERGE_RESULT_CONTRACT_ID,
     FACTORIZATION_MERGE_RESULT_SCHEMA_VERSION,
     FACTOR_INTEGER_SUBJECT_CONTRACT_ID,
@@ -76,9 +79,11 @@ from tokenshare.plugins.factorization.schemas import (
     schema_ref,
 )
 from tokenshare.plugins.factorization.split_strategy import (
+    EXP2_CONTIGUOUS_20WAY_PROFILE_ID,
     FactorizationSplitPlanResult,
     FactorizationSplitStrategyActionResult,
     build_factorization_split_strategy_result,
+    resolve_requested_child_count,
 )
 from tokenshare.plugins.factorization.validator import (
     build_factor_search_instruction,
@@ -166,6 +171,7 @@ class FactorizationRuntimeAdapter:
         self._ranges_by_unit_id: dict[str, FactorSearchRangeInput] = {}
         self._range_input_refs_by_request_id: dict[str, ArtifactRef] = {}
         self._merge_candidate_refs: dict[str, Any] = {}
+        self._slot_integrity_violation_applied = False
 
     def plan_root(
         self,
@@ -175,12 +181,23 @@ class FactorizationRuntimeAdapter:
     ) -> RootProtocolPlan:
         case = _case(root_input)
         _validate_case(case)
+        requested_child_count = resolve_requested_child_count(case["split_params"])
+        split_profile_id = case["split_params"].get("split_profile_id")
+        if (
+            split_profile_id == EXP2_CONTIGUOUS_20WAY_PROFILE_ID
+            and self.protocol_config.max_children_per_unit < requested_child_count
+        ):
+            self.protocol_config = replace(
+                self.protocol_config,
+                max_children_per_unit=requested_child_count,
+            )
         self._artifact_store = artifact_store
         self._case = case
         self._split_plan = None
         self._ranges_by_unit_id = {}
         self._range_input_refs_by_request_id = {}
         self._merge_candidate_refs = {}
+        self._slot_integrity_violation_applied = False
         case_id = str(case["case_id"])
         task_id = f"paper_factorization_{case_id}"
         root = RootInput(
@@ -431,6 +448,7 @@ class FactorizationRuntimeAdapter:
             ),
             soft_hints={
                 "temperature": 0.0,
+                "lease_deadline_at": lease.expires_at,
                 "planned_ai_unit_id": (
                     f"range_{self._ranges_by_unit_id[unit.unit_id].child_index}"
                     if is_range
@@ -542,13 +560,42 @@ class FactorizationRuntimeAdapter:
         *,
         parent: TaskUnit,
         canonical_children: tuple[TaskUnit, ...],
+        slot_integrity_enabled: bool = True,
     ) -> MergeAction:
         store = self._require_store()
         split_plan = self._require_split_plan()
         children = {item.unit_id: item for item in canonical_children}
+        selected_slots = [
+            slot
+            for slot in split_plan.merge_plan.required_slots
+            if str(slot["source_child_unit_id"]) in children
+        ]
+        source_children = [
+            children[str(slot["source_child_unit_id"])]
+            for slot in selected_slots
+        ]
+        if (
+            not slot_integrity_enabled
+            and len(split_plan.merge_plan.required_slots) > 1
+        ):
+            if len(source_children) > 1:
+                source_children = source_children[1:] + source_children[:1]
+            else:
+                selected_slot_key = str(selected_slots[0]["slot_key"])
+                selected_slots = [
+                    next(
+                        slot
+                        for slot in split_plan.merge_plan.required_slots
+                        if str(slot["slot_key"]) != selected_slot_key
+                    )
+                ]
+            self._slot_integrity_violation_applied = True
         slots: list[RangeSlotMergeInput] = []
-        for slot in split_plan.merge_plan.required_slots:
-            child = children[str(slot["source_child_unit_id"])]
+        for slot, child in zip(
+            selected_slots,
+            source_children,
+            strict=True,
+        ):
             ref = child.canonical_output_refs["range_result"]
             slots.append(
                 RangeSlotMergeInput(
@@ -563,13 +610,14 @@ class FactorizationRuntimeAdapter:
             slot_results=slots,
             merge_unit_id=merge_unit_id,
             created_at=self.created_at,
+            slot_integrity_enabled=slot_integrity_enabled,
         )
         merge_ref = store.save_json(
             merged.merge_result.to_dict(),
             artifact_id=f"merge_result_{_safe(merge_unit_id)}",
             artifact_type="canonical_output",
             artifact_schema_id="factorization.merge_result",
-            artifact_schema_version="v1",
+            artifact_schema_version="v2",
             source={"kind": "factorization_runtime", "task_id": parent.task_id},
             metadata={"output_name": "factorization_result"},
             created_at=self.created_at,
@@ -584,6 +632,143 @@ class FactorizationRuntimeAdapter:
             raise ValueError("factorization merge did not resolve the parent output")
         self._merge_candidate_refs = refs
         return MergeAction(resolution_builder=self._merge_resolution)
+
+    def planned_ai_unit_id(self, unit: TaskUnit) -> str | None:
+        range_input = self._ranges_by_unit_id.get(unit.unit_id)
+        if range_input is None:
+            return None
+        return f"range_{range_input.child_index}"
+
+    def evaluate_merge_readiness(
+        self,
+        context: MergeReadinessContext,
+    ) -> MergeReadinessDecision:
+        required = tuple(
+            dict.fromkeys(
+                str(slot["source_child_unit_id"])
+                for slot in context.merge_plan.required_slots
+            )
+        )
+        verified_results = self._verified_canonical_range_results(context)
+        witnesses = [
+            (unit_id, result)
+            for unit_id, result in verified_results.items()
+            if result.result_kind == "found_factor"
+        ]
+        if witnesses:
+            witness_unit_id, _result = min(
+                witnesses,
+                key=lambda item: (
+                    int(item[1].found_factor or "0"),
+                    item[0],
+                ),
+            )
+            return MergeReadinessDecision(
+                status="ready",
+                reason="verified_factor_witness_canonical",
+                policy_id=FACTOR_WITNESS_OR_ALL_RANGES_MERGE_POLICY_ID,
+                policy_version="v2",
+                required_child_unit_ids=required,
+                selected_child_unit_ids=(witness_unit_id,),
+            )
+        if (
+            len(verified_results) == len(required)
+            and all(
+                result.result_kind == "no_factor_in_range"
+                for result in verified_results.values()
+            )
+        ):
+            return MergeReadinessDecision(
+                status="ready",
+                reason="all_required_ranges_no_factor_canonical",
+                policy_id=FACTOR_WITNESS_OR_ALL_RANGES_MERGE_POLICY_ID,
+                policy_version="v2",
+                required_child_unit_ids=required,
+                selected_child_unit_ids=required,
+            )
+        required_set = set(required)
+        if any(
+            child.state == TaskState.FAILED
+            for child in context.children
+            if child.unit_id in required_set
+        ):
+            return MergeReadinessDecision(
+                status="failed",
+                reason="terminal_child_failure_without_factor_witness",
+                policy_id=FACTOR_WITNESS_OR_ALL_RANGES_MERGE_POLICY_ID,
+                policy_version="v2",
+                required_child_unit_ids=required,
+            )
+        return MergeReadinessDecision(
+            status="wait",
+            reason="factor_witness_or_complete_coverage_not_ready",
+            policy_id=FACTOR_WITNESS_OR_ALL_RANGES_MERGE_POLICY_ID,
+            policy_version="v2",
+            required_child_unit_ids=required,
+        )
+
+    def _verified_canonical_range_results(
+        self,
+        context: MergeReadinessContext,
+    ) -> dict[str, RangeResult]:
+        store = self._require_store()
+        canonical_by_unit_id = {}
+        for event in context.canonical_events:
+            selection = event.payload.get("canonical_selection")
+            if isinstance(selection, dict) and isinstance(
+                selection.get("unit_id"),
+                str,
+            ):
+                canonical_by_unit_id[str(selection["unit_id"])] = selection
+        verification_by_id = {
+            event.object_id: event.payload.get("verification_report")
+            for event in context.verification_events
+        }
+        results: dict[str, RangeResult] = {}
+        for child in context.children:
+            if child.state != TaskState.COMPLETED:
+                continue
+            selection = canonical_by_unit_id.get(child.unit_id)
+            if not isinstance(selection, dict):
+                continue
+            report = verification_by_id.get(
+                str(selection.get("selected_verification_report_id"))
+            )
+            if (
+                not isinstance(report, dict)
+                or report.get("status") not in {"passed", "accepted"}
+                or report.get("eligible_for_canonical") is not True
+                or report.get("unit_id") != child.unit_id
+            ):
+                continue
+            ref = child.canonical_output_refs.get("range_result")
+            range_input = self._ranges_by_unit_id.get(child.unit_id)
+            if ref is None or range_input is None:
+                continue
+            try:
+                result = RangeResult(**_read_json(store, ref))
+            except (KeyError, TypeError, ValueError):
+                continue
+            metadata = report.get("metadata")
+            no_verification_ablation = (
+                isinstance(metadata, dict)
+                and metadata.get("domain_verifier_invoked") is False
+            )
+            if (
+                not no_verification_ablation
+                and not verify_range_result(
+                    result,
+                    child_input=range_input,
+                    no_factor_recheck_max_divisors=(
+                        int(range_input.range_end)
+                        - int(range_input.range_start)
+                        + 1
+                    ),
+                ).accepted
+            ):
+                continue
+            results[child.unit_id] = result
+        return results
 
     def save_prime_factorization_result(self, result: PrimeFactorizationResult):
         case = self._require_case()
@@ -617,6 +802,10 @@ class FactorizationRuntimeAdapter:
     @property
     def merge_candidate_refs(self) -> dict[str, Any]:
         return dict(self._merge_candidate_refs)
+
+    @property
+    def slot_integrity_violation_applied(self) -> bool:
+        return self._slot_integrity_violation_applied
 
     @property
     def planned_split_plan(self) -> FactorizationSplitPlanResult:
@@ -700,7 +889,7 @@ class FactorizationRuntimeAdapter:
         ]
         subject = FactorIntegerSubject(**_read_json(store, subject_ref))
         case = self._require_case()
-        requested = int(case["split_params"]["requested_child_count"])
+        requested = resolve_requested_child_count(case["split_params"])
         split_action = _build_split_action(
             subject=subject,
             canonical_selection_id=context.canonical_selection.canonical_selection_id,
@@ -1086,6 +1275,30 @@ class FactorizationExecutionBridge:
             submitted_at=submitted_at,
         )
 
+    def prepare_process_execution(
+        self,
+        request: ExecutionRequest,
+        execution_index: int,
+    ) -> None:
+        prepare = getattr(self._range_executor, "prepare_process_execution", None)
+        if callable(prepare):
+            prepare(request, execution_index)
+
+    def export_process_result(
+        self,
+        request: ExecutionRequest,
+        submission: ExecutionSubmission,
+    ):
+        if str(request.task_unit_snapshot["unit_type"]) != FACTOR_SEARCH_RANGE_TASK_TYPE:
+            return None
+        export = getattr(self._range_executor, "export_process_result", None)
+        return export(request, submission) if callable(export) else None
+
+    def ingest_process_result(self, captured) -> None:
+        ingest = getattr(self._range_executor, "ingest_process_result", None)
+        if callable(ingest) and captured is not None:
+            ingest(captured)
+
 
 def _preflight_split_plan(
     case: JsonObject,
@@ -1137,7 +1350,7 @@ def _preflight_split_plan(
         metadata={"output_name": FACTOR_INTEGER_SUBJECT_OUTPUT_NAME},
         created_at=created_at,
     )
-    requested_child_count = int(case["split_params"]["requested_child_count"])
+    requested_child_count = resolve_requested_child_count(case["split_params"])
     action = _build_split_action(
         subject=subject,
         canonical_selection_id=f"canonical_selection:{task_id}:{root_unit_id}",

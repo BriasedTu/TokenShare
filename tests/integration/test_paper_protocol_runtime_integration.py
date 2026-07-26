@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+from dataclasses import replace
 from pathlib import Path
 from threading import Lock
 
@@ -43,10 +44,13 @@ from tokenshare.experiments.paper_models import (
     PaperTaskStatus,
 )
 from tokenshare.local_runtime import (
+    NoOpRuntimeHooks,
+    ParsedCandidateDirective,
     ProcessWorkerBackend,
     ProtocolRunRequest,
     SequentialWorkerBackend,
 )
+from tokenshare.core.models import ArtifactRef
 from tokenshare.storage.events import EventType
 
 
@@ -181,6 +185,102 @@ def test_factorization_full_capturing_transport_covers_system_lifecycle(
         )
 
 
+@pytest.mark.parametrize(
+    ("case_id", "target_n", "candidate_end", "oracle_prime_factors", "expected_calls"),
+    (
+        (
+            "factor_exp2_early_witness",
+            "3027",
+            "55",
+            (
+                {"prime": "3", "exponent": 1},
+                {"prime": "1009", "exponent": 1},
+            ),
+            3,
+        ),
+        (
+            "factor_exp2_no_factor",
+            "104729",
+            "323",
+            ({"prime": "104729", "exponent": 1},),
+            20,
+        ),
+    ),
+)
+def test_exp2_20way_factorization_stops_before_the_next_worker_batch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    case_id: str,
+    target_n: str,
+    candidate_end: str,
+    oracle_prime_factors: tuple[dict[str, object], ...],
+    expected_calls: int,
+) -> None:
+    profile = load_exp1_pilot_profile(EXP1_PROFILE)
+    entry = profile.source_provider_config.entries[0]
+    monkeypatch.setenv(entry.api_key_env, "task4-offline-capture-key")
+    template = next(
+        item
+        for item in generate_factorization_paper_cases()
+        if item["difficulty"] == "hard"
+    )
+    case = {
+        **template,
+        "case_id": case_id,
+        "target_n": target_n,
+        "candidate_start": "2",
+        "candidate_end": candidate_end,
+        "factor_position_quantile": (
+            "no_factor" if len(oracle_prime_factors) == 1 else "early"
+        ),
+        "oracle_prime_factors": [dict(item) for item in oracle_prime_factors],
+        "split_params": {
+            "strategy_id": "factorization.candidate_range_partition.v1",
+            "range_policy": "contiguous",
+            "split_profile_id": "factorization.exp2_contiguous_20way.v1",
+        },
+    }
+    condition = replace(
+        _condition_for_case(
+            case=case,
+            domain="factorization",
+            catalog_digest="sha256:" + "2" * 64,
+            profile=profile,
+        ),
+        experiment_id="exp2_real_ai_scalability",
+        condition_id=f"task4_{case_id}_w3_r0",
+        worker_count=3,
+    )
+    transport = _CapturingFactorizationTransport()
+
+    result = dispatch_paper_case(
+        case=case,
+        condition=condition,
+        output_root=str(tmp_path / case_id),
+        transport=transport,
+        real_transport=True,
+        ai_api_config=profile.source_provider_config,
+        entry_id=entry.entry_id,
+        max_tokens=512,
+        timeout_seconds=30,
+    )
+
+    observation = result.run_evidence["protocol_runtime"]["runtime_observation"]
+    assert result.task_result.root_status == PaperTaskStatus.COMPLETED
+    assert result.split_summary["range_child_count"] == 20
+    assert len(transport.calls) == expected_calls
+    assert len(observation["planned_ai_unit_ids"]) == 20
+    assert len(observation["dispatched_ai_unit_ids"]) == expected_calls
+    assert len(observation["completed_ai_unit_ids"]) == expected_calls
+    assert len(observation["unscheduled_ai_unit_ids"]) == 20 - expected_calls
+    assert observation["observed_peak_concurrency"] <= 3
+    if expected_calls == 3:
+        assert observation["in_flight_ai_unit_ids_at_witness"] == []
+        assert observation["witness_observed_at"] is not None
+    else:
+        assert observation["in_flight_ai_unit_ids_at_witness"] == []
+
+
 def test_lean_fixed_plan_full_is_plugin_validated_and_engine_merged(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -299,6 +399,47 @@ def test_verifier_rejection_and_late_submission_requeue_without_old_canonical(
         assert canonical_attempt_ids & (same_unit_attempts - {old_attempt_id})
 
 
+def test_parsed_candidate_hook_runs_before_submission_and_verification(
+    tmp_path: Path,
+) -> None:
+    store, ledger, plugin, clock, coordinator = recovery_runtime(
+        tmp_path,
+        max_retries=0,
+        plugin_type=_ExpandedPluginRuntime,
+    )
+    hooks = _ParsedCandidateOrderingHook(store=store, ledger=ledger)
+
+    result = coordinator.run_root(
+        ProtocolRunRequest(
+            run_id="task5_parsed_candidate_boundary",
+            root_input={"fault": "parsed_candidate"},
+            plugin_runtime=plugin,
+            worker_backend=SequentialWorkerBackend(
+                executor=_ArtifactExecutor(store),
+                submitted_at=clock,
+            ),
+            hooks=hooks,
+        )
+    )
+
+    assert result.status == "completed"
+    assert hooks.observed_attempt_ids
+    submission_events = [
+        event
+        for event in ledger.read_all()
+        if event.event_type == EventType.EXECUTION_SUBMISSION_RECORDED.value
+        and event.payload.get("acceptance_status") == "accepted"
+    ]
+    assert len(submission_events) == len(hooks.observed_attempt_ids)
+    for event in submission_events:
+        submission_ref = ArtifactRef.from_dict(event.payload["submission_ref"])
+        submission = json.loads(store.read_bytes(submission_ref).decode("utf-8"))
+        assert {
+            ref["artifact_id"]
+            for ref in submission["candidate_output_refs"].values()
+        } == {f"parsed_candidate_hook_{event.payload['attempt_id']}"}
+
+
 def test_real_os_worker_death_expires_lease_and_reassigns_same_unit(
     tmp_path: Path,
 ) -> None:
@@ -349,6 +490,8 @@ def test_real_os_worker_death_expires_lease_and_reassigns_same_unit(
     ]
     assert len(active_leases) == 2
     assert active_leases[0]["lease_id"] != active_leases[1]["lease_id"]
+    assert active_leases[0]["attempt_id"] != active_leases[1]["attempt_id"]
+    assert active_leases[0]["fencing_token"] != active_leases[1]["fencing_token"]
 
 
 @pytest.mark.parametrize(
@@ -359,10 +502,9 @@ def test_real_os_worker_death_expires_lease_and_reassigns_same_unit(
         "NO_PARSER_POLICY",
         "NO_REQUEUE",
         "NO_MERGE_GATE",
-        "NO_SLOT_INTEGRITY",
     ),
 )
-def test_six_ablation_modes_are_observed_from_runtime_gates(
+def test_five_ablation_modes_are_observed_from_runtime_gates(
     tmp_path: Path,
     mode: str,
 ) -> None:
@@ -392,7 +534,11 @@ def test_six_ablation_modes_are_observed_from_runtime_gates(
             {0} if mode in {"NO_VERIFICATION", "NO_MERGE_GATE"} else set()
         )
     )
-    post_raw_hook = _ExecutorErrorOncePerUnit() if mode == "NO_REQUEUE" else None
+    post_raw_hook = (
+        _ExecutorErrorOncePerUnit()
+        if mode in {"FULL", "NO_REQUEUE"}
+        else None
+    )
 
     result = dispatch_paper_case(
         case=case,
@@ -410,23 +556,70 @@ def test_six_ablation_modes_are_observed_from_runtime_gates(
 
     runtime = result.run_evidence["ablation_runtime"]
     assert runtime["mode"] == mode
+    assert runtime["max_retries"] == 1
     assert runtime["applied_before_adapter_completion"] is True
     if mode == "FULL":
         assert runtime["disabled_mechanism"] is None
         assert runtime["hook_observations"] == []
         assert result.task_result.root_status == PaperTaskStatus.COMPLETED
+        assert len(
+            {attempt.unit_id for attempt in result.attempt_results}
+        ) < len(result.attempt_results)
     else:
         assert runtime["disabled_mechanism"] is not None
         assert runtime["hook_observations"]
         assert all(
-            observation["event_type"] == "EXPERIMENT_ABLATION_GATE_APPLIED"
+            observation["event_type"]
+            in {
+                "EXPERIMENT_ABLATION_GATE_APPLIED",
+                "EXPERIMENT_PREMATURE_MERGE_ATTEMPTED",
+            }
             for observation in runtime["hook_observations"]
         )
-        if mode in {"NO_REQUEUE", "NO_MERGE_GATE", "NO_SLOT_INTEGRITY"}:
+        if mode in {"NO_REQUEUE", "NO_MERGE_GATE"}:
             assert all(
                 observation["protocol_event_refs"]
                 for observation in runtime["hook_observations"]
+                if observation["event_type"] == "EXPERIMENT_ABLATION_GATE_APPLIED"
             )
+    if mode == "NO_VERIFICATION":
+        assert result.task_result.accepted_validity is False
+        assert runtime["attempt_observations"]
+        assert any(
+            observation["canonical_output_refs"]
+            and observation["independent_candidate_validity"] is False
+            for observation in runtime["attempt_observations"]
+        )
+    if mode == "NO_PARSER_POLICY":
+        assert runtime["attempt_observations"]
+        assert all(
+            observation["raw_output_ref"] == observation["candidate_output_ref"]
+            for observation in runtime["attempt_observations"]
+        )
+        assert all(
+            observation["final_validity"]
+            == result.task_result.accepted_validity
+            for observation in runtime["attempt_observations"]
+        )
+    if mode == "NO_REQUEUE":
+        assert result.task_result.root_status != PaperTaskStatus.COMPLETED
+        assert runtime["max_retries"] == 1
+        assert len(
+            {attempt.unit_id for attempt in result.attempt_results}
+        ) == len(result.attempt_results)
+    if mode == "NO_MERGE_GATE":
+        premature = [
+            observation
+            for observation in runtime["hook_observations"]
+            if observation["event_type"]
+            == "EXPERIMENT_PREMATURE_MERGE_ATTEMPTED"
+        ]
+        assert premature
+        assert premature[0]["attempt_status"] == "executed"
+        assert premature[0]["root_check_passed"] is False
+        assert premature[0]["result_artifact_ref"]["content_hash"].startswith(
+            "sha256:"
+        )
 
 
 def test_experiments_package_has_no_direct_protocol_state_write_authority() -> None:
@@ -513,3 +706,46 @@ class _ExecutorErrorOncePerUnit:
                 return None
             self._seen_unit_ids.add(unit_id)
         return {"result_kind": "executor_error"}
+
+
+class _ParsedCandidateOrderingHook(NoOpRuntimeHooks):
+    def __init__(self, *, store, ledger) -> None:
+        self._store = store
+        self._ledger = ledger
+        self.observed_attempt_ids: list[str] = []
+
+    def after_parsed_candidate_persisted(self, context):
+        prior_attempt_events = [
+            event
+            for event in self._ledger.read_all()
+            if event.payload.get("attempt_id") == context.attempt_id
+            and event.event_type
+            in {
+                EventType.EXECUTION_SUBMISSION_RECORDED.value,
+                EventType.VERIFICATION_RECORDED.value,
+            }
+        ]
+        assert prior_attempt_events == []
+        replacement_ref = self._store.save_json(
+            {"unit_id": context.unit_id, "answer": "fault-mutated"},
+            artifact_id=f"parsed_candidate_hook_{context.attempt_id}",
+            artifact_type="canonical_output",
+            artifact_schema_id="tokenshare.runtime_test.answer",
+            artifact_schema_version="v1",
+            source={"kind": "parsed_candidate_ordering_hook"},
+            metadata={"attempt_id": context.attempt_id},
+            created_at=context.submitted_at,
+        )
+        self.observed_attempt_ids.append(context.attempt_id)
+        return ParsedCandidateDirective(
+            replacement_candidate_output_refs={
+                name: replacement_ref
+                for name in context.candidate_output_refs
+            },
+            experiment_records=(
+                {
+                    "event_type": "EXPERIMENT_PARSED_CANDIDATE_MUTATED",
+                    "attempt_id": context.attempt_id,
+                },
+            ),
+        )

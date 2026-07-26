@@ -5,6 +5,10 @@
 > 权威口径：Doc/TechnicalDocument/tokenshare_latest_real_plugin_experiment_design.md
 > 主计划：Doc/TechnicalDocument/2026-07-13-feat-011-paper-real-ai-experiments-implementation-plan.md
 > 并发设计：Doc/TechnicalDocument/2026-07-18-feat-011-parallel-experiment-development-design.md
+> 2026-07-24 参数覆盖：本文中的 Exp1 三次重复、`1,905` root-runs、`8,700` planned AI units 及由此导出的旧 P0 总数已被 EPD-001 替代。当前目标是 Exp1 两个领域每题 1 次、`635` root-runs、`2,900` planned AI units；以唯一权威实验设计和 `tokenshare_experiment_parameter_decision_log.md` 为准。
+> 2026-07-24 Exp2 参数覆盖：本文中的 Factorization 三档 + Lean、worker `1/3/10/30`、5 repeats、optional `100/300` 和 `10,300` root-runs 已被 EPD-003 替代。当前目标是全部 166 道 hard Factorization、20-way split、worker `1/3/7/10/30/50`、每档 2 遍，Lean 不进入，共 `1,992` root-runs / `39,840` planned AI units。
+> 2026-07-24 Exp3 参数覆盖：本文中的 rate-fault/worker-death 3 repeats 和旧规模已被 EPD-004 替代。当前两类矩阵均为每 condition 2 repeats，规模为 `35,120/6,036`，Exp3 合计 `41,156` root-runs；其他参数不变。
+> 2026-07-24 Exp4/Exp5 与实施覆盖：EPD-005 的 Exp4 仅保留五模式、7,725 root-runs；EPD-006 的 Exp5 独立使用 Exp1 全部 hard roots（Factorization 166 + Lean 45）、36 conditions、1,899 root-runs，不再复用 Exp2 slice。Prompt D–G/H/M/N 的当前修复任务、正式指标和验证顺序以 `2026-07-24-feat-011-exp2-exp5-experiment-facility-completion-implementation-plan.md` 为准，本文后续旧 4,635 算术和共享 slice 不得继续执行。
 
 ## 0. 使用顺序
 
@@ -209,9 +213,9 @@ Gate B 通过并形成 checkpoint 后，可并发启动 Prompt C–G：
     - src/tokenshare/experiments/paper_exp4_ablation_runner.py
     - tests/experiments/test_paper_exp4_ablation_runner.py
 
-    六个模式固定为 FULL、NO_VERIFICATION、NO_PARSER_POLICY、NO_REQUEUE、NO_MERGE_GATE、NO_SLOT_INTEGRITY。Factorization 三档分别使用全部 `167/167/166` roots；Lean 使用与 Exp2/5 完全相同的 2/2/1 五题 slices；6 modes × 3 repeats，共 9,270 root-runs。所有模式固定 GLM-5.2 entry。
+    按 EPD-005，五个模式固定为 FULL、NO_VERIFICATION、NO_PARSER_POLICY、NO_REQUEUE、NO_MERGE_GATE；NO_SLOT_INTEGRITY 已从正式矩阵删除。Factorization 三档分别使用全部 `167/167/166` roots；Lean 使用与 Exp2/5 完全相同的 2/2/1 五题 slices；5 modes × 3 repeats，共 7,725 root-runs。所有模式固定 GLM-5.2 entry。
 
-    每个 mode 使用独立 output root；模块返回 mode-specific wrapper/config，不修改协议默认配置。summary 至少覆盖 completion、accepted validity、wrong canonical acceptance、raw-only acceptance、stuck task、premature merge、slot mismatch、wall-clock、tokens、cost。
+    每个 mode 使用独立 output root；模块返回 mode-specific wrapper/config，不修改协议默认配置。summary 至少覆盖 completion、accepted validity、wrong canonical acceptance、raw-only exposure/acceptance、stuck task、premature merge、wall-clock、tokens、cost。
 
     明确实现：
 
@@ -318,9 +322,9 @@ Gate B 通过并形成 checkpoint 后，可并发启动 Prompt C–G：
 
 ## Prompt L：Experiment 4 plan、预算记录、pilot 与 formal run
 
-    只执行 Experiment 4，并要求 Experiment 3 已完成审计。先 plan-only 冻结 9,270 root-runs、六 modes、Factorization 全部 500 roots、Lean exact 5-task slices、3 repeats、独立 output roots、GLM-5.2 identity、hard limits和预算 digest。记录 `approval_mode=user_bypassed` 后可继续。
+只执行 Experiment 4，并要求 Experiment 3 已完成审计。先 plan-only 冻结 7,725 root-runs、五 modes、Factorization 全部 500 roots、Lean exact 5-task slices、3 repeats、独立 output roots、GLM-5.2 identity、hard limits和预算 digest。记录 `approval_mode=user_bypassed` 后可继续。
 
-    pilot 验证每个 mode 只关闭一个实验边界、FULL 默认语义未改变、错误 evidence 不跨 output root 污染。drift 时重新 plan。正式运行输出 completion/validity、wrong canonical/raw-only/stuck/premature merge/slot mismatch，以及 exposed_error_count、escaped_error_count、error_escape_rate/applicability、time/tokens/cost。验证并更新状态，停在 Experiment 5 run 前。
+pilot 验证每个 mode 只关闭一个实验边界、FULL 默认语义未改变、错误 evidence 不跨 output root 污染。drift 时重新 plan。正式运行输出 completion/validity、wrong canonical/raw-only exposure/acceptance/stuck/premature merge，以及 exposed_error_count、escaped_error_count、error_escape_rate/applicability、time/tokens/cost。每个专项字段必须来自真实 runtime/canonical/recovery/merge evidence，不能由 mode 标记直接生成。验证并更新状态，停在 Experiment 5 run 前。
 
 ## Prompt M：Experiment 5 plan、预算记录、pilot 与 formal run
 

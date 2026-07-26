@@ -11,6 +11,7 @@ from threading import Lock, current_thread
 from typing import Callable, Iterable
 
 from tokenshare.executors.contracts import ExecutionRequest, ExecutionSubmission
+from tokenshare.local_runtime.contracts import WorkerTerminationPolicy
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -30,6 +31,12 @@ class WorkerExecutionFact:
     started_at: str | None = None
     ended_at: str | None = None
     kill_point: str | None = None
+    kill_progress_target_ratio: float | None = None
+    kill_progress_completed_ai_unit_count: int | None = None
+    kill_progress_total_ai_unit_count: int | None = None
+    kill_progress_actual_ratio: float | None = None
+    kill_progress_observed_at: str | None = None
+    kill_progress_error: str | None = None
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -46,6 +53,16 @@ class WorkerExecutionFact:
             "started_at": self.started_at,
             "ended_at": self.ended_at,
             "kill_point": self.kill_point,
+            "kill_progress_target_ratio": self.kill_progress_target_ratio,
+            "kill_progress_completed_ai_unit_count": (
+                self.kill_progress_completed_ai_unit_count
+            ),
+            "kill_progress_total_ai_unit_count": (
+                self.kill_progress_total_ai_unit_count
+            ),
+            "kill_progress_actual_ratio": self.kill_progress_actual_ratio,
+            "kill_progress_observed_at": self.kill_progress_observed_at,
+            "kill_progress_error": self.kill_progress_error,
         }
 
 
@@ -250,7 +267,7 @@ class ThreadWorkerBackend:
 
 
 class ProcessWorkerBackend:
-    """每个 request 在独立进程执行，并可终止一次匹配的 unit process。"""
+    """每个 request 在独立进程执行，并可终止有限个匹配的 unit process。"""
 
     def __init__(
         self,
@@ -259,20 +276,39 @@ class ProcessWorkerBackend:
         capacity: int,
         submitted_at: Callable[[], str],
         terminate_once: Callable[[ExecutionRequest], bool] | None = None,
+        termination_limit: int = 1,
+        termination_policy: WorkerTerminationPolicy | None = None,
         kill_point: str | None = None,
         process_timeout_seconds: float = 30.0,
     ) -> None:
+        if termination_policy is not None:
+            if terminate_once is not None:
+                raise ValueError(
+                    "termination_policy cannot be combined with terminate_once"
+                )
+            terminate_once = termination_policy.matches
+            termination_limit = termination_policy.termination_limit
+            kill_point = termination_policy.kill_point
+            process_timeout_seconds = (
+                termination_policy.process_timeout_seconds
+            )
         if capacity < 1:
             raise ValueError("worker capacity must be positive")
         if process_timeout_seconds <= 0:
             raise ValueError("process_timeout_seconds must be positive")
+        if termination_limit < 1:
+            raise ValueError("termination_limit must be positive")
         self._executor = executor
         self._capacity = capacity
         self._submitted_at = submitted_at
         self._terminate_once = terminate_once
+        self._termination_limit = termination_limit
         self._kill_point = kill_point
+        self._termination_policy = termination_policy
         self._process_timeout_seconds = process_timeout_seconds
-        self._termination_consumed = False
+        self._termination_count = 0
+        self._terminated_planned_ai_unit_ids: set[str] = set()
+        self._completed_planned_ai_unit_ids: set[str] = set()
         self._next_execution_index = 1
         self._execution_facts: list[WorkerExecutionFact] = []
 
@@ -313,6 +349,7 @@ class ProcessWorkerBackend:
                 args=(
                     self._executor,
                     request,
+                    execution_index,
                     submission_id,
                     submitted_at,
                     child_connection,
@@ -320,11 +357,6 @@ class ProcessWorkerBackend:
                 ),
                 name=f"tokenshare-unit-{execution_index}",
             )
-            should_terminate = False
-            if not self._termination_consumed and self._terminate_once is not None:
-                should_terminate = bool(self._terminate_once(request))
-                if should_terminate:
-                    self._termination_consumed = True
             started_at = _utc_now()
             try:
                 process.start()
@@ -362,7 +394,11 @@ class ProcessWorkerBackend:
                     "process": process,
                     "connection": parent_connection,
                     "release": release,
-                    "should_terminate": should_terminate,
+                    "matches_termination_target": (
+                        self._termination_count < self._termination_limit
+                        and self._terminate_once is not None
+                        and bool(self._terminate_once(request))
+                    ),
                     "started_at": started_at,
                 }
             )
@@ -384,7 +420,7 @@ class ProcessWorkerBackend:
         process = handle["process"]
         connection = handle["connection"]
         release = handle["release"]
-        should_terminate = bool(handle["should_terminate"])
+        matches_termination_target = bool(handle["matches_termination_target"])
         started_at = str(handle["started_at"])
         try:
             if not connection.poll(self._process_timeout_seconds):
@@ -409,10 +445,35 @@ class ProcessWorkerBackend:
                     error_message="worker process timed out",
                 )
             else:
-                message_kind, payload = connection.recv()
+                message = connection.recv()
+                message_kind, payload = message[:2]
+                process_result = message[2] if len(message) > 2 else None
+                progress_observation = self._termination_progress_observation(
+                    matches_termination_target=matches_termination_target,
+                    request=request,
+                )
+                should_terminate = (
+                    matches_termination_target
+                    and self._termination_count < self._termination_limit
+                    and progress_observation["armed"] is True
+                    and self._termination_target_is_available(request)
+                )
                 if message_kind == "submission" and should_terminate:
+                    self._termination_count += 1
+                    planned_ai_unit_id = request.soft_hints.get(
+                        "planned_ai_unit_id"
+                    )
+                    if (
+                        isinstance(planned_ai_unit_id, str)
+                        and planned_ai_unit_id
+                    ):
+                        self._terminated_planned_ai_unit_ids.add(
+                            planned_ai_unit_id
+                        )
+                    _ingest_process_result(self._executor, process_result)
                     process.terminate()
                     process.join(timeout=5)
+                    observed_at = _utc_now()
                     fact = _fact(
                         request=request,
                         execution_index=execution_index,
@@ -422,8 +483,22 @@ class ProcessWorkerBackend:
                         worker_pid=process.pid,
                         process_exitcode=process.exitcode,
                         started_at=started_at,
-                        ended_at=_utc_now(),
+                        ended_at=observed_at,
                         kill_point=self._kill_point,
+                        kill_progress_target_ratio=progress_observation[
+                            "target_ratio"
+                        ],
+                        kill_progress_completed_ai_unit_count=progress_observation[
+                            "completed_count"
+                        ],
+                        kill_progress_total_ai_unit_count=progress_observation[
+                            "total_count"
+                        ],
+                        kill_progress_actual_ratio=progress_observation[
+                            "actual_ratio"
+                        ],
+                        kill_progress_observed_at=observed_at,
+                        kill_progress_error=progress_observation["error"],
                     )
                     outcome = WorkerBatchOutcome(
                         request=request,
@@ -433,6 +508,7 @@ class ProcessWorkerBackend:
                         error_message="worker process terminated before submission",
                     )
                 elif message_kind == "submission":
+                    _ingest_process_result(self._executor, process_result)
                     release.set()
                     process.join(timeout=5)
                     fact = _fact(
@@ -445,7 +521,41 @@ class ProcessWorkerBackend:
                         process_exitcode=process.exitcode,
                         started_at=started_at,
                         ended_at=_utc_now(),
+                        kill_point=(
+                            self._kill_point
+                            if matches_termination_target
+                            else None
+                        ),
+                        kill_progress_target_ratio=(
+                            progress_observation["target_ratio"]
+                            if matches_termination_target
+                            else None
+                        ),
+                        kill_progress_completed_ai_unit_count=(
+                            progress_observation["completed_count"]
+                            if matches_termination_target
+                            else None
+                        ),
+                        kill_progress_total_ai_unit_count=(
+                            progress_observation["total_count"]
+                            if matches_termination_target
+                            else None
+                        ),
+                        kill_progress_actual_ratio=(
+                            progress_observation["actual_ratio"]
+                            if matches_termination_target
+                            else None
+                        ),
+                        kill_progress_observed_at=(
+                            _utc_now() if matches_termination_target else None
+                        ),
+                        kill_progress_error=(
+                            progress_observation["error"]
+                            if matches_termination_target
+                            else None
+                        ),
                     )
+                    self._record_completed_planned_ai_unit(request, payload)
                     outcome = WorkerBatchOutcome(
                         request=request,
                         submission=payload,
@@ -479,6 +589,86 @@ class ProcessWorkerBackend:
                 process.join(timeout=5)
         self._execution_facts.append(outcome.fact)
         return outcome
+
+    def _termination_progress_observation(
+        self,
+        *,
+        matches_termination_target: bool,
+        request: ExecutionRequest,
+    ) -> dict[str, object]:
+        policy = self._termination_policy
+        if not matches_termination_target or policy is None:
+            return {
+                "armed": matches_termination_target,
+                "target_ratio": None,
+                "completed_count": None,
+                "total_count": None,
+                "actual_ratio": None,
+                "error": None,
+            }
+        total_count = policy.total_planned_ai_unit_count
+        if total_count is None:
+            return {
+                "armed": False,
+                "target_ratio": policy.target_progress_ratio,
+                "completed_count": len(self._completed_planned_ai_unit_ids),
+                "total_count": None,
+                "actual_ratio": None,
+                "error": "missing_total_planned_ai_unit_count",
+            }
+        planned_ai_unit_id = request.soft_hints.get("planned_ai_unit_id")
+        current_completion = (
+            1
+            if isinstance(planned_ai_unit_id, str)
+            and planned_ai_unit_id
+            and planned_ai_unit_id not in self._completed_planned_ai_unit_ids
+            else 0
+        )
+        completed_count = (
+            len(self._completed_planned_ai_unit_ids) + current_completion
+        )
+        actual_ratio = completed_count / total_count
+        armed = actual_ratio >= policy.target_progress_ratio
+        return {
+            "armed": armed,
+            "target_ratio": policy.target_progress_ratio,
+            "completed_count": completed_count,
+            "total_count": total_count,
+            "actual_ratio": actual_ratio,
+            "error": None if armed else "actual_progress_below_target",
+        }
+
+    def _termination_target_is_available(
+        self,
+        request: ExecutionRequest,
+    ) -> bool:
+        policy = self._termination_policy
+        if policy is None:
+            return True
+        planned_ai_unit_id = request.soft_hints.get("planned_ai_unit_id")
+        if not isinstance(planned_ai_unit_id, str) or not planned_ai_unit_id:
+            return False
+        pending_targets = (
+            set(policy.target_planned_ai_unit_ids)
+            - self._terminated_planned_ai_unit_ids
+        )
+        # 先让每个冻结逻辑 target 各终止一次；达到唯一 target 覆盖后，
+        # 允许在 replacement process 上继续终止，直到满足 death-count。
+        return (
+            planned_ai_unit_id not in self._terminated_planned_ai_unit_ids
+            or not pending_targets
+        )
+
+    def _record_completed_planned_ai_unit(
+        self,
+        request: ExecutionRequest,
+        submission: object,
+    ) -> None:
+        if getattr(submission, "result_kind", None) != "succeeded":
+            return
+        planned_ai_unit_id = request.soft_hints.get("planned_ai_unit_id")
+        if isinstance(planned_ai_unit_id, str) and planned_ai_unit_id:
+            self._completed_planned_ai_unit_ids.add(planned_ai_unit_id)
 
 
 def execute_worker_batch(
@@ -540,6 +730,7 @@ def execute_worker_batch(
 def _process_execution_entry(
     executor: object,
     request: ExecutionRequest,
+    execution_index: int,
     submission_id: str,
     submitted_at: str,
     connection: object,
@@ -548,12 +739,25 @@ def _process_execution_entry(
     """子进程执行 unit；submission 交给 coordinator 前保持进程存活。"""
 
     try:
+        prepare_process_execution = getattr(
+            executor,
+            "prepare_process_execution",
+            None,
+        )
+        if callable(prepare_process_execution):
+            prepare_process_execution(request, execution_index)
         submission = executor.execute(
             request,
             submission_id=submission_id,
             submitted_at=submitted_at,
         )
-        connection.send(("submission", submission))
+        export_process_result = getattr(executor, "export_process_result", None)
+        process_result = (
+            export_process_result(request, submission)
+            if callable(export_process_result)
+            else None
+        )
+        connection.send(("submission", submission, process_result))
         release.wait(timeout=30)
     except BaseException as error:
         try:
@@ -562,6 +766,14 @@ def _process_execution_entry(
             pass
     finally:
         connection.close()
+
+
+def _ingest_process_result(executor: object, process_result: object) -> None:
+    if process_result is None:
+        return
+    ingest_process_result = getattr(executor, "ingest_process_result", None)
+    if callable(ingest_process_result):
+        ingest_process_result(process_result)
 
 
 def _fact(
@@ -576,6 +788,12 @@ def _fact(
     worker_pid: int | None = None,
     process_exitcode: int | None = None,
     kill_point: str | None = None,
+    kill_progress_target_ratio: float | None = None,
+    kill_progress_completed_ai_unit_count: int | None = None,
+    kill_progress_total_ai_unit_count: int | None = None,
+    kill_progress_actual_ratio: float | None = None,
+    kill_progress_observed_at: str | None = None,
+    kill_progress_error: str | None = None,
 ) -> WorkerExecutionFact:
     return WorkerExecutionFact(
         execution_index=execution_index,
@@ -591,6 +809,14 @@ def _fact(
         started_at=started_at,
         ended_at=ended_at,
         kill_point=kill_point,
+        kill_progress_target_ratio=kill_progress_target_ratio,
+        kill_progress_completed_ai_unit_count=(
+            kill_progress_completed_ai_unit_count
+        ),
+        kill_progress_total_ai_unit_count=kill_progress_total_ai_unit_count,
+        kill_progress_actual_ratio=kill_progress_actual_ratio,
+        kill_progress_observed_at=kill_progress_observed_at,
+        kill_progress_error=kill_progress_error,
     )
 
 

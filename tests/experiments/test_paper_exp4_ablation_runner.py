@@ -23,6 +23,7 @@ from tokenshare.experiments.paper_exp4_ablation_runner import (
     BASELINE_PROVIDER_FAMILY,
     BASELINE_PROVIDER_MODEL_ID,
     EXP4_EXPERIMENT_ID,
+    EXP4_MODES,
     EXP4_REPEATS,
     EXP4_ROOT_RUN_COUNT,
     EXP4_V1_ROOT_RUN_COUNT,
@@ -74,17 +75,18 @@ def test_exp4_module_conforms_to_gate_b_protocol() -> None:
     assert isinstance(Experiment4AblationModule(), PaperExperimentModule)
 
 
-def test_exp4_expands_frozen_six_mode_matrix_with_glm_baseline() -> None:
+def test_exp4_expands_frozen_five_mode_matrix_with_glm_baseline() -> None:
     conditions = expand_exp4_conditions(_context())
 
-    assert EXP4_ROOT_RUN_COUNT == 9_270
-    assert EXP4_V1_ROOT_RUN_COUNT == 540
+    assert EXP4_ROOT_RUN_COUNT == 7_725
+    assert EXP4_V1_ROOT_RUN_COUNT == 450
     assert EXP4_REPEATS == 3
-    assert len(conditions) == 108
-    assert len({condition.condition_id for condition in conditions}) == 108
+    assert len(conditions) == 90
+    assert len({condition.condition_id for condition in conditions}) == 90
     assert {condition.ablation_mode for condition in conditions} == {
-        mode.value for mode in PaperAblationMode
+        mode.value for mode in EXP4_MODES
     }
+    assert PaperAblationMode.NO_SLOT_INTEGRITY not in EXP4_MODES
     assert {condition.domain for condition in conditions} == {
         "factorization",
         "lean_proof",
@@ -143,7 +145,7 @@ def test_exp4_accepts_controls_resolved_from_actual_baseline_provider_config() -
     }
     assert resolved_controls == {
         "max_tokens": 1024,
-        "timeout_seconds": 30,
+        "timeout_seconds": 100,
         "max_provider_attempts": 1,
         "temperature": 0.0,
         "top_p": 1.0,
@@ -157,7 +159,7 @@ def test_exp4_accepts_controls_resolved_from_actual_baseline_provider_config() -
     conditions = expand_exp4_conditions(context)
     selections = freeze_exp4_case_selections(context, conditions)
 
-    assert len(conditions) == 108
+    assert len(conditions) == 90
     assert count_exp4_root_runs(conditions, selections) == EXP4_V1_ROOT_RUN_COUNT
     assert all(selection.is_executable for selection in selections)
 
@@ -166,7 +168,7 @@ def test_exp4_accepts_controls_resolved_from_actual_baseline_provider_config() -
     ("field_name", "drifted_value"),
     [
         ("max_tokens", 2048),
-        ("timeout_seconds", 31),
+        ("timeout_seconds", 101),
         ("max_provider_attempts", 2),
         ("top_p", 0.9),
         ("stream", True),
@@ -206,7 +208,7 @@ def test_exp4_consumes_versioned_integration_prepared_catalog_view() -> None:
     conditions = expand_exp4_conditions(context)
     selections = freeze_exp4_case_selections(context, conditions)
 
-    assert len(conditions) == 108
+    assert len(conditions) == 90
     assert count_exp4_root_runs(conditions, selections) == EXP4_V1_ROOT_RUN_COUNT
     assert all(selection.is_executable for selection in selections)
 
@@ -231,7 +233,7 @@ def test_exp4_prepared_view_blocks_lean_when_semantic_readiness_is_not_ready() -
         if condition.domain == "lean_proof"
     ]
 
-    assert len(lean_pairs) == 54
+    assert len(lean_pairs) == 45
     assert all(selection.is_blocked for _, selection in lean_pairs)
     assert {
         selection.blocked_reason for _, selection in lean_pairs
@@ -365,7 +367,7 @@ def test_exp4_missing_formal_lean_slice_is_structured_blocked_with_zero_calls() 
         and condition.paper_difficulty == "hard_frontier"
     ]
 
-    assert len(blocked) == 18
+    assert len(blocked) == 15
     assert all(selection.is_blocked for _, selection in blocked)
     assert all(selection.ordered_case_ids == () for _, selection in blocked)
     assert all(selection.expected_ai_unit_count == 0 for _, selection in blocked)
@@ -419,8 +421,8 @@ def test_exp4_mode_configs_isolate_output_roots_and_preserve_full_default() -> N
         for condition in comparable
     ]
 
-    assert len(configs) == 6
-    assert len({config.output_root for config in configs}) == 6
+    assert len(configs) == 5
+    assert len({config.output_root for config in configs}) == 5
     assert all(
         config.output_root.startswith(context.output_root)
         for config in configs
@@ -581,20 +583,23 @@ def test_exp4_summary_uses_authoritative_condition_bounds_and_repeat_statistics(
     assert row["cost_iqr"] == pytest.approx(0.1)
 
 
-def test_exp4_formal_summary_accepts_only_complete_540_root_matrix() -> None:
+def test_exp4_formal_summary_accepts_only_complete_450_root_matrix() -> None:
     evidence = _formal_evidence()
 
     summary = summarize_exp4_ablation(evidence)
 
-    assert len(summary.rows) == 36
-    assert sum(row["root_run_count"] for row in summary.rows) == 540
+    assert len(summary.rows) == 30
+    assert sum(row["root_run_count"] for row in summary.rows) == 450
+    assert {
+        row["ablation_mode"] for row in summary.rows
+    } == {mode.value for mode in EXP4_MODES}
     assert all(row["repeat_count"] == 3 for row in summary.rows)
     assert all(row["repeat_set_status"] == "complete" for row in summary.rows)
     assert all(row["paper_eligible"] is True for row in summary.rows)
 
     incomplete = deepcopy(evidence)
     incomplete["condition_results"].pop()
-    with pytest.raises(ValueError, match="formal evidence must contain 108 conditions"):
+    with pytest.raises(ValueError, match="formal evidence must contain 90 conditions"):
         summarize_exp4_ablation(incomplete)
 
 
@@ -713,19 +718,6 @@ def test_exp4_summary_reports_protocol_outcomes_resources_and_escape_rates() -> 
             ),
         ),
         _evidence_record(
-            mode=PaperAblationMode.NO_SLOT_INTEGRITY,
-            tasks=(
-                _task_result(
-                    task_id="task_ns_1",
-                    completed=True,
-                    accepted_validity=False,
-                    slot_mismatch=True,
-                    error_exposed=True,
-                    error_escaped=True,
-                ),
-            ),
-        ),
-        _evidence_record(
             mode=PaperAblationMode.FULL,
             tasks=(
                 _task_result(
@@ -748,6 +740,7 @@ def test_exp4_summary_reports_protocol_outcomes_resources_and_escape_rates() -> 
     assert no_verification["completion_rate"] == 0.5
     assert no_verification["accepted_validity_rate"] == 0.0
     assert no_verification["wrong_canonical_acceptance_rate"] == 0.5
+    assert no_verification["wrong_canonical_count"] == 1
     assert no_verification["stuck_task_rate"] == 0.5
     assert no_verification["wall_clock_ms"] == 400
     assert no_verification["total_tokens"] == 30
@@ -758,6 +751,7 @@ def test_exp4_summary_reports_protocol_outcomes_resources_and_escape_rates() -> 
     assert no_verification["error_escape_applicability"] == "applicable"
 
     no_parser = rows[PaperAblationMode.NO_PARSER_POLICY.value]
+    assert no_parser["raw_only_exposure_count"] == 1
     assert no_parser["raw_only_acceptance_rate"] == 1.0
     assert no_parser["error_escape_rate"] is None
     assert no_parser["error_escape_applicability"] == "zero_denominator"
@@ -772,13 +766,54 @@ def test_exp4_summary_reports_protocol_outcomes_resources_and_escape_rates() -> 
     assert rows[PaperAblationMode.NO_MERGE_GATE.value][
         "premature_merge_rate"
     ] == 1.0
-    assert rows[PaperAblationMode.NO_SLOT_INTEGRITY.value][
-        "slot_mismatch_rate"
+    assert rows[PaperAblationMode.NO_MERGE_GATE.value][
+        "premature_merge_attempt_count"
+    ] == 1
+    assert rows[PaperAblationMode.NO_MERGE_GATE.value][
+        "premature_merge_failure_rate"
     ] == 1.0
+    assert PaperAblationMode.NO_SLOT_INTEGRITY.value not in rows
     assert rows[PaperAblationMode.FULL.value]["error_escape_rate"] is None
     assert rows[PaperAblationMode.FULL.value][
         "error_escape_applicability"
     ] == "not_applicable"
+
+
+def test_exp4_specialty_counts_do_not_change_when_only_mode_label_changes() -> None:
+    task = _task_result(
+        task_id="task_same_evidence",
+        completed=True,
+        accepted_validity=False,
+        wrong_canonical_acceptance=True,
+        raw_only_acceptance=True,
+        premature_merge=True,
+        error_exposed=True,
+        error_escaped=True,
+    )
+    summaries = {}
+    for mode in (
+        PaperAblationMode.NO_VERIFICATION,
+        PaperAblationMode.NO_PARSER_POLICY,
+    ):
+        row = summarize_exp4_ablation(
+            _evidence([_evidence_record(mode=mode, tasks=(task,))])
+        ).rows[0]
+        summaries[mode] = {
+            field: row[field]
+            for field in (
+                "wrong_canonical_count",
+                "raw_only_exposure_count",
+                "stuck_task_count",
+                "premature_merge_attempt_count",
+                "premature_merge_failure_rate",
+                "exposed_error_count",
+                "escaped_error_count",
+            )
+        }
+
+    assert summaries[PaperAblationMode.NO_VERIFICATION] == summaries[
+        PaperAblationMode.NO_PARSER_POLICY
+    ]
 
 
 def test_exp4_summary_rejects_escape_without_exposure() -> None:
@@ -1069,7 +1104,7 @@ def _baseline_binding() -> dict[str, Any]:
 def _complete_request_controls() -> dict[str, Any]:
     return {
         "max_tokens": 1024,
-        "timeout_seconds": 30,
+        "timeout_seconds": 100,
         "max_provider_attempts": 1,
         "temperature": 0.0,
         "top_p": 1.0,

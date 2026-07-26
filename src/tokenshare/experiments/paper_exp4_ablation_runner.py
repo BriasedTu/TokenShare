@@ -22,6 +22,7 @@ from tokenshare.experiments.paper_experiment_contracts import (
     canonical_contract_digest,
 )
 from tokenshare.experiments.paper_models import (
+    PAPER_FORMAL_AI_TIMEOUT_SECONDS,
     PaperConditionResult,
     PaperExperimentCondition,
     PaperStatus,
@@ -41,8 +42,8 @@ EXP4_FACTOR_CASE_COUNTS_BY_DIFFICULTY = {
     "medium": 167,
     "hard": 166,
 }
-EXP4_V1_ROOT_RUN_COUNT = 540
-EXP4_ROOT_RUN_COUNT = 9_270
+EXP4_V1_ROOT_RUN_COUNT = 450
+EXP4_ROOT_RUN_COUNT = 7_725
 EXP4_SEED_BASE = 4000
 
 BASELINE_PROVIDER_CONFIG_ID = "exp1_baseline_siliconflow"
@@ -51,7 +52,7 @@ BASELINE_PROVIDER_FAMILY = "siliconflow"
 BASELINE_PROVIDER_MODEL_ID = "zai-org/GLM-5.2"
 BASELINE_REQUEST_CONTROLS = {
     "max_tokens": 1024,
-    "timeout_seconds": 30,
+    "timeout_seconds": PAPER_FORMAL_AI_TIMEOUT_SECONDS,
     "max_provider_attempts": 1,
     "temperature": 0.0,
     "top_p": 1.0,
@@ -72,7 +73,6 @@ EXP4_MODES = (
     PaperAblationMode.NO_PARSER_POLICY,
     PaperAblationMode.NO_REQUEUE,
     PaperAblationMode.NO_MERGE_GATE,
-    PaperAblationMode.NO_SLOT_INTEGRITY,
 )
 FACTOR_PAPER_DIFFICULTIES = ("easy", "medium", "hard")
 LEAN_PAPER_DIFFICULTIES = ("simple", "medium_lemma_dag", "hard_frontier")
@@ -585,6 +585,20 @@ def _summarize_exp4_group(
     accepted_valid_count = sum(task["accepted_validity"] is True for task in tasks)
     exposed_error_count = sum(task["exposed_error_count"] for task in tasks)
     escaped_error_count = sum(task["escaped_error_count"] for task in tasks)
+    wrong_canonical_count = _flag_count(
+        tasks,
+        "wrong_canonical_acceptance",
+    )
+    raw_only_exposure_count = _flag_count(
+        tasks,
+        "raw_only_acceptance",
+    )
+    premature_merge_attempt_count = _flag_count(tasks, "premature_merge")
+    premature_merge_failure_count = sum(
+        task["premature_merge"] is True
+        and task["accepted_validity"] is not True
+        for task in tasks
+    )
     applicability, escape_rate = _error_escape_rate(
         mode=PaperAblationMode(mode),
         exposed_error_count=exposed_error_count,
@@ -631,25 +645,28 @@ def _summarize_exp4_group(
             if root_run_count > 0
             else None
         ),
-        "wrong_canonical_acceptance_count": _flag_count(
-            tasks,
-            "wrong_canonical_acceptance",
-        ),
+        "wrong_canonical_count": wrong_canonical_count,
+        "wrong_canonical_acceptance_count": wrong_canonical_count,
         "wrong_canonical_acceptance_rate": _flag_rate(
             tasks,
             "wrong_canonical_acceptance",
         ),
-        "raw_only_acceptance_count": _flag_count(
-            tasks,
-            "raw_only_acceptance",
-        ),
+        "raw_only_exposure_count": raw_only_exposure_count,
+        "raw_only_acceptance_count": raw_only_exposure_count,
         "raw_only_acceptance_rate": _flag_rate(
             tasks,
             "raw_only_acceptance",
         ),
         "stuck_task_count": _flag_count(tasks, "stuck_task"),
         "stuck_task_rate": _flag_rate(tasks, "stuck_task"),
-        "premature_merge_count": _flag_count(tasks, "premature_merge"),
+        "premature_merge_attempt_count": premature_merge_attempt_count,
+        "premature_merge_failure_count": premature_merge_failure_count,
+        "premature_merge_failure_rate": (
+            premature_merge_failure_count / premature_merge_attempt_count
+            if premature_merge_attempt_count
+            else None
+        ),
+        "premature_merge_count": premature_merge_attempt_count,
         "premature_merge_rate": _flag_rate(tasks, "premature_merge"),
         "slot_mismatch_count": _flag_count(tasks, "slot_mismatch"),
         "slot_mismatch_rate": _flag_rate(tasks, "slot_mismatch"),
@@ -739,8 +756,8 @@ def _validate_complete_formal_evidence(
     record_count: int,
     catalog_version: str,
 ) -> None:
-    if record_count != 108:
-        raise ValueError("formal evidence must contain 108 conditions")
+    if record_count != 90:
+        raise ValueError("formal evidence must contain 90 conditions")
     expected_groups = {
         (domain, paper_difficulty, mode.value)
         for domain, difficulties in (

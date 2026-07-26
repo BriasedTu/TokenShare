@@ -7,7 +7,7 @@
     "seed_source": "request_or_environment_seed"
   },
   "defaults": {
-    "timeout_seconds": 30,
+    "timeout_seconds": 100,
     "max_tokens": 1024,
     "temperature": 0.0,
     "top_p": 1.0,

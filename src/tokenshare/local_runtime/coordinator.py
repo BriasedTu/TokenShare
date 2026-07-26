@@ -21,6 +21,9 @@ from tokenshare.local_runtime.contracts import (
     GateDirective,
     MergeContext,
     MergeExecutionContext,
+    MergeReadinessContext,
+    MergeReadinessDecision,
+    ParsedCandidateContext,
     ParserContext,
     ProtocolMechanismPolicy,
     ProtocolRunRequest,
@@ -30,7 +33,10 @@ from tokenshare.local_runtime.contracts import (
     UnitProgressContext,
     VerificationContext,
 )
-from tokenshare.local_runtime.projection import project_protocol_run
+from tokenshare.local_runtime.projection import (
+    build_runtime_observation,
+    project_protocol_run,
+)
 from tokenshare.local_runtime.workers import WorkerBatchOutcome, execute_worker_batch
 from tokenshare.protocol_engine import ProtocolEngine
 from tokenshare.storage.artifacts import ArtifactStore
@@ -47,11 +53,13 @@ class ProtocolRunCoordinator:
         artifact_store: ArtifactStore,
         event_ledger: EventLedger,
         now: Callable[[], str] | None = None,
+        observation_clock: Callable[[], str] | None = None,
     ) -> None:
         self._engine = engine
         self._artifact_store = artifact_store
         self._event_ledger = event_ledger
         self._now = now or _utc_now
+        self._observation_clock = observation_clock or _utc_now
 
     def run_root(self, request: ProtocolRunRequest) -> ProtocolRunResult:
         if request.worker_backend.capacity < 1:
@@ -62,6 +70,7 @@ class ProtocolRunCoordinator:
             raise ValueError(
                 "multi-worker backend requires execute_batch; use a single-worker-compatible backend"
             )
+        runtime_started_at = self._observation_clock()
         run_key = _safe_id(request.run_id)
         plan = request.plugin_runtime.plan_root(
             request.root_input,
@@ -93,15 +102,32 @@ class ProtocolRunCoordinator:
         expand_result = None
         merge_plan = None
         merge_action = None
+        merge_children: tuple[object, ...] = ()
         merge_creation = None
         merge_resolution_batch: BatchView | None = None
         schedule_ordinal = 0
         terminal_child_failure = None
         pending_executions: list[tuple[object, object, WorkerBatchOutcome]] = []
         runtime_observations: list[dict[str, object]] = []
+        worker_execution_facts: list[dict[str, object]] = []
+        partial_observation = False
+        witness_observed_at: str | None = None
+        in_flight_ai_unit_ids_at_witness: tuple[str, ...] = ()
 
         while True:
             activatable = () if pending_executions else graph.activatable_unit_ids()
+            activatable = _scoped_unit_ids(
+                request=request,
+                graph=graph,
+                unit_ids=activatable,
+                expansion_started=expand_result is not None,
+            )
+            if merge_creation is not None:
+                activatable = tuple(
+                    unit_id
+                    for unit_id in activatable
+                    if unit_id == merge_creation.merge_task_unit.unit_id
+                )
             if activatable:
                 unit_id = activatable[0]
                 activated = self._engine.record_dependency_ready(
@@ -112,12 +138,70 @@ class ProtocolRunCoordinator:
                 )
                 graph = _replace_graph_unit(graph, activated.task_unit)
                 continue
-            ready = graph.ready_unit_ids()
-            if pending_executions or ready:
+            ready = _scoped_unit_ids(
+                request=request,
+                graph=graph,
+                unit_ids=graph.ready_unit_ids(),
+                expansion_started=expand_result is not None,
+            )
+            if merge_creation is not None:
+                ready = tuple(
+                    unit_id
+                    for unit_id in ready
+                    if unit_id == merge_creation.merge_task_unit.unit_id
+                )
+            readiness_before_dispatch = None
+            if (
+                expand_result is not None
+                and merge_creation is None
+                and not pending_executions
+                and _plugin_owns_merge_readiness(request)
+            ):
+                readiness_before_dispatch, _, _, _ = (
+                    _current_merge_readiness(
+                        request=request,
+                        graph=graph,
+                        event_ledger=self._event_ledger,
+                        root_unit_id=registration.root_unit.unit_id,
+                        child_units=tuple(expand_result.child_units),
+                        merge_plan=merge_plan,
+                    )
+                )
+                if (
+                    readiness_before_dispatch.status == "ready"
+                    and witness_observed_at is None
+                ):
+                    witness_observed_at = self._observation_clock()
+                    in_flight_ai_unit_ids_at_witness = (
+                        _observed_in_flight_ai_unit_ids(
+                            request=request,
+                            graph=graph,
+                            worker_execution_facts=worker_execution_facts,
+                            observed_at=witness_observed_at,
+                        )
+                    )
+            merge_ready_before_dispatch = (
+                readiness_before_dispatch is not None
+                and readiness_before_dispatch.status == "ready"
+            )
+            if pending_executions or (ready and not merge_ready_before_dispatch):
                 if not pending_executions:
                     prepared: list[tuple[object, object, object]] = []
                     for _slot in range(request.worker_backend.capacity):
-                        if not graph.ready_unit_ids():
+                        scoped_ready = _scoped_unit_ids(
+                            request=request,
+                            graph=graph,
+                            unit_ids=graph.ready_unit_ids(),
+                            expansion_started=expand_result is not None,
+                        )
+                        if merge_creation is not None:
+                            scoped_ready = tuple(
+                                unit_id
+                                for unit_id in scoped_ready
+                                if unit_id
+                                == merge_creation.merge_task_unit.unit_id
+                            )
+                        if not scoped_ready:
                             break
                         schedule_ordinal += 1
                         ordinal = schedule_ordinal
@@ -130,6 +214,7 @@ class ProtocolRunCoordinator:
                             lease_id=f"{run_key}_lease_{ordinal}",
                             attempt_id=f"{run_key}_attempt_{ordinal}",
                             fencing_token=f"{run_key}_fence_{ordinal}",
+                            allowed_unit_ids=scoped_ready,
                         )
                         graph = _replace_graph_unit(graph, scheduled.task_unit)
                         progress_directive = _observe(
@@ -154,6 +239,9 @@ class ProtocolRunCoordinator:
                     worker_outcomes = execute_worker_batch(
                         request.worker_backend,
                         tuple(item[0] for item in prepared),
+                    )
+                    worker_execution_facts.extend(
+                        outcome.fact.to_dict() for outcome in worker_outcomes
                     )
                     pending_executions.extend(
                         (scheduled, request_flow, worker_outcome)
@@ -221,16 +309,40 @@ class ProtocolRunCoordinator:
                     canonical_unit,
                     canonical_refs=canonical.canonical_selection.canonical_output_refs,
                 )
+                if (
+                    expand_result is not None
+                    and merge_creation is None
+                    and witness_observed_at is None
+                    and canonical_unit.unit_type != "merge"
+                    and _plugin_owns_merge_readiness(request)
+                ):
+                    readiness_after_canonical, _, _, _ = (
+                        _current_merge_readiness(
+                            request=request,
+                            graph=graph,
+                            event_ledger=self._event_ledger,
+                            root_unit_id=registration.root_unit.unit_id,
+                            child_units=tuple(expand_result.child_units),
+                            merge_plan=merge_plan,
+                        )
+                    )
+                    if readiness_after_canonical.status == "ready":
+                        witness_observed_at = self._observation_clock()
+                        in_flight_ai_unit_ids_at_witness = (
+                            _observed_in_flight_ai_unit_ids(
+                                request=request,
+                                graph=graph,
+                                worker_execution_facts=worker_execution_facts,
+                                observed_at=witness_observed_at,
+                            )
+                        )
                 if canonical_unit.unit_type == "merge":
                     if merge_action is None or merge_creation is None or expand_result is None:
                         raise RuntimeError("merge runtime context is incomplete")
                     resolved = merge_action.resolution_builder(
                         MergeExecutionContext(
                             parent=graph.units[registration.root_unit.unit_id],
-                            canonical_children=tuple(
-                                graph.units[unit.unit_id]
-                                for unit in expand_result.child_units
-                            ),
+                            canonical_children=merge_children,
                             merge_unit=canonical_unit,
                             merge_task_link=merge_creation.merge_task_link,
                             merge_plan=merge_plan,
@@ -347,67 +459,47 @@ class ProtocolRunCoordinator:
                     graph = expand_result.task_graph
                     merge_plan = action.merge_plan
                     expansion_batch = _batch(expand_result.events)
+                    _validate_selected_scope_units(
+                        request=request,
+                        child_units=tuple(expand_result.child_units),
+                    )
                 else:
                     raise TypeError("canonical action must be CompleteAction or ExpandAction")
                 continue
 
-            if terminal_child_failure is not None:
-                if expand_result is not None and merge_creation is None:
-                    children = tuple(
-                        graph.units[unit.unit_id]
-                        for unit in expand_result.child_units
-                    )
-                    canonical_events = [
-                        event
-                        for event in self._event_ledger.read_all()
-                        if event.event_type == EventType.CANONICAL_OUTPUTS_BOUND
-                        and event.task_id == graph.task_id
-                    ]
-                    # 即使 child 已终止失败，也先经过稳定 merge gate 观察点；
-                    # 消融只能记录 premature merge 请求，core 仍会记录父失败。
-                    merge_directive = _observe(
-                        request.hooks.before_merge,
-                        MergeContext(
-                            parent=graph.units[
-                                registration.root_unit.unit_id
-                            ],
-                            canonical_children=tuple(
-                                child
-                                for child in children
-                                if child.state.value == "Completed"
-                            ),
-                            required_child_unit_ids=tuple(
-                                child.unit_id for child in children
-                            ),
-                            gate_satisfied=False,
-                            protocol_event_refs=tuple(
-                                _event_ref(event) for event in canonical_events
-                            ),
-                        ),
-                    )
-                    _collect_observations(
-                        runtime_observations,
-                        merge_directive,
-                    )
-                graph = self._record_parent_failure(
+            if (
+                expand_result is not None
+                and request.execution_scope.mode == "selected_ai_units"
+                and _selected_scope_finished(
                     request=request,
                     graph=graph,
-                    terminal_child_failure=terminal_child_failure,
+                    child_units=tuple(expand_result.child_units),
                 )
+            ):
+                partial_observation = True
                 break
             if expand_result is not None and merge_creation is None:
-                children = tuple(
-                    graph.units[unit.unit_id] for unit in expand_result.child_units
+                readiness, children, canonical_events, verification_events = (
+                    _current_merge_readiness(
+                        request=request,
+                        graph=graph,
+                        event_ledger=self._event_ledger,
+                        root_unit_id=registration.root_unit.unit_id,
+                        child_units=tuple(expand_result.child_units),
+                        merge_plan=merge_plan,
+                    )
                 )
-                gate_satisfied = all(
-                    unit.state.value == "Completed" for unit in children
-                )
-                canonical_events = [
-                    event
-                    for event in self._event_ledger.read_all()
-                    if event.event_type == EventType.CANONICAL_OUTPUTS_BOUND
-                    and event.task_id == graph.task_id
-                ]
+                if readiness.status == "ready" and witness_observed_at is None:
+                    witness_observed_at = self._observation_clock()
+                    in_flight_ai_unit_ids_at_witness = (
+                        _observed_in_flight_ai_unit_ids(
+                            request=request,
+                            graph=graph,
+                            worker_execution_facts=worker_execution_facts,
+                            observed_at=witness_observed_at,
+                        )
+                    )
+                gate_satisfied = readiness.status == "ready"
                 merge_directive = _observe(
                     request.hooks.before_merge,
                     MergeContext(
@@ -434,12 +526,99 @@ class ProtocolRunCoordinator:
                 )
                 if merge_gate_open:
                     if not gate_satisfied:
-                        # 消融只让 runtime 真实观察到 premature merge gate；
-                        # core slot/canonical 约束仍拒绝伪造 merge task。
+                        # NO_MERGE_GATE 必须真实调用插件 merge，并把失败结果持久化；
+                        # 但不伪造 required slot，也不进入 core merge task 创建路径。
+                        completed_children = tuple(
+                            child
+                            for child in children
+                            if child.state.value == "Completed"
+                        )
+                        plugin_result_type = None
+                        plugin_error = None
+                        try:
+                            plugin_result = request.plugin_runtime.build_merge(
+                                parent=graph.units[registration.root_unit.unit_id],
+                                canonical_children=completed_children,
+                                slot_integrity_enabled=True,
+                            )
+                            plugin_result_type = type(plugin_result).__name__
+                        except Exception as exc:  # 实验结果必须记录插件的实际拒绝。
+                            plugin_error = f"{type(exc).__name__}: {exc}"
+                        completed_ids = {
+                            child.unit_id for child in completed_children
+                        }
+                        attempt_body = {
+                            "schema_version": (
+                                "tokenshare.premature_merge_attempt.v1"
+                            ),
+                            "run_id": request.run_id,
+                            "task_id": graph.task_id,
+                            "parent_unit_id": registration.root_unit.unit_id,
+                            "required_child_unit_ids": list(
+                                readiness.required_child_unit_ids
+                            ),
+                            "canonical_child_unit_ids": [
+                                child.unit_id for child in completed_children
+                            ],
+                            "missing_child_unit_ids": [
+                                unit_id
+                                for unit_id in readiness.required_child_unit_ids
+                                if unit_id not in completed_ids
+                            ],
+                            "attempt_status": "executed",
+                            "plugin_result_type": plugin_result_type,
+                            "plugin_error": plugin_error,
+                            "root_check_passed": False,
+                            "failure_kind": "merge_readiness_unsatisfied",
+                            "protocol_event_refs": [
+                                _event_ref(event) for event in canonical_events
+                            ],
+                        }
+                        result_ref = self._artifact_store.save_json(
+                            attempt_body,
+                            artifact_id=(
+                                f"premature_merge_{run_key}_"
+                                f"{len(runtime_observations)}"
+                            ),
+                            artifact_type="experiment_evidence",
+                            artifact_schema_id=(
+                                "tokenshare.premature_merge_attempt"
+                            ),
+                            artifact_schema_version="v1",
+                            source={
+                                "kind": "experiment_ablation",
+                                "run_id": request.run_id,
+                            },
+                            metadata={
+                                "ablation_mode": "NO_MERGE_GATE",
+                                "root_check_passed": False,
+                            },
+                            created_at=self._now(),
+                        )
+                        runtime_observations.append(
+                            {
+                                "event_type": (
+                                    "EXPERIMENT_PREMATURE_MERGE_ATTEMPTED"
+                                ),
+                                **attempt_body,
+                                "result_artifact_ref": result_ref.to_dict(),
+                            }
+                        )
                         break
+                    selected_child_unit_ids = set(
+                        readiness.selected_child_unit_ids
+                    )
+                    merge_children = tuple(
+                        child
+                        for child in children
+                        if child.unit_id in selected_child_unit_ids
+                    )
                     merge_action = request.plugin_runtime.build_merge(
                         parent=graph.units[registration.root_unit.unit_id],
-                        canonical_children=children,
+                        canonical_children=merge_children,
+                        slot_integrity_enabled=(
+                            request.mechanism_policy.slot_integrity_enabled
+                        ),
                     )
                     merge_results = MergeCoordinator(
                         event_ledger=self._event_ledger,
@@ -458,6 +637,7 @@ class ProtocolRunCoordinator:
                         now=self._now(),
                         coordinator_id="protocol_run_coordinator",
                         correlation_id=f"{request.run_id}:merge_create",
+                        readiness_decision=readiness.to_dict(),
                     )
                     if len(merge_results) != 1:
                         raise RuntimeError("expected exactly one merge task")
@@ -468,6 +648,24 @@ class ProtocolRunCoordinator:
                         add=True,
                     )
                     continue
+                if readiness.status == "failed":
+                    if terminal_child_failure is None:
+                        raise RuntimeError(
+                            "failed merge readiness requires terminal child evidence"
+                        )
+                    graph = self._record_parent_failure(
+                        request=request,
+                        graph=graph,
+                        terminal_child_failure=terminal_child_failure,
+                    )
+                    break
+            if terminal_child_failure is not None and merge_creation is not None:
+                graph = self._record_parent_failure(
+                    request=request,
+                    graph=graph,
+                    terminal_child_failure=terminal_child_failure,
+                )
+                break
             root_state = graph.units[registration.root_unit.unit_id].state
             if root_state not in {TaskState.COMPLETED, TaskState.FAILED}:
                 raise RuntimeError(
@@ -475,13 +673,55 @@ class ProtocolRunCoordinator:
                 )
             break
 
+        runtime_ended_at = self._observation_clock()
+        planned_by_unit_id = _planned_ai_units_by_protocol_unit(
+            request=request,
+            graph=graph,
+        )
+        dispatched_ai_unit_ids = _ordered_unique(
+            planned_by_unit_id[unit_id]
+            for fact in worker_execution_facts
+            if isinstance((unit_id := fact.get("unit_id")), str)
+            and unit_id in planned_by_unit_id
+        )
+        completed_ai_unit_ids = tuple(
+            planned_ai_unit_id
+            for unit_id, planned_ai_unit_id in planned_by_unit_id.items()
+            if graph.units[unit_id].state == TaskState.COMPLETED
+            and planned_ai_unit_id in set(dispatched_ai_unit_ids)
+        )
+        runtime_observation = build_runtime_observation(
+            run_id=request.run_id,
+            runtime_started_at=runtime_started_at,
+            runtime_ended_at=runtime_ended_at,
+            planned_ai_unit_ids=tuple(planned_by_unit_id.values()),
+            dispatched_ai_unit_ids=dispatched_ai_unit_ids,
+            completed_ai_unit_ids=completed_ai_unit_ids,
+            worker_execution_facts=worker_execution_facts,
+            in_flight_ai_unit_ids_at_witness=in_flight_ai_unit_ids_at_witness,
+            witness_observed_at=witness_observed_at,
+        )
         projected = project_protocol_run(
             run_id=request.run_id,
             task_id=registration.task_spec.task_id,
             root_unit_id=registration.root_unit.unit_id,
             event_ledger=self._event_ledger,
             artifact_store=self._artifact_store,
+            runtime_observation=runtime_observation,
         )
+        if partial_observation:
+            projected = replace(
+                projected,
+                status="partial",
+                summary={
+                    **projected.summary,
+                    "execution_scope": request.execution_scope.mode,
+                    "selected_ai_unit_ids": list(
+                        request.execution_scope.selected_ai_unit_ids
+                    ),
+                    "partial_observation": True,
+                },
+            )
         if not runtime_observations:
             return projected
         return replace(
@@ -491,7 +731,6 @@ class ProtocolRunCoordinator:
                 "runtime_hook_observations": runtime_observations,
             },
         )
-
     def _record_parent_failure(
         self,
         *,
@@ -585,7 +824,6 @@ class ProtocolRunCoordinator:
         if (
             not request.mechanism_policy.parser_policy_enabled
             and submission.raw_output_ref is not None
-            and not submission.candidate_output_refs
         ):
             submission = replace(
                 submission,
@@ -608,6 +846,37 @@ class ProtocolRunCoordinator:
                 trigger="parser_failure",
                 causation_event_id=request_flow.event.event_id,
                 runtime_observations=runtime_observations,
+            )
+        if (
+            submission.parsed_output_ref is not None
+            and submission.candidate_output_refs
+        ):
+            parsed_candidate_directive = _observe(
+                request.hooks.after_parsed_candidate_persisted,
+                ParsedCandidateContext(
+                    run_id=request.run_id,
+                    task_id=submission.task_id,
+                    unit_id=submission.unit_id,
+                    attempt_id=submission.attempt_id,
+                    lease_id=submission.lease_id,
+                    worker_id=scheduled.attempt.client_id,
+                    raw_output_ref=submission.raw_output_ref,
+                    original_parsed_output_ref=submission.parsed_output_ref,
+                    candidate_output_refs=dict(submission.candidate_output_refs),
+                    submitted_at=submission.submitted_at,
+                    experiment_unit_id=_optional_planned_ai_unit_id(
+                        request.plugin_runtime,
+                        scheduled.task_unit,
+                    ),
+                ),
+            )
+            _collect_observations(
+                runtime_observations,
+                parsed_candidate_directive,
+            )
+            submission = _replace_candidate_output_refs(
+                submission,
+                parsed_candidate_directive,
             )
         submission_flow = self._engine.record_execution_submission(
             submission=submission,
@@ -851,6 +1120,159 @@ class ProtocolRunCoordinator:
         )
 
 
+def _scoped_unit_ids(*, request, graph, unit_ids, expansion_started):
+    candidates = tuple(unit_ids)
+    if request.execution_scope.mode == "whole_root" or not expansion_started:
+        return candidates
+    selected = set(request.execution_scope.selected_ai_unit_ids)
+    return tuple(
+        unit_id
+        for unit_id in candidates
+        if request.plugin_runtime.planned_ai_unit_id(graph.units[unit_id])
+        in selected
+    )
+
+
+def _validate_selected_scope_units(*, request, child_units) -> None:
+    if request.execution_scope.mode != "selected_ai_units":
+        return
+    available = {
+        planned
+        for unit in child_units
+        if (
+            planned := request.plugin_runtime.planned_ai_unit_id(unit)
+        )
+        is not None
+    }
+    missing = sorted(set(request.execution_scope.selected_ai_unit_ids) - available)
+    if missing:
+        raise ValueError(
+            "selected_ai_unit_id is not present in plugin split plan: "
+            + ", ".join(missing)
+        )
+
+
+def _selected_scope_finished(*, request, graph, child_units) -> bool:
+    selected = set(request.execution_scope.selected_ai_unit_ids)
+    selected_units = tuple(
+        graph.units[unit.unit_id]
+        for unit in child_units
+        if request.plugin_runtime.planned_ai_unit_id(unit) in selected
+    )
+    return bool(selected_units) and all(
+        unit.state in {TaskState.COMPLETED, TaskState.FAILED}
+        for unit in selected_units
+    )
+
+
+def _current_merge_readiness(
+    *,
+    request,
+    graph,
+    event_ledger,
+    root_unit_id,
+    child_units,
+    merge_plan,
+):
+    """从当前 graph/ledger 快照构造一次通用 plugin readiness 观察。"""
+
+    children = tuple(graph.units[unit.unit_id] for unit in child_units)
+    task_events = [
+        event
+        for event in event_ledger.read_all()
+        if event.task_id == graph.task_id
+    ]
+    canonical_events = [
+        event
+        for event in task_events
+        if event.event_type == EventType.CANONICAL_OUTPUTS_BOUND
+    ]
+    verification_events = [
+        event
+        for event in task_events
+        if event.event_type == EventType.VERIFICATION_RECORDED
+    ]
+    readiness = _evaluate_merge_readiness(
+        request=request,
+        parent=graph.units[root_unit_id],
+        children=children,
+        merge_plan=merge_plan,
+        canonical_events=canonical_events,
+        verification_events=verification_events,
+    )
+    return readiness, children, canonical_events, verification_events
+
+
+def _plugin_owns_merge_readiness(request: ProtocolRunRequest) -> bool:
+    return callable(
+        getattr(request.plugin_runtime, "evaluate_merge_readiness", None)
+    )
+
+
+def _evaluate_merge_readiness(
+    *,
+    request,
+    parent,
+    children,
+    merge_plan,
+    canonical_events,
+    verification_events,
+) -> MergeReadinessDecision:
+    context = MergeReadinessContext(
+        parent=parent,
+        children=tuple(children),
+        merge_plan=merge_plan,
+        canonical_events=tuple(canonical_events),
+        verification_events=tuple(verification_events),
+    )
+    evaluator = getattr(
+        request.plugin_runtime,
+        "evaluate_merge_readiness",
+        None,
+    )
+    if callable(evaluator):
+        decision = evaluator(context)
+        if not isinstance(decision, MergeReadinessDecision):
+            raise TypeError(
+                "evaluate_merge_readiness must return MergeReadinessDecision"
+            )
+        return decision
+
+    required = tuple(
+        dict.fromkeys(
+            str(slot["source_child_unit_id"])
+            for slot in merge_plan.required_slots
+        )
+    )
+    required_children = tuple(
+        child for child in children if child.unit_id in set(required)
+    )
+    if all(child.state == TaskState.COMPLETED for child in required_children):
+        return MergeReadinessDecision(
+            status="ready",
+            reason="all_required_slots_canonical",
+            policy_id="tokenshare.runtime.all_required.v1",
+            policy_version="v1",
+            required_child_unit_ids=required,
+            selected_child_unit_ids=required,
+        )
+    if any(child.state == TaskState.FAILED for child in required_children):
+        return MergeReadinessDecision(
+            status="failed",
+            reason="terminal_child_failure",
+            policy_id="tokenshare.runtime.all_required.v1",
+            policy_version="v1",
+            required_child_unit_ids=required,
+        )
+    return MergeReadinessDecision(
+        status="wait",
+        reason="required_children_not_terminal",
+        policy_id="tokenshare.runtime.all_required.v1",
+        policy_version="v1",
+        required_child_unit_ids=required,
+    )
+
+
 def _replace_graph_unit(
     graph: TaskGraph,
     unit,
@@ -908,6 +1330,41 @@ def _replacement_submission(submission, directive):
     if not isinstance(replacement, type(submission)):
         raise TypeError("runtime hook replacement must be an ExecutionSubmission")
     return replacement
+
+
+def _replace_candidate_output_refs(submission, directive):
+    if directive is None:
+        return submission
+    replacement_refs = directive.replacement_candidate_output_refs
+    if not isinstance(replacement_refs, dict):
+        raise TypeError("parsed-candidate replacement refs must be an object")
+    if set(replacement_refs) != set(submission.candidate_output_refs):
+        raise ValueError(
+            "parsed-candidate replacement refs must preserve output contract names"
+        )
+    if any(
+        not isinstance(name, str) or not isinstance(ref, type(submission.parsed_output_ref))
+        for name, ref in replacement_refs.items()
+    ):
+        raise TypeError(
+            "parsed-candidate replacement refs must contain ArtifactRef values"
+        )
+    return replace(
+        submission,
+        candidate_output_refs=dict(replacement_refs),
+    )
+
+
+def _optional_planned_ai_unit_id(plugin_runtime, unit) -> str | None:
+    resolver = getattr(plugin_runtime, "planned_ai_unit_id", None)
+    if not callable(resolver):
+        return None
+    planned_ai_unit_id = resolver(unit)
+    if planned_ai_unit_id is None:
+        return None
+    if not isinstance(planned_ai_unit_id, str) or not planned_ai_unit_id:
+        raise ValueError("planned_ai_unit_id must be a non-empty string")
+    return planned_ai_unit_id
 
 
 def _build_no_verification_report(
@@ -986,6 +1443,62 @@ def _event_ref(event) -> dict[str, object]:
 
 def _utc_now() -> str:
     return datetime.now(UTC).isoformat().replace("+00:00", "Z")
+
+
+def _planned_ai_units_by_protocol_unit(
+    *,
+    request: ProtocolRunRequest,
+    graph: TaskGraph,
+) -> dict[str, str]:
+    resolver = getattr(request.plugin_runtime, "planned_ai_unit_id", None)
+    if not callable(resolver):
+        return {}
+    planned_by_unit_id: dict[str, str] = {}
+    for unit_id, unit in graph.units.items():
+        planned_ai_unit_id = resolver(unit)
+        if planned_ai_unit_id is None:
+            continue
+        if not isinstance(planned_ai_unit_id, str) or not planned_ai_unit_id:
+            raise ValueError("planned_ai_unit_id must be a non-empty string")
+        if planned_ai_unit_id in planned_by_unit_id.values():
+            raise ValueError("planned_ai_unit_id inventory must be unique")
+        planned_by_unit_id[unit_id] = planned_ai_unit_id
+    return planned_by_unit_id
+
+
+def _observed_in_flight_ai_unit_ids(
+    *,
+    request: ProtocolRunRequest,
+    graph: TaskGraph,
+    worker_execution_facts,
+    observed_at: str,
+) -> tuple[str, ...]:
+    """按真实 worker interval 投影 readiness witness 时仍在执行的 AI units。"""
+
+    observed = datetime.fromisoformat(observed_at.replace("Z", "+00:00"))
+    planned_by_unit_id = _planned_ai_units_by_protocol_unit(
+        request=request,
+        graph=graph,
+    )
+    return _ordered_unique(
+        planned_by_unit_id[unit_id]
+        for fact in worker_execution_facts
+        if isinstance((unit_id := fact.get("unit_id")), str)
+        and unit_id in planned_by_unit_id
+        and isinstance(fact.get("started_at"), str)
+        and isinstance(fact.get("ended_at"), str)
+        and datetime.fromisoformat(
+            str(fact["started_at"]).replace("Z", "+00:00")
+        )
+        <= observed
+        < datetime.fromisoformat(
+            str(fact["ended_at"]).replace("Z", "+00:00")
+        )
+    )
+
+
+def _ordered_unique(values) -> tuple[str, ...]:
+    return tuple(dict.fromkeys(values))
 
 
 def _safe_id(value: str) -> str:

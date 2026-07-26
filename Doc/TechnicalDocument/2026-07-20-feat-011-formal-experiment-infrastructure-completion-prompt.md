@@ -1,5 +1,13 @@
 # TokenShare feat-011 正式实验设施补全 Prompt
 
+> 2026-07-24 参数覆盖：本文是历史设施补全 prompt，其中 Exp1=`1,905` 和 P0-core/P0-full 旧算术已被 EPD-001 替代。当前目标是 Experiment 1 的 Factorization 500 题与 Lean 135 题均只运行 1 次，即 Exp1=`635` root-runs / `2,900` planned AI units；以 `tokenshare_latest_real_plugin_experiment_design.md` 和 `tokenshare_experiment_parameter_decision_log.md` 为准。
+
+> 2026-07-24 Exp2 参数覆盖：本文中的 Exp2=`10,300`、Factorization 三档 + Lean、worker `1/3/10/30` 和 5 repeats 均为历史设施口径。EPD-003 当前目标为全部 166 道 hard Factorization、20-way split、worker `1/3/7/10/30/50`、每档 2 遍，Lean 不进入，共 `1,992` root-runs / `39,840` planned AI units。
+
+> 2026-07-24 Exp3 参数覆盖：本文中的 Experiment 3 3 repeats、rate-fault=`52,680`、worker-death=`9,054` 和 Exp3=`61,734` 均为历史设施口径。EPD-004 当前统一为每 condition 2 repeats，对应 `35,120/6,036/41,156` root-runs；其他参数不变。
+
+> 2026-07-24 Exp4/Exp5 与当前设施覆盖：Exp4 当前为五模式/7,725 roots；Exp5 当前为 Exp1 全部 hard Factorization 166 + Lean 45、36 conditions、1,899 roots，并与 Exp2 selection 解耦。正式行为/指标 blocker 和实施顺序已统一写入 `2026-07-24-feat-011-exp2-exp5-experiment-facility-completion-implementation-plan.md`；本文下方旧六模式、4,635-root Exp5 和旧完整设施声明均为历史输入，不得作为“已经可跑”的证据。
+
 把本文件从下一行开始完整交给负责设施补全的 agent。
 
 ---
@@ -129,7 +137,7 @@ src/tokenshare/executors/ai_api*.py
 - `paper_metrics.py` 只有 Gate C pilot 和 Exp1 pilot evidence metrics。
 - `paper_report.py` 只有 Exp1 pilot report，并写 `formal_paper_table_generated=false`。
 - Exp3 post-AI fault 和 worker-death primitives 已有，但没有接入真实 formal execution callback。
-- Exp4 六种 mode/profile 已有，但没有运行时 wrapper 实现这些 mode 的行为。
+- 本段是当时的实现基线；当前 runtime wrapper/hook 已存在。EPD-005 后正式 Exp4 只保留五种 mode，且仍须修复权威设计中 2026-07-24 输出接线审计列出的专项指标问题。
 - 当前绿色测试主要覆盖 plan、callback 参数转发、单 case capturing path 和独立 primitives，没有覆盖完整 formal suite。
 
 你的任务是实现缺失设施，不是把现有 pilot loop 简单改名为 formal。
@@ -147,7 +155,7 @@ Exp2 = 10,300 root-runs
 Exp3 = 61,734 root-runs
   rate-fault   = 52,680
   worker-death =  9,054
-Exp4 = 9,270 root-runs
+Exp4 = 7,725 root-runs（EPD-005：5 modes）
 Exp5 = 4,635 root-runs
 
 P0-core = 83,209 root-runs
@@ -289,7 +297,7 @@ capturing integration tests 至少证明：
 
 ## 九、Exp4 要求
 
-六种 mode：
+按 EPD-005 固定五种 mode：
 
 ```text
 FULL
@@ -297,7 +305,6 @@ NO_VERIFICATION
 NO_PARSER_POLICY
 NO_REQUEUE
 NO_MERGE_GATE
-NO_SLOT_INTEGRITY
 ```
 
 要求：
@@ -309,7 +316,6 @@ NO_SLOT_INTEGRITY
 - NO_PARSER_POLICY 只能在实验 wrapper 暴露 raw/free-form 风险，不能修改正式 parser 默认策略。
 - NO_REQUEUE 在拒绝/过期后不创建 replacement，stuck/completion 从 evidence 计算。
 - NO_MERGE_GATE 允许 premature merge attempt，但 root verifier/checker 仍记录失败。
-- NO_SLOT_INTEGRITY 允许受控错误 slot binding，记录 mismatch/escape。
 - `exposed_error_count`、`escaped_error_count` 和 applicability 从实际事件复算，不硬编码。
 
 ## 十、Evidence 和 output contract
@@ -373,7 +379,7 @@ evidence_manifest.json
 - Exp1：completion、accepted validity、wall-clock/tokens quantiles、failure breakdown。
 - Exp2：throughput、speedup、efficiency、critical path、429/retry sensitivity。
 - Exp3：detection/false accept/recovery/completion、matched overhead、worker completeness。
-- Exp4：completion/validity、wrong canonical/raw-only/stuck/premature merge/slot mismatch、error escape。
+- Exp4：completion/validity、wrong canonical/raw-only exposure/acceptance/stuck/premature merge、error escape；专项字段必须来自真实运行事实。
 - Exp5：按 endpoint/provider 的 completion/validity/tokens/cost/latency/errors 和 model execution identity audit。
 
 必须有“修改输入 evidence 后汇总随之改变”的回归，证明没有硬编码结果。

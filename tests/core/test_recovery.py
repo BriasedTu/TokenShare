@@ -146,12 +146,12 @@ def test_retry_decision_supports_all_runtime_recovery_triggers(
 
 
 def test_retry_decision_fails_task_when_retry_limit_is_reached() -> None:
-    decision = evaluate_retry(trigger="executor_error", retry_count=3, max_retries=3)
+    decision = evaluate_retry(trigger="executor_error", retry_count=4, max_retries=3)
 
     assert decision.retry_allowed is False
     assert decision.next_task_state == TaskState.FAILED
     assert decision.superseded_attempt_state == AttemptState.FAILED
-    assert decision.retry_count == 3
+    assert decision.retry_count == 4
     assert decision.reason == "retry_limit_reached"
 
 

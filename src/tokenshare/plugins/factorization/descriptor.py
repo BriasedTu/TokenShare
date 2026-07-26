@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from tokenshare.plugins.contracts import OutputContract, PluginDescriptor, SplitStrategyContract
 from tokenshare.plugins.factorization.schemas import (
-    ALL_REQUIRED_RANGE_MERGE_POLICY_ID,
+    FACTOR_WITNESS_OR_ALL_RANGES_MERGE_POLICY_ID,
     CANDIDATE_RANGE_PARTITION_PARAMS_SCHEMA_VERSION,
     CANDIDATE_RANGE_PARTITION_STRATEGY_ID,
     FACTOR_INTEGER_SUBJECT_CONTRACT_ID,
@@ -22,6 +22,9 @@ from tokenshare.plugins.factorization.schemas import (
     RANGE_RESULT_VALIDATOR_POLICY_ID,
     SUPPORTED_TASK_TYPES,
     schema_ref,
+)
+from tokenshare.plugins.factorization.split_strategy import (
+    EXP2_CONTIGUOUS_20WAY_PROFILE_ID,
 )
 
 
@@ -80,7 +83,7 @@ def build_factorization_plugin_descriptor() -> PluginDescriptor:
                     "factor_search_range": {"output_contract_id": RANGE_RESULT_CONTRACT_ID}
                 },
                 validator_policy_id=RANGE_RESULT_VALIDATOR_POLICY_ID,
-                merge_policy_id=ALL_REQUIRED_RANGE_MERGE_POLICY_ID,
+                merge_policy_id=FACTOR_WITNESS_OR_ALL_RANGES_MERGE_POLICY_ID,
                 durable_subgoal_policy={
                     "only_promote_unit_types": ["factor_search_range"],
                     "requires_bounded_candidate_range": True,
@@ -97,7 +100,7 @@ def build_factorization_plugin_descriptor() -> PluginDescriptor:
             )
         },
         validator_policy_id=RANGE_RESULT_VALIDATOR_POLICY_ID,
-        merge_policy_id=ALL_REQUIRED_RANGE_MERGE_POLICY_ID,
+        merge_policy_id=FACTOR_WITNESS_OR_ALL_RANGES_MERGE_POLICY_ID,
         metadata={
             "plugin_identity": {
                 "main_tdd_section": "14.1",
@@ -114,6 +117,13 @@ def build_factorization_plugin_descriptor() -> PluginDescriptor:
                 "range_result": RANGE_RESULT_SCHEMA_VERSION,
                 "factorization_merge_result": FACTORIZATION_MERGE_RESULT_SCHEMA_VERSION,
                 "prime_factorization_result": PRIME_FACTORIZATION_RESULT_SCHEMA_VERSION,
+            },
+            "split_profiles": {
+                EXP2_CONTIGUOUS_20WAY_PROFILE_ID: {
+                    "strategy_id": CANDIDATE_RANGE_PARTITION_STRATEGY_ID,
+                    "range_policy": "contiguous",
+                    "requested_child_count": 20,
+                }
             },
             "first_slice_limitations": {
                 "early_success": "deferred",

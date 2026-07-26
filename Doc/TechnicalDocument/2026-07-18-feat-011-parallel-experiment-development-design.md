@@ -4,6 +4,8 @@
 > 状态：方案已获用户认可；Task 14 语义审核未通过，允许并发代码开发但禁止正式实验  
 > 适用范围：`feat-011` Task 15–20 的代码开发、集成、预算与正式运行顺序  
 > 权威实验口径：`tokenshare_latest_real_plugin_experiment_design.md`
+> 2026-07-24 EPD-004 覆盖：本文中的 Experiment 3 3 repeats 为旧参数；当前五类 rate-fault 和 worker-death 所有 condition 均为 2 repeats，其他矩阵参数不变。
+> 2026-07-24 当前实施覆盖：Exp2–Exp5 剩余设施由 `2026-07-24-feat-011-exp2-exp5-experiment-facility-completion-implementation-plan.md` 统一安排。Exp4 仅五模式；Exp5 使用 Exp1 全部 hard 166+45 roots、36 conditions、1,899 root-runs，并与 Exp2 selection 解耦。本文的旧并发切片和旧规模只作历史 provenance。
 
 ## 1. 决策
 

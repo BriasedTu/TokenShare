@@ -93,7 +93,7 @@ class WorkerDeathRecord:
     worker_pid: int
     worker_process_exitcode: int | None
     kill_point: WorkerDeathKillPoint | str
-    progress_before_kill: int
+    progress_before_kill: float
     worker_started_at: str
     killed_at: str
     initial_lease: JsonObject
@@ -109,6 +109,15 @@ class WorkerDeathRecord:
     provider_tokens_attributed: int
     protocol_event_refs: tuple[str, ...]
     created_at: str
+    completed_ai_unit_count_before_kill: int = 0
+    total_ai_unit_count: int = 0
+    observed_progress_percent_before_kill: float = 0.0
+    kill_progress_target_ratio: float = 0.0
+    kill_progress_completed_ai_unit_count: int = 0
+    kill_progress_total_ai_unit_count: int = 0
+    kill_progress_actual_ratio: float = 0.0
+    kill_progress_observed_at: str = ""
+    kill_progress_error: str | None = None
     schema_version: str = WORKER_DEATH_RECORD_SCHEMA_VERSION
 
     def to_dict(self) -> JsonObject:
@@ -140,6 +149,23 @@ class WorkerDeathRecord:
             "provider_tokens_attributed": self.provider_tokens_attributed,
             "protocol_event_refs": list(self.protocol_event_refs),
             "created_at": self.created_at,
+            "completed_ai_unit_count_before_kill": (
+                self.completed_ai_unit_count_before_kill
+            ),
+            "total_ai_unit_count": self.total_ai_unit_count,
+            "observed_progress_percent_before_kill": (
+                self.observed_progress_percent_before_kill
+            ),
+            "kill_progress_target_ratio": self.kill_progress_target_ratio,
+            "kill_progress_completed_ai_unit_count": (
+                self.kill_progress_completed_ai_unit_count
+            ),
+            "kill_progress_total_ai_unit_count": (
+                self.kill_progress_total_ai_unit_count
+            ),
+            "kill_progress_actual_ratio": self.kill_progress_actual_ratio,
+            "kill_progress_observed_at": self.kill_progress_observed_at,
+            "kill_progress_error": self.kill_progress_error,
         }
 
 
@@ -251,6 +277,7 @@ def record_worker_death_observation(
     protocol_events: Iterable[Mapping[str, Any] | object],
     coordinator_pid: int,
     created_at: str,
+    provider_tokens_attributed: int = 0,
 ) -> WorkerDeathOutcome:
     """把 backend 事实和 engine ledger 事件投影成实验记录。"""
 
@@ -262,6 +289,8 @@ def record_worker_death_observation(
         raise ValueError("worker facts must reference the selected target unit")
     if killed.get("result_kind") != "worker_terminated":
         raise ValueError("worker_fact must prove worker_terminated")
+    if killed.get("kill_point") != plan.kill_point.value:
+        raise ValueError("worker_fact kill_point does not match frozen plan")
     if replacement.get("result_kind") != "succeeded":
         raise ValueError("replacement_fact must prove succeeded")
     if killed.get("attempt_id") == replacement.get("attempt_id"):
@@ -304,6 +333,13 @@ def record_worker_death_observation(
         or created_at
     )
     replacement_ended_at = str(replacement.get("ended_at") or created_at)
+    progress = _worker_kill_progress_evidence(
+        killed,
+        expected_target_ratio=plan.progress_percent / 100.0,
+        expected_total_ai_unit_count=len(plan.dependency_graph["unit_ids"]),
+    )
+    if provider_tokens_attributed < 0:
+        raise ValueError("provider_tokens_attributed must be non-negative")
     record = WorkerDeathRecord(
         condition_id=plan.condition_id,
         repeat_id=plan.repeat_id,
@@ -315,7 +351,7 @@ def record_worker_death_observation(
         worker_pid=worker_pid,
         worker_process_exitcode=worker_exitcode,
         kill_point=plan.kill_point,
-        progress_before_kill=plan.progress_percent,
+        progress_before_kill=float(progress["actual_ratio"]) * 100.0,
         worker_started_at=started_at,
         killed_at=killed_at,
         initial_lease=initial_lease,
@@ -374,7 +410,7 @@ def record_worker_death_observation(
             "waited_for_lease_expiry": True,
         },
         canonical_pollution=False,
-        provider_tokens_attributed=0,
+        provider_tokens_attributed=provider_tokens_attributed,
         protocol_event_refs=tuple(
             str(evidence[name]["event_id"])
             for name in (
@@ -387,11 +423,28 @@ def record_worker_death_observation(
             )
         ),
         created_at=created_at,
+        completed_ai_unit_count_before_kill=(
+            int(progress["completed_count"])
+        ),
+        total_ai_unit_count=int(progress["total_count"]),
+        observed_progress_percent_before_kill=(
+            float(progress["actual_ratio"]) * 100.0
+        ),
+        kill_progress_target_ratio=float(progress["target_ratio"]),
+        kill_progress_completed_ai_unit_count=int(progress["completed_count"]),
+        kill_progress_total_ai_unit_count=int(progress["total_count"]),
+        kill_progress_actual_ratio=float(progress["actual_ratio"]),
+        kill_progress_observed_at=str(progress["observed_at"]),
+        kill_progress_error=(
+            str(progress["error"]) if progress["error"] is not None else None
+        ),
     )
     record_ref = artifact_store.save_json(
         record.to_dict(),
         artifact_id=(
-            f"worker_death_{_safe_id(target_unit_id)}_{plan.kill_point.value}"
+            f"worker_death_{_safe_id(target_unit_id)}_"
+            f"{_safe_id(_required_str(killed, 'attempt_id'))}_"
+            f"{plan.kill_point.value}"
         ),
         artifact_type="WorkerDeathRecord",
         artifact_schema_id="tokenshare.paper_worker_death",
@@ -409,6 +462,101 @@ def record_worker_death_observation(
         created_at=created_at,
     )
     return WorkerDeathOutcome(record=record, record_ref=record_ref)
+
+
+def project_worker_death_records(
+    *,
+    artifact_store: ArtifactStore,
+    condition_id: str,
+    repeat_id: int,
+    run_id: str,
+    ai_units: Iterable[PaperAIUnit],
+    selected_target_unit_ids: Iterable[str],
+    kill_point: WorkerDeathKillPoint | str,
+    worker_facts: Iterable[Mapping[str, Any] | object],
+    protocol_events: Iterable[Mapping[str, Any] | object],
+    coordinator_pid: int,
+    created_at: str,
+    provider_tokens_by_attempt_id: Mapping[str, int] | None = None,
+) -> tuple[JsonObject, ...]:
+    """把真实 process backend 事实投影为实验记录，不参与协议恢复决策。"""
+
+    units = tuple(ai_units)
+    selected = tuple(selected_target_unit_ids)
+    plan = freeze_worker_death_plan(
+        condition_id=condition_id,
+        repeat_id=repeat_id,
+        run_id=run_id,
+        ai_units=units,
+        target_unit_ids=selected,
+        kill_point=kill_point,
+    )
+    facts = tuple(
+        sorted(
+            (_mapping(item, "worker_fact") for item in worker_facts),
+            key=lambda item: int(item.get("execution_index") or 0),
+        )
+    )
+    events = tuple(protocol_events)
+    token_counts = dict(provider_tokens_by_attempt_id or {})
+    selected_set = set(selected)
+    killed_facts = tuple(
+        fact
+        for fact in facts
+        if fact.get("unit_id") in selected_set
+        and fact.get("result_kind") == "worker_terminated"
+    )
+    killed_unit_ids = {str(fact["unit_id"]) for fact in killed_facts}
+    missing_targets = sorted(selected_set - killed_unit_ids)
+    if missing_targets:
+        raise ValueError(
+            "worker backend did not terminate selected units: "
+            f"{missing_targets}"
+        )
+    records: list[JsonObject] = []
+    for killed in killed_facts:
+        target_unit_id = str(killed["unit_id"])
+        replacement = next(
+            (
+                fact
+                for fact in facts
+                if fact.get("unit_id") == target_unit_id
+                and fact.get("result_kind") == "succeeded"
+                and fact.get("attempt_id") != killed.get("attempt_id")
+            ),
+            None,
+        )
+        if replacement is None:
+            raise ValueError(
+                f"worker backend did not complete replacement unit: {target_unit_id}"
+            )
+        outcome = record_worker_death_observation(
+            artifact_store=artifact_store,
+            plan=plan,
+            target_unit_id=target_unit_id,
+            worker_fact=killed,
+            replacement_fact=replacement,
+            protocol_events=events,
+            coordinator_pid=coordinator_pid,
+            created_at=created_at,
+            provider_tokens_attributed=int(
+                token_counts.get(str(killed.get("attempt_id") or ""), 0)
+            ),
+        )
+        body = outcome.record.to_dict()
+        body.update(
+            {
+                "fault_type": "worker_death",
+                "record_ref": outcome.record_ref.to_dict(),
+                "planned_ai_unit_id": (
+                    body["target_ai_unit"].get("metadata", {}).get(
+                        "planned_ai_unit_id"
+                    )
+                ),
+            }
+        )
+        records.append(body)
+    return tuple(records)
 
 
 def run_worker_death_harness(**kwargs: Any) -> WorkerDeathOutcome:
@@ -478,6 +626,59 @@ def _engine_worker_death_evidence(
         missing = sorted(required - set(evidence))
         raise ValueError(f"engine worker-death evidence is incomplete: {missing}")
     return evidence
+
+
+def _worker_kill_progress_evidence(
+    worker_fact: Mapping[str, Any],
+    *,
+    expected_target_ratio: float,
+    expected_total_ai_unit_count: int,
+) -> dict[str, Any]:
+    """只接受 backend 在 kill 时持久化的完成进度，不从 execution index 反推。"""
+
+    target_ratio = worker_fact.get("kill_progress_target_ratio")
+    completed_count = worker_fact.get("kill_progress_completed_ai_unit_count")
+    total_count = worker_fact.get("kill_progress_total_ai_unit_count")
+    actual_ratio = worker_fact.get("kill_progress_actual_ratio")
+    observed_at = worker_fact.get("kill_progress_observed_at")
+    error = worker_fact.get("kill_progress_error")
+    for field_name, value in (
+        ("kill_progress_target_ratio", target_ratio),
+        ("kill_progress_actual_ratio", actual_ratio),
+    ):
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ValueError(f"{field_name} must be persisted by the worker backend")
+    for field_name, value in (
+        ("kill_progress_completed_ai_unit_count", completed_count),
+        ("kill_progress_total_ai_unit_count", total_count),
+    ):
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise ValueError(f"{field_name} must be persisted by the worker backend")
+    if not isinstance(observed_at, str) or not observed_at:
+        raise ValueError(
+            "kill_progress_observed_at must be persisted by the worker backend"
+        )
+    if error is not None and (not isinstance(error, str) or not error):
+        raise ValueError("kill_progress_error must be null or a non-empty string")
+    if abs(float(target_ratio) - expected_target_ratio) > 1e-9:
+        raise ValueError("worker kill progress target does not match frozen plan")
+    if total_count != expected_total_ai_unit_count:
+        raise ValueError("worker kill progress total does not match dependency graph")
+    if completed_count < 0 or completed_count > total_count:
+        raise ValueError("worker kill progress completed count is invalid")
+    expected_actual_ratio = completed_count / total_count
+    if abs(float(actual_ratio) - expected_actual_ratio) > 1e-9:
+        raise ValueError("worker kill progress ratio does not match completed count")
+    if float(actual_ratio) < float(target_ratio):
+        raise ValueError("worker kill occurred before the registered progress gate")
+    return {
+        "target_ratio": float(target_ratio),
+        "completed_count": completed_count,
+        "total_count": total_count,
+        "actual_ratio": float(actual_ratio),
+        "observed_at": observed_at,
+        "error": error,
+    }
 
 
 def _attempt_snapshot(
@@ -582,7 +783,13 @@ def _required_int(body: Mapping[str, Any], field: str) -> int:
 
 
 def _safe_id(value: str) -> str:
-    return "".join(char if char.isalnum() or char in "._-" else "_" for char in value)
+    normalized = "".join(
+        char if char.isalnum() or char in "._-" else "_" for char in value
+    )
+    if len(normalized) <= 80:
+        return normalized
+    digest_suffix = digest_json({"value": value}).removeprefix("sha256:")[:16]
+    return f"{normalized[:48]}_{digest_suffix}"
 
 
 def _require_non_empty(field_name: str, value: str) -> None:

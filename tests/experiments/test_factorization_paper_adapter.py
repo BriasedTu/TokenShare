@@ -4,6 +4,7 @@ from pathlib import Path
 import pytest
 
 import tokenshare.experiments.factorization_paper_adapter as factorization_paper_adapter_module
+from tokenshare.core.models import ArtifactRef
 from tokenshare.executors.ai_api import build_ai_api_executor_descriptor
 from tokenshare.executors.ai_api_config import load_ai_api_config
 from tokenshare.executors.ai_api_transport import (
@@ -34,6 +35,7 @@ from tokenshare.experiments.paper_model_identity import (
     PaperModelIdentityMismatch,
     build_model_endpoint_identity,
 )
+from tokenshare.experiments.paper_faults import PaperFaultRuntimeHooks
 from tokenshare.experiments.paper_models import (
     PaperAttemptStatus,
     PaperExperimentCondition,
@@ -42,7 +44,12 @@ from tokenshare.experiments.paper_models import (
     PaperTaskStatus,
 )
 from tokenshare.plugins.factorization.split_strategy import partition_candidate_ranges
-from tokenshare.local_runtime import ProtocolRunCoordinator
+from tokenshare.local_runtime import (
+    NoOpRuntimeHooks,
+    ProtocolRunCoordinator,
+    RawOutputContext,
+    WorkerTerminationPolicy,
+)
 from tokenshare.storage.events import EventLedger, EventType
 
 
@@ -139,6 +146,198 @@ def test_factorization_v2_hard_prime_control_merges_complete_no_factor_ranges(
     assert result.final_prime_factors == [
         {"prime": case["target_n"], "exponent": 1}
     ]
+    link = next(
+        event["payload"]["merge_task_link"]
+        for event in result.event_records
+        if event["event_type"] == "MERGE_TASK_LINK_RECORDED"
+    )
+    assert link["readiness_reason"] == (
+        "all_required_ranges_no_factor_canonical"
+    )
+    assert len(link["required_slot_bindings"]) == len(transport.calls)
+
+
+@pytest.mark.parametrize(
+    ("failure_mode", "expected_failed_attempt"),
+    (
+        ("provider_error", PaperAttemptStatus.PROVIDER_ERROR),
+        ("verifier_rejected", PaperAttemptStatus.VERIFICATION_REJECTED),
+    ),
+)
+def test_factorization_verified_witness_completes_despite_terminal_sibling_failure(
+    tmp_path,
+    failure_mode,
+    expected_failed_attempt,
+) -> None:
+    case = next(
+        case
+        for case in generate_factorization_paper_cases()
+        if case["difficulty"] == "easy"
+        and case["factor_position_quantile"] != "no_factor"
+    )
+    transport = _WitnessWithOneFailedSiblingTransport(mode=failure_mode)
+
+    result = run_factorization_paper_case(
+        case=case,
+        condition=_v2_condition(case),
+        output_root=tmp_path,
+        transport=transport,
+        real_transport=False,
+        entry_id="factorization_paper_scripted",
+    )
+
+    assert transport.witness_count == 1
+    assert transport.failed_sibling_count == 1
+    assert result.task_result.root_status == PaperTaskStatus.COMPLETED
+    assert result.task_result.accepted_validity is True
+    failed_attempt = next(
+        attempt
+        for attempt in result.attempt_results
+        if attempt.attempt_status == expected_failed_attempt
+    )
+    assert any(
+        attempt.attempt_status == expected_failed_attempt
+        for attempt in result.attempt_results
+    )
+    event_types = [event["event_type"] for event in result.event_records]
+    assert "MERGE_RECORDED" in event_types
+    assert "SETTLEMENT_RECORDED" in event_types
+    link_event = next(
+        event
+        for event in result.event_records
+        if event["event_type"] == "MERGE_TASK_LINK_RECORDED"
+    )
+    link = link_event["payload"]["merge_task_link"]
+    assert link["schema_version"] == "phase5.merge_task_link.v2"
+    assert link["readiness_reason"] == "verified_factor_witness_canonical"
+    assert link["readiness_decision"]["schema_version"] == (
+        "tokenshare.merge_readiness_decision.v1"
+    )
+    assert link["readiness_decision"]["policy_id"] == (
+        "factorization.factor_witness_or_all_ranges.v2"
+    )
+    assert len(link["required_slot_bindings"]) == 1
+    # worker batch 已启动的 sibling 证据必须保留，witness completion 不做删除或改写。
+    for event_type in (
+        "EXECUTION_REQUEST_RECORDED",
+        "EXECUTION_SUBMISSION_RECORDED",
+    ):
+        assert any(
+            event["event_type"] == event_type
+            and event["payload"]["unit_id"] == failed_attempt.unit_id
+            for event in result.event_records
+        )
+
+
+def test_factorization_no_factor_conclusion_requires_every_range_canonical(
+    tmp_path,
+) -> None:
+    case = next(
+        case
+        for case in generate_factorization_paper_cases()
+        if case["difficulty"] == "hard"
+        and case["factor_position_quantile"] == "no_factor"
+    )
+    transport = _WitnessWithOneFailedSiblingTransport(mode="provider_error")
+
+    result = run_factorization_paper_case(
+        case=case,
+        condition=_v2_condition(case),
+        output_root=tmp_path,
+        transport=transport,
+        real_transport=False,
+        entry_id="factorization_paper_scripted",
+    )
+
+    assert transport.witness_count == 0
+    assert transport.failed_sibling_count == 1
+    assert result.task_result.root_status == PaperTaskStatus.FAILED
+    event_types = [event["event_type"] for event in result.event_records]
+    assert "MERGE_RECORDED" not in event_types
+    assert "SETTLEMENT_RECORDED" not in event_types
+
+
+def test_factorization_rejected_false_negative_cannot_trigger_witness_completion(
+    tmp_path,
+) -> None:
+    case = next(
+        case
+        for case in generate_factorization_paper_cases()
+        if case["difficulty"] == "easy"
+        and case["factor_position_quantile"] != "no_factor"
+    )
+    partition = _v2_partition(case)
+    oracle_primes = {int(item["prime"]) for item in case["oracle_prime_factors"]}
+    factor_child_index = next(
+        item.child_index
+        for item in partition.ranges
+        if any(
+            int(item.range_start) <= prime <= int(item.range_end)
+            for prime in oracle_primes
+        )
+    )
+    transport = ScriptedFactorizationRangeTransport(
+        force_false_negative_child_indices={factor_child_index}
+    )
+
+    result = run_factorization_paper_case(
+        case=case,
+        condition=_v2_condition(case),
+        output_root=tmp_path,
+        transport=transport,
+        real_transport=False,
+        entry_id="factorization_paper_scripted",
+    )
+
+    assert result.task_result.root_status == PaperTaskStatus.FAILED
+    assert any(
+        attempt.attempt_status == PaperAttemptStatus.VERIFICATION_REJECTED
+        for attempt in result.attempt_results
+    )
+    event_types = [event["event_type"] for event in result.event_records]
+    assert "MERGE_RECORDED" not in event_types
+    assert "SETTLEMENT_RECORDED" not in event_types
+
+
+def test_factorization_forged_witness_slot_identity_is_rejected(
+    tmp_path,
+) -> None:
+    case = next(
+        case
+        for case in generate_factorization_paper_cases()
+        if case["difficulty"] == "easy"
+        and case["factor_position_quantile"] != "no_factor"
+    )
+    transport = _ForgedWitnessIdentityTransport()
+
+    result = run_factorization_paper_case(
+        case=case,
+        condition=_v2_condition(case),
+        output_root=tmp_path,
+        transport=transport,
+        real_transport=False,
+        entry_id="factorization_paper_scripted",
+    )
+
+    assert transport.forged_witness_count == 1
+    assert result.task_result.root_status == PaperTaskStatus.FAILED
+    assert any(
+        attempt.attempt_status == PaperAttemptStatus.VERIFICATION_REJECTED
+        for attempt in result.attempt_results
+    )
+    event_types = [event["event_type"] for event in result.event_records]
+    assert "MERGE_RECORDED" not in event_types
+    assert "SETTLEMENT_RECORDED" not in event_types
+
+
+def test_generic_core_does_not_encode_factorization_witness_vocabulary() -> None:
+    core_root = Path(__file__).parents[2] / "src" / "tokenshare" / "core"
+    source = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in sorted(core_root.glob("*.py"))
+    )
+
+    assert "found_factor" not in source
 
 
 def test_factorization_v2_large_no_factor_range_uses_canonical_child_length_as_budget(
@@ -234,6 +433,40 @@ def test_factorization_paper_adapter_runs_range_children_through_ai_api_executor
     assert len(result.range_results) == result.split_summary["range_child_count"]
     assert all(item["verification"]["accepted"] is True for item in result.range_results)
     assert all(item["canonical_output_ref"] for item in result.range_results)
+
+
+def test_factorization_adapter_resolves_exp2_20way_profile_inside_plugin(
+    tmp_path,
+) -> None:
+    case = next(
+        case
+        for case in generate_factorization_paper_cases()
+        if case["difficulty"] == "hard"
+        and case["factor_position_quantile"] == "no_factor"
+        and int(case["candidate_end"]) - int(case["candidate_start"]) + 1 >= 20
+    )
+    case = {
+        **case,
+        "split_params": {
+            "strategy_id": "factorization.candidate_range_partition.v1",
+            "range_policy": "contiguous",
+            "split_profile_id": "factorization.exp2_contiguous_20way.v1",
+        },
+    }
+    transport = ScriptedFactorizationRangeTransport()
+
+    result = run_factorization_paper_case(
+        case=case,
+        condition=_v2_condition(case),
+        output_root=tmp_path,
+        transport=transport,
+        real_transport=False,
+        entry_id="factorization_paper_scripted",
+    )
+
+    assert 1 <= len(transport.calls) <= 20
+    assert result.split_summary["range_child_count"] == 20
+    assert result.task_result.root_status == PaperTaskStatus.COMPLETED
     assert all(attempt.raw_output_ref is not None for attempt in result.attempt_results)
     assert all(attempt.parsed_output_ref is not None for attempt in result.attempt_results)
     assert all(attempt.usage_ref is not None for attempt in result.attempt_results)
@@ -252,6 +485,7 @@ def test_factorization_paper_adapter_runs_range_children_through_ai_api_executor
 
 def test_factorization_paper_adapter_can_execute_exactly_one_selected_ai_unit(
     tmp_path,
+    monkeypatch,
 ) -> None:
     catalog = load_paper_catalogs(
         factorization_path=FACTOR_CATALOG,
@@ -260,6 +494,15 @@ def test_factorization_paper_adapter_can_execute_exactly_one_selected_ai_unit(
     case = catalog.cases_for(domain="factorization", difficulty="easy")[0]
     condition = _condition(catalog.catalog_digest)
     transport = ScriptedFactorizationRangeTransport()
+    coordinator_calls = 0
+    original = ProtocolRunCoordinator.run_root
+
+    def recording(self, request):
+        nonlocal coordinator_calls
+        coordinator_calls += 1
+        return original(self, request)
+
+    monkeypatch.setattr(ProtocolRunCoordinator, "run_root", recording)
 
     result = run_factorization_paper_case(
         case=case,
@@ -272,10 +515,25 @@ def test_factorization_paper_adapter_can_execute_exactly_one_selected_ai_unit(
     )
 
     assert len(transport.calls) == 1
+    assert coordinator_calls == 1
     assert len(result.attempt_results) == 1
     assert result.attempt_results[0].planned_ai_unit_id == "range_0"
-    assert result.merge_summary["status"] == "blocked"
-    assert result.task_result.root_status == PaperTaskStatus.FAILED
+    assert result.merge_summary["status"] == "partial"
+    assert result.task_result.root_status == PaperTaskStatus.PARTIAL
+    assert result.task_result.paper_eligible is False
+    event_types = [event["event_type"] for event in result.event_records]
+    for event_type in (
+        "TASK_REGISTERED",
+        "TASK_EXPANDED",
+        "LEASE_STATE_CHANGED",
+        "EXECUTION_REQUEST_RECORDED",
+        "EXECUTION_SUBMISSION_RECORDED",
+        "VERIFICATION_RECORDED",
+        "CANONICAL_OUTPUTS_BOUND",
+    ):
+        assert event_type in event_types
+    assert "MERGE_RECORDED" not in event_types
+    assert "SETTLEMENT_RECORDED" not in event_types
 
     untouched_transport = ScriptedFactorizationRangeTransport()
     with pytest.raises(ValueError, match="selected_ai_unit_id"):
@@ -440,6 +698,11 @@ def test_factorization_exp4_ablation_modes_execute_inside_adapter_lifecycle(
     else:
         assert runtime["slot_integrity_violation"] is True
         assert runtime["root_validity_audit_passed"] is True
+        assert result.merge_summary["slot_integrity_violation"] is True
+        assert (
+            result.merge_summary["slot_binding_applied_by"]
+            == "local_runtime_policy"
+        )
         assert any(
             observation["disabled_mechanism"] == "slot_integrity"
             for observation in runtime["hook_observations"]
@@ -928,6 +1191,77 @@ class _ProviderErrorTransport:
         )
 
 
+class _WitnessWithOneFailedSiblingTransport(
+    ScriptedFactorizationRangeTransport
+):
+    """保留真实 scripted witness，只让第一个 no-factor sibling 终态失败。"""
+
+    def __init__(self, *, mode: str) -> None:
+        if mode not in {"provider_error", "verifier_rejected"}:
+            raise ValueError("unsupported sibling failure mode")
+        super().__init__()
+        self.mode = mode
+        self.witness_count = 0
+        self.failed_sibling_count = 0
+
+    def post_chat_completion(
+        self,
+        *,
+        entry,
+        api_key: str,
+        body,
+        timeout_seconds: int,
+    ):
+        response = super().post_chat_completion(
+            entry=entry,
+            api_key=api_key,
+            body=body,
+            timeout_seconds=timeout_seconds,
+        )
+        result = self.calls[-1]["range_result"]
+        if result["result_kind"] == "found_factor":
+            self.witness_count += 1
+            return response
+        if self.failed_sibling_count:
+            return response
+        self.failed_sibling_count += 1
+        if self.mode == "provider_error":
+            return _TransportResponse(
+                status_code=503,
+                body={"message": "scripted sibling provider error"},
+            )
+
+        rejected = {
+            **result,
+            "child_index": int(result["child_index"]) + 1000,
+        }
+        self.calls[-1]["range_result"] = rejected
+        return _TransportResponse(
+            status_code=200,
+            body={
+                "id": "factorization-paper-scripted-rejected-sibling",
+                "model": entry.model,
+                "choices": [
+                    {
+                        "message": {
+                            "content": json.dumps(
+                                rejected,
+                                ensure_ascii=False,
+                                sort_keys=True,
+                            )
+                        },
+                        "finish_reason": "stop",
+                    }
+                ],
+                "usage": {
+                    "prompt_tokens": 70,
+                    "completion_tokens": 30,
+                    "total_tokens": 100,
+                },
+            },
+        )
+
+
 class _RecordingProviderErrorTransport:
     def __init__(self) -> None:
         self.calls: list[dict] = []
@@ -945,6 +1279,62 @@ class _RecordingProviderErrorTransport:
         return _TransportResponse(
             status_code=503,
             body={"message": "provider overloaded"},
+        )
+
+
+class _ForgedWitnessIdentityTransport(
+    ScriptedFactorizationRangeTransport
+):
+    def __init__(self) -> None:
+        super().__init__()
+        self.forged_witness_count = 0
+
+    def post_chat_completion(
+        self,
+        *,
+        entry,
+        api_key: str,
+        body,
+        timeout_seconds: int,
+    ):
+        response = super().post_chat_completion(
+            entry=entry,
+            api_key=api_key,
+            body=body,
+            timeout_seconds=timeout_seconds,
+        )
+        result = self.calls[-1]["range_result"]
+        if result["result_kind"] != "found_factor":
+            return response
+        self.forged_witness_count += 1
+        forged = {
+            **result,
+            "child_index": int(result["child_index"]) + 1000,
+        }
+        self.calls[-1]["range_result"] = forged
+        return _TransportResponse(
+            status_code=200,
+            body={
+                "id": "factorization-paper-scripted-forged-witness",
+                "model": entry.model,
+                "choices": [
+                    {
+                        "message": {
+                            "content": json.dumps(
+                                forged,
+                                ensure_ascii=False,
+                                sort_keys=True,
+                            )
+                        },
+                        "finish_reason": "stop",
+                    }
+                ],
+                "usage": {
+                    "prompt_tokens": 70,
+                    "completion_tokens": 30,
+                    "total_tokens": 100,
+                },
+            },
         )
 
 
@@ -998,6 +1388,218 @@ def _v2_condition(case: dict) -> PaperExperimentCondition:
         repeat_id=0,
         seed=1,
         catalog_digest="sha256:" + "0" * 64,
+    )
+
+
+def test_factorization_worker_death_runs_through_process_lease_recovery(
+    tmp_path: Path,
+) -> None:
+    case = generate_factorization_paper_cases()[0]
+    condition = PaperExperimentCondition(
+        **{
+            **_v2_condition(case).__dict__,
+            "experiment_id": "exp3_real_ai_fault_recovery",
+            "condition_id": "exp3_factorization_worker_death_progress_25_k1_r0",
+            "fault_type": "worker_death",
+        }
+    )
+
+    result = run_factorization_paper_case(
+        case=case,
+        condition=condition,
+        output_root=tmp_path,
+        transport=ScriptedFactorizationRangeTransport(),
+        real_transport=False,
+        entry_id="factorization_paper_scripted",
+            worker_termination_policy=WorkerTerminationPolicy(
+                target_planned_ai_unit_ids=("range_0",),
+                kill_point="progress_25",
+                total_planned_ai_unit_count=2,
+            ),
+    )
+
+    assert result.task_result.root_status == PaperTaskStatus.COMPLETED
+    assert any(
+        attempt.attempt_status == PaperAttemptStatus.WORKER_DIED
+        for attempt in result.attempt_results
+    )
+    worker_deaths = [
+        record
+        for record in result.fault_records
+        if record["fault_type"] == "worker_death"
+    ]
+    assert len(worker_deaths) == 1
+    record = worker_deaths[0]
+    assert record["target_ai_unit"]["metadata"]["planned_ai_unit_id"] == "range_0"
+    assert record["worker_process_exitcode"] != 0
+    assert record["replacement_process_exitcode"] == 0
+    assert record["lease_expiry"]["trigger"] == "lease_expired"
+    assert record["coordinator"]["survived"] is True
+
+
+def test_factorization_three_worker_deaths_reuse_replacements_for_two_unit_root(
+    tmp_path: Path,
+) -> None:
+    case = generate_factorization_paper_cases()[0]
+    condition = PaperExperimentCondition(
+        **{
+            **_v2_condition(case).__dict__,
+            "experiment_id": "exp3_real_ai_fault_recovery",
+            "condition_id": "exp3_factorization_worker_death_progress_25_k3_r0",
+            "fault_type": "worker_death",
+        }
+    )
+
+    result = run_factorization_paper_case(
+        case=case,
+        condition=condition,
+        output_root=tmp_path,
+        transport=ScriptedFactorizationRangeTransport(),
+        real_transport=False,
+        entry_id="factorization_paper_scripted",
+            worker_termination_policy=WorkerTerminationPolicy(
+                target_planned_ai_unit_ids=("range_0", "range_1"),
+                termination_count_target=3,
+                kill_point="progress_25",
+                total_planned_ai_unit_count=2,
+            ),
+    )
+
+    dead_attempts = [
+        attempt
+        for attempt in result.attempt_results
+        if attempt.attempt_status == PaperAttemptStatus.WORKER_DIED
+    ]
+    assert result.task_result.root_status == PaperTaskStatus.COMPLETED
+    assert len(dead_attempts) == 3
+    assert len(result.fault_records) == 3
+    assert len(
+        {
+            record["worker_pid"]
+            for record in result.fault_records
+        }
+    ) == 3
+
+
+@pytest.mark.parametrize(
+    "fault_type",
+    (
+        "false_positive",
+        "false_negative",
+        "no_return",
+        "late_submission",
+        "executor_error",
+    ),
+)
+def test_factorization_rate_faults_use_protocol_recovery_lifecycle(
+    tmp_path: Path,
+    fault_type: str,
+) -> None:
+    case = generate_factorization_paper_cases()[0]
+    base_condition = _v2_condition(case)
+    condition = PaperExperimentCondition(
+        **{
+            **base_condition.__dict__,
+            "experiment_id": "exp3_real_ai_fault_recovery",
+            "condition_id": f"exp3_factorization_{fault_type}_r0",
+            "fault_type": fault_type,
+            "fault_rate": 1.0,
+        }
+    )
+    runtime_hook: PaperFaultRuntimeHooks | None = None
+
+    def post_raw_output_hook(**context):
+        nonlocal runtime_hook
+        request = context["request"]
+        if runtime_hook is None:
+            runtime_hook = PaperFaultRuntimeHooks(
+                artifact_store=context["artifact_store"],
+                condition_id=condition.condition_id,
+                repeat_id=condition.repeat_id,
+                fault_type=fault_type,
+                seed=condition.seed,
+                selected_unit_ids=("range_0",),
+            )
+        directive = runtime_hook.after_raw_output_persisted(
+            RawOutputContext(
+                run_id=f"{condition.condition_id}_{case['case_id']}",
+                task_id=request.task_id,
+                unit_id=request.unit_id,
+                experiment_unit_id=request.soft_hints.get(
+                    "planned_ai_unit_id"
+                ),
+                attempt_id=request.attempt_id,
+                worker_id=str(
+                    request.allocation_decision.get(
+                        "client_id", "factor-worker"
+                    )
+                ),
+                raw_output_ref=context["raw_output_ref"],
+                provenance_ref=context["provenance_ref"],
+                usage_ref=context["usage_ref"],
+                content_text=str(context["content_text"]),
+                provider=str(context["provider_family"]),
+                model=str(context["model"]),
+                entry_id=str(context["entry_id"]),
+                usage_summary=dict(context["usage_summary"]),
+                submitted_at=str(context["submitted_at"]),
+                lease_deadline_at=request.soft_hints.get(
+                    "lease_deadline_at"
+                ),
+            )
+        )
+        if directive is None:
+            return None
+        return {
+            key: value
+            for key, value in {
+                "content_text": directive.content_text,
+                "result_kind": directive.result_kind,
+            }.items()
+            if value is not None
+        }
+
+    class RuntimeHookBridge(NoOpRuntimeHooks):
+        def __call__(self, **context):
+            return post_raw_output_hook(**context)
+
+        def after_parsed_candidate_persisted(self, context):
+            # factorization root 的确定性拆分会先产生一次非 AI 候选；
+            # fault hook 只处理随后由 raw-output 回调注册的实验 AI 单元。
+            if runtime_hook is None:
+                return None
+            return runtime_hook.after_parsed_candidate_persisted(context)
+
+    result = run_factorization_paper_case(
+        case=case,
+        condition=condition,
+        output_root=tmp_path,
+        transport=ScriptedFactorizationRangeTransport(),
+        real_transport=False,
+        entry_id="factorization_paper_scripted",
+        post_raw_output_hook=RuntimeHookBridge(),
+    )
+
+    assert result.task_result.root_status == PaperTaskStatus.COMPLETED
+    assert runtime_hook is not None
+    assert len(runtime_hook.records) == 1
+    record = runtime_hook.records[0]
+    affected_attempts = [
+        attempt
+        for attempt in result.attempt_results
+        if attempt.unit_id == record["unit_id"]
+    ]
+    assert len(affected_attempts) == 2
+    assert any(
+        attempt.attempt_status == PaperAttemptStatus.SUCCEEDED
+        for attempt in affected_attempts
+    )
+    assert ArtifactStore(result.output_root).verify(
+        ArtifactRef.from_dict(record["original_raw_output_ref"])
+    )
+    assert any(
+        event["event_type"] == "RECOVERY_ACTION_RECORDED"
+        for event in result.event_records
     )
 
 

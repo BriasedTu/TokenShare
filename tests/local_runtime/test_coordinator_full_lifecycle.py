@@ -14,6 +14,7 @@ from tokenshare.local_runtime import (
     MergeAction,
     MergeExecutionContext,
     MergeResolutionAction,
+    ProtocolMechanismPolicy,
     ProtocolRunCoordinator,
     ProtocolRunRequest,
     RootProtocolPlan,
@@ -133,6 +134,14 @@ class _Clock:
         return value.isoformat().replace("+00:00", "Z")
 
 
+class _ObservationClock:
+    def __init__(self, *values: str) -> None:
+        self._values = iter(values)
+
+    def __call__(self) -> str:
+        return next(self._values)
+
+
 class _ArtifactExecutor:
     def __init__(self, store: ArtifactStore) -> None:
         self._store = store
@@ -186,6 +195,7 @@ class _ExpandedPluginRuntime:
         self.executor_descriptor = make_executor_descriptor()
         self.verify_calls: list[str] = []
         self.merge_calls = 0
+        self.merge_slot_integrity_policies: list[bool] = []
         self.clear_dependency_edges = True
 
     def plan_root(self, root_input: object, *, artifact_store: ArtifactStore):
@@ -291,10 +301,18 @@ class _ExpandedPluginRuntime:
             completed_at=submission.submitted_at,
         )
 
-    def build_merge(self, *, parent, canonical_children):
+    def build_merge(
+        self,
+        *,
+        parent,
+        canonical_children,
+        slot_integrity_enabled: bool = True,
+    ):
         self.merge_calls += 1
+        self.merge_slot_integrity_policies.append(slot_integrity_enabled)
         assert parent.unit_id == "unit_ready"
-        assert len(canonical_children) == 2
+        # build_merge 只接收 readiness decision 选中的 merge input children。
+        assert len(canonical_children) == 1
         return MergeAction(resolution_builder=self._merge_resolution)
 
     def _canonical_action(self, context: CanonicalUnitContext):
@@ -503,9 +521,11 @@ class _DependencyBlockedPluginRuntime(_ExpandedPluginRuntime):
         self.clear_dependency_edges = False
 
 
+@pytest.mark.parametrize("slot_integrity_enabled", (True, False))
 def test_coordinator_runs_expand_children_merge_completion_and_settlement_through_engine(
     tmp_path: Path,
     monkeypatch,
+    slot_integrity_enabled: bool,
 ) -> None:
     store = ArtifactStore(tmp_path)
     ledger = EventLedger(tmp_path / "events" / "task_demo.jsonl")
@@ -598,6 +618,9 @@ def test_coordinator_runs_expand_children_merge_completion_and_settlement_throug
             root_input={"prompt": "split then merge"},
             plugin_runtime=plugin,
             worker_backend=backend,
+            mechanism_policy=ProtocolMechanismPolicy(
+                slot_integrity_enabled=slot_integrity_enabled
+            ),
         )
     )
 
@@ -615,6 +638,7 @@ def test_coordinator_runs_expand_children_merge_completion_and_settlement_throug
     assert calls.count("record_root_settlement") == 1
     assert set(merge_canonical_task_ids) == {"task_demo"}
     assert plugin.merge_calls == 1
+    assert plugin.merge_slot_integrity_policies == [slot_integrity_enabled]
     assert len(plugin.verify_calls) == 4
 
     event_types = [event.event_type for event in ledger.read_all()]
@@ -631,6 +655,7 @@ def test_coordinator_runs_expand_children_merge_completion_and_settlement_throug
         root_unit_id="unit_ready",
         event_ledger=ledger,
         artifact_store=store,
+        runtime_observation=result.summary["runtime_observation"],
     )
     assert projected == result
 
@@ -672,6 +697,10 @@ def test_coordinator_direct_root_complete_records_settlement_without_expansion(
         artifact_store=store,
         event_ledger=ledger,
         now=clock,
+        observation_clock=_ObservationClock(
+            "2026-07-24T00:00:00Z",
+            "2026-07-24T00:00:01.250000Z",
+        ),
     ).run_root(
         ProtocolRunRequest(
             run_id="run_direct_complete",
@@ -686,6 +715,17 @@ def test_coordinator_direct_root_complete_records_settlement_without_expansion(
 
     assert result.status == "completed"
     assert result.summary["unit_state_counts"] == {"Completed": 1}
+    observation = result.summary["runtime_observation"]
+    assert observation["schema_version"] == "tokenshare.protocol_runtime_observation.v1"
+    assert observation["runtime_started_at"] == "2026-07-24T00:00:00Z"
+    assert observation["runtime_ended_at"] == "2026-07-24T00:00:01.250000Z"
+    assert observation["runtime_wall_clock_ms"] == 1250.0
+    assert len(observation["worker_execution_facts"]) == 1
+    assert observation["worker_execution_facts"][0]["unit_id"] == "unit_ready"
+    assert observation["worker_execution_facts"][0]["attempt_id"]
+    assert observation["worker_execution_facts"][0]["worker_id"] == (
+        "sequential-worker-1"
+    )
     event_types = [event.event_type for event in ledger.read_all()]
     assert EventType.SETTLEMENT_RECORDED in event_types
     assert EventType.TASK_EXPANDED not in event_types

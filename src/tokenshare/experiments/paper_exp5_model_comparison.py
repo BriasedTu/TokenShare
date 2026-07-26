@@ -17,6 +17,8 @@ from tokenshare.experiments.paper_experiment_contracts import (
 )
 from tokenshare.experiments.paper_model_identity import PaperModelEndpointIdentity
 from tokenshare.experiments.paper_model_policy import (
+    EXP5_COMPARABLE_REQUEST_CONTROL_FIELDS,
+    EXP5_DOMAIN_EXECUTION_CONTRACTS,
     PAPER_MODEL_ENDPOINT_COHORT_ID,
     PAPER_MODEL_ENDPOINT_COHORT_MEMBER_IDS,
     PAPER_MODEL_ENDPOINT_COHORT_MEMBERS,
@@ -37,30 +39,30 @@ EXP5_CATALOG_VERSION = "v2"
 EXP5_REPEAT_COUNT = 3
 EXP5_WORKER_COUNT = 10
 EXP5_SEED_FAMILY = (5001, 5002, 5003)
-EXP5_TASKS_PER_CONDITION = 5
-EXP5_FACTOR_CASE_COUNTS_BY_DIFFICULTY = {
-    "easy": 167,
-    "medium": 167,
-    "hard": 166,
-}
-EXP5_EXPECTED_CONDITION_COUNT = 54
-EXP5_V1_EXPECTED_ROOT_RUNS = 270
-EXP5_EXPECTED_ROOT_RUNS = 4_635
+EXP5_FACTOR_HARD_CASE_COUNT = 166
+EXP5_LEAN_HARD_CASES_PER_TOPIC = 15
+EXP5_EXPECTED_CONDITION_COUNT = 36
+EXP5_EXPECTED_ROOT_RUNS = 1_899
+EXP5_EXPECTED_AI_UNIT_COUNT = 14_652
 EXP5_INCOMPLETE_COHORT_REASON = "incomplete_model_cohort"
 EXP5_MIXED_TOPIC_FAMILY_MARKER = "mixed_topic_family"
 
-FACTOR_PAPER_DIFFICULTIES = ("easy", "medium", "hard")
-LEAN_PAPER_DIFFICULTIES = ("simple", "medium_lemma_dag", "hard_frontier")
+FACTOR_PAPER_DIFFICULTIES = ("hard",)
+LEAN_PAPER_DIFFICULTIES = ("hard_frontier",)
+LEAN_FORMAL_PAPER_DIFFICULTIES = (
+    "simple",
+    "medium_lemma_dag",
+    "hard_frontier",
+)
 LEAN_TOPIC_FAMILIES = ("pure_logic", "function_set", "induction")
 LEAN_CONDITION_DIFFICULTY = {
-    "simple": "easy",
-    "medium_lemma_dag": "medium",
     "hard_frontier": "hard",
 }
 LEAN_TOPIC_ALLOCATIONS = {
-    "simple": {"pure_logic": 2, "function_set": 2, "induction": 1},
-    "medium_lemma_dag": {"pure_logic": 1, "function_set": 2, "induction": 2},
-    "hard_frontier": {"pure_logic": 2, "function_set": 1, "induction": 2},
+    "hard_frontier": {
+        topic_family: EXP5_LEAN_HARD_CASES_PER_TOPIC
+        for topic_family in LEAN_TOPIC_FAMILIES
+    },
 }
 
 
@@ -241,7 +243,7 @@ def build_exp5_single_member_pilot_plan(
         "model_endpoint_identity_digest": plan[
             "model_endpoint_identity_digest"
         ],
-        "condition_count": 2 * 3 * EXP5_REPEAT_COUNT,
+        "condition_count": 4 * EXP5_REPEAT_COUNT,
         "root_run_count": _single_member_root_run_count(context.catalog),
         "provider_attempt_count": 0,
         "provider_calls_made": 0,
@@ -271,17 +273,21 @@ def expand_exp5_conditions(
                     )
                 )
             for paper_difficulty in LEAN_PAPER_DIFFICULTIES:
-                conditions.append(
-                    _condition(
-                        member_plan=member_plan,
-                        domain="lean_proof",
-                        difficulty=LEAN_CONDITION_DIFFICULTY[paper_difficulty],
-                        paper_difficulty=paper_difficulty,
-                        repeat_id=repeat_id,
-                        seed=seed,
-                        catalog_digest=catalog_digest,
+                for topic_family in LEAN_TOPIC_FAMILIES:
+                    conditions.append(
+                        _condition(
+                            member_plan=member_plan,
+                            domain="lean_proof",
+                            difficulty=LEAN_CONDITION_DIFFICULTY[
+                                paper_difficulty
+                            ],
+                            paper_difficulty=paper_difficulty,
+                            topic_family=topic_family,
+                            repeat_id=repeat_id,
+                            seed=seed,
+                            catalog_digest=catalog_digest,
+                        )
                     )
-                )
     if len(conditions) != EXP5_EXPECTED_CONDITION_COUNT:
         raise ValueError("Experiment 5 condition count drift")
     return tuple(conditions)
@@ -296,7 +302,6 @@ def freeze_exp5_case_selections(
         condition.condition_digest for condition in canonical_conditions
     ):
         raise ValueError("Experiment 5 condition order or identity drift")
-    _validate_shared_slice(context.catalog)
     bindings = tuple(
         FrozenConditionSelectionBinding.from_condition(
             condition,
@@ -443,8 +448,19 @@ def _model_execution_row(item: Mapping[str, Any]) -> JsonObject:
         if isinstance(raw_output, Mapping)
         else None
     )
+    joined_evidence: dict[str, Mapping[str, Any] | None] = {}
+    for field_name in ("request", "provenance", "usage"):
+        value = item.get(field_name)
+        if value is not None and not isinstance(value, Mapping):
+            raise ValueError(f"{field_name} must be a persisted mapping")
+        joined_evidence[field_name] = value
+    formal_strict_join = item.get("formal_strict_join") is True
 
     failure_reasons = [str(reason) for reason in record_body.get("mismatch_reasons", ())]
+    if formal_strict_join:
+        for field_name, value in joined_evidence.items():
+            if value is None:
+                failure_reasons.append(f"missing_{field_name}_evidence")
     if isinstance(raw_output, Mapping):
         raw_schema = raw_output.get("schema_version")
         if (
@@ -660,6 +676,11 @@ def _model_execution_row(item: Mapping[str, Any]) -> JsonObject:
         "parse_failure_ref": attempt.get("parse_failure_ref"),
         "fault_injection_ref": attempt.get("fault_injection_ref"),
         "model_execution_record_ref": record_ref,
+        "request_evidence_joined": joined_evidence["request"] is not None,
+        "provenance_evidence_joined": (
+            joined_evidence["provenance"] is not None
+        ),
+        "usage_evidence_joined": joined_evidence["usage"] is not None,
         "started_at": attempt.get("started_at"),
         "ended_at": attempt.get("ended_at"),
         "latency_ms": _non_negative_int(attempt["latency_ms"], "latency_ms"),
@@ -927,6 +948,7 @@ def _condition(
     domain: str,
     difficulty: str,
     paper_difficulty: str,
+    topic_family: str | None = None,
     repeat_id: int,
     seed: int,
     catalog_digest: str,
@@ -937,14 +959,15 @@ def _condition(
         experiment_id=EXP5_EXPERIMENT_ID,
         condition_id=(
             f"exp5_{member_id}_{domain}_{paper_difficulty}"
+            f"{'_' + topic_family if topic_family else ''}"
             f"_w{EXP5_WORKER_COUNT}_r{repeat_id}"
         ),
         domain=domain,
         difficulty=difficulty,
         paper_difficulty=paper_difficulty,
-        topic_family=None,
+        topic_family=topic_family,
         topic_family_version=(
-            None if domain == "factorization" else "exp2_shared_2_2_1_v1"
+            None if domain == "factorization" else "exp1_hard_frontier_15_v1"
         ),
         worker_count=EXP5_WORKER_COUNT,
         fault_type="none",
@@ -977,33 +1000,35 @@ def _selection_for_condition(
     context: PaperExecutionContext,
     condition: PaperExperimentCondition,
 ) -> FrozenCaseSelection:
-    exp2 = _shared_exp2_slice(context.catalog)
+    catalog = _catalog_view(context.catalog)
+    catalog_version = _catalog_string(context.catalog, "catalog_version")
+    if catalog_version != EXP5_CATALOG_VERSION:
+        raise ValueError("formal Experiment 5 requires catalog v2")
     if condition.domain == "factorization":
-        cases = _case_list(
-            _mapping(exp2.get("factorization")).get(condition.paper_difficulty)
+        cases = tuple(
+            case
+            for case in _formal_catalog_cases(
+                catalog,
+                domain="factorization",
+            )
+            if case.get("paper_difficulty", case.get("difficulty")) == "hard"
         )
-        expected_count = _factor_case_count(
-            _catalog_string(context.catalog, "catalog_version"),
-            str(condition.paper_difficulty),
-        )
-        if len(cases) != expected_count:
-            raise ValueError("Experiment 5 factorization slice count drift")
+        if len(cases) != EXP5_FACTOR_HARD_CASE_COUNT:
+            raise ValueError("Experiment 5 Factorization hard catalog drift")
         for case in cases:
             split_params = _mapping(case.get("split_params"))
-            nested_parallelism_valid = (
-                case.get("parallelism_scope") == "within_root_range_children"
-            )
-            formal_parallelism_valid = (
+            if not (
                 split_params.get("strategy_id")
                 == "factorization.candidate_range_partition.v1"
                 and split_params.get("range_policy") == "contiguous"
-            )
-            if not nested_parallelism_valid and not formal_parallelism_valid:
+                and split_params.get("requested_child_count") == 8
+                and _case_expected_ai_unit_count(case) == 8
+            ):
                 raise ValueError(
-                    "Experiment 5 factorization requires range-child protocol tasks"
+                    "Experiment 5 requires the Exp1 hard 8-way split"
                 )
         return FrozenCaseSelection(
-            selection_id=f"exp5:factorization:{condition.paper_difficulty}:v1",
+            selection_id="exp5:exp1-formal:factorization:hard:v1",
             experiment_id=EXP5_EXPERIMENT_ID,
             suite_version=_catalog_string(context.catalog, "suite_version"),
             catalog_version=_catalog_string(context.catalog, "catalog_version"),
@@ -1018,26 +1043,39 @@ def _selection_for_condition(
             paper_eligible_required=True,
         )
 
-    topics = _mapping(
-        _mapping(exp2.get("lean_proof")).get(condition.paper_difficulty)
-    )
-    cases: list[Mapping[str, Any]] = []
-    for topic_family in LEAN_TOPIC_FAMILIES:
-        topic_cases = _case_list(topics.get(topic_family))
-        expected_count = LEAN_TOPIC_ALLOCATIONS[str(condition.paper_difficulty)][
-            topic_family
+    topic_family = str(condition.topic_family or "")
+    if topic_family not in LEAN_TOPIC_FAMILIES:
+        raise ValueError("Experiment 5 Lean condition requires a topic family")
+    readiness = _validated_readiness_selection(catalog)
+    selected_ids = tuple(
+        readiness["selected_case_ids_by_cell"][
+            f"hard_frontier/{topic_family}"
         ]
-        if len(topic_cases) != expected_count:
-            raise ValueError("Experiment 5 Lean slice must preserve Exp2 2/2/1 IDs")
-        cases.extend(topic_cases)
-    return Exp5MixedLeanCaseSelection(
-        selection_id=f"exp5:lean_proof:{condition.paper_difficulty}:v1",
+    )
+    cases_by_id = {
+        _case_id(case): case
+        for case in _formal_catalog_cases(catalog, domain="lean_proof")
+    }
+    try:
+        cases = tuple(cases_by_id[case_id] for case_id in selected_ids)
+    except KeyError as exc:
+        raise ValueError(
+            "Lean readiness selection references unknown catalog case"
+        ) from exc
+    if len(cases) != EXP5_LEAN_HARD_CASES_PER_TOPIC or any(
+        case.get("paper_difficulty") != "hard_frontier"
+        or case.get("topic_family") != topic_family
+        for case in cases
+    ):
+        raise ValueError("Experiment 5 Lean hard topic selection drift")
+    return FrozenCaseSelection(
+        selection_id=f"exp5:exp1-formal:lean:hard_frontier:{topic_family}:v1",
         experiment_id=EXP5_EXPERIMENT_ID,
         suite_version=_catalog_string(context.catalog, "suite_version"),
         catalog_version=_catalog_string(context.catalog, "catalog_version"),
         domain="lean_proof",
         paper_difficulty=str(condition.paper_difficulty),
-        topic_family=None,
+        topic_family=topic_family,
         ordered_case_ids=tuple(_case_id(case) for case in cases),
         catalog_digest=_catalog_digest(context.catalog),
         expected_ai_unit_count=sum(
@@ -1077,19 +1115,15 @@ def _validate_selection_shape(
             str(condition.paper_difficulty),
         )
         if condition.domain == "factorization"
-        else EXP5_TASKS_PER_CONDITION
+        else EXP5_LEAN_HARD_CASES_PER_TOPIC
     )
     if len(selection.ordered_case_ids) != expected_count:
         raise ValueError("Experiment 5 selection count drift")
     if selection.is_blocked:
         raise ValueError("formal Experiment 5 condition cannot use blocked selection")
     if condition.domain == "lean_proof":
-        if not isinstance(selection, Exp5MixedLeanCaseSelection):
-            raise ValueError("Experiment 5 Lean selection must retain mixed-topic metadata")
-        if dict(selection.topic_family_counts) != LEAN_TOPIC_ALLOCATIONS[
-            str(condition.paper_difficulty)
-        ]:
-            raise ValueError("Experiment 5 Lean topic allocation drift")
+        if selection.topic_family != condition.topic_family:
+            raise ValueError("Experiment 5 Lean topic family drift")
 
 
 def _selection_body(selection: FrozenCaseSelection) -> JsonObject:
@@ -1178,6 +1212,7 @@ def _validate_cohort_preflight(value: Any) -> Exp5CohortGate:
 
     normalized_plans: list[JsonObject] = []
     namespaces: set[tuple[str, str]] = set()
+    comparable_control_digests: set[str] = set()
     for member_id in expected_ids:
         plan = member_plans.get(member_id)
         if not isinstance(plan, Mapping):
@@ -1254,7 +1289,55 @@ def _validate_cohort_preflight(value: Any) -> Exp5CohortGate:
                     reasons.append(f"{member_id}:reasoning_controls_mismatch")
             elif controls not in ({}, {"enable_thinking": False}):
                 reasons.append(f"{member_id}:reasoning_controls_mismatch")
+        request_controls = plan.get("request_controls")
+        if not isinstance(request_controls, Mapping):
+            reasons.append(f"{member_id}:missing_request_controls")
+        else:
+            comparable = request_controls.get("comparable")
+            provider_reasoning = request_controls.get(
+                "provider_specific_reasoning"
+            )
+            if not isinstance(comparable, Mapping) or any(
+                field_name not in comparable
+                for field_name in EXP5_COMPARABLE_REQUEST_CONTROL_FIELDS
+            ):
+                reasons.append(
+                    f"{member_id}:incomplete_comparable_request_controls"
+                )
+            elif comparable.get("domain_contracts") != (
+                EXP5_DOMAIN_EXECUTION_CONTRACTS
+            ):
+                reasons.append(f"{member_id}:domain_contract_mismatch")
+            elif request_controls.get("comparable_digest") != digest_json(
+                dict(comparable)
+            ):
+                reasons.append(
+                    f"{member_id}:request_controls_digest_mismatch"
+                )
+            else:
+                comparable_control_digests.add(digest_json(dict(comparable)))
+            if (
+                endpoint_identity is not None
+                and provider_reasoning
+                != dict(endpoint_identity.effective_reasoning_controls)
+            ):
+                reasons.append(
+                    f"{member_id}:provider_reasoning_controls_mismatch"
+                )
         normalized_plans.append(dict(plan))
+
+    if len(comparable_control_digests) != 1:
+        reasons.append("cross_member_request_controls_mismatch")
+    else:
+        snapshot = value.get("request_controls_snapshot")
+        snapshot_digest = next(iter(comparable_control_digests))
+        if (
+            not isinstance(snapshot, Mapping)
+            or digest_json(dict(snapshot)) != snapshot_digest
+            or value.get("request_controls_snapshot_digest")
+            != snapshot_digest
+        ):
+            reasons.append("request_controls_snapshot_mismatch")
 
     return Exp5CohortGate(
         member_plans=tuple(normalized_plans) if not reasons else (),
@@ -1332,6 +1415,26 @@ def _single_member_plan_reasons(
             reasons.append("reasoning_controls_mismatch")
     elif controls not in ({}, {"enable_thinking": False}):
         reasons.append("reasoning_controls_mismatch")
+    request_controls = plan.get("request_controls")
+    if not isinstance(request_controls, Mapping):
+        reasons.append("missing_request_controls")
+    else:
+        comparable = request_controls.get("comparable")
+        if not isinstance(comparable, Mapping) or any(
+            field_name not in comparable
+            for field_name in EXP5_COMPARABLE_REQUEST_CONTROL_FIELDS
+        ):
+            reasons.append("incomplete_comparable_request_controls")
+        elif comparable.get("domain_contracts") != (
+            EXP5_DOMAIN_EXECUTION_CONTRACTS
+        ):
+            reasons.append("domain_contract_mismatch")
+        elif request_controls.get("comparable_digest") != digest_json(
+            dict(comparable)
+        ):
+            reasons.append("request_controls_digest_mismatch")
+        if request_controls.get("provider_specific_reasoning") != controls:
+            reasons.append("provider_reasoning_controls_mismatch")
     return tuple(dict.fromkeys(reasons))
 
 
@@ -1381,38 +1484,45 @@ def _shared_exp2_slice(catalog: Any) -> Mapping[str, Any]:
 
 
 def _factor_case_count(catalog_version: str, paper_difficulty: str) -> int:
-    if catalog_version == "v1":
-        return EXP5_TASKS_PER_CONDITION
-    if catalog_version == "v2":
-        try:
-            return EXP5_FACTOR_CASE_COUNTS_BY_DIFFICULTY[paper_difficulty]
-        except KeyError as exc:
-            raise ValueError("unsupported Factorization paper difficulty") from exc
-    raise ValueError("Experiment 5 supports only catalog v1 or v2")
+    if catalog_version == "v2" and paper_difficulty == "hard":
+        return EXP5_FACTOR_HARD_CASE_COUNT
+    raise ValueError("Experiment 5 supports only the v2 hard catalog")
 
 
 def _expected_root_runs(catalog_version: str) -> int:
-    if catalog_version == "v1":
-        return EXP5_V1_EXPECTED_ROOT_RUNS
     if catalog_version == "v2":
         return EXP5_EXPECTED_ROOT_RUNS
-    raise ValueError("Experiment 5 supports only catalog v1 or v2")
+    raise ValueError("Experiment 5 supports only catalog v2")
 
 
 def _single_member_root_run_count(catalog: Any) -> int:
-    exp2 = _shared_exp2_slice(catalog)
-    factorization = _mapping(exp2.get("factorization"))
-    lean = _mapping(exp2.get("lean_proof"))
-    per_repeat = sum(
-        len(_case_list(factorization.get(difficulty)))
-        for difficulty in FACTOR_PAPER_DIFFICULTIES
+    catalog_view = _catalog_view(catalog)
+    factor_count = len(
+        tuple(
+            case
+            for case in _formal_catalog_cases(
+                catalog_view,
+                domain="factorization",
+            )
+            if case.get("paper_difficulty", case.get("difficulty")) == "hard"
+        )
     )
-    per_repeat += sum(
-        len(_case_list(_mapping(lean.get(difficulty)).get(topic_family)))
-        for difficulty in LEAN_PAPER_DIFFICULTIES
+    readiness = _validated_readiness_selection(catalog_view)
+    lean_count = sum(
+        len(
+            readiness["selected_case_ids_by_cell"][
+                f"hard_frontier/{topic_family}"
+            ]
+        )
         for topic_family in LEAN_TOPIC_FAMILIES
     )
-    return per_repeat * EXP5_REPEAT_COUNT
+    if (
+        factor_count != EXP5_FACTOR_HARD_CASE_COUNT
+        or lean_count
+        != EXP5_LEAN_HARD_CASES_PER_TOPIC * len(LEAN_TOPIC_FAMILIES)
+    ):
+        raise ValueError("Experiment 5 single-member hard catalog drift")
+    return (factor_count + lean_count) * EXP5_REPEAT_COUNT
 
 
 def _formal_exp2_slice(catalog: Mapping[str, Any]) -> JsonObject:
@@ -1508,7 +1618,7 @@ def _validated_readiness_selection(catalog: Mapping[str, Any]) -> JsonObject:
         raise ValueError("Lean readiness selection is not formal/executable")
     expected_cells = {
         f"{difficulty}/{topic_family}"
-        for difficulty in LEAN_PAPER_DIFFICULTIES
+        for difficulty in LEAN_FORMAL_PAPER_DIFFICULTIES
         for topic_family in LEAN_TOPIC_FAMILIES
     }
     selected_by_cell = readiness.get("selected_case_ids_by_cell")

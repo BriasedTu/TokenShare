@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from collections import Counter
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
+from collections.abc import Mapping, Sequence
 
 from tokenshare.core.models import ArtifactRef, JsonObject
 from tokenshare.local_runtime.contracts import ProtocolRunResult
@@ -27,6 +29,65 @@ class RuntimeAttemptView:
     state: str
 
 
+def build_runtime_observation(
+    *,
+    run_id: str,
+    runtime_started_at: str,
+    runtime_ended_at: str,
+    planned_ai_unit_ids: Sequence[str],
+    dispatched_ai_unit_ids: Sequence[str],
+    completed_ai_unit_ids: Sequence[str],
+    worker_execution_facts: Sequence[Mapping[str, Any]],
+    in_flight_ai_unit_ids_at_witness: Sequence[str] = (),
+    witness_observed_at: str | None = None,
+) -> JsonObject:
+    """规范化真实 execution clock、AI-unit inventory 与 worker intervals。"""
+
+    started = _timestamp(runtime_started_at)
+    ended = _timestamp(runtime_ended_at)
+    if ended < started:
+        raise ValueError("runtime observation ended before it started")
+    planned = _unique_strings(planned_ai_unit_ids, "planned_ai_unit_ids")
+    dispatched = _unique_strings(
+        dispatched_ai_unit_ids,
+        "dispatched_ai_unit_ids",
+    )
+    completed = _unique_strings(
+        completed_ai_unit_ids,
+        "completed_ai_unit_ids",
+    )
+    in_flight = _unique_strings(
+        in_flight_ai_unit_ids_at_witness,
+        "in_flight_ai_unit_ids_at_witness",
+    )
+    if not set(dispatched).issubset(planned):
+        raise ValueError("dispatched AI units must belong to the planned inventory")
+    if not set(completed).issubset(set(dispatched)):
+        raise ValueError("completed AI units must belong to the dispatched inventory")
+    if not set(in_flight).issubset(set(dispatched)):
+        raise ValueError("in-flight AI units must belong to the dispatched inventory")
+    facts = [dict(fact) for fact in worker_execution_facts]
+    return {
+        "schema_version": "tokenshare.protocol_runtime_observation.v1",
+        "run_id": run_id,
+        "runtime_started_at": runtime_started_at,
+        "runtime_ended_at": runtime_ended_at,
+        "runtime_wall_clock_ms": (
+            (ended - started).total_seconds() * 1000.0
+        ),
+        "planned_ai_unit_ids": list(planned),
+        "dispatched_ai_unit_ids": list(dispatched),
+        "completed_ai_unit_ids": list(completed),
+        "unscheduled_ai_unit_ids": [
+            unit_id for unit_id in planned if unit_id not in set(dispatched)
+        ],
+        "in_flight_ai_unit_ids_at_witness": list(in_flight),
+        "witness_observed_at": witness_observed_at,
+        "worker_execution_facts": facts,
+        "observed_peak_concurrency": _observed_peak_concurrency(facts),
+    }
+
+
 def project_protocol_run(
     *,
     run_id: str,
@@ -34,6 +95,7 @@ def project_protocol_run(
     root_unit_id: str,
     event_ledger: EventLedger,
     artifact_store: ArtifactStore,
+    runtime_observation: Mapping[str, Any] | None = None,
 ) -> ProtocolRunResult:
     """只从 ledger 事实派生结果，并仅返回 event/artifact 引用及摘要。"""
 
@@ -114,6 +176,8 @@ def project_protocol_run(
             for view in attempt_views
         ],
     }
+    if runtime_observation is not None:
+        summary["runtime_observation"] = dict(runtime_observation)
     return ProtocolRunResult(
         run_id=run_id,
         task_id=task_id,
@@ -136,6 +200,48 @@ def project_protocol_run(
         ),
         summary=summary,
     )
+
+
+def _unique_strings(values: Sequence[str], field_name: str) -> tuple[str, ...]:
+    normalized = tuple(values)
+    if any(not isinstance(value, str) or not value for value in normalized):
+        raise ValueError(f"{field_name} must contain non-empty strings")
+    if len(set(normalized)) != len(normalized):
+        raise ValueError(f"{field_name} must contain unique values")
+    return normalized
+
+
+def _observed_peak_concurrency(
+    worker_execution_facts: Sequence[Mapping[str, Any]],
+) -> int:
+    boundaries: list[tuple[datetime, int]] = []
+    for fact in worker_execution_facts:
+        started_at = fact.get("started_at")
+        ended_at = fact.get("ended_at")
+        if not isinstance(started_at, str) or not isinstance(ended_at, str):
+            continue
+        started = _timestamp(started_at)
+        ended = _timestamp(ended_at)
+        if ended < started:
+            raise ValueError("worker execution fact ended before it started")
+        boundaries.append((started, 1))
+        boundaries.append((ended, -1))
+    active = 0
+    peak = 0
+    for _timestamp_value, delta in sorted(
+        boundaries,
+        key=lambda item: (item[0], item[1]),
+    ):
+        active += delta
+        peak = max(peak, active)
+    return peak
+
+
+def _timestamp(value: str) -> datetime:
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("runtime observation timestamp is invalid") from exc
 
 
 def _artifact_refs(value: Any):

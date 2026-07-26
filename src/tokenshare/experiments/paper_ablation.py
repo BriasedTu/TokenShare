@@ -270,6 +270,8 @@ class PaperAblationRuntimeHooks(NoOpRuntimeHooks):
         return self._directive(
             mechanism="parser_policy",
             protocol_event_refs=(),
+            artifact_refs=_submission_artifact_refs(context.submission),
+            hook_input=_hook_context_identity(context),
             bypass=True,
         )
 
@@ -282,6 +284,8 @@ class PaperAblationRuntimeHooks(NoOpRuntimeHooks):
         return self._directive(
             mechanism="verification",
             protocol_event_refs=(),
+            artifact_refs=_submission_artifact_refs(context.submission),
+            hook_input=_hook_context_identity(context),
             bypass=True,
         )
 
@@ -291,6 +295,7 @@ class PaperAblationRuntimeHooks(NoOpRuntimeHooks):
         return self._directive(
             mechanism="requeue",
             protocol_event_refs=context.recovery_event_refs,
+            hook_input=_hook_context_identity(context),
             stop=True,
         )
 
@@ -302,6 +307,7 @@ class PaperAblationRuntimeHooks(NoOpRuntimeHooks):
             return self._directive(
                 mechanism="merge_gate",
                 protocol_event_refs=context.protocol_event_refs,
+                hook_input=_hook_context_identity(context),
                 bypass=True,
             )
         if (
@@ -311,6 +317,7 @@ class PaperAblationRuntimeHooks(NoOpRuntimeHooks):
             return self._directive(
                 mechanism="slot_integrity",
                 protocol_event_refs=context.protocol_event_refs,
+                hook_input=_hook_context_identity(context),
                 bypass=True,
             )
         return None
@@ -320,6 +327,8 @@ class PaperAblationRuntimeHooks(NoOpRuntimeHooks):
         *,
         mechanism: str,
         protocol_event_refs: tuple[JsonObject, ...],
+        artifact_refs: tuple[JsonObject, ...] = (),
+        hook_input: JsonObject,
         bypass: bool = False,
         stop: bool = False,
     ) -> GateDirective:
@@ -328,6 +337,9 @@ class PaperAblationRuntimeHooks(NoOpRuntimeHooks):
             "ablation_mode": self.mode.value,
             "disabled_mechanism": mechanism,
             "protocol_event_refs": [dict(ref) for ref in protocol_event_refs],
+            "artifact_refs": [dict(ref) for ref in artifact_refs],
+            "hook_input": dict(hook_input),
+            "hook_result": {"bypass": bypass, "stop": stop},
         }
         self._events.append(event)
         return GateDirective(
@@ -335,6 +347,46 @@ class PaperAblationRuntimeHooks(NoOpRuntimeHooks):
             stop=stop,
             experiment_records=(event,),
         )
+
+
+def _hook_context_identity(context: object) -> JsonObject:
+    body: JsonObject = {}
+    for owner_name in ("unit", "attempt", "lease"):
+        owner = getattr(context, owner_name, None)
+        for field_name in ("task_id", "unit_id", "attempt_id", "lease_id"):
+            value = getattr(owner, field_name, None)
+            if isinstance(value, str) and value:
+                body[field_name] = value
+    for field_name in ("trigger", "gate_satisfied"):
+        value = getattr(context, field_name, None)
+        if isinstance(value, (str, bool)):
+            body[field_name] = value
+    required = getattr(context, "required_child_unit_ids", None)
+    if isinstance(required, tuple):
+        body["required_child_unit_ids"] = list(required)
+    return body
+
+
+def _submission_artifact_refs(submission: object) -> tuple[JsonObject, ...]:
+    refs: list[JsonObject] = []
+    for field_name in (
+        "raw_output_ref",
+        "parsed_output_ref",
+        "parse_failure_ref",
+        "log_ref",
+        "provenance_ref",
+    ):
+        value = getattr(submission, field_name, None)
+        if value is not None and callable(getattr(value, "to_dict", None)):
+            refs.append(dict(value.to_dict()))
+    candidates = getattr(submission, "candidate_output_refs", None)
+    if isinstance(candidates, dict):
+        refs.extend(
+            dict(value.to_dict())
+            for value in candidates.values()
+            if callable(getattr(value, "to_dict", None))
+        )
+    return tuple(refs)
 
 
 def ablation_profile_for_mode(
@@ -350,7 +402,19 @@ def ablation_profile_for_mode(
 
 
 def ablation_modes() -> tuple[PaperAblationMode, ...]:
-    return tuple(PaperAblationMode)
+    """返回论文 Experiment 4 的五个正式模式。
+
+    ``NO_SLOT_INTEGRITY`` 只保留为历史夹具兼容枚举，不进入正式条件、
+    预算或报告矩阵。
+    """
+
+    return (
+        PaperAblationMode.FULL,
+        PaperAblationMode.NO_VERIFICATION,
+        PaperAblationMode.NO_PARSER_POLICY,
+        PaperAblationMode.NO_REQUEUE,
+        PaperAblationMode.NO_MERGE_GATE,
+    )
 
 
 def runtime_controls_for_mode(

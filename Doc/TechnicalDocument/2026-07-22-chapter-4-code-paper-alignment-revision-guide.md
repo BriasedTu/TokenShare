@@ -50,9 +50,9 @@
 
 | 机制或论文主张 | 当前基础 | 论文处理 | 允许的代码投入 |
 | --- | --- | --- | --- |
-| lease、attempt 与 fencing token 绑定 | Task 2/3 已实现并验证 active/deadline/fencing 与最新权威 snapshot 判断 | 保留 | 不再扩展为分布式授权机制 |
-| replacement 使用不同的 attempt-bound token | engine 接受调用方提供 token；当前 coordinator 按 run identity 和 schedule ordinal 生成不同 token | 保留“每次重新调度使用不同 token”；不得写“全局单调递增”或“密码学随机” | 至多增加局部唯一性断言与测试 |
-| 迟到或旧 lease 的 submission 不推进权威状态 | Task 2/3 已实现 `SubmissionAcceptanceDecision`、active/deadline/fencing 判断和 recovery authority | 保留 | 不扩大成分布式 exactly-once |
+| lease、attempt 与 fencing token 绑定 | 2026-07-23 小补丁后，submission/heartbeat 在 engine 写入边界使用 ledger 最新 attempt/lease snapshot；core 继续只负责纯规则 | 保留 | 不再扩展为分布式授权机制 |
+| replacement 使用不同的 attempt-bound token | coordinator 按 run identity 和 schedule ordinal 生成不同 token；worker-death system integration 已显式断言 replacement lease/attempt/token 均不同 | 保留“每次重新调度使用不同 token”；不得写“全局单调递增”或“密码学随机” | 已完成局部不重复回归，不再扩展 token 语义 |
+| 迟到或旧 lease 的 submission 不推进权威状态 | `SubmissionAcceptanceDecision` 现在针对 ledger 最新 attempt/lease 执行 active/deadline/fencing 判断；被拒绝 submission 只留审计记录 | 保留 | 不扩大成分布式 exactly-once |
 | 被拒绝操作仍可留下审计证据 | append-only event ledger 已有基础 | 保留，并区分证据日志与权威状态投影 | 通常无需新增代码 |
 | 每个 unit 只有一个 canonical output | 已有 deterministic eligibility、事件顺序和 SQLite 唯一约束 | 保留，但限定本地单协调器模型 | 不增加分布式 CAS |
 | batch 的整体可见性 | 已有 batch envelope 和完整性投影检查 | 保留“完整 batch 才进入权威投影” | 不实现 JSONL 物理事务 |
@@ -90,7 +90,7 @@ and submission.submitted_at <= lease.expires_at
 - [`src/tokenshare/protocol_engine.py`](../../src/tokenshare/protocol_engine.py)
 - [`src/tokenshare/core/leases.py`](../../src/tokenshare/core/leases.py)
 
-这一机制边界局部，而且直接复用已有 `Attempt`、`Lease` 和 ledger projection，不要求建立新状态机。migration Task 2/3 的当前状态记录和定向测试已经覆盖该能力，因此可以在论文中保留；paper adapter 迁移完成后仍应在正式路径上复核一次。
+这一机制边界局部，而且直接复用已有 `Attempt`、`Lease` 和 ledger projection，不要求建立新状态机。2026-07-23 小补丁已经让 submission/heartbeat 在 `ProtocolEngine` 写入边界恢复 ledger 最新 snapshot；Factorization、Lean、late recovery 和真实 OS worker-death 的 system runtime integration 已完成复核，因此可以在论文中保留这一受限主张。
 
 ### 4.2 replacement lease 的 attempt-bound fencing token
 
@@ -102,15 +102,15 @@ and submission.submitted_at <= lease.expires_at
 
 > fencing token 在全系统范围内严格单调递增。
 
-当前 coordinator 已按 run identity 与 schedule ordinal 生成 attempt-bound token，并将它持久化在已有 lease event 中。若后续需要补强，只需增加局部不重复断言及测试；不必改成 UUID。全局单调语义则需要维护持久化 epoch、解决并发分配和恢复后的计数一致性，没有必要。
+当前 coordinator 已按 run identity 与 schedule ordinal 生成 attempt-bound token，并将它持久化在已有 lease event 中。worker-death replacement 集成回归已经显式验证新 lease、attempt 和 fencing token 均不同；不必改成 UUID。全局单调语义则需要维护持久化 epoch、解决并发分配和恢复后的计数一致性，没有必要。
 
 ### 4.3 明确记录拒绝原因
 
-若论文需要区分 `lease_inactive`、`attempt_not_running`、`fencing_token_mismatch` 和 `lease_deadline_exceeded`，可以继续使用现有 acceptance decision 中的稳定 `rejection_reason`。这是审计分类，不是新故障机制，也不应扩展 Experiment 3 已冻结的故障类型。
+若论文需要区分 `lease_not_active`、`attempt_not_running`、`fencing_token_mismatch` 和 `lease_deadline_exceeded`，可以继续使用现有 acceptance decision 中的稳定 `rejection_reason`。这是审计分类，不是新故障机制，也不应扩展 Experiment 3 已冻结的故障类型。
 
 ### 4.4 本地单写入决策
 
-paper runtime 迁移完成后，可以把所有协议状态写入集中到一个 coordinator。该约束允许论文保留确定性 canonical selection 和顺序化状态推进，但必须把适用范围写清楚：这是本地单协调器模型，不是多节点并发共识。
+paper runtime 迁移已经完成，正常 FULL/fault/ablation 路径把协议状态写入集中到 `ProtocolRunCoordinator` 调用的 `ProtocolEngine`。该约束允许论文保留确定性 canonical selection 和顺序化状态推进，但必须把适用范围写清楚：这是本地单协调器模型，不是多节点并发共识。
 
 这一项属于既定 runtime 迁移的执行约束，不应被包装成新的论文贡献。
 
@@ -341,12 +341,14 @@ Lean 可以作为预注册固定 lemma-DAG 的实例：catalog/脚本预先给�
 
 ## 12. 当前停止线
 
-在进入正式实验前，论文对齐工作只要求：
+截至 2026-07-24，以下实现侧停止线已完成：
 
-1. 完成既定 paper runner → system runtime/`ProtocolEngine` 迁移；
-2. 完成并验证 submission active/deadline/fencing acceptance；
-3. 复核 coordinator 对每次 replacement 使用不同的 attempt-bound token；
-4. 按本文删除任意递归、精确贡献、分布式原子性和完整 runtime recovery 主张；
-5. 对第四章执行一次代码映射审核和强词审核。
+1. [x] 完成既定 paper runner → system runtime/`ProtocolEngine` 迁移；
+2. [x] 完成并验证 submission active/deadline/fencing acceptance，并补上 ledger 最新 snapshot guard；
+3. [x] 复核 coordinator 对每次 replacement 使用不同的 attempt-bound token；
+4. [x] 完成实现与 code map 的第四章映射复核。
+5. [x] formal planning/execution/resume/replay 共享冻结、版本化 catalog execution view，未弱化 canonical selection identity 校验；
+6. [x] selected-unit pilot 作为通用 runtime execution scope 进入 coordinator/engine，只输出 partial observation，不由 paper adapter 推进生命周期；
+7. [x] Factorization completion 使用插件声明的非对称语义：accepted factor witness 为 OR-join，no-factor/prime 为全部 required ranges 的 AND-join；通用 core 不识别领域结果。
 
-达到以上停止线后，不再新增通用机制，直接完成真实 AI 实验、指标生成和论文结果分析。
+不再为这些机制新增通用代码。后续仍需在最终论文稿中落实本文要求的收窄措辞，并完成真实 AI Experiment 1–5、指标生成、结果分析和发布级总门禁；当前实现测试不能替代真实-provider 论文结果。

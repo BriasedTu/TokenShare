@@ -4,6 +4,7 @@ from copy import deepcopy
 from dataclasses import replace
 import importlib
 import importlib.util
+import inspect
 from types import SimpleNamespace
 from typing import Any
 
@@ -36,7 +37,47 @@ COHORT_DIGEST = "sha256:" + "2" * 64
 _MISSING = object()
 
 
-def test_exp5_module_implements_contract_and_freezes_270_root_runs() -> None:
+def test_exp5_epd006_uses_all_exp1_hard_roots_without_exp2_slice() -> None:
+    module = _load_module()
+    catalog = _epd006_catalog()
+    context = _context(catalog=catalog)
+
+    conditions = module.expand_exp5_conditions(context)
+    selections = module.freeze_exp5_case_selections(context, conditions)
+
+    assert len(conditions) == 36
+    assert len(selections) == 36
+    assert module.count_exp5_root_runs(conditions, selections) == 1_899
+    assert sum(selection.expected_ai_unit_count for selection in selections) == (
+        14_652
+    )
+    assert "_shared_exp2_slice" not in inspect.getsource(
+        module._selection_for_condition
+    )
+    expected_factor_ids = tuple(
+        case["case_id"]
+        for case in catalog.factorization_cases
+        if case["paper_difficulty"] == "hard"
+    )
+    readiness_ids = catalog.task15_budget_input["selected_case_ids_by_cell"]
+    for condition, selection in zip(conditions, selections, strict=True):
+        assert condition.paper_difficulty in {"hard", "hard_frontier"}
+        if condition.domain == "factorization":
+            assert condition.topic_family is None
+            assert selection.ordered_case_ids == expected_factor_ids
+            assert len(selection.ordered_case_ids) == 166
+        else:
+            assert condition.topic_family in module.LEAN_TOPIC_FAMILIES
+            assert selection.topic_family == condition.topic_family
+            assert selection.ordered_case_ids == tuple(
+                readiness_ids[
+                    f"hard_frontier/{condition.topic_family}"
+                ]
+            )
+            assert len(selection.ordered_case_ids) == 15
+
+
+def test_exp5_module_implements_contract_and_freezes_1899_root_runs() -> None:
     module = _load_module()
     context = _context()
     experiment = module.Experiment5ModelComparisonModule()
@@ -45,19 +86,22 @@ def test_exp5_module_implements_contract_and_freezes_270_root_runs() -> None:
     selections = experiment.freeze_case_selections(context, conditions)
 
     assert isinstance(experiment, PaperExperimentModule)
-    assert len(conditions) == 54
-    assert len(selections) == 54
-    assert module.count_exp5_root_runs(conditions, selections) == 270
+    assert len(conditions) == 36
+    assert len(selections) == 36
+    assert module.count_exp5_root_runs(conditions, selections) == 1_899
     assert {condition.cohort_member_id for condition in conditions} == set(
         PAPER_MODEL_ENDPOINT_COHORT_MEMBER_IDS
     )
     assert {condition.repeat_id for condition in conditions} == {0, 1, 2}
     assert {condition.model_policy for condition in conditions} == {"fixed_entry"}
-    assert {len(selection.ordered_case_ids) for selection in selections} == {5}
+    assert {len(selection.ordered_case_ids) for selection in selections} == {
+        15,
+        166,
+    }
     assert all(condition.paper_eligible_required for condition in conditions)
 
 
-def test_exp5_reuses_exact_exp2_five_task_slices_for_every_endpoint_and_repeat() -> None:
+def test_exp5_reuses_exact_exp1_hard_slices_for_every_endpoint_and_repeat() -> None:
     module = _load_module()
     context = _context()
     conditions = module.expand_exp5_conditions(context)
@@ -65,46 +109,43 @@ def test_exp5_reuses_exact_exp2_five_task_slices_for_every_endpoint_and_repeat()
     ids_by_scope: dict[tuple[str, str], set[tuple[str, ...]]] = {}
 
     for condition, selection in zip(conditions, selections, strict=True):
-        scope = (condition.domain, str(condition.paper_difficulty))
+        scope = (
+            condition.domain,
+            str(condition.topic_family or condition.paper_difficulty),
+        )
         ids_by_scope.setdefault(scope, set()).add(tuple(selection.ordered_case_ids))
         if condition.domain == "lean_proof":
-            assert selection.topic_family is None
-            assert selection.topic_family_marker == "mixed_topic_family"
-            assert selection.topic_family_counts == module.LEAN_TOPIC_ALLOCATIONS[
-                condition.paper_difficulty
-            ]
+            assert selection.topic_family == condition.topic_family
 
-    assert len(ids_by_scope) == 6
+    assert len(ids_by_scope) == 4
     assert all(len(observed) == 1 for observed in ids_by_scope.values())
-    assert all(len(next(iter(observed))) == 5 for observed in ids_by_scope.values())
+    assert {
+        len(next(iter(observed))) for observed in ids_by_scope.values()
+    } == {15, 166}
 
 
 def test_exp5_accepts_flat_formal_catalog_and_freezes_readiness_ids() -> None:
     module = _load_module()
-    catalog = _formal_catalog()
+    catalog = _epd006_catalog()
     context = _context(catalog=catalog)
 
     conditions = module.expand_exp5_conditions(context)
     selections = module.freeze_exp5_case_selections(context, conditions)
 
-    assert module.count_exp5_root_runs(conditions, selections) == 270
+    assert module.count_exp5_root_runs(conditions, selections) == 1_899
     readiness_ids = catalog.task15_budget_input["selected_case_ids_by_cell"]
     for condition, selection in zip(conditions, selections, strict=True):
         if condition.domain == "factorization":
             expected_ids = tuple(
                 case["case_id"]
                 for case in catalog.factorization_cases
-                if case["paper_difficulty"] == condition.paper_difficulty
-            )[:5]
+                if case["paper_difficulty"] == "hard"
+            )
         else:
             expected_ids = tuple(
-                case_id
-                for topic_family, count in module.LEAN_TOPIC_ALLOCATIONS[
-                    condition.paper_difficulty
-                ].items()
-                for case_id in readiness_ids[
-                    f"{condition.paper_difficulty}/{topic_family}"
-                ][:count]
+                readiness_ids[
+                    f"hard_frontier/{condition.topic_family}"
+                ]
             )
         assert selection.ordered_case_ids == expected_ids
 
@@ -166,8 +207,8 @@ def test_exp5_single_member_plan_is_pilot_only_and_never_formal_eligible() -> No
     assert plan["pilot_only"] is True
     assert plan["paper_eligible"] is False
     assert plan["cohort_member_id"] == "qwen3_6_27b_siliconflow"
-    assert plan["condition_count"] == 18
-    assert plan["root_run_count"] == 90
+    assert plan["condition_count"] == 12
+    assert plan["root_run_count"] == 633
     assert plan["provider_calls_made"] == 0
 
 
@@ -214,12 +255,12 @@ def test_exp5_formal_cohort_fails_closed_on_identity_drift(
     assert gate.to_dict()["provider_calls_made"] == 0
 
 
-def test_exp5_rejects_slice_drift_from_exp2_before_execution() -> None:
+def test_exp5_rejects_readiness_drift_before_execution() -> None:
     module = _load_module()
-    catalog = deepcopy(_catalog())
-    catalog["exp5"]["lean_proof"]["simple"]["pure_logic"][0][
-        "case_id"
-    ] = "drifted_case"
+    catalog = _epd006_catalog()
+    catalog.task15_budget_input["selected_case_ids_by_cell"][
+        "hard_frontier/pure_logic"
+    ][0] = "drifted_case"
     context = _context(catalog=catalog)
     conditions = module.expand_exp5_conditions(context)
 
@@ -675,7 +716,7 @@ def _context(
 
     return PaperExecutionContext(
         context_id="exp5_test_context",
-        catalog=catalog or _catalog(),
+        catalog=catalog or _epd006_catalog(),
         approved_endpoint_binding=binding or _cohort_preflight(),
         request_limits={"max_provider_attempts": 1, "max_tokens": 1024},
         hard_limits={"max_total_provider_attempts": 0},
@@ -834,6 +875,26 @@ def _cohort_preflight() -> dict[str, Any]:
         "qwen3_6_27b_siliconflow": "qwen-entry",
         "gpt_5_6_sol_high_openai": "gpt-entry",
     }
+    comparable_controls = {
+        "temperature": 0.0,
+        "top_p": 0.9,
+        "stream": False,
+        "timeout_seconds": 100,
+        "max_tokens": 512,
+        "max_provider_attempts": 1,
+        "domain_contracts": {
+            "factorization": {
+                "prompt_profile": "factorization.bounded_range_prompt.v1",
+                "parser_id": "factorization.range_result.parser.v1",
+                "plugin_version": "0.1.0",
+            },
+            "lean_proof": {
+                "prompt_profile": "lean_proof.proof_candidate_prompt.v1",
+                "parser_id": "lean_proof.proof_candidate.parser.v1",
+                "plugin_version": "0.1.0",
+            },
+        },
+    }
     for index, member_id in enumerate(PAPER_MODEL_ENDPOINT_COHORT_MEMBER_IDS, start=3):
         expected = PAPER_MODEL_ENDPOINT_COHORT_MEMBERS[member_id]
         source_digest = "sha256:" + str(index) * 64
@@ -871,6 +932,15 @@ def _cohort_preflight() -> dict[str, Any]:
                 identity.model_endpoint_identity_digest
             ),
             "endpoint_identity": identity.to_dict(),
+            "request_controls": {
+                "schema_version": "tokenshare.paper_exp5_request_controls.v1",
+                "comparable": comparable_controls,
+                "comparable_digest": digest_json(comparable_controls),
+                "provider_specific_reasoning": effective_controls,
+                "provider_specific_reasoning_digest": digest_json(
+                    effective_controls
+                ),
+            },
         }
     return {
         "schema_version": "tokenshare.paper_model_endpoint_cohort_preflight.v1",
@@ -884,6 +954,8 @@ def _cohort_preflight() -> dict[str, Any]:
         "model_cohort_digest": COHORT_DIGEST,
         "expected_member_ids": list(PAPER_MODEL_ENDPOINT_COHORT_MEMBER_IDS),
         "member_plans": member_plans,
+        "request_controls_snapshot": comparable_controls,
+        "request_controls_snapshot_digest": digest_json(comparable_controls),
     }
 
 
@@ -997,6 +1069,90 @@ def _formal_catalog() -> SimpleNamespace:
         lean_cases=simple_cases,
         lean_lemma_graph_cases=graph_cases,
         task15_budget_input=task15_budget_input,
+    )
+
+
+def _epd006_catalog() -> SimpleNamespace:
+    base = _formal_catalog()
+    factorization_cases = tuple(
+        {
+            "schema_version": "tokenshare.paper_factorization_case.v1",
+            "case_id": f"factor_v2_{difficulty}_{index:03d}",
+            "difficulty": difficulty,
+            "paper_difficulty": difficulty,
+            "candidate_start": "2",
+            "candidate_end": str(1_000 + index),
+            "expected_ai_unit_count": requested_children,
+            "split_params": {
+                "strategy_id": "factorization.candidate_range_partition.v1",
+                "range_policy": "contiguous",
+                "requested_child_count": requested_children,
+            },
+        }
+        for difficulty, count, requested_children in (
+            ("easy", 167, 2),
+            ("medium", 167, 4),
+            ("hard", 166, 8),
+        )
+        for index in range(1, count + 1)
+    )
+    lean_cases = tuple(deepcopy(case) for case in base.lean_cases)
+    hard_units = {"pure_logic": 7, "function_set": 6, "induction": 7}
+    graph_cases = tuple(
+        {
+            **deepcopy(case),
+            **(
+                {
+                    "expected_ai_unit_count": hard_units[
+                        str(case["topic_family"])
+                    ]
+                }
+                if case["paper_difficulty"] == "hard_frontier"
+                else {}
+            ),
+        }
+        for case in base.lean_lemma_graph_cases
+    )
+    catalog_id = "tokenshare.paper.catalog.epd006.test"
+    catalog_version = "v2"
+    catalog_digest = digest_json(
+        {
+            "catalog_id": catalog_id,
+            "catalog_version": catalog_version,
+            "factorization_cases": list(factorization_cases),
+            "lean_cases": list(lean_cases),
+            "lean_lemma_graph_cases": list(graph_cases),
+        }
+    )
+    readiness = deepcopy(base.task15_budget_input)
+    readiness["catalog_digest"] = catalog_digest
+    selection_digest = digest_json(
+        {
+            "schema_version": "tokenshare.lean_task14_selected_cases.v1",
+            "catalog_digest": catalog_digest,
+            "environment_digest": readiness["environment_digest"],
+            "oracle_package_digests": readiness["oracle_package_digests"],
+            "target_case_count": 15,
+            "selected_case_ids_by_cell": readiness[
+                "selected_case_ids_by_cell"
+            ],
+            "semantic_fingerprint_digests_by_cell": readiness[
+                "semantic_fingerprint_digests_by_cell"
+            ],
+            "golden_case_ids_by_cell": readiness["golden_case_ids_by_cell"],
+        }
+    )
+    readiness["selection_digest"] = selection_digest
+    readiness["catalog_slice_digest"] = selection_digest
+    return SimpleNamespace(
+        catalog_id=catalog_id,
+        catalog_version=catalog_version,
+        catalog_digest=catalog_digest,
+        suite_version="paper_v1",
+        factorization_cases=factorization_cases,
+        lean_cases=lean_cases,
+        lean_lemma_graph_cases=graph_cases,
+        task15_budget_input=readiness,
     )
 
 

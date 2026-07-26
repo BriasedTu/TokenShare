@@ -32,6 +32,8 @@ from tokenshare.local_runtime.contracts import (
     ExpandAction,
     MergeAction,
     MergeExecutionContext,
+    MergeReadinessContext,
+    MergeReadinessDecision,
     MergeResolutionAction,
     RootProtocolPlan,
 )
@@ -204,6 +206,7 @@ class LeanRuntimeAdapter:
         self._canonical_proof_refs_by_logical_key: dict[str, ArtifactRef] = {}
         self._merge_candidate_refs: dict[str, ArtifactRef] = {}
         self._merge_result: LeanProofMergeResult | LeanLemmaGraphMergeResult | None = None
+        self._slot_integrity_violation_applied = False
 
     def plan_root(
         self,
@@ -347,7 +350,10 @@ class LeanRuntimeAdapter:
         )
         input_refs = dict(unit.input_refs)
         prompt_ref = None
-        soft_hints: JsonObject = {"temperature": 0.0}
+        soft_hints: JsonObject = {
+            "temperature": 0.0,
+            "lease_deadline_at": lease.expires_at,
+        }
         if is_proof_unit:
             logical_key = str(unit.metadata["child_logical_key"])
             payload_name = (
@@ -581,6 +587,7 @@ class LeanRuntimeAdapter:
         *,
         parent: TaskUnit,
         canonical_children: tuple[TaskUnit, ...],
+        slot_integrity_enabled: bool = True,
     ) -> MergeAction:
         split_plan = self._require_split_plan()
         parent_ref = self._require_parent_payload_ref()
@@ -596,12 +603,33 @@ class LeanRuntimeAdapter:
         request_id = f"lean_merge_checker_{_safe(parent.task_id)}"
         certificate = split_plan.certificate
         if isinstance(certificate, LeanLemmaGraphCertificate):
-            node_inputs = [
-                self._proof_inputs_by_logical_key[str(node["node_id"])]
-                for node in certificate.lemma_nodes
+            required_slots = list(split_plan.merge_plan.required_slots)
+            source_inputs = [
+                self._proof_inputs_by_logical_key[
+                    str(slot["source_child_logical_key"])
+                ]
+                for slot in required_slots
             ]
-            if not all(isinstance(item, LeanLemmaGraphProofInput) for item in node_inputs):
+            if not all(
+                isinstance(item, LeanLemmaGraphProofInput)
+                for item in source_inputs
+            ):
                 raise TypeError("Lean lemma graph merge inputs are invalid")
+            if not slot_integrity_enabled and len(source_inputs) > 1:
+                source_inputs = source_inputs[1:] + source_inputs[:1]
+                self._slot_integrity_violation_applied = True
+            node_inputs = [
+                replace(
+                    proof,
+                    node_id=str(slot["source_child_logical_key"]),
+                    slot_key=str(slot["slot_key"]),
+                )
+                for slot, proof in zip(
+                    required_slots,
+                    source_inputs,
+                    strict=True,
+                )
+            ]
             result = merge_lean_lemma_graph_proofs(
                 merge_plan=split_plan.merge_plan,
                 lemma_graph_certificate=certificate,
@@ -613,20 +641,39 @@ class LeanRuntimeAdapter:
                 request_id=request_id,
                 created_at=self.created_at,
                 checker=self.checker,
+                slot_integrity_enabled=slot_integrity_enabled,
             )
         else:
+            required_slots = list(split_plan.merge_plan.required_slots)
+            source_proofs = [
+                self._proof_inputs_by_logical_key[
+                    str(slot["source_child_logical_key"])
+                ]
+                for slot in required_slots
+            ]
+            if not all(
+                isinstance(proof, LeanChildProofResult)
+                for proof in source_proofs
+            ):
+                raise TypeError("Lean simple merge inputs are invalid")
+            if not slot_integrity_enabled and len(source_proofs) > 1:
+                source_proofs = source_proofs[1:] + source_proofs[:1]
+                self._slot_integrity_violation_applied = True
             child_inputs: list[LeanProofMergeInput] = []
-            slot_by_key = {
-                str(slot["source_child_logical_key"]): str(slot["slot_key"])
-                for slot in split_plan.merge_plan.required_slots
-            }
-            for child in certificate.child_goals:
-                key = str(child["child_logical_key"])
-                proof = self._proof_inputs_by_logical_key[key]
-                if not isinstance(proof, LeanChildProofResult):
-                    raise TypeError("Lean simple merge inputs are invalid")
+            for slot, proof in zip(
+                required_slots,
+                source_proofs,
+                strict=True,
+            ):
+                expected_key = str(slot["source_child_logical_key"])
                 child_inputs.append(
-                    LeanProofMergeInput(slot_key=slot_by_key[key], child_proof=proof)
+                    LeanProofMergeInput(
+                        slot_key=str(slot["slot_key"]),
+                        child_proof=replace(
+                            proof,
+                            child_logical_key=expected_key,
+                        ),
+                    )
                 )
             result = merge_lean_child_proofs(
                 merge_plan=split_plan.merge_plan,
@@ -639,6 +686,7 @@ class LeanRuntimeAdapter:
                 request_id=request_id,
                 created_at=self.created_at,
                 checker=self.checker,
+                slot_integrity_enabled=slot_integrity_enabled,
             )
         self._merge_result = result
         refs: dict[str, ArtifactRef] = {}
@@ -682,6 +730,10 @@ class LeanRuntimeAdapter:
         return dict(self._merge_candidate_refs)
 
     @property
+    def slot_integrity_violation_applied(self) -> bool:
+        return self._slot_integrity_violation_applied
+
+    @property
     def merge_result(self) -> LeanProofMergeResult | LeanLemmaGraphMergeResult:
         if self._merge_result is None:
             raise RuntimeError("Lean merge result is not available")
@@ -695,6 +747,44 @@ class LeanRuntimeAdapter:
         logical_key: str,
     ) -> LeanChildProofResult | LeanLemmaGraphProofInput | None:
         return self._proof_inputs_by_logical_key.get(logical_key)
+
+    def export_process_proof_state(
+        self,
+        request: ExecutionRequest,
+    ) -> JsonObject:
+        """导出 proof 子进程产生、父 coordinator 后续校验所需的最小状态。"""
+
+        logical_key = str(
+            request.task_unit_snapshot["metadata"]["child_logical_key"]
+        )
+        return {
+            "request_id": request.request_id,
+            "logical_key": logical_key,
+            "checker_report": self._checker_reports_by_request_id.get(
+                request.request_id
+            ),
+            "proof_input": self._proof_inputs_by_logical_key.get(logical_key),
+            "canonical_proof_ref": (
+                self._canonical_proof_refs_by_logical_key.get(logical_key)
+            ),
+        }
+
+    def ingest_process_proof_state(self, state: JsonObject) -> None:
+        """把子进程 checker/proof 结果恢复到父进程插件实例。"""
+
+        request_id = str(state["request_id"])
+        logical_key = str(state["logical_key"])
+        checker_report = state.get("checker_report")
+        if checker_report is not None:
+            self._checker_reports_by_request_id[request_id] = checker_report
+        proof_input = state.get("proof_input")
+        if proof_input is not None:
+            self._proof_inputs_by_logical_key[logical_key] = proof_input
+        canonical_ref = state.get("canonical_proof_ref")
+        if canonical_ref is not None:
+            self._canonical_proof_refs_by_logical_key[logical_key] = (
+                canonical_ref
+            )
 
     def _canonical_action(self, context: CanonicalUnitContext):
         if context.unit.parent_unit_id is not None:
@@ -1312,6 +1402,53 @@ class LeanRuntimeAdapter:
             ordered.append(logical_key)
         return ordered
 
+    def planned_ai_unit_id(self, unit: TaskUnit) -> str | None:
+        logical_key = unit.metadata.get("child_logical_key")
+        if not isinstance(logical_key, str) or unit.unit_type == "merge":
+            return None
+        return self._planned_ai_unit_id(logical_key)
+
+    def evaluate_merge_readiness(
+        self,
+        context: MergeReadinessContext,
+    ) -> MergeReadinessDecision:
+        required = tuple(
+            dict.fromkeys(
+                str(slot["source_child_unit_id"])
+                for slot in context.merge_plan.required_slots
+            )
+        )
+        required_set = set(required)
+        required_children = tuple(
+            child
+            for child in context.children
+            if child.unit_id in required_set
+        )
+        if all(child.state == TaskState.COMPLETED for child in required_children):
+            return MergeReadinessDecision(
+                status="ready",
+                reason="all_required_slots_canonical",
+                policy_id="lean_proof.all_required_children.v1",
+                policy_version="v1",
+                required_child_unit_ids=required,
+                selected_child_unit_ids=required,
+            )
+        if any(child.state == TaskState.FAILED for child in required_children):
+            return MergeReadinessDecision(
+                status="failed",
+                reason="terminal_child_failure",
+                policy_id="lean_proof.all_required_children.v1",
+                policy_version="v1",
+                required_child_unit_ids=required,
+            )
+        return MergeReadinessDecision(
+            status="wait",
+            reason="required_children_not_terminal",
+            policy_id="lean_proof.all_required_children.v1",
+            policy_version="v1",
+            required_child_unit_ids=required,
+        )
+
     def _planned_ai_unit_id(self, logical_key: str) -> str:
         certificate = self._require_split_plan().certificate
         if isinstance(certificate, LeanLemmaGraphCertificate):
@@ -1334,6 +1471,7 @@ class LeanRuntimeAdapter:
         self._canonical_proof_refs_by_logical_key = {}
         self._merge_candidate_refs = {}
         self._merge_result = None
+        self._slot_integrity_violation_applied = False
 
     def _merge_checker_report(self) -> LeanCheckerReport:
         return self.merge_result.root_checker_report
@@ -1425,6 +1563,59 @@ class LeanExecutionBridge:
             error=None,
             submitted_at=submitted_at,
         )
+
+    def prepare_process_execution(
+        self,
+        request: ExecutionRequest,
+        execution_index: int,
+    ) -> None:
+        prepare = getattr(
+            self._proof_candidate_executor,
+            "prepare_process_execution",
+            None,
+        )
+        if callable(prepare):
+            prepare(request, execution_index)
+
+    def export_process_result(
+        self,
+        request: ExecutionRequest,
+        submission: ExecutionSubmission,
+    ):
+        unit_type = str(request.task_unit_snapshot["unit_type"])
+        if unit_type not in {
+            LEAN_PROOF_SUBGOAL_TASK_TYPE,
+            LEAN_PROOF_LEMMA_NODE_TASK_TYPE,
+        }:
+            return None
+        export = getattr(
+            self._proof_candidate_executor,
+            "export_process_result",
+            None,
+        )
+        return {
+            "captured": (
+                export(request, submission) if callable(export) else None
+            ),
+            "plugin_state": self._plugin_runtime.export_process_proof_state(
+                request
+            ),
+        }
+
+    def ingest_process_result(self, process_result) -> None:
+        if process_result is None:
+            return
+        captured = process_result.get("captured")
+        plugin_state = process_result.get("plugin_state")
+        ingest = getattr(
+            self._proof_candidate_executor,
+            "ingest_process_result",
+            None,
+        )
+        if callable(ingest) and captured is not None:
+            ingest(captured)
+        if plugin_state is not None:
+            self._plugin_runtime.ingest_process_proof_state(plugin_state)
 
 
 def _case(root_input: object) -> JsonObject:

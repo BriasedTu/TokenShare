@@ -30,6 +30,7 @@ from tokenshare.experiments.paper_models import (
     PaperFailureStage,
     PaperTaskStatus,
 )
+from tokenshare.local_runtime import ProtocolRunCoordinator, WorkerTerminationPolicy
 from tests.support.lean_checker import RecordingLeanChecker
 from tokenshare.plugins.lean_proof.checker import (
     LeanCheckerMode,
@@ -142,8 +143,91 @@ def test_lean_paper_adapter_runs_split_children_through_ai_api_checker_and_merge
     assert "claim_checker_success" in provider_prompt
 
 
+def test_lean_no_slot_integrity_binds_wrong_slot_inside_local_runtime(
+    tmp_path,
+) -> None:
+    catalog = load_paper_catalogs(
+        factorization_path=FACTOR_CATALOG,
+        lean_path=LEAN_CATALOG,
+    )
+    case = catalog.cases_for(domain="lean_proof", difficulty="easy")[0]
+    base_condition = _condition(catalog.catalog_digest)
+    condition = PaperExperimentCondition(
+        **{
+            **base_condition.__dict__,
+            "experiment_id": "exp4_real_ai_protocol_ablation",
+            "condition_id": "exp4_lean_no_slot_integrity_r0",
+            "ablation_mode": "NO_SLOT_INTEGRITY",
+        }
+    )
+
+    result = run_lean_paper_case(
+        case=case,
+        condition=condition,
+        output_root=tmp_path,
+        transport=ScriptedLeanPaperProofTransport(),
+        real_transport=False,
+        entry_id="lean_paper_scripted",
+        ablation_mode="NO_SLOT_INTEGRITY",
+    )
+
+    assert result.merge_summary["slot_integrity_violation"] is True
+    assert (
+        result.merge_summary["slot_binding_applied_by"]
+        == "local_runtime_policy"
+    )
+    assert result.run_evidence["ablation_runtime"][
+        "slot_integrity_violation"
+    ] is True
+    assert any(
+        observation["disabled_mechanism"] == "slot_integrity"
+        for observation in result.run_evidence["ablation_runtime"][
+            "hook_observations"
+        ]
+    )
+
+
+def test_lean_no_slot_integrity_wrong_binding_is_rejected_by_real_checker(
+    tmp_path,
+) -> None:
+    catalog = load_paper_catalogs(
+        factorization_path=FACTOR_CATALOG,
+        lean_path=LEAN_CATALOG,
+    )
+    case = catalog.cases_for(domain="lean_proof", difficulty="easy")[0]
+    base_condition = _condition(catalog.catalog_digest)
+    condition = PaperExperimentCondition(
+        **{
+            **base_condition.__dict__,
+            "experiment_id": "exp4_real_ai_protocol_ablation",
+            "condition_id": "exp4_lean_no_slot_integrity_real_checker_r0",
+            "ablation_mode": "NO_SLOT_INTEGRITY",
+        }
+    )
+
+    result = run_lean_paper_case(
+        case=case,
+        condition=condition,
+        output_root=tmp_path,
+        transport=ScriptedLeanPaperProofTransport(),
+        real_transport=False,
+        entry_id="lean_paper_scripted",
+        ablation_mode="NO_SLOT_INTEGRITY",
+        checker=real_lean_checker,
+    )
+
+    assert result.task_result.root_status == PaperTaskStatus.FAILED
+    assert result.task_result.accepted_validity is False
+    assert result.merge_summary["slot_integrity_violation"] is True
+    assert (
+        result.merge_summary["slot_binding_applied_by"]
+        == "local_runtime_policy"
+    )
+
+
 def test_lean_paper_adapter_can_execute_exactly_one_selected_ai_unit(
     tmp_path,
+    monkeypatch,
 ) -> None:
     catalog = load_paper_catalogs(
         factorization_path=FACTOR_CATALOG,
@@ -152,6 +236,15 @@ def test_lean_paper_adapter_can_execute_exactly_one_selected_ai_unit(
     case = catalog.cases_for(domain="lean_proof", difficulty="easy")[0]
     condition = _condition(catalog.catalog_digest)
     transport = ScriptedLeanPaperProofTransport()
+    coordinator_calls = 0
+    original = ProtocolRunCoordinator.run_root
+
+    def recording(self, request):
+        nonlocal coordinator_calls
+        coordinator_calls += 1
+        return original(self, request)
+
+    monkeypatch.setattr(ProtocolRunCoordinator, "run_root", recording)
 
     result = run_lean_paper_case(
         case=case,
@@ -164,10 +257,25 @@ def test_lean_paper_adapter_can_execute_exactly_one_selected_ai_unit(
     )
 
     assert len(transport.calls) == 1
+    assert coordinator_calls == 1
     assert len(result.attempt_results) == 1
     assert result.attempt_results[0].planned_ai_unit_id == "child_0"
-    assert result.merge_summary["status"] == "blocked"
-    assert result.task_result.root_status == PaperTaskStatus.FAILED
+    assert result.merge_summary["status"] == "partial"
+    assert result.task_result.root_status == PaperTaskStatus.PARTIAL
+    assert result.task_result.paper_eligible is False
+    event_types = [event["event_type"] for event in result.event_records]
+    for event_type in (
+        "TASK_REGISTERED",
+        "TASK_EXPANDED",
+        "LEASE_STATE_CHANGED",
+        "EXECUTION_REQUEST_RECORDED",
+        "EXECUTION_SUBMISSION_RECORDED",
+        "VERIFICATION_RECORDED",
+        "CANONICAL_OUTPUTS_BOUND",
+    ):
+        assert event_type in event_types
+    assert "MERGE_RECORDED" not in event_types
+    assert "SETTLEMENT_RECORDED" not in event_types
 
     untouched_transport = ScriptedLeanPaperProofTransport()
     with pytest.raises(ValueError, match="selected_ai_unit_id"):
@@ -245,6 +353,61 @@ def test_lean_paper_adapter_runs_v2_medium_pure_logic_lemma_dag_nodes_through_ai
     prompt = json.dumps(transport.calls[0]["body"], ensure_ascii=False)
     assert "Do not return a split plan" in prompt
     assert "Do not propose child tasks" in prompt
+
+
+def test_lean_lemma_dag_worker_death_uses_protocol_lease_recovery(
+    tmp_path,
+) -> None:
+    catalog = _catalog_with_lemma_graph()
+    case = _v2_case(catalog, "lean_v2_medium_lemma_dag_01")
+    base_condition = _condition_for_case(catalog.catalog_digest, case)
+    condition = PaperExperimentCondition(
+        **{
+            **base_condition.__dict__,
+            "experiment_id": "exp3_real_ai_fault_recovery",
+            "condition_id": "exp3_lean_worker_death_progress_25_k1_r0",
+            "fault_type": "worker_death",
+        }
+    )
+    selected_node_id = str(case["merge_plan_shape"]["dependency_order"][1])
+
+    result = run_lean_paper_case(
+        case=case,
+        condition=condition,
+        output_root=tmp_path,
+        transport=ScriptedLeanPaperProofTransport(
+            proof_sources_by_statement=_oracle_sources_by_statement(case)
+        ),
+        real_transport=False,
+        entry_id="lean_paper_scripted",
+        worker_termination_policy=WorkerTerminationPolicy(
+            target_planned_ai_unit_ids=(selected_node_id,),
+            kill_point="progress_25",
+            total_planned_ai_unit_count=len(case["lemma_graph"]["nodes"]),
+        ),
+    )
+
+    assert result.task_result.root_status == PaperTaskStatus.COMPLETED
+    dead_attempts = [
+        attempt
+        for attempt in result.attempt_results
+        if attempt.attempt_status == PaperAttemptStatus.WORKER_DIED
+    ]
+    assert len(dead_attempts) == 1
+    assert dead_attempts[0].planned_ai_unit_id == selected_node_id
+    assert any(
+        attempt.unit_id == dead_attempts[0].unit_id
+        and attempt.attempt_status == PaperAttemptStatus.SUCCEEDED
+        for attempt in result.attempt_results
+    )
+    assert len(result.fault_records) == 1
+    assert (
+        result.fault_records[0]["target_ai_unit"]["metadata"][
+            "planned_ai_unit_id"
+        ]
+        == selected_node_id
+    )
+    assert result.fault_records[0]["lease_expiry"]["trigger"] == "lease_expired"
 
 
 @pytest.mark.parametrize(

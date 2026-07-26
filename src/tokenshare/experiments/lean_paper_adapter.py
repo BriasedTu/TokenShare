@@ -26,10 +26,13 @@ from tokenshare.core.models import (
     TaskUnit,
 )
 from tokenshare.local_runtime import (
+    ProcessWorkerBackend,
+    ProtocolExecutionScope,
     ProtocolRunCoordinator,
     ProtocolRunRequest,
     SequentialWorkerBackend,
     ThreadWorkerBackend,
+    WorkerTerminationPolicy,
 )
 from tokenshare.protocol_engine import ProtocolEngine
 from tokenshare.executors.ai_api import AIAPIExecutor
@@ -71,6 +74,10 @@ from tokenshare.experiments.paper_ablation import runtime_controls_for_mode
 from tokenshare.experiments.paper_unit_commitments import (
     lean_lemma_graph_plugin_payload,
     lean_simple_plugin_payload,
+)
+from tokenshare.experiments.paper_workers import (
+    PaperAIUnit,
+    project_worker_death_records,
 )
 from tokenshare.plugins.contracts import OutputContract
 from tokenshare.plugins.lean_proof.child_proof import (
@@ -158,6 +165,7 @@ class LeanPaperRunResult:
     run_evidence: JsonObject
     output_root: str
     event_records: tuple[JsonObject, ...] = ()
+    fault_records: tuple[JsonObject, ...] = ()
     schema_version: str = "tokenshare.lean_paper_run.v1"
 
     def to_dict(self) -> JsonObject:
@@ -174,6 +182,7 @@ class LeanPaperRunResult:
             "run_evidence": dict(self.run_evidence),
             "output_root": self.output_root,
             "event_records": [dict(item) for item in self.event_records],
+            "fault_records": [dict(item) for item in self.fault_records],
         }
 
 
@@ -272,6 +281,7 @@ def run_lean_paper_case(
     selected_ai_unit_id: str | None = None,
     post_raw_output_hook: Any | None = None,
     ablation_mode: str | None = None,
+    worker_termination_policy: WorkerTerminationPolicy | None = None,
     checker: LeanChecker | None = None,
     protocol_run_dispatcher: Any | None = None,
 ) -> LeanPaperRunResult:
@@ -321,12 +331,9 @@ def run_lean_paper_case(
         timeout_seconds=timeout_seconds,
     )
     secret_values = _real_secret_values(config) if real_transport else ()
-    if (
-        selected_ai_unit_id is None
-        and not (
+    if selected_ai_unit_id is not None or not (
             is_lemma_graph_case
             and case.get("preflight_status") == "structured_blocked"
-        )
     ):
         case_id = str(case["case_id"])
         run_root = Path(output_root) / case_id
@@ -355,7 +362,11 @@ def run_lean_paper_case(
             paper_metadata=paper_metadata,
             protocol_run_dispatcher=protocol_run_dispatcher,
             ablation_mode=normalized_ablation_mode,
+            worker_termination_policy=worker_termination_policy,
+            selected_ai_unit_id=selected_ai_unit_id,
         )
+    # 仅无 selected scope 的历史 structured-blocked reader 保留旧投影；
+    # 当前 CLI/dispatcher 的 selected-unit 路径始终在上方进入 coordinator。
     if is_lemma_graph_case:
         return _run_lean_lemma_graph_paper_case(
             case=case,
@@ -615,6 +626,44 @@ class _FixedIdentityLeanExecutor:
         self.calls: list[_CapturedLeanCall] = []
         self._calls_lock = Lock()
         self._next_call_index = 0
+        self._process_call_indexes: dict[str, int] = {}
+
+    def __getstate__(self):
+        state = dict(self.__dict__)
+        state.pop("_calls_lock", None)
+        return state
+
+    def __setstate__(self, state):
+        self.__dict__.update(state)
+        self._calls_lock = Lock()
+
+    def prepare_process_execution(
+        self,
+        request: ExecutionRequest,
+        execution_index: int,
+    ) -> None:
+        self._process_call_indexes[request.attempt_id] = execution_index
+
+    def export_process_result(
+        self,
+        request: ExecutionRequest,
+        submission: ExecutionSubmission,
+    ) -> _CapturedLeanCall:
+        del submission
+        return next(
+            call
+            for call in reversed(self.calls)
+            if call.request.attempt_id == request.attempt_id
+        )
+
+    def ingest_process_result(self, captured: _CapturedLeanCall) -> None:
+        with self._calls_lock:
+            if any(
+                call.request.attempt_id == captured.request.attempt_id
+                for call in self.calls
+            ):
+                return
+            self.calls.append(captured)
 
     def execute(
         self,
@@ -634,8 +683,11 @@ class _FixedIdentityLeanExecutor:
             created_at=request.created_at,
         )
         with self._calls_lock:
-            index = self._next_call_index
-            self._next_call_index += 1
+            index = self._process_call_indexes.pop(
+                request.attempt_id,
+                self._next_call_index,
+            )
+            self._next_call_index = max(self._next_call_index + 1, index + 1)
         mismatches = _lean_executor_requirement_mismatches(
             request=request,
             expected=self.executor_requirements,
@@ -763,6 +815,8 @@ def _run_lean_full_via_coordinator(
     paper_metadata: JsonObject,
     protocol_run_dispatcher: Any | None,
     ablation_mode: str,
+    worker_termination_policy: WorkerTerminationPolicy | None,
+    selected_ai_unit_id: str | None,
 ) -> LeanPaperRunResult:
     """FULL 兼容壳：配置 Lean runtime，调用 coordinator，再投影旧 result。"""
 
@@ -776,7 +830,15 @@ def _run_lean_full_via_coordinator(
             event_log_uri="file://events/event_log.jsonl",
             metadata={"paper_lean": True, "case_id": case_id},
         ),
-        max_retries=1 if post_raw_output_hook is not None else 0,
+        max_retries=(
+            worker_termination_policy.termination_limit + 1
+            if worker_termination_policy is not None
+            else 1
+            if condition.experiment_id == "exp4_real_ai_protocol_ablation"
+            else 2
+            if post_raw_output_hook is not None
+            else 0
+        ),
     )
     environment_manifest = default_lean_paper_environment_manifest()
     executor_requirements = _lean_fixed_entry_executor_requirements(
@@ -823,6 +885,14 @@ def _run_lean_full_via_coordinator(
         proof_candidate_executor=capturing_executor,
     )
     worker_backend = (
+        ProcessWorkerBackend(
+            executor=execution_bridge,
+            capacity=condition.worker_count,
+            submitted_at=lambda: NOW,
+            termination_policy=worker_termination_policy,
+        )
+        if worker_termination_policy is not None
+        else
         SequentialWorkerBackend(
             executor=execution_bridge,
             submitted_at=lambda: NOW,
@@ -840,8 +910,26 @@ def _run_lean_full_via_coordinator(
         plugin_runtime=plugin_runtime,
         worker_backend=worker_backend,
         mechanism_policy=controls.mechanism_policy,
-        hooks=controls.hooks,
+        hooks=(
+            post_raw_output_hook
+            if callable(
+                getattr(
+                    post_raw_output_hook,
+                    "after_parsed_candidate_persisted",
+                    None,
+                )
+            )
+            else controls.hooks
+        ),
         continue_after_terminal_child_failure=True,
+        execution_scope=(
+            ProtocolExecutionScope()
+            if selected_ai_unit_id is None
+            else ProtocolExecutionScope(
+                mode="selected_ai_units",
+                selected_ai_unit_ids=(selected_ai_unit_id,),
+            )
+        ),
     )
     try:
         runtime_result = (
@@ -870,7 +958,30 @@ def _run_lean_full_via_coordinator(
             "lean_split_certificate_ref"
         ]
     )
+    runtime_events = ledger.read_all()
+    submitted_candidate_refs_by_attempt = {
+        str(event.payload["attempt_id"]): {
+            name: ArtifactRef.from_dict(ref)
+            for name, ref in _read_json_ref(
+                store,
+                ArtifactRef.from_dict(event.payload["submission_ref"]),
+            ).get("candidate_output_refs", {}).items()
+        }
+        for event in runtime_events
+        if event.event_type == "EXECUTION_SUBMISSION_RECORDED"
+        and event.payload.get("acceptance_status") == "accepted"
+    }
+    canonical_refs_by_attempt = {
+        str(event.payload["selected_attempt_id"]): {
+            name: ArtifactRef.from_dict(ref)
+            for name, ref in event.payload["canonical_output_refs"].items()
+        }
+        for event in runtime_events
+        if event.event_type == "CANONICAL_OUTPUTS_BOUND"
+        and isinstance(event.payload.get("selected_attempt_id"), str)
+    }
     attempts: list[PaperAttemptResult] = []
+    independent_validity_by_attempt: dict[str, bool] = {}
     projection_metadata_by_unit: dict[str, JsonObject] = {}
     child_records: list[JsonObject] = []
     nodes_by_id = (
@@ -951,8 +1062,16 @@ def _run_lean_full_via_coordinator(
                 ),
             )
         )
-        proof_candidate_ref = submission.candidate_output_refs.get(
+        protocol_candidate_refs = submitted_candidate_refs_by_attempt.get(
+            request.attempt_id,
+            submission.candidate_output_refs,
+        )
+        proof_candidate_ref = protocol_candidate_refs.get(
             PROOF_CANDIDATE_OUTPUT_NAME
+        )
+        protocol_submission = replace(
+            submission,
+            candidate_output_refs=dict(protocol_candidate_refs),
         )
         payload_name = (
             "lemma_theorem_payload"
@@ -973,7 +1092,7 @@ def _run_lean_full_via_coordinator(
                 ),
                 node_payload=payload,
                 node_payload_ref=payload_ref,
-                submission=submission,
+                submission=protocol_submission,
                 proof_candidate_ref=proof_candidate_ref,
                 checker_report=checker_report,
             )
@@ -983,7 +1102,7 @@ def _run_lean_full_via_coordinator(
                 child_key=logical_key,
                 child_payload=payload,
                 child_payload_ref=payload_ref,
-                submission=submission,
+                submission=protocol_submission,
                 proof_candidate_ref=proof_candidate_ref,
                 proof_result=(
                     proof_input
@@ -991,6 +1110,9 @@ def _run_lean_full_via_coordinator(
                     else None
                 ),
             )
+        independent_validity_by_attempt[request.attempt_id] = bool(
+            record["checker"]["accepted"]
+        )
         record["model_execution_record_ref"] = (
             captured.model_execution_record_ref.to_dict()
             if captured.model_execution_record_ref is not None
@@ -1008,13 +1130,19 @@ def _run_lean_full_via_coordinator(
         split_plan=split_plan,
         runtime_status=runtime_result.status,
     )
-    accepted_validity = merge_summary.get("root_checker_accepted") is True
+    is_partial = runtime_result.status == "partial"
+    if is_partial:
+        merge_summary = {**merge_summary, "status": "partial"}
+    accepted_validity = (
+        None
+        if is_partial
+        else merge_summary.get("root_checker_accepted") is True
+    )
     split_summary = _runtime_lean_split_summary(
         case=case,
         split_plan=split_plan,
         certificate_ref=certificate_ref,
     )
-    runtime_events = ledger.read_all()
     projection = project_paper_protocol_run(
         condition=condition,
         case=case,
@@ -1025,6 +1153,110 @@ def _run_lean_full_via_coordinator(
         attempt_metadata_by_unit=projection_metadata_by_unit,
     )
     attempts = list(projection.attempt_results)
+    fault_records: tuple[JsonObject, ...] = ()
+    if worker_termination_policy is not None:
+        actual_unit_id_by_planned = {
+            str(captured.request.soft_hints["planned_ai_unit_id"]): (
+                captured.request.unit_id
+            )
+            for captured in capturing_executor.calls
+        }
+        dependency_sources_by_planned: dict[str, tuple[str, ...]] = {}
+        if isinstance(certificate, LeanLemmaGraphCertificate):
+            for planned_ai_unit_id in actual_unit_id_by_planned:
+                dependency_sources_by_planned[planned_ai_unit_id] = tuple(
+                    str(edge["source_node_id"])
+                    for edge in certificate.dependency_edges
+                    if str(edge["target_node_id"]) == planned_ai_unit_id
+                )
+        depth_by_planned: dict[str, int] = {}
+
+        def planned_depth(planned_ai_unit_id: str) -> int:
+            if planned_ai_unit_id in depth_by_planned:
+                return depth_by_planned[planned_ai_unit_id]
+            sources = dependency_sources_by_planned.get(
+                planned_ai_unit_id, ()
+            )
+            depth = (
+                max(planned_depth(source) for source in sources) + 1
+                if sources
+                else 0
+            )
+            depth_by_planned[planned_ai_unit_id] = depth
+            return depth
+
+        ai_units_by_id: dict[str, PaperAIUnit] = {}
+        provider_tokens_by_attempt_id: dict[str, int] = {}
+        for captured in capturing_executor.calls:
+            request = captured.request
+            planned_ai_unit_id = str(
+                request.soft_hints["planned_ai_unit_id"]
+            )
+            dependency_path = tuple(
+                str(item)
+                for item in request.soft_hints.get("dependency_path", ())
+            )
+            ai_units_by_id[request.unit_id] = PaperAIUnit(
+                task_id=request.task_id,
+                unit_id=request.unit_id,
+                unit_kind=(
+                    "lean_lemma_node"
+                    if isinstance(certificate, LeanLemmaGraphCertificate)
+                    else "lean_subgoal"
+                ),
+                dependencies=tuple(
+                    actual_unit_id_by_planned[source]
+                    for source in dependency_sources_by_planned.get(
+                        planned_ai_unit_id, ()
+                    )
+                ),
+                depth=planned_depth(planned_ai_unit_id),
+                domain="lean_proof",
+                metadata={
+                    "planned_ai_unit_id": planned_ai_unit_id,
+                    "lemma_node_id": request.soft_hints.get("lemma_node_id"),
+                    "dependency_path": list(dependency_path),
+                },
+            )
+            provider_tokens_by_attempt_id[request.attempt_id] = _int_metric(
+                (captured.submission.usage_summary or {}).get("total_tokens")
+            )
+        missing_targets = [
+            planned
+            for planned in worker_termination_policy.target_planned_ai_unit_ids
+            if planned not in actual_unit_id_by_planned
+        ]
+        if missing_targets:
+            raise ValueError(
+                f"worker-death targets were not dispatched: {missing_targets}"
+            )
+        fault_records = project_worker_death_records(
+            artifact_store=store,
+            condition_id=condition.condition_id,
+            repeat_id=condition.repeat_id,
+            run_id=runtime_result.run_id,
+            ai_units=tuple(ai_units_by_id.values()),
+            selected_target_unit_ids=tuple(
+                actual_unit_id_by_planned[planned]
+                for planned in worker_termination_policy.target_planned_ai_unit_ids
+            ),
+            kill_point=worker_termination_policy.kill_point,
+            worker_facts=worker_backend.execution_facts,
+            protocol_events=runtime_events,
+            coordinator_pid=os.getpid(),
+            created_at=NOW,
+            provider_tokens_by_attempt_id=provider_tokens_by_attempt_id,
+        )
+        attempts = _enrich_lean_worker_death_attempts(
+            attempts=attempts,
+            captured_calls=capturing_executor.calls,
+            worker_facts=worker_backend.execution_facts,
+            fault_records=fault_records,
+            store=store,
+            condition=condition,
+            case_id=case_id,
+            paper_metadata=paper_metadata,
+        )
     run_evidence = _run_evidence(
         store=store,
         real_transport=real_transport,
@@ -1040,6 +1272,10 @@ def _run_lean_full_via_coordinator(
         "event_count": len(runtime_result.event_refs),
         "lifecycle_coverage": projection.lifecycle_coverage,
         "generation_identity": projection.runtime_generation_identity,
+        "execution_scope": protocol_request.execution_scope.mode,
+        "selected_ai_unit_ids": list(
+            protocol_request.execution_scope.selected_ai_unit_ids
+        ),
     }
     if isinstance(certificate, LeanLemmaGraphCertificate):
         run_evidence["lean_lemma_graph"] = _lemma_graph_run_metadata(
@@ -1053,6 +1289,10 @@ def _run_lean_full_via_coordinator(
         attempts=attempts,
         merge_summary=merge_summary,
         root_validity=accepted_validity,
+        max_retries=protocol_config.max_retries,
+        submitted_candidate_refs_by_attempt=submitted_candidate_refs_by_attempt,
+        canonical_refs_by_attempt=canonical_refs_by_attempt,
+        independent_validity_by_attempt=independent_validity_by_attempt,
         hook_observations=tuple(
             dict(item)
             for item in runtime_result.summary.get(
@@ -1065,11 +1305,22 @@ def _run_lean_full_via_coordinator(
         run_evidence=run_evidence,
         checker=checker,
     )
+    projection_ineligibility_reasons = projection.ineligibility_reasons
+    if (
+        worker_termination_policy is not None
+        and attempts
+        and all(attempt.paper_eligible for attempt in attempts)
+    ):
+        projection_ineligibility_reasons = tuple(
+            reason
+            for reason in projection_ineligibility_reasons
+            if reason != "incomplete_attempt_evidence"
+        )
     combined_reasons = tuple(
         dict.fromkeys(
             (
                 *eligibility.ineligibility_reasons,
-                *projection.ineligibility_reasons,
+                *projection_ineligibility_reasons,
             )
         )
     )
@@ -1094,9 +1345,104 @@ def _run_lean_full_via_coordinator(
         run_evidence=run_evidence,
         output_root=run_root.as_posix(),
         event_records=tuple(event.to_dict() for event in runtime_events),
+        fault_records=fault_records,
     )
     _write_case_outputs(run_root, result)
     return result
+
+
+def _enrich_lean_worker_death_attempts(
+    *,
+    attempts: list[PaperAttemptResult],
+    captured_calls: list[_CapturedLeanCall],
+    worker_facts: tuple[Any, ...],
+    fault_records: tuple[JsonObject, ...],
+    store: ArtifactStore,
+    condition: PaperExperimentCondition,
+    case_id: str,
+    paper_metadata: JsonObject,
+) -> list[PaperAttemptResult]:
+    """用子进程 sidecar 补齐未进入 submission ledger 的死亡 proof attempt。"""
+
+    killed_facts = {
+        str(fact.attempt_id): fact
+        for fact in worker_facts
+        if fact.result_kind == "worker_terminated" and fact.attempt_id
+    }
+    calls_by_attempt = {
+        captured.request.attempt_id: captured for captured in captured_calls
+    }
+    record_ref_by_attempt = {
+        str(record["dead_attempt"]["attempt_id"]): dict(record["record_ref"])
+        for record in fault_records
+    }
+    enriched: list[PaperAttemptResult] = []
+    for attempt in attempts:
+        fact = killed_facts.get(attempt.attempt_id)
+        captured = calls_by_attempt.get(attempt.attempt_id)
+        if fact is None or captured is None:
+            enriched.append(attempt)
+            continue
+        planned_ai_unit_id = str(
+            captured.request.soft_hints["planned_ai_unit_id"]
+        )
+        captured_attempt = _paper_attempt_result(
+            store=store,
+            condition=condition,
+            case_id=case_id,
+            index=fact.execution_index,
+            request=captured.request,
+            request_ref=captured.request_ref,
+            submission=captured.submission,
+            usage_ref=captured.usage_ref,
+            attempt_status=PaperAttemptStatus.WORKER_DIED,
+            planned_ai_unit_id=planned_ai_unit_id,
+            paper_difficulty=paper_metadata.get("paper_difficulty"),
+            topic_family=paper_metadata.get("topic_family"),
+            topic_family_version=paper_metadata.get("topic_family_version"),
+            construction_rule_id=paper_metadata.get("construction_rule_id"),
+            oracle_package_group=paper_metadata.get("oracle_package_group"),
+            proof_assembly_shape=paper_metadata.get("proof_assembly_shape"),
+            lemma_node_id=attempt.lemma_node_id,
+            slot_key=attempt.slot_key,
+            dependency_path=list(attempt.dependency_path or ()),
+            model_execution_record_ref=(
+                captured.model_execution_record_ref
+            ),
+            error_kind_override="worker_died",
+        )
+        model_record_eligible = bool(
+            captured.model_execution_record is not None
+            and captured.model_execution_record.paper_eligible
+        )
+        enriched.append(
+            replace(
+                attempt,
+                worker_id=str(fact.worker_id or attempt.worker_id),
+                attempt_status=PaperAttemptStatus.WORKER_DIED,
+                request_ref=captured_attempt.request_ref,
+                raw_output_ref=captured_attempt.raw_output_ref,
+                parsed_output_ref=captured_attempt.parsed_output_ref,
+                parse_failure_ref=captured_attempt.parse_failure_ref,
+                provenance_ref=captured_attempt.provenance_ref,
+                usage_ref=captured_attempt.usage_ref,
+                started_at=str(fact.started_at or attempt.started_at),
+                ended_at=str(fact.ended_at or attempt.ended_at),
+                latency_ms=captured_attempt.latency_ms,
+                prompt_tokens=captured_attempt.prompt_tokens,
+                completion_tokens=captured_attempt.completion_tokens,
+                total_tokens=captured_attempt.total_tokens,
+                cost_estimate=captured_attempt.cost_estimate,
+                error_kind="worker_died",
+                fault_injection_ref=record_ref_by_attempt.get(attempt.attempt_id),
+                paper_eligible=model_record_eligible,
+                model_execution_record_ref=(
+                    captured_attempt.model_execution_record_ref
+                ),
+                planned_ai_unit_id=planned_ai_unit_id,
+            )
+        )
+    return enriched
 
 
 def _runtime_lean_merge_summary(
@@ -1112,6 +1458,14 @@ def _runtime_lean_merge_summary(
             "merge_ready_child_count": sum(
                 plugin_runtime.proof_input_for_logical_key(str(key)) is not None
                 for key in split_plan.child_unit_ids_by_logical_key
+            ),
+            "slot_integrity_violation": (
+                plugin_runtime.slot_integrity_violation_applied
+            ),
+            "slot_binding_applied_by": (
+                "local_runtime_policy"
+                if plugin_runtime.slot_integrity_violation_applied
+                else None
             ),
         }
     result = plugin_runtime.merge_result
@@ -1134,6 +1488,14 @@ def _runtime_lean_merge_summary(
         "root_proof_artifact_ref": (
             result.root_proof_artifact_ref.to_dict()
             if result.root_proof_artifact_ref is not None
+            else None
+        ),
+        "slot_integrity_violation": (
+            plugin_runtime.slot_integrity_violation_applied
+        ),
+        "slot_binding_applied_by": (
+            "local_runtime_policy"
+            if plugin_runtime.slot_integrity_violation_applied
             else None
         ),
     }
@@ -1712,9 +2074,20 @@ def _lean_ablation_runtime_evidence(
     mode: str,
     attempts: list[PaperAttemptResult],
     merge_summary: JsonObject,
-    root_validity: bool,
+    root_validity: bool | None,
+    max_retries: int = 0,
+    submitted_candidate_refs_by_attempt: (
+        dict[str, dict[str, ArtifactRef]] | None
+    ) = None,
+    canonical_refs_by_attempt: dict[str, dict[str, ArtifactRef]] | None = None,
+    independent_validity_by_attempt: dict[str, bool] | None = None,
     hook_observations: tuple[JsonObject, ...] = (),
 ) -> JsonObject:
+    submitted_candidate_refs_by_attempt = (
+        submitted_candidate_refs_by_attempt or {}
+    )
+    canonical_refs_by_attempt = canonical_refs_by_attempt or {}
+    independent_validity_by_attempt = independent_validity_by_attempt or {}
     observed_mechanisms = {
         str(item.get("disabled_mechanism"))
         for item in hook_observations
@@ -1732,6 +2105,7 @@ def _lean_ablation_runtime_evidence(
             "NO_SLOT_INTEGRITY": "slot_integrity",
         }[mode],
         "applied_before_adapter_completion": True,
+        "max_retries": max_retries,
         "parser_policy_enabled": mode != "NO_PARSER_POLICY",
         "verification_enabled": mode != "NO_VERIFICATION",
         "replacement_attempts_allowed": mode != "NO_REQUEUE",
@@ -1756,6 +2130,38 @@ def _lean_ablation_runtime_evidence(
         ),
         "slot_integrity_violation": "slot_integrity" in observed_mechanisms,
         "root_validity_audit_passed": root_validity,
+        "attempt_observations": [
+            {
+                "attempt_id": attempt.attempt_id,
+                "unit_id": attempt.unit_id,
+                "raw_output_ref": attempt.raw_output_ref,
+                "candidate_output_ref": (
+                    next(
+                        iter(
+                            submitted_candidate_refs_by_attempt.get(
+                                attempt.attempt_id,
+                                {},
+                            ).values()
+                        ),
+                        None,
+                    ).to_dict()
+                    if submitted_candidate_refs_by_attempt.get(attempt.attempt_id)
+                    else None
+                ),
+                "canonical_output_refs": {
+                    name: ref.to_dict()
+                    for name, ref in canonical_refs_by_attempt.get(
+                        attempt.attempt_id,
+                        {},
+                    ).items()
+                },
+                "independent_candidate_validity": (
+                    independent_validity_by_attempt.get(attempt.attempt_id)
+                ),
+                "final_validity": root_validity,
+            }
+            for attempt in attempts
+        ],
         "hook_observations": [dict(item) for item in hook_observations],
     }
 

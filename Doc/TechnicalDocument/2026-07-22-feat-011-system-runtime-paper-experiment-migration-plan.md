@@ -474,7 +474,7 @@ powershell -ExecutionPolicy Bypass -File .\init.ps1
 
 - [x] fault 只能在真实 raw/provenance/usage artifact 已持久化后触发。
 - [x] FULL 使用 `NoOpRuntimeHooks`，必须与无实验 runtime 行为完全相同。
-- [x] 六种 ablation 由 `ProtocolMechanismPolicy`/hook 在稳定 gate 禁用一个机制。
+- [x] 当时实现的六种 ablation 由 `ProtocolMechanismPolicy`/hook 在稳定 gate 禁用一个机制；EPD-005 后正式 Exp4 只保留 `FULL + 4`，`NO_SLOT_INTEGRITY` 仅作为待清理的历史实现事实。
 - [x] `NO_REQUEUE` 只阻止 engine recovery 后继续创建 replacement；runner 不再手写 stuck/replacement 状态。
 - [x] `NO_VERIFICATION`、`NO_PARSER_POLICY`、`NO_MERGE_GATE`、`NO_SLOT_INTEGRITY` 的逃逸事实必须由实际 runtime 结果显示，不能事后改 `PaperTaskResult`。
 - [x] 实验事件使用 `EXPERIMENT_*` namespace，并引用对应协议 event/artifact；不得冒充协议事件。
@@ -536,7 +536,7 @@ powershell -ExecutionPolicy Bypass -File .\init.ps1
 - [x] 用 deterministic verifier rejection 证明系统 requeue/replacement。
 - [x] 用 late submission 证明旧 lease 输出不能 canonical。
 - [x] 用真实 OS worker death regression 证明 lease expiry/reassignment。
-- [x] 跑六种 ablation，证明差异来自 hook/gate，而不是 runner 改写结果。
+- [x] 历史迁移验收跑过六种 ablation，证明差异来自 hook/gate，而不是 runner 改写结果；这不代表 EPD-005 后的五模式正式报告已经通过专项指标接线审计。
 - [x] 证明 experiments package 不再拥有协议状态迁移权威。
 
 **Verify:**
@@ -601,7 +601,7 @@ git diff --check
 
 - [ ] Factorization 与 Lean 兼容 public API 均已调用 coordinator。
 - [ ] 500/135 catalog 的 plan commitments 从 plugin/runtime preflight 派生且 digest 稳定。
-- [ ] FULL、五类 fault、worker death、六种 ablation 都有系统路径测试。
+- [ ] FULL、五类 fault、worker death、EPD-005 五模式 ablation 都有系统路径测试；删除 legacy slot mode 后重验正式矩阵。
 - [ ] 正常成功路径不含 synthetic protocol attempt/event。
 - [ ] 旧结果 reader/replay regression 仍通过。
 - [ ] `tests/experiments`、plugin tests、protocol phase tests、`init.ps1 -Full` 全部通过。

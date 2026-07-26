@@ -309,7 +309,6 @@ def test_exp3_worker_death_strategy_projects_runtime_evidence_without_fake_proto
         ("NO_PARSER_POLICY", "raw_only_exposed"),
         ("NO_REQUEUE", "stuck_after_rejection"),
         ("NO_MERGE_GATE", "premature_merge_attempted"),
-        ("NO_SLOT_INTEGRITY", "slot_mismatch_exposed"),
     ],
 )
 def test_exp4_strategy_changes_only_the_selected_boundary(
@@ -333,6 +332,14 @@ def test_exp4_strategy_changes_only_the_selected_boundary(
     assert result.runtime_flags["deterministic_validity_audit_retained"] is True
     if mode != "FULL":
         assert result.metrics["applicable"] is True
+
+
+def test_exp4_formal_strategy_rejects_retired_slot_integrity_mode() -> None:
+    with pytest.raises(ValueError, match="unsupported Experiment 4 mode"):
+        run_exp4_ablation_strategy(
+            mode="NO_SLOT_INTEGRITY",
+            adapter_observation={},
+        )
         assert result.metrics["exposed_error_count"] == 1
 
 

@@ -6,7 +6,15 @@
 
 > **2026-07-23 当前状态覆盖条款：** system runtime 迁移 Task 1-9 已落地；正常 FULL/fault/ablation 由 `paper_dispatcher` 进入 `local_runtime` / `ProtocolEngine`。公开 adapter direct API 仅作 deprecated 历史/selector regression 兼容。本文下方仍用“当前”“尚未”描述 adapter、formal runner、worker harness 或旧 catalog 的段落，均是迁移前的历史实施快照，不代表 2026-07-23 当前生命周期所有权或完成状态。
 
+> **2026-07-26 证据门禁覆盖条款：** Task A–11 的设施实现和本次反伪造 blocker 修复已通过用户规定的九文件最低验收 `246 passed`。正式资格只走持久化 `attempt → task → condition → experiment → suite → report` 聚合；Exp2 critical path、Exp3 matched baseline/worker death、Exp4 hook/FULL 配对、Exp5 provider-attempt identity inventory 与 429 sensitivity 均按权威证据 fail closed。下方关于 Gate C“等待接入”、旧简化 metrics/report 或可由 capturing 证明正式资格的表述只作历史计划，不代表当前实现。真实 provider Experiment 1–5、Full 和发布门禁仍未执行，`feat-011` 保持 `in-progress`。
+
 > **2026-07-22 安全范围覆盖条款：** 本地研究原型不做 external-input attack、tamper/fabrication、path/injection、security fuzzing、auth/signature/ACL、恶意 plugin/executor/worker 或 Byzantine hardening。错误处理只实现 `false_positive,false_negative,no_return,late_submission,executor_error` 五类 rate-fault；worker death 和 ablation 仅按已冻结实验矩阵执行。本文历史 Task 中已有的 evidence consistency/tamper regression 只保留为既有正常流程回归，不授权新增攻击防护。
+
+> **2026-07-24 Exp2 参数覆盖条款：** EPD-003 已把 Experiment 2 改为仅使用全部 166 道 hard Factorization、每 root 20-way split、worker `1/3/7/10/30/50`、每档 2 遍；Lean 不进入 Exp2，正式规模为 `1,992` root-runs / `39,840` planned AI units。本文下方 Factorization 三档 + Lean 5-task、worker `1/3/10/30`、5 repeats、`10,300` root-runs 和 optional `100/300` 均为旧计划，不得再实现。
+
+> **2026-07-24 Exp3 参数覆盖条款：** EPD-004 只把五类 rate-fault 和 worker-death 的每个 condition 从 3 repeats 改为 2 repeats；其他矩阵不变。新规模为 rate-fault=`35,120`、worker-death=`6,036`、Exp3=`41,156` root-runs。本文下方 3 repeats 和旧规模只作历史计划。
+
+> **2026-07-24 Exp4/Exp5 与剩余设施覆盖条款：** EPD-005 把 Exp4 固定为 `FULL + 4`、7,725 root-runs；EPD-006 把 Exp5 改为独立使用 Exp1 全部 hard roots（Factorization 166 + Lean 45）、36 conditions、1,899 root-runs，不再复用 Exp2 slice。Exp2–Exp5 当前行为/指标 blocker、文件归属和实施顺序统一以 `2026-07-24-feat-011-exp2-exp5-experiment-facility-completion-implementation-plan.md` 为准；本文后续旧六模式、4,635-root Exp5、共享 Exp2 slice 和未接线 summarizer 表述不得继续实施。
 
 **Goal:** 在不删减 Experiment 1–5、也不跳过 Lean 3×3 正式实验前置能力的前提下，用最少的工程 Task 完成真实 AI API 实验、审计输出和论文表格。
 
@@ -222,17 +230,17 @@ Task 0–10 的已完成基础不再逐项展开：paper models/catalog、real-A
 - [ ] worker-death report 输出 `dead_worker_count,kill_progress,coordinator_continued,recovery_latency_ms,retry_count,reassignment_count,required_slot_count,recovered_slot_count,result_completeness_rate,root_output_complete,accepted_validity`。
 - [ ] 在同一 Task 内完成 TDD、预算批准、小 pilot、正式 Exp3、fault/recovery reports、状态和完整验证。
 
-### Task 18: 扩展并运行 Experiment 4（六模式消融）
+### Task 18: 扩展并运行 Experiment 4（五模式消融）
 
 **依赖：** Task 17。
 
 **Files:** `paper_runner.py`、`paper_ablation.py`、metrics/report 及对应 ablation execution tests。
 
-- [ ] 展开 `FULL,NO_VERIFICATION,NO_PARSER_POLICY,NO_REQUEUE,NO_MERGE_GATE,NO_SLOT_INTEGRITY`。
+- [ ] 按 EPD-005 展开 `FULL,NO_VERIFICATION,NO_PARSER_POLICY,NO_REQUEUE,NO_MERGE_GATE`；`NO_SLOT_INTEGRITY` 已从正式矩阵删除。
 - [ ] 消融只存在于 experiment wrapper/adapter，不修改协议 core 的 FULL 默认语义。
 - [ ] 每 mode 使用独立 output root；每 domain/difficulty 固定 5 tasks，Lean 使用预注册 2/2/1 topic-family slice，重复 3 次，仍先调用真实 AI API。
 - [ ] 所有 modes 固定使用 SiliconFlow `zai-org/GLM-5.2` / `glm_5_2_exp1_baseline`；不得让不同 mode 使用不同模型。
-- [ ] 记录 completion、accepted validity、wrong canonical/raw-only acceptance、stuck、premature merge、slot mismatch、time/token/cost，以及 `exposed_error_count,escaped_error_count,error_escape_rate,error_escape_applicability`。
+- [ ] 记录 completion、accepted validity、wrong canonical/raw-only exposure/acceptance、stuck、premature merge、time/token/cost，以及 `exposed_error_count,escaped_error_count,error_escape_rate,error_escape_applicability`；专项字段必须来自运行事实，不能由 mode 标记直接生成。
 - [ ] `error_escape_rate=escaped_error_count/exposed_error_count`；NO_REQUEUE 不适用或分母为 0 时写 `null` 和稳定 applicability reason，不得硬写 0。
 - [ ] 在同一 Task 内完成 TDD、预算批准、小 pilot、正式 Exp4、`paper_table_exp4.csv`、状态和完整验证。
 

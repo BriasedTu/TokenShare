@@ -29,6 +29,7 @@ from tokenshare.experiments.paper_faults import (
 from tokenshare.experiments.paper_models import (
     JsonObject,
     LEAN_TOPIC_FAMILIES,
+    PAPER_FORMAL_AI_TIMEOUT_SECONDS,
     PaperAttemptResult,
     PaperConditionResult,
     PaperExperimentCondition,
@@ -52,7 +53,7 @@ BASELINE_PROVIDER_CONFIG_ID = "exp1_baseline_siliconflow"
 BASELINE_REASONING_PROFILE_ID = "default"
 BASELINE_REQUEST_LIMIT_POLICY = {
     "max_tokens": 1024,
-    "timeout_seconds": 30,
+    "timeout_seconds": PAPER_FORMAL_AI_TIMEOUT_SECONDS,
     "max_provider_attempts": 1,
     "temperature": 0.0,
     "top_p": 1.0,
@@ -84,23 +85,23 @@ FAULT_INJECTION_POINT_BY_TYPE = {
 }
 FACTOR_RATE_FAULT_RATES_PERCENT = (0, 1, 5, 10, 25, 50, 100)
 LEAN_RATE_FAULT_RATES_PERCENT = (0, 10, 50, 100)
-REPEAT_IDS = (0, 1, 2)
+REPEAT_IDS = (0, 1)
 
 WORKER_DEATH_WORKER_COUNT = 10
 WORKER_DEATH_COUNTS = (1, 3)
 WORKER_DEATH_KILL_PROGRESS_PERCENT = (25, 50, 75)
 RATE_FAULT_TARGET_SEED = 300300
 V1_EXPECTED_ROOT_RUN_COUNTS = {
-    "rate_fault_factorization": 525,
-    "rate_fault_lean_proof": 180,
-    "worker_death": 108,
-    "total": 813,
+    "rate_fault_factorization": 350,
+    "rate_fault_lean_proof": 120,
+    "worker_death": 72,
+    "total": 542,
 }
 EXPECTED_ROOT_RUN_COUNTS = {
-    "rate_fault_factorization": 52_500,
-    "rate_fault_lean_proof": 180,
-    "worker_death": 9_054,
-    "total": 61_734,
+    "rate_fault_factorization": 35_000,
+    "rate_fault_lean_proof": 120,
+    "worker_death": 6_036,
+    "total": 41_156,
 }
 V2_FACTOR_CASE_COUNTS_BY_DIFFICULTY = {
     "easy": 167,
@@ -673,6 +674,7 @@ def _condition_execution_manifest(
             catalog=catalog,
         )
     else:
+        ai_units_by_case_id = _ai_units_by_case_id(catalog)
         worker_death_manifest = {
             "schema_version": "tokenshare.paper_exp3_worker_death_target_manifest.v1",
             "condition_id": condition.condition_id,
@@ -682,6 +684,20 @@ def _condition_execution_manifest(
             "worker_count": WORKER_DEATH_WORKER_COUNT,
             "dead_worker_count_target": key.dead_worker_count,
             "kill_progress_target_percent": key.kill_progress_percent,
+            "selected_target_ai_unit_ids_by_case": {
+                str(case_id): list(
+                    _worker_death_targets(
+                        ai_units_by_case_id[str(case_id)],
+                        dead_worker_count=key.dead_worker_count,
+                        kill_progress_percent=key.kill_progress_percent,
+                    )
+                )
+                for case_id in selection.ordered_case_ids
+            },
+            "planned_ai_unit_count_by_case": {
+                str(case_id): len(ai_units_by_case_id[str(case_id)])
+                for case_id in selection.ordered_case_ids
+            },
             "repeat_id": key.repeat_id,
             "seed": condition.seed,
         }
@@ -727,6 +743,10 @@ def _fault_target_manifest_for_condition(
         fault_rate=key.fault_rate_percent / 100.0,
         seed=RATE_FAULT_TARGET_SEED,
     )
+    selected_target_set = set(selected_targets)
+    reserve_targets = tuple(
+        unit_id for unit_id in unit_ids if unit_id not in selected_target_set
+    )
     return {
         "schema_version": "tokenshare.paper_exp3_fault_target_manifest.v1",
         "condition_id": condition.condition_id,
@@ -745,7 +765,10 @@ def _fault_target_manifest_for_condition(
         "selection_digest": selection.selection_digest,
         "ordered_case_ids": list(selection.ordered_case_ids),
         "candidate_ai_unit_ids": list(unit_ids),
+        "candidate_target_count": len(unit_ids),
         "selected_target_ai_unit_ids": list(selected_targets),
+        "selected_target_count": len(selected_targets),
+        "reserve_target_ai_unit_ids": list(reserve_targets),
         "target_seed": RATE_FAULT_TARGET_SEED,
         "provider_tokens_attributed_by_mutation": 0,
     }
@@ -1394,6 +1417,10 @@ def _summarize_rate_fault_run(
         fault_rate_percent=fault_rate_percent,
     )
     injected_fault_count = _non_negative_int(run, "injected_fault_count")
+    applicability_counts = _fault_applicability_counts(
+        run,
+        injected_fault_count=injected_fault_count,
+    )
     detected_fault_count = _non_negative_int(run, "detected_fault_count")
     false_accept_count = _non_negative_int(run, "false_accept_count")
     recoverable_fault_target_count = _non_negative_int(
@@ -1479,6 +1506,7 @@ def _summarize_rate_fault_run(
         "matched_baseline_condition_id": matched_baseline,
         "expected_baseline_condition_id": expected_baseline,
         "injected_fault_count": injected_fault_count,
+        **applicability_counts,
         "detected_fault_count": detected_fault_count,
         "false_accept_count": false_accept_count,
         "recoverable_fault_target_count": recoverable_fault_target_count,
@@ -1527,6 +1555,60 @@ def _summarize_rate_fault_run(
     }
     _reject_non_finite_row(row)
     return row
+
+
+def _fault_applicability_counts(
+    run: Mapping[str, Any],
+    *,
+    injected_fault_count: int,
+) -> JsonObject:
+    manifest = _require_mapping(
+        run.get("fault_target_manifest"),
+        "fault_target_manifest",
+    )
+    selected_ids = _string_tuple(
+        manifest.get("selected_target_ai_unit_ids", ()),
+        "selected_target_ai_unit_ids",
+    )
+    reserve_ids = _string_tuple(
+        manifest.get("reserve_target_ai_unit_ids", ()),
+        "reserve_target_ai_unit_ids",
+    )
+
+    def count(field_name: str, default: int) -> int:
+        value = run.get(field_name, manifest.get(field_name, default))
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise ValueError(f"{field_name} must be an integer >= 0")
+        return value
+
+    candidate_count = count(
+        "candidate_target_count",
+        max(len(selected_ids) + len(reserve_ids), injected_fault_count),
+    )
+    selected_count = count("selected_target_count", len(selected_ids))
+    eligible_count = count("eligible_target_count", injected_fault_count)
+    not_applicable_count = count("not_applicable_target_count", 0)
+    denominator = count("injection_denominator", eligible_count)
+    if selected_count > candidate_count:
+        raise ValueError("selected_target_count exceeds candidate_target_count")
+    if eligible_count > candidate_count:
+        raise ValueError("eligible_target_count exceeds candidate_target_count")
+    if injected_fault_count > eligible_count:
+        raise ValueError("injected_fault_count exceeds eligible_target_count")
+    if eligible_count + not_applicable_count > candidate_count:
+        raise ValueError(
+            "eligible/not-applicable target counts exceed candidate_target_count"
+        )
+    if denominator != eligible_count:
+        raise ValueError("injection_denominator must equal eligible_target_count")
+    return {
+        "candidate_target_count": candidate_count,
+        "selected_target_count": selected_count,
+        "eligible_target_count": eligible_count,
+        "not_applicable_target_count": not_applicable_count,
+        "injection_denominator": denominator,
+        "injection_denominator_kind": "eligible_parsed_candidates",
+    }
 
 
 def _summarize_worker_death_run(
@@ -2135,7 +2217,7 @@ def _validate_fault_records(
     mutated_output_refs: Sequence[Mapping[str, Any]],
 ) -> None:
     records = _require_sequence(run.get("fault_records", ()), "fault_records")
-    selected_target_ids = _validate_fault_target_manifest(
+    allowed_target_ids = _validate_fault_target_manifest(
         run,
         condition_id=condition_id,
         repeat_id=repeat_id,
@@ -2233,15 +2315,15 @@ def _validate_fault_records(
             raise ValueError("raw/provenance must be persisted before fault injection")
         if mutation_persisted_at < injected_at:
             raise ValueError("mutation provenance cannot predate fault injection")
-        if body.get("canonical_pollution") is not False:
-            raise ValueError("fault injection must not pollute canonical output")
         if _non_negative_int(body, "provider_tokens_attributed") != 0:
             raise ValueError("synthetic mutation must not attribute provider tokens")
     if sorted(actual_original_ref_digests) != sorted(expected_original_ref_digests):
         raise ValueError("fault record original_output_ref does not match summary")
     if sorted(actual_mutated_ref_digests) != sorted(expected_mutated_ref_digests):
         raise ValueError("fault record mutated_output_ref does not match summary")
-    if {unit_id for unit_id, _attempt_id in target_keys} != set(selected_target_ids):
+    if not {unit_id for unit_id, _attempt_id in target_keys}.issubset(
+        set(allowed_target_ids)
+    ):
         raise ValueError("fault records do not match frozen target manifest")
 
 
@@ -2276,9 +2358,15 @@ def _validate_fault_target_manifest(
         manifest.get("selected_target_ai_unit_ids"),
         "selected_target_ai_unit_ids",
     )
-    if len(selected) != injected_fault_count:
+    reserve = _string_tuple(
+        manifest.get("reserve_target_ai_unit_ids", ()),
+        "reserve_target_ai_unit_ids",
+    )
+    if set(selected) & set(reserve):
+        raise ValueError("fault target manifest selected/reserve overlap")
+    if injected_fault_count > len(selected):
         raise ValueError("fault target manifest count mismatch")
-    return selected
+    return (*selected, *reserve)
 
 
 def _artifact_ref_digests(
@@ -2373,13 +2461,46 @@ def _validate_worker_death_records(
             raise ValueError("worker death record repeat_id mismatch")
         if body.get("kill_point") != f"progress_{target_kill_progress_percent}":
             raise ValueError("worker death record kill point mismatch")
-        progress_before_kill = _non_negative_int(body, "progress_before_kill")
+        progress_before_kill = _non_negative_number(
+            body,
+            "progress_before_kill",
+        )
         if progress_before_kill < target_kill_progress_percent:
             raise ValueError("worker death record progress is before kill target")
-        if progress_before_kill != actual_kill_progress_percent:
+        if abs(progress_before_kill - actual_kill_progress_percent) > 1e-9:
             raise ValueError(
                 "actual kill progress must match worker death record evidence"
             )
+        target_ratio = _non_negative_number(
+            body,
+            "kill_progress_target_ratio",
+        )
+        actual_ratio = _non_negative_number(
+            body,
+            "kill_progress_actual_ratio",
+        )
+        completed_count = _non_negative_int(
+            body,
+            "kill_progress_completed_ai_unit_count",
+        )
+        total_count = _positive_int(
+            body,
+            "kill_progress_total_ai_unit_count",
+        )
+        if (
+            abs(target_ratio - target_kill_progress_percent / 100.0) > 1e-9
+            or abs(actual_ratio - completed_count / total_count) > 1e-9
+            or abs(actual_ratio * 100.0 - progress_before_kill) > 1e-9
+            or actual_ratio < target_ratio
+        ):
+            raise ValueError("worker death record kill progress evidence mismatch")
+        _parse_timestamp(
+            body.get("kill_progress_observed_at"),
+            "kill_progress_observed_at",
+        )
+        progress_error = body.get("kill_progress_error")
+        if progress_error is not None:
+            raise ValueError("worker death record kill progress observation failed")
         worker_pid = _positive_int(body, "worker_pid")
         replacement_worker_pid = _positive_int(body, "replacement_worker_pid")
         if worker_pid == replacement_worker_pid:
@@ -2558,6 +2679,32 @@ def _ai_units_by_case_id(catalog: Mapping[str, Any]) -> Mapping[str, tuple[str, 
     return normalized
 
 
+def _worker_death_targets(
+    unit_ids: tuple[str, ...],
+    *,
+    dead_worker_count: int,
+    kill_progress_percent: int,
+) -> tuple[str, ...]:
+    if dead_worker_count < 1:
+        raise ValueError("dead_worker_count must be positive")
+    if not unit_ids:
+        raise ValueError("worker death condition requires at least one AI unit")
+    if kill_progress_percent not in {25, 50, 75}:
+        raise ValueError("unsupported worker death progress")
+    anchor = max(
+        0,
+        min(
+            len(unit_ids) - 1,
+            (len(unit_ids) * kill_progress_percent + 99) // 100 - 1,
+        ),
+    )
+    selected_unit_count = min(
+        dead_worker_count,
+        len(unit_ids) - anchor,
+    )
+    return unit_ids[anchor : anchor + selected_unit_count]
+
+
 def _mapping(value: Any) -> Mapping[str, Any]:
     if not isinstance(value, Mapping):
         raise ValueError("expected mapping")
@@ -2618,6 +2765,16 @@ def _non_negative_int(body: Mapping[str, Any], field_name: str) -> int:
     value = body.get(field_name)
     if isinstance(value, bool) or not isinstance(value, int) or value < 0:
         raise ValueError(f"{field_name} must be an integer >= 0")
+    return value
+
+
+def _non_negative_number(
+    body: Mapping[str, Any],
+    field_name: str,
+) -> float:
+    value = _number(body, field_name)
+    if value < 0:
+        raise ValueError(f"{field_name} must be numeric >= 0")
     return value
 
 

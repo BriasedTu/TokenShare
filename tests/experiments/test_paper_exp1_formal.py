@@ -42,16 +42,15 @@ def test_exp1_formal_expands_exact_conditions_with_frozen_baseline_controls() ->
     conditions = module.expand_conditions(context)
 
     assert isinstance(module, PaperExperimentModule)
-    assert len(conditions) == 36
-    assert [condition.repeat_id for condition in conditions[:12]] == [0] * 12
-    assert [condition.repeat_id for condition in conditions[12:24]] == [1] * 12
-    assert [condition.repeat_id for condition in conditions[24:]] == [2] * 12
+    assert len(conditions) == 12
+    assert [condition.repeat_id for condition in conditions] == [0] * 12
+    assert {condition.seed for condition in conditions} == {1}
     assert conditions[0].condition_id == "exp1_factorization_easy_w10_r0"
     assert conditions[3].condition_id == "exp1_lean_simple_pure_logic_w10_r0"
-    assert conditions[-1].condition_id == "exp1_lean_hard_frontier_induction_w10_r2"
+    assert conditions[-1].condition_id == "exp1_lean_hard_frontier_induction_w10_r0"
     assert Counter(condition.domain for condition in conditions) == {
-        "factorization": 9,
-        "lean_proof": 27,
+        "factorization": 3,
+        "lean_proof": 9,
     }
     assert {
         (condition.paper_difficulty, condition.topic_family)
@@ -92,7 +91,7 @@ def test_exp1_formal_accepts_shared_endpoint_identity_and_effective_controls() -
 
     conditions = module.expand_conditions(context)
 
-    assert len(conditions) == 36
+    assert len(conditions) == 12
     assert {condition.model_entry_id for condition in conditions} == {
         "glm_5_2_exp1_baseline"
     }
@@ -112,13 +111,13 @@ def test_exp1_formal_accepts_normal_validated_endpoint_binding() -> None:
 
     conditions = Exp1FormalModule().expand_conditions(_context(binding=binding))
 
-    assert len(conditions) == 36
+    assert len(conditions) == 12
     assert {condition.reasoning_profile_id for condition in conditions} == {
         "default"
     }
 
 
-def test_exp1_formal_freezes_165_unique_roots_and_495_root_runs_without_resampling() -> None:
+def test_exp1_formal_freezes_165_unique_roots_once_without_resampling() -> None:
     module = Exp1FormalModule()
     context = _context()
     conditions = module.expand_conditions(context)
@@ -128,18 +127,18 @@ def test_exp1_formal_freezes_165_unique_roots_and_495_root_runs_without_resampli
     assert len(selections) == len(conditions)
     assert all(isinstance(selection, FrozenCaseSelection) for selection in selections)
     assert all(selection.is_executable for selection in selections)
-    assert sum(len(selection.ordered_case_ids) for selection in selections) == 495
+    assert sum(len(selection.ordered_case_ids) for selection in selections) == 165
     assert len({case_id for selection in selections for case_id in selection.ordered_case_ids}) == 165
     assert sum(
         len(selection.ordered_case_ids)
         for selection in selections
         if selection.domain == "factorization"
-    ) == 90
+    ) == 30
     assert sum(
         len(selection.ordered_case_ids)
         for selection in selections
         if selection.domain == "lean_proof"
-    ) == 405
+    ) == 135
 
     grouped: dict[tuple[str, str, str | None], list[tuple[str, ...]]] = defaultdict(list)
     for selection in selections:
@@ -153,7 +152,7 @@ def test_exp1_formal_freezes_165_unique_roots_and_495_root_runs_without_resampli
     assert len(grouped) == 12
     for key, repeated_ids in grouped.items():
         expected_count = 10 if key[0] == "factorization" else 15
-        assert repeated_ids == [repeated_ids[0], repeated_ids[0], repeated_ids[0]]
+        assert repeated_ids == [repeated_ids[0]]
         assert len(repeated_ids[0]) == expected_count
 
 
@@ -165,7 +164,7 @@ def test_exp1_formal_consumes_task14_selected_lean_ids_instead_of_catalog_pools(
     selections = module.freeze_case_selections(context, conditions)
 
     assert all(selection.is_executable for selection in selections)
-    assert sum(len(selection.ordered_case_ids) for selection in selections) == 495
+    assert sum(len(selection.ordered_case_ids) for selection in selections) == 165
     assert len({case_id for selection in selections for case_id in selection.ordered_case_ids}) == 165
     simple_pure = next(
         selection
@@ -203,7 +202,7 @@ def test_exp1_formal_consumes_task14_selected_lean_ids_instead_of_catalog_pools(
     )) == 25
 
 
-def test_exp1_formal_real_catalog_probe_generates_495_root_runs() -> None:
+def test_exp1_formal_real_catalog_probe_generates_165_root_runs() -> None:
     module = Exp1FormalModule()
     context = _context(catalog=_RealCatalogProbe())
     conditions = module.expand_conditions(context)
@@ -211,7 +210,7 @@ def test_exp1_formal_real_catalog_probe_generates_495_root_runs() -> None:
     selections = module.freeze_case_selections(context, conditions)
 
     assert all(selection.is_executable for selection in selections)
-    assert sum(len(selection.ordered_case_ids) for selection in selections) == 495
+    assert sum(len(selection.ordered_case_ids) for selection in selections) == 165
     assert len({case_id for selection in selections for case_id in selection.ordered_case_ids}) == 165
     assert len(context.catalog.cases_for(
         domain="lean_proof",
@@ -239,7 +238,7 @@ def test_exp1_formal_blocks_lean_before_provider_when_readiness_is_missing() -> 
     lean_selections = [selection for selection in selections if selection.domain == "lean_proof"]
     blocked = [selection for selection in lean_selections if selection.is_blocked]
 
-    assert len(blocked) == 27
+    assert len(blocked) == 9
     assert {selection.blocked_reason for selection in blocked} == {
         "lean_semantic_readiness_not_passed"
     }
@@ -270,12 +269,12 @@ def test_exp1_formal_blocks_incomplete_task14_readiness_before_provider() -> Non
     selections = module.freeze_case_selections(context, conditions)
     lean_selections = [selection for selection in selections if selection.domain == "lean_proof"]
 
-    assert len(lean_selections) == 27
+    assert len(lean_selections) == 9
     assert all(selection.is_blocked for selection in lean_selections)
     assert {selection.blocked_reason for selection in lean_selections} == {
         "lean_semantic_readiness_not_passed"
     }
-    assert sum(len(selection.ordered_case_ids) for selection in selections) == 90
+    assert sum(len(selection.ordered_case_ids) for selection in selections) == 30
 
 
 def test_exp1_formal_rejects_task14_selection_order_tamper_with_stale_digest() -> None:
@@ -286,7 +285,7 @@ def test_exp1_formal_rejects_task14_selection_order_tamper_with_stale_digest() -
     selections = module.freeze_case_selections(context, conditions)
 
     lean_selections = [selection for selection in selections if selection.domain == "lean_proof"]
-    assert len(lean_selections) == 27
+    assert len(lean_selections) == 9
     assert all(selection.is_blocked for selection in lean_selections)
     assert {selection.blocked_reason for selection in lean_selections} == {
         "lean_semantic_readiness_not_passed"
@@ -306,7 +305,7 @@ def test_exp1_formal_blocks_duplicate_task14_roots_and_rejects_condition_drift()
         for selection in duplicate_selections
         if selection.domain == "lean_proof"
     ]
-    assert len(lean_selections) == 27
+    assert len(lean_selections) == 9
     assert all(selection.is_blocked for selection in lean_selections)
     assert all(selection.expected_ai_unit_count == 0 for selection in lean_selections)
     assert {selection.blocked_reason for selection in lean_selections} == {
@@ -563,19 +562,19 @@ def test_exp1_formal_summary_requires_complete_canonical_formal_inventory() -> N
     )
     evidence["task_metrics"] = evidence["task_metrics"][:-1]
 
-    with pytest.raises(ValueError, match="495 root-runs"):
+    with pytest.raises(ValueError, match="165 root-runs"):
         Exp1FormalModule().summarize(evidence)
 
 
-def test_exp1_formal_summary_accepts_exact_165_by_3_real_evidence_matrix() -> None:
+def test_exp1_formal_summary_accepts_exact_165_by_1_real_evidence_matrix() -> None:
     summary = Exp1FormalModule().summarize(
         _integration_summary_evidence(_context(binding=_shared_baseline_identity()))
     )
 
     assert len(summary.rows) == 12
     assert sum(int(row["case_count"]) for row in summary.rows) == 165
-    assert sum(int(row["root_run_count"]) for row in summary.rows) == 495
-    assert {int(row["repeat_count"]) for row in summary.rows} == {3}
+    assert sum(int(row["root_run_count"]) for row in summary.rows) == 165
+    assert {int(row["repeat_count"]) for row in summary.rows} == {1}
     assert all(row["paper_eligible"] is True for row in summary.rows)
 
 
@@ -586,8 +585,8 @@ def test_exp1_formal_summary_accepts_integration_prepared_task_metrics() -> None
 
     assert len(summary.rows) == 12
     assert sum(int(row["case_count"]) for row in summary.rows) == 165
-    assert sum(int(row["root_run_count"]) for row in summary.rows) == 495
-    assert {int(row["repeat_count"]) for row in summary.rows} == {3}
+    assert sum(int(row["root_run_count"]) for row in summary.rows) == 165
+    assert {int(row["repeat_count"]) for row in summary.rows} == {1}
     assert all(row["transport_kind"] == "ai_api" for row in summary.rows)
     assert all(row["paper_eligible"] is True for row in summary.rows)
 
@@ -763,7 +762,7 @@ def _baseline_binding() -> dict[str, Any]:
 def _baseline_request_controls() -> dict[str, Any]:
     return {
         "max_tokens": 1024,
-        "timeout_seconds": 30,
+        "timeout_seconds": 100,
         "max_provider_attempts": 1,
         "temperature": 0.0,
         "top_p": 1.0,

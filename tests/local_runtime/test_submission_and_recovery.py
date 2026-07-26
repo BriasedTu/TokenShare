@@ -272,7 +272,7 @@ def test_failure_is_recorded_by_engine_then_replacement_is_scheduled(
     ]
 
 
-def test_retry_limit_records_failed_root_without_recording_completion(tmp_path) -> None:
+def test_one_retry_budget_creates_exactly_one_replacement(tmp_path) -> None:
     store, ledger, plugin, clock, coordinator = _runtime(tmp_path, max_retries=1)
     backend = SequentialWorkerBackend(
         executor=_FailFirstExecutor(_ArtifactExecutor(store)),
@@ -288,18 +288,17 @@ def test_retry_limit_records_failed_root_without_recording_completion(tmp_path) 
         )
     )
 
-    assert result.status == "failed"
-    assert _recovery_actions(ledger)[0]["retry_allowed"] is False
-    assert not any(
-        event.event_type in {EventType.TASK_EXPANDED, EventType.SETTLEMENT_RECORDED}
-        for event in ledger.read_all()
-    )
+    assert result.status == "completed"
+    assert _recovery_actions(ledger)[0]["retry_allowed"] is True
     root_attempt_ids = [
         attempt["attempt_id"]
         for attempt in result.summary["attempts"]
         if attempt["unit_id"] == "unit_ready"
     ]
-    assert root_attempt_ids == ["run_retry_limit_attempt_1"]
+    assert root_attempt_ids == [
+        "run_retry_limit_attempt_1",
+        "run_retry_limit_attempt_2",
+    ]
 
 
 def test_returned_failure_submission_recovers_from_submitted_attempt(tmp_path) -> None:

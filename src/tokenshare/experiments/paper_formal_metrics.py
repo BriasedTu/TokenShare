@@ -13,6 +13,10 @@ import json
 from pathlib import Path
 from typing import Any
 
+from tokenshare.experiments.paper_exp5_model_comparison import (
+    build_exp5_model_execution_rows,
+)
+
 
 EXP1 = "exp1_real_ai_feasibility"
 EXP2 = "exp2_real_ai_scalability"
@@ -72,10 +76,18 @@ def recompute_paper_formal_metrics(
         generation = _current_generation(run_root)
         bundle = {
             "condition": condition,
+            "suite_root": root,
             "tasks": _read_jsonl(generation / "per_task_results.jsonl"),
             "attempts": _read_jsonl(generation / "per_attempt_results.jsonl"),
             "faults": _read_jsonl(generation / "fault_injections.jsonl"),
             "events": _read_jsonl(generation / "events" / "event_log.jsonl"),
+            "artifacts": (
+                _read_jsonl(generation / "artifacts" / "artifact_index.jsonl")
+                if (
+                    generation / "artifacts" / "artifact_index.jsonl"
+                ).is_file()
+                else []
+            ),
         }
         if not bundle["tasks"] or not bundle["attempts"] or not bundle["events"]:
             raise ValueError(f"incomplete formal evidence: {condition_id}")
@@ -90,13 +102,51 @@ def recompute_paper_formal_metrics(
         EXP4: tuple(_exp4_rows(rows_by_id, run_bundles)),
         EXP5: tuple(_exp5_rows(rows_by_id, run_bundles)),
     }
+    experiment_rows = {
+        experiment_id: tuple(
+            _with_repeat_aggregates(experiment_id, rows)
+        )
+        for experiment_id, rows in experiment_rows.items()
+    }
+    experiment_rows[EXP4] = tuple(
+        _with_exp4_full_pairing(experiment_rows[EXP4])
+    )
+    capturing = (
+        suite.get("regression_only") is True
+        or suite.get("capturing") is True
+    )
+    required_experiment_ids = tuple(
+        str(value)
+        for value in suite.get("experiment_ids", ())
+        if isinstance(value, str) and value
+    )
+    eligibility_reasons: list[str] = []
+    if suite.get("paper_eligible") is not True:
+        eligibility_reasons.append("suite_manifest_not_paper_eligible")
+    if capturing:
+        eligibility_reasons.append("capturing_or_regression_only")
+    if not condition_rows or any(
+        row.get("paper_eligible") is not True for row in condition_rows
+    ):
+        eligibility_reasons.append("condition_evidence_not_paper_eligible")
+    if not required_experiment_ids or any(
+        not experiment_rows.get(experiment_id)
+        or any(
+            row.get("paper_eligible") is not True
+            for row in experiment_rows[experiment_id]
+        )
+        for experiment_id in required_experiment_ids
+    ):
+        eligibility_reasons.append("experiment_evidence_not_paper_eligible")
+    paper_eligible = not eligibility_reasons
     metrics_body = {
         "schema_version": "tokenshare.paper_formal_metrics_body.v1",
         "formal": True,
         "pilot_only": False,
         "execution_scope": "formal_matrix",
-        "capturing": suite.get("regression_only") is True,
-        "paper_eligible": suite.get("paper_eligible") is True,
+        "capturing": capturing,
+        "paper_eligible": paper_eligible,
+        "paper_ineligibility_reasons": eligibility_reasons,
         "condition_rows": condition_rows,
         "experiment_rows": {
             key: list(value) for key, value in experiment_rows.items()
@@ -115,8 +165,8 @@ def recompute_paper_formal_metrics(
         condition_rows=tuple(condition_rows),
         experiment_rows=experiment_rows,
         metrics_digest=metrics_digest,
-        paper_eligible=suite.get("paper_eligible") is True,
-        capturing=suite.get("regression_only") is True,
+        paper_eligible=paper_eligible,
+        capturing=capturing,
         output_refs=tuple(output_refs),
     )
 
@@ -126,6 +176,7 @@ def _condition_metrics(bundle: Mapping[str, Any]) -> dict[str, Any]:
     tasks = bundle["tasks"]
     attempts = bundle["attempts"]
     events = bundle["events"]
+    artifacts = bundle.get("artifacts", ())
     completed = sum(_status(task.get("root_status")) == "completed" for task in tasks)
     accepted_valid = sum(_task_validity(task) for task in tasks)
     task_count = len(tasks)
@@ -140,8 +191,57 @@ def _condition_metrics(bundle: Mapping[str, Any]) -> dict[str, Any]:
         status = _status(attempt.get("attempt_status"))
         if status not in {"succeeded", "completed"}:
             failure_breakdown[status] += 1
-    wall_clock_ms = _wall_clock_ms(events)
-    critical_path_ms = _critical_path_ms(events)
+    interval_metrics = _worker_interval_metrics(attempts)
+    wall_clock_ms = (
+        interval_metrics["wall_clock_ms"]
+        if interval_metrics is not None
+        else _wall_clock_ms(events)
+    )
+    critical_paths = [
+        _protocol_critical_path(
+            task=task,
+            attempts=_records_for_task(attempts, task, tasks),
+            events=_records_for_task(events, task, tasks),
+        )
+        for task in tasks
+    ]
+    critical_path_complete = bool(critical_paths) and all(
+        item["critical_path_ms"] is not None for item in critical_paths
+    )
+    critical_path_ms = (
+        sum(float(item["critical_path_ms"]) for item in critical_paths)
+        if critical_path_complete
+        else None
+    )
+    critical_path_reasons = list(
+        dict.fromkeys(
+            str(reason)
+            for item in critical_paths
+            for reason in item["paper_ineligibility_reasons"]
+        )
+    )
+    critical_path_refs = _stable_evidence_refs(
+        [
+            ref
+            for item in critical_paths
+            for ref in item["critical_path_evidence_refs"]
+        ]
+    )
+    # 关键路径是 Exp2 的专项指标；其他实验的完整失败终局不要求成功 merge。
+    critical_path_required = condition.get("experiment_id") == EXP2
+    eligibility_reasons: list[str] = []
+    if interval_metrics is None:
+        eligibility_reasons.append("missing_worker_interval_evidence")
+    if not tasks or any(task.get("paper_eligible") is not True for task in tasks):
+        eligibility_reasons.append("task_not_paper_eligible")
+    if not attempts or any(
+        attempt.get("paper_eligible") is not True for attempt in attempts
+    ):
+        eligibility_reasons.append("attempt_not_paper_eligible")
+    if not artifacts:
+        eligibility_reasons.append("missing_artifact_inventory")
+    if critical_path_required:
+        eligibility_reasons.extend(critical_path_reasons)
     return {
         "experiment_id": str(condition["experiment_id"]),
         "condition_id": str(condition["condition_id"]),
@@ -169,10 +269,24 @@ def _condition_metrics(bundle: Mapping[str, Any]) -> dict[str, Any]:
             float(_number(attempt.get("cost_estimate"))) for attempt in attempts
         ),
         "wall_clock_ms": wall_clock_ms,
+        "wall_clock_source": (
+            "worker_execution_intervals"
+            if interval_metrics is not None
+            else "protocol_event_fallback"
+        ),
         "critical_path_ms": critical_path_ms,
+        "critical_path_source": (
+            "sum_of_protocol_root_dependency_paths"
+            if critical_path_complete
+            else "insufficient_protocol_dependency_evidence"
+        ),
+        "critical_path_evidence_refs": critical_path_refs,
+        "observed_peak_concurrency": (
+            interval_metrics["observed_peak_concurrency"]
+            if interval_metrics is not None
+            else None
+        ),
         "provider_latency_sum_ms": sum(latency_values),
-        "wall_clock_p50": _quantile([wall_clock_ms], 0.5),
-        "wall_clock_p95": _quantile([wall_clock_ms], 0.95),
         "token_p50": _quantile(token_values, 0.5),
         "token_p95": _quantile(token_values, 0.95),
         "provider_error_count": sum(
@@ -191,7 +305,9 @@ def _condition_metrics(bundle: Mapping[str, Any]) -> dict[str, Any]:
             - len({str(attempt.get("unit_id")) for attempt in attempts}),
         ),
         "failure_breakdown": dict(sorted(failure_breakdown.items())),
-        "paper_eligible": False,
+        "row_scope": "repeat_condition",
+        "paper_eligible": not eligibility_reasons,
+        "paper_ineligibility_reasons": eligibility_reasons,
         "formal": True,
         "pilot_only": False,
         "execution_scope": "formal_matrix",
@@ -213,19 +329,230 @@ def _exp2_rows(
     rows: Mapping[str, Mapping[str, Any]],
     bundles: Mapping[str, Mapping[str, Any]],
 ) -> list[dict[str, Any]]:
-    source = [
-        dict(rows[condition_id])
-        for condition_id, bundle in bundles.items()
-        if bundle["condition"]["experiment_id"] == EXP2
-    ]
-    baselines: dict[tuple[Any, ...], float] = {}
+    source: list[dict[str, Any]] = []
+    for condition_id, bundle in bundles.items():
+        condition = bundle["condition"]
+        if condition["experiment_id"] != EXP2:
+            continue
+        condition_row = dict(rows[condition_id])
+        tasks = bundle["tasks"]
+        for task in tasks:
+            task_id = str(task.get("task_id") or "")
+            task_attempts = [
+                attempt
+                for attempt in bundle["attempts"]
+                if str(attempt.get("task_id") or "") == task_id
+            ]
+            if not task_attempts and len(tasks) == 1:
+                task_attempts = list(bundle["attempts"])
+            observation = task.get("runtime_observation")
+            observation = (
+                dict(observation) if isinstance(observation, Mapping) else {}
+            )
+            interval_metrics = _worker_interval_metrics(task_attempts)
+            wall_clock_ms = _observed_time_ms(
+                observation.get("runtime_wall_clock_ms")
+            )
+            if wall_clock_ms is None:
+                wall_clock_ms = (
+                    float(interval_metrics["wall_clock_ms"])
+                    if interval_metrics is not None
+                    else None
+                )
+            generation_identity = task.get("runtime_generation_identity")
+            generation_identity = (
+                generation_identity
+                if isinstance(generation_identity, Mapping)
+                else {}
+            )
+            run_id = generation_identity.get("run_id")
+            task_events = _records_for_task(
+                bundle["events"], task, tasks
+            )
+            critical_path = _protocol_critical_path(
+                task=task,
+                attempts=task_attempts,
+                events=task_events,
+            )
+            planned_ids = _string_inventory(
+                observation.get("planned_ai_unit_ids")
+            )
+            dispatched_ids = _string_inventory(
+                observation.get("dispatched_ai_unit_ids")
+            )
+            completed_ids = _string_inventory(
+                observation.get("completed_ai_unit_ids")
+            )
+            unscheduled_ids = _string_inventory(
+                observation.get("unscheduled_ai_unit_ids")
+            )
+            in_flight_ids = _string_inventory(
+                observation.get("in_flight_ai_unit_ids_at_witness")
+            )
+            inventory_reasons: list[str] = list(
+                critical_path["paper_ineligibility_reasons"]
+            )
+            if not observation:
+                inventory_reasons.append("missing_runtime_observation")
+            elif (
+                set(dispatched_ids) - set(planned_ids)
+                or set(completed_ids) - set(dispatched_ids)
+                or set(unscheduled_ids) != set(planned_ids) - set(dispatched_ids)
+                or set(in_flight_ids) - set(dispatched_ids)
+            ):
+                inventory_reasons.append("invalid_runtime_ai_unit_inventory")
+            if not isinstance(run_id, str) or not run_id:
+                inventory_reasons.append("missing_runtime_run_identity")
+                run_id = None
+            if wall_clock_ms is None:
+                inventory_reasons.append("missing_root_wall_clock_evidence")
+            peak = observation.get("observed_peak_concurrency")
+            if not isinstance(peak, int) or isinstance(peak, bool) or peak < 0:
+                peak = (
+                    interval_metrics["observed_peak_concurrency"]
+                    if interval_metrics is not None
+                    else condition_row.get("observed_peak_concurrency")
+                )
+            if isinstance(peak, (int, float)) and (
+                peak > int(condition.get("worker_count", 1))
+                or (dispatched_ids and peak > len(dispatched_ids))
+            ):
+                inventory_reasons.append("invalid_observed_peak_concurrency")
+            provider_latency_sum_ms = sum(
+                float(_number(attempt.get("latency_ms")))
+                for attempt in task_attempts
+            )
+            provider_attempt_count = len(task_attempts)
+            unique_unit_count = len(
+                {
+                    str(attempt.get("unit_id"))
+                    for attempt in task_attempts
+                    if attempt.get("unit_id") is not None
+                }
+            )
+            worker_busy_ms = sum(
+                max(
+                    0.0,
+                    float(_observed_time_ms(attempt["ended_at"]) or 0.0)
+                    - float(_observed_time_ms(attempt["started_at"]) or 0.0),
+                )
+                for attempt in task_attempts
+                if isinstance(attempt.get("started_at"), str)
+                and isinstance(attempt.get("ended_at"), str)
+            )
+            worker_count = int(condition.get("worker_count", 1))
+            source.append(
+                _with_specialty_eligibility(
+                    condition_row,
+                    inventory_reasons,
+                    {
+                        **condition_row,
+                        "task_count": 1,
+                        "completed_root_count": int(
+                            _status(task.get("root_status")) == "completed"
+                        ),
+                        "failed_root_count": int(
+                            _status(task.get("root_status")) != "completed"
+                        ),
+                        "completion_rate": float(
+                            _status(task.get("root_status")) == "completed"
+                        ),
+                        "accepted_validity_rate": float(
+                            task.get("accepted_validity") is True
+                        ),
+                        "case_id": str(task.get("case_id") or task_id),
+                        "task_id": task_id,
+                        "run_id": run_id,
+                        "factor_position_quantile": task.get(
+                            "factor_position_quantile"
+                        ),
+                        "planned_ai_unit_count": len(planned_ids),
+                        "executed_ai_unit_count": len(dispatched_ids),
+                        "early_stop_unscheduled_count": len(unscheduled_ids),
+                        "in_flight_after_witness_count": len(in_flight_ids),
+                        "observed_peak_concurrency": peak,
+                        "wall_clock_ms": wall_clock_ms,
+                        "wall_clock_source": (
+                            "runtime_observation"
+                            if _observed_time_ms(
+                                observation.get("runtime_wall_clock_ms")
+                            )
+                            is not None
+                            else "worker_execution_intervals"
+                            if interval_metrics is not None
+                            else "insufficient_root_wall_clock_evidence"
+                        ),
+                        "critical_path_ms": critical_path["critical_path_ms"],
+                        "critical_path_source": critical_path[
+                            "critical_path_source"
+                        ],
+                        "critical_path_evidence_refs": critical_path[
+                            "critical_path_evidence_refs"
+                        ],
+                        "provider_latency_sum_ms": provider_latency_sum_ms,
+                        "provider_attempt_count": provider_attempt_count,
+                        "total_tokens": sum(
+                            int(_number(attempt.get("total_tokens")))
+                            for attempt in task_attempts
+                        ),
+                        "total_cost_estimate": sum(
+                            float(_number(attempt.get("cost_estimate")))
+                            for attempt in task_attempts
+                        ),
+                        "cost": sum(
+                            float(_number(attempt.get("cost_estimate")))
+                            for attempt in task_attempts
+                        ),
+                        "http_429_count": sum(
+                            attempt.get("error_kind") in {"rate_limited", "429"}
+                            for attempt in task_attempts
+                        ),
+                        "rate_limited_attempt_count": sum(
+                            attempt.get("error_kind") in {"rate_limited", "429"}
+                            for attempt in task_attempts
+                        ),
+                        "retry_count": max(
+                            0,
+                            provider_attempt_count - unique_unit_count,
+                        ),
+                        "retry_attempt_count": max(
+                            0,
+                            provider_attempt_count - unique_unit_count,
+                        ),
+                        "worker_utilization": (
+                            min(
+                                1.0,
+                                worker_busy_ms
+                                / (wall_clock_ms * worker_count),
+                            )
+                            if wall_clock_ms is not None and wall_clock_ms > 0
+                            else None
+                        ),
+                        "row_scope": "root_run",
+                    },
+                )
+            )
+    baselines: dict[tuple[str, int], float] = {}
     for row in source:
-        if row["worker_count"] == 1:
-            baselines[_scalability_key(row)] = float(row["wall_clock_ms"])
+        if (
+            row["worker_count"] == 1
+            and isinstance(row.get("wall_clock_ms"), (int, float))
+            and not isinstance(row.get("wall_clock_ms"), bool)
+        ):
+            baselines[(str(row["case_id"]), int(row["repeat_id"]))] = float(
+                row["wall_clock_ms"]
+            )
     result: list[dict[str, Any]] = []
     for row in source:
-        baseline = baselines.get(_scalability_key(row))
-        wall_clock = float(row["wall_clock_ms"])
+        baseline = baselines.get(
+            (str(row["case_id"]), int(row["repeat_id"]))
+        )
+        wall_clock = (
+            float(row["wall_clock_ms"])
+            if isinstance(row.get("wall_clock_ms"), (int, float))
+            and not isinstance(row.get("wall_clock_ms"), bool)
+            else 0.0
+        )
         speedup = (
             baseline / wall_clock
             if baseline is not None and wall_clock > 0
@@ -234,16 +561,23 @@ def _exp2_rows(
         result.append(
             {
                 **row,
+                "throughput": (
+                    row["executed_ai_unit_count"] / (wall_clock / 1000.0)
+                    if wall_clock > 0
+                    else None
+                ),
                 "throughput_roots_per_second": (
                     row["completed_root_count"] / (wall_clock / 1000.0)
                     if wall_clock > 0
                     else None
                 ),
                 "speedup": speedup,
+                "parallel_efficiency": (
+                    speedup / row["worker_count"] if speedup is not None else None
+                ),
                 "efficiency": (
                     speedup / row["worker_count"] if speedup is not None else None
                 ),
-                "critical_path_source": "dependency_and_merge_gate_events",
                 "provider_latency_is_wall_clock": False,
             }
         )
@@ -261,23 +595,73 @@ def _exp3_rows(
         row = dict(rows[condition_id])
         faults = bundle["faults"]
         events = bundle["events"]
-        injected = len(faults)
-        detected = sum(
-            fault.get("detected") is True
-            or fault.get("canonical_pollution") is False
-            for fault in faults
-        )
-        false_accept = sum(fault.get("canonical_pollution") is True for fault in faults)
-        recovery_required = sum(
-            fault.get("recovery_required") is True
-            or fault.get("requires_replacement") is True
-            for fault in faults
-        )
-        recovered = sum(
-            event.get("event_type") == "REPLACEMENT_ACCEPTED" for event in events
-        )
-        worker_faults = [fault for fault in faults if "worker_pid" in fault]
+        attempts = bundle["attempts"]
         tasks = bundle["tasks"]
+        outcomes, outcome_reasons = _exp3_fault_outcomes(
+            faults=faults,
+            attempts=attempts,
+            events=events,
+        )
+        injected = len(faults)
+        expected_faults = (
+            bundle["condition"].get("fault_type") == "worker_death"
+            or float(bundle["condition"].get("fault_rate", 0.0)) > 0
+        )
+        if expected_faults and not faults:
+            outcome_reasons.append("missing_fault_outcome_evidence")
+        detected_values = [outcome["detected"] for outcome in outcomes]
+        false_accept_values = [
+            outcome["wrongly_canonicalized"] for outcome in outcomes
+        ]
+        recoverable_values = [outcome["recoverable"] for outcome in outcomes]
+        recovered_values = [outcome["recovered"] for outcome in outcomes]
+        complete_outcomes = sum(
+            all(
+                outcome[field_name] is not None
+                for field_name in (
+                    "detected",
+                    "wrongly_canonicalized",
+                    "recoverable",
+                    "recovered",
+                )
+            )
+            for outcome in outcomes
+        )
+        worker_faults = [
+            fault
+            for fault in faults
+            if fault.get("fault_type") == "worker_death"
+            or fault.get("schema_version") == "tokenshare.paper_worker_death.v1"
+        ]
+        progress, progress_reasons = _worker_kill_progress_metrics(worker_faults)
+        outcome_reasons.extend(progress_reasons)
+        if bundle["condition"].get("fault_type") == "worker_death":
+            worker_death_metrics, worker_death_reasons = (
+                _worker_death_recovery_metrics(
+                    condition=bundle["condition"],
+                    tasks=tasks,
+                    attempts=attempts,
+                    worker_faults=worker_faults,
+                    events=events,
+                )
+            )
+            outcome_reasons.extend(worker_death_reasons)
+        else:
+            worker_death_metrics = {
+                "dead_worker_count": None,
+                "actual_dead_worker_count": None,
+                "target_dead_worker_count": None,
+                "kill_progress": None,
+                "target_kill_progress_percent": None,
+                "coordinator_continued": None,
+                "required_slot_count": None,
+                "recovered_slot_count": None,
+                "result_completeness_rate": None,
+                "result_completeness_applicability": "not_applicable",
+                "root_output_complete": None,
+                "accepted_validity": None,
+                "worker_death_evidence_refs": [],
+            }
         baseline_manifest = next(
             (
                 task.get("matched_baseline")
@@ -286,67 +670,998 @@ def _exp3_rows(
             ),
             {},
         )
-        baseline_condition_id = baseline_manifest.get("condition_id")
-        baseline_row = rows.get(str(baseline_condition_id))
+        baseline_condition_id = next(
+            (
+                task.get("matched_baseline_condition_id")
+                for task in tasks
+                if isinstance(task.get("matched_baseline_condition_id"), str)
+            ),
+            baseline_manifest.get("condition_id"),
+        )
+        baseline_reasons: list[str] = []
+        current_condition_id = str(bundle["condition"].get("condition_id"))
+        if str(baseline_condition_id) == current_condition_id:
+            baseline_row = None
+            baseline_reasons.append("self_matched_baseline_forbidden")
+            baseline_wall = None
+            baseline_tokens = None
+            baseline_cost = None
+            baseline_latency = None
+            baseline_source = "not_available"
+        else:
+            baseline_row = rows.get(str(baseline_condition_id))
         if baseline_row is not None:
             baseline_wall = float(baseline_row["wall_clock_ms"])
             baseline_tokens = int(baseline_row["total_tokens"])
             baseline_cost = float(baseline_row["total_cost_estimate"])
+            baseline_latency = float(baseline_row["provider_latency_sum_ms"])
             baseline_source = "matched_condition_evidence"
-        else:
-            baseline_wall = sum(
-                float(_number(task.get("matched_baseline_wall_clock_ms")))
-                for task in tasks
+        elif not baseline_reasons:
+            baseline_metrics, baseline_reasons = _dedicated_baseline_metrics(
+                suite_root=Path(bundle["suite_root"]),
+                tasks=tasks,
+                condition=bundle["condition"],
             )
-            baseline_tokens = sum(
-                int(_number(task.get("matched_baseline_total_tokens")))
-                for task in tasks
-            )
-            baseline_cost = sum(
-                float(_number(task.get("matched_baseline_cost_estimate")))
-                for task in tasks
-            )
-            baseline_source = (
-                "worker_death_pre_harness_snapshot"
-                if baseline_manifest
-                else "not_available"
-            )
-        wall_delta = float(row["wall_clock_ms"]) - baseline_wall
-        token_delta = int(row["total_tokens"]) - baseline_tokens
-        cost_delta = float(row["total_cost_estimate"]) - baseline_cost
+            if baseline_metrics is None:
+                baseline_wall = None
+                baseline_tokens = None
+                baseline_cost = None
+                baseline_latency = None
+                baseline_source = "not_available"
+            else:
+                baseline_wall = baseline_metrics["wall_clock_ms"]
+                baseline_tokens = baseline_metrics["total_tokens"]
+                baseline_cost = baseline_metrics["total_cost_estimate"]
+                baseline_latency = baseline_metrics["provider_latency_sum_ms"]
+                baseline_source = "dedicated_condition_evidence"
+        specialty_reasons = list(
+            dict.fromkeys([*outcome_reasons, *baseline_reasons])
+        )
+        wall_delta = (
+            float(row["wall_clock_ms"]) - float(baseline_wall)
+            if baseline_wall is not None
+            else None
+        )
+        token_delta = (
+            int(row["total_tokens"]) - int(baseline_tokens)
+            if baseline_tokens is not None
+            else None
+        )
+        cost_delta = (
+            float(row["total_cost_estimate"]) - float(baseline_cost)
+            if baseline_cost is not None
+            else None
+        )
+        latency_delta = (
+            float(row["provider_latency_sum_ms"]) - float(baseline_latency)
+            if baseline_latency is not None
+            else None
+        )
         result.append(
-            {
+            _with_specialty_eligibility(row, specialty_reasons, {
                 **row,
                 "injected_fault_count": injected,
-                "detection_rate": _rate(detected, injected),
-                "false_accept_rate": _rate(false_accept, injected),
-                "recovery_rate": _rate(recovered, recovery_required),
+                "detected_fault_count": _complete_boolean_sum(detected_values),
+                "detection_rate": _complete_boolean_rate(detected_values),
+                "wrongly_canonicalized_count": _complete_boolean_sum(
+                    false_accept_values
+                ),
+                "false_accept_rate": _complete_boolean_rate(
+                    false_accept_values
+                ),
+                "recoverable_fault_count": _complete_boolean_sum(
+                    recoverable_values
+                ),
+                "recovered_fault_count": _complete_boolean_sum(
+                    recovered_values
+                ),
+                "recovery_rate": _recovery_rate(
+                    recoverable_values,
+                    recovered_values,
+                ),
+                "outcome_evidence_complete": (
+                    injected == complete_outcomes and not outcome_reasons
+                ),
+                "evidence_completeness_rate": _rate(
+                    complete_outcomes,
+                    injected,
+                ),
+                "recovery_latency_ms": _mean_or_none(
+                    [
+                        float(outcome["recovery_latency_ms"])
+                        for outcome in outcomes
+                        if outcome["recovered"] is True
+                        and outcome["recovery_latency_ms"] is not None
+                    ]
+                ),
+                "reassignment_count": sum(
+                    outcome["reassignment_count"] for outcome in outcomes
+                ),
+                "wasted_actual_tokens": sum(
+                    outcome["wasted_actual_tokens"] for outcome in outcomes
+                ),
                 "worker_death_count": len(worker_faults),
                 "worker_replacement_complete_rate": _rate(
-                    sum(
-                        fault.get("replacement_process_exitcode") == 0
-                        and fault.get("coordinator", {}).get("survived") is True
-                        for fault in worker_faults
-                    ),
+                    sum(value is True for value in recovered_values),
                     len(worker_faults),
                 ),
+                **progress,
+                **worker_death_metrics,
                 "matched_baseline_condition_id": baseline_condition_id,
                 "matched_baseline_source": baseline_source,
+                "matched_baseline_wall_clock_ms": baseline_wall,
+                "matched_baseline_total_tokens": baseline_tokens,
+                "matched_baseline_total_cost_estimate": baseline_cost,
+                "matched_baseline_provider_latency_ms": baseline_latency,
                 "wall_clock_overhead_ms": wall_delta,
                 "wall_clock_overhead_ratio": (
-                    wall_delta / baseline_wall if baseline_wall > 0 else None
+                    wall_delta / baseline_wall
+                    if wall_delta is not None
+                    and baseline_wall is not None
+                    and baseline_wall > 0
+                    else None
                 ),
                 "token_overhead": token_delta,
                 "token_overhead_ratio": (
-                    token_delta / baseline_tokens if baseline_tokens > 0 else None
+                    token_delta / baseline_tokens
+                    if token_delta is not None
+                    and baseline_tokens is not None
+                    and baseline_tokens > 0
+                    else None
                 ),
                 "cost_overhead_delta": cost_delta,
                 "cost_overhead_ratio": (
-                    cost_delta / baseline_cost if baseline_cost > 0 else None
+                    cost_delta / baseline_cost
+                    if cost_delta is not None
+                    and baseline_cost is not None
+                    and baseline_cost > 0
+                    else None
+                ),
+                "provider_latency_overhead_ms": latency_delta,
+                "provider_latency_overhead_ratio": (
+                    latency_delta / baseline_latency
+                    if latency_delta is not None
+                    and baseline_latency is not None
+                    and baseline_latency > 0
+                    else None
+                ),
+            })
+        )
+        if bundle["condition"].get("fault_type") == "worker_death":
+            result.extend(
+                _worker_death_task_rows(
+                    base_row=row,
+                    condition=bundle["condition"],
+                    tasks=tasks,
+                    attempts=attempts,
+                    worker_faults=worker_faults,
+                    events=events,
+                )
+            )
+    return result
+
+
+def _exp3_fault_outcomes(
+    *,
+    faults: Sequence[Mapping[str, Any]],
+    attempts: Sequence[Mapping[str, Any]],
+    events: Sequence[Mapping[str, Any]],
+) -> tuple[list[dict[str, Any]], list[str]]:
+    attempts_by_id = {
+        str(attempt["attempt_id"]): attempt
+        for attempt in attempts
+        if isinstance(attempt.get("attempt_id"), str)
+        and attempt.get("attempt_id")
+    }
+    canonical_attempt_ids: set[str] = set()
+    canonical_unit_ids: set[str] = set()
+    completion_unit_ids: set[str] = set()
+    verification_rejections: set[str] = set()
+    late_rejections: set[str] = set()
+    recovery_by_attempt: dict[str, list[Mapping[str, Any]]] = defaultdict(list)
+    for event in events:
+        event_type = str(event.get("event_type") or "")
+        payload = event.get("payload")
+        payload = payload if isinstance(payload, Mapping) else {}
+        canonical = payload.get("canonical_selection")
+        canonical = canonical if isinstance(canonical, Mapping) else payload
+        selected_attempt_id = canonical.get("selected_attempt_id")
+        if (
+            event_type == "CANONICAL_OUTPUTS_BOUND"
+            and isinstance(selected_attempt_id, str)
+            and selected_attempt_id
+            and _event_has_reference(event)
+        ):
+            canonical_attempt_ids.add(selected_attempt_id)
+            unit_id = canonical.get("unit_id") or payload.get("unit_id")
+            if isinstance(unit_id, str) and unit_id:
+                canonical_unit_ids.add(unit_id)
+        if event_type == "VERIFICATION_RECORDED":
+            attempt_id = payload.get("attempt_id")
+            report = payload.get("verification_report")
+            report = report if isinstance(report, Mapping) else {}
+            status = _status(
+                payload.get("status")
+                or report.get("status")
+                or payload.get("new_state")
+            )
+            if (
+                isinstance(attempt_id, str)
+                and attempt_id
+                and status
+                and status
+                not in {"passed", "accepted", "succeeded", "completed"}
+                and _event_has_reference(event)
+            ):
+                verification_rejections.add(attempt_id)
+        if event_type in {
+            "LATE_SUBMISSION_REJECTED",
+            "EXECUTION_SUBMISSION_REJECTED",
+        }:
+            attempt_id = payload.get("attempt_id")
+            if (
+                isinstance(attempt_id, str)
+                and attempt_id
+                and _event_has_reference(event)
+            ):
+                late_rejections.add(attempt_id)
+        if event_type == "RECOVERY_ACTION_RECORDED":
+            action = payload.get("recovery_action")
+            action = action if isinstance(action, Mapping) else {}
+            attempt_id = action.get("attempt_id")
+            if (
+                isinstance(attempt_id, str)
+                and attempt_id
+                and _event_has_reference(event)
+            ):
+                recovery_by_attempt[attempt_id].append(event)
+        if event_type == "TASK_UNIT_STATE_CHANGED":
+            state_change = payload.get("task_unit_state_change")
+            state_change = (
+                state_change if isinstance(state_change, Mapping) else payload
+            )
+            if _status(state_change.get("new_state")).lower() == "completed":
+                unit_id = (
+                    state_change.get("unit_id")
+                    or payload.get("unit_id")
+                    or event.get("object_id")
+                )
+                if (
+                    isinstance(unit_id, str)
+                    and unit_id
+                    and _event_has_reference(event)
+                ):
+                    completion_unit_ids.add(unit_id)
+
+    outcomes: list[dict[str, Any]] = []
+    reasons: list[str] = []
+    for fault in faults:
+        dead_attempt = fault.get("dead_attempt")
+        dead_attempt = dead_attempt if isinstance(dead_attempt, Mapping) else {}
+        target_unit = fault.get("target_ai_unit")
+        target_unit = target_unit if isinstance(target_unit, Mapping) else {}
+        attempt_id = fault.get("attempt_id") or dead_attempt.get("attempt_id")
+        unit_id = fault.get("unit_id") or target_unit.get("unit_id")
+        if not isinstance(attempt_id, str) or not attempt_id:
+            reasons.append("missing_fault_attempt_evidence")
+            outcomes.append(_empty_exp3_fault_outcome())
+            continue
+        if not isinstance(unit_id, str) or not unit_id:
+            reasons.append("missing_fault_unit_evidence")
+            outcomes.append(_empty_exp3_fault_outcome())
+            continue
+        attempt = attempts_by_id.get(attempt_id)
+        if attempt is None:
+            reasons.append("missing_fault_attempt_evidence")
+            outcomes.append(_empty_exp3_fault_outcome())
+            continue
+        recovery_events = recovery_by_attempt.get(attempt_id, [])
+        rejected = (
+            attempt_id in verification_rejections
+            or attempt_id in late_rejections
+            or bool(recovery_events)
+        )
+        canonical_for_unit = (
+            unit_id in canonical_unit_ids
+            or any(
+                str(item.get("unit_id") or "") == unit_id
+                and item.get("canonical") is True
+                for item in attempts
+            )
+        )
+        if not canonical_for_unit:
+            wrongly_canonicalized: bool | None = None
+            reasons.append("missing_canonical_event_evidence")
+        else:
+            wrongly_canonicalized = (
+                attempt_id in canonical_attempt_ids
+                or attempt.get("canonical") is True
+            )
+        detected: bool | None
+        if rejected:
+            detected = True
+        elif wrongly_canonicalized is True:
+            detected = False
+        else:
+            detected = None
+            reasons.append("missing_detection_event_evidence")
+        retry_allowed = any(
+            _recovery_action(event).get("retry_allowed") is True
+            for event in recovery_events
+        )
+        replacements = [
+            item
+            for item in attempts
+            if item.get("attempt_id") != attempt_id
+            and str(item.get("unit_id") or "") == unit_id
+        ]
+        if detected is False:
+            recoverable: bool | None = False
+        elif recovery_events and retry_allowed and replacements:
+            recoverable = True
+        elif detected is True:
+            recoverable = None
+            reasons.append("missing_recovery_event_evidence")
+        else:
+            recoverable = None
+        successful_replacements = [
+            item
+            for item in replacements
+            if _status(item.get("attempt_status")) in {"succeeded", "completed"}
+        ]
+        canonical_replacement = next(
+            (
+                item
+                for item in successful_replacements
+                if item.get("attempt_id") in canonical_attempt_ids
+                or item.get("canonical") is True
+            ),
+            None,
+        )
+        if recoverable is False:
+            recovered: bool | None = False
+        elif recoverable is True:
+            if canonical_replacement is None:
+                recovered = None
+                reasons.append("missing_canonical_event_evidence")
+            elif unit_id not in completion_unit_ids:
+                recovered = None
+                reasons.append("missing_completion_event_evidence")
+            else:
+                recovered = True
+        else:
+            recovered = None
+        recovery_latency_ms = None
+        if recovered is True and canonical_replacement is not None:
+            ended_at = _observed_time_ms(attempt.get("ended_at"))
+            replacement_started_at = _observed_time_ms(
+                canonical_replacement.get("started_at")
+            )
+            if ended_at is None or replacement_started_at is None:
+                reasons.append("missing_recovery_timing_evidence")
+            else:
+                recovery_latency_ms = max(
+                    0.0,
+                    replacement_started_at - ended_at,
+                )
+        outcomes.append(
+            {
+                "detected": detected,
+                "wrongly_canonicalized": wrongly_canonicalized,
+                "recoverable": recoverable,
+                "recovered": recovered,
+                "recovery_latency_ms": recovery_latency_ms,
+                "reassignment_count": len(recovery_events),
+                "wasted_actual_tokens": int(
+                    _number(attempt.get("total_tokens"))
                 ),
             }
         )
-    return result
+    return outcomes, list(dict.fromkeys(reasons))
+
+
+def _empty_exp3_fault_outcome() -> dict[str, Any]:
+    return {
+        "detected": None,
+        "wrongly_canonicalized": None,
+        "recoverable": None,
+        "recovered": None,
+        "recovery_latency_ms": None,
+        "reassignment_count": 0,
+        "wasted_actual_tokens": 0,
+    }
+
+
+def _event_has_reference(event: Mapping[str, Any]) -> bool:
+    event_id = event.get("event_id")
+    return isinstance(event_id, str) and bool(event_id)
+
+
+def _recovery_action(event: Mapping[str, Any]) -> Mapping[str, Any]:
+    payload = event.get("payload")
+    payload = payload if isinstance(payload, Mapping) else {}
+    action = payload.get("recovery_action")
+    return action if isinstance(action, Mapping) else {}
+
+
+def _complete_boolean_sum(values: Sequence[bool | None]) -> int | None:
+    if not values or any(value is None for value in values):
+        return None
+    return sum(value is True for value in values)
+
+
+def _complete_boolean_rate(values: Sequence[bool | None]) -> float | None:
+    count = _complete_boolean_sum(values)
+    return count / len(values) if count is not None and values else None
+
+
+def _recovery_rate(
+    recoverable_values: Sequence[bool | None],
+    recovered_values: Sequence[bool | None],
+) -> float | None:
+    if (
+        not recoverable_values
+        or len(recoverable_values) != len(recovered_values)
+        or any(value is None for value in recoverable_values)
+        or any(value is None for value in recovered_values)
+    ):
+        return None
+    denominator = sum(value is True for value in recoverable_values)
+    if denominator == 0:
+        return None
+    return (
+        sum(
+            recoverable is True and recovered is True
+            for recoverable, recovered in zip(
+                recoverable_values,
+                recovered_values,
+                strict=True,
+            )
+        )
+        / denominator
+    )
+
+
+def _mean_or_none(values: Sequence[float]) -> float | None:
+    return sum(values) / len(values) if values else None
+
+
+def _worker_kill_progress_metrics(
+    worker_faults: Sequence[Mapping[str, Any]],
+) -> tuple[dict[str, Any], list[str]]:
+    empty = {
+        "kill_progress_target_ratio": None,
+        "kill_progress_actual_ratio_min": None,
+        "kill_progress_actual_ratio_max": None,
+        "kill_progress_actual_ratio_mean": None,
+        "kill_progress_completed_ai_unit_count": None,
+        "kill_progress_total_ai_unit_count": None,
+        "kill_progress_error_count": None,
+    }
+    if not worker_faults:
+        return empty, []
+    observations: list[dict[str, Any]] = []
+    for fault in worker_faults:
+        target_ratio = fault.get("kill_progress_target_ratio")
+        actual_ratio = fault.get("kill_progress_actual_ratio")
+        completed_count = fault.get("kill_progress_completed_ai_unit_count")
+        total_count = fault.get("kill_progress_total_ai_unit_count")
+        observed_at = fault.get("kill_progress_observed_at")
+        error = fault.get("kill_progress_error")
+        if (
+            isinstance(target_ratio, bool)
+            or not isinstance(target_ratio, (int, float))
+            or isinstance(actual_ratio, bool)
+            or not isinstance(actual_ratio, (int, float))
+            or isinstance(completed_count, bool)
+            or not isinstance(completed_count, int)
+            or isinstance(total_count, bool)
+            or not isinstance(total_count, int)
+            or not isinstance(observed_at, str)
+            or not observed_at
+            or total_count < 1
+            or completed_count < 0
+            or completed_count > total_count
+            or abs(actual_ratio - completed_count / total_count) > 1e-9
+            or actual_ratio < target_ratio
+        ):
+            return empty, ["missing_worker_kill_progress_evidence"]
+        observations.append(
+            {
+                "target_ratio": float(target_ratio),
+                "actual_ratio": float(actual_ratio),
+                "completed_count": completed_count,
+                "total_count": total_count,
+                "error": error,
+            }
+        )
+    target_ratios = {item["target_ratio"] for item in observations}
+    total_counts = {item["total_count"] for item in observations}
+    reasons = []
+    if len(target_ratios) != 1 or len(total_counts) != 1:
+        reasons.append("inconsistent_worker_kill_progress_evidence")
+    error_count = sum(item["error"] is not None for item in observations)
+    if error_count:
+        reasons.append("worker_kill_progress_observation_error")
+    actual_ratios = [item["actual_ratio"] for item in observations]
+    return {
+        "kill_progress_target_ratio": (
+            next(iter(target_ratios)) if len(target_ratios) == 1 else None
+        ),
+        "kill_progress_actual_ratio_min": min(actual_ratios),
+        "kill_progress_actual_ratio_max": max(actual_ratios),
+        "kill_progress_actual_ratio_mean": _mean_or_none(actual_ratios),
+        "kill_progress_completed_ai_unit_count": sum(
+            item["completed_count"] for item in observations
+        ),
+        "kill_progress_total_ai_unit_count": (
+            next(iter(total_counts)) if len(total_counts) == 1 else None
+        ),
+        "kill_progress_error_count": error_count,
+    }, reasons
+
+
+def _worker_death_recovery_metrics(
+    *,
+    condition: Mapping[str, Any],
+    tasks: Sequence[Mapping[str, Any]],
+    attempts: Sequence[Mapping[str, Any]],
+    worker_faults: Sequence[Mapping[str, Any]],
+    events: Sequence[Mapping[str, Any]],
+) -> tuple[dict[str, Any], list[str]]:
+    """只从死亡记录与死亡后的协议事件投影 worker-death 正式字段。"""
+
+    reasons: list[str] = []
+    evidence_refs: list[dict[str, Any]] = []
+    expected_dead = _first_int(
+        condition.get("dead_worker_count"),
+        condition.get("dead_worker_count_target"),
+        *(task.get("dead_worker_count_target") for task in tasks),
+    )
+    target_progress_percent = _first_number(
+        condition.get("kill_progress_percent"),
+        condition.get("kill_progress_target_percent"),
+        *(task.get("kill_progress_target_percent") for task in tasks),
+    )
+    if expected_dead is None or expected_dead < 1:
+        reasons.append("missing_worker_death_target_evidence")
+    if target_progress_percent is None:
+        reasons.append("missing_worker_kill_progress_target_evidence")
+
+    event_by_id = {
+        str(event["event_id"]): event
+        for event in events
+        if isinstance(event.get("event_id"), str) and event.get("event_id")
+    }
+    graphs: list[tuple[str, ...]] = []
+    actual_progress: list[float] = []
+    killed_units: set[str] = set()
+    replacement_attempt_by_unit: dict[str, str] = {}
+    coordinator_continued = bool(worker_faults)
+    for fault in worker_faults:
+        if fault.get("schema_version") != "tokenshare.paper_worker_death.v1":
+            reasons.append("worker_death_schema_mismatch")
+        record_ref = fault.get("record_ref")
+        if isinstance(record_ref, Mapping) and record_ref:
+            evidence_refs.append(dict(record_ref))
+        else:
+            reasons.append("missing_worker_death_record_ref")
+        target = fault.get("target_ai_unit")
+        target = target if isinstance(target, Mapping) else {}
+        unit_id = target.get("unit_id")
+        replacement = fault.get("replacement_attempt")
+        replacement = replacement if isinstance(replacement, Mapping) else {}
+        replacement_attempt_id = replacement.get("attempt_id")
+        if (
+            not isinstance(unit_id, str)
+            or not unit_id
+            or unit_id in killed_units
+            or replacement.get("unit_id") != unit_id
+            or not isinstance(replacement_attempt_id, str)
+            or not replacement_attempt_id
+        ):
+            reasons.append("invalid_worker_replacement_identity")
+        else:
+            killed_units.add(unit_id)
+            replacement_attempt_by_unit[unit_id] = replacement_attempt_id
+        death_exitcode = fault.get("worker_process_exitcode")
+        replacement_exitcode = fault.get("replacement_process_exitcode")
+        if (
+            not isinstance(death_exitcode, int)
+            or isinstance(death_exitcode, bool)
+            or death_exitcode == 0
+            or not isinstance(replacement_exitcode, int)
+            or isinstance(replacement_exitcode, bool)
+            or replacement_exitcode != 0
+        ):
+            reasons.append("worker_process_death_or_replacement_not_proven")
+
+        graph = fault.get("dependency_graph")
+        graph = graph if isinstance(graph, Mapping) else {}
+        unit_ids = _string_inventory(graph.get("unit_ids"))
+        graph_count = graph.get("expected_ai_unit_count")
+        if (
+            graph.get("schema_version")
+            != "tokenshare.paper_ai_unit_dependency_graph.v1"
+            or not isinstance(graph_count, int)
+            or isinstance(graph_count, bool)
+            or graph_count < 1
+            or len(unit_ids) != graph_count
+        ):
+            reasons.append("invalid_worker_death_task_graph")
+        else:
+            graphs.append(unit_ids)
+
+        actual_ratio = fault.get("kill_progress_actual_ratio")
+        if isinstance(actual_ratio, (int, float)) and not isinstance(
+            actual_ratio, bool
+        ):
+            actual_progress.append(float(actual_ratio))
+        else:
+            reasons.append("missing_worker_kill_progress_evidence")
+        if target_progress_percent is not None:
+            persisted_target = fault.get("kill_progress_target_ratio")
+            if (
+                not isinstance(persisted_target, (int, float))
+                or isinstance(persisted_target, bool)
+                or abs(float(persisted_target) - target_progress_percent / 100.0)
+                > 1e-9
+            ):
+                reasons.append("worker_kill_progress_target_mismatch")
+
+        killed_at = _observed_time_ms(fault.get("killed_at"))
+        referenced_ids = {
+            str(ref.get("event_id")) if isinstance(ref, Mapping) else str(ref)
+            for ref in fault.get("protocol_event_refs", ())
+            if (isinstance(ref, Mapping) and ref.get("event_id"))
+            or (isinstance(ref, str) and ref)
+        }
+        post_death_events = [
+            event_by_id[event_id]
+            for event_id in referenced_ids
+            if event_id in event_by_id
+            and killed_at is not None
+            and (_event_time_ms(event_by_id[event_id]) or float("-inf")) > killed_at
+            and event_by_id[event_id].get("event_type")
+            in {
+                "LEASE_STATE_CHANGED",
+                "RECOVERY_ACTION_RECORDED",
+                "EXECUTION_ATTEMPT_CREATED",
+                "EXECUTION_REQUESTED",
+                "TASK_UNIT_STATE_CHANGED",
+            }
+        ]
+        coordinator_continued = coordinator_continued and bool(post_death_events)
+        for event in post_death_events:
+            ref = _event_evidence_ref(event)
+            if ref is not None:
+                evidence_refs.append(ref)
+    if expected_dead is not None and len(worker_faults) != expected_dead:
+        reasons.append("actual_dead_worker_count_mismatch")
+    if worker_faults and not coordinator_continued:
+        reasons.append("coordinator_post_death_scheduling_not_proven")
+
+    graph_inventory = {graph for graph in graphs}
+    required_units = next(iter(graph_inventory)) if len(graph_inventory) == 1 else ()
+    if worker_faults and len(graph_inventory) != 1:
+        reasons.append("inconsistent_worker_death_task_graph")
+    required_slot_count = len(required_units) if required_units else None
+    merge_links = [
+        event for event in events if event.get("event_type") == "MERGE_TASK_LINK_RECORDED"
+    ]
+    merge_required_counts = {
+        _nested_mapping(event, "merge_task_link").get("required_slot_count")
+        for event in merge_links
+        if isinstance(
+            _nested_mapping(event, "merge_task_link").get("required_slot_count"),
+            int,
+        )
+    }
+    if (
+        required_slot_count is None
+        or merge_required_counts != {required_slot_count}
+        or not merge_links
+    ):
+        reasons.append("required_slot_inventory_not_proven")
+    for event in merge_links:
+        ref = _event_evidence_ref(event)
+        if ref is not None:
+            evidence_refs.append(ref)
+
+    attempts_by_id = {
+        str(attempt["attempt_id"]): attempt
+        for attempt in attempts
+        if isinstance(attempt.get("attempt_id"), str) and attempt.get("attempt_id")
+    }
+    canonical_by_unit: dict[str, str] = {}
+    for event in events:
+        if event.get("event_type") != "CANONICAL_OUTPUTS_BOUND":
+            continue
+        selection = _nested_mapping(event, "canonical_selection")
+        unit_id = selection.get("unit_id")
+        attempt_id = selection.get("selected_attempt_id")
+        if isinstance(unit_id, str) and isinstance(attempt_id, str):
+            canonical_by_unit[unit_id] = attempt_id
+            ref = _event_evidence_ref(event)
+            if ref is not None:
+                evidence_refs.append(ref)
+    recovered_units = {
+        unit_id
+        for unit_id in required_units
+        if (attempt_id := canonical_by_unit.get(unit_id)) in attempts_by_id
+        and (
+            unit_id not in replacement_attempt_by_unit
+            or replacement_attempt_by_unit[unit_id] == attempt_id
+        )
+    }
+    recovered_slot_count = len(recovered_units) if required_slot_count is not None else None
+    completeness_rate = _rate(recovered_slot_count, required_slot_count)
+    completeness_applicability = (
+        "observed"
+        if required_slot_count is not None and required_slot_count > 0
+        else "zero_denominator"
+        if required_slot_count == 0
+        else "insufficient_evidence"
+    )
+    if required_slot_count == 0:
+        reasons.append("zero_required_slot_denominator")
+    elif required_slot_count is not None and recovered_slot_count != required_slot_count:
+        reasons.append("worker_death_result_incomplete")
+
+    merge_records = [event for event in events if event.get("event_type") == "MERGE_RECORDED"]
+    for event in merge_records:
+        ref = _event_evidence_ref(event)
+        if ref is not None:
+            evidence_refs.append(ref)
+    root_ids = {
+        identity.get("root_unit_id")
+        for task in tasks
+        if isinstance((identity := task.get("runtime_generation_identity")), Mapping)
+        and isinstance(identity.get("root_unit_id"), str)
+    }
+    root_events = [
+        event
+        for event in events
+        if event.get("event_type") in {"ROOT_COMPLETED", "TASK_COMPLETED"}
+        or (
+            event.get("event_type") == "TASK_UNIT_STATE_CHANGED"
+            and _status(
+                _nested_mapping(event, "task_unit_state_change").get("new_state")
+            ).lower()
+            == "completed"
+            and (
+                not root_ids
+                or event.get("object_id") in root_ids
+                or _event_payload(event).get("unit_id") in root_ids
+            )
+        )
+    ]
+    for event in root_events:
+        ref = _event_evidence_ref(event)
+        if ref is not None:
+            evidence_refs.append(ref)
+    validity_values = [task.get("accepted_validity") for task in tasks]
+    accepted_validity = (
+        all(value is True for value in validity_values)
+        if validity_values and all(isinstance(value, bool) for value in validity_values)
+        else None
+    )
+    if accepted_validity is None:
+        reasons.append("missing_root_checker_validity_evidence")
+    root_output_complete = bool(
+        required_slot_count
+        and recovered_slot_count == required_slot_count
+        and merge_records
+        and root_events
+        and accepted_validity is not None
+    )
+    if not root_output_complete:
+        reasons.append("root_output_completion_not_proven")
+    return {
+        "dead_worker_count": len(worker_faults),
+        "actual_dead_worker_count": len(worker_faults),
+        "target_dead_worker_count": expected_dead,
+        "kill_progress": _mean_or_none(actual_progress),
+        "target_kill_progress_percent": target_progress_percent,
+        "coordinator_continued": coordinator_continued,
+        "required_slot_count": required_slot_count,
+        "recovered_slot_count": recovered_slot_count,
+        "result_completeness_rate": completeness_rate,
+        "result_completeness_applicability": completeness_applicability,
+        "root_output_complete": root_output_complete,
+        "accepted_validity": accepted_validity,
+        "worker_death_evidence_refs": _stable_evidence_refs(evidence_refs),
+    }, list(dict.fromkeys(reasons))
+
+
+def _worker_death_task_rows(
+    *,
+    base_row: Mapping[str, Any],
+    condition: Mapping[str, Any],
+    tasks: Sequence[Mapping[str, Any]],
+    attempts: Sequence[Mapping[str, Any]],
+    worker_faults: Sequence[Mapping[str, Any]],
+    events: Sequence[Mapping[str, Any]],
+) -> list[dict[str, Any]]:
+    """逐 task 投影 worker-death 恢复事实，不用条件汇总替代单题证据。"""
+
+    rows: list[dict[str, Any]] = []
+    for task in tasks:
+        task_id = str(task.get("task_id") or "")
+        task_attempts = _records_for_task(attempts, task, tasks)
+        task_faults = _records_for_task(worker_faults, task, tasks)
+        task_events = _records_for_task(events, task, tasks)
+        metrics, reasons = _worker_death_recovery_metrics(
+            condition=condition,
+            tasks=[task],
+            attempts=task_attempts,
+            worker_faults=task_faults,
+            events=task_events,
+        )
+        completed = int(_status(task.get("root_status")) == "completed")
+        rows.append(
+            _with_specialty_eligibility(
+                base_row,
+                reasons,
+                {
+                    **dict(base_row),
+                    "row_scope": "task",
+                    "case_id": str(task.get("case_id") or task_id),
+                    "task_id": task_id,
+                    "task_count": 1,
+                    "completed_root_count": completed,
+                    "failed_root_count": 1 - completed,
+                    "completion_rate": float(completed),
+                    "provider_attempt_count": len(task_attempts),
+                    "total_tokens": sum(
+                        int(_number(attempt.get("total_tokens")))
+                        for attempt in task_attempts
+                    ),
+                    "total_cost_estimate": sum(
+                        float(_number(attempt.get("cost_estimate")))
+                        for attempt in task_attempts
+                    ),
+                    **metrics,
+                },
+            )
+        )
+    return rows
+
+
+def _first_int(*values: Any) -> int | None:
+    return next(
+        (
+            value
+            for value in values
+            if isinstance(value, int) and not isinstance(value, bool)
+        ),
+        None,
+    )
+
+
+def _first_number(*values: Any) -> float | None:
+    value = next(
+        (
+            value
+            for value in values
+            if isinstance(value, (int, float)) and not isinstance(value, bool)
+        ),
+        None,
+    )
+    return float(value) if value is not None else None
+
+
+def _dedicated_baseline_metrics(
+    *,
+    suite_root: Path,
+    tasks: Sequence[Mapping[str, Any]],
+    condition: Mapping[str, Any],
+) -> tuple[dict[str, Any] | None, list[str]]:
+    references = [
+        task.get("matched_baseline_evidence_ref")
+        for task in tasks
+        if isinstance(task.get("matched_baseline_evidence_ref"), Mapping)
+    ]
+    if len(references) != len(tasks) or not references:
+        return None, ["missing_matched_baseline_evidence"]
+    bodies: list[Mapping[str, Any]] = []
+    for task, reference in zip(tasks, references, strict=True):
+        relative_path = reference.get("path")
+        if not isinstance(relative_path, str) or not relative_path:
+            return None, ["missing_matched_baseline_evidence"]
+        path = suite_root / relative_path
+        if (
+            not path.is_file()
+            or reference.get("content_hash")
+            != "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
+        ):
+            return None, ["invalid_matched_baseline_evidence_ref"]
+        body = _read_json(path)
+        condition_id = task.get("matched_baseline_condition_id")
+        if (
+            body.get("schema_version")
+            != "tokenshare.paper_exp3_baseline_evidence.v1"
+            or body.get("condition_id") != condition_id
+            or reference.get("condition_id") != condition_id
+            or body.get("case_id") != task.get("task_id")
+            or reference.get("case_id") != task.get("task_id")
+            or body.get("repeat_id") != condition.get("repeat_id", 0)
+            or body.get("seed") != condition.get("seed")
+            or body.get("worker_count") != condition.get("worker_count")
+        ):
+            return None, ["matched_baseline_identity_mismatch"]
+        bodies.append(body)
+    totals = {
+        "wall_clock_ms": 0.0,
+        "total_tokens": 0,
+        "total_cost_estimate": 0.0,
+        "provider_latency_sum_ms": 0.0,
+    }
+    for body in bodies:
+        task = body.get("task_result")
+        task = task if isinstance(task, Mapping) else {}
+        attempts = body.get("attempt_results")
+        attempts = (
+            attempts
+            if isinstance(attempts, Sequence)
+            and not isinstance(attempts, (str, bytes))
+            else ()
+        )
+        events = body.get("event_records")
+        events = (
+            events
+            if isinstance(events, Sequence)
+            and not isinstance(events, (str, bytes))
+            else ()
+        )
+        if (
+            _status(task.get("root_status")) != "completed"
+            or not attempts
+            or not events
+            or not any(attempt.get("canonical") is True for attempt in attempts)
+        ):
+            return None, ["incomplete_matched_baseline_evidence"]
+        wall_clock_ms = _observed_time_ms(task.get("wall_clock_ms"))
+        if wall_clock_ms is None:
+            run_evidence = body.get("run_evidence")
+            run_evidence = (
+                run_evidence if isinstance(run_evidence, Mapping) else {}
+            )
+            protocol_runtime = run_evidence.get("protocol_runtime")
+            protocol_runtime = (
+                protocol_runtime
+                if isinstance(protocol_runtime, Mapping)
+                else {}
+            )
+            runtime_observation = protocol_runtime.get("runtime_observation")
+            runtime_observation = (
+                runtime_observation
+                if isinstance(runtime_observation, Mapping)
+                else {}
+            )
+            wall_clock_ms = _observed_time_ms(
+                runtime_observation.get("runtime_wall_clock_ms")
+            )
+        if wall_clock_ms is None:
+            intervals = _worker_interval_metrics(attempts)
+            wall_clock_ms = (
+                float(intervals["wall_clock_ms"])
+                if intervals is not None
+                else None
+            )
+        if wall_clock_ms is None:
+            return None, ["missing_matched_baseline_timing_evidence"]
+        totals["wall_clock_ms"] += wall_clock_ms
+        totals["total_tokens"] += sum(
+            int(_number(attempt.get("total_tokens"))) for attempt in attempts
+        )
+        totals["total_cost_estimate"] += sum(
+            float(_number(attempt.get("cost_estimate"))) for attempt in attempts
+        )
+        totals["provider_latency_sum_ms"] += sum(
+            float(_number(attempt.get("latency_ms"))) for attempt in attempts
+        )
+    return totals, []
 
 
 def _exp4_rows(
@@ -357,48 +1672,844 @@ def _exp4_rows(
     for condition_id, bundle in bundles.items():
         if bundle["condition"]["experiment_id"] != EXP4:
             continue
-        tasks = bundle["tasks"]
+        base_row = rows[condition_id]
+        task_rows = [
+            _exp4_task_row(
+                base_row=base_row,
+                task=task,
+                attempts=bundle["attempts"],
+                events=bundle["events"],
+                artifacts=bundle.get("artifacts", ()),
+            )
+            for task in bundle["tasks"]
+        ]
         result.append(
-            {
-                **dict(rows[condition_id]),
-                "wrong_canonical_count": sum(
-                    task.get("canonical_accepted_by_ablation") is True
-                    and task.get("final_deterministic_validity") is False
-                    for task in tasks
-                ),
-                "raw_only_count": sum(
-                    task.get("ablation_runtime_flags", {}).get("raw_only_exposed")
-                    is True
-                    for task in tasks
-                ),
-                "stuck_count": sum(
-                    task.get("ablation_runtime_flags", {}).get("stuck_after_rejection")
-                    is True
-                    for task in tasks
-                ),
-                "premature_merge_count": sum(
-                    task.get("ablation_runtime_flags", {}).get(
-                        "premature_merge_attempted"
-                    )
-                    is True
-                    for task in tasks
-                ),
-                "slot_mismatch_count": sum(
-                    task.get("ablation_runtime_flags", {}).get(
-                        "slot_mismatch_exposed"
-                    )
-                    is True
-                    for task in tasks
-                ),
-                "exposed_error_count": sum(
-                    int(_number(task.get("exposed_error_count"))) for task in tasks
-                ),
-                "escaped_error_count": sum(
-                    int(_number(task.get("escaped_error_count"))) for task in tasks
-                ),
-            }
+            _exp4_rollup_row(
+                base_row=base_row,
+                source_rows=task_rows,
+                row_scope="repeat_condition",
+            )
         )
+        result.extend(task_rows)
     return result
+
+
+def _exp4_task_row(
+    *,
+    base_row: Mapping[str, Any],
+    task: Mapping[str, Any],
+    attempts: Sequence[Mapping[str, Any]],
+    events: Sequence[Mapping[str, Any]] = (),
+    artifacts: Sequence[Mapping[str, Any]] = (),
+) -> dict[str, Any]:
+    task_id = str(task.get("task_id") or task.get("case_id") or "unknown")
+    task_attempts = [
+        attempt
+        for attempt in attempts
+        if str(attempt.get("task_id") or task_id) == task_id
+    ]
+    runtime_audit = _exp4_runtime_audit(
+        base_row=base_row,
+        task=task,
+        task_attempts=task_attempts,
+        events=events,
+        artifacts=artifacts,
+    )
+    attempt_observations = runtime_audit["attempt_observations"]
+    hook_observations = runtime_audit["hook_observations"]
+
+    invalid_attempt_ids = {
+        str(observation.get("attempt_id") or f"observation-{index}")
+        for index, observation in enumerate(attempt_observations)
+        if observation.get("independent_candidate_validity") is False
+    }
+    wrong_canonical_ids = {
+        str(observation.get("attempt_id") or f"observation-{index}")
+        for index, observation in enumerate(attempt_observations)
+        if observation.get("independent_candidate_validity") is False
+        and bool(observation.get("canonical_output_refs"))
+    }
+    raw_only_observations = [
+        observation
+        for observation in attempt_observations
+        if observation.get("raw_output_ref") is not None
+        and observation.get("candidate_output_ref")
+        == observation.get("raw_output_ref")
+    ]
+    raw_only_acceptances = [
+        observation
+        for observation in raw_only_observations
+        if bool(observation.get("canonical_output_refs"))
+    ]
+    requeue_gate_observed = any(
+        observation.get("event_type") == "EXPERIMENT_ABLATION_GATE_APPLIED"
+        and observation.get("disabled_mechanism") == "requeue"
+        and bool(observation.get("protocol_event_refs"))
+        for observation in hook_observations
+    )
+    stuck_task_count = int(
+        requeue_gate_observed
+        and _status(task.get("root_status")) != "completed"
+    )
+    premature_merge_observations = [
+        observation
+        for observation in hook_observations
+        if observation.get("event_type")
+        == "EXPERIMENT_PREMATURE_MERGE_ATTEMPTED"
+    ]
+    premature_merge_failure_count = sum(
+        observation.get("root_check_passed") is False
+        for observation in premature_merge_observations
+    )
+    premature_merge_escape_count = sum(
+        observation.get("root_check_passed") is True
+        for observation in premature_merge_observations
+    )
+
+    exposed_error_count = (
+        len(invalid_attempt_ids)
+        + len(premature_merge_observations)
+        + int(stuck_task_count > 0 and not invalid_attempt_ids)
+    )
+    escaped_error_count = (
+        len(wrong_canonical_ids) + premature_merge_escape_count
+    )
+    applicability, escape_rate = _exp4_error_escape(
+        exposed_error_count=exposed_error_count,
+        escaped_error_count=escaped_error_count,
+        stuck_task_count=stuck_task_count,
+        wrong_canonical_count=len(wrong_canonical_ids),
+        premature_merge_attempt_count=len(premature_merge_observations),
+    )
+    evidence_complete = not runtime_audit["reasons"]
+    wrong_canonical_count = len(wrong_canonical_ids) if evidence_complete else None
+    raw_only_exposure_count = (
+        len(raw_only_observations) if evidence_complete else None
+    )
+    raw_only_acceptance_count = (
+        len(raw_only_acceptances) if evidence_complete else None
+    )
+    premature_merge_attempt_count = (
+        len(premature_merge_observations) if evidence_complete else None
+    )
+    invalid_candidate_count = len(invalid_attempt_ids) if evidence_complete else None
+    exposed_metric = exposed_error_count if evidence_complete else None
+    escaped_metric = escaped_error_count if evidence_complete else None
+    stuck_metric = stuck_task_count if evidence_complete else None
+    applicability = applicability if evidence_complete else "insufficient_evidence"
+    escape_rate = escape_rate if evidence_complete else None
+    reasons = list(runtime_audit["reasons"])
+    completed = int(_status(task.get("root_status")) == "completed")
+    total_tokens = sum(
+        int(_number(attempt.get("total_tokens"))) for attempt in task_attempts
+    )
+    total_cost = sum(
+        float(_number(attempt.get("cost_estimate"))) for attempt in task_attempts
+    )
+    return _with_specialty_eligibility(
+        base_row,
+        reasons,
+        {
+            **dict(base_row),
+            "case_id": str(task.get("case_id") or task_id),
+            "task_id": task_id,
+            "task_count": 1,
+            "completed_root_count": completed,
+            "failed_root_count": 1 - completed,
+            "completion_rate": float(completed),
+            "accepted_validity_rate": float(
+                task.get("accepted_validity") is True
+            ),
+            "provider_attempt_count": len(task_attempts),
+            "total_tokens": total_tokens,
+            "total_cost_estimate": total_cost,
+            "cost": total_cost,
+            "wrong_canonical_count": wrong_canonical_count,
+            "wrong_canonical_acceptance_count": wrong_canonical_count,
+            "invalid_candidate_count": invalid_candidate_count,
+            "wrong_canonical_acceptance_rate": _rate(
+                wrong_canonical_count,
+                invalid_candidate_count,
+            ),
+            "wrong_canonical_acceptance_applicability": _exp4_rate_applicability(
+                mode=str(base_row.get("ablation_mode") or ""),
+                target_mode="NO_VERIFICATION",
+                denominator=invalid_candidate_count,
+                evidence_complete=evidence_complete,
+            ),
+            "raw_only_exposure_count": raw_only_exposure_count,
+            "raw_only_count": raw_only_exposure_count,
+            "raw_only_acceptance_count": raw_only_acceptance_count,
+            "raw_only_acceptance_rate": _rate(
+                raw_only_acceptance_count,
+                raw_only_exposure_count,
+            ),
+            "raw_only_acceptance_applicability": _exp4_rate_applicability(
+                mode=str(base_row.get("ablation_mode") or ""),
+                target_mode="NO_PARSER_POLICY",
+                denominator=raw_only_exposure_count,
+                evidence_complete=evidence_complete,
+            ),
+            "stuck_task_count": stuck_metric,
+            "stuck_count": stuck_metric,
+            "stuck_task_rate": (
+                float(stuck_metric) if stuck_metric is not None else None
+            ),
+            "stuck_task_applicability": _exp4_rate_applicability(
+                mode=str(base_row.get("ablation_mode") or ""),
+                target_mode="NO_REQUEUE",
+                denominator=1 if evidence_complete else None,
+                evidence_complete=evidence_complete,
+            ),
+            "premature_merge_attempt_count": premature_merge_attempt_count,
+            "premature_merge_count": premature_merge_attempt_count,
+            "premature_merge_failure_count": (
+                premature_merge_failure_count if evidence_complete else None
+            ),
+            "premature_merge_failure_rate": _rate(
+                premature_merge_failure_count if evidence_complete else None,
+                premature_merge_attempt_count,
+            ),
+            "premature_merge_failure_applicability": _exp4_rate_applicability(
+                mode=str(base_row.get("ablation_mode") or ""),
+                target_mode="NO_MERGE_GATE",
+                denominator=premature_merge_attempt_count,
+                evidence_complete=evidence_complete,
+            ),
+            "slot_mismatch_count": None,
+            "slot_mismatch_applicability": "not_applicable_removed_formal_mode",
+            "exposed_error_count": exposed_metric,
+            "escaped_error_count": escaped_metric,
+            "error_escape_rate": escape_rate,
+            "error_escape_applicability": applicability,
+            "ablation_evidence_refs": runtime_audit["evidence_refs"],
+            "row_scope": "task",
+        },
+    )
+
+
+def _exp4_runtime_audit(
+    *,
+    base_row: Mapping[str, Any],
+    task: Mapping[str, Any],
+    task_attempts: Sequence[Mapping[str, Any]],
+    events: Sequence[Mapping[str, Any]],
+    artifacts: Sequence[Mapping[str, Any]],
+) -> dict[str, Any]:
+    runtime = task.get("ablation_runtime")
+    reasons: list[str] = []
+    evidence_refs: list[dict[str, Any]] = []
+    if not isinstance(runtime, Mapping):
+        return {
+            "attempt_observations": [],
+            "hook_observations": [],
+            "evidence_refs": [],
+            "reasons": ["missing_ablation_observation"],
+        }
+    if runtime.get("schema_version") != "tokenshare.paper_ablation_runtime.v1":
+        reasons.append("ablation_runtime_schema_mismatch")
+    expected_identity = {
+        "condition_id": base_row.get("condition_id"),
+        "case_id": task.get("case_id") or task.get("task_id"),
+        "repeat_id": base_row.get("repeat_id"),
+        "mode": base_row.get("ablation_mode"),
+    }
+    for field_name, expected in expected_identity.items():
+        if runtime.get(field_name) != expected:
+            reasons.append(
+                "ablation_mode_mismatch"
+                if field_name == "mode"
+                else f"ablation_{field_name}_mismatch"
+            )
+    raw_attempts = runtime.get("attempt_observations")
+    raw_hooks = runtime.get("hook_observations")
+    if not isinstance(raw_attempts, list) or any(
+        not isinstance(item, Mapping) for item in raw_attempts
+    ):
+        reasons.append("invalid_ablation_attempt_observations")
+        attempt_observations: list[Mapping[str, Any]] = []
+    else:
+        attempt_observations = list(raw_attempts)
+    if not isinstance(raw_hooks, list) or any(
+        not isinstance(item, Mapping) for item in raw_hooks
+    ):
+        reasons.append("invalid_ablation_hook_observations")
+        hook_observations: list[Mapping[str, Any]] = []
+    else:
+        hook_observations = list(raw_hooks)
+
+    expected_attempt_ids = {
+        str(attempt.get("attempt_id"))
+        for attempt in task_attempts
+        if isinstance(attempt.get("attempt_id"), str)
+        and attempt.get("attempt_id")
+    }
+    observed_attempt_ids = {
+        str(observation.get("attempt_id"))
+        for observation in attempt_observations
+        if isinstance(observation.get("attempt_id"), str)
+        and observation.get("attempt_id")
+    }
+    if not expected_attempt_ids or observed_attempt_ids != expected_attempt_ids:
+        reasons.append("incomplete_ablation_attempt_inventory")
+    for observation in attempt_observations:
+        refs = _observation_refs(observation)
+        if not refs:
+            reasons.append("missing_ablation_attempt_evidence_ref")
+        evidence_refs.extend(refs)
+
+    mode = str(base_row.get("ablation_mode") or "")
+    target_mechanism = {
+        "FULL": None,
+        "NO_VERIFICATION": "verification",
+        "NO_PARSER_POLICY": "parser_policy",
+        "NO_REQUEUE": "requeue",
+        "NO_MERGE_GATE": "merge_gate",
+    }.get(mode)
+    if mode not in {
+        "FULL",
+        "NO_VERIFICATION",
+        "NO_PARSER_POLICY",
+        "NO_REQUEUE",
+        "NO_MERGE_GATE",
+    }:
+        reasons.append("unsupported_ablation_mode")
+    for observation in hook_observations:
+        observed_mode = observation.get("ablation_mode", observation.get("mode"))
+        if observed_mode is not None and observed_mode != mode:
+            reasons.append("ablation_hook_mode_mismatch")
+        refs = _observation_refs(observation)
+        if not refs:
+            reasons.append("missing_ablation_hook_evidence_ref")
+        evidence_refs.extend(refs)
+    if any(
+        not _ablation_observation_refs_resolve(
+            observation,
+            events=events,
+            artifacts=artifacts,
+        )
+        for observation in (*attempt_observations, *hook_observations)
+    ):
+        reasons.append("unresolved_ablation_evidence_ref")
+    if target_mechanism is not None:
+        applied = [
+            observation
+            for observation in hook_observations
+            if observation.get("event_type") == "EXPERIMENT_ABLATION_GATE_APPLIED"
+            and observation.get("disabled_mechanism") == target_mechanism
+        ]
+        not_applicable = [
+            observation
+            for observation in hook_observations
+            if observation.get("disabled_mechanism") == target_mechanism
+            and observation.get("applicability") == "not_applicable"
+            and isinstance(observation.get("not_applicable_reason"), str)
+            and observation.get("not_applicable_reason")
+        ]
+        if not applied and not not_applicable:
+            reasons.append("target_ablation_hook_not_observed")
+        for observation in (*applied, *not_applicable):
+            hook_input = observation.get("hook_input")
+            hook_result = observation.get("hook_result")
+            if (
+                not isinstance(hook_input, Mapping)
+                or not hook_input
+                or not isinstance(hook_result, Mapping)
+                or not hook_result
+            ):
+                reasons.append("incomplete_ablation_hook_observation")
+                continue
+            if observation in applied and (
+                not isinstance(hook_result.get("bypass"), bool)
+                or not isinstance(hook_result.get("stop"), bool)
+            ):
+                reasons.append("incomplete_ablation_hook_observation")
+    if mode == "NO_MERGE_GATE":
+        premature = [
+            observation
+            for observation in hook_observations
+            if observation.get("event_type")
+            == "EXPERIMENT_PREMATURE_MERGE_ATTEMPTED"
+        ]
+        if not premature or any(
+            observation.get("attempt_status") != "executed"
+            or not isinstance(observation.get("root_check_passed"), bool)
+            or not isinstance(observation.get("result_artifact_ref"), Mapping)
+            for observation in premature
+        ):
+            reasons.append("missing_premature_merge_execution_evidence")
+    return {
+        "attempt_observations": attempt_observations,
+        "hook_observations": hook_observations,
+        "evidence_refs": _stable_evidence_refs(evidence_refs),
+        "reasons": list(dict.fromkeys(reasons)),
+    }
+
+
+def _observation_refs(observation: Mapping[str, Any]) -> list[dict[str, Any]]:
+    refs: list[dict[str, Any]] = []
+    for field_name in (
+        "raw_output_ref",
+        "candidate_output_ref",
+        "result_artifact_ref",
+        "merge_attempt_ref",
+        "merge_result_ref",
+        "root_check_ref",
+    ):
+        value = observation.get(field_name)
+        if isinstance(value, Mapping):
+            refs.append({"evidence_kind": field_name, **dict(value)})
+    canonical = observation.get("canonical_output_refs")
+    if isinstance(canonical, Mapping):
+        refs.extend(
+            {"evidence_kind": "canonical_output_ref", **dict(value)}
+            for value in canonical.values()
+            if isinstance(value, Mapping)
+        )
+    for field_name in ("protocol_event_refs", "artifact_refs"):
+        values = observation.get(field_name)
+        if isinstance(values, Sequence) and not isinstance(values, (str, bytes)):
+            refs.extend(
+                {"evidence_kind": field_name, **dict(value)}
+                if isinstance(value, Mapping)
+                else {"evidence_kind": field_name, "evidence_id": value}
+                for value in values
+                if isinstance(value, Mapping)
+                or isinstance(value, str)
+                and value
+            )
+    return refs
+
+
+def _ablation_observation_refs_resolve(
+    observation: Mapping[str, Any],
+    *,
+    events: Sequence[Mapping[str, Any]],
+    artifacts: Sequence[Mapping[str, Any]],
+) -> bool:
+    event_ids = {
+        str(event.get("event_id"))
+        for event in events
+        if isinstance(event.get("event_id"), str) and event.get("event_id")
+    }
+    protocol_refs = observation.get("protocol_event_refs", ())
+    if isinstance(protocol_refs, Sequence) and not isinstance(
+        protocol_refs, (str, bytes)
+    ):
+        for ref in protocol_refs:
+            event_id = ref.get("event_id") if isinstance(ref, Mapping) else ref
+            if not isinstance(event_id, str) or event_id not in event_ids:
+                return False
+    artifact_values: list[Any] = []
+    for field_name in (
+        "raw_output_ref",
+        "candidate_output_ref",
+        "result_artifact_ref",
+        "merge_attempt_ref",
+        "merge_result_ref",
+        "root_check_ref",
+    ):
+        if observation.get(field_name) is not None:
+            artifact_values.append(observation[field_name])
+    canonical = observation.get("canonical_output_refs")
+    if isinstance(canonical, Mapping):
+        artifact_values.extend(canonical.values())
+    explicit_artifacts = observation.get("artifact_refs", ())
+    if isinstance(explicit_artifacts, Sequence) and not isinstance(
+        explicit_artifacts, (str, bytes)
+    ):
+        artifact_values.extend(explicit_artifacts)
+    return all(
+        _artifact_ref_in_inventory(ref, artifacts) for ref in artifact_values
+    )
+
+
+def _artifact_ref_in_inventory(
+    value: Any,
+    artifacts: Sequence[Mapping[str, Any]],
+) -> bool:
+    if not isinstance(value, Mapping) or not value:
+        return False
+    for artifact in artifacts:
+        if value.get("artifact_id") is not None and (
+            artifact.get("artifact_id") != value.get("artifact_id")
+        ):
+            continue
+        if value.get("path") is not None and artifact.get("path") != value.get("path"):
+            continue
+        if value.get("content_hash") is not None and (
+            artifact.get("content_hash") != value.get("content_hash")
+        ):
+            continue
+        if any(
+            value.get(field_name) is not None
+            for field_name in ("artifact_id", "path", "uri")
+        ):
+            return True
+    return False
+
+
+def _exp4_rollup_row(
+    *,
+    base_row: Mapping[str, Any],
+    source_rows: Sequence[Mapping[str, Any]],
+    row_scope: str,
+) -> dict[str, Any]:
+    task_count = sum(int(row["task_count"]) for row in source_rows)
+    wrong_canonical_count = _sum_complete_field(source_rows, "wrong_canonical_count")
+    invalid_candidate_count = _sum_complete_field(source_rows, "invalid_candidate_count")
+    raw_only_exposure_count = _sum_complete_field(source_rows, "raw_only_exposure_count")
+    raw_only_acceptance_count = _sum_complete_field(source_rows, "raw_only_acceptance_count")
+    stuck_task_count = _sum_complete_field(source_rows, "stuck_task_count")
+    premature_merge_attempt_count = _sum_complete_field(
+        source_rows, "premature_merge_attempt_count"
+    )
+    premature_merge_failure_count = _sum_complete_field(
+        source_rows, "premature_merge_failure_count"
+    )
+    exposed_error_count = _sum_complete_field(source_rows, "exposed_error_count")
+    escaped_error_count = _sum_complete_field(source_rows, "escaped_error_count")
+    if all(
+        value is not None
+        for value in (
+            exposed_error_count,
+            escaped_error_count,
+            stuck_task_count,
+            wrong_canonical_count,
+            premature_merge_attempt_count,
+        )
+    ):
+        applicability, escape_rate = _exp4_error_escape(
+            exposed_error_count=exposed_error_count,
+            escaped_error_count=escaped_error_count,
+            stuck_task_count=stuck_task_count,
+            wrong_canonical_count=wrong_canonical_count,
+            premature_merge_attempt_count=premature_merge_attempt_count,
+        )
+    else:
+        applicability, escape_rate = "insufficient_evidence", None
+    reasons = list(
+        dict.fromkeys(
+            str(reason)
+            for row in source_rows
+            for reason in row.get("paper_ineligibility_reasons", ())
+        )
+    )
+    return _with_specialty_eligibility(
+        base_row,
+        reasons,
+        {
+            **dict(base_row),
+            "case_id": None,
+            "task_id": None,
+            "task_count": task_count,
+            "completed_root_count": sum(
+                int(row["completed_root_count"]) for row in source_rows
+            ),
+            "failed_root_count": sum(
+                int(row["failed_root_count"]) for row in source_rows
+            ),
+            "completion_rate": _rate(
+                sum(int(row["completed_root_count"]) for row in source_rows),
+                task_count,
+            ),
+            "provider_attempt_count": sum(
+                int(row["provider_attempt_count"]) for row in source_rows
+            ),
+            "total_tokens": sum(
+                int(row["total_tokens"]) for row in source_rows
+            ),
+            "total_cost_estimate": sum(
+                float(row["total_cost_estimate"]) for row in source_rows
+            ),
+            "cost": sum(
+                float(row["total_cost_estimate"]) for row in source_rows
+            ),
+            "wrong_canonical_count": wrong_canonical_count,
+            "wrong_canonical_acceptance_count": wrong_canonical_count,
+            "invalid_candidate_count": invalid_candidate_count,
+            "wrong_canonical_acceptance_rate": _rate(
+                wrong_canonical_count,
+                invalid_candidate_count,
+            ),
+            "wrong_canonical_acceptance_applicability": _exp4_rate_applicability(
+                mode=str(base_row.get("ablation_mode") or ""),
+                target_mode="NO_VERIFICATION",
+                denominator=invalid_candidate_count,
+                evidence_complete=invalid_candidate_count is not None,
+            ),
+            "raw_only_exposure_count": raw_only_exposure_count,
+            "raw_only_count": raw_only_exposure_count,
+            "raw_only_acceptance_count": raw_only_acceptance_count,
+            "raw_only_acceptance_rate": _rate(
+                raw_only_acceptance_count,
+                raw_only_exposure_count,
+            ),
+            "raw_only_acceptance_applicability": _exp4_rate_applicability(
+                mode=str(base_row.get("ablation_mode") or ""),
+                target_mode="NO_PARSER_POLICY",
+                denominator=raw_only_exposure_count,
+                evidence_complete=raw_only_exposure_count is not None,
+            ),
+            "stuck_task_count": stuck_task_count,
+            "stuck_count": stuck_task_count,
+            "stuck_task_rate": _rate(stuck_task_count, task_count),
+            "stuck_task_applicability": _exp4_rate_applicability(
+                mode=str(base_row.get("ablation_mode") or ""),
+                target_mode="NO_REQUEUE",
+                denominator=task_count,
+                evidence_complete=stuck_task_count is not None,
+            ),
+            "premature_merge_attempt_count": premature_merge_attempt_count,
+            "premature_merge_count": premature_merge_attempt_count,
+            "premature_merge_failure_count": premature_merge_failure_count,
+            "premature_merge_failure_rate": _rate(
+                premature_merge_failure_count,
+                premature_merge_attempt_count,
+            ),
+            "premature_merge_failure_applicability": _exp4_rate_applicability(
+                mode=str(base_row.get("ablation_mode") or ""),
+                target_mode="NO_MERGE_GATE",
+                denominator=premature_merge_attempt_count,
+                evidence_complete=premature_merge_attempt_count is not None,
+            ),
+            "slot_mismatch_count": None,
+            "slot_mismatch_applicability": "not_applicable_removed_formal_mode",
+            "exposed_error_count": exposed_error_count,
+            "escaped_error_count": escaped_error_count,
+            "error_escape_rate": escape_rate,
+            "error_escape_applicability": applicability,
+            "row_scope": row_scope,
+        },
+    )
+
+
+def _sum_complete_field(
+    rows: Sequence[Mapping[str, Any]], field_name: str
+) -> int | None:
+    values = [row.get(field_name) for row in rows]
+    if not values or any(
+        isinstance(value, bool) or not isinstance(value, int) for value in values
+    ):
+        return None
+    return sum(values)
+
+
+def _exp4_error_escape(
+    *,
+    exposed_error_count: int,
+    escaped_error_count: int,
+    stuck_task_count: int,
+    wrong_canonical_count: int,
+    premature_merge_attempt_count: int,
+) -> tuple[str, float | None]:
+    if escaped_error_count > exposed_error_count:
+        raise ValueError("escaped_error_count cannot exceed exposed_error_count")
+    if exposed_error_count == 0:
+        return "zero_denominator", None
+    if (
+        stuck_task_count > 0
+        and wrong_canonical_count == 0
+        and premature_merge_attempt_count == 0
+    ):
+        return "not_applicable", None
+    return "applicable", escaped_error_count / exposed_error_count
+
+
+def _exp4_rate_applicability(
+    *,
+    mode: str,
+    target_mode: str,
+    denominator: int | None,
+    evidence_complete: bool,
+) -> str:
+    if not evidence_complete or denominator is None:
+        return "insufficient_evidence"
+    if mode != target_mode:
+        return "not_applicable"
+    if denominator == 0:
+        return "zero_denominator"
+    return "applicable"
+
+
+def _strict_exp5_model_rows(
+    bundle: Mapping[str, Any],
+) -> tuple[dict[str, Any], ...]:
+    """返回通过完整 attempt inventory 对账后的 Exp5 join rows。"""
+
+    return tuple(_exp5_identity_inventory(bundle)["rows"])
+
+
+def _exp5_identity_inventory(bundle: Mapping[str, Any]) -> dict[str, Any]:
+    """将应有 attempt inventory 与持久化 v2 identity record 一一对账。"""
+
+    expected: dict[tuple[Any, ...], Mapping[str, Any]] = {}
+    reasons: list[str] = []
+    for attempt in bundle.get("attempts", ()):
+        if not isinstance(attempt, Mapping):
+            reasons.append("invalid_expected_attempt_record")
+            continue
+        key = _exp5_join_key(attempt)
+        if key is None:
+            reasons.append("missing_expected_attempt_identity")
+            continue
+        if key in expected:
+            reasons.append("duplicate_expected_attempt_identity")
+            continue
+        expected[key] = attempt
+
+    items: list[dict[str, Any]] = []
+    for task in bundle.get("tasks", ()):
+        if not isinstance(task, Mapping):
+            reasons.append("invalid_model_execution_task")
+            continue
+        raw_items = task.get("model_execution_records", ())
+        if not isinstance(raw_items, Sequence) or isinstance(raw_items, (str, bytes)):
+            reasons.append("invalid_model_execution_record_inventory")
+            continue
+        for raw_item in raw_items:
+            if not isinstance(raw_item, Mapping):
+                reasons.append("invalid_model_execution_record")
+                continue
+            item = dict(raw_item)
+            nested_task = item.get("task")
+            task_body = dict(nested_task) if isinstance(nested_task, Mapping) else {}
+            task_body.update(
+                {
+                    "condition_id": task.get("condition_id"),
+                    "repeat_id": task.get("repeat_id"),
+                    "task_id": task.get("task_id"),
+                    "paper_eligible": task.get("paper_eligible"),
+                }
+            )
+            item["task"] = task_body
+            items.append(item)
+
+    actual_by_key: dict[tuple[Any, ...], list[dict[str, Any]]] = defaultdict(list)
+    invalid_record_count = 0
+    for item in items:
+        record = item.get("record", item)
+        joined_attempt = item.get("attempt")
+        if (
+            not isinstance(record, Mapping)
+            or record.get("schema_version")
+            != "tokenshare.paper_model_execution_record.v2"
+            or not isinstance(joined_attempt, Mapping)
+        ):
+            invalid_record_count += 1
+            reasons.append("invalid_model_execution_v2_record")
+            continue
+        key = _exp5_join_key({**dict(record), **{
+            "provider_attempt_index": joined_attempt.get("provider_attempt_index")
+        }})
+        if key is None:
+            invalid_record_count += 1
+            reasons.append("missing_model_execution_join_identity")
+            continue
+        actual_by_key[key].append(item)
+
+    missing_keys = sorted(set(expected) - set(actual_by_key), key=str)
+    orphan_keys = sorted(set(actual_by_key) - set(expected), key=str)
+    duplicate_record_count = sum(
+        max(0, len(records) - 1) for records in actual_by_key.values()
+    )
+    if missing_keys:
+        reasons.append("missing_model_execution_v2_record")
+    if orphan_keys:
+        reasons.append("orphan_model_execution_v2_record")
+    if duplicate_record_count:
+        reasons.append("duplicate_model_execution_v2_record")
+
+    rows: list[dict[str, Any]] = []
+    mismatch_count = 0
+    provider_attempt_denominator = 0
+    provider_attempt_covered = 0
+    for key, attempt in expected.items():
+        provider_attempt_count = attempt.get("provider_attempt_count")
+        if (
+            isinstance(provider_attempt_count, bool)
+            or not isinstance(provider_attempt_count, int)
+            or provider_attempt_count < 1
+        ):
+            reasons.append("missing_provider_attempt_inventory")
+            continue
+        provider_attempt_denominator += provider_attempt_count
+        records = actual_by_key.get(key, ())
+        if len(records) != 1:
+            continue
+        item = records[0]
+        try:
+            joined = build_exp5_model_execution_rows(
+                {"model_execution_records": [item]}
+            )
+        except (KeyError, TypeError, ValueError):
+            mismatch_count += 1
+            reasons.append("model_execution_join_invalid")
+            continue
+        if len(joined) != 1:
+            mismatch_count += 1
+            reasons.append("model_execution_join_invalid")
+            continue
+        row = dict(joined[0])
+        row["provider_attempt_index"] = key[-1]
+        rows.append(row)
+        record = item.get("record", item)
+        provider_attempts = (
+            record.get("actual_provider_attempts", ())
+            if isinstance(record, Mapping)
+            else ()
+        )
+        if (
+            not isinstance(provider_attempts, Sequence)
+            or isinstance(provider_attempts, (str, bytes))
+            or len(provider_attempts) != provider_attempt_count
+            or any(not isinstance(value, Mapping) for value in provider_attempts)
+        ):
+            mismatch_count += 1
+            reasons.append("provider_attempt_identity_coverage_mismatch")
+        elif row.get("paper_eligible") is True:
+            provider_attempt_covered += provider_attempt_count
+        else:
+            mismatch_count += 1
+            reasons.append("model_identity_mismatch")
+
+    stable_reasons = list(dict.fromkeys(reasons))
+    return {
+        "rows": rows,
+        "identity_denominator": len(expected),
+        "model_execution_v2_record_count": len(items),
+        "missing_record_count": len(missing_keys),
+        "duplicate_record_count": duplicate_record_count,
+        "orphan_record_count": len(orphan_keys),
+        "mismatch_record_count": mismatch_count + invalid_record_count,
+        "provider_attempt_identity_denominator": provider_attempt_denominator,
+        "provider_attempt_identity_covered_count": provider_attempt_covered,
+        "paper_eligible": bool(expected) and not stable_reasons,
+        "paper_ineligibility_reasons": stable_reasons,
+        "missing_join_keys": [list(key) for key in missing_keys],
+        "orphan_join_keys": [list(key) for key in orphan_keys],
+    }
+
+
+def _exp5_join_key(record: Mapping[str, Any]) -> tuple[Any, ...] | None:
+    values = (
+        record.get("condition_id"),
+        record.get("repeat_id"),
+        record.get("run_id"),
+        record.get("task_id"),
+        record.get("unit_id"),
+        record.get("attempt_id"),
+        record.get("provider_attempt_index"),
+    )
+    if (
+        any(value is None or value == "" for value in values)
+        or isinstance(values[1], bool)
+        or not isinstance(values[1], int)
+        or isinstance(values[-1], bool)
+        or not isinstance(values[-1], int)
+    ):
+        return None
+    return values
 
 
 def _exp5_rows(
@@ -410,26 +2521,62 @@ def _exp5_rows(
         condition = bundle["condition"]
         if condition["experiment_id"] != EXP5:
             continue
-        attempts = bundle["attempts"]
+        identity_audit = _exp5_identity_inventory(bundle)
+        strict_rows = tuple(identity_audit["rows"])
         matches = sum(
-            attempt.get("model_identity_audit") == "fixed_entry_match"
-            or (
-                attempt.get("provider") == condition.get("provider_family")
-                and attempt.get("model") == condition.get("provider_model_id")
-                and attempt.get("entry_id") == condition.get("model_entry_id")
-            )
-            for attempt in attempts
+            _strict_exp5_identity_matches(record, condition)
+            for record in strict_rows
         )
+        identity_denominator = int(identity_audit["identity_denominator"])
+        identity_status = (
+            "not_observed"
+            if not strict_rows
+            else "matched"
+            if matches == identity_denominator
+            else "model_identity_mismatch"
+        )
+        specialty_reasons: list[str] = []
+        specialty_reasons.extend(identity_audit["paper_ineligibility_reasons"])
+        if matches != identity_denominator:
+            specialty_reasons.append("model_identity_mismatch")
+        if any(record.get("paper_eligible") is not True for record in strict_rows):
+            specialty_reasons.append("model_execution_join_ineligible")
+        base_row = rows[condition_id]
         result.append(
-            {
-                **dict(rows[condition_id]),
-                "model_identity_match_rate": _rate(matches, len(attempts)),
-                "endpoint_error_count": sum(
-                    _status(attempt.get("attempt_status"))
-                    not in {"succeeded", "completed"}
-                    for attempt in attempts
-                ),
-            }
+            _with_specialty_eligibility(
+                base_row,
+                specialty_reasons,
+                {
+                **dict(base_row),
+                "model_execution_v2_record_count": identity_audit[
+                    "model_execution_v2_record_count"
+                ],
+                "model_identity_match_count": matches,
+                "model_identity_denominator": identity_denominator,
+                "model_identity_match_rate": _rate(matches, identity_denominator),
+                "identity_status": identity_status,
+                "model_identity_missing_record_count": identity_audit[
+                    "missing_record_count"
+                ],
+                "model_identity_duplicate_record_count": identity_audit[
+                    "duplicate_record_count"
+                ],
+                "model_identity_orphan_record_count": identity_audit[
+                    "orphan_record_count"
+                ],
+                "model_identity_mismatch_record_count": identity_audit[
+                    "mismatch_record_count"
+                ],
+                "provider_attempt_identity_denominator": identity_audit[
+                    "provider_attempt_identity_denominator"
+                ],
+                "provider_attempt_identity_covered_count": identity_audit[
+                    "provider_attempt_identity_covered_count"
+                ],
+                "endpoint_error_count": int(base_row["provider_error_count"]),
+                "provider_confounding": "model_provider_endpoint_pair",
+                },
+            )
         )
     return result
 
@@ -442,12 +2589,39 @@ def _write_metrics_outputs(
     experiment_rows: Mapping[str, Sequence[Mapping[str, Any]]],
     run_bundles: Mapping[str, Mapping[str, Any]],
 ) -> list[dict[str, Any]]:
+    exp2_root_rows = [
+        row for row in experiment_rows[EXP2] if row.get("row_scope") == "root_run"
+    ]
+    exp2_views = _exp2_rate_limit_views(exp2_root_rows)
     paths_and_content = {
         "metrics/per_condition_summary.csv": _csv_text(condition_rows),
         "metrics/paper_table_feasibility.csv": _csv_text(experiment_rows[EXP1]),
         "metrics/paper_plot_scalability.csv": _csv_text(experiment_rows[EXP2]),
+        "metrics/paper_plot_scalability_all_runs.csv": _csv_text(
+            _annotated_rate_limit_view_rows(exp2_views["all_runs"])
+        ),
+        "metrics/paper_plot_scalability_rate_limit_excluded_sensitivity.csv": (
+            _csv_text(
+                _annotated_rate_limit_view_rows(
+                    exp2_views["rate_limit_excluded"]
+                )
+            )
+        ),
+        "metrics/paper_plot_scalability_views.json": json.dumps(
+            exp2_views,
+            ensure_ascii=False,
+            sort_keys=True,
+            indent=2,
+        )
+        + "\n",
         "metrics/paper_plot_robustness.csv": _csv_text(experiment_rows[EXP3]),
         "metrics/paper_table_ablation.csv": _csv_text(experiment_rows[EXP4]),
+        "metrics/paper_table_model_comparison.csv": _csv_text(
+            experiment_rows[EXP5]
+        ),
+        "metrics/paper_table_model_endpoint_comparison.csv": _csv_text(
+            experiment_rows[EXP5]
+        ),
         "metrics/model_execution_records.jsonl": _model_record_text(run_bundles),
         "metrics/failure_examples.json": json.dumps(
             _failure_examples(run_bundles),
@@ -477,32 +2651,88 @@ def _write_metrics_outputs(
     return refs
 
 
+def _annotated_rate_limit_view_rows(
+    view: Mapping[str, Any],
+) -> list[dict[str, Any]]:
+    metadata = {
+        "analysis_view": view["analysis_view"],
+        "view_sample_count": view["sample_count"],
+        "excluded_run_ids": list(view["excluded_run_ids"]),
+        "excluded_condition_ids": list(view["excluded_condition_ids"]),
+        "exclusion_reason": view["exclusion_reason"],
+    }
+    return [{**dict(row), **metadata} for row in view["rows"]]
+
+
+def _exp2_rate_limit_views(
+    rows: Sequence[Mapping[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    """保留主 end-to-end 样本，并另建只排除 429 run 的敏感性视图。"""
+
+    all_rows = [dict(row) for row in rows]
+    excluded = [
+        row
+        for row in all_rows
+        if int(_number(row.get("http_429_count"))) > 0
+        or int(_number(row.get("rate_limited_attempt_count"))) > 0
+    ]
+    sensitivity_rows = [
+        row
+        for row in all_rows
+        if int(_number(row.get("http_429_count"))) == 0
+        and int(_number(row.get("rate_limited_attempt_count"))) == 0
+    ]
+    excluded_run_ids = sorted(
+        {
+            str(
+                row.get("run_id")
+                or row.get("condition_id")
+                or row.get("task_id")
+                or row.get("case_id")
+            )
+            for row in excluded
+            if row.get("run_id")
+            or row.get("condition_id")
+            or row.get("task_id")
+            or row.get("case_id")
+        }
+    )
+    excluded_condition_ids = sorted(
+        {
+            str(row.get("condition_id"))
+            for row in excluded
+            if row.get("condition_id")
+        }
+    )
+    return {
+        "all_runs": {
+            "analysis_view": "all_runs_end_to_end",
+            "sample_count": len(all_rows),
+            "excluded_run_ids": [],
+            "excluded_condition_ids": [],
+            "exclusion_reason": "none",
+            "rows": all_rows,
+        },
+        "rate_limit_excluded": {
+            "analysis_view": "rate_limit_excluded_sensitivity",
+            "sample_count": len(sensitivity_rows),
+            "excluded_run_ids": excluded_run_ids,
+            "excluded_condition_ids": excluded_condition_ids,
+            "exclusion_reason": (
+                "provider_http_429" if excluded else "no_exclusions"
+            ),
+            "rows": sensitivity_rows,
+        },
+    }
+
+
 def _model_record_text(bundles: Mapping[str, Mapping[str, Any]]) -> str:
     records: list[dict[str, Any]] = []
     for bundle in bundles.values():
         condition = bundle["condition"]
         if condition["experiment_id"] != EXP5:
             continue
-        for attempt in bundle["attempts"]:
-            records.append(
-                {
-                    "schema_version": "tokenshare.paper_formal_model_execution.v1",
-                    "condition_id": condition["condition_id"],
-                    "cohort_member_id": condition.get("cohort_member_id"),
-                    "provider": attempt.get("provider"),
-                    "model": attempt.get("model"),
-                    "entry_id": attempt.get("entry_id"),
-                    "attempt_id": attempt.get("attempt_id"),
-                    "request_ref": attempt.get("request_ref"),
-                    "raw_output_ref": attempt.get("raw_output_ref"),
-                    "parsed_output_ref": attempt.get("parsed_output_ref"),
-                    "parse_failure_ref": attempt.get("parse_failure_ref"),
-                    "provenance_ref": attempt.get("provenance_ref"),
-                    "usage_ref": attempt.get("usage_ref"),
-                    "model_execution_ref": attempt.get("model_execution_ref"),
-                    "model_identity_audit": attempt.get("model_identity_audit"),
-                }
-            )
+        records.extend(_strict_exp5_model_rows(bundle))
     return "".join(
         json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n"
         for record in records
@@ -518,6 +2748,857 @@ def _failure_examples(bundles: Mapping[str, Mapping[str, Any]]) -> list[dict[str
                 if len(examples) == 20:
                     return examples
     return examples
+
+
+def _worker_interval_metrics(
+    attempts: Sequence[Mapping[str, Any]],
+) -> dict[str, float | int] | None:
+    """从真实 worker attempt interval 计算 wall clock 与峰值并发。"""
+
+    intervals: list[tuple[float, float]] = []
+    for attempt in attempts:
+        started = _observed_time_ms(attempt.get("started_at"))
+        ended = _observed_time_ms(attempt.get("ended_at"))
+        worker_id = attempt.get("worker_id")
+        if (
+            started is None
+            or ended is None
+            or ended < started
+            or not isinstance(worker_id, str)
+            or not worker_id
+        ):
+            return None
+        intervals.append((started, ended))
+    if not intervals:
+        return None
+    points = sorted(
+        (
+            (timestamp, 1 if boundary == "start" else -1)
+            for started, ended in intervals
+            for timestamp, boundary in ((started, "start"), (ended, "end"))
+        ),
+        key=lambda item: (item[0], -item[1]),
+    )
+    active = 0
+    peak = 0
+    for _, delta in points:
+        active += delta
+        peak = max(peak, active)
+    return {
+        "wall_clock_ms": max(end for _, end in intervals)
+        - min(start for start, _ in intervals),
+        "observed_peak_concurrency": peak,
+    }
+
+
+def _protocol_critical_path(
+    *,
+    task: Mapping[str, Any],
+    attempts: Sequence[Mapping[str, Any]],
+    events: Sequence[Mapping[str, Any]],
+) -> dict[str, Any]:
+    """从 attempt、任务关系、canonical、merge 与 root 事件计算关键路径。"""
+
+    reasons: list[str] = []
+    interval_by_attempt: dict[str, tuple[str, float, float]] = {}
+    attempts_by_unit: dict[str, list[str]] = defaultdict(list)
+    evidence_refs: list[dict[str, Any]] = []
+    root_registration = next(
+        (
+            event
+            for event in events
+            if event.get("event_type") == "TASK_REGISTERED"
+        ),
+        None,
+    )
+    root_started_at = _event_time_ms(root_registration)
+    root_start_ref = _event_evidence_ref(root_registration)
+    if root_started_at is None or root_start_ref is None:
+        reasons.append("missing_root_start_evidence")
+    else:
+        evidence_refs.append(root_start_ref)
+
+    created_unit_ids: set[str] = set()
+    for event in events:
+        if event.get("event_type") != "TASK_UNIT_CREATED":
+            continue
+        task_unit = _nested_mapping(event, "task_unit")
+        unit_id = task_unit.get("unit_id") or event.get("object_id")
+        ref = _event_evidence_ref(event)
+        if not isinstance(unit_id, str) or not unit_id or ref is None:
+            reasons.append("invalid_task_graph_unit_evidence")
+            continue
+        created_unit_ids.add(unit_id)
+        evidence_refs.append(ref)
+    for attempt in attempts:
+        attempt_id = attempt.get("attempt_id")
+        unit_id = attempt.get("unit_id")
+        started = _observed_time_ms(attempt.get("started_at"))
+        ended = _observed_time_ms(attempt.get("ended_at"))
+        if (
+            not isinstance(attempt_id, str)
+            or not attempt_id
+            or not isinstance(unit_id, str)
+            or not unit_id
+            or started is None
+            or ended is None
+            or ended < started
+            or attempt_id in interval_by_attempt
+        ):
+            reasons.append("missing_attempt_timing_evidence")
+            continue
+        interval_by_attempt[attempt_id] = (unit_id, started, ended)
+        attempts_by_unit[unit_id].append(attempt_id)
+        evidence_refs.append(
+            {"evidence_kind": "attempt_interval", "attempt_id": attempt_id}
+        )
+    if not attempts or len(interval_by_attempt) != len(attempts):
+        reasons.append("missing_attempt_timing_evidence")
+    if set(attempts_by_unit) - created_unit_ids:
+        reasons.append("missing_task_graph_unit_evidence")
+
+    predecessors: dict[str, set[str]] = {
+        attempt_id: set() for attempt_id in interval_by_attempt
+    }
+    for unit_attempt_ids in attempts_by_unit.values():
+        unit_attempt_ids.sort(key=lambda item: interval_by_attempt[item][1])
+        for previous, current in zip(unit_attempt_ids, unit_attempt_ids[1:]):
+            predecessors[current].add(previous)
+
+    relation_count = 0
+    for event in events:
+        if event.get("event_type") != "TASK_RELATION_CREATED":
+            continue
+        relation = _nested_mapping(event, "task_relation")
+        source_unit = relation.get("source_unit_id")
+        target_unit = relation.get("target_unit_id")
+        if (
+            not isinstance(source_unit, str)
+            or not isinstance(target_unit, str)
+            or source_unit not in attempts_by_unit
+            or target_unit not in attempts_by_unit
+        ):
+            reasons.append("invalid_task_dependency_evidence")
+            continue
+        source_attempt = attempts_by_unit[source_unit][-1]
+        target_attempt = attempts_by_unit[target_unit][0]
+        predecessors[target_attempt].add(source_attempt)
+        relation_count += 1
+        ref = _event_evidence_ref(event)
+        if ref is None:
+            reasons.append("missing_dependency_event_ref")
+        else:
+            evidence_refs.append(ref)
+
+    declared_dependency = any(
+        isinstance(attempt.get("dependency_path"), Sequence)
+        and not isinstance(attempt.get("dependency_path"), (str, bytes))
+        and bool(attempt.get("dependency_path"))
+        for attempt in attempts
+    )
+    if declared_dependency and relation_count == 0:
+        reasons.append("missing_task_dependency_evidence")
+
+    memo: dict[str, float] = {}
+    visiting: set[str] = set()
+
+    def visit(attempt_id: str) -> float | None:
+        if attempt_id in memo:
+            return memo[attempt_id]
+        if attempt_id in visiting:
+            reasons.append("cyclic_task_dependency_evidence")
+            return None
+        visiting.add(attempt_id)
+        _unit_id, started, ended = interval_by_attempt[attempt_id]
+        duration = ended - started
+        predecessor_costs: list[float] = []
+        for predecessor_id in predecessors[attempt_id]:
+            predecessor_cost = visit(predecessor_id)
+            if predecessor_cost is None:
+                continue
+            predecessor_end = interval_by_attempt[predecessor_id][2]
+            if started < predecessor_end:
+                reasons.append("dependency_timing_contradiction")
+                continue
+            predecessor_costs.append(
+                predecessor_cost + (started - predecessor_end)
+            )
+        visiting.remove(attempt_id)
+        if predecessors[attempt_id] and not predecessor_costs:
+            return None
+        if predecessors[attempt_id]:
+            prefix = max(predecessor_costs)
+        elif root_started_at is None or started < root_started_at:
+            reasons.append("dependency_timing_contradiction")
+            return None
+        else:
+            prefix = started - root_started_at
+        memo[attempt_id] = duration + prefix
+        return memo[attempt_id]
+
+    canonical_by_unit: dict[str, tuple[str, float, dict[str, Any]]] = {}
+    for event in events:
+        if event.get("event_type") != "CANONICAL_OUTPUTS_BOUND":
+            continue
+        canonical = _nested_mapping(event, "canonical_selection")
+        unit_id = canonical.get("unit_id")
+        attempt_id = canonical.get("selected_attempt_id")
+        occurred = _event_time_ms(event)
+        ref = _event_evidence_ref(event)
+        if (
+            isinstance(unit_id, str)
+            and isinstance(attempt_id, str)
+            and attempt_id in interval_by_attempt
+            and occurred is not None
+            and ref is not None
+        ):
+            canonical_by_unit[unit_id] = (attempt_id, occurred, ref)
+
+    merge_link = next(
+        (
+            event
+            for event in events
+            if event.get("event_type") == "MERGE_TASK_LINK_RECORDED"
+        ),
+        None,
+    )
+    if merge_link is None:
+        reasons.append("missing_merge_dependency_evidence")
+        return _incomplete_critical_path(reasons, evidence_refs)
+    merge_link_body = _nested_mapping(merge_link, "merge_task_link")
+    bindings = merge_link_body.get("required_slot_bindings")
+    if not isinstance(bindings, Sequence) or isinstance(bindings, (str, bytes)):
+        reasons.append("missing_merge_dependency_evidence")
+        return _incomplete_critical_path(reasons, evidence_refs)
+    required_units = tuple(
+        str(binding.get("source_child_unit_id"))
+        for binding in bindings
+        if isinstance(binding, Mapping)
+        and isinstance(binding.get("source_child_unit_id"), str)
+        and binding.get("source_child_unit_id")
+    )
+    if not required_units or len(required_units) != len(bindings):
+        reasons.append("missing_merge_dependency_evidence")
+    merge_link_time = _event_time_ms(merge_link)
+    merge_link_ref = _event_evidence_ref(merge_link)
+    if merge_link_time is None or merge_link_ref is None:
+        reasons.append("missing_merge_gate_timing_evidence")
+    else:
+        evidence_refs.append(merge_link_ref)
+
+    canonical_paths: list[float] = []
+    if merge_link_time is not None:
+        for unit_id in required_units:
+            canonical = canonical_by_unit.get(unit_id)
+            if canonical is None:
+                reasons.append("missing_canonical_dependency_evidence")
+                continue
+            attempt_id, canonical_time, canonical_ref = canonical
+            attempt_cost = visit(attempt_id)
+            attempt_end = interval_by_attempt[attempt_id][2]
+            if (
+                attempt_cost is None
+                or canonical_time < attempt_end
+                or merge_link_time < canonical_time
+            ):
+                reasons.append("dependency_timing_contradiction")
+                continue
+            canonical_paths.append(
+                attempt_cost
+                + (canonical_time - attempt_end)
+                + (merge_link_time - canonical_time)
+            )
+            evidence_refs.append(canonical_ref)
+    if len(canonical_paths) != len(required_units):
+        reasons.append("incomplete_canonical_dependency_inventory")
+
+    merge_record = next(
+        (
+            event
+            for event in events
+            if event.get("event_type") == "MERGE_RECORDED"
+            and (
+                merge_link_time is None
+                or (_event_time_ms(event) or float("-inf")) >= merge_link_time
+            )
+        ),
+        None,
+    )
+    merge_record_time = _event_time_ms(merge_record) if merge_record else None
+    merge_record_ref = _event_evidence_ref(merge_record) if merge_record else None
+    if (
+        merge_record_time is None
+        or merge_link_time is None
+        or merge_record_time < merge_link_time
+        or merge_record_ref is None
+    ):
+        reasons.append("missing_merge_completion_evidence")
+    else:
+        evidence_refs.append(merge_record_ref)
+
+    generation_identity = task.get("runtime_generation_identity")
+    generation_identity = (
+        generation_identity if isinstance(generation_identity, Mapping) else {}
+    )
+    root_unit_id = generation_identity.get("root_unit_id")
+    root_completion = next(
+        (
+            event
+            for event in events
+            if event.get("event_type") in {
+                "ROOT_COMPLETED",
+                "TASK_COMPLETED",
+                "TASK_UNIT_STATE_CHANGED",
+            }
+            and (
+                event.get("event_type") != "TASK_UNIT_STATE_CHANGED"
+                or (
+                    _status(_nested_mapping(event, "task_unit_state_change").get("new_state")
+                    or _event_payload(event).get("new_state")).lower()
+                    == "completed"
+                    and (
+                        not isinstance(root_unit_id, str)
+                        or event.get("object_id") == root_unit_id
+                        or _event_payload(event).get("unit_id") == root_unit_id
+                    )
+                )
+            )
+        ),
+        None,
+    )
+    root_time = _event_time_ms(root_completion) if root_completion else None
+    root_ref = _event_evidence_ref(root_completion) if root_completion else None
+    if (
+        root_time is None
+        or merge_record_time is None
+        or root_time < merge_record_time
+        or root_ref is None
+    ):
+        reasons.append("missing_root_completion_evidence")
+    else:
+        evidence_refs.append(root_ref)
+
+    stable_reasons = list(dict.fromkeys(reasons))
+    if stable_reasons or not canonical_paths:
+        return _incomplete_critical_path(stable_reasons, evidence_refs)
+    assert merge_link_time is not None
+    assert merge_record_time is not None
+    assert root_time is not None
+    critical_path_ms = (
+        max(canonical_paths)
+        + (merge_record_time - merge_link_time)
+        + (root_time - merge_record_time)
+    )
+    return {
+        "critical_path_ms": critical_path_ms,
+        "critical_path_source": "protocol_dependency_graph",
+        "critical_path_evidence_refs": _stable_evidence_refs(evidence_refs),
+        "paper_ineligibility_reasons": [],
+    }
+
+
+def _incomplete_critical_path(
+    reasons: Sequence[str],
+    evidence_refs: Sequence[Mapping[str, Any]],
+) -> dict[str, Any]:
+    return {
+        "critical_path_ms": None,
+        "critical_path_source": "insufficient_protocol_dependency_evidence",
+        "critical_path_evidence_refs": _stable_evidence_refs(evidence_refs),
+        "paper_ineligibility_reasons": list(dict.fromkeys(reasons)),
+    }
+
+
+def _nested_mapping(event: Mapping[str, Any] | None, field_name: str) -> Mapping[str, Any]:
+    if not isinstance(event, Mapping):
+        return {}
+    payload = _event_payload(event)
+    nested = payload.get(field_name)
+    return nested if isinstance(nested, Mapping) else payload
+
+
+def _event_payload(event: Mapping[str, Any]) -> Mapping[str, Any]:
+    payload = event.get("payload")
+    return payload if isinstance(payload, Mapping) else {}
+
+
+def _event_time_ms(event: Mapping[str, Any] | None) -> float | None:
+    if not isinstance(event, Mapping):
+        return None
+    for field_name in ("occurred_at", "ended_at", "started_at"):
+        value = _observed_time_ms(event.get(field_name))
+        if value is not None:
+            return value
+    offset = event.get("offset_ms")
+    return (
+        float(offset)
+        if isinstance(offset, (int, float)) and not isinstance(offset, bool)
+        else None
+    )
+
+
+def _event_evidence_ref(event: Mapping[str, Any] | None) -> dict[str, Any] | None:
+    if not isinstance(event, Mapping):
+        return None
+    event_id = event.get("event_id")
+    if not isinstance(event_id, str) or not event_id:
+        return None
+    ref: dict[str, Any] = {
+        "evidence_kind": "ledger_event",
+        "event_id": event_id,
+        "event_type": event.get("event_type"),
+    }
+    if isinstance(event.get("event_seq"), int):
+        ref["event_seq"] = event["event_seq"]
+    return ref
+
+
+def _stable_evidence_refs(
+    refs: Sequence[Mapping[str, Any]],
+) -> list[dict[str, Any]]:
+    result: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for ref in refs:
+        body = dict(ref)
+        key = json.dumps(body, ensure_ascii=False, sort_keys=True)
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(body)
+    return result
+
+
+def _observed_time_ms(value: Any) -> float | None:
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return float(value)
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        return (
+            datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
+            * 1000.0
+        )
+    except ValueError:
+        return None
+
+
+def _string_inventory(value: Any) -> tuple[str, ...]:
+    if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
+        return ()
+    inventory = tuple(
+        item for item in value if isinstance(item, str) and item
+    )
+    if len(inventory) != len(value) or len(set(inventory)) != len(inventory):
+        return ()
+    return inventory
+
+
+def _records_for_task(
+    records: Sequence[Mapping[str, Any]],
+    task: Mapping[str, Any],
+    all_tasks: Sequence[Mapping[str, Any]],
+) -> list[Mapping[str, Any]]:
+    """按持久化 task_id 隔离单个 root；单 root 兼容无上下文字段的旧夹具。"""
+
+    task_id = task.get("task_id")
+    matched = [
+        record
+        for record in records
+        if isinstance(task_id, str) and record.get("task_id") == task_id
+    ]
+    if matched or len(all_tasks) != 1:
+        return matched
+    return list(records)
+
+
+def _with_specialty_eligibility(
+    base_row: Mapping[str, Any],
+    specialty_reasons: Sequence[str],
+    row: Mapping[str, Any],
+) -> dict[str, Any]:
+    reasons = list(base_row.get("paper_ineligibility_reasons", ()))
+    reasons.extend(str(reason) for reason in specialty_reasons)
+    stable_reasons = list(dict.fromkeys(reasons))
+    return {
+        **dict(row),
+        "paper_eligible": (
+            base_row.get("paper_eligible") is True and not stable_reasons
+        ),
+        "paper_ineligibility_reasons": stable_reasons,
+    }
+
+
+def _strict_exp5_identity_matches(
+    record: Mapping[str, Any],
+    condition: Mapping[str, Any],
+) -> bool:
+    return (
+        record.get("identity_status") == "matched"
+        and record.get("provider_family") == condition.get("provider_family")
+        and record.get("selected_entry_id") == condition.get("model_entry_id")
+        and record.get("configured_model") == condition.get("provider_model_id")
+        and record.get("requested_model") == condition.get("provider_model_id")
+        and record.get("resolved_model") == condition.get("provider_model_id")
+    )
+
+
+def _with_repeat_aggregates(
+    experiment_id: str,
+    rows: Sequence[Mapping[str, Any]],
+) -> list[dict[str, Any]]:
+    """保留逐 repeat 行；只有跨 repeat 样本才生成 aggregate。"""
+
+    repeat_rows = [dict(row) for row in rows]
+    grouped: dict[tuple[Any, ...], list[dict[str, Any]]] = defaultdict(list)
+    for row in repeat_rows:
+        if (
+            experiment_id == EXP4
+            and row.get("row_scope") != "repeat_condition"
+        ):
+            continue
+        if (
+            experiment_id == EXP3
+            and row.get("row_scope") != "repeat_condition"
+        ):
+            continue
+        grouped[_repeat_group_key(experiment_id, row)].append(row)
+    aggregates: list[dict[str, Any]] = []
+    for group in grouped.values():
+        if len(group) < 2:
+            continue
+        ordered = sorted(group, key=lambda row: int(row.get("repeat_id", 0)))
+        wall_values = [float(row["wall_clock_ms"]) for row in ordered]
+        minimum = min(wall_values)
+        maximum = max(wall_values)
+        reasons = list(
+            dict.fromkeys(
+                str(reason)
+                for row in ordered
+                for reason in row.get("paper_ineligibility_reasons", ())
+            )
+        )
+        aggregate = {
+            **ordered[0],
+            "row_scope": "repeat_aggregate",
+            "condition_id": None,
+            "condition_ids": [row["condition_id"] for row in ordered],
+            "repeat_id": None,
+            "repeat_ids": [int(row.get("repeat_id", 0)) for row in ordered],
+            "repeat_count": len(ordered),
+            "wall_clock_ms": None,
+            "wall_clock_min_ms": minimum,
+            "wall_clock_max_ms": maximum,
+            "wall_clock_relative_difference": (
+                (maximum - minimum) / minimum if minimum > 0 else None
+            ),
+            "completed_root_count": sum(
+                int(row["completed_root_count"]) for row in ordered
+            ),
+            "task_count": sum(int(row["task_count"]) for row in ordered),
+            "total_tokens": sum(int(row["total_tokens"]) for row in ordered),
+            "total_cost_estimate": sum(
+                float(row["total_cost_estimate"]) for row in ordered
+            ),
+            "paper_eligible": all(
+                row.get("paper_eligible") is True for row in ordered
+            )
+            and not reasons,
+            "paper_ineligibility_reasons": reasons,
+        }
+        if len(ordered) >= 3:
+            aggregate["wall_clock_p50"] = _quantile(wall_values, 0.5)
+            aggregate["wall_clock_p95"] = _quantile(wall_values, 0.95)
+        if experiment_id == EXP4:
+            aggregate = _exp4_rollup_row(
+                base_row=aggregate,
+                source_rows=ordered,
+                row_scope=(
+                    "three_repeat_aggregate"
+                    if len(ordered) == 3
+                    else "repeat_aggregate"
+                ),
+            )
+        if experiment_id == EXP3:
+            for field_name in (
+                "detection_rate",
+                "false_accept_rate",
+                "recovery_rate",
+                "completion_rate",
+                "recovery_latency_ms",
+                "reassignment_count",
+                "wasted_actual_tokens",
+                "wall_clock_overhead_ms",
+                "wall_clock_overhead_ratio",
+                "token_overhead",
+                "token_overhead_ratio",
+                "cost_overhead_delta",
+                "cost_overhead_ratio",
+                "provider_latency_overhead_ms",
+                "provider_latency_overhead_ratio",
+                "evidence_completeness_rate",
+                "kill_progress_actual_ratio_min",
+                "kill_progress_actual_ratio_max",
+                "kill_progress_actual_ratio_mean",
+            ):
+                values = [row.get(field_name) for row in ordered]
+                aggregate[field_name] = None
+                if any(
+                    isinstance(value, bool)
+                    or not isinstance(value, (int, float))
+                    for value in values
+                ):
+                    aggregate[f"{field_name}_min"] = None
+                    aggregate[f"{field_name}_max"] = None
+                    aggregate[f"{field_name}_relative_difference"] = None
+                    continue
+                numeric_values = [float(value) for value in values]
+                field_minimum = min(numeric_values)
+                field_maximum = max(numeric_values)
+                aggregate[f"{field_name}_min"] = field_minimum
+                aggregate[f"{field_name}_max"] = field_maximum
+                aggregate[f"{field_name}_relative_difference"] = (
+                    (field_maximum - field_minimum) / abs(field_minimum)
+                    if field_minimum != 0
+                    else 0.0
+                    if field_maximum == 0
+                    else None
+                )
+            if ordered[0].get("fault_type") == "worker_death":
+                for field_name in (
+                    "dead_worker_count",
+                    "actual_dead_worker_count",
+                    "target_dead_worker_count",
+                    "required_slot_count",
+                    "recovered_slot_count",
+                ):
+                    values = [row.get(field_name) for row in ordered]
+                    aggregate[field_name] = (
+                        sum(int(value) for value in values)
+                        if all(
+                            isinstance(value, int)
+                            and not isinstance(value, bool)
+                            and value >= 0
+                            for value in values
+                        )
+                        else None
+                    )
+                required_slots = aggregate.get("required_slot_count")
+                recovered_slots = aggregate.get("recovered_slot_count")
+                aggregate["result_completeness_rate"] = _rate(
+                    recovered_slots,
+                    required_slots,
+                )
+                aggregate["result_completeness_applicability"] = (
+                    "applicable"
+                    if isinstance(required_slots, int) and required_slots > 0
+                    else "zero_denominator"
+                )
+                for field_name in (
+                    "coordinator_continued",
+                    "root_output_complete",
+                    "accepted_validity",
+                ):
+                    values = [row.get(field_name) for row in ordered]
+                    aggregate[field_name] = (
+                        all(values)
+                        if all(isinstance(value, bool) for value in values)
+                        else None
+                    )
+                kill_progress_values = [
+                    float(row["kill_progress"])
+                    for row in ordered
+                    if isinstance(row.get("kill_progress"), (int, float))
+                    and not isinstance(row.get("kill_progress"), bool)
+                ]
+                aggregate["kill_progress"] = None
+                aggregate["kill_progress_min"] = (
+                    min(kill_progress_values) if kill_progress_values else None
+                )
+                aggregate["kill_progress_max"] = (
+                    max(kill_progress_values) if kill_progress_values else None
+                )
+                aggregate["kill_progress_mean"] = (
+                    sum(kill_progress_values) / len(kill_progress_values)
+                    if kill_progress_values
+                    else None
+                )
+                aggregate["worker_death_evidence_refs"] = _stable_evidence_refs(
+                    [
+                        ref
+                        for row in ordered
+                        for ref in row.get("worker_death_evidence_refs", ())
+                        if isinstance(ref, Mapping)
+                    ]
+                )
+        if experiment_id == EXP5:
+            task_count = int(aggregate["task_count"])
+            accepted_count = sum(
+                float(row.get("accepted_validity_rate") or 0.0)
+                * int(row["task_count"])
+                for row in ordered
+            )
+            identity_matches = sum(
+                int(row.get("model_identity_match_count") or 0)
+                for row in ordered
+            )
+            identity_denominator = sum(
+                int(row.get("model_identity_denominator") or 0)
+                for row in ordered
+            )
+            aggregate.update(
+                {
+                    "row_scope": (
+                        "three_repeat_aggregate"
+                        if len(ordered) == 3
+                        else "repeat_aggregate"
+                    ),
+                    "completion_rate": _rate(
+                        int(aggregate["completed_root_count"]),
+                        task_count,
+                    ),
+                    "accepted_validity_rate": _rate(
+                        accepted_count,
+                        task_count,
+                    ),
+                    "provider_attempt_count": sum(
+                        int(row["provider_attempt_count"]) for row in ordered
+                    ),
+                    "provider_latency_sum_ms": sum(
+                        float(row["provider_latency_sum_ms"])
+                        for row in ordered
+                    ),
+                    "provider_error_count": sum(
+                        int(row["provider_error_count"]) for row in ordered
+                    ),
+                    "rate_limited_attempt_count": sum(
+                        int(row["rate_limited_attempt_count"])
+                        for row in ordered
+                    ),
+                    "retry_attempt_count": sum(
+                        int(row["retry_attempt_count"]) for row in ordered
+                    ),
+                    "endpoint_error_count": sum(
+                        int(row["endpoint_error_count"]) for row in ordered
+                    ),
+                    "model_execution_v2_record_count": sum(
+                        int(row["model_execution_v2_record_count"])
+                        for row in ordered
+                    ),
+                    "model_identity_match_count": identity_matches,
+                    "model_identity_denominator": identity_denominator,
+                    "model_identity_match_rate": _rate(
+                        identity_matches,
+                        identity_denominator,
+                    ),
+                    "identity_status": (
+                        "not_observed"
+                        if identity_denominator == 0
+                        else "matched"
+                        if identity_matches == identity_denominator
+                        else "model_identity_mismatch"
+                    ),
+                    "provider_confounding": "model_provider_endpoint_pair",
+                }
+            )
+        aggregates.append(aggregate)
+    return [*repeat_rows, *aggregates]
+
+
+def _with_exp4_full_pairing(
+    rows: Sequence[Mapping[str, Any]],
+) -> list[dict[str, Any]]:
+    full_rows = {
+        _exp4_pair_key(row): row
+        for row in rows
+        if row.get("ablation_mode") == "FULL"
+    }
+    paired_rows: list[dict[str, Any]] = []
+    for source in rows:
+        row = dict(source)
+        full_row = full_rows.get(_exp4_pair_key(row))
+        full_condition_id = (
+            full_row.get("condition_id") if full_row is not None else None
+        )
+        full_condition_ids = (
+            list(full_row.get("condition_ids", ()))
+            if full_row is not None
+            else []
+        )
+        if full_condition_id is not None and not full_condition_ids:
+            full_condition_ids = [full_condition_id]
+        row.update(
+            {
+                "paired_full_ablation_mode": (
+                    "FULL" if full_row is not None else None
+                ),
+                "paired_full_case_id": (
+                    full_row.get("case_id") if full_row is not None else None
+                ),
+                "paired_full_condition_id": full_condition_id,
+                "paired_full_condition_ids": full_condition_ids,
+                "paired_full_row_found": full_row is not None,
+                "paired_full_paper_eligible": (
+                    full_row.get("paper_eligible") is True
+                    if full_row is not None
+                    else False
+                ),
+            }
+        )
+        if row.get("ablation_mode") != "FULL":
+            reasons = list(row.get("paper_ineligibility_reasons", ()))
+            if full_row is None:
+                reasons.append("missing_paired_full_evidence")
+            elif full_row.get("paper_eligible") is not True:
+                reasons.append("paired_full_not_paper_eligible")
+            stable_reasons = list(dict.fromkeys(str(reason) for reason in reasons))
+            row["paper_ineligibility_reasons"] = stable_reasons
+            row["paper_eligible"] = (
+                row.get("paper_eligible") is True and not stable_reasons
+            )
+        paired_rows.append(row)
+    return paired_rows
+
+
+def _exp4_pair_key(row: Mapping[str, Any]) -> tuple[Any, ...]:
+    row_scope = row.get("row_scope")
+    return (
+        row_scope,
+        row.get("domain"),
+        row.get("difficulty"),
+        row.get("paper_difficulty"),
+        row.get("topic_family"),
+        row.get("worker_count"),
+        row.get("case_id") if row_scope == "task" else None,
+        (
+            row.get("repeat_id")
+            if row_scope in {"task", "repeat_condition"}
+            else None
+        ),
+    )
+
+
+def _repeat_group_key(
+    experiment_id: str,
+    row: Mapping[str, Any],
+) -> tuple[Any, ...]:
+    return (
+        experiment_id,
+        row.get("domain"),
+        row.get("difficulty"),
+        row.get("paper_difficulty"),
+        row.get("topic_family"),
+        row.get("case_id"),
+        row.get("worker_count"),
+        row.get("fault_type"),
+        row.get("fault_rate"),
+        row.get("ablation_mode"),
+        row.get("cohort_member_id"),
+        row.get("provider_family"),
+        row.get("provider_model_id"),
+        row.get("model_entry_id"),
+        row.get("worker_death_count"),
+        row.get("kill_progress_target_ratio"),
+    )
 
 
 def _run_roots(root: Path) -> list[Path]:
@@ -573,24 +3654,6 @@ def _wall_clock_ms(events: Sequence[Mapping[str, Any]]) -> float:
     )
 
 
-def _critical_path_ms(events: Sequence[Mapping[str, Any]]) -> float:
-    unit_ms = max(
-        (
-            float(_number(event.get("duration_ms")))
-            for event in events
-            if event.get("event_type") == "AI_UNIT_ENDED"
-        ),
-        default=0.0,
-    )
-    merge_ms = sum(
-        float(_number(event.get("duration_ms")))
-        for event in events
-        if event.get("event_type") == "MERGE_GATE_COMPLETED"
-    )
-    calculated = unit_ms + merge_ms
-    return calculated if calculated > 0 else _wall_clock_ms(events)
-
-
 def _event_timestamps(event: Mapping[str, Any]) -> list[datetime]:
     result: list[datetime] = []
     for field_name in ("started_at", "ended_at", "occurred_at", "created_at"):
@@ -622,8 +3685,16 @@ def _scalability_key(row: Mapping[str, Any]) -> tuple[Any, ...]:
     )
 
 
-def _rate(numerator: int, denominator: int) -> float | None:
-    return numerator / denominator if denominator else None
+def _rate(numerator: Any, denominator: Any) -> float | None:
+    if (
+        isinstance(numerator, bool)
+        or not isinstance(numerator, (int, float))
+        or isinstance(denominator, bool)
+        or not isinstance(denominator, (int, float))
+        or denominator == 0
+    ):
+        return None
+    return numerator / denominator
 
 
 def _quantile(values: Sequence[int | float], probability: float) -> int | float | None:

@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from tokenshare.experiments.paper_budget import (
+    PAPER_EXPERIMENT_TASK_LIMITS,
     PaperBudgetApprovalError,
     load_exp1_pilot_profile,
     plan_exp1_pilot,
@@ -307,7 +308,14 @@ def test_budget_digest_covers_gate_c_execution_commitments() -> None:
         )
 
     baseline = plan()
-    assert baseline.quota_preflight["budget_commitments"] == commitments
+    persisted_commitments = baseline.quota_preflight["budget_commitments"]
+    assert all(
+        persisted_commitments[key] == value
+        for key, value in commitments.items()
+    )
+    assert persisted_commitments["experiment_budget_identity"][
+        "schema_version"
+    ] == "tokenshare.paper_experiment_budget_identity.v1"
     drifts = (
         {
             "frozen_selections": [
@@ -480,6 +488,54 @@ def test_exp5_source_config_drift_changes_budget_and_invalidates_old_approval() 
             plan_only=False,
             approve_budget_digest=original_budget.budget_digest,
         )
+
+
+def test_exp5_budget_has_no_five_root_cap_and_binds_request_controls() -> None:
+    assert (
+        "exp5_real_ai_model_endpoint_comparison"
+        not in PAPER_EXPERIMENT_TASK_LIMITS
+    )
+    catalog = load_paper_catalogs(
+        factorization_path=Path(
+            "benchmarks/paper/factorization_catalog.v1.jsonl"
+        ),
+        lean_path=Path("benchmarks/paper/lean_catalog.v1.jsonl"),
+    )
+    condition = expand_plan_conditions(
+        catalog_manifest=catalog,
+        experiment_ids=("exp5_real_ai_model_endpoint_comparison",),
+        worker_levels=(10,),
+        repeats=1,
+        seed_family=(1,),
+        model_endpoint_cohort_preflight=_exp5_preflight(
+            source_digest="sha256:" + "3" * 64
+        ),
+    )[0]
+    controls_a = _exp5_preflight(source_digest="sha256:" + "3" * 64)
+    controls_b = json.loads(json.dumps(controls_a))
+    controls_a["request_controls_snapshot"] = {
+        "temperature": 0.0,
+        "top_p": 0.9,
+        "stream": False,
+    }
+    controls_b["request_controls_snapshot"] = {
+        "temperature": 0.0,
+        "top_p": 0.8,
+        "stream": False,
+    }
+
+    def plan(preflight: dict) -> str:
+        return plan_paper_suite(
+            catalog_manifest=catalog,
+            conditions=(condition,),
+            max_provider_attempts_per_ai_unit=1,
+            token_upper_bound_per_provider_attempt=100,
+            cost_upper_bound_per_provider_attempt=0.01,
+            plan_only=True,
+            model_endpoint_cohort_preflight=preflight,
+        ).budget_digest
+
+    assert plan(controls_a) != plan(controls_b)
 
 
 def test_lean_medium_lemma_dag_budget_uses_v2_expected_ai_unit_count() -> None:

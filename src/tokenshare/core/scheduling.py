@@ -57,9 +57,19 @@ class Scheduler:
         now: str,
         decision_id: str,
         lease_kind: str = "primary",
+        allowed_unit_ids: Iterable[str] | None = None,
     ) -> SchedulingDecision | None:
+        allowed = (
+            None
+            if allowed_unit_ids is None
+            else frozenset(str(unit_id) for unit_id in allowed_unit_ids)
+        )
         ready_unit_ids = sorted(
-            graph.ready_unit_ids(),
+            (
+                unit_id
+                for unit_id in graph.ready_unit_ids()
+                if allowed is None or unit_id in allowed
+            ),
             key=lambda unit_id: (graph.units[unit_id].created_at, unit_id),
         )
         client_list = list(clients)

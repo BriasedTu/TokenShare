@@ -1,0 +1,2867 @@
+{
+  "audit_refs": [
+    {
+      "path": "lean_3x3_matrix.json"
+    },
+    {
+      "path": "exp1_pilot_profile.json"
+    }
+  ],
+  "budget_ref": {
+    "budget_digest": "sha256:bacb74c11c59da57367cdbf013267e8a4046fd57f0bdb31b8bde4b944108416a",
+    "cost_upper_bound": 0.116736,
+    "disk_estimate": {
+      "bytes": 26214400,
+      "policy": {
+        "base_suite_bytes": 1048576,
+        "per_ai_unit_bytes": 1048576,
+        "per_root_bytes": 262144
+      }
+    },
+    "max_provider_attempts": 22,
+    "planned_ai_units": 22,
+    "planned_conditions": 8,
+    "planned_experiments": [
+      "exp1_real_ai_feasibility"
+    ],
+    "planned_root_runs": 8,
+    "quota_preflight": {
+      "budget_approval": {
+        "approval_mode": "user_bypassed",
+        "approval_required": false,
+        "authorization_source": "project_policy",
+        "budget_digest": "sha256:bacb74c11c59da57367cdbf013267e8a4046fd57f0bdb31b8bde4b944108416a",
+        "provided_approval_digest": null
+      },
+      "exp1_pilot": {
+        "approval_status": "user_bypassed",
+        "baseline_provider": {
+          "baseline_declaration_digest": "sha256:b858d1f534ef2f01216e4804c639305b49ec36d50b299be1588d2e163a49311d",
+          "baseline_id": "exp1_glm_5_2_siliconflow_default_v1",
+          "model_endpoint_identity_digest": "sha256:aa55d4add07d28e00c0c44d75fa09ad63af83a6e90cb47859cec78b9415aaebb",
+          "provider_config_id": "exp1_baseline_siliconflow",
+          "provider_config_path": "exp1_baseline_provider_config.v1.json",
+          "provider_config_safe_snapshot": {
+            "defaults": {
+              "max_provider_attempts": 1,
+              "max_tokens": 1024,
+              "stream": false,
+              "temperature": 0.0,
+              "timeout_seconds": 30,
+              "top_p": 1.0
+            },
+            "entries": [
+              {
+                "api_key_env": "TOKENSHARE_EXP1_BASELINE_API_KEY",
+                "base_url": "https://api.siliconflow.cn/v1",
+                "enabled": true,
+                "endpoint": "/chat/completions",
+                "entry_id": "glm_5_2_exp1_baseline",
+                "model": "zai-org/GLM-5.2",
+                "pricing": {
+                  "currency": "USD",
+                  "input_per_million_tokens": 1.0,
+                  "output_per_million_tokens": 2.0
+                },
+                "request_overrides": {
+                  "enable_thinking": false,
+                  "temperature": 0.0
+                },
+                "supports_json_mode": true,
+                "supports_streaming": false,
+                "tags": [
+                  "paper",
+                  "exp1_baseline",
+                  "pilot"
+                ]
+              }
+            ],
+            "executor_id": "executor_ai_api_exp1_baseline",
+            "local_concurrency": {
+              "max_in_flight_global": 10
+            },
+            "metadata": {
+              "approval_snapshot": "exp1_minimal_pilot_v1",
+              "pricing_note": "Conservative planning ceiling for Task 11 budget approval; actual provider usage and cost remain evidence-derived.",
+              "secret_policy": "api_key_env_only"
+            },
+            "provider_family": "siliconflow",
+            "schema_version": "phase7.ai_api_executor_config.v1",
+            "selection_policy": {
+              "kind": "uniform_random_without_weights",
+              "seed_source": "request_or_environment_seed"
+            }
+          },
+          "provider_family": "siliconflow",
+          "provider_model_id": "zai-org/GLM-5.2",
+          "reasoning_profile_id": "default",
+          "selected_entry_id": "glm_5_2_exp1_baseline",
+          "source_provider_config_digest": "sha256:d1642ac83b912a46b953e475e58949320dfc97db7454dad614693574374f44f5"
+        },
+        "blocked_case_ids": [
+          "lean_v2_hard_frontier_01"
+        ],
+        "blocked_root_runs": 1,
+        "case_order": [
+          "factor_easy_01",
+          "factor_medium_01",
+          "factor_hard_01",
+          "lean_easy_01",
+          "lean_v2_medium_lemma_dag_01",
+          "lean_v2_medium_function_set_dx_subset_chain_01",
+          "lean_v2_medium_induction_nat_predicate_chain_01",
+          "lean_v2_hard_frontier_01"
+        ],
+        "case_request_profiles": [
+          {
+            "ai_unit_bindings": [
+              {
+                "binding_digest": "sha256:630c3950c6dfc9c2faf680e81128b227b73187c1902fb6b618d493c05f15384d",
+                "core_binding_digest": "sha256:1e63b90d36f4e7361e42018f34921a85a783197b83355f1f0766c82294b2aa6b",
+                "domain_unit_commitment": {
+                  "case_id": null,
+                  "child_count": 2,
+                  "child_index": 0,
+                  "commitment_kind": "factorization_range.v1",
+                  "coverage_id": "coverage:sha256:9aa1d40d893ee2652b43e186fb7548261434b11365742128087a010c0af4b7d0:sha256:5b46fb7f82766f4a638acbcbcd9ca6ec56df9d61ea4eb4e3b2e249caa96cbc9c",
+                  "domain": "factorization",
+                  "logical_range_index": 0,
+                  "partition_params_digest": "sha256:5b46fb7f82766f4a638acbcbcd9ca6ec56df9d61ea4eb4e3b2e249caa96cbc9c",
+                  "planned_ai_unit_id": "range_0",
+                  "range_digest": "sha256:c85a143803e020c5a119d8144b6b029a2443bb6a2d8c41cf51a97749959ad197",
+                  "range_end": "5",
+                  "range_payload_digest": "sha256:1b76f8fefbdc504ecd99d6c1fa58c4374765d20fe4b8cb7d5efcc1c04f6e36b6",
+                  "range_start": "2",
+                  "schema_version": "tokenshare.paper_domain_unit_commitment.v1",
+                  "snapshot_range_payload_digest": null,
+                  "target_n": "87",
+                  "task_id": "paper_factorization_factor_easy_01",
+                  "unit_id": "unit_paper_factor_root_factor_easy_01_e40ab3cdd957e383e726462a0d6c11a94efa2bacad6a4a1c04131c3bc18e7ab8_range_coverage_sha256_9aa1d40d893ee2652b43e186fb7548261434b11365742128087a010c0af4b7d0_sha256_5b46fb7f82766f4a638acbcbcd9ca6ec56df9d61ea4eb4e3b2e249caa96cbc9c_0",
+                  "unit_type": "factor_search_range"
+                },
+                "domain_unit_commitment_digest": "sha256:2a955aba3b948047cc58f6290d3b6629fb464c7a724353623c94b7c1455ed621",
+                "planned_ai_unit_id": "range_0",
+                "schema_version": "tokenshare.paper_ai_unit_binding.v1",
+                "task_unit_snapshot_commitment": {
+                  "depth": 1,
+                  "input_refs": {},
+                  "metadata": {
+                    "canonical_selection_id": "canonical_selection:paper_factorization_factor_easy_01:paper_factor_root_factor_easy_01",
+                    "child_logical_key": "range:coverage:sha256:9aa1d40d893ee2652b43e186fb7548261434b11365742128087a010c0af4b7d0:sha256:5b46fb7f82766f4a638acbcbcd9ca6ec56df9d61ea4eb4e3b2e249caa96cbc9c:0",
+                    "output_contract_refs": {
+                      "range_result": {
+                        "output_contract_id": "factorization.range_result.contract.v1",
+                        "schema_ref": {
+                          "artifact_schema_id": "factorization.range_result",
+                          "artifact_schema_version": "v1",
+                          "schema_version": "factorization.range_result.v1"
+                        }
+                      }
+                    },
+                    "required_outputs": [
+                      "range_result"
+                    ],
+                    "source_expansion_decision_id": "expansion_decision:34a854f5114c3e22b11db2428c8cadfb72e5584bcc670f5fc725dc88844e03c5",
+                    "source_proposal_id": "decomposition_proposal_e40ab3cdd957e383e726462a0d6c11a94efa2bacad6a4a1c04131c3bc18e7ab8",
+                    "validator_policy_id": "factorization.range_result.validator.v1"
+                  },
+                  "parent_unit_id": "paper_factor_root_factor_easy_01",
+                  "plugin_payload": {
+                    "schema_version": "factorization.factor_search_range_plugin_payload.v1",
+                    "summary": {
+                      "child_count": 2,
+                      "child_index": 0,
+                      "coverage_id": "coverage:sha256:9aa1d40d893ee2652b43e186fb7548261434b11365742128087a010c0af4b7d0:sha256:5b46fb7f82766f4a638acbcbcd9ca6ec56df9d61ea4eb4e3b2e249caa96cbc9c",
+                      "partition_params_digest": "sha256:5b46fb7f82766f4a638acbcbcd9ca6ec56df9d61ea4eb4e3b2e249caa96cbc9c",
+                      "range_digest": "sha256:c85a143803e020c5a119d8144b6b029a2443bb6a2d8c41cf51a97749959ad197"
+                    },
+                    "validation_requirements": {
+                      "bounded_range_required": true,
+                      "coverage_id_consistency_required": true,
+                      "partition_params_digest_consistency_required": true,
+                      "range_input_digest_required": true,
+                      "range_result_schema_version": "factorization.range_result.v1"
+                    }
+                  },
+                  "schema_version": "tokenshare.paper_task_unit_snapshot_commitment.v1",
+                  "task_id": "paper_factorization_factor_easy_01",
+                  "unit_id": "unit_paper_factor_root_factor_easy_01_e40ab3cdd957e383e726462a0d6c11a94efa2bacad6a4a1c04131c3bc18e7ab8_range_coverage_sha256_9aa1d40d893ee2652b43e186fb7548261434b11365742128087a010c0af4b7d0_sha256_5b46fb7f82766f4a638acbcbcd9ca6ec56df9d61ea4eb4e3b2e249caa96cbc9c_0",
+                  "unit_type": "factor_search_range"
+                },
+                "task_unit_snapshot_digest": "sha256:c89f59db7ef71e420ec5901b043e0c605a67ea53625c3d719aadff71b4b1fd8e",
+                "unit_id": "unit_paper_factor_root_factor_easy_01_e40ab3cdd957e383e726462a0d6c11a94efa2bacad6a4a1c04131c3bc18e7ab8_range_coverage_sha256_9aa1d40d893ee2652b43e186fb7548261434b11365742128087a010c0af4b7d0_sha256_5b46fb7f82766f4a638acbcbcd9ca6ec56df9d61ea4eb4e3b2e249caa96cbc9c_0"
+              },
+              {
+                "binding_digest": "sha256:151dcb26fd08814abc47a35303d817efe633c2af0e2492addc5e15308de17709",
+                "core_binding_digest": "sha256:d0397135dc2cb8be894434899ca599903baf858e86b6d55915cdb4b49914e689",
+                "domain_unit_commitment": {
+                  "case_id": null,
+                  "child_count": 2,
+                  "child_index": 1,
+                  "commitment_kind": "factorization_range.v1",
+                  "coverage_id": "coverage:sha256:9aa1d40d893ee2652b43e186fb7548261434b11365742128087a010c0af4b7d0:sha256:5b46fb7f82766f4a638acbcbcd9ca6ec56df9d61ea4eb4e3b2e249caa96cbc9c",
+                  "domain": "factorization",
+                  "logical_range_index": 1,
+                  "partition_params_digest": "sha256:5b46fb7f82766f4a638acbcbcd9ca6ec56df9d61ea4eb4e3b2e249caa96cbc9c",
+                  "planned_ai_unit_id": "range_1",
+                  "range_digest": "sha256:65c8581c8766050639cd140579a133e5c30b3b20b150090b7c8c902e3783682a",
+                  "range_end": "9",
+                  "range_payload_digest": "sha256:1f82994ee785d8a0f109cbe694a9a0544108ec053a888fba30c08dcea003b5ac",
+                  "range_start": "6",
+                  "schema_version": "tokenshare.paper_domain_unit_commitment.v1",
+                  "snapshot_range_payload_digest": null,
+                  "target_n": "87",
+                  "task_id": "paper_factorization_factor_easy_01",
+                  "unit_id": "unit_paper_factor_root_factor_easy_01_e40ab3cdd957e383e726462a0d6c11a94efa2bacad6a4a1c04131c3bc18e7ab8_range_coverage_sha256_9aa1d40d893ee2652b43e186fb7548261434b11365742128087a010c0af4b7d0_sha256_5b46fb7f82766f4a638acbcbcd9ca6ec56df9d61ea4eb4e3b2e249caa96cbc9c_1",
+                  "unit_type": "factor_search_range"
+                },
+                "domain_unit_commitment_digest": "sha256:2a04359b0d632fbbb918ad07a293144fe573a47c13aab8f615afc6f2dc89d73e",
+                "planned_ai_unit_id": "range_1",
+                "schema_version": "tokenshare.paper_ai_unit_binding.v1",
+                "task_unit_snapshot_commitment": {
+                  "depth": 1,
+                  "input_refs": {},
+                  "metadata": {
+                    "canonical_selection_id": "canonical_selection:paper_factorization_factor_easy_01:paper_factor_root_factor_easy_01",
+                    "child_logical_key": "range:coverage:sha256:9aa1d40d893ee2652b43e186fb7548261434b11365742128087a010c0af4b7d0:sha256:5b46fb7f82766f4a638acbcbcd9ca6ec56df9d61ea4eb4e3b2e249caa96cbc9c:1",
+                    "output_contract_refs": {
+                      "range_result": {
+                        "output_contract_id": "factorization.range_result.contract.v1",
+                        "schema_ref": {
+                          "artifact_schema_id": "factorization.range_result",
+                          "artifact_schema_version": "v1",
+                          "schema_version": "factorization.range_result.v1"
+                        }
+                      }
+                    },
+                    "required_outputs": [
+                      "range_result"
+                    ],
+                    "source_expansion_decision_id": "expansion_decision:34a854f5114c3e22b11db2428c8cadfb72e5584bcc670f5fc725dc88844e03c5",
+                    "source_proposal_id": "decomposition_proposal_e40ab3cdd957e383e726462a0d6c11a94efa2bacad6a4a1c04131c3bc18e7ab8",
+                    "validator_policy_id": "factorization.range_result.validator.v1"
+                  },
+                  "parent_unit_id": "paper_factor_root_factor_easy_01",
+                  "plugin_payload": {
+                    "schema_version": "factorization.factor_search_range_plugin_payload.v1",
+                    "summary": {
+                      "child_count": 2,
+                      "child_index": 1,
+                      "coverage_id": "coverage:sha256:9aa1d40d893ee2652b43e186fb7548261434b11365742128087a010c0af4b7d0:sha256:5b46fb7f82766f4a638acbcbcd9ca6ec56df9d61ea4eb4e3b2e249caa96cbc9c",
+                      "partition_params_digest": "sha256:5b46fb7f82766f4a638acbcbcd9ca6ec56df9d61ea4eb4e3b2e249caa96cbc9c",
+                      "range_digest": "sha256:65c8581c8766050639cd140579a133e5c30b3b20b150090b7c8c902e3783682a"
+                    },
+                    "validation_requirements": {
+                      "bounded_range_required": true,
+                      "coverage_id_consistency_required": true,
+                      "partition_params_digest_consistency_required": true,
+                      "range_input_digest_required": true,
+                      "range_result_schema_version": "factorization.range_result.v1"
+                    }
+                  },
+                  "schema_version": "tokenshare.paper_task_unit_snapshot_commitment.v1",
+                  "task_id": "paper_factorization_factor_easy_01",
+                  "unit_id": "unit_paper_factor_root_factor_easy_01_e40ab3cdd957e383e726462a0d6c11a94efa2bacad6a4a1c04131c3bc18e7ab8_range_coverage_sha256_9aa1d40d893ee2652b43e186fb7548261434b11365742128087a010c0af4b7d0_sha256_5b46fb7f82766f4a638acbcbcd9ca6ec56df9d61ea4eb4e3b2e249caa96cbc9c_1",
+                  "unit_type": "factor_search_range"
+                },
+                "task_unit_snapshot_digest": "sha256:804bf59d745863b84789d347436d2115694bf3e3a8f73e423addd593052c94af",
+                "unit_id": "unit_paper_factor_root_factor_easy_01_e40ab3cdd957e383e726462a0d6c11a94efa2bacad6a4a1c04131c3bc18e7ab8_range_coverage_sha256_9aa1d40d893ee2652b43e186fb7548261434b11365742128087a010c0af4b7d0_sha256_5b46fb7f82766f4a638acbcbcd9ca6ec56df9d61ea4eb4e3b2e249caa96cbc9c_1"
+              }
+            ],
+            "ai_unit_count": 2,
+            "blocked_reason": null,
+            "case_id": "factor_easy_01",
+            "catalog_expected_ai_unit_count": 2,
+            "completion_token_upper_bound": 1024,
+            "cost_currency": "USD",
+            "cost_upper_bound": 0.006144,
+            "disk_upper_bound_bytes": 2359296,
+            "domain": "factorization",
+            "execution_status": "executable",
+            "executor_requirements": {
+              "executor": "ai_api",
+              "model_endpoint_identity_digest": "sha256:aa55d4add07d28e00c0c44d75fa09ad63af83a6e90cb47859cec78b9415aaebb",
+              "prepared_execution_config_digest": "sha256:19e8ff0930fc0c13a406c4d7a9be4c25f76a1cbf6d58a466493f9f8a39fdce2d",
+              "provider_config_id": "exp1_baseline_siliconflow",
+              "provider_family": "siliconflow",
+              "provider_model_id": "zai-org/GLM-5.2",
+              "reasoning_profile_id": "default",
+              "selected_entry_id": "glm_5_2_exp1_baseline",
+              "source_provider_config_digest": "sha256:d1642ac83b912a46b953e475e58949320dfc97db7454dad614693574374f44f5"
+            },
+            "legacy_difficulty": "easy",
+            "ordinal": 0,
+            "paper_difficulty": "easy",
+            "prompt_token_upper_bound": 4096,
+            "provider_attempt_upper_bound": 2,
+            "request_limits": {
+              "max_provider_attempts_per_ai_unit": 1,
+              "max_tokens": 512,
+              "prompt_token_upper_bound": 2048,
+              "stream": false,
+              "temperature": 0.0,
+              "timeout_seconds": 30
+            },
+            "split_profile": {
+              "actual_child_count": 2,
+              "ai_unit_order": [
+                "range_0",
+                "range_1"
+              ],
+              "partition_params_digest": "sha256:5b46fb7f82766f4a638acbcbcd9ca6ec56df9d61ea4eb4e3b2e249caa96cbc9c",
+              "ranges": [
+                {
+                  "range_end": "5",
+                  "range_start": "2"
+                },
+                {
+                  "range_end": "9",
+                  "range_start": "6"
+                }
+              ],
+              "ranges_digest": "sha256:0ad6b979d6359fedce62d5aa91d795f51077d9bb93718afc4dee352fcaaf9df7",
+              "requested_child_count": 2,
+              "split_kind": "factorization.candidate_range_partition.v1"
+            },
+            "token_upper_bound": 5120,
+            "topic_family": null,
+            "wall_clock_upper_bound_seconds": 60
+          },
+          {
+            "ai_unit_bindings": [
+              {
+                "binding_digest": "sha256:6036ff546b71709739d9d74cb85cb0d3e2275802b0a01147c6e2f76e8bae49b9",
+                "core_binding_digest": "sha256:6f099de88e46efe8107010251983756ab8df98269514fc4e9d65abe5e46d93a2",
+                "domain_unit_commitment": {
+                  "case_id": null,
+                  "child_count": 2,
+                  "child_index": 0,
+                  "commitment_kind": "factorization_range.v1",
+                  "coverage_id": "coverage:sha256:cd66d6b69f8c2f749d7d8d9c44c2039e5c129cfed83515df05a0881f0d2ec321:sha256:3382fe5a67991fed85c23e3040dd1dba35ad4d24de0fb0171c78ac72adaf4264",
+                  "domain": "factorization",
+                  "logical_range_index": 0,
+                  "partition_params_digest": "sha256:3382fe5a67991fed85c23e3040dd1dba35ad4d24de0fb0171c78ac72adaf4264",
+                  "planned_ai_unit_id": "range_0",
+                  "range_digest": "sha256:a55eba8e5ea60a7b3fdb597777afd403504741a465a19416a5f41dd1a8acb9c4",
+                  "range_end": "21",
+                  "range_payload_digest": "sha256:1795580722390808258578ebe04966c20a94da2466273783d089918f9f101bee",
+                  "range_start": "2",
+                  "schema_version": "tokenshare.paper_domain_unit_commitment.v1",
+                  "snapshot_range_payload_digest": null,
+                  "target_n": "1689",
+                  "task_id": "paper_factorization_factor_medium_01",
+                  "unit_id": "unit_paper_factor_root_factor_medium_01_0d7bfb0f3a881a75c0ddc44e7da2130ae79c19757b49f66cfd9561decbf4703b_range_coverage_sha256_cd66d6b69f8c2f749d7d8d9c44c2039e5c129cfed83515df05a0881f0d2ec321_sha256_3382fe5a67991fed85c23e3040dd1dba35ad4d24de0fb0171c78ac72adaf4264_0",
+                  "unit_type": "factor_search_range"
+                },
+                "domain_unit_commitment_digest": "sha256:8233d9a8a48191734fe46722a523e377b22549bf396cdb2a2012bbf36bb8e837",
+                "planned_ai_unit_id": "range_0",
+                "schema_version": "tokenshare.paper_ai_unit_binding.v1",
+                "task_unit_snapshot_commitment": {
+                  "depth": 1,
+                  "input_refs": {},
+                  "metadata": {
+                    "canonical_selection_id": "canonical_selection:paper_factorization_factor_medium_01:paper_factor_root_factor_medium_01",
+                    "child_logical_key": "range:coverage:sha256:cd66d6b69f8c2f749d7d8d9c44c2039e5c129cfed83515df05a0881f0d2ec321:sha256:3382fe5a67991fed85c23e3040dd1dba35ad4d24de0fb0171c78ac72adaf4264:0",
+                    "output_contract_refs": {
+                      "range_result": {
+                        "output_contract_id": "factorization.range_result.contract.v1",
+                        "schema_ref": {
+                          "artifact_schema_id": "factorization.range_result",
+                          "artifact_schema_version": "v1",
+                          "schema_version": "factorization.range_result.v1"
+                        }
+                      }
+                    },
+                    "required_outputs": [
+                      "range_result"
+                    ],
+                    "source_expansion_decision_id": "expansion_decision:be440cc5f8086c6cc874c590f68b31e35845d25a8391206729f0699cf6e7e6dd",
+                    "source_proposal_id": "decomposition_proposal_0d7bfb0f3a881a75c0ddc44e7da2130ae79c19757b49f66cfd9561decbf4703b",
+                    "validator_policy_id": "factorization.range_result.validator.v1"
+                  },
+                  "parent_unit_id": "paper_factor_root_factor_medium_01",
+                  "plugin_payload": {
+                    "schema_version": "factorization.factor_search_range_plugin_payload.v1",
+                    "summary": {
+                      "child_count": 2,
+                      "child_index": 0,
+                      "coverage_id": "coverage:sha256:cd66d6b69f8c2f749d7d8d9c44c2039e5c129cfed83515df05a0881f0d2ec321:sha256:3382fe5a67991fed85c23e3040dd1dba35ad4d24de0fb0171c78ac72adaf4264",
+                      "partition_params_digest": "sha256:3382fe5a67991fed85c23e3040dd1dba35ad4d24de0fb0171c78ac72adaf4264",
+                      "range_digest": "sha256:a55eba8e5ea60a7b3fdb597777afd403504741a465a19416a5f41dd1a8acb9c4"
+                    },
+                    "validation_requirements": {
+                      "bounded_range_required": true,
+                      "coverage_id_consistency_required": true,
+                      "partition_params_digest_consistency_required": true,
+                      "range_input_digest_required": true,
+                      "range_result_schema_version": "factorization.range_result.v1"
+                    }
+                  },
+                  "schema_version": "tokenshare.paper_task_unit_snapshot_commitment.v1",
+                  "task_id": "paper_factorization_factor_medium_01",
+                  "unit_id": "unit_paper_factor_root_factor_medium_01_0d7bfb0f3a881a75c0ddc44e7da2130ae79c19757b49f66cfd9561decbf4703b_range_coverage_sha256_cd66d6b69f8c2f749d7d8d9c44c2039e5c129cfed83515df05a0881f0d2ec321_sha256_3382fe5a67991fed85c23e3040dd1dba35ad4d24de0fb0171c78ac72adaf4264_0",
+                  "unit_type": "factor_search_range"
+                },
+                "task_unit_snapshot_digest": "sha256:2669fa6ba0c90b4313a4ccd4fada9e3f0d4ec7c883ffaa31585f4b670cfe6198",
+                "unit_id": "unit_paper_factor_root_factor_medium_01_0d7bfb0f3a881a75c0ddc44e7da2130ae79c19757b49f66cfd9561decbf4703b_range_coverage_sha256_cd66d6b69f8c2f749d7d8d9c44c2039e5c129cfed83515df05a0881f0d2ec321_sha256_3382fe5a67991fed85c23e3040dd1dba35ad4d24de0fb0171c78ac72adaf4264_0"
+              },
+              {
+                "binding_digest": "sha256:16bc0244d063fb4b41fbf7d1a1848fd9da5bc6ec487111c7c13ada5243015046",
+                "core_binding_digest": "sha256:da8080c8ccfd493bdef5ac9542af8ef5c4270e9d8d43679c90740cb35835a239",
+                "domain_unit_commitment": {
+                  "case_id": null,
+                  "child_count": 2,
+                  "child_index": 1,
+                  "commitment_kind": "factorization_range.v1",
+                  "coverage_id": "coverage:sha256:cd66d6b69f8c2f749d7d8d9c44c2039e5c129cfed83515df05a0881f0d2ec321:sha256:3382fe5a67991fed85c23e3040dd1dba35ad4d24de0fb0171c78ac72adaf4264",
+                  "domain": "factorization",
+                  "logical_range_index": 1,
+                  "partition_params_digest": "sha256:3382fe5a67991fed85c23e3040dd1dba35ad4d24de0fb0171c78ac72adaf4264",
+                  "planned_ai_unit_id": "range_1",
+                  "range_digest": "sha256:73a3b6d789d4769f7578732e5b6bfbd2d147157037cf88dbebac9e5ba9d912f1",
+                  "range_end": "41",
+                  "range_payload_digest": "sha256:5f105cd934d0c6b7db7a2aa93805b55c80e7e627403dc0c83ca46d592f9e9ac2",
+                  "range_start": "22",
+                  "schema_version": "tokenshare.paper_domain_unit_commitment.v1",
+                  "snapshot_range_payload_digest": null,
+                  "target_n": "1689",
+                  "task_id": "paper_factorization_factor_medium_01",
+                  "unit_id": "unit_paper_factor_root_factor_medium_01_0d7bfb0f3a881a75c0ddc44e7da2130ae79c19757b49f66cfd9561decbf4703b_range_coverage_sha256_cd66d6b69f8c2f749d7d8d9c44c2039e5c129cfed83515df05a0881f0d2ec321_sha256_3382fe5a67991fed85c23e3040dd1dba35ad4d24de0fb0171c78ac72adaf4264_1",
+                  "unit_type": "factor_search_range"
+                },
+                "domain_unit_commitment_digest": "sha256:024c0297bfccf236a950837f1c69fb004c6a138077d86e6b3571744701b86555",
+                "planned_ai_unit_id": "range_1",
+                "schema_version": "tokenshare.paper_ai_unit_binding.v1",
+                "task_unit_snapshot_commitment": {
+                  "depth": 1,
+                  "input_refs": {},
+                  "metadata": {
+                    "canonical_selection_id": "canonical_selection:paper_factorization_factor_medium_01:paper_factor_root_factor_medium_01",
+                    "child_logical_key": "range:coverage:sha256:cd66d6b69f8c2f749d7d8d9c44c2039e5c129cfed83515df05a0881f0d2ec321:sha256:3382fe5a67991fed85c23e3040dd1dba35ad4d24de0fb0171c78ac72adaf4264:1",
+                    "output_contract_refs": {
+                      "range_result": {
+                        "output_contract_id": "factorization.range_result.contract.v1",
+                        "schema_ref": {
+                          "artifact_schema_id": "factorization.range_result",
+                          "artifact_schema_version": "v1",
+                          "schema_version": "factorization.range_result.v1"
+                        }
+                      }
+                    },
+                    "required_outputs": [
+                      "range_result"
+                    ],
+                    "source_expansion_decision_id": "expansion_decision:be440cc5f8086c6cc874c590f68b31e35845d25a8391206729f0699cf6e7e6dd",
+                    "source_proposal_id": "decomposition_proposal_0d7bfb0f3a881a75c0ddc44e7da2130ae79c19757b49f66cfd9561decbf4703b",
+                    "validator_policy_id": "factorization.range_result.validator.v1"
+                  },
+                  "parent_unit_id": "paper_factor_root_factor_medium_01",
+                  "plugin_payload": {
+                    "schema_version": "factorization.factor_search_range_plugin_payload.v1",
+                    "summary": {
+                      "child_count": 2,
+                      "child_index": 1,
+                      "coverage_id": "coverage:sha256:cd66d6b69f8c2f749d7d8d9c44c2039e5c129cfed83515df05a0881f0d2ec321:sha256:3382fe5a67991fed85c23e3040dd1dba35ad4d24de0fb0171c78ac72adaf4264",
+                      "partition_params_digest": "sha256:3382fe5a67991fed85c23e3040dd1dba35ad4d24de0fb0171c78ac72adaf4264",
+                      "range_digest": "sha256:73a3b6d789d4769f7578732e5b6bfbd2d147157037cf88dbebac9e5ba9d912f1"
+                    },
+                    "validation_requirements": {
+                      "bounded_range_required": true,
+                      "coverage_id_consistency_required": true,
+                      "partition_params_digest_consistency_required": true,
+                      "range_input_digest_required": true,
+                      "range_result_schema_version": "factorization.range_result.v1"
+                    }
+                  },
+                  "schema_version": "tokenshare.paper_task_unit_snapshot_commitment.v1",
+                  "task_id": "paper_factorization_factor_medium_01",
+                  "unit_id": "unit_paper_factor_root_factor_medium_01_0d7bfb0f3a881a75c0ddc44e7da2130ae79c19757b49f66cfd9561decbf4703b_range_coverage_sha256_cd66d6b69f8c2f749d7d8d9c44c2039e5c129cfed83515df05a0881f0d2ec321_sha256_3382fe5a67991fed85c23e3040dd1dba35ad4d24de0fb0171c78ac72adaf4264_1",
+                  "unit_type": "factor_search_range"
+                },
+                "task_unit_snapshot_digest": "sha256:1c9efbc3d7c5adb9afeabc7768f3a79eb5079fb2ea554d83d7db309050b287b7",
+                "unit_id": "unit_paper_factor_root_factor_medium_01_0d7bfb0f3a881a75c0ddc44e7da2130ae79c19757b49f66cfd9561decbf4703b_range_coverage_sha256_cd66d6b69f8c2f749d7d8d9c44c2039e5c129cfed83515df05a0881f0d2ec321_sha256_3382fe5a67991fed85c23e3040dd1dba35ad4d24de0fb0171c78ac72adaf4264_1"
+              }
+            ],
+            "ai_unit_count": 2,
+            "blocked_reason": null,
+            "case_id": "factor_medium_01",
+            "catalog_expected_ai_unit_count": 2,
+            "completion_token_upper_bound": 1024,
+            "cost_currency": "USD",
+            "cost_upper_bound": 0.006144,
+            "disk_upper_bound_bytes": 2359296,
+            "domain": "factorization",
+            "execution_status": "executable",
+            "executor_requirements": {
+              "executor": "ai_api",
+              "model_endpoint_identity_digest": "sha256:aa55d4add07d28e00c0c44d75fa09ad63af83a6e90cb47859cec78b9415aaebb",
+              "prepared_execution_config_digest": "sha256:19e8ff0930fc0c13a406c4d7a9be4c25f76a1cbf6d58a466493f9f8a39fdce2d",
+              "provider_config_id": "exp1_baseline_siliconflow",
+              "provider_family": "siliconflow",
+              "provider_model_id": "zai-org/GLM-5.2",
+              "reasoning_profile_id": "default",
+              "selected_entry_id": "glm_5_2_exp1_baseline",
+              "source_provider_config_digest": "sha256:d1642ac83b912a46b953e475e58949320dfc97db7454dad614693574374f44f5"
+            },
+            "legacy_difficulty": "medium",
+            "ordinal": 1,
+            "paper_difficulty": "medium",
+            "prompt_token_upper_bound": 4096,
+            "provider_attempt_upper_bound": 2,
+            "request_limits": {
+              "max_provider_attempts_per_ai_unit": 1,
+              "max_tokens": 512,
+              "prompt_token_upper_bound": 2048,
+              "stream": false,
+              "temperature": 0.0,
+              "timeout_seconds": 30
+            },
+            "split_profile": {
+              "actual_child_count": 2,
+              "ai_unit_order": [
+                "range_0",
+                "range_1"
+              ],
+              "partition_params_digest": "sha256:3382fe5a67991fed85c23e3040dd1dba35ad4d24de0fb0171c78ac72adaf4264",
+              "ranges": [
+                {
+                  "range_end": "21",
+                  "range_start": "2"
+                },
+                {
+                  "range_end": "41",
+                  "range_start": "22"
+                }
+              ],
+              "ranges_digest": "sha256:963ffa88478d7a0445e7cbaef383e83e1441e49b70b53ca9f31a61c2209a84e7",
+              "requested_child_count": 2,
+              "split_kind": "factorization.candidate_range_partition.v1"
+            },
+            "token_upper_bound": 5120,
+            "topic_family": null,
+            "wall_clock_upper_bound_seconds": 60
+          },
+          {
+            "ai_unit_bindings": [
+              {
+                "binding_digest": "sha256:7f24067bd3d4aad18cdd1b0038b98e6a0f6ba2c4327e2dbfac87c6ba522facc8",
+                "core_binding_digest": "sha256:c13c274c7ba9058c882af5d806deea3964fc5e1ffb3a76d292c2e72553dd14c4",
+                "domain_unit_commitment": {
+                  "case_id": null,
+                  "child_count": 2,
+                  "child_index": 0,
+                  "commitment_kind": "factorization_range.v1",
+                  "coverage_id": "coverage:sha256:03de53d33ab9a58a0a10a839a59f0fc2f7dc48041713788b53bfb04bb2050ec2:sha256:fd91a6db6dc8fe8ccbe9281bac8b36d43fca9185d9f20b976e421ed23e244219",
+                  "domain": "factorization",
+                  "logical_range_index": 0,
+                  "partition_params_digest": "sha256:fd91a6db6dc8fe8ccbe9281bac8b36d43fca9185d9f20b976e421ed23e244219",
+                  "planned_ai_unit_id": "range_0",
+                  "range_digest": "sha256:ff495fc70cd65a6c7fd9d3885706f802eedd96255e78a9f51d09a52871ce0ef1",
+                  "range_end": "73",
+                  "range_payload_digest": "sha256:6f4c1a7d9afd4d8f2dc6b0ab107908a8f87b85b0d63a1b8f6d16b2401111745c",
+                  "range_start": "2",
+                  "schema_version": "tokenshare.paper_domain_unit_commitment.v1",
+                  "snapshot_range_payload_digest": null,
+                  "target_n": "21047",
+                  "task_id": "paper_factorization_factor_hard_01",
+                  "unit_id": "unit_paper_factor_root_factor_hard_01_060d6635dd61f938e065d301168e805dd3615c2ed99c4c8a3bb0560cd610bda8_range_coverage_sha256_03de53d33ab9a58a0a10a839a59f0fc2f7dc48041713788b53bfb04bb2050ec2_sha256_fd91a6db6dc8fe8ccbe9281bac8b36d43fca9185d9f20b976e421ed23e244219_0",
+                  "unit_type": "factor_search_range"
+                },
+                "domain_unit_commitment_digest": "sha256:f1405846089895e86a73a18fb410025a690660f43596184c88e610d4fd23c65f",
+                "planned_ai_unit_id": "range_0",
+                "schema_version": "tokenshare.paper_ai_unit_binding.v1",
+                "task_unit_snapshot_commitment": {
+                  "depth": 1,
+                  "input_refs": {},
+                  "metadata": {
+                    "canonical_selection_id": "canonical_selection:paper_factorization_factor_hard_01:paper_factor_root_factor_hard_01",
+                    "child_logical_key": "range:coverage:sha256:03de53d33ab9a58a0a10a839a59f0fc2f7dc48041713788b53bfb04bb2050ec2:sha256:fd91a6db6dc8fe8ccbe9281bac8b36d43fca9185d9f20b976e421ed23e244219:0",
+                    "output_contract_refs": {
+                      "range_result": {
+                        "output_contract_id": "factorization.range_result.contract.v1",
+                        "schema_ref": {
+                          "artifact_schema_id": "factorization.range_result",
+                          "artifact_schema_version": "v1",
+                          "schema_version": "factorization.range_result.v1"
+                        }
+                      }
+                    },
+                    "required_outputs": [
+                      "range_result"
+                    ],
+                    "source_expansion_decision_id": "expansion_decision:5010a415ec352279fc88dbf06d37041e42582a78f8a5fedc087a3cec6dd77091",
+                    "source_proposal_id": "decomposition_proposal_060d6635dd61f938e065d301168e805dd3615c2ed99c4c8a3bb0560cd610bda8",
+                    "validator_policy_id": "factorization.range_result.validator.v1"
+                  },
+                  "parent_unit_id": "paper_factor_root_factor_hard_01",
+                  "plugin_payload": {
+                    "schema_version": "factorization.factor_search_range_plugin_payload.v1",
+                    "summary": {
+                      "child_count": 2,
+                      "child_index": 0,
+                      "coverage_id": "coverage:sha256:03de53d33ab9a58a0a10a839a59f0fc2f7dc48041713788b53bfb04bb2050ec2:sha256:fd91a6db6dc8fe8ccbe9281bac8b36d43fca9185d9f20b976e421ed23e244219",
+                      "partition_params_digest": "sha256:fd91a6db6dc8fe8ccbe9281bac8b36d43fca9185d9f20b976e421ed23e244219",
+                      "range_digest": "sha256:ff495fc70cd65a6c7fd9d3885706f802eedd96255e78a9f51d09a52871ce0ef1"
+                    },
+                    "validation_requirements": {
+                      "bounded_range_required": true,
+                      "coverage_id_consistency_required": true,
+                      "partition_params_digest_consistency_required": true,
+                      "range_input_digest_required": true,
+                      "range_result_schema_version": "factorization.range_result.v1"
+                    }
+                  },
+                  "schema_version": "tokenshare.paper_task_unit_snapshot_commitment.v1",
+                  "task_id": "paper_factorization_factor_hard_01",
+                  "unit_id": "unit_paper_factor_root_factor_hard_01_060d6635dd61f938e065d301168e805dd3615c2ed99c4c8a3bb0560cd610bda8_range_coverage_sha256_03de53d33ab9a58a0a10a839a59f0fc2f7dc48041713788b53bfb04bb2050ec2_sha256_fd91a6db6dc8fe8ccbe9281bac8b36d43fca9185d9f20b976e421ed23e244219_0",
+                  "unit_type": "factor_search_range"
+                },
+                "task_unit_snapshot_digest": "sha256:6099fa52ee70444dd6cbdfaadc6b69780a5a21090491520b1b9dbeab3b781df8",
+                "unit_id": "unit_paper_factor_root_factor_hard_01_060d6635dd61f938e065d301168e805dd3615c2ed99c4c8a3bb0560cd610bda8_range_coverage_sha256_03de53d33ab9a58a0a10a839a59f0fc2f7dc48041713788b53bfb04bb2050ec2_sha256_fd91a6db6dc8fe8ccbe9281bac8b36d43fca9185d9f20b976e421ed23e244219_0"
+              },
+              {
+                "binding_digest": "sha256:76aa0d6f20f4e75636607036796391e42b72648b1ba959202de016b416584888",
+                "core_binding_digest": "sha256:cba315d2d5a3d026c34fb017933d0386db5676529b5a75c19247e43414872243",
+                "domain_unit_commitment": {
+                  "case_id": null,
+                  "child_count": 2,
+                  "child_index": 1,
+                  "commitment_kind": "factorization_range.v1",
+                  "coverage_id": "coverage:sha256:03de53d33ab9a58a0a10a839a59f0fc2f7dc48041713788b53bfb04bb2050ec2:sha256:fd91a6db6dc8fe8ccbe9281bac8b36d43fca9185d9f20b976e421ed23e244219",
+                  "domain": "factorization",
+                  "logical_range_index": 1,
+                  "partition_params_digest": "sha256:fd91a6db6dc8fe8ccbe9281bac8b36d43fca9185d9f20b976e421ed23e244219",
+                  "planned_ai_unit_id": "range_1",
+                  "range_digest": "sha256:d751630bbb19503857d5b55ab9baa94cda50b36b4d790e8ea04f0f91eebcbfef",
+                  "range_end": "145",
+                  "range_payload_digest": "sha256:0d267122ddf233f446810f0eb5e8efc1e9b8bfcf91461c301be9db0b4dfaa00e",
+                  "range_start": "74",
+                  "schema_version": "tokenshare.paper_domain_unit_commitment.v1",
+                  "snapshot_range_payload_digest": null,
+                  "target_n": "21047",
+                  "task_id": "paper_factorization_factor_hard_01",
+                  "unit_id": "unit_paper_factor_root_factor_hard_01_060d6635dd61f938e065d301168e805dd3615c2ed99c4c8a3bb0560cd610bda8_range_coverage_sha256_03de53d33ab9a58a0a10a839a59f0fc2f7dc48041713788b53bfb04bb2050ec2_sha256_fd91a6db6dc8fe8ccbe9281bac8b36d43fca9185d9f20b976e421ed23e244219_1",
+                  "unit_type": "factor_search_range"
+                },
+                "domain_unit_commitment_digest": "sha256:68161424cb0853a8edd1c835f570bb6132ca3347afb80725bbc3f8dbc0995031",
+                "planned_ai_unit_id": "range_1",
+                "schema_version": "tokenshare.paper_ai_unit_binding.v1",
+                "task_unit_snapshot_commitment": {
+                  "depth": 1,
+                  "input_refs": {},
+                  "metadata": {
+                    "canonical_selection_id": "canonical_selection:paper_factorization_factor_hard_01:paper_factor_root_factor_hard_01",
+                    "child_logical_key": "range:coverage:sha256:03de53d33ab9a58a0a10a839a59f0fc2f7dc48041713788b53bfb04bb2050ec2:sha256:fd91a6db6dc8fe8ccbe9281bac8b36d43fca9185d9f20b976e421ed23e244219:1",
+                    "output_contract_refs": {
+                      "range_result": {
+                        "output_contract_id": "factorization.range_result.contract.v1",
+                        "schema_ref": {
+                          "artifact_schema_id": "factorization.range_result",
+                          "artifact_schema_version": "v1",
+                          "schema_version": "factorization.range_result.v1"
+                        }
+                      }
+                    },
+                    "required_outputs": [
+                      "range_result"
+                    ],
+                    "source_expansion_decision_id": "expansion_decision:5010a415ec352279fc88dbf06d37041e42582a78f8a5fedc087a3cec6dd77091",
+                    "source_proposal_id": "decomposition_proposal_060d6635dd61f938e065d301168e805dd3615c2ed99c4c8a3bb0560cd610bda8",
+                    "validator_policy_id": "factorization.range_result.validator.v1"
+                  },
+                  "parent_unit_id": "paper_factor_root_factor_hard_01",
+                  "plugin_payload": {
+                    "schema_version": "factorization.factor_search_range_plugin_payload.v1",
+                    "summary": {
+                      "child_count": 2,
+                      "child_index": 1,
+                      "coverage_id": "coverage:sha256:03de53d33ab9a58a0a10a839a59f0fc2f7dc48041713788b53bfb04bb2050ec2:sha256:fd91a6db6dc8fe8ccbe9281bac8b36d43fca9185d9f20b976e421ed23e244219",
+                      "partition_params_digest": "sha256:fd91a6db6dc8fe8ccbe9281bac8b36d43fca9185d9f20b976e421ed23e244219",
+                      "range_digest": "sha256:d751630bbb19503857d5b55ab9baa94cda50b36b4d790e8ea04f0f91eebcbfef"
+                    },
+                    "validation_requirements": {
+                      "bounded_range_required": true,
+                      "coverage_id_consistency_required": true,
+                      "partition_params_digest_consistency_required": true,
+                      "range_input_digest_required": true,
+                      "range_result_schema_version": "factorization.range_result.v1"
+                    }
+                  },
+                  "schema_version": "tokenshare.paper_task_unit_snapshot_commitment.v1",
+                  "task_id": "paper_factorization_factor_hard_01",
+                  "unit_id": "unit_paper_factor_root_factor_hard_01_060d6635dd61f938e065d301168e805dd3615c2ed99c4c8a3bb0560cd610bda8_range_coverage_sha256_03de53d33ab9a58a0a10a839a59f0fc2f7dc48041713788b53bfb04bb2050ec2_sha256_fd91a6db6dc8fe8ccbe9281bac8b36d43fca9185d9f20b976e421ed23e244219_1",
+                  "unit_type": "factor_search_range"
+                },
+                "task_unit_snapshot_digest": "sha256:be104862b0079af2fef43f8221ed9a9900e5f10d8844a1369a1ba9ac58d9ef23",
+                "unit_id": "unit_paper_factor_root_factor_hard_01_060d6635dd61f938e065d301168e805dd3615c2ed99c4c8a3bb0560cd610bda8_range_coverage_sha256_03de53d33ab9a58a0a10a839a59f0fc2f7dc48041713788b53bfb04bb2050ec2_sha256_fd91a6db6dc8fe8ccbe9281bac8b36d43fca9185d9f20b976e421ed23e244219_1"
+              }
+            ],
+            "ai_unit_count": 2,
+            "blocked_reason": null,
+            "case_id": "factor_hard_01",
+            "catalog_expected_ai_unit_count": 2,
+            "completion_token_upper_bound": 1024,
+            "cost_currency": "USD",
+            "cost_upper_bound": 0.006144,
+            "disk_upper_bound_bytes": 2359296,
+            "domain": "factorization",
+            "execution_status": "executable",
+            "executor_requirements": {
+              "executor": "ai_api",
+              "model_endpoint_identity_digest": "sha256:aa55d4add07d28e00c0c44d75fa09ad63af83a6e90cb47859cec78b9415aaebb",
+              "prepared_execution_config_digest": "sha256:19e8ff0930fc0c13a406c4d7a9be4c25f76a1cbf6d58a466493f9f8a39fdce2d",
+              "provider_config_id": "exp1_baseline_siliconflow",
+              "provider_family": "siliconflow",
+              "provider_model_id": "zai-org/GLM-5.2",
+              "reasoning_profile_id": "default",
+              "selected_entry_id": "glm_5_2_exp1_baseline",
+              "source_provider_config_digest": "sha256:d1642ac83b912a46b953e475e58949320dfc97db7454dad614693574374f44f5"
+            },
+            "legacy_difficulty": "hard",
+            "ordinal": 2,
+            "paper_difficulty": "hard",
+            "prompt_token_upper_bound": 4096,
+            "provider_attempt_upper_bound": 2,
+            "request_limits": {
+              "max_provider_attempts_per_ai_unit": 1,
+              "max_tokens": 512,
+              "prompt_token_upper_bound": 2048,
+              "stream": false,
+              "temperature": 0.0,
+              "timeout_seconds": 30
+            },
+            "split_profile": {
+              "actual_child_count": 2,
+              "ai_unit_order": [
+                "range_0",
+                "range_1"
+              ],
+              "partition_params_digest": "sha256:fd91a6db6dc8fe8ccbe9281bac8b36d43fca9185d9f20b976e421ed23e244219",
+              "ranges": [
+                {
+                  "range_end": "73",
+                  "range_start": "2"
+                },
+                {
+                  "range_end": "145",
+                  "range_start": "74"
+                }
+              ],
+              "ranges_digest": "sha256:28211da9c8eee607a12c555ba7287a0795858f7b3a35f4f225452b63ec5e2458",
+              "requested_child_count": 2,
+              "split_kind": "factorization.candidate_range_partition.v1"
+            },
+            "token_upper_bound": 5120,
+            "topic_family": null,
+            "wall_clock_upper_bound_seconds": 60
+          },
+          {
+            "ai_unit_bindings": [
+              {
+                "binding_digest": "sha256:d7bbc3b14fe0282efdb5f7b72ff001a28e01c6ea5de5625f4d1295c9b6487aef",
+                "core_binding_digest": "sha256:14348524505bebb39dc29b6306be9ff8eba5837e973ba61f0c26c98744aa277b",
+                "domain_unit_commitment": {
+                  "case_id": null,
+                  "child_logical_key": null,
+                  "commitment_kind": "lean_simple_child.v1",
+                  "domain": "lean_proof",
+                  "planned_ai_unit_id": "child_0",
+                  "schema_version": "tokenshare.paper_domain_unit_commitment.v1",
+                  "snapshot_theorem_payload_digest": null,
+                  "task_id": "paper_lean_lean_easy_01",
+                  "theorem_id": "lean_theorem:lean_easy_01:child:left",
+                  "theorem_name": "lean_easy_01_left",
+                  "theorem_payload_body_digest": "sha256:b7291d3e251f626caa5185ac728c4f4f556820536780f4d7d46d1d80de25a439",
+                  "theorem_payload_digest": "sha256:28156268792b76bc7175c2d90af181cd1dc961d11bf1871acabe4322429d6c5c",
+                  "unit_id": "unit_paper_lean_root_lean_easy_01_8603bf1f07af673c5f3e49cf55b0adacec666573fc4c4ef26f34abc60d0168bb_child_left",
+                  "unit_type": "lean_proof_subgoal"
+                },
+                "domain_unit_commitment_digest": "sha256:183630a86b4323ac33be03e0e4f3da36215563ef54ab66defaac996b51e37122",
+                "planned_ai_unit_id": "child_0",
+                "schema_version": "tokenshare.paper_ai_unit_binding.v1",
+                "task_unit_snapshot_commitment": {
+                  "depth": 1,
+                  "input_refs": {
+                    "child_theorem_payload": {
+                      "artifact_id": "lean_split_request_lean_easy_01_child_child_left_json",
+                      "artifact_schema_id": "lean_proof.child_theorem_payload",
+                      "artifact_schema_version": "v1",
+                      "artifact_type": "LeanChildTheoremPayload",
+                      "content_hash": "sha256:b7291d3e251f626caa5185ac728c4f4f556820536780f4d7d46d1d80de25a439",
+                      "created_at": "2026-07-14T00:00:00Z",
+                      "media_type": "application/json",
+                      "metadata": {
+                        "child_logical_key": "child:left",
+                        "context_digest": "sha256:lean_context_left"
+                      },
+                      "schema_version": "ArtifactRef.v1",
+                      "size_bytes": 1049,
+                      "source": {
+                        "kind": "lean_split_helper",
+                        "request_id": "lean_split_request:lean_easy_01"
+                      },
+                      "uri": "artifacts/lean_split_request_lean_easy_01_child_child_left_json"
+                    }
+                  },
+                  "metadata": {
+                    "canonical_selection_id": "canonical_selection:paper_lean_lean_easy_01:paper_lean_root_lean_easy_01",
+                    "child_logical_key": "child:left",
+                    "output_contract_refs": {
+                      "lean_proof_artifact": {
+                        "output_contract_id": "lean_proof.proof_artifact.contract.v1",
+                        "schema_ref": {
+                          "artifact_schema_id": "lean_proof.proof_artifact",
+                          "artifact_schema_version": "v1",
+                          "schema_version": "lean_proof.proof_artifact.v1"
+                        }
+                      }
+                    },
+                    "required_outputs": [
+                      "lean_proof_artifact"
+                    ],
+                    "source_expansion_decision_id": "lean_expansion_decision_7c161f96a53e584f4739f35b401caca12d520be8c760d6a906cacd841cc6d21c",
+                    "source_proposal_id": "lean_decomposition_proposal_8603bf1f07af673c5f3e49cf55b0adacec666573fc4c4ef26f34abc60d0168bb",
+                    "validator_policy_id": "lean_proof.checker.validator.v1"
+                  },
+                  "parent_unit_id": "paper_lean_root_lean_easy_01",
+                  "plugin_payload": {
+                    "schema_version": "lean_proof.subgoal_plugin_payload.v1",
+                    "summary": {
+                      "child_logical_key": "child:left",
+                      "child_payload_digest": "sha256:28156268792b76bc7175c2d90af181cd1dc961d11bf1871acabe4322429d6c5c",
+                      "context_digest": "sha256:lean_context_left",
+                      "source_rule_id": "lean_split.conjunction_goal.v1"
+                    },
+                    "validation_requirements": {
+                      "checker_required": true,
+                      "context_digest_required": true,
+                      "environment_ref_required": true,
+                      "split_certificate_child_required": true
+                    }
+                  },
+                  "schema_version": "tokenshare.paper_task_unit_snapshot_commitment.v1",
+                  "task_id": "paper_lean_lean_easy_01",
+                  "unit_id": "unit_paper_lean_root_lean_easy_01_8603bf1f07af673c5f3e49cf55b0adacec666573fc4c4ef26f34abc60d0168bb_child_left",
+                  "unit_type": "lean_proof_subgoal"
+                },
+                "task_unit_snapshot_digest": "sha256:a829e0b2822510d28bbad247016d0aa2d2b6f066b2fbaadcb51d921f1e987bee",
+                "unit_id": "unit_paper_lean_root_lean_easy_01_8603bf1f07af673c5f3e49cf55b0adacec666573fc4c4ef26f34abc60d0168bb_child_left"
+              },
+              {
+                "binding_digest": "sha256:f0e2eb50d86b46a43a4e7b728032c09440a379b98cbfcb4b49382ba5a2c75a96",
+                "core_binding_digest": "sha256:329a3ad55d1984eb10a96d053eb742617ac5668d364ed9f6f0f829c77d8b89c1",
+                "domain_unit_commitment": {
+                  "case_id": null,
+                  "child_logical_key": null,
+                  "commitment_kind": "lean_simple_child.v1",
+                  "domain": "lean_proof",
+                  "planned_ai_unit_id": "child_1",
+                  "schema_version": "tokenshare.paper_domain_unit_commitment.v1",
+                  "snapshot_theorem_payload_digest": null,
+                  "task_id": "paper_lean_lean_easy_01",
+                  "theorem_id": "lean_theorem:lean_easy_01:child:right",
+                  "theorem_name": "lean_easy_01_right",
+                  "theorem_payload_body_digest": "sha256:6f8c52a8883dbe4cf77322b11b3b2e431c3d167b023fcc2214f0252a3b201c96",
+                  "theorem_payload_digest": "sha256:8d99dc4b5cb721a0a3ccdf655df7cb0f3cc96afcc1a7412267187c0e13e703e9",
+                  "unit_id": "unit_paper_lean_root_lean_easy_01_8603bf1f07af673c5f3e49cf55b0adacec666573fc4c4ef26f34abc60d0168bb_child_right",
+                  "unit_type": "lean_proof_subgoal"
+                },
+                "domain_unit_commitment_digest": "sha256:cb026ef9f4173eebf114ac78124a6810aeb56b199b4780878731b00e0d67140d",
+                "planned_ai_unit_id": "child_1",
+                "schema_version": "tokenshare.paper_ai_unit_binding.v1",
+                "task_unit_snapshot_commitment": {
+                  "depth": 1,
+                  "input_refs": {
+                    "child_theorem_payload": {
+                      "artifact_id": "lean_split_request_lean_easy_01_child_child_right_json",
+                      "artifact_schema_id": "lean_proof.child_theorem_payload",
+                      "artifact_schema_version": "v1",
+                      "artifact_type": "LeanChildTheoremPayload",
+                      "content_hash": "sha256:6f8c52a8883dbe4cf77322b11b3b2e431c3d167b023fcc2214f0252a3b201c96",
+                      "created_at": "2026-07-14T00:00:00Z",
+                      "media_type": "application/json",
+                      "metadata": {
+                        "child_logical_key": "child:right",
+                        "context_digest": "sha256:lean_context_right"
+                      },
+                      "schema_version": "ArtifactRef.v1",
+                      "size_bytes": 1052,
+                      "source": {
+                        "kind": "lean_split_helper",
+                        "request_id": "lean_split_request:lean_easy_01"
+                      },
+                      "uri": "artifacts/lean_split_request_lean_easy_01_child_child_right_json"
+                    }
+                  },
+                  "metadata": {
+                    "canonical_selection_id": "canonical_selection:paper_lean_lean_easy_01:paper_lean_root_lean_easy_01",
+                    "child_logical_key": "child:right",
+                    "output_contract_refs": {
+                      "lean_proof_artifact": {
+                        "output_contract_id": "lean_proof.proof_artifact.contract.v1",
+                        "schema_ref": {
+                          "artifact_schema_id": "lean_proof.proof_artifact",
+                          "artifact_schema_version": "v1",
+                          "schema_version": "lean_proof.proof_artifact.v1"
+                        }
+                      }
+                    },
+                    "required_outputs": [
+                      "lean_proof_artifact"
+                    ],
+                    "source_expansion_decision_id": "lean_expansion_decision_7c161f96a53e584f4739f35b401caca12d520be8c760d6a906cacd841cc6d21c",
+                    "source_proposal_id": "lean_decomposition_proposal_8603bf1f07af673c5f3e49cf55b0adacec666573fc4c4ef26f34abc60d0168bb",
+                    "validator_policy_id": "lean_proof.checker.validator.v1"
+                  },
+                  "parent_unit_id": "paper_lean_root_lean_easy_01",
+                  "plugin_payload": {
+                    "schema_version": "lean_proof.subgoal_plugin_payload.v1",
+                    "summary": {
+                      "child_logical_key": "child:right",
+                      "child_payload_digest": "sha256:8d99dc4b5cb721a0a3ccdf655df7cb0f3cc96afcc1a7412267187c0e13e703e9",
+                      "context_digest": "sha256:lean_context_right",
+                      "source_rule_id": "lean_split.conjunction_goal.v1"
+                    },
+                    "validation_requirements": {
+                      "checker_required": true,
+                      "context_digest_required": true,
+                      "environment_ref_required": true,
+                      "split_certificate_child_required": true
+                    }
+                  },
+                  "schema_version": "tokenshare.paper_task_unit_snapshot_commitment.v1",
+                  "task_id": "paper_lean_lean_easy_01",
+                  "unit_id": "unit_paper_lean_root_lean_easy_01_8603bf1f07af673c5f3e49cf55b0adacec666573fc4c4ef26f34abc60d0168bb_child_right",
+                  "unit_type": "lean_proof_subgoal"
+                },
+                "task_unit_snapshot_digest": "sha256:2f246435d3d76108bde026c09efb4df57c9a81c3a69198692e34eb1f51529af2",
+                "unit_id": "unit_paper_lean_root_lean_easy_01_8603bf1f07af673c5f3e49cf55b0adacec666573fc4c4ef26f34abc60d0168bb_child_right"
+              }
+            ],
+            "ai_unit_count": 2,
+            "blocked_reason": null,
+            "case_id": "lean_easy_01",
+            "catalog_expected_ai_unit_count": 2,
+            "completion_token_upper_bound": 2048,
+            "cost_currency": "USD",
+            "cost_upper_bound": 0.012288,
+            "disk_upper_bound_bytes": 2359296,
+            "domain": "lean_proof",
+            "execution_status": "executable",
+            "executor_requirements": {
+              "executor": "ai_api",
+              "model_endpoint_identity_digest": "sha256:aa55d4add07d28e00c0c44d75fa09ad63af83a6e90cb47859cec78b9415aaebb",
+              "prepared_execution_config_digest": "sha256:e3803db6f03a3a38c09e50da0cbcf71597cc83db133304cf366f207a4f339ca2",
+              "provider_config_id": "exp1_baseline_siliconflow",
+              "provider_family": "siliconflow",
+              "provider_model_id": "zai-org/GLM-5.2",
+              "reasoning_profile_id": "default",
+              "selected_entry_id": "glm_5_2_exp1_baseline",
+              "source_provider_config_digest": "sha256:d1642ac83b912a46b953e475e58949320dfc97db7454dad614693574374f44f5"
+            },
+            "legacy_difficulty": "easy",
+            "ordinal": 3,
+            "paper_difficulty": "simple",
+            "prompt_token_upper_bound": 8192,
+            "provider_attempt_upper_bound": 2,
+            "request_limits": {
+              "max_provider_attempts_per_ai_unit": 1,
+              "max_tokens": 1024,
+              "prompt_token_upper_bound": 4096,
+              "stream": false,
+              "temperature": 0.0,
+              "timeout_seconds": 30
+            },
+            "split_profile": {
+              "actual_child_count": 2,
+              "ai_unit_order": [
+                "child_0",
+                "child_1"
+              ],
+              "split_kind": "conjunction",
+              "topic_family_version": "shallow_v1"
+            },
+            "token_upper_bound": 10240,
+            "topic_family": "pure_logic",
+            "wall_clock_upper_bound_seconds": 60
+          },
+          {
+            "ai_unit_bindings": [
+              {
+                "binding_digest": "sha256:d45481780e2d472957ab7fa805722327518c2f61745ec210796b310868aea16f",
+                "core_binding_digest": "sha256:71e52d9e35edef458b9347807d3b770577aec5217bd3af1dfc5df81de13e9e5f",
+                "domain_unit_commitment": {
+                  "case_id": null,
+                  "commitment_kind": "lean_lemma_dag_node.v1",
+                  "context_digest": null,
+                  "dependency_edges_digest": null,
+                  "dependency_path": [],
+                  "domain": "lean_proof",
+                  "node_id": "pure_medium_leaf_a_01",
+                  "planned_ai_unit_id": "pure_medium_leaf_a_01",
+                  "schema_version": "tokenshare.paper_domain_unit_commitment.v1",
+                  "slot_key": null,
+                  "snapshot_theorem_payload_digest": null,
+                  "task_id": "paper_lean_lean_v2_medium_lemma_dag_01",
+                  "theorem_id": "lean_lemma_graph:lean_v2_medium_lemma_dag_01:pure_medium_leaf_a_01",
+                  "theorem_name": "pure_medium_leaf_a_01",
+                  "theorem_payload_body_digest": "sha256:5130974cfc013f9b99197e1c7d28be1dee9062c3aee0ef2465a9a2ce0bb40d2a",
+                  "theorem_payload_digest": "sha256:da66f3fe8a8e0b3f0b459eee7c8fa0a465317a1c0e52ed36fb8410550ab11ed4",
+                  "unit_id": "unit_paper_lean_root_lean_v2_medium_lemma_dag_01_fd876eec2f090cd7e8e28c018161533347e4a2f7cae5041939a3cd9f951614bc_pure_medium_leaf_a_01",
+                  "unit_type": "lean_proof_lemma_node"
+                },
+                "domain_unit_commitment_digest": "sha256:be7efb6ad54098efa0289f9601b7b3d0dd61e3b542d2de2fa32c66332b2d4908",
+                "planned_ai_unit_id": "pure_medium_leaf_a_01",
+                "schema_version": "tokenshare.paper_ai_unit_binding.v1",
+                "task_unit_snapshot_commitment": {
+                  "depth": 1,
+                  "input_refs": {
+                    "lemma_theorem_payload": {
+                      "artifact_id": "lean_fixed_plan_request_lean_v2_medium_lemma_dag_01_lemma_node_pure_medium_leaf_a_01_json",
+                      "artifact_schema_id": "lean_proof.lemma_graph_node_payload",
+                      "artifact_schema_version": "v2",
+                      "artifact_type": "LeanLemmaGraphNodePayload",
+                      "content_hash": "sha256:5130974cfc013f9b99197e1c7d28be1dee9062c3aee0ef2465a9a2ce0bb40d2a",
+                      "created_at": "2026-07-14T00:00:00Z",
+                      "media_type": "application/json",
+                      "metadata": {
+                        "context_digest": "sha256:f8517be66bdddec503656742f57e82e8edf00b11caeffad02112c37cbbf189ac",
+                        "node_id": "pure_medium_leaf_a_01",
+                        "root_node_id": "pure_medium_root_01"
+                      },
+                      "schema_version": "ArtifactRef.v1",
+                      "size_bytes": 963,
+                      "source": {
+                        "kind": "lean_lemma_graph_certificate",
+                        "request_id": "lean_fixed_plan_request:lean_v2_medium_lemma_dag_01"
+                      },
+                      "uri": "artifacts/lean_fixed_plan_request_lean_v2_medium_lemma_dag_01_lemma_node_pure_medium_leaf_a_01_json"
+                    }
+                  },
+                  "metadata": {
+                    "canonical_selection_id": "canonical_selection:paper_lean_lean_v2_medium_lemma_dag_01:paper_lean_root_lean_v2_medium_lemma_dag_01",
+                    "child_logical_key": "pure_medium_leaf_a_01",
+                    "output_contract_refs": {
+                      "lean_proof_artifact": {
+                        "output_contract_id": "lean_proof.proof_artifact.contract.v1",
+                        "schema_ref": {
+                          "artifact_schema_id": "lean_proof.proof_artifact",
+                          "artifact_schema_version": "v1",
+                          "schema_version": "lean_proof.proof_artifact.v1"
+                        }
+                      }
+                    },
+                    "required_outputs": [
+                      "lean_proof_artifact"
+                    ],
+                    "source_expansion_decision_id": "lean_expansion_decision_089560b993fbe6d6d17b2e65ebb67b30138a78f45cf2f08608c40b75fb26ebe6",
+                    "source_proposal_id": "lean_decomposition_proposal_fd876eec2f090cd7e8e28c018161533347e4a2f7cae5041939a3cd9f951614bc",
+                    "validator_policy_id": "lean_proof.checker.validator.v1"
+                  },
+                  "parent_unit_id": "paper_lean_root_lean_v2_medium_lemma_dag_01",
+                  "plugin_payload": {
+                    "provenance": {
+                      "certificate_digest": "sha256:8599d6352316da02413a16f64e76d3069113a6bd0ff654bb4d5a37503b5fa582",
+                      "certificate_id": "lean_lemma_graph_certificate:lean_v2_medium_lemma_dag_01",
+                      "oracle_proof_package_digest": "sha256:4af791228bd24f4ea6d92fed511be8eee4f29d1ba8db5c6102968e743a8047ca",
+                      "rule_id": "lean_split.lemma_graph_dag.v2"
+                    },
+                    "schema_version": "lean_proof.lemma_graph_node_plugin_payload.v2",
+                    "summary": {
+                      "certificate_digest": "sha256:8599d6352316da02413a16f64e76d3069113a6bd0ff654bb4d5a37503b5fa582",
+                      "construction_rule_id": "fixed_oracle_lemma_graph.pure_logic.v1",
+                      "depth": 1,
+                      "environment_digest": "sha256:cdc9de4cb0a8407f17ddd7cf423a3fb5640a4560c3b55bd6a70116f5a14de731",
+                      "node_id": "pure_medium_leaf_a_01",
+                      "node_kind": "leaf_sublemma",
+                      "oracle_package_group": "lean_lemma_graph_oracle.pure_logic.v1",
+                      "proof_assembly_shape": "recursive_lemma_dag_required_slots.v1",
+                      "root_node_id": "pure_medium_root_01",
+                      "topic_family": "pure_logic",
+                      "topic_family_version": "v1"
+                    },
+                    "validation_requirements": {
+                      "checker_required": true,
+                      "context_digest_required": true,
+                      "dependency_aware_slot_integrity_required": true,
+                      "environment_ref_required": true,
+                      "lemma_graph_certificate_node_required": true
+                    }
+                  },
+                  "schema_version": "tokenshare.paper_task_unit_snapshot_commitment.v1",
+                  "task_id": "paper_lean_lean_v2_medium_lemma_dag_01",
+                  "unit_id": "unit_paper_lean_root_lean_v2_medium_lemma_dag_01_fd876eec2f090cd7e8e28c018161533347e4a2f7cae5041939a3cd9f951614bc_pure_medium_leaf_a_01",
+                  "unit_type": "lean_proof_lemma_node"
+                },
+                "task_unit_snapshot_digest": "sha256:2d040ece3e5ca3a972ad05f2feda722caf022aed19e82cd572882ca6a8eee28f",
+                "unit_id": "unit_paper_lean_root_lean_v2_medium_lemma_dag_01_fd876eec2f090cd7e8e28c018161533347e4a2f7cae5041939a3cd9f951614bc_pure_medium_leaf_a_01"
+              },
+              {
+                "binding_digest": "sha256:a397702389feeda02482b1ebc892fb1ee7b2dfe2956cfd4a1046d77a1b7fe08d",
+                "core_binding_digest": "sha256:957b6b64875feb237055978bc0e45cc45656b87c6e3ccc39b2c62323d8861b4a",
+                "domain_unit_commitment": {
+                  "case_id": null,
+                  "commitment_kind": "lean_lemma_dag_node.v1",
+                  "context_digest": null,
+                  "dependency_edges_digest": null,
+                  "dependency_path": [],
+                  "domain": "lean_proof",
+                  "node_id": "pure_medium_leaf_ab_01",
+                  "planned_ai_unit_id": "pure_medium_leaf_ab_01",
+                  "schema_version": "tokenshare.paper_domain_unit_commitment.v1",
+                  "slot_key": null,
+                  "snapshot_theorem_payload_digest": null,
+                  "task_id": "paper_lean_lean_v2_medium_lemma_dag_01",
+                  "theorem_id": "lean_lemma_graph:lean_v2_medium_lemma_dag_01:pure_medium_leaf_ab_01",
+                  "theorem_name": "pure_medium_leaf_ab_01",
+                  "theorem_payload_body_digest": "sha256:f182f57c816135ccd4de09ca8bd1a9f841f6c9cc99e5701bcb8c2ed228ced134",
+                  "theorem_payload_digest": "sha256:fd777d23257ce7e3c72c2e67704038c23700d572accdf040e1346c872b6ce33d",
+                  "unit_id": "unit_paper_lean_root_lean_v2_medium_lemma_dag_01_fd876eec2f090cd7e8e28c018161533347e4a2f7cae5041939a3cd9f951614bc_pure_medium_leaf_ab_01",
+                  "unit_type": "lean_proof_lemma_node"
+                },
+                "domain_unit_commitment_digest": "sha256:4437c20c2eccf655ed7a2afcce52cc6e4ab533062ec4f6a5c6c6f5c93c603d18",
+                "planned_ai_unit_id": "pure_medium_leaf_ab_01",
+                "schema_version": "tokenshare.paper_ai_unit_binding.v1",
+                "task_unit_snapshot_commitment": {
+                  "depth": 1,
+                  "input_refs": {
+                    "lemma_theorem_payload": {
+                      "artifact_id": "lean_fixed_plan_request_lean_v2_medium_lemma_dag_01_lemma_node_pure_medium_leaf_ab_01_json",
+                      "artifact_schema_id": "lean_proof.lemma_graph_node_payload",
+                      "artifact_schema_version": "v2",
+                      "artifact_type": "LeanLemmaGraphNodePayload",
+                      "content_hash": "sha256:f182f57c816135ccd4de09ca8bd1a9f841f6c9cc99e5701bcb8c2ed228ced134",
+                      "created_at": "2026-07-14T00:00:00Z",
+                      "media_type": "application/json",
+                      "metadata": {
+                        "context_digest": "sha256:1505705ec525b3b383d8dc4de8f95c15303f04cea7c28733684b24c023b88365",
+                        "node_id": "pure_medium_leaf_ab_01",
+                        "root_node_id": "pure_medium_root_01"
+                      },
+                      "schema_version": "ArtifactRef.v1",
+                      "size_bytes": 971,
+                      "source": {
+                        "kind": "lean_lemma_graph_certificate",
+                        "request_id": "lean_fixed_plan_request:lean_v2_medium_lemma_dag_01"
+                      },
+                      "uri": "artifacts/lean_fixed_plan_request_lean_v2_medium_lemma_dag_01_lemma_node_pure_medium_leaf_ab_01_json"
+                    }
+                  },
+                  "metadata": {
+                    "canonical_selection_id": "canonical_selection:paper_lean_lean_v2_medium_lemma_dag_01:paper_lean_root_lean_v2_medium_lemma_dag_01",
+                    "child_logical_key": "pure_medium_leaf_ab_01",
+                    "output_contract_refs": {
+                      "lean_proof_artifact": {
+                        "output_contract_id": "lean_proof.proof_artifact.contract.v1",
+                        "schema_ref": {
+                          "artifact_schema_id": "lean_proof.proof_artifact",
+                          "artifact_schema_version": "v1",
+                          "schema_version": "lean_proof.proof_artifact.v1"
+                        }
+                      }
+                    },
+                    "required_outputs": [
+                      "lean_proof_artifact"
+                    ],
+                    "source_expansion_decision_id": "lean_expansion_decision_089560b993fbe6d6d17b2e65ebb67b30138a78f45cf2f08608c40b75fb26ebe6",
+                    "source_proposal_id": "lean_decomposition_proposal_fd876eec2f090cd7e8e28c018161533347e4a2f7cae5041939a3cd9f951614bc",
+                    "validator_policy_id": "lean_proof.checker.validator.v1"
+                  },
+                  "parent_unit_id": "paper_lean_root_lean_v2_medium_lemma_dag_01",
+                  "plugin_payload": {
+                    "provenance": {
+                      "certificate_digest": "sha256:8599d6352316da02413a16f64e76d3069113a6bd0ff654bb4d5a37503b5fa582",
+                      "certificate_id": "lean_lemma_graph_certificate:lean_v2_medium_lemma_dag_01",
+                      "oracle_proof_package_digest": "sha256:4af791228bd24f4ea6d92fed511be8eee4f29d1ba8db5c6102968e743a8047ca",
+                      "rule_id": "lean_split.lemma_graph_dag.v2"
+                    },
+                    "schema_version": "lean_proof.lemma_graph_node_plugin_payload.v2",
+                    "summary": {
+                      "certificate_digest": "sha256:8599d6352316da02413a16f64e76d3069113a6bd0ff654bb4d5a37503b5fa582",
+                      "construction_rule_id": "fixed_oracle_lemma_graph.pure_logic.v1",
+                      "depth": 1,
+                      "environment_digest": "sha256:cdc9de4cb0a8407f17ddd7cf423a3fb5640a4560c3b55bd6a70116f5a14de731",
+                      "node_id": "pure_medium_leaf_ab_01",
+                      "node_kind": "leaf_sublemma",
+                      "oracle_package_group": "lean_lemma_graph_oracle.pure_logic.v1",
+                      "proof_assembly_shape": "recursive_lemma_dag_required_slots.v1",
+                      "root_node_id": "pure_medium_root_01",
+                      "topic_family": "pure_logic",
+                      "topic_family_version": "v1"
+                    },
+                    "validation_requirements": {
+                      "checker_required": true,
+                      "context_digest_required": true,
+                      "dependency_aware_slot_integrity_required": true,
+                      "environment_ref_required": true,
+                      "lemma_graph_certificate_node_required": true
+                    }
+                  },
+                  "schema_version": "tokenshare.paper_task_unit_snapshot_commitment.v1",
+                  "task_id": "paper_lean_lean_v2_medium_lemma_dag_01",
+                  "unit_id": "unit_paper_lean_root_lean_v2_medium_lemma_dag_01_fd876eec2f090cd7e8e28c018161533347e4a2f7cae5041939a3cd9f951614bc_pure_medium_leaf_ab_01",
+                  "unit_type": "lean_proof_lemma_node"
+                },
+                "task_unit_snapshot_digest": "sha256:f63df42a71fead66f253eb5a63fb42e1ab2471b3c3ff3ea2b678b3356fef2855",
+                "unit_id": "unit_paper_lean_root_lean_v2_medium_lemma_dag_01_fd876eec2f090cd7e8e28c018161533347e4a2f7cae5041939a3cd9f951614bc_pure_medium_leaf_ab_01"
+              },
+              {
+                "binding_digest": "sha256:d2c874a9450e64f31f3387b67dbfbae4e78735f84b87f607f713282c00edcddf",
+                "core_binding_digest": "sha256:e8af68a027d7ce672920a17d93ccc8a03e77822a432e245da62d68cfe0520b65",
+                "domain_unit_commitment": {
+                  "case_id": null,
+                  "commitment_kind": "lean_lemma_dag_node.v1",
+                  "context_digest": null,
+                  "dependency_edges_digest": null,
+                  "dependency_path": [],
+                  "domain": "lean_proof",
+                  "node_id": "pure_medium_mid_b_01",
+                  "planned_ai_unit_id": "pure_medium_mid_b_01",
+                  "schema_version": "tokenshare.paper_domain_unit_commitment.v1",
+                  "slot_key": null,
+                  "snapshot_theorem_payload_digest": null,
+                  "task_id": "paper_lean_lean_v2_medium_lemma_dag_01",
+                  "theorem_id": "lean_lemma_graph:lean_v2_medium_lemma_dag_01:pure_medium_mid_b_01",
+                  "theorem_name": "pure_medium_mid_b_01",
+                  "theorem_payload_body_digest": "sha256:efc66d0dc314356b97d061a09e8c745c5848d2299fc6e86e8630c89e2bf53dce",
+                  "theorem_payload_digest": "sha256:e5b74728468ea88e48673f03f8fb3b72b73611f0b02bd0825f2e5d3d11653332",
+                  "unit_id": "unit_paper_lean_root_lean_v2_medium_lemma_dag_01_fd876eec2f090cd7e8e28c018161533347e4a2f7cae5041939a3cd9f951614bc_pure_medium_mid_b_01",
+                  "unit_type": "lean_proof_lemma_node"
+                },
+                "domain_unit_commitment_digest": "sha256:c41f3f43dc7ce0aad089693f9c36182971f5fa2a3c21ffd87158df5ede33b26a",
+                "planned_ai_unit_id": "pure_medium_mid_b_01",
+                "schema_version": "tokenshare.paper_ai_unit_binding.v1",
+                "task_unit_snapshot_commitment": {
+                  "depth": 1,
+                  "input_refs": {
+                    "lemma_theorem_payload": {
+                      "artifact_id": "lean_fixed_plan_request_lean_v2_medium_lemma_dag_01_lemma_node_pure_medium_mid_b_01_json",
+                      "artifact_schema_id": "lean_proof.lemma_graph_node_payload",
+                      "artifact_schema_version": "v2",
+                      "artifact_type": "LeanLemmaGraphNodePayload",
+                      "content_hash": "sha256:efc66d0dc314356b97d061a09e8c745c5848d2299fc6e86e8630c89e2bf53dce",
+                      "created_at": "2026-07-14T00:00:00Z",
+                      "media_type": "application/json",
+                      "metadata": {
+                        "context_digest": "sha256:a6d4dec6156ade5a6945d1abd2474dbd4311dc0d05e7fde820eef20be20d2879",
+                        "node_id": "pure_medium_mid_b_01",
+                        "root_node_id": "pure_medium_root_01"
+                      },
+                      "schema_version": "ArtifactRef.v1",
+                      "size_bytes": 960,
+                      "source": {
+                        "kind": "lean_lemma_graph_certificate",
+                        "request_id": "lean_fixed_plan_request:lean_v2_medium_lemma_dag_01"
+                      },
+                      "uri": "artifacts/lean_fixed_plan_request_lean_v2_medium_lemma_dag_01_lemma_node_pure_medium_mid_b_01_json"
+                    }
+                  },
+                  "metadata": {
+                    "canonical_selection_id": "canonical_selection:paper_lean_lean_v2_medium_lemma_dag_01:paper_lean_root_lean_v2_medium_lemma_dag_01",
+                    "child_logical_key": "pure_medium_mid_b_01",
+                    "output_contract_refs": {
+                      "lean_proof_artifact": {
+                        "output_contract_id": "lean_proof.proof_artifact.contract.v1",
+                        "schema_ref": {
+                          "artifact_schema_id": "lean_proof.proof_artifact",
+                          "artifact_schema_version": "v1",
+                          "schema_version": "lean_proof.proof_artifact.v1"
+                        }
+                      }
+                    },
+                    "required_outputs": [
+                      "lean_proof_artifact"
+                    ],
+                    "source_expansion_decision_id": "lean_expansion_decision_089560b993fbe6d6d17b2e65ebb67b30138a78f45cf2f08608c40b75fb26ebe6",
+                    "source_proposal_id": "lean_decomposition_proposal_fd876eec2f090cd7e8e28c018161533347e4a2f7cae5041939a3cd9f951614bc",
+                    "validator_policy_id": "lean_proof.checker.validator.v1"
+                  },
+                  "parent_unit_id": "paper_lean_root_lean_v2_medium_lemma_dag_01",
+                  "plugin_payload": {
+                    "provenance": {
+                      "certificate_digest": "sha256:8599d6352316da02413a16f64e76d3069113a6bd0ff654bb4d5a37503b5fa582",
+                      "certificate_id": "lean_lemma_graph_certificate:lean_v2_medium_lemma_dag_01",
+                      "oracle_proof_package_digest": "sha256:4af791228bd24f4ea6d92fed511be8eee4f29d1ba8db5c6102968e743a8047ca",
+                      "rule_id": "lean_split.lemma_graph_dag.v2"
+                    },
+                    "schema_version": "lean_proof.lemma_graph_node_plugin_payload.v2",
+                    "summary": {
+                      "certificate_digest": "sha256:8599d6352316da02413a16f64e76d3069113a6bd0ff654bb4d5a37503b5fa582",
+                      "construction_rule_id": "fixed_oracle_lemma_graph.pure_logic.v1",
+                      "depth": 2,
+                      "environment_digest": "sha256:cdc9de4cb0a8407f17ddd7cf423a3fb5640a4560c3b55bd6a70116f5a14de731",
+                      "node_id": "pure_medium_mid_b_01",
+                      "node_kind": "intermediate_lemma",
+                      "oracle_package_group": "lean_lemma_graph_oracle.pure_logic.v1",
+                      "proof_assembly_shape": "recursive_lemma_dag_required_slots.v1",
+                      "root_node_id": "pure_medium_root_01",
+                      "topic_family": "pure_logic",
+                      "topic_family_version": "v1"
+                    },
+                    "validation_requirements": {
+                      "checker_required": true,
+                      "context_digest_required": true,
+                      "dependency_aware_slot_integrity_required": true,
+                      "environment_ref_required": true,
+                      "lemma_graph_certificate_node_required": true
+                    }
+                  },
+                  "schema_version": "tokenshare.paper_task_unit_snapshot_commitment.v1",
+                  "task_id": "paper_lean_lean_v2_medium_lemma_dag_01",
+                  "unit_id": "unit_paper_lean_root_lean_v2_medium_lemma_dag_01_fd876eec2f090cd7e8e28c018161533347e4a2f7cae5041939a3cd9f951614bc_pure_medium_mid_b_01",
+                  "unit_type": "lean_proof_lemma_node"
+                },
+                "task_unit_snapshot_digest": "sha256:3a636f4059fbc02cda5cdd6d1560cfa4f8e322b15bd5e61e60a2a35335827179",
+                "unit_id": "unit_paper_lean_root_lean_v2_medium_lemma_dag_01_fd876eec2f090cd7e8e28c018161533347e4a2f7cae5041939a3cd9f951614bc_pure_medium_mid_b_01"
+              },
+              {
+                "binding_digest": "sha256:41102afb0d4fe7d4b7ce883557688aaa93e48b163e15c537dbaf5a7a100a5309",
+                "core_binding_digest": "sha256:b2b1bae351df9dcb9adadf64e569feb17eef19fc6904382b6cc8726baa1c954a",
+                "domain_unit_commitment": {
+                  "case_id": null,
+                  "commitment_kind": "lean_lemma_dag_node.v1",
+                  "context_digest": null,
+                  "dependency_edges_digest": null,
+                  "dependency_path": [],
+                  "domain": "lean_proof",
+                  "node_id": "pure_medium_leaf_bc_01",
+                  "planned_ai_unit_id": "pure_medium_leaf_bc_01",
+                  "schema_version": "tokenshare.paper_domain_unit_commitment.v1",
+                  "slot_key": null,
+                  "snapshot_theorem_payload_digest": null,
+                  "task_id": "paper_lean_lean_v2_medium_lemma_dag_01",
+                  "theorem_id": "lean_lemma_graph:lean_v2_medium_lemma_dag_01:pure_medium_leaf_bc_01",
+                  "theorem_name": "pure_medium_leaf_bc_01",
+                  "theorem_payload_body_digest": "sha256:750ee60944bdd2a4dbb64e9b16fa55a08132acc7dd58f804b52c10370dac2b83",
+                  "theorem_payload_digest": "sha256:12f078f6789277ef3f216354b3a52349825d99b804528f5929e1c6de8302937c",
+                  "unit_id": "unit_paper_lean_root_lean_v2_medium_lemma_dag_01_fd876eec2f090cd7e8e28c018161533347e4a2f7cae5041939a3cd9f951614bc_pure_medium_leaf_bc_01",
+                  "unit_type": "lean_proof_lemma_node"
+                },
+                "domain_unit_commitment_digest": "sha256:84f7fbc85367949342f67cac2291b01eb022cd5c59b927cd76ccfbace36f2e45",
+                "planned_ai_unit_id": "pure_medium_leaf_bc_01",
+                "schema_version": "tokenshare.paper_ai_unit_binding.v1",
+                "task_unit_snapshot_commitment": {
+                  "depth": 1,
+                  "input_refs": {
+                    "lemma_theorem_payload": {
+                      "artifact_id": "lean_fixed_plan_request_lean_v2_medium_lemma_dag_01_lemma_node_pure_medium_leaf_bc_01_json",
+                      "artifact_schema_id": "lean_proof.lemma_graph_node_payload",
+                      "artifact_schema_version": "v2",
+                      "artifact_type": "LeanLemmaGraphNodePayload",
+                      "content_hash": "sha256:750ee60944bdd2a4dbb64e9b16fa55a08132acc7dd58f804b52c10370dac2b83",
+                      "created_at": "2026-07-14T00:00:00Z",
+                      "media_type": "application/json",
+                      "metadata": {
+                        "context_digest": "sha256:78c4dfda3e93ef0647a7f7d794e0d891b771a73a402c0028868ea535872e0225",
+                        "node_id": "pure_medium_leaf_bc_01",
+                        "root_node_id": "pure_medium_root_01"
+                      },
+                      "schema_version": "ArtifactRef.v1",
+                      "size_bytes": 977,
+                      "source": {
+                        "kind": "lean_lemma_graph_certificate",
+                        "request_id": "lean_fixed_plan_request:lean_v2_medium_lemma_dag_01"
+                      },
+                      "uri": "artifacts/lean_fixed_plan_request_lean_v2_medium_lemma_dag_01_lemma_node_pure_medium_leaf_bc_01_json"
+                    }
+                  },
+                  "metadata": {
+                    "canonical_selection_id": "canonical_selection:paper_lean_lean_v2_medium_lemma_dag_01:paper_lean_root_lean_v2_medium_lemma_dag_01",
+                    "child_logical_key": "pure_medium_leaf_bc_01",
+                    "output_contract_refs": {
+                      "lean_proof_artifact": {
+                        "output_contract_id": "lean_proof.proof_artifact.contract.v1",
+                        "schema_ref": {
+                          "artifact_schema_id": "lean_proof.proof_artifact",
+                          "artifact_schema_version": "v1",
+                          "schema_version": "lean_proof.proof_artifact.v1"
+                        }
+                      }
+                    },
+                    "required_outputs": [
+                      "lean_proof_artifact"
+                    ],
+                    "source_expansion_decision_id": "lean_expansion_decision_089560b993fbe6d6d17b2e65ebb67b30138a78f45cf2f08608c40b75fb26ebe6",
+                    "source_proposal_id": "lean_decomposition_proposal_fd876eec2f090cd7e8e28c018161533347e4a2f7cae5041939a3cd9f951614bc",
+                    "validator_policy_id": "lean_proof.checker.validator.v1"
+                  },
+                  "parent_unit_id": "paper_lean_root_lean_v2_medium_lemma_dag_01",
+                  "plugin_payload": {
+                    "provenance": {
+                      "certificate_digest": "sha256:8599d6352316da02413a16f64e76d3069113a6bd0ff654bb4d5a37503b5fa582",
+                      "certificate_id": "lean_lemma_graph_certificate:lean_v2_medium_lemma_dag_01",
+                      "oracle_proof_package_digest": "sha256:4af791228bd24f4ea6d92fed511be8eee4f29d1ba8db5c6102968e743a8047ca",
+                      "rule_id": "lean_split.lemma_graph_dag.v2"
+                    },
+                    "schema_version": "lean_proof.lemma_graph_node_plugin_payload.v2",
+                    "summary": {
+                      "certificate_digest": "sha256:8599d6352316da02413a16f64e76d3069113a6bd0ff654bb4d5a37503b5fa582",
+                      "construction_rule_id": "fixed_oracle_lemma_graph.pure_logic.v1",
+                      "depth": 1,
+                      "environment_digest": "sha256:cdc9de4cb0a8407f17ddd7cf423a3fb5640a4560c3b55bd6a70116f5a14de731",
+                      "node_id": "pure_medium_leaf_bc_01",
+                      "node_kind": "leaf_sublemma",
+                      "oracle_package_group": "lean_lemma_graph_oracle.pure_logic.v1",
+                      "proof_assembly_shape": "recursive_lemma_dag_required_slots.v1",
+                      "root_node_id": "pure_medium_root_01",
+                      "topic_family": "pure_logic",
+                      "topic_family_version": "v1"
+                    },
+                    "validation_requirements": {
+                      "checker_required": true,
+                      "context_digest_required": true,
+                      "dependency_aware_slot_integrity_required": true,
+                      "environment_ref_required": true,
+                      "lemma_graph_certificate_node_required": true
+                    }
+                  },
+                  "schema_version": "tokenshare.paper_task_unit_snapshot_commitment.v1",
+                  "task_id": "paper_lean_lean_v2_medium_lemma_dag_01",
+                  "unit_id": "unit_paper_lean_root_lean_v2_medium_lemma_dag_01_fd876eec2f090cd7e8e28c018161533347e4a2f7cae5041939a3cd9f951614bc_pure_medium_leaf_bc_01",
+                  "unit_type": "lean_proof_lemma_node"
+                },
+                "task_unit_snapshot_digest": "sha256:8002c14330aaab43fa59ba7d9df63de541fb9688ab8bdd09b6331983423fbf40",
+                "unit_id": "unit_paper_lean_root_lean_v2_medium_lemma_dag_01_fd876eec2f090cd7e8e28c018161533347e4a2f7cae5041939a3cd9f951614bc_pure_medium_leaf_bc_01"
+              },
+              {
+                "binding_digest": "sha256:f035a8f2353274bbf5ae26dc5058894940dcb5186e5dde95a0811b7deeafc196",
+                "core_binding_digest": "sha256:156619d470d2e5bc8629b7ba0325cdfde9963f9e81c024e29daf3bcc570addaa",
+                "domain_unit_commitment": {
+                  "case_id": null,
+                  "commitment_kind": "lean_lemma_dag_node.v1",
+                  "context_digest": null,
+                  "dependency_edges_digest": null,
+                  "dependency_path": [],
+                  "domain": "lean_proof",
+                  "node_id": "pure_medium_root_01",
+                  "planned_ai_unit_id": "pure_medium_root_01",
+                  "schema_version": "tokenshare.paper_domain_unit_commitment.v1",
+                  "slot_key": null,
+                  "snapshot_theorem_payload_digest": null,
+                  "task_id": "paper_lean_lean_v2_medium_lemma_dag_01",
+                  "theorem_id": "lean_lemma_graph:lean_v2_medium_lemma_dag_01:pure_medium_root_01",
+                  "theorem_name": "pure_medium_root_01",
+                  "theorem_payload_body_digest": "sha256:59e0170be482f534789dc488c5a0cad7145a3e41b7e659d4cf3464e1d9ccc8be",
+                  "theorem_payload_digest": "sha256:73533d86e13e57957b2f481d9044dd46ae6e7bdb2f9b8139868936b10bedebd3",
+                  "unit_id": "unit_paper_lean_root_lean_v2_medium_lemma_dag_01_fd876eec2f090cd7e8e28c018161533347e4a2f7cae5041939a3cd9f951614bc_pure_medium_root_01",
+                  "unit_type": "lean_proof_lemma_node"
+                },
+                "domain_unit_commitment_digest": "sha256:73828accd4164b0be39b08fe88d14b23e2e23ed743b94a785d0fd6d972286d7b",
+                "planned_ai_unit_id": "pure_medium_root_01",
+                "schema_version": "tokenshare.paper_ai_unit_binding.v1",
+                "task_unit_snapshot_commitment": {
+                  "depth": 1,
+                  "input_refs": {
+                    "lemma_theorem_payload": {
+                      "artifact_id": "lean_fixed_plan_request_lean_v2_medium_lemma_dag_01_lemma_node_pure_medium_root_01_json",
+                      "artifact_schema_id": "lean_proof.lemma_graph_node_payload",
+                      "artifact_schema_version": "v2",
+                      "artifact_type": "LeanLemmaGraphNodePayload",
+                      "content_hash": "sha256:59e0170be482f534789dc488c5a0cad7145a3e41b7e659d4cf3464e1d9ccc8be",
+                      "created_at": "2026-07-14T00:00:00Z",
+                      "media_type": "application/json",
+                      "metadata": {
+                        "context_digest": "sha256:d2d87bd2bd4c8b2295f12af21effc91255f28f4e68ac7045c8cff5a498fb545e",
+                        "node_id": "pure_medium_root_01",
+                        "root_node_id": "pure_medium_root_01"
+                      },
+                      "schema_version": "ArtifactRef.v1",
+                      "size_bytes": 963,
+                      "source": {
+                        "kind": "lean_lemma_graph_certificate",
+                        "request_id": "lean_fixed_plan_request:lean_v2_medium_lemma_dag_01"
+                      },
+                      "uri": "artifacts/lean_fixed_plan_request_lean_v2_medium_lemma_dag_01_lemma_node_pure_medium_root_01_json"
+                    }
+                  },
+                  "metadata": {
+                    "canonical_selection_id": "canonical_selection:paper_lean_lean_v2_medium_lemma_dag_01:paper_lean_root_lean_v2_medium_lemma_dag_01",
+                    "child_logical_key": "pure_medium_root_01",
+                    "output_contract_refs": {
+                      "lean_proof_artifact": {
+                        "output_contract_id": "lean_proof.proof_artifact.contract.v1",
+                        "schema_ref": {
+                          "artifact_schema_id": "lean_proof.proof_artifact",
+                          "artifact_schema_version": "v1",
+                          "schema_version": "lean_proof.proof_artifact.v1"
+                        }
+                      }
+                    },
+                    "required_outputs": [
+                      "lean_proof_artifact"
+                    ],
+                    "source_expansion_decision_id": "lean_expansion_decision_089560b993fbe6d6d17b2e65ebb67b30138a78f45cf2f08608c40b75fb26ebe6",
+                    "source_proposal_id": "lean_decomposition_proposal_fd876eec2f090cd7e8e28c018161533347e4a2f7cae5041939a3cd9f951614bc",
+                    "validator_policy_id": "lean_proof.checker.validator.v1"
+                  },
+                  "parent_unit_id": "paper_lean_root_lean_v2_medium_lemma_dag_01",
+                  "plugin_payload": {
+                    "provenance": {
+                      "certificate_digest": "sha256:8599d6352316da02413a16f64e76d3069113a6bd0ff654bb4d5a37503b5fa582",
+                      "certificate_id": "lean_lemma_graph_certificate:lean_v2_medium_lemma_dag_01",
+                      "oracle_proof_package_digest": "sha256:4af791228bd24f4ea6d92fed511be8eee4f29d1ba8db5c6102968e743a8047ca",
+                      "rule_id": "lean_split.lemma_graph_dag.v2"
+                    },
+                    "schema_version": "lean_proof.lemma_graph_node_plugin_payload.v2",
+                    "summary": {
+                      "certificate_digest": "sha256:8599d6352316da02413a16f64e76d3069113a6bd0ff654bb4d5a37503b5fa582",
+                      "construction_rule_id": "fixed_oracle_lemma_graph.pure_logic.v1",
+                      "depth": 3,
+                      "environment_digest": "sha256:cdc9de4cb0a8407f17ddd7cf423a3fb5640a4560c3b55bd6a70116f5a14de731",
+                      "node_id": "pure_medium_root_01",
+                      "node_kind": "root_theorem",
+                      "oracle_package_group": "lean_lemma_graph_oracle.pure_logic.v1",
+                      "proof_assembly_shape": "recursive_lemma_dag_required_slots.v1",
+                      "root_node_id": "pure_medium_root_01",
+                      "topic_family": "pure_logic",
+                      "topic_family_version": "v1"
+                    },
+                    "validation_requirements": {
+                      "checker_required": true,
+                      "context_digest_required": true,
+                      "dependency_aware_slot_integrity_required": true,
+                      "environment_ref_required": true,
+                      "lemma_graph_certificate_node_required": true
+                    }
+                  },
+                  "schema_version": "tokenshare.paper_task_unit_snapshot_commitment.v1",
+                  "task_id": "paper_lean_lean_v2_medium_lemma_dag_01",
+                  "unit_id": "unit_paper_lean_root_lean_v2_medium_lemma_dag_01_fd876eec2f090cd7e8e28c018161533347e4a2f7cae5041939a3cd9f951614bc_pure_medium_root_01",
+                  "unit_type": "lean_proof_lemma_node"
+                },
+                "task_unit_snapshot_digest": "sha256:915e18b12379a079cb2b9cd64ed870a4165b853ad8c1aa6ece3f360224d37362",
+                "unit_id": "unit_paper_lean_root_lean_v2_medium_lemma_dag_01_fd876eec2f090cd7e8e28c018161533347e4a2f7cae5041939a3cd9f951614bc_pure_medium_root_01"
+              }
+            ],
+            "ai_unit_count": 5,
+            "blocked_reason": null,
+            "case_id": "lean_v2_medium_lemma_dag_01",
+            "catalog_expected_ai_unit_count": 5,
+            "completion_token_upper_bound": 5120,
+            "cost_currency": "USD",
+            "cost_upper_bound": 0.03072,
+            "disk_upper_bound_bytes": 5505024,
+            "domain": "lean_proof",
+            "execution_status": "executable",
+            "executor_requirements": {
+              "executor": "ai_api",
+              "model_endpoint_identity_digest": "sha256:aa55d4add07d28e00c0c44d75fa09ad63af83a6e90cb47859cec78b9415aaebb",
+              "prepared_execution_config_digest": "sha256:e3803db6f03a3a38c09e50da0cbcf71597cc83db133304cf366f207a4f339ca2",
+              "provider_config_id": "exp1_baseline_siliconflow",
+              "provider_family": "siliconflow",
+              "provider_model_id": "zai-org/GLM-5.2",
+              "reasoning_profile_id": "default",
+              "selected_entry_id": "glm_5_2_exp1_baseline",
+              "source_provider_config_digest": "sha256:d1642ac83b912a46b953e475e58949320dfc97db7454dad614693574374f44f5"
+            },
+            "legacy_difficulty": "medium",
+            "ordinal": 4,
+            "paper_difficulty": "medium_lemma_dag",
+            "prompt_token_upper_bound": 20480,
+            "provider_attempt_upper_bound": 5,
+            "request_limits": {
+              "max_provider_attempts_per_ai_unit": 1,
+              "max_tokens": 1024,
+              "prompt_token_upper_bound": 4096,
+              "stream": false,
+              "temperature": 0.0,
+              "timeout_seconds": 30
+            },
+            "split_profile": {
+              "actual_child_count": 5,
+              "ai_unit_order": [
+                "pure_medium_leaf_a_01",
+                "pure_medium_leaf_ab_01",
+                "pure_medium_mid_b_01",
+                "pure_medium_leaf_bc_01",
+                "pure_medium_root_01"
+              ],
+              "construction_rule_id": "fixed_oracle_lemma_graph.pure_logic.v1",
+              "dependency_edges": [
+                {
+                  "source_node_id": "pure_medium_leaf_a_01",
+                  "target_node_id": "pure_medium_mid_b_01"
+                },
+                {
+                  "source_node_id": "pure_medium_leaf_ab_01",
+                  "target_node_id": "pure_medium_mid_b_01"
+                },
+                {
+                  "source_node_id": "pure_medium_mid_b_01",
+                  "target_node_id": "pure_medium_root_01"
+                },
+                {
+                  "source_node_id": "pure_medium_leaf_bc_01",
+                  "target_node_id": "pure_medium_root_01"
+                }
+              ],
+              "proof_assembly_shape": "recursive_lemma_dag_required_slots.v1",
+              "split_kind": "recursive_lemma_dag"
+            },
+            "token_upper_bound": 25600,
+            "topic_family": "pure_logic",
+            "wall_clock_upper_bound_seconds": 150
+          },
+          {
+            "ai_unit_bindings": [
+              {
+                "binding_digest": "sha256:fbdc1ff26d2f1554a8169e947eb3f934c99e343dfa52f7b101f424bee2b6c9cc",
+                "core_binding_digest": "sha256:165e42e67b8907a966abcb39122e2b0d11c0d0a7720710b3269c12480d8d022f",
+                "domain_unit_commitment": {
+                  "case_id": null,
+                  "commitment_kind": "lean_lemma_dag_node.v1",
+                  "context_digest": null,
+                  "dependency_edges_digest": null,
+                  "dependency_path": [],
+                  "domain": "lean_proof",
+                  "node_id": "function_set_medium_ab_01",
+                  "planned_ai_unit_id": "function_set_medium_ab_01",
+                  "schema_version": "tokenshare.paper_domain_unit_commitment.v1",
+                  "slot_key": null,
+                  "snapshot_theorem_payload_digest": null,
+                  "task_id": "paper_lean_lean_v2_medium_function_set_dx_subset_chain_01",
+                  "theorem_id": "lean_lemma_graph:lean_v2_medium_function_set_dx_subset_chain_01:function_set_medium_ab_01",
+                  "theorem_name": "function_set_medium_ab_01",
+                  "theorem_payload_body_digest": "sha256:a24b8ac7a96c5532942cdb422a3fbf0a8848d5882e3dd17c5445d2e09b7d842a",
+                  "theorem_payload_digest": "sha256:7a48cd8944b33eec46d64c21f89b621aadec2545ebf20600108da390c2da1cdd",
+                  "unit_id": "unit_paper_lean_root_lean_v2_medium_function_set_dx_subset_chain_01_d6b31eaea853b06de014afb610fe65a9cd1ea8e4da990969245c2256b643e7f8_function_set_medium_ab_01",
+                  "unit_type": "lean_proof_lemma_node"
+                },
+                "domain_unit_commitment_digest": "sha256:d7036508b45276749e6f028944d6aa40b49a595fae9bbe357848b322a89983d1",
+                "planned_ai_unit_id": "function_set_medium_ab_01",
+                "schema_version": "tokenshare.paper_ai_unit_binding.v1",
+                "task_unit_snapshot_commitment": {
+                  "depth": 1,
+                  "input_refs": {
+                    "lemma_theorem_payload": {
+                      "artifact_id": "lean_fixed_plan_request_lean_v2_medium_function_set_dx_subset_chain_01_lemma_node_function_set_medium_ab_01_json",
+                      "artifact_schema_id": "lean_proof.lemma_graph_node_payload",
+                      "artifact_schema_version": "v2",
+                      "artifact_type": "LeanLemmaGraphNodePayload",
+                      "content_hash": "sha256:a24b8ac7a96c5532942cdb422a3fbf0a8848d5882e3dd17c5445d2e09b7d842a",
+                      "created_at": "2026-07-14T00:00:00Z",
+                      "media_type": "application/json",
+                      "metadata": {
+                        "context_digest": "sha256:ea2732b603251dcdb209166078b2328579b6f50d84aa3a5ff61d4a6ca26ea931",
+                        "node_id": "function_set_medium_ab_01",
+                        "root_node_id": "function_set_medium_root_01"
+                      },
+                      "schema_version": "ArtifactRef.v1",
+                      "size_bytes": 1091,
+                      "source": {
+                        "kind": "lean_lemma_graph_certificate",
+                        "request_id": "lean_fixed_plan_request:lean_v2_medium_function_set_dx_subset_chain_01"
+                      },
+                      "uri": "artifacts/lean_fixed_plan_request_lean_v2_medium_function_set_dx_subset_chain_01_lemma_node_function_set_medium_ab_01_json"
+                    }
+                  },
+                  "metadata": {
+                    "canonical_selection_id": "canonical_selection:paper_lean_lean_v2_medium_function_set_dx_subset_chain_01:paper_lean_root_lean_v2_medium_function_set_dx_subset_chain_01",
+                    "child_logical_key": "function_set_medium_ab_01",
+                    "output_contract_refs": {
+                      "lean_proof_artifact": {
+                        "output_contract_id": "lean_proof.proof_artifact.contract.v1",
+                        "schema_ref": {
+                          "artifact_schema_id": "lean_proof.proof_artifact",
+                          "artifact_schema_version": "v1",
+                          "schema_version": "lean_proof.proof_artifact.v1"
+                        }
+                      }
+                    },
+                    "required_outputs": [
+                      "lean_proof_artifact"
+                    ],
+                    "source_expansion_decision_id": "lean_expansion_decision_f72267e38e22b3856861aa251e4e5938ef65a4e3f480f76a02b15a1ba16e2284",
+                    "source_proposal_id": "lean_decomposition_proposal_d6b31eaea853b06de014afb610fe65a9cd1ea8e4da990969245c2256b643e7f8",
+                    "validator_policy_id": "lean_proof.checker.validator.v1"
+                  },
+                  "parent_unit_id": "paper_lean_root_lean_v2_medium_function_set_dx_subset_chain_01",
+                  "plugin_payload": {
+                    "provenance": {
+                      "certificate_digest": "sha256:6ddcbac6622887c8530448619ec72633c25195dcc65a6477649c3812530678b3",
+                      "certificate_id": "lean_lemma_graph_certificate:lean_v2_medium_function_set_dx_subset_chain_01",
+                      "oracle_proof_package_digest": "sha256:4af791228bd24f4ea6d92fed511be8eee4f29d1ba8db5c6102968e743a8047ca",
+                      "rule_id": "lean_split.lemma_graph_dag.v2"
+                    },
+                    "schema_version": "lean_proof.lemma_graph_node_plugin_payload.v2",
+                    "summary": {
+                      "certificate_digest": "sha256:6ddcbac6622887c8530448619ec72633c25195dcc65a6477649c3812530678b3",
+                      "construction_rule_id": "function_set.medium_lemma_dag.dx_subset_chain.v1",
+                      "depth": 1,
+                      "environment_digest": "sha256:cdc9de4cb0a8407f17ddd7cf423a3fb5640a4560c3b55bd6a70116f5a14de731",
+                      "node_id": "function_set_medium_ab_01",
+                      "node_kind": "leaf_sublemma",
+                      "oracle_package_group": "lean_lemma_graph_oracle.function_set.v1",
+                      "proof_assembly_shape": "recursive_lemma_dag_required_slots.v1",
+                      "root_node_id": "function_set_medium_root_01",
+                      "topic_family": "function_set",
+                      "topic_family_version": "v1"
+                    },
+                    "validation_requirements": {
+                      "checker_required": true,
+                      "context_digest_required": true,
+                      "dependency_aware_slot_integrity_required": true,
+                      "environment_ref_required": true,
+                      "lemma_graph_certificate_node_required": true
+                    }
+                  },
+                  "schema_version": "tokenshare.paper_task_unit_snapshot_commitment.v1",
+                  "task_id": "paper_lean_lean_v2_medium_function_set_dx_subset_chain_01",
+                  "unit_id": "unit_paper_lean_root_lean_v2_medium_function_set_dx_subset_chain_01_d6b31eaea853b06de014afb610fe65a9cd1ea8e4da990969245c2256b643e7f8_function_set_medium_ab_01",
+                  "unit_type": "lean_proof_lemma_node"
+                },
+                "task_unit_snapshot_digest": "sha256:eb8ed38656213bc88223ed77763a74f9871379b537ddfa39119c0a281348b6b0",
+                "unit_id": "unit_paper_lean_root_lean_v2_medium_function_set_dx_subset_chain_01_d6b31eaea853b06de014afb610fe65a9cd1ea8e4da990969245c2256b643e7f8_function_set_medium_ab_01"
+              },
+              {
+                "binding_digest": "sha256:2fc2ef92d9f24ac0f015b9cd3ce385bc7deb50f5327c6be3e34a9ec3c4015b3a",
+                "core_binding_digest": "sha256:54e064c0f7d5136584990d39c55c14a1c0f7d6866e24d09ea71bf7a05d743f01",
+                "domain_unit_commitment": {
+                  "case_id": null,
+                  "commitment_kind": "lean_lemma_dag_node.v1",
+                  "context_digest": null,
+                  "dependency_edges_digest": null,
+                  "dependency_path": [],
+                  "domain": "lean_proof",
+                  "node_id": "function_set_medium_bc_01",
+                  "planned_ai_unit_id": "function_set_medium_bc_01",
+                  "schema_version": "tokenshare.paper_domain_unit_commitment.v1",
+                  "slot_key": null,
+                  "snapshot_theorem_payload_digest": null,
+                  "task_id": "paper_lean_lean_v2_medium_function_set_dx_subset_chain_01",
+                  "theorem_id": "lean_lemma_graph:lean_v2_medium_function_set_dx_subset_chain_01:function_set_medium_bc_01",
+                  "theorem_name": "function_set_medium_bc_01",
+                  "theorem_payload_body_digest": "sha256:560638b4669081d9cde80c4cb7cf40d5fc3f879c9e105b16f996ac343db88327",
+                  "theorem_payload_digest": "sha256:14255dd88e87c5f2059854c20e455677285db41b2ccb0fe909266176953effe7",
+                  "unit_id": "unit_paper_lean_root_lean_v2_medium_function_set_dx_subset_chain_01_d6b31eaea853b06de014afb610fe65a9cd1ea8e4da990969245c2256b643e7f8_function_set_medium_bc_01",
+                  "unit_type": "lean_proof_lemma_node"
+                },
+                "domain_unit_commitment_digest": "sha256:4ac3f24e060ea76be5ae3031d52b74211fce7df6aa537e9681c792fdee466838",
+                "planned_ai_unit_id": "function_set_medium_bc_01",
+                "schema_version": "tokenshare.paper_ai_unit_binding.v1",
+                "task_unit_snapshot_commitment": {
+                  "depth": 1,
+                  "input_refs": {
+                    "lemma_theorem_payload": {
+                      "artifact_id": "lean_fixed_plan_request_lean_v2_medium_function_set_dx_subset_chain_01_lemma_node_function_set_medium_bc_01_json",
+                      "artifact_schema_id": "lean_proof.lemma_graph_node_payload",
+                      "artifact_schema_version": "v2",
+                      "artifact_type": "LeanLemmaGraphNodePayload",
+                      "content_hash": "sha256:560638b4669081d9cde80c4cb7cf40d5fc3f879c9e105b16f996ac343db88327",
+                      "created_at": "2026-07-14T00:00:00Z",
+                      "media_type": "application/json",
+                      "metadata": {
+                        "context_digest": "sha256:6850ab67d1879a2978c5f63a306c5f6ee367060ba4066f1cfc81e8bb6ba702a4",
+                        "node_id": "function_set_medium_bc_01",
+                        "root_node_id": "function_set_medium_root_01"
+                      },
+                      "schema_version": "ArtifactRef.v1",
+                      "size_bytes": 1101,
+                      "source": {
+                        "kind": "lean_lemma_graph_certificate",
+                        "request_id": "lean_fixed_plan_request:lean_v2_medium_function_set_dx_subset_chain_01"
+                      },
+                      "uri": "artifacts/lean_fixed_plan_request_lean_v2_medium_function_set_dx_subset_chain_01_lemma_node_function_set_medium_bc_01_json"
+                    }
+                  },
+                  "metadata": {
+                    "canonical_selection_id": "canonical_selection:paper_lean_lean_v2_medium_function_set_dx_subset_chain_01:paper_lean_root_lean_v2_medium_function_set_dx_subset_chain_01",
+                    "child_logical_key": "function_set_medium_bc_01",
+                    "output_contract_refs": {
+                      "lean_proof_artifact": {
+                        "output_contract_id": "lean_proof.proof_artifact.contract.v1",
+                        "schema_ref": {
+                          "artifact_schema_id": "lean_proof.proof_artifact",
+                          "artifact_schema_version": "v1",
+                          "schema_version": "lean_proof.proof_artifact.v1"
+                        }
+                      }
+                    },
+                    "required_outputs": [
+                      "lean_proof_artifact"
+                    ],
+                    "source_expansion_decision_id": "lean_expansion_decision_f72267e38e22b3856861aa251e4e5938ef65a4e3f480f76a02b15a1ba16e2284",
+                    "source_proposal_id": "lean_decomposition_proposal_d6b31eaea853b06de014afb610fe65a9cd1ea8e4da990969245c2256b643e7f8",
+                    "validator_policy_id": "lean_proof.checker.validator.v1"
+                  },
+                  "parent_unit_id": "paper_lean_root_lean_v2_medium_function_set_dx_subset_chain_01",
+                  "plugin_payload": {
+                    "provenance": {
+                      "certificate_digest": "sha256:6ddcbac6622887c8530448619ec72633c25195dcc65a6477649c3812530678b3",
+                      "certificate_id": "lean_lemma_graph_certificate:lean_v2_medium_function_set_dx_subset_chain_01",
+                      "oracle_proof_package_digest": "sha256:4af791228bd24f4ea6d92fed511be8eee4f29d1ba8db5c6102968e743a8047ca",
+                      "rule_id": "lean_split.lemma_graph_dag.v2"
+                    },
+                    "schema_version": "lean_proof.lemma_graph_node_plugin_payload.v2",
+                    "summary": {
+                      "certificate_digest": "sha256:6ddcbac6622887c8530448619ec72633c25195dcc65a6477649c3812530678b3",
+                      "construction_rule_id": "function_set.medium_lemma_dag.dx_subset_chain.v1",
+                      "depth": 1,
+                      "environment_digest": "sha256:cdc9de4cb0a8407f17ddd7cf423a3fb5640a4560c3b55bd6a70116f5a14de731",
+                      "node_id": "function_set_medium_bc_01",
+                      "node_kind": "leaf_sublemma",
+                      "oracle_package_group": "lean_lemma_graph_oracle.function_set.v1",
+                      "proof_assembly_shape": "recursive_lemma_dag_required_slots.v1",
+                      "root_node_id": "function_set_medium_root_01",
+                      "topic_family": "function_set",
+                      "topic_family_version": "v1"
+                    },
+                    "validation_requirements": {
+                      "checker_required": true,
+                      "context_digest_required": true,
+                      "dependency_aware_slot_integrity_required": true,
+                      "environment_ref_required": true,
+                      "lemma_graph_certificate_node_required": true
+                    }
+                  },
+                  "schema_version": "tokenshare.paper_task_unit_snapshot_commitment.v1",
+                  "task_id": "paper_lean_lean_v2_medium_function_set_dx_subset_chain_01",
+                  "unit_id": "unit_paper_lean_root_lean_v2_medium_function_set_dx_subset_chain_01_d6b31eaea853b06de014afb610fe65a9cd1ea8e4da990969245c2256b643e7f8_function_set_medium_bc_01",
+                  "unit_type": "lean_proof_lemma_node"
+                },
+                "task_unit_snapshot_digest": "sha256:39a70ead104868a2dfa2702ae42c9c986d49d960d718b54b0c9f2fa2712ffcbf",
+                "unit_id": "unit_paper_lean_root_lean_v2_medium_function_set_dx_subset_chain_01_d6b31eaea853b06de014afb610fe65a9cd1ea8e4da990969245c2256b643e7f8_function_set_medium_bc_01"
+              },
+              {
+                "binding_digest": "sha256:cc097041968b5683c0a5ac9c8a47c957d5403888130f99154a49806c9aa0dc0e",
+                "core_binding_digest": "sha256:a43e1497e7604a0373f4e9542b16d961f9bc534079644d9555c9085ed460ebd3",
+                "domain_unit_commitment": {
+                  "case_id": null,
+                  "commitment_kind": "lean_lemma_dag_node.v1",
+                  "context_digest": null,
+                  "dependency_edges_digest": null,
+                  "dependency_path": [],
+                  "domain": "lean_proof",
+                  "node_id": "function_set_medium_ac_01",
+                  "planned_ai_unit_id": "function_set_medium_ac_01",
+                  "schema_version": "tokenshare.paper_domain_unit_commitment.v1",
+                  "slot_key": null,
+                  "snapshot_theorem_payload_digest": null,
+                  "task_id": "paper_lean_lean_v2_medium_function_set_dx_subset_chain_01",
+                  "theorem_id": "lean_lemma_graph:lean_v2_medium_function_set_dx_subset_chain_01:function_set_medium_ac_01",
+                  "theorem_name": "function_set_medium_ac_01",
+                  "theorem_payload_body_digest": "sha256:5d7b3cf2ee20fd9049fabc4f828384fe4f80d6f5049c5e47c712b22b0ab9448a",
+                  "theorem_payload_digest": "sha256:1b5b0962a9d36157b17f438e79a84076c2f799482836abb6876ce3dcfdb211d2",
+                  "unit_id": "unit_paper_lean_root_lean_v2_medium_function_set_dx_subset_chain_01_d6b31eaea853b06de014afb610fe65a9cd1ea8e4da990969245c2256b643e7f8_function_set_medium_ac_01",
+                  "unit_type": "lean_proof_lemma_node"
+                },
+                "domain_unit_commitment_digest": "sha256:d2c0f3ade2ce5b28c05f32c09413f2ac5ad918af9d539608e567531db94c324f",
+                "planned_ai_unit_id": "function_set_medium_ac_01",
+                "schema_version": "tokenshare.paper_ai_unit_binding.v1",
+                "task_unit_snapshot_commitment": {
+                  "depth": 1,
+                  "input_refs": {
+                    "lemma_theorem_payload": {
+                      "artifact_id": "lean_fixed_plan_request_lean_v2_medium_function_set_dx_subset_chain_01_lemma_node_function_set_medium_ac_01_json",
+                      "artifact_schema_id": "lean_proof.lemma_graph_node_payload",
+                      "artifact_schema_version": "v2",
+                      "artifact_type": "LeanLemmaGraphNodePayload",
+                      "content_hash": "sha256:5d7b3cf2ee20fd9049fabc4f828384fe4f80d6f5049c5e47c712b22b0ab9448a",
+                      "created_at": "2026-07-14T00:00:00Z",
+                      "media_type": "application/json",
+                      "metadata": {
+                        "context_digest": "sha256:fc62409d26c8667d08a836eea981d786696fe9640ce5cb78ef320968839ed617",
+                        "node_id": "function_set_medium_ac_01",
+                        "root_node_id": "function_set_medium_root_01"
+                      },
+                      "schema_version": "ArtifactRef.v1",
+                      "size_bytes": 1101,
+                      "source": {
+                        "kind": "lean_lemma_graph_certificate",
+                        "request_id": "lean_fixed_plan_request:lean_v2_medium_function_set_dx_subset_chain_01"
+                      },
+                      "uri": "artifacts/lean_fixed_plan_request_lean_v2_medium_function_set_dx_subset_chain_01_lemma_node_function_set_medium_ac_01_json"
+                    }
+                  },
+                  "metadata": {
+                    "canonical_selection_id": "canonical_selection:paper_lean_lean_v2_medium_function_set_dx_subset_chain_01:paper_lean_root_lean_v2_medium_function_set_dx_subset_chain_01",
+                    "child_logical_key": "function_set_medium_ac_01",
+                    "output_contract_refs": {
+                      "lean_proof_artifact": {
+                        "output_contract_id": "lean_proof.proof_artifact.contract.v1",
+                        "schema_ref": {
+                          "artifact_schema_id": "lean_proof.proof_artifact",
+                          "artifact_schema_version": "v1",
+                          "schema_version": "lean_proof.proof_artifact.v1"
+                        }
+                      }
+                    },
+                    "required_outputs": [
+                      "lean_proof_artifact"
+                    ],
+                    "source_expansion_decision_id": "lean_expansion_decision_f72267e38e22b3856861aa251e4e5938ef65a4e3f480f76a02b15a1ba16e2284",
+                    "source_proposal_id": "lean_decomposition_proposal_d6b31eaea853b06de014afb610fe65a9cd1ea8e4da990969245c2256b643e7f8",
+                    "validator_policy_id": "lean_proof.checker.validator.v1"
+                  },
+                  "parent_unit_id": "paper_lean_root_lean_v2_medium_function_set_dx_subset_chain_01",
+                  "plugin_payload": {
+                    "provenance": {
+                      "certificate_digest": "sha256:6ddcbac6622887c8530448619ec72633c25195dcc65a6477649c3812530678b3",
+                      "certificate_id": "lean_lemma_graph_certificate:lean_v2_medium_function_set_dx_subset_chain_01",
+                      "oracle_proof_package_digest": "sha256:4af791228bd24f4ea6d92fed511be8eee4f29d1ba8db5c6102968e743a8047ca",
+                      "rule_id": "lean_split.lemma_graph_dag.v2"
+                    },
+                    "schema_version": "lean_proof.lemma_graph_node_plugin_payload.v2",
+                    "summary": {
+                      "certificate_digest": "sha256:6ddcbac6622887c8530448619ec72633c25195dcc65a6477649c3812530678b3",
+                      "construction_rule_id": "function_set.medium_lemma_dag.dx_subset_chain.v1",
+                      "depth": 2,
+                      "environment_digest": "sha256:cdc9de4cb0a8407f17ddd7cf423a3fb5640a4560c3b55bd6a70116f5a14de731",
+                      "node_id": "function_set_medium_ac_01",
+                      "node_kind": "intermediate_lemma",
+                      "oracle_package_group": "lean_lemma_graph_oracle.function_set.v1",
+                      "proof_assembly_shape": "recursive_lemma_dag_required_slots.v1",
+                      "root_node_id": "function_set_medium_root_01",
+                      "topic_family": "function_set",
+                      "topic_family_version": "v1"
+                    },
+                    "validation_requirements": {
+                      "checker_required": true,
+                      "context_digest_required": true,
+                      "dependency_aware_slot_integrity_required": true,
+                      "environment_ref_required": true,
+                      "lemma_graph_certificate_node_required": true
+                    }
+                  },
+                  "schema_version": "tokenshare.paper_task_unit_snapshot_commitment.v1",
+                  "task_id": "paper_lean_lean_v2_medium_function_set_dx_subset_chain_01",
+                  "unit_id": "unit_paper_lean_root_lean_v2_medium_function_set_dx_subset_chain_01_d6b31eaea853b06de014afb610fe65a9cd1ea8e4da990969245c2256b643e7f8_function_set_medium_ac_01",
+                  "unit_type": "lean_proof_lemma_node"
+                },
+                "task_unit_snapshot_digest": "sha256:dfb6ea5c6854f4d477e683b83f0d8443adf558aae81ab0ec1884e6c7d144a7ab",
+                "unit_id": "unit_paper_lean_root_lean_v2_medium_function_set_dx_subset_chain_01_d6b31eaea853b06de014afb610fe65a9cd1ea8e4da990969245c2256b643e7f8_function_set_medium_ac_01"
+              },
+              {
+                "binding_digest": "sha256:7097e0cd2469c0c3fd972d3dbd46c714eae1e7e883721ac3bbf37943208b3da7",
+                "core_binding_digest": "sha256:16763c73f0c7c780e793067876816b1fa2dad590d07091de366f562892bdc8a4",
+                "domain_unit_commitment": {
+                  "case_id": null,
+                  "commitment_kind": "lean_lemma_dag_node.v1",
+                  "context_digest": null,
+                  "dependency_edges_digest": null,
+                  "dependency_path": [],
+                  "domain": "lean_proof",
+                  "node_id": "function_set_medium_root_01",
+                  "planned_ai_unit_id": "function_set_medium_root_01",
+                  "schema_version": "tokenshare.paper_domain_unit_commitment.v1",
+                  "slot_key": null,
+                  "snapshot_theorem_payload_digest": null,
+                  "task_id": "paper_lean_lean_v2_medium_function_set_dx_subset_chain_01",
+                  "theorem_id": "lean_lemma_graph:lean_v2_medium_function_set_dx_subset_chain_01:function_set_medium_root_01",
+                  "theorem_name": "function_set_medium_root_01",
+                  "theorem_payload_body_digest": "sha256:27c07a84c9571b6f78aab9136ec1ee1ffde505733cb10476f344e6bb84bb6e98",
+                  "theorem_payload_digest": "sha256:1b4514af49b4fbfbff6a7e1fa4395dd0a7df95f99d72c57de998f672eb7d26cc",
+                  "unit_id": "unit_paper_lean_root_lean_v2_medium_function_set_dx_subset_chain_01_d6b31eaea853b06de014afb610fe65a9cd1ea8e4da990969245c2256b643e7f8_function_set_medium_root_01",
+                  "unit_type": "lean_proof_lemma_node"
+                },
+                "domain_unit_commitment_digest": "sha256:7e691ff40a4e742e98d6921232d01120875b79f97c67da3f803240aa5e963717",
+                "planned_ai_unit_id": "function_set_medium_root_01",
+                "schema_version": "tokenshare.paper_ai_unit_binding.v1",
+                "task_unit_snapshot_commitment": {
+                  "depth": 1,
+                  "input_refs": {
+                    "lemma_theorem_payload": {
+                      "artifact_id": "lean_fixed_plan_request_lean_v2_medium_function_set_dx_subset_chain_01_lemma_node_function_set_medium_root_01_json",
+                      "artifact_schema_id": "lean_proof.lemma_graph_node_payload",
+                      "artifact_schema_version": "v2",
+                      "artifact_type": "LeanLemmaGraphNodePayload",
+                      "content_hash": "sha256:27c07a84c9571b6f78aab9136ec1ee1ffde505733cb10476f344e6bb84bb6e98",
+                      "created_at": "2026-07-14T00:00:00Z",
+                      "media_type": "application/json",
+                      "metadata": {
+                        "context_digest": "sha256:f9b4192f86010387307c58b99b1c23bef0d821606a536a5fa8bfa29c26ba99ad",
+                        "node_id": "function_set_medium_root_01",
+                        "root_node_id": "function_set_medium_root_01"
+                      },
+                      "schema_version": "ArtifactRef.v1",
+                      "size_bytes": 1107,
+                      "source": {
+                        "kind": "lean_lemma_graph_certificate",
+                        "request_id": "lean_fixed_plan_request:lean_v2_medium_function_set_dx_subset_chain_01"
+                      },
+                      "uri": "artifacts/lean_fixed_plan_request_lean_v2_medium_function_set_dx_subset_chain_01_lemma_node_function_set_medium_root_01_json"
+                    }
+                  },
+                  "metadata": {
+                    "canonical_selection_id": "canonical_selection:paper_lean_lean_v2_medium_function_set_dx_subset_chain_01:paper_lean_root_lean_v2_medium_function_set_dx_subset_chain_01",
+                    "child_logical_key": "function_set_medium_root_01",
+                    "output_contract_refs": {
+                      "lean_proof_artifact": {
+                        "output_contract_id": "lean_proof.proof_artifact.contract.v1",
+                        "schema_ref": {
+                          "artifact_schema_id": "lean_proof.proof_artifact",
+                          "artifact_schema_version": "v1",
+                          "schema_version": "lean_proof.proof_artifact.v1"
+                        }
+                      }
+                    },
+                    "required_outputs": [
+                      "lean_proof_artifact"
+                    ],
+                    "source_expansion_decision_id": "lean_expansion_decision_f72267e38e22b3856861aa251e4e5938ef65a4e3f480f76a02b15a1ba16e2284",
+                    "source_proposal_id": "lean_decomposition_proposal_d6b31eaea853b06de014afb610fe65a9cd1ea8e4da990969245c2256b643e7f8",
+                    "validator_policy_id": "lean_proof.checker.validator.v1"
+                  },
+                  "parent_unit_id": "paper_lean_root_lean_v2_medium_function_set_dx_subset_chain_01",
+                  "plugin_payload": {
+                    "provenance": {
+                      "certificate_digest": "sha256:6ddcbac6622887c8530448619ec72633c25195dcc65a6477649c3812530678b3",
+                      "certificate_id": "lean_lemma_graph_certificate:lean_v2_medium_function_set_dx_subset_chain_01",
+                      "oracle_proof_package_digest": "sha256:4af791228bd24f4ea6d92fed511be8eee4f29d1ba8db5c6102968e743a8047ca",
+                      "rule_id": "lean_split.lemma_graph_dag.v2"
+                    },
+                    "schema_version": "lean_proof.lemma_graph_node_plugin_payload.v2",
+                    "summary": {
+                      "certificate_digest": "sha256:6ddcbac6622887c8530448619ec72633c25195dcc65a6477649c3812530678b3",
+                      "construction_rule_id": "function_set.medium_lemma_dag.dx_subset_chain.v1",
+                      "depth": 3,
+                      "environment_digest": "sha256:cdc9de4cb0a8407f17ddd7cf423a3fb5640a4560c3b55bd6a70116f5a14de731",
+                      "node_id": "function_set_medium_root_01",
+                      "node_kind": "root_theorem",
+                      "oracle_package_group": "lean_lemma_graph_oracle.function_set.v1",
+                      "proof_assembly_shape": "recursive_lemma_dag_required_slots.v1",
+                      "root_node_id": "function_set_medium_root_01",
+                      "topic_family": "function_set",
+                      "topic_family_version": "v1"
+                    },
+                    "validation_requirements": {
+                      "checker_required": true,
+                      "context_digest_required": true,
+                      "dependency_aware_slot_integrity_required": true,
+                      "environment_ref_required": true,
+                      "lemma_graph_certificate_node_required": true
+                    }
+                  },
+                  "schema_version": "tokenshare.paper_task_unit_snapshot_commitment.v1",
+                  "task_id": "paper_lean_lean_v2_medium_function_set_dx_subset_chain_01",
+                  "unit_id": "unit_paper_lean_root_lean_v2_medium_function_set_dx_subset_chain_01_d6b31eaea853b06de014afb610fe65a9cd1ea8e4da990969245c2256b643e7f8_function_set_medium_root_01",
+                  "unit_type": "lean_proof_lemma_node"
+                },
+                "task_unit_snapshot_digest": "sha256:45e53246957b973490c523d763330178b92f6f1858214c2b291dad53597cc136",
+                "unit_id": "unit_paper_lean_root_lean_v2_medium_function_set_dx_subset_chain_01_d6b31eaea853b06de014afb610fe65a9cd1ea8e4da990969245c2256b643e7f8_function_set_medium_root_01"
+              }
+            ],
+            "ai_unit_count": 4,
+            "blocked_reason": null,
+            "case_id": "lean_v2_medium_function_set_dx_subset_chain_01",
+            "catalog_expected_ai_unit_count": 4,
+            "completion_token_upper_bound": 4096,
+            "cost_currency": "USD",
+            "cost_upper_bound": 0.024576,
+            "disk_upper_bound_bytes": 4456448,
+            "domain": "lean_proof",
+            "execution_status": "executable",
+            "executor_requirements": {
+              "executor": "ai_api",
+              "model_endpoint_identity_digest": "sha256:aa55d4add07d28e00c0c44d75fa09ad63af83a6e90cb47859cec78b9415aaebb",
+              "prepared_execution_config_digest": "sha256:e3803db6f03a3a38c09e50da0cbcf71597cc83db133304cf366f207a4f339ca2",
+              "provider_config_id": "exp1_baseline_siliconflow",
+              "provider_family": "siliconflow",
+              "provider_model_id": "zai-org/GLM-5.2",
+              "reasoning_profile_id": "default",
+              "selected_entry_id": "glm_5_2_exp1_baseline",
+              "source_provider_config_digest": "sha256:d1642ac83b912a46b953e475e58949320dfc97db7454dad614693574374f44f5"
+            },
+            "legacy_difficulty": "medium",
+            "ordinal": 5,
+            "paper_difficulty": "medium_lemma_dag",
+            "prompt_token_upper_bound": 16384,
+            "provider_attempt_upper_bound": 4,
+            "request_limits": {
+              "max_provider_attempts_per_ai_unit": 1,
+              "max_tokens": 1024,
+              "prompt_token_upper_bound": 4096,
+              "stream": false,
+              "temperature": 0.0,
+              "timeout_seconds": 30
+            },
+            "split_profile": {
+              "actual_child_count": 4,
+              "ai_unit_order": [
+                "function_set_medium_ab_01",
+                "function_set_medium_bc_01",
+                "function_set_medium_ac_01",
+                "function_set_medium_root_01"
+              ],
+              "construction_rule_id": "function_set.medium_lemma_dag.dx_subset_chain.v1",
+              "dependency_edges": [
+                {
+                  "source_node_id": "function_set_medium_ab_01",
+                  "target_node_id": "function_set_medium_ac_01"
+                },
+                {
+                  "source_node_id": "function_set_medium_bc_01",
+                  "target_node_id": "function_set_medium_ac_01"
+                },
+                {
+                  "source_node_id": "function_set_medium_ac_01",
+                  "target_node_id": "function_set_medium_root_01"
+                }
+              ],
+              "proof_assembly_shape": "recursive_lemma_dag_required_slots.v1",
+              "split_kind": "recursive_lemma_dag"
+            },
+            "token_upper_bound": 20480,
+            "topic_family": "function_set",
+            "wall_clock_upper_bound_seconds": 120
+          },
+          {
+            "ai_unit_bindings": [
+              {
+                "binding_digest": "sha256:14e095eca25f8b03f1822ab10c4d510259829f7001b6fa4af43e61292b4fd2f3",
+                "core_binding_digest": "sha256:f4be05572ff8b343c3a39296febfd632cc43c27dbc2186904c22583bc539f109",
+                "domain_unit_commitment": {
+                  "case_id": null,
+                  "commitment_kind": "lean_lemma_dag_node.v1",
+                  "context_digest": null,
+                  "dependency_edges_digest": null,
+                  "dependency_path": [],
+                  "domain": "lean_proof",
+                  "node_id": "induction_medium_a_01",
+                  "planned_ai_unit_id": "induction_medium_a_01",
+                  "schema_version": "tokenshare.paper_domain_unit_commitment.v1",
+                  "slot_key": null,
+                  "snapshot_theorem_payload_digest": null,
+                  "task_id": "paper_lean_lean_v2_medium_induction_nat_predicate_chain_01",
+                  "theorem_id": "lean_lemma_graph:lean_v2_medium_induction_nat_predicate_chain_01:induction_medium_a_01",
+                  "theorem_name": "induction_medium_a_01",
+                  "theorem_payload_body_digest": "sha256:6538a749fdd361881d49fac96ef113a00e8f4a8e46e2419a8741c642dac99061",
+                  "theorem_payload_digest": "sha256:83b873e04ff9ab1a6f9766ddc695da47f31d136b091106cd3a47c19fbddc0aea",
+                  "unit_id": "unit_paper_lean_root_lean_v2_medium_induction_nat_predicate_chain_01_5125be308ad61ab43c9f4cec3a7eb404e62e69446dedbd6e5e2d9dc57493031c_induction_medium_a_01",
+                  "unit_type": "lean_proof_lemma_node"
+                },
+                "domain_unit_commitment_digest": "sha256:661be5cf12c3590916a29f6385c101ff4484626cf9a7abb75b4510093295c956",
+                "planned_ai_unit_id": "induction_medium_a_01",
+                "schema_version": "tokenshare.paper_ai_unit_binding.v1",
+                "task_unit_snapshot_commitment": {
+                  "depth": 1,
+                  "input_refs": {
+                    "lemma_theorem_payload": {
+                      "artifact_id": "lean_fixed_plan_request_lean_v2_medium_induction_nat_predicate_chain_01_lemma_node_induction_medium_a_01_json",
+                      "artifact_schema_id": "lean_proof.lemma_graph_node_payload",
+                      "artifact_schema_version": "v2",
+                      "artifact_type": "LeanLemmaGraphNodePayload",
+                      "content_hash": "sha256:6538a749fdd361881d49fac96ef113a00e8f4a8e46e2419a8741c642dac99061",
+                      "created_at": "2026-07-14T00:00:00Z",
+                      "media_type": "application/json",
+                      "metadata": {
+                        "context_digest": "sha256:a9e4cffcab35dfac791f0054e3d2387b2d7ab068f17a31de0afe3e3032849759",
+                        "node_id": "induction_medium_a_01",
+                        "root_node_id": "induction_medium_root_01"
+                      },
+                      "schema_version": "ArtifactRef.v1",
+                      "size_bytes": 1082,
+                      "source": {
+                        "kind": "lean_lemma_graph_certificate",
+                        "request_id": "lean_fixed_plan_request:lean_v2_medium_induction_nat_predicate_chain_01"
+                      },
+                      "uri": "artifacts/lean_fixed_plan_request_lean_v2_medium_induction_nat_predicate_chain_01_lemma_node_induction_medium_a_01_json"
+                    }
+                  },
+                  "metadata": {
+                    "canonical_selection_id": "canonical_selection:paper_lean_lean_v2_medium_induction_nat_predicate_chain_01:paper_lean_root_lean_v2_medium_induction_nat_predicate_chain_01",
+                    "child_logical_key": "induction_medium_a_01",
+                    "output_contract_refs": {
+                      "lean_proof_artifact": {
+                        "output_contract_id": "lean_proof.proof_artifact.contract.v1",
+                        "schema_ref": {
+                          "artifact_schema_id": "lean_proof.proof_artifact",
+                          "artifact_schema_version": "v1",
+                          "schema_version": "lean_proof.proof_artifact.v1"
+                        }
+                      }
+                    },
+                    "required_outputs": [
+                      "lean_proof_artifact"
+                    ],
+                    "source_expansion_decision_id": "lean_expansion_decision_0903b6df503aa2e7a5079306a0bfb25be9482d676e47b65dc79aabced4b595fd",
+                    "source_proposal_id": "lean_decomposition_proposal_5125be308ad61ab43c9f4cec3a7eb404e62e69446dedbd6e5e2d9dc57493031c",
+                    "validator_policy_id": "lean_proof.checker.validator.v1"
+                  },
+                  "parent_unit_id": "paper_lean_root_lean_v2_medium_induction_nat_predicate_chain_01",
+                  "plugin_payload": {
+                    "provenance": {
+                      "certificate_digest": "sha256:0ce9f192ddb814e5c14145998d9edbf3f63baae33b08b655ac9e5a23488f861a",
+                      "certificate_id": "lean_lemma_graph_certificate:lean_v2_medium_induction_nat_predicate_chain_01",
+                      "oracle_proof_package_digest": "sha256:4af791228bd24f4ea6d92fed511be8eee4f29d1ba8db5c6102968e743a8047ca",
+                      "rule_id": "lean_split.lemma_graph_dag.v2"
+                    },
+                    "schema_version": "lean_proof.lemma_graph_node_plugin_payload.v2",
+                    "summary": {
+                      "certificate_digest": "sha256:0ce9f192ddb814e5c14145998d9edbf3f63baae33b08b655ac9e5a23488f861a",
+                      "construction_rule_id": "induction.medium_lemma_dag.nat_predicate_chain.v1",
+                      "depth": 1,
+                      "environment_digest": "sha256:cdc9de4cb0a8407f17ddd7cf423a3fb5640a4560c3b55bd6a70116f5a14de731",
+                      "node_id": "induction_medium_a_01",
+                      "node_kind": "leaf_sublemma",
+                      "oracle_package_group": "lean_lemma_graph_oracle.induction.v1",
+                      "proof_assembly_shape": "recursive_induction_lemma_dag_required_slots.v1",
+                      "root_node_id": "induction_medium_root_01",
+                      "topic_family": "induction",
+                      "topic_family_version": "v1"
+                    },
+                    "validation_requirements": {
+                      "checker_required": true,
+                      "context_digest_required": true,
+                      "dependency_aware_slot_integrity_required": true,
+                      "environment_ref_required": true,
+                      "lemma_graph_certificate_node_required": true
+                    }
+                  },
+                  "schema_version": "tokenshare.paper_task_unit_snapshot_commitment.v1",
+                  "task_id": "paper_lean_lean_v2_medium_induction_nat_predicate_chain_01",
+                  "unit_id": "unit_paper_lean_root_lean_v2_medium_induction_nat_predicate_chain_01_5125be308ad61ab43c9f4cec3a7eb404e62e69446dedbd6e5e2d9dc57493031c_induction_medium_a_01",
+                  "unit_type": "lean_proof_lemma_node"
+                },
+                "task_unit_snapshot_digest": "sha256:680c09c8b5754fd6a2dd2c4f2f83114e3a197c57b2ea144f02cb7da06cb63a53",
+                "unit_id": "unit_paper_lean_root_lean_v2_medium_induction_nat_predicate_chain_01_5125be308ad61ab43c9f4cec3a7eb404e62e69446dedbd6e5e2d9dc57493031c_induction_medium_a_01"
+              },
+              {
+                "binding_digest": "sha256:9f147755185d69be2b9ad10b5a0e64411e399fb7c06ce37eaa24dca9cf54a35b",
+                "core_binding_digest": "sha256:10c2c27806e5d80cf900fc73d092d33b1d961aa76b17f762f8524527a338382e",
+                "domain_unit_commitment": {
+                  "case_id": null,
+                  "commitment_kind": "lean_lemma_dag_node.v1",
+                  "context_digest": null,
+                  "dependency_edges_digest": null,
+                  "dependency_path": [],
+                  "domain": "lean_proof",
+                  "node_id": "induction_medium_ab_01",
+                  "planned_ai_unit_id": "induction_medium_ab_01",
+                  "schema_version": "tokenshare.paper_domain_unit_commitment.v1",
+                  "slot_key": null,
+                  "snapshot_theorem_payload_digest": null,
+                  "task_id": "paper_lean_lean_v2_medium_induction_nat_predicate_chain_01",
+                  "theorem_id": "lean_lemma_graph:lean_v2_medium_induction_nat_predicate_chain_01:induction_medium_ab_01",
+                  "theorem_name": "induction_medium_ab_01",
+                  "theorem_payload_body_digest": "sha256:c4a31eecf81dac63898ccafd4e888c4f9440f173c3b10f930aa9da191d27d252",
+                  "theorem_payload_digest": "sha256:2fb377d2a057bde6dd1655eea12f3440345609d0f701e8af2f98ae8f9f9facd8",
+                  "unit_id": "unit_paper_lean_root_lean_v2_medium_induction_nat_predicate_chain_01_5125be308ad61ab43c9f4cec3a7eb404e62e69446dedbd6e5e2d9dc57493031c_induction_medium_ab_01",
+                  "unit_type": "lean_proof_lemma_node"
+                },
+                "domain_unit_commitment_digest": "sha256:23b5e1bd7664b561b3c83a15ef701853bc5691f352a671c723b33340fe4d0177",
+                "planned_ai_unit_id": "induction_medium_ab_01",
+                "schema_version": "tokenshare.paper_ai_unit_binding.v1",
+                "task_unit_snapshot_commitment": {
+                  "depth": 1,
+                  "input_refs": {
+                    "lemma_theorem_payload": {
+                      "artifact_id": "lean_fixed_plan_request_lean_v2_medium_induction_nat_predicate_chain_01_lemma_node_induction_medium_ab_01_json",
+                      "artifact_schema_id": "lean_proof.lemma_graph_node_payload",
+                      "artifact_schema_version": "v2",
+                      "artifact_type": "LeanLemmaGraphNodePayload",
+                      "content_hash": "sha256:c4a31eecf81dac63898ccafd4e888c4f9440f173c3b10f930aa9da191d27d252",
+                      "created_at": "2026-07-14T00:00:00Z",
+                      "media_type": "application/json",
+                      "metadata": {
+                        "context_digest": "sha256:37ab61dd5ccd63c1af3c6475f4e776a33fc1cb60dd7ab0c7a9dc8bf0a942aef0",
+                        "node_id": "induction_medium_ab_01",
+                        "root_node_id": "induction_medium_root_01"
+                      },
+                      "schema_version": "ArtifactRef.v1",
+                      "size_bytes": 1092,
+                      "source": {
+                        "kind": "lean_lemma_graph_certificate",
+                        "request_id": "lean_fixed_plan_request:lean_v2_medium_induction_nat_predicate_chain_01"
+                      },
+                      "uri": "artifacts/lean_fixed_plan_request_lean_v2_medium_induction_nat_predicate_chain_01_lemma_node_induction_medium_ab_01_json"
+                    }
+                  },
+                  "metadata": {
+                    "canonical_selection_id": "canonical_selection:paper_lean_lean_v2_medium_induction_nat_predicate_chain_01:paper_lean_root_lean_v2_medium_induction_nat_predicate_chain_01",
+                    "child_logical_key": "induction_medium_ab_01",
+                    "output_contract_refs": {
+                      "lean_proof_artifact": {
+                        "output_contract_id": "lean_proof.proof_artifact.contract.v1",
+                        "schema_ref": {
+                          "artifact_schema_id": "lean_proof.proof_artifact",
+                          "artifact_schema_version": "v1",
+                          "schema_version": "lean_proof.proof_artifact.v1"
+                        }
+                      }
+                    },
+                    "required_outputs": [
+                      "lean_proof_artifact"
+                    ],
+                    "source_expansion_decision_id": "lean_expansion_decision_0903b6df503aa2e7a5079306a0bfb25be9482d676e47b65dc79aabced4b595fd",
+                    "source_proposal_id": "lean_decomposition_proposal_5125be308ad61ab43c9f4cec3a7eb404e62e69446dedbd6e5e2d9dc57493031c",
+                    "validator_policy_id": "lean_proof.checker.validator.v1"
+                  },
+                  "parent_unit_id": "paper_lean_root_lean_v2_medium_induction_nat_predicate_chain_01",
+                  "plugin_payload": {
+                    "provenance": {
+                      "certificate_digest": "sha256:0ce9f192ddb814e5c14145998d9edbf3f63baae33b08b655ac9e5a23488f861a",
+                      "certificate_id": "lean_lemma_graph_certificate:lean_v2_medium_induction_nat_predicate_chain_01",
+                      "oracle_proof_package_digest": "sha256:4af791228bd24f4ea6d92fed511be8eee4f29d1ba8db5c6102968e743a8047ca",
+                      "rule_id": "lean_split.lemma_graph_dag.v2"
+                    },
+                    "schema_version": "lean_proof.lemma_graph_node_plugin_payload.v2",
+                    "summary": {
+                      "certificate_digest": "sha256:0ce9f192ddb814e5c14145998d9edbf3f63baae33b08b655ac9e5a23488f861a",
+                      "construction_rule_id": "induction.medium_lemma_dag.nat_predicate_chain.v1",
+                      "depth": 1,
+                      "environment_digest": "sha256:cdc9de4cb0a8407f17ddd7cf423a3fb5640a4560c3b55bd6a70116f5a14de731",
+                      "node_id": "induction_medium_ab_01",
+                      "node_kind": "leaf_sublemma",
+                      "oracle_package_group": "lean_lemma_graph_oracle.induction.v1",
+                      "proof_assembly_shape": "recursive_induction_lemma_dag_required_slots.v1",
+                      "root_node_id": "induction_medium_root_01",
+                      "topic_family": "induction",
+                      "topic_family_version": "v1"
+                    },
+                    "validation_requirements": {
+                      "checker_required": true,
+                      "context_digest_required": true,
+                      "dependency_aware_slot_integrity_required": true,
+                      "environment_ref_required": true,
+                      "lemma_graph_certificate_node_required": true
+                    }
+                  },
+                  "schema_version": "tokenshare.paper_task_unit_snapshot_commitment.v1",
+                  "task_id": "paper_lean_lean_v2_medium_induction_nat_predicate_chain_01",
+                  "unit_id": "unit_paper_lean_root_lean_v2_medium_induction_nat_predicate_chain_01_5125be308ad61ab43c9f4cec3a7eb404e62e69446dedbd6e5e2d9dc57493031c_induction_medium_ab_01",
+                  "unit_type": "lean_proof_lemma_node"
+                },
+                "task_unit_snapshot_digest": "sha256:186ab0374c095f8a16f13a43db7c6188fd731ee01a8f49c2e7685d4249bf8ec7",
+                "unit_id": "unit_paper_lean_root_lean_v2_medium_induction_nat_predicate_chain_01_5125be308ad61ab43c9f4cec3a7eb404e62e69446dedbd6e5e2d9dc57493031c_induction_medium_ab_01"
+              },
+              {
+                "binding_digest": "sha256:5a5ba6d96a1ab7221fd610a9f1ed0cf7fbbfd9580d038cc2f73a6716262464a8",
+                "core_binding_digest": "sha256:7ea1dbae69146748d45778d3a3c42d3babf495349e67d8c221023b1a17ee031c",
+                "domain_unit_commitment": {
+                  "case_id": null,
+                  "commitment_kind": "lean_lemma_dag_node.v1",
+                  "context_digest": null,
+                  "dependency_edges_digest": null,
+                  "dependency_path": [],
+                  "domain": "lean_proof",
+                  "node_id": "induction_medium_b_01",
+                  "planned_ai_unit_id": "induction_medium_b_01",
+                  "schema_version": "tokenshare.paper_domain_unit_commitment.v1",
+                  "slot_key": null,
+                  "snapshot_theorem_payload_digest": null,
+                  "task_id": "paper_lean_lean_v2_medium_induction_nat_predicate_chain_01",
+                  "theorem_id": "lean_lemma_graph:lean_v2_medium_induction_nat_predicate_chain_01:induction_medium_b_01",
+                  "theorem_name": "induction_medium_b_01",
+                  "theorem_payload_body_digest": "sha256:ee08736433222759c6b260c4efd7a3a0729a68265d84155f69ad8e20fbc58bdb",
+                  "theorem_payload_digest": "sha256:a58fa42b6c4023c4f1186e46cdac9f7ff92f1ad6eefb13c7d5dd1aae5ef22898",
+                  "unit_id": "unit_paper_lean_root_lean_v2_medium_induction_nat_predicate_chain_01_5125be308ad61ab43c9f4cec3a7eb404e62e69446dedbd6e5e2d9dc57493031c_induction_medium_b_01",
+                  "unit_type": "lean_proof_lemma_node"
+                },
+                "domain_unit_commitment_digest": "sha256:336d1ac1ef112d5f015c42756b4de80ac6062c18ab287589dd28d55d439bd1c0",
+                "planned_ai_unit_id": "induction_medium_b_01",
+                "schema_version": "tokenshare.paper_ai_unit_binding.v1",
+                "task_unit_snapshot_commitment": {
+                  "depth": 1,
+                  "input_refs": {
+                    "lemma_theorem_payload": {
+                      "artifact_id": "lean_fixed_plan_request_lean_v2_medium_induction_nat_predicate_chain_01_lemma_node_induction_medium_b_01_json",
+                      "artifact_schema_id": "lean_proof.lemma_graph_node_payload",
+                      "artifact_schema_version": "v2",
+                      "artifact_type": "LeanLemmaGraphNodePayload",
+                      "content_hash": "sha256:ee08736433222759c6b260c4efd7a3a0729a68265d84155f69ad8e20fbc58bdb",
+                      "created_at": "2026-07-14T00:00:00Z",
+                      "media_type": "application/json",
+                      "metadata": {
+                        "context_digest": "sha256:c11bb2955fbbbb8c75ac268df71b1583003a822b02dd70a130840129f82a2264",
+                        "node_id": "induction_medium_b_01",
+                        "root_node_id": "induction_medium_root_01"
+                      },
+                      "schema_version": "ArtifactRef.v1",
+                      "size_bytes": 1082,
+                      "source": {
+                        "kind": "lean_lemma_graph_certificate",
+                        "request_id": "lean_fixed_plan_request:lean_v2_medium_induction_nat_predicate_chain_01"
+                      },
+                      "uri": "artifacts/lean_fixed_plan_request_lean_v2_medium_induction_nat_predicate_chain_01_lemma_node_induction_medium_b_01_json"
+                    }
+                  },
+                  "metadata": {
+                    "canonical_selection_id": "canonical_selection:paper_lean_lean_v2_medium_induction_nat_predicate_chain_01:paper_lean_root_lean_v2_medium_induction_nat_predicate_chain_01",
+                    "child_logical_key": "induction_medium_b_01",
+                    "output_contract_refs": {
+                      "lean_proof_artifact": {
+                        "output_contract_id": "lean_proof.proof_artifact.contract.v1",
+                        "schema_ref": {
+                          "artifact_schema_id": "lean_proof.proof_artifact",
+                          "artifact_schema_version": "v1",
+                          "schema_version": "lean_proof.proof_artifact.v1"
+                        }
+                      }
+                    },
+                    "required_outputs": [
+                      "lean_proof_artifact"
+                    ],
+                    "source_expansion_decision_id": "lean_expansion_decision_0903b6df503aa2e7a5079306a0bfb25be9482d676e47b65dc79aabced4b595fd",
+                    "source_proposal_id": "lean_decomposition_proposal_5125be308ad61ab43c9f4cec3a7eb404e62e69446dedbd6e5e2d9dc57493031c",
+                    "validator_policy_id": "lean_proof.checker.validator.v1"
+                  },
+                  "parent_unit_id": "paper_lean_root_lean_v2_medium_induction_nat_predicate_chain_01",
+                  "plugin_payload": {
+                    "provenance": {
+                      "certificate_digest": "sha256:0ce9f192ddb814e5c14145998d9edbf3f63baae33b08b655ac9e5a23488f861a",
+                      "certificate_id": "lean_lemma_graph_certificate:lean_v2_medium_induction_nat_predicate_chain_01",
+                      "oracle_proof_package_digest": "sha256:4af791228bd24f4ea6d92fed511be8eee4f29d1ba8db5c6102968e743a8047ca",
+                      "rule_id": "lean_split.lemma_graph_dag.v2"
+                    },
+                    "schema_version": "lean_proof.lemma_graph_node_plugin_payload.v2",
+                    "summary": {
+                      "certificate_digest": "sha256:0ce9f192ddb814e5c14145998d9edbf3f63baae33b08b655ac9e5a23488f861a",
+                      "construction_rule_id": "induction.medium_lemma_dag.nat_predicate_chain.v1",
+                      "depth": 2,
+                      "environment_digest": "sha256:cdc9de4cb0a8407f17ddd7cf423a3fb5640a4560c3b55bd6a70116f5a14de731",
+                      "node_id": "induction_medium_b_01",
+                      "node_kind": "intermediate_lemma",
+                      "oracle_package_group": "lean_lemma_graph_oracle.induction.v1",
+                      "proof_assembly_shape": "recursive_induction_lemma_dag_required_slots.v1",
+                      "root_node_id": "induction_medium_root_01",
+                      "topic_family": "induction",
+                      "topic_family_version": "v1"
+                    },
+                    "validation_requirements": {
+                      "checker_required": true,
+                      "context_digest_required": true,
+                      "dependency_aware_slot_integrity_required": true,
+                      "environment_ref_required": true,
+                      "lemma_graph_certificate_node_required": true
+                    }
+                  },
+                  "schema_version": "tokenshare.paper_task_unit_snapshot_commitment.v1",
+                  "task_id": "paper_lean_lean_v2_medium_induction_nat_predicate_chain_01",
+                  "unit_id": "unit_paper_lean_root_lean_v2_medium_induction_nat_predicate_chain_01_5125be308ad61ab43c9f4cec3a7eb404e62e69446dedbd6e5e2d9dc57493031c_induction_medium_b_01",
+                  "unit_type": "lean_proof_lemma_node"
+                },
+                "task_unit_snapshot_digest": "sha256:46536646580678d6216084ba56169c2a69e9033ac9a47e0af020a36925b893b8",
+                "unit_id": "unit_paper_lean_root_lean_v2_medium_induction_nat_predicate_chain_01_5125be308ad61ab43c9f4cec3a7eb404e62e69446dedbd6e5e2d9dc57493031c_induction_medium_b_01"
+              },
+              {
+                "binding_digest": "sha256:02fe30a2624a994a58daa1d03321f10690ddf3c0e8363a87b64913cc3a6fe7a5",
+                "core_binding_digest": "sha256:8ad39d0105f0ce72d4701af4b7a03d6add1d5e6dee0881fb64b41c3832e95b21",
+                "domain_unit_commitment": {
+                  "case_id": null,
+                  "commitment_kind": "lean_lemma_dag_node.v1",
+                  "context_digest": null,
+                  "dependency_edges_digest": null,
+                  "dependency_path": [],
+                  "domain": "lean_proof",
+                  "node_id": "induction_medium_bc_01",
+                  "planned_ai_unit_id": "induction_medium_bc_01",
+                  "schema_version": "tokenshare.paper_domain_unit_commitment.v1",
+                  "slot_key": null,
+                  "snapshot_theorem_payload_digest": null,
+                  "task_id": "paper_lean_lean_v2_medium_induction_nat_predicate_chain_01",
+                  "theorem_id": "lean_lemma_graph:lean_v2_medium_induction_nat_predicate_chain_01:induction_medium_bc_01",
+                  "theorem_name": "induction_medium_bc_01",
+                  "theorem_payload_body_digest": "sha256:a6bdede6879862910a6b39c5e54b24b7cfe4d53f32e0d81aa0cc9384a823fbf4",
+                  "theorem_payload_digest": "sha256:1dee2b4e4dde6f4bf4eae060d78868e0f4ff274b7e8abe1c92c491144313e84a",
+                  "unit_id": "unit_paper_lean_root_lean_v2_medium_induction_nat_predicate_chain_01_5125be308ad61ab43c9f4cec3a7eb404e62e69446dedbd6e5e2d9dc57493031c_induction_medium_bc_01",
+                  "unit_type": "lean_proof_lemma_node"
+                },
+                "domain_unit_commitment_digest": "sha256:f67764669fde924705827b1bc9cf036a2d039796a4aabf6608cd2bc929f87179",
+                "planned_ai_unit_id": "induction_medium_bc_01",
+                "schema_version": "tokenshare.paper_ai_unit_binding.v1",
+                "task_unit_snapshot_commitment": {
+                  "depth": 1,
+                  "input_refs": {
+                    "lemma_theorem_payload": {
+                      "artifact_id": "lean_fixed_plan_request_lean_v2_medium_induction_nat_predicate_chain_01_lemma_node_induction_medium_bc_01_json",
+                      "artifact_schema_id": "lean_proof.lemma_graph_node_payload",
+                      "artifact_schema_version": "v2",
+                      "artifact_type": "LeanLemmaGraphNodePayload",
+                      "content_hash": "sha256:a6bdede6879862910a6b39c5e54b24b7cfe4d53f32e0d81aa0cc9384a823fbf4",
+                      "created_at": "2026-07-14T00:00:00Z",
+                      "media_type": "application/json",
+                      "metadata": {
+                        "context_digest": "sha256:e6999e32b0214f583dcb8836e55197bebf8854a38e1f8ea4bb923fb4d202a41e",
+                        "node_id": "induction_medium_bc_01",
+                        "root_node_id": "induction_medium_root_01"
+                      },
+                      "schema_version": "ArtifactRef.v1",
+                      "size_bytes": 1100,
+                      "source": {
+                        "kind": "lean_lemma_graph_certificate",
+                        "request_id": "lean_fixed_plan_request:lean_v2_medium_induction_nat_predicate_chain_01"
+                      },
+                      "uri": "artifacts/lean_fixed_plan_request_lean_v2_medium_induction_nat_predicate_chain_01_lemma_node_induction_medium_bc_01_json"
+                    }
+                  },
+                  "metadata": {
+                    "canonical_selection_id": "canonical_selection:paper_lean_lean_v2_medium_induction_nat_predicate_chain_01:paper_lean_root_lean_v2_medium_induction_nat_predicate_chain_01",
+                    "child_logical_key": "induction_medium_bc_01",
+                    "output_contract_refs": {
+                      "lean_proof_artifact": {
+                        "output_contract_id": "lean_proof.proof_artifact.contract.v1",
+                        "schema_ref": {
+                          "artifact_schema_id": "lean_proof.proof_artifact",
+                          "artifact_schema_version": "v1",
+                          "schema_version": "lean_proof.proof_artifact.v1"
+                        }
+                      }
+                    },
+                    "required_outputs": [
+                      "lean_proof_artifact"
+                    ],
+                    "source_expansion_decision_id": "lean_expansion_decision_0903b6df503aa2e7a5079306a0bfb25be9482d676e47b65dc79aabced4b595fd",
+                    "source_proposal_id": "lean_decomposition_proposal_5125be308ad61ab43c9f4cec3a7eb404e62e69446dedbd6e5e2d9dc57493031c",
+                    "validator_policy_id": "lean_proof.checker.validator.v1"
+                  },
+                  "parent_unit_id": "paper_lean_root_lean_v2_medium_induction_nat_predicate_chain_01",
+                  "plugin_payload": {
+                    "provenance": {
+                      "certificate_digest": "sha256:0ce9f192ddb814e5c14145998d9edbf3f63baae33b08b655ac9e5a23488f861a",
+                      "certificate_id": "lean_lemma_graph_certificate:lean_v2_medium_induction_nat_predicate_chain_01",
+                      "oracle_proof_package_digest": "sha256:4af791228bd24f4ea6d92fed511be8eee4f29d1ba8db5c6102968e743a8047ca",
+                      "rule_id": "lean_split.lemma_graph_dag.v2"
+                    },
+                    "schema_version": "lean_proof.lemma_graph_node_plugin_payload.v2",
+                    "summary": {
+                      "certificate_digest": "sha256:0ce9f192ddb814e5c14145998d9edbf3f63baae33b08b655ac9e5a23488f861a",
+                      "construction_rule_id": "induction.medium_lemma_dag.nat_predicate_chain.v1",
+                      "depth": 1,
+                      "environment_digest": "sha256:cdc9de4cb0a8407f17ddd7cf423a3fb5640a4560c3b55bd6a70116f5a14de731",
+                      "node_id": "induction_medium_bc_01",
+                      "node_kind": "leaf_sublemma",
+                      "oracle_package_group": "lean_lemma_graph_oracle.induction.v1",
+                      "proof_assembly_shape": "recursive_induction_lemma_dag_required_slots.v1",
+                      "root_node_id": "induction_medium_root_01",
+                      "topic_family": "induction",
+                      "topic_family_version": "v1"
+                    },
+                    "validation_requirements": {
+                      "checker_required": true,
+                      "context_digest_required": true,
+                      "dependency_aware_slot_integrity_required": true,
+                      "environment_ref_required": true,
+                      "lemma_graph_certificate_node_required": true
+                    }
+                  },
+                  "schema_version": "tokenshare.paper_task_unit_snapshot_commitment.v1",
+                  "task_id": "paper_lean_lean_v2_medium_induction_nat_predicate_chain_01",
+                  "unit_id": "unit_paper_lean_root_lean_v2_medium_induction_nat_predicate_chain_01_5125be308ad61ab43c9f4cec3a7eb404e62e69446dedbd6e5e2d9dc57493031c_induction_medium_bc_01",
+                  "unit_type": "lean_proof_lemma_node"
+                },
+                "task_unit_snapshot_digest": "sha256:7d9336d6b4845ec4cb1e069f21ba0e282633739ed5676e32c4ea5a4d0b315f7c",
+                "unit_id": "unit_paper_lean_root_lean_v2_medium_induction_nat_predicate_chain_01_5125be308ad61ab43c9f4cec3a7eb404e62e69446dedbd6e5e2d9dc57493031c_induction_medium_bc_01"
+              },
+              {
+                "binding_digest": "sha256:6be9c2572d152d09b2d43dada100370b5d27fbbf81c43ef89632f259fe25f66b",
+                "core_binding_digest": "sha256:1c9e0c1b7470f93babb5ddc07e71885a25b9677864e7d4c970749bff3b4546ff",
+                "domain_unit_commitment": {
+                  "case_id": null,
+                  "commitment_kind": "lean_lemma_dag_node.v1",
+                  "context_digest": null,
+                  "dependency_edges_digest": null,
+                  "dependency_path": [],
+                  "domain": "lean_proof",
+                  "node_id": "induction_medium_root_01",
+                  "planned_ai_unit_id": "induction_medium_root_01",
+                  "schema_version": "tokenshare.paper_domain_unit_commitment.v1",
+                  "slot_key": null,
+                  "snapshot_theorem_payload_digest": null,
+                  "task_id": "paper_lean_lean_v2_medium_induction_nat_predicate_chain_01",
+                  "theorem_id": "lean_lemma_graph:lean_v2_medium_induction_nat_predicate_chain_01:induction_medium_root_01",
+                  "theorem_name": "induction_medium_root_01",
+                  "theorem_payload_body_digest": "sha256:65d0653cb55c822751d96a0610e25a0bbe2d873728eb8f9801d41b0e17efde6e",
+                  "theorem_payload_digest": "sha256:5f4e8a85243414ced6421fb24a0c7947b91ba362e816929237dcbd767faeea2d",
+                  "unit_id": "unit_paper_lean_root_lean_v2_medium_induction_nat_predicate_chain_01_5125be308ad61ab43c9f4cec3a7eb404e62e69446dedbd6e5e2d9dc57493031c_induction_medium_root_01",
+                  "unit_type": "lean_proof_lemma_node"
+                },
+                "domain_unit_commitment_digest": "sha256:810770fe405ae181a09e5ac8584d1254cbcd3ed3319002330faf9774df009c37",
+                "planned_ai_unit_id": "induction_medium_root_01",
+                "schema_version": "tokenshare.paper_ai_unit_binding.v1",
+                "task_unit_snapshot_commitment": {
+                  "depth": 1,
+                  "input_refs": {
+                    "lemma_theorem_payload": {
+                      "artifact_id": "lean_fixed_plan_request_lean_v2_medium_induction_nat_predicate_chain_01_lemma_node_induction_medium_root_01_json",
+                      "artifact_schema_id": "lean_proof.lemma_graph_node_payload",
+                      "artifact_schema_version": "v2",
+                      "artifact_type": "LeanLemmaGraphNodePayload",
+                      "content_hash": "sha256:65d0653cb55c822751d96a0610e25a0bbe2d873728eb8f9801d41b0e17efde6e",
+                      "created_at": "2026-07-14T00:00:00Z",
+                      "media_type": "application/json",
+                      "metadata": {
+                        "context_digest": "sha256:24f144b795d5efda48b15122cee550e987fd69019fdfd92281f8653b9c505858",
+                        "node_id": "induction_medium_root_01",
+                        "root_node_id": "induction_medium_root_01"
+                      },
+                      "schema_version": "ArtifactRef.v1",
+                      "size_bytes": 1099,
+                      "source": {
+                        "kind": "lean_lemma_graph_certificate",
+                        "request_id": "lean_fixed_plan_request:lean_v2_medium_induction_nat_predicate_chain_01"
+                      },
+                      "uri": "artifacts/lean_fixed_plan_request_lean_v2_medium_induction_nat_predicate_chain_01_lemma_node_induction_medium_root_01_json"
+                    }
+                  },
+                  "metadata": {
+                    "canonical_selection_id": "canonical_selection:paper_lean_lean_v2_medium_induction_nat_predicate_chain_01:paper_lean_root_lean_v2_medium_induction_nat_predicate_chain_01",
+                    "child_logical_key": "induction_medium_root_01",
+                    "output_contract_refs": {
+                      "lean_proof_artifact": {
+                        "output_contract_id": "lean_proof.proof_artifact.contract.v1",
+                        "schema_ref": {
+                          "artifact_schema_id": "lean_proof.proof_artifact",
+                          "artifact_schema_version": "v1",
+                          "schema_version": "lean_proof.proof_artifact.v1"
+                        }
+                      }
+                    },
+                    "required_outputs": [
+                      "lean_proof_artifact"
+                    ],
+                    "source_expansion_decision_id": "lean_expansion_decision_0903b6df503aa2e7a5079306a0bfb25be9482d676e47b65dc79aabced4b595fd",
+                    "source_proposal_id": "lean_decomposition_proposal_5125be308ad61ab43c9f4cec3a7eb404e62e69446dedbd6e5e2d9dc57493031c",
+                    "validator_policy_id": "lean_proof.checker.validator.v1"
+                  },
+                  "parent_unit_id": "paper_lean_root_lean_v2_medium_induction_nat_predicate_chain_01",
+                  "plugin_payload": {
+                    "provenance": {
+                      "certificate_digest": "sha256:0ce9f192ddb814e5c14145998d9edbf3f63baae33b08b655ac9e5a23488f861a",
+                      "certificate_id": "lean_lemma_graph_certificate:lean_v2_medium_induction_nat_predicate_chain_01",
+                      "oracle_proof_package_digest": "sha256:4af791228bd24f4ea6d92fed511be8eee4f29d1ba8db5c6102968e743a8047ca",
+                      "rule_id": "lean_split.lemma_graph_dag.v2"
+                    },
+                    "schema_version": "lean_proof.lemma_graph_node_plugin_payload.v2",
+                    "summary": {
+                      "certificate_digest": "sha256:0ce9f192ddb814e5c14145998d9edbf3f63baae33b08b655ac9e5a23488f861a",
+                      "construction_rule_id": "induction.medium_lemma_dag.nat_predicate_chain.v1",
+                      "depth": 3,
+                      "environment_digest": "sha256:cdc9de4cb0a8407f17ddd7cf423a3fb5640a4560c3b55bd6a70116f5a14de731",
+                      "node_id": "induction_medium_root_01",
+                      "node_kind": "root_theorem",
+                      "oracle_package_group": "lean_lemma_graph_oracle.induction.v1",
+                      "proof_assembly_shape": "recursive_induction_lemma_dag_required_slots.v1",
+                      "root_node_id": "induction_medium_root_01",
+                      "topic_family": "induction",
+                      "topic_family_version": "v1"
+                    },
+                    "validation_requirements": {
+                      "checker_required": true,
+                      "context_digest_required": true,
+                      "dependency_aware_slot_integrity_required": true,
+                      "environment_ref_required": true,
+                      "lemma_graph_certificate_node_required": true
+                    }
+                  },
+                  "schema_version": "tokenshare.paper_task_unit_snapshot_commitment.v1",
+                  "task_id": "paper_lean_lean_v2_medium_induction_nat_predicate_chain_01",
+                  "unit_id": "unit_paper_lean_root_lean_v2_medium_induction_nat_predicate_chain_01_5125be308ad61ab43c9f4cec3a7eb404e62e69446dedbd6e5e2d9dc57493031c_induction_medium_root_01",
+                  "unit_type": "lean_proof_lemma_node"
+                },
+                "task_unit_snapshot_digest": "sha256:2a3c747b58d6c6abc7f035a2995044485b7e906040d2abcd5c41f15d4e6dbc75",
+                "unit_id": "unit_paper_lean_root_lean_v2_medium_induction_nat_predicate_chain_01_5125be308ad61ab43c9f4cec3a7eb404e62e69446dedbd6e5e2d9dc57493031c_induction_medium_root_01"
+              }
+            ],
+            "ai_unit_count": 5,
+            "blocked_reason": null,
+            "case_id": "lean_v2_medium_induction_nat_predicate_chain_01",
+            "catalog_expected_ai_unit_count": 5,
+            "completion_token_upper_bound": 5120,
+            "cost_currency": "USD",
+            "cost_upper_bound": 0.03072,
+            "disk_upper_bound_bytes": 5505024,
+            "domain": "lean_proof",
+            "execution_status": "executable",
+            "executor_requirements": {
+              "executor": "ai_api",
+              "model_endpoint_identity_digest": "sha256:aa55d4add07d28e00c0c44d75fa09ad63af83a6e90cb47859cec78b9415aaebb",
+              "prepared_execution_config_digest": "sha256:e3803db6f03a3a38c09e50da0cbcf71597cc83db133304cf366f207a4f339ca2",
+              "provider_config_id": "exp1_baseline_siliconflow",
+              "provider_family": "siliconflow",
+              "provider_model_id": "zai-org/GLM-5.2",
+              "reasoning_profile_id": "default",
+              "selected_entry_id": "glm_5_2_exp1_baseline",
+              "source_provider_config_digest": "sha256:d1642ac83b912a46b953e475e58949320dfc97db7454dad614693574374f44f5"
+            },
+            "legacy_difficulty": "medium",
+            "ordinal": 6,
+            "paper_difficulty": "medium_lemma_dag",
+            "prompt_token_upper_bound": 20480,
+            "provider_attempt_upper_bound": 5,
+            "request_limits": {
+              "max_provider_attempts_per_ai_unit": 1,
+              "max_tokens": 1024,
+              "prompt_token_upper_bound": 4096,
+              "stream": false,
+              "temperature": 0.0,
+              "timeout_seconds": 30
+            },
+            "split_profile": {
+              "actual_child_count": 5,
+              "ai_unit_order": [
+                "induction_medium_a_01",
+                "induction_medium_ab_01",
+                "induction_medium_b_01",
+                "induction_medium_bc_01",
+                "induction_medium_root_01"
+              ],
+              "construction_rule_id": "induction.medium_lemma_dag.nat_predicate_chain.v1",
+              "dependency_edges": [
+                {
+                  "source_node_id": "induction_medium_a_01",
+                  "target_node_id": "induction_medium_b_01"
+                },
+                {
+                  "source_node_id": "induction_medium_ab_01",
+                  "target_node_id": "induction_medium_b_01"
+                },
+                {
+                  "source_node_id": "induction_medium_b_01",
+                  "target_node_id": "induction_medium_root_01"
+                },
+                {
+                  "source_node_id": "induction_medium_bc_01",
+                  "target_node_id": "induction_medium_root_01"
+                }
+              ],
+              "proof_assembly_shape": "recursive_induction_lemma_dag_required_slots.v1",
+              "split_kind": "recursive_induction_lemma_dag"
+            },
+            "token_upper_bound": 25600,
+            "topic_family": "induction",
+            "wall_clock_upper_bound_seconds": 150
+          },
+          {
+            "ai_unit_bindings": [],
+            "ai_unit_count": 0,
+            "blocked_reason": "missing_oracle_proof_package",
+            "case_id": "lean_v2_hard_frontier_01",
+            "catalog_expected_ai_unit_count": 4,
+            "completion_token_upper_bound": 0,
+            "cost_currency": "USD",
+            "cost_upper_bound": 0.0,
+            "disk_upper_bound_bytes": 262144,
+            "domain": "lean_proof",
+            "execution_status": "structured_blocked",
+            "executor_requirements": {
+              "executor": "ai_api",
+              "model_endpoint_identity_digest": "sha256:aa55d4add07d28e00c0c44d75fa09ad63af83a6e90cb47859cec78b9415aaebb",
+              "prepared_execution_config_digest": "sha256:e3803db6f03a3a38c09e50da0cbcf71597cc83db133304cf366f207a4f339ca2",
+              "provider_config_id": "exp1_baseline_siliconflow",
+              "provider_family": "siliconflow",
+              "provider_model_id": "zai-org/GLM-5.2",
+              "reasoning_profile_id": "default",
+              "selected_entry_id": "glm_5_2_exp1_baseline",
+              "source_provider_config_digest": "sha256:d1642ac83b912a46b953e475e58949320dfc97db7454dad614693574374f44f5"
+            },
+            "legacy_difficulty": "hard",
+            "ordinal": 7,
+            "paper_difficulty": "hard_frontier",
+            "prompt_token_upper_bound": 0,
+            "provider_attempt_upper_bound": 0,
+            "request_limits": {
+              "max_provider_attempts_per_ai_unit": 1,
+              "max_tokens": 1024,
+              "prompt_token_upper_bound": 4096,
+              "stream": false,
+              "temperature": 0.0,
+              "timeout_seconds": 30
+            },
+            "split_profile": {
+              "actual_child_count": 4,
+              "ai_unit_order": [
+                "frontier_leaf_a",
+                "frontier_leaf_b",
+                "frontier_intermediate",
+                "frontier_root"
+              ],
+              "construction_rule_id": "frontier_stress_no_oracle.pure_logic.v1",
+              "dependency_edges": [
+                {
+                  "source_node_id": "frontier_leaf_a",
+                  "target_node_id": "frontier_intermediate"
+                },
+                {
+                  "source_node_id": "frontier_leaf_b",
+                  "target_node_id": "frontier_intermediate"
+                },
+                {
+                  "source_node_id": "frontier_intermediate",
+                  "target_node_id": "frontier_root"
+                }
+              ],
+              "proof_assembly_shape": "structured_blocked_no_oracle_frontier_stress.v1",
+              "split_kind": "frontier_stress_lemma_dag"
+            },
+            "token_upper_bound": 0,
+            "topic_family": "pure_logic",
+            "wall_clock_upper_bound_seconds": 0
+          }
+        ],
+        "catalog_digest": "sha256:a3b3713663a7d564eb5440f4bbec714cf600b24a80539c6a990746184f11134f",
+        "domains": [
+          "factorization",
+          "lean_proof"
+        ],
+        "estimate_methodology": {
+          "cost": "token ceilings multiplied by the frozen safe provider pricing snapshot",
+          "disk": "base suite allowance plus fixed per-root and per-executable-AI-unit allowances",
+          "token": "prompt budget plus completion max_tokens for every allowed provider attempt",
+          "wall_clock": "sequential sum of provider timeout ceilings; local checker time is reported separately by later execution evidence"
+        },
+        "executable_root_runs": 7,
+        "profile_digest": "sha256:25eacbf57d7d80f8df4cea4ef59c5afd64342cc33da1eb874b3b1c5162836d2a",
+        "repeat_count": 1,
+        "request_policy": {
+          "domain_limits": {
+            "factorization": {
+              "max_tokens": 512,
+              "prompt_token_upper_bound": 2048,
+              "timeout_seconds": 30
+            },
+            "lean_proof": {
+              "max_tokens": 1024,
+              "prompt_token_upper_bound": 4096,
+              "timeout_seconds": 30
+            }
+          },
+          "max_provider_attempts_per_ai_unit": 1,
+          "stream": false,
+          "temperature": 0.0
+        },
+        "schema_version": "tokenshare.paper_exp1_pilot_budget_summary.v1",
+        "seed_family": [
+          1
+        ],
+        "suite_id": "paper_exp1_minimal_pilot_v1",
+        "worker_count": 10
+      },
+      "plan_only": true,
+      "provider_calls_made": 0,
+      "status": "planned"
+    },
+    "rate_limit_preflight": {
+      "max_in_flight_global": 10,
+      "provider_calls_made": 0,
+      "status": "not_checked"
+    },
+    "schema_version": "tokenshare.paper_budget_result.v1",
+    "status": "planned",
+    "token_upper_bound": 97280,
+    "wall_clock_estimate": 660.0
+  },
+  "condition_count": 8,
+  "eligibility_report_ref": {
+    "path": "audit/paper_eligibility_report.json"
+  },
+  "ended_at": "2026-07-14T00:00:00Z",
+  "error_summary": [],
+  "experiment_ids": [
+    "exp1_real_ai_feasibility"
+  ],
+  "metrics_refs": [],
+  "model_endpoint_cohort_preflight": null,
+  "model_policy_preflight": null,
+  "output_root": "local/feat011-current-pilot-plan",
+  "paper_eligible": false,
+  "provider_attempt_count": 0,
+  "run_count": 8,
+  "schema_version": "tokenshare.paper_suite_result.v1",
+  "started_at": "2026-07-14T00:00:00Z",
+  "status": "planned",
+  "suite_id": "paper_exp1_minimal_pilot_v1",
+  "task_count": 8,
+  "total_cost_estimate": 0.0,
+  "total_tokens": 0
+}

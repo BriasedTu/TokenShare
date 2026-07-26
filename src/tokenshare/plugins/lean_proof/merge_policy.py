@@ -85,6 +85,7 @@ def merge_lean_child_proofs(
     request_id: str,
     created_at: str,
     checker: LeanChecker = check_lean_proof,
+    slot_integrity_enabled: bool = True,
 ) -> LeanProofMergeResult:
     """Build a root merge proof from child proof evidence and re-check it."""
 
@@ -93,12 +94,13 @@ def merge_lean_child_proofs(
     child_proofs_by_slot = _proofs_by_slot(child_proofs)
     _require_exact_required_slots(required_slots, child_proofs_by_slot)
     ordered_inputs = [child_proofs_by_slot[str(slot["slot_key"])] for slot in required_slots]
-    _validate_child_inputs(
-        required_slots=required_slots,
-        split_certificate=split_certificate,
-        child_inputs=ordered_inputs,
-        environment_manifest=environment_manifest,
-    )
+    if slot_integrity_enabled:
+        _validate_child_inputs(
+            required_slots=required_slots,
+            split_certificate=split_certificate,
+            child_inputs=ordered_inputs,
+            environment_manifest=environment_manifest,
+        )
 
     parent_payload = LeanTheoremPayload.from_dict(
         json.loads(artifact_store.read_bytes(parent_theorem_payload_ref).decode("utf-8"))
@@ -191,6 +193,7 @@ def merge_lean_lemma_graph_proofs(
     request_id: str,
     created_at: str,
     checker: LeanChecker = check_lean_proof,
+    slot_integrity_enabled: bool = True,
 ) -> LeanLemmaGraphMergeResult:
     """Assemble accepted lemma-DAG node proof artifacts and re-check the root."""
 
@@ -211,13 +214,14 @@ def merge_lean_lemma_graph_proofs(
     node_proofs_by_slot = _lemma_graph_proofs_by_slot(node_proofs)
     _require_exact_lemma_graph_required_slots(required_slots, node_proofs_by_slot)
     ordered_inputs = [node_proofs_by_slot[str(slot["slot_key"])] for slot in required_slots]
-    _validate_lemma_graph_node_inputs(
-        required_slots=required_slots,
-        certificate=lemma_graph_certificate,
-        node_inputs=ordered_inputs,
-        artifact_store=artifact_store,
-        environment_manifest=environment_manifest,
-    )
+    if slot_integrity_enabled:
+        _validate_lemma_graph_node_inputs(
+            required_slots=required_slots,
+            certificate=lemma_graph_certificate,
+            node_inputs=ordered_inputs,
+            artifact_store=artifact_store,
+            environment_manifest=environment_manifest,
+        )
 
     parent_payload = LeanTheoremPayload.from_dict(
         json.loads(artifact_store.read_bytes(parent_theorem_payload_ref).decode("utf-8"))

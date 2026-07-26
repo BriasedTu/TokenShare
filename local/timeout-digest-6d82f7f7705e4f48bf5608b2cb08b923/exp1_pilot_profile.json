@@ -1,0 +1,156 @@
+{
+  "baseline_provider": {
+    "baseline_declaration_digest": "sha256:b858d1f534ef2f01216e4804c639305b49ec36d50b299be1588d2e163a49311d",
+    "baseline_id": "exp1_glm_5_2_siliconflow_default_v1",
+    "model_endpoint_identity_digest": "sha256:aa55d4add07d28e00c0c44d75fa09ad63af83a6e90cb47859cec78b9415aaebb",
+    "provider_config_id": "exp1_baseline_siliconflow",
+    "provider_config_path": "exp1_baseline_provider_config.v1.json",
+    "provider_config_safe_snapshot": {
+      "defaults": {
+        "max_provider_attempts": 1,
+        "max_tokens": 1024,
+        "stream": false,
+        "temperature": 0.0,
+        "timeout_seconds": 100,
+        "top_p": 1.0
+      },
+      "entries": [
+        {
+          "api_key_env": "TOKENSHARE_EXP1_BASELINE_API_KEY",
+          "base_url": "https://api.siliconflow.cn/v1",
+          "enabled": true,
+          "endpoint": "/chat/completions",
+          "entry_id": "glm_5_2_exp1_baseline",
+          "model": "zai-org/GLM-5.2",
+          "pricing": {
+            "currency": "USD",
+            "input_per_million_tokens": 1.0,
+            "output_per_million_tokens": 2.0
+          },
+          "request_overrides": {
+            "enable_thinking": false,
+            "temperature": 0.0
+          },
+          "supports_json_mode": true,
+          "supports_streaming": false,
+          "tags": [
+            "paper",
+            "exp1_baseline",
+            "pilot"
+          ]
+        }
+      ],
+      "executor_id": "executor_ai_api_exp1_baseline",
+      "local_concurrency": {
+        "max_in_flight_global": 10
+      },
+      "metadata": {
+        "approval_snapshot": "exp1_minimal_pilot_v1",
+        "pricing_note": "Conservative planning ceiling for Task 11 budget approval; actual provider usage and cost remain evidence-derived.",
+        "secret_policy": "api_key_env_only"
+      },
+      "provider_family": "siliconflow",
+      "schema_version": "phase7.ai_api_executor_config.v1",
+      "selection_policy": {
+        "kind": "uniform_random_without_weights",
+        "seed_source": "request_or_environment_seed"
+      }
+    },
+    "provider_family": "siliconflow",
+    "provider_model_id": "zai-org/GLM-5.2",
+    "reasoning_profile_id": "default",
+    "selected_entry_id": "glm_5_2_exp1_baseline",
+    "source_provider_config_digest": "sha256:a602b7597691089a40e1d036b60f426d272e906e8f59d067938e9364e411fbcf"
+  },
+  "catalog_slice": [
+    {
+      "case_id": "factor_easy_01",
+      "domain": "factorization",
+      "execution_policy": "execute",
+      "paper_difficulty": "easy"
+    },
+    {
+      "case_id": "factor_medium_01",
+      "domain": "factorization",
+      "execution_policy": "execute",
+      "paper_difficulty": "medium"
+    },
+    {
+      "case_id": "factor_hard_01",
+      "domain": "factorization",
+      "execution_policy": "execute",
+      "paper_difficulty": "hard"
+    },
+    {
+      "case_id": "lean_easy_01",
+      "domain": "lean_proof",
+      "execution_policy": "execute",
+      "paper_difficulty": "simple",
+      "topic_family": "pure_logic"
+    },
+    {
+      "case_id": "lean_v2_medium_lemma_dag_01",
+      "domain": "lean_proof",
+      "execution_policy": "execute",
+      "paper_difficulty": "medium_lemma_dag",
+      "topic_family": "pure_logic"
+    },
+    {
+      "case_id": "lean_v2_medium_function_set_dx_subset_chain_01",
+      "domain": "lean_proof",
+      "execution_policy": "execute",
+      "paper_difficulty": "medium_lemma_dag",
+      "topic_family": "function_set"
+    },
+    {
+      "case_id": "lean_v2_medium_induction_nat_predicate_chain_01",
+      "domain": "lean_proof",
+      "execution_policy": "execute",
+      "paper_difficulty": "medium_lemma_dag",
+      "topic_family": "induction"
+    },
+    {
+      "blocked_reason": "missing_oracle_proof_package",
+      "case_id": "lean_v2_hard_frontier_01",
+      "domain": "lean_proof",
+      "execution_policy": "structured_blocked",
+      "paper_difficulty": "hard_frontier",
+      "topic_family": "pure_logic"
+    }
+  ],
+  "disk_policy": {
+    "base_suite_bytes": 1048576,
+    "per_ai_unit_bytes": 1048576,
+    "per_root_bytes": 262144
+  },
+  "domains": [
+    "factorization",
+    "lean_proof"
+  ],
+  "experiment_id": "exp1_real_ai_feasibility",
+  "profile_digest": "sha256:7f3637de8a775b40d4f5d65acae19940228ff9760d1ad49ff72d93614dcc69aa",
+  "repeat_count": 1,
+  "request_policy": {
+    "domain_limits": {
+      "factorization": {
+        "max_tokens": 512,
+        "prompt_token_upper_bound": 2048,
+        "timeout_seconds": 100
+      },
+      "lean_proof": {
+        "max_tokens": 1024,
+        "prompt_token_upper_bound": 4096,
+        "timeout_seconds": 100
+      }
+    },
+    "max_provider_attempts_per_ai_unit": 1,
+    "stream": false,
+    "temperature": 0.0
+  },
+  "schema_version": "tokenshare.paper_exp1_pilot_profile.v1",
+  "seed_family": [
+    1
+  ],
+  "suite_id": "paper_exp1_minimal_pilot_v1",
+  "worker_count": 10
+}

@@ -129,7 +129,9 @@ def evaluate_retry(*, trigger: str, retry_count: int, max_retries: int) -> Retry
     if max_retries < 0:
         raise ValueError("max_retries must be non-negative")
 
-    retry_allowed = retry_count < max_retries
+    # ``max_retries`` 表示初始 attempt 之后允许创建的 replacement 数量。
+    # 因此第一次 recovery 的 retry_count=1 在 max_retries=1 时仍应放行。
+    retry_allowed = retry_count <= max_retries
     return RetryDecision(
         trigger=trigger,
         retry_allowed=retry_allowed,

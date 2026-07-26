@@ -20,6 +20,7 @@ from tokenshare.experiments.paper_models import (
     LEAN_PAPER_DIFFICULTIES,
     LEAN_TOPIC_FAMILIES,
     PAPER_DIFFICULTIES,
+    PAPER_FORMAL_AI_TIMEOUT_SECONDS,
     UNSUPPORTED_PAPER_TRANSPORTS,
     JsonObject,
     PaperConditionResult,
@@ -31,13 +32,13 @@ from tokenshare.experiments.paper_models import (
 
 EXP1_FORMAL_EXPERIMENT_ID = "exp1_real_ai_feasibility"
 EXP1_FORMAL_SUITE_VERSION = "paper_v1"
-EXP1_FORMAL_REPEAT_COUNT = 3
+EXP1_FORMAL_REPEAT_COUNT = 1
 EXP1_FORMAL_WORKER_COUNT = 10
-EXP1_FORMAL_SEED_FAMILY = (1, 2, 3)
+EXP1_FORMAL_SEED_FAMILY = (1,)
 EXP1_FACTOR_CASE_COUNTS_BY_DIFFICULTY = {"easy": 167, "medium": 167, "hard": 166}
 EXP1_LEAN_CASES_PER_CELL = 15
 EXP1_EXPECTED_UNIQUE_ROOTS = 635
-EXP1_EXPECTED_ROOT_RUNS = 1_905
+EXP1_EXPECTED_ROOT_RUNS = 635
 
 EXP1_BASELINE_PROVIDER_CONFIG_ID = "exp1_baseline_siliconflow"
 EXP1_BASELINE_ENTRY_ID = "glm_5_2_exp1_baseline"
@@ -47,7 +48,7 @@ EXP1_BASELINE_REASONING_PROFILE_ID = "default"
 
 EXP1_FORMAL_REQUEST_CONTROLS: JsonObject = {
     "max_tokens": 1024,
-    "timeout_seconds": 30,
+    "timeout_seconds": PAPER_FORMAL_AI_TIMEOUT_SECONDS,
     "max_provider_attempts": 1,
     "temperature": 0.0,
     "top_p": 1.0,

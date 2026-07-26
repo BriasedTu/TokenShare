@@ -1,3 +1,4 @@
+import sqlite3
 from dataclasses import replace
 
 import pytest
@@ -9,6 +10,7 @@ from tokenshare.executors.mock_ai import MockAIExecutor, MockAIExecutorProfile
 from tokenshare.protocol_engine import ProtocolEngine
 from tokenshare.storage.artifacts import ArtifactStore
 from tokenshare.storage.events import EventLedger, EventType
+from tokenshare.storage.sqlite_index import SQLiteMaterializedIndex
 
 from tests.phase2_fixtures import make_client, make_config, make_unit
 from tests.phase3_fixtures import (
@@ -492,6 +494,98 @@ def test_protocol_engine_rejects_cross_trigger_recovery_from_stale_snapshots(
         )
 
     assert ledger.read_all() == before
+
+
+def test_phase3_submission_uses_latest_ledger_attempt_and_lease_snapshots(
+    tmp_path,
+) -> None:
+    store = ArtifactStore(tmp_path)
+    ledger = EventLedger(tmp_path / "events" / "task_demo.jsonl")
+    engine = ProtocolEngine(
+        event_ledger=ledger,
+        protocol_config=make_config(),
+        artifact_store=store,
+    )
+    unit = make_unit()
+    scheduled = engine.schedule_ready_unit(
+        graph=TaskGraph(
+            task_id=unit.task_id,
+            units={unit.unit_id: unit},
+            relations=[],
+        ),
+        clients=[make_client()],
+        now="2026-07-22T00:00:00Z",
+        correlation_id="corr_schedule_stale_submission",
+        decision_id="decision_stale_submission",
+        lease_id="lease_stale_submission",
+        attempt_id="attempt_stale_submission",
+        fencing_token="fence_stale_submission",
+    )
+    engine.record_recovery_decision(
+        decision=evaluate_retry(
+            trigger="executor_error",
+            retry_count=1,
+            max_retries=make_config().max_retries,
+        ),
+        attempt=scheduled.attempt,
+        lease=scheduled.lease,
+        task_unit=scheduled.task_unit,
+        recovery_action_id="recovery_before_stale_submission",
+        now="2026-07-22T00:01:00Z",
+        correlation_id="corr_recovery_before_stale_submission",
+    )
+    submission = _submission_for(
+        attempt=scheduled.attempt,
+        lease=scheduled.lease,
+        submission_id="submission_after_recovery",
+        submitted_at="2026-07-22T00:02:00Z",
+    )
+
+    result = engine.record_execution_submission(
+        submission=submission,
+        attempt=scheduled.attempt,
+        lease=scheduled.lease,
+        correlation_id="corr_stale_submission_after_recovery",
+    )
+
+    assert result.acceptance_decision.acceptance_status == "rejected"
+    assert result.acceptance_decision.rejection_reason == "attempt_not_running"
+    assert result.attempt is None
+    assert result.attempt_event is None
+    attempt_edges = [
+        (event.payload.get("old_state"), event.payload.get("new_state"))
+        for event in ledger.read_all()
+        if event.event_type == EventType.ATTEMPT_STATE_CHANGED
+        and event.object_id == scheduled.attempt.attempt_id
+    ]
+    assert ("Running", "Submitted") not in attempt_edges
+
+    index_path = tmp_path / "index.sqlite"
+    SQLiteMaterializedIndex(
+        index_path,
+        artifact_store=store,
+    ).rebuild_from_events(ledger.read_all())
+    with sqlite3.connect(index_path) as connection:
+        attempt_state = connection.execute(
+            "select state from attempts where attempt_id = ?",
+            (scheduled.attempt.attempt_id,),
+        ).fetchone()
+        lease_state = connection.execute(
+            "select state from leases where lease_id = ?",
+            (scheduled.lease.lease_id,),
+        ).fetchone()
+        submission_row = connection.execute(
+            """
+            select acceptance_status, rejection_reason
+            from execution_submissions
+            where submission_id = ?
+            """,
+            (submission.submission_id,),
+        ).fetchone()
+
+    assert attempt_state == ("Failed",)
+    assert lease_state == ("Released",)
+    assert submission_row == ("rejected", "attempt_not_running")
 
 
 def test_protocol_engine_generic_expiry_rejects_lease_before_deadline(tmp_path) -> None:

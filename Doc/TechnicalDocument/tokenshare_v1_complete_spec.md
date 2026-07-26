@@ -651,7 +651,7 @@ descriptor digest 来自 canonical JSON body。`PluginRegistry.freeze()` 会保�
 
 ### 7.1 目标
 
-`factorization` 插件验证普通可拆分计算任务：把整数分解任务拆成 bounded candidate factor ranges，分别执行可重放的范围搜索，再用 all-required merge 合并结果。
+`factorization` 插件验证普通可拆分计算任务：把整数分解任务拆成 bounded candidate factor ranges，分别执行可重放的范围搜索，再由插件按有效 factor witness OR / 完整 no-factor coverage AND 的非对称策略合并结果。
 
 当前第一切片支持：
 
@@ -661,7 +661,7 @@ descriptor digest 来自 canonical JSON body。`PluginRegistry.freeze()` 会保�
 - candidate range partition
 - range result parser
 - deterministic range verifier
-- all-required range merge
+- verifier-gated factor-witness OR / no-factor-coverage AND merge
 - prime / semiprime fixture E2E
 
 当前第一切片明确不承诺：
@@ -754,7 +754,7 @@ root input 先被转成 `FactorIntegerSubject` canonical output。`verify_factor
 
 ### 7.7 merge
 
-factorization merge policy 当前是 all-required。所有 range child 都必须 canonical 后才能创建 merge task。merge 输出必须能形成 parent expected output resolution。第一切片不做提前成功和 sibling pruning。
+factorization merge policy 当前为 `factorization.factor_witness_or_all_ranges.v2`。任一 `found_factor` 只有在 parser/verifier accepted、canonical、range/slot/contract 有效时才足以创建 merge task；其他 sibling 的 terminal failure 不推翻该 witness。没有有效 witness 时，必须等所有 required range child accepted/canonical 且 coverage 完整，才能生成 no-factor/prime 结论。merge 输出仍必须能形成 parent expected output resolution。本切片不做 sibling cancellation/pruning，已经产生的 sibling evidence 保留。
 
 ## 8. 真实 Lean proof 插件
 

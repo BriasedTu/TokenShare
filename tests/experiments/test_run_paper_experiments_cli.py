@@ -1,5 +1,6 @@
 import json
 import os
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -17,8 +18,8 @@ from tokenshare.experiments.run_paper_experiments import main
 APPROVED_EXP1_PILOT_DIGEST = (
     # Current schema digest for mock-approved CLI routing tests. The historical
     # real pilot approval digest remains immutable in existing evidence.
-    "sha256:6815a90bad32bb71b53b5ee80d7b103"
-    "6ee86c2223f0f3d626908298c8a3c481e"
+    "sha256:898e723087546edc8154edd0077c435a"
+    "5b74e7340d861398551c030f1b28a346"
 )
 
 
@@ -51,15 +52,65 @@ def test_paper_cli_plan_only_writes_budget_and_suite_manifest(tmp_path: Path) ->
     assert suite["paper_eligible"] is False
     assert budget["planned_experiments"] == ["exp1_real_ai_feasibility"]
     assert budget["quota_preflight"]["provider_calls_made"] == 0
-    assert budget["planned_root_runs"] == 1_905
-    assert budget["planned_ai_units"] == 8_700
-    assert budget["token_upper_bound"] == 142_540_800
-    assert budget["cost_upper_bound"] == pytest.approx(435.0)
+    assert budget["planned_root_runs"] == 635
+    assert budget["planned_ai_units"] == 2_900
+    assert budget["token_upper_bound"] == 47_513_600
+    assert budget["cost_upper_bound"] == pytest.approx(145.0)
+    assert budget["quota_preflight"]["budget_commitments"]["request_limits"][
+        "timeout_seconds"
+    ] == 100
     dispatch = json.loads(
         (tmp_path / "paper_dispatch_plans.json").read_text(encoding="utf-8")
     )
     assert dispatch["provider_calls_made"] == 0
-    assert dispatch["plans"][0]["condition_count"] == 36
+    assert dispatch["plans"][0]["condition_count"] == 12
+
+
+def test_paper_cli_plan_only_p0_core_includes_exp3_supporting_baselines(
+    tmp_path: Path,
+) -> None:
+    exit_code = main(
+        [
+            "--output-root",
+            str(tmp_path),
+            "--experiments",
+            "exp1,exp2,exp3,exp4",
+            "--plan-only",
+        ]
+    )
+
+    assert exit_code == 0
+    budget = json.loads(
+        (tmp_path / "run_budget.json").read_text(encoding="utf-8")
+    )
+    dispatch = json.loads(
+        (tmp_path / "paper_dispatch_plans.json").read_text(encoding="utf-8")
+    )
+    identity = budget["quota_preflight"]["budget_commitments"][
+        "experiment_budget_identity"
+    ]
+    assert [plan["condition_count"] for plan in dispatch["plans"]] == [
+        12,
+        12,
+        182,
+        90,
+    ]
+    assert identity["headline_p0_core_root_runs"] == 51_508
+    assert identity["actual_p0_core_root_runs"] == 52_514
+    assert identity["supporting_baseline_root_runs_by_experiment"] == {
+        "exp3_real_ai_fault_recovery": 1_006,
+    }
+    assert identity["planned_first_attempt_ai_units_by_experiment"] == {
+        "exp1_real_ai_feasibility": 2_900,
+        "exp2_real_ai_scalability": 39_840,
+        "exp3_real_ai_fault_recovery": 196_476,
+        "exp4_real_ai_protocol_ablation": 35_910,
+    }
+    assert budget["planned_root_runs"] == 52_514
+    assert budget["planned_ai_units"] == 275_126
+    assert budget["max_provider_attempts"] > budget["planned_ai_units"]
+    assert budget["quota_preflight"]["provider_calls_made"] == 0
+    assert dispatch["provider_calls_made"] == 0
 
 
 def test_paper_cli_plan_only_outputs_blocked_aware_lean_3x3_matrix(
@@ -236,6 +287,35 @@ def test_paper_cli_requires_budget_digest_only_when_policy_flag_is_set(
     assert suite["error_summary"][0]["failure_kind"] == "missing_budget_approval"
 
 
+def test_paper_cli_rejects_stale_budget_digest_before_formal_dispatch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_budget_policy_cli_boundaries(monkeypatch)
+
+    exit_code = main(
+        [
+            "--output-root",
+            str(tmp_path),
+            "--experiments",
+            "exp1",
+            "--real-transport",
+            "--require-budget-approval",
+            "--approve-budget-digest",
+            "sha256:" + "0" * 64,
+        ]
+    )
+
+    suite = json.loads(
+        (tmp_path / "suite_manifest.json").read_text(encoding="utf-8")
+    )
+    assert exit_code == 2
+    assert suite["status"] == "blocked"
+    assert suite["error_summary"][0]["failure_kind"] == (
+        "budget_digest_mismatch"
+    )
+
+
 def test_paper_cli_bypasses_manual_budget_approval_by_default(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -336,6 +416,125 @@ def test_paper_cli_routes_formal_capturing_run_to_formal_suite(
     suite = json.loads((run_root / "suite_manifest.json").read_text(encoding="utf-8"))
     assert suite["status"] == "completed"
     assert suite["paper_eligible"] is False
+
+
+def test_paper_cli_formal_capturing_e2e_writes_all_tables_without_real_usage(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    profile = load_exp1_pilot_profile(
+        "benchmarks/paper/exp1_minimal_pilot_profile.v1.json"
+    )
+    entry = profile.source_provider_config.entries[0]
+    monkeypatch.setenv(entry.api_key_env, "task11-offline-capturing-key")
+    build_dispatch_plans = paper_cli.build_gate_c_dispatch_plans
+
+    def build_factorization_capture_plan(**kwargs):
+        plans = build_dispatch_plans(**kwargs)
+        plan = plans[0]
+        condition_index = next(
+            index
+            for index, condition in enumerate(plan.conditions)
+            if condition.domain == "factorization"
+        )
+        return (
+            replace(
+                plan,
+                conditions=(plan.conditions[condition_index],),
+                condition_selection_bindings=(
+                    plan.condition_selection_bindings[condition_index],
+                ),
+            ),
+        )
+
+    monkeypatch.setattr(
+        paper_cli,
+        "build_gate_c_dispatch_plans",
+        build_factorization_capture_plan,
+    )
+
+    class ZeroUsageCapturingTransport(_CLICapturingTransport):
+        def post_chat_completion(
+            self,
+            *,
+            entry,
+            api_key,
+            body,
+            timeout_seconds,
+        ):
+            response = super().post_chat_completion(
+                entry=entry,
+                api_key=api_key,
+                body=body,
+                timeout_seconds=timeout_seconds,
+            )
+            response.body["usage"] = {
+                "prompt_tokens": 0,
+                "completion_tokens": 0,
+                "total_tokens": 0,
+            }
+            response.text = json.dumps(response.body, ensure_ascii=False)
+            return response
+
+    transport = ZeroUsageCapturingTransport()
+    exit_code = main(
+        [
+            "--output-root",
+            str(tmp_path),
+            "--experiments",
+            "exp1",
+            "--real-transport",
+            "--max-total-provider-attempts",
+            "20",
+            "--stop-after-current-task",
+        ],
+        gate_c_transport=transport,
+        gate_c_ai_api_configs={
+            profile.model_endpoint_identity.provider_config_id: (
+                profile.source_provider_config
+            )
+        },
+    )
+
+    assert exit_code == 0
+    assert transport.calls
+    suite = json.loads(
+        (tmp_path / "suite_manifest.json").read_text(encoding="utf-8")
+    )
+    budget = json.loads(
+        (tmp_path / "run_budget.json").read_text(encoding="utf-8")
+    )
+    report = json.loads(
+        (tmp_path / "formal_report_result.json").read_text(encoding="utf-8")
+    )
+    metrics = json.loads(
+        (tmp_path / "metrics" / "formal_metrics.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert suite["formal"] is True
+    assert suite["paper_eligible"] is False
+    assert all(row["total_tokens"] == 0 for row in metrics["condition_rows"])
+    assert all(
+        row["total_cost_estimate"] == 0.0
+        for row in metrics["condition_rows"]
+    )
+    assert budget["quota_preflight"]["provider_calls_made"] == 0
+    assert report["paper_eligible"] is False
+    for relative_path in (
+        "metrics/per_condition_summary.csv",
+        "metrics/paper_table_feasibility.csv",
+        "metrics/paper_plot_scalability.csv",
+        "metrics/paper_plot_robustness.csv",
+        "metrics/paper_table_ablation.csv",
+        "metrics/paper_table_model_comparison.csv",
+        "metrics/paper_table_model_endpoint_comparison.csv",
+        "metrics/model_execution_records.jsonl",
+        "metrics/failure_examples.json",
+        "metrics/formal_metrics.json",
+        "formal_regression_report.md",
+    ):
+        assert (tmp_path / relative_path).is_file(), relative_path
 
 
 def test_paper_cli_formal_replay_skips_catalog_and_provider_config_loading(
@@ -662,7 +861,7 @@ def test_general_gate_c_cli_routes_single_exp2_case_unit_through_shared_runner(
             strict=True,
         )
         if condition["domain"] == "factorization"
-        and condition["paper_difficulty"] == "easy"
+        and condition["paper_difficulty"] == "hard"
         and condition["worker_count"] == 1
         and condition["repeat_id"] == 0
     )
@@ -753,7 +952,7 @@ def test_general_gate_c_cli_reaches_registered_module_adapter_and_capture(
             strict=True,
         )
         if condition["domain"] == "factorization"
-        and condition["paper_difficulty"] == "easy"
+        and condition["paper_difficulty"] == "hard"
         and condition["worker_count"] == 1
         and condition["repeat_id"] == 0
     )
@@ -1020,7 +1219,7 @@ def test_exp1_pilot_cli_injects_matching_local_key_into_approved_env(
                     "seed_source": "request_or_environment_seed",
                 },
                 "defaults": {
-                    "timeout_seconds": 30,
+                    "timeout_seconds": 100,
                     "max_tokens": 1024,
                     "temperature": 0.0,
                     "top_p": 1.0,

@@ -5,6 +5,7 @@ from tokenshare.experiments.paper_ablation import (
     PaperAblationMode,
     PaperAblationProfile,
     ablation_profile_for_mode,
+    ablation_modes,
     runtime_controls_for_mode,
     summarize_ablation_evidence,
     validate_ablation_attempt_coverage,
@@ -26,7 +27,6 @@ from tokenshare.local_runtime import MergeContext, NoOpRuntimeHooks
         (PaperAblationMode.NO_VERIFICATION, "verification_enabled"),
         (PaperAblationMode.NO_REQUEUE, "replacement_attempts_allowed"),
         (PaperAblationMode.NO_MERGE_GATE, "merge_gate_enabled"),
-        (PaperAblationMode.NO_SLOT_INTEGRITY, "slot_integrity_enabled"),
     ],
 )
 def test_ablation_modes_disable_exactly_one_runtime_mechanism(
@@ -104,15 +104,15 @@ def test_exp4_condition_expansion_includes_all_protocol_ablation_modes() -> None
         seed_family=(9,),
     )
 
-    assert len(conditions) == 36
+    assert len(conditions) == 30
     assert {condition.ablation_mode for condition in conditions} == {
         PaperAblationMode.FULL.value,
         PaperAblationMode.NO_PARSER_POLICY.value,
         PaperAblationMode.NO_VERIFICATION.value,
         PaperAblationMode.NO_REQUEUE.value,
         PaperAblationMode.NO_MERGE_GATE.value,
-        PaperAblationMode.NO_SLOT_INTEGRITY.value,
     }
+    assert PaperAblationMode.NO_SLOT_INTEGRITY not in ablation_modes()
     assert {condition.domain for condition in conditions} == {
         "factorization",
         "lean_proof",
@@ -144,7 +144,7 @@ def test_exp4_condition_expansion_includes_all_protocol_ablation_modes() -> None
         cost_upper_bound_per_provider_attempt=0.01,
         plan_only=True,
     )
-    assert budget.planned_root_runs == 180
+    assert budget.planned_root_runs == 150
 
 
 @pytest.mark.parametrize("mode", list(PaperAblationMode))

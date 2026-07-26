@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
+from hashlib import sha256
 from typing import Any, Callable, Protocol
 
 from tokenshare.core.expansion import (
@@ -86,6 +88,84 @@ class MergeAction:
 
 
 @dataclass(frozen=True, kw_only=True)
+class MergeReadinessContext:
+    """插件判断 parent 是否可进入 merge 的领域无关事实视图。"""
+
+    parent: TaskUnit
+    children: tuple[TaskUnit, ...]
+    merge_plan: MergePlan
+    canonical_events: tuple[LedgerEvent, ...]
+    verification_events: tuple[LedgerEvent, ...]
+
+
+@dataclass(frozen=True, kw_only=True)
+class MergeReadinessDecision:
+    """版本化的插件 completion/readiness 决策；runtime 只解释状态与选择集。"""
+
+    status: str
+    reason: str
+    policy_id: str
+    policy_version: str
+    required_child_unit_ids: tuple[str, ...]
+    selected_child_unit_ids: tuple[str, ...] = ()
+    decision_digest: str | None = None
+    schema_version: str = "tokenshare.merge_readiness_decision.v1"
+
+    def __post_init__(self) -> None:
+        if self.schema_version != "tokenshare.merge_readiness_decision.v1":
+            raise ValueError(
+                "schema_version must be tokenshare.merge_readiness_decision.v1"
+            )
+        if self.status not in {"ready", "wait", "failed"}:
+            raise ValueError("merge readiness status must be ready, wait, or failed")
+        for field_name, value in {
+            "reason": self.reason,
+            "policy_id": self.policy_id,
+            "policy_version": self.policy_version,
+        }.items():
+            if not isinstance(value, str) or not value:
+                raise ValueError(f"{field_name} must be a non-empty string")
+        required = self.required_child_unit_ids
+        selected = self.selected_child_unit_ids
+        if (
+            not required
+            or len(set(required)) != len(required)
+            or any(not item for item in required)
+        ):
+            raise ValueError("required_child_unit_ids must be non-empty and unique")
+        if len(set(selected)) != len(selected) or any(not item for item in selected):
+            raise ValueError("selected_child_unit_ids must be unique")
+        if not set(selected).issubset(required):
+            raise ValueError("selected child units must belong to the required set")
+        if self.status == "ready" and not selected:
+            raise ValueError("ready merge decision must select at least one child")
+        if self.status != "ready" and selected:
+            raise ValueError("non-ready merge decision cannot select children")
+        expected = _merge_readiness_digest(self._digest_body())
+        if self.decision_digest is None:
+            object.__setattr__(self, "decision_digest", expected)
+        elif self.decision_digest != expected:
+            raise ValueError("merge readiness decision_digest mismatch")
+
+    def _digest_body(self) -> JsonObject:
+        return {
+            "schema_version": self.schema_version,
+            "status": self.status,
+            "reason": self.reason,
+            "policy_id": self.policy_id,
+            "policy_version": self.policy_version,
+            "required_child_unit_ids": list(self.required_child_unit_ids),
+            "selected_child_unit_ids": list(self.selected_child_unit_ids),
+        }
+
+    def to_dict(self) -> JsonObject:
+        return {
+            **self._digest_body(),
+            "decision_digest": self.decision_digest,
+        }
+
+
+@dataclass(frozen=True, kw_only=True)
 class RootProtocolPlan:
     """一个 root 的确定性协议计划；不包含 runtime 状态决定。"""
 
@@ -136,8 +216,20 @@ class ProtocolTaskPluginRuntime(Protocol):
         *,
         parent: TaskUnit,
         canonical_children: tuple[TaskUnit, ...],
+        slot_integrity_enabled: bool = True,
     ) -> MergeAction:
-        """从 canonical child 集合构造插件拥有的 merge action。"""
+        """按系统运行策略从 canonical child 集合构造插件拥有的 merge action。"""
+        ...
+
+    def planned_ai_unit_id(self, unit: TaskUnit) -> str | None:
+        """返回实验冻结的通用 AI-unit identity；协议结构单元返回 None。"""
+        ...
+
+    def evaluate_merge_readiness(
+        self,
+        context: MergeReadinessContext,
+    ) -> MergeReadinessDecision:
+        """根据 canonical/verification 事实决定 merge 是否就绪。"""
         ...
 
 
@@ -159,7 +251,25 @@ class RawOutputContext:
     entry_id: str
     usage_summary: JsonObject
     submitted_at: str
+    experiment_unit_id: str | None = None
     lease_deadline_at: str | None = None
+
+
+@dataclass(frozen=True, kw_only=True)
+class ParsedCandidateContext:
+    """真实 parser 已持久化 candidate、协议尚未记录 submission 的事实。"""
+
+    run_id: str
+    task_id: str
+    unit_id: str
+    attempt_id: str
+    lease_id: str
+    worker_id: str
+    raw_output_ref: ArtifactRef | None
+    original_parsed_output_ref: ArtifactRef
+    candidate_output_refs: dict[str, ArtifactRef]
+    submitted_at: str
+    experiment_unit_id: str | None = None
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -227,6 +337,14 @@ class RawOutputDirective:
 
 
 @dataclass(frozen=True, kw_only=True)
+class ParsedCandidateDirective:
+    """只替换 verifier 将读取的 candidate refs，并返回实验观察。"""
+
+    replacement_candidate_output_refs: dict[str, ArtifactRef]
+    experiment_records: tuple[JsonObject, ...] = ()
+
+
+@dataclass(frozen=True, kw_only=True)
 class GateDirective:
     """稳定 gate 的窄指令；状态推进仍由 coordinator/engine 完成。"""
 
@@ -252,6 +370,10 @@ class RuntimeHooks(Protocol):
         self, context: RawOutputContext
     ) -> RawOutputDirective | None: ...
 
+    def after_parsed_candidate_persisted(
+        self, context: ParsedCandidateContext
+    ) -> ParsedCandidateDirective | None: ...
+
     def before_parser(self, context: ParserContext) -> GateDirective | None: ...
 
     def before_verification(
@@ -273,6 +395,11 @@ class NoOpRuntimeHooks:
     def after_raw_output_persisted(self, context: RawOutputContext) -> None:
         return None
 
+    def after_parsed_candidate_persisted(
+        self, context: ParsedCandidateContext
+    ) -> None:
+        return None
+
     def before_parser(self, context: ParserContext) -> None:
         return None
 
@@ -291,13 +418,115 @@ class NoOpRuntimeHooks:
 
 @dataclass(frozen=True, kw_only=True)
 class ProtocolMechanismPolicy:
-    """Experiment 4 六种模式共享的机制 gate；默认值等价于 FULL。"""
+    """Experiment 4 正式五模式共享的机制 gate；默认值等价于 FULL。
+
+    ``slot_integrity_enabled`` 继续服务历史回归，但不再对应正式论文条件。
+    """
 
     parser_policy_enabled: bool = True
     verification_enabled: bool = True
     replacement_attempts_allowed: bool = True
     merge_gate_enabled: bool = True
     slot_integrity_enabled: bool = True
+
+
+@dataclass(frozen=True, kw_only=True)
+class ProtocolExecutionScope:
+    """一个 root run 的通用执行范围；selected 模式只用于诊断观察。"""
+
+    mode: str = "whole_root"
+    selected_ai_unit_ids: tuple[str, ...] = ()
+    schema_version: str = "tokenshare.protocol_execution_scope.v1"
+
+    def __post_init__(self) -> None:
+        if self.schema_version != "tokenshare.protocol_execution_scope.v1":
+            raise ValueError(
+                "schema_version must be tokenshare.protocol_execution_scope.v1"
+            )
+        if self.mode not in {"whole_root", "selected_ai_units"}:
+            raise ValueError("unsupported protocol execution scope")
+        if self.mode == "whole_root":
+            if self.selected_ai_unit_ids:
+                raise ValueError("whole_root scope cannot select AI units")
+            return
+        if (
+            not self.selected_ai_unit_ids
+            or len(set(self.selected_ai_unit_ids))
+            != len(self.selected_ai_unit_ids)
+            or any(not item for item in self.selected_ai_unit_ids)
+        ):
+            raise ValueError(
+                "selected_ai_units scope requires non-empty unique IDs"
+            )
+
+
+@dataclass(frozen=True, kw_only=True)
+class WorkerTerminationPolicy:
+    """把预注册 planned AI unit 解析为需终止的真实 execution request。"""
+
+    target_planned_ai_unit_ids: tuple[str, ...]
+    kill_point: str
+    termination_count_target: int | None = None
+    total_planned_ai_unit_count: int | None = None
+    process_timeout_seconds: float = 120.0
+
+    def __post_init__(self) -> None:
+        if (
+            not self.target_planned_ai_unit_ids
+            or len(set(self.target_planned_ai_unit_ids))
+            != len(self.target_planned_ai_unit_ids)
+            or any(not item for item in self.target_planned_ai_unit_ids)
+        ):
+            raise ValueError(
+                "target_planned_ai_unit_ids must be non-empty and unique"
+            )
+        if self.kill_point not in {
+            "progress_25",
+            "progress_50",
+            "progress_75",
+        }:
+            raise ValueError("unsupported worker termination kill_point")
+        if self.process_timeout_seconds <= 0:
+            raise ValueError("process_timeout_seconds must be positive")
+        if (
+            self.total_planned_ai_unit_count is not None
+            and (
+                isinstance(self.total_planned_ai_unit_count, bool)
+                or self.total_planned_ai_unit_count < 1
+            )
+        ):
+            raise ValueError("total_planned_ai_unit_count must be a positive integer")
+        if (
+            self.termination_count_target is not None
+            and (
+                self.termination_count_target < len(
+                    self.target_planned_ai_unit_ids
+                )
+                or self.termination_count_target < 1
+            )
+        ):
+            raise ValueError(
+                "termination_count_target must cover every selected planned unit"
+            )
+
+    def matches(self, request: ExecutionRequest) -> bool:
+        planned = request.soft_hints.get("planned_ai_unit_id")
+        return (
+            isinstance(planned, str)
+            and planned in self.target_planned_ai_unit_ids
+        )
+
+    @property
+    def termination_limit(self) -> int:
+        return (
+            len(self.target_planned_ai_unit_ids)
+            if self.termination_count_target is None
+            else self.termination_count_target
+        )
+
+    @property
+    def target_progress_ratio(self) -> float:
+        return int(self.kill_point.removeprefix("progress_")) / 100.0
 
 
 class WorkerBackend(Protocol):
@@ -322,6 +551,9 @@ class ProtocolRunRequest:
     )
     hooks: RuntimeHooks = field(default_factory=NoOpRuntimeHooks)
     continue_after_terminal_child_failure: bool = False
+    execution_scope: ProtocolExecutionScope = field(
+        default_factory=ProtocolExecutionScope
+    )
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -335,3 +567,13 @@ class ProtocolRunResult:
     event_refs: tuple[JsonObject, ...] = ()
     artifact_refs: tuple[ArtifactRef, ...] = ()
     summary: JsonObject = field(default_factory=dict)
+
+
+def _merge_readiness_digest(body: JsonObject) -> str:
+    encoded = json.dumps(
+        body,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return f"sha256:{sha256(encoded).hexdigest()}"

@@ -68,7 +68,6 @@ class Exp1PilotProfile:
 PAPER_EXPERIMENT_TASK_LIMITS = {
     "exp2_real_ai_scalability": 5,
     "exp4_real_ai_protocol_ablation": 5,
-    "exp5_real_ai_model_endpoint_comparison": 5,
 }
 
 
@@ -375,6 +374,14 @@ def plan_paper_suite(
     planned_root_runs = 0
     planned_ai_units = 0
     exp4_requeue_ai_unit_upper_bound = 0
+    headline_root_runs_by_experiment: dict[str, int] = {}
+    headline_ai_units_by_experiment: dict[str, int] = {}
+    supporting_root_runs_by_experiment: dict[str, int] = {}
+    supporting_ai_units_by_experiment: dict[str, int] = {}
+    replacement_reserve_by_experiment: dict[str, int] = {}
+    replacement_policy_by_condition: list[JsonObject] = []
+    supporting_baseline_commitments: list[JsonObject] = []
+    seen_supporting_baselines: set[str] = set()
     derived_selections: list[JsonObject] = []
     derived_ai_unit_commitments: list[JsonObject] = []
     for condition in condition_tuple:
@@ -432,11 +439,17 @@ def plan_paper_suite(
                 "ordered_case_ids": [str(case["case_id"]) for case in cases],
             }
         )
+        condition_ai_units = 0
         for case in cases:
-            split_profile = _deterministic_split_profile(case)
+            split_profile = _budget_split_profile(
+                case=case,
+                condition=condition,
+                exact_selection=exact_selection,
+            )
             planned_ai_unit_ids = [
                 str(ai_unit_id) for ai_unit_id in split_profile["ai_unit_order"]
             ]
+            condition_ai_units += len(planned_ai_unit_ids)
             derived_ai_unit_commitments.append(
                 {
                     "condition_id": condition.condition_id,
@@ -454,20 +467,185 @@ def plan_paper_suite(
                     ),
                 }
             )
-        condition_ai_units = sum(
-            estimated_ai_units_for_case(case) for case in cases
-        )
         planned_root_runs += len(cases)
         planned_ai_units += condition_ai_units
-        if (
-            condition.experiment_id == "exp4_real_ai_protocol_ablation"
-            and condition.ablation_mode != "NO_REQUEUE"
-        ):
-            exp4_requeue_ai_unit_upper_bound += condition_ai_units
-    max_provider_attempts = (
-        planned_ai_units * max_provider_attempts_per_ai_unit
-        + exp4_requeue_ai_unit_upper_bound
+        headline_root_runs_by_experiment[condition.experiment_id] = (
+            headline_root_runs_by_experiment.get(condition.experiment_id, 0)
+            + len(cases)
+        )
+        headline_ai_units_by_experiment[condition.experiment_id] = (
+            headline_ai_units_by_experiment.get(condition.experiment_id, 0)
+            + condition_ai_units
+        )
+        replacement_count = _condition_replacement_reserve(
+            condition=condition,
+            condition_ai_units=condition_ai_units,
+        )
+        if replacement_count:
+            replacement_reserve_by_experiment[condition.experiment_id] = (
+                replacement_reserve_by_experiment.get(
+                    condition.experiment_id,
+                    0,
+                )
+                + replacement_count
+            )
+        replacement_policy_by_condition.append(
+            {
+                "condition_id": condition.condition_id,
+                "condition_digest": condition.condition_digest,
+                "experiment_id": condition.experiment_id,
+                "planned_ai_unit_count": condition_ai_units,
+                "protocol_replacement_reserve": replacement_count,
+                "policy": _condition_replacement_policy(condition),
+            }
+        )
+        if condition.experiment_id == "exp4_real_ai_protocol_ablation":
+            exp4_requeue_ai_unit_upper_bound += replacement_count
+        baseline_key = _exp3_supporting_baseline_key(condition)
+        if baseline_key is not None and baseline_key not in seen_supporting_baselines:
+            seen_supporting_baselines.add(baseline_key)
+            supporting_root_runs_by_experiment[condition.experiment_id] = (
+                supporting_root_runs_by_experiment.get(
+                    condition.experiment_id,
+                    0,
+                )
+                + len(cases)
+            )
+            supporting_ai_units_by_experiment[condition.experiment_id] = (
+                supporting_ai_units_by_experiment.get(
+                    condition.experiment_id,
+                    0,
+                )
+                + condition_ai_units
+            )
+            supporting_baseline_commitments.append(
+                {
+                    "baseline_key": baseline_key,
+                    "experiment_id": condition.experiment_id,
+                    "source_condition_id": condition.condition_id,
+                    "source_condition_digest": condition.condition_digest,
+                    "ordered_case_ids": [
+                        str(case["case_id"]) for case in cases
+                    ],
+                    "root_run_count": len(cases),
+                    "planned_ai_unit_count": condition_ai_units,
+                    "protocol_replacement_reserve": 0,
+                }
+            )
+    planned_root_runs += sum(supporting_root_runs_by_experiment.values())
+    planned_ai_units += sum(supporting_ai_units_by_experiment.values())
+    total_replacement_reserve = sum(
+        replacement_reserve_by_experiment.values()
     )
+    max_provider_attempts = (
+        (planned_ai_units + total_replacement_reserve)
+        * max_provider_attempts_per_ai_unit
+    )
+    experiment_ids = sorted(
+        set(headline_root_runs_by_experiment)
+        | set(supporting_root_runs_by_experiment)
+    )
+    actual_scheduled_root_runs_by_experiment = {
+        experiment_id: (
+            headline_root_runs_by_experiment.get(experiment_id, 0)
+            + supporting_root_runs_by_experiment.get(experiment_id, 0)
+        )
+        for experiment_id in experiment_ids
+    }
+    planned_first_attempt_ai_units_by_experiment = {
+        experiment_id: (
+            headline_ai_units_by_experiment.get(experiment_id, 0)
+            + supporting_ai_units_by_experiment.get(experiment_id, 0)
+        )
+        for experiment_id in experiment_ids
+    }
+    experiment_budget_identity: JsonObject = {
+        "schema_version": "tokenshare.paper_experiment_budget_identity.v1",
+        "headline_root_runs_by_experiment": dict(
+            sorted(headline_root_runs_by_experiment.items())
+        ),
+        "supporting_baseline_root_runs_by_experiment": dict(
+            sorted(supporting_root_runs_by_experiment.items())
+        ),
+        "actual_scheduled_root_runs_by_experiment": dict(
+            sorted(actual_scheduled_root_runs_by_experiment.items())
+        ),
+        "headline_ai_units_by_experiment": dict(
+            sorted(headline_ai_units_by_experiment.items())
+        ),
+        "supporting_baseline_ai_units_by_experiment": dict(
+            sorted(supporting_ai_units_by_experiment.items())
+        ),
+        "planned_first_attempt_ai_units_by_experiment": dict(
+            sorted(planned_first_attempt_ai_units_by_experiment.items())
+        ),
+        "replacement_reserve_by_experiment": dict(
+            sorted(replacement_reserve_by_experiment.items())
+        ),
+        "replacement_policy_by_condition": replacement_policy_by_condition,
+        "supporting_baseline_commitments": supporting_baseline_commitments,
+        "headline_p0_core_root_runs": sum(
+            headline_root_runs_by_experiment.get(experiment_id, 0)
+            for experiment_id in (
+                "exp1_real_ai_feasibility",
+                "exp2_real_ai_scalability",
+                "exp3_real_ai_fault_recovery",
+                "exp4_real_ai_protocol_ablation",
+            )
+        ),
+        "headline_p0_full_root_runs": sum(
+            headline_root_runs_by_experiment.get(experiment_id, 0)
+            for experiment_id in (
+                "exp1_real_ai_feasibility",
+                "exp2_real_ai_scalability",
+                "exp3_real_ai_fault_recovery",
+                "exp4_real_ai_protocol_ablation",
+                "exp5_real_ai_model_endpoint_comparison",
+            )
+        ),
+        "actual_p0_core_root_runs": sum(
+            actual_scheduled_root_runs_by_experiment.get(experiment_id, 0)
+            for experiment_id in (
+                "exp1_real_ai_feasibility",
+                "exp2_real_ai_scalability",
+                "exp3_real_ai_fault_recovery",
+                "exp4_real_ai_protocol_ablation",
+            )
+        ),
+        "actual_p0_full_root_runs": sum(
+            actual_scheduled_root_runs_by_experiment.get(experiment_id, 0)
+            for experiment_id in (
+                "exp1_real_ai_feasibility",
+                "exp2_real_ai_scalability",
+                "exp3_real_ai_fault_recovery",
+                "exp4_real_ai_protocol_ablation",
+                "exp5_real_ai_model_endpoint_comparison",
+            )
+        ),
+        "exp2_no_early_stop_ai_unit_upper_bound": (
+            planned_first_attempt_ai_units_by_experiment.get(
+                "exp2_real_ai_scalability",
+                0,
+            )
+        ),
+        "exp3_replacement_reserve": replacement_reserve_by_experiment.get(
+            "exp3_real_ai_fault_recovery",
+            0,
+        ),
+        "exp4_replacement_reserve": replacement_reserve_by_experiment.get(
+            "exp4_real_ai_protocol_ablation",
+            0,
+        ),
+        "exp5_first_attempt_ai_units": (
+            planned_first_attempt_ai_units_by_experiment.get(
+                "exp5_real_ai_model_endpoint_comparison",
+                0,
+            )
+        ),
+        "provider_attempt_multiplier": max_provider_attempts_per_ai_unit,
+        "max_provider_attempts": max_provider_attempts,
+        "provider_calls_made": 0,
+    }
     resolved_endpoint_identity = endpoint_identity or {
         "condition_endpoint_identities": _condition_endpoint_identities(
             condition_tuple
@@ -526,6 +704,7 @@ def plan_paper_suite(
                 "cross_experiment_evidence_allowed": False,
             }
         ),
+        "experiment_budget_identity": experiment_budget_identity,
     }
     body: JsonObject = {
         "planned_experiments": sorted({item.experiment_id for item in condition_tuple}),
@@ -622,6 +801,100 @@ def _lean_matrix_budget_identity(lean_3x3_matrix: JsonObject) -> JsonObject:
             "target_case_count": lean_3x3_matrix.get("target_case_count"),
             "task15_budget_input": task15_budget_input,
         }
+    )
+
+
+def _condition_replacement_policy(
+    condition: PaperExperimentCondition,
+) -> JsonObject:
+    if condition.experiment_id == "exp3_real_ai_fault_recovery":
+        worker_death = _exp3_worker_death_identity(condition)
+        max_retries = (
+            int(worker_death["dead_worker_count"]) + 1
+            if worker_death is not None
+            else 2
+        )
+        return {
+            "max_retries": max_retries,
+            "replacement_attempts_allowed": True,
+            "source": (
+                "worker_termination_policy"
+                if worker_death is not None
+                else "post_raw_fault_hook"
+            ),
+        }
+    if condition.experiment_id == "exp4_real_ai_protocol_ablation":
+        replacement_allowed = condition.ablation_mode != "NO_REQUEUE"
+        return {
+            "max_retries": 1,
+            "replacement_attempts_allowed": replacement_allowed,
+            "source": "exp4_five_mode_protocol_policy",
+        }
+    return {
+        "max_retries": 0,
+        "replacement_attempts_allowed": False,
+        "source": "no_protocol_replacement",
+    }
+
+
+def _condition_replacement_reserve(
+    *,
+    condition: PaperExperimentCondition,
+    condition_ai_units: int,
+) -> int:
+    policy = _condition_replacement_policy(condition)
+    if policy["replacement_attempts_allowed"] is not True:
+        return 0
+    return condition_ai_units * int(policy["max_retries"])
+
+
+def _exp3_worker_death_identity(
+    condition: PaperExperimentCondition,
+) -> JsonObject | None:
+    if condition.experiment_id != "exp3_real_ai_fault_recovery":
+        return None
+    prefix = (
+        "exp3_worker_death_factorization"
+        if condition.domain == "factorization"
+        else "exp3_worker_death_lean"
+    )
+    parts = condition.condition_id.split("__")
+    if not parts or parts[0] != prefix:
+        if condition.fault_type == "worker_death":
+            raise ValueError("Experiment 3 worker-death condition ID is invalid")
+        return None
+    if len(parts) != 5:
+        raise ValueError("Experiment 3 worker-death condition ID is invalid")
+    dead_part = parts[2]
+    repeat_part = parts[4]
+    if not dead_part.startswith("dead") or not repeat_part.startswith("rep"):
+        raise ValueError("Experiment 3 worker-death condition ID is invalid")
+    try:
+        dead_worker_count = int(dead_part.removeprefix("dead"))
+        repeat_id = int(repeat_part.removeprefix("rep"))
+    except ValueError as exc:
+        raise ValueError(
+            "Experiment 3 worker-death condition ID is invalid"
+        ) from exc
+    if dead_worker_count not in {1, 3} or repeat_id != condition.repeat_id:
+        raise ValueError("Experiment 3 worker-death condition identity drift")
+    return {
+        "domain": condition.domain,
+        "task_slice_key": parts[1],
+        "repeat_id": repeat_id,
+        "dead_worker_count": dead_worker_count,
+    }
+
+
+def _exp3_supporting_baseline_key(
+    condition: PaperExperimentCondition,
+) -> str | None:
+    identity = _exp3_worker_death_identity(condition)
+    if identity is None:
+        return None
+    return (
+        f"exp3:no-kill:{identity['domain']}:"
+        f"{identity['task_slice_key']}:rep{identity['repeat_id']}"
     )
 
 
@@ -896,6 +1169,74 @@ def _case_request_profile(
             )
         ),
     }
+
+
+def _budget_split_profile(
+    *,
+    case: JsonObject,
+    condition: PaperExperimentCondition,
+    exact_selection: JsonObject | None,
+) -> JsonObject:
+    if (
+        condition.experiment_id == "exp2_real_ai_scalability"
+        and condition.domain == "factorization"
+    ):
+        if (
+            exact_selection is None
+            or exact_selection.get("split_profile_id")
+            != "factorization.exp2_contiguous_20way.v1"
+        ):
+            raise ValueError(
+                "Experiment 2 budget requires frozen 20-way split profile"
+            )
+        case_counts = exact_selection.get("case_expected_ai_unit_counts")
+        if not isinstance(case_counts, dict):
+            raise ValueError(
+                "Experiment 2 budget requires per-case AI-unit commitments"
+            )
+        case_id = str(case["case_id"])
+        requested_child_count = case_counts.get(case_id)
+        if requested_child_count != 20:
+            raise ValueError(
+                "Experiment 2 budget per-case AI-unit commitment drift"
+            )
+        partition = partition_candidate_ranges(
+            target_n=case["target_n"],
+            requested_child_count=20,
+            max_children_per_unit=20,
+            min_divisor=case["candidate_start"],
+            max_divisor=case["candidate_end"],
+        )
+        return {
+            "split_kind": "factorization.exp2_contiguous_20way.v1",
+            "requested_child_count": 20,
+            "actual_child_count": len(partition.ranges),
+            "ai_unit_order": [
+                f"range_{item.child_index}" for item in partition.ranges
+            ],
+            "ranges": [
+                {
+                    "range_start": item.range_start,
+                    "range_end": item.range_end,
+                }
+                for item in partition.ranges
+            ],
+            "partition_params_digest": partition.params.params_digest,
+            "ranges_digest": partition.coverage_proof.ranges_digest,
+        }
+    split_profile = _deterministic_split_profile(case)
+    if exact_selection is not None:
+        case_counts = exact_selection.get("case_expected_ai_unit_counts")
+        if isinstance(case_counts, dict):
+            expected = case_counts.get(str(case["case_id"]))
+            if (
+                expected is not None
+                and expected != len(split_profile["ai_unit_order"])
+            ):
+                raise ValueError(
+                    "frozen per-case AI-unit commitment does not match split"
+                )
+    return split_profile
 
 
 def _deterministic_split_profile(case: JsonObject) -> JsonObject:

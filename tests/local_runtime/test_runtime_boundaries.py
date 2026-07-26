@@ -348,6 +348,17 @@ def test_runtime_public_contracts_are_frozen() -> None:
     assert _parameter_kinds(ProtocolTaskPluginRuntime.build_merge) == {
         "parent": inspect.Parameter.KEYWORD_ONLY,
         "canonical_children": inspect.Parameter.KEYWORD_ONLY,
+        "slot_integrity_enabled": inspect.Parameter.KEYWORD_ONLY,
+    }
+    assert _parameter_kinds(
+        ProtocolTaskPluginRuntime.planned_ai_unit_id
+    ) == {
+        "unit": inspect.Parameter.POSITIONAL_OR_KEYWORD,
+    }
+    assert _parameter_kinds(
+        ProtocolTaskPluginRuntime.evaluate_merge_readiness
+    ) == {
+        "context": inspect.Parameter.POSITIONAL_OR_KEYWORD,
     }
 
     expected_hook_parameter = {

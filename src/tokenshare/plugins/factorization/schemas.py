@@ -31,7 +31,7 @@ CANDIDATE_RANGE_COVERAGE_PROOF_SCHEMA_VERSION = (
 FACTOR_SEARCH_RANGE_INPUT_SCHEMA_VERSION = "factorization.factor_search_range_input.v1"
 FACTOR_SEARCH_INSTRUCTION_SCHEMA_VERSION = "factorization.factor_search_instruction.v1"
 RANGE_RESULT_SCHEMA_VERSION = "factorization.range_result.v1"
-FACTORIZATION_MERGE_RESULT_SCHEMA_VERSION = "factorization.merge_result.v1"
+FACTORIZATION_MERGE_RESULT_SCHEMA_VERSION = "factorization.merge_result.v2"
 PRIME_FACTORIZATION_RESULT_SCHEMA_VERSION = "factorization.prime_factorization_result.v1"
 FIXTURE_CASE_SCHEMA_VERSION = "factorization.fixture_case.v1"
 PARSE_FAILURE_REPORT_SCHEMA_VERSION = "phase3.parse_failure_report.v1"
@@ -39,7 +39,11 @@ PARSE_FAILURE_REPORT_SCHEMA_VERSION = "phase3.parse_failure_report.v1"
 CANDIDATE_RANGE_PARTITION_STRATEGY_ID = "factorization.candidate_range_partition.v1"
 RANGE_RESULT_PARSER_ID = "factorization.range_result.parser.v1"
 RANGE_RESULT_VALIDATOR_POLICY_ID = "factorization.range_result.validator.v1"
-ALL_REQUIRED_RANGE_MERGE_POLICY_ID = "factorization.all_required_range_merge.v1"
+FACTOR_WITNESS_OR_ALL_RANGES_MERGE_POLICY_ID = (
+    "factorization.factor_witness_or_all_ranges.v2"
+)
+# 兼容既有 import 名称；值已指向显式升级后的非对称 policy。
+ALL_REQUIRED_RANGE_MERGE_POLICY_ID = FACTOR_WITNESS_OR_ALL_RANGES_MERGE_POLICY_ID
 TRIAL_DIVISION_PRIMALITY_POLICY_ID = "factorization.trial_division_primality.v1"
 
 FACTOR_INTEGER_SUBJECT_CONTRACT_ID = "factorization.factor_integer_subject.contract.v1"

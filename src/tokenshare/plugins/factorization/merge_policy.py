@@ -1,4 +1,4 @@
-"""Factorization all-required range merge policy."""
+"""Factorization witness-OR / no-factor-AND merge policy."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ from tokenshare.plugins.factorization.models import (
     canonical_json_digest,
 )
 from tokenshare.plugins.factorization.schemas import (
-    ALL_REQUIRED_RANGE_MERGE_POLICY_ID,
+    FACTOR_WITNESS_OR_ALL_RANGES_MERGE_POLICY_ID,
     MERGE_RESULT_NONTRIVIAL_FACTOR,
     MERGE_RESULT_PRIME_CERTIFICATE,
     MERGE_RESULT_PRIME_FACTORIZATION,
@@ -87,8 +87,9 @@ def merge_required_range_results(
     merge_unit_id: str,
     created_at: str,
     primality_recheck_max_divisors: int = DEFAULT_PRIMALITY_RECHECK_MAX_DIVISORS,
+    slot_integrity_enabled: bool = True,
 ) -> FactorizationMergePolicyResult:
-    """Merge canonical range results using the plugin all-required policy."""
+    """合并 canonical range：有效 factor 走 OR，no-factor 结论走完整 AND。"""
 
     _validate_positive_integer_budget(
         "primality_recheck_max_divisors", primality_recheck_max_divisors
@@ -98,19 +99,42 @@ def merge_required_range_results(
     required_slot_keys = [slot["slot_key"] for slot in required_slots]
     provided = [_coerce_slot_input(item) for item in slot_results]
     provided_by_key = _slot_inputs_by_key(provided)
-    _require_exact_required_slots(required_slot_keys, provided_by_key)
+    _reject_unexpected_slots(required_slot_keys, provided_by_key)
 
-    ordered_inputs = [provided_by_key[slot_key] for slot_key in required_slot_keys]
-    _validate_slot_result_bindings(required_slots=required_slots, ordered_inputs=ordered_inputs)
+    selected_required_slots = [
+        slot
+        for slot in required_slots
+        if slot["slot_key"] in provided_by_key
+    ]
+    ordered_inputs = [
+        provided_by_key[str(slot["slot_key"])]
+        for slot in selected_required_slots
+    ]
+    if not ordered_inputs:
+        raise ValueError("factorization merge requires canonical range results")
+    if slot_integrity_enabled:
+        _validate_slot_result_bindings(
+            required_slots=selected_required_slots,
+            ordered_inputs=ordered_inputs,
+        )
     range_results = [item.range_result for item in ordered_inputs]
     summary = _plugin_summary(merge_plan)
-    target_n = _validate_range_result_set(
-        range_results=range_results,
-        required_slot_count=len(required_slots),
-        summary=summary,
-    )
-
     found_factor = _smallest_found_factor(range_results)
+    complete_slot_set = len(provided_by_key) == len(required_slot_keys)
+    if complete_slot_set:
+        target_n = _validate_complete_range_result_set(
+            range_results=range_results,
+            required_slot_count=len(required_slots),
+            summary=summary,
+        )
+    elif found_factor is None:
+        _require_exact_required_slots(required_slot_keys, provided_by_key)
+        raise AssertionError("unreachable incomplete no-factor slot set")
+    else:
+        target_n = _validate_factor_witness_result_set(
+            range_results=range_results,
+            summary=summary,
+        )
     merge_plan_id = str(merge_plan.merge_plan_header["merge_plan_id"])
     merge_result_id = f"factorization_merge:{merge_plan_id}:{merge_unit_id}"
     slot_result_digests = [item.canonical_output_digest for item in ordered_inputs]
@@ -129,6 +153,7 @@ def merge_required_range_results(
             target_n=target_n,
             summary=summary,
             result_kind=MERGE_RESULT_PRIME_CERTIFICATE,
+            range_result_count=len(ordered_inputs),
             required_slot_count=len(required_slots),
             slot_result_digests=slot_result_digests,
             coverage_digest=coverage_digest,
@@ -169,6 +194,7 @@ def merge_required_range_results(
             target_n=target_n,
             summary=summary,
             result_kind=MERGE_RESULT_PRIME_FACTORIZATION,
+            range_result_count=len(ordered_inputs),
             required_slot_count=len(required_slots),
             slot_result_digests=slot_result_digests,
             coverage_digest=coverage_digest,
@@ -194,6 +220,7 @@ def merge_required_range_results(
         target_n=target_n,
         summary=summary,
         result_kind=MERGE_RESULT_NONTRIVIAL_FACTOR,
+        range_result_count=len(ordered_inputs),
         required_slot_count=len(required_slots),
         slot_result_digests=slot_result_digests,
         coverage_digest=coverage_digest,
@@ -212,8 +239,14 @@ def merge_required_range_results(
 
 
 def _validate_policy_ref(merge_plan: MergePlan) -> None:
-    if merge_plan.merge_policy_ref.get("merge_policy_id") != ALL_REQUIRED_RANGE_MERGE_POLICY_ID:
-        raise ValueError("merge_plan must use factorization all-required range merge policy")
+    if (
+        merge_plan.merge_policy_ref.get("merge_policy_id")
+        != FACTOR_WITNESS_OR_ALL_RANGES_MERGE_POLICY_ID
+        or merge_plan.merge_policy_ref.get("merge_policy_version") != "v2"
+    ):
+        raise ValueError(
+            "merge_plan must use factorization witness-or-all-ranges v2 policy"
+        )
 
 
 def _coerce_slot_input(item: RangeSlotMergeInput | JsonObject) -> RangeSlotMergeInput:
@@ -249,6 +282,15 @@ def _require_exact_required_slots(
         raise ValueError("unexpected range slots: " + ", ".join(unexpected))
 
 
+def _reject_unexpected_slots(
+    required_slot_keys: list[str],
+    provided_by_key: dict[str, RangeSlotMergeInput],
+) -> None:
+    unexpected = sorted(set(provided_by_key).difference(required_slot_keys))
+    if unexpected:
+        raise ValueError("unexpected range slots: " + ", ".join(unexpected))
+
+
 def _validate_slot_result_bindings(
     *,
     required_slots: list[JsonObject],
@@ -274,7 +316,7 @@ def _plugin_summary(merge_plan: MergePlan) -> JsonObject:
     return summary
 
 
-def _validate_range_result_set(
+def _validate_complete_range_result_set(
     *,
     range_results: list[RangeResult],
     required_slot_count: int,
@@ -309,6 +351,38 @@ def _validate_range_result_set(
 
     _validate_complete_candidate_coverage(target_n=target_n, range_results=range_results)
     return target_n
+
+
+def _validate_factor_witness_result_set(
+    *,
+    range_results: list[RangeResult],
+    summary: JsonObject,
+) -> int:
+    if any(item.result_kind != RANGE_RESULT_FOUND_FACTOR for item in range_results):
+        raise ValueError(
+            "partial factorization merge may contain only factor witnesses"
+        )
+    target_values = {item.target_n for item in range_results}
+    coverage_ids = {item.coverage_id for item in range_results}
+    params_digests = {item.partition_params_digest for item in range_results}
+    if len(target_values) != 1:
+        raise ValueError("factor witnesses must use the same target_n")
+    if len(coverage_ids) != 1:
+        raise ValueError("factor witnesses must use the same coverage_id")
+    if len(params_digests) != 1:
+        raise ValueError(
+            "factor witnesses must use the same partition_params_digest"
+        )
+    target_n_text = next(iter(target_values))
+    if summary.get("target_n") != target_n_text:
+        raise ValueError("merge plan target_n does not match factor witness")
+    if summary.get("coverage_id") != next(iter(coverage_ids)):
+        raise ValueError("merge plan coverage_id does not match factor witness")
+    if summary.get("partition_params_digest") != next(iter(params_digests)):
+        raise ValueError(
+            "merge plan partition params digest does not match factor witness"
+        )
+    return int(target_n_text)
 
 
 def _validate_complete_candidate_coverage(
@@ -379,6 +453,7 @@ def _merge_result(
     target_n: int,
     summary: JsonObject,
     result_kind: str,
+    range_result_count: int,
     required_slot_count: int,
     slot_result_digests: list[str],
     coverage_digest: str,
@@ -394,7 +469,7 @@ def _merge_result(
         coverage_id=str(summary["coverage_id"]),
         partition_params_digest=str(summary["partition_params_digest"]),
         result_kind=result_kind,
-        range_result_count=required_slot_count,
+        range_result_count=range_result_count,
         required_slot_count=required_slot_count,
         coverage_digest=coverage_digest,
         slot_result_digests=slot_result_digests,

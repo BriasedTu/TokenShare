@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections import Counter, defaultdict
 from collections.abc import Iterable, Mapping, Sequence
+from dataclasses import dataclass
 from typing import Any
 
 from tokenshare.experiments.paper_experiment_contracts import (
@@ -16,6 +17,7 @@ from tokenshare.experiments.paper_experiment_contracts import (
 )
 from tokenshare.experiments.paper_models import (
     LEAN_TOPIC_FAMILIES,
+    PAPER_FORMAL_AI_TIMEOUT_SECONDS,
     PaperConditionResult,
     PaperExperimentCondition,
     digest_json,
@@ -30,11 +32,13 @@ EXP2_FACTOR_CASE_COUNTS_BY_DIFFICULTY = {
     "medium": 167,
     "hard": 166,
 }
-EXP2_V1_EXPECTED_ROOT_RUNS = 600
-EXP2_EXPECTED_ROOT_RUNS = 10_300
-MANDATORY_WORKER_LEVELS = (1, 3, 10, 30)
-OPTIONAL_WORKER_LEVELS = (100, 300)
-EXP2_REPEATS = 5
+EXP2_V1_EXPECTED_ROOT_RUNS = 60
+EXP2_EXPECTED_ROOT_RUNS = 1_992
+EXP2_SPLIT_PROFILE_ID = "factorization.exp2_contiguous_20way.v1"
+EXP2_SPLIT_PROFILE_REQUESTED_CHILD_COUNT = 20
+MANDATORY_WORKER_LEVELS = (1, 3, 7, 10, 30, 50)
+OPTIONAL_WORKER_LEVELS: tuple[int, ...] = ()
+EXP2_REPEATS = 2
 EXP2_SEED_BASE = 2000
 
 BASELINE_PROVIDER_FAMILY = "siliconflow"
@@ -44,7 +48,7 @@ BASELINE_PROVIDER_CONFIG_ID = "exp1_baseline_siliconflow"
 BASELINE_REASONING_PROFILE_ID = "default"
 BASELINE_REQUEST_LIMIT_POLICY = {
     "max_tokens": 1024,
-    "timeout_seconds": 30,
+    "timeout_seconds": PAPER_FORMAL_AI_TIMEOUT_SECONDS,
     "max_provider_attempts": 1,
     "temperature": 0.0,
     "top_p": 1.0,
@@ -145,6 +149,34 @@ class Exp2MixedLeanCaseSelection(FrozenCaseSelection):
         return body
 
 
+@dataclass(frozen=True, kw_only=True)
+class Exp2FactorizationCaseSelection(FrozenCaseSelection):
+    split_profile_id: str = EXP2_SPLIT_PROFILE_ID
+
+    def __post_init__(self) -> None:
+        if self.split_profile_id != EXP2_SPLIT_PROFILE_ID:
+            raise ValueError("Experiment 2 factorization split profile drift")
+        super().__post_init__()
+
+    def _body(self, *, include_digest: bool) -> dict[str, Any]:
+        body = {
+            **super()._body(include_digest=include_digest),
+            "split_profile_id": self.split_profile_id,
+        }
+        for field_name in (
+            "catalog_source_kind",
+            "slice_digest",
+            "split_metadata_digest",
+            "case_expected_ai_unit_counts",
+        ):
+            if hasattr(self, field_name):
+                value = getattr(self, field_name)
+                body[field_name] = (
+                    dict(value) if isinstance(value, Mapping) else value
+                )
+        return body
+
+
 class Experiment2ScalabilityModule:
     def expand_conditions(
         self,
@@ -184,39 +216,20 @@ def expand_exp2_conditions(
     catalog_digest = _catalog_digest(context)
     endpoint_binding = _validate_approved_endpoint_binding(context)
     conditions: list[PaperExperimentCondition] = []
-    for domain in ("factorization", "lean_proof"):
-        if domain == "factorization":
-            for paper_difficulty in FACTOR_PAPER_DIFFICULTIES:
-                for worker_count in MANDATORY_WORKER_LEVELS:
-                    for repeat_id in range(EXP2_REPEATS):
-                        conditions.append(
-                            _condition(
-                                domain=domain,
-                                difficulty=paper_difficulty,
-                                paper_difficulty=paper_difficulty,
-                                topic_family=None,
-                                worker_count=worker_count,
-                                repeat_id=repeat_id,
-                                catalog_digest=catalog_digest,
-                                endpoint_binding=endpoint_binding,
-                            )
-                        )
-            continue
-        for paper_difficulty in LEAN_PAPER_DIFFICULTIES:
-            for worker_count in MANDATORY_WORKER_LEVELS:
-                for repeat_id in range(EXP2_REPEATS):
-                    conditions.append(
-                        _condition(
-                            domain=domain,
-                            difficulty=LEAN_CONDITION_DIFFICULTY[paper_difficulty],
-                            paper_difficulty=paper_difficulty,
-                            topic_family=None,
-                            worker_count=worker_count,
-                            repeat_id=repeat_id,
-                            catalog_digest=catalog_digest,
-                            endpoint_binding=endpoint_binding,
-                        )
-                    )
+    for worker_count in MANDATORY_WORKER_LEVELS:
+        for repeat_id in range(EXP2_REPEATS):
+            conditions.append(
+                _condition(
+                    domain="factorization",
+                    difficulty="hard",
+                    paper_difficulty="hard",
+                    topic_family=None,
+                    worker_count=worker_count,
+                    repeat_id=repeat_id,
+                    catalog_digest=catalog_digest,
+                    endpoint_binding=endpoint_binding,
+                )
+            )
     return tuple(conditions)
 
 
@@ -227,11 +240,7 @@ def freeze_exp2_case_selections(
     bindings: list[FrozenConditionSelectionBinding] = []
     for condition in conditions:
         validate_exp2_condition(context, condition)
-        selection = (
-            _factorization_selection(context, condition)
-            if condition.domain == "factorization"
-            else _lean_selection(context, condition)
-        )
+        selection = _factorization_selection(context, condition)
         bindings.append(
             FrozenConditionSelectionBinding.from_condition(condition, selection)
         )
@@ -322,12 +331,7 @@ def validate_exp2_condition(
         if condition.topic_family is not None:
             raise ValueError("factorization condition must not declare topic_family")
     else:
-        if condition.domain != "lean_proof":
-            raise ValueError("domain must be factorization or lean_proof")
-        if condition.paper_difficulty not in LEAN_PAPER_DIFFICULTIES:
-            raise ValueError("Lean paper_difficulty is not valid for Experiment 2")
-        if condition.topic_family is not None:
-            raise ValueError("Lean Experiment 2 condition must use one mixed 5-task batch")
+        raise ValueError("Experiment 2 formal matrix is factorization hard-only")
     return _canonical_condition_for(
         context,
         condition,
@@ -347,12 +351,7 @@ def _canonical_condition_for(
         return validate_exp2_condition(context, condition)
     if condition.repeat_id not in range(EXP2_REPEATS):
         raise ValueError("condition does not match canonical Experiment 2 condition")
-    if condition.domain == "factorization":
-        expected_difficulty = str(condition.paper_difficulty)
-    else:
-        expected_difficulty = LEAN_CONDITION_DIFFICULTY[
-            str(condition.paper_difficulty)
-        ]
+    expected_difficulty = str(condition.paper_difficulty)
     canonical = _condition(
         domain=condition.domain,
         difficulty=expected_difficulty,
@@ -515,7 +514,7 @@ def _factorization_selection(
                 "factorization scaling must use within-root range children"
             )
         case_ids.append(_case_id(case))
-        expected_ai_units += _case_expected_ai_unit_count(case)
+        expected_ai_units += EXP2_SPLIT_PROFILE_REQUESTED_CHILD_COUNT
     return _selection(
         context,
         condition,
@@ -525,6 +524,7 @@ def _factorization_selection(
         ordered_case_ids=case_ids,
         expected_ai_unit_count=expected_ai_units,
         cases=cases,
+        split_profile_id=EXP2_SPLIT_PROFILE_ID,
     )
 
 
@@ -591,9 +591,18 @@ def _selection(
     selection_topic_family: str | None = None,
     mixed_topic_family_counts: Mapping[str, int] | None = None,
     readiness_selection_digest: str | None = None,
+    split_profile_id: str | None = None,
 ) -> FrozenCaseSelection:
     catalog = _catalog(context)
-    selection = Exp2MixedLeanCaseSelection(
+    selection_type = (
+        Exp2FactorizationCaseSelection
+        if condition.domain == "factorization"
+        else Exp2MixedLeanCaseSelection
+    )
+    selection_kwargs: dict[str, Any] = {}
+    if split_profile_id is not None:
+        selection_kwargs["split_profile_id"] = split_profile_id
+    selection = selection_type(
         selection_id=selection_id,
         experiment_id=EXP2_EXPERIMENT_ID,
         suite_version=str(catalog.get("suite_version") or EXP2_SUITE_VERSION),
@@ -607,11 +616,27 @@ def _selection(
         catalog_digest=_catalog_digest(context),
         expected_ai_unit_count=expected_ai_unit_count,
         paper_eligible_required=True,
+        **selection_kwargs,
     )
     case_unit_counts = {
-        _case_id(case): _case_expected_ai_unit_count(case) for case in cases
+        _case_id(case): (
+            EXP2_SPLIT_PROFILE_REQUESTED_CHILD_COUNT
+            if condition.domain == "factorization"
+            else _case_expected_ai_unit_count(case)
+        )
+        for case in cases
     }
-    split_metadata = [_case_split_metadata(case) for case in cases]
+    split_metadata = [
+        {
+            **_case_split_metadata(case),
+            **(
+                {"split_profile_id": split_profile_id}
+                if split_profile_id is not None
+                else {}
+            ),
+        }
+        for case in cases
+    ]
     object.__setattr__(selection, "catalog_source_kind", "formal_paper_catalog")
     object.__setattr__(
         selection,
@@ -646,6 +671,8 @@ def _selection(
             "topic_family_counts",
             dict(mixed_topic_family_counts or {}),
         )
+    if condition.domain == "factorization":
+        object.__setattr__(selection, "split_profile_id", EXP2_SPLIT_PROFILE_ID)
     return selection
 
 
@@ -911,8 +938,14 @@ def _validate_summary_selection(
     tasks: Sequence[Mapping[str, Any]],
 ) -> dict[str, int]:
     ordered_case_ids = _normalize_ordered_case_ids(selection.get("ordered_case_ids"))
-    if len(ordered_case_ids) != 5:
-        raise ValueError("Experiment 2 summary selection must contain exactly 5 roots")
+    expected_case_count = _factor_case_count(
+        str(selection.get("catalog_version")),
+        "hard",
+    )
+    if len(ordered_case_ids) != expected_case_count:
+        raise ValueError(
+            "Experiment 2 summary selection must contain the frozen hard roots"
+        )
     if tuple(_summary_task_case_id(task) for task in tasks) != ordered_case_ids:
         raise ValueError("actual task IDs must match frozen ordered_case_ids")
     if (
@@ -929,11 +962,6 @@ def _validate_summary_selection(
         raise ValueError("summary selection does not match its condition")
     expected_selection_id = (
         f"{EXP2_EXPERIMENT_ID}:factorization:{condition['paper_difficulty']}"
-        if condition.get("domain") == "factorization"
-        else (
-            f"{EXP2_EXPERIMENT_ID}:lean_proof:"
-            f"{condition['paper_difficulty']}:topic_mixed"
-        )
     )
     if selection.get("selection_id") != expected_selection_id:
         raise ValueError("summary selection_id drift")
@@ -970,30 +998,17 @@ def _validate_summary_selection(
         selection.get("expected_ai_unit_count")
     ):
         raise ValueError("summary selection AI-unit commitment count drift")
+    if (
+        selection.get("split_profile_id") != EXP2_SPLIT_PROFILE_ID
+        or set(case_unit_counts.values())
+        != {EXP2_SPLIT_PROFILE_REQUESTED_CHILD_COUNT}
+    ):
+        raise ValueError("summary selection split profile drift")
     selection_digest_body = {
         field_name: value
         for field_name, value in selection.items()
         if field_name not in generated_fields
     }
-    if condition.get("domain") == "lean_proof":
-        expected_counts = LEAN_TOPIC_ALLOCATIONS[str(condition["paper_difficulty"])]
-        if (
-            selection.get("topic_family_marker")
-            != LEAN_BATCH_SELECTION_TOPIC_FAMILY_MARKER
-            or selection.get("topic_family_counts") != expected_counts
-            or _topic_family_counts(ordered_case_ids) != expected_counts
-        ):
-            raise ValueError("summary Lean mixed-topic provenance drift")
-        selection_digest_body["topic_family_marker"] = selection.get(
-            "topic_family_marker"
-        )
-        selection_digest_body["topic_family_counts"] = selection.get(
-            "topic_family_counts"
-        )
-        _require_complete_digest(
-            "readiness_selection_digest",
-            selection.get("readiness_selection_digest"),
-        )
     if selection.get("selection_digest") != canonical_contract_digest(
         selection_digest_body
     ):
@@ -1482,12 +1497,7 @@ def _apply_formal_matrix_audit(
     rows: Sequence[dict[str, Any]],
 ) -> list[dict[str, Any]]:
     expected_group_keys = {
-        ("factorization", difficulty, worker_count)
-        for difficulty in FACTOR_PAPER_DIFFICULTIES
-        for worker_count in MANDATORY_WORKER_LEVELS
-    } | {
-        ("lean_proof", difficulty, worker_count)
-        for difficulty in LEAN_PAPER_DIFFICULTIES
+        ("factorization", "hard", worker_count)
         for worker_count in MANDATORY_WORKER_LEVELS
     }
     mandatory_rows = [

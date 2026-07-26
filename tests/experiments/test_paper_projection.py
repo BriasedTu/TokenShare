@@ -119,6 +119,39 @@ def test_projection_derives_paper_results_from_protocol_events_and_artifacts(
             parsed_ref,
             provenance_ref,
         ),
+        summary={
+            "runtime_observation": {
+                "schema_version": "tokenshare.protocol_runtime_observation.v1",
+                "run_id": "condition_1_case_1",
+                "runtime_started_at": "2026-07-23T00:00:00Z",
+                "runtime_ended_at": "2026-07-23T00:00:01.234000Z",
+                "runtime_wall_clock_ms": 1234.0,
+                "planned_ai_unit_ids": ["range_0"],
+                "dispatched_ai_unit_ids": ["range_0"],
+                "completed_ai_unit_ids": ["range_0"],
+                "unscheduled_ai_unit_ids": [],
+                "in_flight_ai_unit_ids_at_witness": [],
+                "witness_observed_at": None,
+                "worker_execution_facts": [
+                    {
+                        "execution_index": 1,
+                        "request_id": "request_case_1_0",
+                        "submission_id": "submission_case_1_0",
+                        "result_kind": "succeeded",
+                        "unit_id": unit_id,
+                        "attempt_id": attempt_id,
+                        "lease_id": "lease_case_1_0",
+                        "worker_id": "runtime-worker-7",
+                        "worker_pid": None,
+                        "process_exitcode": None,
+                        "started_at": "2026-07-23T00:00:00.100000Z",
+                        "ended_at": "2026-07-23T00:00:00.400000Z",
+                        "kill_point": None,
+                    }
+                ],
+                "observed_peak_concurrency": 1,
+            }
+        },
     )
 
     projection = project_paper_protocol_run(
@@ -135,8 +168,16 @@ def test_projection_derives_paper_results_from_protocol_events_and_artifacts(
     assert projection.task_result.paper_eligible is True
     assert projection.task_result.attempt_count == 1
     assert projection.task_result.provider_attempt_count == 1
+    assert projection.task_result.wall_clock_ms == 1234
     assert projection.task_result.total_tokens == 11
     assert projection.attempt_results[0].attempt_id == attempt_id
+    assert projection.attempt_results[0].worker_id == "runtime-worker-7"
+    assert projection.attempt_results[0].started_at == (
+        "2026-07-23T00:00:00.100000Z"
+    )
+    assert projection.attempt_results[0].ended_at == (
+        "2026-07-23T00:00:00.400000Z"
+    )
     assert projection.attempt_results[0].provider_attempt_index == 0
     assert projection.attempt_results[0].attempt_status.value == "succeeded"
     assert projection.attempt_results[0].usage_ref == usage_ref.to_dict()
@@ -145,6 +186,7 @@ def test_projection_derives_paper_results_from_protocol_events_and_artifacts(
         == model_record_ref.to_dict()
     )
     assert projection.lifecycle_coverage["complete"] is True
+    assert projection.runtime_observation["runtime_wall_clock_ms"] == 1234.0
     assert projection.runtime_generation_identity["last_event_id"] == "event-9"
     assert projection.runtime_generation_identity["ledger_digest"].startswith("sha256:")
 

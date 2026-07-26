@@ -5,9 +5,14 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass, is_dataclass
 from datetime import UTC, datetime
+import json
 from pathlib import Path
 from typing import Any
 
+from tokenshare.core.models import ArtifactRef
+from tokenshare.experiments.paper_exp5_model_comparison import (
+    build_exp5_model_execution_rows,
+)
 from tokenshare.experiments.paper_models import digest_json
 from tokenshare.experiments.paper_workers import (
     PaperAIUnit,
@@ -402,7 +407,6 @@ def run_exp4_ablation_strategy(
         "NO_PARSER_POLICY",
         "NO_REQUEUE",
         "NO_MERGE_GATE",
-        "NO_SLOT_INTEGRITY",
     }
     if normalized_mode not in supported:
         raise ValueError("unsupported Experiment 4 mode")
@@ -412,7 +416,6 @@ def run_exp4_ablation_strategy(
         "raw_only_exposed": normalized_mode == "NO_PARSER_POLICY",
         "stuck_after_rejection": normalized_mode == "NO_REQUEUE",
         "premature_merge_attempted": normalized_mode == "NO_MERGE_GATE",
-        "slot_mismatch_exposed": normalized_mode == "NO_SLOT_INTEGRITY",
         "deterministic_validity_audit_retained": True,
     }
     applicable = normalized_mode != "FULL" and _ablation_applicable(
@@ -423,7 +426,7 @@ def run_exp4_ablation_strategy(
     escaped = int(
         applicable
         and normalized_mode
-        in {"NO_VERIFICATION", "NO_PARSER_POLICY", "NO_SLOT_INTEGRITY"}
+        in {"NO_VERIFICATION", "NO_PARSER_POLICY"}
         and adapter_observation.get("deterministic_validity") is False
     )
     event = {
@@ -466,36 +469,78 @@ def run_exp5_identity_strategy(
     approved_identity: Mapping[str, Any],
     condition_id: str,
     cohort_member_id: str,
+    adapter_root: str | Path,
+    task: Mapping[str, Any],
+    transport_kind: str,
+    model_policy: str,
+    pilot_only: bool,
 ) -> FormalStrategyResult:
-    """验证 Exp5 首次与恢复 attempts 始终使用冻结 entry。"""
+    """从 adapter 持久化的 v2 identity artifacts 构造严格 join 输入。"""
 
+    store = ArtifactStore(adapter_root)
     records: list[dict[str, Any]] = []
     for attempt in attempts:
         _validate_fixed_identity(attempt, approved_identity)
+        attempt_body = _json_mapping(attempt, "Experiment 5 attempt")
+        record_ref = _required_artifact_ref(
+            attempt_body,
+            "model_execution_record_ref",
+        )
+        record_body = _read_json_artifact(store, record_ref)
+        if (
+            record_body.get("schema_version")
+            != "tokenshare.paper_model_execution_record.v2"
+        ):
+            raise ValueError(
+                "formal Experiment 5 requires persisted model execution v2"
+            )
+        if record_body.get("condition_id") != condition_id:
+            raise ValueError("model execution record condition_id mismatch")
+        expected_identity = record_body.get("expected_identity")
+        if (
+            not isinstance(expected_identity, Mapping)
+            or expected_identity.get("cohort_member_id") != cohort_member_id
+        ):
+            raise ValueError("model execution record cohort member mismatch")
+        raw_ref = _optional_artifact_ref(attempt_body, "raw_output_ref")
+        request_ref = _required_artifact_ref(attempt_body, "request_ref")
+        provenance_ref = _required_artifact_ref(attempt_body, "provenance_ref")
+        usage_ref = _required_artifact_ref(attempt_body, "usage_ref")
         records.append(
             {
-                "schema_version": "tokenshare.paper_formal_model_execution.v1",
-                "condition_id": condition_id,
-                "cohort_member_id": cohort_member_id,
-                "attempt_id": str(_required_field(attempt, "attempt_id")),
-                "unit_id": str(_required_field(attempt, "unit_id")),
-                "provider": str(_required_field(attempt, "provider")),
-                "model": str(_required_field(attempt, "model")),
-                "entry_id": str(_required_field(attempt, "entry_id")),
-                "request_ref": _field(attempt, "request_ref"),
-                "raw_output_ref": _field(attempt, "raw_output_ref"),
-                "parsed_output_ref": _field(attempt, "parsed_output_ref"),
-                "parse_failure_ref": _field(attempt, "parse_failure_ref"),
-                "provenance_ref": _field(attempt, "provenance_ref"),
-                "usage_ref": _field(attempt, "usage_ref"),
-                "model_execution_ref": _field(attempt, "model_execution_ref"),
+                "record": record_body,
+                "record_ref": record_ref,
+                "raw_output": (
+                    _read_json_artifact(store, raw_ref)
+                    if raw_ref is not None
+                    else None
+                ),
+                "request": _read_json_artifact(store, request_ref),
+                "provenance": _read_json_artifact(store, provenance_ref),
+                "usage": _read_json_artifact(store, usage_ref),
+                "attempt": attempt_body,
+                "task": dict(task),
+                "transport_kind": transport_kind,
+                "model_policy": model_policy,
+                "provider_errors": [],
+                "pilot_only": pilot_only,
+                "formal_strict_join": True,
             }
         )
+    rows = build_exp5_model_execution_rows(
+        {"model_execution_records": records}
+    )
     return FormalStrategyResult(
         ordered_case_ids=(),
         outcomes=tuple(attempts),
         events=(),
-        metrics={"model_execution_record_count": len(records)},
+        metrics={
+            "model_execution_record_count": len(records),
+            "identity_status_by_attempt": {
+                str(row["attempt_id"]): str(row["identity_status"])
+                for row in rows
+            },
+        },
         model_execution_records=tuple(records),
     )
 
@@ -506,13 +551,10 @@ def _ablation_applicable(mode: str, observation: Mapping[str, Any]) -> bool:
         "NO_PARSER_POLICY": "parse_failed",
         "NO_REQUEUE": "replacement_created",
         "NO_MERGE_GATE": "merge_gate_blocked",
-        "NO_SLOT_INTEGRITY": "slot_binding_valid",
     }
     field = field_by_mode.get(mode)
     if field is None:
         return False
-    if mode == "NO_SLOT_INTEGRITY":
-        return observation.get(field) is True
     return observation.get(field) is True
 
 
@@ -523,7 +565,6 @@ def _disabled_mechanism(mode: str) -> str | None:
         "NO_PARSER_POLICY": "parser_policy",
         "NO_REQUEUE": "requeue",
         "NO_MERGE_GATE": "merge_gate",
-        "NO_SLOT_INTEGRITY": "slot_integrity",
     }[mode]
 
 
@@ -658,6 +699,59 @@ def _required_field(value: Any, field_name: str) -> Any:
     if result is None:
         raise ValueError(f"required field is missing: {field_name}")
     return result
+
+
+def _json_mapping(value: Any, label: str) -> dict[str, Any]:
+    if isinstance(value, Mapping):
+        return {str(key): item for key, item in value.items()}
+    to_dict = getattr(value, "to_dict", None)
+    if callable(to_dict):
+        body = to_dict()
+        if isinstance(body, Mapping):
+            return {str(key): item for key, item in body.items()}
+    if is_dataclass(value):
+        body = asdict(value)
+        if isinstance(body, Mapping):
+            return {str(key): item for key, item in body.items()}
+    raise ValueError(f"{label} must be a JSON mapping")
+
+
+def _required_artifact_ref(
+    body: Mapping[str, Any],
+    field_name: str,
+) -> dict[str, Any]:
+    value = body.get(field_name)
+    if not isinstance(value, Mapping):
+        raise ValueError(f"formal Experiment 5 requires {field_name}")
+    return dict(value)
+
+
+def _optional_artifact_ref(
+    body: Mapping[str, Any],
+    field_name: str,
+) -> dict[str, Any] | None:
+    value = body.get(field_name)
+    if value is None:
+        return None
+    if not isinstance(value, Mapping):
+        raise ValueError(f"formal Experiment 5 {field_name} must be a ref")
+    return dict(value)
+
+
+def _read_json_artifact(
+    store: ArtifactStore,
+    ref_body: Mapping[str, Any],
+) -> dict[str, Any]:
+    ref = ArtifactRef.from_dict(dict(ref_body))
+    if not store.verify(ref):
+        raise ValueError("formal Experiment 5 artifact verification failed")
+    try:
+        body = json.loads(store.read_bytes(ref).decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError("formal Experiment 5 artifact must be JSON") from exc
+    if not isinstance(body, dict):
+        raise ValueError("formal Experiment 5 artifact body must be an object")
+    return body
 
 
 def _numeric_field(value: Any, field_name: str) -> float:

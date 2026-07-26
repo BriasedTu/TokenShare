@@ -62,6 +62,12 @@ def test_worker_death_record_projects_runtime_facts_and_engine_events(tmp_path) 
             "kill_point": "progress_50",
             "started_at": NOW,
             "ended_at": "2026-07-15T00:00:01Z",
+            "kill_progress_target_ratio": 0.5,
+            "kill_progress_completed_ai_unit_count": 3,
+            "kill_progress_total_ai_unit_count": 6,
+            "kill_progress_actual_ratio": 0.5,
+            "kill_progress_observed_at": "2026-07-15T00:00:01Z",
+            "kill_progress_error": None,
         },
         replacement_fact={
             "unit_id": "unit_lemma_join",
@@ -88,6 +94,12 @@ def test_worker_death_record_projects_runtime_facts_and_engine_events(tmp_path) 
     assert body["dead_attempt"]["attempt_id"] == "attempt_initial"
     assert body["replacement_attempt"]["attempt_id"] == "attempt_replacement"
     assert body["reassignment"]["replacement_lease_id"] == "lease_replacement"
+    assert body["kill_progress_target_ratio"] == pytest.approx(0.5)
+    assert body["kill_progress_completed_ai_unit_count"] == 3
+    assert body["kill_progress_total_ai_unit_count"] == 6
+    assert body["kill_progress_actual_ratio"] == pytest.approx(0.5)
+    assert body["kill_progress_observed_at"] == "2026-07-15T00:00:01Z"
+    assert body["kill_progress_error"] is None
     assert body["protocol_event_refs"] == [
         "event_initial_lease",
         "event_expired_lease",
@@ -159,6 +171,13 @@ def test_worker_death_record_rejects_missing_engine_recovery_evidence(tmp_path) 
                 "worker_pid": 1001,
                 "process_exitcode": -15,
                 "result_kind": "worker_terminated",
+                "kill_point": "progress_25",
+                "kill_progress_target_ratio": 0.25,
+                "kill_progress_completed_ai_unit_count": 2,
+                "kill_progress_total_ai_unit_count": 6,
+                "kill_progress_actual_ratio": 2 / 6,
+                "kill_progress_observed_at": NOW,
+                "kill_progress_error": None,
             },
             replacement_fact={
                 "unit_id": "unit_lemma_join",

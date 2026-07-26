@@ -34,6 +34,8 @@ from tokenshare.experiments.paper_models import (
 )
 from tokenshare.experiments.paper_model_identity import PaperModelEndpointIdentity
 from tokenshare.experiments.paper_model_policy import (
+    EXP5_COMPARABLE_REQUEST_CONTROL_FIELDS,
+    EXP5_DOMAIN_EXECUTION_CONTRACTS,
     PAPER_MODEL_ENDPOINT_COHORT_ID,
     PAPER_MODEL_ENDPOINT_COHORT_MEMBER_IDS,
     PAPER_MODEL_ENDPOINT_COHORT_MEMBERS,
@@ -43,6 +45,7 @@ from tokenshare.experiments.paper_metrics import (
     write_gate_c_pilot_metrics,
 )
 from tokenshare.experiments import paper_runner
+from tokenshare.experiments import paper_formal_runner
 from tokenshare.experiments.paper_runner import build_gate_c_dispatch_plans
 from tokenshare.local_runtime import ProtocolRunRequest, ProtocolRunResult
 
@@ -81,7 +84,7 @@ def test_gate_c_dispatcher_registers_all_modules_through_protocol() -> None:
 
 
 def test_gate_c_plans_all_real_modules_from_frozen_formal_catalog(tmp_path) -> None:
-    catalog = _frozen_formal_catalog()
+    catalog = _frozen_formal_catalog_v2()
     readiness = json.loads(
         Path("benchmarks/paper/lean_task14_3x3_readiness.v1.json").read_text(
             encoding="utf-8"
@@ -96,7 +99,7 @@ def test_gate_c_plans_all_real_modules_from_frozen_formal_catalog(tmp_path) -> N
         "model_entry_id": identity["selected_entry_id"],
         "request_controls": {
             "max_tokens": 1024,
-            "timeout_seconds": 30,
+            "timeout_seconds": 100,
             "max_provider_attempts": 1,
             "temperature": 0.0,
             "top_p": 1.0,
@@ -115,11 +118,11 @@ def test_gate_c_plans_all_real_modules_from_frozen_formal_catalog(tmp_path) -> N
     )
 
     assert [plan.experiment_id for plan in plans] == list(EXPERIMENT_IDS)
-    assert [len(plan.conditions) for plan in plans] == [36, 120, 273, 108, 0]
+    assert [len(plan.conditions) for plan in plans] == [12, 12, 182, 90, 0]
     assert [
         sum(len(selection.ordered_case_ids) for selection in plan.selections)
         for plan in plans
-    ] == [495, 600, 813, 540, 0]
+    ] == [635, 1_992, 41_156, 7_725, 0]
     assert all(plan.provider_calls_made == 0 for plan in plans)
     assert [plan.status for plan in plans] == [
         "planned",
@@ -142,7 +145,7 @@ def test_gate_c_plans_all_real_modules_from_frozen_formal_catalog(tmp_path) -> N
         )
 
 
-def test_gate_c_v2_plans_use_all_500_factorization_roots_in_every_experiment(
+def test_gate_c_v2_plans_freeze_current_p0_matrix_and_budget_identity(
     tmp_path: Path,
 ) -> None:
     catalog = _frozen_formal_catalog_v2()
@@ -169,15 +172,15 @@ def test_gate_c_v2_plans_use_all_500_factorization_roots_in_every_experiment(
         sum(len(selection.ordered_case_ids) for selection in plan.selections)
         for plan in plans
     ]
-    assert root_runs == [1_905, 10_300, 61_734, 9_270, 4_635]
-    assert sum(root_runs[:4]) == 83_209
-    assert sum(root_runs) == 87_844
+    assert root_runs == [635, 1_992, 41_156, 7_725, 1_899]
+    assert sum(root_runs[:4]) == 51_508
+    assert sum(root_runs) == 53_407
 
     all_factor_ids = {
         str(case["case_id"]) for case in catalog.factorization_cases
     }
     expected_sizes = {"easy": 167, "medium": 167, "hard": 166}
-    for plan in (plans[0], plans[1], plans[3], plans[4]):
+    for plan in (plans[0], plans[3]):
         grouped: dict[str, set[tuple[str, ...]]] = {}
         for condition, selection in plan.bound_items():
             if condition.domain != "factorization":
@@ -193,6 +196,20 @@ def test_gate_c_v2_plans_use_all_500_factorization_roots_in_every_experiment(
             assert len(ordered_ids) == expected_sizes[difficulty]
             selected_union.update(ordered_ids)
         assert selected_union == all_factor_ids
+
+    hard_factor_ids = {
+        str(case["case_id"])
+        for case in catalog.factorization_cases
+        if case["difficulty"] == "hard"
+    }
+    for plan in (plans[1], plans[4]):
+        factor_selections = {
+            tuple(selection.ordered_case_ids)
+            for condition, selection in plan.bound_items()
+            if condition.domain == "factorization"
+        }
+        assert len(factor_selections) == 1
+        assert set(next(iter(factor_selections))) == hard_factor_ids
 
     exp3_rate_selections = {
         tuple(selection.ordered_case_ids)
@@ -224,6 +241,71 @@ def test_gate_c_v2_plans_use_all_500_factorization_roots_in_every_experiment(
         assert len(ordered_ids) == expected_sizes[difficulty]
         exp3_death_union.update(ordered_ids)
     assert exp3_death_union == all_factor_ids
+
+    conditions = tuple(
+        condition for plan in plans for condition in plan.conditions
+    )
+    frozen_selections = [
+        {
+            **selection.to_dict(),
+            "condition_id": condition.condition_id,
+            "condition_digest": condition.condition_digest,
+        }
+        for plan in plans
+        for condition, selection in plan.bound_items()
+    ]
+    budget = plan_paper_suite(
+        catalog_manifest=catalog,
+        conditions=conditions,
+        max_provider_attempts_per_ai_unit=1,
+        token_upper_bound_per_provider_attempt=1024,
+        cost_upper_bound_per_provider_attempt=0.01,
+        plan_only=True,
+        frozen_selections=frozen_selections,
+        model_endpoint_cohort_preflight=cohort_preflight,
+    )
+    identity = budget.quota_preflight["budget_commitments"][
+        "experiment_budget_identity"
+    ]
+    assert identity["headline_root_runs_by_experiment"] == {
+        "exp1_real_ai_feasibility": 635,
+        "exp2_real_ai_scalability": 1_992,
+        "exp3_real_ai_fault_recovery": 41_156,
+        "exp4_real_ai_protocol_ablation": 7_725,
+        "exp5_real_ai_model_endpoint_comparison": 1_899,
+    }
+    assert identity["supporting_baseline_root_runs_by_experiment"] == {
+        "exp3_real_ai_fault_recovery": 1_006,
+    }
+    assert identity["actual_scheduled_root_runs_by_experiment"] == {
+        "exp1_real_ai_feasibility": 635,
+        "exp2_real_ai_scalability": 1_992,
+        "exp3_real_ai_fault_recovery": 42_162,
+        "exp4_real_ai_protocol_ablation": 7_725,
+        "exp5_real_ai_model_endpoint_comparison": 1_899,
+    }
+    assert identity["planned_first_attempt_ai_units_by_experiment"] == {
+        "exp1_real_ai_feasibility": 2_900,
+        "exp2_real_ai_scalability": 39_840,
+        "exp3_real_ai_fault_recovery": 196_476,
+        "exp4_real_ai_protocol_ablation": 35_910,
+        "exp5_real_ai_model_endpoint_comparison": 14_652,
+    }
+    assert identity["headline_p0_core_root_runs"] == 51_508
+    assert identity["headline_p0_full_root_runs"] == 53_407
+    assert identity["actual_p0_core_root_runs"] == 52_514
+    assert identity["actual_p0_full_root_runs"] == 54_413
+    assert identity["exp2_no_early_stop_ai_unit_upper_bound"] == 39_840
+    assert identity["exp4_replacement_reserve"] > 0
+    assert identity["exp3_replacement_reserve"] > 0
+    assert budget.planned_root_runs == 54_413
+    assert budget.planned_ai_units == 289_778
+    assert budget.max_provider_attempts == (
+        budget.planned_ai_units
+        + identity["exp3_replacement_reserve"]
+        + identity["exp4_replacement_reserve"]
+    )
+    assert budget.quota_preflight["provider_calls_made"] == 0
 
 
 def test_gate_c_dispatcher_delegates_plan_and_run_without_copying_module_logic(
@@ -392,7 +474,7 @@ def test_gate_c_pilot_executes_registered_module_and_replays_without_transport(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    catalog = _frozen_formal_catalog()
+    catalog = _frozen_formal_catalog_v2()
     readiness = json.loads(
         Path("benchmarks/paper/lean_task14_3x3_readiness.v1.json").read_text(
             encoding="utf-8"
@@ -442,7 +524,7 @@ def test_gate_c_pilot_executes_registered_module_and_replays_without_transport(
             strict=True,
         )
         if condition.domain == "factorization"
-        and condition.paper_difficulty == "easy"
+        and condition.paper_difficulty == "hard"
         and condition.worker_count == 1
         and condition.repeat_id == 0
     )
@@ -661,7 +743,7 @@ def test_gate_c_each_registered_experiment_reaches_real_mode_capture(
     monkeypatch: pytest.MonkeyPatch,
     experiment_id: str,
 ) -> None:
-    catalog = _frozen_formal_catalog()
+    catalog = _frozen_formal_catalog_v2()
     readiness = json.loads(
         Path("benchmarks/paper/lean_task14_3x3_readiness.v1.json").read_text(
             encoding="utf-8"
@@ -686,7 +768,14 @@ def test_gate_c_each_registered_experiment_reaches_real_mode_capture(
         output_root=tmp_path / "plans",
     )[0]
     condition, selection = _capturing_condition_and_selection(plan)
-    case_id = selection.ordered_case_ids[0]
+    factor_cases = {
+        str(case["case_id"]): case for case in catalog.factorization_cases
+    }
+    case_id = next(
+        selected_case_id
+        for selected_case_id in selection.ordered_case_ids
+        if factor_cases[selected_case_id]["difficulty"] == condition.difficulty
+    )
     frozen = [
         {
             **selected.to_dict(),
@@ -761,10 +850,10 @@ def test_gate_c_each_registered_experiment_reaches_real_mode_capture(
     assert all(body["temperature"] == 0 for body in request_bodies)
 
 
-def test_gate_c_exp2_exp4_exp5_share_exact_lean_case_selection_digest(
+def test_gate_c_exp2_excludes_lean_and_exp5_reuses_exp1_hard_lean_selection(
     tmp_path: Path,
 ) -> None:
-    catalog = _frozen_formal_catalog()
+    catalog = _frozen_formal_catalog_v2()
     readiness = json.loads(
         Path("benchmarks/paper/lean_task14_3x3_readiness.v1.json").read_text(
             encoding="utf-8"
@@ -778,8 +867,8 @@ def test_gate_c_exp2_exp4_exp5_share_exact_lean_case_selection_digest(
         catalog_manifest=catalog,
         lean_3x3_matrix=readiness,
         experiment_ids=(
+            "exp1_real_ai_feasibility",
             "exp2_real_ai_scalability",
-            "exp4_real_ai_protocol_ablation",
             "exp5_real_ai_model_endpoint_comparison",
         ),
         baseline_endpoint_binding=_baseline_binding(profile),
@@ -787,38 +876,34 @@ def test_gate_c_exp2_exp4_exp5_share_exact_lean_case_selection_digest(
         output_root=tmp_path,
     )
 
-    for paper_difficulty in (
-        "simple",
-        "medium_lemma_dag",
-        "hard_frontier",
-    ):
-        exp2 = _shared_lean_selection(
-            plans[0],
-            paper_difficulty=paper_difficulty,
-            condition_filter=lambda condition: (
-                condition.worker_count == 1 and condition.repeat_id == 0
-            ),
-        )
-        exp4 = _shared_lean_selection(
-            plans[1],
-            paper_difficulty=paper_difficulty,
-            condition_filter=lambda condition: (
-                condition.ablation_mode == "FULL" and condition.repeat_id == 0
-            ),
-        )
-        exp5 = _shared_lean_selection(
-            plans[2],
-            paper_difficulty=paper_difficulty,
-            condition_filter=lambda condition: (
-                condition.cohort_member_id == "glm_5_2_siliconflow"
-                and condition.repeat_id == 0
-            ),
-        )
-        assert exp2.ordered_case_ids == exp4.ordered_case_ids == exp5.ordered_case_ids
+    assert all(
+        condition.domain == "factorization"
+        for condition in plans[1].conditions
+    )
+    exp1_hard = {
+        condition.topic_family: selection
+        for condition, selection in plans[0].bound_items()
+        if condition.domain == "lean_proof"
+        and condition.paper_difficulty == "hard_frontier"
+        and condition.repeat_id == 0
+    }
+    exp5_hard = {
+        condition.topic_family: selection
+        for condition, selection in plans[2].bound_items()
+        if condition.domain == "lean_proof"
+        and condition.paper_difficulty == "hard_frontier"
+        and condition.cohort_member_id == "glm_5_2_siliconflow"
+        and condition.repeat_id == 0
+    }
+    assert set(exp1_hard) == set(exp5_hard)
+    assert len(exp1_hard) == 3
+    for topic_family, exp1_selection in exp1_hard.items():
+        exp5_selection = exp5_hard[topic_family]
+        assert len(exp1_selection.ordered_case_ids) == 15
+        assert exp5_selection.ordered_case_ids == exp1_selection.ordered_case_ids
         assert (
-            exp2.case_selection_digest
-            == exp4.case_selection_digest
-            == exp5.case_selection_digest
+            exp5_selection.case_selection_digest
+            == exp1_selection.case_selection_digest
         )
 
 
@@ -904,11 +989,151 @@ def test_gate_c_registered_exp1_reaches_lean_checker_and_merge(
     assert all(attempt["model_execution_record_ref"] for attempt in attempts)
 
 
+def test_formal_exp1_reuses_planning_catalog_view_when_crossing_to_lean(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Factorization 后的第一条 Lean condition 必须复用冻结 planning view。"""
+
+    catalog = _frozen_formal_catalog()
+    readiness = json.loads(
+        Path("benchmarks/paper/lean_task14_3x3_readiness.v1.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    profile = load_exp1_pilot_profile(
+        "benchmarks/paper/exp1_minimal_pilot_profile.v1.json"
+    )
+    binding = _baseline_binding(profile)
+    full_plan = build_gate_c_dispatch_plans(
+        catalog_manifest=catalog,
+        lean_3x3_matrix=readiness,
+        experiment_ids=("exp1_real_ai_feasibility",),
+        baseline_endpoint_binding=binding,
+        model_endpoint_cohort_preflight=None,
+        output_root=tmp_path,
+    )[0]
+    factor_item = next(
+        item for item in full_plan.bound_items() if item[0].domain == "factorization"
+    )
+    lean_item = next(
+        item for item in full_plan.bound_items() if item[0].domain == "lean_proof"
+    )
+    selected_ids = {factor_item[0].condition_id, lean_item[0].condition_id}
+    plan = replace(
+        full_plan,
+        conditions=(factor_item[0], lean_item[0]),
+        condition_selection_bindings=tuple(
+            binding_item
+            for binding_item in full_plan.condition_selection_bindings
+            if binding_item.condition_id in selected_ids
+        ),
+    )
+    budget = _budget_for_plan(
+        catalog=catalog,
+        readiness=readiness,
+        plan=plan,
+        endpoint_identity={"baseline": binding},
+        request_limits=binding["request_controls"],
+    )
+    callback_domains: list[str] = []
+    execution_selections: dict[str, dict] = {}
+
+    class CapturingFormalCallback:
+        def __init__(self, **_kwargs) -> None:
+            pass
+
+        def __call__(self, *, context, condition, selection):
+            callback_domains.append(condition.domain)
+            execution_selections[condition.condition_id] = selection.to_dict()
+            return PaperConditionResult(
+                condition_id=condition.condition_id,
+                status=PaperStatus.COMPLETED,
+                repeat_count=1,
+                task_count=len(selection.ordered_case_ids),
+                completed_root_count=len(selection.ordered_case_ids),
+                failed_root_count=0,
+                blocked_root_count=0,
+                provider_attempt_count=0,
+                metrics_ref=None,
+            )
+
+    monkeypatch.setattr(
+        paper_formal_runner,
+        "_FormalConditionExecutionCallback",
+        CapturingFormalCallback,
+    )
+    transport = _RejectingTransport()
+
+    execution_kwargs = {
+        "dispatch_plans": (plan,),
+        "catalog_manifest": catalog,
+        "budget": budget,
+        "budget_approval": {
+            "approval_mode": "user_bypassed",
+            "budget_digest": budget.budget_digest,
+        },
+        "output_root": tmp_path,
+        "ai_api_configs": {
+            profile.model_endpoint_identity.provider_config_id: (
+                profile.source_provider_config
+            )
+        },
+        "transport": transport,
+        "real_transport": False,
+        "hard_limits": {},
+    }
+    executed = paper_formal_runner.execute_paper_formal_suite(
+        **execution_kwargs,
+    )
+
+    assert callback_domains == ["factorization", "lean_proof"]
+    assert callback_domains.count("lean_proof") == 1
+    assert execution_selections[lean_item[0].condition_id] == lean_item[1].to_dict()
+    assert transport.calls == 0
+
+    replayed = paper_formal_runner.execute_paper_formal_suite(
+        **{
+            **execution_kwargs,
+            "dispatch_plans": (plan,),
+            "ai_api_configs": {},
+            "transport": transport,
+            "replay_only": True,
+        }
+    )
+    assert replayed.to_dict() == executed.to_dict()
+    assert transport.calls == 0
+
+    drifted_view = deepcopy(plan.catalog_execution_view)
+    assert drifted_view is not None
+    drifted_view["view_body"]["optional_worker_preflight"] = {"drift": True}
+    drifted_view["view_digest"] = digest_json(
+        {
+            "schema_version": drifted_view["schema_version"],
+            "view_kind": drifted_view["view_kind"],
+            "catalog_manifest_digest": drifted_view[
+                "catalog_manifest_digest"
+            ],
+            "view_body": drifted_view["view_body"],
+        }
+    )
+    drifted_plan = replace(plan, catalog_execution_view=drifted_view)
+    with pytest.raises(ValueError, match="identity"):
+        paper_formal_runner.execute_paper_formal_suite(
+            **{
+                **execution_kwargs,
+                "dispatch_plans": (drifted_plan,),
+                "resume": True,
+            }
+        )
+    assert transport.calls == 0
+
+
 def test_gate_c_exp5_openai_member_preserves_high_reasoning_controls(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    catalog = _frozen_formal_catalog()
+    catalog = _frozen_formal_catalog_v2()
     readiness = json.loads(
         Path("benchmarks/paper/lean_task14_3x3_readiness.v1.json").read_text(
             encoding="utf-8"
@@ -935,7 +1160,7 @@ def test_gate_c_exp5_openai_member_preserves_high_reasoning_controls(
             strict=True,
         )
         if condition.domain == "factorization"
-        and condition.paper_difficulty == "easy"
+        and condition.paper_difficulty == "hard"
         and condition.repeat_id == 0
         and condition.cohort_member_id == "gpt_5_6_sol_high_openai"
     )
@@ -983,7 +1208,7 @@ def test_gate_c_exp5_openai_member_preserves_high_reasoning_controls(
 def test_gate_c_budget_selection_and_identity_drift_stop_before_transport(
     tmp_path: Path,
 ) -> None:
-    catalog = _frozen_formal_catalog()
+    catalog = _frozen_formal_catalog_v2()
     readiness = json.loads(
         Path("benchmarks/paper/lean_task14_3x3_readiness.v1.json").read_text(
             encoding="utf-8"
@@ -1149,7 +1374,6 @@ def test_gate_c_case_dispatcher_routes_protocol_request_through_coordinator(
         entry_id="entry_1",
         max_tokens=123,
         timeout_seconds=17,
-        selected_ai_unit_id="unit_1",
     )
 
     assert result is runtime_result
@@ -1165,12 +1389,49 @@ def test_gate_c_case_dispatcher_routes_protocol_request_through_coordinator(
             "entry_id": "entry_1",
             "max_tokens": 123,
             "timeout_seconds": 17,
-            "selected_ai_unit_id": "unit_1",
+            "selected_ai_unit_id": None,
             "post_raw_output_hook": None,
             "ablation_mode": None,
+            "worker_termination_policy": None,
             "protocol_run_dispatcher": paper_dispatcher.execute_protocol_request,
         }
     ]
+
+
+def test_dispatch_paper_case_routes_selected_unit_to_system_runtime(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    condition = _condition_for_domain("factorization")
+    calls: list[dict] = []
+
+    def capture_adapter(**kwargs):
+        calls.append(kwargs)
+        return "selected-runtime-result"
+
+    monkeypatch.setattr(
+        paper_dispatcher,
+        "run_factorization_paper_case",
+        capture_adapter,
+    )
+    result = paper_dispatcher.dispatch_paper_case(
+        case={"case_id": "case_1"},
+        condition=condition,
+        output_root="outputs/gate-c/case-1",
+        transport="capturing-transport",
+        real_transport=False,
+        ai_api_config="config",
+        entry_id="entry_1",
+        max_tokens=123,
+        timeout_seconds=17,
+        selected_ai_unit_id="unit_1",
+    )
+
+    assert result == "selected-runtime-result"
+    assert calls[0]["selected_ai_unit_id"] == "unit_1"
+    assert (
+        calls[0]["protocol_run_dispatcher"]
+        is paper_dispatcher.execute_protocol_request
+    )
 
 
 class _RecordingModule:
@@ -1384,7 +1645,7 @@ def _baseline_binding(profile) -> dict:
         "model_entry_id": identity["selected_entry_id"],
         "request_controls": {
             "max_tokens": 1024,
-            "timeout_seconds": 30,
+            "timeout_seconds": 100,
             "max_provider_attempts": 1,
             "temperature": 0.0,
             "top_p": 1.0,
@@ -1429,6 +1690,11 @@ def _budget_for_plan(
 
 
 def _capturing_condition_and_selection(plan):
+    target_difficulty = {
+        "exp2_real_ai_scalability": "hard",
+        "exp3_real_ai_fault_recovery": "medium",
+        "exp5_real_ai_model_endpoint_comparison": "hard",
+    }.get(plan.experiment_id, "easy")
     candidates = [
         (condition, selection)
         for condition, selection in zip(
@@ -1437,12 +1703,7 @@ def _capturing_condition_and_selection(plan):
             strict=True,
         )
         if condition.domain == "factorization"
-        and condition.paper_difficulty
-        == (
-            "medium"
-            if condition.experiment_id == "exp3_real_ai_fault_recovery"
-            else "easy"
-        )
+        and condition.paper_difficulty == target_difficulty
         and condition.repeat_id == 0
         and selection.is_executable
         and (
@@ -1498,7 +1759,7 @@ def _complete_cohort_preflight():
                 "seed_source": "request_or_environment_seed",
             },
             "defaults": {
-                "timeout_seconds": 30,
+                "timeout_seconds": 100,
                 "max_tokens": 1024,
                 "temperature": 0.0,
                 "top_p": 1.0,
@@ -1539,7 +1800,7 @@ def _complete_cohort_preflight():
                 "seed_source": "request_or_environment_seed",
             },
             "defaults": {
-                "timeout_seconds": 30,
+                "timeout_seconds": 100,
                 "max_tokens": 1024,
                 "temperature": 0.0,
                 "top_p": 1.0,
@@ -1568,6 +1829,17 @@ def _complete_cohort_preflight():
         "gpt_5_6_sol_high_openai": "gpt-exp5-capture",
     }
     member_plans = {}
+    request_controls_snapshot = {
+        field_name: {
+            **siliconflow.defaults,
+            **siliconflow.entries[0].request_overrides,
+        }[field_name]
+        for field_name in EXP5_COMPARABLE_REQUEST_CONTROL_FIELDS
+    }
+    request_controls_snapshot["domain_contracts"] = {
+        domain: dict(contract)
+        for domain, contract in EXP5_DOMAIN_EXECUTION_CONTRACTS.items()
+    }
     for member_id in PAPER_MODEL_ENDPOINT_COHORT_MEMBER_IDS:
         expected = PAPER_MODEL_ENDPOINT_COHORT_MEMBERS[member_id]
         provider = str(expected["provider_family"])
@@ -1605,6 +1877,17 @@ def _complete_cohort_preflight():
                 identity.model_endpoint_identity_digest
             ),
             "endpoint_identity": identity.to_dict(),
+            "request_controls": {
+                "schema_version": "tokenshare.paper_exp5_request_controls.v1",
+                "comparable": dict(request_controls_snapshot),
+                "comparable_digest": digest_json(
+                    request_controls_snapshot
+                ),
+                "provider_specific_reasoning": effective_controls,
+                "provider_specific_reasoning_digest": digest_json(
+                    effective_controls
+                ),
+            },
         }
     return (
         {
@@ -1621,6 +1904,10 @@ def _complete_cohort_preflight():
             "model_cohort_digest": cohort_digest,
             "expected_member_ids": list(PAPER_MODEL_ENDPOINT_COHORT_MEMBER_IDS),
             "member_plans": member_plans,
+            "request_controls_snapshot": request_controls_snapshot,
+            "request_controls_snapshot_digest": digest_json(
+                request_controls_snapshot
+            ),
         },
         configs,
     )

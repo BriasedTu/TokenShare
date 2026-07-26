@@ -432,13 +432,22 @@ class FactorizationMergeResult:
             raise ValueError("range_result_count must be >= 1")
         if self.required_slot_count < 1:
             raise ValueError("required_slot_count must be >= 1")
-        if self.range_result_count != self.required_slot_count:
-            raise ValueError("range_result_count must equal required_slot_count")
+        if self.range_result_count > self.required_slot_count:
+            raise ValueError(
+                "range_result_count must not exceed required_slot_count"
+            )
+        if (
+            self.result_kind == MERGE_RESULT_PRIME_CERTIFICATE
+            and self.range_result_count != self.required_slot_count
+        ):
+            raise ValueError(
+                "prime certificate range_result_count must equal required_slot_count"
+            )
         _require_digest("coverage_digest", self.coverage_digest)
         if not all(isinstance(item, str) and item.startswith("sha256:") for item in self.slot_result_digests):
             raise ValueError("slot_result_digests must contain sha256 digests")
-        if len(self.slot_result_digests) != self.required_slot_count:
-            raise ValueError("slot_result_digests must match required_slot_count")
+        if len(self.slot_result_digests) != self.range_result_count:
+            raise ValueError("slot_result_digests must match range_result_count")
         if self.result_kind == MERGE_RESULT_PRIME_CERTIFICATE:
             if self.found_factor is not None or self.cofactor is not None:
                 raise ValueError("prime_certificate must not include found_factor or cofactor")
