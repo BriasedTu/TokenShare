@@ -9,6 +9,8 @@ param(
 
 $ErrorActionPreference = "Stop"
 . (Join-Path $PSScriptRoot "invoke_native_process_with_logs.ps1")
+$OutputRoot = Resolve-TokenShareRuntimePath -Path $OutputRoot
+$SupervisorRoot = Resolve-TokenShareRuntimePath -Path $SupervisorRoot
 
 if (Test-Path -LiteralPath $OutputRoot) {
     throw "output root already exists"
@@ -38,12 +40,8 @@ $identityArgs = @(
     "--unlimited-budget",
     "--smoke-identity-only"
 )
-$identityStdoutLog = Join-Path (Get-Location) (
-    Join-Path $SupervisorRoot "identity_preflight.stdout.log"
-)
-$identityStderrLog = Join-Path (Get-Location) (
-    Join-Path $SupervisorRoot "identity_preflight.stderr.log"
-)
+$identityStdoutLog = Join-Path $SupervisorRoot "identity_preflight.stdout.log"
+$identityStderrLog = Join-Path $SupervisorRoot "identity_preflight.stderr.log"
 $identityExitCode = Invoke-TokenShareNativeProcessWithLogs `
     -FilePath $condaPath `
     -ArgumentList $identityArgs `
@@ -134,7 +132,7 @@ if ($semantics.paper_eligible -ne $false) {
     throw "smoke eligibility drift"
 }
 $expectedOutputRoot = [IO.Path]::GetFullPath(
-    (Join-Path (Get-Location) $OutputRoot)
+    $OutputRoot
 ).Replace("\", "/")
 if ($runInstance.output_root -ne $expectedOutputRoot) {
     throw "smoke run-instance output root drift"
@@ -223,7 +221,7 @@ $prelaunch = [ordered]@{
     budget_mode = "unlimited_total_limits_without_changing_request_limits"
     expected_direct_roots = 21
     expected_actual_scheduled_roots = 22
-    output_root = (Join-Path (Get-Location) $OutputRoot)
+    output_root = $OutputRoot
     paper_eligible = $false
     explicit_exclusions = @(
         "exp5",
@@ -242,12 +240,8 @@ $prelaunch | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (
     Join-Path $SupervisorRoot "prelaunch.json"
 ) -Encoding UTF8
 
-$stdoutLog = Join-Path (Get-Location) (
-    Join-Path $SupervisorRoot "runner.stdout.log"
-)
-$stderrLog = Join-Path (Get-Location) (
-    Join-Path $SupervisorRoot "runner.stderr.log"
-)
+$stdoutLog = Join-Path $SupervisorRoot "runner.stdout.log"
+$stderrLog = Join-Path $SupervisorRoot "runner.stderr.log"
 $processRecord = [ordered]@{
     schema_version = "tokenshare.paper_smoke_process.v1"
     recorded_at_utc = [DateTime]::UtcNow.ToString("o")
@@ -256,7 +250,7 @@ $processRecord = [ordered]@{
     process_name = "powershell"
     status = "started"
     command = $commandText
-    output_root = (Join-Path (Get-Location) $OutputRoot)
+    output_root = $OutputRoot
     stdout_log = $stdoutLog
     stderr_log = $stderrLog
 }

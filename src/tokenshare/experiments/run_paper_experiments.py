@@ -83,6 +83,7 @@ from tokenshare.experiments.paper_smoke import (
     replay_paper_smoke_suite,
     resolve_paper_smoke_execution_plan,
 )
+from tokenshare.runtime_paths import default_data_root, resolve_experiment_output_root
 
 
 DEFAULT_FACTOR_CATALOG = Path("benchmarks/paper/factorization_catalog.v2.jsonl")
@@ -621,16 +622,29 @@ def _utc_now_string() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
-def main(
-    argv: Sequence[str] | None = None,
-    *,
-    gate_c_transport=None,
-    gate_c_ai_api_configs: dict | None = None,
-) -> int:
+def _paper_output_root(explicit_output_root: str | Path | None) -> Path:
+    return resolve_experiment_output_root(explicit_output_root, "paper_v1")
+
+
+def _configured_paper_output_boundary() -> Path:
+    """返回 smoke 必须避开的正式 paper 容器；非法 override 不阻断显式路径。"""
+
+    try:
+        return _paper_output_root(None).resolve(strict=False)
+    except ValueError:
+        return (
+            default_data_root() / "outputs" / "experiments" / "paper_v1"
+        ).resolve(strict=False)
+
+
+def _build_argument_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Plan or run TokenShare paper real-AI experiments.",
     )
-    parser.add_argument("--output-root", default="outputs/experiments/paper_v1")
+    parser.add_argument(
+        "--output-root",
+        default=None,
+    )
     parser.add_argument("--experiments", default="exp1")
     parser.add_argument("--worker-levels", default="10")
     parser.add_argument("--optional-worker-levels", default="")
@@ -669,6 +683,16 @@ def main(
     parser.add_argument("--model-cohort-file", default=None)
     parser.add_argument("--model-entry-map", default=None)
     parser.add_argument("--provider-config", action="append", default=[])
+    return parser
+
+
+def main(
+    argv: Sequence[str] | None = None,
+    *,
+    gate_c_transport=None,
+    gate_c_ai_api_configs: dict | None = None,
+) -> int:
+    parser = _build_argument_parser()
     command_argv = tuple(sys.argv[1:] if argv is None else argv)
     args = parser.parse_args(command_argv)
     args._command_argv = command_argv
@@ -692,9 +716,28 @@ def main(
         )
         return 3
 
-    output_base = Path(args.output_root)
+    if args.output_root is None:
+        print(
+            json.dumps(
+                {
+                    "status": "blocked",
+                    "failure_kind": "missing_output_root",
+                    "message": (
+                        "paper experiment commands require an explicit new "
+                        "--output-root"
+                    ),
+                    "provider_calls_made": 0,
+                },
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return 3
+
+    output_base = _paper_output_root(args.output_root)
     # 离线 identity preflight 不能占用真实 run 的全新 output root。
-    if not args.smoke_identity_only:
+    # smoke 在隔离检查通过前也不得创建或补写目标目录。
+    if not args.smoke_identity_only and args.smoke_profile is None:
         output_base.mkdir(parents=True, exist_ok=True)
     output_root = output_base
     pilot_blocked_output_root: Path | None = None
@@ -1709,6 +1752,30 @@ def _run_smoke_cli(
 ) -> int:
     """独立 smoke CLI；正式矩阵参数不参与 smoke selector。"""
 
+    formal_output_root = _configured_paper_output_boundary()
+    resolved_output_root = output_root.resolve(strict=False)
+    if (
+        resolved_output_root == formal_output_root
+        or formal_output_root in resolved_output_root.parents
+        or resolved_output_root in formal_output_root.parents
+    ):
+        print(
+            json.dumps(
+                {
+                    "status": "blocked",
+                    "failure_kind": "invalid_smoke_output_root",
+                    "message": (
+                        "smoke output root must be isolated from formal paper output"
+                    ),
+                    "provider_calls_made": 0,
+                },
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return 3
+
     try:
         profile = load_paper_smoke_profile(Path(args.smoke_profile))
     except (OSError, ValueError, json.JSONDecodeError) as exc:
@@ -1729,19 +1796,6 @@ def _run_smoke_cli(
             profile=profile,
             failure_kind="invalid_smoke_mode",
             message="--smoke-profile cannot be combined with pilot selectors",
-        )
-        return 3
-    formal_output_root = Path("outputs/experiments/paper_v1").resolve(strict=False)
-    resolved_output_root = output_root.resolve(strict=False)
-    if (
-        resolved_output_root == formal_output_root
-        or formal_output_root in resolved_output_root.parents
-    ):
-        _write_smoke_blocked_suite(
-            output_root=output_root,
-            profile=profile,
-            failure_kind="invalid_smoke_output_root",
-            message="smoke output root must be isolated from formal paper output",
         )
         return 3
     if args.replay_only:

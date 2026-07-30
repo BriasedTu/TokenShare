@@ -1,3 +1,16 @@
+function Resolve-TokenShareRuntimePath {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path
+    )
+
+    if ([IO.Path]::IsPathRooted($Path)) {
+        return [IO.Path]::GetFullPath($Path)
+    }
+    return [IO.Path]::GetFullPath((Join-Path (Get-Location) $Path))
+}
+
 function Invoke-TokenShareNativeProcessWithLogs {
     [CmdletBinding()]
     param(

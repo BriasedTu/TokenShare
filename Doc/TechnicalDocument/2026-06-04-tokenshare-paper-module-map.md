@@ -1,6 +1,6 @@
 # TokenShare 论文到模块借鉴映射
 
-来源文档：`2026-06-02-tokenshare-protocol-kernel-revised-draft.md`
+早期来源文档：`Doc/archive/design-history/2026-06-02-tokenshare-protocol-kernel-revised-draft.md`（历史 provenance；当前协议边界以 `tokenshare_v1_complete_spec.md` 为准）
 
 本文件收录已经影响 TokenShare 设计的论文、技术报告或正式论文 PDF。Airflow、Argo Workflows、Temporal、Kubernetes、Ray 文档、Apache Beam、Nextflow、Chaos Mesh、OpenTelemetry GenAI、IMClaw 等为工程文档、规范或公开站点，不作为论文 OCR 条目收录。
 
@@ -8,8 +8,7 @@
 
 自 2026-06-06 起，任何联网查到并被用于修改 TokenShare 设计、代码、测试或文档的新论文/技术报告，都必须先下载或转换为本地可复查材料，再补充到本文件。新增条目至少记录：论文标题、来源 URL、本地文件路径、下载或转换日期、影响到的模块/章节，以及借鉴方式。无法合法保存全文时，必须记录原因、可访问元数据、本地摘要和影响范围。
 
-2026-06-23：P01-P22 候选机制已整合进主 TDD。本文继续记录论文来源和设计借鉴方式；若本
-文映射语句与主 TDD 的 V1 实现边界冲突，以主 TDD 为准。
+2026-06-23：P01-P22 候选机制已整合进协议规格。本文只记录论文来源和借鉴映射；若本文映射语句与当前实现边界冲突，以 `tokenshare_v1_complete_spec.md` 和当前 code map 为准。
 
 ## 模块到论文映射
 

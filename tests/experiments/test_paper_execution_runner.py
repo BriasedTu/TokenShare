@@ -549,6 +549,7 @@ def test_exp1_pilot_hard_limits_stop_after_current_task(
 
 def test_exp1_pilot_replay_consumes_existing_evidence_without_adapter_calls(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     catalog, profile, budget = _approved_inputs()
     first_calls: list[dict] = []
@@ -569,6 +570,17 @@ def test_exp1_pilot_replay_consumes_existing_evidence_without_adapter_calls(
         / "paper_exp1_minimal_pilot_v1"
         / "per_attempt_results.jsonl"
     ).read_bytes()
+    suite_root = tmp_path / "paper_exp1_minimal_pilot_v1"
+    tree_before = {
+        path.relative_to(suite_root).as_posix(): path.read_bytes()
+        for path in suite_root.rglob("*")
+        if path.is_file()
+    }
+    monkeypatch.setattr(
+        paper_runner,
+        "_finalize_exp1_pilot_result",
+        lambda **_kwargs: pytest.fail("replay must not rewrite derived evidence"),
+    )
 
     replay = execute_exp1_pilot(
         catalog_manifest=catalog,
@@ -592,6 +604,11 @@ def test_exp1_pilot_replay_consumes_existing_evidence_without_adapter_calls(
         / "paper_exp1_minimal_pilot_v1"
         / "per_attempt_results.jsonl"
     ).read_bytes() == evidence_before
+    assert {
+        path.relative_to(suite_root).as_posix(): path.read_bytes()
+        for path in suite_root.rglob("*")
+        if path.is_file()
+    } == tree_before
 
 
 def test_exp1_pilot_replay_derives_stop_reason_from_hashed_event_evidence(

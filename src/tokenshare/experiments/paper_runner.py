@@ -63,6 +63,7 @@ from tokenshare.experiments.paper_catalog_execution_view import (
 from tokenshare.experiments.paper_unit_commitments import (
     build_case_ai_unit_bindings,
 )
+from tokenshare.runtime_paths import resolve_persisted_data_path
 from tokenshare.storage.artifacts import ArtifactStore
 
 
@@ -626,6 +627,8 @@ def execute_exp1_pilot(
             replayed_run_count=replayed_run_count,
             stop_reason=_existing_stop_reason(evidence["events"]),
         )
+        if replay_only:
+            return result
         return _finalize_exp1_pilot_result(
             result=result,
             suite_root=suite_root,
@@ -3354,7 +3357,10 @@ def _validate_execution_evidence_consistency(
         indexed_refs.add(key)
         uri = ref.get("uri")
         if isinstance(uri, str) and uri:
-            artifact_root = Path(str(runs_by_id[run_id]["artifact_root"]))
+            artifact_root = resolve_persisted_data_path(
+                str(runs_by_id[run_id]["artifact_root"]),
+                relative_to=suite_root,
+            )
             try:
                 artifact_ref = ArtifactRef.from_dict(ref)
                 verified = ArtifactStore(artifact_root).verify(artifact_ref)

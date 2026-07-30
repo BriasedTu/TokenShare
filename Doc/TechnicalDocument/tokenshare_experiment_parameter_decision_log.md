@@ -37,7 +37,7 @@
 | Factorization | 冻结 500 道唯一 root，每道运行 1 次。 |
 | Lean | 冻结 135 道唯一 root，每道运行 1 次。 |
 | worker count | 保持 10，不修改。 |
-| 模型和请求参数 | 保持 SiliconFlow `zai-org/GLM-5.2` / `glm_5_2_exp1_baseline`、`temperature=0.0`、`enable_thinking=false`，不修改。 |
+| 模型和请求参数 | 本决定当时不修改 GLM/nonthinking；该描述已由 EPD-008/009 覆盖。当前 Experiment 1–4 使用官方 DeepSeek v4-pro、thinking high、`600/300000`。 |
 | fault / ablation | 保持 `none / FULL`，不修改。 |
 | pilot | 仍只作单次、非主表运行；本决定不把 pilot 结果升级为正式结果。 |
 | 不受影响实验 | Experiment 2 的性能重复、Experiment 3 的故障/死亡重复、Experiment 4 的消融重复、Experiment 5 的端点比较重复均暂不修改。 |
@@ -145,7 +145,7 @@ Factorization 的最终因子由 deterministic verifier 判断，Lean proof 由�
 - worker backend 的真实 execution facts 没进入 normal Exp2 formal evidence；adapter 又给协议 event 注入固定 `NOW`，所以当前 formal wall-clock、critical path、peak concurrency 和 utilization 不能用于论文。
 - 正式 CLI 使用简化 `paper_formal_metrics._exp2_rows()`；更完整的 `summarize_exp2_scalability()` 没接入生产 evidence/CSV。planned/executed/unscheduled/in-flight、paired per-root speedup、两遍 min/max/relative difference 均未形成正式输出。
 
-详细文件级修复清单见唯一权威实验设计的“2026-07-24 Exp2 实现与指标接线审计”。
+当前 Exp2 要求见唯一权威实验设计的“Experiment 2”节；2026-07-24 的文件级修复过程已归档到 `Doc/archive/design-history/2026-07-24-feat-011-exp2-exp5-experiment-facility-completion-implementation-plan.md`，只供 provenance。
 
 2026-07-25 Task 3–4 已覆盖上述历史审计：正式矩阵为 1,992 roots，20-way 无早停上界为 39,840 首轮 AI units；coordinator 在每批后检查 plugin readiness，持久化 planned/dispatched/completed/unscheduled/in-flight 与 observed peak concurrency；正式 scalability CSV 使用真实 runtime timing 和逐 root worker-1 paired speedup。
 
@@ -198,7 +198,7 @@ worker-death matched comparison 另需真实执行、并按 `domain × task_slic
 - dedicated worker-death no-fault baseline 只有 manifest，没有实际执行；formal runner 把故障 run 自己的 time/token/cost 复制成 baseline fallback，overhead 会被错误压到 0。
 - 正式 recovery 指标查找不存在的 `REPLACEMENT_ACCEPTED` event name；更完整的 `summarize_exp3()` 没接入 formal CSV。真实 replacement 即使存在也可能被漏计，recovery latency、wasted tokens、completeness 和两遍汇总也未完整输出。
 
-详细文件级修复清单见唯一权威实验设计的“2026-07-24 Exp3 实现与指标接线审计”。
+当前 Exp3 要求见唯一权威实验设计的“Experiment 3”节；2026-07-24 的文件级修复过程已归档到 `Doc/archive/design-history/2026-07-24-feat-011-exp2-exp5-experiment-facility-completion-implementation-plan.md`，只供 provenance。
 
 2026-07-25 Task 5–6 当时覆盖上述历史审计：false-positive/false-negative 位于真实 parsed-candidate→submission/verifier 边界；无候选 false-negative 为 not-applicable 并按冻结 reserve 晋位；worker death 由实际 completed/planned 进度触发并产生不同 PID/attempt/lease/recovery 事实。该版本曾把 1,006 个 dedicated no-kill baseline 纳入计划；2026-07-29 起已由 EPD-012 删除，历史 evidence 不重写。
 
@@ -259,6 +259,8 @@ root-run 数量仍不等于 provider calls；正式预算必须在 runner 采用
 
 ### EPD-006：Experiment 5 独立使用 Experiment 1 的全部 hard 题
 
+覆盖关系：本决定只剩“Exp5 使用 hard-only 难度层”这一约束仍有效；“全部 211 个 hard roots”已由 EPD-010 的分层确定性半量 107 roots 覆盖，“三个 endpoint / 36 conditions”等 cohort 形状已由 EPD-011 覆盖，均不是当前运行参数。
+
 | 字段 | 决定 |
 |:---|:---|
 | 决定日期 | 2026-07-24 |
@@ -269,7 +271,7 @@ root-run 数量仍不等于 provider calls；正式预算必须在 runner 采用
 | endpoint / repeats | 三个预注册 endpoint，每个 condition 重复 3 次，不修改。 |
 | condition 组织 | 每个 endpoint/repeat 包含 1 个 Factorization hard condition 和 3 个 Lean hard topic-family conditions，共 `3 × 3 × 4 = 36` conditions。 |
 | selection 所有权 | 直接绑定 Experiment 1 formal catalog execution view、case IDs/order 和 digest；删除对 `_shared_exp2_slice()` 的依赖。Exp2 以后修改 domain/split/worker/selection 不得改变 Exp5。 |
-| 状态 | `verified`：hard-only selection、公平 controls、persisted v2 observed identity、strict formal join、endpoint comparison CSV、预算/CLI/capturing 均已实现并验证。 |
+| 状态 | `superseded`（仅 hard-only 难度约束继续有效）：题量由 EPD-010、模型与 condition 形状由 EPD-011 接管；本节的 v2 selection identity 与规模只供历史 replay。 |
 
 #### 修改理由
 
@@ -337,7 +339,7 @@ Experiment 5 的目的是比较三个 endpoint 在同一批高难任务上的完
 | 新参数 | 当时统一为 `timeout_seconds=100`。2026-07-28 起 Exp1–4 已由 EPD-009 重新预注册为 600 秒，worker-death guard 相应为 630 秒；Exp5 cohort v2 曾继续使用本决定的 100 秒，但已在 2026-07-29 被 EPD-011 的 cohort v3 `timeout_seconds=600` 取代，只保留历史 replay。 |
 | 不受影响范围 | 通用 `AIAPIExecutor`/paper adapter 30 秒缺省回退、协议 lease 300 秒、Lean payload/checker 30 秒资源限制、历史 direct Factorization 500 benchmark 60 秒。 |
 | identity / budget | provider config、pilot profile、condition、budget 和 approval digest 均随参数变化；任何 30 秒配置下的旧 digest 不得复用。 |
-| 状态 | `verified`：共享正式常量、Exp1–4/CLI/Gate C、tracked JSON 和 Exp5 fail-closed 已接入；timeout 直接影响集 `218 passed`，最终 Fast `331 passed, 1 skipped in 14.83s`。 |
+| 状态 | `superseded`：当时实现与验证证据保留；当前 Exp1–4 由 EPD-009、Exp5 v3 由 EPD-011 覆盖，100 秒不再是现行正式参数。 |
 
 #### 修改理由
 
@@ -370,7 +372,7 @@ Experiment 5 的目的是比较三个 endpoint 在同一批高难任务上的完
 | usage / cost | DeepSeek CNY 价格：cached input 0.025、uncached input 3、output 6（每 1M tokens）；cache 明细缺失按 uncached 保守估算，缺 usage 标记 `usage_missing`。本地数值只叫 `cost_estimate`；CNY/USD 分币种报告，不直接合计。 |
 | 历史兼容 | `exp1_baseline_provider_config.v1.json`、`exp1_minimal_pilot_profile.v1.json`、`model_comparison_cohort.v1.json`、旧 digest 和旧 evidence 保持只读可 replay。 |
 | 授权边界 | 本决定只授权实现与离线验证；不得调用付费 API 或启动 pilot/正式实验。 |
-| 状态 | `verified_offline`：代码、v2 tracked configs、TDD 与文档已接入；定向 `369 passed`、Fast `346 passed/1 skipped`、Full `1420 passed/1 skipped`。未调用真实 provider。 |
+| 状态 | `superseded`：v2 实现与验证证据只供历史 replay；当前 Exp1–4 请求上限由 EPD-009、Exp5 cohort 由 EPD-010/011 覆盖。 |
 
 #### identity 与版本影响
 
@@ -468,11 +470,11 @@ Experiment 5 的目的是比较三个 endpoint 在同一批高难任务上的完
 
 - [x] 实验参数决策台账。
 - [x] 唯一权威实验设计中的下一版 Exp5 题库口径。
-- [ ] Exp5 专属 selection artifact、runner 常量和 condition expansion。
-- [ ] budget / P0-full 总量 / plan-only identity / digest。
-- [ ] smoke profile 与 catalog/selection drift gates。
-- [ ] metrics/report 的样本量与 paired comparison metadata。
-- [ ] tests、progress、feature、handoff 和 code map；实现后运行定向验证。
+- [x] Exp5 专属 selection artifact、runner 常量和 condition expansion。
+- [x] budget / P0-full 总量 / plan-only identity / digest。
+- [x] smoke profile 与 catalog/selection drift gates。
+- [x] metrics/report 的样本量与 paired comparison metadata 的离线模块；production CLI/replay 完整接线仍受 EPD-011 当前 P1 门禁约束。
+- [x] tests、progress、feature、handoff 和 code map 的离线同步；真实 smoke/formal 仍未授权。
 
 ### EPD-011：Experiment 5 cohort v3 请求参数、论文输出与实施边界
 
@@ -484,12 +486,12 @@ Experiment 5 的目的是比较三个 endpoint 在同一批高难任务上的完
 | 公共请求参数 | `timeout_seconds=600`、`max_tokens=32768`、`temperature=0.0`、`top_p=1.0`、`stream=false`、`max_provider_attempts=1`、SiliconFlow 全局 in-flight=`3`。 |
 | reasoning profile | GLM-5.2、Qwen3-14B 与 MiniMax-M2.5：`enable_thinking=true, thinking_budget=32768`；Pro/DeepSeek-V3：`enable_thinking=false` 且不发送 `thinking_budget`。MiniMax 修订依据是实际请求即使显式发送 `enable_thinking=false` 仍返回 reasoning usage。 |
 | 调度 | 模型 arm 顺序执行，3 repeats 使用预注册 3×4 部分平衡顺序；condition worker capacity 与共享 SiliconFlow provider gate 均为 3。 |
-| 论文强制输出 | 审计 CSV/JSONL、overall/by-domain-topic 表、六模型对 paired comparisons、order/concurrency 与 failure taxonomy、LaTeX 表、PDF/SVG 图、数据派生结果摘要和失败附录。 |
+| 论文强制输出 | 审计 CSV/JSONL、overall/by-domain-topic 表、六个无序模型对的 paired comparisons、order/concurrency 与 failure taxonomy、LaTeX 表、PDF/SVG 图、数据派生结果摘要和失败附录。 |
 | 预算与 pricing | token plan 按 entry 计算，当前保守 ceiling=`607,518,720`；正式 config 必须冻结可审计的 SiliconFlow official pricing snapshot，缺失则正式货币预算/preflight blocked，不猜价格。 |
 | 验证边界 | 只运行 Exp5/provider/metrics/report/CLI 定向 pytest 与必要 compile/Fast；不运行全量 pytest、`init.ps1 -Full`、LeanAudit 或正式矩阵。 |
 | 排除范围 | 不新增、修复或扩展人为注入攻击、对抗性输入或安全工程；只保持既有 secret 不落盘与正常实验正确性门禁。 |
 | 真实调用边界 | 本决定批准代码与离线定向测试，不自动批准真实付费 API。四 entry capability smoke、8-root smoke 与 1,284-root 正式矩阵仍分别需要运行前明确授权。 |
-| 状态 | `verified_offline`：v3 离线设施已实现，最终 Exp5 定向集合=`464 passed in 231.56s`，本次 bootstrap/key/MiniMax 修订影响集=`227 passed`；Task 7/8/9 独立 review 均 PASS。五次最小 endpoint/key 诊断不是正式 evidence；8-root smoke 未运行，正式 preflight blocked。 |
+| 状态 | `implemented_offline_with_p1_blockers`：v3 selection/identity/budget/renderer 模块与 bootstrap 入口已实现并有历史定向证据，但 2026-07-30 全链 review 发现 canonical v3 provider-config binding、四 member artifact-backed smoke evidence、部分/失败运行分母与 missingness、六类 renderer 的 production CLI/replay 接线尚未闭合。五次最小 endpoint/key 诊断不是正式 evidence；8-root smoke 未运行，P0-full NO-GO。 |
 
 #### 待同步清单
 
@@ -497,7 +499,7 @@ Experiment 5 的目的是比较三个 endpoint 在同一批高难任务上的完
 - [x] 参数决策台账、权威设计和导航。
 - [x] transport / identity / usage。
 - [x] cohort / config / selection / policy / runner / budget。
-- [x] metrics / statistics / paper artifacts / smoke profile。
+- [ ] metrics / statistics / paper artifacts 的 production CLI/replay 全链闭合；离线模块已存在，但不能据此解除正式门禁。
 - [x] 定向测试、plan-only、progress、feature、handoff 和 code map。
 
 #### 2026-07-30 离线实施证据与运行边界
@@ -543,6 +545,7 @@ Experiment 5 的目的是比较三个 endpoint 在同一批高难任务上的完
 | supporting baseline roots | 0 |
 | P0-core 唯一实际 roots | 46,478 |
 | P0-full（历史三端点 Exp5 v2）唯一实际 roots | 48,377 |
+| P0-full（当前四模型 Exp5 v3）唯一实际 roots | 47,762 |
 | Exp3–4-only smoke direct/actual roots | 11 / 11 |
 
 condition、selection、profile、execution-plan 和 budget identity 均随本决定重新生成；execution-plan/budget digest 继续绑定具体 `output_root`。旧 digest 和 run01–run04 evidence 只读保留，不重算、不升级。

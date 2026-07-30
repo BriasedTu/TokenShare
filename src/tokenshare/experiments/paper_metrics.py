@@ -16,6 +16,7 @@ from tokenshare.experiments.paper_unit_commitments import (
     build_ai_unit_binding_from_request,
     validate_ai_unit_binding,
 )
+from tokenshare.runtime_paths import resolve_persisted_data_path
 from tokenshare.storage.artifacts import ArtifactStore
 
 
@@ -316,6 +317,7 @@ def recompute_exp1_pilot_metrics(suite_root: str | Path) -> PaperMetricsResult:
         events=events,
     )
     artifact_reasons, indexed_refs_by_run = _validate_artifacts(
+        suite_root=root,
         plan=plan,
         runs=runs,
         tasks=tasks,
@@ -857,6 +859,7 @@ def _validate_suite_event_lifecycle(
 
 def _validate_artifacts(
     *,
+    suite_root: Path,
     plan: JsonObject,
     runs: list[JsonObject],
     tasks: list[JsonObject],
@@ -895,9 +898,11 @@ def _validate_artifacts(
             continue
         try:
             artifact_ref = ArtifactRef.from_dict(ref)
-            verified = ArtifactStore(Path(str(runs_by_id[run_id]["artifact_root"]))).verify(
-                artifact_ref
+            artifact_root = resolve_persisted_data_path(
+                str(runs_by_id[run_id]["artifact_root"]),
+                relative_to=suite_root,
             )
+            verified = ArtifactStore(artifact_root).verify(artifact_ref)
         except (KeyError, TypeError, ValueError) as exc:
             raise ValueError("paper artifact integrity metadata is invalid") from exc
         if not verified:
@@ -930,7 +935,12 @@ def _validate_artifacts(
         run_id = str(attempt["run_id"])
         request_ref = attempt.get("request_ref")
         try:
-            store = ArtifactStore(Path(str(runs_by_id[run_id]["artifact_root"])))
+            store = ArtifactStore(
+                resolve_persisted_data_path(
+                    str(runs_by_id[run_id]["artifact_root"]),
+                    relative_to=suite_root,
+                )
+            )
             request_body = _read_artifact_json(store=store, ref=request_ref)
         except (
             KeyError,

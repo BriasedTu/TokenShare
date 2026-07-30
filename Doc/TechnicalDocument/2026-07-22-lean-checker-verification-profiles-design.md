@@ -8,13 +8,13 @@
 
 ## 1. 问题与目标
 
-当前 `load_paper_catalogs()` 在加载 catalog 时同步运行真实 Lean preflight。现有 catalog 一次 cache miss 会启动 30 个 shallow direct-case checker 和 570 个 lemma-graph node checker，共 600 个独立 `lake env lean` 子进程。进程内字典缓存只在当前 Python 进程有效，新的 pytest 或 CLI 进程会重新执行全部检查。
+以下是 2026-07-22 设计实施前的问题快照，不描述当前 loader 行为：当时 `load_paper_catalogs()` 在加载 catalog 时同步运行真实 Lean preflight；一次 cache miss 会启动 30 个 shallow direct-case checker 和 570 个 lemma-graph node checker，共 600 个独立 `lake env lean` 子进程。进程内字典缓存只在当时的当前 Python 进程有效，新的 pytest 或 CLI 进程会重新执行全部检查。后文第 3–7 节定义的分层验证与持久化 preflight 已实施。
 
 本机诊断证据如下：
 
 - `tests/plugins/lean_proof/test_lean_checker_direct.py` 首次真实检查约 8.8 秒，后续检查约 0.76–0.84 秒。
 - 单独测量的热启动 `lake env lean` 约 0.58 秒；预先准备 Lake 环境后直接运行 `lean.exe` 约 0.23 秒。
-- 当前快速 `init.ps1` 的 pytest 为 288 passed、1 skipped、14.33 秒；脚本总墙钟约 40 秒，额外时间主要来自四次 `conda run` 和 `compileall`，不是实际 Lean checker。
+- 当时快速 `init.ps1` 的 pytest 为 288 passed、1 skipped、14.33 秒；脚本总墙钟约 40 秒，额外时间主要来自四次 `conda run` 和 `compileall`，不是实际 Lean checker。
 - 历史 catalog、adapter 和完整验证的 7–13 分钟耗时与 600 次串行 checker 启动一致。
 
 本设计目标：
@@ -43,7 +43,7 @@
 
 ### 3.1 Fast
 
-命令保持 `.\init.ps1` / `./init.sh`。它运行 JSON/SQLite、harness、排除 `reference_repos/` 的 compileall，以及 `verification/fast-tests.txt`。Fast 不运行真实 Lean subprocess，只验证 Lean schema、environment manifest 纯逻辑和 tracked preflight manifest 的静态完整性。
+命令保持 `.\init.ps1` / `./init.sh`。它运行 JSON/SQLite、harness、仅对 `src/`、`tests/`、`verification/` 执行 compileall，以及 `verification/fast-tests.txt`。Fast 不运行真实 Lean subprocess，只验证 Lean schema、environment manifest 纯逻辑和 tracked preflight manifest 的静态完整性。
 
 ### 3.2 Full
 
@@ -166,7 +166,7 @@ catalog batching 暂不进入本 feature。分批编译会改变 per-entry failu
 新增 `verification/run_verification.py`，由 `init.ps1` 和 `init.sh` 通过一次 `conda run -n <env> python` 调用。它负责：
 
 1. JSON/SQLite 可用性和 harness 文件检查；
-2. 调用当前解释器完成排除 `reference_repos/` 的 compileall；
+2. 调用当前解释器仅对 `src/`、`tests/`、`verification/` 完成 compileall；
 3. 根据 fast/full 选择 pytest 参数；
 4. Full 固定运行真实 canary；根据 `--lean-audit` 调用增量或 `--force-all` catalog audit；
 5. 保留现有清晰的退出码和摘要输出。
@@ -212,6 +212,6 @@ PowerShell/Bash 只负责参数解析、环境变量和调用，不重复实现�
 - 600-entry `--force-all` 审计由旧实现约 441.7 秒降至 188.8 秒，600/600 accepted；tracked manifest 摘要为 `sha256:3d7d6888dacd15e4467f5532697c94158282c4d1986827e513fb9d1664eadbf2`。
 - Fast 首次改造后实测为 290 passed、1 skipped，pytest 11.93 秒、脚本总墙钟约 28.5 秒；最终冷态复验同为 290 passed、1 skipped，pytest 25.30 秒、runner 总墙钟 46.1 秒，说明公共 compile/test 墙钟仍受机器冷暖状态影响。两次都不启动 600-entry audit。
 - 最终固定 Lean canary bundle 为 11 passed，pytest 47.15 秒，runner 总墙钟 61.6 秒；它额外覆盖 timeout、`admit` 和 checker injection/rejection 契约，耗时仍与 catalog entry 数无关。
-- 当前仓库 Full 的分层实现和 Lean 定向测试已验证；全仓 Full 仍被本次改造范围外的 3 个既有 paper 实验断言漂移阻塞：两个 Gate C dispatcher 断言未接受现有 `ablation_mode` 参数，一个 Experiment 5 plan-only 仍期望旧 `run_count=270` 而当前规划为 4635。不得为使本设计“变绿”而篡改这些不相关行为；应由对应迁移 Task 修复后再取得最终 Full 证据。
+- 2026-07-22 当时 Full 曾被 3 个 paper 断言漂移阻塞；这些问题随后已由对应实验迁移修复，不能继续视为当前 blocker。本文只规定 Lean 分层验证方法；当前 Full 结果以 `progress.md` 的最新实际运行证据为准。
 
 因此，日常开发使用 Fast；普通 feature 完成使用 Full；Lean 相关迁移 Task 额外使用固定 canary 和增量 audit；正式发布/共享 Lean 输入变化使用一次 force-all audit。这个分层不减少 bug 检查面，而是用静态证据、spy 契约、小型真实 canary 和按内容失效的全量证据分别覆盖不同风险。

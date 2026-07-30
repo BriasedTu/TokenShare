@@ -14,6 +14,41 @@ def _read_native_log(path: Path) -> str:
     return raw.decode("utf-8-sig")
 
 
+def test_runtime_path_helper_preserves_absolute_and_resolves_relative(
+    tmp_path: Path,
+) -> None:
+    helper = REPO_ROOT / "local" / "invoke_native_process_with_logs.ps1"
+    absolute = (tmp_path / "absolute-output").resolve()
+    relative = Path("relative-output")
+    quote = lambda value: str(value).replace("'", "''")
+    command = (
+        f". '{quote(helper)}'; "
+        f"$absolute = Resolve-TokenShareRuntimePath -Path '{quote(absolute)}'; "
+        f"$relative = Resolve-TokenShareRuntimePath -Path '{quote(relative)}'; "
+        "@{absolute=$absolute;relative=$relative} | ConvertTo-Json"
+    )
+
+    result = subprocess.run(
+        ["powershell.exe", "-NoProfile", "-Command", command],
+        cwd=REPO_ROOT,
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+    body = json.loads(result.stdout)
+
+    assert Path(body["absolute"]) == absolute
+    assert Path(body["relative"]) == (REPO_ROOT / relative).resolve()
+    for launcher_name in (
+        "run_exp1_exp4_v3_smoke.ps1",
+        "run_exp3_exp4_v3_smoke.ps1",
+    ):
+        source = (REPO_ROOT / "local" / launcher_name).read_text(encoding="utf-8-sig")
+        assert "$OutputRoot = Resolve-TokenShareRuntimePath -Path $OutputRoot" in source
+        assert "$SupervisorRoot = Resolve-TokenShareRuntimePath -Path $SupervisorRoot" in source
+        assert "Join-Path (Get-Location) $OutputRoot" not in source
+
+
 def test_native_process_helper_captures_both_streams_and_preserves_exit_code(
     tmp_path: Path,
 ) -> None:

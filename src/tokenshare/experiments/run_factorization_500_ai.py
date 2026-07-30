@@ -13,6 +13,7 @@ from tokenshare.executors.ai_api_local_config import load_local_ai_api_config
 from tokenshare.experiments.factorization_500_ai import DEFAULT_MAX_TOKENS
 from tokenshare.experiments.factorization_500_ai import DEFAULT_TIMEOUT_SECONDS
 from tokenshare.experiments.factorization_500_ai import run_factorization_500_ai_suite
+from tokenshare.runtime_paths import resolve_experiment_output_root
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -21,7 +22,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     parser.add_argument(
         "--output-root",
-        default="outputs/experiments/factorization_500_ai",
+        default=None,
         help="Directory for benchmark outputs.",
     )
     parser.add_argument("--count", type=int, default=500, help="Number of inputs.")
@@ -76,7 +77,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         raise SystemExit("--real-transport requires a local config with at least one enabled API key")
 
     report = run_factorization_500_ai_suite(
-        output_root=Path(args.output_root),
+        output_root=resolve_experiment_output_root(
+            args.output_root,
+            "factorization_500_ai",
+        ),
         count=args.count,
         seed=args.seed,
         ai_api_config=config if _usable_ai_config(config) else None,

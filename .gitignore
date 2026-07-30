@@ -1,5 +1,7 @@
 __pycache__/
 *.py[cod]
+/.pytest_cache/
+/pytest*/
 
 fixtures/lean_proof_project/.lake/
 local/*.local.json

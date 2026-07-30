@@ -12,6 +12,7 @@ from tokenshare.executors.ai_api_local_config import DEFAULT_LOCAL_AI_API_CONFIG
 from tokenshare.executors.ai_api_local_config import load_local_ai_api_config
 from tokenshare.experiments.ai_profile import run_ai_profile_suite
 from tokenshare.experiments.runner import run_phase8_default_suite
+from tokenshare.runtime_paths import resolve_experiment_output_root
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -20,7 +21,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     parser.add_argument(
         "--output-root",
-        default="outputs/experiments",
+        default=None,
         help="Directory for suite outputs, reports, copied event logs, and artifacts.",
     )
     parser.add_argument("--seed", type=int, default=1, help="Deterministic suite seed.")
@@ -46,7 +47,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         loaded_config = load_local_ai_api_config(config_path)
         loaded_config_digest = loaded_config.config_digest
 
-    output_root = Path(args.output_root)
+    output_root = resolve_experiment_output_root(args.output_root)
     suite_report = run_phase8_default_suite(output_root=output_root, seed=args.seed)
     if args.run_ai_profile:
         ai_profile_report = run_ai_profile_suite(

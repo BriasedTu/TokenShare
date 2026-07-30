@@ -8,16 +8,16 @@ TokenShare 是一个早期本地研究原型，目标是验证一种协议：把
 
 1. 确认当前工作目录是仓库根目录。
 2. 完整阅读本文件。
-3. 阅读导引：
+3. 阅读 `feature_list.json`，确认唯一 `active_feature` 与 `active_focus`；一次只实施一个 focus，除非用户明确要求跨范围同步。
+4. 阅读 `progress.md` 和 `session-handoff.md`，确认当前状态和未解决决策。
+5. 阅读导引：
    - `Doc/agent-navigation.md`（agent 导航、模块路由和外部参考资料落库规则）
    - 如果本轮涉及实验设计、实验 runner、论文实验表格、failure/ablation/generalization 实验，阅读 `Doc/TechnicalDocument/tokenshare_latest_real_plugin_experiment_design.md`
-4. 运行基线验证：
+6. 运行基线验证：
    - PowerShell 默认快速档：`.\init.ps1`
    - Bash/Git Bash/WSL 默认快速档：`./init.sh`
    - feature 完成、提交/合并或发布实验结果前，运行完整档：`.\init.ps1 -Full` 或 `./init.sh --full`
    - 涉及 Lean catalog/checker/toolchain/fixture helper 或发布 Lean 论文结果时，按 `2026-07-22-lean-checker-verification-profiles-design.md` 追加增量 `-LeanAudit` / `--lean-audit`；共享 checker/toolchain/helper 变化或正式发布才使用 force-all
-5. 阅读 `feature_list.json`，确认当前 active track。若 `active_features` 同时列出 Phase 6 Lean 插件和 Phase 8 实验基础设施，本轮仍只选择其中一个 track 实施，除非用户明确要求做跨 track 状态同步。
-6. 阅读 `progress.md` 和 `session-handoff.md`，确认当前状态和未解决决策。
 7. 如果需要判断代码应该放在哪个模块、哪些外部参考资料可借鉴，先看 `Doc/agent-navigation.md`。
 8. 如果本轮需要联网查找资料，必须按 `Doc/agent-navigation.md` 的“外部参考资料落库与使用规则”执行本地落库和文档同步。
 
@@ -111,7 +111,7 @@ Lean 增量审计与显式全量审计：
 ./init.sh --full --lean-audit --force-all-lean-audit
 ```
 
-`init.ps1` 和 `init.sh` 默认只执行一次 `conda run -n tokenshare python verification/run_verification.py`；可通过 `TOKENSHARE_CONDA_ENV` 临时覆盖环境名。两个档位都会运行 Python JSON/SQLite、harness 文件检查和排除 `reference_repos/` 的全仓 `compileall`。默认快速档随后执行 `verification/fast-tests.txt` 中的无网络 smoke/regression tests；完整档执行 `pytest tests`，但不会默认重跑全部 600 条 Lean catalog entry。改动相关的定向测试仍需单独运行。LeanAudit 默认内容寻址增量重检，只有共享 Lean 输入变化、正式发布或显式 force-all 才重检全部 entry；普通 catalog load 只验证 tracked manifest 并在 stale 时 fail closed。
+`init.ps1` 和 `init.sh` 默认只执行一次 `conda run -n tokenshare python verification/run_verification.py`；可通过 `TOKENSHARE_CONDA_ENV` 临时覆盖环境名。两个档位都会运行 Python JSON/SQLite、harness 文件检查，并只对 `src/`、`tests/`、`verification/` 执行 `compileall`。默认快速档随后执行 `verification/fast-tests.txt` 中的无网络 smoke/regression tests；完整档执行 `pytest tests`，但不会默认重跑全部 600 条 Lean catalog entry。改动相关的定向测试仍需单独运行。LeanAudit 默认内容寻址增量重检，只有共享 Lean 输入变化、正式发布或显式 force-all 才重检全部 entry；普通 catalog load 只验证 tracked manifest 并在 stale 时 fail closed。
 
 ## 结束会话（End of Session / Before ending）
 

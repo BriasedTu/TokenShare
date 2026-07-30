@@ -11,6 +11,7 @@ from typing import Sequence
 from tokenshare.executors.ai_api_local_config import DEFAULT_LOCAL_AI_API_CONFIG_PATH
 from tokenshare.executors.ai_api_local_config import load_local_ai_api_config
 from tokenshare.experiments.lean_ai_benchmark import run_lean_ai_benchmark_suite
+from tokenshare.runtime_paths import resolve_experiment_output_root
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -19,7 +20,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     parser.add_argument(
         "--output-root",
-        default="outputs/experiments/lean_ai_50",
+        default=None,
         help="Directory for Lean AI benchmark outputs.",
     )
     parser.add_argument("--count", type=int, default=50, help="Number of tasks to run.")
@@ -44,7 +45,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         raise SystemExit("--real-transport requires a local config with at least one enabled API key")
 
     report = run_lean_ai_benchmark_suite(
-        output_root=Path(args.output_root),
+        output_root=resolve_experiment_output_root(args.output_root, "lean_ai_50"),
         count=args.count,
         seed=args.seed,
         ai_api_config=config if _usable_ai_config(config) else None,

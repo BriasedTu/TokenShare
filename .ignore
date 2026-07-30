@@ -1,0 +1,7 @@
+# 默认搜索/索引只覆盖当前源码与当前文档；历史材料按需显式读取。
+Doc/archive/
+Doc/TechnicalDocument/phase-1-6-archive/
+reference_repos/
+pytest*/
+.pytest_cache/
+local/cache/

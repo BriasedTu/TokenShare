@@ -4,7 +4,7 @@
 
 状态：Phase 1-6 收敛后的默认说明文档。本文接管旧 Phase 1-6 字段规格、TDD 讨论稿、scope change 和阶段说明的默认阅读入口。旧文档已移动到 `Doc/TechnicalDocument/phase-1-6-archive/`，只作为历史材料保留，不作为默认索引或新实现权威。
 
-本文只覆盖 Phase 1-6 已实现的协议内核、存储、插件和执行器契约。Phase 7 AI API executor、Phase 8 experiment infrastructure 和当前 `feat-011` Paper Real AI Experiments 仍使用各自现有文档，尤其论文实验设计以 `Doc/TechnicalDocument/tokenshare_latest_real_plugin_experiment_design.md` 为唯一权威。
+本文只覆盖 Phase 1-6 已实现的协议内核、存储、插件和执行器契约。当前代码归属统一由 `tokenshare_v1_code_map.md` 维护；Phase 7 AI API executor、Phase 8 experiment infrastructure 和 `feat-011` 的现行实验语义统一由 `tokenshare_latest_real_plugin_experiment_design.md` 负责。历史子系统 code map 已移入 `Doc/archive/code-maps/`，不再作为当前事实源。
 
 ## 1. 项目在做什么
 

@@ -1570,6 +1570,85 @@ def test_exp1_exp4_smoke_identity_preflight_changes_only_run_instance_identity_f
     ]["budget_digest"]
 
 
+def test_smoke_explicit_output_root_ignores_invalid_default_data_root(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    output_root = tmp_path / "explicit-identity"
+    monkeypatch.setenv(
+        "TOKENSHARE_DATA_ROOT",
+        str(Path(__file__).resolve().parents[2] / "invalid-data-root"),
+    )
+
+    exit_code = main(
+        [
+            "--output-root",
+            str(output_root),
+            "--smoke-profile",
+            "benchmarks/paper/paper_smoke_exp3_exp4_profile.v1.json",
+            "--ai-api-config",
+            "benchmarks/paper/exp1_baseline_provider_config.v3.json",
+            "--unlimited-budget",
+            "--smoke-identity-only",
+        ]
+    )
+
+    assert exit_code == 0
+    assert not output_root.exists()
+    assert json.loads(capsys.readouterr().out)["run_instance_identity"][
+        "output_root"
+    ] == output_root.resolve().as_posix()
+
+
+def test_smoke_rejects_configured_formal_root_without_creating_it(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    data_root = (tmp_path / "TokenShareData").resolve()
+    formal_root = data_root / "outputs" / "experiments" / "paper_v1"
+    monkeypatch.setenv("TOKENSHARE_DATA_ROOT", str(data_root))
+
+    exit_code = main(
+        [
+            "--output-root",
+            str(formal_root),
+            "--smoke-profile",
+            "benchmarks/paper/paper_smoke_exp3_exp4_profile.v1.json",
+            "--ai-api-config",
+            "benchmarks/paper/exp1_baseline_provider_config.v3.json",
+            "--unlimited-budget",
+            "--plan-only",
+        ]
+    )
+
+    assert exit_code == 3
+    assert not formal_root.exists()
+    result = json.loads(capsys.readouterr().out)
+    assert result["status"] == "blocked"
+    assert result["failure_kind"] == "invalid_smoke_output_root"
+    assert result["provider_calls_made"] == 0
+
+
+def test_paper_cli_requires_explicit_output_root_without_consuming_default(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    data_root = (tmp_path / "TokenShareData").resolve()
+    monkeypatch.setenv("TOKENSHARE_DATA_ROOT", str(data_root))
+
+    exit_code = main(["--experiments", "exp1", "--plan-only"])
+
+    assert exit_code == 3
+    assert not data_root.exists()
+    result = json.loads(capsys.readouterr().out)
+    assert result["status"] == "blocked"
+    assert result["failure_kind"] == "missing_output_root"
+    assert result["provider_calls_made"] == 0
+
+
 def test_exp3_exp4_smoke_identity_has_11_direct_roots_and_no_baseline_execution(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

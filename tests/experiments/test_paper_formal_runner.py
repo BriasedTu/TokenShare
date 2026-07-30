@@ -3880,6 +3880,22 @@ def test_formal_runner_smoke_filter_executes_one_canonical_root_and_freezes_flag
         ),
     )
     from tokenshare.experiments.paper_smoke import replay_paper_smoke_suite
+    from tokenshare.experiments.paper_formal_evidence import FormalEvidenceStore
+
+    generate_paper_smoke_report(output_root=tmp_path, secret_values=())
+    FormalEvidenceStore(tmp_path)._refresh_evidence_manifest()
+    tree_before = {
+        path.relative_to(tmp_path).as_posix(): path.read_bytes()
+        for path in tmp_path.rglob("*")
+        if path.is_file()
+    }
+    import tokenshare.experiments.paper_smoke_report as smoke_report_module
+
+    monkeypatch.setattr(
+        smoke_report_module,
+        "generate_paper_smoke_report",
+        lambda **_kwargs: pytest.fail("smoke replay must be read-only"),
+    )
 
     replayed = replay_paper_smoke_suite(output_root=tmp_path)
     summary = json.loads(
@@ -3891,3 +3907,8 @@ def test_formal_runner_smoke_filter_executes_one_canonical_root_and_freezes_flag
     assert summary["cost_estimate"] == 0.0
     assert summary["provider_actual_billing"] is None
     assert summary["provider_actual_billing_available"] is False
+    assert {
+        path.relative_to(tmp_path).as_posix(): path.read_bytes()
+        for path in tmp_path.rglob("*")
+        if path.is_file()
+    } == tree_before

@@ -757,14 +757,9 @@ def replay_paper_smoke_suite(
         or suite.get("execution_scope") != "smoke_suite"
     ):
         raise ValueError("replay input is not smoke evidence")
-    from tokenshare.experiments.paper_formal_evidence import FormalEvidenceStore
     from tokenshare.experiments.paper_formal_runner import replay_paper_formal_suite
-    from tokenshare.experiments.paper_smoke_report import generate_paper_smoke_report
 
-    result = replay_paper_formal_suite(output_root=root)
-    generate_paper_smoke_report(output_root=root, secret_values=())
-    FormalEvidenceStore(root)._refresh_evidence_manifest()
-    return result
+    return replay_paper_formal_suite(output_root=root)
 
 
 def _load_item(value: Any, *, strict_v3: bool = False) -> PaperSmokeItem:
