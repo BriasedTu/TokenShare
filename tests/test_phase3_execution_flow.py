@@ -334,11 +334,12 @@ def test_protocol_engine_rejects_submitted_attempt_on_parser_failure(tmp_path) -
 
 def test_protocol_engine_rejects_retry_decision_from_different_retry_budget(tmp_path) -> None:
     ledger = EventLedger(tmp_path / "events" / "task_demo.jsonl")
-    engine = ProtocolEngine(event_ledger=ledger, protocol_config=make_config())
+    config = make_config()
+    engine = ProtocolEngine(event_ledger=ledger, protocol_config=config)
     foreign_decision = evaluate_retry(
         trigger="executor_error",
-        retry_count=3,
-        max_retries=4,
+        retry_count=config.max_retries + 1,
+        max_retries=config.max_retries + 1,
     )
     attempt = _scheduled_attempt()
 
@@ -358,7 +359,8 @@ def test_protocol_engine_rejects_retry_decision_from_different_retry_budget(tmp_
 
 def test_protocol_engine_rejects_mismatched_recovery_lease_without_writes(tmp_path) -> None:
     ledger = EventLedger(tmp_path / "events" / "task_demo.jsonl")
-    engine = ProtocolEngine(event_ledger=ledger, protocol_config=make_config())
+    config = make_config()
+    engine = ProtocolEngine(event_ledger=ledger, protocol_config=config)
     attempt = _scheduled_attempt()
 
     with pytest.raises(ValueError, match="recovery lease does not match attempt"):
@@ -377,11 +379,16 @@ def test_protocol_engine_rejects_mismatched_recovery_lease_without_writes(tmp_pa
 
 def test_protocol_engine_records_retry_limit_as_failed_task(tmp_path) -> None:
     ledger = EventLedger(tmp_path / "events" / "task_demo.jsonl")
-    engine = ProtocolEngine(event_ledger=ledger, protocol_config=make_config())
+    config = make_config()
+    engine = ProtocolEngine(event_ledger=ledger, protocol_config=config)
 
     attempt = _scheduled_attempt()
     result = engine.record_recovery_decision(
-        decision=evaluate_retry(trigger="executor_error", retry_count=3, max_retries=3),
+        decision=evaluate_retry(
+            trigger="executor_error",
+            retry_count=config.max_retries + 1,
+            max_retries=config.max_retries,
+        ),
         attempt=attempt,
         lease=_active_lease(attempt=attempt),
         task_unit=make_unit(state=TaskState.PROCESSING),

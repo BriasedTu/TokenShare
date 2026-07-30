@@ -1,0 +1,104 @@
+{
+  "schema_version": "tokenshare.paper_exp1_pilot_profile.v1",
+  "suite_id": "paper_exp1_minimal_pilot_v3",
+  "experiment_id": "exp1_real_ai_feasibility",
+  "domains": [
+    "factorization",
+    "lean_proof"
+  ],
+  "worker_count": 10,
+  "repeat_count": 1,
+  "seed_family": [
+    1
+  ],
+  "baseline_provider": {
+    "baseline_id": "exp1_deepseek_v4_pro_official_high_v3",
+    "provider_config_path": "exp1_baseline_provider_config.v3.json",
+    "provider_config_id": "exp1_baseline_deepseek",
+    "selected_entry_id": "deepseek_v4_pro_exp1_baseline",
+    "provider_family": "deepseek",
+    "provider_model_id": "deepseek-v4-pro",
+    "reasoning_profile_id": "high"
+  },
+  "request_policy": {
+    "max_provider_attempts_per_ai_unit": 1,
+    "stream": false,
+    "thinking": {
+      "type": "enabled"
+    },
+    "reasoning_effort": "high",
+    "domain_limits": {
+      "factorization": {
+        "timeout_seconds": 600,
+        "prompt_token_upper_bound": 2048,
+        "max_tokens": 300000
+      },
+      "lean_proof": {
+        "timeout_seconds": 600,
+        "prompt_token_upper_bound": 4096,
+        "max_tokens": 300000
+      }
+    }
+  },
+  "disk_policy": {
+    "base_suite_bytes": 1048576,
+    "per_root_bytes": 262144,
+    "per_ai_unit_bytes": 1048576
+  },
+  "catalog_slice": [
+    {
+      "case_id": "factor_easy_01",
+      "domain": "factorization",
+      "paper_difficulty": "easy",
+      "execution_policy": "execute"
+    },
+    {
+      "case_id": "factor_medium_01",
+      "domain": "factorization",
+      "paper_difficulty": "medium",
+      "execution_policy": "execute"
+    },
+    {
+      "case_id": "factor_hard_01",
+      "domain": "factorization",
+      "paper_difficulty": "hard",
+      "execution_policy": "execute"
+    },
+    {
+      "case_id": "lean_easy_01",
+      "domain": "lean_proof",
+      "paper_difficulty": "simple",
+      "topic_family": "pure_logic",
+      "execution_policy": "execute"
+    },
+    {
+      "case_id": "lean_v2_medium_lemma_dag_01",
+      "domain": "lean_proof",
+      "paper_difficulty": "medium_lemma_dag",
+      "topic_family": "pure_logic",
+      "execution_policy": "execute"
+    },
+    {
+      "case_id": "lean_v2_medium_function_set_dx_subset_chain_01",
+      "domain": "lean_proof",
+      "paper_difficulty": "medium_lemma_dag",
+      "topic_family": "function_set",
+      "execution_policy": "execute"
+    },
+    {
+      "case_id": "lean_v2_medium_induction_nat_predicate_chain_01",
+      "domain": "lean_proof",
+      "paper_difficulty": "medium_lemma_dag",
+      "topic_family": "induction",
+      "execution_policy": "execute"
+    },
+    {
+      "case_id": "lean_v2_hard_frontier_01",
+      "domain": "lean_proof",
+      "paper_difficulty": "hard_frontier",
+      "topic_family": "pure_logic",
+      "execution_policy": "structured_blocked",
+      "blocked_reason": "missing_oracle_proof_package"
+    }
+  ]
+}

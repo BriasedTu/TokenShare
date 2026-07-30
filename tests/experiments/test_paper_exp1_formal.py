@@ -74,11 +74,11 @@ def test_exp1_formal_expands_exact_conditions_with_frozen_baseline_controls() ->
         assert condition.fault_rate == 0.0
         assert condition.ablation_mode == "FULL"
         assert condition.model_policy == "fixed_entry"
-        assert condition.provider_config_id == "exp1_baseline_siliconflow"
-        assert condition.model_entry_id == "glm_5_2_exp1_baseline"
-        assert condition.provider_family == "siliconflow"
-        assert condition.provider_model_id == "zai-org/GLM-5.2"
-        assert condition.reasoning_profile_id == "default"
+        assert condition.provider_config_id == "exp1_baseline_deepseek"
+        assert condition.model_entry_id == "deepseek_v4_pro_exp1_baseline"
+        assert condition.provider_family == "deepseek"
+        assert condition.provider_model_id == "deepseek-v4-pro"
+        assert condition.reasoning_profile_id == "high"
         assert condition.source_provider_config_digest == SOURCE_CONFIG_DIGEST
         assert condition.model_endpoint_identity_digest == ENDPOINT_DIGEST
         assert condition.catalog_digest == CATALOG_DIGEST
@@ -93,7 +93,7 @@ def test_exp1_formal_accepts_shared_endpoint_identity_and_effective_controls() -
 
     assert len(conditions) == 12
     assert {condition.model_entry_id for condition in conditions} == {
-        "glm_5_2_exp1_baseline"
+        "deepseek_v4_pro_exp1_baseline"
     }
     assert {condition.model_endpoint_identity_digest for condition in conditions} == {
         identity.model_endpoint_identity_digest
@@ -105,7 +105,7 @@ def test_exp1_formal_accepts_normal_validated_endpoint_binding() -> None:
     source_config = _baseline_source_config()
     binding = validate_fixed_entry_config_identity(
         expected_identity=identity,
-        provider_config_id="exp1_baseline_siliconflow",
+        provider_config_id="exp1_baseline_deepseek",
         source_config=source_config,
     )
 
@@ -113,7 +113,7 @@ def test_exp1_formal_accepts_normal_validated_endpoint_binding() -> None:
 
     assert len(conditions) == 12
     assert {condition.reasoning_profile_id for condition in conditions} == {
-        "default"
+        "high"
     }
 
 
@@ -337,7 +337,7 @@ def test_exp1_formal_rejects_complete_baseline_identity_drift(
 ) -> None:
     module = Exp1FormalModule()
 
-    with pytest.raises(ValueError, match="GLM-5.2 baseline"):
+    with pytest.raises(ValueError, match="DeepSeek-V4-Pro baseline"):
         module.expand_conditions(_context(binding={**_baseline_binding(), **binding_drift}))
 
 
@@ -353,7 +353,7 @@ def test_exp1_formal_rejects_request_control_drift(
 ) -> None:
     module = Exp1FormalModule()
 
-    with pytest.raises(ValueError, match="GLM-5.2 baseline"):
+    with pytest.raises(ValueError, match="DeepSeek-V4-Pro baseline"):
         module.expand_conditions(_context(request_limits=request_limits))
 
 
@@ -364,7 +364,7 @@ def test_exp1_formal_rejects_binding_request_control_drift_even_when_context_lim
         "request_controls": {"temperature": 0.9, "enable_thinking": True},
     }
 
-    with pytest.raises(ValueError, match="GLM-5.2 baseline"):
+    with pytest.raises(ValueError, match="DeepSeek-V4-Pro baseline"):
         module.expand_conditions(
             _context(
                 binding=binding,
@@ -747,12 +747,12 @@ def _context(
 
 def _baseline_binding() -> dict[str, Any]:
     return {
-        "provider_config_id": "exp1_baseline_siliconflow",
-        "selected_entry_id": "glm_5_2_exp1_baseline",
-        "model_entry_id": "glm_5_2_exp1_baseline",
-        "provider_family": "siliconflow",
-        "provider_model_id": "zai-org/GLM-5.2",
-        "reasoning_profile_id": "default",
+        "provider_config_id": "exp1_baseline_deepseek",
+        "selected_entry_id": "deepseek_v4_pro_exp1_baseline",
+        "model_entry_id": "deepseek_v4_pro_exp1_baseline",
+        "provider_family": "deepseek",
+        "provider_model_id": "deepseek-v4-pro",
+        "reasoning_profile_id": "high",
         "source_provider_config_digest": SOURCE_CONFIG_DIGEST,
         "model_endpoint_identity_digest": ENDPOINT_DIGEST,
         "request_controls": _baseline_request_controls(),
@@ -761,27 +761,26 @@ def _baseline_binding() -> dict[str, Any]:
 
 def _baseline_request_controls() -> dict[str, Any]:
     return {
-        "max_tokens": 1024,
-        "timeout_seconds": 100,
+        "max_tokens": 300_000,
+        "timeout_seconds": 600,
         "max_provider_attempts": 1,
-        "temperature": 0.0,
-        "top_p": 1.0,
         "stream": False,
-        "enable_thinking": False,
+        "thinking": {"type": "enabled"},
+        "reasoning_effort": "high",
     }
 
 
 def _shared_baseline_identity() -> PaperModelEndpointIdentity:
     source_config = _baseline_source_config()
     return build_model_endpoint_identity(
-        model_cohort_id="exp1_to_exp4_glm_baseline",
+        model_cohort_id="exp1_to_exp4_deepseek_baseline",
         model_cohort_digest="sha256:" + "8" * 64,
-        cohort_member_id="exp1_glm_5_2_siliconflow_default_v1",
-        provider_config_id="exp1_baseline_siliconflow",
-        selected_entry_id="glm_5_2_exp1_baseline",
-        expected_provider_family="siliconflow",
-        expected_provider_model_id="zai-org/GLM-5.2",
-        expected_reasoning_profile_id="default",
+        cohort_member_id="exp1_deepseek_v4_pro_official_high_v2",
+        provider_config_id="exp1_baseline_deepseek",
+        selected_entry_id="deepseek_v4_pro_exp1_baseline",
+        expected_provider_family="deepseek",
+        expected_provider_model_id="deepseek-v4-pro",
+        expected_reasoning_profile_id="high",
         source_config=source_config,
     )
 
@@ -791,7 +790,7 @@ def _baseline_source_config():
         Path(__file__).resolve().parents[2]
         / "benchmarks"
         / "paper"
-        / "exp1_baseline_provider_config.v1.json"
+        / "exp1_baseline_provider_config.v3.json"
     )
     return load_ai_api_config(json.loads(config_path.read_text(encoding="utf-8")))
 

@@ -161,7 +161,7 @@ def test_exp1_pilot_dispatches_both_domains_and_persists_evidence(
     ]
     assert all(call["real_transport"] is True for call in calls)
     assert all(call["entry_id"] == "glm_5_2_exp1_baseline" for call in calls)
-    assert {call["timeout_seconds"] for call in calls} == {30}
+    assert {call["timeout_seconds"] for call in calls} == {100}
     assert [call["max_tokens"] for call in calls] == [
         512,
         512,

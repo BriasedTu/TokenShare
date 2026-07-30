@@ -313,6 +313,19 @@ def artifact_body_commitment(
     }
 
 
+def _commitment_provider_family(
+    executor_requirements: JsonObject | None,
+) -> str:
+    """让离线 unit commitment 使用已冻结的 provider identity。"""
+
+    if executor_requirements is None:
+        return "siliconflow"
+    provider_family = executor_requirements.get("provider_family")
+    if not isinstance(provider_family, str) or not provider_family:
+        raise ValueError("executor requirements require provider_family")
+    return provider_family
+
+
 def _factorization_case_bindings(
     case: JsonObject,
     *,
@@ -325,7 +338,7 @@ def _factorization_case_bindings(
         prefix="tokenshare_factorization_runtime_plan_"
     ) as runtime_root:
         runtime_adapter = FactorizationRuntimeAdapter(
-            provider_family="siliconflow",
+            provider_family=_commitment_provider_family(executor_requirements),
             seed=seed,
             executor_requirements=executor_requirements,
         )
@@ -395,7 +408,7 @@ def _lean_simple_case_bindings(
 
         store = ArtifactStore(Path(runtime_root))
         runtime_adapter = LeanRuntimeAdapter(
-            provider_family="siliconflow",
+            provider_family=_commitment_provider_family(executor_requirements),
             environment_manifest=default_lean_paper_environment_manifest(),
             seed=seed,
             created_at=NOW,
@@ -465,7 +478,7 @@ def _lean_lemma_graph_case_bindings(
 
         store = ArtifactStore(Path(runtime_root))
         runtime_adapter = LeanRuntimeAdapter(
-            provider_family="siliconflow",
+            provider_family=_commitment_provider_family(executor_requirements),
             environment_manifest=default_lean_paper_environment_manifest(),
             seed=seed,
             created_at=NOW,

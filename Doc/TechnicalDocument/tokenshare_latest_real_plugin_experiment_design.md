@@ -24,15 +24,15 @@
 
 2.  Experiment 2 P0-core scaling 只使用 Factorization hard 的全部 166 roots，Lean 不进入扩展性实验。Factorization 插件按 Exp2 冻结的 `factorization.exp2_contiguous_20way.v1` profile，把每个 root 的完整候选因子域确定性切成 20 个连续 range children；强制 worker levels 为 `1, 3, 7, 10, 30, 50`，每档对相同 166 roots 运行 2 遍，共 1,992 个 root-runs 和 39,840 个 planned AI units。worker 30/50 都受单 root 20 个 range children 限制，用于观测扩展性上限。保留 verifier-accepted factor witness 的自然早停，不取消已发出的同批请求；报告必须同时给出延迟、实际 provider calls、已执行/未调度 AI units、token/cost 和利用率。决策 provenance 见 EPD-003。
 
-3.  Experiment 3 的 rate-fault 矩阵只包含 5 类非死亡故障：`false_positive`、`false_negative`、`no_return`、`late_submission`、`executor_error`。Factorization rate-fault condition 使用全部 500 roots；`worker_death` 永远单独进入 worker-death 矩阵，Factorization worker-death condition 按 difficulty 使用 `167/167/166`，每组 death-count/kill-position/repeat 的三档并集为全部 500 roots。worker-death P0 固定 `worker_count=10`、`dead_worker_count ∈ {1,3}` 和 25% / 50% / 75% 三个 kill positions。按 EPD-004，每个 rate-fault 和 worker-death condition 均重复 2 次：rate-fault 共 35,120 root-runs，worker-death 共 6,036，Experiment 3 合计 41,156。
+3.  Experiment 3 的 rate-fault 矩阵只包含 5 类非死亡故障：`false_positive`、`false_negative`、`no_return`、`late_submission`、`executor_error`。Factorization rate-fault condition 使用全部 500 roots；`worker_death` 永远单独进入 worker-death 矩阵，Factorization worker-death condition 按 difficulty 使用 `167/167/166`，每组 death-count/kill-position/repeat 的三档并集为全部 500 roots。worker-death P0 固定 `worker_count=10`、`dead_worker_count ∈ {1,3}` 和 25% / 50% / 75% 三个 kill positions。每个实际 fault condition 均重复 2 次；Factorization rate-fault 只调度 `1/5/10/25/50/100%`，Lean 只调度 `10/50/100%`，0% 行由正式 Exp1 同 `case_id` 的持久化 evidence 投影且不形成 Exp3 root/provider call。因此 rate-fault 共 30,090 root-runs，worker-death 共 6,036，Experiment 3 合计 36,126。
 
 4.  Experiment 4 P0-core ablation 的 Factorization 每个 difficulty 使用全部 `167/167/166` roots，Lean 每档使用固定 5-task 2/2/1 slice；按 EPD-005 删除 `NO_SLOT_INTEGRITY` 后，固定为 `FULL + 4` 个消融模式和 3 次 repeat，共 7,725 个 root-runs。旧的 3-task/5-task Factorization 子样本不再作为正式 P0 口径。
 
-5.  Experiment 5 改为预注册的三模型 model-provider endpoint comparison：SiliconFlow `zai-org/GLM-5.2`、SiliconFlow `Qwen/Qwen3.6-27B`、OpenAI `gpt-5.6-sol` with `reasoning_effort=high`。按 EPD-006，题库独立从 Experiment 1 正式 catalog 选择全部 hard roots：Factorization 166 道，Lean `hard_frontier × pure_logic/function_set/induction` 每格 15 道、合计 45 道；不再复用 Experiment 2 selection，也不使用 easy/medium。三个 endpoint × 3 repeats 共 1,899 root-runs。三个真实 entry、provider transport、reasoning profile 和 smoke evidence 都可用时纳入 P0-full；缺少任一 cohort member 时输出结构化 `blocked`，不算协议失败，也不影响 Experiment 1-4 的主张。
+5.  Experiment 5 当前预注册口径为 cohort v3：SiliconFlow `zai-org/GLM-5.2`、`Qwen/Qwen3-14B`、`MiniMaxAI/MiniMax-M2.5`、`Pro/deepseek-ai/DeepSeek-V3` 四个固定 entry，共用 `timeout_seconds=600`、`max_tokens=32768`、`max_provider_attempts_per_ai_unit=1`；GLM/Qwen/MiniMax 启用 thinking 且 `thinking_budget=32768`，DeepSeek 使用 nonthinking。题库使用 Exp5 专属、分层确定性半量 hard-only selection：Factorization 83 道，Lean 三个 topic family 各 8 道，共 107 道/model-repeat；四模型 × 3 repeats 共 48 conditions、1,284 root-runs、9,888 个 planned first-attempt AI units，token ceiling=`607,518,720`。离线设施和独立 8-root bootstrap 入口已实现；五次最小 endpoint/key 诊断不是 artifact-backed evidence，8-root smoke 尚未运行，因此正式 preflight 仍必须在 provider 调用前 blocked。cohort v1/v2、1,899-root 三端点矩阵和 `100/8192` 只供历史 replay/provenance。
 
-6.  除 Experiment 5 三端点对比外，Experiment 1–4 的所有 pilot、正式 condition、故障恢复 attempt 和消融 mode 都固定使用 SiliconFlow `zai-org/GLM-5.2`，安全配置为 `benchmarks/paper/exp1_baseline_provider_config.v1.json`，entry id 为 `glm_5_2_exp1_baseline`，`temperature=0.0`、`enable_thinking=false`。缺少该 entry、API key、真实 smoke 或 identity evidence 时对应实验结构化 `blocked`；不得切换到 Qwen、OpenAI 或其他模型继续生成论文结果。
+6.  除 Experiment 5 当前四端点对比外，Experiment 1–4 的所有 pilot、正式 condition、故障恢复 attempt 和消融 mode 固定使用官方 DeepSeek `deepseek-v4-pro`，当前安全配置为 `benchmarks/paper/exp1_baseline_provider_config.v3.json`，entry id 为 `deepseek_v4_pro_exp1_baseline`，官方 base URL/endpoint 为 `https://api.deepseek.com` + `/chat/completions`，`thinking={"type":"enabled"}`、`reasoning_effort=high`、`timeout_seconds=600`、`max_tokens=300000`。Thinking 模式请求不得发送 `temperature` 或 `top_p`。缺少该 entry、API key、真实 smoke 或 identity evidence 时对应实验结构化 `blocked`；不得切换到 GLM、OpenAI 或其他模型继续生成论文结果。`max_in_flight_global=50` 是 provider 并发上限，与 Experiment 2 的 `worker_count=1/3/7/10/30/50` 保持独立。v2 的 `100/8192` 配置只保留为历史 replay 与 Experiment 5 cohort v2 成员输入，不得冒充当前 Exp1–4 或 Exp5 v3 配置。
 
-7.  P0-core 指 Experiment 1-4；P0-full 指 Experiment 1-5 且模型策略 preflight 通过。所有 summary、预算和论文表格必须标明自己属于 P0-core、P0-full 还是包含 100/300 worker extension 的扩展运行。
+7.  P0-core 指 Experiment 1-4；P0-full 指 Experiment 1-5 且 Exp5 v3 四 entry 的 capability、identity、selection、budget、output-contract 与 smoke preflight 全部通过。当前只有 Exp5 v3 离线设施与非正式诊断证据，artifact-backed 8-root smoke 未运行，所以 P0-full 不得启动。所有 summary、预算和论文表格必须标明自己属于 P0-core、P0-full 还是包含 100/300 worker extension 的扩展运行。
 
 # 论文要回答的三个主问题
 
@@ -44,7 +44,7 @@
 
 3.  **鲁棒性（Robustness）**：真实 AI 输出之后发生 false positive、false negative、不返回、延迟、executor error 或 worker death 时，协议能否检测、隔离、重试、重分配并完成？哪些错误只能检测而不能恢复？
 
-协议消融用于解释第三个主张中各机制的贡献；三模型 model-provider endpoint comparison 只作为次要分析，不单独证明协议正确性，也不把跨 provider 的 latency/cost 差异解释为纯模型效应。
+协议消融用于解释第三个主张中各机制的贡献；Experiment 5 的四模型、同一 SiliconFlow provider endpoint comparison 只作为次要分析，不单独证明协议正确性。它减少了跨 provider 混杂，但仍受同一 provider 的 serving profile、路由、限流和计费口径约束，不能把观察差异解释为模型本体的纯因果效应。
 
 # 论文可采信硬门槛
 
@@ -120,7 +120,7 @@ TokenShare V1 假设实验人员、catalog、配置、插件、executor registry
 | Paper formal runner/adapters | 已通过 shared dispatcher/system runtime 执行 FULL、五类 rate-fault、真实 process worker death、消融 hook 和 Exp5 fixed-entry endpoint binding，并从权威 ledger/artifacts 派生 paper projection；runner 不再决定 canonical、replacement、merge/completion。五类 rate-fault 以 `case_id:planned_ai_unit_id` 映射到实际协议 unit，worker death 由 process backend 终止真实 executor process。 | 2026-07-26 已修复正式资格分裂及 Exp2–5 的证据真实性 blocker；捕获式、脚本式、selected-unit partial 和任何缺失下层 evidence 的结果仍一律 regression-only / paper-ineligible。正式真实-provider 数据尚未运行，不能发布论文结论。 |
 | Task 14 readiness | `benchmarks/paper/lean_task14_3x3_readiness.v1.json` 已冻结九格×每格 15、合计 135 个 selected checker-backed cases；Task 5 已由 Lean 插件校验 fixed plan、生成 certificate，并由 system runtime/`ProtocolEngine` 记录 FULL 生命周期。 | readiness 和本地 checker 回归仍不等于正式真实-provider实验结果；正式矩阵还必须通过后续 runtime hooks、预算和 provider evidence gate。 |
 | Metrics | 正式 CLI 只使用 `paper_formal_metrics.py` 从持久化 condition/task/attempt/event/artifact/runtime observation 复算；Exp2 关键路径、Exp3 recovery/worker death、Exp4 hook/配对、Exp5 v2 identity inventory 和 429 sensitivity 均已接入生产 CSV。 | 任何依赖边、时间戳、hook ref、FULL 配对、attempt identity record 或分母证据缺失时写 `null`/applicability reason 并使行不合格；不回退到 wall clock、provider latency、mode/fault 名称或现存记录分母。 |
-| Worker fault | 实验层冻结 kill plan/selection；runtime process backend 终止真实 worker，coordinator/engine 记录 lease expiry、recovery 和 replacement；25%/50%/75% 使用真实 completed/planned progress，dedicated no-kill baseline 实际执行并持久化。 | 正式数据仍须由真实 provider 条件运行；实际死亡进程数、death 后 coordinator event、replacement canonical slots 或 baseline identity 任一不足时对应 run fail closed。 |
+| Worker fault | 实验层冻结 kill plan/selection；runtime process backend 终止真实 worker，coordinator/engine 记录 lease expiry、recovery 和 replacement；25%/50%/75% 使用真实 completed/planned progress。无故障 reference 统一引用正式 Exp1 同 `case_id` evidence，不新增 dedicated baseline 调度。 | 正式数据仍须由真实 provider 条件运行；实际死亡进程数、death 后 coordinator event 或 replacement canonical slots 不足时形成 `failed_experimental + complete`；Exp1 reference 缺失、hash/schema/identity 不符才作为设施失败 fail closed。 |
 | Report | formal evidence、metrics/report、预算、paper eligibility、secret scan 和论文 CSV 生成路径已实现；report 独立复核 suite→experiment→condition→task→attempt 与 event/artifact refs。 | 只有所有必需下层 row/evidence 均合格且 transport 为真实 API 时才生成 `formal_paper_report.md`；否则只生成 `formal_regression_report.md`。尚无本轮正式真实-provider 数据，不得预写论文结论。 |
 
 # 统一术语、实验单位和控制变量
@@ -142,13 +142,13 @@ TokenShare V1 假设实验人员、catalog、配置、插件、executor registry
 
 同一对比组必须固定 input catalog digest、provider/model entry、prompt/parser/plugin/executor version、Lean environment digest、timeout、max tokens、provider-attempt limit、fault seed、worker scheduling policy、机器与 Python/Lean 版本。每次 run 记录开始/结束时间、进程数、CPU logical count、内存摘要和网络/provider rate-limit 事件。
 
-按 EPD-007，正式 Experiment 1–5 的单次 AI API 请求 `timeout_seconds` 统一固定为 `100`。Exp5 三个 endpoint 即使共同使用另一个值也必须在 preflight fail closed，不能因为跨 endpoint 相等就进入正式矩阵。worker-death process backend 继续使用既有 `max(30, request_timeout + 30)` 进程保护，因此正式配置派生为 `130` 秒；该 130 秒不是额外的 provider 响应配额。参数变更会改变 provider/profile/condition/budget identity 和 digest，任何 30 秒配置下生成的旧批准 digest 均不得复用。
+EPD-009 覆盖 EPD-007 对 Experiment 1–4 timeout 的旧决定：正式 Experiment 1–4 的官方 DeepSeek 单次请求固定 `timeout_seconds=600`、`max_tokens=300000`。EPD-011 进一步冻结 Experiment 5 cohort v3 的四个 SiliconFlow entry：共同 `timeout_seconds=600`、`max_tokens=32768`、每 AI unit 仅 1 次 provider attempt；GLM/Qwen/MiniMax 必须匹配 thinking 与 `thinking_budget=32768`，DeepSeek 必须匹配 nonthinking。任何 entry 即使共同漂移也必须在 preflight fail closed。cohort v2 的 `100/8192` 仅供历史 replay。worker-death process backend 继续使用既有 `max(30, request_timeout + 30)` 进程保护，Exp1–4 当前派生值为 `630` 秒；该保护时间不是额外的 provider 响应配额。参数变更会改变 provider/profile/condition/budget identity 和 digest，旧批准 digest 均不得复用。
 
 本决定不修改通用 `AIAPIExecutor` 和 paper adapter 的 30 秒缺省回退、不修改协议 lease 的 300 秒、不修改 Lean payload/checker 的 30 秒资源限制，也不修改历史 direct Factorization 500 benchmark 的 60 秒 timeout。
 
 真实 API 温度等非确定性参数必须写入 request artifact。论文主对比不得在看到结果后更换模型或 prompt；若必须修复 prompt contract，修复前后的结果分开成不同 experiment version。
 
-Experiment 1–4 的模型控制变量不是运行时任选值：必须解析到 SiliconFlow `zai-org/GLM-5.2` / `glm_5_2_exp1_baseline`，首次执行、provider retry、replacement 和 resume 都保持同一 identity。Experiment 5 才加载三模型 cohort；它的 GLM cohort entry `glm_5_2_siliconflow` 与 Experiment 1–4 baseline entry 是两个不同命名空间，不得混用 digest 或 approval。
+Experiment 1–4 的模型控制变量不是运行时任选值：必须解析到官方 DeepSeek `deepseek-v4-pro` / `deepseek_v4_pro_exp1_baseline`，首次执行、provider retry、replacement 和 resume 都保持同一 identity。Experiment 5 单独加载四模型 cohort v3，所有 entry 都绑定 SiliconFlow provider config；它们与 Experiment 1–4 baseline entry 属于不同命名空间，不得混用 digest、approval 或 smoke evidence。
 
 # 输入 catalog 与难度定义
 
@@ -217,7 +217,7 @@ medium lemma-DAG / hard-frontier catalog 每行至少包含：`case_id,paper_dif
 | tasks | Factorization easy/medium/hard=`167/167/166`，共 500 个；Lean 每个 `(paper_difficulty,topic_family)` 15 个，共 135 个；合计 635 个唯一 root tasks。若任一 Lean cell 未达到 15 个 checker-backed cases，正式 Experiment 1 不得启动，不得用其他 cell 或 shallow v1 补齐 |
 | repeats | 论文 run 的 Factorization 500 题和 Lean 135 题均每题 1 次；pilot 仍只跑 1 次且不进入主表。后续 EPD-003 把 Experiment 2 设为每个 worker level 2 次，EPD-004 把 Experiment 3 所有 condition 设为 2 次；Experiment 4–5 不受 EPD-001 影响。 |
 | worker count | 固定 10；若 provider preflight 不允许 10，并发改为可用上限且整个实验保持一致 |
-| model | 固定 SiliconFlow `zai-org/GLM-5.2`，entry id `glm_5_2_exp1_baseline`，`temperature=0.0`、`enable_thinking=false`；不得自动替换模型 |
+| model | 固定官方 DeepSeek `deepseek-v4-pro`，entry id `deepseek_v4_pro_exp1_baseline`，thinking enabled、`reasoning_effort=high`、`timeout_seconds=600`、`max_tokens=300000`，并省略 `temperature/top_p`；不得自动替换模型 |
 | fault/ablation | none / FULL |
 
 ## 程序必须输出
@@ -240,7 +240,7 @@ Experiment 2 仅保留 Factorization，Lean 固定 lemma-DAG 不进入 worker sc
 
 每个 Exp2 root 使用插件拥有的 `factorization.exp2_contiguous_20way.v1` split profile：候选域仍严格覆盖 `[2, floor_sqrt(target_n)]`，但 `requested_child_count=20`。实验只提交该 profile 和 catalog case；连续区间边界、coverage proof、task graph child、merge slot 和 completion 仍由 Factorization 插件与系统 runtime 生成，不得由 runner 复制拆分算法。该 profile 只适用于 Experiment 2，不修改 Experiment 1/3/4/5 对同一 catalog case 的冻结 split 参数。协议 run config 必须允许至少 20 个直接 child，并把 profile identity、20-way partition digest 和 case selection digest 写入 plan/evidence。
 
-强制 worker levels 为 `1, 3, 7, 10, 30, 50`，不再保留 `100/300` 扩展点。每个 worker level 对完全相同、顺序一致的 166 roots 运行 2 遍；comparison group 固定 catalog digest、case IDs/order、split profile、SiliconFlow `zai-org/GLM-5.2` baseline、prompt、timeout 和两成员 seed family。正式矩阵共 `166 × 6 × 2 = 1,992` root-runs；每个 root 计划 20 个 AI units，因此首次 attempt 预算基数为 `1,992 × 20 = 39,840` planned AI units。该数是无早停、无 replacement 时的计划上限，不是实际 provider-call 报告。
+强制 worker levels 为 `1, 3, 7, 10, 30, 50`，不再保留 `100/300` 扩展点。每个 worker level 对完全相同、顺序一致的 166 roots 运行 2 遍；comparison group 固定 catalog digest、case IDs/order、split profile、官方 DeepSeek `deepseek-v4-pro` baseline、prompt、timeout 和两成员 seed family。正式矩阵共 `166 × 6 × 2 = 1,992` root-runs；每个 root 计划 20 个 AI units，因此首次 attempt 预算基数为 `1,992 × 20 = 39,840` planned AI units。该数是无早停、无 replacement 时的计划上限，不是实际 provider-call 报告。`worker_count` 控制协议 worker 并行度，`provider_inflight_limit=50` 控制 provider 请求并发，runner 不得用更小的本地 semaphore 静默截断 30/50 档。
 
 Factor witness 早停必须保留：verifier 接受一个 canonical factor witness 后，插件可以打开 merge gate，系统停止调度尚未发出的 sibling；已经组成 worker batch 并发给 provider 的请求不追溯取消。159 个 semiprime roots 可能自然早停，7 个 no-factor roots 必须覆盖全部 20 个 range children。更高 worker 既可能降低 witness latency，也可能在 witness 返回前增加 speculative provider calls；这是被测系统的 latency/cost trade-off，不是需要消除的混杂。
 
@@ -310,11 +310,17 @@ Q(w)=\frac{\text{completed roots}}{\text{wall-clock seconds}}
 | executor_error | real provider response 保存之后、parser bridge 之前 | 生成受控 executor error record，恢复 attempt 再次真实调用 API。 |
 | worker_death | 独立 worker process 已保存 raw output、尚未提交时 | 终止该 worker process；协调器保持运行，等待 lease expiry 后交给 replacement worker。 |
 
-Rate-fault 矩阵只覆盖 5 类非死亡故障：`false_positive`、`false_negative`、`no_return`、`late_submission`、`executor_error`。Factorization fault rates 使用 `0%, 1%, 5%, 10%, 25%, 50%, 100%`。Lean 因每个 root 有多个 proof calls，使用 `0%, 10%, 50%, 100%`，其 3-task slice 固定为 `pure_logic/function_set/induction` 各 1 道。故障目标用固定 seed 从 AI units 中选择，实际 target ids 写入 manifest。每个 condition 重复 2 次。所有原始和恢复 AI attempts 固定使用 `glm_5_2_exp1_baseline`，故障不得触发模型升级或 provider 切换。
+Rate-fault 矩阵只覆盖 5 类非死亡故障：`false_positive`、`false_negative`、`no_return`、`late_submission`、`executor_error`。Factorization 实际 fault rates 使用 `1%, 5%, 10%, 25%, 50%, 100%`；Lean 使用 `10%, 50%, 100%`，其 3-task slice 固定为 `pure_logic/function_set/induction` 各 1 道。0% 不再是 Exp3 condition，而是从正式 Exp1 的同 `case_id` root 投影 `shared_exp1_reference/shared_reference` 行。故障目标用固定 seed 从 AI units 中选择，实际 target ids 写入 manifest。每个 condition 重复 2 次。所有原始和恢复 AI attempts 固定使用 `deepseek_v4_pro_exp1_baseline`，故障不得触发模型升级或 provider 切换。
 
 worker death 固定 `worker_count=10`，分别终止 1 个和 3 个 executor worker processes，并按任务进度 25%、50%、75% 三个位置注入；每个 domain、每个死亡数量、每个位置重复 2 次。`dead_worker_count` 统计实际被终止的不同操作系统进程，不要求这些进程对应互不相同的逻辑 AI unit：若一个 root 的可选逻辑 unit 少于 3 个，冻结 manifest 仍只列唯一逻辑 target，后续死亡可落在这些 unit 的 replacement process 上。每次死亡都必须有独立 process/attempt fact、lease expiry/recovery 事件和最终成功 replacement；不得把重复逻辑 unit 或重复 PID 伪装成多次死亡。这里终止的是 executor worker，不是 coordinator；因此可以在 Phase 9 完整 replay 之前测试 lease/reassignment。若要测试 coordinator crash/restart，必须等待 state replay 可重建后另立实验，不得混写。
 
-Experiment 3 每个 condition 的两遍原始结果必须全部保留，并报告 min/max 和相对差；不得把 `n=2` 的 IQR 当作稳定性证据。matched baseline 必须继续使用相同 `repeat_id/seed` 配对，不能因为重复数减少而跨 repeat 借用 baseline。
+2026-07-28 负向终态补充：上句“最终成功 replacement”是 `tokenshare.paper_worker_death.v1` 成功恢复记录和 paper-eligible worker-death 结果的必要条件，不允许 adapter 因 replacement 未完成而抛出异常并中断整个 suite。若真实 executor process 已由 runtime 终止，ledger 随后以 `retry_allowed=false` 的 recovery action（例如 `retry_limit_reached`）进入终态，但没有成功 replacement，实验层必须把已有 process fact、dead attempt、replacement attempts、terminal recovery event、artifact refs 与实际 kill progress 原样投影为 `tokenshare.paper_worker_death_incomplete.v1`，并显式写 `recovery_completed=false`、`evidence_complete=false`、`replacement_fact=null`。该记录计入真实死亡与失败分母，但其 root/condition 为失败或 `completed_with_failures`，始终 paper-ineligible，不得进入“成功恢复”分子；runner 仍须闭合 run/condition/experiment/suite manifest、生成 metrics/audit/smoke reports 并继续后续预注册条件（包括 Exp4）。`tokenshare.paper_attempt_result.v2` 不是通用 failed-runtime fallback：它只允许 `condition.experiment_id=exp3_real_ai_fault_recovery`，且每个已持久化 `ExecutionRequest` 必须精确标识 `executor_id=executor_factorization_runtime`、`executor_type=deterministic_local`；production 入口和投影 helper 必须分别审计这两个条件。满足 allowlist 的 provider 前失败写 `attempt_status=executor_error`、真实 `executor_id/executor_type/request_ref`、`provider/model/entry_id=null`、`provider_attempt_count/tokens/cost=0`、空 raw/usage/provenance/model-record refs并固定 paper-ineligible；它属于 request-stage/internal executor failure，不计 provider call 或 provider failure。Experiment 1/2/4/5 或任何非预期 executor 必须在创建 v2 row/checkpoint 前 fail closed，不得退回 v1/provider_error；所有真实 provider-dispatched attempts（尤其 Experiment 5）继续使用 `tokenshare.paper_attempt_result.v1`，其 schema 与 endpoint 指标语义不变。缺少真实 config identity 或协议证据仍在调用前 fail closed，配置/identity `ValueError` 不得转换为 condition failure 或继续后续 condition。此补充不改变 event/ledger schema，也不允许 catch 任意配置、身份或 invariant 错误。
+
+Experiment 3 每个 condition 的两遍原始结果必须全部保留，并报告 min/max 和相对差；不得把 `n=2` 的 IQR 当作稳定性证据。两遍都引用同一个正式 Exp1 `repeat_id=0,seed=1,worker_count=10` 的同 `case_id` evidence；这是共享 reference，不得描述为 same-repeat/paired baseline。兼容字段可保留 `matched_baseline_*`，但必须同时冻结 `comparison_kind=shared_reference`、source suite/run/generation/condition/task/repeat/seed、content hash 和 source usage。
+
+## 双轴终态与 suite continuation
+
+每个 root 同时冻结 `outcome_status ∈ {succeeded,failed_experimental,blocked_dependency}` 与 `evidence_integrity ∈ {complete,missing,invalid,corrupt}`。parser/checker/provider/injected-fault/worker-death 的可信失败是 `failed_experimental + complete`，必须闭合 root/condition 并继续剩余预注册条件；所有 roots 有可信终态而存在失败时 suite 为 `completed_with_failures`。配置、catalog、selection、budget、output、模型/request identity 或 evidence hash/schema 漂移是 `blocked_dependency`，停止新 API 调用，但尽最大可能把未开始 roots 明写为 `not_started` 并闭合 experiment/suite manifest。`incomplete` 只用于进程/机器中断或终态持久化失败。
 
 ## 必须输出
 
@@ -336,21 +342,21 @@ actual token 只来自 provider usage。注入变换的 synthetic work 另写 `s
 
 - `completion_rate = completed_root_count / attempted_root_count`。
 
-- `wall_clock_overhead_ms = fault_condition_wall_clock_ms - matched_no_fault_baseline_wall_clock_ms`；`wall_clock_overhead_ratio = wall_clock_overhead_ms / matched_no_fault_baseline_wall_clock_ms`。
+- `wall_clock_overhead_ms = fault_condition_wall_clock_ms - shared_exp1_reference_wall_clock_ms`；`wall_clock_overhead_ratio = wall_clock_overhead_ms / shared_exp1_reference_wall_clock_ms`。
 
-- `token_overhead = total_actual_tokens - matched_baseline_total_tokens`；`token_overhead_ratio = token_overhead / matched_baseline_total_tokens`。`wasted_actual_tokens` 只累计因注入、死亡、late/no-return 或 rejected recovery 而无法贡献到最终 accepted result 的真实 provider usage，不与 `token_overhead` 混用。
+- `token_overhead = total_actual_tokens - shared_exp1_reference_total_tokens`；`token_overhead_ratio = token_overhead / shared_exp1_reference_total_tokens`。`wasted_actual_tokens` 只累计因注入、死亡、late/no-return 或 rejected recovery 而无法贡献到最终 accepted result 的真实 provider usage，不与 `token_overhead` 混用。
 
-- `cost_overhead = (fault_condition_cost - matched_no_fault_baseline_cost) / matched_no_fault_baseline_cost`。
+- `cost_overhead = (fault_condition_cost - shared_exp1_reference_cost) / shared_exp1_reference_cost`。
 
 - `result_completeness_rate = recovered_slot_count / required_slot_count`；`root_output_complete = (recovered_slot_count == required_slot_count)`。它必须和 deterministic `accepted_validity` 同时报告：slot 齐全但 checker/verifier 不通过，仍不是完整有效结果。
 
-所有 matched baseline 必须与 fault condition 使用相同 task ids、repeat/seed、worker count、GLM-5.2 entry、prompt/parser/plugin/executor version 和 request limits。任何比率的 baseline 分母为 0 时写 `null` 并记录 `zero_baseline_denominator`，不得输出 `Infinity`、`NaN` 或改用其他 condition。
+所有 shared reference 必须与 fault condition 使用相同 `case_id`、catalog/split/plugin/parser/verifier/executor identity、DeepSeek-V4-Pro entry 和 request limits；reference 固定来自 Exp1 的 `repeat_id=0,seed=1,worker_count=10`，不要求等于 Exp3 fault repeat/seed。Exp1 root 有完整失败终态时 Exp3 仍执行，但 `baseline_comparison_eligible=false`，wall-clock/token/cost delta 均写 `null` 并记录 `source_exp1_failed_experimental`。任何比率分母为 0 时也写 `null` 并记录 `zero_baseline_denominator`，不得输出 `Infinity`、`NaN` 或改用其他 condition。
 
 `false_positive` 和 `late_submission` 默认是 detect-and-isolate；`no_return`、`executor_error` 和 `worker_death` 默认是 recoverable；`false_negative` 必须按插件能否从后续 merge / checker 发现缺失事实记录为 `recoverable` 或 `detect_only`，不能硬写为成功恢复。
 
 ## 2026-07-24 Exp3 实现与指标接线审计
 
-> 本节保留 2026-07-24 修复前的代码审计 provenance；其中“当前”“尚未”和 blocker 清单均已由本文末尾 2026-07-25 Task A–11 状态及 2026-07-26 反伪造复核覆盖，不能作为当前实现状态读取。
+> 本节保留 2026-07-24 修复前的代码审计 provenance；其中“当前”“尚未”、same-repeat matched baseline、dedicated no-kill baseline 和 blocker 清单都不是当前要求。2026-07-29 起统一由上文 `shared_exp1_reference`、双轴终态以及 EPD-012 覆盖，不能作为当前实现状态读取。
 
 本次沿 `paper_faults.py`、`paper_exp3_fault_recovery.py`、`paper_formal_runner.py`、两类 paper adapter、`local_runtime/workers.py`、`paper_workers.py` 和 `paper_formal_metrics.py` 检查真实执行链。结论是：五类 rate-fault 的注入点和协议恢复大体是真实的，worker process death 与 lease/reassignment 也是真实的；但重复矩阵、false-negative applicability、kill progress、matched baseline 和正式汇总存在 blocker。
 
@@ -404,7 +410,7 @@ actual token 只来自 provider usage。注入变换的 synthetic work 另写 `s
 | NO_REQUEUE | rejected/expired unit 不创建 replacement attempt | stuck task rate 和 completion 降低。 |
 | NO_MERGE_GATE | required slots 未齐时允许 merge 尝试 | premature merge、root checker/merge failure。 |
 
-Factorization 三档分别使用全部 `167/167/166` roots；Lean 每档按预注册的 2/2/1 分层固定 5-task slice 覆盖三个 topic families。`FULL + 4` 个消融模式均重复 3 次，并固定使用 SiliconFlow `zai-org/GLM-5.2` / `glm_5_2_exp1_baseline`。为让 `NO_REQUEUE` 与 FULL 形成可解释的唯一变量对照，Exp4 五个 mode 的 `ProtocolConfig.max_retries` 统一冻结为 `1`；`NO_REQUEUE` 只把 `replacement_attempts_allowed` 关闭。报告 completion、accepted validity、wrong canonical acceptance、raw-only exposure/acceptance、stuck task、premature merge、time、token 和 cost。消融条件由实验层选择，但必须通过 `tokenshare.local_runtime` 的稳定 hook / `ProtocolMechanismPolicy` 在真实生命周期 gate 注入；不得让 paper runner 事后改写结果，也不得修改协议 core 的默认 FULL 语义。
+Factorization 三档分别使用全部 `167/167/166` roots；Lean 每档按预注册的 2/2/1 分层固定 5-task slice 覆盖三个 topic families。`FULL + 4` 个消融模式均重复 3 次，并固定使用官方 DeepSeek `deepseek-v4-pro` / `deepseek_v4_pro_exp1_baseline`。为让 `NO_REQUEUE` 与 FULL 形成可解释的唯一变量对照，Exp4 五个 mode 的 `ProtocolConfig.max_retries` 统一冻结为 `1`；`NO_REQUEUE` 只把 `replacement_attempts_allowed` 关闭。报告 completion、accepted validity、wrong canonical acceptance、raw-only exposure/acceptance、stuck task、premature merge、time、token 和 cost。消融条件由实验层选择，但必须通过 `tokenshare.local_runtime` 的稳定 hook / `ProtocolMechanismPolicy` 在真实生命周期 gate 注入；不得让 paper runner 事后改写结果，也不得修改协议 core 的默认 FULL 语义。
 
 消融还必须输出 `exposed_error_count,escaped_error_count,error_escape_rate,error_escape_applicability`。其中 `exposed_error_count` 是到达被关闭机制、且 FULL 模式本应拒绝或隔离的无效候选/不完整状态数量；`escaped_error_count` 是这些对象中继续进入 canonical、merge 或被错误标记为 terminal success 的数量；`error_escape_rate = escaped_error_count / exposed_error_count`。若某 mode 没有可适用的 gate（例如 NO_REQUEUE 主要观察 stuck/completion）或分母为 0，rate 写 `null`，并把 applicability 写为 `not_applicable` 或 `zero_denominator`，不得用 0 假装“没有逃逸”。
 
@@ -439,33 +445,40 @@ Factorization 三档分别使用全部 `167/167/166` roots；Lean 每档按预�
 3.  FULL 与 mode 按相同 `case_id × repeat_id` 配对；输出逐 task、逐 repeat condition 和 3-repeat 汇总，并保留 completion、validity、wall-clock、provider attempts、tokens 和 cost。
 4.  收敛 `paper_formal_metrics._exp4_rows()` 与 `summarize_exp4_ablation()` 为一条生产路径；`paper_table_ablation.csv` 缺真实 event/artifact refs 或专项分母时必须拒绝 paper eligibility。
 
-# Experiment 5: 三模型 model-provider endpoint comparison（次要）
+# Experiment 5: 四模型、同一 SiliconFlow endpoint comparison（次要）
 
 ## 为什么需要
 
-三个具名模型端点可用于观察 TokenShare 在异构真实模型/提供商上的完成率、有效性、token、成本和延迟差异，但不再人为划分 strong/weak，也不实现 mixed routing。它主要测量 model-provider endpoint 对实验结果的影响，不能替代前四个协议实验；OpenAI 与 SiliconFlow 的 provider 差异会同时影响 latency、429、成本和可用性，因此论文必须显式保留该混杂因素。
+四个具名 SiliconFlow 模型 entry 用于观察 TokenShare 在固定 provider 家族下的完成率、有效性、token、成本和延迟差异；不划分 strong/weak，也不实现 mixed routing。它不能替代前四个协议实验。单 provider 设计减少了跨 provider 混杂，但 SiliconFlow 的 serving profile、路由、限流、模型版本映射和计费仍是共同上游条件，所以论文只能报告“同 provider 下的模型端点比较”，不能把差异解释成模型本体的纯因果效应。
 
 ## 预注册 cohort
 
-正式 cohort 固定为 `tokenshare.paper.model_endpoint_cohort.v1`：
+当前预注册 cohort 固定为 `tokenshare.paper.model_endpoint_cohort.v3`，tracked artifact 为 `benchmarks/paper/model_comparison_cohort.v3.json`：
 
-| `cohort_member_id` | provider endpoint | provider model / reasoning profile | Artificial Analysis v4.1 背景分数 | 解释边界 |
+| `cohort_member_id` | provider endpoint | provider model / reasoning profile | 公共请求上限 | 解释边界 |
 |:---|:---|:---|---:|:---|
-| `glm_5_2_siliconflow` | SiliconFlow | `zai-org/GLM-5.2`；reasoning controls 在 pilot 前固定 | GLM-5.2 (max): 51 | 未证明 SiliconFlow reasoning mode 与榜单 max 完全一致时，`benchmark_match_status=family_only`。 |
-| `qwen3_6_27b_siliconflow` | SiliconFlow | `Qwen/Qwen3.6-27B`；reasoning controls 在 pilot 前固定 | Qwen3.6 27B (Reasoning): 37 | 未证明 endpoint thinking configuration 与榜单一致时，`benchmark_match_status=family_only`。 |
-| `gpt_5_6_sol_high_openai` | OpenAI | `gpt-5.6-sol`；`reasoning_effort=high` | GPT-5.6 Sol (high): 56 | provider request、response resolved model 和 reasoning profile 都匹配后才标 `exact`。 |
+| `glm_5_2_siliconflow` | SiliconFlow | `zai-org/GLM-5.2`；thinking；`thinking_budget=32768` | 600 秒 / 32768 / 1 attempt | request、response identity 和 thinking control 必须匹配。 |
+| `qwen3_14b_siliconflow` | SiliconFlow | `Qwen/Qwen3-14B`；thinking；`thinking_budget=32768` | 600 秒 / 32768 / 1 attempt | 与 GLM 共用 thinking contract，不允许静默降为 nonthinking。 |
+| `minimax_m2_5_siliconflow` | SiliconFlow | `MiniMaxAI/MiniMax-M2.5`；thinking；`thinking_budget=32768` | 600 秒 / 32768 / 1 attempt | 实测即使发送 `enable_thinking=false` 仍产生 reasoning tokens，因此按实际端点行为冻结为 thinking。 |
+| `deepseek_v3_pro_siliconflow` | SiliconFlow | `Pro/deepseek-ai/DeepSeek-V3`；nonthinking | 600 秒 / 32768 / 1 attempt | 这是 SiliconFlow entry，不得与 Experiment 1–4 官方 DeepSeek baseline 混用。 |
 
-外部分数只进入 cohort snapshot 和论文模型背景表，不产生 strong/weak 标签，不决定 routing、paper eligibility 或 TokenShare 结论。正式 run 不联网刷新榜单；榜单变更只能生成新 cohort version，不能改写旧 suite。2026-07-16 本地摘要来源为 Artificial Analysis [v4.1 methodology](https://artificialanalysis.ai/methodology/intelligence-benchmarking)、[Data API](https://artificialanalysis.ai/data-api)、[GLM-5.2](https://artificialanalysis.ai/models/glm-5-2)、[Qwen3.6 27B](https://artificialanalysis.ai/models/qwen3-6-27b)、[GPT-5.6 Sol high](https://artificialanalysis.ai/models/gpt-5-6-sol-high)，以及 provider identity 来源 SiliconFlow [模型中心](https://www.siliconflow.cn/models) 和 OpenAI [Models](https://developers.openai.com/api/docs/models)。这些在线资料影响的范围仅为 cohort identity、外部分数 provenance、provider/model/reasoning preflight 和论文限定语。
+外部分数和价格只进入冻结的 cohort/provider snapshot 与论文背景表，不产生 strong/weak 标签，不决定 routing、paper eligibility 或 TokenShare 结论。正式 run 不联网刷新；模型、价格或端点变更只能生成新 version。v3 cohort digest 为 `sha256:1b317c9827d87c43b974b77c469b115906da463a79064d3ffb3b949dc5257942`，safe provider config digest 为 `sha256:6b1d6ffe977340ebbf59d69368d8c977fef664007575de72593c08c038d5ffe1`。
 
 ## 设计与输出
 
-按 EPD-006，只使用 Experiment 1 正式 catalog 中的全部 hard roots：Factorization hard 166 道；Lean `hard_frontier` 的 `pure_logic/function_set/induction` 三格各 15 道，共 45 道。Factorization hard 形成 1 个 condition slice，Lean hard 按三个 topic family 分成 3 个 condition slices；每个 endpoint/repeat 因而有 4 个 conditions。三个 endpoint × 3 repeats 共 36 个 conditions、`(166 + 45) × 3 × 3 = 1,899` root-runs。case IDs、order、catalog execution view 和 selection digest 直接绑定 Experiment 1 formal catalog，不得调用 Experiment 2 的 shared slice，也不得继承 Exp2 专用 20-way split。
+v3 只使用 EPD-010 冻结的 Exp5 专属分层确定性半量 hard-only selection：在 Factorization hard 与 Lean `hard_frontier` 的 `pure_logic/function_set/induction` 四个 stratum 内分别按 `sha256(case_id)` 升序取前 `ceil(n/2)`，得到 `83 + 8 + 8 + 8 = 107` roots/model-repeat。semantic selection digest 为 `sha256:fbec153a02befa4071b4ad4d639e51e910a3bc4c433cc9eea4b19ac6489a3490`。所有模型和 repeats 使用同一 case IDs/order；不得按模型输出、失败或成本换题。该 selection 不修改 Experiment 1–4 或共享 catalog。
 
-三个 cohort member 各自作为 `model_policy="fixed_entry"` 的独立 condition，使用相同 task order、prompt/parser/plugin version、worker count、`timeout_seconds=100`、request-limit policy 和 repeat/seed family，每个 condition 重复 3 次。AI unit 在整个首次/恢复 attempt 链中保持同一 cohort member，不按 difficulty 换模型，也不在失败后升级到另一个模型。Factorization hard 仍使用 Exp1 冻结的 8-way split，Lean hard 使用各自预注册固定 lemma-DAG；Exp5 首轮 planned AI units 为 `(166 × 8 + 15 × 7 + 15 × 6 + 15 × 7) × 3 × 3 = 14,652`，不含 provider retry/replacement。
+四个 cohort member 各自作为 `model_policy="fixed_entry"` 的独立 condition，Factorization 与三个 Lean topic slices 各 1 个 condition/repeat，因此共有 `4 models × 3 repeats × 4 slices = 48` conditions、`107 × 4 × 3 = 1,284` root-runs。Factorization 83 roots 保持 8-way split，Lean 三个 stratum 的 8 roots 分别保持 catalog 固定 lemma-DAG，合计 9,888 个 planned first-attempt AI units；每 AI unit 仅 1 次 provider attempt。调度顺序固定为 repeat 0/1/2 的 `ABCD / BDAC / CADB`，sequence digest 为 `sha256:de9271732513d7d2ab20624d2949af3c9230b9adc2cd8db4b1f1ddb0d57b58cb`；四个 model arm 顺序执行，arm 内全局 `max_in_flight_global=3`。最坏 token ceiling 为 607,518,720。
 
-输出 completion、accepted validity、tokens、cost、latency、provider errors、recovery attempts 和 `model_execution_records`。运行时首先为每个正式 AI unit 保存 `tokenshare.paper_model_execution_record.v2` identity artifact；正式 runner/report 再把该 artifact 与 `PaperAttemptResult` / usage evidence 连接成 `model_execution_records.jsonl`，补齐 `model_policy,latency_ms,total_tokens,cost_estimate` 等统计列。历史 v1 artifact 不重写，新 reader 必须按 schema version 保守读取。论文以 completion / accepted validity 作为主要跨端点结果；latency、cost 和 rate-limit 结果必须按 provider 分层或标注 provider confounding。
+cohort v1/v2 以及 v2 的三端点、36 conditions、1,899 roots、14,652 first-attempt units、`100/8192` 口径仅供历史 replay/provenance；不得再称为当前正式 cohort，也不得把 v2 approval/digest 复用于 v3。
 
-正式 Experiment 5 preflight 必须验证三个 cohort member 的 provider config、key env、model id、reasoning profile、真实 smoke evidence、catalog compatibility、`timeout_seconds=100` 和预算。缺少任一 member 或任一 endpoint timeout 不是 100 时，整个正式 Experiment 5 标记 `blocked`，`blocked_reason="incomplete_model_cohort"`，`paper_eligible=false`，`provider_attempt_count=0`；timeout 漂移进入 member 的 `formal_ai_timeout_seconds_mismatch` reason。可用 member 的单模型试跑只能标 `pilot_only=true`，不能生成三模型论文主表。该 blocked 不影响 Experiment 1-4 的主张。
+输出契约同时覆盖机器可审计与论文消费：raw/normalized evidence 使用 JSON/JSONL；统计表使用 CSV；论文表使用 TeX；可复核摘要使用 Markdown；正式报告通过 TeX 生成 PDF；图表使用可追溯 SVG。核心字段包括 completion、accepted validity、tokens、cost estimate、latency、provider errors、recovery attempts、identity 和 `model_execution_records`。六个无序模型对都输出成对差异/置信区间所需行；任何缺失 evidence 都保留空值与 eligibility reason，不从显示字段补写。历史 schema 只读、不重写。
+
+DeepSeek-V4-Pro 的 pricing snapshot 固定为 CNY：cached input ¥0.025 / 1M、uncached input ¥3 / 1M、output ¥6 / 1M。usage 有 cache hit/miss 明细时分项估算，缺少明细时按 uncached input 保守估算；未收到 usage 时写 `usage_missing`，不得按零 token 解释。本地值一律称 `cost_estimate`，不是实际账单。Experiment 5 的 CNY 与 USD estimate 必须分别汇总到 `cost_estimate_by_currency`；未预注册汇率前，混合币种的顶层 scalar 合计固定为不可用并标记 `mixed_currency_not_aggregated`。
+
+正式 Experiment 5 preflight 必须验证四个 cohort member 的 provider config、key env、model id、reasoning profile、真实 capability evidence、8-root Exp5 smoke evidence、catalog/selection compatibility、请求限制、调度顺序、预算和输出契约。首次 8-root smoke 是产生该 smoke evidence 的 bootstrap 路径，启动前只校验 config/key/model/reasoning/catalog/selection/request/budget/输出身份，不要求事先已有 passed smoke evidence；正式矩阵 preflight 仍必须 fail closed 地要求该 evidence，二者不得再复用同一个门禁模式。`paper_smoke_profile.v3.json` 是 29-root 综合 profile；`paper_smoke_exp5_profile.v3.json` 是只含 Exp5 的独立 8-root profile，digest=`sha256:b44646d8b298200165abb73155304085c6800fab9ab363aa52483bd03556e61b`。两者均固定 `pilot_only/regression_only/paper_eligible=false`。2026-07-30 的五次最小 endpoint/key 诊断均返回 HTTP 200，其中 MiniMax 在显式 `enable_thinking=false` 时仍报告 87 个 reasoning tokens；这些诊断没有形成 artifact-backed capability/smoke evidence，8-root smoke 也尚未运行，所以正式 preflight 仍保持 `blocked`。可用单模型试跑也只能是 pilot，不能生成四模型论文表；该 blocked 不影响 Experiment 1–4 的主张。
+
+2026-07-30 首次真实 Exp5-only bootstrap 的 `paper_smoke_exp5_v3_20260730_run01` 在 API 前因实现漂移失败：preflight 已冻结 `thinking_budget=32768`，formal runner 的重复字段投影却漏掉该字段；同时 CLI 未持久化启动异常，因而只留下空目录。修复后 preflight/runner 共用同一 reasoning-controls projector，且 pre-execution exception 会在未初始化 suite 时持久化 blocked/0-attempt evidence。无 API 的真实参数哨兵已到达 evidence initialize；随后两次顺序 Qwen diagnostic attempts 中第一次为远端 connection error，第二次成功并报告 397 total/303 reasoning tokens，secret scan 无命中。上述单模型 diagnostic 仍不是 passed 8-root smoke evidence；空 run01 不得 resume，下一次完整 smoke 必须使用全新 output root 和重新生成的 path-bound digests。
 
 ## Fixed-entry 身份闭环
 
@@ -497,7 +510,7 @@ Provider call 前必须满足：condition 的 provider config namespace、entry�
 
 Provider call 后必须从持久化 evidence 审计：每个 provenance attempt 的 provider/entry/configured model、`provider_request_identity` 的 configured/requested model 与 reasoning controls、provenance 的 prepared config digest，以及 raw output 的 provider/entry/resolved model。成功或 parse-failed response 的 `model` 缺失、`null`、空字符串或非字符串统一产生稳定 reason `missing_resolved_model`；非空但与批准 identity 不同（包括未批准版本化 alias）产生 `resolved_model_mismatch`。OpenAI resolved model 默认 exact match；版本化 alias 只有进入新的 cohort/preflight approval 才可接受，禁止前缀猜测。上述 identity mismatch 必须把 attempt/failure kind 标为 `model_identity_mismatch`、`paper_eligible=false`，并停止该 condition 内尚未执行的 AI units；已经持久化的 raw/parsed evidence 保留用于审计，但不得进入 verifier/checker/canonical/merge。provider error 且没有成功 raw response 时不得伪造 resolved model，model execution record 写 `identity_status=not_observed`、`response_model_status=unavailable`，attempt 继续保留原 provider failure 分类。
 
-Reasoning normalization 规则：OpenAI `reasoning_effort` 缺失或 `None` 为 `default`，空字符串非法，非空字符串规范化后比较，GPT member 必须为 `high`；SiliconFlow cohort v1 的逻辑 profile 保持 `default`，`enable_thinking` 作为独立 boolean effective control 持久化。JSON-mode builder 隐式产生的 `enable_thinking=false` 必须进入 request identity；未批准的 `true` 不能被 `default` 标签吞掉。
+Reasoning normalization 规则：OpenAI `reasoning_effort` 缺失或 `None` 为 `default`，空字符串非法，非空字符串规范化后比较，GPT member 必须为 `high`；SiliconFlow cohort v2 的逻辑 profile 为 `thinking`，必须持久化 `enable_thinking=true`；DeepSeek 必须同时持久化 `thinking={"type":"enabled"}` 与 `reasoning_effort=high`。v1 cohort 的 SiliconFlow `default` / `enable_thinking=false` 只用于历史读取，不得套用到 v2。
 
 首次执行、provider failure、replacement/retry 和 resume 必须复用 condition 已批准的 endpoint identity；不得重新从当前 config 仅按 entry 字符串解析。source config drift 在 provider call 前失败；单-entry prepared config 禁止 failover 到 sibling entry/model。Replay 只验证和读取历史 request/provenance/raw/usage/model-execution artifacts，provider calls 必须为 0，也不得重新读取当前 API key 或当前 config 来补写历史事实。v1 artifact 的外层混合 `model` 不作为 resolved evidence；不能重写已有历史 artifact。未知 schema 或 v2 内部 requested/resolved/status 与原始 response 不一致时必须 fail closed。
 
@@ -607,11 +620,11 @@ CLI exit code 固定为：0 表示 runner 正常结束或按预算上限结构�
       "model_policy": "fixed_entry",
       "model_cohort_id": null,
       "cohort_member_id": null,
-      "provider_config_id": "siliconflow",
-      "model_entry_id": "glm_5_2_exp1_baseline",
-      "provider_family": "siliconflow",
-      "provider_model_id": "zai-org/GLM-5.2",
-      "reasoning_profile_id": null,
+      "provider_config_id": "exp1_baseline_deepseek",
+      "model_entry_id": "deepseek_v4_pro_exp1_baseline",
+      "provider_family": "deepseek",
+      "provider_model_id": "deepseek-v4-pro",
+      "reasoning_profile_id": "high",
       "model_cohort_digest": null,
       "source_provider_config_digest": null,
       "model_endpoint_identity_digest": null,
@@ -663,12 +676,12 @@ CLI exit code 固定为：0 表示 runner 正常结束或按预算上限结构�
 |---|---:|---:|
 | Experiment 1 | Factorization 500 + Lean 135 = 635 unique roots × 1 次 | 635 |
 | Experiment 2 | Factorization hard 166 × 6 worker levels × 2 repeats；每 root 使用 Exp2 专用 20-way split；Lean 不进入 | 1,992 |
-| Experiment 3 rate faults | Factorization 500 × 5 fault types × 7 rates × 2 repeats；Lean 3 × 5 × 4 × 2 | 35,120 |
+| Experiment 3 rate faults | Factorization 500 × 5 fault types × 6 positive rates × 2 repeats；Lean 3 × 5 × 3 positive rates × 2 | 30,090 |
 | Experiment 3 worker death | Factorization 三档并集 500 × 2 death counts × 3 kill positions × 2 repeats；Lean 3 × 2 × 3 × 2 | 6,036 |
 | Experiment 4 | Factorization 500 × 5 modes × 3 repeats；Lean 15 × 5 × 3 | 7,725 |
-| Experiment 5（三模型 cohort 完整时纳入 P0-full） | (Factorization hard 166 + Lean hard 45) × 3 endpoints × 3 repeats | 1,899 |
+| Experiment 5 v3（四模型 capability/smoke preflight 完整时纳入 P0-full） | (Factorization 83 + Lean 8/8/8) × 4 models × 3 repeats | 1,284 |
 
-P0-core（Experiment 1-4）论文 headline 合计 51,508 个 root-runs；P0-full（Experiment 1-5 且三模型 cohort / provider preflight 通过）论文 headline 合计 53,407 个 root-runs。Experiment 3 worker-death 还必须执行按 `domain × task_slice × repeat` 去重的 dedicated no-kill baselines：Factorization 1,000 roots、Lean 6 roots，共 1,006 个 supporting root-runs。这些 baseline 进入 plan-only 和真实成本，但不混入 fault condition 的论文分母；因此 P0-core/P0-full 实际调度 root-runs 分别为 52,514 / 54,413。Experiment 2 不再有 100/300 worker extension。root-run 数量不等于 provider calls。Factorization root 可能拆成多个 range AI units，Lean root 可能拆成多个 proof AI units；真实 provider-attempt 上界必须由 split preflight 精确展开。若预算上限无法覆盖计划，runner 写 `budget_exhausted` 并停止启动新 task；不得静默减少样本、删 mode、删 difficulty、删 topic family 或把 Lean 每格 15 道减为子样本。
+P0-core（Experiment 1-4）唯一实际调度合计 46,478 个 root-runs；叠加当前 Exp5 v3 后，P0-full 为 47,762 个 root-runs、256,886 个 first-attempt AI units，provider-attempt 上界 650,438。历史三模型 Exp5 v2 的 48,377-root P0-full 只供 replay/provenance。Exp3 的 0% reference 行统一引用 Exp1 已持久化 evidence，reference 自身 provider calls/tokens/cost 为 0；不再产生 1,006 个 dedicated supporting roots，因此 headline 与实际调度分母一致。同一个 Exp1 root 在全局唯一真实执行分母中只计一次。Experiment 2 不再有 100/300 worker extension。root-run 数量不等于 provider calls。若预算上限无法覆盖计划，runner 写 `budget_exhausted` 并停止启动新 task；不得静默减少样本、删 mode、删 difficulty、删 topic family 或把 Lean 每格 15 道减为子样本。
 
 ## 运行前预算门禁
 
@@ -682,6 +695,16 @@ N_{calls}^{max}=\sum_{conditions}\sum_{tasks}
 预算文件至少包含 planned root tasks、AI units、provider attempts 上界、token 上界、cost estimate 上界、预计 wall-clock、provider/model、并发、quota/rate-limit preflight 和磁盘空间估计。CLI 默认使用 `approval_mode=user_bypassed` 直接执行，同时记录 budget digest、`authorization_source=project_policy` 和实际 usage；如需恢复旧的人工门禁，显式传 `--require-budget-approval`，此时才要求匹配的 `--approve-budget-digest`。即使 bypass，任何显式提供但不匹配的 digest 仍必须在 transport 前拒绝。
 
 CLI 必须支持 `--max-total-provider-attempts`、`--max-total-tokens`、`--max-cost-estimate` 和 `--stop-after-current-task`。超过任一上限时写结构化 `budget_exhausted`，不启动新 task；已完成 evidence 保留。
+
+`--unlimited-budget` 是对既有“未提供三个总量上限时不设总量硬上限”行为的显式授权与审计身份，不是取消请求控制。该模式仍生成预算估计和 `run_budget.json`，仍记录真实 attempts/tokens/cost，并持久化 `budget_mode="unlimited"`、`approval_required=false`、`approval_mode="explicit_unlimited"`、`authorization_source="cli"`、`hard_limits={}`；但不要求 approval digest，也不设置总 provider attempts、tokens 或 cost 上限。单 AI unit 最多一次 provider attempt；Exp1–4 保留 `timeout_seconds=600`、`max_tokens=300000`，Exp5 cohort v2 保留公共 `timeout_seconds=100`、`max_tokens=8192`；temperature/model/reasoning、provider/cohort/config preflight、secret 不落盘和 evidence identity 检查全部保留。该参数与 `--require-budget-approval`、`--approve-budget-digest` 及三个 `--max-total-*` 参数互斥，冲突必须在 transport 前拒绝；不传时保持现有 `user_bypassed` 兼容行为。
+
+## 独立 smoke profiles
+
+`benchmarks/paper/paper_smoke_exp3_exp4_profile.v1.json` 是当前独立 Exp3–4-only 真实 API smoke selection，`suite_id=paper_smoke_exp3_exp4_v1`。它只对 `factor_v2_easy_001`、`repeat_id=0`、`worker_count=10` 调度五类 r100 rate-fault、一个 `dead1/p50` worker-death 和 Exp4 的 `FULL + 4` modes，正好 11 个直接/实际 roots。profile 强类型冻结 `baseline_policy=omitted_for_smoke_regression`：不运行/读取/导入 Exp1、Exp2、Exp3 0% 或历史 run01–run04，supporting roots/AI units/provider attempts 均为 0；Exp3 row 写 `baseline=null`、`baseline_comparison_eligible=false`、`baseline_unavailable_reason=smoke_baseline_not_requested`。该例外仅限 smoke，正式 scope 若尝试 omission policy 必须在 provider dispatch 前 fail closed。
+
+当前综合 smoke 由 `paper_smoke_profile.v3.json` 冻结为 29 个 direct roots：Exp1–4 既有部分 21 个，Exp5 v3 部分 8 个（四模型各 1 Factorization + 1 Lean）。另有 `paper_smoke_exp5_profile.v3.json` 作为物理独立的 Exp5-only 8-root bootstrap；首次 smoke 不要求先验 smoke evidence，正式 preflight 仍要求。五次最小 endpoint/key 诊断已完成但不构成正式 capability/smoke evidence，8-root smoke 尚未运行。`paper_smoke_profile.v1/v2`、旧 Exp1–4 profile/launcher 和历史输出只供 replay/provenance，不能冒充当前预注册设计。
+
+smoke 只负责检查真实配置、协议生命周期、fault/death/ablation/endpoint 路由和持久化/report 接线。所有层级必须冻结 `formal=false`、`pilot_only=true`、`regression_only=true`、`paper_eligible=false`，且 `ineligibility_reasons` 至少含 `smoke_suite,pilot_only`；不得提供升级参数，不得生成正式 `paper_table_*` / `paper_plot_*`，正式 metrics/report 必须拒绝其 evidence。condition selector 只保存语义字段，运行前解析为恰好一个 canonical condition/selection 并冻结 condition/selection/profile digests；零匹配、多匹配、catalog/output identity 漂移均在 transport 前阻塞。Exp3/Exp4 必须复用真实 production hooks，Exp5 必须经过 whole-cohort preflight；cohort 不完整时整个 smoke suite 在 transport 前阻塞，同时逐 endpoint 写 `status=blocked` 的审计记录，禁止自动换模型。离线 capturing 测试的 provider calls/tokens/cost 必须为 `0/0/0`，replay 只读持久化 evidence。
 
 ## 现有真实运行只用于资源校准
 
@@ -763,7 +786,7 @@ CLI 必须支持 `--max-total-provider-attempts`、`--max-total-tokens`、`--max
 
 8.  （Task 10 迁移及后续正常时序补缝已完成定向与 Fast 验证）运行 runtime、targeted、`tests/experiments`、executor/plugin impact suite 和完整 `init.ps1`；正式发布时再按验证分层运行所需 Full/LeanAudit。本轮按用户要求不重复全量门禁或正式实验。
 
-9.  只有系统生命周期覆盖审计通过后，才执行新的 plan-only、pilot、正式 P0、ablation；Experiment 5 只有在三模型 cohort、OpenAI/SiliconFlow provider preflight 和预算都通过时进入 P0-full，不得阻塞 P0-core。
+9.  只有系统生命周期覆盖审计通过后，才执行新的 plan-only、pilot、正式 P0、ablation；Experiment 5 只有在 v3 四模型 SiliconFlow capability、identity、8-root smoke 和预算 preflight 都通过时进入 P0-full，不得阻塞 P0-core。当前 8-root smoke 未运行，P0-full 保持 blocked。
 
 建议验证命令：
 
@@ -786,10 +809,12 @@ conda run -n tokenshare python -m tokenshare.experiments.run_paper_experiments `
   --output-root outputs/experiments/paper_v1 `
   --experiments exp1,exp2,exp3,exp4,exp5 `
   --real-transport `
+  --ai-api-config benchmarks/paper/exp1_baseline_provider_config.v3.json `
   --provider-config siliconflow=local/ai_api_smoke.local.json `
+  --provider-config deepseek=benchmarks/paper/exp1_baseline_provider_config.v2.json `
   --provider-config openai=local/openai_api_smoke.local.json `
-  --baseline-entry-id glm_5_2_exp1_baseline `
-  --model-cohort-file benchmarks/paper/model_comparison_cohort.v1.json `
+  --baseline-entry-id deepseek_v4_pro_exp1_baseline `
+  --model-cohort-file benchmarks/paper/model_comparison_cohort.v2.json `
   --model-entry-map local/model_comparison_entries.local.json `
   --exp2-worker-levels 1,3,7,10,30,50 `
   --exp2-repeats 2 `
@@ -802,10 +827,12 @@ conda run -n tokenshare python -m tokenshare.experiments.run_paper_experiments `
   --output-root outputs/experiments/paper_v1 `
   --experiments exp1,exp2,exp3,exp4,exp5 `
   --real-transport `
+  --ai-api-config benchmarks/paper/exp1_baseline_provider_config.v3.json `
   --provider-config siliconflow=local/ai_api_smoke.local.json `
+  --provider-config deepseek=benchmarks/paper/exp1_baseline_provider_config.v2.json `
   --provider-config openai=local/openai_api_smoke.local.json `
-  --baseline-entry-id glm_5_2_exp1_baseline `
-  --model-cohort-file benchmarks/paper/model_comparison_cohort.v1.json `
+  --baseline-entry-id deepseek_v4_pro_exp1_baseline `
+  --model-cohort-file benchmarks/paper/model_comparison_cohort.v2.json `
   --model-entry-map local/model_comparison_entries.local.json `
   --exp2-worker-levels 1,3,7,10,30,50 `
   --exp2-repeats 2 `
@@ -815,7 +842,19 @@ conda run -n tokenshare python -m tokenshare.experiments.run_paper_experiments `
       --max-total-tokens <approved-limit> `
       --max-cost-estimate <approved-limit>
 
-CLI 若未给 `--real-transport`、Experiment 1-4 baseline 不能从 `benchmarks/paper/exp1_baseline_provider_config.v1.json` 解析到 SiliconFlow `zai-org/GLM-5.2` / `glm_5_2_exp1_baseline`、catalog digest 不匹配、预算 digest 不匹配或输出目录已有不同 suite manifest，应拒绝启动，不得自动退回 scripted transport，也不得用 Experiment 5 cohort 的其他 member 替代。运行 Experiment 5 时还必须加载 frozen cohort、local entry map、SiliconFlow/OpenAI provider configs，并通过三个 member 的 key/model/reasoning/smoke preflight；任一 member 缺失时 runner 写 `blocked_reason="incomplete_model_cohort"`，而不是让 Experiment 1-4 失败，也不得自动替换模型。
+CLI 若未给 `--real-transport`、Exp1–4 实际执行命令未显式给 `--ai-api-config benchmarks/paper/exp1_baseline_provider_config.v3.json`，或 v3 digest、provider/model/endpoint/thinking/reasoning/`600/300000`、catalog/selection/profile/分母等预注册语义任一不匹配，应在 provider dispatch 前 structured blocked，且 provider calls 为 0。`execution_plan_digest` 与 `budget_digest` 都绑定实际绝对 `output_root`；全新 root 必须重新生成并冻结这两个运行实例 digest，不能与历史 root 的值比较。只有同一 output root 的冻结 identity 不一致才必须 fail closed。不得自动退回 scripted transport，也不得用 Experiment 5 cohort 的其他 member 替代。上面两条包含 Exp5 的命令中，`--provider-config deepseek=benchmarks/paper/exp1_baseline_provider_config.v2.json` 只绑定 Exp5 cohort v2 的 DeepSeek member，不是 Exp1–4 baseline。运行 Experiment 5 时还必须加载 frozen cohort v2、local entry map、SiliconFlow/DeepSeek/OpenAI provider configs，并通过三个 member 的 key/model/reasoning/smoke preflight；任一 member 缺失时 runner 写 `blocked_reason="incomplete_model_cohort"`，而不是让 Experiment 1–4 失败，也不得自动替换模型。
+
+当前 Exp1–4-only smoke 的唯一启动形态如下；run id、output root 和 supervision root 都必须此前不存在，输出固定 `paper_eligible=false`：
+
+    $stamp = [DateTime]::UtcNow.ToString("yyyyMMddTHHmmssZ")
+    $runId = "paper_smoke_exp1_exp4_v3_${stamp}_run03"
+    powershell -NoProfile -ExecutionPolicy Bypass `
+      -File .\local\run_exp1_exp4_v3_smoke.ps1 `
+      -RunId $runId `
+      -OutputRoot "outputs/experiments/$runId" `
+      -SupervisorRoot "local/supervision/$runId"
+
+launcher 必须先执行 `--smoke-identity-only`：跨 run 核对 profile/catalog/selection/provider-config digest、模型与请求控制、repeat/retry、21 direct roots + 1 worker-death supporting baseline（22 个实际调度 roots）、114 个首轮 AI units 和 150 provider-attempt upper bound；然后仅冻结当前 output root 生成的 execution-plan/budget digest，并在实际 runner argv 中通过 expected-digest 参数复核。不运行 Experiment 5、pilot、正式 Experiment 1–5 或 Full 实验矩阵。
 
 # 四天执行安排
 
@@ -850,15 +889,15 @@ CLI 若未给 `--real-transport`、Experiment 1-4 baseline 不能从 `benchmarks
 
 9.  `tokenshare.experiments` 的 FULL 路径不直接推进 canonical/requeue/merge/completion，worker pool 只提供容量，所有 unit 都通过系统 scheduler/lease；targeted tests、影响范围 tests、`compileall`、完整 `init.ps1` 通过，并把证据同步到 code map、feature list、progress 和 handoff。
 
-## 2026-07-25 实验设施 Task A–11 实现状态
+## 2026-07-25 实验设施 Task A–11 实现状态（历史，已由 EPD-012 覆盖 Exp3/P0 算术）
 
 2026-07-24 的 Exp2–4 行为审计和 Exp5 blocker 列表保留为实现前 provenance；当前实现已经按 EPD-001～EPD-006 完成设施补全：
 
 - Exp1=`12 conditions / 635 roots / 2,900 first-attempt AI units`；Exp2=`12 / 1,992 / 39,840 no-early-stop upper bound`，使用插件拥有的 20-way profile 和 system-native early stop。
-- Exp3 headline/supporting/actual roots=`41,156/1,006/42,162`；五类 rate-fault、applicability/reserve、真实 progress-triggered worker death、dedicated no-kill baseline 和 recovery metrics 均从持久化执行事实派生。
+- Exp3 当时的 headline/supporting/actual roots=`41,156/1,006/42,162`；该 dedicated baseline 版本只保留历史 replay，当前 runner 已由 EPD-012 改为 shared Exp1 reference，正式 roots=`36,126` 且 supporting=`0`。
 - Exp4 只含五模式，`90 conditions / 7,725 roots`；五模式统一 `max_retries=1`，`NO_REQUEUE` 只关闭 replacement；四类专项指标来自 runtime observations。
-- Exp5=`36 conditions / 1,899 roots / 14,652 first-attempt AI units`；selection 与 Exp2 解耦，公共 request controls、persisted v2 identity、strict artifact join、三遍 endpoint aggregate 和 provider confounding 已接入正式生产路径。
-- P0-core/P0-full actual scheduled roots=`52,514/54,413`，first-attempt AI units=`275,126/289,778`；Exp3/Exp4 replacement reserve=`411,704/28,728`，provider-attempt 上界=`715,558/730,210`。这些是计划预算，不是实际 usage。
+- Exp5 当时为 `36 conditions / 1,899 roots / 14,652 first-attempt AI units`；该 v2 三端点口径现仅供历史 replay。当前 v3 为四模型同一 SiliconFlow provider、`48 conditions / 1,284 roots / 9,888 first-attempt AI units`，离线设施与独立 bootstrap 入口已定向验证，artifact-backed 8-root smoke 未运行。
+- 当时 P0-core/P0-full actual scheduled roots=`52,514/54,413`，first-attempt AI units=`275,126/289,778`，provider-attempt 上界=`715,558/730,210`；这些数已失效。当前 EPD-012 P0-core roots=`46,478`、first-attempt AI units=`246,998`、provider-attempt 上界=`640,550`；叠加当前 Exp5 v3 后，P0-full roots=`47,762`、first-attempt AI units=`256,886`、provider-attempt 上界=`650,438`。历史 v2 的 `48,377/261,650/655,202` 只供 provenance；这些都只是计划预算，不是实际 usage。
 
 2026-07-26 的反伪造复核进一步关闭了 Task 11 后发现的资格链、critical path、空消融 observation、Exp5 identity 分母、worker-death 输出、429 sensitivity 和 Gate C stale fixture 问题。正式资格现在只有 `attempt → task → condition → experiment → suite → report` 一条聚合链；Exp2 的 `wall_clock_ms`、`provider_latency_sum_ms`、`critical_path_ms` 保持独立，且只有 Exp2 把完整成功依赖路径作为专项资格门禁。Exp1/3/4/5 中证据完整的 checker rejection、未恢复故障、消融失败和 provider/model failure 必须保留在正式分母中，不得因没有成功 merge/root-completion 而失格；其资格仍由真实 terminal attempt/task evidence 和各实验专项 evidence 决定。Exp3 禁止 self-baseline，Exp4 要求真实 hook refs 与同 case/repeat 的合格 FULL 配对，Exp5 以完整预期 provider-attempt inventory 作为身份分母。负面终局专项 TDD 从 `4 failed, 1 passed` 到 `5 passed`，最低验收九文件套件为 `251 passed in 120.27s`，最终 Fast 为 `331 passed, 1 skipped in 15.77s`；Capturing 仍只能生成 regression report。
 

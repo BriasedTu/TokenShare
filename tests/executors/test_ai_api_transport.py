@@ -54,7 +54,7 @@ def test_build_siliconflow_chat_body_disables_qwen_thinking_for_json_mode() -> N
     assert body["enable_thinking"] is False
 
 
-def test_build_siliconflow_chat_body_rejects_thinking_override_in_json_mode() -> None:
+def test_build_siliconflow_chat_body_preserves_explicit_thinking_override() -> None:
     config = load_ai_api_config(make_config_dict())
     entry = replace(
         config.entries[0],
@@ -64,16 +64,128 @@ def test_build_siliconflow_chat_body_rejects_thinking_override_in_json_mode() ->
         },
     )
 
+    body = build_siliconflow_chat_body(
+        entry=entry,
+        prompt_text="Return JSON.",
+        defaults=config.defaults,
+        request_limits={"max_tokens": 1024},
+        soft_hints={"temperature": 0.0},
+        require_json_mode=True,
+    )
+
+    assert body["enable_thinking"] is True
+
+
+def test_build_siliconflow_chat_body_sends_explicit_thinking_budget_controls() -> None:
+    config = load_ai_api_config(make_config_dict())
+    entry = replace(
+        config.entries[0],
+        request_overrides={
+            "temperature": 0.0,
+            "top_p": 1.0,
+            "enable_thinking": True,
+            "thinking_budget": 32768,
+        },
+    )
+
+    body = build_siliconflow_chat_body(
+        entry=entry,
+        prompt_text="Return JSON.",
+        defaults=config.defaults,
+        request_limits={"max_tokens": 32768},
+        soft_hints={},
+        require_json_mode=True,
+    )
+
+    assert {
+        key: body[key]
+        for key in (
+            "enable_thinking",
+            "thinking_budget",
+            "temperature",
+            "top_p",
+            "max_tokens",
+        )
+    } == {
+        "enable_thinking": True,
+        "thinking_budget": 32768,
+        "temperature": 0.0,
+        "top_p": 1.0,
+        "max_tokens": 32768,
+    }
+
+
+def test_build_siliconflow_chat_body_sends_explicit_non_thinking_without_budget() -> None:
+    config = load_ai_api_config(make_config_dict())
+    entry = replace(
+        config.entries[0],
+        request_overrides={
+            "temperature": 0.0,
+            "top_p": 1.0,
+            "enable_thinking": False,
+        },
+    )
+
+    body = build_siliconflow_chat_body(
+        entry=entry,
+        prompt_text="Return JSON.",
+        defaults=config.defaults,
+        request_limits={"max_tokens": 32768},
+        soft_hints={},
+        require_json_mode=True,
+    )
+
+    assert body["enable_thinking"] is False
+    assert "thinking_budget" not in body
+
+
+@pytest.mark.parametrize("thinking_budget", [True, 0, -1, 1.5, "32768"])
+def test_build_siliconflow_chat_body_rejects_invalid_thinking_budget(
+    thinking_budget,
+) -> None:
+    config = load_ai_api_config(make_config_dict())
+    entry = replace(
+        config.entries[0],
+        request_overrides={
+            "enable_thinking": True,
+            "thinking_budget": thinking_budget,
+        },
+    )
+
     with pytest.raises(
         ValueError,
-        match="enable_thinking must be false when json mode is required",
+        match="request_overrides.thinking_budget must be a positive integer",
     ):
         build_siliconflow_chat_body(
             entry=entry,
             prompt_text="Return JSON.",
             defaults=config.defaults,
-            request_limits={"max_tokens": 1024},
-            soft_hints={"temperature": 0.0},
+            request_limits={"max_tokens": 32768},
+            soft_hints={},
+            require_json_mode=True,
+        )
+
+
+@pytest.mark.parametrize("enable_thinking", [None, False])
+def test_build_siliconflow_chat_body_requires_thinking_for_budget(
+    enable_thinking: bool | None,
+) -> None:
+    config = load_ai_api_config(make_config_dict())
+    request_overrides = {"thinking_budget": 32768}
+    if enable_thinking is not None:
+        request_overrides["enable_thinking"] = enable_thinking
+    entry = replace(config.entries[0], request_overrides=request_overrides)
+
+    with pytest.raises(
+        ValueError,
+        match="thinking_budget requires enable_thinking=true",
+    ):
+        build_siliconflow_chat_body(
+            entry=entry,
+            prompt_text="Return JSON.",
+            defaults=config.defaults,
+            request_limits={"max_tokens": 32768},
+            soft_hints={},
             require_json_mode=True,
         )
 

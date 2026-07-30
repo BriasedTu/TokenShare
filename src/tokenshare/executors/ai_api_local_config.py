@@ -98,6 +98,8 @@ def _expand_model_matrix(body: JsonObject) -> JsonObject:
 def _default_base_url_for_provider(provider_family: str) -> str:
     if provider_family == "openai":
         return "https://api.openai.com/v1"
+    if provider_family == "deepseek":
+        return "https://api.deepseek.com"
     return "https://api.siliconflow.cn/v1"
 
 

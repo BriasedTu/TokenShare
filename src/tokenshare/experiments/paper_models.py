@@ -19,6 +19,8 @@ LEAN_TOPIC_FAMILIES = ("pure_logic", "function_set", "induction")
 PAPER_MODEL_POLICIES = ("fixed_entry",)
 FORMAL_MODEL_ENDPOINT_EXPERIMENT_ID = "exp5_real_ai_model_endpoint_comparison"
 PAPER_FORMAL_AI_TIMEOUT_SECONDS = 100
+EXP1_TO_EXP4_DEEPSEEK_TIMEOUT_SECONDS = 600
+EXP1_TO_EXP4_DEEPSEEK_MAX_TOKENS = 300_000
 UNSUPPORTED_PAPER_TRANSPORTS = frozenset({"scripted", "fake", "deterministic", "mock"})
 
 
@@ -28,6 +30,7 @@ class PaperStatus(str, Enum):
     COMPLETED = "completed"
     COMPLETED_WITH_FAILURES = "completed_with_failures"
     BLOCKED = "blocked"
+    INCOMPLETE = "incomplete"
     BUDGET_EXHAUSTED = "budget_exhausted"
     FAILED = "failed"
 
@@ -46,6 +49,7 @@ class PaperAttemptStatus(str, Enum):
     SUCCEEDED = "succeeded"
     MODEL_IDENTITY_MISMATCH = "model_identity_mismatch"
     PROVIDER_ERROR = "provider_error"
+    EXECUTOR_ERROR = "executor_error"
     PARSE_FAILED = "parse_failed"
     VERIFICATION_REJECTED = "verification_rejected"
     CHECKER_REJECTED = "checker_rejected"
@@ -248,10 +252,12 @@ class PaperSuiteResult:
     error_summary: list[JsonObject] | tuple[JsonObject, ...]
     model_policy_preflight: JsonObject | None = None
     model_endpoint_cohort_preflight: JsonObject | None = None
+    cost_estimate_by_currency: JsonObject | None = None
+    total_cost_estimate_status: str = "single_currency_or_legacy"
     schema_version: str = "tokenshare.paper_suite_result.v1"
 
     def to_dict(self) -> JsonObject:
-        return {
+        body = {
             "schema_version": self.schema_version,
             "suite_id": self.suite_id,
             "status": _status_value("status", PaperStatus, self.status),
@@ -276,6 +282,12 @@ class PaperSuiteResult:
                 self.model_endpoint_cohort_preflight
             ),
         }
+        if self.cost_estimate_by_currency is not None:
+            body["cost_estimate_by_currency"] = _json_value(
+                self.cost_estimate_by_currency
+            )
+            body["total_cost_estimate_status"] = self.total_cost_estimate_status
+        return body
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -398,10 +410,12 @@ class PaperTaskResult:
     event_refs: list[JsonObject] | tuple[JsonObject, ...]
     artifact_refs: list[JsonObject] | tuple[JsonObject, ...]
     paper_eligible: bool
+    cost_estimate_currency: str | None = None
+    cost_estimate_status: str | None = None
     schema_version: str = "tokenshare.paper_task_result.v1"
 
     def to_dict(self) -> JsonObject:
-        return {
+        body = {
             "schema_version": self.schema_version,
             "condition_id": self.condition_id,
             "repeat_id": self.repeat_id,
@@ -439,6 +453,11 @@ class PaperTaskResult:
             "artifact_refs": _json_value(list(self.artifact_refs)),
             "paper_eligible": self.paper_eligible,
         }
+        if self.cost_estimate_currency is not None:
+            body["cost_estimate_currency"] = self.cost_estimate_currency
+        if self.cost_estimate_status is not None:
+            body["cost_estimate_status"] = self.cost_estimate_status
+        return body
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -452,9 +471,9 @@ class PaperAttemptResult:
     worker_id: str
     provider_attempt_index: int
     attempt_status: PaperAttemptStatus | str
-    provider: str
-    model: str
-    entry_id: str
+    provider: str | None
+    model: str | None
+    entry_id: str | None
     request_ref: JsonObject | None
     raw_output_ref: JsonObject | None
     parsed_output_ref: JsonObject | None
@@ -483,10 +502,72 @@ class PaperAttemptResult:
     slot_key: str | None = None
     dependency_path: list[str] | tuple[str, ...] | None = None
     planned_ai_unit_id: str | None = None
+    cost_estimate_currency: str | None = None
+    cost_estimate_status: str | None = None
+    executor_id: str | None = None
+    executor_type: str | None = None
     schema_version: str = "tokenshare.paper_attempt_result.v1"
 
+    def __post_init__(self) -> None:
+        status = PaperAttemptStatus(self.attempt_status)
+        if status == PaperAttemptStatus.EXECUTOR_ERROR:
+            if self.schema_version != "tokenshare.paper_attempt_result.v2":
+                raise ValueError("executor_error attempt requires v2 schema")
+            for field_name in (
+                "provider_attempt_count",
+                "provider_attempt_index",
+                "prompt_tokens",
+                "completion_tokens",
+                "total_tokens",
+            ):
+                if type(getattr(self, field_name)) is not int or getattr(
+                    self, field_name
+                ) != 0:
+                    raise ValueError(
+                        f"executor_error attempt requires integer zero {field_name}"
+                    )
+            if (
+                isinstance(self.cost_estimate, bool)
+                or not isinstance(self.cost_estimate, (int, float))
+                or float(self.cost_estimate) != 0.0
+            ):
+                raise ValueError("executor_error attempt requires zero provider cost")
+            if type(self.latency_ms) is not int or self.latency_ms < 0:
+                raise ValueError(
+                    "executor_error attempt requires non-negative integer latency_ms"
+                )
+            if any(value is not None for value in (self.provider, self.model, self.entry_id)):
+                raise ValueError("executor_error attempt cannot claim provider identity")
+            if self.executor_id != "executor_factorization_runtime":
+                raise ValueError(
+                    "executor_error attempt requires executor_factorization_runtime"
+                )
+            if self.executor_type != "deterministic_local":
+                raise ValueError("executor_error attempt requires deterministic_local")
+            _require_non_empty("error_kind", self.error_kind)
+            if not isinstance(self.request_ref, Mapping) or not self.request_ref:
+                raise ValueError("executor_error attempt requires request_ref")
+            if any(
+                value is not None
+                for value in (
+                    self.raw_output_ref,
+                    self.parsed_output_ref,
+                    self.parse_failure_ref,
+                    self.provenance_ref,
+                    self.usage_ref,
+                    self.fault_injection_ref,
+                    self.model_execution_record_ref,
+                )
+            ):
+                raise ValueError("executor_error attempt cannot claim provider artifacts")
+            if self.paper_eligible is not False:
+                raise ValueError("executor_error attempt must be paper-ineligible")
+            return
+        if self.schema_version != "tokenshare.paper_attempt_result.v1":
+            raise ValueError("provider-dispatched attempt requires v1 schema")
+
     def to_dict(self) -> JsonObject:
-        return {
+        body = {
             "schema_version": self.schema_version,
             "condition_id": self.condition_id,
             "repeat_id": self.repeat_id,
@@ -539,6 +620,15 @@ class PaperAttemptResult:
                 else None
             ),
         }
+        if self.cost_estimate_currency is not None:
+            body["cost_estimate_currency"] = self.cost_estimate_currency
+        if self.cost_estimate_status is not None:
+            body["cost_estimate_status"] = self.cost_estimate_status
+        if self.executor_id is not None:
+            body["executor_id"] = self.executor_id
+        if self.executor_type is not None:
+            body["executor_type"] = self.executor_type
+        return body
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -757,10 +847,15 @@ class PaperBudgetResult:
     rate_limit_preflight: JsonObject
     disk_estimate: JsonObject
     status: PaperStatus | str
+    budget_mode: str | None = None
+    approval_required: bool | None = None
+    approval_mode: str | None = None
+    authorization_source: str | None = None
+    hard_limits: JsonObject | None = None
     schema_version: str = "tokenshare.paper_budget_result.v1"
 
     def to_dict(self) -> JsonObject:
-        return {
+        body = {
             "schema_version": self.schema_version,
             "budget_digest": self.budget_digest,
             "planned_experiments": list(self.planned_experiments),
@@ -776,6 +871,17 @@ class PaperBudgetResult:
             "disk_estimate": _json_value(self.disk_estimate),
             "status": _status_value("status", PaperStatus, self.status),
         }
+        if self.budget_mode is not None:
+            body.update(
+                {
+                    "budget_mode": self.budget_mode,
+                    "approval_required": self.approval_required,
+                    "approval_mode": self.approval_mode,
+                    "authorization_source": self.authorization_source,
+                    "hard_limits": _json_value(self.hard_limits or {}),
+                }
+            )
+        return body
 
 
 def digest_json(data: Any) -> str:
@@ -883,6 +989,70 @@ def _attempt_ineligibility_reasons(
 ) -> list[str]:
     attempt_id = str(attempt.get("attempt_id") or "unknown")
     reasons: list[str] = []
+    if attempt.get("attempt_status") == PaperAttemptStatus.EXECUTOR_ERROR.value:
+        reasons.append(f"attempt:{attempt_id}:executor_error")
+        if attempt.get("schema_version") != "tokenshare.paper_attempt_result.v2":
+            reasons.append(f"attempt:{attempt_id}:invalid_executor_error_schema")
+        for field_name in ("executor_id", "executor_type"):
+            if not isinstance(attempt.get(field_name), str) or not attempt.get(
+                field_name
+            ):
+                reasons.append(f"attempt:{attempt_id}:missing_{field_name}")
+        if any(
+            attempt.get(field_name) is not None
+            for field_name in ("provider", "model", "entry_id")
+        ):
+            reasons.append(
+                f"attempt:{attempt_id}:executor_error_claims_provider_identity"
+            )
+        if any(
+            attempt.get(field_name) is not None
+            for field_name in (
+                "raw_output_ref",
+                "provenance_ref",
+                "usage_ref",
+                "model_execution_record_ref",
+            )
+        ):
+            reasons.append(
+                f"attempt:{attempt_id}:executor_error_claims_provider_artifacts"
+            )
+        for field_name in (
+            "provider_attempt_index",
+            "provider_attempt_count",
+            "prompt_tokens",
+            "completion_tokens",
+            "total_tokens",
+        ):
+            if (
+                type(attempt.get(field_name)) is not int
+                or attempt.get(field_name) != 0
+            ):
+                reasons.append(f"attempt:{attempt_id}:invalid_{field_name}")
+        if (
+            not isinstance(attempt.get("cost_estimate"), (int, float))
+            or isinstance(attempt.get("cost_estimate"), bool)
+            or float(attempt["cost_estimate"]) != 0.0
+        ):
+            reasons.append(f"attempt:{attempt_id}:invalid_cost_estimate")
+        if attempt.get("paper_eligible") is not False:
+            reasons.append(f"attempt:{attempt_id}:executor_error_marked_eligible")
+        for field_name in ("started_at", "ended_at"):
+            if not isinstance(attempt.get(field_name), str) or not attempt.get(
+                field_name
+            ):
+                reasons.append(f"attempt:{attempt_id}:missing_{field_name}")
+        _check_required_artifact_ref(
+            attempt,
+            "request_ref",
+            attempt_id,
+            reasons,
+            artifact_inventory=artifact_inventory,
+            scanned_artifact_ids=scanned_artifact_ids,
+            allowed_types={"ExecutionRequest"},
+            allowed_source_kinds=None,
+        )
+        return reasons
     if attempt.get("attempt_status") == PaperAttemptStatus.MODEL_IDENTITY_MISMATCH.value:
         reasons.append(f"attempt:{attempt_id}:model_identity_mismatch")
     for field_name in ("provider", "model", "entry_id"):

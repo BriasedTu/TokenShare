@@ -54,6 +54,40 @@ def test_initialize_writes_required_formal_capturing_manifests(
     )
 
 
+def test_resume_archives_uncheckpointed_adapter_evidence_before_load(
+    tmp_path: Path,
+) -> None:
+    store = FormalEvidenceStore.initialize(
+        output_root=tmp_path,
+        **_suite_bodies(),
+        capturing=True,
+    )
+    orphan_root = tmp_path / EXPERIMENT_A / "runs" / CONDITION_A / "case-1"
+    orphan_file = orphan_root / "events" / "adapter.jsonl"
+    orphan_file.parent.mkdir(parents=True)
+    orphan_file.write_text('{"event_type":"FACILITY_FAILURE"}\n', encoding="utf-8")
+
+    with pytest.raises(
+        ValueError,
+        match="evidence manifest does not exactly index stored files",
+    ):
+        store._validate_evidence_manifest()
+
+    repair = store.archive_uncheckpointed_adapter_runs()
+
+    assert repair is not None
+    assert repair["repair_kind"] == "uncheckpointed_adapter_evidence_archive"
+    assert repair["archived_condition_count"] == 1
+    assert not (tmp_path / EXPERIMENT_A / "runs" / CONDITION_A).exists()
+    archived = repair["archived_files"][0]
+    assert archived["source_path"].endswith("events/adapter.jsonl")
+    assert (tmp_path / archived["archived_ref"]["path"]).read_text(
+        encoding="utf-8"
+    ) == '{"event_type":"FACILITY_FAILURE"}\n'
+    assert repair["paper_eligible"] is False
+    store._validate_evidence_manifest()
+
+
 def test_initialize_promotes_matching_zero_call_plan_only_root(
     tmp_path: Path,
 ) -> None:
@@ -185,6 +219,243 @@ def test_checkpoint_preserves_artifact_and_loads_completed_task(
     )
     assert loaded.completed_task_ids == ("task-1",)
     assert loaded.completed_task_ids_by_experiment == {EXPERIMENT_A: ("task-1",)}
+
+
+def test_shared_root_reference_freezes_current_generation_and_zero_usage(
+    tmp_path: Path,
+) -> None:
+    store = FormalEvidenceStore.initialize(
+        output_root=tmp_path,
+        **_suite_bodies(),
+        capturing=False,
+    )
+    _checkpoint_task(store, tmp_path, task_id="task-1")
+
+    reference = store.build_shared_root_reference(
+        source_experiment_id=EXPERIMENT_A,
+        case_id="task-1",
+        source_repeat_id=0,
+        expected_condition_identity={"repeat_id": 0},
+    )
+    repeated = store.build_shared_root_reference(
+        source_experiment_id=EXPERIMENT_A,
+        case_id="task-1",
+        source_repeat_id=0,
+        expected_condition_identity={"repeat_id": 0},
+    )
+
+    assert reference == repeated
+    assert reference["schema_version"] == (
+        "tokenshare.paper_exp1_shared_reference.v1"
+    )
+    assert reference["source_suite_id"] == "formal-suite-1"
+    assert reference["source_experiment_id"] == EXPERIMENT_A
+    assert reference["source_condition_id"] == CONDITION_A
+    assert reference["source_case_id"] == "task-1"
+    assert reference["source_task_id"] == "task-1"
+    assert reference["source_repeat_id"] == 0
+    assert reference["source_generation_id"]
+    assert reference["source_generation_manifest_digest"].startswith("sha256:")
+    assert reference["source_task_record_hash"].startswith("sha256:")
+    assert reference["source_hash"].startswith("sha256:")
+    assert reference["source_versions"] == _execution_version_identity()
+    assert reference["source_attempt_refs"]
+    assert reference["source_event_refs"]
+    assert reference["source_artifact_refs"]
+    assert reference["source_root_status"] == "completed"
+    assert reference["evidence_integrity"] == "complete"
+    assert reference["baseline_comparison_eligible"] is True
+    assert reference["provider_calls_made"] == 0
+    assert reference["prompt_tokens"] == 0
+    assert reference["completion_tokens"] == 0
+    assert reference["total_tokens"] == 0
+    assert reference["cost_estimate"] == 0.0
+
+
+def test_shared_root_reference_rejects_version_drift_and_does_not_zero_missing_usage(
+    tmp_path: Path,
+) -> None:
+    store = FormalEvidenceStore.initialize(
+        output_root=tmp_path,
+        **_suite_bodies(),
+        capturing=False,
+    )
+    task = {
+        **_task(EXPERIMENT_A, CONDITION_A),
+        "provider_attempt_count": 1,
+    }
+    attempt = _attempt(EXPERIMENT_A, CONDITION_A)
+    for field_name in (
+        "prompt_tokens",
+        "completion_tokens",
+        "total_tokens",
+        "cost_estimate",
+        "cost_estimate_currency",
+        "cost_estimate_status",
+    ):
+        attempt.pop(field_name, None)
+    artifact = (
+        tmp_path
+        / "experiments"
+        / EXPERIMENT_A
+        / "runs"
+        / CONDITION_A
+        / "0"
+        / "artifacts"
+        / "missing-usage-source.bin"
+    )
+    artifact.parent.mkdir(parents=True, exist_ok=True)
+    artifact.write_bytes(b"missing usage source")
+    store.checkpoint_root(
+        experiment_id=EXPERIMENT_A,
+        condition=_condition(EXPERIMENT_A, CONDITION_A),
+        repeat_id=0,
+        task=task,
+        attempts=[attempt],
+        faults=[],
+        events=[_event(EXPERIMENT_A, CONDITION_A)],
+        artifact_refs=[
+            {
+                "experiment_id": EXPERIMENT_A,
+                "condition_id": CONDITION_A,
+                "repeat_id": 0,
+                "task_id": "task-1",
+                "path": artifact.relative_to(tmp_path).as_posix(),
+                "content_hash": _sha256(artifact.read_bytes()),
+            }
+        ],
+    )
+
+    with pytest.raises(ValueError, match="version identity mismatch"):
+        store.build_shared_root_reference(
+            source_experiment_id=EXPERIMENT_A,
+            case_id="task-1",
+            source_repeat_id=0,
+            expected_condition_identity={"repeat_id": 0},
+            expected_source_versions={
+                **_execution_version_identity(),
+                "split_profile_digest": "sha256:" + "9" * 64,
+            },
+        )
+
+    reference = store.build_shared_root_reference(
+        source_experiment_id=EXPERIMENT_A,
+        case_id="task-1",
+        source_repeat_id=0,
+        expected_condition_identity={"repeat_id": 0},
+        expected_source_versions=_execution_version_identity(),
+    )
+    assert reference["source_usage"]["usage_complete"] is False
+    assert reference["source_usage"]["usage_missing_provider_attempt_count"] == 1
+    assert reference["source_usage"]["prompt_tokens"] is None
+    assert reference["source_usage"]["cost_estimate"] is None
+    assert reference["baseline_comparison_eligible"] is False
+    assert reference["baseline_unavailable_reason"] == "source_exp1_usage_incomplete"
+
+
+def test_shared_root_reference_accepts_complete_experimental_failure(
+    tmp_path: Path,
+) -> None:
+    store = FormalEvidenceStore.initialize(
+        output_root=tmp_path,
+        **_suite_bodies(),
+        capturing=False,
+    )
+    run_root = tmp_path / "experiments" / EXPERIMENT_A / "runs" / CONDITION_A / "0"
+    artifact = run_root / "artifacts" / "task-1.bin"
+    artifact.parent.mkdir(parents=True, exist_ok=True)
+    artifact.write_bytes(b"complete failed evidence")
+    store.checkpoint_root(
+        experiment_id=EXPERIMENT_A,
+        condition=_condition(EXPERIMENT_A, CONDITION_A),
+        repeat_id=0,
+        task={
+            **_task(EXPERIMENT_A, CONDITION_A, status="failed"),
+            "case_id": "task-1",
+            "outcome_status": "failed_experimental",
+            "evidence_integrity": "complete",
+        },
+        attempts=[
+            {
+                **_attempt(EXPERIMENT_A, CONDITION_A),
+                "attempt_status": "failed",
+                "total_tokens": 17,
+                "cost_estimate": 0.25,
+            }
+        ],
+        faults=[],
+        events=[_event(EXPERIMENT_A, CONDITION_A)],
+        artifact_refs=[
+            {
+                "experiment_id": EXPERIMENT_A,
+                "condition_id": CONDITION_A,
+                "repeat_id": 0,
+                "task_id": "task-1",
+                "path": artifact.relative_to(tmp_path).as_posix(),
+                "content_hash": _sha256(artifact.read_bytes()),
+            }
+        ],
+    )
+
+    reference = store.build_shared_root_reference(
+        source_experiment_id=EXPERIMENT_A,
+        case_id="task-1",
+        source_repeat_id=0,
+        expected_condition_identity={"repeat_id": 0},
+    )
+
+    assert reference["source_root_status"] == "failed"
+    assert reference["evidence_integrity"] == "complete"
+    assert reference["baseline_comparison_eligible"] is False
+    assert reference["baseline_unavailable_reason"] == (
+        "source_exp1_failed_experimental"
+    )
+    assert reference["source_usage"] == {
+        "provider_attempt_count": 1,
+        "expected_provider_attempt_count": 1,
+        "prompt_tokens": 4,
+        "completion_tokens": 6,
+        "total_tokens": 17,
+        "cost_estimate": 0.25,
+        "usage_complete": True,
+        "usage_missing_provider_attempt_count": 0,
+        "cost_estimate_status": "estimated",
+        "cost_estimate_currency": "USD",
+    }
+
+
+def test_shared_root_reference_fails_closed_on_identity_or_generation_corruption(
+    tmp_path: Path,
+) -> None:
+    store = FormalEvidenceStore.initialize(
+        output_root=tmp_path,
+        **_suite_bodies(),
+        capturing=False,
+    )
+    _checkpoint_task(store, tmp_path, task_id="task-1")
+
+    with pytest.raises(ValueError, match="identity"):
+        store.build_shared_root_reference(
+            source_experiment_id=EXPERIMENT_A,
+            case_id="task-1",
+            source_repeat_id=0,
+            expected_condition_identity={"repeat_id": 1},
+        )
+
+    run_root = tmp_path / "experiments" / EXPERIMENT_A / "runs" / CONDITION_A / "0"
+    generation_root = _current_generation_root(run_root)
+    task_path = generation_root / "per_task_results.jsonl"
+    task_path.write_text(
+        task_path.read_text(encoding="utf-8").replace("completed", "failed"),
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="integrity"):
+        store.build_shared_root_reference(
+            source_experiment_id=EXPERIMENT_A,
+            case_id="task-1",
+            source_repeat_id=0,
+            expected_condition_identity={"repeat_id": 0},
+        )
 
 
 @pytest.mark.parametrize(
@@ -967,6 +1238,9 @@ def _task(
         "repeat_id": 0,
         "task_id": task_id,
         "root_status": status,
+        "provider_attempt_count": 1,
+        "execution_version_identity": _execution_version_identity(),
+        "runtime_generation_identity": _runtime_generation_identity(),
     }
 
 
@@ -983,6 +1257,42 @@ def _attempt(
         "task_id": task_id,
         "attempt_id": f"attempt-{task_id}",
         "attempt_status": "success",
+        "provider_attempt_count": 1,
+        "prompt_tokens": 4,
+        "completion_tokens": 6,
+        "total_tokens": 10,
+        "cost_estimate": 0.1,
+        "cost_estimate_currency": "USD",
+        "cost_estimate_status": "estimated",
+        "model_execution_record_ref": {"content_hash": "sha256:" + "7" * 64},
+    }
+
+
+def _execution_version_identity() -> dict[str, object]:
+    return {
+        "schema_version": "tokenshare.paper_execution_version_identity.v1",
+        "plugin_version": "plugin-test-v1",
+        "parser_version": "parser-test-v1",
+        "verifier_version": "verifier-test-v1",
+        "executor_version": "executor-test-v1",
+        "prompt_version": "prompt-test-v1",
+        "split_profile_digest": "sha256:" + "6" * 64,
+        "runtime_generation_schema_version": (
+            "tokenshare.paper_runtime_generation_identity.v1"
+        ),
+        "runtime_generation_identity_digest": _sha256(
+            _canonical_json(_runtime_generation_identity()).encode("utf-8")
+        ),
+    }
+
+
+def _runtime_generation_identity() -> dict[str, object]:
+    return {
+        "schema_version": "tokenshare.paper_runtime_generation_identity.v1",
+        "run_id": "test-run",
+        "task_id": "task-1",
+        "root_unit_id": "root-task-1",
+        "ledger_digest": "sha256:" + "4" * 64,
     }
 
 

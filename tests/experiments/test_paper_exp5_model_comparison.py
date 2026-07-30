@@ -5,11 +5,14 @@ from dataclasses import replace
 import importlib
 import importlib.util
 import inspect
+import json
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
 
+from tokenshare.experiments.paper_catalog import load_paper_catalogs
 from tokenshare.experiments.paper_experiment_contracts import (
     PaperExecutionContext,
     PaperExperimentModule,
@@ -19,6 +22,9 @@ from tokenshare.experiments.paper_model_policy import (
     PAPER_MODEL_ENDPOINT_COHORT_ID,
     PAPER_MODEL_ENDPOINT_COHORT_MEMBER_IDS,
     PAPER_MODEL_ENDPOINT_COHORT_MEMBERS,
+    PAPER_MODEL_ENDPOINT_COHORT_V3_ID,
+    PAPER_MODEL_ENDPOINT_COHORT_V3_MEMBER_IDS,
+    PAPER_MODEL_ENDPOINT_COHORT_V3_MEMBERS,
 )
 from tokenshare.experiments.paper_models import (
     PaperAttemptResult,
@@ -29,12 +35,404 @@ from tokenshare.experiments.paper_models import (
     PaperTaskStatus,
     digest_json,
 )
+from tokenshare.experiments.paper_runner import _bind_lean_matrix_to_catalog
 
 
 MODULE_NAME = "tokenshare.experiments.paper_exp5_model_comparison"
 CATALOG_DIGEST = "sha256:" + "1" * 64
 COHORT_DIGEST = "sha256:" + "2" * 64
 _MISSING = object()
+
+
+def test_exp5_v3_selection_artifact_freezes_107_hard_roots() -> None:
+    selection = json.loads(
+        Path("benchmarks/paper/exp5_hard_half_selection.v3.json").read_text(
+            encoding="utf-8"
+        )
+    )
+
+    assert selection["schema_version"] == (
+        "tokenshare.paper_exp5_hard_half_selection.v3"
+    )
+    assert selection["selection_id"] == "tokenshare.paper.exp5.hard_half.v3"
+    assert selection["selection_version"] == "v3"
+    assert selection["counts_by_stratum"] == {
+        "factorization:hard": 83,
+        "lean_proof:hard:pure_logic": 8,
+        "lean_proof:hard:function_set": 8,
+        "lean_proof:hard:induction": 8,
+    }
+    assert len(selection["ordered_case_ids"]) == 107
+
+
+def test_exp5_v3_expands_48_repeat_major_conditions() -> None:
+    module = _load_module()
+    conditions = module.expand_exp5_v3_conditions(
+        _context(binding=_cohort_preflight_v3())
+    )
+    expected_order = {
+        0: (
+            "glm_5_2_siliconflow",
+            "qwen3_14b_siliconflow",
+            "minimax_m2_5_siliconflow",
+            "deepseek_v3_pro_siliconflow",
+        ),
+        1: (
+            "qwen3_14b_siliconflow",
+            "deepseek_v3_pro_siliconflow",
+            "glm_5_2_siliconflow",
+            "minimax_m2_5_siliconflow",
+        ),
+        2: (
+            "minimax_m2_5_siliconflow",
+            "glm_5_2_siliconflow",
+            "deepseek_v3_pro_siliconflow",
+            "qwen3_14b_siliconflow",
+        ),
+    }
+
+    assert len(conditions) == 48
+    cursor = 0
+    for repeat_id, member_ids in expected_order.items():
+        predecessor = None
+        for order_slot, member_id in enumerate(member_ids, start=1):
+            block = conditions[cursor : cursor + 4]
+            cursor += 4
+            assert [condition.domain for condition in block] == [
+                "factorization",
+                "lean_proof",
+                "lean_proof",
+                "lean_proof",
+            ]
+            assert [condition.topic_family for condition in block] == [
+                None,
+                "pure_logic",
+                "function_set",
+                "induction",
+            ]
+            assert {condition.repeat_id for condition in block} == {repeat_id}
+            assert {condition.cohort_member_id for condition in block} == {
+                member_id
+            }
+            assert {condition.worker_count for condition in block} == {3}
+            assert {condition.order_slot for condition in block} == {order_slot}
+            assert {condition.predecessor_member_id for condition in block} == {
+                predecessor
+            }
+            assert all(
+                condition.schema_version == "tokenshare.paper_condition.v3"
+                for condition in block
+            )
+            predecessor = member_id
+
+
+def test_exp5_v3_freezes_1284_roots_and_9888_first_attempt_units() -> None:
+    module = _load_module()
+    context = _context(
+        catalog=_tracked_v3_catalog(),
+        binding=_cohort_preflight_v3(),
+    )
+    conditions = module.expand_exp5_v3_conditions(context)
+    selections = module.freeze_exp5_v3_case_selections(context, conditions)
+
+    assert module.count_exp5_v3_root_runs(conditions, selections) == 1_284
+    assert sum(selection.expected_ai_unit_count for selection in selections) == (
+        9_888
+    )
+    ids_by_scope: dict[tuple[str, str], set[tuple[str, ...]]] = {}
+    for condition, selection in zip(conditions, selections, strict=True):
+        scope = (
+            condition.domain,
+            str(condition.topic_family or condition.paper_difficulty),
+        )
+        ids_by_scope.setdefault(scope, set()).add(selection.ordered_case_ids)
+        assert condition.exp5_selection_digest == (
+            "sha256:fbec153a02befa4071b4ad4d639e51e910a3bc4c433cc9eea4b19ac6489a3490"
+        )
+    assert {scope: len(next(iter(ids))) for scope, ids in ids_by_scope.items()} == {
+        ("factorization", "hard"): 83,
+        ("lean_proof", "pure_logic"): 8,
+        ("lean_proof", "function_set"): 8,
+        ("lean_proof", "induction"): 8,
+    }
+    assert all(len(ids) == 1 for ids in ids_by_scope.values())
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ("selection_digest", "case_order", "parent_catalog_digest"),
+)
+def test_exp5_v3_selection_loader_rejects_identity_drift(
+    tmp_path: Path,
+    mutation: str,
+) -> None:
+    module = _load_module()
+    source = Path("benchmarks/paper/exp5_hard_half_selection.v3.json")
+    body = json.loads(source.read_text(encoding="utf-8"))
+    if mutation == "selection_digest":
+        body["selection_digest"] = "sha256:" + "0" * 64
+    elif mutation == "case_order":
+        body["strata"][0]["ordered_case_ids"][:2] = reversed(
+            body["strata"][0]["ordered_case_ids"][:2]
+        )
+        body["ordered_case_ids"] = [
+            case_id
+            for stratum in body["strata"]
+            for case_id in stratum["ordered_case_ids"]
+        ]
+        digest_body = dict(body)
+        digest_body.pop("selection_digest")
+        body["selection_digest"] = digest_json(digest_body)
+    else:
+        body["parent_catalog"]["catalog_digest"] = "sha256:" + "9" * 64
+        digest_body = dict(body)
+        digest_body.pop("selection_digest")
+        body["selection_digest"] = digest_json(digest_body)
+    path = tmp_path / "selection.json"
+    path.write_text(json.dumps(body), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="digest|order|parent"):
+        module.load_exp5_v3_selection(path, catalog=_tracked_v3_catalog())
+
+
+def test_exp5_v3_rejects_condition_order_drift() -> None:
+    module = _load_module()
+    context = _context(
+        catalog=_tracked_v3_catalog(),
+        binding=_cohort_preflight_v3(),
+    )
+    conditions = module.expand_exp5_v3_conditions(context)
+
+    with pytest.raises(ValueError, match="condition order or identity drift"):
+        module.freeze_exp5_v3_case_selections(
+            context,
+            tuple(reversed(conditions)),
+        )
+
+
+@pytest.mark.parametrize("entrypoint", ("expand", "freeze"))
+@pytest.mark.parametrize(
+    "mutation",
+    (
+        "source_count",
+        "retained_count",
+        "counts_by_stratum",
+        "stratum_source_count",
+        "stratum_retained_count",
+    ),
+)
+def test_exp5_public_v3_rejects_float_selection_counts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    entrypoint: str,
+    mutation: str,
+) -> None:
+    module = _load_module()
+    calls: list[str] = []
+    context = _context(
+        catalog=_tracked_v3_catalog(),
+        binding=_cohort_preflight_v3(),
+        callback=lambda **kwargs: calls.append("called"),
+    )
+    canonical_conditions = module.expand_exp5_v3_conditions(context)
+    body = json.loads(
+        Path("benchmarks/paper/exp5_hard_half_selection.v3.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    if mutation == "source_count":
+        body["source_count"] = float(body["source_count"])
+    elif mutation == "retained_count":
+        body["retained_count"] = float(body["retained_count"])
+    elif mutation == "counts_by_stratum":
+        body["counts_by_stratum"]["factorization:hard"] = 83.0
+    elif mutation == "stratum_source_count":
+        body["strata"][0]["source_count"] = 166.0
+    else:
+        body["strata"][0]["retained_count"] = 83.0
+    digest_body = dict(body)
+    digest_body.pop("selection_digest")
+    body["selection_digest"] = digest_json(digest_body)
+    selection_path = tmp_path / "selection.json"
+    selection_path.write_text(json.dumps(body), encoding="utf-8")
+    monkeypatch.setitem(
+        module.expand_exp5_v3_conditions.__kwdefaults__,
+        "selection_path",
+        selection_path,
+    )
+    monkeypatch.setitem(
+        module.freeze_exp5_v3_case_selections.__kwdefaults__,
+        "selection_path",
+        selection_path,
+    )
+    drifted_conditions = tuple(
+        replace(
+            condition,
+            exp5_selection_digest=body["selection_digest"],
+        )
+        for condition in canonical_conditions
+    )
+    experiment = module.Experiment5ModelComparisonModule()
+
+    with pytest.raises(ValueError, match="integer|count"):
+        if entrypoint == "expand":
+            experiment.expand_conditions(context)
+        else:
+            experiment.freeze_case_selections(context, drifted_conditions)
+    assert calls == []
+
+
+@pytest.mark.parametrize("entrypoint", ("expand", "freeze"))
+@pytest.mark.parametrize(
+    ("field_name", "drifted_value"),
+    (
+        ("provider_calls_made", False),
+        ("provider_calls_made", 0.0),
+        ("timeout_seconds", 600.0),
+        ("max_tokens", 32768.0),
+        ("max_provider_attempts", 1.0),
+        ("max_provider_attempts", True),
+    ),
+)
+def test_exp5_public_v3_rejects_non_integer_preflight_counts_and_controls(
+    entrypoint: str,
+    field_name: str,
+    drifted_value: object,
+) -> None:
+    module = _load_module()
+    calls: list[str] = []
+    catalog = _tracked_v3_catalog()
+    valid_context = _context(
+        catalog=catalog,
+        binding=_cohort_preflight_v3(),
+    )
+    canonical_conditions = module.expand_exp5_v3_conditions(valid_context)
+    binding = deepcopy(_cohort_preflight_v3())
+    if field_name == "provider_calls_made":
+        binding[field_name] = drifted_value
+    else:
+        for plan in binding["member_plans"].values():
+            request_controls = plan["request_controls"]
+            comparable = dict(request_controls["comparable"])
+            comparable[field_name] = drifted_value
+            request_controls["comparable"] = comparable
+            request_controls["comparable_digest"] = digest_json(comparable)
+        snapshot = dict(binding["request_controls_snapshot"])
+        snapshot[field_name] = drifted_value
+        binding["request_controls_snapshot"] = snapshot
+        binding["request_controls_snapshot_digest"] = digest_json(snapshot)
+    context = _context(
+        catalog=catalog,
+        binding=binding,
+        callback=lambda **kwargs: calls.append("called"),
+    )
+    experiment = module.Experiment5ModelComparisonModule()
+
+    with pytest.raises(ValueError, match="integer|preflight|controls"):
+        if entrypoint == "expand":
+            experiment.expand_conditions(context)
+        else:
+            experiment.freeze_case_selections(context, canonical_conditions)
+    assert calls == []
+
+
+def test_exp5_public_module_dispatches_v3_expansion_and_freeze() -> None:
+    module = _load_module()
+    context = _context(
+        catalog=_tracked_v3_catalog(),
+        binding=_cohort_preflight_v3(),
+    )
+    experiment = module.Experiment5ModelComparisonModule()
+
+    conditions = experiment.expand_conditions(context)
+    selections = experiment.freeze_case_selections(context, conditions)
+
+    assert len(conditions) == 48
+    assert len(selections) == 48
+    assert all(
+        condition.schema_version == "tokenshare.paper_condition.v3"
+        for condition in conditions
+    )
+    assert {len(selection.ordered_case_ids) for selection in selections} == {
+        8,
+        83,
+    }
+    with pytest.raises(ValueError, match="condition order or identity drift"):
+        experiment.freeze_case_selections(context, tuple(reversed(conditions)))
+
+
+def test_exp5_public_module_runs_v3_selection_and_rejects_digest_drift() -> None:
+    module = _load_module()
+    calls: list[tuple[str, int]] = []
+
+    def callback(**kwargs: Any) -> PaperConditionResult:
+        condition = kwargs["condition"]
+        selection = kwargs["selection"]
+        calls.append((condition.domain, len(selection.ordered_case_ids)))
+        return PaperConditionResult(
+            condition_id=condition.condition_id,
+            status=PaperStatus.BLOCKED,
+            repeat_count=1,
+            task_count=len(selection.ordered_case_ids),
+            completed_root_count=0,
+            failed_root_count=0,
+            blocked_root_count=len(selection.ordered_case_ids),
+            provider_attempt_count=0,
+            metrics_ref={"transport_kind": "scripted", "paper_eligible": False},
+        )
+
+    context = _context(
+        catalog=_tracked_v3_catalog(),
+        binding=_cohort_preflight_v3(),
+        callback=callback,
+    )
+    experiment = module.Experiment5ModelComparisonModule()
+    conditions = module.expand_exp5_v3_conditions(context)
+    selections = module.freeze_exp5_v3_case_selections(context, conditions)
+    factor_index = next(
+        index
+        for index, condition in enumerate(conditions)
+        if condition.domain == "factorization"
+    )
+    lean_index = next(
+        index
+        for index, condition in enumerate(conditions)
+        if condition.domain == "lean_proof"
+    )
+
+    experiment.run_condition(
+        context,
+        conditions[factor_index],
+        selections[factor_index],
+    )
+    experiment.run_condition(
+        context,
+        conditions[lean_index],
+        selections[lean_index],
+    )
+
+    assert calls == [("factorization", 83), ("lean_proof", 8)]
+    with pytest.raises(ValueError, match="canonical Experiment 5 v3 selection"):
+        experiment.run_condition(
+            context,
+            conditions[factor_index],
+            replace(
+                selections[factor_index],
+                ordered_case_ids=tuple(
+                    reversed(selections[factor_index].ordered_case_ids)
+                ),
+            ),
+        )
+    with pytest.raises(ValueError, match="canonical Experiment 5 v3 identity"):
+        experiment.run_condition(
+            context,
+            replace(
+                conditions[factor_index],
+                exp5_selection_digest="sha256:" + "0" * 64,
+            ),
+            selections[factor_index],
+        )
+    assert calls == [("factorization", 83), ("lean_proof", 8)]
 
 
 def test_exp5_epd006_uses_all_exp1_hard_roots_without_exp2_slice() -> None:
@@ -153,7 +551,7 @@ def test_exp5_accepts_flat_formal_catalog_and_freezes_readiness_ids() -> None:
 def test_exp5_incomplete_cohort_structures_zero_call_formal_block() -> None:
     module = _load_module()
     preflight = _cohort_preflight()
-    preflight["member_plans"].pop("qwen3_6_27b_siliconflow")
+    preflight["member_plans"].pop("deepseek_v4_pro_deepseek")
     calls: list[str] = []
 
     context = _context(
@@ -200,13 +598,13 @@ def test_exp5_single_member_plan_is_pilot_only_and_never_formal_eligible() -> No
 
     plan = module.build_exp5_single_member_pilot_plan(
         context,
-        cohort_member_id="qwen3_6_27b_siliconflow",
+        cohort_member_id="deepseek_v4_pro_deepseek",
     )
 
     assert plan["status"] == "planned"
     assert plan["pilot_only"] is True
     assert plan["paper_eligible"] is False
-    assert plan["cohort_member_id"] == "qwen3_6_27b_siliconflow"
+    assert plan["cohort_member_id"] == "deepseek_v4_pro_deepseek"
     assert plan["condition_count"] == 12
     assert plan["root_run_count"] == 633
     assert plan["provider_calls_made"] == 0
@@ -216,7 +614,7 @@ def test_exp5_single_member_plan_is_pilot_only_and_never_formal_eligible() -> No
     ("mutate", "reason"),
     [
         (
-            lambda body: body["member_plans"]["qwen3_6_27b_siliconflow"].update(
+            lambda body: body["member_plans"]["deepseek_v4_pro_deepseek"].update(
                 {
                     "provider_config_id": "siliconflow",
                     "selected_entry_id": "glm-entry",
@@ -718,7 +1116,7 @@ def _context(
         context_id="exp5_test_context",
         catalog=catalog or _epd006_catalog(),
         approved_endpoint_binding=binding or _cohort_preflight(),
-        request_limits={"max_provider_attempts": 1, "max_tokens": 1024},
+        request_limits={"max_provider_attempts": 1, "max_tokens": 8192},
         hard_limits={"max_total_provider_attempts": 0},
         output_root="outputs/experiments/exp5_test",
         artifact_store=object(),
@@ -872,15 +1270,13 @@ def _cohort_preflight() -> dict[str, Any]:
     member_plans: dict[str, Any] = {}
     entry_ids = {
         "glm_5_2_siliconflow": "glm-entry",
-        "qwen3_6_27b_siliconflow": "qwen-entry",
+        "deepseek_v4_pro_deepseek": "deepseek-entry",
         "gpt_5_6_sol_high_openai": "gpt-entry",
     }
     comparable_controls = {
-        "temperature": 0.0,
-        "top_p": 0.9,
         "stream": False,
         "timeout_seconds": 100,
-        "max_tokens": 512,
+        "max_tokens": 8192,
         "max_provider_attempts": 1,
         "domain_contracts": {
             "factorization": {
@@ -898,11 +1294,14 @@ def _cohort_preflight() -> dict[str, Any]:
     for index, member_id in enumerate(PAPER_MODEL_ENDPOINT_COHORT_MEMBER_IDS, start=3):
         expected = PAPER_MODEL_ENDPOINT_COHORT_MEMBERS[member_id]
         source_digest = "sha256:" + str(index) * 64
-        effective_controls = (
-            {"reasoning_effort": "high"}
-            if expected["provider_family"] == "openai"
-            else {}
-        )
+        effective_controls = {
+            "siliconflow": {"enable_thinking": True},
+            "deepseek": {
+                "thinking": {"type": "enabled"},
+                "reasoning_effort": "high",
+            },
+            "openai": {"reasoning_effort": "high"},
+        }[str(expected["provider_family"])]
         identity = PaperModelEndpointIdentity(
             model_cohort_id=PAPER_MODEL_ENDPOINT_COHORT_ID,
             model_cohort_digest=COHORT_DIGEST,
@@ -957,6 +1356,123 @@ def _cohort_preflight() -> dict[str, Any]:
         "request_controls_snapshot": comparable_controls,
         "request_controls_snapshot_digest": digest_json(comparable_controls),
     }
+
+
+def _cohort_preflight_v3() -> dict[str, Any]:
+    cohort_digest = "sha256:" + "c" * 64
+    comparable_controls = {
+        "temperature": 0.0,
+        "top_p": 1.0,
+        "stream": False,
+        "timeout_seconds": 600,
+        "max_tokens": 32768,
+        "max_provider_attempts": 1,
+        "domain_contracts": {
+            "factorization": {
+                "prompt_profile": "factorization.bounded_range_prompt.v1",
+                "parser_id": "factorization.range_result.parser.v1",
+                "plugin_version": "0.1.0",
+            },
+            "lean_proof": {
+                "prompt_profile": "lean_proof.proof_candidate_prompt.v1",
+                "parser_id": "lean_proof.proof_candidate.parser.v1",
+                "plugin_version": "0.1.0",
+            },
+        },
+    }
+    member_plans: dict[str, Any] = {}
+    for index, member_id in enumerate(
+        PAPER_MODEL_ENDPOINT_COHORT_V3_MEMBER_IDS,
+        start=3,
+    ):
+        expected = PAPER_MODEL_ENDPOINT_COHORT_V3_MEMBERS[member_id]
+        source_digest = "sha256:" + str(index) * 64
+        selected_entry_id = f"{member_id}_entry"
+        reasoning_controls = dict(expected["request_overrides"])
+        identity = PaperModelEndpointIdentity(
+            model_cohort_id=PAPER_MODEL_ENDPOINT_COHORT_V3_ID,
+            model_cohort_digest=cohort_digest,
+            cohort_member_id=member_id,
+            provider_config_id="siliconflow",
+            selected_entry_id=selected_entry_id,
+            provider_family="siliconflow",
+            provider_model_id=str(expected["provider_model_id"]),
+            reasoning_profile_id=str(expected["reasoning_profile_id"]),
+            effective_reasoning_controls=reasoning_controls,
+            source_provider_config_digest=source_digest,
+        )
+        member_plans[member_id] = {
+            "schema_version": "tokenshare.paper_model_endpoint_member_plan.v1",
+            "status": "planned",
+            "blocked_reasons": [],
+            "cohort_id": PAPER_MODEL_ENDPOINT_COHORT_V3_ID,
+            "model_cohort_digest": cohort_digest,
+            "cohort_member_id": member_id,
+            "provider_config_id": "siliconflow",
+            "selected_entry_id": selected_entry_id,
+            "provider_family": "siliconflow",
+            "provider_model_id": expected["provider_model_id"],
+            "reasoning_profile_id": expected["reasoning_profile_id"],
+            "source_provider_config_digest": source_digest,
+            "model_endpoint_identity_digest": (
+                identity.model_endpoint_identity_digest
+            ),
+            "endpoint_identity": identity.to_dict(),
+            "request_controls": {
+                "schema_version": "tokenshare.paper_exp5_request_controls.v1",
+                "comparable": comparable_controls,
+                "comparable_digest": digest_json(comparable_controls),
+                "provider_specific_reasoning": reasoning_controls,
+                "provider_specific_reasoning_digest": digest_json(
+                    reasoning_controls
+                ),
+            },
+        }
+    return {
+        "schema_version": "tokenshare.paper_model_endpoint_cohort_preflight.v1",
+        "status": "planned",
+        "paper_eligible_possible": True,
+        "blocked_reason": None,
+        "ineligibility_reasons": [],
+        "provider_calls_made": 0,
+        "model_policy": "fixed_entry",
+        "cohort_id": PAPER_MODEL_ENDPOINT_COHORT_V3_ID,
+        "model_cohort_digest": cohort_digest,
+        "expected_member_ids": list(PAPER_MODEL_ENDPOINT_COHORT_V3_MEMBER_IDS),
+        "member_plans": member_plans,
+        "request_controls_snapshot": comparable_controls,
+        "request_controls_snapshot_digest": digest_json(comparable_controls),
+    }
+
+
+def _tracked_v3_catalog() -> SimpleNamespace:
+    manifest = load_paper_catalogs(
+        factorization_path=Path("benchmarks/paper/factorization_catalog.v2.jsonl"),
+        lean_path=Path("benchmarks/paper/lean_catalog.v1.jsonl"),
+        lean_lemma_graph_path=Path(
+            "benchmarks/paper/lean_lemma_graph_catalog.v1.jsonl"
+        ),
+    )
+    readiness = json.loads(
+        Path("benchmarks/paper/lean_task14_3x3_readiness.v1.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    bound_readiness = _bind_lean_matrix_to_catalog(
+        readiness,
+        catalog_manifest=manifest,
+    )
+    return SimpleNamespace(
+        catalog_id=manifest.catalog_id,
+        catalog_version=manifest.catalog_version,
+        catalog_digest=manifest.catalog_digest,
+        suite_version="paper_v1",
+        factorization_cases=manifest.factorization_cases,
+        lean_cases=manifest.lean_cases,
+        lean_lemma_graph_cases=manifest.lean_lemma_graph_cases,
+        task15_budget_input=bound_readiness["task15_budget_input"],
+        lean_task14_readiness=bound_readiness,
+    )
 
 
 def _formal_catalog() -> SimpleNamespace:

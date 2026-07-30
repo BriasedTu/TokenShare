@@ -17,10 +17,11 @@ from tokenshare.experiments.paper_experiment_contracts import (
     PaperExecutionContext,
 )
 from tokenshare.experiments.paper_models import (
+    EXP1_TO_EXP4_DEEPSEEK_MAX_TOKENS,
+    EXP1_TO_EXP4_DEEPSEEK_TIMEOUT_SECONDS,
     LEAN_PAPER_DIFFICULTIES,
     LEAN_TOPIC_FAMILIES,
     PAPER_DIFFICULTIES,
-    PAPER_FORMAL_AI_TIMEOUT_SECONDS,
     UNSUPPORTED_PAPER_TRANSPORTS,
     JsonObject,
     PaperConditionResult,
@@ -40,20 +41,19 @@ EXP1_LEAN_CASES_PER_CELL = 15
 EXP1_EXPECTED_UNIQUE_ROOTS = 635
 EXP1_EXPECTED_ROOT_RUNS = 635
 
-EXP1_BASELINE_PROVIDER_CONFIG_ID = "exp1_baseline_siliconflow"
-EXP1_BASELINE_ENTRY_ID = "glm_5_2_exp1_baseline"
-EXP1_BASELINE_PROVIDER_FAMILY = "siliconflow"
-EXP1_BASELINE_PROVIDER_MODEL_ID = "zai-org/GLM-5.2"
-EXP1_BASELINE_REASONING_PROFILE_ID = "default"
+EXP1_BASELINE_PROVIDER_CONFIG_ID = "exp1_baseline_deepseek"
+EXP1_BASELINE_ENTRY_ID = "deepseek_v4_pro_exp1_baseline"
+EXP1_BASELINE_PROVIDER_FAMILY = "deepseek"
+EXP1_BASELINE_PROVIDER_MODEL_ID = "deepseek-v4-pro"
+EXP1_BASELINE_REASONING_PROFILE_ID = "high"
 
 EXP1_FORMAL_REQUEST_CONTROLS: JsonObject = {
-    "max_tokens": 1024,
-    "timeout_seconds": PAPER_FORMAL_AI_TIMEOUT_SECONDS,
+    "max_tokens": EXP1_TO_EXP4_DEEPSEEK_MAX_TOKENS,
+    "timeout_seconds": EXP1_TO_EXP4_DEEPSEEK_TIMEOUT_SECONDS,
     "max_provider_attempts": 1,
-    "temperature": 0.0,
-    "top_p": 1.0,
     "stream": False,
-    "enable_thinking": False,
+    "thinking": {"type": "enabled"},
+    "reasoning_effort": "high",
 }
 _EXP1_FORMAL_SUMMARY_INPUT_SCHEMA_VERSION = (
     "tokenshare.paper_exp1_summary_input.v1"
@@ -493,10 +493,10 @@ def _baseline_identity(context: PaperExecutionContext) -> JsonObject:
         or provider_family != EXP1_BASELINE_PROVIDER_FAMILY
         or provider_model_id != EXP1_BASELINE_PROVIDER_MODEL_ID
         or reasoning_profile_id != EXP1_BASELINE_REASONING_PROFILE_ID
-        or request_controls["temperature"] != 0.0
-        or request_controls["enable_thinking"] is not False
+        or request_controls["thinking"] != {"type": "enabled"}
+        or request_controls["reasoning_effort"] != "high"
     ):
-        raise ValueError("Experiment 1 requires the fixed GLM-5.2 baseline")
+        raise ValueError("Experiment 1 requires the fixed DeepSeek-V4-Pro baseline")
     source_provider_config_digest = _field(
         identity,
         "source_provider_config_digest",
@@ -520,7 +520,7 @@ def _baseline_identity(context: PaperExecutionContext) -> JsonObject:
     if not _is_complete_digest(source_provider_config_digest) or not _is_complete_digest(
         model_endpoint_identity_digest
     ):
-        raise ValueError("Experiment 1 requires the fixed GLM-5.2 baseline")
+        raise ValueError("Experiment 1 requires the fixed DeepSeek-V4-Pro baseline")
     return {
         "provider_config_id": EXP1_BASELINE_PROVIDER_CONFIG_ID,
         "model_entry_id": EXP1_BASELINE_ENTRY_ID,
@@ -556,7 +556,7 @@ def _fixed_request_controls(
         )
         if normalized_request_limits != normalized_binding_controls:
             raise ValueError(
-                "Experiment 1 requires fixed GLM-5.2 baseline request controls"
+                "Experiment 1 requires fixed DeepSeek-V4-Pro baseline request controls"
             )
 
     source_config = _field(context.approved_endpoint_binding, "source_config")
@@ -573,7 +573,7 @@ def _fixed_request_controls(
         effective_controls = {**dict(defaults), **dict(overrides)}
         if _normalized_request_controls(effective_controls) != normalized_request_limits:
             raise ValueError(
-                "Experiment 1 requires fixed GLM-5.2 baseline request controls"
+                "Experiment 1 requires fixed DeepSeek-V4-Pro baseline request controls"
             )
 
     reasoning_controls = _field(identity, "effective_reasoning_controls")
@@ -583,11 +583,11 @@ def _fixed_request_controls(
             "approved endpoint effective_reasoning_controls",
         )
         expected_reasoning = {
-            "temperature": EXP1_FORMAL_REQUEST_CONTROLS["temperature"],
-            "enable_thinking": EXP1_FORMAL_REQUEST_CONTROLS["enable_thinking"],
+            "thinking": EXP1_FORMAL_REQUEST_CONTROLS["thinking"],
+            "reasoning_effort": EXP1_FORMAL_REQUEST_CONTROLS["reasoning_effort"],
         }
         if (
-            "enable_thinking" not in normalized_reasoning
+            set(normalized_reasoning) != set(expected_reasoning)
             or any(
                 field_name not in expected_reasoning
                 or value != expected_reasoning[field_name]
@@ -595,39 +595,37 @@ def _fixed_request_controls(
             )
         ):
             raise ValueError(
-                "Experiment 1 requires fixed GLM-5.2 baseline request controls"
+                "Experiment 1 requires fixed DeepSeek-V4-Pro baseline request controls"
             )
     return normalized_request_limits
 
 
 def _required_controls_mapping(value: Any, field_name: str) -> Mapping[str, Any]:
     if not isinstance(value, Mapping):
-        raise ValueError("Experiment 1 requires the fixed GLM-5.2 baseline")
+        raise ValueError("Experiment 1 requires the fixed DeepSeek-V4-Pro baseline")
     return value
 
 
 def _normalized_request_controls(controls: Mapping[str, Any]) -> JsonObject:
     if set(controls) != set(EXP1_FORMAL_REQUEST_CONTROLS):
         raise ValueError(
-            "Experiment 1 requires fixed GLM-5.2 baseline request controls"
+            "Experiment 1 requires fixed DeepSeek-V4-Pro baseline request controls"
         )
     normalized = dict(controls)
     for field_name in ("max_tokens", "timeout_seconds", "max_provider_attempts"):
         value = normalized[field_name]
         if isinstance(value, bool) or not isinstance(value, int) or value < 1:
             raise ValueError(
-                "Experiment 1 requires fixed GLM-5.2 baseline request controls"
+                "Experiment 1 requires fixed DeepSeek-V4-Pro baseline request controls"
             )
-    temperature = normalized["temperature"]
     if (
-        isinstance(temperature, bool)
-        or not isinstance(temperature, (int, float))
-        or float(temperature) != 0.0
-        or normalized["enable_thinking"] is not False
+        normalized["stream"] is not False
+        or normalized["thinking"] != {"type": "enabled"}
+        or normalized["reasoning_effort"] != "high"
         or normalized != EXP1_FORMAL_REQUEST_CONTROLS
     ):
         raise ValueError(
-            "Experiment 1 requires fixed GLM-5.2 baseline request controls"
+            "Experiment 1 requires fixed DeepSeek-V4-Pro baseline request controls"
         )
     return dict(EXP1_FORMAL_REQUEST_CONTROLS)
 

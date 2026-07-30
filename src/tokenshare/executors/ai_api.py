@@ -18,10 +18,13 @@ from tokenshare.executors.ai_api_artifacts import (
 from tokenshare.executors.ai_api_config import AIAPIExecutorConfig
 from tokenshare.executors.ai_api_selector import build_provider_selection, entries_by_attempt_order
 from tokenshare.executors.ai_api_transport import (
+    DeepSeekProviderError,
     OpenAIProviderError,
     SiliconFlowProviderError,
+    build_deepseek_chat_body,
     build_openai_chat_body,
     build_siliconflow_chat_body,
+    parse_deepseek_response,
     parse_openai_response,
     parse_siliconflow_response,
 )
@@ -40,7 +43,7 @@ def build_ai_api_executor_descriptor(
     executor_version: str = "0.1.0",
     provider_family: str = "siliconflow",
 ) -> ExecutorDescriptor:
-    if provider_family not in {"siliconflow", "openai"}:
+    if provider_family not in {"siliconflow", "openai", "deepseek"}:
         raise ValueError(f"unsupported ai api provider_family: {provider_family}")
     return ExecutorDescriptor(
         executor_id=executor_id,
@@ -211,9 +214,14 @@ class AIAPIExecutor:
         final_result = None
         final_entry = None
         final_request_identity: JsonObject | None = None
-        terminal_error: SiliconFlowProviderError | OpenAIProviderError | None = None
+        last_attempted_entry = None
+        last_request_identity: JsonObject | None = None
+        terminal_error: (
+            SiliconFlowProviderError | OpenAIProviderError | DeepSeekProviderError | None
+        ) = None
         build_chat_body, parse_provider_response = _provider_adapter(self._config.provider_family)
         for entry in entries_by_attempt_order(config=self._config, selection=selection):
+            last_attempted_entry = entry
             started = perf_counter()
             request_identity: JsonObject | None = None
             try:
@@ -230,6 +238,7 @@ class AIAPIExecutor:
                     entry=entry,
                     body=body,
                 )
+                last_request_identity = request_identity
                 api_key = entry.resolve_api_key()
                 response = self._transport.post_chat_completion(
                     entry=entry,
@@ -288,7 +297,7 @@ class AIAPIExecutor:
                         provider_request_identity=request_identity,
                     )
                 )
-            except (SiliconFlowProviderError, OpenAIProviderError) as exc:
+            except (SiliconFlowProviderError, OpenAIProviderError, DeepSeekProviderError) as exc:
                 attempts.append(
                     _attempt_record(
                         self._config.provider_family,
@@ -327,6 +336,29 @@ class AIAPIExecutor:
                 final_result_kind=result_kind,
                 submitted_at=submitted_at,
             )
+            if last_attempted_entry is None:
+                failure_usage_summary: JsonObject = {
+                    "provider_family": self._config.provider_family,
+                    "provider_attempt_count": len(attempts),
+                    "cost_estimate": None,
+                    "cost_estimate_status": "usage_missing",
+                    "cost_estimate_basis": "usage_missing",
+                }
+            else:
+                failure_usage_summary = _usage_summary(
+                    self._config.provider_family,
+                    last_attempted_entry,
+                    requested_model=str(
+                        (last_request_identity or {}).get(
+                            "requested_model", last_attempted_entry.model
+                        )
+                    ),
+                    usage=None,
+                    attempt_count=len(attempts),
+                    enable_thinking=_request_identity_enable_thinking(
+                        last_request_identity
+                    ),
+                )
             return self._submission(
                 request=request,
                 submission_id=submission_id,
@@ -337,7 +369,7 @@ class AIAPIExecutor:
                 candidate_output_refs={},
                 parse_failure_ref=parse_failure_ref,
                 provenance_ref=provenance_ref,
-                usage_summary={"provider_attempt_count": len(attempts)},
+                usage_summary=failure_usage_summary,
                 error={"kind": result_kind, "attempts": attempts},
             )
 
@@ -355,6 +387,7 @@ class AIAPIExecutor:
                 ),
                 "provider_response_id": final_result.provider_response_id,
                 "content_text": final_result.content_text,
+                "reasoning_content": getattr(final_result, "reasoning_content", None),
                 "raw_response_json": final_result.raw_response_json,
                 "finish_reason": final_result.finish_reason,
                 "usage": final_result.usage,
@@ -375,6 +408,9 @@ class AIAPIExecutor:
             requested_model=str(final_request_identity["requested_model"]),
             usage=final_result.usage,
             attempt_count=len(attempts),
+            enable_thinking=_request_identity_enable_thinking(
+                final_request_identity
+            ),
         )
         hook_result_kind: str | None = None
         if self._post_raw_output_hook is not None:
@@ -491,6 +527,9 @@ class AIAPIExecutor:
                             ),
                             usage=final_result.usage,
                             attempt_count=len(attempts),
+                            enable_thinking=_request_identity_enable_thinking(
+                                final_request_identity
+                            ),
                         ),
                         error={"kind": "parse_failed", "reason": "plugin_parser_rejected_output"},
                     )
@@ -537,6 +576,9 @@ class AIAPIExecutor:
                         ),
                         usage=final_result.usage,
                         attempt_count=len(attempts),
+                        enable_thinking=_request_identity_enable_thinking(
+                            final_request_identity
+                        ),
                     ),
                     error={"kind": "parse_failed", "reason": "plugin_parser_rejected_output"},
                 )
@@ -887,6 +929,8 @@ def _provider_request_identity(
         "response_format",
         "reasoning_effort",
         "enable_thinking",
+        "thinking_budget",
+        "thinking",
     )
     effective_controls = {
         key: body[key]
@@ -895,7 +939,12 @@ def _provider_request_identity(
     }
     reasoning_controls = {
         key: effective_controls[key]
-        for key in ("reasoning_effort", "enable_thinking")
+        for key in (
+            "reasoning_effort",
+            "enable_thinking",
+            "thinking_budget",
+            "thinking",
+        )
         if key in effective_controls
     }
     encoded_controls = json.dumps(
@@ -924,6 +973,7 @@ def _usage_summary(
     requested_model: str,
     usage: JsonObject | None,
     attempt_count: int,
+    enable_thinking: bool | None = None,
 ) -> JsonObject:
     base = {
         "provider_family": provider_family,
@@ -935,27 +985,163 @@ def _usage_summary(
         "currency": entry.pricing["currency"],
         "pricing_snapshot": dict(entry.pricing),
     }
-    if not usage or "prompt_tokens" not in usage or "completion_tokens" not in usage:
+    usage_body: Mapping[str, Any] = usage or {}
+    invalid_fields: set[str] = set()
+    prompt_tokens, prompt_status = _usage_int_field(usage_body, "prompt_tokens")
+    completion_tokens, completion_status = _usage_int_field(
+        usage_body,
+        "completion_tokens",
+    )
+    completion_details = usage_body.get("completion_tokens_details")
+    reasoning_body = (
+        completion_details
+        if isinstance(completion_details, Mapping)
+        else usage_body
+    )
+    reasoning_tokens, reasoning_status = _usage_int_field(
+        reasoning_body,
+        "reasoning_tokens",
+    )
+    total_tokens, total_status = _usage_int_field(usage_body, "total_tokens")
+    if total_status == "missing" and prompt_tokens is not None and completion_tokens is not None:
+        total_tokens = prompt_tokens + completion_tokens
+    cache_hit, cache_hit_status = _usage_int_field(
+        usage_body,
+        "prompt_cache_hit_tokens",
+    )
+    cache_miss, cache_miss_status = _usage_int_field(
+        usage_body,
+        "prompt_cache_miss_tokens",
+    )
+    for field_name, status in (
+        ("prompt_tokens", prompt_status),
+        ("completion_tokens", completion_status),
+        ("reasoning_tokens", reasoning_status),
+        ("total_tokens", total_status),
+        ("prompt_cache_hit_tokens", cache_hit_status),
+        ("prompt_cache_miss_tokens", cache_miss_status),
+    ):
+        if status == "invalid":
+            invalid_fields.add(field_name)
+    visible_output_tokens, visible_output_basis = _visible_output_usage(
+        completion_tokens=completion_tokens,
+        reasoning_tokens=reasoning_tokens,
+        enable_thinking=enable_thinking,
+        reasoning_invalid=reasoning_status == "invalid",
+    )
+    if prompt_tokens is None or completion_tokens is None:
+        usage_status = (
+            "usage_invalid"
+            if "invalid" in {prompt_status, completion_status}
+            else "usage_missing"
+        )
         return {
             **base,
-            "prompt_tokens": None,
-            "completion_tokens": None,
-            "total_tokens": None,
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "total_tokens": total_tokens,
+            "reasoning_tokens": reasoning_tokens,
+            "visible_output_tokens": visible_output_tokens,
+            "visible_output_basis": visible_output_basis,
+            "prompt_cache_hit_tokens": cache_hit,
+            "prompt_cache_miss_tokens": cache_miss,
+            "usage_invalid_fields": sorted(invalid_fields),
             "cost_estimate": None,
-            "cost_estimate_status": "usage_missing",
+            "cost_estimate_status": usage_status,
+            "cost_estimate_basis": usage_status,
         }
-    prompt_tokens = int(usage["prompt_tokens"])
-    completion_tokens = int(usage["completion_tokens"])
-    input_cost = prompt_tokens / 1_000_000 * float(entry.pricing["input_per_million_tokens"])
+    if "input_per_million_tokens" in entry.pricing:
+        input_cost = (
+            prompt_tokens
+            / 1_000_000
+            * float(entry.pricing["input_per_million_tokens"])
+        )
+        estimate_basis = "legacy_single_input_rate"
+    elif cache_hit is not None and cache_miss is not None:
+        input_cost = (
+            cache_hit
+            / 1_000_000
+            * float(entry.pricing["cached_input_per_million_tokens"])
+            + cache_miss
+            / 1_000_000
+            * float(entry.pricing["uncached_input_per_million_tokens"])
+        )
+        estimate_basis = "provider_cache_breakdown"
+    else:
+        input_cost = (
+            prompt_tokens
+            / 1_000_000
+            * float(entry.pricing["uncached_input_per_million_tokens"])
+        )
+        estimate_basis = "all_prompt_tokens_uncached"
     output_cost = completion_tokens / 1_000_000 * float(entry.pricing["output_per_million_tokens"])
     return {
         **base,
         "prompt_tokens": prompt_tokens,
         "completion_tokens": completion_tokens,
-        "total_tokens": int(usage.get("total_tokens", prompt_tokens + completion_tokens)),
+        "total_tokens": total_tokens,
+        "reasoning_tokens": reasoning_tokens,
+        "visible_output_tokens": visible_output_tokens,
+        "visible_output_basis": visible_output_basis,
+        "prompt_cache_hit_tokens": cache_hit,
+        "prompt_cache_miss_tokens": cache_miss,
+        "usage_invalid_fields": sorted(invalid_fields),
         "cost_estimate": input_cost + output_cost,
         "cost_estimate_status": "estimated",
+        "cost_estimate_basis": estimate_basis,
     }
+
+
+def _optional_usage_int(body: Mapping[str, Any], field: str) -> int | None:
+    value, _status = _usage_int_field(body, field)
+    return value
+
+
+def _usage_int_field(
+    body: Mapping[str, Any],
+    field: str,
+) -> tuple[int | None, str]:
+    if field not in body:
+        return None, "missing"
+    value = body[field]
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        return None, "invalid"
+    return value, "valid"
+
+
+def _visible_output_usage(
+    *,
+    completion_tokens: int | None,
+    reasoning_tokens: int | None,
+    enable_thinking: bool | None,
+    reasoning_invalid: bool = False,
+) -> tuple[int | None, str]:
+    if completion_tokens is None:
+        return None, "completion_usage_unavailable"
+    if reasoning_invalid:
+        return None, "invalid_usage_breakdown"
+    if reasoning_tokens is not None:
+        if reasoning_tokens > completion_tokens:
+            return None, "invalid_usage_breakdown"
+        return (
+            completion_tokens - reasoning_tokens,
+            "provider_reasoning_breakdown",
+        )
+    if enable_thinking is False:
+        return completion_tokens, "explicit_non_thinking"
+    return None, "reasoning_breakdown_unavailable"
+
+
+def _request_identity_enable_thinking(
+    provider_request_identity: Mapping[str, Any] | None,
+) -> bool | None:
+    if not isinstance(provider_request_identity, Mapping):
+        return None
+    reasoning_controls = provider_request_identity.get("reasoning_controls")
+    if not isinstance(reasoning_controls, Mapping):
+        return None
+    enable_thinking = reasoning_controls.get("enable_thinking")
+    return enable_thinking if isinstance(enable_thinking, bool) else None
 
 
 def _required_request_model(body: JsonObject) -> str:
@@ -970,6 +1156,8 @@ def _provider_adapter(provider_family: str):
         return build_siliconflow_chat_body, parse_siliconflow_response
     if provider_family == "openai":
         return build_openai_chat_body, parse_openai_response
+    if provider_family == "deepseek":
+        return build_deepseek_chat_body, parse_deepseek_response
     raise ValueError(f"unsupported ai api provider_family: {provider_family}")
 
 

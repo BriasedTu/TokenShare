@@ -4,6 +4,8 @@ __pycache__/
 fixtures/lean_proof_project/.lake/
 local/*.local.json
 local/cache/
+local/_*_diagnostic.py
+local/supervision/
 outputs/
 out/
 

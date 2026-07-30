@@ -27,9 +27,10 @@ from tokenshare.experiments.paper_faults import (
     select_fault_targets,
 )
 from tokenshare.experiments.paper_models import (
+    EXP1_TO_EXP4_DEEPSEEK_MAX_TOKENS,
+    EXP1_TO_EXP4_DEEPSEEK_TIMEOUT_SECONDS,
     JsonObject,
     LEAN_TOPIC_FAMILIES,
-    PAPER_FORMAL_AI_TIMEOUT_SECONDS,
     PaperAttemptResult,
     PaperConditionResult,
     PaperExperimentCondition,
@@ -46,19 +47,18 @@ EXP3_SCHEMA_VERSION = "tokenshare.paper_exp3_fault_recovery.v1"
 EXP3_FAULT_EVIDENCE_SCHEMA_VERSION = "tokenshare.paper_exp3_fault_evidence.v1"
 PAPER_CONDITION_V2 = "tokenshare.paper_condition.v2"
 
-BASELINE_PROVIDER_FAMILY = "siliconflow"
-BASELINE_PROVIDER_MODEL_ID = "zai-org/GLM-5.2"
-BASELINE_MODEL_ENTRY_ID = "glm_5_2_exp1_baseline"
-BASELINE_PROVIDER_CONFIG_ID = "exp1_baseline_siliconflow"
-BASELINE_REASONING_PROFILE_ID = "default"
+BASELINE_PROVIDER_FAMILY = "deepseek"
+BASELINE_PROVIDER_MODEL_ID = "deepseek-v4-pro"
+BASELINE_MODEL_ENTRY_ID = "deepseek_v4_pro_exp1_baseline"
+BASELINE_PROVIDER_CONFIG_ID = "exp1_baseline_deepseek"
+BASELINE_REASONING_PROFILE_ID = "high"
 BASELINE_REQUEST_LIMIT_POLICY = {
-    "max_tokens": 1024,
-    "timeout_seconds": PAPER_FORMAL_AI_TIMEOUT_SECONDS,
+    "max_tokens": EXP1_TO_EXP4_DEEPSEEK_MAX_TOKENS,
+    "timeout_seconds": EXP1_TO_EXP4_DEEPSEEK_TIMEOUT_SECONDS,
     "max_provider_attempts": 1,
-    "temperature": 0.0,
-    "top_p": 1.0,
     "stream": False,
-    "enable_thinking": False,
+    "thinking": {"type": "enabled"},
+    "reasoning_effort": "high",
 }
 
 RATE_FAULT_TYPES = (
@@ -83,8 +83,8 @@ FAULT_INJECTION_POINT_BY_TYPE = {
     "late_submission": "after_raw_output_late_submission",
     "executor_error": "after_raw_output_before_parser_bridge",
 }
-FACTOR_RATE_FAULT_RATES_PERCENT = (0, 1, 5, 10, 25, 50, 100)
-LEAN_RATE_FAULT_RATES_PERCENT = (0, 10, 50, 100)
+FACTOR_RATE_FAULT_RATES_PERCENT = (1, 5, 10, 25, 50, 100)
+LEAN_RATE_FAULT_RATES_PERCENT = (10, 50, 100)
 REPEAT_IDS = (0, 1)
 
 WORKER_DEATH_WORKER_COUNT = 10
@@ -92,16 +92,16 @@ WORKER_DEATH_COUNTS = (1, 3)
 WORKER_DEATH_KILL_PROGRESS_PERCENT = (25, 50, 75)
 RATE_FAULT_TARGET_SEED = 300300
 V1_EXPECTED_ROOT_RUN_COUNTS = {
-    "rate_fault_factorization": 350,
-    "rate_fault_lean_proof": 120,
+    "rate_fault_factorization": 300,
+    "rate_fault_lean_proof": 90,
     "worker_death": 72,
-    "total": 542,
+    "total": 462,
 }
 EXPECTED_ROOT_RUN_COUNTS = {
-    "rate_fault_factorization": 35_000,
-    "rate_fault_lean_proof": 120,
+    "rate_fault_factorization": 30_000,
+    "rate_fault_lean_proof": 90,
     "worker_death": 6_036,
-    "total": 41_156,
+    "total": 36_126,
 }
 V2_FACTOR_CASE_COUNTS_BY_DIFFICULTY = {
     "easy": 167,
@@ -508,11 +508,11 @@ def build_exp3_plan_manifest(
                     catalog=catalog,
                 )
             )
-        baseline = _matched_baseline_manifest_entry(
+        baseline = _shared_exp1_reference_policy_entry(
             condition=condition,
             selection=selection,
         )
-        baseline_id = str(baseline["condition_id"])
+        baseline_id = str(baseline["reference_policy_id"])
         baseline_by_condition[condition.condition_id] = baseline_id
         prior = baselines_by_id.setdefault(baseline_id, baseline)
         if prior != baseline:
@@ -520,30 +520,20 @@ def build_exp3_plan_manifest(
     if not any(selection.is_blocked for selection in selections):
         if root_counts != _expected_root_run_counts(catalog):
             raise ValueError("root-run total drift for Experiment 3 matrix")
-    reused_baseline_root_runs = sum(
-        len(row["ordered_case_ids"])
-        for row in baselines_by_id.values()
-        if row["source_kind"] == "reused_rate_fault_zero"
-    )
-    dedicated_baseline_root_runs = sum(
-        len(row["ordered_case_ids"])
-        for row in baselines_by_id.values()
-        if row["source_kind"] == "dedicated_worker_death"
-    )
-
     return {
         "schema_version": EXP3_SCHEMA_VERSION,
         "experiment_id": EXP3_EXPERIMENT_ID,
         "condition_count": len(conditions),
         "selection_count": len(selections),
         "root_run_counts": root_counts,
+        "baseline_policy": "shared_exp1_reference",
         "matched_baseline_by_condition": baseline_by_condition,
         "matched_baseline_manifest": list(baselines_by_id.values()),
         "matched_baseline_root_run_counts": {
-            "reused_rate_fault_zero": reused_baseline_root_runs,
-            "dedicated_worker_death": dedicated_baseline_root_runs,
-            "additional": dedicated_baseline_root_runs,
-            "budgeted_total": root_counts["total"] + dedicated_baseline_root_runs,
+            "reused_rate_fault_zero": 0,
+            "dedicated_worker_death": 0,
+            "additional": 0,
+            "budgeted_total": root_counts["total"],
         },
         "provider_calls_made": 0,
         "baseline_model": {
@@ -715,7 +705,8 @@ def _condition_execution_manifest(
         "request_controls": dict(BASELINE_REQUEST_LIMIT_POLICY),
         "fault_target_manifest": fault_target_manifest,
         "worker_death_manifest": worker_death_manifest,
-        "matched_baseline": _matched_baseline_manifest_entry(
+        "baseline_policy": "shared_exp1_reference",
+        "matched_baseline": _shared_exp1_reference_policy_entry(
             condition=condition,
             selection=selection,
         ),
@@ -774,70 +765,63 @@ def _fault_target_manifest_for_condition(
     }
 
 
-def _matched_baseline_manifest_entry(
+def _shared_exp1_reference_policy_entry(
     *,
     condition: PaperExperimentCondition,
     selection: FrozenCaseSelection,
 ) -> JsonObject:
-    key = _parse_condition_id(condition.condition_id)
-    if key.matrix_kind == "rate_fault":
-        baseline_key = replace(
-            key,
-            fault_type="false_positive",
-            fault_rate_percent=0,
-        )
-        baseline_condition = _condition_from_key(
-            baseline_key,
-            catalog_digest=condition.catalog_digest,
-            endpoint_identity=_identity_from_condition(condition),
-        )
-        source_kind = "reused_rate_fault_zero"
-        additional_execution_required = False
-    else:
-        baseline_condition = replace(
-            condition,
-            condition_id=_worker_death_baseline_condition_id(key),
-            fault_type="none",
-            fault_rate=0.0,
-        )
-        source_kind = "dedicated_worker_death"
-        additional_execution_required = True
-    return {
-        "schema_version": "tokenshare.paper_exp3_matched_baseline.v1",
-        "condition_id": baseline_condition.condition_id,
-        "condition_digest": baseline_condition.condition_digest,
-        "condition": baseline_condition.to_dict(),
-        "source_kind": source_kind,
-        "additional_execution_required": additional_execution_required,
+    source_identity = {
+        "schema_version": "tokenshare.paper_exp1_shared_reference_policy.v1",
+        "source_experiment_id": "exp1_real_ai_feasibility",
+        "source_repeat_id": 0,
+        "source_seed": 1,
+        "source_worker_count": 10,
+        "catalog_digest": condition.catalog_digest,
+        "provider_config_id": condition.provider_config_id,
+        "model_entry_id": condition.model_entry_id,
+        "provider_family": condition.provider_family,
+        "provider_model_id": condition.provider_model_id,
+        "reasoning_profile_id": condition.reasoning_profile_id,
+        "source_provider_config_digest": condition.source_provider_config_digest,
+        "model_endpoint_identity_digest": (
+            condition.model_endpoint_identity_digest
+        ),
+        "request_limits": dict(BASELINE_REQUEST_LIMIT_POLICY),
+    }
+    source_reference_ids_by_case = {
+        str(case_id): "exp1_shared_"
+        + digest_json(
+            {
+                **source_identity,
+                "case_id": str(case_id),
+            }
+        ).removeprefix("sha256:")[:24]
+        for case_id in selection.ordered_case_ids
+    }
+    reference_policy_id = "exp1_shared_policy_" + digest_json(
+        {
+            **source_identity,
+            "source_reference_ids_by_case": source_reference_ids_by_case,
+        }
+    ).removeprefix("sha256:")[:24]
+    policy_body: JsonObject = {
+        **source_identity,
+        "reference_policy_id": reference_policy_id,
+        "comparison_kind": "shared_reference",
+        "source_kind": "shared_exp1_reference",
+        "additional_execution_required": False,
         "selection_id": selection.selection_id,
         "selection_digest": selection.selection_digest,
         "selection": _selection_contract_body(selection),
         "ordered_case_ids": list(selection.ordered_case_ids),
-        "repeat_id": baseline_condition.repeat_id,
-        "seed": baseline_condition.seed,
-        "worker_count": baseline_condition.worker_count,
-        "catalog_digest": baseline_condition.catalog_digest,
-        "provider_config_id": baseline_condition.provider_config_id,
-        "model_entry_id": baseline_condition.model_entry_id,
-        "provider_family": baseline_condition.provider_family,
-        "provider_model_id": baseline_condition.provider_model_id,
-        "reasoning_profile_id": baseline_condition.reasoning_profile_id,
-        "source_provider_config_digest": (
-            baseline_condition.source_provider_config_digest
-        ),
-        "model_endpoint_identity_digest": (
-            baseline_condition.model_endpoint_identity_digest
-        ),
-        "request_limits": dict(BASELINE_REQUEST_LIMIT_POLICY),
+        "source_reference_ids_by_case": source_reference_ids_by_case,
+        "provider_calls_made": 0,
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "total_tokens": 0,
+        "cost_estimate": 0.0,
     }
-
-
-def _worker_death_baseline_condition_id(key: _ConditionKey) -> str:
-    domain = "lean" if key.domain == "lean_proof" else "factorization"
-    return (
-        f"exp3_matched_baseline_worker_death_{domain}__{key.task_slice_key}"
-        f"__rep{key.repeat_id}"
-    )
+    return policy_body
 
 
 def _validate_condition_matches_expected(
@@ -1851,28 +1835,16 @@ def _normalized_request_limit_policy(value: Mapping[str, Any]) -> JsonObject:
         if isinstance(item, bool) or not isinstance(item, int) or item < 1:
             raise ValueError(f"{field_name} must be a positive integer")
         result[field_name] = item
-    temperature = value.get("temperature")
     if (
-        isinstance(temperature, bool)
-        or not isinstance(temperature, (int, float))
-        or float(temperature) != 0.0
+        value.get("thinking") != {"type": "enabled"}
+        or value.get("reasoning_effort") != "high"
     ):
-        raise ValueError("temperature must be 0.0 for Experiment 3")
-    if value.get("enable_thinking") is not False:
-        raise ValueError("enable_thinking must be false for Experiment 3")
-    top_p = value.get("top_p")
-    if (
-        isinstance(top_p, bool)
-        or not isinstance(top_p, (int, float))
-        or float(top_p) != 1.0
-    ):
-        raise ValueError("top_p must be 1.0 for Experiment 3")
+        raise ValueError("DeepSeek reasoning controls are invalid for Experiment 3")
     if value.get("stream") is not False:
         raise ValueError("stream must be false for Experiment 3")
-    result["temperature"] = 0.0
-    result["top_p"] = 1.0
     result["stream"] = False
-    result["enable_thinking"] = False
+    result["thinking"] = {"type": "enabled"}
+    result["reasoning_effort"] = "high"
     return result
 
 
@@ -2602,7 +2574,8 @@ def _validate_rate_fault_membership(
         if domain == "factorization"
         else LEAN_RATE_FAULT_RATES_PERCENT
     )
-    if fault_rate_percent not in allowed_rates:
+    # 0% 不再属于新的正式矩阵，但历史 v1/v2 evidence 仍需可重放。
+    if fault_rate_percent != 0 and fault_rate_percent not in allowed_rates:
         raise ValueError("unsupported frozen rate")
 
 

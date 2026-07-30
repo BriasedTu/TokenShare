@@ -91,20 +91,19 @@ def test_gate_c_plans_all_real_modules_from_frozen_formal_catalog(tmp_path) -> N
         )
     )
     profile = load_exp1_pilot_profile(
-        "benchmarks/paper/exp1_minimal_pilot_profile.v1.json"
+        "benchmarks/paper/exp1_minimal_pilot_profile.v3.json"
     )
     identity = profile.model_endpoint_identity.to_dict()
     baseline_binding = {
         **identity,
         "model_entry_id": identity["selected_entry_id"],
         "request_controls": {
-            "max_tokens": 1024,
-            "timeout_seconds": 100,
+            "max_tokens": 300000,
+            "timeout_seconds": 600,
             "max_provider_attempts": 1,
-            "temperature": 0.0,
-            "top_p": 1.0,
             "stream": False,
-            "enable_thinking": False,
+            "thinking": {"type": "enabled"},
+            "reasoning_effort": "high",
         },
     }
 
@@ -118,11 +117,11 @@ def test_gate_c_plans_all_real_modules_from_frozen_formal_catalog(tmp_path) -> N
     )
 
     assert [plan.experiment_id for plan in plans] == list(EXPERIMENT_IDS)
-    assert [len(plan.conditions) for plan in plans] == [12, 12, 182, 90, 0]
+    assert [len(plan.conditions) for plan in plans] == [12, 12, 162, 90, 0]
     assert [
         sum(len(selection.ordered_case_ids) for selection in plan.selections)
         for plan in plans
-    ] == [635, 1_992, 41_156, 7_725, 0]
+    ] == [635, 1_992, 36_126, 7_725, 0]
     assert all(plan.provider_calls_made == 0 for plan in plans)
     assert [plan.status for plan in plans] == [
         "planned",
@@ -156,7 +155,7 @@ def test_gate_c_v2_plans_freeze_current_p0_matrix_and_budget_identity(
         )
     )
     profile = load_exp1_pilot_profile(
-        "benchmarks/paper/exp1_minimal_pilot_profile.v1.json"
+        "benchmarks/paper/exp1_minimal_pilot_profile.v3.json"
     )
     cohort_preflight, _configs = _complete_cohort_preflight()
     plans = build_gate_c_dispatch_plans(
@@ -172,9 +171,9 @@ def test_gate_c_v2_plans_freeze_current_p0_matrix_and_budget_identity(
         sum(len(selection.ordered_case_ids) for selection in plan.selections)
         for plan in plans
     ]
-    assert root_runs == [635, 1_992, 41_156, 7_725, 1_899]
-    assert sum(root_runs[:4]) == 51_508
-    assert sum(root_runs) == 53_407
+    assert root_runs == [635, 1_992, 36_126, 7_725, 1_899]
+    assert sum(root_runs[:4]) == 46_478
+    assert sum(root_runs) == 48_377
 
     all_factor_ids = {
         str(case["case_id"]) for case in catalog.factorization_cases
@@ -270,36 +269,34 @@ def test_gate_c_v2_plans_freeze_current_p0_matrix_and_budget_identity(
     assert identity["headline_root_runs_by_experiment"] == {
         "exp1_real_ai_feasibility": 635,
         "exp2_real_ai_scalability": 1_992,
-        "exp3_real_ai_fault_recovery": 41_156,
+        "exp3_real_ai_fault_recovery": 36_126,
         "exp4_real_ai_protocol_ablation": 7_725,
         "exp5_real_ai_model_endpoint_comparison": 1_899,
     }
-    assert identity["supporting_baseline_root_runs_by_experiment"] == {
-        "exp3_real_ai_fault_recovery": 1_006,
-    }
+    assert identity["supporting_baseline_root_runs_by_experiment"] == {}
     assert identity["actual_scheduled_root_runs_by_experiment"] == {
         "exp1_real_ai_feasibility": 635,
         "exp2_real_ai_scalability": 1_992,
-        "exp3_real_ai_fault_recovery": 42_162,
+        "exp3_real_ai_fault_recovery": 36_126,
         "exp4_real_ai_protocol_ablation": 7_725,
         "exp5_real_ai_model_endpoint_comparison": 1_899,
     }
     assert identity["planned_first_attempt_ai_units_by_experiment"] == {
         "exp1_real_ai_feasibility": 2_900,
         "exp2_real_ai_scalability": 39_840,
-        "exp3_real_ai_fault_recovery": 196_476,
+        "exp3_real_ai_fault_recovery": 168_348,
         "exp4_real_ai_protocol_ablation": 35_910,
         "exp5_real_ai_model_endpoint_comparison": 14_652,
     }
-    assert identity["headline_p0_core_root_runs"] == 51_508
-    assert identity["headline_p0_full_root_runs"] == 53_407
-    assert identity["actual_p0_core_root_runs"] == 52_514
-    assert identity["actual_p0_full_root_runs"] == 54_413
+    assert identity["headline_p0_core_root_runs"] == 46_478
+    assert identity["headline_p0_full_root_runs"] == 48_377
+    assert identity["actual_p0_core_root_runs"] == 46_478
+    assert identity["actual_p0_full_root_runs"] == 48_377
     assert identity["exp2_no_early_stop_ai_unit_upper_bound"] == 39_840
     assert identity["exp4_replacement_reserve"] > 0
     assert identity["exp3_replacement_reserve"] > 0
-    assert budget.planned_root_runs == 54_413
-    assert budget.planned_ai_units == 289_778
+    assert budget.planned_root_runs == 48_377
+    assert budget.planned_ai_units == 261_650
     assert budget.max_provider_attempts == (
         budget.planned_ai_units
         + identity["exp3_replacement_reserve"]
@@ -481,7 +478,7 @@ def test_gate_c_pilot_executes_registered_module_and_replays_without_transport(
         )
     )
     profile = load_exp1_pilot_profile(
-        "benchmarks/paper/exp1_minimal_pilot_profile.v1.json"
+        "benchmarks/paper/exp1_minimal_pilot_profile.v3.json"
     )
     binding = _baseline_binding(profile)
     plan = build_gate_c_dispatch_plans(
@@ -737,8 +734,15 @@ def test_gate_c_metrics_reject_unindexed_optional_provider_error_artifact(
         recompute_gate_c_pilot_metrics(output_root)
 
 
-@pytest.mark.parametrize("experiment_id", EXPERIMENT_IDS)
-def test_gate_c_each_registered_experiment_reaches_real_mode_capture(
+@pytest.mark.parametrize(
+    "experiment_id",
+    tuple(
+        experiment_id
+        for experiment_id in EXPERIMENT_IDS
+        if experiment_id != "exp3_real_ai_fault_recovery"
+    ),
+)
+def test_gate_c_supported_registered_experiments_reach_real_mode_capture(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     experiment_id: str,
@@ -750,7 +754,7 @@ def test_gate_c_each_registered_experiment_reaches_real_mode_capture(
         )
     )
     profile = load_exp1_pilot_profile(
-        "benchmarks/paper/exp1_minimal_pilot_profile.v1.json"
+        "benchmarks/paper/exp1_minimal_pilot_profile.v3.json"
     )
     baseline_binding = _baseline_binding(profile)
     cohort_preflight, cohort_configs = _complete_cohort_preflight()
@@ -846,8 +850,46 @@ def test_gate_c_each_registered_experiment_reaches_real_mode_capture(
     request_bodies = transport.calls
     assert all(body["model"] == condition.provider_model_id for body in request_bodies)
     assert all(body["response_format"] == {"type": "json_object"} for body in request_bodies)
-    assert all(body["enable_thinking"] is False for body in request_bodies)
-    assert all(body["temperature"] == 0 for body in request_bodies)
+    if condition.provider_family == "deepseek":
+        assert all(
+            body["thinking"] == {"type": "enabled"}
+            and body["reasoning_effort"] == "high"
+            and "temperature" not in body
+            and "top_p" not in body
+            for body in request_bodies
+        )
+    elif condition.provider_family == "siliconflow":
+        assert all(body["enable_thinking"] is True for body in request_bodies)
+    else:
+        assert all(body["reasoning_effort"] == "high" for body in request_bodies)
+
+
+def test_gate_c_pilot_does_not_fabricate_removed_exp3_zero_rate_baseline(
+    tmp_path: Path,
+) -> None:
+    catalog = _frozen_formal_catalog_v2()
+    readiness = json.loads(
+        Path("benchmarks/paper/lean_task14_3x3_readiness.v1.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    profile = load_exp1_pilot_profile(
+        "benchmarks/paper/exp1_minimal_pilot_profile.v3.json"
+    )
+    plan = build_gate_c_dispatch_plans(
+        catalog_manifest=catalog,
+        lean_3x3_matrix=readiness,
+        experiment_ids=("exp3_real_ai_fault_recovery",),
+        baseline_endpoint_binding=_baseline_binding(profile),
+        model_endpoint_cohort_preflight=None,
+        output_root=tmp_path,
+    )[0]
+
+    with pytest.raises(
+        ValueError,
+        match="formal or smoke runner production callback",
+    ):
+        paper_runner._validate_gate_c_pilot_condition_scope(plan.conditions[0])
 
 
 def test_gate_c_exp2_excludes_lean_and_exp5_reuses_exp1_hard_lean_selection(
@@ -860,7 +902,7 @@ def test_gate_c_exp2_excludes_lean_and_exp5_reuses_exp1_hard_lean_selection(
         )
     )
     profile = load_exp1_pilot_profile(
-        "benchmarks/paper/exp1_minimal_pilot_profile.v1.json"
+        "benchmarks/paper/exp1_minimal_pilot_profile.v3.json"
     )
     cohort_preflight, _configs = _complete_cohort_preflight()
     plans = build_gate_c_dispatch_plans(
@@ -918,7 +960,7 @@ def test_gate_c_registered_exp1_reaches_lean_checker_and_merge(
         )
     )
     profile = load_exp1_pilot_profile(
-        "benchmarks/paper/exp1_minimal_pilot_profile.v1.json"
+        "benchmarks/paper/exp1_minimal_pilot_profile.v3.json"
     )
     binding = _baseline_binding(profile)
     plan = build_gate_c_dispatch_plans(
@@ -1002,7 +1044,7 @@ def test_formal_exp1_reuses_planning_catalog_view_when_crossing_to_lean(
         )
     )
     profile = load_exp1_pilot_profile(
-        "benchmarks/paper/exp1_minimal_pilot_profile.v1.json"
+        "benchmarks/paper/exp1_minimal_pilot_profile.v3.json"
     )
     binding = _baseline_binding(profile)
     full_plan = build_gate_c_dispatch_plans(
@@ -1140,7 +1182,7 @@ def test_gate_c_exp5_openai_member_preserves_high_reasoning_controls(
         )
     )
     profile = load_exp1_pilot_profile(
-        "benchmarks/paper/exp1_minimal_pilot_profile.v1.json"
+        "benchmarks/paper/exp1_minimal_pilot_profile.v3.json"
     )
     binding = _baseline_binding(profile)
     cohort_preflight, configs = _complete_cohort_preflight()
@@ -1215,7 +1257,7 @@ def test_gate_c_budget_selection_and_identity_drift_stop_before_transport(
         )
     )
     profile = load_exp1_pilot_profile(
-        "benchmarks/paper/exp1_minimal_pilot_profile.v1.json"
+        "benchmarks/paper/exp1_minimal_pilot_profile.v3.json"
     )
     binding = _baseline_binding(profile)
     plan = build_gate_c_dispatch_plans(
@@ -1644,13 +1686,12 @@ def _baseline_binding(profile) -> dict:
         **identity,
         "model_entry_id": identity["selected_entry_id"],
         "request_controls": {
-            "max_tokens": 1024,
-            "timeout_seconds": 100,
+            "max_tokens": 300000,
+            "timeout_seconds": 600,
             "max_provider_attempts": 1,
-            "temperature": 0.0,
-            "top_p": 1.0,
             "stream": False,
-            "enable_thinking": False,
+            "thinking": {"type": "enabled"},
+            "reasoning_effort": "high",
         },
     }
 
@@ -1692,7 +1733,6 @@ def _budget_for_plan(
 def _capturing_condition_and_selection(plan):
     target_difficulty = {
         "exp2_real_ai_scalability": "hard",
-        "exp3_real_ai_fault_recovery": "medium",
         "exp5_real_ai_model_endpoint_comparison": "hard",
     }.get(plan.experiment_id, "easy")
     candidates = [
@@ -1709,13 +1749,6 @@ def _capturing_condition_and_selection(plan):
         and (
             condition.experiment_id != "exp2_real_ai_scalability"
             or condition.worker_count == 1
-        )
-        and (
-            condition.experiment_id != "exp3_real_ai_fault_recovery"
-            or (
-                condition.fault_type != "worker_death"
-                and condition.fault_rate == 0.0
-            )
         )
         and (
             condition.experiment_id != "exp4_real_ai_protocol_ablation"
@@ -1760,9 +1793,7 @@ def _complete_cohort_preflight():
             },
             "defaults": {
                 "timeout_seconds": 100,
-                "max_tokens": 1024,
-                "temperature": 0.0,
-                "top_p": 1.0,
+                "max_tokens": 8192,
                 "stream": False,
                 "max_provider_attempts": 1,
             },
@@ -1771,20 +1802,38 @@ def _complete_cohort_preflight():
                     entry_id="glm-exp5-capture",
                     key_env="TOKENSHARE_GATE_C_GLM_KEY",
                     model="zai-org/GLM-5.2",
-                    request_overrides={
-                        "temperature": 0.0,
-                        "enable_thinking": False,
-                    },
+                    request_overrides={"enable_thinking": True},
                 ),
+            ],
+            "local_concurrency": {"max_in_flight_global": 1},
+            "metadata": {"test_only": True},
+        }
+    )
+    deepseek = load_ai_api_config(
+        {
+            "schema_version": "phase7.ai_api_executor_config.v1",
+            "executor_id": "gate_c_exp5_deepseek",
+            "provider_family": "deepseek",
+            "selection_policy": {
+                "kind": "uniform_random_without_weights",
+                "seed_source": "request_or_environment_seed",
+            },
+            "defaults": {
+                "timeout_seconds": 100,
+                "max_tokens": 8192,
+                "stream": False,
+                "max_provider_attempts": 1,
+            },
+            "entries": [
                 _config_entry(
-                    entry_id="qwen-exp5-capture",
-                    key_env="TOKENSHARE_GATE_C_QWEN_KEY",
-                    model="Qwen/Qwen3.6-27B",
+                    entry_id="deepseek-exp5-capture",
+                    key_env="TOKENSHARE_GATE_C_DEEPSEEK_KEY",
+                    model="deepseek-v4-pro",
                     request_overrides={
-                        "temperature": 0.0,
-                        "enable_thinking": False,
+                        "thinking": {"type": "enabled"},
+                        "reasoning_effort": "high",
                     },
-                ),
+                )
             ],
             "local_concurrency": {"max_in_flight_global": 1},
             "metadata": {"test_only": True},
@@ -1801,9 +1850,7 @@ def _complete_cohort_preflight():
             },
             "defaults": {
                 "timeout_seconds": 100,
-                "max_tokens": 1024,
-                "temperature": 0.0,
-                "top_p": 1.0,
+                "max_tokens": 8192,
                 "stream": False,
                 "max_provider_attempts": 1,
             },
@@ -1812,20 +1859,21 @@ def _complete_cohort_preflight():
                     entry_id="gpt-exp5-capture",
                     key_env="TOKENSHARE_GATE_C_GPT_KEY",
                     model="gpt-5.6-sol",
-                    request_overrides={
-                        "temperature": 0.0,
-                        "reasoning_effort": "high",
-                    },
+                    request_overrides={"reasoning_effort": "high"},
                 )
             ],
             "local_concurrency": {"max_in_flight_global": 1},
             "metadata": {"test_only": True},
         }
     )
-    configs = {"siliconflow": siliconflow, "openai": openai}
+    configs = {
+        "siliconflow": siliconflow,
+        "deepseek": deepseek,
+        "openai": openai,
+    }
     entry_ids = {
         "glm_5_2_siliconflow": "glm-exp5-capture",
-        "qwen3_6_27b_siliconflow": "qwen-exp5-capture",
+        "deepseek_v4_pro_deepseek": "deepseek-exp5-capture",
         "gpt_5_6_sol_high_openai": "gpt-exp5-capture",
     }
     member_plans = {}
@@ -1843,11 +1891,14 @@ def _complete_cohort_preflight():
     for member_id in PAPER_MODEL_ENDPOINT_COHORT_MEMBER_IDS:
         expected = PAPER_MODEL_ENDPOINT_COHORT_MEMBERS[member_id]
         provider = str(expected["provider_family"])
-        effective_controls = (
-            {"reasoning_effort": "high"}
-            if provider == "openai"
-            else {"enable_thinking": False}
-        )
+        effective_controls = {
+            "siliconflow": {"enable_thinking": True},
+            "deepseek": {
+                "thinking": {"type": "enabled"},
+                "reasoning_effort": "high",
+            },
+            "openai": {"reasoning_effort": "high"},
+        }[provider]
         identity = PaperModelEndpointIdentity(
             model_cohort_id=PAPER_MODEL_ENDPOINT_COHORT_ID,
             model_cohort_digest=cohort_digest,

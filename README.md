@@ -63,12 +63,14 @@ V1 当前计划包含两类实验插件，实验设计和论文实验口径以 `
 最新实验设计把论文实验分成五组：
 
 - **Experiment 1 - 真实 AI 跨领域可行性与难度**：factorization 使用 easy/medium/hard=`167/167/166`、合计 500 道，Lean 使用 3 个 paper difficulty × 3 个 topic family × 每格固定 15 道、合计 135 道，分别报告完成率、accepted result validity、时间、token、成本和失败边界。
-- **Experiment 2 - 真实 AI worker 扩展性**：固定任务和模型，比较 1/3/10/30 workers；100/300 只在任务粒度和 provider quota 允许时扩展。
+- **Experiment 2 - 真实 AI worker 扩展性**：固定任务和模型，比较 1/3/7/10/30/50 workers；`worker_count` 与 provider inflight limit 分开记录。
 - **Experiment 3 - 真实 AI 故障注入与 worker death 恢复**：真实 API 输出后注入 false positive、false negative、不返回、延迟、executor error 和独立 worker process death，报告检测、恢复和成本曲线。
 - **Experiment 4 - 真实 AI 协议消融**：每次只关闭 verification、parser policy、requeue、merge gate 或 slot integrity 中的一个机制。
-- **Experiment 5 - 三模型 model-provider endpoint comparison**：预注册比较 SiliconFlow GLM-5.2、SiliconFlow Qwen3.6-27B 和 OpenAI GPT-5.6 Sol high；不使用 strong/weak/mixed 标签，外部榜单分数只作背景，且跨 provider 的延迟/成本差异不能解释为纯模型效应。
+- **Experiment 5 - 三模型 model-provider endpoint comparison**：当前 cohort v2 比较 SiliconFlow GLM-5.2（thinking enabled）、官方 DeepSeek-V4-Pro high 和 OpenAI GPT-5.6 Sol high，三个端点 `max_tokens=8192`；不使用 strong/weak/mixed 标签，旧含 Qwen 的 v1 只供历史 replay，且跨 provider 的延迟/成本差异不能解释为纯模型效应。
 
-除 Experiment 5 外，Experiment 1–4 的 pilot、正式 condition、故障恢复 attempt 和消融 mode 均固定使用 SiliconFlow `zai-org/GLM-5.2` / `glm_5_2_exp1_baseline`；配置或 identity 证据不满足时结构化停止，不自动切换模型。
+除 Experiment 5 外，Experiment 1–4 的 pilot、正式 condition、故障恢复 attempt 和消融 mode 均固定使用官方 DeepSeek `deepseek-v4-pro` / `deepseek_v4_pro_exp1_baseline`，thinking enabled、`reasoning_effort=high`、`timeout_seconds=600`、`max_tokens=300000`，默认使用版本化的 `exp1_baseline_provider_config.v3.json`；配置或 identity 证据不满足时结构化停止，不自动切换模型。Experiment 5 cohort v2 保持三个端点公共 `timeout_seconds=100`、`max_tokens=8192`。DeepSeek 本地 estimate 使用 provider-reported usage；CNY 与 USD 不直接合计。
+
+2026-07-29 起，正式 Experiment 3 不再重复执行 0% 或 dedicated no-kill baseline，而是按同一 `case_id` 引用正式 Experiment 1 已持久化的 terminal evidence；Exp3 rates 为 Factorization `1/5/10/25/50/100%`、Lean `10/50/100%`，合计 36,126 roots。回归入口 `local/run_exp3_exp4_v3_smoke.ps1` 对应 `paper_smoke_exp3_exp4_v1` 的精确 11-root、无 baseline/supporting-root smoke；它永久 `paper_eligible=false`，必须使用全新的 output/supervision 路径，并且真实执行仍需用户另行授权。
 
 ## Architecture Principles
 
@@ -121,6 +123,47 @@ conda run -n tokenshare python verification/run_verification.py --mode fast
 ## Run Experiments
 
 以下现有命令属于 Phase 8 回归与校准入口，不是 2026-07-12 新论文主实验入口。新论文 runner 已落地为 `tokenshare.experiments.run_paper_experiments`，正常执行通过 `paper_dispatcher`、`tokenshare.local_runtime` 和 `ProtocolEngine` 推进生命周期；正式运行仍必须满足唯一权威设计中的 real-transport、catalog、预算、provider evidence 和最终验证门禁。旧命令输出不得写成新实验结论。
+
+### Experiment 1–4-only 真实 API smoke profile
+
+当前 Exp1–4-only smoke 固定选择 21 个 direct roots，worker-death 另调度一个 distinct no-kill supporting baseline，因此固定分母为 22。实际执行必须通过 `local/run_exp1_exp4_v3_smoke.ps1`，launcher 会先运行不读取 secret、不创建 output root 的 `--smoke-identity-only` 预检，再把当前 output root 生成的 `execution_plan_digest` 和 `budget_digest` 动态冻结到实际 runner 命令。缺少显式 v3 config，或 provider/model/endpoint/thinking/reasoning/timeout/max-tokens/config digest 任一漂移时，runner 都会在 provider dispatch 前写 structured blocked，且 provider call 数为 0。
+
+```powershell
+$stamp = [DateTime]::UtcNow.ToString("yyyyMMddTHHmmssZ")
+$runId = "paper_smoke_exp1_exp4_v3_${stamp}_run03"
+powershell -NoProfile -ExecutionPolicy Bypass `
+  -File .\local\run_exp1_exp4_v3_smoke.ps1 `
+  -RunId $runId `
+  -OutputRoot "outputs/experiments/$runId" `
+  -SupervisorRoot "local/supervision/$runId"
+```
+
+该命令只运行 Exp1–4 smoke/regression，不运行 Experiment 5、pilot、正式实验或 Full 实验矩阵。跨 run 必须稳定的是 profile/catalog/selection/config、模型与请求控制、repeat/retry 以及 21 direct + 1 supporting 分母；`execution_plan_digest` 和 `budget_digest` 绑定当前绝对 `output_root`，因此新 root 应生成新值。launcher 只把本次 root 的两个运行实例 digest 冻结并回传给 runner；同一 root 内的 identity 漂移仍 fail closed，不得拿历史 root 的两个 digest 阻止合法新 run。v3 固定为官方 DeepSeek `deepseek-v4-pro` / `deepseek_v4_pro_exp1_baseline`、thinking enabled/high、`timeout_seconds=600`、`max_tokens=300000`、单 AI unit 一次 provider attempt；输出始终 `paper_eligible=false`。
+
+### Experiment 1–5 独立 API smoke profile
+
+`benchmarks/paper/paper_smoke_profile.v2.json` 从正式 frozen catalog 和 canonical plans 语义解析 27 个直接 root-runs：Exp1 六题、Exp2 三个 worker level、Exp3 no-fault/五类 rate-fault/worker-death、Exp4 FULL/四种正式消融、Exp5 两题×三个固定 endpoint。v2 将 Experiment 1–4 selector 固定到官方 DeepSeek baseline，并将 Experiment 5 selector 固定到 GLM/DeepSeek/GPT cohort v2；`paper_smoke_profile.v1.json` 原样保留，仅供旧 GLM/Qwen cohort 的历史 replay。worker-death 生产路径还会执行一个 distinct no-kill supporting baseline，因此预算中的实际调度 root 数为 28。该 profile 不改变正式 Experiment 1–5 的题库、condition、worker、repeat、fault、ablation、模型或 request controls。
+
+```powershell
+$env:PYTHONPATH='src'
+conda run -n tokenshare python -m tokenshare.experiments.run_paper_experiments `
+  --smoke-profile benchmarks/paper/paper_smoke_profile.v2.json `
+  --output-root outputs/experiments/paper_smoke_v2 `
+  --real-transport `
+  --ai-api-config benchmarks/paper/exp1_baseline_provider_config.v3.json `
+  --provider-config siliconflow=local/ai_api_smoke.local.json `
+  --provider-config deepseek=benchmarks/paper/exp1_baseline_provider_config.v2.json `
+  --provider-config openai=local/openai_api_smoke.local.json `
+  --model-cohort-file benchmarks/paper/model_comparison_cohort.v2.json `
+  --model-entry-map local/model_comparison_entries.local.json `
+  --unlimited-budget
+```
+
+smoke 输出始终冻结为 `formal=false`、`pilot_only=true`、`regression_only=true`、`paper_eligible=false`，不可用 CLI 升级，也不会生成正式 `paper_table_*` / `paper_plot_*`。`--unlimited-budget` 只是显式记录“无总 provider-attempt/token/cost 硬上限”：仍生成 `run_budget.json`、预算估计和真实 usage，仍保留每 AI unit 一次 provider attempt、模型/reasoning controls 和 cohort/config preflight；Exp1–4 固定 `600/300000`，Exp5 cohort v2 固定 `100/8192`。它与人工 approval/digest 及三个 `--max-total-*` 参数互斥。不传该参数时保持原有默认兼容行为。
+
+### Experiment 5 v3 独立 8-root smoke
+
+`benchmarks/paper/paper_smoke_exp5_profile.v3.json` 只调度四个 SiliconFlow 模型各 1 个 Factorization hard root 和 1 个 Lean hard root，共 8 direct roots、60 planned first-attempt AI units。首次 smoke 的 bootstrap preflight 不要求预先已有 passed smoke evidence；正式 Experiment 5 eligibility preflight 仍要求该 evidence。先用同一全新 `output-root` 执行 `--smoke-identity-only`，取得 path-bound execution-plan/budget digest，再把两个 digest 原样传入 `--real-transport` 命令。`--local-ai-api-config local/ai_api_smoke.local.json` 只把匹配的 SiliconFlow secret 注入当前进程，不写入安全 config 或输出。
 
 当前旧 Experiment 1-4 regression suite 可一条命令运行，输出会写入被忽略的 `outputs/experiments/`：
 
@@ -321,7 +364,7 @@ conda run -n tokenshare python -m pytest tests\executors\test_ai_api_siliconflow
 
 当前已进入 `feat-011` / Paper Real AI Experiments。
 
-当前 paper runner 与 system runtime 迁移实现已落地；尚未完成的是 Task 10 最终 targeted/Fast 与唯一 Full+LeanAudit 门禁、正式真实 API Experiment 1-5 运行、指标/CSV/图表和论文结果收尾。`feat-010` replay / audit 已从当前必做开发路径中延后。真实分布式 executor 网络、生产级 AI API 平台或真实链上结算仍属于 V1 范围外。`feat-007` 真实 Lean proof plugin、`feat-008` 实验级 AI API executor 和 `feat-009` 实验基础设施已完成。structured report stub 已从 Phase 6 开发计划剔除。
+当前 paper runner、system runtime 迁移、正式 evidence/metrics/report 门禁和独立 27-root smoke profile 均已落地并完成离线验证；尚未完成的是单独授权后的真实 API smoke/正式 Experiment 1–5、真实 evidence 审计、论文结果发布及届时要求的 Full/必要 Lean 审计。`feat-010` replay / audit 已从当前必做开发路径中延后。真实分布式 executor 网络、生产级 AI API 平台或真实链上结算仍属于 V1 范围外。`feat-007` 真实 Lean proof plugin、`feat-008` 实验级 AI API executor 和 `feat-009` 实验基础设施已完成。structured report stub 已从 Phase 6 开发计划剔除。
 
 当前仍需注意：
 

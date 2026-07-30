@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -20,7 +21,6 @@ from tokenshare.experiments.paper_model_identity import (
     validate_fixed_entry_config_identity,
 )
 from tokenshare.experiments.paper_models import (
-    PAPER_FORMAL_AI_TIMEOUT_SECONDS,
     JsonObject,
     digest_json,
 )
@@ -30,19 +30,168 @@ POLICY_STATUS_PLANNED = "planned"
 POLICY_STATUS_BLOCKED = "blocked"
 LEGACY_MODEL_POLICIES = ("strong_only", "weak_only", "mixed")
 FIXED_ENTRY_MODEL_POLICY = "fixed_entry"
-PAPER_MODEL_ENDPOINT_COHORT_ID = "tokenshare.paper.model_endpoint_cohort.v1"
-MODEL_ENDPOINT_COHORT_SCHEMA_VERSION = "tokenshare.paper_model_endpoint_cohort.v1"
+LEGACY_PAPER_MODEL_ENDPOINT_COHORT_ID = "tokenshare.paper.model_endpoint_cohort.v1"
+LEGACY_MODEL_ENDPOINT_COHORT_SCHEMA_VERSION = (
+    "tokenshare.paper_model_endpoint_cohort.v1"
+)
+PAPER_MODEL_ENDPOINT_COHORT_ID = "tokenshare.paper.model_endpoint_cohort.v2"
+MODEL_ENDPOINT_COHORT_SCHEMA_VERSION = "tokenshare.paper_model_endpoint_cohort.v2"
+PAPER_MODEL_ENDPOINT_COHORT_V3_ID = "tokenshare.paper.model_endpoint_cohort.v3"
+MODEL_ENDPOINT_COHORT_V3_SCHEMA_VERSION = (
+    "tokenshare.paper_model_endpoint_cohort.v3"
+)
 MODEL_ENTRY_MAP_SCHEMA_VERSION = "tokenshare.paper_model_entry_map.v1"
 MODEL_ENDPOINT_COHORT_PRELIGHT_SCHEMA_VERSION = (
     "tokenshare.paper_model_endpoint_cohort_preflight.v1"
 )
 SMOKE_EVIDENCE_SCHEMA_VERSION = "tokenshare.paper_model_endpoint_smoke_evidence.v1"
+V3_SMOKE_EVIDENCE_SCHEMA_VERSION = (
+    "tokenshare.paper_model_endpoint_smoke_evidence.v2"
+)
 PAPER_MODEL_ENDPOINT_COHORT_MEMBER_IDS = (
+    "glm_5_2_siliconflow",
+    "deepseek_v4_pro_deepseek",
+    "gpt_5_6_sol_high_openai",
+)
+PAPER_MODEL_ENDPOINT_COHORT_MEMBERS = {
+    "glm_5_2_siliconflow": {
+        "provider_family": "siliconflow",
+        "provider_model_id": "zai-org/GLM-5.2",
+        "reasoning_profile_id": "thinking",
+        "request_overrides": {"enable_thinking": True},
+        "max_tokens": 8192,
+    },
+    "deepseek_v4_pro_deepseek": {
+        "provider_family": "deepseek",
+        "provider_model_id": "deepseek-v4-pro",
+        "reasoning_profile_id": "high",
+        "request_overrides": {
+            "thinking": {"type": "enabled"},
+            "reasoning_effort": "high",
+        },
+        "max_tokens": 8192,
+    },
+    "gpt_5_6_sol_high_openai": {
+        "provider_family": "openai",
+        "provider_model_id": "gpt-5.6-sol",
+        "reasoning_profile_id": "high",
+        "request_overrides": {"reasoning_effort": "high"},
+        "max_tokens": 8192,
+    },
+}
+PAPER_MODEL_ENDPOINT_COHORT_V3_MEMBER_IDS = (
+    "glm_5_2_siliconflow",
+    "qwen3_14b_siliconflow",
+    "minimax_m2_5_siliconflow",
+    "deepseek_v3_pro_siliconflow",
+)
+_V3_PRICING_SOURCE_URL = "https://siliconflow.cn/pricing"
+_V3_PRICING_ACCESSED_AT = "2026-07-29"
+PAPER_MODEL_ENDPOINT_COHORT_V3_MEMBERS = {
+    "glm_5_2_siliconflow": {
+        "provider_family": "siliconflow",
+        "provider_model_id": "zai-org/GLM-5.2",
+        "reasoning_profile_id": "thinking",
+        "request_overrides": {
+            "enable_thinking": True,
+            "thinking_budget": 32768,
+        },
+        "max_tokens": 32768,
+        "api_key_env": "SILICONFLOW_API_KEY",
+        "pricing": {
+            "currency": "CNY",
+            "cached_input_per_million_tokens": 2.0,
+            "uncached_input_per_million_tokens": 8.0,
+            "output_per_million_tokens": 28.0,
+            "source_url": _V3_PRICING_SOURCE_URL,
+            "accessed_at": _V3_PRICING_ACCESSED_AT,
+        },
+    },
+    "qwen3_14b_siliconflow": {
+        "provider_family": "siliconflow",
+        "provider_model_id": "Qwen/Qwen3-14B",
+        "reasoning_profile_id": "thinking",
+        "request_overrides": {
+            "enable_thinking": True,
+            "thinking_budget": 32768,
+        },
+        "max_tokens": 32768,
+        "api_key_env": "SILICONFLOW_API_KEY",
+        "pricing": {
+            "currency": "CNY",
+            "input_per_million_tokens": 0.5,
+            "output_per_million_tokens": 2.0,
+            "source_url": _V3_PRICING_SOURCE_URL,
+            "accessed_at": _V3_PRICING_ACCESSED_AT,
+        },
+    },
+    "minimax_m2_5_siliconflow": {
+        "provider_family": "siliconflow",
+        "provider_model_id": "MiniMaxAI/MiniMax-M2.5",
+        "reasoning_profile_id": "thinking",
+        "request_overrides": {
+            "enable_thinking": True,
+            "thinking_budget": 32768,
+        },
+        "max_tokens": 32768,
+        "api_key_env": "SILICONFLOW_API_KEY",
+        "pricing": {
+            "currency": "CNY",
+            "cached_input_per_million_tokens": 0.21,
+            "uncached_input_per_million_tokens": 2.1,
+            "output_per_million_tokens": 8.4,
+            "source_url": _V3_PRICING_SOURCE_URL,
+            "accessed_at": _V3_PRICING_ACCESSED_AT,
+        },
+    },
+    "deepseek_v3_pro_siliconflow": {
+        "provider_family": "siliconflow",
+        "provider_model_id": "Pro/deepseek-ai/DeepSeek-V3",
+        "reasoning_profile_id": "default",
+        "request_overrides": {"enable_thinking": False},
+        "max_tokens": 32768,
+        "api_key_env": "SILICONFLOW_API_KEY",
+        "pricing": {
+            "currency": "CNY",
+            "input_per_million_tokens": 2.0,
+            "output_per_million_tokens": 8.0,
+            "source_url": _V3_PRICING_SOURCE_URL,
+            "accessed_at": _V3_PRICING_ACCESSED_AT,
+        },
+    },
+}
+EXP5_COMPARABLE_REQUEST_CONTROL_FIELDS = (
+    "stream",
+    "timeout_seconds",
+    "max_tokens",
+    "max_provider_attempts",
+)
+EXP5_PROVIDER_SPECIFIC_REASONING_CONTROL_FIELDS = (
+    "enable_thinking",
+    "thinking_budget",
+    "thinking",
+    "reasoning_effort",
+)
+
+
+def exp5_provider_specific_reasoning_controls(
+    request_controls: Mapping[str, object],
+) -> JsonObject:
+    """按同一预注册字段集投影 Exp5 provider-specific reasoning 参数。"""
+
+    return {
+        field_name: request_controls[field_name]
+        for field_name in EXP5_PROVIDER_SPECIFIC_REASONING_CONTROL_FIELDS
+        if field_name in request_controls
+    }
+
+
+_LEGACY_COHORT_MEMBER_IDS = (
     "glm_5_2_siliconflow",
     "qwen3_6_27b_siliconflow",
     "gpt_5_6_sol_high_openai",
 )
-PAPER_MODEL_ENDPOINT_COHORT_MEMBERS = {
+_LEGACY_COHORT_MEMBERS = {
     "glm_5_2_siliconflow": {
         "provider_family": "siliconflow",
         "provider_model_id": "zai-org/GLM-5.2",
@@ -59,7 +208,7 @@ PAPER_MODEL_ENDPOINT_COHORT_MEMBERS = {
         "reasoning_profile_id": "high",
     },
 }
-EXP5_COMPARABLE_REQUEST_CONTROL_FIELDS = (
+_LEGACY_COMPARABLE_REQUEST_CONTROL_FIELDS = (
     "temperature",
     "top_p",
     "stream",
@@ -67,6 +216,56 @@ EXP5_COMPARABLE_REQUEST_CONTROL_FIELDS = (
     "max_tokens",
     "max_provider_attempts",
 )
+_COHORT_DEFINITIONS = {
+    LEGACY_PAPER_MODEL_ENDPOINT_COHORT_ID: {
+        "schema_version": LEGACY_MODEL_ENDPOINT_COHORT_SCHEMA_VERSION,
+        "member_ids": _LEGACY_COHORT_MEMBER_IDS,
+        "members": _LEGACY_COHORT_MEMBERS,
+        "comparable_fields": _LEGACY_COMPARABLE_REQUEST_CONTROL_FIELDS,
+        "required_common_controls": {
+            "stream": False,
+            "timeout_seconds": 100,
+            "max_tokens": 8192,
+            "max_provider_attempts": 1,
+        },
+        "smoke_evidence_schema_version": SMOKE_EVIDENCE_SCHEMA_VERSION,
+    },
+    PAPER_MODEL_ENDPOINT_COHORT_ID: {
+        "schema_version": MODEL_ENDPOINT_COHORT_SCHEMA_VERSION,
+        "member_ids": PAPER_MODEL_ENDPOINT_COHORT_MEMBER_IDS,
+        "members": PAPER_MODEL_ENDPOINT_COHORT_MEMBERS,
+        "comparable_fields": EXP5_COMPARABLE_REQUEST_CONTROL_FIELDS,
+        "required_common_controls": {
+            "stream": False,
+            "timeout_seconds": 100,
+            "max_tokens": 8192,
+            "max_provider_attempts": 1,
+        },
+        "smoke_evidence_schema_version": SMOKE_EVIDENCE_SCHEMA_VERSION,
+    },
+    PAPER_MODEL_ENDPOINT_COHORT_V3_ID: {
+        "schema_version": MODEL_ENDPOINT_COHORT_V3_SCHEMA_VERSION,
+        "member_ids": PAPER_MODEL_ENDPOINT_COHORT_V3_MEMBER_IDS,
+        "members": PAPER_MODEL_ENDPOINT_COHORT_V3_MEMBERS,
+        "comparable_fields": (
+            "temperature",
+            "top_p",
+            "stream",
+            "timeout_seconds",
+            "max_tokens",
+            "max_provider_attempts",
+        ),
+        "required_common_controls": {
+            "temperature": 0.0,
+            "top_p": 1.0,
+            "stream": False,
+            "timeout_seconds": 600,
+            "max_tokens": 32768,
+            "max_provider_attempts": 1,
+        },
+        "smoke_evidence_schema_version": V3_SMOKE_EVIDENCE_SCHEMA_VERSION,
+    },
+}
 EXP5_DOMAIN_EXECUTION_CONTRACTS = {
     "factorization": {
         "prompt_profile": "factorization.bounded_range_prompt.v1",
@@ -83,11 +282,12 @@ EXP5_DOMAIN_EXECUTION_CONTRACTS = {
 
 def load_model_endpoint_cohort(path: str | Path) -> JsonObject:
     body = _load_json_file(path)
-    if body.get("schema_version") != MODEL_ENDPOINT_COHORT_SCHEMA_VERSION:
-        raise ValueError("unsupported model endpoint cohort schema")
     cohort_id = body.get("cohort_id")
     if not isinstance(cohort_id, str) or not cohort_id:
         raise ValueError("model endpoint cohort requires cohort_id")
+    definition = _COHORT_DEFINITIONS.get(cohort_id)
+    if definition is None or body.get("schema_version") != definition["schema_version"]:
+        raise ValueError("unsupported model endpoint cohort schema")
     members = body.get("members")
     if not isinstance(members, list) or not members:
         raise ValueError("model endpoint cohort requires members")
@@ -102,6 +302,15 @@ def load_model_endpoint_cohort(path: str | Path) -> JsonObject:
         _required_str(member, "provider_family")
         _required_str(member, "provider_model_id")
         _required_str(member, "reasoning_profile_id")
+        if cohort_id in {
+            PAPER_MODEL_ENDPOINT_COHORT_ID,
+            PAPER_MODEL_ENDPOINT_COHORT_V3_ID,
+        }:
+            if not isinstance(member.get("request_overrides"), dict):
+                raise ValueError("model endpoint cohort requires request_overrides")
+            max_tokens = member.get("max_tokens")
+            if isinstance(max_tokens, bool) or not isinstance(max_tokens, int):
+                raise ValueError("model endpoint cohort requires integer max_tokens")
     result = dict(body)
     result["model_cohort_digest"] = digest_json(body)
     return result
@@ -148,10 +357,18 @@ def build_model_endpoint_cohort_preflight(
     cohort: JsonObject,
     entry_map: JsonObject,
     provider_configs: dict[str, AIAPIExecutorConfig],
+    require_smoke_evidence: bool = True,
 ) -> JsonObject:
     cohort_id = str(cohort.get("cohort_id") or "")
     cohort_digest = str(cohort.get("model_cohort_digest") or digest_json(cohort))
     members_by_id = _cohort_members_by_id(cohort)
+    definition = _COHORT_DEFINITIONS.get(cohort_id)
+    if definition is None:
+        raise ValueError("unsupported model endpoint cohort id")
+    expected_member_ids_ordered = tuple(definition["member_ids"])
+    expected_members = dict(definition["members"])
+    comparable_fields = tuple(definition["comparable_fields"])
+    required_common_controls = dict(definition["required_common_controls"])
     entry_specs = entry_map.get("members")
     if not isinstance(entry_specs, dict):
         entry_specs = {}
@@ -165,12 +382,10 @@ def build_model_endpoint_cohort_preflight(
     member_plans: dict[str, JsonObject] = {}
     cohort_level_reasons: list[str] = []
 
-    expected_member_ids = set(PAPER_MODEL_ENDPOINT_COHORT_MEMBER_IDS)
+    expected_member_ids = set(expected_member_ids_ordered)
     actual_member_ids = set(members_by_id)
     entry_map_member_ids = {str(member_id) for member_id in entry_specs}
-    if cohort_id != PAPER_MODEL_ENDPOINT_COHORT_ID:
-        cohort_level_reasons.append("cohort_id_mismatch")
-    if entry_map.get("cohort_id") != cohort_id or cohort_id != PAPER_MODEL_ENDPOINT_COHORT_ID:
+    if entry_map.get("cohort_id") != cohort_id:
         cohort_level_reasons.append("entry_map_cohort_id_mismatch")
     if actual_member_ids != expected_member_ids:
         cohort_level_reasons.append("cohort_member_set_mismatch")
@@ -179,8 +394,8 @@ def build_model_endpoint_cohort_preflight(
     if unexpected_entry_map_members:
         cohort_level_reasons.append("entry_map_member_set_mismatch")
 
-    for member_id in PAPER_MODEL_ENDPOINT_COHORT_MEMBER_IDS:
-        expected_member = PAPER_MODEL_ENDPOINT_COHORT_MEMBERS[member_id]
+    for member_id in expected_member_ids_ordered:
+        expected_member = expected_members[member_id]
         member = members_by_id.get(member_id)
         spec = entry_specs.get(member_id)
         if member is None or not isinstance(spec, dict):
@@ -195,6 +410,7 @@ def build_model_endpoint_cohort_preflight(
         config = provider_configs.get(provider_config_id)
         selected_entry: AIAPIProviderEntry | None = None
         endpoint_identity: PaperModelEndpointIdentity | None = None
+        pricing_snapshot: JsonObject | None = None
         blocked_reasons: list[str] = []
         if str(member.get("provider_family") or "") != provider_family:
             blocked_reasons.append("cohort_provider_family_mismatch")
@@ -202,13 +418,22 @@ def build_model_endpoint_cohort_preflight(
             blocked_reasons.append("cohort_model_mismatch")
         if str(member.get("reasoning_profile_id") or "") != reasoning_profile_id:
             blocked_reasons.append("cohort_reasoning_profile_mismatch")
+        expected_overrides = expected_member.get("request_overrides")
+        if expected_overrides is not None and not _strict_json_equal(
+            member.get("request_overrides"),
+            expected_overrides,
+        ):
+            blocked_reasons.append("cohort_request_overrides_mismatch")
+        expected_max_tokens = expected_member.get("max_tokens")
+        if expected_max_tokens is not None and member.get("max_tokens") != expected_max_tokens:
+            blocked_reasons.append("cohort_max_tokens_mismatch")
         if config is None:
             missing_provider_configs.append(provider_config_id)
             blocked_reasons.append("missing_provider_config")
         else:
             try:
                 endpoint_identity = build_model_endpoint_identity(
-                    model_cohort_id=PAPER_MODEL_ENDPOINT_COHORT_ID,
+                    model_cohort_id=cohort_id,
                     model_cohort_digest=cohort_digest,
                     cohort_member_id=member_id,
                     provider_config_id=provider_config_id,
@@ -231,41 +456,97 @@ def build_model_endpoint_cohort_preflight(
                 missing_entry_ids.append(entry_id)
                 if "selected_entry_not_found" not in blocked_reasons:
                     blocked_reasons.append("selected_entry_not_found")
-            elif selected_entry.enabled:
+            else:
+                if not selected_entry.enabled:
+                    blocked_reasons.append("selected_entry_disabled")
+                expected_api_key_env = expected_member.get("api_key_env")
+                if (
+                    expected_api_key_env is not None
+                    and selected_entry.api_key_env != expected_api_key_env
+                ):
+                    blocked_reasons.append("api_key_env_mismatch")
                 if not os.environ.get(selected_entry.api_key_env, ""):
                     blocked_reasons.append("missing_api_key_env")
-                smoke_reasons = _smoke_evidence_blocked_reasons(
+                if (
+                    expected_overrides is not None
+                    and endpoint_identity is not None
+                    and dict(endpoint_identity.effective_reasoning_controls)
+                    != expected_overrides
+                ):
+                    blocked_reasons.append("entry_reasoning_controls_mismatch")
+                pricing_snapshot = dict(selected_entry.pricing)
+                expected_pricing = expected_member.get("pricing")
+                if isinstance(expected_pricing, dict):
+                    blocked_reasons.extend(
+                        _pricing_snapshot_blocked_reasons(
+                            actual=pricing_snapshot,
+                            expected=expected_pricing,
+                        )
+                    )
+
+        request_controls: JsonObject | None = None
+        if (
+            config is not None
+            and selected_entry is not None
+            and endpoint_identity is not None
+        ):
+            try:
+                request_controls = _normalized_exp5_request_controls(
+                config=config,
+                selected_entry=selected_entry,
+                endpoint_identity=endpoint_identity,
+                comparable_fields=comparable_fields,
+            )
+            except ValueError:
+                blocked_reasons.append("missing_comparable_request_controls")
+        if request_controls is None:
+            if "missing_comparable_request_controls" not in blocked_reasons:
+                blocked_reasons.append("missing_comparable_request_controls")
+        else:
+            blocked_reasons.extend(
+                _required_control_blocked_reasons(
+                    actual=request_controls["comparable"],
+                    required=required_common_controls,
+                )
+            )
+        request_controls_digest = _request_controls_binding_digest(
+            request_controls
+        )
+        pricing_snapshot_digest = (
+            digest_json(pricing_snapshot)
+            if pricing_snapshot is not None
+            else None
+        )
+        if require_smoke_evidence:
+            blocked_reasons.extend(
+                _smoke_evidence_blocked_reasons(
                     smoke_evidence=spec.get("smoke_evidence_ref"),
+                    smoke_schema_version=str(
+                        definition["smoke_evidence_schema_version"]
+                    ),
                     member_id=member_id,
                     entry_id=entry_id,
                     provider_family=provider_family,
                     provider_model_id=provider_model_id,
                     reasoning_profile_id=reasoning_profile_id,
+                    model_cohort_id=cohort_id,
+                    model_cohort_digest=cohort_digest,
+                    source_provider_config_digest=(
+                        config.config_digest if config is not None else None
+                    ),
+                    model_endpoint_identity_digest=(
+                        endpoint_identity.model_endpoint_identity_digest
+                        if endpoint_identity is not None
+                        else None
+                    ),
+                    request_controls_digest=request_controls_digest,
+                    pricing_snapshot_digest=pricing_snapshot_digest,
                 )
-                blocked_reasons.extend(smoke_reasons)
-
-        blocked_reasons = list(dict.fromkeys(blocked_reasons))
-        request_controls = (
-            _normalized_exp5_request_controls(
-                config=config,
-                selected_entry=selected_entry,
-                endpoint_identity=endpoint_identity,
             )
-            if config is not None
-            and selected_entry is not None
-            and endpoint_identity is not None
-            else None
-        )
-        if request_controls is None:
-            blocked_reasons.append("missing_comparable_request_controls")
-        elif (
-            request_controls["comparable"]["timeout_seconds"]
-            != PAPER_FORMAL_AI_TIMEOUT_SECONDS
-        ):
-            blocked_reasons.append("formal_ai_timeout_seconds_mismatch")
+        blocked_reasons = list(dict.fromkeys(blocked_reasons))
         plan = {
             "schema_version": "tokenshare.paper_model_endpoint_member_plan.v1",
-            "cohort_id": PAPER_MODEL_ENDPOINT_COHORT_ID,
+            "cohort_id": cohort_id,
             "model_cohort_digest": cohort_digest,
             "cohort_member_id": member_id,
             "provider_config_id": provider_config_id or None,
@@ -288,6 +569,9 @@ def build_model_endpoint_cohort_preflight(
                 endpoint_identity.to_dict() if endpoint_identity is not None else None
             ),
             "request_controls": request_controls,
+            "request_controls_digest": request_controls_digest,
+            "pricing_snapshot": pricing_snapshot,
+            "pricing_snapshot_digest": pricing_snapshot_digest,
             "smoke_evidence_ref": spec.get("smoke_evidence_ref"),
             "external_benchmark": {
                 "source": member.get("external_benchmark_source"),
@@ -318,7 +602,7 @@ def build_model_endpoint_cohort_preflight(
     ]
     request_controls_snapshot = (
         comparable_snapshots[0]
-        if len(comparable_snapshots) == len(PAPER_MODEL_ENDPOINT_COHORT_MEMBER_IDS)
+        if len(comparable_snapshots) == len(expected_member_ids_ordered)
         else None
     )
     if request_controls_snapshot is not None and len(
@@ -348,7 +632,8 @@ def build_model_endpoint_cohort_preflight(
         "model_policy": FIXED_ENTRY_MODEL_POLICY,
         "cohort_id": cohort_id,
         "model_cohort_digest": cohort_digest,
-        "expected_member_ids": list(PAPER_MODEL_ENDPOINT_COHORT_MEMBER_IDS),
+        "expected_member_ids": list(expected_member_ids_ordered),
+        "comparable_request_control_fields": list(comparable_fields),
         "cohort_level_reasons": cohort_level_reasons,
         "missing_members": sorted(set(missing_members)),
         "unexpected_members": unexpected_members,
@@ -365,7 +650,91 @@ def build_model_endpoint_cohort_preflight(
             if request_controls_snapshot is not None
             else None
         ),
+        "required_common_controls": required_common_controls,
     }
+
+
+def _required_control_blocked_reasons(
+    *,
+    actual: JsonObject,
+    required: JsonObject,
+) -> list[str]:
+    reasons: list[str] = []
+    reason_by_field = {
+        "timeout_seconds": "formal_ai_timeout_seconds_mismatch",
+        "max_tokens": "formal_ai_max_tokens_mismatch",
+    }
+    for field_name, expected_value in required.items():
+        actual_value = actual.get(field_name)
+        if type(actual_value) is type(expected_value) and actual_value == expected_value:
+            continue
+        reasons.append(
+            reason_by_field.get(field_name, f"formal_ai_{field_name}_mismatch")
+        )
+    return reasons
+
+
+def _strict_json_equal(left: Any, right: Any) -> bool:
+    if type(left) is not type(right):
+        return False
+    if isinstance(left, dict):
+        return set(left) == set(right) and all(
+            _strict_json_equal(left[key], right[key]) for key in left
+        )
+    if isinstance(left, list):
+        return len(left) == len(right) and all(
+            _strict_json_equal(left_item, right_item)
+            for left_item, right_item in zip(left, right, strict=True)
+        )
+    return bool(left == right)
+
+
+def _request_controls_binding_digest(
+    request_controls: JsonObject | None,
+) -> str | None:
+    if not isinstance(request_controls, dict):
+        return None
+    comparable = request_controls.get("comparable")
+    reasoning = request_controls.get("provider_specific_reasoning")
+    if not isinstance(comparable, dict) or not isinstance(reasoning, dict):
+        return None
+    return digest_json(
+        {
+            "comparable": dict(comparable),
+            "provider_specific_reasoning": dict(reasoning),
+        }
+    )
+
+
+def _pricing_snapshot_blocked_reasons(
+    *,
+    actual: JsonObject,
+    expected: JsonObject,
+) -> list[str]:
+    reasons: list[str] = []
+    for field_name, reason in (
+        ("currency", "pricing_snapshot_currency_mismatch"),
+        ("source_url", "pricing_snapshot_source_url_mismatch"),
+        ("accessed_at", "pricing_snapshot_accessed_at_mismatch"),
+    ):
+        if actual.get(field_name) != expected.get(field_name):
+            reasons.append(reason)
+    rate_fields = {
+        "input_per_million_tokens",
+        "cached_input_per_million_tokens",
+        "uncached_input_per_million_tokens",
+        "output_per_million_tokens",
+    }
+    expected_rates = {field for field in rate_fields if field in expected}
+    actual_rates = {field for field in rate_fields if field in actual}
+    if actual_rates != expected_rates or any(
+        isinstance(actual.get(field), bool)
+        or not isinstance(actual.get(field), (int, float))
+        or float(actual[field]) != float(expected[field])
+        for field in expected_rates
+    ):
+        reasons.append("pricing_snapshot_rate_mismatch")
+    return list(dict.fromkeys(reasons))
 
 
 def _normalized_exp5_request_controls(
@@ -373,13 +742,14 @@ def _normalized_exp5_request_controls(
     config: AIAPIExecutorConfig,
     selected_entry: AIAPIProviderEntry,
     endpoint_identity: PaperModelEndpointIdentity,
+    comparable_fields: tuple[str, ...],
 ) -> JsonObject:
     effective = {
         **dict(config.defaults),
         **dict(selected_entry.request_overrides),
     }
     comparable: JsonObject = {}
-    for field_name in EXP5_COMPARABLE_REQUEST_CONTROL_FIELDS:
+    for field_name in comparable_fields:
         if field_name not in effective:
             raise ValueError(
                 f"missing Experiment 5 request control: {field_name}"
@@ -389,7 +759,7 @@ def _normalized_exp5_request_controls(
         domain: dict(contract)
         for domain, contract in EXP5_DOMAIN_EXECUTION_CONTRACTS.items()
     }
-    provider_specific_reasoning = dict(
+    provider_specific_reasoning = exp5_provider_specific_reasoning_controls(
         endpoint_identity.effective_reasoning_controls
     )
     return {
@@ -650,17 +1020,24 @@ def _validate_model_policy(value: str) -> None:
 def _smoke_evidence_blocked_reasons(
     *,
     smoke_evidence: Any,
+    smoke_schema_version: str,
     member_id: str,
     entry_id: str,
     provider_family: str,
     provider_model_id: str,
     reasoning_profile_id: str,
+    model_cohort_id: str,
+    model_cohort_digest: str,
+    source_provider_config_digest: str | None,
+    model_endpoint_identity_digest: str | None,
+    request_controls_digest: str | None,
+    pricing_snapshot_digest: str | None,
 ) -> list[str]:
     if not isinstance(smoke_evidence, dict):
         return ["missing_smoke_evidence"]
     reasons: list[str] = []
     expected = {
-        "schema_version": SMOKE_EVIDENCE_SCHEMA_VERSION,
+        "schema_version": smoke_schema_version,
         "status": "passed",
         "cohort_member_id": member_id,
         "entry_id": entry_id,
@@ -671,6 +1048,32 @@ def _smoke_evidence_blocked_reasons(
     for field_name, expected_value in expected.items():
         if smoke_evidence.get(field_name) != expected_value:
             reasons.append(f"smoke_evidence_{field_name}_mismatch")
+    if smoke_schema_version == V3_SMOKE_EVIDENCE_SCHEMA_VERSION:
+        v3_bindings = {
+            "model_cohort_id": model_cohort_id,
+            "model_cohort_digest": model_cohort_digest,
+            "source_provider_config_digest": source_provider_config_digest,
+            "model_endpoint_identity_digest": model_endpoint_identity_digest,
+            "request_controls_digest": request_controls_digest,
+            "pricing_snapshot_digest": pricing_snapshot_digest,
+        }
+        for field_name, expected_value in v3_bindings.items():
+            if expected_value is None or smoke_evidence.get(field_name) != expected_value:
+                reasons.append(f"smoke_evidence_{field_name}_mismatch")
+        capability_fields = {
+            "resolved_model_match",
+            "request_controls_match",
+            "usage_schema_verified",
+            "thinking_breakdown_verified",
+            "timeout_path_verified",
+        }
+        capability_checks = smoke_evidence.get("capability_checks")
+        if (
+            not isinstance(capability_checks, dict)
+            or set(capability_checks) != capability_fields
+            or any(capability_checks[field] is not True for field in capability_fields)
+        ):
+            reasons.append("smoke_evidence_capability_checks_mismatch")
     if not _positive_int(smoke_evidence.get("provider_attempt_count")):
         reasons.append("smoke_evidence_missing_provider_attempt")
     for field_name in ("raw_output_ref", "provenance_ref", "usage_ref"):

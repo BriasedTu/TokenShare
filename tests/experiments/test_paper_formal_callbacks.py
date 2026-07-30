@@ -265,9 +265,16 @@ def test_exp3_worker_death_strategy_projects_runtime_evidence_without_fake_proto
                     "attempt_id": "attempt_initial",
                     "lease_id": "lease_initial",
                     "worker_id": "process-worker-1",
-                    "worker_pid": 1001,
-                    "process_exitcode": -15,
-                    "result_kind": "worker_terminated",
+                        "worker_pid": 1001,
+                        "process_exitcode": -15,
+                        "result_kind": "worker_terminated",
+                        "kill_point": "progress_25",
+                        "kill_progress_target_ratio": 0.25,
+                        "kill_progress_completed_ai_unit_count": 1,
+                        "kill_progress_total_ai_unit_count": 1,
+                        "kill_progress_actual_ratio": 1.0,
+                        "kill_progress_observed_at": "2026-07-20T00:00:01Z",
+                        "kill_progress_error": None,
                     "started_at": "2026-07-20T00:00:00Z",
                     "ended_at": "2026-07-20T00:00:01Z",
                 },
@@ -343,7 +350,9 @@ def test_exp4_formal_strategy_rejects_retired_slot_integrity_mode() -> None:
         assert result.metrics["exposed_error_count"] == 1
 
 
-def test_exp5_strategy_rejects_failover_and_emits_model_records() -> None:
+def test_exp5_strategy_rejects_failover_and_requires_persisted_model_records(
+    tmp_path: Path,
+) -> None:
     approved = {
         "provider": "siliconflow",
         "model": "zai-org/GLM-5.2",
@@ -352,16 +361,18 @@ def test_exp5_strategy_rejects_failover_and_emits_model_records() -> None:
     }
     attempt = _Attempt(unit_id="unit-1", attempt_id="attempt-1")
 
-    result = run_exp5_identity_strategy(
-        attempts=(attempt,),
-        approved_identity=approved,
-        condition_id="condition-exp5",
-        cohort_member_id="glm_5_2_siliconflow",
-    )
-    assert result.model_execution_records[0]["attempt_id"] == "attempt-1"
-    assert result.model_execution_records[0]["cohort_member_id"] == (
-        "glm_5_2_siliconflow"
-    )
+    shared = {
+        "approved_identity": approved,
+        "condition_id": "condition-exp5",
+        "cohort_member_id": "glm_5_2_siliconflow",
+        "adapter_root": tmp_path,
+        "task": {},
+        "transport_kind": "offline_capture",
+        "model_policy": "fixed_entry",
+        "pilot_only": True,
+    }
+    with pytest.raises(ValueError, match="model_execution_record_ref"):
+        run_exp5_identity_strategy(attempts=(attempt,), **shared)
 
     drifted = _Attempt(
         unit_id="unit-1",
@@ -371,7 +382,5 @@ def test_exp5_strategy_rejects_failover_and_emits_model_records() -> None:
     with pytest.raises(ValueError, match="failover"):
         run_exp5_identity_strategy(
             attempts=(drifted,),
-            approved_identity=approved,
-            condition_id="condition-exp5",
-            cohort_member_id="glm_5_2_siliconflow",
+            **shared,
         )

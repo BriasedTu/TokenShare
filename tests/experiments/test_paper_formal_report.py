@@ -7,6 +7,9 @@ from tokenshare.experiments.paper_formal_metrics import (
     FormalMetricsResult,
     recompute_paper_formal_metrics,
 )
+from tokenshare.experiments.paper_exp5_artifacts import (
+    Exp5PaperArtifactResult,
+)
 from tokenshare.experiments.paper_formal_report import (
     generate_paper_formal_report,
 )
@@ -197,6 +200,115 @@ def test_formal_report_rejects_dangling_event_or_artifact_refs(
     assert "persisted_evidence_ref_unresolved" in eligibility[
         "ineligibility_reasons"
     ]
+
+
+def test_formal_report_fails_closed_when_exp5_paper_renderer_fails(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    _write_claimed_formal_evidence(
+        tmp_path,
+        task_eligible=True,
+        attempt_eligible=True,
+    )
+    calls: list[dict[str, object]] = []
+
+    def fake_renderer(**kwargs):
+        calls.append(kwargs)
+        return Exp5PaperArtifactResult(
+            status="paper_artifact_render_failed",
+            paper_eligible=False,
+            artifact_refs=(),
+            failure_reason="deterministic backend failure",
+        )
+
+    monkeypatch.setattr(
+        "tokenshare.experiments.paper_formal_report.render_exp5_paper_artifacts",
+        fake_renderer,
+    )
+    parsed_rows = {
+        "suite_status": "completed",
+        "identity_complete": True,
+        "overall_rows": (),
+        "domain_topic_rows": (),
+        "paired_comparison_rows": (),
+        "model_execution_rows": (),
+        "order_concurrency_rows": (),
+        "failure_taxonomy_rows": (),
+    }
+
+    report = generate_paper_formal_report(
+        output_root=tmp_path,
+        metrics=_claimed_metrics(condition_eligible=True),
+        exp5_artifact_rows=parsed_rows,
+    )
+
+    assert calls and calls[0]["paper_eligible"] is True
+    assert report.paper_eligible is False
+    assert report.formal_paper_table_generated is False
+    eligibility = json.loads(
+        (tmp_path / "audit" / "paper_eligibility_report.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert "paper_artifact_render_failed" in eligibility[
+        "ineligibility_reasons"
+    ]
+    assert eligibility["exp5_artifact_result"]["status"] == (
+        "paper_artifact_render_failed"
+    )
+    assert not (tmp_path / "formal_paper_report.md").exists()
+
+
+def test_formal_report_catches_exp5_renderer_validation_error_and_retains_audit(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    _write_claimed_formal_evidence(
+        tmp_path,
+        task_eligible=True,
+        attempt_eligible=True,
+    )
+    audit_path = tmp_path / "metrics" / "exp5_model_overall.csv"
+    audit_path.parent.mkdir(parents=True, exist_ok=True)
+    audit_path.write_text("cohort_member_id\n", encoding="utf-8")
+
+    def invalid_renderer(**_kwargs):
+        raise ValueError("overall_rows contains an unsafe nested field")
+
+    monkeypatch.setattr(
+        "tokenshare.experiments.paper_formal_report.render_exp5_paper_artifacts",
+        invalid_renderer,
+    )
+    parsed_rows = {
+        "suite_status": "completed",
+        "identity_complete": True,
+        "overall_rows": (),
+        "domain_topic_rows": (),
+        "paired_comparison_rows": (),
+        "model_execution_rows": (),
+        "order_concurrency_rows": (),
+        "failure_taxonomy_rows": (),
+    }
+
+    report = generate_paper_formal_report(
+        output_root=tmp_path,
+        metrics=_claimed_metrics(condition_eligible=True),
+        exp5_artifact_rows=parsed_rows,
+    )
+
+    assert report.paper_eligible is False
+    assert audit_path.read_text(encoding="utf-8") == "cohort_member_id\n"
+    eligibility = json.loads(
+        (tmp_path / "audit" / "paper_eligibility_report.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert "paper_artifact_render_failed" in eligibility["ineligibility_reasons"]
+    assert eligibility["exp5_artifact_result"]["failure_reason"] == (
+        "overall_rows contains an unsafe nested field"
+    )
+    assert not (tmp_path / "formal_paper_report.md").exists()
 
 
 def _write_minimal_formal_evidence(root: Path) -> None:

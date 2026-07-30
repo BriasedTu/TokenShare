@@ -19,6 +19,7 @@ from tokenshare.core.models import ArtifactRef, JsonObject, ProtocolConfig, Task
 from tokenshare.executors.ai_api import AIAPIExecutor
 from tokenshare.executors.ai_api_config import AIAPIExecutorConfig, load_ai_api_config
 from tokenshare.executors.ai_api_transport import (
+    UrlLibDeepSeekTransport,
     UrlLibOpenAITransport,
     UrlLibSiliconFlowTransport,
 )
@@ -71,6 +72,7 @@ from tokenshare.plugins.factorization.merge_policy import (
     merge_required_range_results,
 )
 from tokenshare.plugins.factorization.runtime_adapter import (
+    DETERMINISTIC_EXECUTOR_ID,
     FactorizationExecutionBridge,
     FactorizationRuntimeAdapter,
 )
@@ -121,7 +123,11 @@ NOW = "2026-07-14T00:00:00Z"
 AI_EXECUTOR_ID = "executor_ai_api"
 AI_EXECUTOR_VERSION = "0.1.0"
 FAKE_KEY_ENV = "TOKENSHARE_FACTORIZATION_PAPER_FAKE_KEY"
-REAL_TRANSPORT_TYPES = (UrlLibSiliconFlowTransport, UrlLibOpenAITransport)
+REAL_TRANSPORT_TYPES = (
+    UrlLibSiliconFlowTransport,
+    UrlLibOpenAITransport,
+    UrlLibDeepSeekTransport,
+)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -637,6 +643,8 @@ def run_factorization_paper_case(
         wall_clock_ms=sum(attempt.latency_ms for attempt in attempts),
         total_tokens=sum(attempt.total_tokens for attempt in attempts),
         cost_estimate=sum(attempt.cost_estimate for attempt in attempts),
+        cost_estimate_currency=_single_attempt_currency(attempts),
+        cost_estimate_status=_combined_cost_estimate_status(attempts),
         event_refs=[],
         artifact_refs=[
             ref
@@ -1298,27 +1306,28 @@ def _run_factorization_full_via_coordinator(
             for planned in worker_termination_policy.target_planned_ai_unit_ids
             if planned not in actual_unit_id_by_planned
         ]
-        if missing_targets:
+        if missing_targets and runtime_result.status != "failed":
             raise ValueError(
                 f"worker-death targets were not dispatched: {missing_targets}"
             )
-        fault_records = project_worker_death_records(
-            artifact_store=store,
-            condition_id=condition.condition_id,
-            repeat_id=condition.repeat_id,
-            run_id=runtime_result.run_id,
-            ai_units=tuple(ai_units_by_id.values()),
-            selected_target_unit_ids=tuple(
-                actual_unit_id_by_planned[planned]
-                for planned in worker_termination_policy.target_planned_ai_unit_ids
-            ),
-            kill_point=worker_termination_policy.kill_point,
-            worker_facts=worker_backend.execution_facts,
-            protocol_events=runtime_events,
-            coordinator_pid=os.getpid(),
-            created_at=NOW,
-            provider_tokens_by_attempt_id=provider_tokens_by_attempt_id,
-        )
+        if not missing_targets:
+            fault_records = project_worker_death_records(
+                artifact_store=store,
+                condition_id=condition.condition_id,
+                repeat_id=condition.repeat_id,
+                run_id=runtime_result.run_id,
+                ai_units=tuple(ai_units_by_id.values()),
+                selected_target_unit_ids=tuple(
+                    actual_unit_id_by_planned[planned]
+                    for planned in worker_termination_policy.target_planned_ai_unit_ids
+                ),
+                kill_point=worker_termination_policy.kill_point,
+                worker_facts=worker_backend.execution_facts,
+                protocol_events=runtime_events,
+                coordinator_pid=os.getpid(),
+                created_at=NOW,
+                provider_tokens_by_attempt_id=provider_tokens_by_attempt_id,
+            )
         attempts = _enrich_worker_death_attempts(
             attempts=attempts,
             captured_calls=capturing_executor.calls,
@@ -1327,6 +1336,18 @@ def _run_factorization_full_via_coordinator(
             store=store,
             condition=condition,
             case_id=case_id,
+        )
+    if not attempts and runtime_result.status == "failed":
+        _validate_failed_protocol_projection_scope(
+            condition=condition,
+            runtime_events=runtime_events,
+            store=store,
+        )
+        attempts = _failed_protocol_attempts_from_events(
+            condition=condition,
+            runtime_result=runtime_result,
+            runtime_events=runtime_events,
+            store=store,
         )
     run_evidence = _run_evidence(
         store=store,
@@ -1500,6 +1521,186 @@ def _enrich_worker_death_attempts(
             )
         )
     return enriched
+
+
+def _failed_protocol_attempts_from_events(
+    *,
+    condition: PaperExperimentCondition,
+    runtime_result: Any,
+    runtime_events: tuple[Any, ...] | list[Any],
+    store: ArtifactStore,
+) -> list[PaperAttemptResult]:
+    """投影 provider 尚未 dispatch 前已经存在的真实协议 attempt。"""
+
+    _validate_failed_protocol_projection_scope(
+        condition=condition,
+        runtime_events=runtime_events,
+        store=store,
+    )
+
+    events = [
+        event.to_dict() if hasattr(event, "to_dict") else dict(event)
+        for event in runtime_events
+    ]
+    snapshots = {
+        str(attempt["attempt_id"]): dict(attempt)
+        for event in events
+        if event.get("event_type") == "ATTEMPT_STATE_CHANGED"
+        and isinstance((attempt := event.get("payload", {}).get("attempt")), dict)
+        and attempt.get("attempt_id")
+    }
+    worker_facts = {
+        str(fact.get("attempt_id")): dict(fact)
+        for fact in runtime_result.summary.get("runtime_observation", {}).get(
+            "worker_execution_facts", ()
+        )
+        if isinstance(fact, dict) and fact.get("attempt_id")
+    }
+    projected: list[PaperAttemptResult] = []
+    for event in events:
+        if event.get("event_type") != "EXECUTION_REQUEST_RECORDED":
+            continue
+        payload = event.get("payload", {})
+        request_ref = payload.get("request_ref")
+        if not isinstance(request_ref, dict):
+            raise ValueError("failed protocol attempt is missing request artifact")
+        request = _read_json_ref(store, ArtifactRef.from_dict(request_ref))
+        executor = request.get("executor")
+        if not isinstance(executor, dict):
+            raise ValueError(
+                "failed protocol attempt is missing persisted executor evidence"
+            )
+        executor_id = _required_projection_text(
+            executor.get("executor_id"),
+            "executor_id",
+        )
+        executor_type = _required_projection_text(
+            executor.get("executor_type"),
+            "executor_type",
+        )
+        attempt_id = _required_projection_text(
+            request.get("attempt_id") or payload.get("attempt_id"),
+            "attempt_id",
+        )
+        unit_id = _required_projection_text(
+            request.get("unit_id") or payload.get("unit_id"),
+            "unit_id",
+        )
+        snapshot = snapshots.get(attempt_id, {})
+        fact = worker_facts.get(attempt_id, {})
+        if snapshot.get("state") != "Failed":
+            continue
+        worker_id = _required_projection_text(
+            fact.get("worker_id") or snapshot.get("client_id"),
+            "worker_id",
+        )
+        started_at = _required_projection_text(
+            fact.get("started_at")
+            or snapshot.get("started_at")
+            or request.get("created_at"),
+            "started_at",
+        )
+        ended_at = _required_projection_text(
+            fact.get("ended_at") or snapshot.get("finished_at"),
+            "ended_at",
+        )
+        error_kind = _required_projection_text(
+            snapshot.get("failure_kind")
+            or snapshot.get("failure_reason")
+            or fact.get("result_kind"),
+            "failure_reason",
+        )
+        projected.append(
+            PaperAttemptResult(
+                condition_id=condition.condition_id,
+                repeat_id=condition.repeat_id,
+                run_id=runtime_result.run_id,
+                task_id=runtime_result.task_id,
+                unit_id=unit_id,
+                attempt_id=attempt_id,
+                worker_id=worker_id,
+                provider_attempt_index=0,
+                attempt_status=PaperAttemptStatus.EXECUTOR_ERROR,
+                provider=None,
+                model=None,
+                entry_id=None,
+                request_ref=dict(request_ref),
+                raw_output_ref=None,
+                parsed_output_ref=None,
+                parse_failure_ref=None,
+                provenance_ref=None,
+                usage_ref=None,
+                started_at=started_at,
+                ended_at=ended_at,
+                latency_ms=0,
+                prompt_tokens=0,
+                completion_tokens=0,
+                total_tokens=0,
+                cost_estimate=0.0,
+                error_kind=error_kind,
+                fault_injection_ref=None,
+                paper_eligible=False,
+                provider_attempt_count=0,
+                paper_difficulty=condition.paper_difficulty,
+                planned_ai_unit_id=None,
+                executor_id=executor_id,
+                executor_type=executor_type,
+                schema_version="tokenshare.paper_attempt_result.v2",
+            )
+        )
+    if not projected:
+        raise ValueError("failed protocol run is missing persisted attempt evidence")
+    return projected
+
+
+def _validate_failed_protocol_projection_scope(
+    *,
+    condition: PaperExperimentCondition,
+    runtime_events: tuple[Any, ...] | list[Any],
+    store: ArtifactStore,
+) -> None:
+    """仅允许 Exp3 的 deterministic root failure 进入 v2 负向投影。"""
+
+    error_message = (
+        "paper attempt v2 projection is restricted to Exp3 deterministic runtime"
+    )
+    if condition.experiment_id != "exp3_real_ai_fault_recovery":
+        raise ValueError(error_message)
+    request_events = [
+        event.to_dict() if hasattr(event, "to_dict") else dict(event)
+        for event in runtime_events
+        if (
+            event.event_type
+            if hasattr(event, "event_type")
+            else event.get("event_type")
+        )
+        == "EXECUTION_REQUEST_RECORDED"
+    ]
+    if not request_events:
+        raise ValueError("failed protocol run is missing persisted request evidence")
+    for event in request_events:
+        request_ref = event.get("payload", {}).get("request_ref")
+        if not isinstance(request_ref, dict):
+            raise ValueError("failed protocol attempt is missing request artifact")
+        request = _read_json_ref(store, ArtifactRef.from_dict(request_ref))
+        executor = request.get("executor")
+        if not isinstance(executor, dict):
+            raise ValueError(
+                "failed protocol attempt is missing persisted executor evidence"
+            )
+        if (
+            executor.get("executor_id") != DETERMINISTIC_EXECUTOR_ID
+            or executor.get("executor_type") != "deterministic_local"
+        ):
+            raise ValueError(error_message)
+
+
+def _required_projection_text(value: Any, field_name: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(
+            f"failed protocol attempt is missing persisted {field_name} evidence"
+        )
+    return value
 
 
 def _normalize_ablation_mode(value: str | None) -> str:
@@ -1912,10 +2113,17 @@ def _validate_real_transport_mode(
     transport: Any | None,
     ai_api_config: AIAPIExecutorConfig | None,
 ) -> None:
+    provider_family = (
+        ai_api_config.provider_family if ai_api_config is not None else None
+    )
+    resolved_transport = _transport_for_provider_family(
+        transport,
+        provider_family=provider_family,
+    )
     if not real_transport:
-        if isinstance(transport, REAL_TRANSPORT_TYPES):
+        if isinstance(resolved_transport, REAL_TRANSPORT_TYPES):
             raise ValueError(
-                "UrlLibSiliconFlowTransport or UrlLibOpenAITransport requires "
+                f"{type(resolved_transport).__name__} is a real provider transport and requires "
                 "real_transport=True"
             )
         return
@@ -1924,14 +2132,35 @@ def _validate_real_transport_mode(
     if transport is None:
         return
     expected_type = _real_transport_type(ai_api_config.provider_family)
-    if type(transport) is not expected_type and not _is_offline_capturing_transport(
-        transport
+    if (
+        type(resolved_transport) is not expected_type
+        and not _is_offline_capturing_transport(transport)
     ):
         raise ValueError(
             "real transport factorization paper runs require "
-            "UrlLibSiliconFlowTransport or UrlLibOpenAITransport matching "
+            f"{expected_type.__name__} matching "
             f"provider_family={ai_api_config.provider_family}"
         )
+
+
+def _transport_for_provider_family(
+    transport: Any | None,
+    *,
+    provider_family: str | None,
+) -> Any | None:
+    if transport is None or provider_family is None:
+        return transport
+    resolver = getattr(
+        transport,
+        "tokenshare_transport_for_provider",
+        None,
+    )
+    if not callable(resolver):
+        return transport
+    resolved = resolver(provider_family)
+    if resolved is None:
+        raise ValueError("provider transport router returned no transport")
+    return resolved
 
 
 def _default_real_transport(config: AIAPIExecutorConfig):
@@ -1944,6 +2173,8 @@ def _real_transport_type(provider_family: str):
         return UrlLibSiliconFlowTransport
     if provider_family == "openai":
         return UrlLibOpenAITransport
+    if provider_family == "deepseek":
+        return UrlLibDeepSeekTransport
     raise ValueError(f"unsupported real transport provider_family: {provider_family}")
 
 
@@ -2165,6 +2396,14 @@ def _paper_attempt_result(
         completion_tokens=completion_tokens,
         total_tokens=total_tokens,
         cost_estimate=_float_metric(usage.get("cost_estimate")),
+        cost_estimate_currency=(
+            str(usage["currency"]) if isinstance(usage.get("currency"), str) else None
+        ),
+        cost_estimate_status=(
+            str(usage["cost_estimate_status"])
+            if isinstance(usage.get("cost_estimate_status"), str)
+            else None
+        ),
         error_kind=(
             error_kind_override
             if error_kind_override is not None
@@ -2318,6 +2557,30 @@ def _is_offline_capturing_transport(transport: Any | None) -> bool:
     )
 
 
+def _single_attempt_currency(attempts: list[PaperAttemptResult]) -> str | None:
+    currencies = {
+        attempt.cost_estimate_currency
+        for attempt in attempts
+        if attempt.cost_estimate_currency is not None
+    }
+    if len(currencies) > 1:
+        raise ValueError("a paper task cannot aggregate mixed cost currencies")
+    return next(iter(currencies), None)
+
+
+def _combined_cost_estimate_status(attempts: list[PaperAttemptResult]) -> str | None:
+    statuses = {
+        attempt.cost_estimate_status
+        for attempt in attempts
+        if attempt.cost_estimate_status is not None
+    }
+    if "usage_missing" in statuses:
+        return "usage_missing"
+    if statuses:
+        return "estimated"
+    return None
+
+
 def _real_secret_values(config: AIAPIExecutorConfig) -> tuple[str, ...]:
     return tuple(
         dict.fromkeys(
@@ -2358,6 +2621,11 @@ def _task_failure_from_child_evidence(
         return PaperFailureStage.AUDIT, PaperFailureKind.MODEL_IDENTITY_MISMATCH
     if any(attempt.attempt_status == PaperAttemptStatus.PARSE_FAILED for attempt in attempts):
         return PaperFailureStage.PARSE, PaperFailureKind.PARSE_FAILURE
+    if any(
+        attempt.attempt_status == PaperAttemptStatus.EXECUTOR_ERROR
+        for attempt in attempts
+    ):
+        return PaperFailureStage.REQUEST, PaperFailureKind.INTERNAL_ERROR
     if any(attempt.attempt_status == PaperAttemptStatus.PROVIDER_ERROR for attempt in attempts):
         return PaperFailureStage.PROVIDER, PaperFailureKind.PROVIDER_ERROR
     if any(

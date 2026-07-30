@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass, replace
+from math import isfinite
 from pathlib import Path
 from typing import Any
 
@@ -23,6 +25,10 @@ from tokenshare.experiments.paper_model_identity import (
     build_model_endpoint_identity,
     prepare_fixed_entry_execution_config,
     validate_fixed_entry_config_identity,
+)
+from tokenshare.experiments.paper_model_policy import (
+    PAPER_MODEL_ENDPOINT_COHORT_V3_ID,
+    PAPER_MODEL_ENDPOINT_COHORT_V3_MEMBER_IDS,
 )
 from tokenshare.experiments.paper_models import (
     JsonObject,
@@ -44,6 +50,8 @@ class PaperBudgetApprovalError(ValueError):
 EXP1_PILOT_PROFILE_SCHEMA_VERSION = "tokenshare.paper_exp1_pilot_profile.v1"
 EXP1_PILOT_EXPERIMENT_ID = "exp1_real_ai_feasibility"
 EXP1_BASELINE_COHORT_ID = "tokenshare.paper.exp1_baseline.v1"
+EXP5_EXPERIMENT_ID = "exp5_real_ai_model_endpoint_comparison"
+EXP5_V3_PROMPT_TOKEN_UPPER_BOUND_PER_PROVIDER_ATTEMPT = 4_096
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -144,9 +152,15 @@ def plan_exp1_pilot(
     plan_only: bool,
     approve_budget_digest: str | None = None,
     budget_approval_required: bool = True,
+    budget_mode: str | None = None,
 ) -> PaperBudgetResult:
     """按冻结 profile 复算最小 Exp1 pilot，不进行任何 provider 调用。"""
 
+    if budget_mode not in {None, "unlimited"}:
+        raise ValueError("unsupported budget_mode")
+    if budget_mode == "unlimited":
+        if budget_approval_required or approve_budget_digest is not None:
+            raise ValueError("unlimited budget cannot use digest approval")
     profile_body = pilot_profile.to_dict()
     request_policy = dict(profile_body["request_policy"])
     disk_policy = dict(profile_body["disk_policy"])
@@ -258,6 +272,14 @@ def plan_exp1_pilot(
         "wall_clock_estimate": wall_clock_estimate,
         "disk_estimate_bytes": disk_bytes,
     }
+    if budget_mode == "unlimited":
+        digest_body["budget_authorization"] = {
+            "budget_mode": "unlimited",
+            "approval_required": False,
+            "approval_mode": "explicit_unlimited",
+            "authorization_source": "cli",
+            "hard_limits": {},
+        }
     budget_digest = digest_json(digest_body)
     _validate_budget_approval(
         plan_only=plan_only,
@@ -269,6 +291,7 @@ def plan_exp1_pilot(
         budget_digest=budget_digest,
         approve_budget_digest=approve_budget_digest,
         budget_approval_required=budget_approval_required,
+        budget_mode=budget_mode,
     )
 
     pilot_summary: JsonObject = {
@@ -328,7 +351,36 @@ def plan_exp1_pilot(
             "policy": disk_policy,
         },
         status=PaperStatus.PLANNED,
+        budget_mode=budget_mode,
+        approval_required=(False if budget_mode == "unlimited" else None),
+        approval_mode=("explicit_unlimited" if budget_mode == "unlimited" else None),
+        authorization_source=("cli" if budget_mode == "unlimited" else None),
+        hard_limits=({} if budget_mode == "unlimited" else None),
     )
+
+
+def build_exp5_v3_token_ceiling_mapping(
+    model_endpoint_cohort_preflight: JsonObject | None,
+) -> dict[str, int] | None:
+    """从已通过的 Exp5 v3 whole-cohort preflight 派生逐端点 token 上界。"""
+
+    if not isinstance(model_endpoint_cohort_preflight, Mapping):
+        return None
+    if (
+        model_endpoint_cohort_preflight.get("cohort_id")
+        != PAPER_MODEL_ENDPOINT_COHORT_V3_ID
+        or model_endpoint_cohort_preflight.get("status") != "planned"
+    ):
+        return None
+    specs = _exp5_v3_member_budget_specs(
+        model_endpoint_cohort_preflight
+    )
+    return {
+        str(specs[member_id]["model_endpoint_identity_digest"]): int(
+            specs[member_id]["token_upper_bound_per_provider_attempt"]
+        )
+        for member_id in PAPER_MODEL_ENDPOINT_COHORT_V3_MEMBER_IDS
+    }
 
 
 def plan_paper_suite(
@@ -337,6 +389,7 @@ def plan_paper_suite(
     conditions: tuple[PaperExperimentCondition, ...] | list[PaperExperimentCondition],
     max_provider_attempts_per_ai_unit: int,
     token_upper_bound_per_provider_attempt: int,
+    token_upper_bound_by_endpoint_identity_digest: Mapping[str, int] | None = None,
     cost_upper_bound_per_provider_attempt: float,
     plan_only: bool,
     lean_3x3_matrix: JsonObject | None = None,
@@ -351,6 +404,7 @@ def plan_paper_suite(
     output_identity: JsonObject | None = None,
     approve_budget_digest: str | None = None,
     budget_approval_required: bool = True,
+    budget_mode: str | None = None,
 ) -> PaperBudgetResult:
     if max_provider_attempts_per_ai_unit < 1:
         raise ValueError("max_provider_attempts_per_ai_unit must be >= 1")
@@ -358,7 +412,34 @@ def plan_paper_suite(
         raise ValueError("token_upper_bound_per_provider_attempt must be >= 1")
     if cost_upper_bound_per_provider_attempt < 0:
         raise ValueError("cost_upper_bound_per_provider_attempt must be >= 0")
+    if budget_mode not in {None, "unlimited"}:
+        raise ValueError("unsupported budget_mode")
+    if budget_mode == "unlimited":
+        if budget_approval_required:
+            raise ValueError("unlimited budget cannot require budget approval")
+        if approve_budget_digest is not None:
+            raise ValueError("unlimited budget cannot provide an approval digest")
+        if hard_limits != {}:
+            raise ValueError("unlimited budget requires empty hard_limits")
     condition_tuple = tuple(conditions)
+    endpoint_budget_specs = _prepare_exp5_v3_endpoint_budget_specs(
+        conditions=condition_tuple,
+        model_endpoint_cohort_preflight=model_endpoint_cohort_preflight,
+        token_upper_bound_by_endpoint_identity_digest=(
+            token_upper_bound_by_endpoint_identity_digest
+        ),
+    )
+    endpoint_usage_by_member = (
+        {
+            member_id: {
+                "planned_ai_unit_count": 0,
+                "provider_attempt_upper_bound": 0,
+            }
+            for member_id in PAPER_MODEL_ENDPOINT_COHORT_V3_MEMBER_IDS
+        }
+        if endpoint_budget_specs is not None
+        else None
+    )
     exact_selection_by_condition = _exact_selection_commitments(
         frozen_selections,
         conditions=condition_tuple,
@@ -499,6 +580,17 @@ def plan_paper_suite(
                 "policy": _condition_replacement_policy(condition),
             }
         )
+        if (
+            endpoint_usage_by_member is not None
+            and condition.experiment_id == EXP5_EXPERIMENT_ID
+        ):
+            member_id = str(condition.cohort_member_id)
+            member_usage = endpoint_usage_by_member[member_id]
+            member_usage["planned_ai_unit_count"] += condition_ai_units
+            member_usage["provider_attempt_upper_bound"] += (
+                (condition_ai_units + replacement_count)
+                * max_provider_attempts_per_ai_unit
+            )
         if condition.experiment_id == "exp4_real_ai_protocol_ablation":
             exp4_requeue_ai_unit_upper_bound += replacement_count
         baseline_key = _exp3_supporting_baseline_key(condition)
@@ -540,6 +632,21 @@ def plan_paper_suite(
     max_provider_attempts = (
         (planned_ai_units + total_replacement_reserve)
         * max_provider_attempts_per_ai_unit
+    )
+    (
+        token_upper_bound,
+        cost_upper_bound,
+        endpoint_budget_identity,
+    ) = _endpoint_aware_budget_totals(
+        max_provider_attempts=max_provider_attempts,
+        token_upper_bound_per_provider_attempt=(
+            token_upper_bound_per_provider_attempt
+        ),
+        cost_upper_bound_per_provider_attempt=(
+            cost_upper_bound_per_provider_attempt
+        ),
+        endpoint_budget_specs=endpoint_budget_specs,
+        endpoint_usage_by_member=endpoint_usage_by_member,
     )
     experiment_ids = sorted(
         set(headline_root_runs_by_experiment)
@@ -677,14 +784,11 @@ def plan_paper_suite(
         ),
         "hard_limits": _json_copy(
             hard_limits
-            or {
+            if hard_limits is not None
+            else {
                 "max_provider_attempts": max_provider_attempts,
-                "token_upper_bound": (
-                    max_provider_attempts * token_upper_bound_per_provider_attempt
-                ),
-                "cost_upper_bound": (
-                    max_provider_attempts * cost_upper_bound_per_provider_attempt
-                ),
+                "token_upper_bound": token_upper_bound,
+                "cost_upper_bound": cost_upper_bound,
             }
         ),
         "suite_identity": _json_copy(
@@ -706,14 +810,18 @@ def plan_paper_suite(
         ),
         "experiment_budget_identity": experiment_budget_identity,
     }
+    if endpoint_budget_identity is not None:
+        budget_commitments["endpoint_budget_identity"] = (
+            endpoint_budget_identity
+        )
     body: JsonObject = {
         "planned_experiments": sorted({item.experiment_id for item in condition_tuple}),
         "planned_conditions": len(condition_tuple),
         "planned_root_runs": planned_root_runs,
         "planned_ai_units": planned_ai_units,
         "max_provider_attempts": max_provider_attempts,
-        "token_upper_bound": max_provider_attempts * token_upper_bound_per_provider_attempt,
-        "cost_upper_bound": max_provider_attempts * cost_upper_bound_per_provider_attempt,
+        "token_upper_bound": token_upper_bound,
+        "cost_upper_bound": cost_upper_bound,
         "catalog_digest": catalog_manifest.catalog_digest,
         "condition_digests": [item.condition_digest for item in condition_tuple],
         "budget_commitments": budget_commitments,
@@ -731,6 +839,14 @@ def plan_paper_suite(
         body["model_policy_preflight"] = model_policy_preflight
     if model_endpoint_cohort_preflight is not None:
         body["model_endpoint_cohort_preflight"] = model_endpoint_cohort_preflight
+    if budget_mode == "unlimited":
+        body["budget_authorization"] = {
+            "budget_mode": "unlimited",
+            "approval_required": False,
+            "approval_mode": "explicit_unlimited",
+            "authorization_source": "cli",
+            "hard_limits": {},
+        }
     budget_digest = digest_json(body)
     _validate_budget_approval(
         plan_only=plan_only,
@@ -742,6 +858,7 @@ def plan_paper_suite(
         budget_digest=budget_digest,
         approve_budget_digest=approve_budget_digest,
         budget_approval_required=budget_approval_required,
+        budget_mode=budget_mode,
     )
     return PaperBudgetResult(
         budget_digest=budget_digest,
@@ -759,6 +876,23 @@ def plan_paper_suite(
             "plan_only": plan_only,
             "budget_approval": budget_approval,
             "budget_commitments": budget_commitments,
+            **(
+                {
+                    "token_upper_bound_by_member": (
+                        endpoint_budget_identity["token_upper_bound_by_member"]
+                    ),
+                    "cost_upper_bound_by_member": (
+                        endpoint_budget_identity["cost_upper_bound_by_member"]
+                    ),
+                    "pricing_snapshot_digest_by_member": (
+                        endpoint_budget_identity[
+                            "pricing_snapshot_digest_by_member"
+                        ]
+                    ),
+                }
+                if endpoint_budget_identity is not None
+                else {}
+            ),
             **(
                 {"lean_3x3_matrix": lean_3x3_matrix}
                 if lean_3x3_matrix is not None
@@ -780,7 +914,506 @@ def plan_paper_suite(
             "bytes": max(4096, planned_root_runs * 2048 + planned_ai_units * 1024)
         },
         status=PaperStatus.PLANNED,
+        budget_mode=budget_mode,
+        approval_required=(False if budget_mode == "unlimited" else None),
+        approval_mode=("explicit_unlimited" if budget_mode == "unlimited" else None),
+        authorization_source=("cli" if budget_mode == "unlimited" else None),
+        hard_limits=({} if budget_mode == "unlimited" else None),
     )
+
+
+def _prepare_exp5_v3_endpoint_budget_specs(
+    *,
+    conditions: tuple[PaperExperimentCondition, ...],
+    model_endpoint_cohort_preflight: JsonObject | None,
+    token_upper_bound_by_endpoint_identity_digest: (
+        Mapping[str, int] | None
+    ),
+) -> dict[str, JsonObject] | None:
+    v3_conditions = tuple(
+        condition
+        for condition in conditions
+        if condition.experiment_id == EXP5_EXPERIMENT_ID
+        and condition.model_cohort_id == PAPER_MODEL_ENDPOINT_COHORT_V3_ID
+    )
+    preflight_is_v3 = (
+        isinstance(model_endpoint_cohort_preflight, Mapping)
+        and model_endpoint_cohort_preflight.get("cohort_id")
+        == PAPER_MODEL_ENDPOINT_COHORT_V3_ID
+    )
+    preflight_is_planned = (
+        preflight_is_v3
+        and model_endpoint_cohort_preflight.get("status") == "planned"
+    )
+    if token_upper_bound_by_endpoint_identity_digest is None:
+        if v3_conditions or preflight_is_planned:
+            raise ValueError(
+                "Exp5 v3 endpoint token ceiling mapping is required"
+            )
+        return None
+    if not preflight_is_planned:
+        raise ValueError(
+            "Exp5 v3 endpoint token ceiling mapping requires a planned preflight"
+        )
+
+    normalized_mapping = _normalize_endpoint_token_ceiling_mapping(
+        token_upper_bound_by_endpoint_identity_digest
+    )
+    specs = _exp5_v3_member_budget_specs(
+        model_endpoint_cohort_preflight
+    )
+    expected_mapping = {
+        str(specs[member_id]["model_endpoint_identity_digest"]): int(
+            specs[member_id]["token_upper_bound_per_provider_attempt"]
+        )
+        for member_id in PAPER_MODEL_ENDPOINT_COHORT_V3_MEMBER_IDS
+    }
+    if normalized_mapping != expected_mapping:
+        raise ValueError(
+            "Exp5 v3 endpoint token ceiling mapping drift: "
+            f"expected keys={sorted(expected_mapping)}, "
+            f"actual keys={sorted(normalized_mapping)}"
+        )
+
+    all_exp5_conditions = tuple(
+        condition
+        for condition in conditions
+        if condition.experiment_id == EXP5_EXPERIMENT_ID
+    )
+    member_ids = {condition.cohort_member_id for condition in all_exp5_conditions}
+    expected_member_ids = set(PAPER_MODEL_ENDPOINT_COHORT_V3_MEMBER_IDS)
+    if member_ids != expected_member_ids:
+        raise ValueError(
+            "Exp5 v3 endpoint identity drift: condition member inventory "
+            "must cover the exact four-member cohort"
+        )
+    for condition in all_exp5_conditions:
+        member_id = condition.cohort_member_id
+        if member_id not in specs:
+            raise ValueError(
+                "Exp5 v3 endpoint identity drift: unknown condition member"
+            )
+        spec = specs[member_id]
+        expected_fields = {
+            "schema_version": "tokenshare.paper_condition.v3",
+            "model_policy": "fixed_entry",
+            "model_cohort_id": spec["cohort_id"],
+            "cohort_member_id": member_id,
+            "provider_config_id": spec["provider_config_id"],
+            "model_entry_id": spec["selected_entry_id"],
+            "provider_family": spec["provider_family"],
+            "provider_model_id": spec["provider_model_id"],
+            "reasoning_profile_id": spec["reasoning_profile_id"],
+            "model_cohort_digest": spec["model_cohort_digest"],
+            "source_provider_config_digest": (
+                spec["source_provider_config_digest"]
+            ),
+            "model_endpoint_identity_digest": (
+                spec["model_endpoint_identity_digest"]
+            ),
+        }
+        if any(
+            getattr(condition, field_name) != expected_value
+            for field_name, expected_value in expected_fields.items()
+        ):
+            raise ValueError(
+                "Exp5 v3 endpoint identity drift between condition and "
+                f"member plan: {condition.condition_id}"
+            )
+    return specs
+
+
+def _normalize_endpoint_token_ceiling_mapping(
+    raw_mapping: Mapping[str, int],
+) -> dict[str, int]:
+    if not isinstance(raw_mapping, Mapping):
+        raise ValueError(
+            "Exp5 v3 endpoint token ceiling mapping must be an object"
+        )
+    normalized: dict[str, int] = {}
+    for endpoint_digest, token_ceiling in raw_mapping.items():
+        if not isinstance(endpoint_digest, str) or not endpoint_digest.strip():
+            raise ValueError(
+                "Exp5 v3 endpoint token ceiling keys must be non-empty digests"
+            )
+        if type(token_ceiling) is not int or token_ceiling < 1:
+            raise ValueError(
+                "Exp5 v3 endpoint token ceiling must be a positive integer"
+            )
+        normalized[endpoint_digest] = token_ceiling
+    return normalized
+
+
+def _exp5_v3_member_budget_specs(
+    preflight: Mapping[str, Any],
+) -> dict[str, JsonObject]:
+    expected_member_ids = tuple(PAPER_MODEL_ENDPOINT_COHORT_V3_MEMBER_IDS)
+    raw_expected_member_ids = preflight.get("expected_member_ids")
+    if (
+        not isinstance(raw_expected_member_ids, list)
+        or tuple(raw_expected_member_ids) != expected_member_ids
+    ):
+        raise ValueError(
+            "Exp5 v3 endpoint token ceiling member inventory drift"
+        )
+    member_plans = preflight.get("member_plans")
+    if not isinstance(member_plans, Mapping) or set(member_plans) != set(
+        expected_member_ids
+    ):
+        raise ValueError(
+            "Exp5 v3 endpoint token ceiling member plan inventory drift"
+        )
+    cohort_digest = preflight.get("model_cohort_digest")
+    if not isinstance(cohort_digest, str) or not cohort_digest:
+        raise ValueError("Exp5 v3 endpoint identity drift: missing cohort digest")
+
+    request_controls_snapshot = preflight.get("request_controls_snapshot")
+    if not isinstance(request_controls_snapshot, Mapping):
+        raise ValueError(
+            "Exp5 v3 endpoint identity drift: missing request controls snapshot"
+        )
+    if preflight.get("request_controls_snapshot_digest") != digest_json(
+        dict(request_controls_snapshot)
+    ):
+        raise ValueError(
+            "Exp5 v3 endpoint identity drift: request controls snapshot digest"
+        )
+
+    specs: dict[str, JsonObject] = {}
+    seen_endpoint_digests: set[str] = set()
+    for member_id in expected_member_ids:
+        raw_plan = member_plans[member_id]
+        if not isinstance(raw_plan, Mapping):
+            raise ValueError(
+                "Exp5 v3 endpoint identity drift: member plan must be an object"
+            )
+        plan = dict(raw_plan)
+        if plan.get("status") != "planned" or plan.get("blocked_reasons") not in (
+            [],
+            (),
+        ):
+            raise ValueError(
+                "Exp5 v3 endpoint identity drift: member plan is not planned"
+            )
+        if (
+            plan.get("cohort_id") != PAPER_MODEL_ENDPOINT_COHORT_V3_ID
+            or plan.get("model_cohort_digest") != cohort_digest
+            or plan.get("cohort_member_id") != member_id
+        ):
+            raise ValueError(
+                "Exp5 v3 endpoint identity drift in member plan"
+            )
+        for field_name in (
+            "provider_config_id",
+            "selected_entry_id",
+            "provider_family",
+            "provider_model_id",
+            "reasoning_profile_id",
+            "source_provider_config_digest",
+            "model_endpoint_identity_digest",
+        ):
+            field_value = plan.get(field_name)
+            if not isinstance(field_value, str) or not field_value:
+                raise ValueError(
+                    "Exp5 v3 endpoint identity drift: "
+                    f"missing {field_name} for {member_id}"
+                )
+
+        endpoint_digest = str(plan["model_endpoint_identity_digest"])
+        if endpoint_digest in seen_endpoint_digests:
+            raise ValueError(
+                "Exp5 v3 endpoint identity drift: endpoint digests must be unique"
+            )
+        seen_endpoint_digests.add(endpoint_digest)
+
+        request_controls = plan.get("request_controls")
+        if not isinstance(request_controls, Mapping):
+            raise ValueError(
+                "Exp5 v3 endpoint identity drift: missing member request controls"
+            )
+        comparable = request_controls.get("comparable")
+        reasoning = request_controls.get("provider_specific_reasoning")
+        if not isinstance(comparable, Mapping) or not isinstance(
+            reasoning,
+            Mapping,
+        ):
+            raise ValueError(
+                "Exp5 v3 endpoint identity drift: invalid member request controls"
+            )
+        comparable_body = dict(comparable)
+        reasoning_body = dict(reasoning)
+        if (
+            request_controls.get("comparable_digest")
+            != digest_json(comparable_body)
+            or request_controls.get("provider_specific_reasoning_digest")
+            != digest_json(reasoning_body)
+            or comparable_body != dict(request_controls_snapshot)
+        ):
+            raise ValueError(
+                "Exp5 v3 endpoint identity drift: request controls digest"
+            )
+
+        max_tokens = comparable_body.get("max_tokens")
+        if type(max_tokens) is not int or max_tokens < 1:
+            raise ValueError(
+                "Exp5 v3 endpoint token ceiling requires positive max_tokens"
+            )
+        enable_thinking = reasoning_body.get("enable_thinking")
+        if type(enable_thinking) is not bool:
+            raise ValueError(
+                "Exp5 v3 endpoint token ceiling requires explicit enable_thinking"
+            )
+        if enable_thinking:
+            thinking_budget = reasoning_body.get("thinking_budget")
+            if type(thinking_budget) is not int or thinking_budget < 1:
+                raise ValueError(
+                    "Exp5 v3 endpoint token ceiling requires a positive "
+                    "thinking_budget"
+                )
+        else:
+            if "thinking_budget" in reasoning_body:
+                raise ValueError(
+                    "Exp5 v3 endpoint token ceiling forbids thinking_budget "
+                    "when thinking is disabled"
+                )
+            thinking_budget = 0
+
+        pricing_snapshot = plan.get("pricing_snapshot")
+        if not isinstance(pricing_snapshot, Mapping):
+            raise ValueError(
+                "Exp5 v3 pricing snapshot digest drift: snapshot is missing"
+            )
+        pricing_body = dict(pricing_snapshot)
+        pricing_snapshot_digest = plan.get("pricing_snapshot_digest")
+        if pricing_snapshot_digest != digest_json(pricing_body):
+            raise ValueError(
+                "Exp5 v3 pricing snapshot digest drift"
+            )
+        currency = pricing_body.get("currency")
+        if not isinstance(currency, str) or not currency:
+            raise ValueError("Exp5 v3 pricing snapshot requires a currency")
+        input_rate_field = (
+            "uncached_input_per_million_tokens"
+            if "uncached_input_per_million_tokens" in pricing_body
+            else "input_per_million_tokens"
+        )
+        if input_rate_field not in pricing_body:
+            raise ValueError(
+                "Exp5 v3 pricing snapshot requires an input token rate"
+            )
+        input_rate = _non_negative_pricing_rate(
+            pricing_body[input_rate_field]
+        )
+        if "output_per_million_tokens" not in pricing_body:
+            raise ValueError(
+                "Exp5 v3 pricing snapshot requires an output token rate"
+            )
+        output_rate = _non_negative_pricing_rate(
+            pricing_body["output_per_million_tokens"]
+        )
+        completion_and_thinking_tokens = max_tokens + thinking_budget
+        token_ceiling = (
+            EXP5_V3_PROMPT_TOKEN_UPPER_BOUND_PER_PROVIDER_ATTEMPT
+            + completion_and_thinking_tokens
+        )
+        cost_per_attempt = round(
+            (
+                EXP5_V3_PROMPT_TOKEN_UPPER_BOUND_PER_PROVIDER_ATTEMPT
+                * input_rate
+                + completion_and_thinking_tokens * output_rate
+            )
+            / 1_000_000,
+            12,
+        )
+        specs[member_id] = {
+            "cohort_id": plan["cohort_id"],
+            "model_cohort_digest": plan["model_cohort_digest"],
+            "cohort_member_id": member_id,
+            "provider_config_id": plan["provider_config_id"],
+            "selected_entry_id": plan["selected_entry_id"],
+            "provider_family": plan["provider_family"],
+            "provider_model_id": plan["provider_model_id"],
+            "reasoning_profile_id": plan["reasoning_profile_id"],
+            "source_provider_config_digest": (
+                plan["source_provider_config_digest"]
+            ),
+            "model_endpoint_identity_digest": endpoint_digest,
+            "request_controls": _json_copy(dict(request_controls)),
+            "prompt_token_upper_bound_per_provider_attempt": (
+                EXP5_V3_PROMPT_TOKEN_UPPER_BOUND_PER_PROVIDER_ATTEMPT
+            ),
+            "completion_token_upper_bound_per_provider_attempt": max_tokens,
+            "thinking_token_upper_bound_per_provider_attempt": thinking_budget,
+            "token_upper_bound_per_provider_attempt": token_ceiling,
+            "pricing_snapshot": _json_copy(pricing_body),
+            "pricing_snapshot_digest": pricing_snapshot_digest,
+            "pricing_input_rate_field": input_rate_field,
+            "input_per_million_tokens_for_upper_bound": input_rate,
+            "output_per_million_tokens_for_upper_bound": output_rate,
+            "cost_currency": currency,
+            "cost_upper_bound_per_provider_attempt": cost_per_attempt,
+        }
+    return specs
+
+
+def _non_negative_pricing_rate(value: Any) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError("Exp5 v3 pricing snapshot rates must be numeric")
+    normalized = float(value)
+    if not isfinite(normalized) or normalized < 0:
+        raise ValueError(
+            "Exp5 v3 pricing snapshot rates must be finite and non-negative"
+        )
+    return normalized
+
+
+def _endpoint_aware_budget_totals(
+    *,
+    max_provider_attempts: int,
+    token_upper_bound_per_provider_attempt: int,
+    cost_upper_bound_per_provider_attempt: float,
+    endpoint_budget_specs: dict[str, JsonObject] | None,
+    endpoint_usage_by_member: dict[str, JsonObject] | None,
+) -> tuple[int, float, JsonObject | None]:
+    if endpoint_budget_specs is None:
+        return (
+            max_provider_attempts * token_upper_bound_per_provider_attempt,
+            max_provider_attempts * cost_upper_bound_per_provider_attempt,
+            None,
+        )
+    if endpoint_usage_by_member is None or set(endpoint_usage_by_member) != set(
+        PAPER_MODEL_ENDPOINT_COHORT_V3_MEMBER_IDS
+    ):
+        raise ValueError("Exp5 v3 endpoint identity drift in budget usage")
+
+    member_subtotals: dict[str, JsonObject] = {}
+    token_upper_bound_by_member: dict[str, int] = {}
+    cost_upper_bound_by_member: dict[str, float] = {}
+    pricing_snapshot_digest_by_member: dict[str, str] = {}
+    endpoint_identity_digest_by_member: dict[str, str] = {}
+    mapped_provider_attempts = 0
+    for member_id in PAPER_MODEL_ENDPOINT_COHORT_V3_MEMBER_IDS:
+        spec = endpoint_budget_specs[member_id]
+        usage = endpoint_usage_by_member[member_id]
+        planned_ai_unit_count = int(usage["planned_ai_unit_count"])
+        provider_attempt_upper_bound = int(
+            usage["provider_attempt_upper_bound"]
+        )
+        mapped_provider_attempts += provider_attempt_upper_bound
+        prompt_tokens = provider_attempt_upper_bound * int(
+            spec["prompt_token_upper_bound_per_provider_attempt"]
+        )
+        completion_tokens = provider_attempt_upper_bound * int(
+            spec["completion_token_upper_bound_per_provider_attempt"]
+        )
+        thinking_tokens = provider_attempt_upper_bound * int(
+            spec["thinking_token_upper_bound_per_provider_attempt"]
+        )
+        member_token_upper_bound = provider_attempt_upper_bound * int(
+            spec["token_upper_bound_per_provider_attempt"]
+        )
+        member_cost_upper_bound = round(
+            provider_attempt_upper_bound
+            * float(spec["cost_upper_bound_per_provider_attempt"]),
+            12,
+        )
+        token_upper_bound_by_member[member_id] = member_token_upper_bound
+        cost_upper_bound_by_member[member_id] = member_cost_upper_bound
+        pricing_snapshot_digest_by_member[member_id] = str(
+            spec["pricing_snapshot_digest"]
+        )
+        endpoint_identity_digest_by_member[member_id] = str(
+            spec["model_endpoint_identity_digest"]
+        )
+        member_subtotals[member_id] = {
+            "planned_ai_unit_count": planned_ai_unit_count,
+            "provider_attempt_upper_bound": provider_attempt_upper_bound,
+            "prompt_token_upper_bound": prompt_tokens,
+            "completion_token_upper_bound": completion_tokens,
+            "thinking_token_upper_bound": thinking_tokens,
+            "token_upper_bound_per_provider_attempt": int(
+                spec["token_upper_bound_per_provider_attempt"]
+            ),
+            "token_upper_bound": member_token_upper_bound,
+            "cost_currency": spec["cost_currency"],
+            "cost_upper_bound_per_provider_attempt": float(
+                spec["cost_upper_bound_per_provider_attempt"]
+            ),
+            "cost_upper_bound": member_cost_upper_bound,
+            "model_endpoint_identity_digest": (
+                spec["model_endpoint_identity_digest"]
+            ),
+            "pricing_snapshot_digest": spec["pricing_snapshot_digest"],
+        }
+
+    scalar_fallback_attempts = max_provider_attempts - mapped_provider_attempts
+    if scalar_fallback_attempts < 0:
+        raise ValueError(
+            "Exp5 v3 endpoint identity drift: mapped attempts exceed suite total"
+        )
+    scalar_fallback_token_upper_bound = (
+        scalar_fallback_attempts * token_upper_bound_per_provider_attempt
+    )
+    scalar_fallback_cost_upper_bound = (
+        scalar_fallback_attempts * cost_upper_bound_per_provider_attempt
+    )
+    token_upper_bound = scalar_fallback_token_upper_bound + sum(
+        token_upper_bound_by_member.values()
+    )
+    cost_upper_bound = round(
+        scalar_fallback_cost_upper_bound
+        + sum(cost_upper_bound_by_member.values()),
+        12,
+    )
+    currencies = {
+        str(spec["cost_currency"])
+        for spec in endpoint_budget_specs.values()
+    }
+    if len(currencies) != 1:
+        raise ValueError(
+            "Exp5 v3 pricing snapshot currencies must match for suite totals"
+        )
+    endpoint_budget_identity: JsonObject = {
+        "schema_version": "tokenshare.paper_endpoint_budget_identity.v1",
+        "model_cohort_id": PAPER_MODEL_ENDPOINT_COHORT_V3_ID,
+        "model_cohort_digest": endpoint_budget_specs[
+            PAPER_MODEL_ENDPOINT_COHORT_V3_MEMBER_IDS[0]
+        ]["model_cohort_digest"],
+        "prompt_token_upper_bound_per_provider_attempt": (
+            EXP5_V3_PROMPT_TOKEN_UPPER_BOUND_PER_PROVIDER_ATTEMPT
+        ),
+        "token_upper_bound_by_endpoint_identity_digest": {
+            str(endpoint_budget_specs[member_id][
+                "model_endpoint_identity_digest"
+            ]): int(endpoint_budget_specs[member_id][
+                "token_upper_bound_per_provider_attempt"
+            ])
+            for member_id in PAPER_MODEL_ENDPOINT_COHORT_V3_MEMBER_IDS
+        },
+        "endpoint_identity_digest_by_member": endpoint_identity_digest_by_member,
+        "pricing_snapshot_digest_by_member": pricing_snapshot_digest_by_member,
+        "token_upper_bound_by_member": token_upper_bound_by_member,
+        "cost_upper_bound_by_member": cost_upper_bound_by_member,
+        "member_token_cost_subtotals": member_subtotals,
+        "cost_currency": next(iter(currencies)),
+        "scalar_fallback_subtotal": {
+            "provider_attempt_upper_bound": scalar_fallback_attempts,
+            "token_upper_bound_per_provider_attempt": (
+                token_upper_bound_per_provider_attempt
+            ),
+            "token_upper_bound": scalar_fallback_token_upper_bound,
+            "cost_upper_bound_per_provider_attempt": (
+                cost_upper_bound_per_provider_attempt
+            ),
+            "cost_upper_bound": scalar_fallback_cost_upper_bound,
+        },
+        "token_upper_bound": token_upper_bound,
+        "cost_upper_bound": cost_upper_bound,
+    }
+    endpoint_budget_identity["endpoint_budget_identity_digest"] = digest_json(
+        endpoint_budget_identity
+    )
+    return token_upper_bound, cost_upper_bound, endpoint_budget_identity
 
 
 def _lean_matrix_budget_identity(lean_3x3_matrix: JsonObject) -> JsonObject:
@@ -889,13 +1522,10 @@ def _exp3_worker_death_identity(
 def _exp3_supporting_baseline_key(
     condition: PaperExperimentCondition,
 ) -> str | None:
-    identity = _exp3_worker_death_identity(condition)
-    if identity is None:
-        return None
-    return (
-        f"exp3:no-kill:{identity['domain']}:"
-        f"{identity['task_slice_key']}:rep{identity['repeat_id']}"
-    )
+    # 正式 Exp3 统一引用已经持久化的 Exp1 证据；这里仍校验
+    # worker-death condition identity，但不再调度额外 no-kill baseline。
+    _exp3_worker_death_identity(condition)
+    return None
 
 
 def _budget_cases_for_condition(
@@ -968,7 +1598,14 @@ def _validate_exp1_pilot_profile_body(body: JsonObject) -> None:
         raise ValueError("Exp1 pilot request_policy must be an object")
     if int(request_policy.get("max_provider_attempts_per_ai_unit", 0)) < 1:
         raise ValueError("Exp1 pilot max provider attempts must be >= 1")
-    if float(request_policy.get("temperature", -1)) != 0.0:
+    if baseline.get("provider_family") == "deepseek":
+        if "temperature" in request_policy or "top_p" in request_policy:
+            raise ValueError("DeepSeek Exp1 pilot must omit temperature and top_p")
+        if request_policy.get("thinking") != {"type": "enabled"}:
+            raise ValueError("DeepSeek Exp1 pilot thinking must be enabled")
+        if request_policy.get("reasoning_effort") != "high":
+            raise ValueError("DeepSeek Exp1 pilot reasoning_effort must be high")
+    elif float(request_policy.get("temperature", -1)) != 0.0:
         raise ValueError("Exp1 pilot temperature must be frozen at 0.0")
     if request_policy.get("stream") is not False:
         raise ValueError("Exp1 pilot stream must be frozen at false")
@@ -1030,7 +1667,10 @@ def _validate_provider_config_against_profile(
         request_policy["max_provider_attempts_per_ai_unit"]
     ):
         raise ValueError("baseline provider max_provider_attempts does not match profile")
-    if float(defaults.get("temperature", -1)) != float(
+    if source_config.provider_family == "deepseek":
+        if "temperature" in defaults or "top_p" in defaults:
+            raise ValueError("DeepSeek baseline provider must omit temperature and top_p")
+    elif float(defaults.get("temperature", -1)) != float(
         request_policy["temperature"]
     ):
         raise ValueError("baseline provider temperature does not match profile")
@@ -1116,9 +1756,14 @@ def _case_request_profile(
     )
     token_upper_bound = prompt_token_upper_bound + completion_token_upper_bound
     pricing = selected_entry.pricing
-    if pricing.get("currency") != "USD":
-        raise ValueError("Exp1 pilot budget currently requires USD pricing")
-    input_rate = float(pricing["input_per_million_tokens"])
+    if not isinstance(pricing.get("currency"), str) or not pricing["currency"]:
+        raise ValueError("Exp1 pilot budget requires a pricing currency")
+    input_rate = float(
+        pricing.get(
+            "input_per_million_tokens",
+            pricing.get("uncached_input_per_million_tokens"),
+        )
+    )
     output_rate = float(pricing["output_per_million_tokens"])
     if input_rate < 0 or output_rate < 0:
         raise ValueError("Exp1 pilot provider pricing must be non-negative")
@@ -1154,8 +1799,18 @@ def _case_request_profile(
         "request_limits": {
             **limits,
             "max_provider_attempts_per_ai_unit": max_attempts_per_unit,
-            "temperature": request_policy["temperature"],
             "stream": request_policy["stream"],
+            **{
+                field_name: request_policy[field_name]
+                for field_name in (
+                    "temperature",
+                    "top_p",
+                    "enable_thinking",
+                    "thinking",
+                    "reasoning_effort",
+                )
+                if field_name in request_policy
+            },
         },
         "executor_requirements": dict(executor_requirements),
         "split_profile": _deterministic_split_profile(case),
@@ -1319,8 +1974,12 @@ def _budget_approval_record(
     budget_digest: str,
     approve_budget_digest: str | None,
     budget_approval_required: bool,
+    budget_mode: str | None = None,
 ) -> JsonObject:
-    if not budget_approval_required and approve_budget_digest is None:
+    if budget_mode == "unlimited":
+        approval_mode = "explicit_unlimited"
+        authorization_source = "cli"
+    elif not budget_approval_required and approve_budget_digest is None:
         approval_mode = "user_bypassed"
         authorization_source = "project_policy"
     elif approve_budget_digest == budget_digest:

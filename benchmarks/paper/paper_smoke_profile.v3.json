@@ -1,0 +1,79 @@
+{
+  "schema_version": "tokenshare.paper_smoke_profile.v2",
+  "suite_id": "paper_smoke_v3",
+  "profile_version": "v3",
+  "catalog": {
+    "catalog_id": "tokenshare.paper.catalog",
+    "catalog_version": "v2",
+    "catalog_digest": "sha256:9293070c526d2912aebf38c85712a5572cc912c9e65f5a02754a3375957704fb"
+  },
+  "experiment_ids": [
+    "exp1_real_ai_feasibility",
+    "exp2_real_ai_scalability",
+    "exp3_real_ai_fault_recovery",
+    "exp4_real_ai_protocol_ablation",
+    "exp5_real_ai_model_endpoint_comparison"
+  ],
+  "expected_root_runs": 29,
+  "output_mode": "isolated_smoke_root",
+  "baseline_policy": "required_by_formal_plan",
+  "formal": false,
+  "pilot_only": true,
+  "regression_only": true,
+  "paper_eligible": false,
+  "ineligibility_reasons": ["smoke_suite", "pilot_only"],
+  "exp5_v3_contract": {
+    "schema_version": "tokenshare.paper_smoke_exp5_contract.v1",
+    "cohort_id": "tokenshare.paper.model_endpoint_cohort.v3",
+    "cohort_digest": "sha256:1b317c9827d87c43b974b77c469b115906da463a79064d3ffb3b949dc5257942",
+    "provider_config_id": "executor_ai_api_exp5_siliconflow_v3",
+    "provider_config_digest": "sha256:6b1d6ffe977340ebbf59d69368d8c977fef664007575de72593c08c038d5ffe1",
+    "selection_id": "tokenshare.paper.exp5.hard_half.v3",
+    "selection_digest": "sha256:fbec153a02befa4071b4ad4d639e51e910a3bc4c433cc9eea4b19ac6489a3490",
+    "sequence_plan_digest": "sha256:de9271732513d7d2ab20624d2949af3c9230b9adc2cd8db4b1f1ddb0d57b58cb",
+    "shared_provider_family": "siliconflow",
+    "max_in_flight_global": 3,
+    "model_arms_sequential": true,
+    "repeat_member_order": {
+      "0": ["glm_5_2_siliconflow", "qwen3_14b_siliconflow", "minimax_m2_5_siliconflow", "deepseek_v3_pro_siliconflow"],
+      "1": ["qwen3_14b_siliconflow", "deepseek_v3_pro_siliconflow", "glm_5_2_siliconflow", "minimax_m2_5_siliconflow"],
+      "2": ["minimax_m2_5_siliconflow", "glm_5_2_siliconflow", "deepseek_v3_pro_siliconflow", "qwen3_14b_siliconflow"]
+    }
+  },
+  "profile_digest": "sha256:7b8b036352ecca3f660b539c6ffb927c49b90dcf39d6d4ab2e30be2876b1a9d9",
+  "items": [
+    {"item_id":"exp1_factor_easy","experiment_id":"exp1_real_ai_feasibility","case_id":"factor_v2_easy_001","repeat_id":0,"condition_selector":{"domain":"factorization","difficulty":"easy","worker_count":10,"fault_type":"none","fault_rate":0.0,"ablation_mode":"FULL","model_entry_id":"deepseek_v4_pro_exp1_baseline"}},
+    {"item_id":"exp1_factor_medium","experiment_id":"exp1_real_ai_feasibility","case_id":"factor_v2_medium_001","repeat_id":0,"condition_selector":{"domain":"factorization","difficulty":"medium","worker_count":10,"fault_type":"none","fault_rate":0.0,"ablation_mode":"FULL","model_entry_id":"deepseek_v4_pro_exp1_baseline"}},
+    {"item_id":"exp1_factor_hard","experiment_id":"exp1_real_ai_feasibility","case_id":"factor_v2_hard_001","repeat_id":0,"condition_selector":{"domain":"factorization","difficulty":"hard","worker_count":10,"fault_type":"none","fault_rate":0.0,"ablation_mode":"FULL","model_entry_id":"deepseek_v4_pro_exp1_baseline"}},
+    {"item_id":"exp1_lean_simple","experiment_id":"exp1_real_ai_feasibility","case_id":"lean_easy_01","repeat_id":0,"condition_selector":{"domain":"lean_proof","paper_difficulty":"simple","topic_family":"pure_logic","worker_count":10,"fault_type":"none","fault_rate":0.0,"ablation_mode":"FULL","model_entry_id":"deepseek_v4_pro_exp1_baseline"}},
+    {"item_id":"exp1_lean_medium","experiment_id":"exp1_real_ai_feasibility","case_id":"lean_v2_medium_lemma_dag_01","repeat_id":0,"condition_selector":{"domain":"lean_proof","paper_difficulty":"medium_lemma_dag","topic_family":"pure_logic","worker_count":10,"fault_type":"none","fault_rate":0.0,"ablation_mode":"FULL","model_entry_id":"deepseek_v4_pro_exp1_baseline"}},
+    {"item_id":"exp1_lean_hard","experiment_id":"exp1_real_ai_feasibility","case_id":"lean_v2_hard_frontier_pure_logic_checker_01","repeat_id":0,"condition_selector":{"domain":"lean_proof","paper_difficulty":"hard_frontier","topic_family":"pure_logic","worker_count":10,"fault_type":"none","fault_rate":0.0,"ablation_mode":"FULL","model_entry_id":"deepseek_v4_pro_exp1_baseline"}},
+
+    {"item_id":"exp2_w1","experiment_id":"exp2_real_ai_scalability","case_id":"factor_v2_hard_160","repeat_id":0,"condition_selector":{"domain":"factorization","difficulty":"hard","worker_count":1,"fault_type":"none","fault_rate":0.0,"ablation_mode":"FULL","model_entry_id":"deepseek_v4_pro_exp1_baseline"}},
+    {"item_id":"exp2_w10","experiment_id":"exp2_real_ai_scalability","case_id":"factor_v2_hard_160","repeat_id":0,"condition_selector":{"domain":"factorization","difficulty":"hard","worker_count":10,"fault_type":"none","fault_rate":0.0,"ablation_mode":"FULL","model_entry_id":"deepseek_v4_pro_exp1_baseline"}},
+    {"item_id":"exp2_w50","experiment_id":"exp2_real_ai_scalability","case_id":"factor_v2_hard_160","repeat_id":0,"condition_selector":{"domain":"factorization","difficulty":"hard","worker_count":50,"fault_type":"none","fault_rate":0.0,"ablation_mode":"FULL","model_entry_id":"deepseek_v4_pro_exp1_baseline"}},
+
+    {"item_id":"exp3_baseline","experiment_id":"exp3_real_ai_fault_recovery","case_id":"factor_v2_easy_001","repeat_id":0,"condition_selector":{"matrix_kind":"rate_fault","domain":"factorization","fault_type":"false_positive","fault_rate":0.0,"worker_count":10,"model_entry_id":"deepseek_v4_pro_exp1_baseline"}},
+    {"item_id":"exp3_false_positive","experiment_id":"exp3_real_ai_fault_recovery","case_id":"factor_v2_easy_001","repeat_id":0,"condition_selector":{"matrix_kind":"rate_fault","domain":"factorization","fault_type":"false_positive","fault_rate":1.0,"worker_count":10,"model_entry_id":"deepseek_v4_pro_exp1_baseline"}},
+    {"item_id":"exp3_false_negative","experiment_id":"exp3_real_ai_fault_recovery","case_id":"factor_v2_easy_001","repeat_id":0,"condition_selector":{"matrix_kind":"rate_fault","domain":"factorization","fault_type":"false_negative","fault_rate":1.0,"worker_count":10,"model_entry_id":"deepseek_v4_pro_exp1_baseline"}},
+    {"item_id":"exp3_no_return","experiment_id":"exp3_real_ai_fault_recovery","case_id":"factor_v2_easy_001","repeat_id":0,"condition_selector":{"matrix_kind":"rate_fault","domain":"factorization","fault_type":"no_return","fault_rate":1.0,"worker_count":10,"model_entry_id":"deepseek_v4_pro_exp1_baseline"}},
+    {"item_id":"exp3_late_submission","experiment_id":"exp3_real_ai_fault_recovery","case_id":"factor_v2_easy_001","repeat_id":0,"condition_selector":{"matrix_kind":"rate_fault","domain":"factorization","fault_type":"late_submission","fault_rate":1.0,"worker_count":10,"model_entry_id":"deepseek_v4_pro_exp1_baseline"}},
+    {"item_id":"exp3_executor_error","experiment_id":"exp3_real_ai_fault_recovery","case_id":"factor_v2_easy_001","repeat_id":0,"condition_selector":{"matrix_kind":"rate_fault","domain":"factorization","fault_type":"executor_error","fault_rate":1.0,"worker_count":10,"model_entry_id":"deepseek_v4_pro_exp1_baseline"}},
+    {"item_id":"exp3_worker_death","experiment_id":"exp3_real_ai_fault_recovery","case_id":"factor_v2_easy_001","repeat_id":0,"condition_selector":{"matrix_kind":"worker_death","domain":"factorization","difficulty":"easy","fault_type":"worker_death","worker_count":10,"dead_worker_count":1,"kill_progress_percent":50,"model_entry_id":"deepseek_v4_pro_exp1_baseline"}},
+
+    {"item_id":"exp4_full","experiment_id":"exp4_real_ai_protocol_ablation","case_id":"factor_v2_easy_001","repeat_id":0,"condition_selector":{"domain":"factorization","difficulty":"easy","worker_count":10,"ablation_mode":"FULL","model_entry_id":"deepseek_v4_pro_exp1_baseline"}},
+    {"item_id":"exp4_no_verification","experiment_id":"exp4_real_ai_protocol_ablation","case_id":"factor_v2_easy_001","repeat_id":0,"condition_selector":{"domain":"factorization","difficulty":"easy","worker_count":10,"ablation_mode":"NO_VERIFICATION","model_entry_id":"deepseek_v4_pro_exp1_baseline"}},
+    {"item_id":"exp4_no_parser_policy","experiment_id":"exp4_real_ai_protocol_ablation","case_id":"factor_v2_easy_001","repeat_id":0,"condition_selector":{"domain":"factorization","difficulty":"easy","worker_count":10,"ablation_mode":"NO_PARSER_POLICY","model_entry_id":"deepseek_v4_pro_exp1_baseline"}},
+    {"item_id":"exp4_no_requeue","experiment_id":"exp4_real_ai_protocol_ablation","case_id":"factor_v2_easy_001","repeat_id":0,"condition_selector":{"domain":"factorization","difficulty":"easy","worker_count":10,"ablation_mode":"NO_REQUEUE","model_entry_id":"deepseek_v4_pro_exp1_baseline"}},
+    {"item_id":"exp4_no_merge_gate","experiment_id":"exp4_real_ai_protocol_ablation","case_id":"factor_v2_easy_001","repeat_id":0,"condition_selector":{"domain":"factorization","difficulty":"easy","worker_count":10,"ablation_mode":"NO_MERGE_GATE","model_entry_id":"deepseek_v4_pro_exp1_baseline"}},
+
+    {"item_id":"exp5_factor_glm","experiment_id":"exp5_real_ai_model_endpoint_comparison","case_id":"factor_v2_hard_001","repeat_id":0,"condition_selector":{"domain":"factorization","difficulty":"hard","worker_count":3,"cohort_member_id":"glm_5_2_siliconflow"}},
+    {"item_id":"exp5_lean_glm","experiment_id":"exp5_real_ai_model_endpoint_comparison","case_id":"lean_v2_hard_frontier_pure_logic_checker_06","repeat_id":0,"condition_selector":{"domain":"lean_proof","difficulty":"hard","paper_difficulty":"hard_frontier","topic_family":"pure_logic","worker_count":3,"cohort_member_id":"glm_5_2_siliconflow"}},
+    {"item_id":"exp5_factor_qwen","experiment_id":"exp5_real_ai_model_endpoint_comparison","case_id":"factor_v2_hard_001","repeat_id":0,"condition_selector":{"domain":"factorization","difficulty":"hard","worker_count":3,"cohort_member_id":"qwen3_14b_siliconflow"}},
+    {"item_id":"exp5_lean_qwen","experiment_id":"exp5_real_ai_model_endpoint_comparison","case_id":"lean_v2_hard_frontier_pure_logic_checker_06","repeat_id":0,"condition_selector":{"domain":"lean_proof","difficulty":"hard","paper_difficulty":"hard_frontier","topic_family":"pure_logic","worker_count":3,"cohort_member_id":"qwen3_14b_siliconflow"}},
+    {"item_id":"exp5_factor_minimax","experiment_id":"exp5_real_ai_model_endpoint_comparison","case_id":"factor_v2_hard_001","repeat_id":0,"condition_selector":{"domain":"factorization","difficulty":"hard","worker_count":3,"cohort_member_id":"minimax_m2_5_siliconflow"}},
+    {"item_id":"exp5_lean_minimax","experiment_id":"exp5_real_ai_model_endpoint_comparison","case_id":"lean_v2_hard_frontier_pure_logic_checker_06","repeat_id":0,"condition_selector":{"domain":"lean_proof","difficulty":"hard","paper_difficulty":"hard_frontier","topic_family":"pure_logic","worker_count":3,"cohort_member_id":"minimax_m2_5_siliconflow"}},
+    {"item_id":"exp5_factor_deepseek","experiment_id":"exp5_real_ai_model_endpoint_comparison","case_id":"factor_v2_hard_001","repeat_id":0,"condition_selector":{"domain":"factorization","difficulty":"hard","worker_count":3,"cohort_member_id":"deepseek_v3_pro_siliconflow"}},
+    {"item_id":"exp5_lean_deepseek","experiment_id":"exp5_real_ai_model_endpoint_comparison","case_id":"lean_v2_hard_frontier_pure_logic_checker_06","repeat_id":0,"condition_selector":{"domain":"lean_proof","difficulty":"hard","paper_difficulty":"hard_frontier","topic_family":"pure_logic","worker_count":3,"cohort_member_id":"deepseek_v3_pro_siliconflow"}}
+  ]
+}

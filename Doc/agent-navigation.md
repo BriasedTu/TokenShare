@@ -1,6 +1,6 @@
 # TokenShare Agent 导航
 
-日期：2026-07-24
+日期：2026-07-27
 
 状态：工作流导航文档。本文只回答“新 AI 遇到问题应先看哪里、代码应放到哪个模块、外部参考资料应如何落库和使用”。本文不是协议设计规格，不替代 `AGENTS.md`、`feature_list.json`、`progress.md` 或 `session-handoff.md`。
 
@@ -23,12 +23,13 @@
 1. `AGENTS.md`：最高优先级工作规则、范围边界、验证和完成标准。
 2. `feature_list.json`：当前 active track / active feature 和 feature 状态。当前 active feature 是 `feat-011` Paper Real AI Experiments；`feat-010` Phase 9 replay / audit 已延后。
 3. `progress.md`：最近进展、验证证据、风险和下一步。
+   - 当前 Exp5 v3 的独立 smoke 入口为 `benchmarks/paper/paper_smoke_exp5_profile.v3.json`；正式参数、bootstrap/formal preflight 区别以权威实验设计的 Experiment 5 节为准。
 4. `session-handoff.md`：跨会话恢复摘要，尤其是上一轮未解决问题。
 5. `Doc/TechnicalDocument/tokenshare_v1_complete_spec.md`：Phase 1-6 收敛后的完整说明，接管旧 Phase 1-6 默认说明入口。
 6. `Doc/TechnicalDocument/tokenshare_v1_code_map.md`：Phase 1-6 收敛后的代码映射，以当前 `src/` 和 `tests/` 为准。
 7. `Doc/TechnicalDocument/tokenshare_latest_real_plugin_experiment_design.md`：唯一权威实验设计；用于全部新论文实验、真实 AI API 门槛、Experiment 1-5、输入 catalog、runner 改造、failure/ablation、metrics/report、预算和论文结果口径。
 8. `Doc/TechnicalDocument/tokenshare_experiment_parameter_decision_log.md`：用户实验参数决定的持续台账；记录确认来源、影响规模和 design/code/verification 同步状态。它不替代上一项唯一权威设计；正式 plan-only 前必须确认相关决定已经同步并实现。
-9. `Doc/TechnicalDocument/2026-07-24-feat-011-exp2-exp5-experiment-facility-completion-implementation-plan.md`：可单文件开工的实验补全实施入口；集中给出 Exp1 单次运行同步、Exp2–Exp5 目标/旧值差异、模型/request controls、seed、condition/root/AI-unit 公式、Exp3 supporting baseline、正式输出、文件归属、TDD 顺序、少跑 Lean、不做攻击防护和正式运行前门禁。
+9. `Doc/TechnicalDocument/2026-07-24-feat-011-exp2-exp5-experiment-facility-completion-implementation-plan.md`：历史实验补全实施入口；集中记录当时的模型/request controls、seed、condition/root/AI-unit 公式、正式输出和门禁。其 Exp3 supporting-baseline 方案已由 EPD-012/shared Exp1 reference 取代，不能作为当前开工口径。
 10. `Doc/TechnicalDocument/2026-07-24-feat-011-experiment-facility-autonomous-execution-prompt.md`：用户离线时交给主实施 agent 的连续执行 Prompt；要求从 Task A 连续推进到 Task 11，规定 shared-file integration owner、只使用 `gpt-5.6-sol` + `ultra` 的可控子 agent、失败恢复、上下文续接、真实 API/Full/全量 Lean/攻击防护边界和最终交付格式。
 11. `Doc/TechnicalDocument/2026-07-22-feat-011-system-runtime-paper-experiment-migration-plan.md`：把 paper adapter/runner 的协议生命周期职责迁回系统的文件级执行计划；明确新增 `tokenshare.local_runtime`、插件 runtime bridge、实验 hooks/projection，以及保留 Lean 预写固定 lemma-DAG 的边界。
 12. `Doc/TechnicalDocument/2026-07-24-feat-011-three-system-native-blockers-design.md`、`Doc/TechnicalDocument/2026-07-24-feat-011-three-system-native-blockers-implementation-plan.md`：迁移复核后 catalog execution view、selected-unit runtime scope、Factorization 非对称 completion 三个阻塞点的已批准设计与可执行计划。
@@ -37,11 +38,15 @@
 15. `Doc/TechnicalDocument/2026-07-15-feat-011-lean-3x3-topic-template-design.md`：Lean 3×3 topic-family / paper-difficulty theorem template 设计记录；用于 case selection、oracle package 和能力缺口判断，不表示 runner 已支持完整 3×3 执行矩阵。
 16. `Doc/TechnicalDocument/2026-06-28-phase-7-ai-api-executor-field-spec.md`、`Doc/TechnicalDocument/2026-06-28-phase-7-ai-api-executor-tdd-plan.md`、`Doc/TechnicalDocument/2026-06-28-phase-7-ai-api-executor-code-map.md`：Phase 7 实验级 AI API executor 已实现边界。
 17. `Doc/TechnicalDocument/2026-06-29-phase-8-experiment-infrastructure-code-map.md`：Phase 8 第一版 regression infrastructure 的 source/tests/边界和验证证据映射；不是新论文实验设计权威。
-18. `README.md`：人类入口、运行命令和仓库地图。
-19. `Doc/TechnicalDocument/2026-06-04-tokenshare-paper-module-map.md`：论文、技术报告和本地 TeX/OCR 映射；用于追踪研究依据。
-20. `Doc/TechnicalDocument/2026-06-22-p01-p12-tokenshare-candidate-mechanism-spec.md`：P01-P22 机制整合记录；只用于追溯取舍理由，不覆盖当前实现规格。
-21. `Doc/TechnicalDocument/2026-06-02-tokenshare-protocol-kernel-revised-draft.md`：历史讨论稿；只用于理解早期设计原因。
-22. `reference_repos/`：外部参考源码；只能用于借鉴模式，不属于 TokenShare runtime。
+18. `Doc/TechnicalDocument/2026-07-27-feat-011-deepseek-v4-pro-runner-and-cohort-v2-design.md`、`Doc/TechnicalDocument/2026-07-27-feat-011-deepseek-v4-pro-runner-and-cohort-v2-implementation-plan.md`：EPD-008 的官方 DeepSeek provider、Experiment 1–4 baseline v2、Experiment 5 cohort v2、usage/cost/secret 边界和实施证据。
+19. `Doc/TechnicalDocument/2026-07-29-feat-011-exp5-siliconflow-four-model-v3-design.md`：EPD-010/EPD-011 当前 Experiment 5 v3 权威细化：四个 SiliconFlow model entries、107-root 半量 hard-only selection、总并发 3、`ABCD/BDAC/CADB` 顺序、`600/32768/1 attempt`、GLM/Qwen/MiniMax thinking 32K、独立 8-root bootstrap、官方 pricing snapshot 和 CSV/JSONL/TeX/PDF/SVG/Markdown 输出契约。离线设施已实现；2026-07-30 `thinking_budget` bootstrap blocker 修复与单模型 diagnostic 已验证，但完整 8-root smoke 仍未运行，正式 preflight blocked。
+20. `Doc/TechnicalDocument/2026-07-29-feat-011-exp5-siliconflow-four-model-v3-implementation-plan.md`：上述设计的 TDD 实施与证据入口；Task 0–10 离线完成，最终 Exp5 定向集合 464 passed，Task 11 真实 smoke/正式运行未执行。cohort v1/v2 只供历史 replay。
+21. `Doc/TechnicalDocument/2026-07-29-feat-011-shared-exp1-baseline-terminal-boundary-exp3-exp4-smoke-design.md`、`Doc/TechnicalDocument/2026-07-29-feat-011-shared-exp1-baseline-terminal-boundary-exp3-exp4-smoke-implementation-plan.md`：EPD-012 的当前实现入口；定义 Exp3 shared Exp1 evidence、双轴终态/设施停止边界、36,126/46,478 规模和精确 11-root Exp3/Exp4 smoke。历史 dedicated no-kill baseline、0% Exp3 roots 和 run01–run04 不得据此改写。
+22. `README.md`：人类入口、运行命令和仓库地图。
+23. `Doc/TechnicalDocument/2026-06-04-tokenshare-paper-module-map.md`：论文、技术报告和本地 TeX/OCR 映射；用于追踪研究依据。
+24. `Doc/TechnicalDocument/2026-06-22-p01-p12-tokenshare-candidate-mechanism-spec.md`：P01-P22 机制整合记录；只用于追溯取舍理由，不覆盖当前实现规格。
+25. `Doc/TechnicalDocument/2026-06-02-tokenshare-protocol-kernel-revised-draft.md`：历史讨论稿；只用于理解早期设计原因。
+26. `reference_repos/`：外部参考源码；只能用于借鉴模式，不属于 TokenShare runtime。
 
 旧 Phase 1-6 文档已移动到 `Doc/TechnicalDocument/phase-1-6-archive/`。该目录只作普通历史归档，不写单独索引，也不作为默认阅读入口。如果新文档和旧归档冲突，应相信新文档和当前代码；必要时把冲突记录到 `progress.md` 或 `session-handoff.md`。
 
@@ -55,7 +60,7 @@
 | Lean fixed plan / system runtime 在哪里 | `src/tokenshare/plugins/lean_proof/fixed_plan.py`、`src/tokenshare/plugins/lean_proof/runtime_adapter.py` | `src/tokenshare/local_runtime/{coordinator,workers}.py`、`src/tokenshare/protocol_engine.py`、`src/tokenshare/experiments/paper_workers.py`、Phase 6 Lean code map、Phase 8 code map | catalog 只提供预注册 node/edge/merge shape；插件校验 certificate，coordinator/engine 记录依赖解阻、同 root worker capacity、lease-expiry/replacement 与完整生命周期。experiments 只冻结 kill plan/投影 event refs，不拥有 lease authority；不要把 fixed plan 写成通用自动 lemma discovery。 |
 | Phase 1-6 V1 协议在做什么 | `Doc/TechnicalDocument/tokenshare_v1_complete_spec.md` | `README.md` | 只覆盖 Phase 1-6 协议内核、存储、插件和执行器契约。 |
 | Phase 1-6 代码在哪、测试在哪 | `Doc/TechnicalDocument/tokenshare_v1_code_map.md` | `src/tokenshare/`、`tests/` | code map 必须以当前实现为准；不要从旧归档文档倒推。 |
-| 最新真实 AI 论文实验 | `Doc/TechnicalDocument/tokenshare_latest_real_plugin_experiment_design.md` | `Doc/TechnicalDocument/2026-07-24-feat-011-exp2-exp5-experiment-facility-completion-implementation-plan.md`、`Doc/TechnicalDocument/2026-07-24-feat-011-three-system-native-blockers-design.md`、`Doc/TechnicalDocument/2026-07-22-feat-011-system-runtime-paper-experiment-migration-plan.md`、`Doc/TechnicalDocument/2026-07-13-feat-011-paper-real-ai-experiments-implementation-plan.md`、`Doc/TechnicalDocument/2026-07-15-feat-011-lean-3x3-topic-template-design.md` | system runtime 迁移及 2026-07-24 三项补缝已落地；FULL 与 selected-unit diagnostic 都经 `paper_dispatcher`、`local_runtime` 和 `ProtocolEngine`。先按最新设施补全计划同步 Exp1 单次运行参数，再修 Exp2–Exp5 真实行为/指标，之后才能正式运行。所有论文 run 必须真实调用 AI API；实验只设条件和观察。Lean 保留预注册固定拆分图，验证尽量使用定向测试和 canary，不默认全量 force-all。 |
+| 最新真实 AI 论文实验 | `Doc/TechnicalDocument/tokenshare_latest_real_plugin_experiment_design.md` | `Doc/TechnicalDocument/2026-07-29-feat-011-exp5-siliconflow-four-model-v3-design.md`、`Doc/TechnicalDocument/2026-07-29-feat-011-exp5-siliconflow-four-model-v3-implementation-plan.md`、`Doc/TechnicalDocument/2026-07-27-feat-011-deepseek-v4-pro-runner-and-cohort-v2-design.md`、`Doc/TechnicalDocument/2026-07-27-feat-011-deepseek-v4-pro-runner-and-cohort-v2-implementation-plan.md`、`Doc/TechnicalDocument/2026-07-24-feat-011-exp2-exp5-experiment-facility-completion-implementation-plan.md` | EPD-010/EPD-011 已确认下一版 Exp5 使用四模型共享 SiliconFlow、半量 hard-only 题库、总并发 3、v3 请求参数和论文输出契约；代码正在按 TDD 实施。当前已实现 Exp1–4 baseline 仍是官方 DeepSeek-V4-Pro，Exp5 cohort v1/v2 只供历史 replay。所有论文 run 必须真实调用 AI API；Lean 验证不默认全量 force-all。 |
 | 第四章方法主张如何与代码对齐 | `Doc/TechnicalDocument/2026-07-22-chapter-4-code-paper-alignment-revision-guide.md` | `tokenshare_v1_code_map.md`、当前 `src/` 和 `tests/` | 这是论文修改决策记录，不是论文正文或实验权威；按“保留并局部补齐 / 收窄措辞 / 删除大型机制”审核第四章。 |
 | Phase 7 AI API executor | Phase 7 field spec / TDD plan / code map | `src/tokenshare/executors/ai_api*.py`、`tests/executors/test_ai_api_*.py` | 保持 artifact/provenance/secret/replay 边界；标准 config 只保存 `api_key_env`。 |
 | Phase 8 regression infrastructure | `Doc/TechnicalDocument/2026-06-29-phase-8-experiment-infrastructure-code-map.md` | `src/tokenshare/experiments/`、`tests/experiments/` | Phase 8 code map 不是最新论文实验设计。 |
@@ -153,6 +158,9 @@ tests/
 
 - 如果只是回答用户临时问题，可以在回答中引用来源；如果进入项目设计或实现，必须在最相关的设计文档、`progress.md` 或 `session-handoff.md` 中记录来源 URL、访问日期、本地摘要和影响范围。
 - 如果该在线文档对应可拉取仓库、版本化文档或 release tag，应优先保存对应仓库或 tag 到 `reference_repos/`，而不是只记录网页。
+- 2026-07-28 DeepSeek-V4-Pro 1M context、384K 最大输出、Chat Completions `max_tokens` 与并发/keepalive 边界的官方网页摘要，统一落在 `Doc/TechnicalDocument/2026-07-28-feat-011-deepseek-exp1-exp4-300k-reregistration-design.md` 第 6 节；影响范围仅为 Exp1–4 DeepSeek v3 `600/300000` 重新预注册，不覆盖 Experiment 5、GLM 或 GPT。
+- 2026-07-29 SiliconFlow 四个 Exp5 model entries、模型页 context/reasoning 标签、Chat Completions `max_tokens`、reasoning `thinking_budget`、官方 pricing 与 DeepSeek-V3 更新公告摘要，统一落在 `Doc/TechnicalDocument/2026-07-29-feat-011-exp5-siliconflow-four-model-v3-design.md` 第 15 节；影响范围仅为下一版 Exp5 cohort v3、capability smoke、token/reasoning usage、pricing snapshot 和参数 gate。
+- 2026-07-30 CPython Windows multiprocessing `DupHandle.detach()` / `DuplicateHandle` race issue 的官方来源、访问日期、局限和本地 worker bootstrap 影响摘要，统一落在 `Doc/TechnicalDocument/2026-07-30-feat-011-exp3-exp4-facility-comprehensive-audit-plan.md`；只用于 Exp3 worker-death 的本地 subprocess/file-handshake 决策，不扩大故障模型或引入外部 runtime dependency。
 
 `reference_repos/` 是研究材料，不是项目源码。可以打开外部项目源码观察命名、目录边界和测试组织，但不能引入为 runtime dependency。
 

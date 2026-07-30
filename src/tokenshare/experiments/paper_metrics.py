@@ -1369,6 +1369,13 @@ def _task_metric_row(
 ) -> JsonObject:
     statuses = [str(attempt.get("attempt_status")) for attempt in attempts]
     attempted = planned["execution_status"] == "executable"
+    currencies = {
+        str(item["cost_estimate_currency"])
+        for item in attempts
+        if isinstance(item.get("cost_estimate_currency"), str)
+    }
+    if len(currencies) > 1:
+        raise ValueError("one paper task cannot mix cost estimate currencies")
     return {
         "schema_version": "tokenshare.paper_task_metrics.v1",
         "condition_id": task["condition_id"],
@@ -1402,6 +1409,15 @@ def _task_metric_row(
         "cost_estimate": round(
             sum(float(item["cost_estimate"]) for item in attempts), 12
         ),
+        "cost_estimate_currency": next(iter(currencies), None),
+        "cost_estimate_status": (
+            "usage_missing"
+            if any(
+                item.get("cost_estimate_status") == "usage_missing"
+                for item in attempts
+            )
+            else ("estimated" if currencies else None)
+        ),
         "artifact_ref_count": sum(
             1
             for attempt in attempts
@@ -1415,7 +1431,18 @@ def _task_metric_row(
 
 
 def _aggregate_rows(rows: list[JsonObject]) -> JsonObject:
-    return {
+    costs_by_currency: dict[str, float] = {}
+    legacy_cost = 0.0
+    for row in rows:
+        currency = row.get("cost_estimate_currency")
+        if isinstance(currency, str):
+            costs_by_currency[currency] = costs_by_currency.get(currency, 0.0) + float(
+                row["cost_estimate"]
+            )
+        else:
+            legacy_cost += float(row["cost_estimate"])
+    mixed_currency = len(costs_by_currency) > 1
+    body = {
         "planned_root_count": len(rows),
         "attempted_root_count": sum(bool(row["attempted"]) for row in rows),
         "completed_root_count": sum(bool(row["completed"]) for row in rows),
@@ -1447,8 +1474,30 @@ def _aggregate_rows(rows: list[JsonObject]) -> JsonObject:
             int(row["provider_latency_ms"]) for row in rows
         ),
         "wall_clock_ms": sum(int(row["wall_clock_ms"]) for row in rows),
-        "cost_estimate": round(sum(float(row["cost_estimate"]) for row in rows), 12),
+        "cost_estimate": (
+            0.0
+            if mixed_currency
+            else round(
+                legacy_cost + sum(costs_by_currency.values()),
+                12,
+            )
+        ),
     }
+    if costs_by_currency:
+        body["cost_estimate_by_currency"] = {
+            currency: round(value, 12)
+            for currency, value in sorted(costs_by_currency.items())
+        }
+        body["cost_estimate_status"] = (
+            "mixed_currency_not_aggregated"
+            if mixed_currency
+            else (
+                "usage_missing"
+                if any(row.get("cost_estimate_status") == "usage_missing" for row in rows)
+                else "single_currency_estimate"
+            )
+        )
+    return body
 
 
 def _summary_rows(
@@ -1516,7 +1565,16 @@ def _validate_suite_totals(
     for field_name, value in expected.items():
         if int(suite.get(field_name, -1)) != int(value):
             raise ValueError(f"paper suite manifest {field_name} total mismatch")
-    if not math.isclose(
+    if totals.get("cost_estimate_status") == "mixed_currency_not_aggregated":
+        if (
+            suite.get("total_cost_estimate_status")
+            != "mixed_currency_not_aggregated"
+            or suite.get("cost_estimate_by_currency")
+            != totals.get("cost_estimate_by_currency")
+            or float(suite.get("total_cost_estimate", -1.0)) != 0.0
+        ):
+            raise ValueError("paper suite mixed-currency cost totals mismatch")
+    elif not math.isclose(
         float(suite.get("total_cost_estimate", -1.0)),
         float(totals["cost_estimate"]),
         rel_tol=0.0,

@@ -38,6 +38,7 @@ from tokenshare.protocol_engine import ProtocolEngine
 from tokenshare.executors.ai_api import AIAPIExecutor
 from tokenshare.executors.ai_api_config import AIAPIExecutorConfig, load_ai_api_config
 from tokenshare.executors.ai_api_transport import (
+    UrlLibDeepSeekTransport,
     UrlLibOpenAITransport,
     UrlLibSiliconFlowTransport,
 )
@@ -149,7 +150,11 @@ AI_EXECUTOR_ID = "executor_ai_api"
 AI_EXECUTOR_VERSION = "0.1.0"
 FAKE_KEY_ENV = "TOKENSHARE_LEAN_PAPER_FAKE_KEY"
 LEAN_V2_SCHEMA_VERSION = "tokenshare.paper_lean_lemma_graph_case.v1"
-REAL_TRANSPORT_TYPES = (UrlLibSiliconFlowTransport, UrlLibOpenAITransport)
+REAL_TRANSPORT_TYPES = (
+    UrlLibSiliconFlowTransport,
+    UrlLibOpenAITransport,
+    UrlLibDeepSeekTransport,
+)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -568,6 +573,8 @@ def run_lean_paper_case(
         wall_clock_ms=sum(attempt.latency_ms for attempt in attempts),
         total_tokens=sum(attempt.total_tokens for attempt in attempts),
         cost_estimate=sum(attempt.cost_estimate for attempt in attempts),
+        cost_estimate_currency=_single_attempt_currency(attempts),
+        cost_estimate_status=_combined_cost_estimate_status(attempts),
         event_refs=[],
         artifact_refs=_task_artifact_refs(attempts=attempts, child_records=child_records, merge_summary=merge_summary),
         paper_eligible=eligibility.paper_eligible,
@@ -1068,7 +1075,7 @@ def _run_lean_full_via_coordinator(
         )
         proof_candidate_ref = protocol_candidate_refs.get(
             PROOF_CANDIDATE_OUTPUT_NAME
-        )
+        ) or protocol_candidate_refs.get(PROOF_ARTIFACT_OUTPUT_NAME)
         protocol_submission = replace(
             submission,
             candidate_output_refs=dict(protocol_candidate_refs),
@@ -2031,6 +2038,8 @@ def _run_lean_lemma_graph_paper_case(
         wall_clock_ms=sum(attempt.latency_ms for attempt in attempts),
         total_tokens=sum(attempt.total_tokens for attempt in attempts),
         cost_estimate=sum(attempt.cost_estimate for attempt in attempts),
+        cost_estimate_currency=_single_attempt_currency(attempts),
+        cost_estimate_status=_combined_cost_estimate_status(attempts),
         event_refs=[],
         artifact_refs=_task_artifact_refs(
             attempts=attempts,
@@ -2866,10 +2875,17 @@ def _validate_real_transport_mode(
     transport: Any | None,
     ai_api_config: AIAPIExecutorConfig | None,
 ) -> None:
+    provider_family = (
+        ai_api_config.provider_family if ai_api_config is not None else None
+    )
+    resolved_transport = _transport_for_provider_family(
+        transport,
+        provider_family=provider_family,
+    )
     if not real_transport:
-        if isinstance(transport, REAL_TRANSPORT_TYPES):
+        if isinstance(resolved_transport, REAL_TRANSPORT_TYPES):
             raise ValueError(
-                "UrlLibSiliconFlowTransport or UrlLibOpenAITransport requires "
+                f"{type(resolved_transport).__name__} is a real provider transport and requires "
                 "real_transport=True"
             )
         return
@@ -2878,14 +2894,35 @@ def _validate_real_transport_mode(
     if transport is None:
         return
     expected_type = _real_transport_type(ai_api_config.provider_family)
-    if type(transport) is not expected_type and not _is_offline_capturing_transport(
-        transport
+    if (
+        type(resolved_transport) is not expected_type
+        and not _is_offline_capturing_transport(transport)
     ):
         raise ValueError(
-            "real transport Lean paper runs require UrlLibSiliconFlowTransport "
-            "or UrlLibOpenAITransport matching "
+            "real transport Lean paper runs require "
+            f"{expected_type.__name__} matching "
             f"provider_family={ai_api_config.provider_family}"
         )
+
+
+def _transport_for_provider_family(
+    transport: Any | None,
+    *,
+    provider_family: str | None,
+) -> Any | None:
+    if transport is None or provider_family is None:
+        return transport
+    resolver = getattr(
+        transport,
+        "tokenshare_transport_for_provider",
+        None,
+    )
+    if not callable(resolver):
+        return transport
+    resolved = resolver(provider_family)
+    if resolved is None:
+        raise ValueError("provider transport router returned no transport")
+    return resolved
 
 
 def _default_real_transport(config: AIAPIExecutorConfig):
@@ -2898,6 +2935,8 @@ def _real_transport_type(provider_family: str):
         return UrlLibSiliconFlowTransport
     if provider_family == "openai":
         return UrlLibOpenAITransport
+    if provider_family == "deepseek":
+        return UrlLibDeepSeekTransport
     raise ValueError(f"unsupported real transport provider_family: {provider_family}")
 
 
@@ -3673,6 +3712,14 @@ def _paper_attempt_result(
         completion_tokens=completion_tokens,
         total_tokens=total_tokens,
         cost_estimate=_float_metric(usage.get("cost_estimate")),
+        cost_estimate_currency=(
+            str(usage["currency"]) if isinstance(usage.get("currency"), str) else None
+        ),
+        cost_estimate_status=(
+            str(usage["cost_estimate_status"])
+            if isinstance(usage.get("cost_estimate_status"), str)
+            else None
+        ),
         error_kind=(
             error_kind_override
             if error_kind_override is not None
@@ -4191,3 +4238,27 @@ def _float_metric(value: Any) -> float:
         return float(value)
     except (TypeError, ValueError):
         return 0.0
+
+
+def _single_attempt_currency(attempts: list[PaperAttemptResult]) -> str | None:
+    currencies = {
+        attempt.cost_estimate_currency
+        for attempt in attempts
+        if attempt.cost_estimate_currency is not None
+    }
+    if len(currencies) > 1:
+        raise ValueError("a paper task cannot aggregate mixed cost currencies")
+    return next(iter(currencies), None)
+
+
+def _combined_cost_estimate_status(attempts: list[PaperAttemptResult]) -> str | None:
+    statuses = {
+        attempt.cost_estimate_status
+        for attempt in attempts
+        if attempt.cost_estimate_status is not None
+    }
+    if "usage_missing" in statuses:
+        return "usage_missing"
+    if statuses:
+        return "estimated"
+    return None

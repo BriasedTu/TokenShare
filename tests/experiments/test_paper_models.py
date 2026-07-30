@@ -18,6 +18,96 @@ from tokenshare.experiments.paper_models import (
 )
 
 
+def _executor_error_attempt() -> PaperAttemptResult:
+    return PaperAttemptResult(
+        condition_id="exp3-condition",
+        repeat_id=0,
+        run_id="exp3-run",
+        task_id="task-root-1",
+        unit_id="unit-root-1",
+        attempt_id="attempt-root-1",
+        worker_id="worker-root-1",
+        provider_attempt_index=0,
+        attempt_status=PaperAttemptStatus.EXECUTOR_ERROR,
+        provider=None,
+        model=None,
+        entry_id=None,
+        request_ref={"artifact_id": "request-root-1"},
+        raw_output_ref=None,
+        parsed_output_ref=None,
+        parse_failure_ref=None,
+        provenance_ref=None,
+        usage_ref=None,
+        started_at="2026-07-28T00:00:00Z",
+        ended_at="2026-07-28T00:00:01Z",
+        latency_ms=0,
+        prompt_tokens=0,
+        completion_tokens=0,
+        total_tokens=0,
+        cost_estimate=0.0,
+        error_kind="retry_limit_reached",
+        fault_injection_ref=None,
+        paper_eligible=False,
+        model_execution_record_ref=None,
+        provider_attempt_count=0,
+        executor_id="executor_factorization_runtime",
+        executor_type="deterministic_local",
+        schema_version="tokenshare.paper_attempt_result.v2",
+    )
+
+
+@pytest.mark.parametrize(
+    ("field_name", "invalid_value"),
+    (
+        ("provider_attempt_index", False),
+        ("provider_attempt_index", 0.0),
+        ("provider_attempt_index", -1),
+        ("provider_attempt_count", False),
+        ("provider_attempt_count", 0.0),
+        ("provider_attempt_count", -1),
+        ("prompt_tokens", False),
+        ("prompt_tokens", 0.0),
+        ("prompt_tokens", -1),
+        ("completion_tokens", False),
+        ("completion_tokens", 0.0),
+        ("completion_tokens", -1),
+        ("total_tokens", False),
+        ("total_tokens", 0.0),
+        ("total_tokens", -1),
+        ("cost_estimate", False),
+        ("cost_estimate", -0.1),
+        ("latency_ms", False),
+        ("latency_ms", 0.0),
+        ("latency_ms", -1),
+        ("error_kind", None),
+        ("error_kind", ""),
+        ("executor_id", "executor_ai_api"),
+        ("executor_type", "ai_api"),
+        ("provider", "deepseek"),
+        ("model", "deepseek-v4-pro"),
+        ("entry_id", "deepseek_v4_pro_exp1_baseline"),
+        ("raw_output_ref", {"artifact_id": "raw-1"}),
+        ("parsed_output_ref", {"artifact_id": "parsed-1"}),
+        ("parse_failure_ref", {"artifact_id": "parse-failure-1"}),
+        ("provenance_ref", {"artifact_id": "provenance-1"}),
+        ("usage_ref", {"artifact_id": "usage-1"}),
+        ("fault_injection_ref", {"artifact_id": "fault-1"}),
+        ("model_execution_record_ref", {"artifact_id": "model-record-1"}),
+        ("request_ref", None),
+        ("request_ref", {}),
+        ("paper_eligible", True),
+    ),
+)
+def test_executor_error_v2_rejects_values_outside_closed_schema(
+    field_name: str,
+    invalid_value,
+) -> None:
+    attempt = _executor_error_attempt()
+
+    with pytest.raises(ValueError):
+        replace(attempt, **{field_name: invalid_value})
+
+
 def test_model_execution_record_v2_represents_provider_failure_as_not_observed() -> None:
     record = PaperModelExecutionRecord(
         condition_id="condition1",
@@ -521,7 +611,6 @@ def test_paper_result_objects_serialize_stable_status_schema_and_evidence_refs()
     assert experiment.to_dict()["accepted_validity_rate"] == 1.0
     assert budget.to_dict()["status"] == "planned"
     assert suite.to_dict()["paper_eligible"] is False
-
 
 def test_invalid_paper_status_values_are_rejected() -> None:
     with pytest.raises(ValueError, match="status"):

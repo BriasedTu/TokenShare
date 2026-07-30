@@ -6,8 +6,15 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from hashlib import sha256
-from multiprocessing import get_context
+import json
+import os
+from pathlib import Path
+import pickle
+import subprocess
+import sys
+from tempfile import TemporaryDirectory
 from threading import Lock, current_thread
+from time import monotonic, sleep
 from typing import Callable, Iterable
 
 from tokenshare.executors.contracts import ExecutionRequest, ExecutionSubmission
@@ -79,6 +86,10 @@ class WorkerBatchOutcome:
 
 class WorkerExecutionError(RuntimeError):
     """单请求兼容 API 无法返回 batch failure fact 时使用。"""
+
+
+class WorkerProcessBootstrapError(RuntimeError):
+    """真实 worker 子进程在 executor 放行前无法启动。"""
 
 
 class SequentialWorkerBackend:
@@ -335,82 +346,116 @@ class ProcessWorkerBackend:
             return ()
         if len(request_batch) > self.capacity:
             raise ValueError("request batch exceeds process worker capacity")
-        context = get_context("spawn")
-        handles: list[dict[str, object]] = []
-        for request in request_batch:
-            execution_index = self._next_execution_index
-            self._next_execution_index += 1
-            submission_id = _submission_id(request, execution_index=execution_index)
-            submitted_at = self._submitted_at()
-            parent_connection, child_connection = context.Pipe(duplex=False)
-            release = context.Event()
-            process = context.Process(
-                target=_process_execution_entry,
-                args=(
-                    self._executor,
-                    request,
-                    execution_index,
-                    submission_id,
-                    submitted_at,
-                    child_connection,
-                    release,
-                ),
-                name=f"tokenshare-unit-{execution_index}",
-            )
-            started_at = _utc_now()
+        with TemporaryDirectory(prefix="tokenshare-process-workers-") as temp_root:
+            handles: list[dict[str, object]] = []
             try:
-                process.start()
-            except Exception as error:
-                child_connection.close()
-                parent_connection.close()
-                fact = _fact(
-                    request=request,
-                    execution_index=execution_index,
-                    submission_id=None,
-                    result_kind="executor_error",
-                    worker_id=process.name,
-                    started_at=started_at,
-                    ended_at=_utc_now(),
-                )
-                self._execution_facts.append(fact)
-                handles.append(
-                    {
-                        "immediate_outcome": WorkerBatchOutcome(
+                for request in request_batch:
+                    execution_index = self._next_execution_index
+                    self._next_execution_index += 1
+                    handles.append(
+                        self._start_process_handle(
                             request=request,
-                            submission=None,
-                            fact=fact,
-                            failure_kind="executor_error",
-                            error_message=f"{type(error).__name__}: {error}",
+                            execution_index=execution_index,
+                            temp_root=Path(temp_root),
                         )
-                    }
+                    )
+                for handle in handles:
+                    _signal_process_path(Path(str(handle["start_path"])))
+                return tuple(
+                    self._finish_process_handle(handle) for handle in handles
+                )
+            finally:
+                for handle in handles:
+                    process = handle.get("process")
+                    if isinstance(process, subprocess.Popen) and process.poll() is None:
+                        process.kill()
+                        process.wait(timeout=5)
+
+    def _start_process_handle(
+        self,
+        *,
+        request: ExecutionRequest,
+        execution_index: int,
+        temp_root: Path,
+    ) -> dict[str, object]:
+        submission_id = _submission_id(request, execution_index=execution_index)
+        submitted_at = self._submitted_at()
+        started_at = _utc_now()
+        failures: list[str] = []
+        for bootstrap_attempt in range(1, 4):
+            attempt_root = temp_root / (
+                f"execution-{execution_index}-bootstrap-{bootstrap_attempt}"
+            )
+            attempt_root.mkdir(parents=True, exist_ok=False)
+            payload_path = attempt_root / "payload.pkl"
+            ready_path = attempt_root / "ready"
+            start_path = attempt_root / "start"
+            result_path = attempt_root / "result.pkl"
+            release_path = attempt_root / "release"
+            error_path = attempt_root / "bootstrap-error.json"
+            with payload_path.open("wb") as handle:
+                pickle.dump(
+                    (
+                        self._executor,
+                        request,
+                        execution_index,
+                        submission_id,
+                        submitted_at,
+                    ),
+                    handle,
+                    protocol=pickle.HIGHEST_PROTOCOL,
+                )
+            try:
+                process = _open_process_worker(
+                    (
+                        sys.executable,
+                        "-m",
+                        "tokenshare.local_runtime.process_worker_child",
+                        payload_path.as_posix(),
+                        ready_path.as_posix(),
+                        start_path.as_posix(),
+                        result_path.as_posix(),
+                        release_path.as_posix(),
+                        error_path.as_posix(),
+                    ),
+                )
+            except OSError as error:
+                failures.append(
+                    "stage=process_create, "
+                    f"error_kind={type(error).__name__}, message={error}"
                 )
                 continue
-            child_connection.close()
-            handles.append(
-                {
-                    "request": request,
-                    "execution_index": execution_index,
-                    "submission_id": submission_id,
-                    "process": process,
-                    "connection": parent_connection,
-                    "release": release,
-                    "matches_termination_target": (
-                        self._termination_count < self._termination_limit
-                        and self._terminate_once is not None
-                        and bool(self._terminate_once(request))
-                    ),
-                    "started_at": started_at,
-                }
-            )
-
-        outcomes: list[WorkerBatchOutcome] = []
-        for handle in handles:
-            immediate = handle.get("immediate_outcome")
-            if isinstance(immediate, WorkerBatchOutcome):
-                outcomes.append(immediate)
-                continue
-            outcomes.append(self._finish_process_handle(handle))
-        return tuple(outcomes)
+            deadline = monotonic() + min(30.0, self._process_timeout_seconds)
+            while monotonic() < deadline:
+                if ready_path.is_file():
+                    return {
+                        "request": request,
+                        "execution_index": execution_index,
+                        "submission_id": submission_id,
+                        "process": process,
+                        "worker_id": f"process-worker-{execution_index}",
+                        "result_path": result_path,
+                        "start_path": start_path,
+                        "release_path": release_path,
+                        "error_path": error_path,
+                        "matches_termination_target": (
+                            self._termination_count < self._termination_limit
+                            and self._terminate_once is not None
+                            and bool(self._terminate_once(request))
+                        ),
+                        "started_at": started_at,
+                    }
+                if process.poll() is not None:
+                    break
+                sleep(0.01)
+            if process.poll() is None:
+                process.kill()
+            process.wait(timeout=5)
+            failures.append(_process_bootstrap_failure(error_path, process.returncode))
+        raise WorkerProcessBootstrapError(
+            "worker subprocess bootstrap failed before executor release: "
+            + "; ".join(failures)
+        )
 
     def _finish_process_handle(self, handle: dict[str, object]) -> WorkerBatchOutcome:
         request = handle["request"]
@@ -418,22 +463,37 @@ class ProcessWorkerBackend:
         execution_index = int(handle["execution_index"])
         submission_id = str(handle["submission_id"])
         process = handle["process"]
-        connection = handle["connection"]
-        release = handle["release"]
+        assert isinstance(process, subprocess.Popen)
+        worker_id = str(handle["worker_id"])
+        result_path = Path(str(handle["result_path"]))
+        release_path = Path(str(handle["release_path"]))
+        error_path = Path(str(handle["error_path"]))
         matches_termination_target = bool(handle["matches_termination_target"])
         started_at = str(handle["started_at"])
         try:
-            if not connection.poll(self._process_timeout_seconds):
-                process.terminate()
-                process.join(timeout=5)
+            deadline = monotonic() + self._process_timeout_seconds
+            while (
+                not result_path.is_file()
+                and process.poll() is None
+                and monotonic() < deadline
+            ):
+                sleep(0.01)
+            if not result_path.is_file():
+                if process.poll() is None:
+                    process.terminate()
+                    try:
+                        process.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        process.kill()
+                        process.wait(timeout=5)
                 fact = _fact(
                     request=request,
                     execution_index=execution_index,
                     submission_id=None,
                     result_kind="executor_error",
-                    worker_id=process.name,
+                    worker_id=worker_id,
                     worker_pid=process.pid,
-                    process_exitcode=process.exitcode,
+                    process_exitcode=process.returncode,
                     started_at=started_at,
                     ended_at=_utc_now(),
                 )
@@ -442,10 +502,15 @@ class ProcessWorkerBackend:
                     submission=None,
                     fact=fact,
                     failure_kind="executor_error",
-                    error_message="worker process timed out",
+                    error_message=(
+                        _process_bootstrap_failure(error_path, process.returncode)
+                        if process.returncode is not None
+                        else "worker process timed out"
+                    ),
                 )
             else:
-                message = connection.recv()
+                with result_path.open("rb") as result_handle:
+                    message = pickle.load(result_handle)
                 message_kind, payload = message[:2]
                 process_result = message[2] if len(message) > 2 else None
                 progress_observation = self._termination_progress_observation(
@@ -472,16 +537,20 @@ class ProcessWorkerBackend:
                         )
                     _ingest_process_result(self._executor, process_result)
                     process.terminate()
-                    process.join(timeout=5)
+                    try:
+                        process.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        process.kill()
+                        process.wait(timeout=5)
                     observed_at = _utc_now()
                     fact = _fact(
                         request=request,
                         execution_index=execution_index,
                         submission_id=None,
                         result_kind="worker_terminated",
-                        worker_id=process.name,
+                        worker_id=worker_id,
                         worker_pid=process.pid,
-                        process_exitcode=process.exitcode,
+                        process_exitcode=process.returncode,
                         started_at=started_at,
                         ended_at=observed_at,
                         kill_point=self._kill_point,
@@ -509,16 +578,20 @@ class ProcessWorkerBackend:
                     )
                 elif message_kind == "submission":
                     _ingest_process_result(self._executor, process_result)
-                    release.set()
-                    process.join(timeout=5)
+                    _signal_process_path(release_path)
+                    try:
+                        process.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        process.kill()
+                        process.wait(timeout=5)
                     fact = _fact(
                         request=request,
                         execution_index=execution_index,
                         submission_id=getattr(payload, "submission_id", submission_id),
                         result_kind=getattr(payload, "result_kind", "succeeded"),
-                        worker_id=process.name,
+                        worker_id=worker_id,
                         worker_pid=process.pid,
-                        process_exitcode=process.exitcode,
+                        process_exitcode=process.returncode,
                         started_at=started_at,
                         ended_at=_utc_now(),
                         kill_point=(
@@ -562,16 +635,20 @@ class ProcessWorkerBackend:
                         fact=fact,
                     )
                 else:
-                    release.set()
-                    process.join(timeout=5)
+                    _signal_process_path(release_path)
+                    try:
+                        process.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        process.kill()
+                        process.wait(timeout=5)
                     fact = _fact(
                         request=request,
                         execution_index=execution_index,
                         submission_id=None,
                         result_kind="executor_error",
-                        worker_id=process.name,
+                        worker_id=worker_id,
                         worker_pid=process.pid,
-                        process_exitcode=process.exitcode,
+                        process_exitcode=process.returncode,
                         started_at=started_at,
                         ended_at=_utc_now(),
                     )
@@ -583,10 +660,9 @@ class ProcessWorkerBackend:
                         error_message=str(payload),
                     )
         finally:
-            connection.close()
-            if process.is_alive():
+            if process.poll() is None:
                 process.kill()
-                process.join(timeout=5)
+                process.wait(timeout=5)
         self._execution_facts.append(outcome.fact)
         return outcome
 
@@ -727,45 +803,57 @@ def execute_worker_batch(
     return tuple(outcomes)
 
 
-def _process_execution_entry(
-    executor: object,
-    request: ExecutionRequest,
-    execution_index: int,
-    submission_id: str,
-    submitted_at: str,
-    connection: object,
-    release: object,
-) -> None:
-    """子进程执行 unit；submission 交给 coordinator 前保持进程存活。"""
+def _signal_process_path(path: Path) -> None:
+    """以原子文件信号放行子进程，避免依赖 Windows 句柄继承。"""
 
-    try:
-        prepare_process_execution = getattr(
-            executor,
-            "prepare_process_execution",
-            None,
-        )
-        if callable(prepare_process_execution):
-            prepare_process_execution(request, execution_index)
-        submission = executor.execute(
-            request,
-            submission_id=submission_id,
-            submitted_at=submitted_at,
-        )
-        export_process_result = getattr(executor, "export_process_result", None)
-        process_result = (
-            export_process_result(request, submission)
-            if callable(export_process_result)
-            else None
-        )
-        connection.send(("submission", submission, process_result))
-        release.wait(timeout=30)
-    except BaseException as error:
+    temporary = path.with_name(f"{path.name}.tmp-{os.getpid()}")
+    temporary.write_text("signal\n", encoding="utf-8")
+    os.replace(temporary, path)
+
+
+def _open_process_worker(arguments: tuple[str, ...]) -> subprocess.Popen:
+    return subprocess.Popen(
+        arguments,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        close_fds=True,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        env=_process_worker_environment(),
+    )
+
+
+def _process_worker_environment() -> dict[str, str]:
+    """把父解释器的真实导入路径传给独立 worker 解释器。"""
+
+    environment = dict(os.environ)
+    import_paths = tuple(
+        str(Path(path).resolve()) if path else str(Path.cwd())
+        for path in sys.path
+    )
+    environment["PYTHONPATH"] = os.pathsep.join(dict.fromkeys(import_paths))
+    return environment
+
+
+def _process_bootstrap_failure(error_path: Path, returncode: int | None) -> str:
+    """读取子进程在执行器放行前持久化的结构化启动错误。"""
+
+    if error_path.is_file():
         try:
-            connection.send(("error", f"{type(error).__name__}: {error}"))
-        except (BrokenPipeError, EOFError, OSError):
-            pass
-    finally:
-        connection.close()
+            payload = json.loads(error_path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError) as error:
+            return (
+                "worker bootstrap error evidence is unreadable "
+                f"({type(error).__name__}: {error}; exitcode={returncode})"
+            )
+        stage = payload.get("stage", "unknown")
+        error_kind = payload.get("error_kind", "unknown")
+        message = payload.get("message", "")
+        return (
+            f"stage={stage}, error_kind={error_kind}, message={message}, "
+            f"exitcode={returncode}"
+        )
+    return f"worker exited before ready signal (exitcode={returncode})"
 
 
 def _ingest_process_result(executor: object, process_result: object) -> None:

@@ -12,6 +12,9 @@ from tokenshare.storage.artifacts import ArtifactStore
 
 
 WORKER_DEATH_RECORD_SCHEMA_VERSION = "tokenshare.paper_worker_death.v1"
+WORKER_DEATH_INCOMPLETE_RECORD_SCHEMA_VERSION = (
+    "tokenshare.paper_worker_death_incomplete.v1"
+)
 DEPENDENCY_GRAPH_SCHEMA_VERSION = "tokenshare.paper_ai_dependency_graph.v1"
 WORKER_ATTEMPT_SCHEMA_VERSION = "tokenshare.paper_worker_attempt_snapshot.v1"
 
@@ -527,9 +530,22 @@ def project_worker_death_records(
             None,
         )
         if replacement is None:
-            raise ValueError(
-                f"worker backend did not complete replacement unit: {target_unit_id}"
+            records.append(
+                _record_incomplete_worker_death_observation(
+                    artifact_store=artifact_store,
+                    plan=plan,
+                    target_unit_id=target_unit_id,
+                    worker_fact=killed,
+                    worker_facts=facts,
+                    protocol_events=events,
+                    coordinator_pid=coordinator_pid,
+                    created_at=created_at,
+                    provider_tokens_attributed=int(
+                        token_counts.get(str(killed.get("attempt_id") or ""), 0)
+                    ),
+                )
             )
+            continue
         outcome = record_worker_death_observation(
             artifact_store=artifact_store,
             plan=plan,
@@ -557,6 +573,137 @@ def project_worker_death_records(
         )
         records.append(body)
     return tuple(records)
+
+
+def _record_incomplete_worker_death_observation(
+    *,
+    artifact_store: ArtifactStore,
+    plan: WorkerDeathPlan,
+    target_unit_id: str,
+    worker_fact: Mapping[str, Any],
+    worker_facts: Iterable[Mapping[str, Any]],
+    protocol_events: Iterable[Mapping[str, Any] | object],
+    coordinator_pid: int,
+    created_at: str,
+    provider_tokens_attributed: int,
+) -> JsonObject:
+    """记录真实 worker death 但 replacement 未完成的终态，不伪造成功证据。"""
+
+    killed = _mapping(worker_fact, "worker_fact")
+    events = tuple(_event_mapping(event) for event in protocol_events)
+    terminal_recovery = next(
+        (
+            event
+            for event in reversed(events)
+            if event.get("event_type") == "RECOVERY_ACTION_RECORDED"
+            and _mapping_or_empty(event.get("payload"))
+            .get("recovery_action", {})
+            .get("unit_id")
+            == target_unit_id
+            and _mapping_or_empty(event.get("payload"))
+            .get("recovery_action", {})
+            .get("retry_allowed")
+            is False
+        ),
+        None,
+    )
+    if terminal_recovery is None:
+        raise ValueError(
+            "worker death replacement failure lacks terminal recovery evidence"
+        )
+    recovery_action = dict(
+        _mapping_or_empty(terminal_recovery.get("payload"))["recovery_action"]
+    )
+    progress = _worker_kill_progress_evidence(
+        killed,
+        expected_target_ratio=plan.progress_percent / 100.0,
+        expected_total_ai_unit_count=len(plan.dependency_graph["unit_ids"]),
+    )
+    worker_exitcode = _required_int(killed, "process_exitcode")
+    if worker_exitcode == 0:
+        raise ValueError("incomplete worker death record must prove process death")
+    units_by_id = {
+        str(unit["unit_id"]): dict(unit)
+        for unit in plan.dependency_graph["units"]
+    }
+    replacement_facts = [
+        dict(fact)
+        for fact in worker_facts
+        if fact.get("unit_id") == target_unit_id
+        and fact.get("attempt_id") != killed.get("attempt_id")
+    ]
+    body: JsonObject = {
+        "schema_version": WORKER_DEATH_INCOMPLETE_RECORD_SCHEMA_VERSION,
+        "condition_id": plan.condition_id,
+        "repeat_id": plan.repeat_id,
+        "run_id": plan.run_id,
+        "task_id": plan.task_id,
+        "fault_type": "worker_death",
+        "target_ai_unit": units_by_id[target_unit_id],
+        "dependency_graph": _json_value(plan.dependency_graph),
+        "kill_point": plan.kill_point.value,
+        "worker_fact": dict(killed),
+        "worker_id": _required_str(killed, "worker_id"),
+        "worker_pid": _positive_int(killed, "worker_pid"),
+        "worker_process_exitcode": worker_exitcode,
+        "worker_started_at": str(killed.get("started_at") or created_at),
+        "killed_at": str(killed.get("ended_at") or created_at),
+        "dead_attempt": {
+            "attempt_id": _required_str(killed, "attempt_id"),
+            "lease_id": _required_str(killed, "lease_id"),
+            "unit_id": target_unit_id,
+            "attempt_status": "worker_died",
+        },
+        "replacement_fact": None,
+        "replacement_facts": replacement_facts,
+        "recovery_completed": False,
+        "evidence_complete": False,
+        "failure_reason": str(recovery_action["reason"]),
+        "terminal_recovery_action": recovery_action,
+        "coordinator": {
+            "schema_version": "tokenshare.paper_worker_coordinator.v1",
+            "pid": coordinator_pid,
+            "survived": True,
+            "waited_for_lease_expiry": True,
+        },
+        "canonical_pollution": False,
+        "provider_tokens_attributed": provider_tokens_attributed,
+        "protocol_event_refs": [str(terminal_recovery["event_id"])],
+        "kill_progress_target_ratio": float(progress["target_ratio"]),
+        "kill_progress_completed_ai_unit_count": int(progress["completed_count"]),
+        "kill_progress_total_ai_unit_count": int(progress["total_count"]),
+        "kill_progress_actual_ratio": float(progress["actual_ratio"]),
+        "kill_progress_observed_at": str(progress["observed_at"]),
+        "kill_progress_error": (
+            str(progress["error"]) if progress["error"] is not None else None
+        ),
+        "created_at": created_at,
+    }
+    record_ref = artifact_store.save_json(
+        body,
+        artifact_id=(
+            f"worker_death_incomplete_{_safe_id(target_unit_id)}_"
+            f"{_safe_id(_required_str(killed, 'attempt_id'))}_"
+            f"{plan.kill_point.value}"
+        ),
+        artifact_type="WorkerDeathIncompleteRecord",
+        artifact_schema_id="tokenshare.paper_worker_death_incomplete",
+        artifact_schema_version="v1",
+        source={
+            "kind": "paper_worker_runtime_projection",
+            "condition_id": plan.condition_id,
+            "run_id": plan.run_id,
+        },
+        metadata={
+            "unit_id": target_unit_id,
+            "kill_point": plan.kill_point.value,
+            "recovery_completed": False,
+            "dependency_graph_digest": plan.dependency_graph["graph_digest"],
+        },
+        created_at=created_at,
+    )
+    body["record_ref"] = record_ref.to_dict()
+    return body
 
 
 def run_worker_death_harness(**kwargs: Any) -> WorkerDeathOutcome:

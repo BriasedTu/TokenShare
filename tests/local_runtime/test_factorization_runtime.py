@@ -64,7 +64,16 @@ def test_factorization_full_paper_path_projects_engine_lifecycle(
     }
     assert len(child_ids) == result.split_summary["range_child_count"]
     assert len(result.task_result.event_refs) == len(events)
-    for child_id in child_ids:
+    scheduled_child_ids = {
+        event.payload["lease"]["unit_id"]
+        for event in events
+        if event.event_type == EventType.LEASE_STATE_CHANGED
+        and event.payload.get("scheduling_decision")
+        and event.payload.get("lease", {}).get("unit_id") in child_ids
+    }
+    assert scheduled_child_ids <= child_ids
+    assert len(scheduled_child_ids) == result.task_result.provider_attempt_count
+    for child_id in scheduled_child_ids:
         assert any(
             event.event_type == EventType.LEASE_STATE_CHANGED
             and event.payload.get("lease", {}).get("unit_id") == child_id

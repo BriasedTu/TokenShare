@@ -36,6 +36,14 @@ _RUN_FILES = (
     "artifacts/artifact_index.jsonl",
 )
 _SUCCESS_STATUSES = {"accepted", "completed", "success", "succeeded"}
+_TERMINAL_CHECKPOINT_STATUSES = _SUCCESS_STATUSES | {
+    "blocked",
+    "budget_exhausted",
+    "failed",
+    "ineligible",
+    "partial",
+    "timeout",
+}
 _SUITE_RUNTIME_FIELDS = frozenset(
     {
         "status",
@@ -45,12 +53,24 @@ _SUITE_RUNTIME_FIELDS = frozenset(
         "capturing",
         "regression_only",
         "paper_eligible",
+        "ineligibility_reasons",
+        "baseline_policy",
         "suite_identity",
     }
 )
 _ROOT_LOCKS_GUARD = threading.Lock()
 _ROOT_LOCKS: dict[str, threading.RLock] = {}
 _LOCK_FILE_NAME = ".formal-evidence.lock"
+
+
+class SharedEvidenceError(ValueError):
+    """带类型的 shared evidence 失败，避免消费端解析异常文案。"""
+
+    def __init__(self, message: str, *, evidence_integrity: str) -> None:
+        super().__init__(message)
+        if evidence_integrity not in {"missing", "invalid", "corrupt"}:
+            raise ValueError("invalid shared evidence integrity classification")
+        self.evidence_integrity = evidence_integrity
 _PLAN_ONLY_ROOT_FILES = frozenset(
     {
         "lean_3x3_matrix.json",
@@ -77,6 +97,70 @@ _RUN_MANIFEST_KEYS = {
     "completed_task_ids",
     "status",
 }
+
+
+def _execution_classification(
+    suite_body: Any,
+    *,
+    capturing: bool,
+) -> dict[str, Any]:
+    """从冻结 suite identity 派生 evidence flags；缺省保持正式行为。"""
+
+    declared = (
+        suite_body.get("execution_classification")
+        if isinstance(suite_body, dict)
+        else None
+    )
+    if declared is None:
+        return {
+            "formal": True,
+            "pilot_only": False,
+            "regression_only": bool(capturing),
+            "paper_eligible": True,
+            "execution_scope": "formal_matrix",
+            "ineligibility_reasons": [],
+        }
+    if not isinstance(declared, dict):
+        raise ValueError("execution_classification must be an object")
+    required = {
+        "formal",
+        "pilot_only",
+        "regression_only",
+        "paper_eligible",
+        "execution_scope",
+        "ineligibility_reasons",
+    }
+    optional = {"baseline_policy"}
+    if not required <= set(declared) or set(declared) - required > optional:
+        raise ValueError("execution_classification fields are invalid")
+    for field_name in ("formal", "pilot_only", "regression_only", "paper_eligible"):
+        if not isinstance(declared[field_name], bool):
+            raise ValueError(f"execution_classification {field_name} must be a bool")
+    reasons = declared["ineligibility_reasons"]
+    if not isinstance(reasons, list) or any(
+        not isinstance(reason, str) or not reason for reason in reasons
+    ):
+        raise ValueError("execution_classification reasons are invalid")
+    if (
+        declared["formal"] is not False
+        or declared["pilot_only"] is not True
+        or declared["regression_only"] is not True
+        or declared["paper_eligible"] is not False
+        or declared["execution_scope"] != "smoke_suite"
+        or not {"smoke_suite", "pilot_only"}.issubset(reasons)
+    ):
+        raise ValueError("unsupported non-formal execution classification")
+    result = {
+        **declared,
+        "ineligibility_reasons": list(reasons),
+    }
+    baseline_policy = declared.get("baseline_policy")
+    if baseline_policy is not None and baseline_policy not in {
+        "required_by_formal_plan",
+        "omitted_for_smoke_regression",
+    }:
+        raise ValueError("execution_classification baseline_policy is invalid")
+    return result
 
 
 @dataclass(frozen=True)
@@ -140,16 +224,27 @@ class FormalEvidenceStore:
             name: {"body": body, "digest": _digest_json(body)}
             for name, body in bodies.items()
         }
+        classification = _execution_classification(
+            bodies["suite"],
+            capturing=capturing,
+        )
         suite_manifest = dict(bodies["suite"])
         suite_manifest.update(
             {
                 "status": "running",
-                "formal": True,
-                "pilot_only": False,
-                "execution_scope": "formal_matrix",
+                "formal": classification["formal"],
+                "pilot_only": classification["pilot_only"],
+                "execution_scope": classification["execution_scope"],
                 "capturing": bool(capturing),
-                "regression_only": bool(capturing),
+                "regression_only": classification["regression_only"],
                 "paper_eligible": False,
+                "ineligibility_reasons": classification[
+                    "ineligibility_reasons"
+                ],
+                "baseline_policy": classification.get(
+                    "baseline_policy",
+                    "required_by_formal_plan",
+                ),
                 "suite_identity": identity_components,
             }
         )
@@ -176,12 +271,19 @@ class FormalEvidenceStore:
                     "experiment_id": experiment_id,
                     "condition_ids": [item["condition_id"] for item in conditions],
                     "status": "running",
-                    "formal": True,
-                    "pilot_only": False,
-                    "execution_scope": "formal_matrix",
+                    "formal": classification["formal"],
+                    "pilot_only": classification["pilot_only"],
+                    "execution_scope": classification["execution_scope"],
                     "capturing": bool(capturing),
-                    "regression_only": bool(capturing),
+                    "regression_only": classification["regression_only"],
                     "paper_eligible": False,
+                    "ineligibility_reasons": classification[
+                        "ineligibility_reasons"
+                    ],
+                    "baseline_policy": classification.get(
+                        "baseline_policy",
+                        "required_by_formal_plan",
+                    ),
                     "dispatch_plan_digest": _digest_json(
                         dispatch_plans[experiment_id]
                     ),
@@ -278,6 +380,297 @@ class FormalEvidenceStore:
                     event_bodies=event_bodies,
                     artifact_bodies=artifact_bodies,
                 )
+
+    def build_shared_root_reference(
+        self,
+        *,
+        source_experiment_id: str,
+        case_id: str,
+        source_repeat_id: int,
+        expected_condition_identity: Mapping[str, Any],
+        expected_source_versions: Mapping[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """校验并冻结一个已持久化 root，供后续实验零调用引用。"""
+
+        source_experiment_id = _safe_id(
+            source_experiment_id,
+            "source_experiment_id",
+        )
+        case_id = _safe_id(case_id, "case_id")
+        if isinstance(source_repeat_id, bool) or not isinstance(
+            source_repeat_id,
+            int,
+        ):
+            raise SharedEvidenceError(
+                "source repeat identity is invalid",
+                evidence_integrity="invalid",
+            )
+        if not isinstance(expected_condition_identity, Mapping):
+            raise SharedEvidenceError(
+                "expected source condition identity must be an object",
+                evidence_integrity="invalid",
+            )
+        if expected_source_versions is not None and not isinstance(
+            expected_source_versions,
+            Mapping,
+        ):
+            raise SharedEvidenceError(
+                "expected source version identity must be an object",
+                evidence_integrity="invalid",
+            )
+
+        suite_manifest = _read_json(self.output_root / "suite_manifest.json")
+        suite_identity = suite_manifest.get("suite_identity")
+        if not isinstance(suite_identity, dict):
+            raise SharedEvidenceError(
+                "source suite identity evidence is missing",
+                evidence_integrity="missing",
+            )
+        frozen_request_limits = _frozen_identity_body(
+            suite_identity,
+            "request_limits",
+        )
+        frozen_catalog = _frozen_identity_body(suite_identity, "catalog")
+        runs_root = (
+            self.output_root
+            / "experiments"
+            / source_experiment_id
+            / "runs"
+        )
+        if not runs_root.is_dir():
+            raise SharedEvidenceError(
+                "shared source evidence is missing",
+                evidence_integrity="missing",
+            )
+
+        matches: list[dict[str, Any]] = []
+        for condition_root in sorted(
+            path for path in runs_root.iterdir() if path.is_dir()
+        ):
+            run_root = condition_root / str(source_repeat_id)
+            if not run_root.is_dir():
+                continue
+            try:
+                tasks = self._validate_run(
+                    run_root,
+                    experiment_id=source_experiment_id,
+                )
+            except (ValueError, json.JSONDecodeError) as error:
+                raise SharedEvidenceError(
+                    "shared source checkpoint integrity validation failed",
+                    evidence_integrity="corrupt",
+                ) from error
+            for task in tasks:
+                task_case_id = task.get("case_id", task.get("task_id"))
+                if task_case_id != case_id:
+                    continue
+                matches.append(
+                    {
+                        "run_root": run_root,
+                        "task": task,
+                    }
+                )
+        if not matches:
+            raise SharedEvidenceError(
+                "shared source case evidence is missing",
+                evidence_integrity="missing",
+            )
+        if len(matches) != 1:
+            raise SharedEvidenceError(
+                "shared source case identity is ambiguous",
+                evidence_integrity="invalid",
+            )
+
+        match = matches[0]
+        run_root = match["run_root"]
+        task = match["task"]
+        condition_id = run_root.parent.name
+        condition = self._conditions.get((source_experiment_id, condition_id))
+        if condition is None:
+            raise SharedEvidenceError(
+                "shared source condition identity is missing",
+                evidence_integrity="missing",
+            )
+        for field_name, expected_value in expected_condition_identity.items():
+            if field_name == "request_limits":
+                actual_value = frozen_request_limits
+            elif field_name == "catalog_digest":
+                actual_value = condition.get(
+                    field_name,
+                    frozen_catalog.get(field_name),
+                )
+            else:
+                actual_value = condition.get(field_name)
+            if _canonical_bytes(actual_value) != _canonical_bytes(expected_value):
+                raise SharedEvidenceError(
+                    f"shared source condition identity mismatch: {field_name}",
+                    evidence_integrity="invalid",
+                )
+
+        if not _is_terminal_checkpoint(task):
+            raise SharedEvidenceError(
+                "shared source evidence is not terminal",
+                evidence_integrity="invalid",
+            )
+        generation_root = self._current_generation_root(run_root, required=True)
+        assert generation_root is not None
+        current = _read_json(run_root / "CURRENT.json")
+        run_manifest = _read_json(generation_root / "run_manifest.json")
+        attempts = [
+            item
+            for item in _read_jsonl(
+                generation_root / "per_attempt_results.jsonl"
+            )
+            if item.get("task_id") == task.get("task_id")
+        ]
+        events = [
+            item
+            for item in _read_jsonl(
+                generation_root / "events" / "event_log.jsonl"
+            )
+            if item.get("task_id") == task.get("task_id")
+        ]
+        faults = [
+            item
+            for item in _read_jsonl(
+                generation_root / "fault_injections.jsonl"
+            )
+            if item.get("task_id") == task.get("task_id")
+        ]
+        artifacts = [
+            item
+            for item in _read_jsonl(
+                generation_root / "artifacts" / "artifact_index.jsonl"
+            )
+            if item.get("task_id") == task.get("task_id")
+        ]
+        if not attempts or not events:
+            raise SharedEvidenceError(
+                "shared source evidence is incomplete",
+                evidence_integrity="missing",
+            )
+
+        source_usage = _shared_source_usage(task=task, attempts=attempts)
+        source_root_status = str(task.get("root_status"))
+        comparison_eligible = _is_success(task) and bool(
+            source_usage["usage_complete"]
+        )
+        source_record_refs = {
+            "source_task_ref": _generation_record_ref(
+                self.output_root,
+                generation_root,
+                "per_task_results.jsonl",
+                task,
+            ),
+            "source_attempt_refs": [
+                _generation_record_ref(
+                    self.output_root,
+                    generation_root,
+                    "per_attempt_results.jsonl",
+                    item,
+                )
+                for item in attempts
+            ],
+            "source_event_refs": [
+                _generation_record_ref(
+                    self.output_root,
+                    generation_root,
+                    "events/event_log.jsonl",
+                    item,
+                )
+                for item in events
+            ],
+            "source_fault_refs": [
+                _generation_record_ref(
+                    self.output_root,
+                    generation_root,
+                    "fault_injections.jsonl",
+                    item,
+                )
+                for item in faults
+            ],
+            "source_artifact_refs": artifacts,
+        }
+        source_versions = task.get("execution_version_identity")
+        _validate_execution_version_identity(source_versions)
+        assert isinstance(source_versions, Mapping)
+        source_versions = dict(source_versions)
+        runtime_generation_identity = task.get("runtime_generation_identity")
+        if (
+            not isinstance(runtime_generation_identity, Mapping)
+            or source_versions.get("runtime_generation_schema_version")
+            != runtime_generation_identity.get("schema_version")
+            or source_versions.get("runtime_generation_identity_digest")
+            != _digest_json(runtime_generation_identity)
+        ):
+            raise SharedEvidenceError(
+                "shared source runtime generation identity mismatch",
+                evidence_integrity="invalid",
+            )
+        if expected_source_versions is not None:
+            for field_name, expected_value in expected_source_versions.items():
+                if _canonical_bytes(source_versions.get(field_name)) != _canonical_bytes(
+                    expected_value
+                ):
+                    raise SharedEvidenceError(
+                        f"shared source version identity mismatch: {field_name}",
+                        evidence_integrity="invalid",
+                    )
+        reference_core: dict[str, Any] = {
+            "schema_version": "tokenshare.paper_exp1_shared_reference.v1",
+            "source_suite_id": suite_manifest.get("suite_id"),
+            "source_run_id": f"{condition_id}/{source_repeat_id}",
+            "source_generation_id": generation_root.name,
+            "source_generation_manifest_digest": current[
+                "generation_manifest_digest"
+            ],
+            "source_experiment_id": source_experiment_id,
+            "source_condition_id": condition_id,
+            "source_condition_digest": _digest_json(condition),
+            "source_condition": condition,
+            "source_case_id": case_id,
+            "source_task_id": str(task["task_id"]),
+            "source_repeat_id": source_repeat_id,
+            "source_seed": condition.get("seed"),
+            "source_worker_count": condition.get("worker_count"),
+            "source_root_status": source_root_status,
+            "source_provider_config_id": condition.get("provider_config_id"),
+            "source_model_entry_id": condition.get("model_entry_id"),
+            "source_provider_family": condition.get("provider_family"),
+            "source_provider_model_id": condition.get("provider_model_id"),
+            "source_reasoning_profile_id": condition.get("reasoning_profile_id"),
+            "source_request_limits": frozen_request_limits,
+            "source_catalog_identity": frozen_catalog,
+            "source_versions": source_versions,
+            "source_run_manifest_hash": _digest_json(run_manifest),
+            "source_task_record_hash": _digest_json(task),
+            **source_record_refs,
+            "source_usage": source_usage,
+            "evidence_integrity": "complete",
+            "baseline_comparison_eligible": comparison_eligible,
+            "baseline_unavailable_reason": (
+                None
+                if comparison_eligible
+                else (
+                    "source_exp1_failed_experimental"
+                    if not _is_success(task)
+                    else "source_exp1_usage_incomplete"
+                )
+            ),
+            "provider_calls_made": 0,
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 0,
+            "cost_estimate": 0.0,
+        }
+        source_hash = _digest_json(reference_core)
+        return {
+            **reference_core,
+            "source_hash": source_hash,
+            "source_reference_id": (
+                "shared_exp1_" + source_hash.removeprefix("sha256:")[:24]
+            ),
+        }
 
     def _publish_checkpoint_generation(
         self,
@@ -508,7 +901,9 @@ class FormalEvidenceStore:
                         str(item["task_id"]),
                     )
                     for item in records
-                    if _is_success(item)
+                    # checkpoint 已冻结的负面结果同样是终态；resume 不得把它
+                    # 当作新的 provider retry 再次执行。
+                    if _is_terminal_checkpoint(item)
                 )
         normalized = {
             experiment_id: tuple(sorted(task_ids))
@@ -540,23 +935,34 @@ class FormalEvidenceStore:
         }
         if _canonical_bytes(actual_frozen_fields) != _canonical_bytes(frozen_suite):
             raise ValueError("suite manifest frozen identity mismatch")
+        capturing = suite_manifest.get("capturing")
+        if not isinstance(capturing, bool):
+            raise ValueError("suite manifest capturing identity is invalid")
+        classification = _execution_classification(
+            frozen_suite,
+            capturing=capturing,
+        )
         required_suite_flags = {
-            "formal": True,
-            "pilot_only": False,
-            "execution_scope": "formal_matrix",
+            "formal": classification["formal"],
+            "pilot_only": classification["pilot_only"],
+            "execution_scope": classification["execution_scope"],
+            "regression_only": classification["regression_only"],
+            "ineligibility_reasons": classification["ineligibility_reasons"],
+            "baseline_policy": classification.get(
+                "baseline_policy",
+                "required_by_formal_plan",
+            ),
         }
         for field_name, expected_value in required_suite_flags.items():
             if suite_manifest.get(field_name) != expected_value:
                 raise ValueError(f"suite manifest {field_name} identity mismatch")
-        capturing = suite_manifest.get("capturing")
-        if not isinstance(capturing, bool):
-            raise ValueError("suite manifest capturing identity is invalid")
-        if suite_manifest.get("regression_only") is not capturing:
-            raise ValueError("suite manifest regression identity mismatch")
         if not isinstance(suite_manifest.get("paper_eligible"), bool):
             raise ValueError("suite manifest paper eligibility is invalid")
-        if capturing and suite_manifest.get("paper_eligible") is True:
-            raise ValueError("capturing suite cannot be paper eligible")
+        if (
+            capturing
+            or classification["paper_eligible"] is False
+        ) and suite_manifest.get("paper_eligible") is True:
+            raise ValueError("classified suite cannot be paper eligible")
 
         plans = _dispatch_plans(frozen_dispatch)
         plan_by_experiment = {plan["experiment_id"]: plan for plan in plans}
@@ -583,11 +989,18 @@ class FormalEvidenceStore:
                 "suite_id": suite_manifest.get("suite_id"),
                 "experiment_id": experiment_id,
                 "condition_ids": [item["condition_id"] for item in conditions],
-                "formal": True,
-                "pilot_only": False,
-                "execution_scope": "formal_matrix",
+                "formal": classification["formal"],
+                "pilot_only": classification["pilot_only"],
+                "execution_scope": classification["execution_scope"],
                 "capturing": capturing,
-                "regression_only": capturing,
+                "regression_only": classification["regression_only"],
+                "ineligibility_reasons": classification[
+                    "ineligibility_reasons"
+                ],
+                "baseline_policy": classification.get(
+                    "baseline_policy",
+                    "required_by_formal_plan",
+                ),
                 "dispatch_plan_digest": _digest_json(
                     plan_by_experiment[experiment_id]
                 ),
@@ -603,14 +1016,18 @@ class FormalEvidenceStore:
                 "completed",
                 "completed_with_failures",
                 "blocked",
+                "incomplete",
                 "budget_exhausted",
                 "failed",
             }:
                 raise ValueError("experiment manifest status is invalid")
             if not isinstance(manifest.get("paper_eligible"), bool):
                 raise ValueError("experiment manifest paper eligibility is invalid")
-            if capturing and manifest.get("paper_eligible") is True:
-                raise ValueError("capturing experiment cannot be paper eligible")
+            if (
+                capturing
+                or classification["paper_eligible"] is False
+            ) and manifest.get("paper_eligible") is True:
+                raise ValueError("classified experiment cannot be paper eligible")
 
     def _current_generation_root(
         self,
@@ -721,6 +1138,19 @@ class FormalEvidenceStore:
         if not isinstance(dispatch_component, dict):
             return {}
         dispatch = dispatch_component.get("body")
+        suite_component = identity.get("suite")
+        suite_body = (
+            suite_component.get("body")
+            if isinstance(suite_component, dict)
+            else None
+        )
+        root_case_filter = (
+            suite_body.get("root_case_filter", {})
+            if isinstance(suite_body, dict)
+            else {}
+        )
+        if not isinstance(root_case_filter, dict):
+            raise ValueError("suite root_case_filter must be an object")
         result: dict[tuple[str, str], int] = {}
         for plan in _dispatch_plans(dispatch):
             experiment_id = str(plan["experiment_id"])
@@ -733,9 +1163,11 @@ class FormalEvidenceStore:
             for condition, selection in zip(conditions, selections, strict=True):
                 ordered = selection.get("ordered_case_ids", [])
                 if isinstance(ordered, list):
-                    result[(experiment_id, str(condition["condition_id"]))] = len(
-                        ordered
-                    )
+                    condition_id = str(condition["condition_id"])
+                    filtered = root_case_filter.get(condition_id, ordered)
+                    if not isinstance(filtered, list):
+                        raise ValueError("suite root_case_filter entry must be a list")
+                    result[(experiment_id, condition_id)] = len(filtered)
         return result
 
     def _validate_artifact_refs(
@@ -800,6 +1232,264 @@ class FormalEvidenceStore:
                 "files": entries,
             },
         )
+
+    def repair_stale_compatibility_manifest(self) -> dict[str, Any] | None:
+        """仅修复与 canonical evidence 逐字节一致的未索引兼容镜像。"""
+
+        try:
+            self._validate_evidence_manifest()
+            return None
+        except ValueError as error:
+            if str(error) != "evidence manifest does not exactly index stored files":
+                raise
+
+        manifest_path = self.output_root / "evidence_manifest.json"
+        manifest = _read_json(manifest_path)
+        entries = manifest.get("files")
+        if not isinstance(entries, list):
+            raise ValueError("evidence manifest file index is missing")
+        seen = {
+            str(entry["path"])
+            for entry in entries
+            if isinstance(entry, dict)
+            and isinstance(entry.get("path"), str)
+            and Path(str(entry["path"])).name != _LOCK_FILE_NAME
+            and not _is_noncurrent_generation_path(
+                self.output_root,
+                str(entry["path"]),
+            )
+        }
+        actual = {
+            path.relative_to(self.output_root).as_posix()
+            for path in self.output_root.rglob("*")
+            if path.is_file()
+            and path.name != "evidence_manifest.json"
+            and path.name != _LOCK_FILE_NAME
+            and not path.name.endswith(".tmp")
+            and not _is_noncurrent_generation_path(
+                self.output_root,
+                path.relative_to(self.output_root).as_posix(),
+            )
+        }
+        if seen.difference(actual):
+            raise ValueError("stale evidence manifest references missing files")
+        unindexed = sorted(actual.difference(seen))
+        if not unindexed:
+            raise ValueError("stale evidence manifest has no repairable files")
+
+        mirror_pairs = []
+        for relative_path in unindexed:
+            parts = Path(relative_path).parts
+            if not parts or parts[0] in {"experiments", "repairs"}:
+                raise ValueError(
+                    "unindexed evidence is not a compatibility projection"
+                )
+            compatibility_path = self.output_root / relative_path
+            canonical_path = self.output_root / "experiments" / relative_path
+            if (
+                not canonical_path.is_file()
+                or compatibility_path.read_bytes() != canonical_path.read_bytes()
+            ):
+                raise ValueError(
+                    "unindexed compatibility evidence differs from canonical evidence"
+                )
+            mirror_pairs.append(
+                {
+                    "compatibility": _file_evidence(
+                        self.output_root,
+                        compatibility_path,
+                    ),
+                    "canonical": _file_evidence(
+                        self.output_root,
+                        canonical_path,
+                    ),
+                }
+            )
+
+        original_bytes = manifest_path.read_bytes()
+        original_digest = _digest_bytes(original_bytes)
+        repair_suffix = original_digest.removeprefix("sha256:")[:16]
+        repair_root = self.output_root / "repairs"
+        original_copy = (
+            repair_root
+            / f"pre_resume_evidence_manifest_{repair_suffix}.json"
+        )
+        if original_copy.is_file():
+            if original_copy.read_bytes() != original_bytes:
+                raise ValueError("preserved evidence manifest identity mismatch")
+        else:
+            original_copy.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(manifest_path, original_copy)
+        repair_body = {
+            "schema_version": "tokenshare.paper_compatibility_manifest_repair.v1",
+            "repair_kind": "stale_compatibility_projection_index",
+            "original_manifest_ref": _file_evidence(
+                self.output_root,
+                original_copy,
+            ),
+            "unindexed_compatibility_file_count": len(mirror_pairs),
+            "verified_mirror_pairs": mirror_pairs,
+            "paper_eligible": False,
+        }
+        repair_path = (
+            repair_root
+            / f"compatibility_manifest_repair_{repair_suffix}.json"
+        )
+        if repair_path.is_file():
+            if _read_json(repair_path) != repair_body:
+                raise ValueError("compatibility manifest repair identity mismatch")
+        else:
+            _atomic_write_json(repair_path, repair_body)
+        self._refresh_evidence_manifest()
+        self._validate_evidence_manifest()
+        return repair_body
+
+    def archive_uncheckpointed_adapter_runs(self) -> dict[str, Any] | None:
+        """归档设施异常留下、尚未进入 canonical checkpoint 的 adapter 现场。"""
+
+        suite = _read_json(self.output_root / "suite_manifest.json")
+        identity = suite.get("suite_identity")
+        dispatch_component = (
+            identity.get("dispatch") if isinstance(identity, dict) else None
+        )
+        dispatch = (
+            dispatch_component.get("body")
+            if isinstance(dispatch_component, dict)
+            else None
+        )
+        if not isinstance(dispatch, dict):
+            raise ValueError("suite identity dispatch evidence is missing")
+
+        orphan_roots: list[Path] = []
+        for experiment_id, conditions in _conditions_by_experiment(dispatch).items():
+            for condition in conditions:
+                condition_id = str(condition["condition_id"])
+                repeat_id = _safe_id(str(condition.get("repeat_id", 0)), "repeat_id")
+                compatibility_root = (
+                    self.output_root
+                    / experiment_id
+                    / "runs"
+                    / condition_id
+                )
+                canonical_current = (
+                    self.output_root
+                    / "experiments"
+                    / experiment_id
+                    / "runs"
+                    / condition_id
+                    / repeat_id
+                    / "CURRENT.json"
+                )
+                if (
+                    compatibility_root.is_dir()
+                    and not canonical_current.is_file()
+                    and any(path.is_file() for path in compatibility_root.rglob("*"))
+                ):
+                    orphan_roots.append(compatibility_root)
+        if not orphan_roots:
+            return None
+
+        manifest_path = self.output_root / "evidence_manifest.json"
+        manifest = _read_json(manifest_path)
+        entries = manifest.get("files")
+        if not isinstance(entries, list):
+            raise ValueError("evidence manifest file index is missing")
+        seen = {
+            str(entry["path"])
+            for entry in entries
+            if isinstance(entry, dict)
+            and isinstance(entry.get("path"), str)
+            and Path(str(entry["path"])).name != _LOCK_FILE_NAME
+            and not _is_noncurrent_generation_path(
+                self.output_root,
+                str(entry["path"]),
+            )
+        }
+        actual = {
+            path.relative_to(self.output_root).as_posix()
+            for path in self.output_root.rglob("*")
+            if path.is_file()
+            and path.name != "evidence_manifest.json"
+            and path.name != _LOCK_FILE_NAME
+            and not path.name.endswith(".tmp")
+            and not _is_noncurrent_generation_path(
+                self.output_root,
+                path.relative_to(self.output_root).as_posix(),
+            )
+        }
+        if seen.difference(actual):
+            raise ValueError("stale evidence manifest references missing files")
+        orphan_paths = {
+            path.relative_to(self.output_root).as_posix()
+            for root in orphan_roots
+            for path in root.rglob("*")
+            if path.is_file() and not path.name.endswith(".tmp")
+        }
+        if actual.difference(seen) != orphan_paths:
+            raise ValueError(
+                "unindexed evidence is not exactly uncheckpointed adapter evidence"
+            )
+
+        inventory = [
+            {
+                "source_path": relative_path,
+                "content_sha256": _digest_bytes(
+                    (self.output_root / relative_path).read_bytes()
+                ),
+                "size": (self.output_root / relative_path).stat().st_size,
+            }
+            for relative_path in sorted(orphan_paths)
+        ]
+        repair_suffix = _digest_json(inventory).removeprefix("sha256:")[:16]
+        repair_id = f"facility_orphan_{repair_suffix}"
+        repair_root = (
+            self.output_root / "repairs" / "facility_orphans" / repair_id
+        )
+        if repair_root.exists():
+            raise ValueError("facility orphan archive identity already exists")
+        original_copy = repair_root / "pre_archive_evidence_manifest.json"
+        original_copy.parent.mkdir(parents=True, exist_ok=False)
+        shutil.copyfile(manifest_path, original_copy)
+
+        archived_files = []
+        for orphan_root in sorted(orphan_roots):
+            source_relative = orphan_root.relative_to(self.output_root)
+            destination = repair_root / "original" / source_relative
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(orphan_root), str(destination))
+            for archived_path in sorted(destination.rglob("*")):
+                if not archived_path.is_file() or archived_path.name.endswith(".tmp"):
+                    continue
+                original_relative = (
+                    source_relative / archived_path.relative_to(destination)
+                ).as_posix()
+                archived_files.append(
+                    {
+                        "source_path": original_relative,
+                        "archived_ref": _file_evidence(
+                            self.output_root,
+                            archived_path,
+                        ),
+                    }
+                )
+
+        repair_body = {
+            "schema_version": "tokenshare.paper_facility_orphan_archive.v1",
+            "repair_id": repair_id,
+            "repair_kind": "uncheckpointed_adapter_evidence_archive",
+            "original_manifest_ref": _file_evidence(
+                self.output_root,
+                original_copy,
+            ),
+            "archived_condition_count": len(orphan_roots),
+            "archived_files": archived_files,
+            "paper_eligible": False,
+        }
+        repair_body["repair_digest"] = _digest_json(repair_body)
+        _atomic_write_json(repair_root / "repair.json", repair_body)
+        self._refresh_evidence_manifest()
+        self._validate_evidence_manifest()
+        return repair_body
 
     def _validate_evidence_manifest(self) -> None:
         required = (
@@ -963,6 +1653,36 @@ class FormalEvidenceStore:
                 run_root=run_root,
             )
         return tasks
+
+
+def _frozen_identity_body(
+    suite_identity: Mapping[str, Any],
+    name: str,
+) -> dict[str, Any]:
+    component = suite_identity.get(name)
+    if not isinstance(component, Mapping) or not isinstance(
+        component.get("body"),
+        Mapping,
+    ):
+        raise ValueError(f"source suite identity is missing: {name}")
+    body = dict(component["body"])
+    if component.get("digest") != _digest_json(body):
+        raise ValueError(f"source suite identity digest mismatch: {name}")
+    return body
+
+
+def _generation_record_ref(
+    suite_root: Path,
+    generation_root: Path,
+    relative_path: str,
+    record: Mapping[str, Any],
+) -> dict[str, Any]:
+    return {
+        "path": (generation_root / relative_path).relative_to(
+            suite_root
+        ).as_posix(),
+        "record_hash": _digest_json(record),
+    }
 
 
 def _conditions_by_experiment(dispatch: Any) -> dict[str, list[dict[str, Any]]]:
@@ -1139,6 +1859,159 @@ def _merge_records(
 def _is_success(task: Mapping[str, Any]) -> bool:
     status = task.get("root_status", task.get("status"))
     return isinstance(status, str) and status.lower() in _SUCCESS_STATUSES
+
+
+def _shared_source_usage(
+    *,
+    task: Mapping[str, Any],
+    attempts: Sequence[Mapping[str, Any]],
+) -> dict[str, Any]:
+    provider_attempts = [
+        item
+        for item in attempts
+        if (
+            isinstance(item.get("provider_attempt_count"), int)
+            and not isinstance(item.get("provider_attempt_count"), bool)
+            and int(item["provider_attempt_count"]) > 0
+        )
+        or isinstance(item.get("model_execution_record_ref"), Mapping)
+    ]
+    expected_count = task.get("provider_attempt_count")
+    count_complete = (
+        isinstance(expected_count, int)
+        and not isinstance(expected_count, bool)
+        and expected_count > 0
+        and expected_count == len(provider_attempts)
+    )
+    complete_attempts: list[Mapping[str, Any]] = []
+    currencies: set[str] = set()
+    cost_statuses: set[str] = set()
+    for attempt in provider_attempts:
+        token_values = [
+            attempt.get(field_name)
+            for field_name in (
+                "prompt_tokens",
+                "completion_tokens",
+                "total_tokens",
+            )
+        ]
+        cost_value = attempt.get("cost_estimate")
+        currency = attempt.get("cost_estimate_currency")
+        cost_status = attempt.get("cost_estimate_status")
+        if (
+            any(
+                isinstance(value, bool)
+                or not isinstance(value, int)
+                or value < 0
+                for value in token_values
+            )
+            or isinstance(cost_value, bool)
+            or not isinstance(cost_value, (int, float))
+            or float(cost_value) < 0
+            or not isinstance(currency, str)
+            or not currency
+            or cost_status != "estimated"
+            or attempt.get("usage_missing") is True
+        ):
+            continue
+        complete_attempts.append(attempt)
+        currencies.add(currency)
+        cost_statuses.add(cost_status)
+    usage_complete = (
+        count_complete
+        and len(complete_attempts) == len(provider_attempts)
+        and len(currencies) == 1
+        and cost_statuses == {"estimated"}
+    )
+    missing_count = max(
+        int(expected_count) if isinstance(expected_count, int) else 0,
+        len(provider_attempts),
+    ) - len(complete_attempts)
+    return {
+        "provider_attempt_count": len(provider_attempts),
+        "expected_provider_attempt_count": (
+            int(expected_count)
+            if isinstance(expected_count, int) and not isinstance(expected_count, bool)
+            else None
+        ),
+        "prompt_tokens": (
+            sum(int(item["prompt_tokens"]) for item in complete_attempts)
+            if usage_complete
+            else None
+        ),
+        "completion_tokens": (
+            sum(int(item["completion_tokens"]) for item in complete_attempts)
+            if usage_complete
+            else None
+        ),
+        "total_tokens": (
+            sum(int(item["total_tokens"]) for item in complete_attempts)
+            if usage_complete
+            else None
+        ),
+        "cost_estimate": (
+            round(
+                sum(float(item["cost_estimate"]) for item in complete_attempts),
+                12,
+            )
+            if usage_complete
+            else None
+        ),
+        "usage_complete": usage_complete,
+        "usage_missing_provider_attempt_count": missing_count,
+        "cost_estimate_status": "estimated" if usage_complete else "usage_missing",
+        "cost_estimate_currency": next(iter(currencies)) if usage_complete else None,
+    }
+
+
+def _validate_execution_version_identity(value: Any) -> None:
+    if not isinstance(value, Mapping):
+        raise SharedEvidenceError(
+            "shared source execution version identity is missing",
+            evidence_integrity="missing",
+        )
+    required_strings = (
+        "schema_version",
+        "plugin_version",
+        "parser_version",
+        "verifier_version",
+        "executor_version",
+        "prompt_version",
+        "runtime_generation_schema_version",
+    )
+    if value.get("schema_version") != "tokenshare.paper_execution_version_identity.v1":
+        raise SharedEvidenceError(
+            "shared source execution version identity schema is invalid",
+            evidence_integrity="invalid",
+        )
+    for field_name in required_strings:
+        field_value = value.get(field_name)
+        if not isinstance(field_value, str) or not field_value:
+            raise SharedEvidenceError(
+                f"shared source execution version identity is missing: {field_name}",
+                evidence_integrity="missing",
+            )
+    for field_name in (
+        "split_profile_digest",
+        "runtime_generation_identity_digest",
+    ):
+        field_value = value.get(field_name)
+        if (
+            not isinstance(field_value, str)
+            or not re.fullmatch(r"sha256:[0-9a-f]{64}", field_value)
+        ):
+            raise SharedEvidenceError(
+                f"shared source execution version digest is invalid: {field_name}",
+                evidence_integrity="invalid",
+            )
+
+
+def _is_terminal_checkpoint(task: Mapping[str, Any]) -> bool:
+    status = task.get("root_status", task.get("status"))
+    return (
+        isinstance(status, str)
+        and status.lower() in _TERMINAL_CHECKPOINT_STATUSES
+    )
 
 
 def _derived_run_status(

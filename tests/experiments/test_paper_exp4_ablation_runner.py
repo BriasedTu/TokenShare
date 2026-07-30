@@ -120,37 +120,36 @@ def test_exp4_expands_frozen_five_mode_matrix_with_glm_baseline() -> None:
 
 def test_exp4_accepts_complete_baseline_request_policy_and_normal_profile() -> None:
     binding = _baseline_binding()
-    binding["reasoning_profile_id"] = "default"
+    binding["reasoning_profile_id"] = "high"
     binding["request_controls"] = _complete_request_controls()
 
     conditions = expand_exp4_conditions(_context(binding=binding))
 
-    assert {condition.reasoning_profile_id for condition in conditions} == {"default"}
+    assert {condition.reasoning_profile_id for condition in conditions} == {"high"}
 
 
 def test_exp4_accepts_controls_resolved_from_actual_baseline_provider_config() -> None:
     repo_root = Path(__file__).resolve().parents[2]
     config = json.loads(
-        (repo_root / "benchmarks/paper/exp1_baseline_provider_config.v1.json")
+        (repo_root / "benchmarks/paper/exp1_baseline_provider_config.v3.json")
         .read_text(encoding="utf-8")
     )
     entry = next(
         item
         for item in config["entries"]
-        if item["entry_id"] == "glm_5_2_exp1_baseline"
+        if item["entry_id"] == "deepseek_v4_pro_exp1_baseline"
     )
     resolved_controls = {
         **config["defaults"],
         **entry["request_overrides"],
     }
     assert resolved_controls == {
-        "max_tokens": 1024,
-        "timeout_seconds": 100,
+        "max_tokens": 300_000,
+        "timeout_seconds": 600,
         "max_provider_attempts": 1,
-        "temperature": 0.0,
-        "top_p": 1.0,
         "stream": False,
-        "enable_thinking": False,
+        "thinking": {"type": "enabled"},
+        "reasoning_effort": "high",
     }
     binding = _baseline_binding()
     binding["request_controls"] = resolved_controls
@@ -186,7 +185,7 @@ def test_exp4_rejects_request_policy_drift_before_callback(
         raise AssertionError("request policy drift must not reach callback")
 
     binding = _baseline_binding()
-    binding["reasoning_profile_id"] = "default"
+    binding["reasoning_profile_id"] = "high"
     binding["request_controls"] = _complete_request_controls()
     request_limits = _complete_request_controls()
     request_limits[field_name] = drifted_value
@@ -394,7 +393,7 @@ def test_exp4_rejects_condition_model_drift_before_execution() -> None:
     condition = expand_exp4_conditions(context)[0]
     drifted = replace(condition, model_entry_id="qwen_unapproved")
 
-    with pytest.raises(ValueError, match="GLM-5.2 baseline model identity"):
+    with pytest.raises(ValueError, match="DeepSeek-V4-Pro baseline model identity"):
         validate_exp4_condition(context, drifted)
 
 
@@ -946,12 +945,12 @@ def _evidence_record(
         "ordered_case_ids": list(resolved_case_ids),
         "catalog_digest": CATALOG_DIGEST,
         "catalog_version": "v1",
-        "provider_config_id": "exp1_baseline_siliconflow",
-        "selected_entry_id": "glm_5_2_exp1_baseline",
-        "model_entry_id": "glm_5_2_exp1_baseline",
-        "provider_family": "siliconflow",
-        "provider_model_id": "zai-org/GLM-5.2",
-        "reasoning_profile_id": "default",
+        "provider_config_id": "exp1_baseline_deepseek",
+        "selected_entry_id": "deepseek_v4_pro_exp1_baseline",
+        "model_entry_id": "deepseek_v4_pro_exp1_baseline",
+        "provider_family": "deepseek",
+        "provider_model_id": "deepseek-v4-pro",
+        "reasoning_profile_id": "high",
         "source_provider_config_digest": SOURCE_CONFIG_DIGEST,
         "model_endpoint_identity_digest": ENDPOINT_DIGEST,
         "request_controls": _complete_request_controls(),
@@ -1089,12 +1088,12 @@ def _context(
 
 def _baseline_binding() -> dict[str, Any]:
     return {
-        "provider_config_id": "exp1_baseline_siliconflow",
-        "selected_entry_id": "glm_5_2_exp1_baseline",
-        "model_entry_id": "glm_5_2_exp1_baseline",
-        "provider_family": "siliconflow",
-        "provider_model_id": "zai-org/GLM-5.2",
-        "reasoning_profile_id": "default",
+        "provider_config_id": "exp1_baseline_deepseek",
+        "selected_entry_id": "deepseek_v4_pro_exp1_baseline",
+        "model_entry_id": "deepseek_v4_pro_exp1_baseline",
+        "provider_family": "deepseek",
+        "provider_model_id": "deepseek-v4-pro",
+        "reasoning_profile_id": "high",
         "source_provider_config_digest": SOURCE_CONFIG_DIGEST,
         "model_endpoint_identity_digest": ENDPOINT_DIGEST,
         "request_controls": _complete_request_controls(),
@@ -1103,13 +1102,12 @@ def _baseline_binding() -> dict[str, Any]:
 
 def _complete_request_controls() -> dict[str, Any]:
     return {
-        "max_tokens": 1024,
-        "timeout_seconds": 100,
+        "max_tokens": 300_000,
+        "timeout_seconds": 600,
         "max_provider_attempts": 1,
-        "temperature": 0.0,
-        "top_p": 1.0,
         "stream": False,
-        "enable_thinking": False,
+        "thinking": {"type": "enabled"},
+        "reasoning_effort": "high",
     }
 
 

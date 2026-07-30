@@ -11,7 +11,7 @@ from tokenshare.core.models import JsonObject
 
 
 CONFIG_SCHEMA_VERSION = "phase7.ai_api_executor_config.v1"
-SUPPORTED_PROVIDER_FAMILIES = frozenset({"siliconflow", "openai"})
+SUPPORTED_PROVIDER_FAMILIES = frozenset({"siliconflow", "openai", "deepseek"})
 
 
 @dataclass(frozen=True)
@@ -109,9 +109,7 @@ def _load_entry(body: JsonObject) -> AIAPIProviderEntry:
     if "api_key" in body:
         raise ValueError("api key value must not be stored in ai api config")
     pricing = dict(body.get("pricing", {}))
-    for field in ("currency", "input_per_million_tokens", "output_per_million_tokens"):
-        if field not in pricing:
-            raise ValueError(f"missing pricing field: {field}")
+    _validate_pricing(pricing)
     enabled = _required_bool(body, "enabled")
     supports_json_mode = _required_bool(body, "supports_json_mode")
     supports_streaming = _optional_bool(body, "supports_streaming", default=False)
@@ -128,6 +126,37 @@ def _load_entry(body: JsonObject) -> AIAPIProviderEntry:
         pricing=pricing,
         tags=[str(tag) for tag in body.get("tags", [])],
     )
+
+
+def _validate_pricing(pricing: JsonObject) -> None:
+    if not isinstance(pricing.get("currency"), str) or not str(
+        pricing["currency"]
+    ).strip():
+        raise ValueError("missing pricing field: currency")
+    split_input_fields = (
+        "cached_input_per_million_tokens",
+        "uncached_input_per_million_tokens",
+    )
+    has_legacy_input = "input_per_million_tokens" in pricing
+    has_any_split_input = any(field in pricing for field in split_input_fields)
+    if has_legacy_input and has_any_split_input:
+        raise ValueError("pricing must use either legacy or cached/uncached input rates")
+    if not has_legacy_input and not all(field in pricing for field in split_input_fields):
+        raise ValueError(
+            "pricing requires input_per_million_tokens or both cached/uncached input rates"
+        )
+    numeric_fields = ["output_per_million_tokens"]
+    numeric_fields.extend(
+        ["input_per_million_tokens"]
+        if has_legacy_input
+        else list(split_input_fields)
+    )
+    for field in numeric_fields:
+        value = pricing.get(field)
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ValueError(f"pricing field must be numeric: {field}")
+        if float(value) < 0:
+            raise ValueError(f"pricing field must be non-negative: {field}")
 
 
 def _required_bool(body: JsonObject, field: str) -> bool:

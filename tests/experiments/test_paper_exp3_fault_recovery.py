@@ -67,12 +67,12 @@ def test_exp3_expands_rate_fault_and_worker_death_root_run_counts() -> None:
 
     assert manifest["experiment_id"] == EXP3_EXPERIMENT_ID
     assert manifest["provider_calls_made"] == 0
-    assert manifest["condition_count"] == 182
+    assert manifest["condition_count"] == 162
     assert manifest["root_run_counts"] == {
-        "rate_fault_factorization": 350,
-        "rate_fault_lean_proof": 120,
+        "rate_fault_factorization": 300,
+        "rate_fault_lean_proof": 90,
         "worker_death": 72,
-        "total": 542,
+        "total": 462,
     }
     assert manifest["rate_fault"]["repeats"] == [0, 1]
     assert manifest["worker_death"]["repeats"] == [0, 1]
@@ -84,7 +84,6 @@ def test_exp3_expands_rate_fault_and_worker_death_root_run_counts() -> None:
         "executor_error",
     ]
     assert manifest["rate_fault"]["factorization_rates_percent"] == [
-        0,
         1,
         5,
         10,
@@ -92,7 +91,7 @@ def test_exp3_expands_rate_fault_and_worker_death_root_run_counts() -> None:
         50,
         100,
     ]
-    assert manifest["rate_fault"]["lean_rates_percent"] == [0, 10, 50, 100]
+    assert manifest["rate_fault"]["lean_rates_percent"] == [10, 50, 100]
     assert manifest["worker_death"]["worker_count"] == 10
     assert manifest["worker_death"]["dead_worker_count_targets"] == [1, 3]
     assert manifest["worker_death"]["kill_progress_targets_percent"] == [25, 50, 75]
@@ -100,11 +99,11 @@ def test_exp3_expands_rate_fault_and_worker_death_root_run_counts() -> None:
         BASELINE_MODEL_ENTRY_ID
     }
     assert {condition.provider_model_id for condition in conditions} == {
-        "zai-org/GLM-5.2"
+        "deepseek-v4-pro"
     }
     assert {condition.catalog_digest for condition in conditions} == {CATALOG_DIGEST}
     assert conditions[0].condition_id == (
-        "exp3_rate_fault_factorization__false_positive__r0__rep0"
+        "exp3_rate_fault_factorization__false_positive__r1__rep0"
     )
     assert conditions[0].seed == _expected_condition_seed(conditions[0].condition_id)
     assert {condition.repeat_id for condition in conditions} == {0, 1}
@@ -122,12 +121,12 @@ def test_exp3_v2_matrix_freezes_the_preregistered_two_repeat_root_counts() -> No
         catalog=context.catalog,
     )
 
-    assert manifest["condition_count"] == 182
+    assert manifest["condition_count"] == 162
     assert manifest["root_run_counts"] == {
-        "rate_fault_factorization": 35_000,
-        "rate_fault_lean_proof": 120,
+        "rate_fault_factorization": 30_000,
+        "rate_fault_lean_proof": 90,
         "worker_death": 6_036,
-        "total": 41_156,
+        "total": 36_126,
     }
 
 
@@ -159,7 +158,7 @@ def test_exp3_freezes_task_slices_and_fault_target_manifest_without_resampling()
         for condition_id, selection in by_condition_id.items()
         if condition_id.startswith("exp3_rate_fault_lean__all_topics__")
     }
-    assert len(lean_rate_selections) == 40
+    assert len(lean_rate_selections) == 30
     assert {selection.selection_digest for selection in lean_rate_selections.values()} == {
         next(iter(lean_rate_selections.values())).selection_digest
     }
@@ -995,8 +994,8 @@ def test_exp3_accepts_integration_prepared_baseline_endpoint_view() -> None:
 
     conditions = module.expand_conditions(context)
 
-    assert len(conditions) == 182
-    assert {condition.reasoning_profile_id for condition in conditions} == {"default"}
+    assert len(conditions) == 162
+    assert {condition.reasoning_profile_id for condition in conditions} == {"high"}
     assert {
         condition.source_provider_config_digest for condition in conditions
     } == {SOURCE_CONFIG_DIGEST}
@@ -1064,9 +1063,11 @@ def test_exp3_run_condition_passes_frozen_execution_manifest_to_callback() -> No
     assert manifest["selection_digest"] == selections[index].selection_digest
     assert manifest["fault_target_manifest"]["fault_rate_percent"] == 50
     assert manifest["fault_target_manifest"]["selected_target_ai_unit_ids"]
-    assert manifest["matched_baseline"]["condition_id"].endswith(
-        "__false_positive__r0__rep0"
+    assert manifest["baseline_policy"] == "shared_exp1_reference"
+    assert manifest["matched_baseline"]["source_kind"] == (
+        "shared_exp1_reference"
     )
+    assert manifest["matched_baseline"]["additional_execution_required"] is False
 
 
 def test_exp3_worker_death_manifest_can_target_three_processes_on_two_units() -> None:
@@ -1135,7 +1136,7 @@ def test_exp3_worker_death_manifest_can_target_three_processes_on_two_units() ->
     )
 
 
-def test_exp3_plan_freezes_matched_baselines_and_comparison_seeds() -> None:
+def test_exp3_plan_freezes_shared_exp1_references_without_supporting_execution() -> None:
     module = Experiment3FaultRecoveryModule()
     context = _integration_context()
     conditions = module.expand_conditions(context)
@@ -1147,12 +1148,12 @@ def test_exp3_plan_freezes_matched_baselines_and_comparison_seeds() -> None:
     assert set(baseline_by_condition) == {
         condition.condition_id for condition in conditions
     }
-    assert len(plan["matched_baseline_manifest"]) == 16
+    assert plan["baseline_policy"] == "shared_exp1_reference"
     assert plan["matched_baseline_root_run_counts"] == {
-        "reused_rate_fault_zero": 16,
-        "dedicated_worker_death": 12,
-        "additional": 12,
-        "budgeted_total": 554,
+        "reused_rate_fault_zero": 0,
+        "dedicated_worker_death": 0,
+        "additional": 0,
+        "budgeted_total": 462,
     }
     rate_group = [
         condition
@@ -1161,9 +1162,39 @@ def test_exp3_plan_freezes_matched_baselines_and_comparison_seeds() -> None:
         and condition.fault_type != "worker_death"
     ]
     assert len({condition.seed for condition in rate_group}) == 1
+    assert len({condition.seed for condition in rate_group}) == 1
+    rate_references = {
+        condition.condition_id: next(
+            row
+            for row in plan["matched_baseline_manifest"]
+            if row["reference_policy_id"]
+            == baseline_by_condition[condition.condition_id]
+        )
+        for condition in rate_group
+    }
+    selected_case_ids = selections[
+        conditions.index(rate_group[0])
+    ].ordered_case_ids
+    reference_ids_by_case = {
+        case_id: {
+            row["source_reference_ids_by_case"][case_id]
+            for row in rate_references.values()
+        }
+        for case_id in selected_case_ids
+    }
+    assert all(len(reference_ids) == 1 for reference_ids in reference_ids_by_case.values())
     assert {
-        baseline_by_condition[condition.condition_id] for condition in rate_group
-    } == {"exp3_rate_fault_factorization__false_positive__r0__rep0"}
+        row["source_experiment_id"] for row in rate_references.values()
+    } == {"exp1_real_ai_feasibility"}
+    assert {row["source_repeat_id"] for row in rate_references.values()} == {0}
+    assert {row["source_seed"] for row in rate_references.values()} == {1}
+    assert all(
+        row["additional_execution_required"] is False
+        and row["provider_calls_made"] == 0
+        and row["total_tokens"] == 0
+        and row["cost_estimate"] == 0.0
+        for row in rate_references.values()
+    )
     worker_group = [
         condition
         for condition in conditions
@@ -1174,9 +1205,16 @@ def test_exp3_plan_freezes_matched_baselines_and_comparison_seeds() -> None:
     assert len(
         {baseline_by_condition[condition.condition_id] for condition in worker_group}
     ) == 1
-    assert next(
-        baseline_by_condition[condition.condition_id] for condition in worker_group
-    ).startswith("exp3_matched_baseline_worker_death_factorization__easy")
+    assert all(
+        next(
+            row
+            for row in plan["matched_baseline_manifest"]
+            if row["reference_policy_id"]
+            == baseline_by_condition[condition.condition_id]
+        )["source_kind"]
+        == "shared_exp1_reference"
+        for condition in worker_group
+    )
 
 
 def test_exp3_summary_accepts_standard_paper_attempt_result_shape() -> None:
@@ -1447,11 +1485,11 @@ def test_exp3_summary_binds_baseline_and_aggregate_usage_evidence() -> None:
         "seed": 330001,
         "worker_count": 10,
         "catalog_digest": CATALOG_DIGEST,
-        "provider_config_id": "exp1_baseline_siliconflow",
+        "provider_config_id": "exp1_baseline_deepseek",
         "model_entry_id": BASELINE_MODEL_ENTRY_ID,
-        "provider_family": "siliconflow",
-        "provider_model_id": "zai-org/GLM-5.2",
-        "reasoning_profile_id": "default",
+        "provider_family": "deepseek",
+        "provider_model_id": "deepseek-v4-pro",
+        "reasoning_profile_id": "high",
         "source_provider_config_digest": SOURCE_CONFIG_DIGEST,
         "model_endpoint_identity_digest": ENDPOINT_DIGEST,
         "request_limits": dict(_context().request_limits),
@@ -1637,7 +1675,7 @@ def test_exp3_fault_adapter_requires_persisted_provenance_and_feeds_summary(
         artifact_type="AIProviderCallProvenance",
         schema_id="phase7.ai_provider_call_provenance",
         created_at="2026-07-19T00:00:00Z",
-        body={"provider_family": "siliconflow"},
+        body={"provider_family": "deepseek"},
     )
     attempt = PaperAttemptResult(
         condition_id="fault_primitive_integration",
@@ -1649,8 +1687,8 @@ def test_exp3_fault_adapter_requires_persisted_provenance_and_feeds_summary(
         worker_id="worker_primitive_integration",
         provider_attempt_index=0,
         attempt_status=PaperAttemptStatus.SUCCEEDED,
-        provider="siliconflow",
-        model="zai-org/GLM-5.2",
+        provider="deepseek",
+        model="deepseek-v4-pro",
         entry_id=BASELINE_MODEL_ENTRY_ID,
         request_ref={"artifact_id": "request_primitive_integration"},
         raw_output_ref=raw_ref.to_dict(),
@@ -1846,32 +1884,30 @@ def _context(catalog: dict[str, Any] | None = None) -> PaperExecutionContext:
         context_id="exp3_test_context",
         catalog=catalog or _catalog(),
         approved_endpoint_binding={
-            "provider_config_id": "exp1_baseline_siliconflow",
+            "provider_config_id": "exp1_baseline_deepseek",
             "selected_entry_id": BASELINE_MODEL_ENTRY_ID,
             "model_entry_id": BASELINE_MODEL_ENTRY_ID,
-            "provider_family": "siliconflow",
-            "provider_model_id": "zai-org/GLM-5.2",
-            "reasoning_profile_id": "default",
+            "provider_family": "deepseek",
+            "provider_model_id": "deepseek-v4-pro",
+            "reasoning_profile_id": "high",
             "source_provider_config_digest": SOURCE_CONFIG_DIGEST,
             "model_endpoint_identity_digest": ENDPOINT_DIGEST,
             "request_controls": {
-                "max_tokens": 1024,
-                "timeout_seconds": 100,
+                "max_tokens": 300_000,
+                "timeout_seconds": 600,
                 "max_provider_attempts": 1,
-                "temperature": 0.0,
-                "top_p": 1.0,
                 "stream": False,
-                "enable_thinking": False,
+                "thinking": {"type": "enabled"},
+                "reasoning_effort": "high",
             },
         },
         request_limits={
-            "max_tokens": 1024,
-            "timeout_seconds": 100,
+            "max_tokens": 300_000,
+            "timeout_seconds": 600,
             "max_provider_attempts": 1,
-            "temperature": 0.0,
-            "top_p": 1.0,
             "stream": False,
-            "enable_thinking": False,
+            "thinking": {"type": "enabled"},
+            "reasoning_effort": "high",
         },
         hard_limits={"max_total_provider_attempts": 0},
         output_root="outputs/experiments/exp3_test",
@@ -1883,24 +1919,23 @@ def _context(catalog: dict[str, Any] | None = None) -> PaperExecutionContext:
 
 def _integration_context() -> PaperExecutionContext:
     request_controls = {
-        "max_tokens": 1024,
-        "timeout_seconds": 100,
+        "max_tokens": 300_000,
+        "timeout_seconds": 600,
         "max_provider_attempts": 1,
-        "temperature": 0.0,
-        "top_p": 1.0,
         "stream": False,
-        "enable_thinking": False,
+        "thinking": {"type": "enabled"},
+        "reasoning_effort": "high",
     }
     context = _context()
     return replace(
         context,
         approved_endpoint_binding={
-            "provider_config_id": "exp1_baseline_siliconflow",
+            "provider_config_id": "exp1_baseline_deepseek",
             "selected_entry_id": BASELINE_MODEL_ENTRY_ID,
             "model_entry_id": BASELINE_MODEL_ENTRY_ID,
-            "provider_family": "siliconflow",
-            "provider_model_id": "zai-org/GLM-5.2",
-            "reasoning_profile_id": "default",
+            "provider_family": "deepseek",
+            "provider_model_id": "deepseek-v4-pro",
+            "reasoning_profile_id": "high",
             "source_provider_config_digest": SOURCE_CONFIG_DIGEST,
             "model_endpoint_identity_digest": ENDPOINT_DIGEST,
             "request_controls": request_controls,
@@ -1926,8 +1961,8 @@ def _standard_attempt(
         worker_id=f"worker_{condition_id}",
         provider_attempt_index=0,
         attempt_status=PaperAttemptStatus.SUCCEEDED,
-        provider="siliconflow",
-        model="zai-org/GLM-5.2",
+        provider="deepseek",
+        model="deepseek-v4-pro",
         entry_id=BASELINE_MODEL_ENTRY_ID,
         request_ref=None,
         raw_output_ref=None,
@@ -2071,11 +2106,11 @@ def _comparison_evidence(
         "seed": 330001,
         "worker_count": 10,
         "catalog_digest": CATALOG_DIGEST,
-        "provider_config_id": "exp1_baseline_siliconflow",
+        "provider_config_id": "exp1_baseline_deepseek",
         "model_entry_id": BASELINE_MODEL_ENTRY_ID,
-        "provider_family": "siliconflow",
-        "provider_model_id": "zai-org/GLM-5.2",
-        "reasoning_profile_id": "default",
+        "provider_family": "deepseek",
+        "provider_model_id": "deepseek-v4-pro",
+        "reasoning_profile_id": "high",
         "source_provider_config_digest": SOURCE_CONFIG_DIGEST,
         "model_endpoint_identity_digest": ENDPOINT_DIGEST,
         "request_limits": dict(_context().request_limits),
@@ -2166,10 +2201,10 @@ def _rate_fault_run(
                 "condition_id": condition_id,
                 "repeat_id": 0,
                 "entry_id": BASELINE_MODEL_ENTRY_ID,
-                "provider_config_id": "exp1_baseline_siliconflow",
-                "provider": "siliconflow",
-                "model": "zai-org/GLM-5.2",
-                "reasoning_profile_id": "default",
+                "provider_config_id": "exp1_baseline_deepseek",
+                "provider": "deepseek",
+                "model": "deepseek-v4-pro",
+                "reasoning_profile_id": "high",
                 "source_provider_config_digest": SOURCE_CONFIG_DIGEST,
                 "model_endpoint_identity_digest": ENDPOINT_DIGEST,
                 "request_limits": dict(_context().request_limits),
@@ -2186,10 +2221,10 @@ def _rate_fault_run(
                 "condition_id": matched_baseline_condition_id,
                 "repeat_id": 0,
                 "entry_id": BASELINE_MODEL_ENTRY_ID,
-                "provider_config_id": "exp1_baseline_siliconflow",
-                "provider": "siliconflow",
-                "model": "zai-org/GLM-5.2",
-                "reasoning_profile_id": "default",
+                "provider_config_id": "exp1_baseline_deepseek",
+                "provider": "deepseek",
+                "model": "deepseek-v4-pro",
+                "reasoning_profile_id": "high",
                 "source_provider_config_digest": SOURCE_CONFIG_DIGEST,
                 "model_endpoint_identity_digest": ENDPOINT_DIGEST,
                 "request_limits": dict(_context().request_limits),
@@ -2331,10 +2366,10 @@ def _worker_death_run(
                 "condition_id": condition_id,
                 "repeat_id": 0,
                 "entry_id": BASELINE_MODEL_ENTRY_ID,
-                "provider_config_id": "exp1_baseline_siliconflow",
-                "provider": "siliconflow",
-                "model": "zai-org/GLM-5.2",
-                "reasoning_profile_id": "default",
+                "provider_config_id": "exp1_baseline_deepseek",
+                "provider": "deepseek",
+                "model": "deepseek-v4-pro",
+                "reasoning_profile_id": "high",
                 "source_provider_config_digest": SOURCE_CONFIG_DIGEST,
                 "model_endpoint_identity_digest": ENDPOINT_DIGEST,
                 "request_limits": dict(_context().request_limits),
@@ -2351,10 +2386,10 @@ def _worker_death_run(
                 "condition_id": matched_baseline_condition_id,
                 "repeat_id": 0,
                 "entry_id": BASELINE_MODEL_ENTRY_ID,
-                "provider_config_id": "exp1_baseline_siliconflow",
-                "provider": "siliconflow",
-                "model": "zai-org/GLM-5.2",
-                "reasoning_profile_id": "default",
+                "provider_config_id": "exp1_baseline_deepseek",
+                "provider": "deepseek",
+                "model": "deepseek-v4-pro",
+                "reasoning_profile_id": "high",
                 "source_provider_config_digest": SOURCE_CONFIG_DIGEST,
                 "model_endpoint_identity_digest": ENDPOINT_DIGEST,
                 "request_limits": dict(_context().request_limits),

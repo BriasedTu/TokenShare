@@ -757,6 +757,21 @@ def test_lean_paper_adapter_rejects_custom_transport_marked_real(tmp_path) -> No
         )
 
 
+def test_lean_real_transport_guard_accepts_provider_router_wrapper() -> None:
+    real_transport = UrlLibSiliconFlowTransport()
+
+    class Wrapper:
+        def tokenshare_transport_for_provider(self, provider_family: str):
+            assert provider_family == "siliconflow"
+            return real_transport
+
+    lean_paper_adapter._validate_real_transport_mode(
+        real_transport=True,
+        transport=Wrapper(),
+        ai_api_config=_real_transport_config(),
+    )
+
+
 def test_lean_paper_adapter_accepts_openai_real_transport_through_executor(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,

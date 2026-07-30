@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import os
 from dataclasses import replace
+from pathlib import Path
 from threading import Lock
 from time import sleep
 
 import pytest
 
+import tokenshare.local_runtime.workers as worker_module
 from tokenshare.core.models import ProtocolConfig
 from tokenshare.local_runtime import (
     ProcessWorkerBackend,
@@ -75,6 +77,29 @@ class _ProcessCaptureExecutor:
 
     def ingest_process_result(self, result) -> None:
         self.accepted_process_results.append(dict(result))
+
+
+def _restore_bootstrap_retry_executor(
+    marker_path: str,
+    artifact_root: str,
+) -> _ArtifactExecutor:
+    marker = Path(marker_path)
+    if not marker.is_file():
+        marker.write_text("first bootstrap failed\n", encoding="utf-8")
+        raise OSError(6, "simulated invalid bootstrap handle")
+    return _ArtifactExecutor(ArtifactStore(Path(artifact_root)))
+
+
+class _BootstrapRetryExecutor:
+    def __init__(self, *, marker_path: Path, artifact_root: Path) -> None:
+        self._marker_path = marker_path
+        self._artifact_root = artifact_root
+
+    def __reduce__(self):
+        return (
+            _restore_bootstrap_retry_executor,
+            (str(self._marker_path), str(self._artifact_root)),
+        )
 
 
 def _runtime(tmp_path, *, max_retries: int = 2):
@@ -205,6 +230,108 @@ def test_process_worker_death_uses_engine_lease_expiry_and_replacement(tmp_path)
     assert "Ready" in unit_states
     assert len(replacement_leases) == 2
     assert replacement_leases[0]["lease_id"] != replacement_leases[1]["lease_id"]
+
+
+def test_process_worker_death_does_not_depend_on_multiprocessing_spawn_pipe(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def broken_spawn_context(_method: str):
+        raise OSError(6, "multiprocessing bootstrap handle is invalid")
+
+    monkeypatch.setattr(
+        worker_module,
+        "get_context",
+        broken_spawn_context,
+        raising=False,
+    )
+    store, _ledger, plugin, clock, coordinator = _runtime(tmp_path)
+    coordinator_pid = os.getpid()
+    backend = ProcessWorkerBackend(
+        executor=_ArtifactExecutor(store),
+        capacity=2,
+        submitted_at=clock,
+        terminate_once=lambda request: (
+            request.unit_id != "unit_ready"
+            and request.task_unit_snapshot.get("parent_unit_id") == "unit_ready"
+        ),
+        kill_point="progress_25",
+    )
+
+    result = coordinator.run_root(
+        ProtocolRunRequest(
+            run_id="run_process_death_without_mp_spawn_pipe",
+            root_input={"mode": "process_death"},
+            plugin_runtime=plugin,
+            worker_backend=backend,
+            continue_after_terminal_child_failure=True,
+        )
+    )
+
+    killed = [
+        fact
+        for fact in backend.execution_facts
+        if fact.result_kind == "worker_terminated"
+    ]
+    assert result.status == "completed"
+    assert len(killed) == 1
+    assert killed[0].worker_pid not in (None, coordinator_pid)
+    assert killed[0].process_exitcode not in (None, 0)
+
+
+def test_process_backend_retries_bootstrap_before_releasing_executor(tmp_path) -> None:
+    artifact_root = tmp_path / "artifacts"
+    marker_path = tmp_path / "first-bootstrap-failed"
+    backend = ProcessWorkerBackend(
+        executor=_BootstrapRetryExecutor(
+            marker_path=marker_path,
+            artifact_root=artifact_root,
+        ),
+        capacity=1,
+        submitted_at=lambda: "2026-07-25T00:00:00Z",
+    )
+
+    outcome = backend.execute_batch(
+        (_execution_request(0, planned_ai_unit_id="planned_0"),)
+    )[0]
+
+    assert marker_path.read_text(encoding="utf-8") == "first bootstrap failed\n"
+    assert outcome.submission is not None
+    assert outcome.fact.result_kind == "succeeded"
+
+
+def test_process_backend_retries_transient_process_creation_failure(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original_open_process_worker = worker_module._open_process_worker
+    launch_count = 0
+
+    def flaky_open_process_worker(arguments):
+        nonlocal launch_count
+        launch_count += 1
+        if launch_count == 1:
+            raise OSError(8, "simulated transient process creation failure")
+        return original_open_process_worker(arguments)
+
+    monkeypatch.setattr(
+        worker_module,
+        "_open_process_worker",
+        flaky_open_process_worker,
+    )
+    backend = ProcessWorkerBackend(
+        executor=_ArtifactExecutor(ArtifactStore(tmp_path / "artifacts")),
+        capacity=1,
+        submitted_at=lambda: "2026-07-25T00:00:00Z",
+    )
+
+    outcome = backend.execute_batch(
+        (_execution_request(0, planned_ai_unit_id="planned_0"),)
+    )[0]
+
+    assert launch_count == 2
+    assert outcome.submission is not None
+    assert outcome.fact.result_kind == "succeeded"
 
 
 def test_process_backend_can_terminate_multiple_selected_workers_and_return_sidecars(

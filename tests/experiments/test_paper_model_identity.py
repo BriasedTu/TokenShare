@@ -1,4 +1,5 @@
 import importlib
+import pickle
 from types import ModuleType
 
 import pytest
@@ -54,6 +55,32 @@ def test_approved_config_builds_validated_binding_and_separates_source_digest() 
         expected.source_provider_config_digest
         != same_endpoint.source_provider_config_digest
     )
+
+
+def test_validated_endpoint_binding_round_trips_through_process_pickle() -> None:
+    identity = _identity_module()
+    approved_config = _config(
+        provider_family="openai",
+        model="gpt-5.6-sol",
+        reasoning_effort="high",
+    )
+    expected = _approved_openai_identity(
+        identity,
+        source_config=approved_config,
+    )
+    binding = identity.validate_fixed_entry_config_identity(
+        expected_identity=expected,
+        provider_config_id="openai",
+        source_config=approved_config,
+    )
+
+    restored = pickle.loads(
+        pickle.dumps(binding, protocol=pickle.HIGHEST_PROTOCOL)
+    )
+
+    assert restored.to_safe_dict() == binding.to_safe_dict()
+    with pytest.raises(TypeError):
+        restored.identity.effective_reasoning_controls["reasoning_effort"] = "low"
 
 
 def test_same_entry_id_in_different_provider_configs_is_not_the_same_identity() -> None:
@@ -138,6 +165,143 @@ def test_siliconflow_reasoning_identity_keeps_default_profile_and_thinking_contr
             request_overrides={"enable_thinking": "false"},
         )
     assert "invalid_reasoning_control" in exc.value.reasons
+
+
+def test_siliconflow_reasoning_identity_tracks_thinking_budget() -> None:
+    identity = _identity_module()
+
+    normalized = identity.normalize_reasoning_identity(
+        provider_family="siliconflow",
+        request_overrides={
+            "enable_thinking": True,
+            "thinking_budget": 32768,
+        },
+    )
+
+    assert normalized.reasoning_profile_id == "thinking"
+    assert normalized.effective_controls == {
+        "enable_thinking": True,
+        "thinking_budget": 32768,
+    }
+    with pytest.raises(identity.PaperModelIdentityMismatch) as exc:
+        identity.normalize_reasoning_identity(
+            provider_family="siliconflow",
+            request_overrides={
+                "enable_thinking": False,
+                "thinking_budget": 32768,
+            },
+        )
+    assert "invalid_reasoning_control" in exc.value.reasons
+
+
+def test_siliconflow_reasoning_identity_accepts_legacy_thinking_without_budget() -> None:
+    identity = _identity_module()
+
+    normalized = identity.normalize_reasoning_identity(
+        provider_family="siliconflow",
+        request_overrides={"enable_thinking": True},
+    )
+
+    assert normalized.reasoning_profile_id == "thinking"
+    assert normalized.effective_controls == {"enable_thinking": True}
+
+
+def test_siliconflow_reasoning_identity_rejects_budget_without_enable_thinking() -> None:
+    identity = _identity_module()
+
+    with pytest.raises(identity.PaperModelIdentityMismatch) as exc:
+        identity.normalize_reasoning_identity(
+            provider_family="siliconflow",
+            request_overrides={"thinking_budget": 32768},
+        )
+
+    assert "invalid_reasoning_control" in exc.value.reasons
+
+
+@pytest.mark.parametrize("thinking_budget", [True, 0, -1, 1.5, "32768"])
+def test_siliconflow_reasoning_identity_rejects_invalid_thinking_budget(
+    thinking_budget,
+) -> None:
+    identity = _identity_module()
+
+    with pytest.raises(identity.PaperModelIdentityMismatch) as exc:
+        identity.normalize_reasoning_identity(
+            provider_family="siliconflow",
+            request_overrides={
+                "enable_thinking": True,
+                "thinking_budget": thinking_budget,
+            },
+        )
+
+    assert "invalid_reasoning_control" in exc.value.reasons
+
+
+def test_siliconflow_thinking_budget_changes_endpoint_and_prepared_config_digests() -> None:
+    identity = _identity_module()
+    config_32768 = _config(
+        provider_family="siliconflow",
+        model="zai-org/GLM-5.2",
+        extra_request_overrides={
+            "top_p": 1.0,
+            "enable_thinking": True,
+            "thinking_budget": 32768,
+        },
+    )
+    config_16384 = _config(
+        provider_family="siliconflow",
+        model="zai-org/GLM-5.2",
+        extra_request_overrides={
+            "top_p": 1.0,
+            "enable_thinking": True,
+            "thinking_budget": 16384,
+        },
+    )
+
+    def build_endpoint(source_config: AIAPIExecutorConfig):
+        return identity.build_model_endpoint_identity(
+            model_cohort_id=COHORT_ID,
+            model_cohort_digest=COHORT_DIGEST,
+            cohort_member_id="glm_5_2_siliconflow",
+            provider_config_id="siliconflow",
+            selected_entry_id="gpt-entry",
+            expected_provider_family="siliconflow",
+            expected_provider_model_id="zai-org/GLM-5.2",
+            expected_reasoning_profile_id="thinking",
+            source_config=source_config,
+        )
+
+    endpoint_32768 = build_endpoint(config_32768)
+    endpoint_16384 = build_endpoint(config_16384)
+    binding_32768 = identity.validate_fixed_entry_config_identity(
+        expected_identity=endpoint_32768,
+        provider_config_id="siliconflow",
+        source_config=config_32768,
+    )
+    binding_16384 = identity.validate_fixed_entry_config_identity(
+        expected_identity=endpoint_16384,
+        provider_config_id="siliconflow",
+        source_config=config_16384,
+    )
+    prepared_32768 = identity.prepare_fixed_entry_execution_config(
+        source_config=config_32768,
+        binding=binding_32768,
+        max_tokens=32768,
+        timeout_seconds=600,
+        adapter_metadata_key="factorization_paper_adapter",
+    )
+    prepared_16384 = identity.prepare_fixed_entry_execution_config(
+        source_config=config_16384,
+        binding=binding_16384,
+        max_tokens=32768,
+        timeout_seconds=600,
+        adapter_metadata_key="factorization_paper_adapter",
+    )
+
+    assert (
+        endpoint_32768.model_endpoint_identity_digest
+        != endpoint_16384.model_endpoint_identity_digest
+    )
+    assert prepared_32768.config_digest != prepared_16384.config_digest
 
 
 def test_fixed_entry_identity_rejects_reasoning_profile_drift() -> None:
@@ -425,6 +589,37 @@ def test_submission_identity_v1_ignores_outer_config_fallback_when_response_mode
     assert record.paper_eligible is False
 
 
+def test_submission_identity_v2_accepts_siliconflow_without_thinking_budget() -> None:
+    identity = _identity_module()
+    source_config = _config(
+        provider_family="siliconflow",
+        model="MiniMaxAI/MiniMax-M2.5",
+        extra_request_overrides={"enable_thinking": False},
+    )
+    expected = identity.build_model_endpoint_identity(
+        model_cohort_id=COHORT_ID,
+        model_cohort_digest=COHORT_DIGEST,
+        cohort_member_id="minimax_m2_5_siliconflow",
+        provider_config_id="siliconflow",
+        selected_entry_id="gpt-entry",
+        expected_provider_family="siliconflow",
+        expected_provider_model_id="MiniMaxAI/MiniMax-M2.5",
+        expected_reasoning_profile_id="default",
+        source_config=source_config,
+    )
+
+    record = _submission_record_v2(
+        identity,
+        expected=expected,
+        response_model="MiniMaxAI/MiniMax-M2.5",
+        reasoning_controls={"enable_thinking": False},
+    )
+
+    assert record.identity_status == "matched"
+    assert record.mismatch_reasons == ()
+    assert record.paper_eligible is True
+
+
 def _identity_module() -> ModuleType:
     return importlib.import_module("tokenshare.experiments.paper_model_identity")
 
@@ -536,6 +731,7 @@ def _submission_record_v2(
     include_raw_output: bool = True,
     final_result_kind: str = "succeeded",
     provenance_schema: str = "phase7.ai_provider_call_provenance.v2",
+    reasoning_controls: dict | None = None,
 ):
     actual_requested_model = requested_model or expected.provider_model_id
     response_body = {"id": "provider-response-v2"}
@@ -562,7 +758,11 @@ def _submission_record_v2(
         "entry_id": expected.selected_entry_id,
         "configured_model": expected.provider_model_id,
         "requested_model": actual_requested_model,
-        "reasoning_controls": {"reasoning_effort": "high"},
+        "reasoning_controls": (
+            {"reasoning_effort": "high"}
+            if reasoning_controls is None
+            else reasoning_controls
+        ),
         "effective_request_controls_digest": "sha256:" + "2" * 64,
     }
     prepared_digest = "sha256:" + "3" * 64
@@ -640,8 +840,11 @@ def _config(
     model: str,
     reasoning_effort: object = _MISSING,
     metadata: dict | None = None,
+    extra_request_overrides: dict[str, object] | None = None,
 ) -> AIAPIExecutorConfig:
     request_overrides: dict[str, object] = {"temperature": 0.0}
+    if extra_request_overrides is not None:
+        request_overrides.update(extra_request_overrides)
     if reasoning_effort is not _MISSING:
         request_overrides["reasoning_effort"] = reasoning_effort
     base_url = (

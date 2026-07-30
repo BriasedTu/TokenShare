@@ -67,6 +67,9 @@ class NormalizedReasoningIdentity:
             "effective_controls": dict(self.effective_controls),
         }
 
+    def __reduce__(self):
+        return (_restore_normalized_reasoning_identity, (self.to_dict(),))
+
 
 @dataclass(frozen=True, kw_only=True)
 class PaperModelEndpointIdentity:
@@ -133,6 +136,9 @@ class PaperModelEndpointIdentity:
             ),
         }
 
+    def __reduce__(self):
+        return (_restore_paper_model_endpoint_identity, (self.to_dict(),))
+
 
 @dataclass(frozen=True, kw_only=True)
 class ValidatedModelEndpointBinding:
@@ -156,6 +162,24 @@ class ValidatedModelEndpointBinding:
         }
 
 
+def _restore_normalized_reasoning_identity(
+    body: Mapping[str, Any],
+) -> NormalizedReasoningIdentity:
+    return NormalizedReasoningIdentity(
+        schema_version=str(body["schema_version"]),
+        reasoning_profile_id=str(body["reasoning_profile_id"]),
+        effective_controls=dict(body["effective_controls"]),
+    )
+
+
+def _restore_paper_model_endpoint_identity(
+    body: Mapping[str, Any],
+) -> PaperModelEndpointIdentity:
+    values = dict(body)
+    values.pop("model_endpoint_identity_digest", None)
+    return PaperModelEndpointIdentity(**values)
+
+
 def prepare_fixed_entry_execution_config(
     *,
     source_config: AIAPIExecutorConfig,
@@ -175,9 +199,13 @@ def prepare_fixed_entry_execution_config(
         **dict(source_config.defaults),
         "max_tokens": max_tokens,
         "timeout_seconds": timeout_seconds,
-        "temperature": 0.0,
         "max_provider_attempts": 1,
     }
+    if source_config.provider_family == "deepseek":
+        defaults.pop("temperature", None)
+        defaults.pop("top_p", None)
+    else:
+        defaults["temperature"] = 0.0
     return AIAPIExecutorConfig(
         schema_version=source_config.schema_version,
         executor_id=source_config.executor_id,
@@ -251,9 +279,39 @@ def normalize_reasoning_identity(
             controls = {"enable_thinking": enable_thinking}
         else:
             raise PaperModelIdentityMismatch("invalid_reasoning_control")
+        thinking_budget = request_overrides.get("thinking_budget")
+        if thinking_budget is not None:
+            if (
+                isinstance(thinking_budget, bool)
+                or not isinstance(thinking_budget, int)
+                or thinking_budget < 1
+                or enable_thinking is not True
+            ):
+                raise PaperModelIdentityMismatch("invalid_reasoning_control")
+            controls["thinking_budget"] = thinking_budget
         return NormalizedReasoningIdentity(
-            reasoning_profile_id="default",
+            reasoning_profile_id=(
+                "thinking" if controls.get("enable_thinking") is True else "default"
+            ),
             effective_controls=controls,
+        )
+
+    if family == "deepseek":
+        if request_overrides.get("enable_thinking") is not None:
+            raise PaperModelIdentityMismatch("unsupported_reasoning_control")
+        thinking = request_overrides.get("thinking")
+        if thinking != {"type": "enabled"}:
+            raise PaperModelIdentityMismatch("invalid_reasoning_control")
+        reasoning_effort = request_overrides.get("reasoning_effort")
+        if not isinstance(reasoning_effort, str) or not reasoning_effort.strip():
+            raise PaperModelIdentityMismatch("invalid_reasoning_profile")
+        normalized_effort = reasoning_effort.strip().lower()
+        return NormalizedReasoningIdentity(
+            reasoning_profile_id=normalized_effort,
+            effective_controls={
+                "thinking": {"type": "enabled"},
+                "reasoning_effort": normalized_effort,
+            },
         )
 
     raise PaperModelIdentityMismatch("unsupported_provider_family")

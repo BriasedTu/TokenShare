@@ -70,6 +70,53 @@ def test_load_ai_api_config_accepts_openai_provider_family_and_reasoning_digest(
     assert config.config_digest != changed_config.config_digest
 
 
+def test_load_ai_api_config_accepts_deepseek_and_split_input_pricing() -> None:
+    body = make_config_dict()
+    body["provider_family"] = "deepseek"
+    body["entries"] = [
+        {
+            "entry_id": "deepseek_v4_pro_exp1_baseline",
+            "enabled": True,
+            "base_url": "https://api.deepseek.com",
+            "api_key_env": "DEEPSEEK_API_KEY",
+            "model": "deepseek-v4-pro",
+            "endpoint": "/chat/completions",
+            "supports_json_mode": True,
+            "supports_streaming": False,
+            "request_overrides": {
+                "thinking": {"type": "enabled"},
+                "reasoning_effort": "high",
+            },
+            "pricing": {
+                "currency": "CNY",
+                "cached_input_per_million_tokens": 0.025,
+                "uncached_input_per_million_tokens": 3.0,
+                "output_per_million_tokens": 6.0,
+            },
+            "tags": ["paper", "deepseek", "reasoning:high"],
+        }
+    ]
+
+    config = load_ai_api_config(body)
+
+    assert config.provider_family == "deepseek"
+    assert config.entries[0].api_key_env == "DEEPSEEK_API_KEY"
+    assert config.entries[0].pricing == {
+        "currency": "CNY",
+        "cached_input_per_million_tokens": 0.025,
+        "uncached_input_per_million_tokens": 3.0,
+        "output_per_million_tokens": 6.0,
+    }
+
+
+def test_load_ai_api_config_rejects_unknown_provider_family() -> None:
+    body = make_config_dict()
+    body["provider_family"] = "openai_compatible_guess"
+
+    with pytest.raises(ValueError, match="unsupported ai api provider_family"):
+        load_ai_api_config(body)
+
+
 def test_load_ai_api_config_rejects_duplicate_entry_ids() -> None:
     body = make_config_dict()
     body["entries"][1]["entry_id"] = body["entries"][0]["entry_id"]

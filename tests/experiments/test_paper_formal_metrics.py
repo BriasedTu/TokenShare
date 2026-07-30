@@ -10,6 +10,9 @@ import tokenshare.experiments.paper_formal_metrics as formal_metrics
 from tokenshare.experiments.paper_formal_metrics import (
     recompute_paper_formal_metrics,
 )
+from tokenshare.experiments.paper_exp5_model_comparison import (
+    EXP5_V3_SEQUENCE_PLAN_DIGEST,
+)
 from tokenshare.experiments.paper_models import PaperModelExecutionRecord
 
 
@@ -875,6 +878,309 @@ def test_exp3_metrics_derive_recovery_from_protocol_evidence_and_dedicated_basel
     assert "missing_recovery_event_evidence" in missing_recovery[
         "paper_ineligibility_reasons"
     ]
+
+
+def test_exp3_metrics_use_shared_exp1_usage_and_null_failed_source_comparison(
+    tmp_path: Path,
+) -> None:
+    source_runtime_identity = {
+        "schema_version": "tokenshare.paper_runtime_generation_identity.v1",
+        "run_id": "source-exp1-run",
+        "task_id": "case-exp3",
+        "root_unit_id": "source-exp1-root",
+        "ledger_digest": "sha256:" + "4" * 64,
+    }
+    source_generation = _write_run(
+        tmp_path,
+        experiment_id=EXP1,
+        condition_id="exp1-factor-easy-w10-r0",
+        condition={"domain": "factorization", "worker_count": 10, "seed": 1},
+        task={
+            "task_id": "case-exp3",
+            "root_status": "completed",
+            "provider_attempt_count": 1,
+            "wall_clock_ms": 200,
+            "runtime_generation_identity": source_runtime_identity,
+        },
+        attempts=[
+            {
+                **_attempt(total_tokens=20, latency_ms=150),
+                "canonical": True,
+                "provider_attempt_count": 1,
+                "prompt_tokens": 8,
+                "completion_tokens": 12,
+                "cost_estimate_currency": "USD",
+                "cost_estimate_status": "estimated",
+            }
+        ],
+        events=_timing_events(200),
+    )
+    source_task = json.loads(
+        (source_generation / "per_task_results.jsonl").read_text(encoding="utf-8")
+    )
+    source_attempt = json.loads(
+        (source_generation / "per_attempt_results.jsonl").read_text(
+            encoding="utf-8"
+        )
+    )
+    source_event = json.loads(
+        (source_generation / "events" / "event_log.jsonl").read_text(
+            encoding="utf-8"
+        ).splitlines()[0]
+    )
+    source_artifact = tmp_path / "source-exp1-artifact.bin"
+    source_artifact.write_bytes(b"source exp1 artifact")
+    shared_reference_core = {
+        "schema_version": "tokenshare.paper_exp1_shared_reference.v1",
+        "source_experiment_id": EXP1,
+        "source_condition_id": "exp1-factor-easy-w10-r0",
+        "source_case_id": "case-exp3",
+        "source_task_id": "case-exp3",
+        "source_repeat_id": 0,
+        "source_root_status": "completed",
+        "evidence_integrity": "complete",
+        "baseline_comparison_eligible": True,
+        "baseline_unavailable_reason": None,
+        "source_usage": {
+            "provider_attempt_count": 1,
+            "expected_provider_attempt_count": 1,
+            "prompt_tokens": 8,
+            "completion_tokens": 12,
+            "total_tokens": 20,
+            "cost_estimate": 0.1,
+            "usage_complete": True,
+            "usage_missing_provider_attempt_count": 0,
+            "cost_estimate_status": "estimated",
+            "cost_estimate_currency": "USD",
+        },
+        "source_versions": {
+            "schema_version": "tokenshare.paper_execution_version_identity.v1",
+            "plugin_version": "plugin-test-v1",
+            "parser_version": "parser-test-v1",
+            "verifier_version": "verifier-test-v1",
+            "executor_version": "executor-test-v1",
+            "prompt_version": "prompt-test-v1",
+            "split_profile_digest": "sha256:" + "6" * 64,
+            "runtime_generation_schema_version": (
+                "tokenshare.paper_runtime_generation_identity.v1"
+            ),
+            "runtime_generation_identity_digest": formal_metrics._digest(
+                source_runtime_identity
+            ),
+        },
+        "source_task_ref": {
+            "path": (
+                source_generation / "per_task_results.jsonl"
+            ).relative_to(tmp_path).as_posix(),
+            "record_hash": formal_metrics._digest(source_task),
+        },
+        "source_attempt_refs": [
+            {
+                "path": (
+                    source_generation / "per_attempt_results.jsonl"
+                ).relative_to(tmp_path).as_posix(),
+                "record_hash": formal_metrics._digest(source_attempt),
+            }
+        ],
+        "source_event_refs": [
+            {
+                "path": (
+                    source_generation / "events" / "event_log.jsonl"
+                ).relative_to(tmp_path).as_posix(),
+                "record_hash": formal_metrics._digest(source_event),
+            }
+        ],
+        "source_artifact_refs": [
+            {
+                "path": source_artifact.relative_to(tmp_path).as_posix(),
+                "content_hash": "sha256:"
+                + hashlib.sha256(source_artifact.read_bytes()).hexdigest(),
+            }
+        ],
+    }
+    shared_reference = {
+        **shared_reference_core,
+        "source_hash": formal_metrics._digest(shared_reference_core),
+    }
+    exp3_generation = _write_run(
+        tmp_path,
+        experiment_id=EXP3,
+        condition_id="exp3-shared-reference",
+        condition={
+            "domain": "factorization",
+            "worker_count": 10,
+            "fault_type": "false_positive",
+            "seed": 330001,
+        },
+        task={
+            "task_id": "case-exp3",
+            "root_status": "completed",
+            "matched_baseline_condition_id": "exp1-factor-easy-w10-r0",
+            "matched_baseline_evidence_ref": shared_reference,
+            "shared_exp1_reference": shared_reference,
+            "baseline_comparison_eligible": True,
+            "baseline_unavailable_reason": None,
+        },
+        attempts=[
+            {
+                **_attempt(total_tokens=30, latency_ms=180),
+                "canonical": True,
+            }
+        ],
+        events=_timing_events(250),
+    )
+    _write_suite_manifest(tmp_path, (EXP1, EXP3))
+
+    row = recompute_paper_formal_metrics(tmp_path).experiment_rows[EXP3][0]
+
+    assert row["matched_baseline_source"] == "shared_exp1_reference"
+    assert row["comparison_kind"] == "shared_reference"
+    assert row["baseline_comparison_eligible"] is True
+    assert row["matched_baseline_condition_ids"] == [
+        "exp1-factor-easy-w10-r0"
+    ]
+    assert row["matched_baseline_total_tokens"] == 20
+    assert row["shared_reference_source_usage"]["total_tokens"] == 20
+    assert row["token_overhead"] == 10
+
+    task_path = exp3_generation / "per_task_results.jsonl"
+    task = json.loads(task_path.read_text(encoding="utf-8"))
+    source_task_path = source_generation / "per_task_results.jsonl"
+    source_task["root_status"] = "failed"
+    source_task_path.write_text(json.dumps(source_task) + "\n", encoding="utf-8")
+    failed_reference = {
+        **shared_reference,
+        "source_root_status": "failed",
+        "source_task_ref": {
+            **shared_reference["source_task_ref"],
+            "record_hash": formal_metrics._digest(source_task),
+        },
+        "baseline_comparison_eligible": False,
+        "baseline_unavailable_reason": "source_exp1_failed_experimental",
+    }
+    failed_reference["source_hash"] = formal_metrics._digest(
+        {
+            key: value
+            for key, value in failed_reference.items()
+            if key not in {"source_hash", "source_reference_id"}
+        }
+    )
+    task.update(
+        {
+            "matched_baseline_evidence_ref": failed_reference,
+            "shared_exp1_reference": failed_reference,
+            "baseline_comparison_eligible": False,
+            "baseline_unavailable_reason": "source_exp1_failed_experimental",
+        }
+    )
+    task_path.write_text(json.dumps(task) + "\n", encoding="utf-8")
+
+    failed = recompute_paper_formal_metrics(tmp_path).experiment_rows[EXP3][0]
+
+    assert failed["matched_baseline_source"] == "shared_exp1_reference"
+    assert failed["baseline_comparison_eligible"] is False
+    assert failed["baseline_unavailable_reason"] == (
+        "source_exp1_failed_experimental"
+    )
+    assert failed["shared_reference_source_usage"]["total_tokens"] == 20
+    assert failed["matched_baseline_total_tokens"] is None
+    assert failed["token_overhead"] is None
+
+    invalid_event_reference = {
+        **failed_reference,
+        "source_event_refs": [
+            {
+                "path": "missing/source-event.jsonl",
+                "record_hash": failed_reference["source_event_refs"][0]["record_hash"],
+            }
+        ],
+    }
+    invalid_event_reference["source_hash"] = formal_metrics._digest(
+        {
+            key: value
+            for key, value in invalid_event_reference.items()
+            if key not in {"source_hash", "source_reference_id"}
+        }
+    )
+    task.update(
+        {
+            "matched_baseline_evidence_ref": invalid_event_reference,
+            "shared_exp1_reference": invalid_event_reference,
+        }
+    )
+    task_path.write_text(json.dumps(task) + "\n", encoding="utf-8")
+
+    invalid_event = recompute_paper_formal_metrics(tmp_path).experiment_rows[EXP3][0]
+
+    assert invalid_event["baseline_comparison_eligible"] is False
+    assert invalid_event["baseline_unavailable_reason"] == (
+        "invalid_shared_exp1_event_reference"
+    )
+    assert "invalid_shared_exp1_event_reference" in invalid_event[
+        "paper_ineligibility_reasons"
+    ]
+
+    tampered_reference = {
+        **shared_reference,
+        "source_usage": {**shared_reference["source_usage"], "total_tokens": 0},
+    }
+    task.update(
+        {
+            "matched_baseline_evidence_ref": tampered_reference,
+            "shared_exp1_reference": tampered_reference,
+            "baseline_comparison_eligible": True,
+            "baseline_unavailable_reason": None,
+        }
+    )
+    task_path.write_text(json.dumps(task) + "\n", encoding="utf-8")
+
+    tampered = recompute_paper_formal_metrics(tmp_path).experiment_rows[EXP3][0]
+
+    assert tampered["baseline_comparison_eligible"] is False
+    assert tampered["matched_baseline_total_tokens"] is None
+    assert tampered["token_overhead"] is None
+    assert "shared_exp1_reference_hash_mismatch" in tampered[
+        "paper_ineligibility_reasons"
+    ]
+
+
+def test_exp3_multi_case_condition_preserves_all_shared_source_condition_ids() -> None:
+    scalar, condition_ids = formal_metrics._matched_baseline_condition_identity(
+        tasks=(
+            {"matched_baseline_condition_id": "exp1-factor-easy-w10-r0"},
+            {"matched_baseline_condition_id": "exp1-factor-medium-w10-r0"},
+            {"matched_baseline_condition_id": "exp1-factor-hard-w10-r0"},
+        ),
+        baseline_manifest={},
+    )
+
+    assert scalar is None
+    assert condition_ids == [
+        "exp1-factor-easy-w10-r0",
+        "exp1-factor-hard-w10-r0",
+        "exp1-factor-medium-w10-r0",
+    ]
+
+
+def test_shared_source_usage_comparison_rejects_boolean_integer_alias() -> None:
+    recomputed = {
+        "provider_attempt_count": 1,
+        "expected_provider_attempt_count": 1,
+        "prompt_tokens": 8,
+        "completion_tokens": 12,
+        "total_tokens": 20,
+        "cost_estimate": 0.1,
+        "usage_complete": True,
+        "usage_missing_provider_attempt_count": 0,
+        "cost_estimate_status": "estimated",
+        "cost_estimate_currency": "USD",
+    }
+    frozen = {**recomputed, "provider_attempt_count": True}
+
+    assert not formal_metrics._shared_source_usage_matches(
+        frozen=frozen,
+        recomputed=recomputed,
+    )
 
 
 def test_exp3_two_repeat_aggregate_reports_min_max_and_relative_difference() -> None:
@@ -1743,6 +2049,201 @@ def test_exp5_provider_retries_are_expanded_for_identity_coverage() -> None:
     assert audit["provider_attempt_identity_covered_count"] == 2
 
 
+def test_exp5_v3_case_records_are_derived_from_root_and_attempt_evidence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bundle = {
+        "condition": {
+            "schema_version": "tokenshare.paper_condition.v3",
+            "experiment_id": EXP5,
+            "condition_id": "exp5-v3-condition",
+            "repeat_id": 1,
+            "domain": "lean_proof",
+            "paper_difficulty": "hard",
+            "topic_family": "induction",
+            "cohort_member_id": "model-a",
+            "order_slot": 2,
+            "predecessor_member_id": "model-b",
+            "sequence_plan_digest": EXP5_V3_SEQUENCE_PLAN_DIGEST,
+            "exp5_selection_digest": "sha256:" + "1" * 64,
+            "exp5_selection_parent_catalog_digest": "sha256:" + "2" * 64,
+        },
+        "tasks": [
+            {
+                "task_id": "case-1",
+                "case_id": "case-1",
+                "root_status": "completed",
+                "accepted_validity": True,
+                "paper_eligible": True,
+            }
+        ],
+        "attempts": [
+            {
+                "task_id": "case-1",
+                "attempt_status": "succeeded",
+                "provider_attempt_count": 1,
+                "total_tokens": 17,
+                "latency_ms": 23,
+                "paper_eligible": True,
+                "started_at": "2026-07-30T00:00:00+00:00",
+                "ended_at": "2026-07-30T00:00:01+00:00",
+            }
+        ],
+        "events": [],
+    }
+    monkeypatch.setattr(
+        formal_metrics,
+        "_exp5_identity_inventory",
+        lambda value: {"paper_eligible": True},
+    )
+
+    rows = formal_metrics._exp5_v3_case_records(
+        {"exp5-v3-condition": bundle}
+    )
+
+    assert rows == (
+        {
+            "case_id": "case-1",
+            "repeat_id": 1,
+            "cohort_member_id": "model-a",
+            "condition_id": "exp5-v3-condition",
+            "stratum_id": "lean_proof:hard:induction",
+            "root_completed": True,
+            "accepted_validity": True,
+            "total_tokens": 17,
+            "provider_latency_ms": 23.0,
+            "paper_eligible": True,
+            "order_slot": 2,
+            "predecessor_member_id": "model-b",
+            "sequence_plan_digest": EXP5_V3_SEQUENCE_PLAN_DIGEST,
+            "exp5_selection_digest": "sha256:" + "1" * 64,
+            "exp5_selection_parent_catalog_digest": "sha256:" + "2" * 64,
+            "condition_started_at": "2026-07-30T00:00:00+00:00",
+            "condition_ended_at": "2026-07-30T00:00:01+00:00",
+            "observed_peak_concurrency": 1,
+        },
+    )
+
+
+def test_exp5_attempt_peak_uses_half_open_intervals_at_timestamp_ties() -> None:
+    attempts = (
+        {
+            "started_at": "2026-07-30T00:00:00+00:00",
+            "ended_at": "2026-07-30T00:00:01+00:00",
+        },
+        {
+            "started_at": "2026-07-30T00:00:01+00:00",
+            "ended_at": "2026-07-30T00:00:02+00:00",
+        },
+    )
+
+    assert formal_metrics._attempt_interval_peak(attempts) == 1
+
+
+def test_exp5_v3_formal_outputs_freeze_csv_and_jsonl(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bundles = {
+        "exp5-v3-condition": {
+            "condition": {
+                "schema_version": "tokenshare.paper_condition.v3",
+                "experiment_id": EXP5,
+            },
+            "tasks": [],
+        }
+    }
+    case_records = ({"case_id": "sentinel"},)
+    monkeypatch.setattr(
+        formal_metrics,
+        "_exp5_v3_case_records",
+        lambda value: case_records,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        formal_metrics,
+        "build_exp5_paired_comparison_rows",
+        lambda value: (
+            {"metric": "root_completion", "paired_sample_size": 12},
+        ),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        formal_metrics,
+        "build_exp5_order_and_concurrency_rows",
+        lambda value: (
+            {"row_scope": "arm_audit", "global_peak_in_flight": 3},
+        ),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        formal_metrics,
+        "_exp5_v3_execution_record_text",
+        lambda value: '{"case_id":"case-1"}\n',
+        raising=False,
+    )
+    monkeypatch.setattr(formal_metrics, "_model_record_text", lambda value: "")
+
+    first = formal_metrics._exp5_v3_analysis_outputs(bundles)
+    second = formal_metrics._exp5_v3_analysis_outputs(bundles)
+
+    assert first == second
+    assert set(first) == {
+        "metrics/exp5_paired_comparisons.csv",
+        "metrics/exp5_model_execution_records.jsonl",
+        "metrics/exp5_order_and_concurrency.csv",
+    }
+    assert first["metrics/exp5_model_execution_records.jsonl"] == (
+        '{"case_id":"case-1"}\n'
+    )
+
+    refs = formal_metrics._write_metrics_outputs(
+        root=tmp_path,
+        metrics_body={},
+        condition_rows=(),
+        experiment_rows={
+            EXP1: (),
+            EXP2: (),
+            EXP3: (),
+            EXP4: (),
+            EXP5: (),
+        },
+        run_bundles=bundles,
+    )
+    ref_paths = {ref["path"] for ref in refs}
+    assert set(first) <= ref_paths
+    assert (
+        tmp_path / "metrics" / "exp5_paired_comparisons.csv"
+    ).read_text(encoding="utf-8") == first[
+        "metrics/exp5_paired_comparisons.csv"
+    ]
+    first_hashes = {
+        path: formal_metrics._hash_bytes(
+            (tmp_path / path).read_bytes()
+        )
+        for path in first
+    }
+    formal_metrics._write_metrics_outputs(
+        root=tmp_path,
+        metrics_body={},
+        condition_rows=(),
+        experiment_rows={
+            EXP1: (),
+            EXP2: (),
+            EXP3: (),
+            EXP4: (),
+            EXP5: (),
+        },
+        run_bundles=bundles,
+    )
+    assert first_hashes == {
+        path: formal_metrics._hash_bytes(
+            (tmp_path / path).read_bytes()
+        )
+        for path in first
+    }
+
+
 def test_exp2_rate_limit_views_keep_all_runs_and_list_exclusions() -> None:
     rows = [
         {
@@ -1909,6 +2410,203 @@ def test_worker_death_metrics_require_real_post_death_recovery_evidence() -> Non
         "worker_death_evidence_refs",
     ):
         assert field_name in task_rows[0]
+
+
+def test_worker_death_incomplete_record_is_counted_and_explicitly_ineligible() -> None:
+    fault = {
+        "schema_version": "tokenshare.paper_worker_death_incomplete.v1",
+        "fault_type": "worker_death",
+        "record_ref": {"artifact_id": "worker-death-incomplete"},
+        "target_ai_unit": {"unit_id": "unit-1"},
+        "dependency_graph": {
+            "schema_version": "tokenshare.paper_ai_unit_dependency_graph.v1",
+            "expected_ai_unit_count": 1,
+            "unit_ids": ["unit-1"],
+        },
+        "worker_process_exitcode": 1,
+        "killed_at": _ms_timestamp(100),
+        "dead_attempt": {"attempt_id": "dead-1", "unit_id": "unit-1"},
+        "replacement_fact": None,
+        "recovery_completed": False,
+        "evidence_complete": False,
+        "kill_progress_target_ratio": 0.25,
+        "kill_progress_actual_ratio": 1.0,
+        "kill_progress_completed_ai_unit_count": 1,
+        "kill_progress_total_ai_unit_count": 1,
+        "kill_progress_observed_at": _ms_timestamp(100),
+        "kill_progress_error": None,
+        "protocol_event_refs": ["terminal-recovery"],
+    }
+    events = [
+        {
+            "event_id": "terminal-recovery",
+            "event_type": "RECOVERY_ACTION_RECORDED",
+            "occurred_at": _ms_timestamp(150),
+            "payload": {
+                "recovery_action": {
+                    "attempt_id": "replacement-1",
+                    "unit_id": "unit-1",
+                    "retry_allowed": False,
+                    "reason": "retry_limit_reached",
+                }
+            },
+        }
+    ]
+
+    progress, progress_reasons = formal_metrics._worker_kill_progress_metrics(
+        [fault]
+    )
+    metrics, reasons = formal_metrics._worker_death_recovery_metrics(
+        condition={
+            "fault_type": "worker_death",
+            "dead_worker_count": 1,
+            "kill_progress_percent": 25,
+        },
+        tasks=[
+            {
+                "task_id": "case-1",
+                "root_status": "failed",
+                "accepted_validity": False,
+            }
+        ],
+        attempts=[
+            {
+                "task_id": "case-1",
+                "attempt_id": "dead-1",
+                "unit_id": "unit-1",
+                "attempt_status": "worker_died",
+            },
+            {
+                "task_id": "case-1",
+                "attempt_id": "replacement-1",
+                "unit_id": "unit-1",
+                "attempt_status": "provider_error",
+            },
+        ],
+        worker_faults=[fault],
+        events=events,
+    )
+
+    assert progress_reasons == []
+    assert progress["kill_progress_actual_ratio_mean"] == pytest.approx(1.0)
+    assert metrics["actual_dead_worker_count"] == 1
+    assert metrics["recovered_slot_count"] == 0
+    assert metrics["root_output_complete"] is False
+    assert "incomplete_worker_death_recovery" in reasons
+    assert "invalid_worker_replacement_identity" in reasons
+
+
+def test_executor_error_attempt_is_not_counted_as_provider_call_or_failure() -> None:
+    row = formal_metrics._condition_metrics(
+        {
+            "condition": {
+                "experiment_id": "exp3_real_ai_fault_recovery",
+                "condition_id": "exp3-condition-executor-error",
+                "repeat_id": 0,
+                "domain": "factorization",
+                "difficulty": "easy",
+                "worker_count": 1,
+                "fault_type": "none",
+                "fault_rate": 0.0,
+                "ablation_mode": "FULL",
+            },
+            "tasks": [
+                {
+                    "task_id": "case-1",
+                    "root_status": "failed",
+                    "accepted_validity": False,
+                    "paper_eligible": False,
+                }
+            ],
+            "attempts": [
+                {
+                    "schema_version": "tokenshare.paper_attempt_result.v2",
+                    "task_id": "case-1",
+                    "unit_id": "unit-root-1",
+                    "attempt_id": "attempt-root-1",
+                    "attempt_status": "executor_error",
+                    "provider": None,
+                    "model": None,
+                    "entry_id": None,
+                    "executor_id": "executor_factorization_runtime",
+                    "executor_type": "deterministic_local",
+                    "provider_attempt_count": 0,
+                    "provider_attempt_index": 0,
+                    "total_tokens": 0,
+                    "cost_estimate": 0.0,
+                    "latency_ms": 0,
+                    "error_kind": "retry_limit_reached",
+                    "started_at": "2026-07-28T00:00:00Z",
+                    "ended_at": "2026-07-28T00:00:01Z",
+                    "paper_eligible": False,
+                }
+            ],
+            "events": [],
+            "artifacts": [{"artifact_id": "request-root-1"}],
+        }
+    )
+
+    assert row["provider_attempt_count"] == 0
+    assert row["provider_error_count"] == 0
+    assert row["total_tokens"] == 0
+    assert row["provider_latency_sum_ms"] == 0
+    assert row["token_p50"] is None
+    assert row["token_p95"] is None
+    assert row["failure_breakdown"]["executor_error"] == 1
+    assert row["paper_eligible"] is False
+
+
+def test_experiment_scope_runner_exception_is_excluded_from_provider_inventory() -> None:
+    protocol_attempt = {
+        **_attempt(total_tokens=100, latency_ms=200),
+        "task_id": "case-1",
+        "record_scope": "protocol",
+        "paper_eligible": True,
+    }
+    runner_exception = {
+        **_attempt(total_tokens=999, latency_ms=888),
+        "task_id": "case-1",
+        "attempt_id": "runner-exception",
+        "attempt_status": "provider_error",
+        "error_kind": "runner_exception",
+        "record_scope": "experiment",
+        "paper_eligible": False,
+    }
+
+    row = formal_metrics._condition_metrics(
+        {
+            "condition": {
+                "experiment_id": "exp1_real_ai_cross_domain",
+                "condition_id": "exp1-condition-runner-exception",
+                "repeat_id": 0,
+                "domain": "factorization",
+                "difficulty": "easy",
+                "worker_count": 1,
+                "fault_type": "none",
+                "fault_rate": 0.0,
+                "ablation_mode": "FULL",
+            },
+            "tasks": [
+                {
+                    "task_id": "case-1",
+                    "root_status": "failed",
+                    "accepted_validity": False,
+                    "paper_eligible": False,
+                }
+            ],
+            "attempts": [protocol_attempt, runner_exception],
+            "events": [],
+            "artifacts": [{"artifact_id": "request-root-1"}],
+        }
+    )
+
+    assert row["provider_attempt_count"] == 1
+    assert row["provider_error_count"] == 0
+    assert row["total_tokens"] == 100
+    assert row["total_cost_estimate"] == 0.1
+    assert row["provider_latency_sum_ms"] == 200
+    assert row["token_p50"] == 100
+    assert row["token_p95"] == 100
 
 
 def _write_suite_manifest(root: Path, experiment_ids: tuple[str, ...]) -> None:

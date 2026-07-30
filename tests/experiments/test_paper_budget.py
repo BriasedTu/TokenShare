@@ -20,6 +20,11 @@ from tokenshare.experiments.paper_models import (
     PaperStatus,
     digest_json,
 )
+from tokenshare.experiments.paper_model_policy import (
+    PAPER_MODEL_ENDPOINT_COHORT_V3_ID,
+    PAPER_MODEL_ENDPOINT_COHORT_V3_MEMBER_IDS,
+    PAPER_MODEL_ENDPOINT_COHORT_V3_MEMBERS,
+)
 from tokenshare.experiments.paper_runner import expand_plan_conditions
 
 
@@ -256,6 +261,36 @@ def test_budget_approval_can_be_bypassed_without_changing_budget_identity() -> N
             budget_approval_required=False,
             approve_budget_digest="sha256:" + "0" * 64,
         )
+
+
+def test_explicit_unlimited_budget_records_intent_without_total_hard_limits() -> None:
+    catalog = _raw_paper_catalog_manifest()
+    budget = plan_paper_suite(
+        catalog_manifest=catalog,
+        conditions=_sample_conditions(catalog.catalog_digest),
+        max_provider_attempts_per_ai_unit=1,
+        token_upper_bound_per_provider_attempt=100,
+        cost_upper_bound_per_provider_attempt=0.01,
+        plan_only=False,
+        hard_limits={},
+        budget_mode="unlimited",
+        budget_approval_required=False,
+    )
+
+    body = budget.to_dict()
+    approval = body["quota_preflight"]["budget_approval"]
+    assert body["budget_mode"] == "unlimited"
+    assert body["approval_required"] is False
+    assert body["approval_mode"] == "explicit_unlimited"
+    assert body["authorization_source"] == "cli"
+    assert body["hard_limits"] == {}
+    assert approval["approval_required"] is False
+    assert approval["approval_mode"] == "explicit_unlimited"
+    assert approval["authorization_source"] == "cli"
+    assert body["quota_preflight"]["budget_commitments"]["hard_limits"] == {}
+    assert body["max_provider_attempts"] > 0
+    assert body["token_upper_bound"] > 0
+    assert body["cost_upper_bound"] > 0
 
 
 def test_budget_digest_covers_gate_c_execution_commitments() -> None:
@@ -538,6 +573,150 @@ def test_exp5_budget_has_no_five_root_cap_and_binds_request_controls() -> None:
     assert plan(controls_a) != plan(controls_b)
 
 
+def test_exp5_v3_budget_uses_per_endpoint_token_and_pricing_identity() -> None:
+    (
+        catalog,
+        conditions,
+        selections,
+        preflight,
+        token_ceilings,
+    ) = _exp5_v3_budget_fixture()
+
+    budget = plan_paper_suite(
+        catalog_manifest=catalog,
+        conditions=conditions,
+        max_provider_attempts_per_ai_unit=1,
+        token_upper_bound_per_provider_attempt=100,
+        token_upper_bound_by_endpoint_identity_digest=token_ceilings,
+        cost_upper_bound_per_provider_attempt=0.01,
+        plan_only=True,
+        frozen_selections=selections,
+        model_endpoint_cohort_preflight=preflight,
+    )
+
+    expected_by_member = {
+        "glm_5_2_siliconflow": 172_130_304,
+        "qwen3_14b_siliconflow": 172_130_304,
+        "minimax_m2_5_siliconflow": 172_130_304,
+        "deepseek_v3_pro_siliconflow": 91_127_808,
+    }
+    assert budget.planned_ai_units == 9_888
+    assert budget.max_provider_attempts == 9_888
+    assert budget.token_upper_bound == 607_518_720
+    assert budget.quota_preflight["provider_calls_made"] == 0
+    assert budget.quota_preflight["token_upper_bound_by_member"] == (
+        expected_by_member
+    )
+    identity = budget.quota_preflight["budget_commitments"][
+        "endpoint_budget_identity"
+    ]
+    assert identity["token_upper_bound_by_endpoint_identity_digest"] == (
+        token_ceilings
+    )
+    assert identity["token_upper_bound_by_member"] == expected_by_member
+    assert set(identity["pricing_snapshot_digest_by_member"]) == set(
+        PAPER_MODEL_ENDPOINT_COHORT_V3_MEMBER_IDS
+    )
+    assert all(
+        subtotal["planned_ai_unit_count"] == 2_472
+        and subtotal["provider_attempt_upper_bound"] == 2_472
+        and subtotal["token_upper_bound"] == expected_by_member[member_id]
+        and subtotal["cost_upper_bound"] > 0
+        for member_id, subtotal in identity["member_token_cost_subtotals"].items()
+    )
+    assert budget.cost_upper_bound == pytest.approx(
+        sum(
+            subtotal["cost_upper_bound"]
+            for subtotal in identity["member_token_cost_subtotals"].values()
+        )
+    )
+
+
+@pytest.mark.parametrize(
+    "drift_kind",
+    ("missing", "extra", "zero", "negative", "bool", "float"),
+)
+def test_exp5_v3_budget_rejects_invalid_endpoint_token_mapping(
+    drift_kind: str,
+) -> None:
+    catalog, conditions, selections, preflight, token_ceilings = (
+        _exp5_v3_budget_fixture()
+    )
+    drifted = dict(token_ceilings)
+    first_digest = next(iter(drifted))
+    if drift_kind == "missing":
+        drifted.pop(first_digest)
+    elif drift_kind == "extra":
+        drifted["sha256:" + "f" * 64] = 36_864
+    elif drift_kind == "zero":
+        drifted[first_digest] = 0
+    elif drift_kind == "negative":
+        drifted[first_digest] = -1
+    elif drift_kind == "bool":
+        drifted[first_digest] = True
+    else:
+        drifted[first_digest] = 69_632.0
+
+    with pytest.raises(ValueError, match="endpoint token ceiling"):
+        plan_paper_suite(
+            catalog_manifest=catalog,
+            conditions=conditions,
+            max_provider_attempts_per_ai_unit=1,
+            token_upper_bound_per_provider_attempt=100,
+            token_upper_bound_by_endpoint_identity_digest=drifted,
+            cost_upper_bound_per_provider_attempt=0.01,
+            plan_only=True,
+            frozen_selections=selections,
+            model_endpoint_cohort_preflight=preflight,
+        )
+
+
+def test_exp5_v3_budget_rejects_condition_and_pricing_identity_drift() -> None:
+    catalog, conditions, selections, preflight, token_ceilings = (
+        _exp5_v3_budget_fixture()
+    )
+    drifted_conditions = list(conditions)
+    drifted_conditions[0] = replace(
+        drifted_conditions[0],
+        model_endpoint_identity_digest="sha256:" + "f" * 64,
+    )
+    drifted_selections = list(selections)
+    drifted_selections[0] = {
+        **drifted_selections[0],
+        "condition_digest": drifted_conditions[0].condition_digest,
+    }
+    with pytest.raises(ValueError, match="endpoint identity drift"):
+        plan_paper_suite(
+            catalog_manifest=catalog,
+            conditions=tuple(drifted_conditions),
+            max_provider_attempts_per_ai_unit=1,
+            token_upper_bound_per_provider_attempt=100,
+            token_upper_bound_by_endpoint_identity_digest=token_ceilings,
+            cost_upper_bound_per_provider_attempt=0.01,
+            plan_only=True,
+            frozen_selections=drifted_selections,
+            model_endpoint_cohort_preflight=preflight,
+        )
+
+    pricing_drift = json.loads(json.dumps(preflight))
+    member_id = PAPER_MODEL_ENDPOINT_COHORT_V3_MEMBER_IDS[0]
+    pricing_drift["member_plans"][member_id]["pricing_snapshot_digest"] = (
+        "sha256:" + "e" * 64
+    )
+    with pytest.raises(ValueError, match="pricing snapshot digest drift"):
+        plan_paper_suite(
+            catalog_manifest=catalog,
+            conditions=conditions,
+            max_provider_attempts_per_ai_unit=1,
+            token_upper_bound_per_provider_attempt=100,
+            token_upper_bound_by_endpoint_identity_digest=token_ceilings,
+            cost_upper_bound_per_provider_attempt=0.01,
+            plan_only=True,
+            frozen_selections=selections,
+            model_endpoint_cohort_preflight=pricing_drift,
+        )
+
+
 def test_lean_medium_lemma_dag_budget_uses_v2_expected_ai_unit_count() -> None:
     catalog = load_paper_catalogs(
         factorization_path=Path("benchmarks/paper/factorization_catalog.v1.jsonl"),
@@ -720,7 +899,7 @@ def test_exp1_minimal_pilot_budget_uses_frozen_case_order_and_real_request_profi
     assert body["max_provider_attempts"] == 22
     assert body["token_upper_bound"] == 97280
     assert body["cost_upper_bound"] == pytest.approx(0.116736)
-    assert body["wall_clock_estimate"] == 660.0
+    assert body["wall_clock_estimate"] == 2200.0
     assert body["disk_estimate"]["bytes"] == 26214400
     assert body["quota_preflight"]["provider_calls_made"] == 0
     assert pilot["approval_status"] == "awaiting_user_approval"
@@ -896,6 +1075,70 @@ def test_exp1_pilot_budget_digest_is_stable_and_invalidates_drifted_approval(
         )
 
 
+def test_exp3_worker_death_budget_reuses_exp1_without_supporting_execution() -> None:
+    catalog = load_paper_catalogs(
+        factorization_path=Path("benchmarks/paper/factorization_catalog.v2.jsonl"),
+        lean_path=Path("benchmarks/paper/lean_catalog.v1.jsonl"),
+        lean_lemma_graph_path=Path("benchmarks/paper/lean_lemma_graph_catalog.v1.jsonl"),
+    )
+    condition = PaperExperimentCondition(
+        schema_version="tokenshare.paper_condition.v2",
+        experiment_id="exp3_real_ai_fault_recovery",
+        condition_id=(
+            "exp3_worker_death_factorization__easy__dead1__p50__rep0"
+        ),
+        domain="factorization",
+        difficulty="easy",
+        paper_difficulty="easy",
+        worker_count=10,
+        fault_type="worker_death",
+        fault_rate=0.0,
+        ablation_mode="FULL",
+        model_policy="fixed_entry",
+        model_entry_id="glm_5_2_exp1_baseline",
+        repeat_id=0,
+        seed=1,
+        catalog_digest=catalog.catalog_digest,
+    )
+
+    budget = plan_paper_suite(
+        catalog_manifest=catalog,
+        conditions=(condition,),
+        max_provider_attempts_per_ai_unit=1,
+        token_upper_bound_per_provider_attempt=100,
+        cost_upper_bound_per_provider_attempt=0.01,
+        plan_only=False,
+        frozen_selections=[
+            {
+                "condition_id": condition.condition_id,
+                "condition_digest": condition.condition_digest,
+                "ordered_case_ids": ["factor_v2_easy_001"],
+            }
+        ],
+        hard_limits={},
+        budget_approval_required=False,
+        budget_mode="unlimited",
+    )
+
+    identity = budget.quota_preflight["budget_commitments"][
+        "experiment_budget_identity"
+    ]
+    experiment_id = "exp3_real_ai_fault_recovery"
+    assert identity["headline_root_runs_by_experiment"][experiment_id] == 1
+    assert identity["supporting_baseline_root_runs_by_experiment"].get(
+        experiment_id, 0
+    ) == 0
+    assert identity["supporting_baseline_ai_units_by_experiment"].get(
+        experiment_id, 0
+    ) == 0
+    assert identity["actual_scheduled_root_runs_by_experiment"][experiment_id] == 1
+    assert identity["supporting_baseline_commitments"] == []
+    assert budget.planned_root_runs == 1
+    assert budget.budget_mode == "unlimited"
+    assert budget.approval_mode == "explicit_unlimited"
+    assert budget.hard_limits == {}
+
+
 def _write_pilot_fixture(
     root: Path,
     *,
@@ -923,14 +1166,14 @@ def _exp5_preflight(*, source_digest: str) -> dict:
             "siliconflow",
             "glm-entry",
             "zai-org/GLM-5.2",
-            "default",
+            "thinking",
             "5",
         ),
-        "qwen3_6_27b_siliconflow": (
-            "siliconflow",
-            "qwen-entry",
-            "Qwen/Qwen3.6-27B",
-            "default",
+        "deepseek_v4_pro_deepseek": (
+            "deepseek",
+            "deepseek-entry",
+            "deepseek-v4-pro",
+            "high",
             "6",
         ),
         "gpt_5_6_sol_high_openai": (
@@ -951,7 +1194,7 @@ def _exp5_preflight(*, source_digest: str) -> dict:
     ) in member_specs.items():
         member_plans[member_id] = {
             "status": "planned",
-            "cohort_id": "tokenshare.paper.model_endpoint_cohort.v1",
+            "cohort_id": "tokenshare.paper.model_endpoint_cohort.v2",
             "cohort_member_id": member_id,
             "provider_config_id": provider_config_id,
             "selected_entry_id": entry_id,
@@ -968,3 +1211,144 @@ def _exp5_preflight(*, source_digest: str) -> dict:
         "model_cohort_digest": "sha256:" + "2" * 64,
         "member_plans": member_plans,
     }
+
+
+def _exp5_v3_budget_fixture() -> tuple[
+    PaperInputCatalogManifest,
+    tuple[PaperExperimentCondition, ...],
+    list[dict],
+    dict,
+    dict[str, int],
+]:
+    source_catalog = _raw_paper_catalog_manifest()
+    base_case = source_catalog.factorization_cases[0]
+    case = {
+        **base_case,
+        "case_id": "exp5_v3_budget_2472_units",
+        "target_n": 10_000_019,
+        "candidate_start": 2,
+        "candidate_end": 2_473,
+        "candidate_divisor_count": 2_472,
+        "difficulty": "hard",
+        "paper_difficulty": "hard",
+        "split_params": {
+            **base_case["split_params"],
+            "requested_child_count": 2_472,
+        },
+    }
+    catalog_digest = digest_json(
+        {
+            "schema_version": "tokenshare.test.exp5_v3_budget_catalog.v1",
+            "case": case,
+        }
+    )
+    catalog = replace(
+        source_catalog,
+        catalog_digest=catalog_digest,
+        case_count=1,
+        factorization_cases=(case,),
+        lean_cases=(),
+        lean_lemma_graph_cases=(),
+    )
+    cohort_digest = "sha256:" + "a" * 64
+    comparable_controls = {
+        "temperature": 0.0,
+        "top_p": 1.0,
+        "stream": False,
+        "timeout_seconds": 600,
+        "max_tokens": 32_768,
+        "max_provider_attempts": 1,
+    }
+    conditions: list[PaperExperimentCondition] = []
+    selections: list[dict] = []
+    member_plans: dict[str, dict] = {}
+    token_ceilings: dict[str, int] = {}
+    for index, member_id in enumerate(
+        PAPER_MODEL_ENDPOINT_COHORT_V3_MEMBER_IDS,
+        start=1,
+    ):
+        expected = PAPER_MODEL_ENDPOINT_COHORT_V3_MEMBERS[member_id]
+        source_digest = "sha256:" + f"{index}" * 64
+        endpoint_digest = "sha256:" + f"{index + 4}" * 64
+        reasoning_controls = dict(expected["request_overrides"])
+        pricing_snapshot = dict(expected["pricing"])
+        member_plans[member_id] = {
+            "schema_version": "tokenshare.paper_model_endpoint_member_plan.v1",
+            "status": "planned",
+            "blocked_reasons": [],
+            "cohort_id": PAPER_MODEL_ENDPOINT_COHORT_V3_ID,
+            "model_cohort_digest": cohort_digest,
+            "cohort_member_id": member_id,
+            "provider_config_id": "siliconflow",
+            "selected_entry_id": f"{member_id}_entry",
+            "provider_family": "siliconflow",
+            "provider_model_id": expected["provider_model_id"],
+            "reasoning_profile_id": expected["reasoning_profile_id"],
+            "source_provider_config_digest": source_digest,
+            "model_endpoint_identity_digest": endpoint_digest,
+            "request_controls": {
+                "schema_version": "tokenshare.paper_exp5_request_controls.v1",
+                "comparable": comparable_controls,
+                "comparable_digest": digest_json(comparable_controls),
+                "provider_specific_reasoning": reasoning_controls,
+                "provider_specific_reasoning_digest": digest_json(
+                    reasoning_controls
+                ),
+            },
+            "pricing_snapshot": pricing_snapshot,
+            "pricing_snapshot_digest": digest_json(pricing_snapshot),
+        }
+        condition = PaperExperimentCondition(
+            schema_version="tokenshare.paper_condition.v3",
+            experiment_id="exp5_real_ai_model_endpoint_comparison",
+            condition_id=f"exp5_v3_budget_{member_id}",
+            domain="factorization",
+            difficulty="hard",
+            paper_difficulty="hard",
+            worker_count=3,
+            fault_type="none",
+            fault_rate=0.0,
+            ablation_mode="FULL",
+            model_policy="fixed_entry",
+            model_cohort_id=PAPER_MODEL_ENDPOINT_COHORT_V3_ID,
+            cohort_member_id=member_id,
+            provider_config_id="siliconflow",
+            model_entry_id=f"{member_id}_entry",
+            provider_family="siliconflow",
+            provider_model_id=str(expected["provider_model_id"]),
+            reasoning_profile_id=str(expected["reasoning_profile_id"]),
+            model_cohort_digest=cohort_digest,
+            source_provider_config_digest=source_digest,
+            model_endpoint_identity_digest=endpoint_digest,
+            repeat_id=0,
+            seed=1,
+            catalog_digest=catalog_digest,
+        )
+        conditions.append(condition)
+        selections.append(
+            {
+                "condition_id": condition.condition_id,
+                "condition_digest": condition.condition_digest,
+                "ordered_case_ids": [case["case_id"]],
+                "case_expected_ai_unit_counts": {case["case_id"]: 2_472},
+            }
+        )
+        token_ceilings[endpoint_digest] = (
+            69_632 if reasoning_controls["enable_thinking"] else 36_864
+        )
+    preflight = {
+        "schema_version": "tokenshare.paper_model_endpoint_cohort_preflight.v1",
+        "status": "planned",
+        "paper_eligible_possible": True,
+        "blocked_reason": None,
+        "ineligibility_reasons": [],
+        "provider_calls_made": 0,
+        "model_policy": "fixed_entry",
+        "cohort_id": PAPER_MODEL_ENDPOINT_COHORT_V3_ID,
+        "model_cohort_digest": cohort_digest,
+        "expected_member_ids": list(PAPER_MODEL_ENDPOINT_COHORT_V3_MEMBER_IDS),
+        "member_plans": member_plans,
+        "request_controls_snapshot": comparable_controls,
+        "request_controls_snapshot_digest": digest_json(comparable_controls),
+    }
+    return catalog, tuple(conditions), selections, preflight, token_ceilings

@@ -71,6 +71,7 @@ def test_paper_cli_bypasses_manual_budget_approval_by_default(
 def _patch_budget_policy_cli_boundaries(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-budget-policy-key")
     catalog = PaperInputCatalogManifest(
         catalog_id="tokenshare.paper.catalog",
         catalog_version="v2",

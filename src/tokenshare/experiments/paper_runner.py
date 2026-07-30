@@ -48,6 +48,7 @@ from tokenshare.experiments.paper_dispatcher import (
     dispatch_paper_condition,
     plan_paper_experiment,
 )
+from tokenshare.experiments.paper_exp1 import EXP1_FORMAL_REQUEST_CONTROLS
 from tokenshare.experiments.paper_experiment_contracts import (
     FrozenCaseSelection,
     PaperExecutionContext,
@@ -1181,15 +1182,7 @@ def _gate_c_context(
         context_id=f"gate_c_{experiment_id}",
         catalog=catalog,
         approved_endpoint_binding=endpoint_binding,
-        request_limits={
-            "max_tokens": 1024,
-            "timeout_seconds": PAPER_FORMAL_AI_TIMEOUT_SECONDS,
-            "max_provider_attempts": 1,
-            "temperature": 0.0,
-            "top_p": 1.0,
-            "stream": False,
-            "enable_thinking": False,
-        },
+        request_limits=dict(EXP1_FORMAL_REQUEST_CONTROLS),
         hard_limits=dict(hard_limits),
         output_root=Path(output_root).as_posix(),
         artifact_store=object(),
@@ -1273,27 +1266,27 @@ def _validate_gate_c_execution_config(
     )
     if reasoning.reasoning_profile_id != condition.reasoning_profile_id:
         raise ValueError("reasoning profile drift before transport")
-    if config.provider_family == "siliconflow" and (
-        entry.request_overrides.get("enable_thinking") is not False
-    ):
-        raise ValueError("SiliconFlow JSON mode requires enable_thinking=false")
-    temperature = entry.request_overrides.get(
-        "temperature",
-        config.defaults.get("temperature"),
-    )
-    if float(temperature) != 0.0:
-        raise ValueError("paper execution requires temperature=0")
+    if config.provider_family == "deepseek":
+        if "temperature" in entry.request_overrides or "top_p" in entry.request_overrides:
+            raise ValueError("DeepSeek thinking mode must omit temperature and top_p")
+        if "temperature" in config.defaults or "top_p" in config.defaults:
+            raise ValueError("DeepSeek thinking mode defaults must omit temperature and top_p")
+    else:
+        temperature = entry.request_overrides.get(
+            "temperature",
+            config.defaults.get("temperature"),
+        )
+        if temperature is not None and float(temperature) != 0.0:
+            raise ValueError("paper execution requires temperature=0 when configured")
 
 
 def _validate_gate_c_pilot_condition_scope(
     condition: PaperExperimentCondition,
 ) -> None:
-    if condition.experiment_id == "exp3_real_ai_fault_recovery" and (
-        condition.fault_type == "worker_death" or float(condition.fault_rate) != 0.0
-    ):
+    if condition.experiment_id == "exp3_real_ai_fault_recovery":
         raise ValueError(
-            "Gate C pilot only wires the Exp3 zero-rate provider baseline; "
-            "fault/death execution belongs to Prompt K"
+            "Gate C single-case pilot cannot execute Exp3 fault/death semantics; "
+            "use the formal or smoke runner production callback"
         )
     if (
         condition.experiment_id == "exp4_real_ai_protocol_ablation"
@@ -1937,6 +1930,21 @@ def normalize_experiment_ids(values: list[str] | tuple[str, ...]) -> tuple[str, 
             continue
         normalized.append(EXPERIMENT_ALIASES.get(item, item))
     return tuple(dict.fromkeys(normalized))
+
+
+def validate_experiment_dependency_order(experiment_ids: Sequence[str]) -> None:
+    """验证共享 Exp1 evidence 的执行顺序，不静默重排用户输入。"""
+
+    exp1 = "exp1_real_ai_feasibility"
+    exp3 = "exp3_real_ai_fault_recovery"
+    if (
+        exp1 in experiment_ids
+        and exp3 in experiment_ids
+        and experiment_ids.index(exp1) > experiment_ids.index(exp3)
+    ):
+        raise ValueError(
+            "Exp1 must precede Exp3 when shared Exp1 reference evidence is required"
+        )
 
 
 def expand_plan_conditions(

@@ -11,10 +11,15 @@ import hashlib
 import io
 import json
 from pathlib import Path
+import re
 from typing import Any
 
 from tokenshare.experiments.paper_exp5_model_comparison import (
     build_exp5_model_execution_rows,
+)
+from tokenshare.experiments.paper_exp5_statistics import (
+    build_exp5_order_and_concurrency_rows,
+    build_exp5_paired_comparison_rows,
 )
 
 
@@ -24,6 +29,15 @@ EXP3 = "exp3_real_ai_fault_recovery"
 EXP4 = "exp4_real_ai_protocol_ablation"
 EXP5 = "exp5_real_ai_model_endpoint_comparison"
 FORMAL_EXPERIMENT_IDS = (EXP1, EXP2, EXP3, EXP4, EXP5)
+_SHARED_SOURCE_SUCCESS_STATUSES = {"accepted", "completed", "success", "succeeded"}
+_SHARED_SOURCE_TERMINAL_STATUSES = _SHARED_SOURCE_SUCCESS_STATUSES | {
+    "blocked",
+    "budget_exhausted",
+    "failed",
+    "ineligible",
+    "partial",
+    "timeout",
+}
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -180,8 +194,15 @@ def _condition_metrics(bundle: Mapping[str, Any]) -> dict[str, Any]:
     completed = sum(_status(task.get("root_status")) == "completed" for task in tasks)
     accepted_valid = sum(_task_validity(task) for task in tasks)
     task_count = len(tasks)
-    token_values = [int(_number(attempt.get("total_tokens"))) for attempt in attempts]
-    latency_values = [float(_number(attempt.get("latency_ms"))) for attempt in attempts]
+    provider_attempts = _provider_attempt_records(attempts)
+    token_values = [
+        int(_number(attempt.get("total_tokens")))
+        for attempt in provider_attempts
+    ]
+    latency_values = [
+        float(_number(attempt.get("latency_ms")))
+        for attempt in provider_attempts
+    ]
     failure_breakdown: dict[str, int] = defaultdict(int)
     for task in tasks:
         status = _status(task.get("root_status"))
@@ -263,10 +284,11 @@ def _condition_metrics(bundle: Mapping[str, Any]) -> dict[str, Any]:
         "failed_root_count": task_count - completed,
         "completion_rate": _rate(completed, task_count),
         "accepted_validity_rate": _rate(accepted_valid, task_count),
-        "provider_attempt_count": len(attempts),
+        "provider_attempt_count": len(provider_attempts),
         "total_tokens": sum(token_values),
         "total_cost_estimate": sum(
-            float(_number(attempt.get("cost_estimate"))) for attempt in attempts
+            float(_number(attempt.get("cost_estimate")))
+            for attempt in provider_attempts
         ),
         "wall_clock_ms": wall_clock_ms,
         "wall_clock_source": (
@@ -290,19 +312,26 @@ def _condition_metrics(bundle: Mapping[str, Any]) -> dict[str, Any]:
         "token_p50": _quantile(token_values, 0.5),
         "token_p95": _quantile(token_values, 0.95),
         "provider_error_count": sum(
-            _status(attempt.get("attempt_status"))
-            in {"provider_error", "executor_error"}
-            or attempt.get("error_kind") is not None
-            for attempt in attempts
+            _status(attempt.get("attempt_status")) == "provider_error"
+            or (
+                _status(attempt.get("attempt_status")) != "executor_error"
+                and attempt.get("error_kind") is not None
+            )
+            for attempt in provider_attempts
         ),
         "rate_limited_attempt_count": sum(
             attempt.get("error_kind") in {"rate_limited", "429"}
-            for attempt in attempts
+            for attempt in provider_attempts
         ),
         "retry_attempt_count": max(
             0,
-            len(attempts)
-            - len({str(attempt.get("unit_id")) for attempt in attempts}),
+            len(provider_attempts)
+            - len(
+                {
+                    str(attempt.get("unit_id"))
+                    for attempt in provider_attempts
+                }
+            ),
         ),
         "failure_breakdown": dict(sorted(failure_breakdown.items())),
         "row_scope": "repeat_condition",
@@ -418,15 +447,16 @@ def _exp2_rows(
                 or (dispatched_ids and peak > len(dispatched_ids))
             ):
                 inventory_reasons.append("invalid_observed_peak_concurrency")
+            provider_attempts = _provider_attempt_records(task_attempts)
             provider_latency_sum_ms = sum(
                 float(_number(attempt.get("latency_ms")))
-                for attempt in task_attempts
+                for attempt in provider_attempts
             )
-            provider_attempt_count = len(task_attempts)
+            provider_attempt_count = len(provider_attempts)
             unique_unit_count = len(
                 {
                     str(attempt.get("unit_id"))
-                    for attempt in task_attempts
+                    for attempt in provider_attempts
                     if attempt.get("unit_id") is not None
                 }
             )
@@ -493,23 +523,23 @@ def _exp2_rows(
                         "provider_attempt_count": provider_attempt_count,
                         "total_tokens": sum(
                             int(_number(attempt.get("total_tokens")))
-                            for attempt in task_attempts
+                            for attempt in provider_attempts
                         ),
                         "total_cost_estimate": sum(
                             float(_number(attempt.get("cost_estimate")))
-                            for attempt in task_attempts
+                            for attempt in provider_attempts
                         ),
                         "cost": sum(
                             float(_number(attempt.get("cost_estimate")))
-                            for attempt in task_attempts
+                            for attempt in provider_attempts
                         ),
                         "http_429_count": sum(
                             attempt.get("error_kind") in {"rate_limited", "429"}
-                            for attempt in task_attempts
+                            for attempt in provider_attempts
                         ),
                         "rate_limited_attempt_count": sum(
                             attempt.get("error_kind") in {"rate_limited", "429"}
-                            for attempt in task_attempts
+                            for attempt in provider_attempts
                         ),
                         "retry_count": max(
                             0,
@@ -670,17 +700,48 @@ def _exp3_rows(
             ),
             {},
         )
-        baseline_condition_id = next(
-            (
-                task.get("matched_baseline_condition_id")
-                for task in tasks
-                if isinstance(task.get("matched_baseline_condition_id"), str)
-            ),
-            baseline_manifest.get("condition_id"),
+        (
+            baseline_condition_id,
+            baseline_condition_ids,
+        ) = _matched_baseline_condition_identity(
+            tasks=tasks,
+            baseline_manifest=baseline_manifest,
         )
         baseline_reasons: list[str] = []
+        shared_reference_source_usage: dict[str, Any] | None = None
+        baseline_comparison_eligible: bool | None = None
+        baseline_unavailable_reason: str | None = None
+        comparison_kind = "matched_condition"
         current_condition_id = str(bundle["condition"].get("condition_id"))
-        if str(baseline_condition_id) == current_condition_id:
+        shared_references = [
+            task.get("shared_exp1_reference")
+            for task in tasks
+            if isinstance(task.get("shared_exp1_reference"), Mapping)
+        ]
+        if shared_references:
+            comparison_kind = "shared_reference"
+            (
+                baseline_metrics,
+                baseline_reasons,
+                shared_reference_source_usage,
+                baseline_comparison_eligible,
+                baseline_unavailable_reason,
+            ) = _shared_exp1_reference_metrics(
+                suite_root=Path(bundle["suite_root"]),
+                tasks=tasks,
+            )
+            baseline_source = "shared_exp1_reference"
+            if baseline_metrics is None:
+                baseline_wall = None
+                baseline_tokens = None
+                baseline_cost = None
+                baseline_latency = None
+            else:
+                baseline_wall = baseline_metrics["wall_clock_ms"]
+                baseline_tokens = baseline_metrics["total_tokens"]
+                baseline_cost = baseline_metrics["total_cost_estimate"]
+                baseline_latency = baseline_metrics["provider_latency_sum_ms"]
+        elif str(baseline_condition_id) == current_condition_id:
             baseline_row = None
             baseline_reasons.append("self_matched_baseline_forbidden")
             baseline_wall = None
@@ -690,13 +751,13 @@ def _exp3_rows(
             baseline_source = "not_available"
         else:
             baseline_row = rows.get(str(baseline_condition_id))
-        if baseline_row is not None:
+        if not shared_references and baseline_row is not None:
             baseline_wall = float(baseline_row["wall_clock_ms"])
             baseline_tokens = int(baseline_row["total_tokens"])
             baseline_cost = float(baseline_row["total_cost_estimate"])
             baseline_latency = float(baseline_row["provider_latency_sum_ms"])
             baseline_source = "matched_condition_evidence"
-        elif not baseline_reasons:
+        elif not shared_references and not baseline_reasons:
             baseline_metrics, baseline_reasons = _dedicated_baseline_metrics(
                 suite_root=Path(bundle["suite_root"]),
                 tasks=tasks,
@@ -788,11 +849,16 @@ def _exp3_rows(
                 **progress,
                 **worker_death_metrics,
                 "matched_baseline_condition_id": baseline_condition_id,
+                "matched_baseline_condition_ids": baseline_condition_ids,
                 "matched_baseline_source": baseline_source,
                 "matched_baseline_wall_clock_ms": baseline_wall,
                 "matched_baseline_total_tokens": baseline_tokens,
                 "matched_baseline_total_cost_estimate": baseline_cost,
                 "matched_baseline_provider_latency_ms": baseline_latency,
+                "comparison_kind": comparison_kind,
+                "baseline_comparison_eligible": baseline_comparison_eligible,
+                "baseline_unavailable_reason": baseline_unavailable_reason,
+                "shared_reference_source_usage": shared_reference_source_usage,
                 "wall_clock_overhead_ms": wall_delta,
                 "wall_clock_overhead_ratio": (
                     wall_delta / baseline_wall
@@ -1239,7 +1305,16 @@ def _worker_death_recovery_metrics(
     replacement_attempt_by_unit: dict[str, str] = {}
     coordinator_continued = bool(worker_faults)
     for fault in worker_faults:
-        if fault.get("schema_version") != "tokenshare.paper_worker_death.v1":
+        schema_version = fault.get("schema_version")
+        if schema_version == "tokenshare.paper_worker_death_incomplete.v1":
+            if (
+                fault.get("recovery_completed") is not False
+                or fault.get("evidence_complete") is not False
+                or fault.get("replacement_fact") is not None
+            ):
+                reasons.append("invalid_incomplete_worker_death_record")
+            reasons.append("incomplete_worker_death_recovery")
+        elif schema_version != "tokenshare.paper_worker_death.v1":
             reasons.append("worker_death_schema_mismatch")
         record_ref = fault.get("record_ref")
         if isinstance(record_ref, Mapping) and record_ref:
@@ -1489,6 +1564,7 @@ def _worker_death_task_rows(
     for task in tasks:
         task_id = str(task.get("task_id") or "")
         task_attempts = _records_for_task(attempts, task, tasks)
+        provider_attempts = _provider_attempt_records(task_attempts)
         task_faults = _records_for_task(worker_faults, task, tasks)
         task_events = _records_for_task(events, task, tasks)
         metrics, reasons = _worker_death_recovery_metrics(
@@ -1512,14 +1588,14 @@ def _worker_death_task_rows(
                     "completed_root_count": completed,
                     "failed_root_count": 1 - completed,
                     "completion_rate": float(completed),
-                    "provider_attempt_count": len(task_attempts),
+                    "provider_attempt_count": len(provider_attempts),
                     "total_tokens": sum(
                         int(_number(attempt.get("total_tokens")))
-                        for attempt in task_attempts
+                        for attempt in provider_attempts
                     ),
                     "total_cost_estimate": sum(
                         float(_number(attempt.get("cost_estimate")))
-                        for attempt in task_attempts
+                        for attempt in provider_attempts
                     ),
                     **metrics,
                 },
@@ -1549,6 +1625,457 @@ def _first_number(*values: Any) -> float | None:
         None,
     )
     return float(value) if value is not None else None
+
+
+def _matched_baseline_condition_identity(
+    *,
+    tasks: Sequence[Mapping[str, Any]],
+    baseline_manifest: Mapping[str, Any],
+) -> tuple[str | None, list[str]]:
+    """聚合 condition 内全部 baseline source，避免首项冒充唯一来源。"""
+
+    condition_ids = sorted(
+        {
+            value
+            for task in tasks
+            for value in (task.get("matched_baseline_condition_id"),)
+            if isinstance(value, str) and value
+        }
+    )
+    manifest_condition_id = baseline_manifest.get("condition_id")
+    if not condition_ids and isinstance(manifest_condition_id, str):
+        condition_ids.append(manifest_condition_id)
+    return (
+        condition_ids[0] if len(condition_ids) == 1 else None,
+        condition_ids,
+    )
+
+
+def _shared_exp1_reference_metrics(
+    *,
+    suite_root: Path,
+    tasks: Sequence[Mapping[str, Any]],
+) -> tuple[
+    dict[str, Any] | None,
+    list[str],
+    dict[str, Any] | None,
+    bool,
+    str | None,
+]:
+    references = [
+        task.get("shared_exp1_reference")
+        for task in tasks
+        if isinstance(task.get("shared_exp1_reference"), Mapping)
+    ]
+    if len(references) != len(tasks) or not references:
+        return None, ["missing_shared_exp1_reference"], None, False, (
+            "missing_shared_exp1_reference"
+        )
+
+    source_usage: dict[str, Any] = {
+        "provider_attempt_count": 0,
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "total_tokens": 0,
+        "cost_estimate": 0.0,
+    }
+    unavailable_reasons: list[str] = []
+    frozen_usages: list[Mapping[str, Any] | None] = []
+    for task, reference in zip(tasks, references, strict=True):
+        if (
+            reference.get("schema_version")
+            != "tokenshare.paper_exp1_shared_reference.v1"
+            or reference.get("source_experiment_id")
+            != "exp1_real_ai_feasibility"
+            or reference.get("source_case_id") != task.get("task_id")
+            or reference.get("source_task_id") != task.get("task_id")
+            or reference.get("source_condition_id")
+            != task.get("matched_baseline_condition_id")
+            or reference.get("evidence_integrity") != "complete"
+        ):
+            return None, ["shared_exp1_reference_identity_mismatch"], None, False, (
+                "shared_exp1_reference_identity_mismatch"
+            )
+        reference_core = {
+            key: value
+            for key, value in reference.items()
+            if key
+            not in {
+                "source_hash",
+                "source_reference_id",
+                "planned_source_reference_id",
+                "reference_policy_id",
+            }
+        }
+        if reference.get("source_hash") != _digest(reference_core):
+            return None, ["shared_exp1_reference_hash_mismatch"], None, False, (
+                "shared_exp1_reference_hash_mismatch"
+            )
+        if not _valid_shared_execution_versions(reference.get("source_versions")):
+            return None, ["invalid_shared_exp1_source_versions"], None, False, (
+                "invalid_shared_exp1_source_versions"
+            )
+        usage = reference.get("source_usage")
+        frozen_usages.append(usage if isinstance(usage, Mapping) else None)
+        if reference.get("baseline_comparison_eligible") is not True:
+            reason = reference.get("baseline_unavailable_reason")
+            unavailable_reasons.append(
+                str(reason) if isinstance(reason, str) and reason else (
+                    "shared_exp1_comparison_unavailable"
+                )
+            )
+
+    totals = {
+        "wall_clock_ms": 0.0,
+        "total_tokens": 0,
+        "total_cost_estimate": 0.0,
+        "provider_latency_sum_ms": 0.0,
+    }
+    usage_failure_reason: str | None = None
+    usage_failure_value: dict[str, Any] | None = None
+    for task, reference, frozen_usage in zip(
+        tasks,
+        references,
+        frozen_usages,
+        strict=True,
+    ):
+        task_record = _record_from_frozen_reference(
+            suite_root=suite_root,
+            reference=reference.get("source_task_ref"),
+        )
+        source_status = (
+            _status(task_record.get("root_status")).lower()
+            if task_record is not None
+            else "unknown"
+        )
+        frozen_status = _status(reference.get("source_root_status")).lower()
+        if (
+            task_record is None
+            or source_status not in _SHARED_SOURCE_TERMINAL_STATUSES
+            or source_status != frozen_status
+            or task_record.get("experiment_id") != reference.get("source_experiment_id")
+            or task_record.get("condition_id") != reference.get("source_condition_id")
+            or task_record.get("task_id") != reference.get("source_task_id")
+            or task_record.get("repeat_id") != reference.get("source_repeat_id")
+        ):
+            return None, ["invalid_shared_exp1_task_reference"], source_usage, False, (
+                "invalid_shared_exp1_task_reference"
+            )
+        source_versions = reference.get("source_versions")
+        runtime_generation_identity = task_record.get("runtime_generation_identity")
+        if (
+            not isinstance(source_versions, Mapping)
+            or not isinstance(runtime_generation_identity, Mapping)
+            or source_versions.get("runtime_generation_schema_version")
+            != runtime_generation_identity.get("schema_version")
+            or source_versions.get("runtime_generation_identity_digest")
+            != _digest(runtime_generation_identity)
+        ):
+            return None, ["shared_exp1_runtime_identity_mismatch"], source_usage, (
+                False
+            ), "shared_exp1_runtime_identity_mismatch"
+        attempt_refs = reference.get("source_attempt_refs")
+        if not isinstance(attempt_refs, Sequence) or isinstance(
+            attempt_refs,
+            (str, bytes),
+        ) or not attempt_refs:
+            return None, ["missing_shared_exp1_attempt_references"], source_usage, (
+                False
+            ), "missing_shared_exp1_attempt_references"
+        attempts: list[Mapping[str, Any]] = []
+        for attempt_ref in attempt_refs:
+            attempt = _record_from_frozen_reference(
+                suite_root=suite_root,
+                reference=attempt_ref,
+            )
+            if attempt is None:
+                return None, ["invalid_shared_exp1_attempt_reference"], (
+                    source_usage
+                ), False, "invalid_shared_exp1_attempt_reference"
+            attempts.append(attempt)
+        event_refs = reference.get("source_event_refs")
+        if not isinstance(event_refs, Sequence) or isinstance(
+            event_refs,
+            (str, bytes),
+        ) or not event_refs:
+            return None, ["missing_shared_exp1_event_references"], source_usage, (
+                False
+            ), "missing_shared_exp1_event_references"
+        if any(
+            _record_from_frozen_reference(
+                suite_root=suite_root,
+                reference=event_ref,
+            )
+            is None
+            for event_ref in event_refs
+        ):
+            return None, ["invalid_shared_exp1_event_reference"], source_usage, (
+                False
+            ), "invalid_shared_exp1_event_reference"
+        artifact_refs = reference.get("source_artifact_refs")
+        if not isinstance(artifact_refs, Sequence) or isinstance(
+            artifact_refs,
+            (str, bytes),
+        ) or (
+            not artifact_refs and source_status in _SHARED_SOURCE_SUCCESS_STATUSES
+        ):
+            return None, ["missing_shared_exp1_artifact_references"], source_usage, (
+                False
+            ), "missing_shared_exp1_artifact_references"
+        if any(
+            not _valid_frozen_artifact_reference(
+                suite_root=suite_root,
+                reference=artifact_ref,
+            )
+            for artifact_ref in artifact_refs
+        ):
+            return None, ["invalid_shared_exp1_artifact_reference"], source_usage, (
+                False
+            ), "invalid_shared_exp1_artifact_reference"
+
+        recomputed_usage = _recompute_shared_source_usage(
+            task=task_record,
+            attempts=attempts,
+        )
+        if frozen_usage is None:
+            current_usage_failure = "missing_shared_exp1_source_usage"
+        elif not _shared_source_usage_matches(
+            frozen=frozen_usage,
+            recomputed=recomputed_usage,
+        ):
+            current_usage_failure = "shared_exp1_source_usage_mismatch"
+        elif (
+            recomputed_usage.get("usage_complete") is not True
+            or recomputed_usage.get("usage_missing_provider_attempt_count") != 0
+        ):
+            current_usage_failure = "shared_exp1_source_usage_incomplete"
+        else:
+            current_usage_failure = None
+        if current_usage_failure is not None:
+            if usage_failure_reason is None:
+                usage_failure_reason = current_usage_failure
+                usage_failure_value = (
+                    dict(frozen_usage) if frozen_usage is not None else None
+                )
+        else:
+            assert frozen_usage is not None
+            for field_name in (
+                "provider_attempt_count",
+                "prompt_tokens",
+                "completion_tokens",
+                "total_tokens",
+            ):
+                source_usage[field_name] += int(frozen_usage[field_name])
+            source_usage["cost_estimate"] += float(frozen_usage["cost_estimate"])
+
+        wall_clock_ms = _observed_time_ms(task_record.get("wall_clock_ms"))
+        if wall_clock_ms is None:
+            intervals = _worker_interval_metrics(attempts)
+            wall_clock_ms = (
+                float(intervals["wall_clock_ms"])
+                if intervals is not None
+                else None
+            )
+        if (
+            wall_clock_ms is None
+            and reference.get("baseline_comparison_eligible") is True
+        ):
+            return None, ["missing_shared_exp1_timing_evidence"], source_usage, (
+                False
+            ), "missing_shared_exp1_timing_evidence"
+        totals["wall_clock_ms"] += wall_clock_ms or 0.0
+        totals["provider_latency_sum_ms"] += sum(
+            float(_number(attempt.get("latency_ms")))
+            for attempt in _shared_provider_attempt_records(attempts)
+        )
+
+    source_usage["cost_estimate"] = round(
+        float(source_usage["cost_estimate"]),
+        12,
+    )
+    if usage_failure_reason is not None:
+        return None, [usage_failure_reason], usage_failure_value, False, (
+            usage_failure_reason
+        )
+    if unavailable_reasons:
+        reasons = list(dict.fromkeys(unavailable_reasons))
+        return None, reasons, source_usage, False, reasons[0]
+    totals["total_tokens"] = int(source_usage["total_tokens"])
+    totals["total_cost_estimate"] = float(source_usage["cost_estimate"])
+    return totals, [], source_usage, True, None
+
+
+def _record_from_frozen_reference(
+    *,
+    suite_root: Path,
+    reference: Any,
+) -> Mapping[str, Any] | None:
+    if not isinstance(reference, Mapping):
+        return None
+    relative_path = reference.get("path")
+    record_hash = reference.get("record_hash")
+    if not isinstance(relative_path, str) or not isinstance(record_hash, str):
+        return None
+    path = suite_root / relative_path
+    if not path.is_file():
+        return None
+    matches = [record for record in _read_jsonl(path) if _digest(record) == record_hash]
+    return matches[0] if len(matches) == 1 else None
+
+
+def _valid_frozen_artifact_reference(
+    *,
+    suite_root: Path,
+    reference: Any,
+) -> bool:
+    if not isinstance(reference, Mapping):
+        return False
+    relative_path = reference.get("path")
+    content_hash = reference.get("content_hash")
+    if not isinstance(relative_path, str) or not isinstance(content_hash, str):
+        return False
+    path = suite_root / relative_path
+    return path.is_file() and content_hash == (
+        "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
+    )
+
+
+def _valid_shared_execution_versions(value: Any) -> bool:
+    if not isinstance(value, Mapping):
+        return False
+    if value.get("schema_version") != "tokenshare.paper_execution_version_identity.v1":
+        return False
+    for field_name in (
+        "plugin_version",
+        "parser_version",
+        "verifier_version",
+        "executor_version",
+        "prompt_version",
+        "runtime_generation_schema_version",
+    ):
+        if not isinstance(value.get(field_name), str) or not value.get(field_name):
+            return False
+    return all(
+        isinstance(value.get(field_name), str)
+        and bool(re.fullmatch(r"sha256:[0-9a-f]{64}", value[field_name]))
+        for field_name in (
+            "split_profile_digest",
+            "runtime_generation_identity_digest",
+        )
+    )
+
+
+def _recompute_shared_source_usage(
+    *,
+    task: Mapping[str, Any],
+    attempts: Sequence[Mapping[str, Any]],
+) -> dict[str, Any]:
+    provider_attempts = _shared_provider_attempt_records(attempts)
+    expected_count = task.get("provider_attempt_count")
+    count_complete = (
+        isinstance(expected_count, int)
+        and not isinstance(expected_count, bool)
+        and expected_count > 0
+        and expected_count == len(provider_attempts)
+    )
+    complete_attempts: list[Mapping[str, Any]] = []
+    currencies: set[str] = set()
+    cost_statuses: set[str] = set()
+    for attempt in provider_attempts:
+        token_values = [
+            attempt.get(field_name)
+            for field_name in ("prompt_tokens", "completion_tokens", "total_tokens")
+        ]
+        cost_value = attempt.get("cost_estimate")
+        currency = attempt.get("cost_estimate_currency")
+        cost_status = attempt.get("cost_estimate_status")
+        if (
+            any(
+                isinstance(value, bool)
+                or not isinstance(value, int)
+                or value < 0
+                for value in token_values
+            )
+            or isinstance(cost_value, bool)
+            or not isinstance(cost_value, (int, float))
+            or float(cost_value) < 0
+            or not isinstance(currency, str)
+            or not currency
+            or cost_status != "estimated"
+            or attempt.get("usage_missing") is True
+        ):
+            continue
+        complete_attempts.append(attempt)
+        currencies.add(currency)
+        cost_statuses.add(cost_status)
+    usage_complete = (
+        count_complete
+        and len(complete_attempts) == len(provider_attempts)
+        and len(currencies) == 1
+        and cost_statuses == {"estimated"}
+    )
+    expected_count_value = (
+        int(expected_count)
+        if isinstance(expected_count, int) and not isinstance(expected_count, bool)
+        else None
+    )
+    missing_count = max(expected_count_value or 0, len(provider_attempts)) - len(
+        complete_attempts
+    )
+    return {
+        "provider_attempt_count": len(provider_attempts),
+        "expected_provider_attempt_count": expected_count_value,
+        "prompt_tokens": (
+            sum(int(item["prompt_tokens"]) for item in complete_attempts)
+            if usage_complete
+            else None
+        ),
+        "completion_tokens": sum(
+            int(item["completion_tokens"]) for item in complete_attempts
+        ) if usage_complete else None,
+        "total_tokens": (
+            sum(int(item["total_tokens"]) for item in complete_attempts)
+            if usage_complete
+            else None
+        ),
+        "cost_estimate": round(
+            sum(float(item["cost_estimate"]) for item in complete_attempts),
+            12,
+        ) if usage_complete else None,
+        "usage_complete": usage_complete,
+        "usage_missing_provider_attempt_count": missing_count,
+        "cost_estimate_status": "estimated" if usage_complete else "usage_missing",
+        "cost_estimate_currency": next(iter(currencies)) if usage_complete else None,
+    }
+
+
+def _shared_source_usage_matches(
+    *,
+    frozen: Mapping[str, Any],
+    recomputed: Mapping[str, Any],
+) -> bool:
+    """按 JSON 标量类型和值比较，避免 Python 的 ``True == 1`` 别名。"""
+
+    return all(
+        type(frozen.get(field_name)) is type(expected_value)
+        and frozen.get(field_name) == expected_value
+        for field_name, expected_value in recomputed.items()
+    )
+
+
+def _shared_provider_attempt_records(
+    attempts: Sequence[Mapping[str, Any]],
+) -> tuple[Mapping[str, Any], ...]:
+    return tuple(
+        attempt
+        for attempt in attempts
+        if (
+            isinstance(attempt.get("provider_attempt_count"), int)
+            and not isinstance(attempt.get("provider_attempt_count"), bool)
+            and int(attempt["provider_attempt_count"]) > 0
+        )
+        or isinstance(attempt.get("model_execution_record_ref"), Mapping)
+    )
 
 
 def _dedicated_baseline_metrics(
@@ -1651,15 +2178,19 @@ def _dedicated_baseline_metrics(
             )
         if wall_clock_ms is None:
             return None, ["missing_matched_baseline_timing_evidence"]
+        provider_attempts = _provider_attempt_records(attempts)
         totals["wall_clock_ms"] += wall_clock_ms
         totals["total_tokens"] += sum(
-            int(_number(attempt.get("total_tokens"))) for attempt in attempts
+            int(_number(attempt.get("total_tokens")))
+            for attempt in provider_attempts
         )
         totals["total_cost_estimate"] += sum(
-            float(_number(attempt.get("cost_estimate"))) for attempt in attempts
+            float(_number(attempt.get("cost_estimate")))
+            for attempt in provider_attempts
         )
         totals["provider_latency_sum_ms"] += sum(
-            float(_number(attempt.get("latency_ms"))) for attempt in attempts
+            float(_number(attempt.get("latency_ms")))
+            for attempt in provider_attempts
         )
     return totals, []
 
@@ -1800,11 +2331,14 @@ def _exp4_task_row(
     escape_rate = escape_rate if evidence_complete else None
     reasons = list(runtime_audit["reasons"])
     completed = int(_status(task.get("root_status")) == "completed")
+    provider_attempts = _provider_attempt_records(task_attempts)
     total_tokens = sum(
-        int(_number(attempt.get("total_tokens"))) for attempt in task_attempts
+        int(_number(attempt.get("total_tokens")))
+        for attempt in provider_attempts
     )
     total_cost = sum(
-        float(_number(attempt.get("cost_estimate"))) for attempt in task_attempts
+        float(_number(attempt.get("cost_estimate")))
+        for attempt in provider_attempts
     )
     return _with_specialty_eligibility(
         base_row,
@@ -1820,7 +2354,7 @@ def _exp4_task_row(
             "accepted_validity_rate": float(
                 task.get("accepted_validity") is True
             ),
-            "provider_attempt_count": len(task_attempts),
+            "provider_attempt_count": len(provider_attempts),
             "total_tokens": total_tokens,
             "total_cost_estimate": total_cost,
             "cost": total_cost,
@@ -2581,6 +3115,242 @@ def _exp5_rows(
     return result
 
 
+def _exp5_v3_case_records(
+    bundles: Mapping[str, Mapping[str, Any]],
+) -> tuple[dict[str, Any], ...]:
+    """从正式 checkpoint 生成 Task 7 所需的 root-level 配对记录。"""
+
+    result: list[dict[str, Any]] = []
+    for condition_id in sorted(bundles):
+        bundle = bundles[condition_id]
+        condition = bundle["condition"]
+        if (
+            condition.get("experiment_id") != EXP5
+            or condition.get("schema_version") != "tokenshare.paper_condition.v3"
+        ):
+            continue
+        identity_eligible = _exp5_identity_inventory(bundle)["paper_eligible"] is True
+        attempts = tuple(
+            attempt
+            for attempt in bundle.get("attempts", ())
+            if isinstance(attempt, Mapping)
+        )
+        started_values = [
+            attempt.get("started_at")
+            for attempt in attempts
+            if _observed_time_ms(attempt.get("started_at")) is not None
+        ]
+        ended_values = [
+            attempt.get("ended_at")
+            for attempt in attempts
+            if _observed_time_ms(attempt.get("ended_at")) is not None
+        ]
+        if (
+            not attempts
+            or len(started_values) != len(attempts)
+            or len(ended_values) != len(attempts)
+        ):
+            raise ValueError("Exp5 v3 condition timing evidence is incomplete")
+        condition_started_at = min(
+            started_values,
+            key=lambda value: float(_observed_time_ms(value)),
+        )
+        condition_ended_at = max(
+            ended_values,
+            key=lambda value: float(_observed_time_ms(value)),
+        )
+        observed_peak = _attempt_interval_peak(attempts)
+        tasks = tuple(
+            task
+            for task in bundle.get("tasks", ())
+            if isinstance(task, Mapping)
+        )
+        for task in sorted(
+            tasks,
+            key=lambda value: str(value.get("case_id") or value.get("task_id")),
+        ):
+            case_id = task.get("case_id") or task.get("task_id")
+            if not isinstance(case_id, str) or not case_id:
+                raise ValueError("Exp5 v3 task requires a case identity")
+            task_attempts = _records_for_task(attempts, task, tasks)
+            provider_attempts = _provider_attempt_records(task_attempts)
+            token_values = _complete_numeric_values(
+                provider_attempts,
+                "total_tokens",
+            )
+            latency_values = _complete_numeric_values(
+                provider_attempts,
+                "latency_ms",
+            )
+            root_status = task.get("root_status")
+            root_completed = (
+                _status(root_status) == "completed"
+                if root_status is not None
+                else None
+            )
+            accepted_validity = task.get("accepted_validity")
+            if not isinstance(accepted_validity, bool):
+                accepted_validity = None
+            paper_eligible = (
+                identity_eligible
+                and task.get("paper_eligible") is True
+                and all(
+                    attempt.get("paper_eligible") is True
+                    for attempt in task_attempts
+                )
+            )
+            row = {
+                "case_id": case_id,
+                "repeat_id": condition.get("repeat_id"),
+                "cohort_member_id": condition.get("cohort_member_id"),
+                "condition_id": condition.get("condition_id"),
+                "stratum_id": _exp5_v3_stratum_id(condition),
+                "root_completed": root_completed,
+                "accepted_validity": accepted_validity,
+                "total_tokens": (
+                    sum(token_values) if token_values is not None else None
+                ),
+                "provider_latency_ms": (
+                    sum(latency_values) if latency_values is not None else None
+                ),
+                "paper_eligible": paper_eligible,
+                "order_slot": condition.get("order_slot"),
+                "predecessor_member_id": condition.get(
+                    "predecessor_member_id"
+                ),
+                "sequence_plan_digest": condition.get(
+                    "sequence_plan_digest"
+                ),
+                "exp5_selection_digest": condition.get(
+                    "exp5_selection_digest"
+                ),
+                "exp5_selection_parent_catalog_digest": condition.get(
+                    "exp5_selection_parent_catalog_digest"
+                ),
+                "condition_started_at": condition_started_at,
+                "condition_ended_at": condition_ended_at,
+                "observed_peak_concurrency": observed_peak,
+            }
+            if root_completed is None:
+                row["root_completed_unavailable_reason"] = (
+                    "root_status_missing"
+                )
+            if accepted_validity is None:
+                row["accepted_validity_unavailable_reason"] = (
+                    "accepted_validity_missing"
+                )
+            if token_values is None:
+                row["total_tokens_unavailable_reason"] = (
+                    "provider_usage_missing"
+                )
+            if latency_values is None:
+                row["provider_latency_ms_unavailable_reason"] = (
+                    "provider_latency_missing"
+                )
+            result.append(row)
+    return tuple(result)
+
+
+def _exp5_v3_analysis_outputs(
+    bundles: Mapping[str, Mapping[str, Any]],
+) -> dict[str, str]:
+    """仅在正式 v3 evidence 存在时生成冻结统计输出。"""
+
+    has_v3 = any(
+        bundle.get("condition", {}).get("experiment_id") == EXP5
+        and bundle.get("condition", {}).get("schema_version")
+        == "tokenshare.paper_condition.v3"
+        for bundle in bundles.values()
+    )
+    if not has_v3:
+        return {}
+    case_records = _exp5_v3_case_records(bundles)
+    paired_rows = build_exp5_paired_comparison_rows(case_records)
+    order_rows = build_exp5_order_and_concurrency_rows(case_records)
+    return {
+        "metrics/exp5_paired_comparisons.csv": _csv_text(paired_rows),
+        "metrics/exp5_model_execution_records.jsonl": (
+            _exp5_v3_execution_record_text(bundles)
+        ),
+        "metrics/exp5_order_and_concurrency.csv": _csv_text(order_rows),
+    }
+
+
+def _exp5_v3_execution_record_text(
+    bundles: Mapping[str, Mapping[str, Any]],
+) -> str:
+    records: list[dict[str, Any]] = []
+    for condition_id in sorted(bundles):
+        bundle = bundles[condition_id]
+        condition = bundle["condition"]
+        if (
+            condition.get("experiment_id") == EXP5
+            and condition.get("schema_version") == "tokenshare.paper_condition.v3"
+        ):
+            records.extend(_strict_exp5_model_rows(bundle))
+    records.sort(
+        key=lambda row: (
+            int(row.get("repeat_id", -1)),
+            str(row.get("cohort_member_id")),
+            str(row.get("condition_id")),
+            str(row.get("task_id")),
+            str(row.get("unit_id")),
+            str(row.get("attempt_id")),
+            int(row.get("provider_attempt_index", -1)),
+        )
+    )
+    return "".join(
+        json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n"
+        for record in records
+    )
+
+
+def _exp5_v3_stratum_id(condition: Mapping[str, Any]) -> str:
+    domain = condition.get("domain")
+    paper_difficulty = condition.get("paper_difficulty")
+    if domain == "factorization":
+        return f"factorization:{paper_difficulty}"
+    if domain == "lean_proof" and condition.get("topic_family"):
+        return (
+            f"lean_proof:{paper_difficulty}:{condition['topic_family']}"
+        )
+    raise ValueError("Exp5 v3 condition has an invalid analysis stratum")
+
+
+def _complete_numeric_values(
+    records: Sequence[Mapping[str, Any]],
+    field_name: str,
+) -> list[float] | None:
+    values: list[float] = []
+    for record in records:
+        value = record.get(field_name)
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+        ):
+            return None
+        values.append(float(value))
+    return values
+
+
+def _attempt_interval_peak(
+    attempts: Sequence[Mapping[str, Any]],
+) -> int:
+    points: list[tuple[float, int]] = []
+    for attempt in attempts:
+        started = _observed_time_ms(attempt.get("started_at"))
+        ended = _observed_time_ms(attempt.get("ended_at"))
+        if started is None or ended is None or ended < started:
+            raise ValueError("Exp5 v3 condition timing evidence is invalid")
+        points.extend(((started, 1), (ended, -1)))
+    active = 0
+    peak = 0
+    for _, delta in sorted(points, key=lambda item: (item[0], item[1])):
+        active += delta
+        peak = max(peak, active)
+    return peak
+
+
 def _write_metrics_outputs(
     *,
     root: Path,
@@ -2638,6 +3408,7 @@ def _write_metrics_outputs(
         )
         + "\n",
     }
+    paths_and_content.update(_exp5_v3_analysis_outputs(run_bundles))
     refs: list[dict[str, Any]] = []
     for relative_path, content in paths_and_content.items():
         path = root / relative_path
@@ -3716,6 +4487,21 @@ def _number(value: Any) -> int | float:
 
 def _status(value: Any) -> str:
     return str(getattr(value, "value", value or "unknown"))
+
+
+def _provider_attempt_records(
+    attempts: Sequence[Mapping[str, Any]],
+) -> tuple[Mapping[str, Any], ...]:
+    return tuple(
+        attempt
+        for attempt in attempts
+        if _status(attempt.get("attempt_status")) != "executor_error"
+        and attempt.get("record_scope") != "experiment"
+    )
+
+
+def _provider_attempt_count(attempts: Sequence[Mapping[str, Any]]) -> int:
+    return len(_provider_attempt_records(attempts))
 
 
 def _csv_text(rows: Sequence[Mapping[str, Any]]) -> str:

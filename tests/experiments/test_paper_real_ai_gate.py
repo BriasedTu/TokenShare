@@ -103,6 +103,69 @@ def test_real_ai_gate_rejects_secret_scan_failure_and_missing_attempts() -> None
     assert "secret_scan_failed" in report.ineligibility_reasons
 
 
+def test_real_ai_gate_marks_executor_error_ineligible_without_provider_artifact_requirements() -> None:
+    request_ref = _artifact_ref(
+        "executor-request",
+        "ExecutionRequest",
+        "phase3.execution_request",
+        source_kind="protocol_engine",
+    )
+    attempt = PaperAttemptResult(
+        condition_id="condition_1",
+        repeat_id=0,
+        run_id="run_1",
+        task_id="task_1",
+        unit_id="unit_root_1",
+        attempt_id="attempt_root_1",
+        worker_id="worker_1",
+        provider_attempt_index=0,
+        attempt_status=PaperAttemptStatus.EXECUTOR_ERROR,
+        provider=None,
+        model=None,
+        entry_id=None,
+        request_ref=request_ref,
+        raw_output_ref=None,
+        parsed_output_ref=None,
+        parse_failure_ref=None,
+        provenance_ref=None,
+        usage_ref=None,
+        started_at="2026-07-28T00:00:00Z",
+        ended_at="2026-07-28T00:00:01Z",
+        latency_ms=0,
+        prompt_tokens=0,
+        completion_tokens=0,
+        total_tokens=0,
+        cost_estimate=0.0,
+        error_kind="retry_limit_reached",
+        fault_injection_ref=None,
+        paper_eligible=False,
+        provider_attempt_count=0,
+        executor_id="executor_factorization_runtime",
+        executor_type="deterministic_local",
+        schema_version="tokenshare.paper_attempt_result.v2",
+    )
+
+    report = evaluate_paper_eligibility(
+        attempts=[attempt],
+        run_evidence=_valid_run_evidence([attempt.to_dict()]),
+    )
+
+    reasons = set(report.ineligibility_reasons)
+    assert report.paper_eligible is False
+    assert "attempt:attempt_root_1:executor_error" in reasons
+    for forbidden in (
+        "missing_provider",
+        "missing_model",
+        "missing_entry_id",
+        "missing_raw_output_ref",
+        "missing_provenance_ref",
+        "missing_usage_ref",
+        "missing_parsed_output_or_parse_failure_ref",
+        "missing_total_tokens",
+    ):
+        assert f"attempt:attempt_root_1:{forbidden}" not in reasons
+
+
 def _valid_attempt() -> PaperAttemptResult:
     ref = _artifact_ref("request", "ExecutionRequest", "phase3.execution_request", source_kind="protocol_engine")
     raw_ref = _artifact_ref("raw", "RawModelOutput", "phase7.raw_model_output")

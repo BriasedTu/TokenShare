@@ -16,8 +16,9 @@ from tokenshare.experiments.paper_experiment_contracts import (
     canonical_contract_digest,
 )
 from tokenshare.experiments.paper_models import (
+    EXP1_TO_EXP4_DEEPSEEK_MAX_TOKENS,
+    EXP1_TO_EXP4_DEEPSEEK_TIMEOUT_SECONDS,
     LEAN_TOPIC_FAMILIES,
-    PAPER_FORMAL_AI_TIMEOUT_SECONDS,
     PaperConditionResult,
     PaperExperimentCondition,
     digest_json,
@@ -41,19 +42,18 @@ OPTIONAL_WORKER_LEVELS: tuple[int, ...] = ()
 EXP2_REPEATS = 2
 EXP2_SEED_BASE = 2000
 
-BASELINE_PROVIDER_FAMILY = "siliconflow"
-BASELINE_PROVIDER_MODEL_ID = "zai-org/GLM-5.2"
-BASELINE_MODEL_ENTRY_ID = "glm_5_2_exp1_baseline"
-BASELINE_PROVIDER_CONFIG_ID = "exp1_baseline_siliconflow"
-BASELINE_REASONING_PROFILE_ID = "default"
+BASELINE_PROVIDER_FAMILY = "deepseek"
+BASELINE_PROVIDER_MODEL_ID = "deepseek-v4-pro"
+BASELINE_MODEL_ENTRY_ID = "deepseek_v4_pro_exp1_baseline"
+BASELINE_PROVIDER_CONFIG_ID = "exp1_baseline_deepseek"
+BASELINE_REASONING_PROFILE_ID = "high"
 BASELINE_REQUEST_LIMIT_POLICY = {
-    "max_tokens": 1024,
-    "timeout_seconds": PAPER_FORMAL_AI_TIMEOUT_SECONDS,
+    "max_tokens": EXP1_TO_EXP4_DEEPSEEK_MAX_TOKENS,
+    "timeout_seconds": EXP1_TO_EXP4_DEEPSEEK_TIMEOUT_SECONDS,
     "max_provider_attempts": 1,
-    "temperature": 0.0,
-    "top_p": 1.0,
     "stream": False,
-    "enable_thinking": False,
+    "thinking": {"type": "enabled"},
+    "reasoning_effort": "high",
 }
 
 FACTOR_PAPER_DIFFICULTIES = ("easy", "medium", "hard")
@@ -315,7 +315,7 @@ def validate_exp2_condition(
         or condition.provider_family != BASELINE_PROVIDER_FAMILY
         or condition.provider_model_id != BASELINE_PROVIDER_MODEL_ID
     ):
-        raise ValueError("Experiment 2 requires GLM-5.2 baseline model identity")
+        raise ValueError("Experiment 2 requires DeepSeek-V4-Pro baseline model identity")
     if condition.reasoning_profile_id != BASELINE_REASONING_PROFILE_ID:
         raise ValueError("Experiment 2 reasoning_profile_id must remain fixed")
     if (
@@ -2220,14 +2220,14 @@ def _validate_approved_endpoint_binding(
             "approved endpoint effective_reasoning_controls",
         )
         if (
-            "enable_thinking" not in controls
+            set(controls) != {"thinking", "reasoning_effort"}
             or any(
-                field_name not in {"temperature", "enable_thinking"}
+                field_name not in {"thinking", "reasoning_effort"}
                 or value
                 != {
-                    "temperature": BASELINE_REQUEST_LIMIT_POLICY["temperature"],
-                    "enable_thinking": BASELINE_REQUEST_LIMIT_POLICY[
-                        "enable_thinking"
+                    "thinking": BASELINE_REQUEST_LIMIT_POLICY["thinking"],
+                    "reasoning_effort": BASELINE_REQUEST_LIMIT_POLICY[
+                        "reasoning_effort"
                     ],
                 }[field_name]
                 for field_name, value in controls.items()
@@ -2278,19 +2278,12 @@ def _normalized_request_limit_policy(limits: Mapping[str, Any]) -> dict[str, Any
         value = limits.get(field_name)
         if isinstance(value, bool) or not isinstance(value, int) or value < 1:
             raise ValueError(f"{field_name} must be a positive integer")
-    temperature = limits.get("temperature")
-    top_p = limits.get("top_p")
     if (
-        isinstance(temperature, bool)
-        or not isinstance(temperature, (float, int))
-        or isinstance(top_p, bool)
-        or not isinstance(top_p, (float, int))
-        or not isinstance(limits.get("stream"), bool)
-        or not isinstance(limits.get("enable_thinking"), bool)
+        limits.get("stream") is not False
+        or limits.get("thinking") != {"type": "enabled"}
+        or limits.get("reasoning_effort") != "high"
     ):
         raise ValueError("request controls have invalid types")
-    normalized["temperature"] = float(temperature)
-    normalized["top_p"] = float(top_p)
     return {
         field_name: normalized[field_name]
         for field_name in BASELINE_REQUEST_LIMIT_POLICY

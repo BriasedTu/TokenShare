@@ -419,6 +419,334 @@ def test_ai_api_executor_provenance_records_effective_siliconflow_reasoning_cont
     assert b"secret-a" not in store.read_bytes(submission.provenance_ref)
 
 
+@pytest.mark.parametrize(
+    (
+        "enable_thinking",
+        "usage",
+        "expected_reasoning_tokens",
+        "expected_visible_output_tokens",
+        "expected_visible_output_basis",
+    ),
+    [
+        (
+            True,
+            {
+                "prompt_tokens": 10,
+                "completion_tokens": 8,
+                "total_tokens": 18,
+                "completion_tokens_details": {"reasoning_tokens": 3},
+            },
+            3,
+            5,
+            "provider_reasoning_breakdown",
+        ),
+        (
+            True,
+            {
+                "prompt_tokens": 10,
+                "completion_tokens": 8,
+                "total_tokens": 18,
+                "completion_tokens_details": {"reasoning_tokens": 8},
+            },
+            8,
+            0,
+            "provider_reasoning_breakdown",
+        ),
+        (
+            False,
+            {"prompt_tokens": 10, "completion_tokens": 8, "total_tokens": 18},
+            None,
+            8,
+            "explicit_non_thinking",
+        ),
+        (
+            True,
+            {"prompt_tokens": 10, "completion_tokens": 8, "total_tokens": 18},
+            None,
+            None,
+            "reasoning_breakdown_unavailable",
+        ),
+        (
+            True,
+            {
+                "prompt_tokens": 10,
+                "completion_tokens": 8,
+                "total_tokens": 18,
+                "completion_tokens_details": {"reasoning_tokens": 9},
+            },
+            9,
+            None,
+            "invalid_usage_breakdown",
+        ),
+        (
+            False,
+            {"prompt_tokens": 10},
+            None,
+            None,
+            "completion_usage_unavailable",
+        ),
+    ],
+)
+def test_ai_api_executor_derives_visible_output_from_usage_and_effective_thinking_identity(
+    tmp_path,
+    monkeypatch,
+    enable_thinking: bool,
+    usage: dict,
+    expected_reasoning_tokens: int | None,
+    expected_visible_output_tokens: int | None,
+    expected_visible_output_basis: str,
+) -> None:
+    monkeypatch.setenv("SILICONFLOW_API_KEY_A", "visible-output-secret")
+    store = ArtifactStore(tmp_path)
+    request = make_ai_request(store, request_id=f"request_visible_output_{enable_thinking}")
+    config_body = make_config_dict()
+    request_overrides = {
+        "temperature": 0.0,
+        "top_p": 1.0,
+        "enable_thinking": enable_thinking,
+    }
+    if enable_thinking:
+        request_overrides["thinking_budget"] = 32768
+    config_body["entries"] = [
+        {
+            **config_body["entries"][0],
+            "request_overrides": request_overrides,
+        }
+    ]
+    config_body["defaults"]["max_provider_attempts"] = 1
+    config = load_ai_api_config(config_body)
+    transport = FakeSiliconFlowTransport(
+        [
+            FakeProviderResponse(
+                status_code=200,
+                body={
+                    "id": f"sf-visible-output-{enable_thinking}",
+                    "model": config.entries[0].model,
+                    "choices": [
+                        {
+                            "message": {"content": '{"answer":"ok"}'},
+                            "finish_reason": "stop",
+                        }
+                    ],
+                    "usage": usage,
+                },
+            )
+        ]
+    )
+
+    submission = AIAPIExecutor(
+        executor_id="executor_ai_api",
+        executor_version="0.1.0",
+        artifact_store=store,
+        config=config,
+        transport=transport,
+        parser=parse_answer,
+    ).execute(
+        request,
+        submission_id=f"submission_visible_output_{enable_thinking}",
+        submitted_at="2026-07-29T00:00:00Z",
+    )
+
+    provenance = json.loads(store.read_bytes(submission.provenance_ref).decode("utf-8"))
+    request_identity = provenance["attempts"][0]["provider_request_identity"]
+    expected_reasoning_controls = {"enable_thinking": enable_thinking}
+    if enable_thinking:
+        expected_reasoning_controls["thinking_budget"] = 32768
+    assert request_identity["reasoning_controls"] == expected_reasoning_controls
+    assert request_identity["effective_request_controls_digest"] == (
+        _effective_controls_digest(transport.calls[0]["body"])
+    )
+    assert submission.usage_summary["reasoning_tokens"] == expected_reasoning_tokens
+    assert (
+        submission.usage_summary["visible_output_tokens"]
+        == expected_visible_output_tokens
+    )
+    assert (
+        submission.usage_summary["visible_output_basis"]
+        == expected_visible_output_basis
+    )
+    assert b"visible-output-secret" not in store.read_bytes(submission.provenance_ref)
+
+
+@pytest.mark.parametrize(
+    "invalid_completion_tokens",
+    [8.9, float("nan"), float("inf"), -1, "8"],
+)
+def test_ai_api_executor_marks_invalid_completion_usage_without_raising(
+    tmp_path,
+    monkeypatch,
+    invalid_completion_tokens,
+) -> None:
+    submission = _execute_siliconflow_usage_case(
+        tmp_path=tmp_path,
+        monkeypatch=monkeypatch,
+        usage={
+            "prompt_tokens": 10,
+            "completion_tokens": invalid_completion_tokens,
+            "total_tokens": 18,
+        },
+        enable_thinking=False,
+    )
+
+    assert submission.result_kind == "succeeded"
+    assert submission.usage_summary["completion_tokens"] is None
+    assert submission.usage_summary["visible_output_tokens"] is None
+    assert (
+        submission.usage_summary["visible_output_basis"]
+        == "completion_usage_unavailable"
+    )
+    assert submission.usage_summary["usage_invalid_fields"] == [
+        "completion_tokens"
+    ]
+    assert submission.usage_summary["cost_estimate"] is None
+    assert submission.usage_summary["cost_estimate_status"] == "usage_invalid"
+
+
+@pytest.mark.parametrize(
+    "invalid_reasoning_tokens",
+    [-1, 1.5, float("nan")],
+)
+def test_ai_api_executor_marks_invalid_reasoning_breakdown_without_raising(
+    tmp_path,
+    monkeypatch,
+    invalid_reasoning_tokens,
+) -> None:
+    submission = _execute_siliconflow_usage_case(
+        tmp_path=tmp_path,
+        monkeypatch=monkeypatch,
+        usage={
+            "prompt_tokens": 10,
+            "completion_tokens": 8,
+            "total_tokens": 18,
+            "completion_tokens_details": {
+                "reasoning_tokens": invalid_reasoning_tokens
+            },
+        },
+        enable_thinking=True,
+    )
+
+    assert submission.result_kind == "succeeded"
+    assert submission.usage_summary["reasoning_tokens"] is None
+    assert submission.usage_summary["visible_output_tokens"] is None
+    assert (
+        submission.usage_summary["visible_output_basis"]
+        == "invalid_usage_breakdown"
+    )
+    assert submission.usage_summary["usage_invalid_fields"] == [
+        "reasoning_tokens"
+    ]
+
+
+@pytest.mark.parametrize(
+    "invalid_total_tokens",
+    [18.5, float("nan"), float("inf"), -1, "18"],
+)
+def test_ai_api_executor_marks_invalid_provider_total_without_raising(
+    tmp_path,
+    monkeypatch,
+    invalid_total_tokens,
+) -> None:
+    submission = _execute_siliconflow_usage_case(
+        tmp_path=tmp_path,
+        monkeypatch=monkeypatch,
+        usage={
+            "prompt_tokens": 10,
+            "completion_tokens": 8,
+            "total_tokens": invalid_total_tokens,
+        },
+        enable_thinking=False,
+    )
+
+    assert submission.result_kind == "succeeded"
+    assert submission.usage_summary["prompt_tokens"] == 10
+    assert submission.usage_summary["completion_tokens"] == 8
+    assert submission.usage_summary["total_tokens"] is None
+    assert submission.usage_summary["usage_invalid_fields"] == ["total_tokens"]
+    assert submission.usage_summary["cost_estimate_status"] == "estimated"
+
+
+def test_ai_api_executor_sorts_invalid_usage_field_names_and_rejects_invalid_prompt_cost(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    submission = _execute_siliconflow_usage_case(
+        tmp_path=tmp_path,
+        monkeypatch=monkeypatch,
+        usage={
+            "prompt_tokens": -1,
+            "completion_tokens": 8,
+            "total_tokens": "18",
+        },
+        enable_thinking=False,
+    )
+
+    assert submission.result_kind == "succeeded"
+    assert submission.usage_summary["usage_invalid_fields"] == [
+        "prompt_tokens",
+        "total_tokens",
+    ]
+    assert submission.usage_summary["cost_estimate"] is None
+    assert submission.usage_summary["cost_estimate_status"] == "usage_invalid"
+
+
+def _execute_siliconflow_usage_case(
+    *,
+    tmp_path,
+    monkeypatch,
+    usage: dict,
+    enable_thinking: bool,
+):
+    monkeypatch.setenv("SILICONFLOW_API_KEY_A", "invalid-usage-secret")
+    store = ArtifactStore(tmp_path)
+    request = make_ai_request(store, request_id="request_invalid_usage")
+    config_body = make_config_dict()
+    request_overrides = {
+        "temperature": 0.0,
+        "top_p": 1.0,
+        "enable_thinking": enable_thinking,
+    }
+    if enable_thinking:
+        request_overrides["thinking_budget"] = 32768
+    config_body["entries"] = [
+        {
+            **config_body["entries"][0],
+            "request_overrides": request_overrides,
+        }
+    ]
+    config_body["defaults"]["max_provider_attempts"] = 1
+    config = load_ai_api_config(config_body)
+    transport = FakeSiliconFlowTransport(
+        [
+            FakeProviderResponse(
+                status_code=200,
+                body={
+                    "id": "sf-invalid-usage",
+                    "model": config.entries[0].model,
+                    "choices": [
+                        {
+                            "message": {"content": '{"answer":"ok"}'},
+                            "finish_reason": "stop",
+                        }
+                    ],
+                    "usage": usage,
+                },
+            )
+        ]
+    )
+    return AIAPIExecutor(
+        executor_id="executor_ai_api",
+        executor_version="0.1.0",
+        artifact_store=store,
+        config=config,
+        transport=transport,
+        parser=parse_answer,
+    ).execute(
+        request,
+        submission_id="submission_invalid_usage",
+        submitted_at="2026-07-29T00:00:00Z",
+    )
+
+
 def test_ai_api_executor_sends_full_prompt_package_context_to_provider(
     tmp_path,
     monkeypatch,

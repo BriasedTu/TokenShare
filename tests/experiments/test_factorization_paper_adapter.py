@@ -1,5 +1,7 @@
 import json
+from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -14,8 +16,10 @@ from tokenshare.executors.ai_api_transport import (
 from tokenshare.executors.registry import ExecutorRegistry
 from tokenshare.experiments.factorization_paper_adapter import (
     ScriptedFactorizationRangeTransport,
+    _failed_protocol_attempts_from_events,
     _paper_task_status_from_runtime,
     _prepare_config,
+    _task_failure_from_child_evidence,
     _validate_factorization_case_for_adapter,
     run_factorization_paper_case,
 )
@@ -28,6 +32,7 @@ from tokenshare.plugins.factorization.runtime_adapter import (
 )
 from tokenshare.storage.artifacts import ArtifactStore
 from tokenshare.experiments.paper_catalog import load_paper_catalogs
+from tokenshare.experiments.paper_budget import load_exp1_pilot_profile
 from tokenshare.experiments.paper_factorization_catalog import (
     generate_factorization_paper_cases,
 )
@@ -48,6 +53,7 @@ from tokenshare.local_runtime import (
     NoOpRuntimeHooks,
     ProtocolRunCoordinator,
     RawOutputContext,
+    SequentialWorkerBackend,
     WorkerTerminationPolicy,
 )
 from tokenshare.storage.events import EventLedger, EventType
@@ -55,6 +61,34 @@ from tokenshare.storage.events import EventLedger, EventType
 
 FACTOR_CATALOG = "benchmarks/paper/factorization_catalog.v1.jsonl"
 LEAN_CATALOG = "benchmarks/paper/lean_catalog.v1.jsonl"
+
+
+class _AlwaysServerErrorFactorizationTransport:
+    """让真实 executor/coordinator 走到 retry_limit_reached 的离线 transport。"""
+
+    def post_chat_completion(
+        self,
+        *,
+        entry,
+        api_key: str,
+        body: dict,
+        timeout_seconds: int,
+    ):
+        del entry, api_key, body, timeout_seconds
+        return factorization_paper_adapter_module._ProviderResponse(
+            status_code=500,
+            body={"error": {"message": "offline injected server error"}},
+        )
+
+
+class _FailBeforeProviderExecutor:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def execute(self, request, *, submission_id: str, submitted_at: str):
+        del request, submission_id, submitted_at
+        self.calls += 1
+        raise RuntimeError("offline deterministic root failure")
 
 
 def test_factorization_v2_all_500_cases_pass_adapter_complete_domain_preflight() -> None:
@@ -758,6 +792,21 @@ def test_factorization_paper_adapter_rejects_custom_transport_marked_real(
         )
 
 
+def test_factorization_real_transport_guard_accepts_provider_router_wrapper() -> None:
+    real_transport = UrlLibSiliconFlowTransport()
+
+    class Wrapper:
+        def tokenshare_transport_for_provider(self, provider_family: str):
+            assert provider_family == "siliconflow"
+            return real_transport
+
+    factorization_paper_adapter_module._validate_real_transport_mode(
+        real_transport=True,
+        transport=Wrapper(),
+        ai_api_config=_real_transport_config(),
+    )
+
+
 def test_factorization_paper_adapter_accepts_openai_real_transport_through_executor(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1435,6 +1484,364 @@ def test_factorization_worker_death_runs_through_process_lease_recovery(
     assert record["replacement_process_exitcode"] == 0
     assert record["lease_expiry"]["trigger"] == "lease_expired"
     assert record["coordinator"]["survived"] is True
+
+
+def test_factorization_worker_death_process_accepts_frozen_endpoint_identity(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case = generate_factorization_paper_cases()[0]
+    profile = load_exp1_pilot_profile(
+        "benchmarks/paper/exp1_minimal_pilot_profile.v3.json"
+    )
+    endpoint = profile.model_endpoint_identity
+    monkeypatch.setenv(
+        profile.source_provider_config.entries[0].api_key_env,
+        "offline-process-identity-key",
+    )
+    condition = PaperExperimentCondition(
+        **{
+            **_v2_condition(case).__dict__,
+            "experiment_id": "exp3_real_ai_fault_recovery",
+            "condition_id": "exp3_worker_death_frozen_identity_r0",
+            "fault_type": "worker_death",
+            "model_policy": "fixed_entry",
+            "model_cohort_id": endpoint.model_cohort_id,
+            "cohort_member_id": endpoint.cohort_member_id,
+            "provider_config_id": endpoint.provider_config_id,
+            "model_entry_id": endpoint.selected_entry_id,
+            "provider_family": endpoint.provider_family,
+            "provider_model_id": endpoint.provider_model_id,
+            "reasoning_profile_id": endpoint.reasoning_profile_id,
+            "model_cohort_digest": endpoint.model_cohort_digest,
+            "source_provider_config_digest": (
+                endpoint.source_provider_config_digest
+            ),
+            "model_endpoint_identity_digest": (
+                endpoint.model_endpoint_identity_digest
+            ),
+        }
+    )
+
+    result = run_factorization_paper_case(
+        case=case,
+        condition=condition,
+        output_root=tmp_path,
+        transport=ScriptedFactorizationRangeTransport(),
+        real_transport=False,
+        ai_api_config=profile.source_provider_config,
+        entry_id=endpoint.selected_entry_id,
+        worker_termination_policy=WorkerTerminationPolicy(
+            target_planned_ai_unit_ids=("range_0",),
+            kill_point="progress_25",
+            total_planned_ai_unit_count=2,
+        ),
+    )
+
+    assert result.task_result.root_status == PaperTaskStatus.COMPLETED
+    assert any(
+        attempt.attempt_status == PaperAttemptStatus.WORKER_DIED
+        for attempt in result.attempt_results
+    )
+
+
+def test_factorization_worker_death_retry_limit_returns_failed_projection_without_requiring_replacement(
+    tmp_path: Path,
+) -> None:
+    case = generate_factorization_paper_cases()[0]
+    condition = PaperExperimentCondition(
+        **{
+            **_v2_condition(case).__dict__,
+            "experiment_id": "exp3_real_ai_fault_recovery",
+            "condition_id": "exp3_factorization_worker_death_retry_limit_r0",
+            "fault_type": "worker_death",
+        }
+    )
+
+    result = run_factorization_paper_case(
+        case=case,
+        condition=condition,
+        output_root=tmp_path,
+        transport=_AlwaysServerErrorFactorizationTransport(),
+        real_transport=False,
+        entry_id="factorization_paper_scripted",
+        worker_termination_policy=WorkerTerminationPolicy(
+            target_planned_ai_unit_ids=("range_0",),
+            kill_point="progress_25",
+            total_planned_ai_unit_count=2,
+        ),
+    )
+
+    assert result.task_result.root_status == PaperTaskStatus.FAILED
+    assert any(
+        attempt.attempt_status == PaperAttemptStatus.WORKER_DIED
+        for attempt in result.attempt_results
+    )
+    assert not any(
+        attempt.attempt_status == PaperAttemptStatus.SUCCEEDED
+        for attempt in result.attempt_results
+    )
+    terminal_recoveries = [
+        event
+        for event in result.event_records
+        if event["event_type"] == "RECOVERY_ACTION_RECORDED"
+        and event["payload"]["recovery_action"]["retry_allowed"] is False
+    ]
+    assert terminal_recoveries
+    assert all(
+        event["payload"]["recovery_action"]["reason"] == "retry_limit_reached"
+        for event in terminal_recoveries
+    )
+    assert len(result.fault_records) == 1
+    incomplete = result.fault_records[0]
+    assert incomplete["schema_version"] == (
+        "tokenshare.paper_worker_death_incomplete.v1"
+    )
+    assert incomplete["recovery_completed"] is False
+    assert incomplete["replacement_fact"] is None
+    assert incomplete["failure_reason"] == "retry_limit_reached"
+    assert result.run_evidence["protocol_runtime"]["status"] == "failed"
+    persisted_root = Path(result.output_root)
+    assert (persisted_root / "run_manifest.json").is_file()
+    assert (persisted_root / "per_task_results.jsonl").is_file()
+    assert (persisted_root / "per_attempt_results.jsonl").is_file()
+
+
+def _failed_protocol_projection_fixture(
+    tmp_path: Path,
+    *,
+    experiment_id: str,
+    executor_id: str = "executor_factorization_runtime",
+    executor_type: str = "deterministic_local",
+):
+    case = generate_factorization_paper_cases()[0]
+    condition = PaperExperimentCondition(
+        **{
+            **_v2_condition(case).__dict__,
+            "experiment_id": experiment_id,
+            "condition_id": f"{experiment_id}_failed_runtime_r0",
+            "provider_family": "deepseek",
+            "provider_model_id": "deepseek-v4-pro",
+            "model_entry_id": "deepseek_v4_pro_exp1_baseline",
+        }
+    )
+    store = ArtifactStore(tmp_path)
+    request_ref = store.save_json(
+        {
+            "attempt_id": "attempt-root-1",
+            "unit_id": "unit-root-1",
+            "executor": {
+                "executor_id": executor_id,
+                "executor_type": executor_type,
+                "executor_version": "0.1.0",
+            },
+            "hard_requirements": {"executor": executor_type},
+            "created_at": "2026-07-28T00:00:00Z",
+        },
+        artifact_id="request-root-1.json",
+        artifact_type="ExecutionRequest",
+        artifact_schema_id="ExecutionRequest",
+        artifact_schema_version="v1",
+        source={"kind": "test"},
+        metadata={},
+        created_at="2026-07-28T00:00:00Z",
+    )
+    events = (
+        {
+            "event_type": "EXECUTION_REQUEST_RECORDED",
+            "payload": {
+                "attempt_id": "attempt-root-1",
+                "unit_id": "unit-root-1",
+                "request_ref": request_ref.to_dict(),
+            },
+        },
+        {
+            "event_type": "ATTEMPT_STATE_CHANGED",
+            "payload": {
+                "attempt": {
+                    "attempt_id": "attempt-root-1",
+                    "state": "Failed",
+                    "client_id": "worker-root-1",
+                    "started_at": "2026-07-28T00:00:00Z",
+                    "finished_at": "2026-07-28T00:00:01Z",
+                    "failure_reason": "retry_limit_reached",
+                }
+            },
+        },
+    )
+    runtime_result = SimpleNamespace(
+        run_id="run-root-1",
+        task_id="task-root-1",
+        summary={
+            "provider_attempt_count": 0,
+            "runtime_observation": {
+                "worker_execution_facts": [
+                    {
+                        "attempt_id": "attempt-root-1",
+                        "worker_id": "worker-root-1",
+                        "started_at": "2026-07-28T00:00:00Z",
+                        "ended_at": "2026-07-28T00:00:01Z",
+                        "result_kind": "executor_error",
+                    }
+                ]
+            }
+        },
+    )
+
+    return condition, runtime_result, events, store, request_ref
+
+
+def test_failed_protocol_attempt_projection_preserves_runtime_executor_failure_without_provider_identity(
+    tmp_path: Path,
+) -> None:
+    condition, runtime_result, events, store, request_ref = (
+        _failed_protocol_projection_fixture(
+            tmp_path,
+            experiment_id="exp3_real_ai_fault_recovery",
+        )
+    )
+
+    attempts = _failed_protocol_attempts_from_events(
+        condition=condition,
+        runtime_result=runtime_result,
+        runtime_events=events,
+        store=store,
+    )
+
+    assert len(attempts) == 1
+    attempt = attempts[0]
+    assert attempt.attempt_status == "executor_error"
+    assert attempt.provider_attempt_index == 0
+    assert attempt.provider_attempt_count == 0
+    assert attempt.total_tokens == 0
+    assert attempt.cost_estimate == 0.0
+    assert attempt.raw_output_ref is None
+    assert attempt.usage_ref is None
+    assert attempt.provenance_ref is None
+    assert attempt.request_ref == request_ref.to_dict()
+    assert attempt.error_kind == "retry_limit_reached"
+    assert attempt.provider is None
+    assert attempt.model is None
+    assert attempt.entry_id is None
+    body = attempt.to_dict()
+    assert body["schema_version"] == "tokenshare.paper_attempt_result.v2"
+    assert body["executor_id"] == "executor_factorization_runtime"
+    assert body["executor_type"] == "deterministic_local"
+    failure_stage, failure_kind = _task_failure_from_child_evidence(
+        attempts=attempts,
+        range_records=[],
+    )
+    assert failure_stage == PaperFailureStage.REQUEST
+    assert failure_kind == PaperFailureKind.INTERNAL_ERROR
+
+
+def test_failed_protocol_projection_entry_rejects_exp1_before_v2_helper(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    case = generate_factorization_paper_cases()[0]
+    condition = _v2_condition(case)
+    transport = ScriptedFactorizationRangeTransport()
+    failing_executor = _FailBeforeProviderExecutor()
+    projection_calls: list[str] = []
+
+    def dispatch_failed_root(*, coordinator, request):
+        return coordinator.run_root(
+            replace(
+                request,
+                worker_backend=SequentialWorkerBackend(
+                    executor=failing_executor,
+                    submitted_at=lambda: "2026-07-28T00:00:00Z",
+                ),
+            )
+        )
+
+    def forbidden_projection(**kwargs):
+        del kwargs
+        projection_calls.append("called")
+        raise AssertionError("v2 projection helper must not run for Exp1")
+
+    monkeypatch.setattr(
+        factorization_paper_adapter_module,
+        "_failed_protocol_attempts_from_events",
+        forbidden_projection,
+    )
+
+    with pytest.raises(ValueError, match="Exp3 deterministic runtime"):
+        run_factorization_paper_case(
+            case=case,
+            condition=condition,
+            output_root=tmp_path,
+            transport=transport,
+            real_transport=False,
+            entry_id="factorization_paper_scripted",
+            protocol_run_dispatcher=dispatch_failed_root,
+        )
+
+    assert failing_executor.calls == 1
+    assert transport.calls == []
+    assert projection_calls == []
+    assert not list(tmp_path.rglob("CURRENT.json"))
+    assert not list(tmp_path.rglob("per_attempt_results.jsonl"))
+    assert not any(
+        "tokenshare.paper_attempt_result.v2" in path.read_text(encoding="utf-8")
+        for path in tmp_path.rglob("*.json")
+    )
+
+
+@pytest.mark.parametrize(
+    ("experiment_id", "executor_id", "executor_type"),
+    (
+        (
+            "exp1_real_ai_feasibility",
+            "executor_factorization_runtime",
+            "deterministic_local",
+        ),
+        (
+            "exp2_real_ai_worker_scalability",
+            "executor_factorization_runtime",
+            "deterministic_local",
+        ),
+        (
+            "exp4_real_ai_protocol_ablation",
+            "executor_factorization_runtime",
+            "deterministic_local",
+        ),
+        (
+            "exp3_real_ai_fault_recovery",
+            "executor_ai_api",
+            "ai_api",
+        ),
+    ),
+)
+def test_failed_protocol_attempt_projection_rejects_non_exp3_or_non_runtime_executor(
+    tmp_path: Path,
+    experiment_id: str,
+    executor_id: str,
+    executor_type: str,
+) -> None:
+    condition, runtime_result, events, store, _ = (
+        _failed_protocol_projection_fixture(
+            tmp_path,
+            experiment_id=experiment_id,
+            executor_id=executor_id,
+            executor_type=executor_type,
+        )
+    )
+
+    with pytest.raises(ValueError, match="Exp3 deterministic runtime"):
+        _failed_protocol_attempts_from_events(
+            condition=condition,
+            runtime_result=runtime_result,
+            runtime_events=events,
+            store=store,
+        )
+
+    assert runtime_result.summary["provider_attempt_count"] == 0
+    assert not any(
+        "tokenshare.paper_attempt_result.v2" in path.read_text(encoding="utf-8")
+        for path in tmp_path.rglob("*.json")
+    )
 
 
 def test_factorization_three_worker_deaths_reuse_replacements_for_two_unit_root(

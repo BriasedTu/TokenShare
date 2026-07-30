@@ -22,7 +22,8 @@ from tokenshare.experiments.paper_experiment_contracts import (
     canonical_contract_digest,
 )
 from tokenshare.experiments.paper_models import (
-    PAPER_FORMAL_AI_TIMEOUT_SECONDS,
+    EXP1_TO_EXP4_DEEPSEEK_MAX_TOKENS,
+    EXP1_TO_EXP4_DEEPSEEK_TIMEOUT_SECONDS,
     PaperConditionResult,
     PaperExperimentCondition,
     PaperStatus,
@@ -46,18 +47,17 @@ EXP4_V1_ROOT_RUN_COUNT = 450
 EXP4_ROOT_RUN_COUNT = 7_725
 EXP4_SEED_BASE = 4000
 
-BASELINE_PROVIDER_CONFIG_ID = "exp1_baseline_siliconflow"
-BASELINE_MODEL_ENTRY_ID = "glm_5_2_exp1_baseline"
-BASELINE_PROVIDER_FAMILY = "siliconflow"
-BASELINE_PROVIDER_MODEL_ID = "zai-org/GLM-5.2"
+BASELINE_PROVIDER_CONFIG_ID = "exp1_baseline_deepseek"
+BASELINE_MODEL_ENTRY_ID = "deepseek_v4_pro_exp1_baseline"
+BASELINE_PROVIDER_FAMILY = "deepseek"
+BASELINE_PROVIDER_MODEL_ID = "deepseek-v4-pro"
 BASELINE_REQUEST_CONTROLS = {
-    "max_tokens": 1024,
-    "timeout_seconds": PAPER_FORMAL_AI_TIMEOUT_SECONDS,
+    "max_tokens": EXP1_TO_EXP4_DEEPSEEK_MAX_TOKENS,
+    "timeout_seconds": EXP1_TO_EXP4_DEEPSEEK_TIMEOUT_SECONDS,
     "max_provider_attempts": 1,
-    "temperature": 0.0,
-    "top_p": 1.0,
     "stream": False,
-    "enable_thinking": False,
+    "thinking": {"type": "enabled"},
+    "reasoning_effort": "high",
 }
 EXP4_CATALOG_VIEW_SCHEMA_VERSION = "tokenshare.paper_exp4_catalog_view.v1"
 EXP4_CATALOG_SOURCE_KIND = "paper_input_catalog_manifest"
@@ -332,7 +332,7 @@ def validate_exp4_condition(
         or condition.provider_model_id != BASELINE_PROVIDER_MODEL_ID
         or condition.reasoning_profile_id != endpoint_binding["reasoning_profile_id"]
     ):
-        raise ValueError("Experiment 4 requires GLM-5.2 baseline model identity")
+        raise ValueError("Experiment 4 requires DeepSeek-V4-Pro baseline model identity")
     if (
         condition.source_provider_config_digest
         != endpoint_binding["source_provider_config_digest"]
@@ -1318,15 +1318,15 @@ def _validate_approved_endpoint_binding(
     for field_name, expected_value in expected.items():
         if binding.get(field_name) != expected_value:
             raise ValueError(
-                f"Experiment 4 requires GLM-5.2 baseline {field_name}"
+                f"Experiment 4 requires DeepSeek-V4-Pro baseline {field_name}"
             )
     reasoning_profile_id = binding.get("reasoning_profile_id")
     _require_non_empty_string("reasoning_profile_id", reasoning_profile_id)
     selected_entry_id = binding.get("selected_entry_id")
     if selected_entry_id != BASELINE_MODEL_ENTRY_ID:
-        raise ValueError("Experiment 4 requires GLM-5.2 baseline model entry")
+        raise ValueError("Experiment 4 requires DeepSeek-V4-Pro baseline model entry")
     if binding.get("model_entry_id", selected_entry_id) != BASELINE_MODEL_ENTRY_ID:
-        raise ValueError("Experiment 4 requires GLM-5.2 baseline model entry")
+        raise ValueError("Experiment 4 requires DeepSeek-V4-Pro baseline model entry")
     for field_name in (
         "source_provider_config_digest",
         "model_endpoint_identity_digest",
@@ -1362,17 +1362,10 @@ def _validated_request_controls(
         item = controls[integer_field]
         if isinstance(item, bool) or not isinstance(item, int) or item < 1:
             raise ValueError(error_message)
-    temperature = controls["temperature"]
-    top_p = controls["top_p"]
     if (
-        isinstance(temperature, bool)
-        or not isinstance(temperature, (int, float))
-        or float(temperature) != 0.0
-        or isinstance(top_p, bool)
-        or not isinstance(top_p, (int, float))
-        or float(top_p) != 1.0
-        or controls["stream"] is not False
-        or controls["enable_thinking"] is not False
+        controls["stream"] is not False
+        or controls["thinking"] != {"type": "enabled"}
+        or controls["reasoning_effort"] != "high"
         or dict(controls) != BASELINE_REQUEST_CONTROLS
     ):
         raise ValueError(error_message)

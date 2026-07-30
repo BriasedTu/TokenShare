@@ -44,6 +44,7 @@ from tokenshare.local_runtime.workers import (
     ThreadWorkerBackend,
     WorkerBatchOutcome,
     WorkerExecutionFact,
+    WorkerProcessBootstrapError,
 )
 
 __all__ = [
@@ -84,6 +85,7 @@ __all__ = [
     "WorkerDirective",
     "WorkerTerminationPolicy",
     "WorkerExecutionFact",
+    "WorkerProcessBootstrapError",
     "build_runtime_observation",
     "project_protocol_run",
 ]

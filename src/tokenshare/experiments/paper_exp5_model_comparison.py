@@ -4,7 +4,10 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from hashlib import sha256
+import json
 from math import isfinite
+from pathlib import Path
 from typing import Any
 
 from tokenshare.executors.ai_api_artifacts import read_raw_model_identity_evidence
@@ -22,6 +25,9 @@ from tokenshare.experiments.paper_model_policy import (
     PAPER_MODEL_ENDPOINT_COHORT_ID,
     PAPER_MODEL_ENDPOINT_COHORT_MEMBER_IDS,
     PAPER_MODEL_ENDPOINT_COHORT_MEMBERS,
+    PAPER_MODEL_ENDPOINT_COHORT_V3_ID,
+    PAPER_MODEL_ENDPOINT_COHORT_V3_MEMBER_IDS,
+    PAPER_MODEL_ENDPOINT_COHORT_V3_MEMBERS,
 )
 from tokenshare.experiments.paper_models import (
     JsonObject,
@@ -46,6 +52,67 @@ EXP5_EXPECTED_ROOT_RUNS = 1_899
 EXP5_EXPECTED_AI_UNIT_COUNT = 14_652
 EXP5_INCOMPLETE_COHORT_REASON = "incomplete_model_cohort"
 EXP5_MIXED_TOPIC_FAMILY_MARKER = "mixed_topic_family"
+
+EXP5_V3_SELECTION_SCHEMA_VERSION = (
+    "tokenshare.paper_exp5_hard_half_selection.v3"
+)
+EXP5_V3_SELECTION_ID = "tokenshare.paper.exp5.hard_half.v3"
+EXP5_V3_SELECTION_VERSION = "v3"
+EXP5_V3_SELECTION_PATH = (
+    Path(__file__).resolve().parents[3]
+    / "benchmarks/paper/exp5_hard_half_selection.v3.json"
+)
+EXP5_V3_WORKER_COUNT = 3
+EXP5_V3_EXPECTED_CONDITION_COUNT = 48
+EXP5_V3_EXPECTED_ROOT_RUNS = 1_284
+EXP5_V3_EXPECTED_AI_UNIT_COUNT = 9_888
+EXP5_V3_STRATUM_ORDER = (
+    "factorization:hard",
+    "lean_proof:hard:pure_logic",
+    "lean_proof:hard:function_set",
+    "lean_proof:hard:induction",
+)
+EXP5_V3_RETAINED_COUNTS = {
+    "factorization:hard": 83,
+    "lean_proof:hard:pure_logic": 8,
+    "lean_proof:hard:function_set": 8,
+    "lean_proof:hard:induction": 8,
+}
+EXP5_V3_SOURCE_COUNTS = {
+    "factorization:hard": 166,
+    "lean_proof:hard:pure_logic": 15,
+    "lean_proof:hard:function_set": 15,
+    "lean_proof:hard:induction": 15,
+}
+EXP5_V3_SEQUENCE_PLAN = {
+    0: (
+        "glm_5_2_siliconflow",
+        "qwen3_14b_siliconflow",
+        "minimax_m2_5_siliconflow",
+        "deepseek_v3_pro_siliconflow",
+    ),
+    1: (
+        "qwen3_14b_siliconflow",
+        "deepseek_v3_pro_siliconflow",
+        "glm_5_2_siliconflow",
+        "minimax_m2_5_siliconflow",
+    ),
+    2: (
+        "minimax_m2_5_siliconflow",
+        "glm_5_2_siliconflow",
+        "deepseek_v3_pro_siliconflow",
+        "qwen3_14b_siliconflow",
+    ),
+}
+EXP5_V3_SEQUENCE_PLAN_DIGEST = digest_json(
+    {
+        "schema_version": "tokenshare.paper_exp5_sequence_plan.v1",
+        "repeat_member_order": {
+            str(repeat_id): list(member_ids)
+            for repeat_id, member_ids in EXP5_V3_SEQUENCE_PLAN.items()
+        },
+    }
+)
 
 FACTOR_PAPER_DIFFICULTIES = ("hard",)
 LEAN_PAPER_DIFFICULTIES = ("hard_frontier",)
@@ -94,6 +161,59 @@ class Exp5CohortGate:
             "provider_attempt_count": 0,
             "provider_calls_made": 0,
         }
+
+
+@dataclass(frozen=True, kw_only=True)
+class Exp5V3Condition(PaperExperimentCondition):
+    """Experiment 5 v3 condition with frozen sequential-arm identity."""
+
+    order_slot: int
+    predecessor_member_id: str | None
+    sequence_plan_digest: str
+    exp5_selection_digest: str
+    exp5_selection_parent_catalog_digest: str
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        if self.schema_version != "tokenshare.paper_condition.v3":
+            raise ValueError("Experiment 5 v3 requires paper condition schema v3")
+        if (
+            isinstance(self.order_slot, bool)
+            or not isinstance(self.order_slot, int)
+            or not 1 <= self.order_slot <= 4
+        ):
+            raise ValueError("order_slot must be an integer from 1 through 4")
+        if self.predecessor_member_id is not None:
+            _require_non_empty_string(
+                "predecessor_member_id",
+                self.predecessor_member_id,
+            )
+        _require_complete_digest("sequence_plan_digest", self.sequence_plan_digest)
+        _require_complete_digest(
+            "exp5_selection_digest",
+            self.exp5_selection_digest,
+        )
+        _require_complete_digest(
+            "exp5_selection_parent_catalog_digest",
+            self.exp5_selection_parent_catalog_digest,
+        )
+
+    def _body(self, *, include_digest: bool) -> JsonObject:
+        body = super()._body(include_digest=False)
+        body.update(
+            {
+                "order_slot": self.order_slot,
+                "predecessor_member_id": self.predecessor_member_id,
+                "sequence_plan_digest": self.sequence_plan_digest,
+                "exp5_selection_digest": self.exp5_selection_digest,
+                "exp5_selection_parent_catalog_digest": (
+                    self.exp5_selection_parent_catalog_digest
+                ),
+            }
+        )
+        if include_digest:
+            body["condition_digest"] = digest_json(body)
+        return body
 
 
 class Exp5MixedLeanCaseSelection(FrozenCaseSelection):
@@ -154,12 +274,14 @@ class Exp5MixedLeanCaseSelection(FrozenCaseSelection):
 
 
 class Experiment5ModelComparisonModule:
-    """Gate B module for the preregistered three-endpoint comparison."""
+    """Gate B module for versioned Experiment 5 endpoint cohorts."""
 
     def expand_conditions(
         self,
         context: PaperExecutionContext,
     ) -> tuple[PaperExperimentCondition, ...]:
+        if _context_uses_exp5_v3(context):
+            return expand_exp5_v3_conditions(context)
         return expand_exp5_conditions(context)
 
     def freeze_case_selections(
@@ -167,6 +289,8 @@ class Experiment5ModelComparisonModule:
         context: PaperExecutionContext,
         conditions: tuple[PaperExperimentCondition, ...],
     ) -> FrozenCaseSelectionBatch:
+        if _context_uses_exp5_v3(context):
+            return freeze_exp5_v3_case_selections(context, conditions)
         return freeze_exp5_case_selections(context, conditions)
 
     def run_condition(
@@ -175,6 +299,8 @@ class Experiment5ModelComparisonModule:
         condition: PaperExperimentCondition,
         selection: FrozenCaseSelection,
     ) -> PaperConditionResult:
+        if _context_uses_exp5_v3(context):
+            return _run_exp5_v3_condition(context, condition, selection)
         canonical_condition = _canonical_condition(context, condition)
         canonical_selection = _selection_for_condition(context, canonical_condition)
         if _selection_body(selection) != _selection_body(canonical_selection):
@@ -200,6 +326,345 @@ Exp5ModelComparisonModule = Experiment5ModelComparisonModule
 
 def assess_exp5_cohort(context: PaperExecutionContext) -> Exp5CohortGate:
     return _validate_cohort_preflight(context.approved_endpoint_binding)
+
+
+def load_exp5_v3_selection(
+    path: str | Path = EXP5_V3_SELECTION_PATH,
+    *,
+    catalog: Any | None = None,
+) -> JsonObject:
+    """Load and validate the immutable EPD-010 half-hard selection."""
+
+    selection_path = Path(path)
+    try:
+        body = json.loads(selection_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError("unable to load Experiment 5 v3 selection") from exc
+    if not isinstance(body, Mapping):
+        raise ValueError("Experiment 5 v3 selection must be a JSON object")
+    normalized = dict(body)
+    if (
+        normalized.get("schema_version") != EXP5_V3_SELECTION_SCHEMA_VERSION
+        or normalized.get("selection_id") != EXP5_V3_SELECTION_ID
+        or normalized.get("selection_version") != EXP5_V3_SELECTION_VERSION
+    ):
+        raise ValueError("Experiment 5 v3 selection identity drift")
+    declared_digest = normalized.get("selection_digest")
+    _require_complete_digest("selection_digest", declared_digest)
+    digest_body = dict(normalized)
+    digest_body.pop("selection_digest", None)
+    if digest_json(digest_body) != declared_digest:
+        raise ValueError("Experiment 5 v3 selection digest mismatch")
+
+    algorithm = normalized.get("algorithm")
+    if not isinstance(algorithm, Mapping) or dict(algorithm) != {
+        "algorithm_id": "sha256_case_id_ascending.v1",
+        "hash_encoding": "utf-8",
+        "retention_rule": "ceil_half_per_stratum",
+        "stratum_order": list(EXP5_V3_STRATUM_ORDER),
+        "tie_breaker": "case_id",
+    }:
+        raise ValueError("Experiment 5 v3 selection algorithm drift")
+    strata = normalized.get("strata")
+    if not isinstance(strata, list) or len(strata) != len(
+        EXP5_V3_STRATUM_ORDER
+    ):
+        raise ValueError("Experiment 5 v3 selection strata drift")
+    normalized_strata: list[JsonObject] = []
+    concatenated_ids: list[str] = []
+    for expected_id, raw_stratum in zip(
+        EXP5_V3_STRATUM_ORDER,
+        strata,
+        strict=True,
+    ):
+        if not isinstance(raw_stratum, Mapping):
+            raise ValueError("Experiment 5 v3 selection stratum must be an object")
+        stratum = dict(raw_stratum)
+        case_ids = _normalize_case_ids(stratum.get("ordered_case_ids"))
+        source_count = _require_exact_int(
+            f"strata[{expected_id}].source_count",
+            stratum.get("source_count"),
+            minimum=1,
+        )
+        retained_count = _require_exact_int(
+            f"strata[{expected_id}].retained_count",
+            stratum.get("retained_count"),
+            minimum=1,
+        )
+        if (
+            stratum.get("stratum_id") != expected_id
+            or source_count != EXP5_V3_SOURCE_COUNTS[expected_id]
+            or retained_count != EXP5_V3_RETAINED_COUNTS[expected_id]
+            or len(case_ids) != EXP5_V3_RETAINED_COUNTS[expected_id]
+        ):
+            raise ValueError("Experiment 5 v3 selection stratum count drift")
+        if case_ids != tuple(sorted(case_ids, key=_case_id_rank_key)):
+            raise ValueError("Experiment 5 v3 selection case order drift")
+        stratum["ordered_case_ids"] = list(case_ids)
+        normalized_strata.append(stratum)
+        concatenated_ids.extend(case_ids)
+    _require_exact_int_mapping(
+        "counts_by_stratum",
+        normalized.get("counts_by_stratum"),
+        EXP5_V3_RETAINED_COUNTS,
+    )
+    source_count = _require_exact_int(
+        "source_count",
+        normalized.get("source_count"),
+        minimum=1,
+    )
+    retained_count = _require_exact_int(
+        "retained_count",
+        normalized.get("retained_count"),
+        minimum=1,
+    )
+    if (
+        source_count != sum(EXP5_V3_SOURCE_COUNTS.values())
+        or retained_count != sum(EXP5_V3_RETAINED_COUNTS.values())
+        or normalized.get("ordered_case_ids") != concatenated_ids
+    ):
+        raise ValueError("Experiment 5 v3 selection ordered case inventory drift")
+    parent = normalized.get("parent_catalog")
+    if not isinstance(parent, Mapping):
+        raise ValueError("Experiment 5 v3 selection parent catalog is missing")
+    for field_name in ("catalog_digest",):
+        _require_complete_digest(field_name, parent.get(field_name))
+    normalized["strata"] = normalized_strata
+    _validate_v3_selection_source_files(parent)
+    if catalog is not None:
+        _validate_v3_selection_against_catalog(normalized, catalog)
+    return normalized
+
+
+def expand_exp5_v3_conditions(
+    context: PaperExecutionContext,
+    *,
+    selection_path: str | Path = EXP5_V3_SELECTION_PATH,
+) -> tuple[Exp5V3Condition, ...]:
+    selection = load_exp5_v3_selection(selection_path)
+    member_plans = _validated_v3_member_plans(
+        context.approved_endpoint_binding
+    )
+    catalog_digest = _catalog_digest(context.catalog)
+    parent_catalog = _mapping(selection.get("parent_catalog"))
+    selection_digest = str(selection["selection_digest"])
+    selection_parent_digest = str(parent_catalog["catalog_digest"])
+    conditions: list[Exp5V3Condition] = []
+    for repeat_id, seed in enumerate(EXP5_SEED_FAMILY):
+        predecessor_member_id: str | None = None
+        for order_slot, member_id in enumerate(
+            EXP5_V3_SEQUENCE_PLAN[repeat_id],
+            start=1,
+        ):
+            member_plan = member_plans[member_id]
+            conditions.append(
+                _v3_condition(
+                    member_plan=member_plan,
+                    domain="factorization",
+                    difficulty="hard",
+                    paper_difficulty="hard",
+                    repeat_id=repeat_id,
+                    seed=seed,
+                    catalog_digest=catalog_digest,
+                    order_slot=order_slot,
+                    predecessor_member_id=predecessor_member_id,
+                    selection_digest=selection_digest,
+                    selection_parent_catalog_digest=selection_parent_digest,
+                )
+            )
+            for topic_family in LEAN_TOPIC_FAMILIES:
+                conditions.append(
+                    _v3_condition(
+                        member_plan=member_plan,
+                        domain="lean_proof",
+                        difficulty="hard",
+                        paper_difficulty="hard_frontier",
+                        topic_family=topic_family,
+                        repeat_id=repeat_id,
+                        seed=seed,
+                        catalog_digest=catalog_digest,
+                        order_slot=order_slot,
+                        predecessor_member_id=predecessor_member_id,
+                        selection_digest=selection_digest,
+                        selection_parent_catalog_digest=(
+                            selection_parent_digest
+                        ),
+                    )
+                )
+            predecessor_member_id = member_id
+    if len(conditions) != EXP5_V3_EXPECTED_CONDITION_COUNT:
+        raise ValueError("Experiment 5 v3 condition count drift")
+    return tuple(conditions)
+
+
+def freeze_exp5_v3_case_selections(
+    context: PaperExecutionContext,
+    conditions: Sequence[PaperExperimentCondition],
+    *,
+    selection_path: str | Path = EXP5_V3_SELECTION_PATH,
+) -> FrozenCaseSelectionBatch:
+    canonical_conditions = expand_exp5_v3_conditions(
+        context,
+        selection_path=selection_path,
+    )
+    if tuple(condition.condition_digest for condition in conditions) != tuple(
+        condition.condition_digest for condition in canonical_conditions
+    ):
+        raise ValueError("Experiment 5 v3 condition order or identity drift")
+    selection_body = load_exp5_v3_selection(
+        selection_path,
+        catalog=context.catalog,
+    )
+    strata = {
+        str(stratum["stratum_id"]): stratum
+        for stratum in selection_body["strata"]
+    }
+    cases_by_id = {
+        _case_id(case): case
+        for domain in ("factorization", "lean_proof")
+        for case in _formal_catalog_cases(
+            _catalog_view(context.catalog),
+            domain=domain,
+        )
+    }
+    bindings: list[FrozenConditionSelectionBinding] = []
+    for condition in canonical_conditions:
+        if not isinstance(condition, Exp5V3Condition):
+            raise ValueError("Experiment 5 v3 condition schema drift")
+        if (
+            condition.exp5_selection_digest
+            != selection_body["selection_digest"]
+            or condition.exp5_selection_parent_catalog_digest
+            != _mapping(selection_body["parent_catalog"])["catalog_digest"]
+        ):
+            raise ValueError("Experiment 5 v3 condition selection digest drift")
+        stratum_id = _v3_condition_stratum_id(condition)
+        case_ids = tuple(strata[stratum_id]["ordered_case_ids"])
+        try:
+            expected_ai_units = sum(
+                _case_expected_ai_unit_count(cases_by_id[case_id])
+                for case_id in case_ids
+            )
+        except KeyError as exc:
+            raise ValueError(
+                "Experiment 5 v3 selection references unknown catalog case"
+            ) from exc
+        selection = FrozenCaseSelection(
+            selection_id=(
+                f"exp5:v3:{str(selection_body['selection_digest'])[7:19]}:"
+                f"{stratum_id}"
+            ),
+            experiment_id=EXP5_EXPERIMENT_ID,
+            suite_version=_catalog_string(context.catalog, "suite_version"),
+            catalog_version=_catalog_string(context.catalog, "catalog_version"),
+            domain=condition.domain,
+            paper_difficulty=str(condition.paper_difficulty),
+            topic_family=condition.topic_family,
+            ordered_case_ids=case_ids,
+            catalog_digest=_catalog_digest(context.catalog),
+            expected_ai_unit_count=expected_ai_units,
+            paper_eligible_required=True,
+        )
+        bindings.append(
+            FrozenConditionSelectionBinding.from_condition(
+                condition,
+                selection,
+            )
+        )
+    batch = FrozenCaseSelectionBatch(tuple(bindings))
+    count_exp5_v3_root_runs(canonical_conditions, batch)
+    return batch
+
+
+def count_exp5_v3_root_runs(
+    conditions: Sequence[PaperExperimentCondition],
+    selections: Sequence[FrozenCaseSelection],
+) -> int:
+    if len(conditions) != EXP5_V3_EXPECTED_CONDITION_COUNT or len(
+        selections
+    ) != len(conditions):
+        raise ValueError("Experiment 5 v3 condition/selection count drift")
+    _validate_v3_condition_order(conditions)
+    total_roots = 0
+    total_ai_units = 0
+    for condition, selection in zip(conditions, selections, strict=True):
+        stratum_id = _v3_condition_stratum_id(condition)
+        if (
+            selection.experiment_id != EXP5_EXPERIMENT_ID
+            or selection.domain != condition.domain
+            or selection.paper_difficulty != condition.paper_difficulty
+            or selection.topic_family != condition.topic_family
+            or selection.catalog_digest != condition.catalog_digest
+            or len(selection.ordered_case_ids)
+            != EXP5_V3_RETAINED_COUNTS[stratum_id]
+            or selection.is_blocked
+        ):
+            raise ValueError("Experiment 5 v3 selection shape drift")
+        total_roots += len(selection.ordered_case_ids)
+        total_ai_units += selection.expected_ai_unit_count
+    if total_roots != EXP5_V3_EXPECTED_ROOT_RUNS:
+        raise ValueError("Experiment 5 v3 root-run count drift")
+    if total_ai_units != EXP5_V3_EXPECTED_AI_UNIT_COUNT:
+        raise ValueError("Experiment 5 v3 first-attempt AI-unit count drift")
+    return total_roots
+
+
+def _context_uses_exp5_v3(context: PaperExecutionContext) -> bool:
+    binding = context.approved_endpoint_binding
+    return (
+        isinstance(binding, Mapping)
+        and binding.get("cohort_id") == PAPER_MODEL_ENDPOINT_COHORT_V3_ID
+    )
+
+
+def _run_exp5_v3_condition(
+    context: PaperExecutionContext,
+    condition: PaperExperimentCondition,
+    selection: FrozenCaseSelection,
+) -> PaperConditionResult:
+    canonical_conditions = expand_exp5_v3_conditions(context)
+    canonical_by_id = {
+        candidate.condition_id: candidate for candidate in canonical_conditions
+    }
+    canonical_condition = canonical_by_id.get(condition.condition_id)
+    if (
+        not isinstance(condition, Exp5V3Condition)
+        or canonical_condition is None
+        or canonical_condition.condition_digest != condition.condition_digest
+    ):
+        raise ValueError(
+            "condition does not match canonical Experiment 5 v3 identity"
+        )
+    canonical_selections = freeze_exp5_v3_case_selections(
+        context,
+        canonical_conditions,
+    )
+    selection_by_condition_id = {
+        candidate.condition_id: frozen_selection
+        for candidate, frozen_selection in zip(
+            canonical_conditions,
+            canonical_selections,
+            strict=True,
+        )
+    }
+    canonical_selection = selection_by_condition_id[
+        canonical_condition.condition_id
+    ]
+    if _selection_body(selection) != _selection_body(canonical_selection):
+        raise ValueError(
+            "selection does not match canonical Experiment 5 v3 selection"
+        )
+    result = context.execution_callback(
+        context=context,
+        condition=canonical_condition,
+        selection=canonical_selection,
+        experiment_id=EXP5_EXPERIMENT_ID,
+    )
+    if not isinstance(result, PaperConditionResult):
+        raise ValueError("execution callback must return PaperConditionResult")
+    if result.condition_id != canonical_condition.condition_id:
+        raise ValueError("execution callback returned a mismatched condition_id")
+    return result
 
 
 def build_exp5_single_member_pilot_plan(
@@ -365,14 +830,17 @@ def summarize_exp5_model_comparison(evidence: Any) -> ExperimentSummaryRows:
 def expand_conditions(
     context: PaperExecutionContext,
 ) -> tuple[PaperExperimentCondition, ...]:
-    return expand_exp5_conditions(context)
+    return Experiment5ModelComparisonModule().expand_conditions(context)
 
 
 def freeze_case_selections(
     context: PaperExecutionContext,
     conditions: tuple[PaperExperimentCondition, ...],
 ) -> FrozenCaseSelectionBatch:
-    return freeze_exp5_case_selections(context, conditions)
+    return Experiment5ModelComparisonModule().freeze_case_selections(
+        context,
+        conditions,
+    )
 
 
 def run_condition(
@@ -626,6 +1094,17 @@ def _model_execution_row(item: Mapping[str, Any]) -> JsonObject:
         and task_paper_eligible
         and not stable_reasons
     )
+    usage_evidence = joined_evidence["usage"]
+    cost_estimate_currency = (
+        usage_evidence.get("currency")
+        if isinstance(usage_evidence, Mapping)
+        else None
+    )
+    cost_estimate_status = (
+        usage_evidence.get("cost_estimate_status")
+        if isinstance(usage_evidence, Mapping)
+        else None
+    )
 
     return {
         "schema_version": "tokenshare.paper_exp5_model_execution_row.v1",
@@ -699,6 +1178,16 @@ def _model_execution_row(item: Mapping[str, Any]) -> JsonObject:
         "cost_estimate": _non_negative_number(
             attempt["cost_estimate"],
             "cost_estimate",
+        ),
+        "cost_estimate_currency": (
+            str(cost_estimate_currency)
+            if isinstance(cost_estimate_currency, str)
+            else None
+        ),
+        "cost_estimate_status": (
+            str(cost_estimate_status)
+            if isinstance(cost_estimate_status, str)
+            else "usage_missing"
         ),
         "provider_errors": provider_errors,
         "error_kind": attempt.get("error_kind"),
@@ -920,6 +1409,19 @@ def _reasoning_controls_match(
     )
 
 
+def _approved_v2_reasoning_controls(provider_family: str) -> JsonObject | None:
+    controls = {
+        "siliconflow": {"enable_thinking": True},
+        "deepseek": {
+            "thinking": {"type": "enabled"},
+            "reasoning_effort": "high",
+        },
+        "openai": {"reasoning_effort": "high"},
+    }
+    selected = controls.get(provider_family)
+    return dict(selected) if selected is not None else None
+
+
 def _required_row_string(field_name: str, value: Any) -> str:
     _require_non_empty_string(field_name, value)
     return str(value)
@@ -940,6 +1442,364 @@ def _non_negative_number(value: Any, field_name: str) -> float:
     ):
         raise ValueError(f"{field_name} must be a number >= 0")
     return float(value)
+
+
+def _case_id_rank_key(case_id: str) -> tuple[str, str]:
+    return sha256(case_id.encode("utf-8")).hexdigest(), case_id
+
+
+def _require_exact_int(
+    field_name: str,
+    value: Any,
+    *,
+    minimum: int,
+) -> int:
+    if type(value) is not int or value < minimum:
+        raise ValueError(f"{field_name} must be an integer >= {minimum}")
+    return value
+
+
+def _require_exact_int_mapping(
+    field_name: str,
+    value: Any,
+    expected: Mapping[str, int],
+) -> None:
+    if not isinstance(value, Mapping) or set(value) != set(expected):
+        raise ValueError(f"{field_name} keys drift")
+    for key, expected_value in expected.items():
+        observed = _require_exact_int(
+            f"{field_name}.{key}",
+            value.get(key),
+            minimum=1,
+        )
+        if observed != expected_value:
+            raise ValueError(f"{field_name} count drift")
+
+
+def _validate_v3_selection_source_files(parent: Mapping[str, Any]) -> None:
+    expected_paths = (
+        "benchmarks/paper/factorization_catalog.v2.jsonl",
+        "benchmarks/paper/lean_catalog.v1.jsonl",
+        "benchmarks/paper/lean_lemma_graph_catalog.v1.jsonl",
+    )
+    source_files = parent.get("source_files")
+    if not isinstance(source_files, list) or tuple(
+        item.get("path") if isinstance(item, Mapping) else None
+        for item in source_files
+    ) != expected_paths:
+        raise ValueError("Experiment 5 v3 parent source catalog identity drift")
+    repository_root = Path(__file__).resolve().parents[3]
+    for item, relative_path in zip(source_files, expected_paths, strict=True):
+        content_digest = item.get("content_digest")
+        _require_complete_digest("content_digest", content_digest)
+        source_path = repository_root / relative_path
+        observed = f"sha256:{sha256(source_path.read_bytes()).hexdigest()}"
+        if observed != content_digest:
+            raise ValueError("Experiment 5 v3 parent source catalog drift")
+    readiness = parent.get("lean_readiness")
+    expected_readiness_path = (
+        "benchmarks/paper/lean_task14_3x3_readiness.v1.json"
+    )
+    if (
+        not isinstance(readiness, Mapping)
+        or readiness.get("path") != expected_readiness_path
+    ):
+        raise ValueError("Experiment 5 v3 Lean readiness identity drift")
+    for field_name in (
+        "content_digest",
+        "catalog_digest",
+        "selection_digest",
+    ):
+        _require_complete_digest(field_name, readiness.get(field_name))
+    observed_readiness = (
+        "sha256:"
+        + sha256((repository_root / expected_readiness_path).read_bytes()).hexdigest()
+    )
+    if observed_readiness != readiness.get("content_digest"):
+        raise ValueError("Experiment 5 v3 Lean readiness source drift")
+
+
+def _validate_v3_selection_against_catalog(
+    selection: Mapping[str, Any],
+    catalog: Any,
+) -> None:
+    catalog_view = _catalog_view(catalog)
+    parent = _mapping(selection.get("parent_catalog"))
+    if (
+        parent.get("catalog_id")
+        != catalog_view.get("catalog_id", "tokenshare.paper.catalog")
+        or parent.get("catalog_version")
+        != catalog_view.get("catalog_version")
+        or parent.get("catalog_digest") != _catalog_digest(catalog)
+    ):
+        raise ValueError("Experiment 5 v3 parent catalog digest drift")
+    readiness = _validated_readiness_selection(catalog_view)
+    source_ids = {
+        "factorization:hard": tuple(
+            _case_id(case)
+            for case in _formal_catalog_cases(
+                catalog_view,
+                domain="factorization",
+            )
+            if case.get("paper_difficulty", case.get("difficulty")) == "hard"
+        ),
+        **{
+            f"lean_proof:hard:{topic_family}": tuple(
+                readiness["selected_case_ids_by_cell"][
+                    f"hard_frontier/{topic_family}"
+                ]
+            )
+            for topic_family in LEAN_TOPIC_FAMILIES
+        },
+    }
+    strata = selection.get("strata")
+    if not isinstance(strata, list):
+        raise ValueError("Experiment 5 v3 selection strata drift")
+    for stratum in strata:
+        stratum_id = str(stratum["stratum_id"])
+        source = source_ids[stratum_id]
+        if len(source) != EXP5_V3_SOURCE_COUNTS[stratum_id]:
+            raise ValueError("Experiment 5 v3 source catalog count drift")
+        expected = tuple(sorted(source, key=_case_id_rank_key))[
+            : EXP5_V3_RETAINED_COUNTS[stratum_id]
+        ]
+        if tuple(stratum["ordered_case_ids"]) != expected:
+            raise ValueError("Experiment 5 v3 source catalog selection drift")
+
+
+def _v3_condition_stratum_id(condition: PaperExperimentCondition) -> str:
+    if condition.domain == "factorization":
+        return "factorization:hard"
+    topic_family = str(condition.topic_family or "")
+    stratum_id = f"lean_proof:hard:{topic_family}"
+    if stratum_id not in EXP5_V3_RETAINED_COUNTS:
+        raise ValueError("Experiment 5 v3 Lean topic family drift")
+    return stratum_id
+
+
+def _validate_v3_condition_order(
+    conditions: Sequence[PaperExperimentCondition],
+) -> None:
+    cursor = 0
+    selection_digests: set[str] = set()
+    parent_digests: set[str] = set()
+    for repeat_id, member_ids in EXP5_V3_SEQUENCE_PLAN.items():
+        predecessor: str | None = None
+        for order_slot, member_id in enumerate(member_ids, start=1):
+            expected_scopes = (
+                ("factorization", None),
+                ("lean_proof", "pure_logic"),
+                ("lean_proof", "function_set"),
+                ("lean_proof", "induction"),
+            )
+            for domain, topic_family in expected_scopes:
+                condition = conditions[cursor]
+                cursor += 1
+                if (
+                    not isinstance(condition, Exp5V3Condition)
+                    or condition.schema_version != "tokenshare.paper_condition.v3"
+                    or condition.repeat_id != repeat_id
+                    or condition.cohort_member_id != member_id
+                    or condition.domain != domain
+                    or condition.topic_family != topic_family
+                    or condition.worker_count != EXP5_V3_WORKER_COUNT
+                    or condition.order_slot != order_slot
+                    or condition.predecessor_member_id != predecessor
+                    or condition.sequence_plan_digest
+                    != EXP5_V3_SEQUENCE_PLAN_DIGEST
+                ):
+                    raise ValueError("Experiment 5 v3 condition order or identity drift")
+                selection_digests.add(condition.exp5_selection_digest)
+                parent_digests.add(
+                    condition.exp5_selection_parent_catalog_digest
+                )
+            predecessor = member_id
+    if cursor != len(conditions) or len(selection_digests) != 1 or len(
+        parent_digests
+    ) != 1:
+        raise ValueError("Experiment 5 v3 condition order or identity drift")
+
+
+def _validated_v3_member_plans(value: Any) -> dict[str, JsonObject]:
+    if not isinstance(value, Mapping):
+        raise ValueError("missing Experiment 5 v3 cohort preflight")
+    expected_ids = tuple(PAPER_MODEL_ENDPOINT_COHORT_V3_MEMBER_IDS)
+    cohort_digest = value.get("model_cohort_digest")
+    member_plans = value.get("member_plans")
+    provider_calls_made = _require_exact_int(
+        "provider_calls_made",
+        value.get("provider_calls_made"),
+        minimum=0,
+    )
+    if (
+        value.get("schema_version")
+        != "tokenshare.paper_model_endpoint_cohort_preflight.v1"
+        or value.get("status") != "planned"
+        or value.get("paper_eligible_possible") is not True
+        or provider_calls_made != 0
+        or value.get("cohort_id") != PAPER_MODEL_ENDPOINT_COHORT_V3_ID
+        or not _is_complete_digest(cohort_digest)
+        or value.get("expected_member_ids") != list(expected_ids)
+        or not isinstance(member_plans, Mapping)
+        or set(member_plans) != set(expected_ids)
+    ):
+        raise ValueError("invalid Experiment 5 v3 cohort preflight")
+
+    normalized: dict[str, JsonObject] = {}
+    namespaces: set[tuple[str, str]] = set()
+    comparable_digests: set[str] = set()
+    for member_id in expected_ids:
+        plan = member_plans.get(member_id)
+        expected = PAPER_MODEL_ENDPOINT_COHORT_V3_MEMBERS[member_id]
+        if not isinstance(plan, Mapping):
+            raise ValueError("invalid Experiment 5 v3 member plan")
+        endpoint = _endpoint_identity_from_mapping(plan.get("endpoint_identity"))
+        expected_controls = dict(expected["request_overrides"])
+        if (
+            plan.get("status") != "planned"
+            or plan.get("blocked_reasons") not in ([], (), None)
+            or plan.get("cohort_id") != PAPER_MODEL_ENDPOINT_COHORT_V3_ID
+            or plan.get("model_cohort_digest") != cohort_digest
+            or plan.get("cohort_member_id") != member_id
+            or plan.get("provider_family") != expected["provider_family"]
+            or plan.get("provider_model_id") != expected["provider_model_id"]
+            or plan.get("reasoning_profile_id")
+            != expected["reasoning_profile_id"]
+            or endpoint is None
+            or endpoint.to_dict() != plan.get("endpoint_identity")
+            or dict(endpoint.effective_reasoning_controls) != expected_controls
+            or endpoint.model_endpoint_identity_digest
+            != plan.get("model_endpoint_identity_digest")
+            or endpoint.source_provider_config_digest
+            != plan.get("source_provider_config_digest")
+        ):
+            raise ValueError("Experiment 5 v3 member identity drift")
+        namespace = (
+            str(plan.get("provider_config_id") or ""),
+            str(plan.get("selected_entry_id") or ""),
+        )
+        if not all(namespace) or namespace in namespaces:
+            raise ValueError("Experiment 5 v3 entry namespace drift")
+        namespaces.add(namespace)
+        request_controls = plan.get("request_controls")
+        comparable = (
+            request_controls.get("comparable")
+            if isinstance(request_controls, Mapping)
+            else None
+        )
+        if not isinstance(request_controls, Mapping) or not isinstance(
+            comparable,
+            Mapping,
+        ):
+            raise ValueError("Experiment 5 v3 request controls drift")
+        timeout_seconds = _require_exact_int(
+            "timeout_seconds",
+            comparable.get("timeout_seconds"),
+            minimum=1,
+        )
+        max_tokens = _require_exact_int(
+            "max_tokens",
+            comparable.get("max_tokens"),
+            minimum=1,
+        )
+        max_provider_attempts = _require_exact_int(
+            "max_provider_attempts",
+            comparable.get("max_provider_attempts"),
+            minimum=1,
+        )
+        if (
+            comparable.get("temperature") != 0.0
+            or comparable.get("top_p") != 1.0
+            or comparable.get("stream") is not False
+            or timeout_seconds != 600
+            or max_tokens != 32768
+            or max_provider_attempts != 1
+            or comparable.get("domain_contracts")
+            != EXP5_DOMAIN_EXECUTION_CONTRACTS
+            or request_controls.get("comparable_digest")
+            != digest_json(dict(comparable))
+            or request_controls.get("provider_specific_reasoning")
+            != expected_controls
+        ):
+            raise ValueError("Experiment 5 v3 request controls drift")
+        comparable_digests.add(digest_json(dict(comparable)))
+        normalized[member_id] = dict(plan)
+    if len(comparable_digests) != 1:
+        raise ValueError("Experiment 5 v3 cross-member controls drift")
+    snapshot = value.get("request_controls_snapshot")
+    comparable_digest = next(iter(comparable_digests))
+    if (
+        not isinstance(snapshot, Mapping)
+        or digest_json(dict(snapshot)) != comparable_digest
+        or value.get("request_controls_snapshot_digest") != comparable_digest
+    ):
+        raise ValueError("Experiment 5 v3 request controls snapshot drift")
+    return normalized
+
+
+def _v3_condition(
+    *,
+    member_plan: Mapping[str, Any],
+    domain: str,
+    difficulty: str,
+    paper_difficulty: str,
+    repeat_id: int,
+    seed: int,
+    catalog_digest: str,
+    order_slot: int,
+    predecessor_member_id: str | None,
+    selection_digest: str,
+    selection_parent_catalog_digest: str,
+    topic_family: str | None = None,
+) -> Exp5V3Condition:
+    member_id = str(member_plan["cohort_member_id"])
+    return Exp5V3Condition(
+        schema_version="tokenshare.paper_condition.v3",
+        experiment_id=EXP5_EXPERIMENT_ID,
+        condition_id=(
+            f"exp5_v3_r{repeat_id}_s{order_slot}_{member_id}_{domain}_"
+            f"{paper_difficulty}"
+            f"{'_' + topic_family if topic_family else ''}_w{EXP5_V3_WORKER_COUNT}"
+        ),
+        domain=domain,
+        difficulty=difficulty,
+        paper_difficulty=paper_difficulty,
+        topic_family=topic_family,
+        topic_family_version=(
+            None if domain == "factorization" else "exp1_hard_frontier_15_v1"
+        ),
+        worker_count=EXP5_V3_WORKER_COUNT,
+        fault_type="none",
+        fault_rate=0.0,
+        ablation_mode="FULL",
+        model_policy="fixed_entry",
+        model_cohort_id=PAPER_MODEL_ENDPOINT_COHORT_V3_ID,
+        cohort_member_id=member_id,
+        provider_config_id=str(member_plan["provider_config_id"]),
+        model_entry_id=str(member_plan["selected_entry_id"]),
+        provider_family=str(member_plan["provider_family"]),
+        provider_model_id=str(member_plan["provider_model_id"]),
+        reasoning_profile_id=str(member_plan["reasoning_profile_id"]),
+        model_cohort_digest=str(member_plan["model_cohort_digest"]),
+        source_provider_config_digest=str(
+            member_plan["source_provider_config_digest"]
+        ),
+        model_endpoint_identity_digest=str(
+            member_plan["model_endpoint_identity_digest"]
+        ),
+        repeat_id=repeat_id,
+        seed=seed,
+        catalog_digest=catalog_digest,
+        real_transport_required=True,
+        paper_eligible_required=True,
+        order_slot=order_slot,
+        predecessor_member_id=predecessor_member_id,
+        sequence_plan_digest=EXP5_V3_SEQUENCE_PLAN_DIGEST,
+        exp5_selection_digest=selection_digest,
+        exp5_selection_parent_catalog_digest=(
+            selection_parent_catalog_digest
+        ),
+    )
 
 
 def _condition(
@@ -1284,10 +2144,10 @@ def _validate_cohort_preflight(value: Any) -> Exp5CohortGate:
                 if endpoint_identity.to_dict()[field_name] != plan[plan_field]:
                     reasons.append(f"{member_id}:{field_name}_mismatch")
             controls = dict(endpoint_identity.effective_reasoning_controls)
-            if endpoint_identity.provider_family == "openai":
-                if controls != {"reasoning_effort": "high"}:
-                    reasons.append(f"{member_id}:reasoning_controls_mismatch")
-            elif controls not in ({}, {"enable_thinking": False}):
+            expected_controls = _approved_v2_reasoning_controls(
+                endpoint_identity.provider_family
+            )
+            if expected_controls is None or controls != expected_controls:
                 reasons.append(f"{member_id}:reasoning_controls_mismatch")
         request_controls = plan.get("request_controls")
         if not isinstance(request_controls, Mapping):
@@ -1410,10 +2270,7 @@ def _single_member_plan_reasons(
         if identity_body[identity_field] != plan[plan_field]:
             reasons.append(f"{identity_field}_mismatch")
     controls = dict(identity.effective_reasoning_controls)
-    if identity.provider_family == "openai":
-        if controls != {"reasoning_effort": "high"}:
-            reasons.append("reasoning_controls_mismatch")
-    elif controls not in ({}, {"enable_thinking": False}):
+    if controls != _approved_v2_reasoning_controls(identity.provider_family):
         reasons.append("reasoning_controls_mismatch")
     request_controls = plan.get("request_controls")
     if not isinstance(request_controls, Mapping):
@@ -1826,18 +2683,29 @@ def _require_complete_digest(field_name: str, value: Any) -> None:
 __all__ = [
     "EXP5_EXPECTED_ROOT_RUNS",
     "EXP5_EXPERIMENT_ID",
+    "EXP5_V3_EXPECTED_AI_UNIT_COUNT",
+    "EXP5_V3_EXPECTED_CONDITION_COUNT",
+    "EXP5_V3_EXPECTED_ROOT_RUNS",
+    "EXP5_V3_SELECTION_PATH",
+    "EXP5_V3_SEQUENCE_PLAN",
+    "EXP5_V3_SEQUENCE_PLAN_DIGEST",
     "Exp5CohortGate",
     "Exp5MixedLeanCaseSelection",
     "Exp5ModelComparisonModule",
+    "Exp5V3Condition",
     "Experiment5ModelComparisonModule",
     "assess_exp5_cohort",
     "build_exp5_model_execution_rows",
     "build_exp5_single_member_pilot_plan",
     "count_exp5_root_runs",
+    "count_exp5_v3_root_runs",
     "expand_conditions",
     "expand_exp5_conditions",
+    "expand_exp5_v3_conditions",
     "freeze_case_selections",
     "freeze_exp5_case_selections",
+    "freeze_exp5_v3_case_selections",
+    "load_exp5_v3_selection",
     "run_condition",
     "summarize",
     "summarize_exp5_model_comparison",

@@ -6,6 +6,10 @@
 
 本文不把 Phase 7 AI API executor、Phase 8 experiment infrastructure 或 `feat-011` paper runner 作为 Phase 1-6 实现的一部分。相关目录在仓库中存在，但本 code map 只在“范围外但存在的代码”中说明，避免误读。
 
+> 2026-07-30 范围外现状提示：feat-011 Experiment 5 当前为 cohort v3 的四模型同一 SiliconFlow endpoint comparison，冻结 48 conditions / 1,284 roots / 9,888 first-attempt AI units / 607,518,720 token ceiling，并提供独立 8-root smoke profile 与 CSV/JSONL/TeX/PDF/SVG/Markdown 输出。首次 smoke bootstrap 不要求先验 smoke evidence，正式矩阵仍要求；最小 endpoint/key 诊断已完成但 8-root smoke 未运行。cohort v1/v2 仅供历史 replay。这些实现仍不属于 Phase 1-6 协议内核。
+
+> 2026-07-30 范围外自检提示：feat-011 shared Exp1 consumer 已补齐失败 source 的冻结引用/usage 全校验、Exp3 聚合多来源 condition provenance，以及 Exp1→Exp3 执行顺序的 CLI/formal 双层 preflight。这些修复只位于 `src/tokenshare/experiments/`，没有改变 Phase 1-6 协议对象、event 或 artifact schema。
+
 ## 1. 顶层结构
 
 ```text
@@ -1626,7 +1630,7 @@ harness-files-ok
 387 passed, 1 skipped in 170.77s
 ```
 
-## 2026-07-25 Feat-011 Task A–11 当前映射
+## 2026-07-25 Feat-011 Task A–11 历史映射（Exp3/P0 已由 EPD-012 覆盖）
 
 实验设施补全保持协议核心、plugin runtime 和 experiments 三层边界：
 
@@ -1636,10 +1640,18 @@ harness-files-ok
 - `experiments/paper_formal_runner.py`、`paper_formal_metrics.py`、`paper_formal_report.py` 形成正式证据/指标/报告单路径；Exp5 从持久化 v2 model execution record 严格连接 request/raw/provenance/usage，生成 endpoint comparison 和 provider-confounding 输出。
 - Task 11 指定组合回归=`286 passed`，Fast=`331 passed, 1 skipped`，capturing provider calls/tokens/cost=`0/0/0` 且 `paper_eligible=false`。没有运行真实 formal 实验、Full、LeanAudit 或 force-all；该映射证明设施完成，不代表 `feat-011` 的论文结果已经完成。
 
-## 2026-07-26 正式 AI timeout 控制
+## 2026-07-29 Feat-011 EPD-012 shared Exp1 reference 与 Exp3/Exp4 smoke 边界
 
-- 实验层共享常量 `paper_models.PAPER_FORMAL_AI_TIMEOUT_SECONDS=100` 统一驱动正式 Exp1–4 controls、formal CLI、Gate C 和 Exp5 preflight；tracked baseline/pilot 配置也固定为 100。Exp5 的三个 endpoint 只“彼此相等”不够，任一不是 100 都以 `formal_ai_timeout_seconds_mismatch` 整体阻塞。
-- worker-death 外层 process guard 仍按请求 timeout 加 30 秒清理余量，故正式值为 130 秒；provider 响应上限仍是 100 秒。协议 lease、Lean checker、通用 executor/adapter fallback 和历史 benchmark timeout 均保持原值。
+- `src/tokenshare/experiments/paper_exp3_fault_recovery.py`、`paper_budget.py`：删除 Exp3 0% condition 和 dedicated worker-death baseline，正式 Factorization rates=`1/5/10/25/50/100%`、Lean=`10/50/100%`；Exp3 roots=`36,126`，supporting=`0`，P0-core roots=`46,478`、first-attempt AI units=`246,998`。
+- `paper_formal_evidence.py`、`paper_formal_runner.py`、`paper_formal_metrics.py`：Exp3 同 `case_id` 只读引用正式 Exp1 terminal evidence，冻结 source identity/version/hash/usage；consumer 在 dispatch 前复核 split/plugin/parser/verifier/executor/prompt/runtime identity、source hash 与 checkpoint/attempt/event/artifact usage provenance，usage 不完整时保持 unavailable/null。完整失败 source 保留在分母但 comparison/delta 为 unavailable/null，缺失/无效/损坏 source 作为 dependency/infrastructure failure 在 provider dispatch 前停止并闭合 manifests。
+- `paper_terminal_outcomes.py`、runner、evidence、smoke report：统一 `outcome_status={succeeded,failed_experimental,blocked_dependency}` 与 `evidence_integrity={complete,missing,invalid,corrupt}`；可信实验失败继续后续 root，设施失败停止新 API，suite 终态为 `completed_with_failures`/`blocked`/`incomplete`。
+- `benchmarks/paper/paper_smoke_exp3_exp4_profile.v1.json` 精确包含 11 个 direct roots：同一 Factorization easy case 的五类 Exp3 r100、worker death dead1/p50/w10 与五个 Exp4 modes；baseline 明确 omitted、reference=null、supporting=0、永久 `paper_eligible=false`。`local/run_exp3_exp4_v3_smoke.ps1` 只接受 RunId/OutputRoot/SupervisorRoot 三参数，先做不读 secret 的 identity freeze，再允许全新路径 real transport；本轮只做静态与 identity-only 验证，未执行 launcher 或真实 API。
+- 相关测试覆盖 rates/counts/shared-reference drift/terminal failure/manifest closure/11-root selection/identity/launcher/report/cost semantics。该变更位于范围外实验层，不改变 Phase 1–6 协议核心；历史 run01–run04 evidence 保持只读。
+
+## 2026-07-26 正式 AI timeout 控制（历史，已由 EPD-009 覆盖）
+
+- EPD-007 当时使用 `paper_models.PAPER_FORMAL_AI_TIMEOUT_SECONDS=100` 统一驱动 Exp1–5；该共享口径现已失效。当前 Exp1–4 使用独立 DeepSeek v3 controls `600/300000`，Exp5 cohort v3 使用 `600/32768`；cohort v2 的 `100/8192` 与旧 timeout mismatch 只保留历史 replay/provenance。
+- worker-death 外层 process guard 仍按请求 timeout 加 30 秒清理余量；当前 Exp1–4 派生为 630 秒，历史 100 秒配置才是 130 秒。协议 lease、Lean checker、通用 executor/adapter fallback 和历史 benchmark timeout 均保持原值。
 - 新 timeout 进入 config/profile/condition/budget identity，旧批准 digest 全部失效。验证为 timeout 直接影响集 `218 passed`、最终 Fast `331 passed, 1 skipped in 14.83s`；没有 provider、Full、LeanAudit 或正式实验调用。
 
 ## 2026-07-26 正式实验证据真实性与指标完整性门禁
@@ -1656,3 +1668,36 @@ harness-files-ok
 - `src/tokenshare/experiments/paper_ablation.py`
   - ablation hook observation 保存真实 hook input/result、artifact refs 和 protocol refs，空列表或仅凭 mode 名称不再表示“效果为零”。
 - 反伪造回归集中在 `tests/experiments/test_paper_formal_runner.py`、`test_paper_formal_metrics.py`、`test_paper_formal_report.py` 以及 Exp2–5/Gate C/integration 文件。负面终局门禁 TDD 为 `4 failed, 1 passed`（RED）到 `5 passed`（GREEN），完整 metrics 文件为 `28 passed`；用户指定九文件最低验收为 `251 passed`，最终 Fast 为 `331 passed, 1 skipped`。capturing 始终 paper-ineligible；本轮没有真实 API、正式实验、Full 或 LeanAudit，故 `feat-011` 仍为 `in-progress`。
+## 2026-07-27 feat-011 EPD-008 DeepSeek runner / cohort v2
+
+- `executors/ai_api_config.py`、`ai_api_local_config.py`、`ai_api_transport.py`、`ai_api.py` 新增独立 `deepseek` provider，保持 provenance/error identity；DeepSeek raw evidence 保存 `reasoning_content`，usage 支持 cache hit/miss、reasoning tokens、`usage_missing` 和 CNY estimate。
+- `experiments/factorization_paper_adapter.py` 与 `lean_paper_adapter.py` 路由版本化 provider transport；2026-07-28 EPD-009 后，`paper_exp1.py`、`paper_exp2_scalability.py`、`paper_exp3_fault_recovery.py`、`paper_exp4_ablation_runner.py` 和 CLI/Gate C 的当前 Exp1–4 baseline 固定为 DeepSeek-V4-Pro high、timeout 600 秒、max tokens 300000。Experiment 5 当前 cohort v3 使用四个 SiliconFlow entry 与 `600/32768`；cohort v2 的 100/8192 只供历史 replay。
+- `experiments/run_paper_experiments.py` 的 Exp1–4-only smoke 启动门禁要求命令显式给出 tracked v3 config 路径，并在调用 `execute_paper_smoke_suite()` 前复核固定 config digest、官方 endpoint、model/entry、thinking/high、600/300000、单次 attempt 和 provider inflight；拒绝时输出 `exp1_exp4_v3_config_blocked` 且 provider calls=0。该门禁不进入 Exp5 cohort 分支。
+- 同一入口的 `--smoke-identity-only` 不创建 output root、不读取 API secret，输出跨 run 稳定的 `preregistered_semantics` 和绑定当前绝对 output root 的 `run_instance_identity`；launcher 核对前者后，以 `--expect-smoke-execution-plan-digest` / `--expect-smoke-budget-digest` 冻结后者。换 root 时两个 digest 正常变化，同 root 漂移仍在 provider dispatch 前 fail closed。
+- `local/run_exp1_exp4_v3_smoke.ps1` 在读取 user-scope secret 前执行该 identity preflight，并在 `prelaunch.json` 分别持久化稳定语义、当前 root identity 和 fail-closed policy；实际底层命令仍显式包含 Exp1–4 v2 profile、DeepSeek v3 config、real transport 与 unlimited total budget。
+- `paper_model_policy.py` 与 `paper_exp5_model_comparison.py` 的当前 cohort 升为 v2（GLM thinking、DeepSeek high、GPT high），同时保留 v1/Qwen loader 定义与 tracked file 供历史 replay。
+- `paper_models.py`、`paper_formal_runner.py`、`paper_metrics.py` 增加 currency-aware cost estimate evidence；混合 CNY/USD 时输出分币种 totals 和 `mixed_currency_not_aggregated`，不直接相加。
+- tracked `exp1_baseline_provider_config.v2.json`、`exp1_minimal_pilot_profile.v2.json`、`model_comparison_cohort.v2.json`、`paper_smoke_exp1_exp4_profile.v2.json` 和 `paper_smoke_profile.v2.json` 继续保留；EPD-009 新增 `exp1_baseline_provider_config.v3.json` 与 `exp1_minimal_pilot_profile.v3.json`，只替代 Exp1–4 当前默认，v1/v2 文件和历史 evidence 不改写。
+
+## 2026-07-28 feat-011 EPD-009 验证与 diagnostic evidence
+
+- v3 迁移影响集=`218 passed`；旧 Gate C fixture 的 13 failures 保留为 RED，更新为 v3 controls 后该文件=`33 passed`，最终 Full=`1421 passed, 1 skipped in 762.24s`。这没有放宽生产 request-control fail-closed。
+- 真实 diagnostic `deepseek_hard10_concurrency10_direct_300k_20260727T182217Z` 固定 10 个 hard prompts、并发 10、一次 attempt、600 秒/300K；10/10 HTTP 200/usage，8 normal-valid、2 plugin-domain checker rejection，0 retry/429/usage-missing。
+- provider-reported prompt/completion/total=`14346/225239/239585`，nested reasoning=`221563`；独立 reconciliation 从 hash-verified raw results 修正 local diagnostic summary 的顶层字段漏计。该 helper 缺口不在正式 `AIAPIExecutor._usage_summary()` 路径。
+- output 下 `diagnostic_final_report.md` 明确 `paper_eligible=false`；没有 pilot、正式 Experiment 1–5 matrix、LeanAudit 或 force-all。仓库 Full 仅为测试门禁。
+
+## 2026-07-28 Exp1–Exp4 负向闭环第三次质量复核
+
+- `paper_models.PaperAttemptResult` 对 v2 `executor_error` 使用 exact closed schema：只接受预注册 deterministic factorization executor、strict zero provider counters/tokens/cost、non-negative integer latency、non-empty error、非空 request mapping、null provider/output/parse/fault/model-record refs 和 `paper_eligible=false`；v1/Exp5 不变。
+- `paper_formal_metrics._provider_attempt_records()` 是 provider count/error/token/cost/latency/quantile/retry/rate-limit 的统一 inventory，排除 executor-error 与 experiment-scope runner records；空 inventory 保持 zero count/sum 与 null quantile，不创建伪 provider row。
+- `local/invoke_native_process_with_logs.ps1` 使用 `System.Diagnostics.Process` 双 redirected pipe；每行在内存脱敏后才以 UTF-8 写入独立 stdout/stderr。测试 child 在输出 full/prefix/suffix/short/empty sentinel 到双流后持续存活，由测试按 PID 终止，证明存活期磁盘无明文窗口并保留一般 exit-code 行为。
+- TDD：A `21 failed, 16 passed -> 37 passed`；B `2 failed -> 2 passed`；C `1 failed -> 2 passed`。扩展相关定向 `272 passed in 110.78s`；证据同步前 Fast `383 passed, 1 skipped in 16.22s`，最终 Fast `383 passed, 1 skipped in 15.34s`。用户明确禁止本次 Full/all-pytest，故未重跑；此前 Full 只作历史证据。provider/API/Exp5/LeanAudit/commit 均未发生。
+
+## 2026-07-30 Exp5 v3 provider router primary
+
+- 范围外实验层 `experiments/run_paper_experiments.py` 现从完整 approved execution configs 构造显式 `entry_id -> provider_family` 并与 Exp5 preflight binding 交叉校验；mixed Exp1–5 的 DeepSeek baseline 与四个 SiliconFlow Exp5 entries 正确分流，跨 family 同名 entry fail closed。两条精确回归与 NO-GO 后续门禁见 `2026-06-29-phase-8-experiment-infrastructure-code-map.md`；此变更不修改 Phase 1–6 协议核心，且不表示 Exp5 smoke/formal 设施已完成。
+
+## 2026-07-30 Exp3–4 process identity pickle 与失败退出码
+
+- 范围外实验层 `experiments/paper_model_identity.py` 的 frozen endpoint/reasoning identity 继续以 `MappingProxyType` 保持不可变，但新增显式 pickle reduction/restore，使完整 `ValidatedModelEndpointBinding` 可经 `local_runtime.ProcessWorkerBackend` 文件 payload 传给独立 child。恢复后映射仍只读、endpoint digest 保持一致；协议 event/ledger/artifact schema 未变。
+- `experiments/run_paper_experiments.py` 的实际 formal/pilot/smoke execution 统一按 suite 终态返回 CLI exit code，blocked/incomplete 不再被固定 0 吞掉；budget-exhausted 保持可 resume 成功边界。第三次真实 Exp3–4 smoke 已因旧 mappingproxy 不可 pickle 而 blocked，五个 Exp4 roots 被 hard-stop 正确阻止；修复由 `219 + 228` 扩展测试和 Full `1698 passed, 1 skipped` 覆盖，未调用 provider 或 LeanAudit。

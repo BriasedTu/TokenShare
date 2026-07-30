@@ -3,11 +3,19 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from hashlib import sha256
 import json
 from pathlib import Path
 import re
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable, Mapping
 
+from tokenshare.experiments.paper_exp5_artifacts import (
+    EXP5_AUDIT_FILES,
+    EXP5_PAPER_FILES,
+    Exp5PaperArtifactResult,
+    PlotSpec,
+    render_exp5_paper_artifacts,
+)
 from tokenshare.experiments.paper_formal_metrics import FormalMetricsResult
 
 
@@ -38,6 +46,8 @@ def generate_paper_formal_report(
     output_root: str | Path,
     metrics: FormalMetricsResult,
     secret_values: Iterable[str] = (),
+    exp5_artifact_rows: Mapping[str, Any] | None = None,
+    exp5_pdf_backend: Callable[[Path, PlotSpec], None] | None = None,
 ) -> FormalReportResult:
     """先扫描已持久化 evidence，再决定生成 regression 或 paper report。"""
 
@@ -65,6 +75,39 @@ def generate_paper_formal_report(
     if excluded_rows:
         reasons.append("non_formal_condition_status_present")
     reasons.extend(persisted_audit["ineligibility_reasons"])
+    exp5_artifact_result: Exp5PaperArtifactResult | None = None
+    if exp5_artifact_rows is not None:
+        try:
+            renderer_keys = (
+                "suite_status",
+                "identity_complete",
+                "overall_rows",
+                "domain_topic_rows",
+                "paired_comparison_rows",
+                "model_execution_rows",
+                "order_concurrency_rows",
+                "failure_taxonomy_rows",
+            )
+            renderer_args = {
+                key: exp5_artifact_rows[key]
+                for key in renderer_keys
+            }
+            exp5_artifact_result = render_exp5_paper_artifacts(
+                output_root=root,
+                paper_eligible=not reasons,
+                pdf_backend=exp5_pdf_backend,
+                **renderer_args,
+            )
+        except (KeyError, TypeError, ValueError, OSError, RuntimeError) as exc:
+            _clear_exp5_paper_outputs(root)
+            exp5_artifact_result = Exp5PaperArtifactResult(
+                status="paper_artifact_render_failed",
+                paper_eligible=False,
+                artifact_refs=_existing_exp5_audit_refs(root),
+                failure_reason=str(exc),
+            )
+        if exp5_artifact_result.status != "rendered":
+            reasons.append(exp5_artifact_result.status)
     paper_eligible = not reasons
     eligibility = {
         "schema_version": "tokenshare.paper_formal_eligibility_report.v1",
@@ -80,6 +123,11 @@ def generate_paper_formal_report(
         "persisted_evidence_audit": persisted_audit,
         "metrics_digest": metrics.metrics_digest,
         "secret_scan_report_ref": _ref(root, scan_path),
+        "exp5_artifact_result": (
+            exp5_artifact_result.to_dict()
+            if exp5_artifact_result is not None
+            else None
+        ),
     }
     eligibility_path = root / "audit" / "paper_eligibility_report.json"
     _write_json(eligibility_path, eligibility)
@@ -106,6 +154,29 @@ def generate_paper_formal_report(
     )
     _write_json(root / "formal_report_result.json", result.to_dict())
     return result
+
+
+def _existing_exp5_audit_refs(root: Path) -> tuple[dict[str, str], ...]:
+    return tuple(
+        {
+            "path": relative_path,
+            "content_hash": "sha256:"
+            + sha256((root / relative_path).read_bytes()).hexdigest(),
+        }
+        for relative_path in EXP5_AUDIT_FILES
+        if (root / relative_path).is_file()
+    )
+
+
+def _clear_exp5_paper_outputs(root: Path) -> None:
+    for relative_path in EXP5_PAPER_FILES:
+        (root / relative_path).unlink(missing_ok=True)
+    paper_root = root / "paper"
+    if paper_root.is_dir():
+        try:
+            paper_root.rmdir()
+        except OSError:
+            pass
 
 
 def _audit_persisted_report_evidence(
