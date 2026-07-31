@@ -1,1 +1,4 @@
 outputs/** -text -diff
+benchmarks/paper/exp5_parent_quarter_selection.v4.json text eol=lf
+benchmarks/paper/paper_smoke_exp5_profile.v4.json text eol=lf
+benchmarks/paper/factorization_catalog.v2.jsonl text eol=lf
