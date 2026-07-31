@@ -1,0 +1,175 @@
+{
+  "schema_version": "tokenshare.epd027_pipeline_profile.v1",
+  "profile_id": "epd027_response_bank_paper_pipeline.v1",
+  "profile_version": 1,
+  "authorities": {
+    "implementation_plan_path": "Doc/archive/design-history/2026-08-01-feat-011-response-bank-paper-pipeline-implementation-plan.md",
+    "implementation_plan_content_digest": "sha256:44d656a655b028a09eca17ccb9910d9aa806ba169a31455c16eafbd00357bc3b",
+    "factorization_catalog_path": "benchmarks/paper/factorization_catalog.v2.jsonl",
+    "factorization_catalog_content_digest": "sha256:9ce2b31a199455a37c0ca5afdee68e03540dc4912c4c4fe28e87ed3503467774",
+    "paper_suite_scale_profile_path": "benchmarks/paper/paper_suite_scale_profile.v1.json",
+    "paper_suite_scale_profile_content_digest": "sha256:86a76c364e07ead31c9aedc7c11df86ec11d35de8a27f69ee7f9ae83645e886a",
+    "paper_suite_scale_profile_digest": "sha256:9cab1fb5077265807e1f64c1b63265d0dd3e2f1e87a3371f1c811132e5da7dad",
+    "lean_catalog_path": "benchmarks/paper/lean_lemma_graph_catalog.v1.jsonl",
+    "lean_catalog_content_digest": "sha256:5a134f246d45ad302ead57ef6eb9559b0b040ed85fac50dc6af49974756f2cdc",
+    "lean_readiness_path": "benchmarks/paper/lean_task14_3x3_readiness.v1.json",
+    "lean_readiness_content_digest": "sha256:637a177aa4fbec5d672114468d0d885cf001470d8152a4832fd0a5b59ff956be",
+    "provider_config_path": "benchmarks/paper/exp1_baseline_provider_config.v3.json",
+    "provider_config_content_digest": "sha256:6bca384c1e87d45876534cf2065ff1adc159bf41c98035ce2bac12679ba006be"
+  },
+  "prompt_admission": {
+    "profile_id": "tokenshare.prompt_admission.utf8_byte_upper.v1",
+    "version": 1,
+    "algorithm": "estimated_prompt_tokens=utf8_byte_length(canonical_body_bytes)+8*message_count+16",
+    "canonical_body_schema": "canonical_json_utf8_v1",
+    "includes": [
+      "system",
+      "messages",
+      "canonical_body_overhead",
+      "unicode_utf8_byte_upper"
+    ],
+    "max_prompt_tokens": 32768,
+    "profile_digest": "sha256:e693ef1c9dbf50aff36aaae1b14f7029c5954c6708a6570182e69a7051685d49"
+  },
+  "trace_delay_policy": "logical_source_latency_1x",
+  "online_checks": {
+    "max_concurrent_roots": 1,
+    "exp2": {
+      "workers": [1, 3, 7, 10, 30, 50],
+      "repeat_id": 0,
+      "planned_first_ai_units_per_root": 20,
+      "provider_calls_upper": 480,
+      "conditions": [
+        {"condition_id":"epd027_exp2_online_w1_early_r0","experiment_id":"exp2_online_concurrency_check","evidence_class":"online_real_provider","worker_count":1,"case_position":"early","case_id":"factor_v2_hard_034","paper_difficulty":"hard","active_selection_index":0,"repeat_id":0,"split_profile_id":"factorization.exp2_contiguous_20way.v1","planned_first_ai_units":20,"provider_calls_upper":20,"max_concurrent_roots":1,"condition_digest":"sha256:311021730c60aa58ae3d3fb280ac6efa6e685fed8ec32ae560e98cc78719ee20"},
+        {"condition_id":"epd027_exp2_online_w1_middle_r0","experiment_id":"exp2_online_concurrency_check","evidence_class":"online_real_provider","worker_count":1,"case_position":"middle","case_id":"factor_v2_hard_122","paper_difficulty":"hard","active_selection_index":9,"repeat_id":0,"split_profile_id":"factorization.exp2_contiguous_20way.v1","planned_first_ai_units":20,"provider_calls_upper":20,"max_concurrent_roots":1,"condition_digest":"sha256:ebffd8d2c30f11a49f7edde0f93961c99ee96d80314573784ce78779bae9daab"},
+        {"condition_id":"epd027_exp2_online_w1_late_r0","experiment_id":"exp2_online_concurrency_check","evidence_class":"online_real_provider","worker_count":1,"case_position":"late","case_id":"factor_v2_hard_063","paper_difficulty":"hard","active_selection_index":1,"repeat_id":0,"split_profile_id":"factorization.exp2_contiguous_20way.v1","planned_first_ai_units":20,"provider_calls_upper":20,"max_concurrent_roots":1,"condition_digest":"sha256:41a9675f4e44a01fb60ef227dab7ab9ff06acca7618e32ed52e920087375e39d"},
+        {"condition_id":"epd027_exp2_online_w1_no_factor_r0","experiment_id":"exp2_online_concurrency_check","evidence_class":"online_real_provider","worker_count":1,"case_position":"no_factor","case_id":"factor_v2_hard_161","paper_difficulty":"hard","active_selection_index":44,"repeat_id":0,"split_profile_id":"factorization.exp2_contiguous_20way.v1","planned_first_ai_units":20,"provider_calls_upper":20,"max_concurrent_roots":1,"condition_digest":"sha256:ed58a2944d434763d4b482414763d35e85aa2607f4da95ef4071b80187a2ee08"},
+        {"condition_id":"epd027_exp2_online_w3_early_r0","experiment_id":"exp2_online_concurrency_check","evidence_class":"online_real_provider","worker_count":3,"case_position":"early","case_id":"factor_v2_hard_034","paper_difficulty":"hard","active_selection_index":0,"repeat_id":0,"split_profile_id":"factorization.exp2_contiguous_20way.v1","planned_first_ai_units":20,"provider_calls_upper":20,"max_concurrent_roots":1,"condition_digest":"sha256:6e0a4c099b82ac3b0c7940566b9c2fc0d2d0f1fa42d5de1fdfa0fbd9672427e1"},
+        {"condition_id":"epd027_exp2_online_w3_middle_r0","experiment_id":"exp2_online_concurrency_check","evidence_class":"online_real_provider","worker_count":3,"case_position":"middle","case_id":"factor_v2_hard_122","paper_difficulty":"hard","active_selection_index":9,"repeat_id":0,"split_profile_id":"factorization.exp2_contiguous_20way.v1","planned_first_ai_units":20,"provider_calls_upper":20,"max_concurrent_roots":1,"condition_digest":"sha256:7815927b249b6a8b937f234c5c06d4a90bdf97d6df5a7992ec58ec32a1d0473a"},
+        {"condition_id":"epd027_exp2_online_w3_late_r0","experiment_id":"exp2_online_concurrency_check","evidence_class":"online_real_provider","worker_count":3,"case_position":"late","case_id":"factor_v2_hard_063","paper_difficulty":"hard","active_selection_index":1,"repeat_id":0,"split_profile_id":"factorization.exp2_contiguous_20way.v1","planned_first_ai_units":20,"provider_calls_upper":20,"max_concurrent_roots":1,"condition_digest":"sha256:adf6cc7347c1acb0f9b72ab061f6afa3eb58fe4f7a998acfcd99d2cc7115f124"},
+        {"condition_id":"epd027_exp2_online_w3_no_factor_r0","experiment_id":"exp2_online_concurrency_check","evidence_class":"online_real_provider","worker_count":3,"case_position":"no_factor","case_id":"factor_v2_hard_161","paper_difficulty":"hard","active_selection_index":44,"repeat_id":0,"split_profile_id":"factorization.exp2_contiguous_20way.v1","planned_first_ai_units":20,"provider_calls_upper":20,"max_concurrent_roots":1,"condition_digest":"sha256:a0c380758834f3936c59cf0d5297b40c230a6a154ca903590ecd639443864156"},
+        {"condition_id":"epd027_exp2_online_w7_early_r0","experiment_id":"exp2_online_concurrency_check","evidence_class":"online_real_provider","worker_count":7,"case_position":"early","case_id":"factor_v2_hard_034","paper_difficulty":"hard","active_selection_index":0,"repeat_id":0,"split_profile_id":"factorization.exp2_contiguous_20way.v1","planned_first_ai_units":20,"provider_calls_upper":20,"max_concurrent_roots":1,"condition_digest":"sha256:42033d84f6fe1f768a837821c60987f44c5350d9eb17e73e300a65d63052f0f7"},
+        {"condition_id":"epd027_exp2_online_w7_middle_r0","experiment_id":"exp2_online_concurrency_check","evidence_class":"online_real_provider","worker_count":7,"case_position":"middle","case_id":"factor_v2_hard_122","paper_difficulty":"hard","active_selection_index":9,"repeat_id":0,"split_profile_id":"factorization.exp2_contiguous_20way.v1","planned_first_ai_units":20,"provider_calls_upper":20,"max_concurrent_roots":1,"condition_digest":"sha256:010ebc7c6b627585401d3b8d784a73116492caa005fe0e90c2b08cf9c8388a84"},
+        {"condition_id":"epd027_exp2_online_w7_late_r0","experiment_id":"exp2_online_concurrency_check","evidence_class":"online_real_provider","worker_count":7,"case_position":"late","case_id":"factor_v2_hard_063","paper_difficulty":"hard","active_selection_index":1,"repeat_id":0,"split_profile_id":"factorization.exp2_contiguous_20way.v1","planned_first_ai_units":20,"provider_calls_upper":20,"max_concurrent_roots":1,"condition_digest":"sha256:e72965b613a1c35683a96d9cee78974d7326da3a14aa7bd071a3e21eb307a4ba"},
+        {"condition_id":"epd027_exp2_online_w7_no_factor_r0","experiment_id":"exp2_online_concurrency_check","evidence_class":"online_real_provider","worker_count":7,"case_position":"no_factor","case_id":"factor_v2_hard_161","paper_difficulty":"hard","active_selection_index":44,"repeat_id":0,"split_profile_id":"factorization.exp2_contiguous_20way.v1","planned_first_ai_units":20,"provider_calls_upper":20,"max_concurrent_roots":1,"condition_digest":"sha256:a3a368cc801edb6d89f19eff28feb772b6a62eaf4c9ff937fd4f7af3013ba0e0"},
+        {"condition_id":"epd027_exp2_online_w10_early_r0","experiment_id":"exp2_online_concurrency_check","evidence_class":"online_real_provider","worker_count":10,"case_position":"early","case_id":"factor_v2_hard_034","paper_difficulty":"hard","active_selection_index":0,"repeat_id":0,"split_profile_id":"factorization.exp2_contiguous_20way.v1","planned_first_ai_units":20,"provider_calls_upper":20,"max_concurrent_roots":1,"condition_digest":"sha256:d6137acfb662ddbe80ba52683d5a2d2edc83179c0da9cc5f58314d8b0820237b"},
+        {"condition_id":"epd027_exp2_online_w10_middle_r0","experiment_id":"exp2_online_concurrency_check","evidence_class":"online_real_provider","worker_count":10,"case_position":"middle","case_id":"factor_v2_hard_122","paper_difficulty":"hard","active_selection_index":9,"repeat_id":0,"split_profile_id":"factorization.exp2_contiguous_20way.v1","planned_first_ai_units":20,"provider_calls_upper":20,"max_concurrent_roots":1,"condition_digest":"sha256:40dbbe11717f26619958ce60b8aa49e2f3378a3363eda9aac7b526f525bc9004"},
+        {"condition_id":"epd027_exp2_online_w10_late_r0","experiment_id":"exp2_online_concurrency_check","evidence_class":"online_real_provider","worker_count":10,"case_position":"late","case_id":"factor_v2_hard_063","paper_difficulty":"hard","active_selection_index":1,"repeat_id":0,"split_profile_id":"factorization.exp2_contiguous_20way.v1","planned_first_ai_units":20,"provider_calls_upper":20,"max_concurrent_roots":1,"condition_digest":"sha256:35481e6ac9bb7b142056630eaa818170fa2665dbbb28cbd797dbaeb7e0117b76"},
+        {"condition_id":"epd027_exp2_online_w10_no_factor_r0","experiment_id":"exp2_online_concurrency_check","evidence_class":"online_real_provider","worker_count":10,"case_position":"no_factor","case_id":"factor_v2_hard_161","paper_difficulty":"hard","active_selection_index":44,"repeat_id":0,"split_profile_id":"factorization.exp2_contiguous_20way.v1","planned_first_ai_units":20,"provider_calls_upper":20,"max_concurrent_roots":1,"condition_digest":"sha256:b86e362d52c4154f120a4383f0e49534c8113d280b590ac3ea18c2f4cd595969"},
+        {"condition_id":"epd027_exp2_online_w30_early_r0","experiment_id":"exp2_online_concurrency_check","evidence_class":"online_real_provider","worker_count":30,"case_position":"early","case_id":"factor_v2_hard_034","paper_difficulty":"hard","active_selection_index":0,"repeat_id":0,"split_profile_id":"factorization.exp2_contiguous_20way.v1","planned_first_ai_units":20,"provider_calls_upper":20,"max_concurrent_roots":1,"condition_digest":"sha256:ba65c0e8c8c45f54f9489e91ef48f81b0343dd62f61fce434c418d5531dfda53"},
+        {"condition_id":"epd027_exp2_online_w30_middle_r0","experiment_id":"exp2_online_concurrency_check","evidence_class":"online_real_provider","worker_count":30,"case_position":"middle","case_id":"factor_v2_hard_122","paper_difficulty":"hard","active_selection_index":9,"repeat_id":0,"split_profile_id":"factorization.exp2_contiguous_20way.v1","planned_first_ai_units":20,"provider_calls_upper":20,"max_concurrent_roots":1,"condition_digest":"sha256:fe6d8756c462599e3ebe033cb5248a055d2d3b9e81cfe4ed81460a3ba371990f"},
+        {"condition_id":"epd027_exp2_online_w30_late_r0","experiment_id":"exp2_online_concurrency_check","evidence_class":"online_real_provider","worker_count":30,"case_position":"late","case_id":"factor_v2_hard_063","paper_difficulty":"hard","active_selection_index":1,"repeat_id":0,"split_profile_id":"factorization.exp2_contiguous_20way.v1","planned_first_ai_units":20,"provider_calls_upper":20,"max_concurrent_roots":1,"condition_digest":"sha256:0f55a3750759d852d42e741fc088903b552fd80a750394ea31870e818d5abcdb"},
+        {"condition_id":"epd027_exp2_online_w30_no_factor_r0","experiment_id":"exp2_online_concurrency_check","evidence_class":"online_real_provider","worker_count":30,"case_position":"no_factor","case_id":"factor_v2_hard_161","paper_difficulty":"hard","active_selection_index":44,"repeat_id":0,"split_profile_id":"factorization.exp2_contiguous_20way.v1","planned_first_ai_units":20,"provider_calls_upper":20,"max_concurrent_roots":1,"condition_digest":"sha256:525172713f0edefa4b4863c03bac14e24d5e27078ed3a960658441653ad91678"},
+        {"condition_id":"epd027_exp2_online_w50_early_r0","experiment_id":"exp2_online_concurrency_check","evidence_class":"online_real_provider","worker_count":50,"case_position":"early","case_id":"factor_v2_hard_034","paper_difficulty":"hard","active_selection_index":0,"repeat_id":0,"split_profile_id":"factorization.exp2_contiguous_20way.v1","planned_first_ai_units":20,"provider_calls_upper":20,"max_concurrent_roots":1,"condition_digest":"sha256:42246b3a607231c6bd50739d534e75204496afd77a55a3ae6f77586ed1e55127"},
+        {"condition_id":"epd027_exp2_online_w50_middle_r0","experiment_id":"exp2_online_concurrency_check","evidence_class":"online_real_provider","worker_count":50,"case_position":"middle","case_id":"factor_v2_hard_122","paper_difficulty":"hard","active_selection_index":9,"repeat_id":0,"split_profile_id":"factorization.exp2_contiguous_20way.v1","planned_first_ai_units":20,"provider_calls_upper":20,"max_concurrent_roots":1,"condition_digest":"sha256:d61943e46764a8dbc19e0b7d0563142bf28a33dbff9922270e8e94509f851e23"},
+        {"condition_id":"epd027_exp2_online_w50_late_r0","experiment_id":"exp2_online_concurrency_check","evidence_class":"online_real_provider","worker_count":50,"case_position":"late","case_id":"factor_v2_hard_063","paper_difficulty":"hard","active_selection_index":1,"repeat_id":0,"split_profile_id":"factorization.exp2_contiguous_20way.v1","planned_first_ai_units":20,"provider_calls_upper":20,"max_concurrent_roots":1,"condition_digest":"sha256:60b3f0cf22d1e05c53b72013ce30f685082d014cdbc7eba8bafdacbfe2495a48"},
+        {"condition_id":"epd027_exp2_online_w50_no_factor_r0","experiment_id":"exp2_online_concurrency_check","evidence_class":"online_real_provider","worker_count":50,"case_position":"no_factor","case_id":"factor_v2_hard_161","paper_difficulty":"hard","active_selection_index":44,"repeat_id":0,"split_profile_id":"factorization.exp2_contiguous_20way.v1","planned_first_ai_units":20,"provider_calls_upper":20,"max_concurrent_roots":1,"condition_digest":"sha256:0aeb48d3abaf3fddd2a9ca78548d2c0155fcbffa7138972f46a1e21e2fccb15e"}
+      ]
+    },
+    "exp3": {
+      "provider_calls_upper": 12,
+      "cases": [
+        {
+          "case_id": "factor_v2_easy_109",
+          "check_kind": "false_positive",
+          "fault_rate_percent": 100,
+          "worker_count": 10,
+          "repeat_id": 0,
+          "max_retries": 2,
+          "planned_first_ai_units": 2,
+          "provider_calls_upper": 6
+        },
+        {
+          "case_id": "factor_v2_easy_148",
+          "check_kind": "worker_death",
+          "kill_progress_percent": 50,
+          "dead_worker_count": 1,
+          "worker_count": 10,
+          "repeat_id": 0,
+          "max_retries": 2,
+          "planned_first_ai_units": 2,
+          "provider_calls_upper": 6
+        }
+      ]
+    },
+    "capability": {
+      "classification": "new_real_capability_smoke",
+      "paper_eligible": false,
+      "factor": {
+        "case_id": "factor_v2_easy_109",
+        "split_policy": "deterministic_one_range_capability_split",
+        "stable_planned_ai_unit_id": "range_0",
+        "planned_first_ai_units": 1,
+        "initial_control": "forced_verification_rejection",
+        "initial_attempt_must_reject": true,
+        "max_retries": 1,
+        "replacement_calls_exact": 1,
+        "attempts_after_replacement_exact": 0
+      },
+      "lean": {
+        "case_id": "lean_v2_simple_pure_logic_direct_prop_01",
+        "selected_proof_node_id": "pure_simple_leaf_01",
+        "stable_planned_ai_unit_id": "pure_simple_leaf_01",
+        "planned_first_ai_units": 1,
+        "initial_control": "controlled_checker_rejection",
+        "initial_attempt_must_reject": true,
+        "max_retries": 1,
+        "replacement_calls_exact": 1,
+        "attempts_after_replacement_exact": 0
+      },
+      "root_count": 2,
+      "provider_calls_exact": 4
+    }
+  },
+  "metric_controls": {
+    "exp2_429_or_timeout_union_fraction_max": "0.2",
+    "exp2_union_denominator": "actual_first_provider_attempts_by_worker",
+    "exp2_union_identity": "attempt_identity",
+    "exp2_online_trace_same_case_intersection_min": 3,
+    "severe_speedup_ratio_min": "0.5",
+    "severe_speedup_ratio_max": "2.0",
+    "severe_opposed_trend_high": "1.1",
+    "severe_opposed_trend_low": "0.9"
+  },
+  "paid_authorization": {
+    "allow_provider_calls_flag": true,
+    "required_receipt_schema": "tokenshare.paid_execution_receipt.v1",
+    "offline_approval_authorizes_provider_write": false,
+    "provider_scopes": [
+      "epd027_l3_capability_and_online_checks",
+      "epd027_full_bank_acquisition",
+      "exp1_full_online",
+      "exp5_capability_smoke",
+      "exp5_full_online"
+    ],
+    "output_mode_values": ["new-run", "resume"]
+  },
+  "budget": {
+    "capability_calls_exact": 4,
+    "exp2_calls_upper": 480,
+    "exp3_calls_upper": 12,
+    "online_checks_calls_upper": 492,
+    "planned_calls_upper": 496,
+    "ambiguous_reserve_calls": 20,
+    "calls_hard_limit": 516,
+    "prompt_tokens_per_call": 32768,
+    "completion_tokens_per_call": 300000,
+    "tokens_per_call": 332768,
+    "tokens_hard_limit": 171708288,
+    "cny_per_call_reservation": "1.898304",
+    "cny_reservation_hard_limit": "979.524864",
+    "cny_absolute_hard_stop": "1000.0",
+    "max_in_flight_acquisition_capability": 10,
+    "max_in_flight_exp2_online": 50,
+    "unlimited_budget_provider_writes_allowed": false,
+    "prompt_admission_profile_digest": "sha256:e693ef1c9dbf50aff36aaae1b14f7029c5954c6708a6570182e69a7051685d49",
+    "budget_digest": "sha256:1898ca133111cec3245927fb4defad091277ac5b02681e21aa79d7b133b18c69"
+  },
+  "offline_approval": {
+    "schema_version": "tokenshare.offline_implementation_approval.v1",
+    "approval_kind": "offline_implementation",
+    "approved_plan_digest": "sha256:44d656a655b028a09eca17ccb9910d9aa806ba169a31455c16eafbd00357bc3b",
+    "approved_profile_digest": "sha256:1e7040219bef550d671db4d44d6632e2c7cd69a372e219a3b8401672c9600aae"
+  },
+  "profile_digest": "sha256:1e7040219bef550d671db4d44d6632e2c7cd69a372e219a3b8401672c9600aae"
+}

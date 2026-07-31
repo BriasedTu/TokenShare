@@ -37,6 +37,9 @@ from tokenshare.experiments.paper_models import (
     PaperStatus,
     digest_json,
 )
+from tokenshare.experiments.paper_pipeline_profile import (
+    OfflineImplementationApproval,
+)
 from tokenshare.experiments.paper_unit_commitments import (
     build_case_ai_unit_bindings,
 )
@@ -167,7 +170,7 @@ def plan_exp1_pilot(
     catalog_manifest: PaperInputCatalogManifest,
     pilot_profile: Exp1PilotProfile,
     plan_only: bool,
-    approve_budget_digest: str | None = None,
+    approve_budget_digest: str | OfflineImplementationApproval | None = None,
     budget_approval_required: bool = True,
     budget_mode: str | None = None,
 ) -> PaperBudgetResult:
@@ -419,7 +422,7 @@ def plan_paper_suite(
     hard_limits: JsonObject | None = None,
     suite_identity: JsonObject | None = None,
     output_identity: JsonObject | None = None,
-    approve_budget_digest: str | None = None,
+    approve_budget_digest: str | OfflineImplementationApproval | None = None,
     budget_approval_required: bool = True,
     budget_mode: str | None = None,
 ) -> PaperBudgetResult:
@@ -2099,10 +2102,14 @@ def _deterministic_split_profile(case: JsonObject) -> JsonObject:
 def _validate_budget_approval(
     *,
     plan_only: bool,
-    approve_budget_digest: str | None,
+    approve_budget_digest: str | OfflineImplementationApproval | None,
     budget_digest: str,
     budget_approval_required: bool,
 ) -> None:
+    if isinstance(approve_budget_digest, OfflineImplementationApproval):
+        raise PaperBudgetApprovalError(
+            "offline plan approval is not a paid execution receipt"
+        )
     if not isinstance(budget_approval_required, bool):
         raise ValueError("budget_approval_required must be a bool")
     if (
@@ -2118,7 +2125,7 @@ def _validate_budget_approval(
 def _budget_approval_record(
     *,
     budget_digest: str,
-    approve_budget_digest: str | None,
+    approve_budget_digest: str | OfflineImplementationApproval | None,
     budget_approval_required: bool,
     budget_mode: str | None = None,
 ) -> JsonObject:

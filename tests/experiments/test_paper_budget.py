@@ -1,10 +1,12 @@
 import json
+import os
 from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
 import tokenshare.experiments.paper_budget as paper_budget
+from tokenshare.executors.ai_api_config import AIAPIProviderEntry
 from tokenshare.experiments.paper_budget import (
     PAPER_EXPERIMENT_TASK_LIMITS,
     PaperBudgetApprovalError,
@@ -25,6 +27,9 @@ from tokenshare.experiments.paper_model_policy import (
     PAPER_MODEL_ENDPOINT_COHORT_V3_ID,
     PAPER_MODEL_ENDPOINT_COHORT_V3_MEMBER_IDS,
     PAPER_MODEL_ENDPOINT_COHORT_V3_MEMBERS,
+)
+from tokenshare.experiments.paper_pipeline_profile import (
+    load_paper_pipeline_profile,
 )
 from tokenshare.experiments.paper_runner import expand_plan_conditions
 
@@ -328,6 +333,52 @@ def test_budget_approval_requires_matching_digest() -> None:
             plan_only=False,
             approve_budget_digest="sha256:" + "0" * 64,
         )
+
+
+def test_budget_planner_rejects_offline_approval_before_approval_record(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    catalog = _raw_paper_catalog_manifest()
+    conditions = _sample_conditions(catalog.catalog_digest)
+    profile = load_paper_pipeline_profile()
+    counters = {"secret": 0, "post_approval": 0}
+
+    def forbidden_secret(*args: object, **kwargs: object) -> str:
+        counters["secret"] += 1
+        raise AssertionError("secret resolution reached")
+
+    def forbidden_post_approval(*args: object, **kwargs: object) -> dict[str, object]:
+        counters["post_approval"] += 1
+        raise AssertionError("post-approval semantics reached")
+
+    monkeypatch.setattr(AIAPIProviderEntry, "resolve_api_key", forbidden_secret)
+    monkeypatch.setattr(
+        paper_budget, "_budget_approval_record", forbidden_post_approval
+    )
+    counter_path = Path(os.environ["TOKENSHARE_PYTEST_NETWORK_TRIPWIRE_COUNTER"])
+    before_provider_calls = counter_path.read_text(encoding="utf-8").count(
+        "provider-attempt"
+    )
+
+    with pytest.raises(
+        PaperBudgetApprovalError,
+        match="offline plan approval is not a paid execution receipt",
+    ):
+        plan_paper_suite(
+            catalog_manifest=catalog,
+            conditions=conditions,
+            max_provider_attempts_per_ai_unit=1,
+            token_upper_bound_per_provider_attempt=100,
+            cost_upper_bound_per_provider_attempt=0.01,
+            plan_only=False,
+            approve_budget_digest=profile.offline_approval,
+        )
+
+    after_provider_calls = counter_path.read_text(encoding="utf-8").count(
+        "provider-attempt"
+    )
+    assert counters == {"secret": 0, "post_approval": 0}
+    assert before_provider_calls == after_provider_calls == 0
 
 
 def test_budget_approval_can_be_bypassed_without_changing_budget_identity() -> None:
