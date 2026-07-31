@@ -1,0 +1,1 @@
+{"plans":[{"conditions":[{"condition_id":"condition-a","experiment_id":"exp-a","repeat_id":0}],"experiment_id":"exp-a","selections":[{"ordered_case_ids":["task-1"]}]},{"conditions":[{"condition_id":"condition-b","experiment_id":"exp-b","repeat_id":0}],"experiment_id":"exp-b","selections":[{"ordered_case_ids":["task-b"]}]}],"schema_version":"tokenshare.paper_dispatch.v1"}

@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+import tokenshare.experiments.paper_budget as paper_budget
 from tokenshare.experiments.paper_budget import (
     PAPER_EXPERIMENT_TASK_LIMITS,
     PaperBudgetApprovalError,
@@ -149,6 +150,106 @@ def test_plan_only_budget_expands_conditions_without_provider_calls() -> None:
     assert body["cost_upper_bound"] == 0.8
     assert body["quota_preflight"]["provider_calls_made"] == 0
     assert body["budget_digest"].startswith("sha256:")
+
+
+def test_formal_disk_estimate_records_calibrated_components() -> None:
+    catalog = load_paper_catalogs(
+        factorization_path=Path("benchmarks/paper/factorization_catalog.v1.jsonl"),
+        lean_path=Path("benchmarks/paper/lean_catalog.v1.jsonl"),
+    )
+
+    budget = plan_paper_suite(
+        catalog_manifest=catalog,
+        conditions=_sample_conditions(catalog.catalog_digest),
+        max_provider_attempts_per_ai_unit=2,
+        token_upper_bound_per_provider_attempt=1024,
+        cost_upper_bound_per_provider_attempt=0.01,
+        plan_only=True,
+    )
+
+    estimate = budget.disk_estimate
+    assert estimate["schema_version"] == "tokenshare.paper_disk_estimate.v3"
+    assert estimate["inputs"] == {
+        "planned_conditions": 2,
+        "planned_root_runs": 20,
+        "planned_ai_units": 40,
+        "provider_attempt_upper_bound": 80,
+        "max_tokens": 1024,
+        "token_upper_bound": 81920,
+        "max_condition_root_runs": 10,
+        "max_condition_ai_units": 20,
+        "max_condition_provider_attempts": 40,
+    }
+    assert estimate["policy"] == {
+        "schema_version": "tokenshare.paper_disk_calibration.v2",
+        "p95_root_bytes": 262144,
+        "p95_ai_unit_bytes": 65536,
+        "p95_attempt_envelope_bytes": 98304,
+        "p95_model_execution_record_bytes": 65536,
+        "model_execution_record_duplicate_multiplier": 2,
+        "p95_provider_attempt_payload_bytes": 327680,
+        "provider_attempt_payload_observed_p95_bytes": 289246,
+        "provider_attempt_payload_observed_max_bytes": 1232946,
+        "provider_attempt_calibration_attempt_count": 88,
+        "provider_attempt_payload_sample_count": 87,
+        "provider_attempt_payload_calibration_source": "external_read_only_run04",
+        "utf8_bytes_per_token": 4,
+        "fixed_manifest_bytes": 67108864,
+        "fixed_temp_bytes": 536870912,
+    }
+    assert estimate["components"] == {
+        "root_evidence_bytes": 20 * 262144,
+        "ai_unit_evidence_bytes": 40 * 65536,
+        "provider_attempt_envelope_bytes": 80 * 98304,
+        "forecast_provider_attempt_payload_bytes": 80 * 327680,
+        "model_execution_record_duplicate_bytes": 80 * 65536 * 2,
+        "fixed_manifest_bytes": 67108864,
+        "fixed_temp_bytes": 536870912,
+    }
+    assert estimate["forecast_bytes"] == sum(estimate["components"].values())
+    assert estimate["theoretical_max_payload_bytes"] == 81920 * 4
+    assert estimate["max_condition_compaction_bytes"] == (
+        10 * 262144
+        + 20 * 65536
+        + 40 * 98304
+        + 40 * 327680
+        + 40 * 65536 * 2
+    )
+
+
+def test_disk_forecast_formula_only_can_fit_439_85_gib_capacity() -> None:
+    estimate = paper_budget._paper_disk_estimate(
+        planned_conditions=1_246,
+        planned_root_runs=17_312,
+        planned_ai_units=115_076,
+        provider_attempt_upper_bound=234_788,
+        max_tokens=304_096,
+        token_upper_bound=234_788 * 304_096,
+        # 这里只验证 estimator 算式；正式 full 证据由 planner-only 测试提供。
+        max_condition_root_runs=167,
+        max_condition_ai_units=3_320,
+        max_condition_provider_attempts=3_320,
+    )
+
+    forecast = int(estimate["forecast_bytes"])
+    headroom = max((forecast + 3) // 4, 2 * 1024**3)
+    required = (
+        forecast
+        + headroom
+        + int(estimate["max_condition_compaction_bytes"])
+    )
+    available = int(439.85 * 1024**3)
+
+    assert required < available
+    assert int(estimate["components"]["forecast_provider_attempt_payload_bytes"]) == (
+        234_788 * 327680
+    )
+    assert int(estimate["theoretical_max_payload_bytes"]) == (
+        234_788 * 304_096 * 4
+    )
+    assert int(estimate["theoretical_max_payload_bytes"]) > int(
+        estimate["components"]["forecast_provider_attempt_payload_bytes"]
+    )
 
 
 def test_exp4_budget_counts_requeue_upper_bound_without_inflating_ai_units() -> None:

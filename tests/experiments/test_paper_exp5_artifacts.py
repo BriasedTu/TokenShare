@@ -168,6 +168,92 @@ def test_exp5_renderer_writes_exact_audit_and_paper_contract_deterministically(
         assert "Pages:" in info.stdout and "1" in info.stdout
 
 
+def test_exp5_renderer_keeps_paper_outputs_for_evidence_complete_failures(
+    tmp_path: Path,
+) -> None:
+    fixture = _eligible_fixture()
+    fixture["suite_status"] = "completed_with_failures"
+
+    result = render_exp5_paper_artifacts(
+        output_root=tmp_path,
+        pdf_backend=_DeterministicPdfBackend(),
+        **fixture,
+    )
+
+    assert result.status == "rendered"
+    assert result.paper_eligible is True
+    assert all((tmp_path / path).is_file() for path in EXP5_AUDIT_FILES)
+    assert all((tmp_path / path).is_file() for path in EXP5_PAPER_FILES)
+
+
+@pytest.mark.parametrize(
+    "row_group",
+    (
+        "domain_topic_rows",
+        "paired_comparison_rows",
+        "model_execution_rows",
+        "order_concurrency_rows",
+    ),
+)
+def test_exp5_renderer_rejects_empty_required_paper_inventory(
+    tmp_path: Path,
+    row_group: str,
+) -> None:
+    fixture = _eligible_fixture()
+    fixture[row_group] = ()
+
+    result = render_exp5_paper_artifacts(
+        output_root=tmp_path,
+        pdf_backend=_DeterministicPdfBackend(),
+        **fixture,
+    )
+
+    assert result.status == "paper_artifact_render_failed"
+    assert result.paper_eligible is False
+    assert all((tmp_path / path).is_file() for path in EXP5_AUDIT_FILES)
+    assert all(not (tmp_path / path).exists() for path in EXP5_PAPER_FILES)
+
+
+def test_exp5_renderer_marks_missing_secondary_metrics_without_zero_filling(
+    tmp_path: Path,
+) -> None:
+    fixture = _eligible_fixture()
+    fixture["suite_status"] = "completed_with_failures"
+    fixture["overall_rows"] = tuple(
+        {
+            **row,
+            "total_tokens": None,
+            "total_tokens_sample_size": 0,
+            "total_tokens_median": None,
+            "total_tokens_ci_low": None,
+            "total_tokens_ci_high": None,
+            "provider_latency_ms": None,
+            "provider_latency_ms_sample_size": 0,
+            "provider_latency_ms_median": None,
+            "provider_latency_ms_ci_low": None,
+            "provider_latency_ms_ci_high": None,
+        }
+        for row in fixture["overall_rows"]
+    )
+
+    result = render_exp5_paper_artifacts(
+        output_root=tmp_path,
+        pdf_backend=_DeterministicPdfBackend(),
+        **fixture,
+    )
+
+    assert result.status == "rendered"
+    svg = (tmp_path / "paper" / "exp5_tokens_latency.svg").read_text(
+        encoding="utf-8"
+    )
+    summary = (tmp_path / "paper" / "exp5_results_summary.md").read_text(
+        encoding="utf-8"
+    )
+    assert "unavailable" in svg
+    assert "null" in summary
+    assert "<circle" not in svg
+
+
 def test_exp5_renderer_does_not_persist_unapproved_parsed_fields(
     tmp_path: Path,
 ) -> None:
@@ -193,6 +279,8 @@ def test_exp5_renderer_does_not_persist_unapproved_parsed_fields(
     ("suite_status", "paper_eligible", "identity_complete"),
     (
         ("blocked", True, True),
+        ("budget_exhausted", True, True),
+        ("incomplete", True, True),
         ("completed", False, True),
         ("completed", True, False),
     ),
@@ -285,6 +373,88 @@ def test_exp5_renderer_preserves_real_execution_join_and_provenance_fields(
     assert persisted["cost_estimate_currency"] == "CNY"
     assert "provider_latency_ms" not in persisted
     assert "cost_currency" not in persisted
+
+
+def test_exp5_renderer_accepts_auditable_provider_failure_without_response(
+    tmp_path: Path,
+) -> None:
+    fixture = _eligible_fixture()
+    provider_failure = {
+        **_real_model_execution_row(),
+        "resolved_model": None,
+        "response_model_status": "unavailable",
+        "raw_output_ref": None,
+        "identity_status": "not_observed",
+        "attempt_status": "provider_error",
+        "provider_errors": ["timeout"],
+        "error_kind": "timeout",
+        "paper_eligible": True,
+    }
+    fixture["model_execution_rows"] = (provider_failure,)
+
+    result = render_exp5_paper_artifacts(
+        output_root=tmp_path,
+        pdf_backend=_DeterministicPdfBackend(),
+        **fixture,
+    )
+
+    assert result.status == "rendered"
+    persisted = json.loads(
+        (tmp_path / "metrics" / "exp5_model_execution_records.jsonl").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert persisted["identity_status"] == "not_observed"
+    assert persisted["resolved_model"] is None
+    assert persisted["provider_errors"] == ["timeout"]
+
+
+def test_exp5_renderer_rejects_unbound_not_observed_execution_row(
+    tmp_path: Path,
+) -> None:
+    fixture = _eligible_fixture()
+    fixture["model_execution_rows"] = (
+        {
+            **_real_model_execution_row(),
+            "resolved_model": None,
+            "response_model_status": "unavailable",
+            "raw_output_ref": None,
+            "identity_status": "not_observed",
+            "attempt_status": "provider_error",
+            "provider_errors": [],
+            "error_kind": "timeout",
+            "paper_eligible": True,
+        },
+    )
+
+    result = render_exp5_paper_artifacts(
+        output_root=tmp_path,
+        pdf_backend=_DeterministicPdfBackend(),
+        **fixture,
+    )
+
+    assert result.status == "paper_artifact_ineligible"
+    assert result.paper_eligible is False
+    assert not (tmp_path / "paper").exists()
+
+
+def test_exp5_renderer_requires_explicit_execution_row_eligibility(
+    tmp_path: Path,
+) -> None:
+    fixture = _eligible_fixture()
+    row = _real_model_execution_row()
+    row.pop("paper_eligible")
+    fixture["model_execution_rows"] = (row,)
+
+    result = render_exp5_paper_artifacts(
+        output_root=tmp_path,
+        pdf_backend=_DeterministicPdfBackend(),
+        **fixture,
+    )
+
+    assert result.status == "paper_artifact_ineligible"
+    assert result.paper_eligible is False
+    assert not (tmp_path / "paper").exists()
 
 
 def test_exp5_renderer_consumes_exact_task7_paired_and_order_schemas(
@@ -410,6 +580,8 @@ def test_exp5_renderer_rejects_nested_payload_without_overwriting_audit(
     ("suite_status", "paper_eligible", "identity_complete"),
     (
         ("blocked", True, True),
+        ("budget_exhausted", True, True),
+        ("incomplete", True, True),
         ("completed", False, True),
         ("completed", True, False),
     ),

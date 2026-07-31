@@ -25,7 +25,6 @@ from tokenshare.experiments.paper_exp4_ablation_runner import (
     EXP4_EXPERIMENT_ID,
     EXP4_MODES,
     EXP4_REPEATS,
-    EXP4_ROOT_RUN_COUNT,
     EXP4_V1_ROOT_RUN_COUNT,
     Experiment4AblationModule,
     build_exp4_mode_execution_config,
@@ -40,6 +39,10 @@ from tokenshare.experiments.paper_models import PaperConditionResult, PaperStatu
 from tokenshare.experiments.paper_formal_callbacks import run_exp4_ablation_strategy
 from tokenshare.experiments.paper_formal_runner import (
     _FormalConditionExecutionCallback,
+)
+from tokenshare.experiments.paper_suite_scale import (
+    build_paper_suite_scale_policy,
+    load_paper_suite_scale_profile,
 )
 
 
@@ -78,7 +81,6 @@ def test_exp4_module_conforms_to_gate_b_protocol() -> None:
 def test_exp4_expands_frozen_five_mode_matrix_with_glm_baseline() -> None:
     conditions = expand_exp4_conditions(_context())
 
-    assert EXP4_ROOT_RUN_COUNT == 7_725
     assert EXP4_V1_ROOT_RUN_COUNT == 450
     assert EXP4_REPEATS == 3
     assert len(conditions) == 90
@@ -116,6 +118,28 @@ def test_exp4_expands_frozen_five_mode_matrix_with_glm_baseline() -> None:
     }
     assert all(condition.real_transport_required for condition in conditions)
     assert all(condition.paper_eligible_required for condition in conditions)
+
+
+def test_exp4_v2_suite_scale_keeps_all_modes_repeats_and_lean_slices() -> None:
+    context = _context(catalog=_prepared_catalog_v2())
+    conditions = expand_exp4_conditions(context)
+    selections = freeze_exp4_case_selections(context, conditions)
+
+    assert count_exp4_root_runs(conditions, selections) == 975
+    assert {
+        len(selection.ordered_case_ids)
+        for condition, selection in zip(conditions, selections, strict=True)
+        if condition.domain == "factorization"
+    } == {16, 17}
+    assert {
+        len(selection.ordered_case_ids)
+        for condition, selection in zip(conditions, selections, strict=True)
+        if condition.domain == "lean_proof"
+    } == {5}
+    assert {condition.ablation_mode for condition in conditions} == {
+        mode.value for mode in EXP4_MODES
+    }
+    assert {condition.repeat_id for condition in conditions} == {0, 1, 2}
 
 
 def test_exp4_accepts_complete_baseline_request_policy_and_normal_profile() -> None:
@@ -1137,6 +1161,48 @@ def _prepared_catalog() -> dict[str, Any]:
             )
         },
     }
+
+
+def _prepared_catalog_v2() -> dict[str, Any]:
+    catalog = _prepared_catalog()
+    profile = load_paper_suite_scale_profile(
+        "benchmarks/paper/paper_suite_scale_profile.v1.json"
+    )
+    raw_cases = tuple(
+        json.loads(line)
+        for line in Path(profile.factorization_catalog_path)
+        .read_text(encoding="utf-8")
+        .splitlines()
+        if line.strip()
+    )
+    unit_counts = {"easy": 2, "medium": 4, "hard": 8}
+    candidates_by_difficulty = {
+        difficulty: tuple(
+            {
+                **case,
+                "expected_ai_unit_count": unit_counts[difficulty],
+            }
+            for case in raw_cases
+            if case["paper_difficulty"] == difficulty
+        )
+        for difficulty in ("easy", "medium", "hard")
+    }
+    suite_policy, selected_by_scope = build_paper_suite_scale_policy(
+        profile=profile,
+        catalog_id=profile.catalog_id,
+        catalog_version=profile.catalog_version,
+        catalog_digest=profile.catalog_digest,
+        candidates_by_difficulty=candidates_by_difficulty,
+    )
+    selected = selected_by_scope[EXP4_EXPERIMENT_ID]
+    catalog["catalog_id"] = profile.catalog_id
+    catalog["catalog_version"] = profile.catalog_version
+    catalog["catalog_digest"] = profile.catalog_digest
+    catalog["factorization_slices"] = {
+        difficulty: list(cases) for difficulty, cases in selected.items()
+    }
+    catalog["paper_suite_scale_policy"] = suite_policy
+    return catalog
 
 
 def _shared_lean_slice_digest(

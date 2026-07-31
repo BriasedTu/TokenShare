@@ -1,46 +1,86 @@
 # Session Handoff
 
-更新时间：2026-07-30
-
-本文件只保留下一位 Agent 开工所需事实。历史交接由 git history、`Doc/archive/` 和仓库外迁移备份保存。
+更新时间：2026-08-01
 
 ## 开工顺序
 
-1. 完整阅读 `AGENTS.md`。
-2. 阅读 `feature_list.json`、`progress.md` 和本文件。
-3. 阅读 `Doc/agent-navigation.md`，再按任务进入 Tier 2。
-4. 运行 `.\init.ps1`；开始新的 feature、提交/合并或发布时按 `AGENTS.md` 运行 Full。
+1. 完整阅读 `AGENTS.md`、`feature_list.json`、`progress.md` 和本文件。
+2. 阅读 `Doc/agent-navigation.md` 与唯一实验权威 `Doc/TechnicalDocument/tokenshare_latest_real_plugin_experiment_design.md`。
+3. 运行 `.\init.ps1`；除非用户改变要求，不要运行 Full。
 
-## 当前工作
+## 2026-07-31 用户暂停点
 
-- Active feature：`feat-011`；`repository-context-and-data-boundary` 维护焦点已完成，实施计划已归档到 `Doc/archive/agent-plans/`。
-- 已实现仓库外 runtime path、通用 CLI 默认路径、paper 显式新 root、PowerShell 绝对路径、三种历史 artifact 路径的只读解析和启动上下文预算。
-- 数据迁移已完成：`outputs/` 100,937 files / 930,569,400 bytes，`local/supervision/` 87 / 504,924 bytes，`local/` 根生成日志 24 / 82,165 bytes，合计 101,048 files / 931,156,489 bytes。
-- 外部目标：`E:\TokenEcnomic\TokenShareData`。修改前备份位于 `migration-backups/2026-07-30-context-consolidation-before`；迁移 manifest 位于 `migrations/2026-07-30-runtime-data-relocation.json`。
-- 迁移前后 inventory 和 24 个确定性样本逐文件 hash 一致；仓库内 `outputs/`、`local/supervision/` 和 `local/*.(log|exit)` 已消失。没有 junction/symlink。
-- 三个仓库根 `pytest*` 目录 ACL 拒绝：不要移动、删除或声称已清理；它们不是正式迁移范围。
+- 用户要求暂停并收尾；所有协作 Agent 已停止。不要自动恢复实现、真实 smoke 或正式全量。
+- 当前工作树未 stage/commit，保留本轮代码、测试、设计与规模 profile。不要 reset/clean/checkout，也不要删除 ACL 拒绝访问的 pytest 临时目录。
+- EPD-026 的 300/50/50/50/Exp5-54 规模与资源门禁已独立复审通过；这部分可以继续作为权威输入。
+- 全量内存/增量 checkpoint 支线只完成到中间安全点：root-delta、terminal snapshot、PENDING repair、runner per-root checkpoint/release 与 compaction guard 已实现；暂停前 checkpoint/evidence `142 passed`，shared dispatch/fail-close/resume `3 passed`。
+- 暂停收尾 Fast 已通过：`458 passed, 1 skipped in 21.06s`；未运行 Full。
+- 正式全量仍为 **NO-GO**。恢复时首先完成 terminal-snapshot-only 的 `ValidatedSharedRootReferenceIndex`（一次构建、同 suite 复用、拒绝 stale/duplicate source），再补 500 synthetic roots 的 `max_live_full_outcomes <= 1` 压力证据、formal runner 整体回归和 Fast。当前 `build_shared_root_reference()` 仍按调用扫描 source run，不能把这一支写成已完成。
+- 本次暂停未运行 Full、LeanAudit、真实 API 或正式全量。
 
-## 不可破坏的边界
+## 2026-08-01 用户确认的 EPD-027
 
-- 不改写历史 output 内的绝对路径、execution-plan digest、budget digest 或 evidence；旧输出迁移后只读，不 resume。
-- `resolve_persisted_data_path()` 支持旧仓库绝对路径、`outputs/...` 仓库相对路径和 `runs/...` suite 相对路径；只解析读取位置，不改 evidence。
-- 通用实验 CLI 默认写入仓库同级 `TokenShareData`；paper runner 必须显式指定全新 `--output-root`。无效默认环境不能阻断合法显式路径，smoke 不能写入正式 paper boundary。
-- Exp1/smoke replay 必须只读，不生成 report、不刷新 evidence manifest。
-- 不修改 protocol/plugin/executor 三层边界，不新增攻击/安全工程，不改变权威实验矩阵。
-- 工作树中的既有或本轮修改不得用 reset/clean/checkout 清除；未经用户授权不 stage/commit/push。
+- 用户接受两阶段真实回答库的修正版：Experiment 1/5 保持逐 unit 在线；Experiment 2–4 从不可变真实 API 回答库取输入，但仍完整运行 TokenShare 状态机和正式 fault/verification/lease/worker-death/requeue/merge/settlement/event-ledger 路径。
+- 同一 repeat 内比较条件共享回答，不同 repeat 使用独立 sample slot；replacement 必须覆盖当前冻结最大深度。缺 bank entry 必须 blocked，不能临时在线补洞、scripted 回退或缩短 retry。
+- Experiment 2 在线检查：缩小且预注册的题集，真实 API 覆盖 worker=`1,3,7,10,30,50` 全六档。Experiment 3 在线检查：小型真实恢复链，至少覆盖验证拒绝后 replacement 与 worker death 后重新分派；必须证明 fault/death 后才发生新 provider call。
+- 用户明确要求把本方案记录为实验设施全面修改，而非简单修复。影响 request identity、executor/transport、artifact schema、paper eligibility、budget、runner、metrics/report/renderer、smoke/canary 和 replay/audit。
+- 当前只完成 `design_synced`，没有实现、没有写完整实施计划、没有调用真实 API。下一步应先写从指标→direct result→evidence→组件→测试→门禁的完整实施计划，写完后不要直接执行。
+- 旧 P0-core/P0-full 和“下一次 smoke”顺序暂停；EPD-027 设施与 profile 未实现前不得启动。EPD-026 的题量/fault/mode/repeat 不变，`76,280` 仅保留为旧全在线上界/trace-slot capacity；约 `6,904 + canary` 只是待 bank inventory 验证的 DeepSeek 量级。
+- Experiment 2–4 主矩阵资源指标改为 trace-replay/trace-attributed；Experiment 3 主矩阵使用 `discarded_trace_tokens`。`wasted_actual_tokens` 只用于 Exp3 在线恢复检查，不能把预取回答重复计成 actual spend。
+- 人民币 `1,000` 是 DeepSeek acquisition/在线检查目标硬停止线；当前每 attempt `0.05` 预留不可靠，后续必须同时约束 calls/tokens/CNY 和 in-flight 悲观预留。Experiment 5 SiliconFlow 预算单列。
 
-## Feat-011 业务状态
+## 当前业务状态
 
-- 唯一权威：`Doc/TechnicalDocument/tokenshare_latest_real_plugin_experiment_design.md`。
-- Exp1–4：官方 DeepSeek `deepseek-v4-pro` / `deepseek_v4_pro_exp1_baseline`，thinking enabled、high、`600/300000`。
-- Exp5：SiliconFlow 四模型 cohort v3，48 conditions / 1,284 roots / 9,888 first-attempt units，公共 `600/32768`、单次 attempt；GLM/Qwen/MiniMax thinking budget 32768，DeepSeek nonthinking。
-- Exp5 正式链路仍是 NO-GO：canonical v3 provider-config binding、artifact-backed 8-root smoke evidence、部分/失败分母与 missingness、production renderer/replay 仍有 P1 缺口。
-- 历史 Exp1–4、Exp3–4、Exp5 smoke/diagnostic 全部只读，不能升级为 paper evidence。
+- Active feature：`feat-011`。Experiment 3/4/5 旧全在线代码与离线 smoke/paper evidence readiness 已闭合，但 EPD-027 response-bank/trace-backed 新设施尚未实现，因此不能继续称当前整体 paper readiness 已闭合。
+- Active focus 已转为论文指标合同与结果追溯计划。EPD-025 已冻结 Experiment 5：保持 `max_retries=0`，正文只做两张按模型汇总表，不再做六组 pairwise；首次验证拒绝率只能描述实际明确拒绝的可判断首次候选，不能称自然错误检出率。权威设计已同步，但代码/renderer/replay/tests 尚未迁移。
+- 真实 `exp34-smoke-20260731-041442` 已结束：11 roots、36 provider attempts、839,054 tokens、8 completed、3 evidence-complete experimental failures；配置口径 cost estimate CNY 4.6147626，actual billing unavailable。
+- 真实性审计 PASS：36 个 DeepSeek HTTP 200 response ID 与 36 个 canonical v2 model records，v3 模型/请求身份一致，TokenShare coordinator/engine/ledger/artifact 路径完整，secret scan 零命中。
+- 历史 canonical 论文证据审计 FAIL：两个 no-return provenance 未进入 canonical index、906/906 canonical ledger bodies 被改写但旧 hash 保留、timing 被补零/缺失、fault refs/model inventory/replay 不满足权威。历史 output 只读且不得用于论文。
+- P0-full 仍是 **NO-GO**：修复后尚未产生新的 Exp3/4 11-root canonical 证据；Exp5 8-root smoke 也尚未运行，`audit/exp5_endpoint_smoke_evidence.json` 尚未产生。
+- Exp3/4 修复后离线独立审计 Ready：无 Critical/Important/Minor；canonical materialization/ledger、nullable metrics、model inventory、independent replay、smoke evidence/exit semantics 均 fail closed。
+- Exp5 离线独立审计 PASS：artifact-backed bundle、formal binding、condition-local fail-stop、fixed denominator/missingness、6 audit + 8 paper renderer、execute/replay 均已接线。
 
-## 当前验证
+## 当前正式规模与全量资源门禁（EPD-026）
 
-- 最终相关回归：`242 passed in 207.34s`；真实迁移 suite 只读加载 8 runs / 206 artifacts，708 文件 hash 前后不变。
-- 独立 code/doc review：APPROVED；code reviewer 独立复跑 `34 passed in 33.73s`。
-- 用户指定的迁移接线最终聚焦回归：`47 passed in 36.14s`，且未重建仓库 `outputs/`。
+- 当前机器可读规模权威是 `benchmarks/paper/paper_suite_scale_profile.v1.json`（`paper_suite_scale_300_50_54.v1`）。Factorization active corpus=`100/100/100`；Exp1=300，Exp2 hard=50，Exp3/4 共享=`17/17/16`。Exp5 active selection v4=42 Factorization hard + Lean 三 topic 各 4，共 54 roots/model-repeat。
+- 精确 roots/units/attempt-upper：Exp1=`435/1,970/1,970`，Exp2=`600/12,000/12,000`，Exp3=`3,726/17,148/54,372`，Exp4=`975/4,410/7,938`，Exp5=`648/4,992/4,992`；P0-core=`5,736/35,528/76,280`，P0-full=`6,384/40,520/81,272`。
+- P0-full exact ceiling：tokens=`23,503,151,360`，cost=`7,346.259328`，disk forecast=`50,206,081,024` bytes，含最大 condition compaction 与安全余量 required=`63,406,407,680` bytes（59.05 GiB）。2026-07-31 E: free 快照=`471,755,141,120` bytes（439.36 GiB）；正式启动必须针对实际 output volume 重算，不能把快照当永久保证。
+- 最大单 condition=`100 roots/1,000 units/1,000 attempts`。generation v3 每 root delta checkpoint/release、SQLite streaming compaction、metrics lazy bundle、JSONL/chunked report 已避免主要路径把全 suite 常驻；5/20-run 合成 metrics 峰值=`1,675,937/1,744,169` bytes 且完整 bundle live max=1。共享 reference 索引与 500-root runner 压力证据仍未闭合，所以这只是已验证的局部上界，不是正式全量 GO；仍需防范单个 provider 响应或单 bundle 过大并保留 OS 余量。
+- 旧 `paper_factorization_sampling_profile.v1.json`、Exp5 v3 107-root selection 与 Exp5 smoke v3 保持不可变只供 replay/provenance。EPD-025 的 zero-retry/two-table 指标口径仍有效，EPD-026 只替换题量、selection、总量和预算 identity。
 
-用户明确要求不继续本轮 Full，只保留迁移接线定向验证；未完成的 Full 已终止且不计为证据。下一步回到 feat-011 P1 门禁，获得用户授权前不启动真实 API smoke/formal。
+## 历史 smoke 入口与当前暂停状态
+
+- 必须使用全新仓库外绝对 output/supervisor roots，不能复用任何历史输出。
+- Exp3/4 固定入口：`local/run_exp3_exp4_v3_smoke.ps1`，身份为 11 roots / 22 units / 54 attempt upper、DeepSeek v4-pro high `600/300000`。
+- Exp5 固定入口：`local/run_exp5_v3_smoke.ps1`，文件名保留 v3 cohort provenance，但 active suite/profile/selection 已是 v4；身份为 8 roots / 60 units / 60 attempts、四个 SiliconFlow cohort-v3 endpoints、global inflight 3。
+- Exp5 launcher 从 gitignored `local/ai_api_smoke.local.json` 读取本地 secret，只传入子进程并对 stdout/stderr 做脱敏；成功退出必须存在 `audit/exp5_endpoint_smoke_evidence.json`。
+- 正式 Exp5 preflight 必须显式传 `--exp5-smoke-evidence-bundle <新 smoke root>/audit/exp5_endpoint_smoke_evidence.json`；缺失时 exit 3、provider calls=0，并持久化 canonical 四 member 诊断。
+- 未获得明确付费授权前不要再次调用真实 API；本轮只审计用户已启动的历史调用并修代码，没有新发起付费调用。
+- EPD-025 不改变 Exp5 8-root smoke 的 cohort、请求身份和 capability 目的；smoke 可以继续作为门禁证据，但在正式矩阵和论文结果发布前，必须先完成新的两表 metric contract 与 renderer 迁移验证。
+- EPD-027 生效后，上述入口只记录旧设施身份，不是当前可以立即执行的下一步。新的 bank acquisition、Exp2 六档在线并发检查、Exp3 在线恢复检查与 Exp5 smoke 的统一顺序必须在完整实施计划中重新冻结；未获用户明确付费授权前不得调用 API。
+
+## 不可破坏边界
+
+- **正式规模冻结（EPD-026）**：此前 EPD-022 的 Exp3 规模未决状态已关闭；当前 Exp3 固定 3,726 roots、17,148 first-attempt units、54,372 attempt upper。不得退回旧 36,126 总量，也不得改变 fault rates、repeat 或 worker-death matrix。
+- **Exp5 指标冻结（EPD-025）**：不启用 replacement/retry，不报告 recovery/retry 指标，不做 model pairwise significance；正式正文只保留首次输出质量/最终 root 结果和调用量/资源两张汇总表。图表美化属于后续论文呈现，不得改变冻结分母或新增综合评分。
+- **两阶段 evidence 冻结（EPD-027）**：Exp2–4 主矩阵必须标为 `real_model_trace_protocol_run`，不能伪装 `real_transport=true`；Exp1/5 与两类在线检查才是 `online_real_provider`。source acquisition actual spend 与各条件 trace attribution 必须分账。
+- 正常 paper 结果必须来自 `ProtocolRunCoordinator`/`ProtocolEngine`、真实 provider artifacts、deterministic verifier/固定 Lean checker；capturing/scripted 永远 paper-ineligible。
+- provider failure 保留真实 taxonomy、固定分母和 `null/NA`；不得补 0、删失败或伪造成 success。
+- replay 只读持久化 provider output，不重新调用 API；历史 evidence 不补写、不改 digest、不升级。
+- 不修改正式矩阵、模型、请求参数或 tracked v1/v2 replay 配置；不扩展人为攻击/安全工程。
+- 不要移动/删除仓库根 ACL 拒绝的 `pytest*` 环境遗留目录；不要 reset/clean/checkout 用户工作树。
+
+## 当前验证与残留
+
+- EPD-025 文档与状态同步后的最新 Fast：`457 passed, 1 skipped in 19.99s`；未运行 Full、LeanAudit 或真实 API。
+- 本轮统一核心：356 passed；launcher：9 passed；最终 Fast：457 passed/1 skipped；结果完整性独立复审 Ready。
+- 既有根集成：442 passed；此前 Fast：456 passed、1 skipped。
+- 当前 scale/Exp3/4 reviewer：50 项通过；Exp3 26、Exp4 39；Exp5 model 90；Exp5 smoke/evidence/supervision 48；authoritative Exp1–5 exact plan-only 1 项通过，provider calls=0。
+- 当前工作树暂停收尾 Fast：`458 passed, 1 skipped in 21.06s`；JSON/SQLite、harness、compileall 通过。
+- EPD-027 文档/harness 同步后 Fast：`458 passed, 1 skipped in 17.96s`；未联网、未调用真实 API、未运行 Full。
+- Exp5 identity-only v4：8/60/60，suite=`paper_smoke_exp5_v4`；launcher fail-closed profile/selection identity 已同步 v4。
+- 未运行 Full/LeanAudit/force-all/真实 API/攻击测试；未 stage、commit、push。
+- TTFT 无持久化来源，保持缺失；bundle source path 参与 digest 是本机可移植性 P2。
+- Exp5 identity fail-stop 的 raw checkpoint placeholder 使用 `attempt_status=not_started`；当前 metrics/replay 直接消费并有回归覆盖，未来若引入严格 `PaperAttemptStatus` 反序列化需先版本化该状态。
+- PowerShell helper 在 runner 已退出但后代长期持有继承管道写端时仍可能等待 EOF；正常实时日志脱敏、受控退出和精确退出码路径已通过。该项为 P2，不得写成已修复。
+- 审计输出保存在仓库外 `E:\TokenEcnomic\TokenShareData` 的 `_identity_probe_*`、`_exp5_formal_preflight_no_bundle_20260731*` 与 `_audit_exp34_p0core_plan_20260731_a`；均不是论文 evidence。

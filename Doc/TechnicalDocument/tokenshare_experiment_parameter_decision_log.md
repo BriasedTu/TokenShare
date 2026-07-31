@@ -439,7 +439,7 @@ Experiment 5 的目的是比较三个 endpoint 在同一批高难任务上的完
 | 固定选择规则 | 在 Factorization hard 与三个 Lean topic stratum 内分别按 `sha256(case_id)` 升序排列，保留前 `ceil(n/2)`；把所选 case IDs、顺序、父 catalog digest 和 selection digest 冻结到 Exp5 专属版本化 selection artifact。不得依据模型输出、checker 结果、延迟或成本事后换题。 |
 | 配对规则 | 所有模型、repeat 和相同 domain/topic condition 使用完全相同的冻结 case 集及顺序，保证逐 root 配对比较。 |
 | 不受影响范围 | Experiment 1–4 的 catalog、selection、root 数、split/lemma-DAG、repeat 和论文分母全部不变；Factorization/Lean 共享正式 catalog 文件也不删除任何题。Exp5 小型 smoke 仍为每模型 2 个直接 roots，不因正式题库减半而再缩小。 |
-| 状态 | `verified_offline`：selection artifact、runner、预算、profile、drift gate 和定向测试均已实现；semantic selection digest=`sha256:fbec153a02befa4071b4ad4d639e51e910a3bc4c433cc9eea4b19ac6489a3490`。真实 smoke 仍 hold，不得启动正式 Exp5。 |
+| 状态 | `superseded`（由 EPD-026 取代新运行题量）：本节 v3 selection artifact 与 digest 保持不可变，只供历史 replay，并作为 v4 parent selection provenance；hard-only、分层确定性和跨模型同题顺序原则继续有效。 |
 
 #### 奇数题格的取整口径
 
@@ -557,6 +557,433 @@ condition、selection、profile、execution-plan 和 budget identity 均随本�
 - [x] 11-root profile、CLI identity、v3 launcher 与离线 identity-only。
 - [x] RED/GREEN 定向测试与 Fast。
 - [x] code maps、导航、feature/progress/handoff。
+
+### EPD-013：论文正确性主指标统一使用全部预注册 root-run 作为分母
+
+| 字段 | 决定 |
+|:---|:---|
+| 决定日期 | 2026-07-31 |
+| 用户原意 | 保留原始口径：`最终结果正确的题数 / 全部预注册题数`；不采用只统计实际产生最终结果题目的条件正确率。 |
+| 适用实验 | Experiment 1–5 的正确性主指标，以及按 domain、difficulty、topic、condition、repeat、fault、ablation、model 分层后的对应汇总。 |
+| 指标名称 | `end_to_end_verified_success_rate`（端到端验证成功率）。 |
+| 分子 | 存在最终结果，且由冻结的 Factorization 正确性判断或固定 Lean checker 确认正确，并具备完整、一致的 task/attempt/event/artifact 证据的 root-run 数。 |
+| 分母 | 对应汇总单元的全部预注册 root-run；实验性失败、规定重试用尽、无返回、超时、未恢复 worker death 和未得到可接受结果均不得从分母删除。 |
+| 禁止口径 | 不以“实际产生最终结果的题数”为论文主指标分母；不把未解决 root-run 从主正确率中排除。 |
+| 解释性输出 | 单独保留错误最终结果数、未得到可接受结果数与 failure stage/kind，解释主指标下降原因；这些列不替换主指标分母。 |
+| 无效运行 | suite/condition 因配置、identity 或基础设施阻断而 paper-ineligible 时，审计仍保留固定分母，但该运行不得作为论文低成功率结果发布。 |
+| 状态 | `design_synced`：用户已确认，唯一权威实验设计已同步；现有 runner/metrics/report 字段、测试和论文表格是否完全采用该名称与分子/分母规则，留待本轮完整指标追溯实施计划审计后进入 `implemented` / `verified`。 |
+
+#### 修改理由
+
+条件正确率会把重试用尽、无返回或最终没有可接受答案的题排除在分母之外，使系统表现虚高。全部预注册 root-run 分母能同时保留成功与失败，不需要把“未得到答案”误称为“错误最终答案”；失败原因仍通过互斥结果分类和逐 root evidence 单独解释。
+
+#### 论文与实现影响
+
+- Experiment 1、4、5 当前 `accepted validity` / `validity` 表述必须统一映射到本主指标，不能出现第二套条件分母。
+- Experiment 2、3 中凡报告最终结果正确性，也使用相同 root-run 分母；吞吐、恢复等专项指标继续使用各自明确分母。
+- `per_task_results.jsonl` 必须能区分 verified correct、错误最终结果和未得到可接受结果；汇总表必须保存预注册分母与三类计数。
+- 现有代码若仍只输出 `accepted_validity_rate`，实施计划必须先确认其实际分子/分母，再决定兼容别名、schema 版本化或字段替换，不能只改列名。
+
+#### 待同步清单
+
+- [x] 唯一权威实验设计。
+- [ ] runner / metrics / report 与 machine-readable metric contract。
+- [ ] Exp1–5 逐 root、condition、repeat、aggregate 测试。
+- [ ] 离线真实产物 replay 与论文表格端到端门禁。
+- [ ] progress / feature / code map（在完整实施计划确认并实施时同步）。
+
+### EPD-014：完成率表示产生最终结果的预注册 root-run 比例
+
+| 字段 | 决定 |
+|:---|:---|
+| 决定日期 | 2026-07-31 |
+| 用户决定 | 同意将完成率定义为：`实际产生最终结果的 root-run 数 / 全部预注册 root-run 数`。 |
+| 适用实验 | Experiment 1–5 的 completion 主指标及其所有正式分层汇总。 |
+| 指标名称 | `completion_rate`。 |
+| 分子 | 实际产生最终 canonical/root result，并具备完整结果引用的 root-run 数；不要求最终结果正确。 |
+| 分母 | 与 EPD-013 完全相同的全部预注册 root-run。 |
+| 不计入分子 | 规定重试用尽、无返回、超时、未恢复 worker death，以及 `failed`、`blocked`、`budget_exhausted`、`ineligible`、`not_started` 等没有最终结果的 root-run。 |
+| 与正确性关系 | 完成且正确同时进入 completion 与 EPD-013 分子；完成但错误只进入 completion 分子；未得到最终结果不进入任一分子。 |
+| 状态 | `design_synced`：用户已确认，唯一权威实验设计已同步；runner/metrics/report/schema 与真实产物端到端验证尚待完整实施计划覆盖。 |
+
+#### 修改理由
+
+完成率只回答“系统是否最终给出结果”，端到端验证成功率回答“系统是否最终给出正确结果”。二者共享全部预注册 root-run 分母，差距能够揭示已经产出但内容错误的最终结果，同时不会隐藏重试用尽或未得到答案的题。
+
+#### 待同步清单
+
+- [x] 唯一权威实验设计。
+- [ ] runner / metrics / report 与 machine-readable metric contract。
+- [ ] 逐 root 三分类和 `completion_rate - end_to_end_verified_success_rate` 一致性测试。
+- [ ] 离线真实产物 replay、smoke 与论文表格门禁。
+- [ ] progress / feature / code map（在完整实施计划确认并实施时同步）。
+
+### EPD-015：验证检出能力只使用 Experiment 3 的受控错误分母
+
+| 字段 | 决定 |
+|:---|:---|
+| 决定日期 | 2026-07-31 |
+| 用户决定 | 验证错误检出属于 Experiment 3 已有的受控故障实验，不再另造自然错误检出率；验证机制对完整系统的作用由 Experiment 4 的 `FULL` 与 `NO_VERIFICATION` 对照体现。 |
+| 受控错误拦截率分母 | `false_positive` 中预注册、实际完成注入且确实到达 verification 边界的已知错误候选数。 |
+| 受控错误拦截率分子 | 同一分母中有直接 verifier evidence 证明被明确拒绝的注入候选数。 |
+| 受控错误逃逸率 | 使用同一受控分母；分子是有 canonical/root-result evidence 证明已穿过验证边界的注入候选数。 |
+| 严格排除 | 自然产生但没有独立错误标签的候选、无返回、超时、parser/executor error、worker death 或其他 fault 不得进入上述分母。 |
+| 自然运行统计 | 可以报告 verifier 拒绝次数或进入验证候选中的拒绝占比，但只能解释验证机制介入频率，不得称为自然错误检出率。 |
+| Experiment 4 职责 | 在相同 `case_id × repeat_id` 上比较 `FULL` 与 `NO_VERIFICATION` 的 completion 和 `end_to_end_verified_success_rate`，回答开启验证是否改善最终系统结果，不重复计算检出率。 |
+| 状态 | `design_synced`：用户已确认，唯一权威实验设计已同步；现有 detection/false-accept 字段的兼容、schema 和论文表格迁移留待完整指标追溯实施计划。 |
+
+#### 修改理由
+
+自然错误总数无法由待评价的 verifier 自身给出；用 verifier 已经发现的错误推测未发现错误会形成循环论证。Experiment 3 的预注册受控错误提供了运行前可知且可追踪的分母，Experiment 4 的消融则提供验证机制对端到端结果影响的独立系统级证据，二者不能混成一个指标。
+
+#### 待同步清单
+
+- [x] 唯一权威实验设计。
+- [ ] machine-readable metric contract、runner、metrics 与 report 字段。
+- [ ] fault/attempt identity、互斥 block/escape outcome 与不完整 evidence fail-closed 测试。
+- [ ] Experiment 4 配对差值、离线 replay、smoke 和论文表格门禁。
+- [ ] progress / feature / code map（在完整实施计划确认并实施时同步）。
+
+### EPD-016：删除含义模糊的 recovery rate，仅保留替代尝试成功率
+
+| 字段 | 决定 |
+|:---|:---|
+| 决定日期 | 2026-07-31 |
+| 用户决定 | 检出需要恢复的错误后，协议必须自动启动恢复；“检出后是否启动恢复”的比例与检出重复，不作为论文指标。含义模糊的 `recovery_rate` 删除。 |
+| 完整性门禁 | 对协议规定应恢复且已经检出的 fault，必须存在匹配 fault/attempt identity 的 replacement/requeue evidence；缺失不是低恢复率，而是恢复链证据不完整并 fail closed。 |
+| 保留辅助指标 | `replacement_attempt_success_rate = 产生合格替代结果并完成原 task unit 的 replacement attempts / 实际启动的 replacement attempts`。 |
+| 汇总边界 | 只在 Experiment 3 按 fault type 分别报告，不跨 fault 类型汇总；零分母写 `null` 和 applicability reason。 |
+| 与最终结果关系 | 该辅助指标解释重试次数限制或替代回答再次失败；整道题最终是否正确继续使用 `end_to_end_verified_success_rate`，不另造 root 级恢复率。 |
+| 状态 | `design_synced`：用户已确认，唯一权威实验设计已同步；现有 `recovery_rate` 字段迁移、兼容和测试留待完整指标追溯实施计划。 |
+
+#### 修改理由
+
+“错误被发现后启动重试”是协议必须满足的行为，不应包装成接近 100% 的论文指标。替代尝试能否真正产生合格结果则受重试次数和模型再次失败影响，具有独立解释价值；root 最终正确性已由全局端到端主指标覆盖。
+
+#### 待同步清单
+
+- [x] 唯一权威实验设计。
+- [ ] machine-readable metric contract、runner、metrics、report 与旧字段迁移。
+- [ ] 检出到 replacement 的 identity 完整性门禁及 fail-closed 测试。
+- [ ] 按 fault type 的替代尝试分子/分母、零分母、离线 replay 与论文辅助表测试。
+- [ ] progress / feature / code map（在完整实施计划确认并实施时同步）。
+
+### EPD-017：删除论文 recovery latency，时间代价使用总 wall-clock overhead
+
+| 字段 | 决定 |
+|:---|:---|
+| 决定日期 | 2026-07-31 |
+| 用户决定 | 指标在精不在多；`recovery_latency` 相对总运行时间及故障 overhead 没有足够独立的论文解释价值，从论文指标集合删除。 |
+| 论文时间指标 | Experiment 3 使用真实 wall-clock，以及相对 shared Exp1 无故障 evidence 的 wall-clock overhead，回答故障使整道题总共增加多少时间。 |
+| 仍保留的时间 evidence | fault 发生/确认、replacement/requeue 启动/结束及 provider latency 原始时间必须继续持久化，用于审计、诊断和重放，不进入论文主表。 |
+| 禁止替代 | 不把“故障确认到替代任务开始”的局部派发时间重新包装成另一项论文指标。 |
+| 状态 | `design_synced`：用户已确认，唯一权威实验设计已同步；现有 `recovery_latency_ms` 报表字段的移除/审计降级和测试留待完整指标追溯实施计划。 |
+
+#### 修改理由
+
+局部恢复调度时间只能帮助排查慢在调度还是 provider，不能比真实总运行时间和相对无故障 overhead 更直接地支撑论文主张。保留原始时间 evidence 足以满足诊断与可追溯要求，不需要在论文中增加一列。
+
+#### 待同步清单
+
+- [x] 唯一权威实验设计。
+- [ ] machine-readable metric contract、metrics/report 论文字段与审计字段分层。
+- [ ] wall-clock/shared-reference overhead 完整性和缺失 baseline fail-closed 测试。
+- [ ] 原始恢复时间 evidence 的 replay/审计保留测试。
+- [ ] progress / feature / code map（在完整实施计划确认并实施时同步）。
+
+### EPD-018：保留 Experiment 3 实际重新分派次数
+
+| 字段 | 决定 |
+|:---|:---|
+| 决定日期 | 2026-07-31 |
+| 用户决定 | 保留 `reassignment_count`，继续作为 Experiment 3 指标。 |
+| 计数对象 | 因 fault 或 worker death 实际启动、具有新 `attempt_id`，并能反向关联原 fault 与原 task unit 的 replacement/requeue attempt。 |
+| 不计入 | 只有恢复计划、recovery event 或 `retry_allowed=true`，但没有真实启动新 attempt 的记录不得计数。 |
+| 汇总边界 | 按 fault type 或 worker-death condition 分别报告；不把不同故障类型的原始计数混成一个性能比例。 |
+| 证据要求 | 新旧 attempt、fault、task unit 与 worker/PID（适用时）的 identity 链必须完整；缺失时该指标为 `null` 并使对应专项 evidence fail closed。 |
+| 状态 | `design_synced`：用户已确认，唯一权威实验设计已同步；当前实现从 recovery event 计数的行为需在完整指标追溯实施计划中审计和迁移。 |
+
+#### 修改理由
+
+重新分派次数能够直观展示故障条件实际触发了多少次任务迁移，但只有真实新 attempt 才构成重新分派；计划或事件记录不能代替执行事实。
+
+#### 待同步清单
+
+- [x] 唯一权威实验设计。
+- [ ] machine-readable metric contract、runner、metrics 与 report 字段。
+- [ ] fault→old attempt→new attempt→task unit/worker identity 完整性测试。
+- [ ] 按 fault/worker-death condition 的离线 replay、smoke 与论文表格测试。
+- [ ] progress / feature / code map（在完整实施计划确认并实施时同步）。
+
+### EPD-019：wasted actual tokens 是 Experiment 3 关键真实性指标
+
+| 字段 | 决定 |
+|:---|:---|
+| 决定日期 | 2026-07-31 |
+| 用户决定 | `wasted_actual_tokens` 必须保留并视为关键指标；它证明故障注入不是只改状态或事后填表，而是已经消耗真实 AI tokens，故障后又实际运行了 AI replacement。 |
+| 分子/汇总对象 | 具有真实 provider usage、且因实际 fault/worker death 导致其输出不能进入最终有效 canonical 路径的 attempt tokens 总和。该指标是数量，不计算比例。 |
+| 原 attempt 证据 | 每笔 tokens 必须关联真实 provider attempt、raw/provenance/usage、fault identity 以及 rejection/abandonment/canonical exclusion evidence。 |
+| 真实重跑证据 | 对协议规定应 replacement/requeue 的记录，必须存在不同 `attempt_id` 的后续真实 provider attempt 及独立 usage evidence；只有 recovery event、计划值或预算不能证明 AI 重新运行。 |
+| replacement tokens | replacement attempt tokens 进入总 tokens 与 token/cost overhead；仅当该 replacement 自身也实际失败并被废弃时，才按其自身 evidence 进入 wasted tokens。 |
+| 缺失处理 | 必要 actual usage 缺失时汇总写 `null` 并 fail closed；不得补 0，不得用 token budget、max_tokens 或估算值冒充真实消耗。 |
+| 指标地位 | Experiment 3 关键论文指标，同时承担真实执行证据职责；不是仅供诊断的辅助列。 |
+| 状态 | `design_synced`：用户已确认，唯一权威实验设计已同步；当前实现是否逐 attempt 正确归因、replacement usage 是否闭环，留待完整指标追溯实施计划审计。 |
+
+#### 修改理由
+
+总 token overhead 只能说明故障运行相对基线的净变化，不能直接证明哪些已经付费生成的工作因故障作废，也不能单独证明 replacement 真正调用了 AI。逐 attempt 的 wasted tokens 与后续 replacement usage identity 链共同提供这一真实性证据。
+
+#### 待同步清单
+
+- [x] 唯一权威实验设计。
+- [ ] machine-readable metric contract、runner、metrics 与 report 字段。
+- [ ] faulted attempt actual usage、canonical exclusion 与 replacement provider attempt identity 闭环测试。
+- [ ] usage missing/null、二次 replacement 失败、worker death partial usage 边界测试。
+- [ ] 离线 replay、smoke 与论文表格的真实重跑门禁。
+- [ ] progress / feature / code map（在完整实施计划确认并实施时同步）。
+
+### EPD-020：Experiment 2 使用正确结果配对加速并精简扩展性指标
+
+| 字段 | 决定 |
+|:---|:---|
+| 决定日期 | 2026-07-31 |
+| 用户决定 | 同意现有 Experiment 2 指标审计建议：逐项判断为保留的全部保留，判断为不保留或重复的直接从论文指标删除。 |
+| 正确性门禁 | 每个 worker level 报告 `end_to_end_verified_success_rate` 与 completion；快速失败不得被解释成加速。 |
+| 总时间 | `wall_clock_ms` 保存每个预注册 root-run 的真实协议端到端时间，包括正确、错误和未完成终态。 |
+| 配对加速 | `paired_speedup = worker=1 wall_clock_ms / worker=k wall_clock_ms`；只在同 `case_id × repeat_id` 两端均端到端正确、时间 evidence 完整且大于 0 时计算。否则为 `null`，同时报告 eligible/ineligible pair count 与原因。 |
+| 配对汇总 | 每个 repeat 内按 worker level 报告逐 root 值和 eligible pairs 的中位数，并按 factor position 分层；两个 repeats 原始汇总均保留，只报告 min/max 与相对差。 |
+| 资源代价 | 保留实际 provider attempts、total tokens 与 cost；同 `case_id × repeat_id` 相对 worker=1 计算 paired token/cost multiplier。资源倍率要求实际 usage/cost evidence 完整且分母大于 0，不因运行失败删除样本。 |
+| 并行真实性 | 保留 planned/executed/unscheduled units、in-flight-at-witness、observed peak concurrency 与 worker utilization；峰值并发不得超过 configured workers、dispatched units 或图宽 20。 |
+| 效率 | 只保留解释性 `parallel_efficiency = paired_speedup / configured_worker_count`，沿用 speedup eligibility；删除完全重复的 `efficiency` 别名。 |
+| 外部干扰 | 保留 429/rate-limit 与 retry 作为干扰记录和敏感性分析条件，不包装成扩展性收益。 |
+| 删除论文指标 | 删除 `throughput = executed_ai_unit_count / wall_clock` 与逐 root `throughput_roots_per_second`。前者会奖励无用执行，后者只是总时间的倒数。 |
+| 降级为审计 | critical path 与 provider latency 继续持久化供诊断/审计，但退出 Experiment 2 论文指标集合，不能替代 wall-clock。 |
+| 状态 | `design_synced`：用户已确认，唯一权威实验设计已同步；当前 metrics/report/schema、图表与测试仍待完整指标追溯实施计划迁移。 |
+
+#### 修改理由
+
+Experiment 2 必须证明的是“相同任务正确完成时是否更快，以及为此增加多少真实资源”，不能把快速失败或更多无用 AI unit 执行包装成扩展性。现有两个 throughput 不能提供独立且可靠的论文信息，重复 efficiency 也没有保留两列的价值。
+
+#### 待同步清单
+
+- [x] 唯一权威实验设计。
+- [ ] machine-readable metric contract、root/condition/repeat aggregation 与旧字段迁移。
+- [ ] 双端正确 speedup eligibility、失败 pair null、eligible/ineligible count 与 factor-position 分层测试。
+- [ ] actual token/cost paired multiplier、usage missing/null 与全量失败资源保留测试。
+- [ ] concurrency inventory/utilization、图宽 20、429/retry sensitivity 与审计字段分层测试。
+- [ ] 离线 replay、smoke、论文 CSV/JSON/figure table 与旧 throughput/efficiency 字段删除测试。
+- [ ] progress / feature / code map（在完整实施计划确认并实施时同步）。
+
+### EPD-021：Experiment 3 保留 overhead 名称并披露 shared-reference 语义
+
+| 字段 | 决定 |
+|:---|:---|
+| 决定日期 | 2026-07-31 |
+| 用户决定 | 保留 `wall_clock_overhead`、`token_overhead`、`cost_overhead` 名称，不改成 shared-reference delta。 |
+| 比较来源 | 继续使用 EPD-012 的正式 Exp1 持久化 shared reference，不新增 Experiment 3 0% 或 dedicated baseline provider calls。 |
+| 强制披露 | 论文表头、caption 或方法说明必须标明 `comparison_kind=shared_reference`，说明它不是同一次、同 repeat 的严格 paired baseline。 |
+| 禁止表述 | 不得声称 overhead 的全部差异都由 fault 单独造成，不得写成严格 paired causal effect。 |
+| 状态 | `design_synced`：用户已确认，唯一权威实验设计已同步；renderer/caption/schema 与测试留待完整指标追溯实施计划。 |
+
+#### 待同步清单
+
+- [x] 唯一权威实验设计。
+- [ ] machine-readable comparison kind、paper table/caption 与方法说明。
+- [ ] shared reference 缺失或 paper-ineligible 时 overhead=`null` 的 fail-closed 测试。
+- [ ] 离线 replay、smoke 与正式论文渲染测试。
+
+### EPD-022：Experiment 3 正式规模正在由其他工作调整
+
+| 字段 | 决定 |
+|:---|:---|
+| 决定日期 | 2026-07-31 |
+| 用户通知 | Experiment 3 全量运行资源消耗过大，用户正在通过其他工作修改正式规模；本轮任务只讨论指标，不负责该规模修改。 |
+| 当前边界 | 本轮不得修改 fault rates、root 数、repeat、worker-death matrix、预算或总 root-run 数，也不得覆盖其他工作产生的规模变更。 |
+| 协同规则 | 在指标设计转入实施计划或任何真实运行前，必须重新读取唯一权威实验设计、参数台账和工作树中的最新规模；当前文档中的 36,126 root-runs 不得被本轮当作最终定案重新固化。 |
+| 对指标的影响 | 指标定义可以继续讨论；任何依赖样本数、分层、统计汇总或预算的实现步骤必须等待最终规模同步后再冻结。 |
+| 状态 | `superseded`（由 EPD-026 关闭未决规模）：本节保留为并行协同 provenance；最终规模已经机器可读冻结并完成离线验证。 |
+
+#### 待同步清单
+
+- [ ] 等待负责规模修改的工作给出用户确认结果。
+- [ ] 最终结果同步唯一权威实验设计、runner plan、budget、测试及论文样本数。
+- [ ] 指标实施计划开始前重新审计规模依赖，避免覆盖并行修改。
+
+### EPD-023：区分论文额外 token 表述与作废 attempt tokens
+
+| 字段 | 决定 |
+|:---|:---|
+| 决定日期 | 2026-07-31 |
+| 用户决定 | 论文正文为了易于理解，使用“相对正常运行多出来的 tokens”解释额外 token 消耗，并在方法中进一步说明。 |
+| 对应机器指标 | 该说法对应 `token_overhead = fault-condition total actual tokens - shared Exp1 reference total actual tokens`，同时遵守 EPD-021 的 shared-reference 非配对披露。 |
+| `wasted_actual_tokens` | 仍表示已经生成、后来因 rejection/abandonment 等未进入有效 canonical 的 attempt actual tokens；它不是相对 reference 的净增量。 |
+| 真实重跑证明 | `wasted_actual_tokens` 单独只能证明已有 AI 工作被作废；AI 确实重新运行必须由新 `attempt_id`、独立 provider response/provenance 与 actual usage 证明。 |
+| replacement tokens | 成功 replacement 的 tokens 进入 total tokens/overhead，但不算 wasted；replacement 自身也失败并被作废时，才按其独立 evidence 进入 wasted。 |
+| 状态 | `design_synced`：用户已确认，唯一权威实验设计已同步；论文文案、machine-readable contract 与逐 attempt 归因测试留待完整实施计划。 |
+
+#### 修改理由
+
+人为 fault 不会让原 provider 调用凭空使用更多 tokens；它使已经生成的结果失去用途，重试才产生后续额外消耗。分别保留净增量和作废 tokens，才能同时回答总体资源代价与已有 AI 工作浪费。
+
+#### 待同步清单
+
+- [x] 唯一权威实验设计。
+- [ ] 论文表头/caption/method 的通俗表述与 shared-reference 限定。
+- [ ] total overhead、discarded attempt 与 replacement usage 三本账的一致性测试。
+- [ ] 离线 replay、smoke 与论文表格逐 attempt 追溯门禁。
+
+### EPD-024：Experiment 4 使用独立 FULL 配对与四个 mode 专项指标
+
+| 字段 | 决定 |
+|:---|:---|
+| 决定日期 | 2026-07-31 |
+| 用户决定 | 不再考虑使用 Experiment 1 替代 baseline；同意采用 FULL 配对主结果、资源差值和四个 mode 专项指标的最小集合，并删除通用 escape 与重复别名。 |
+| 正式 baseline | Experiment 4 每个 `case_id × repeat_id` 单独运行一个 FULL，并由四个消融 mode 共同复用；Experiment 1 不进入正式配对。 |
+| 不能复用 Exp1 的原因 | Exp1 只有 `repeat_id=0,seed=1` 且正式 replacement policy 为 `max_retries=0`；Exp4 三 repeats、`max_retries=1`，复用后 NO_REQUEUE 不再是只改变一个机制。 |
+| 配对正确性主结果 | 保留 FULL/消融正确与未正确的四类转移计数；`end_to_end_success_loss_vs_full = FULL success - ablation success`，正值表示删除机制导致退化。 |
+| 配对完成主结果 | `completion_loss_vs_full = FULL completion - ablation completion`，使用同一预注册 pair；实验性失败保留，identity/evidence/infrastructure 不完整时为 `null` 并 fail closed。 |
+| 配对资源差值 | `wall_clock_delta_vs_full`、`token_delta_vs_full`、`cost_delta_vs_full` 均为“消融值减 FULL 值”；actual evidence 缺失时对应字段为 `null`，失败运行的实际消耗不得删除。 |
+| `NO_VERIFICATION` | 保留 `wrong_canonical_acceptance_count/rate`，分母为有独立正确性标签的 invalid candidates。 |
+| `NO_PARSER_POLICY` | 保留 `raw_only_exposure_count` 与 `raw_only_acceptance_count/rate`。 |
+| `NO_REQUEUE` | 保留 `stuck_task_count/rate`，分母为该 mode 全部预注册 root-runs。 |
+| `NO_MERGE_GATE` | 保留 `premature_merge_attempt_count` 与 `premature_merge_failure_count/rate`。 |
+| 删除通用指标 | 删除跨 mode 混合不同分母的 `exposed_error_count`、`escaped_error_count`、`error_escape_rate`。 |
+| 删除重复别名 | 删除 `wrong_canonical_count`、`raw_only_count`、`stuck_count`、`premature_merge_count`，只保留含义明确的正式字段。 |
+| 论文资格门禁 | FULL 不得出现被关闭机制或对应违规 hook；每个消融只关闭一个机制，题目、模型、request、retry、identity 与事件链必须匹配，不另计为指标。 |
+| 状态 | `design_synced`：用户已确认，唯一权威实验设计已同步；当前代码只绑定 paired FULL identity、尚未计算配对差值，旧字段与 renderer/tests 留待完整实施计划迁移。 |
+
+#### 修改理由
+
+消融实验的核心是同一题、同一 repeat 下只删除一个机制后的结果变化。Exp1 与 Exp4 的 repeat 和重试控制不同，不能成为 NO_REQUEUE 等模式的严格对照；通用 error escape 又混合了错误候选、卡住任务和提前合并等不同对象，没有统一分母。
+
+#### 待同步清单
+
+- [x] 唯一权威实验设计。
+- [ ] machine-readable pair transition/delta contract、metrics/report 与 renderer。
+- [ ] FULL 独立运行且四 mode 共享、Exp1 不得绑定为 paired FULL 的 identity 测试。
+- [ ] 正确性/完成率四类转移、全预注册分母、实验失败保留与 infra/evidence fail-closed 测试。
+- [ ] wall-clock/token/cost paired delta、usage missing/null 与失败资源保留测试。
+- [ ] 四个 mode 专项分母、零分母/applicability、旧通用字段和重复别名删除测试。
+- [ ] 离线 replay、smoke、论文 CSV/JSON/table 与 progress/feature/code map。
+
+### EPD-025：Experiment 5 固定不重试并改为两张模型汇总表
+
+| 字段 | 决定 |
+|:---|:---|
+| 决定日期 | 2026-07-31 |
+| 用户决定 | 保持原定 Experiment 5 不重试方针；不做繁琐的模型两两比较，改为按模型汇总首次输出质量、最终 root 结果和资源消耗，正文控制在两张表内。论文后续可以把冻结表格制作成更直观的比较图，但本轮不冻结具体图形。 |
+| 不重试边界 | `ProtocolConfig.max_retries=0`、`replacement_attempts_allowed=false`，每 AI unit 最多一次 provider attempt；删除 recovery、retry count、retry success 与“重试用尽后的正确率”等不适用表述。 |
+| 质量主表 | 保留 `first_attempt_nonpass_rate`、互斥的首次未通过原因、`first_attempt_verification_rejection_rate`、全局 `completion_rate` 与 `end_to_end_verified_success_rate`。错误或无结果 root-run 均保留在全预注册分母中。 |
+| 首次未通过率 | `first_attempt_without_verifier_accepted_candidate_count / actual_first_provider_attempt_count`；原因分为 provider/transport failure、parse/schema unusable、verification/checker rejection，不能混称模型自然错误。 |
+| 首次验证拒绝率 | `first_attempt_explicitly_rejected_by_verifier_count / first_attempt_checkable_candidate_count`；只表示 verifier/checker 对实际到达验证环节的首次可判断候选的明确拒绝比例，不得命名为自然错误检出率。 |
+| 资源主表 | planned first-attempt AI units、actual first provider attempts、actual/planned 调用覆盖率、actual total tokens、冻结价格快照下的 cost estimate、end-to-end wall-clock。实际调用可能因自然早停或 condition-local fail-stop 少于计划调用，必须同时呈现。 |
+| 重复实验 | 三个 repeat 原始值全部保存；正文按 model 显示汇总结果及 repeat 间范围，不做 pairwise significance。 |
+| 删除/降级 | 删除六个无序 model-pair 论文比较、显著性检验、胜负排名、综合评分和 `accepted_validity_rate` 等重复旧名；provider latency、domain/topic/repeat 明细、failure taxonomy 保留为解释性附录或审计数据。 |
+| 论文资格门禁 | model identity、usage 完整性、固定价格、零 retry、顺序/并发与完整 evidence 链只决定结果能否入论文，不作为模型表现指标。 |
+| 对 EPD-011 的影响 | EPD-011 的 cohort、请求参数、模型顺序、预算、身份和真实调用边界继续有效；其中“六个无序模型对的 paired comparisons”及相应旧论文输出要求由本决定 supersede。 |
+| 状态 | `design_synced`：用户已确认，唯一权威实验设计已同步；现有 machine-readable metric contract、metrics/report/renderer、replay 和测试尚未迁移，不能把设计冻结当作实现完成。 |
+
+#### 修改理由
+
+Experiment 5 的目的不是证明任意两个模型之间的严格因果差异，而是在相同题目、相同计划节点数和相同协议下，比较四个 endpoint 的首次输出质量、最终 root 正确性与真实资源消耗。不重试可以避免把恢复策略混入模型 endpoint 比较；按模型汇总比六组 pairwise 更直接，也更适合论文正文。
+
+#### 待同步清单
+
+- [x] 唯一权威实验设计与参数决策台账。
+- [ ] machine-readable metric contract、固定分母、互斥 failure taxonomy 与 missingness。
+- [ ] metrics/report/renderer 删除 pairwise/recovery/旧正确率字段，并生成两张正式表及可追溯明细。
+- [ ] execute/replay、CSV/JSON/TeX/PDF/SVG/Markdown 输出契约与旧 artifact 兼容策略。
+- [ ] 首次调用 planned/actual、自然早停、condition fail-stop、零 retry 和三个 repeat 汇总测试。
+- [ ] 完整指标追溯实施计划确认后，同步实现证据到 progress、feature 与 code map。
+
+### EPD-026：冻结 300/50/54 正式规模并启用全量资源上界
+
+| 字段 | 决定 |
+|:---|:---|
+| 决定日期 | 2026-07-31 |
+| 用户原意 | 正式全量马上启动前，把实验设施补全并控制全量资源；必须保证正式题集不在运行时漂移，Exp5 继续有跨模型可比较性，同时检查磁盘与内存不会按整个 suite 线性膨胀。 |
+| 机器可读权威 | `benchmarks/paper/paper_suite_scale_profile.v1.json`，profile=`paper_suite_scale_300_50_54.v1`，解析 digest=`sha256:9cab1fb5077265807e1f64c1b63265d0dd3e2f1e87a3371f1c811132e5da7dad`。 |
+| Factorization corpus | 从不可变 v2 500 题 catalog 按 difficulty 内稳定 hash 固定选择 easy/medium/hard=`100/100/100`；Exp1 使用全部 300，Exp2 使用 hard 50，Exp3/4 共享 `17/17/16`。不得用 catalog prefix、运行时随机或结果后换题。 |
+| Exp5 selection | `exp5_parent_quarter_selection.v4.json` 按 stratum 取不可变 v3 parent selection 的有序前缀：Factorization hard 42，Lean `pure_logic/function_set/induction` 各 4，共 54 roots/model-repeat；canonical `selection_digest=sha256:452f25dcc53a1eb0387665c6f451f1320095efb0c4bf154af62bf5e388afb6b2`，tracked 文件原始字节 `content_digest=sha256:e6c5c05e4310b385495ca3dccfcc2d7f38b71841d451726c89a1fe45200beb67`。 |
+| 历史兼容 | `paper_factorization_sampling_profile.v1.json`、`exp5_hard_half_selection.v3.json`、`paper_smoke_exp5_profile.v3.json` 保持原字节只供 replay/provenance；新 run 不得加载它们冒充 active selection/profile。 |
+| Exp5 smoke | active profile=`paper_smoke_exp5_profile.v4.json`，suite=`paper_smoke_exp5_v4`，canonical profile digest=`sha256:ef3b46948dee69ff640d4e21a25c3d84979045e2a8be93d0429fd9474e6b0dd6`，profile 文件原始字节 digest=`sha256:8378ce5c5a3c76339344088a36f995eda5c862059b9c9eecf5e34347985de5df`；8-item `selection_inventory` bundle digest=`sha256:eb1a7c33103fe4ef514627c8bf905de5d179e5547d98328fd17b00b62591e9b1`。最后一项不是 v4 selection digest；smoke 仍为四模型各 1 Factorization + 1 Lean 的 8-root regression-only capability smoke。 |
+| 不受影响方法 | EPD-001 的 Exp1 单 repeat、EPD-003 的 Exp2 hard-only/worker/repeat、EPD-004 的 Exp3 双 repeat、EPD-005/024 的五种 Exp4 mode 与独立 FULL、EPD-011 的 cohort/request、EPD-025 的零 retry/两张模型表均继续有效；本决定只替换旧题量、selection、总量和相关预算 identity。 |
+| 状态 | `verified_offline`：规模 profile/selection、runner/Exp1–5/budget/CLI/smoke loader 与 fail-closed identity 已实现；Exp3 26 + Exp4 39、Exp5 model 90、Exp5 smoke/evidence/supervision 48、authoritative CLI exact plan-only 1 项通过。未调用真实 provider、未运行全量。 |
+
+#### 当前精确规模
+
+| 实验 | Root-runs | First-attempt AI units | Provider-attempt upper bound |
+|:---|---:|---:|---:|
+| Experiment 1 | 435 | 1,970 | 1,970 |
+| Experiment 2 | 600 | 12,000 | 12,000 |
+| Experiment 3 | 3,726 | 17,148 | 54,372 |
+| Experiment 4 | 975 | 4,410 | 7,938 |
+| Experiment 5 | 648 | 4,992 | 4,992 |
+| Exp1–4 | 5,736 | 35,528 | 76,280 |
+| Exp1–5 | 6,384 | 40,520 | 81,272 |
+
+Exp1–5 的精确 token ceiling=`23,503,151,360`，冻结价格快照下 cost ceiling=`7,346.259328`。这是 provider-attempt 上界预算，不是实际 usage 或实付费用；正式报告仍只使用持久化 actual usage/cost evidence。
+
+#### 磁盘与内存口径
+
+- 正式 disk forecast=`50,206,081,024` bytes（46.76 GiB）；最大 condition compaction reserve=`648,806,400` bytes（0.60 GiB）；再加 `max(25% forecast, 2 GiB)` 后 required=`63,406,407,680` bytes（59.05 GiB）。2026-07-31 本机 E: 只读快照 free=`471,755,141,120` bytes（439.36 GiB），足够容纳该上界；正式启动必须对实际 output volume 重新检查，不能复用该瞬时读数。
+- 最大单 condition=`100 roots / 1,000 AI units / 1,000 provider attempts`。generation v3 每 root 写 delta checkpoint 后释放；terminal compaction 经临时 SQLite 流式完成；metrics 使用 lazy bundle mapping，JSONL/报告按流式/分块读取。因此峰值内存是 `O(max_single_outcome + current_bundle + fixed SQLite/chunk overhead)`，不是 `O(81,272 attempts)`。
+- 合成 metrics 探针 5-run/20-run 峰值分别为 `1,675,937 / 1,744,169` bytes，且任一时刻完整 bundle live count=1；它证明当前 metrics 路径不随 suite 大小线性常驻，但不构成真实 provider 任意超大单响应的绝对 RSS 保证。正式运行仍须保留 OS 余量并监控单响应与当前 bundle 峰值。
+
+#### 取代范围
+
+- EPD-001 中 Factorization 500、635 roots、2,900 units 的旧规模行被本决定替换；“Exp1 两域均单次”继续有效。
+- EPD-003 中 hard 166/1,992 roots/39,840 units 被 hard 50/600/12,000 替换；hard-only、20-way、worker levels 与双 repeat 继续有效。
+- EPD-005/012 中 Exp3/4 旧 root/unit/attempt 总量被本决定替换；fault、death、shared-reference、ablation 方法不变。
+- EPD-010 的 107-root v3 selection 被 54-root v4 selection 取代；v3 selection 只作不可变 parent/replay provenance。
+- EPD-022 的“规模未决”状态被本决定关闭。EPD-025 不被取代，其 zero-retry 与两表指标决定保持有效。
+
+#### 待同步清单
+
+- [x] 唯一权威设计、机器可读 scale profile 与不可变 selection provenance。
+- [x] Exp1–5 runner、预算、CLI、Exp5 formal/smoke loader 与 launcher identity。
+- [x] 逐实验和全 suite exact plan-only、token/cost/disk forecast、最大 condition 计数。
+- [x] 定向测试、progress、handoff、feature evidence 与 code map。
+- [ ] 真实 API smoke 与正式全量；仍按付费授权和新 output identity 单独执行。
+
+### EPD-027：Experiment 2–4 改为两阶段真实回答库，并冻结两类在线检查
+
+| 字段 | 决定 |
+|:---|:---|
+| 决定日期 | 2026-08-01 |
+| 用户原意 | 接受 response-bank 修正版的其他建议；Experiment 2 在缩小题集上真实运行全部六个 worker 档位，Experiment 3 保留小型在线恢复检查；同时明确这不是一次普通修复，而是实验设施的全面修改。 |
+| 总体方法 | Experiment 1/5 保持逐 unit 真实 API。Experiment 2–4 先建立不可变真实回答库，再由 trace-backed executor 通过正常 TokenShare 状态机消费；fault hook、verifier/checker、lease、worker death、requeue、merge、settlement 与 event ledger 均真实运行。 |
+| 稳定 bank identity | 不使用带 attempt/lease/fencing/time/condition 的完整 `ExecutionRequest` digest。新建 `inference_request_digest`，绑定 provider 实际请求正文、endpoint/model、有效 controls、prompt/plugin version、独立 sample/repeat slot 与 replacement slot。 |
+| 配对与重复 | 同一 `case_id × repeat_id` 内的比较条件共享真实回答；不同 repeat 使用独立 sample slot。replacement 按当前冻结最大恢复深度准备，不能只备一个。缺 entry 立即 blocked，不临时调用、scripted 回退或缩短 retry。 |
+| Experiment 2 在线检查 | 在缩小且预注册的题集上，用真实 API 完整覆盖 worker=`1,3,7,10,30,50`。用途是检查在线排队、限流、超时和扩展趋势是否与 trace 主矩阵严重背离；不是把 600-root-run 主矩阵改写成全量在线结果。题集大小、重复数、阈值和预算在实施计划中冻结。 |
+| Experiment 3 在线检查 | 保留小型真实 API 恢复检查，至少覆盖 verifier/checker 拒绝后 replacement 与 worker death 后重新分派。必须证明 fault/death 之后才建立新 attempt、发起新 provider call，并保存独立 raw/provenance/usage。 |
+| 指标边界 | Experiment 2–4 的正确率、完成率与机制指标继续从完整状态机产生；主矩阵时间/资源改为 trace-replay/trace-attributed 口径。Experiment 3 主矩阵用 `discarded_trace_tokens`；`wasted_actual_tokens` 只用于在线恢复检查的 actual 重跑样本。Experiment 1/5 指标原义不变。 |
+| 论文主张 | Experiment 2–4 必须称为“基于不可变真实模型 trace 的协议扩展性/恢复/消融”，不得声称每个条件都重新在线调用 provider。Experiment 2 在线检查和 Experiment 3 在线检查单独标为 `online_real_provider`。 |
+| 调用量与预算 | EPD-026 的 76,280 保留为旧全在线上界/最大 trace-slot capacity，不再代表预计在线调用量。当前审计量级约为 6,904 次 DeepSeek acquisition 加在线检查，正式数字必须由完整 outbound-body bank inventory 给出；Experiment 5 SiliconFlow 预算单列。人民币 1,000 为 DeepSeek acquisition/在线检查目标硬停止线，须同时约束 calls/tokens/CNY 并为 in-flight 悲观预留。 |
+| 设施影响 | 必须跨 request identity、executor/transport、artifact schema、paper eligibility、budget、runner、metrics/report/renderer、smoke/canary、replay/audit 全面改造；现有 stored-evidence replay 不能替代 trace-backed state-machine run。 |
+| 状态 | `design_synced`：用户已确认方法和两类在线检查，唯一权威设计及 harness 状态已同步；未实现、未写完整实施计划、未运行真实 API。 |
+
+#### 修改理由
+
+回答库能把大量重复付费调用收敛为有限的真实模型样本，并让相同 repeat 内的条件使用相同回答，从而减少“不同条件恰好得到不同模型答案”的干扰。但预取回答不能证明故障后现场重调 API，本地回放也不能复现真实 provider 的并发排队与限流。因此 Exp2 用缩小题集的六档在线检查约束外部并发偏差，Exp3 用小型在线恢复检查保留“故障后确实重新调用 AI”的关键真实性证据。
+
+#### 对既有决定的取代范围
+
+- EPD-019 中“正式 Exp3 全矩阵每个 replacement 都是故障后的真实在线 provider attempt”由本决定取代。其证据目的保留在小型在线恢复检查；主矩阵改用 `discarded_trace_tokens`，不能继续叫 `wasted_actual_tokens`。
+- EPD-020 中 Experiment 2 的 `wall_clock_ms`、`paired_speedup`、actual provider attempts/tokens/cost 与 `parallel_efficiency` 的全矩阵在线含义由 trace-replay/trace-attributed 版本取代；正确率、完成率、调度、并发和利用率指标继续有效。六档真实 API 在线检查单独报告实际资源和 provider 干扰。
+- EPD-021/023 中 Experiment 3 相对 shared Exp1 的 actual wall-clock/token/cost overhead 改为同 sample slot 的 paired trace reference；在线检查的 actual spend 单列。
+- EPD-024 中 Experiment 4 的 FULL 独立协议运行及四 mode 配对结构不变，但同一 pair 共享 source trace；资源差值改为 trace-replay/trace-attributed，不能称为各 mode 当次实际在线支出。
+- EPD-026 的题量、root-run、first-attempt unit、fault/mode/repeat 与 selection 不变；`provider-attempt upper bound` 只保留为旧全在线上界和 trace-slot capacity。新的 acquisition/canary 数量与 budget identity 必须重新生成。
+
+#### 待同步清单
+
+- [x] 唯一权威实验设计、参数决定台账、progress/feature/handoff 与 code map 的待实施边界。
+- [ ] 完整实施计划：从冻结指标反推 direct result、bank/source/consumer evidence、组件、迁移顺序、RED→GREEN 测试和一次性验收。
+- [ ] stable provider-body digest、bank schema/inventory、sample/replacement slot 与 fail-closed completeness。
+- [ ] trace-backed executor、新 submission/source provenance、完整状态机与双 evidence-class paper eligibility。
+- [ ] acquisition actual spend、trace attribution、人民币 1,000 calls/tokens/CNY/in-flight 硬门。
+- [ ] Experiment 2 六档在线检查与 Experiment 3 在线恢复检查的题集、重复、阈值、预算和 profile identity。
+- [ ] metrics/report/renderer/replay/audit、smoke/canary、plan-only、Fast/Full 与真实 API 验证。
 
 ## 4. 后续新增决定模板
 

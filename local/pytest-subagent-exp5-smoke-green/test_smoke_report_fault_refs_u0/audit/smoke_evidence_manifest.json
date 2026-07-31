@@ -1,0 +1,72 @@
+{
+  "file_count": 13,
+  "files": [
+    {
+      "content_hash": "sha256:1a6d9f22df2e4c2bc8958ac990f6b751ee46f5faad375b24ae1a02727231ac3d",
+      "path": "audit/secret_scan_report.json",
+      "size_bytes": 220
+    },
+    {
+      "content_hash": "sha256:3f9c171a6f47032b0fe62f8e0806180ce77e277dd10afeaad3e45903c1a122b2",
+      "path": "audit/smoke_eligibility_report.json",
+      "size_bytes": 327
+    },
+    {
+      "content_hash": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "path": "experiments/exp3_real_ai_fault_recovery/runs/exp3_fault_refs/0/.generations/generation-1/artifacts/artifact_index.jsonl",
+      "size_bytes": 0
+    },
+    {
+      "content_hash": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "path": "experiments/exp3_real_ai_fault_recovery/runs/exp3_fault_refs/0/.generations/generation-1/events/event_log.jsonl",
+      "size_bytes": 0
+    },
+    {
+      "content_hash": "sha256:0db93e01e212a01fca657baa6cd894d8e92520e910eec69d8a46f585b0d2c9d4",
+      "path": "experiments/exp3_real_ai_fault_recovery/runs/exp3_fault_refs/0/.generations/generation-1/fault_injections.jsonl",
+      "size_bytes": 821
+    },
+    {
+      "content_hash": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "path": "experiments/exp3_real_ai_fault_recovery/runs/exp3_fault_refs/0/.generations/generation-1/per_attempt_results.jsonl",
+      "size_bytes": 0
+    },
+    {
+      "content_hash": "sha256:f2432a30fe9d904f4595448786d9b47651f68856475f2e3ca0093bf0bd7f9e90",
+      "path": "experiments/exp3_real_ai_fault_recovery/runs/exp3_fault_refs/0/.generations/generation-1/per_task_results.jsonl",
+      "size_bytes": 249
+    },
+    {
+      "content_hash": "sha256:2d924bef7954ac56eced74c5eac8ebffd17be343fb7ad9d9610235c0945bf539",
+      "path": "experiments/exp3_real_ai_fault_recovery/runs/exp3_fault_refs/0/CURRENT.json",
+      "size_bytes": 33
+    },
+    {
+      "content_hash": "sha256:72f915b32d040abcead51190cc6707835bd0cee6e769467e175b5e5e62ed9ef0",
+      "path": "metrics/smoke_failures.json",
+      "size_bytes": 2682
+    },
+    {
+      "content_hash": "sha256:7675c44c6d90784fa6615d9e955286bb4c5f1f3678e33bf10db5b9ce80912435",
+      "path": "metrics/smoke_summary.csv",
+      "size_bytes": 1533
+    },
+    {
+      "content_hash": "sha256:ba38cc61f5e0b78bc6d2fc2cb341ea15c722141d3448330bff52a923eca02c12",
+      "path": "metrics/smoke_summary.json",
+      "size_bytes": 3894
+    },
+    {
+      "content_hash": "sha256:44d0f8d5e9d5c6af9d17a3c709ca8a6d2d542cd11aaa03b3ddaf5959b7b03299",
+      "path": "smoke_execution_plan.json",
+      "size_bytes": 401
+    },
+    {
+      "content_hash": "sha256:d270de9ea00eb40c7aa4fc793d86531ff7e378f783e777834e243890a893dd03",
+      "path": "suite_manifest.json",
+      "size_bytes": 226
+    }
+  ],
+  "paper_eligible": false,
+  "schema_version": "tokenshare.paper_smoke_evidence_manifest.v1"
+}

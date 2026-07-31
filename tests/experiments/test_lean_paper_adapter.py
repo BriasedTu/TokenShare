@@ -838,6 +838,25 @@ def test_lean_paper_adapter_accepts_openai_real_transport_through_executor(
         for attempt in result.attempt_results
     )
     assert result.run_evidence["transport_evidence"]["transport_kind"] == "ai_api"
+    registration_time = next(
+        event["occurred_at"]
+        for event in result.event_records
+        if event["event_type"] == "TASK_REGISTERED"
+    )
+    later_plugin_events = [
+        event
+        for event in result.event_records
+        if event["event_type"]
+        in {
+            "SPLIT_STRATEGY_INVOCATION_RECORDED",
+            "EXPANSION_DECISION_RECORDED",
+        }
+    ]
+    assert later_plugin_events
+    assert all(
+        event["occurred_at"] != registration_time
+        for event in later_plugin_events
+    )
     secret_scan = result.run_evidence["secret_scan_report"]
     assert secret_scan["status"] == "passed"
     assert secret_scan["secret_checked_count"] == 1

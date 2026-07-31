@@ -1,0 +1,1 @@
+{"schema_version": "tokenshare.paper_evidence_manifest.v2", "static_files": [], "conditions": [{"experiment_id": "exp1_real_ai_feasibility", "condition_id": "condition-large", "repeat_id": 0, "condition_manifest_ref": {"path": "condition_manifest.json", "size": 100}, "reachable_size_bytes": 3221225472}]}

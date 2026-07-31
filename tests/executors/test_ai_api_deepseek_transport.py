@@ -377,7 +377,8 @@ def test_deepseek_executor_timeout_marks_usage_missing(tmp_path, monkeypatch) ->
         submitted_at="2026-07-27T00:00:00Z",
     )
 
-    assert submission.result_kind == "executor_error"
+    assert submission.result_kind == "timeout"
+    assert submission.error["kind"] == "timeout"
     assert submission.usage_summary["provider_attempt_count"] == 1
     assert submission.usage_summary["cost_estimate_status"] == "usage_missing"
     assert submission.usage_summary["cost_estimate"] is None

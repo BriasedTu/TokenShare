@@ -1,0 +1,1 @@
+{"condition_id":"condition-exp4-must-not-run","evidence_integrity":"invalid","failure_kind":"ValueError","failure_stage":"runner_internal","message":"Experiment 3 worker-death condition ID is invalid","outcome_status":"blocked_dependency","root_status":"not_started","task_id":"case-1"}

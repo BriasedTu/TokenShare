@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import deque
 from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass, field, is_dataclass, replace
 from datetime import datetime, timezone
@@ -12,12 +13,17 @@ from pathlib import Path
 import shutil
 from threading import Lock
 from typing import Any
+import uuid
 
 from tokenshare.executors.ai_api_config import AIAPIExecutorConfig
 from tokenshare.experiments.paper_catalog import estimated_ai_units_for_case
 from tokenshare.experiments.paper_catalog import PaperInputCatalogManifest
 from tokenshare.experiments.paper_catalog_execution_view import (
     restore_catalog_execution_view,
+)
+from tokenshare.experiments.paper_budget import (
+    _condition_replacement_policy,
+    _paper_disk_estimate,
 )
 from tokenshare.experiments.paper_dispatcher import (
     PaperExperimentDispatchPlan,
@@ -28,8 +34,11 @@ from tokenshare.experiments.paper_experiment_contracts import PaperExecutionCont
 from tokenshare.experiments.paper_formal_evidence import (
     FormalEvidenceStore,
     SharedEvidenceError,
+    _is_protocol_ledger_event,
 )
 from tokenshare.experiments.paper_formal_callbacks import (
+    exp5_identity_fail_stop_required,
+    finalize_exp5_identity_evidence,
     run_exp4_ablation_strategy,
     run_exp5_identity_strategy,
     run_scheduled_cases,
@@ -76,6 +85,9 @@ from tokenshare.plugins.lean_proof.schemas import (
 
 EXP5_EXPERIMENT_ID = "exp5_real_ai_model_endpoint_comparison"
 APPROVED_ENDPOINT_BINDINGS_KEY = "__approved_endpoint_bindings__"
+_FORMAL_FINALIZATION_PENDING = "PENDING.json"
+_FORMAL_FINALIZATION_SCHEMA = "tokenshare.paper_experiment_finalization_pending.v1"
+_FORMAL_SUITE_FINALIZATION_SCHEMA = "tokenshare.paper_suite_finalization_pending.v1"
 
 
 class PaperInfrastructureBlockedError(Exception):
@@ -90,6 +102,7 @@ class PaperInfrastructureBlockedError(Exception):
         failure_kind: str,
         condition_id: str | None = None,
         task_id: str | None = None,
+        diagnostics: Mapping[str, Any] | None = None,
     ) -> None:
         super().__init__(message)
         self.terminal_outcome = PaperTerminalOutcome(
@@ -100,6 +113,7 @@ class PaperInfrastructureBlockedError(Exception):
         )
         self.condition_id = condition_id
         self.task_id = task_id
+        self.diagnostics = dict(diagnostics) if diagnostics is not None else None
 
     def to_summary(self) -> dict[str, Any]:
         body: dict[str, Any] = self.terminal_outcome.to_dict()
@@ -107,7 +121,131 @@ class PaperInfrastructureBlockedError(Exception):
             body["condition_id"] = self.condition_id
         if self.task_id is not None:
             body["task_id"] = self.task_id
+        if self.diagnostics is not None:
+            body["resource_diagnostics"] = dict(self.diagnostics)
         return body
+
+
+@dataclass
+class _RollingDiskForecast:
+    """用 O(1) 状态保存尚未消费的 suite 空间 forecast。"""
+
+    remaining_root_runs: int
+    remaining_ai_units: int
+    remaining_provider_attempts: int
+    fixed_forecast_bytes: int
+    max_condition_compaction_bytes: int
+    policy: Mapping[str, Any]
+    in_flight_forecast_bytes: int = 0
+    lock: Lock = field(default_factory=Lock, compare=False, repr=False)
+
+    def _remaining_forecast_bytes(self) -> int:
+        return (
+            self.remaining_root_runs * int(self.policy["p95_root_bytes"])
+            + self.remaining_ai_units * int(self.policy["p95_ai_unit_bytes"])
+            + self.remaining_provider_attempts
+            * int(self.policy["p95_attempt_envelope_bytes"])
+            + self.remaining_provider_attempts
+            * int(self.policy["p95_provider_attempt_payload_bytes"])
+            + self.remaining_provider_attempts
+            * int(self.policy["p95_model_execution_record_bytes"])
+            * int(self.policy["model_execution_record_duplicate_multiplier"])
+            + self.fixed_forecast_bytes
+            + self.in_flight_forecast_bytes
+        )
+
+    def root_guard_details(
+        self,
+        *,
+        output_root: str | Path,
+        condition_id: str,
+        task_id: str,
+        ai_unit_count: int,
+        provider_attempt_count: int,
+        max_tokens: int,
+    ) -> dict[str, Any]:
+        root_forecast_bytes = (
+            int(self.policy["p95_root_bytes"])
+            + ai_unit_count * int(self.policy["p95_ai_unit_bytes"])
+            + provider_attempt_count
+            * int(self.policy["p95_attempt_envelope_bytes"])
+            + provider_attempt_count
+            * int(self.policy["p95_provider_attempt_payload_bytes"])
+            + provider_attempt_count
+            * int(self.policy["p95_model_execution_record_bytes"])
+            * int(self.policy["model_execution_record_duplicate_multiplier"])
+        )
+        root_forecast_payload_bytes = provider_attempt_count * int(
+            self.policy["p95_provider_attempt_payload_bytes"]
+        )
+        theoretical_response_bytes = (
+            provider_attempt_count
+            * max_tokens
+            * int(self.policy["utf8_bytes_per_token"])
+        )
+        theoretical_over_forecast_bytes = max(
+            0,
+            theoretical_response_bytes - root_forecast_payload_bytes,
+        )
+        with self.lock:
+            remaining_forecast_bytes = self._remaining_forecast_bytes()
+            headroom_bytes = max(
+                (remaining_forecast_bytes + 3) // 4,
+                2 * 1024**3,
+            )
+            required_bytes = (
+                remaining_forecast_bytes
+                + theoretical_over_forecast_bytes
+                + headroom_bytes
+                + self.max_condition_compaction_bytes
+            )
+            root = Path(output_root).resolve(strict=False)
+            volume_path = _nearest_existing_disk_path(root)
+            available_bytes = int(shutil.disk_usage(volume_path).free)
+            reservation_applied = available_bytes >= required_bytes
+            root_reservation_bytes = (
+                root_forecast_bytes + theoretical_over_forecast_bytes
+            )
+            if reservation_applied:
+                self.remaining_root_runs = max(0, self.remaining_root_runs - 1)
+                self.remaining_ai_units = max(
+                    0, self.remaining_ai_units - ai_unit_count
+                )
+                self.remaining_provider_attempts = max(
+                    0,
+                    self.remaining_provider_attempts - provider_attempt_count,
+                )
+                self.in_flight_forecast_bytes += root_reservation_bytes
+        return {
+            "volume_path": volume_path.as_posix(),
+            "condition_id": condition_id,
+            "task_id": task_id,
+            "ai_unit_count": ai_unit_count,
+            "provider_attempt_count": provider_attempt_count,
+            "max_tokens": max_tokens,
+            "remaining_forecast_bytes": remaining_forecast_bytes,
+            "root_forecast_bytes": root_forecast_bytes,
+            "root_reservation_bytes": root_reservation_bytes,
+            "root_forecast_payload_bytes": root_forecast_payload_bytes,
+            "theoretical_response_bytes": theoretical_response_bytes,
+            "theoretical_over_forecast_bytes": theoretical_over_forecast_bytes,
+            "headroom_bytes": headroom_bytes,
+            "condition_compaction_bytes": self.max_condition_compaction_bytes,
+            "required_bytes": required_bytes,
+            "available_bytes": available_bytes,
+            "reservation_applied": reservation_applied,
+        }
+
+    def consume_root_forecast(
+        self,
+        *,
+        root_reservation_bytes: int,
+    ) -> None:
+        with self.lock:
+            self.in_flight_forecast_bytes = max(
+                0,
+                self.in_flight_forecast_bytes - root_reservation_bytes,
+            )
 
 
 class _Exp3RuntimeHookBridge(NoOpRuntimeHooks):
@@ -266,15 +404,76 @@ class _Exp3RuntimeHookBridge(NoOpRuntimeHooks):
 
 
 def replay_paper_formal_suite(*, output_root: str | Path) -> PaperSuiteResult:
-    """只从历史 frozen identity 和 runner result 重放，不读取当前 config。"""
+    """只从 frozen identity 与 canonical checkpoint evidence 独立重放。"""
 
     suite_root = Path(output_root)
-    bodies = _stored_evidence_bodies(suite_root)
-    FormalEvidenceStore.load(
-        output_root=suite_root,
-        **{f"expected_{name}": body for name, body in bodies.items()},
+    persisted, _recomputed, _comparison = _verified_replay_summary(suite_root)
+    return persisted
+
+
+def write_paper_formal_replay_report(
+    *,
+    output_root: str | Path,
+) -> dict[str, Any]:
+    """执行一次只读 replay，并持久化其输入引用与重放结果。"""
+
+    suite_root = Path(output_root)
+    source_refs = {
+        "formal_runner_result": _suite_file_ref(
+            suite_root,
+            "formal_runner_result.json",
+        ),
+        "evidence_manifest": {
+            "path": "evidence_manifest.json",
+            "validation_status": "verified_before_replay",
+        },
+    }
+    replayed_result, recomputed, comparison = _verified_replay_summary(suite_root)
+    replayed = replayed_result.to_dict()
+    replayed_digest = _sha256_bytes(
+        json.dumps(
+            replayed,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
     )
-    return _suite_result_from_evidence(suite_root)
+    report = {
+        "schema_version": "tokenshare.paper_replay_report.v1",
+        "status": "replay_verified",
+        "replay_mode": "stored_evidence_only",
+        "provider_calls_made": 0,
+        "source_refs": source_refs,
+        "persisted_result_ref": dict(source_refs["formal_runner_result"]),
+        "independently_recomputed_summary": recomputed,
+        "independently_recomputed_summary_digest": _digest_replay_summary(
+            recomputed
+        ),
+        "comparison": comparison,
+        "replayed_result": replayed,
+        "replayed_result_digest": replayed_digest,
+    }
+    relative_path = "audit/replay_report.json"
+    path = suite_root / relative_path
+    _write_json(path, report)
+    report_ref = {
+        "path": relative_path,
+        "content_hash": _sha256_bytes(path.read_bytes()),
+    }
+    # replay report 是 suite evidence，但 report 不嵌入 evidence_manifest hash，
+    # 因此可在写后刷新索引而不形成自引用 digest 循环。
+    FormalEvidenceStore(suite_root)._refresh_evidence_manifest()
+    return report_ref
+
+
+def _suite_file_ref(suite_root: Path, relative_path: str) -> dict[str, Any]:
+    path = suite_root / relative_path
+    if not path.is_file():
+        raise ValueError(f"replay source file is missing: {relative_path}")
+    return {
+        "path": relative_path,
+        "content_hash": _sha256_bytes(path.read_bytes()),
+    }
 
 
 def execute_paper_formal_suite(
@@ -330,6 +529,11 @@ def execute_paper_formal_suite(
         replay_only=replay_only,
         root_case_filter=normalized_root_filter,
     )
+    disk_preflight = _preflight_formal_disk_capacity(
+        output_root=output_root,
+        budget=budget,
+        resume=resume,
+    )
     suite_root = Path(output_root)
     started_at = _utc_now()
     bodies = _evidence_bodies(
@@ -345,11 +549,16 @@ def execute_paper_formal_suite(
     )
     if resume:
         evidence_store = FormalEvidenceStore(suite_root)
-        evidence_store.archive_uncheckpointed_adapter_runs()
-        evidence_store.repair_stale_compatibility_manifest()
+        _repair_interrupted_formal_finalization(suite_root)
         loaded = FormalEvidenceStore.load(
             output_root=suite_root,
             **{f"expected_{name}": body for name, body in bodies.items()},
+        )
+        _cleanup_checkpointed_adapter_trees(
+            suite_root=suite_root,
+            bound_plans=bound_plans,
+            normalized_root_filter=normalized_root_filter,
+            terminal_task_keys=set(loaded.completed_task_keys),
         )
         _persist_pre_execution_documents(
             suite_root=suite_root,
@@ -357,14 +566,18 @@ def execute_paper_formal_suite(
         )
         evidence_store._refresh_evidence_manifest()
         completed_task_keys = set(loaded.completed_task_keys)
-        if _all_selected_roots_completed(
+        all_selected_roots_terminal = _all_selected_roots_completed(
             bound_plans,
             completed_task_keys,
             root_case_filter=normalized_root_filter,
-        ):
-            return _suite_result_from_evidence(suite_root)
+        )
         usage = _usage_from_evidence(suite_root)
-        if _hard_limit_reached(usage, hard_limits):
+        if (
+            all_selected_roots_terminal or _hard_limit_reached(usage, hard_limits)
+        ) and _formal_suite_closure_complete(
+            suite_root=suite_root,
+            plans=plans,
+        ):
             return _suite_result_from_evidence(suite_root)
     else:
         evidence_store = FormalEvidenceStore.initialize(
@@ -379,9 +592,21 @@ def execute_paper_formal_suite(
         documents=frozen_pre_execution_documents,
     )
     evidence_store._refresh_evidence_manifest()
+    rolling_disk_forecast = _rolling_disk_forecast_from_plan(
+        budget=budget,
+        bound_plans=bound_plans,
+        catalog_manifest=catalog_manifest,
+        ai_api_configs=ai_api_configs,
+        normalized_root_filter=normalized_root_filter,
+        completed_task_keys=completed_task_keys,
+        max_condition_compaction_bytes=int(
+            disk_preflight["condition_compaction_bytes"]
+        ),
+    )
     results: list[PaperConditionResult] = []
     try:
         _dispatch_formal_conditions(
+            suite_root=suite_root,
             bound_plans=bound_plans,
             catalog_manifest=catalog_manifest,
             ai_api_configs=ai_api_configs,
@@ -392,6 +617,7 @@ def execute_paper_formal_suite(
             completed_task_keys=completed_task_keys,
             usage=usage,
             budget=budget,
+            rolling_disk_forecast=rolling_disk_forecast,
             normalized_root_filter=normalized_root_filter,
             classification=classification,
             results=results,
@@ -421,6 +647,7 @@ def execute_paper_formal_suite(
             budget=budget,
             budget_approval=budget_approval,
             execution_classification=classification,
+            completed_task_keys=completed_task_keys,
         )
 
     suite_result = PaperSuiteResult(
@@ -464,7 +691,6 @@ def execute_paper_formal_suite(
         audit_refs=(),
         error_summary=(),
     )
-    _write_json(suite_root / "formal_runner_result.json", suite_result.to_dict())
     _finalize_formal_manifests(
         suite_root=suite_root,
         suite_result=suite_result,
@@ -479,6 +705,7 @@ def execute_paper_formal_suite(
 
 def _dispatch_formal_conditions(
     *,
+    suite_root: Path,
     bound_plans: Sequence[tuple[PaperExperimentDispatchPlan, Sequence[tuple[Any, Any]]]],
     catalog_manifest: Any,
     ai_api_configs: Mapping[str, Any],
@@ -489,15 +716,23 @@ def _dispatch_formal_conditions(
     completed_task_keys: set[tuple[str, str, str, str]],
     usage: "_UsageTotals",
     budget: PaperBudgetResult,
+    rolling_disk_forecast: _RollingDiskForecast,
     normalized_root_filter: Mapping[str, tuple[str, ...]],
     classification: Mapping[str, Any] | None,
     results: list[PaperConditionResult],
 ) -> None:
     for plan, bound_items in bound_plans:
         if plan.status == "blocked":
+            _finalize_formal_experiment(
+                suite_root=suite_root,
+                plan=plan,
+                condition_results=(),
+                execution_classification=classification,
+            )
             continue
         plan_root = Path(plan.output_root)
         plan_root.mkdir(parents=True, exist_ok=True)
+        plan_results: list[PaperConditionResult] = []
         for condition, _selection in bound_items:
             endpoint_binding, request_limits, config = _condition_endpoint_contract(
                 experiment_id=plan.experiment_id,
@@ -519,6 +754,7 @@ def _dispatch_formal_conditions(
                 completed_task_keys=completed_task_keys,
                 usage=usage,
                 budget=budget,
+                rolling_disk_forecast=rolling_disk_forecast,
                 hard_limits=hard_limits,
                 root_case_ids=normalized_root_filter.get(
                     condition.condition_id
@@ -548,6 +784,265 @@ def _dispatch_formal_conditions(
             if result.condition_id != condition.condition_id:
                 raise ValueError("dispatcher returned a mismatched condition_id")
             results.append(result)
+            plan_results.append(result)
+        _finalize_formal_experiment(
+            suite_root=suite_root,
+            plan=plan,
+            condition_results=plan_results,
+            execution_classification=classification,
+        )
+
+
+def _verified_adapter_case_root(
+    *,
+    plan_root: Path,
+    condition_id: str,
+    task_id: str,
+    adapter_root: Path,
+) -> Path:
+    """证明清理目标是 plan 下唯一、精确的 adapter case 目录。"""
+
+    for field_name, value in (
+        ("condition_id", condition_id),
+        ("task_id", task_id),
+    ):
+        if (
+            not isinstance(value, str)
+            or not value
+            or not value[0].isalnum()
+            or any(
+                not (character.isalnum() or character in "._-")
+                for character in value
+            )
+        ):
+            raise ValueError(f"{field_name} must be a path-safe identifier")
+    resolved_plan_root = Path(plan_root).resolve(strict=False)
+    runs_root = (resolved_plan_root / "runs").resolve(strict=False)
+    condition_root = (runs_root / condition_id).resolve(strict=False)
+    expected = (condition_root / task_id).resolve(strict=False)
+    resolved_target = Path(adapter_root).resolve(strict=False)
+    if (
+        resolved_target != expected
+        or resolved_target in {resolved_plan_root, runs_root, condition_root}
+        or resolved_target.parent != condition_root
+    ):
+        raise ValueError("cleanup target is not the exact adapter case root")
+    return resolved_target
+
+
+def _remove_checkpointed_adapter_tree(
+    *,
+    suite_root: Path,
+    plan_root: Path,
+    condition: Any,
+    task_id: str,
+    adapter_root: Path,
+    commit_token: Mapping[str, Any] | None = None,
+    terminal_task_keys: set[tuple[str, str, str, str]] | None = None,
+) -> bool:
+    """仅按同调用 commit token 或 full-load terminal key 回收 working tree。"""
+
+    target = _verified_adapter_case_root(
+        plan_root=plan_root,
+        condition_id=condition.condition_id,
+        task_id=task_id,
+        adapter_root=adapter_root,
+    )
+    run_root = (
+        Path(suite_root)
+        / "experiments"
+        / condition.experiment_id
+        / "runs"
+        / condition.condition_id
+        / str(condition.repeat_id)
+    )
+    task_key = _formal_task_key(condition, task_id)
+    if commit_token is not None:
+        expected_commit = {
+            "schema_version": "tokenshare.paper_checkpoint_commit.v1",
+            "experiment_id": condition.experiment_id,
+            "condition_id": condition.condition_id,
+            "repeat_id": str(condition.repeat_id),
+            "task_id": task_id,
+            "run_root": run_root.relative_to(Path(suite_root)).as_posix(),
+        }
+        if any(
+            commit_token.get(key) != value
+            for key, value in expected_commit.items()
+        ):
+            raise ValueError("checkpoint commit token identity mismatch")
+        for field_name in ("generation_id", "generation_manifest_digest"):
+            if not isinstance(commit_token.get(field_name), str) or not commit_token.get(
+                field_name
+            ):
+                raise ValueError("checkpoint commit token is incomplete")
+        current = _required_json_object(
+            run_root / "CURRENT.json",
+            "checkpoint CURRENT",
+        )
+        if (
+            current.get("schema_version")
+            != "tokenshare.paper_checkpoint_current.v1"
+            or current.get("generation_id")
+            != commit_token["generation_id"]
+            or current.get("generation_manifest_digest")
+            != commit_token["generation_manifest_digest"]
+        ):
+            raise ValueError("checkpoint commit token does not match CURRENT")
+    elif terminal_task_keys is None or task_key not in terminal_task_keys:
+        return False
+    if not target.exists():
+        return False
+    if not target.is_dir():
+        raise ValueError("adapter case cleanup target is not a directory")
+    shutil.rmtree(target)
+    return True
+
+
+def _cleanup_checkpointed_adapter_trees(
+    *,
+    suite_root: Path,
+    bound_plans: Sequence[
+        tuple[PaperExperimentDispatchPlan, Sequence[tuple[Any, Any]]]
+    ],
+    normalized_root_filter: Mapping[str, tuple[str, ...]],
+    terminal_task_keys: set[tuple[str, str, str, str]],
+) -> int:
+    """resume 前仅删除已有 canonical task 对应的 exact adapter case。"""
+
+    removed = 0
+    for plan, bound_items in bound_plans:
+        plan_root = Path(plan.output_root)
+        for condition, selection in bound_items:
+            task_ids = normalized_root_filter.get(
+                condition.condition_id,
+                tuple(selection.ordered_case_ids),
+            )
+            for task_id in task_ids:
+                removed += int(
+                    _remove_checkpointed_adapter_tree(
+                        suite_root=suite_root,
+                        plan_root=plan_root,
+                        condition=condition,
+                        task_id=task_id,
+                        adapter_root=(
+                            plan_root
+                            / "runs"
+                            / condition.condition_id
+                            / task_id
+                        ),
+                        terminal_task_keys=terminal_task_keys,
+                    )
+                )
+    return removed
+
+
+def _close_disk_resource_blocked_suite(
+    *,
+    suite_root: Path,
+    suite_id: str,
+    started_at: str,
+    plans: Sequence[PaperExperimentDispatchPlan],
+    bound_plans: Sequence[
+        tuple[PaperExperimentDispatchPlan, Sequence[tuple[Any, Any]]]
+    ],
+    condition_results: Sequence[PaperConditionResult],
+    blocked_error: PaperInfrastructureBlockedError,
+    root_case_filter: Mapping[str, tuple[str, ...]],
+    usage: "_UsageTotals",
+    budget: PaperBudgetResult,
+    budget_approval: Mapping[str, Any],
+    completed_task_keys: set[tuple[str, str, str, str]],
+) -> PaperSuiteResult:
+    """磁盘不足时仅写一个常量大小 marker，禁止逐 root closure。"""
+
+    selection_hasher = hashlib.sha256()
+    remaining_hasher = hashlib.sha256()
+    selected_task_count = 0
+    remaining_task_count = 0
+    for _plan, items in bound_plans:
+        for condition, selection in items:
+            case_ids = root_case_filter.get(
+                condition.condition_id,
+                tuple(selection.ordered_case_ids),
+            )
+            for case_id in case_ids:
+                task_key = _formal_task_key(condition, case_id)
+                encoded = _serialized_json_text(list(task_key)).encode("utf-8")
+                selection_hasher.update(encoded)
+                selection_hasher.update(b"\n")
+                selected_task_count += 1
+                if task_key not in completed_task_keys:
+                    remaining_hasher.update(encoded)
+                    remaining_hasher.update(b"\n")
+                    remaining_task_count += 1
+    last_committed_cursor = (
+        list(max(completed_task_keys)) if completed_task_keys else None
+    )
+    marker = {
+        "schema_version": "tokenshare.paper_infrastructure_blocked.v1",
+        "status": "infrastructure_blocked",
+        "created_at": _utc_now(),
+        "failure": blocked_error.to_summary(),
+        "budget_digest": budget.budget_digest,
+        "selection_digest": f"sha256:{selection_hasher.hexdigest()}",
+        "selected_task_count": selected_task_count,
+        "remaining_task_count": remaining_task_count,
+        "remaining_task_identity_digest": (
+            f"sha256:{remaining_hasher.hexdigest()}"
+        ),
+        "last_committed_cursor": last_committed_cursor,
+        "derivation": "frozen_selection_minus_validated_terminal_task_identities",
+    }
+    closure_error: dict[str, Any] | None = None
+    try:
+        _atomic_write_json(suite_root / "infrastructure_blocked.json", marker)
+        FormalEvidenceStore(suite_root)._refresh_evidence_manifest()
+    except (OSError, TypeError, ValueError) as error:
+        closure_error = {
+            "outcome_status": "blocked_dependency",
+            "evidence_integrity": "invalid",
+            "failure_stage": "infrastructure_blocked_marker",
+            "failure_kind": type(error).__name__,
+            "message": str(error),
+        }
+    error_summary = (
+        blocked_error.to_summary(),
+        *((closure_error,) if closure_error is not None else ()),
+    )
+    return PaperSuiteResult(
+        suite_id=suite_id,
+        status=(
+            PaperStatus.INCOMPLETE
+            if closure_error is not None
+            else PaperStatus.BLOCKED
+        ),
+        output_root=suite_root.as_posix(),
+        started_at=started_at,
+        ended_at=_utc_now(),
+        experiment_ids=tuple(plan.experiment_id for plan in plans),
+        condition_count=sum(len(items) for _plan, items in bound_plans),
+        run_count=len(condition_results),
+        task_count=selected_task_count,
+        provider_attempt_count=usage.provider_attempt_count,
+        total_tokens=usage.total_tokens,
+        total_cost_estimate=usage.reportable_total_cost_estimate(),
+        cost_estimate_by_currency=(
+            dict(sorted(usage.cost_estimate_by_currency.items()))
+            if usage.cost_estimate_by_currency
+            else None
+        ),
+        total_cost_estimate_status=usage.cost_estimate_status(),
+        paper_eligible=False,
+        eligibility_report_ref=None,
+        budget_ref={
+            "budget_digest": budget.budget_digest,
+            "approval_mode": budget_approval["approval_mode"],
+        },
+        metrics_refs=(),
+        audit_refs=(),
+        error_summary=error_summary,
+    )
 
 
 def _close_blocked_formal_suite(
@@ -565,8 +1060,28 @@ def _close_blocked_formal_suite(
     budget: PaperBudgetResult,
     budget_approval: Mapping[str, Any],
     execution_classification: Mapping[str, Any] | None,
+    completed_task_keys: set[tuple[str, str, str, str]],
 ) -> PaperSuiteResult:
     summary = blocked_error.to_summary()
+    if blocked_error.terminal_outcome.failure_kind in {
+        "insufficient_disk_capacity",
+        "insufficient_rolling_root_capacity",
+        "insufficient_condition_compaction_capacity",
+    }:
+        return _close_disk_resource_blocked_suite(
+            suite_root=suite_root,
+            suite_id=suite_id,
+            started_at=started_at,
+            plans=plans,
+            bound_plans=bound_plans,
+            condition_results=condition_results,
+            blocked_error=blocked_error,
+            root_case_filter=root_case_filter,
+            usage=usage,
+            budget=budget,
+            budget_approval=budget_approval,
+            completed_task_keys=completed_task_keys,
+        )
     persistence_failures: list[dict[str, Any]] = []
     failure_checkpointed = False
     selected_task_count = 0
@@ -615,6 +1130,21 @@ def _close_blocked_formal_suite(
                             "message": str(persistence_error),
                         }
                     )
+            try:
+                _finalize_formal_condition_snapshot(
+                    evidence_store=evidence_store,
+                    condition=condition,
+                    selected_case_ids=case_ids,
+                )
+            except Exception as persistence_error:
+                persistence_failures.append(
+                    {
+                        "condition_id": condition.condition_id,
+                        "task_id": None,
+                        "failure_kind": type(persistence_error).__name__,
+                        "message": str(persistence_error),
+                    }
+                )
 
     closed_results = _blocked_condition_results(
         bound_plans=bound_plans,
@@ -672,7 +1202,6 @@ def _close_blocked_formal_suite(
         audit_refs=(),
         error_summary=error_summary,
     )
-    _write_json(suite_root / "formal_runner_result.json", suite_result.to_dict())
     _finalize_formal_manifests(
         suite_root=suite_root,
         suite_result=suite_result,
@@ -697,7 +1226,6 @@ def _close_blocked_formal_suite(
                 },
             ),
         )
-        _write_json(suite_root / "formal_runner_result.json", suite_result.to_dict())
         _finalize_formal_manifests(
             suite_root=suite_root,
             suite_result=suite_result,
@@ -826,11 +1354,16 @@ def _blocked_condition_results(
     root_case_filter: Mapping[str, tuple[str, ...]],
     existing_results: Sequence[PaperConditionResult],
 ) -> list[PaperConditionResult]:
-    existing_by_id = {result.condition_id: result for result in existing_results}
+    remaining_existing = list(existing_results)
     results: list[PaperConditionResult] = []
     for _plan, bound_items in bound_plans:
         for condition, selection in bound_items:
-            prior = existing_by_id.get(condition.condition_id)
+            prior = None
+            if (
+                remaining_existing
+                and remaining_existing[0].condition_id == condition.condition_id
+            ):
+                prior = remaining_existing.pop(0)
             if prior is not None:
                 results.append(prior)
                 continue
@@ -1194,6 +1727,496 @@ def _validate_suite_inputs(
     return tuple(bound_plans)
 
 
+def _preflight_formal_disk_capacity(
+    *,
+    output_root: str | Path,
+    budget: PaperBudgetResult,
+    resume: bool,
+) -> dict[str, Any]:
+    """在 evidence/provider 之前验证目标卷可容纳剩余 formal evidence。"""
+
+    try:
+        estimate = _validated_formal_disk_estimate(budget)
+    except (KeyError, TypeError, ValueError) as error:
+        raise PaperInfrastructureBlockedError(
+            f"formal disk estimate is invalid: {error}",
+            evidence_integrity=PaperEvidenceIntegrity.INVALID,
+            failure_stage="disk_preflight",
+            failure_kind="invalid_disk_estimate",
+            diagnostics={"validation_error": str(error)},
+        ) from error
+    forecast_bytes = int(estimate["forecast_bytes"])
+    components = _required_mapping(estimate["components"], "disk components")
+    policy = _required_mapping(estimate["policy"], "disk policy")
+    root = Path(output_root).resolve(strict=False)
+    existing_canonical_bytes, largest_existing_condition_bytes = (
+        _existing_canonical_evidence_usage(root) if resume else (0, 0)
+    )
+    # actual canonical bytes 与 p95 forecast 不是同一进度单位；startup 保守保留
+    # 全部 forecast，resume 的精确进度由 validated task identity 恢复到计数器。
+    remaining_forecast_bytes = forecast_bytes
+    headroom_bytes = max(
+        (remaining_forecast_bytes + 3) // 4,
+        2 * 1024**3,
+    )
+    condition_compaction_bytes = max(
+        int(estimate["max_condition_compaction_bytes"]),
+        largest_existing_condition_bytes,
+    )
+    required_bytes = (
+        remaining_forecast_bytes + headroom_bytes + condition_compaction_bytes
+    )
+    volume_path = _nearest_existing_disk_path(root)
+    available_bytes = int(shutil.disk_usage(volume_path).free)
+    details = {
+        "volume_path": volume_path.as_posix(),
+        "forecast_bytes": forecast_bytes,
+        "theoretical_max_payload_bytes": int(
+            estimate["theoretical_max_payload_bytes"]
+        ),
+        "existing_canonical_bytes": existing_canonical_bytes,
+        "remaining_forecast_bytes": remaining_forecast_bytes,
+        "headroom_bytes": headroom_bytes,
+        "condition_compaction_bytes": condition_compaction_bytes,
+        "required_bytes": required_bytes,
+        "available_bytes": available_bytes,
+        "policy": dict(policy),
+        "components": {
+            **dict(components),
+            "condition_compaction_bytes": condition_compaction_bytes,
+            "headroom_bytes": headroom_bytes,
+        },
+    }
+    if available_bytes < required_bytes:
+        raise PaperInfrastructureBlockedError(
+            "formal disk preflight failed: insufficient disk capacity",
+            evidence_integrity=PaperEvidenceIntegrity.INVALID,
+            failure_stage="disk_preflight",
+            failure_kind="insufficient_disk_capacity",
+            diagnostics=details,
+        )
+    return details
+
+
+def _validated_formal_disk_estimate(
+    budget: PaperBudgetResult,
+) -> dict[str, Any]:
+    estimate = budget.disk_estimate
+    expected_top_keys = {
+        "schema_version",
+        "inputs",
+        "policy",
+        "components",
+        "forecast_bytes",
+        "theoretical_max_payload_bytes",
+        "max_condition_compaction_bytes",
+    }
+    if not isinstance(estimate, Mapping) or set(estimate) != expected_top_keys:
+        raise ValueError("disk estimate shape mismatch")
+    if estimate.get("schema_version") != "tokenshare.paper_disk_estimate.v3":
+        raise ValueError("disk estimate schema mismatch")
+    inputs = estimate.get("inputs")
+    policy = estimate.get("policy")
+    components = estimate.get("components")
+    if not isinstance(inputs, Mapping) or not isinstance(policy, Mapping):
+        raise ValueError("disk estimate inputs/policy must be mappings")
+    if not isinstance(components, Mapping):
+        raise ValueError("disk estimate components must be a mapping")
+    integer_values = [
+        *inputs.values(),
+        *(
+            value
+            for key, value in policy.items()
+            if key
+            not in {
+                "schema_version",
+                "provider_attempt_payload_calibration_source",
+            }
+        ),
+        *components.values(),
+        estimate.get("forecast_bytes"),
+        estimate.get("theoretical_max_payload_bytes"),
+        estimate.get("max_condition_compaction_bytes"),
+    ]
+    if any(
+        isinstance(value, bool) or not isinstance(value, int) or value < 0
+        for value in integer_values
+    ):
+        raise ValueError("disk estimate numeric fields must be non-negative integers")
+    expected_counts = {
+        "planned_conditions": budget.planned_conditions,
+        "planned_root_runs": budget.planned_root_runs,
+        "planned_ai_units": budget.planned_ai_units,
+        "provider_attempt_upper_bound": budget.max_provider_attempts,
+        "token_upper_bound": budget.token_upper_bound,
+    }
+    for field_name, expected_value in expected_counts.items():
+        if inputs.get(field_name) != expected_value:
+            raise ValueError(f"disk estimate input drift: {field_name}")
+    quota = budget.quota_preflight
+    commitments = quota.get("budget_commitments") if isinstance(quota, Mapping) else None
+    request_limits = (
+        commitments.get("request_limits")
+        if isinstance(commitments, Mapping)
+        else None
+    )
+    frozen_max_tokens = None
+    if isinstance(request_limits, Mapping):
+        frozen_max_tokens = request_limits.get(
+            "token_upper_bound_per_provider_attempt",
+            request_limits.get("max_tokens"),
+        )
+    if frozen_max_tokens is None:
+        provider_attempts = budget.max_provider_attempts
+        if (
+            provider_attempts > 0
+            and budget.token_upper_bound % provider_attempts == 0
+        ):
+            frozen_max_tokens = budget.token_upper_bound // provider_attempts
+    if inputs.get("max_tokens") != frozen_max_tokens:
+        raise ValueError("disk estimate token ceiling drift")
+    recomputed = _paper_disk_estimate(
+        planned_conditions=int(inputs["planned_conditions"]),
+        planned_root_runs=int(inputs["planned_root_runs"]),
+        planned_ai_units=int(inputs["planned_ai_units"]),
+        provider_attempt_upper_bound=int(
+            inputs["provider_attempt_upper_bound"]
+        ),
+        max_tokens=int(inputs["max_tokens"]),
+        token_upper_bound=int(inputs["token_upper_bound"]),
+        max_condition_root_runs=int(inputs["max_condition_root_runs"]),
+        max_condition_ai_units=int(inputs["max_condition_ai_units"]),
+        max_condition_provider_attempts=int(
+            inputs["max_condition_provider_attempts"]
+        ),
+    )
+    if dict(estimate) != recomputed:
+        raise ValueError("disk estimate components/policy mismatch")
+    return dict(estimate)
+
+
+def _root_disk_attempt_upper(
+    *,
+    condition: Any,
+    case: Mapping[str, Any],
+    request_limits: Mapping[str, Any],
+) -> tuple[int, int]:
+    ai_unit_count = (
+        estimated_ai_units_for_case(dict(case))
+        if "schema_version" in case or "expected_ai_unit_count" in case
+        else 1
+    )
+    attempts_per_unit = request_limits.get("max_provider_attempts", 1)
+    max_tokens = request_limits.get("max_tokens")
+    if (
+        isinstance(attempts_per_unit, bool)
+        or not isinstance(attempts_per_unit, int)
+        or attempts_per_unit < 1
+        or isinstance(max_tokens, bool)
+        or not isinstance(max_tokens, int)
+        or max_tokens < 1
+    ):
+        raise ValueError("rolling root request limits must be positive integers")
+    replacement_policy = _condition_replacement_policy(condition)
+    replacement_multiplier = (
+        int(replacement_policy["max_retries"])
+        if replacement_policy["replacement_attempts_allowed"] is True
+        else 0
+    )
+    return (
+        ai_unit_count,
+        ai_unit_count * (1 + replacement_multiplier) * attempts_per_unit,
+    )
+
+
+def _rolling_disk_forecast_from_plan(
+    *,
+    budget: PaperBudgetResult,
+    bound_plans: Sequence[tuple[Any, Sequence[tuple[Any, Any]]]],
+    catalog_manifest: Any,
+    ai_api_configs: Mapping[str, Any],
+    normalized_root_filter: Mapping[str, tuple[str, ...]],
+    completed_task_keys: set[tuple[str, str, str, str]],
+    max_condition_compaction_bytes: int,
+) -> _RollingDiskForecast:
+    """从冻结 plan 与已验证 terminal identity 恢复 remaining 计数。"""
+
+    estimate = _validated_formal_disk_estimate(budget)
+    inputs = _required_mapping(estimate["inputs"], "disk inputs")
+    policy = _required_mapping(estimate["policy"], "disk policy")
+    components = _required_mapping(estimate["components"], "disk components")
+    remaining_root_runs = int(inputs["planned_root_runs"])
+    remaining_ai_units = int(inputs["planned_ai_units"])
+    remaining_provider_attempts = int(inputs["provider_attempt_upper_bound"])
+    cases_by_id = _catalog_cases_by_id(catalog_manifest)
+    for plan, items in bound_plans:
+        if plan.status != "planned":
+            continue
+        for condition, selection in items:
+            selected_case_ids = normalized_root_filter.get(
+                condition.condition_id,
+                tuple(selection.ordered_case_ids),
+            )
+            terminal_case_ids = tuple(
+                case_id
+                for case_id in selected_case_ids
+                if _formal_task_key(condition, case_id) in completed_task_keys
+            )
+            if not terminal_case_ids:
+                continue
+            _, request_limits, _ = _condition_endpoint_contract(
+                experiment_id=plan.experiment_id,
+                condition=condition,
+                ai_api_configs=ai_api_configs,
+            )
+            for case_id in terminal_case_ids:
+                case = cases_by_id.get(case_id)
+                if case is None:
+                    # 完整映射无法证明时仅扣 root identity，其他计数保持保守。
+                    remaining_root_runs = max(0, remaining_root_runs - 1)
+                    continue
+                frozen_case = _case_with_selection_split_profile(case, selection)
+                ai_unit_count, provider_attempt_count = _root_disk_attempt_upper(
+                    condition=condition,
+                    case=frozen_case,
+                    request_limits=request_limits,
+                )
+                remaining_root_runs = max(0, remaining_root_runs - 1)
+                remaining_ai_units = max(
+                    0,
+                    remaining_ai_units - ai_unit_count,
+                )
+                remaining_provider_attempts = max(
+                    0,
+                    remaining_provider_attempts - provider_attempt_count,
+                )
+    fixed_forecast_bytes = int(components["fixed_manifest_bytes"]) + int(
+        components["fixed_temp_bytes"]
+    )
+    return _RollingDiskForecast(
+        remaining_root_runs=remaining_root_runs,
+        remaining_ai_units=remaining_ai_units,
+        remaining_provider_attempts=remaining_provider_attempts,
+        fixed_forecast_bytes=fixed_forecast_bytes,
+        max_condition_compaction_bytes=max_condition_compaction_bytes,
+        policy=dict(policy),
+    )
+
+
+def _preflight_formal_root_capacity(
+    *,
+    output_root: str | Path,
+    condition: Any,
+    task_id: str,
+    case: Mapping[str, Any],
+    request_limits: Mapping[str, Any],
+    rolling_forecast: _RollingDiskForecast,
+) -> dict[str, Any]:
+    """在 root callback/provider 前校验剩余 suite forecast 与尾部补差。"""
+
+    ai_unit_count, provider_attempt_count = _root_disk_attempt_upper(
+        condition=condition,
+        case=case,
+        request_limits=request_limits,
+    )
+    max_tokens = int(request_limits["max_tokens"])
+    details = rolling_forecast.root_guard_details(
+        output_root=output_root,
+        condition_id=str(condition.condition_id),
+        task_id=str(task_id),
+        ai_unit_count=ai_unit_count,
+        provider_attempt_count=provider_attempt_count,
+        max_tokens=max_tokens,
+    )
+    if details["available_bytes"] < details["required_bytes"]:
+        raise PaperInfrastructureBlockedError(
+            "formal rolling root disk guard failed: insufficient capacity",
+            evidence_integrity=PaperEvidenceIntegrity.INVALID,
+            failure_stage="disk_preflight",
+            failure_kind="insufficient_rolling_root_capacity",
+            condition_id=str(condition.condition_id),
+            task_id=str(task_id),
+            diagnostics=details,
+        )
+    return details
+
+
+def _preflight_formal_condition_compaction_capacity(
+    *,
+    output_root: str | Path,
+    condition_id: str,
+    current_condition_reachable_bytes: int,
+) -> dict[str, Any]:
+    """为 v3 delta condition 的 terminal compaction 预留 COW 空间。"""
+
+    if (
+        isinstance(current_condition_reachable_bytes, bool)
+        or not isinstance(current_condition_reachable_bytes, int)
+        or current_condition_reachable_bytes < 0
+    ):
+        raise ValueError("condition reachable bytes must be a non-negative integer")
+    fixed_safety_bytes = 2 * 1024**3
+    required_bytes = current_condition_reachable_bytes + fixed_safety_bytes
+    root = Path(output_root).resolve(strict=False)
+    volume_path = _nearest_existing_disk_path(root)
+    available_bytes = int(shutil.disk_usage(volume_path).free)
+    details = {
+        "volume_path": volume_path.as_posix(),
+        "condition_id": str(condition_id),
+        "current_condition_reachable_bytes": current_condition_reachable_bytes,
+        "fixed_safety_bytes": fixed_safety_bytes,
+        "required_bytes": required_bytes,
+        "available_bytes": available_bytes,
+    }
+    if available_bytes < required_bytes:
+        raise PaperInfrastructureBlockedError(
+            "formal condition compaction disk guard failed: insufficient capacity",
+            evidence_integrity=PaperEvidenceIntegrity.INVALID,
+            failure_stage="condition_compaction",
+            failure_kind="insufficient_condition_compaction_capacity",
+            condition_id=str(condition_id),
+            diagnostics=details,
+        )
+    return details
+
+
+def _finalize_formal_condition_snapshot(
+    *,
+    evidence_store: FormalEvidenceStore,
+    condition: Any,
+    selected_case_ids: Sequence[str],
+    condition_events: Sequence[Mapping[str, Any]] | None = None,
+) -> None:
+    """把冻结分母已齐的 condition 统一收口为唯一 tail 与 standalone snapshot。"""
+
+    if not selected_case_ids:
+        raise ValueError("formal condition snapshot requires selected roots")
+    run_root = (
+        evidence_store.output_root
+        / "experiments"
+        / condition.experiment_id
+        / "runs"
+        / condition.condition_id
+        / str(condition.repeat_id)
+    )
+    condition_manifest = _required_json_object(
+        run_root / "condition_manifest.json",
+        "condition manifest",
+    )
+    if condition_manifest.get("terminal") is True:
+        return
+    if condition_manifest.get("condition_event_delta_count") == 1:
+        if condition_events is not None:
+            evidence_store.checkpoint_condition_tail_events(
+                experiment_id=condition.experiment_id,
+                condition=_as_json(condition),
+                repeat_id=condition.repeat_id,
+                anchor_task_id=str(selected_case_ids[-1]),
+                events=tuple(condition_events),
+            )
+    else:
+        evidence_store.checkpoint_condition_tail_events(
+            experiment_id=condition.experiment_id,
+            condition=_as_json(condition),
+            repeat_id=condition.repeat_id,
+            anchor_task_id=str(selected_case_ids[-1]),
+            events=tuple(condition_events or ()),
+        )
+    condition_manifest = _required_json_object(
+        run_root / "condition_manifest.json",
+        "condition manifest",
+    )
+    _preflight_formal_condition_compaction_capacity(
+        output_root=evidence_store.output_root,
+        condition_id=condition.condition_id,
+        current_condition_reachable_bytes=int(
+            condition_manifest["reachable_size_bytes"]
+        ),
+    )
+    evidence_store.compact_condition_snapshot(
+        experiment_id=condition.experiment_id,
+        condition=_as_json(condition),
+        repeat_id=condition.repeat_id,
+        temp_parent=evidence_store.output_root.parent,
+    )
+
+
+def _nearest_existing_disk_path(path: Path) -> Path:
+    candidate = path
+    while not candidate.exists():
+        parent = candidate.parent
+        if parent == candidate:
+            break
+        candidate = parent
+    if candidate.is_file():
+        return candidate.parent
+    return candidate
+
+
+def _existing_canonical_evidence_usage(root: Path) -> tuple[int, int]:
+    manifest_path = root / "evidence_manifest.json"
+    if not manifest_path.is_file():
+        return 0, 0
+    manifest = _required_json_object(manifest_path, "evidence manifest")
+    schema_version = manifest.get("schema_version")
+    if schema_version == "tokenshare.paper_evidence_manifest.v1":
+        entries = manifest.get("files")
+        if not isinstance(entries, list):
+            raise ValueError("evidence manifest file index is missing")
+        total = 0
+        condition_sizes: dict[tuple[str, ...], int] = {}
+        for entry in entries:
+            size = _manifest_entry_size(entry)
+            total += size
+            path_value = entry.get("path") if isinstance(entry, Mapping) else None
+            parts = Path(str(path_value)).parts if isinstance(path_value, str) else ()
+            if len(parts) >= 5 and parts[0] == "experiments" and parts[2] == "runs":
+                key = tuple(parts[:5])
+                condition_sizes[key] = condition_sizes.get(key, 0) + size
+        return total, max(condition_sizes.values(), default=0)
+    if schema_version == "tokenshare.paper_evidence_manifest.v2":
+        static_files = manifest.get("files", manifest.get("static_files"))
+        conditions = manifest.get("conditions")
+        if not isinstance(static_files, list) or not isinstance(conditions, list):
+            raise ValueError("evidence manifest v2 inventory is invalid")
+        static_size = sum(_manifest_entry_size(entry) for entry in static_files)
+        condition_size = 0
+        for entry in conditions:
+            if not isinstance(entry, Mapping):
+                raise ValueError("evidence manifest v2 condition entry is invalid")
+            reachable_size = entry.get("reachable_size_bytes")
+            if (
+                isinstance(reachable_size, bool)
+                or not isinstance(reachable_size, int)
+                or reachable_size < 0
+            ):
+                raise ValueError(
+                    "evidence manifest v2 reachable size is invalid"
+                )
+            condition_size += reachable_size
+        largest_condition_size = max(
+            (int(entry["reachable_size_bytes"]) for entry in conditions),
+            default=0,
+        )
+        return static_size + condition_size, largest_condition_size
+    raise ValueError("evidence manifest schema version mismatch")
+
+
+def _existing_canonical_evidence_bytes(root: Path) -> int:
+    """保留内部标量入口；preflight 同时消费最大 condition size。"""
+
+    return _existing_canonical_evidence_usage(root)[0]
+
+
+def _manifest_entry_size(entry: Any) -> int:
+    if not isinstance(entry, Mapping):
+        raise ValueError("evidence manifest size entry is invalid")
+    size = entry.get("size")
+    if isinstance(size, bool) or not isinstance(size, int) or size < 0:
+        raise ValueError("evidence manifest entry size is invalid")
+    return size
+
+
 def _selected_ai_unit_count(
     *,
     selection: Any,
@@ -1356,17 +2379,26 @@ def _suite_status(
     if not results:
         return PaperStatus.BLOCKED if plans else PaperStatus.COMPLETED
     statuses = {_status_value(result.status) for result in results}
-    if statuses == {PaperStatus.COMPLETED.value}:
-        return (
-            PaperStatus.COMPLETED_WITH_FAILURES
-            if any(plan.status == "blocked" for plan in plans)
-            else PaperStatus.COMPLETED
-        )
     if PaperStatus.BUDGET_EXHAUSTED.value in statuses:
         return PaperStatus.BUDGET_EXHAUSTED
     if PaperStatus.FAILED.value in statuses:
         return PaperStatus.FAILED
-    return PaperStatus.COMPLETED_WITH_FAILURES
+    if (
+        PaperStatus.BLOCKED.value in statuses
+        or any(plan.status == "blocked" for plan in plans)
+    ):
+        return PaperStatus.BLOCKED
+    if statuses.intersection(
+        {
+            PaperStatus.PLANNED.value,
+            PaperStatus.RUNNING.value,
+            PaperStatus.INCOMPLETE.value,
+        }
+    ):
+        return PaperStatus.INCOMPLETE
+    if PaperStatus.COMPLETED_WITH_FAILURES.value in statuses:
+        return PaperStatus.COMPLETED_WITH_FAILURES
+    return PaperStatus.COMPLETED
 
 
 def _classified_suite_status(
@@ -1374,12 +2406,8 @@ def _classified_suite_status(
     *,
     classification: Mapping[str, Any] | None,
 ) -> PaperStatus:
-    """smoke 的 root 失败保留证据并收敛为 completed_with_failures。"""
+    """execution classification 不得覆盖 runner 已判定的 suite 终态。"""
 
-    if classification is None:
-        return status
-    if status in {PaperStatus.FAILED, PaperStatus.BLOCKED}:
-        return PaperStatus.COMPLETED_WITH_FAILURES
     return status
 
 
@@ -1572,22 +2600,19 @@ def _audit_persisted_condition_evidence(
         / str(repeat_id)
     )
     try:
-        tasks = FormalEvidenceStore(suite_root)._validate_run(
-            run_root,
+        logical = FormalEvidenceStore(suite_root).load_logical_run_records(
             experiment_id=experiment_id,
+            condition_id=condition_id,
+            repeat_id=repeat_id,
         )
-        pointer = json.loads((run_root / "CURRENT.json").read_text(encoding="utf-8"))
-        generation_root = run_root / ".generations" / str(pointer["generation_id"])
-        attempts = _read_jsonl_records(
-            generation_root / "per_attempt_results.jsonl"
-        )
-        events = _read_jsonl_records(generation_root / "events" / "event_log.jsonl")
-        artifacts = _read_jsonl_records(
-            generation_root / "artifacts" / "artifact_index.jsonl"
-        )
+        tasks = logical["tasks"]
+        attempts = logical["attempts"]
+        events = logical["events"]
+        artifacts = logical["artifacts"]
+        generation_roots = logical["source_generation_roots"]
     except (KeyError, OSError, TypeError, ValueError, json.JSONDecodeError):
         tasks, attempts, events, artifacts = [], [], [], []
-        generation_root = run_root
+        generation_roots = ()
         reasons.append("persisted_condition_evidence_invalid")
 
     expected = tuple(str(task_id) for task_id in expected_task_ids)
@@ -1638,24 +2663,29 @@ def _audit_persisted_condition_evidence(
     blocked = sum(
         _status_value(task.get("root_status") or "") == "blocked" for task in tasks
     )
+    budget_exhausted = sum(
+        _status_value(task.get("root_status") or "") == "budget_exhausted"
+        for task in tasks
+    )
     failed = len(expected) - completed - blocked
     evidence_refs: list[dict[str, Any]] = []
-    for relative in (
-        "per_task_results.jsonl",
-        "per_attempt_results.jsonl",
-        "events/event_log.jsonl",
-        "artifacts/artifact_index.jsonl",
-    ):
-        path = generation_root / relative
-        if not path.is_file():
-            reasons.append("persisted_condition_evidence_ref_missing")
-            continue
-        evidence_refs.append(
-            {
-                "path": path.relative_to(suite_root).as_posix(),
-                "content_hash": _sha256_bytes(path.read_bytes()),
-            }
-        )
+    for generation_root in generation_roots:
+        for relative in (
+            "per_task_results.jsonl",
+            "per_attempt_results.jsonl",
+            "events/event_log.jsonl",
+            "artifacts/artifact_index.jsonl",
+        ):
+            path = generation_root / relative
+            if not path.is_file():
+                reasons.append("persisted_condition_evidence_ref_missing")
+                continue
+            evidence_refs.append(
+                {
+                    "path": path.relative_to(suite_root).as_posix(),
+                    "content_hash": _sha256_bytes(path.read_bytes()),
+                }
+            )
     stable_reasons = list(dict.fromkeys(reasons))
     return {
         "paper_eligible": not stable_reasons,
@@ -1665,6 +2695,7 @@ def _audit_persisted_condition_evidence(
         "completed_root_count": completed,
         "failed_root_count": max(0, failed),
         "blocked_root_count": blocked,
+        "budget_exhausted_root_count": budget_exhausted,
         "provider_attempt_count": _persisted_provider_attempt_count(attempts),
         "evidence_refs": evidence_refs,
     }
@@ -2026,12 +3057,55 @@ class _RootExecutionOutcome:
     cost_estimate_currency: str | None = None
     cost_estimate_status: str | None = None
     paper_eligible: bool = False
-    provider_latency_ms: float = 0.0
+    provider_latency_ms: float | None = 0.0
+    provider_latency_evidence_status: str = "not_applicable"
+    provider_latency_unavailable_reason: str | None = "no_provider_attempts"
     provider_error_kind: str | None = None
     error: Exception | None = None
     runtime_records: tuple[dict[str, Any], ...] = ()
     experiment_records: tuple[dict[str, Any], ...] = ()
     matched_baseline_evidence_ref: dict[str, Any] | None = None
+
+
+def _provider_latency_observation(
+    *,
+    attempts: Sequence[Any],
+    expected_provider_attempt_count: int,
+) -> tuple[float | None, str, str | None]:
+    """只在真实 provider attempt 的 latency 全部存在时返回聚合值。"""
+
+    if (
+        isinstance(expected_provider_attempt_count, bool)
+        or not isinstance(expected_provider_attempt_count, int)
+        or expected_provider_attempt_count < 0
+    ):
+        raise ValueError("expected_provider_attempt_count must be non-negative")
+    observed_provider_attempt_count = 0
+    latency_sum_ms = 0.0
+    missing_latency = False
+    for attempt in attempts:
+        raw_count = _optional_field(attempt, "provider_attempt_count")
+        if isinstance(raw_count, bool) or not isinstance(raw_count, int) or raw_count < 0:
+            return None, "incomplete", "provider_attempt_inventory_mismatch"
+        if raw_count == 0:
+            continue
+        observed_provider_attempt_count += raw_count
+        latency_ms = _optional_field(attempt, "latency_ms")
+        if (
+            isinstance(latency_ms, bool)
+            or not isinstance(latency_ms, (int, float))
+            or latency_ms < 0
+        ):
+            missing_latency = True
+            continue
+        latency_sum_ms += float(latency_ms)
+    if observed_provider_attempt_count != expected_provider_attempt_count:
+        return None, "incomplete", "provider_attempt_inventory_mismatch"
+    if expected_provider_attempt_count == 0:
+        return 0.0, "not_applicable", "no_provider_attempts"
+    if missing_latency:
+        return None, "incomplete", "missing_provider_latency_evidence"
+    return latency_sum_ms, "complete", None
 
 
 @dataclass(frozen=True)
@@ -2046,6 +3120,7 @@ class _FormalConditionExecutionCallback:
     completed_task_keys: set[tuple[str, str, str, str]]
     usage: "_UsageTotals"
     budget: PaperBudgetResult
+    rolling_disk_forecast: _RollingDiskForecast
     hard_limits: Mapping[str, Any]
     root_case_ids: tuple[str, ...] | None
     execution_classification: Mapping[str, Any] | None
@@ -2072,80 +3147,136 @@ class _FormalConditionExecutionCallback:
             for case_id in selected_case_ids
             if _formal_task_key(condition, case_id) not in self.completed_task_keys
         )
+        exp5_identity_fail_stop = condition.experiment_id == EXP5_EXPERIMENT_ID
+        persisted_exp5_fail_stop = (
+            exp5_identity_fail_stop
+            and self._has_checkpointed_exp5_identity_fail_stop(condition=condition)
+        )
+        if persisted_exp5_fail_stop:
+            persisted_task_ids = _validated_condition_task_ids(
+                evidence_store=self.evidence_store,
+                condition=condition,
+            )
+            for case_id in selected_case_ids:
+                if case_id not in persisted_task_ids:
+                    self._checkpoint_exp5_identity_not_started(
+                        condition=condition,
+                        task_id=case_id,
+                    )
+            pending_case_ids = ()
         if self.hard_limits.get("stop_after_current_task") is True:
             pending_case_ids = pending_case_ids[:1]
-        # root case 始终由 runner 顺序观察；condition.worker_count 交给 runtime backend。
-        worker_count = 1
-        strategy = run_scheduled_cases(
-            ordered_case_ids=pending_case_ids,
-            worker_count=worker_count,
-            execute_case=lambda case_id, worker_id: self._dispatch_root_case(
+        # root case 仍由 runner 顺序观察；指标容量必须采用 runtime 的冻结 worker_count。
+        worker_count = int(condition.worker_count)
+        budget_exhausted_during_exp5 = False
+
+        def execute_case(case_id: str, worker_id: int) -> _RootExecutionOutcome:
+            case = cases_by_id.get(case_id)
+            if case is None:
+                raise ValueError("frozen selection case is absent from catalog")
+            frozen_case = _case_with_selection_split_profile(case, selection)
+            rolling_reservation = _preflight_formal_root_capacity(
+                output_root=self.output_root,
                 condition=condition,
-                selection=selection,
-                case_id=case_id,
-                case=cases_by_id.get(case_id),
-                worker_id=worker_id,
-                callback_kwargs=kwargs,
-            ),
-        )
-        for case_id, outcome in zip(
-            strategy.ordered_case_ids,
-            strategy.outcomes,
-            strict=True,
-        ):
-            outcome = self._apply_experiment_runtime(
+                task_id=case_id,
+                case=frozen_case,
+                request_limits=self.request_limits,
+                rolling_forecast=self.rolling_disk_forecast,
+            )
+            try:
+                outcome = self._dispatch_root_case(
+                    condition=condition,
+                    selection=selection,
+                    case_id=case_id,
+                    case=case,
+                    worker_id=worker_id,
+                    callback_kwargs=kwargs,
+                )
+            finally:
+                self.rolling_disk_forecast.consume_root_forecast(
+                    root_reservation_bytes=int(
+                        rolling_reservation["root_reservation_bytes"]
+                    )
+                )
+            return self._apply_experiment_runtime(
                 condition=condition,
                 case_id=case_id,
                 case=cases_by_id[case_id],
                 outcome=outcome,
                 callback_kwargs=kwargs,
             )
-            scheduling_events = tuple(
-                event
-                for event in strategy.events
-                if event.get("case_id") == case_id
-            )
-            if case_id == strategy.ordered_case_ids[-1]:
-                scheduling_events += tuple(
-                    event
-                    for event in strategy.events
-                    if event.get("event_type", "").startswith("MERGE_GATE_")
-                )
+
+        def checkpoint_case(
+            case_id: str,
+            outcome: _RootExecutionOutcome,
+        ) -> None:
+            nonlocal budget_exhausted_during_exp5
             if outcome.root_status == "budget_exhausted":
-                budget_exhausted = True
-                failed += 1
+                budget_exhausted_during_exp5 = True
                 self._checkpoint_budget_exhausted(
                     condition=condition,
                     task_id=case_id,
-                    extra_events=scheduling_events,
+                    extra_events=(),
                 )
-                continue
-            if outcome.error is not None:
-                failed += 1
+            elif outcome.error is not None:
                 self._checkpoint_exception(
                     condition=condition,
                     task_id=case_id,
                     error=outcome.error,
-                    extra_events=scheduling_events,
+                    extra_events=(),
                 )
-                continue
-            if outcome.root_status == "completed":
-                completed += 1
-            elif outcome.root_status == "blocked":
-                blocked += 1
             else:
-                failed += 1
-            provider_attempts += outcome.provider_attempt_count
-            self._checkpoint_adapter_result(
-                condition=condition,
-                task_id=case_id,
-                task=outcome.task,
-                adapter_result=outcome.adapter_result,
-                adapter_root=outcome.adapter_root,
-                extra_events=scheduling_events,
-            )
+                self._checkpoint_adapter_result(
+                    condition=condition,
+                    task_id=case_id,
+                    task=outcome.task,
+                    adapter_result=outcome.adapter_result,
+                    adapter_root=outcome.adapter_root,
+                    extra_events=(),
+                )
 
-        self._publish_compatibility_view(condition=condition)
+        def continue_after_exp5_case(
+            case_id: str,
+            outcome: _RootExecutionOutcome,
+        ) -> bool:
+            del case_id
+            return not exp5_identity_fail_stop_required(outcome.adapter_result)
+
+        strategy = run_scheduled_cases(
+            ordered_case_ids=pending_case_ids,
+            worker_count=worker_count,
+            execute_case=execute_case,
+            should_continue_after_case=(
+                continue_after_exp5_case if exp5_identity_fail_stop else None
+            ),
+            on_case_complete=checkpoint_case,
+            retain_outcomes=False,
+        )
+        if exp5_identity_fail_stop and len(strategy.ordered_case_ids) < len(
+            pending_case_ids
+        ):
+            for case_id in pending_case_ids[len(strategy.ordered_case_ids) :]:
+                self._checkpoint_exp5_identity_not_started(
+                    condition=condition,
+                    task_id=case_id,
+                )
+        budget_exhausted = budget_exhausted or budget_exhausted_during_exp5
+        merge_gate_events = tuple(
+            event
+            for event in strategy.events
+            if str(event.get("event_type", "")).startswith("MERGE_GATE_")
+        )
+        _finalize_formal_condition_snapshot(
+            evidence_store=self.evidence_store,
+            condition=condition,
+            selected_case_ids=selected_case_ids,
+            condition_events=(
+                merge_gate_events if strategy.ordered_case_ids else None
+            ),
+        )
+
+        if self.execution_classification is not None:
+            self._publish_compatibility_view(condition=condition)
 
         persisted = _audit_persisted_condition_evidence(
             suite_root=self.evidence_store.output_root,
@@ -2158,6 +3289,10 @@ class _FormalConditionExecutionCallback:
         failed = int(persisted["failed_root_count"])
         blocked = int(persisted["blocked_root_count"])
         provider_attempts = int(persisted["provider_attempt_count"])
+        budget_exhausted = (
+            budget_exhausted
+            or int(persisted["budget_exhausted_root_count"]) > 0
+        )
         status = (
             PaperStatus.BUDGET_EXHAUSTED
             if budget_exhausted
@@ -2322,6 +3457,14 @@ class _FormalConditionExecutionCallback:
             )
         eligibility = _optional_field(adapter_result, "eligibility_report")
         attempts = _sequence_field(adapter_result, "attempt_results", "attempts")
+        (
+            provider_latency_ms,
+            provider_latency_evidence_status,
+            provider_latency_unavailable_reason,
+        ) = _provider_latency_observation(
+            attempts=attempts,
+            expected_provider_attempt_count=provider_attempt_count,
+        )
         return _RootExecutionOutcome(
             case_id=case_id,
             root_status=_status_value(_required_field(task, "root_status")),
@@ -2343,9 +3486,10 @@ class _FormalConditionExecutionCallback:
                 else None
             ),
             paper_eligible=_optional_field(eligibility, "paper_eligible") is True,
-            provider_latency_ms=sum(
-                float(_optional_field(attempt, "latency_ms") or 0.0)
-                for attempt in attempts
+            provider_latency_ms=provider_latency_ms,
+            provider_latency_evidence_status=provider_latency_evidence_status,
+            provider_latency_unavailable_reason=(
+                provider_latency_unavailable_reason
             ),
             provider_error_kind=next(
                 (
@@ -3138,15 +4282,13 @@ class _FormalConditionExecutionCallback:
         identity_status_by_attempt = strategy.metrics[
             "identity_status_by_attempt"
         ]
-        enriched_attempts = tuple(
-            {
-                **_as_json(attempt),
-                "cohort_member_id": condition.cohort_member_id,
-                "model_identity_audit": identity_status_by_attempt[
-                    str(_required_field(attempt, "attempt_id"))
-                ],
-            }
-            for attempt in attempts
+        task_body, enriched_attempts, identity_mismatch = (
+            finalize_exp5_identity_evidence(
+                attempts=attempts,
+                task=task_body,
+                identity_status_by_attempt=identity_status_by_attempt,
+                cohort_member_id=str(condition.cohort_member_id),
+            )
         )
         task_body["model_execution_records"] = list(
             strategy.model_execution_records
@@ -3162,7 +4304,113 @@ class _FormalConditionExecutionCallback:
             ),
             events=_sequence_field(outcome.adapter_result, "event_records"),
         )
-        return replace(outcome, task=task_body, adapter_result=adapter_result)
+        return replace(
+            outcome,
+            task=task_body,
+            adapter_result=adapter_result,
+            root_status=str(task_body.get("root_status") or outcome.root_status),
+            paper_eligible=(outcome.paper_eligible and not identity_mismatch),
+        )
+
+    def _checkpoint_exp5_identity_not_started(
+        self,
+        *,
+        condition: Any,
+        task_id: str,
+    ) -> None:
+        event_type = "EXPERIMENT_NOT_STARTED_AFTER_MODEL_IDENTITY_FAILURE"
+        event_id = (
+            f"formal-exp5-identity-fail-stop-{condition.condition_id}-"
+            f"{condition.repeat_id}-{task_id}"
+        )
+        terminal = PaperTerminalOutcome(
+            outcome_status=PaperOutcomeStatus.FAILED_EXPERIMENTAL,
+            evidence_integrity=PaperEvidenceIntegrity.COMPLETE,
+            failure_stage="model_identity_audit",
+            failure_kind="model_identity_fail_stop",
+        ).to_dict()
+        artifact = _write_runner_artifact(
+            suite_root=self.evidence_store.output_root,
+            condition=condition,
+            task_id=task_id,
+            artifact_name="model-identity-not-started.json",
+            body={
+                **terminal,
+                "root_status": "not_started",
+                "condition_id": condition.condition_id,
+                "task_id": task_id,
+                "cohort_member_id": condition.cohort_member_id,
+            },
+        )
+        common = {
+            "experiment_id": condition.experiment_id,
+            "condition_id": condition.condition_id,
+            "repeat_id": condition.repeat_id,
+            "task_id": task_id,
+            "cohort_member_id": condition.cohort_member_id,
+            **terminal,
+            **self._evidence_flags(paper_eligible=False),
+            "paper_ineligibility_reasons": ["model_identity_fail_stop"],
+            "record_scope": "experiment",
+        }
+        task = {
+            **common,
+            "root_status": "not_started",
+            "error_kind": "model_identity_fail_stop",
+            "event_refs": [{"event_id": event_id, "event_type": event_type}],
+            "evidence_artifact_refs": [artifact],
+        }
+        attempt = {
+            **common,
+            "attempt_id": (
+                f"experiment-not-started-{condition.condition_id}-"
+                f"{condition.repeat_id}-{task_id}"
+            ),
+            "attempt_status": "not_started",
+            "provider_attempt_index": 0,
+            "provider_attempt_count": 0,
+            "error_kind": "model_identity_fail_stop",
+        }
+        event = {
+            **common,
+            "event_id": event_id,
+            "event_type": event_type,
+        }
+        self.evidence_store.checkpoint_root(
+            experiment_id=condition.experiment_id,
+            condition=_as_json(condition),
+            repeat_id=condition.repeat_id,
+            task=task,
+            attempts=[attempt],
+            faults=[],
+            events=[event],
+            artifact_refs=[artifact],
+        )
+
+    def _has_checkpointed_exp5_identity_fail_stop(
+        self,
+        *,
+        condition: Any,
+    ) -> bool:
+        run_root = (
+            self.evidence_store.output_root
+            / "experiments"
+            / condition.experiment_id
+            / "runs"
+            / condition.condition_id
+            / str(condition.repeat_id)
+        )
+        if not run_root.is_dir():
+            return False
+        tasks = self.evidence_store._validate_run(
+            run_root,
+            experiment_id=condition.experiment_id,
+        )
+        return any(
+            task.get("error_kind")
+            in {"model_identity_mismatch", "model_identity_fail_stop"}
+            for task in tasks
+        )
 
     def _checkpoint_adapter_result(
         self,
@@ -3287,7 +4535,7 @@ class _FormalConditionExecutionCallback:
         if protocol_runtime is not None and not protocol_event_values:
             raise ValueError("protocol checkpoint requires real lifecycle events")
         events = [
-            _record_with_context(item, condition=condition, task_id=task_id)
+            _event_record_with_context(item, condition=condition, task_id=task_id)
             for item in protocol_event_values
         ]
         if not events:
@@ -3301,6 +4549,8 @@ class _FormalConditionExecutionCallback:
                 task_id=task_id,
             )]
         for event in events:
+            if _is_protocol_ledger_event(event):
+                continue
             event.setdefault(
                 "record_scope",
                 "experiment"
@@ -3315,6 +4565,8 @@ class _FormalConditionExecutionCallback:
             event.setdefault("record_scope", "experiment")
         events.extend(experiment_events)
         for index, event in enumerate(events):
+            if _is_protocol_ledger_event(event):
+                continue
             event.setdefault(
                 "event_id",
                 (
@@ -3342,7 +4594,12 @@ class _FormalConditionExecutionCallback:
             condition=condition,
             task_id=task_id,
             adapter_root=adapter_root,
-            source_refs=_adapter_artifact_refs(task, attempts, faults),
+            source_refs=_adapter_artifact_refs(
+                task_body,
+                attempts,
+                faults,
+                events=events,
+            ),
         )
         if not artifact_refs:
             artifact_refs = [_write_runner_artifact(
@@ -3376,7 +4633,7 @@ class _FormalConditionExecutionCallback:
         task_body.update(self._evidence_flags(paper_eligible=not task_reasons))
         task_body["source_projection_paper_eligible"] = source_task_eligible
         task_body["paper_ineligibility_reasons"] = task_reasons
-        self.evidence_store.checkpoint_root(
+        commit_token = self.evidence_store.checkpoint_root(
             experiment_id=condition.experiment_id,
             condition=_as_json(condition),
             repeat_id=condition.repeat_id,
@@ -3385,6 +4642,14 @@ class _FormalConditionExecutionCallback:
             faults=faults,
             events=events,
             artifact_refs=artifact_refs,
+        )
+        _remove_checkpointed_adapter_tree(
+            suite_root=self.evidence_store.output_root,
+            plan_root=self.output_root,
+            condition=condition,
+            task_id=task_id,
+            adapter_root=adapter_root,
+            commit_token=commit_token,
         )
         if _status_value(task_body.get("root_status", "failed")) == "completed":
             self.completed_task_keys.add(_formal_task_key(condition, task_id))
@@ -3462,7 +4727,7 @@ class _FormalConditionExecutionCallback:
             artifact_name="runner-error.json",
             body={"error_type": type(error).__name__, "message": str(error)},
         )
-        self.evidence_store.checkpoint_root(
+        commit_token = self.evidence_store.checkpoint_root(
             experiment_id=condition.experiment_id,
             condition=_as_json(condition),
             repeat_id=condition.repeat_id,
@@ -3472,6 +4737,11 @@ class _FormalConditionExecutionCallback:
             events=events,
             artifact_refs=[artifact],
         )
+        self._cleanup_terminal_adapter_tree(
+            condition=condition,
+            task_id=task_id,
+            commit_token=commit_token,
+        )
 
     def _publish_compatibility_view(self, *, condition: Any) -> None:
         """保留 dispatcher output_root 下的只读兼容运行视图。"""
@@ -3480,7 +4750,6 @@ class _FormalConditionExecutionCallback:
         if source == self.output_root:
             return
         shutil.copytree(source, self.output_root, dirs_exist_ok=True)
-        self.evidence_store._refresh_evidence_manifest()
 
     def _checkpoint_budget_exhausted(
         self,
@@ -3561,7 +4830,7 @@ class _FormalConditionExecutionCallback:
                 },
             },
         )
-        self.evidence_store.checkpoint_root(
+        commit_token = self.evidence_store.checkpoint_root(
             experiment_id=condition.experiment_id,
             condition=_as_json(condition),
             repeat_id=condition.repeat_id,
@@ -3570,6 +4839,33 @@ class _FormalConditionExecutionCallback:
             faults=[],
             events=events,
             artifact_refs=[artifact],
+        )
+        self._cleanup_terminal_adapter_tree(
+            condition=condition,
+            task_id=task_id,
+            commit_token=commit_token,
+        )
+
+    def _cleanup_terminal_adapter_tree(
+        self,
+        *,
+        condition: Any,
+        task_id: str,
+        commit_token: Mapping[str, Any],
+    ) -> None:
+        adapter_root = (
+            self.output_root
+            / "runs"
+            / condition.condition_id
+            / task_id
+        )
+        _remove_checkpointed_adapter_tree(
+            suite_root=self.evidence_store.output_root,
+            plan_root=self.output_root,
+            condition=condition,
+            task_id=task_id,
+            adapter_root=adapter_root,
+            commit_token=commit_token,
         )
 
     def _evidence_flags(self, *, paper_eligible: bool = False) -> dict[str, Any]:
@@ -3661,17 +4957,15 @@ def _evidence_bodies(
             "schema_version": "tokenshare.paper_formal_runner.v1",
             "suite_id": suite_id,
             "experiment_ids": [plan.experiment_id for plan in plans],
+            "root_case_filter": {
+                condition_id: list(case_ids)
+                for condition_id, case_ids in sorted(root_case_filter.items())
+            },
             **(
                 {
                     "execution_classification": dict(
                         execution_classification
                     ),
-                    "root_case_filter": {
-                        condition_id: list(case_ids)
-                        for condition_id, case_ids in sorted(
-                            root_case_filter.items()
-                        )
-                    },
                 }
                 if execution_classification is not None
                 else {}
@@ -3734,6 +5028,702 @@ def _stored_evidence_bodies(suite_root: Path) -> dict[str, Any]:
     return result
 
 
+_REPLAY_COMPARISON_FIELDS = (
+    "suite_id",
+    "status",
+    "experiment_ids",
+    "condition_count",
+    "run_count",
+    "task_count",
+    "provider_attempt_count",
+    "total_tokens",
+    "total_cost_estimate",
+    "cost_estimate_by_currency",
+    "total_cost_estimate_status",
+    "paper_eligible",
+    "error_summary",
+)
+
+
+def _verified_replay_summary(
+    suite_root: Path,
+) -> tuple[PaperSuiteResult, dict[str, Any], dict[str, Any]]:
+    """校验 frozen evidence，并拒绝 runner summary 与独立复算结果漂移。"""
+
+    bodies = _stored_evidence_bodies(suite_root)
+    FormalEvidenceStore.load(
+        output_root=suite_root,
+        **{f"expected_{name}": body for name, body in bodies.items()},
+    )
+    persisted = _suite_result_from_evidence(suite_root)
+    recomputed = _independently_recomputed_suite_summary(
+        suite_root=suite_root,
+        bodies=bodies,
+    )
+    mismatched_fields = _replay_summary_mismatches(
+        persisted=persisted.to_dict(),
+        recomputed=recomputed,
+    )
+    comparison = {
+        "status": "matched" if not mismatched_fields else "mismatched",
+        "compared_fields": list(_REPLAY_COMPARISON_FIELDS),
+        "mismatched_fields": mismatched_fields,
+    }
+    if mismatched_fields:
+        raise ValueError(
+            "formal runner result does not match independently recomputed evidence: "
+            + ", ".join(mismatched_fields)
+        )
+    return persisted, recomputed, comparison
+
+
+def _independently_recomputed_suite_summary(
+    *,
+    suite_root: Path,
+    bodies: Mapping[str, Any],
+) -> dict[str, Any]:
+    """从 frozen dispatch 和 CURRENT generation evidence 重算 suite 论文汇总。"""
+
+    suite_manifest = _required_json_object(
+        suite_root / "suite_manifest.json",
+        "suite manifest",
+    )
+    frozen_suite = _required_replay_mapping(bodies.get("suite"), "frozen suite")
+    dispatch = _required_replay_mapping(bodies.get("dispatch"), "frozen dispatch")
+    plans = dispatch.get("plans", dispatch.get("dispatch_plans"))
+    if not isinstance(plans, list):
+        raise ValueError("frozen dispatch plans are missing")
+
+    root_case_filter = frozen_suite.get("root_case_filter")
+    if root_case_filter is not None and not isinstance(root_case_filter, Mapping):
+        raise ValueError("frozen root case filter is invalid")
+    filtered_cases = root_case_filter or {}
+    formal_execution = (
+        suite_manifest.get("formal") is True
+        and suite_manifest.get("pilot_only") is False
+        and suite_manifest.get("regression_only") is False
+        and suite_manifest.get("capturing") is False
+    )
+    hard_limits = _required_replay_mapping(
+        bodies.get("hard_limits"),
+        "frozen hard limits",
+    )
+    partial_checkpoint_prefix_allowed = (
+        suite_manifest.get("capturing") is True
+        and suite_manifest.get("regression_only") is True
+        and hard_limits.get("stop_after_current_task") is True
+    )
+
+    condition_summaries: list[dict[str, Any]] = []
+    source_refs: list[dict[str, Any]] = []
+    expected_condition_keys: set[tuple[str, str, str]] = set()
+    experiment_ids: list[str] = []
+    experiment_conditions: dict[str, list[dict[str, Any]]] = {}
+    any_blocked_plan = False
+    all_plans_paper_eligible = True
+    total_tokens = 0
+    legacy_cost = 0.0
+    currency_costs: dict[str, float] = {}
+    usage_missing_count = 0
+
+    terminal_failure = suite_manifest.get("terminal_failure")
+    if terminal_failure is not None and not isinstance(terminal_failure, Mapping):
+        raise ValueError("suite terminal failure evidence is invalid")
+
+    for raw_plan in plans:
+        plan = _required_replay_mapping(raw_plan, "frozen dispatch plan")
+        experiment_id = _required_replay_string(
+            plan.get("experiment_id"),
+            "dispatch experiment_id",
+        )
+        if experiment_id in experiment_ids:
+            raise ValueError("duplicate replay experiment_id")
+        experiment_ids.append(experiment_id)
+        plan_status = _required_replay_string(
+            plan.get("status"),
+            "dispatch plan status",
+        )
+        any_blocked_plan = any_blocked_plan or plan_status == "blocked"
+        all_plans_paper_eligible = (
+            all_plans_paper_eligible
+            and plan_status != "blocked"
+            and plan.get("paper_eligible_possible") is True
+        )
+        raw_conditions = plan.get("conditions")
+        raw_bindings = plan.get("condition_selection_bindings")
+        if not isinstance(raw_conditions, list) or not isinstance(raw_bindings, list):
+            raise ValueError("frozen dispatch condition inventory is invalid")
+        bindings = {
+            _required_replay_string(
+                _required_replay_mapping(binding, "condition binding").get(
+                    "condition_id"
+                ),
+                "condition binding condition_id",
+            ): _required_replay_mapping(binding, "condition binding")
+            for binding in raw_bindings
+        }
+        if len(bindings) != len(raw_bindings):
+            raise ValueError("duplicate frozen condition binding")
+
+        per_experiment: list[dict[str, Any]] = []
+        for raw_condition in raw_conditions:
+            condition = _required_replay_mapping(
+                raw_condition,
+                "frozen condition",
+            )
+            condition_id = _required_replay_string(
+                condition.get("condition_id"),
+                "condition_id",
+            )
+            repeat_id = condition.get("repeat_id")
+            if isinstance(repeat_id, bool) or not isinstance(repeat_id, (int, str)):
+                raise ValueError("condition repeat_id is invalid")
+            binding = bindings.get(condition_id)
+            if binding is None:
+                raise ValueError("frozen condition binding is missing")
+            selection = _required_replay_mapping(
+                binding.get("selection"),
+                "frozen condition selection",
+            )
+            selected = filtered_cases.get(
+                condition_id,
+                selection.get("ordered_case_ids"),
+            )
+            if not isinstance(selected, (list, tuple)) or any(
+                not isinstance(task_id, str) or not task_id for task_id in selected
+            ):
+                raise ValueError("frozen selected task inventory is invalid")
+            expected_task_ids = tuple(str(task_id) for task_id in selected)
+            if len(set(expected_task_ids)) != len(expected_task_ids):
+                raise ValueError("frozen selected task inventory has duplicates")
+
+            run = _current_replay_run_evidence(
+                suite_root=suite_root,
+                experiment_id=experiment_id,
+                condition_id=condition_id,
+                repeat_id=repeat_id,
+            )
+            tasks = run["tasks"]
+            attempts = run["attempts"]
+            actual_task_ids = tuple(str(task.get("task_id")) for task in tasks)
+            if len(set(actual_task_ids)) != len(actual_task_ids):
+                raise ValueError("canonical task inventory contains duplicates")
+            if partial_checkpoint_prefix_allowed:
+                task_inventory_matches = (
+                    bool(actual_task_ids)
+                    and actual_task_ids
+                    == expected_task_ids[: len(actual_task_ids)]
+                )
+            else:
+                task_inventory_matches = (
+                    len(actual_task_ids) == len(expected_task_ids)
+                    and set(actual_task_ids) == set(expected_task_ids)
+                )
+            if not task_inventory_matches:
+                raise ValueError(
+                    "canonical task inventory does not match frozen selection"
+                )
+            source_refs.extend(run["source_refs"])
+            completed = sum(
+                _status_value(task.get("root_status") or "") == "completed"
+                for task in tasks
+            )
+            blocked = sum(
+                _status_value(task.get("root_status") or "") == "blocked"
+                for task in tasks
+            )
+            failed = max(0, len(expected_task_ids) - completed - blocked)
+            dependency_blocked = any(
+                task.get("outcome_status") == "blocked_dependency"
+                for task in tasks
+            )
+            if any(
+                _status_value(task.get("root_status") or "")
+                == "budget_exhausted"
+                for task in tasks
+            ):
+                condition_status = "budget_exhausted"
+            elif dependency_blocked:
+                condition_status = "blocked"
+            elif completed == len(expected_task_ids):
+                condition_status = "completed"
+            elif blocked == len(expected_task_ids):
+                condition_status = "blocked"
+            else:
+                condition_status = "completed_with_failures"
+
+            audit = _audit_persisted_condition_evidence(
+                suite_root=suite_root,
+                experiment_id=experiment_id,
+                condition_id=condition_id,
+                repeat_id=int(repeat_id),
+                expected_task_ids=expected_task_ids,
+            )
+            condition_paper_eligible = (
+                formal_execution and audit.get("paper_eligible") is True
+            )
+            provider_attempt_count = _persisted_provider_attempt_count(attempts)
+            for task in tasks:
+                task_tokens = task.get("total_tokens")
+                if task_tokens is not None:
+                    if (
+                        isinstance(task_tokens, bool)
+                        or not isinstance(task_tokens, int)
+                        or task_tokens < 0
+                    ):
+                        raise ValueError("canonical task total_tokens is invalid")
+                    total_tokens += task_tokens
+                task_cost = task.get("cost_estimate")
+                if task_cost is not None:
+                    if (
+                        isinstance(task_cost, bool)
+                        or not isinstance(task_cost, (int, float))
+                        or float(task_cost) < 0.0
+                    ):
+                        raise ValueError("canonical task cost_estimate is invalid")
+                    currency = task.get("cost_estimate_currency")
+                    if currency is None:
+                        legacy_cost += float(task_cost)
+                    elif isinstance(currency, str) and currency:
+                        currency_costs[currency] = (
+                            currency_costs.get(currency, 0.0) + float(task_cost)
+                        )
+                    else:
+                        raise ValueError(
+                            "canonical task cost_estimate_currency is invalid"
+                        )
+                if task.get("cost_estimate_status") == "usage_missing":
+                    usage_missing_count += 1
+
+            summary = {
+                "experiment_id": experiment_id,
+                "condition_id": condition_id,
+                "repeat_id": repeat_id,
+                "status": condition_status,
+                "task_count": len(expected_task_ids),
+                "completed_root_count": completed,
+                "failed_root_count": failed,
+                "blocked_root_count": blocked,
+                "provider_attempt_count": provider_attempt_count,
+                "paper_eligible": condition_paper_eligible,
+                "dependency_blocked": dependency_blocked,
+            }
+            condition_summaries.append(summary)
+            per_experiment.append(summary)
+            expected_condition_keys.add(
+                (experiment_id, condition_id, str(repeat_id))
+            )
+        if set(bindings) != {
+            summary["condition_id"] for summary in per_experiment
+        }:
+            raise ValueError("frozen condition binding inventory mismatch")
+        experiment_conditions[experiment_id] = per_experiment
+
+    _validate_recomputed_condition_rows(
+        suite_root=suite_root,
+        expected_condition_keys=expected_condition_keys,
+        condition_summaries=condition_summaries,
+    )
+
+    if terminal_failure is not None:
+        _validate_terminal_failure_against_checkpoint_tasks(
+            terminal_failure=terminal_failure,
+            condition_summaries=condition_summaries,
+            suite_root=suite_root,
+        )
+        status = _required_replay_string(
+            suite_manifest.get("status"),
+            "suite manifest terminal status",
+        )
+        if status not in {"blocked", "incomplete"}:
+            raise ValueError("suite terminal status is inconsistent with failure evidence")
+        error_summary = [dict(terminal_failure)]
+    else:
+        status = _recomputed_suite_status(
+            condition_statuses=[
+                str(summary["status"]) for summary in condition_summaries
+            ],
+            has_plans=bool(plans),
+            any_blocked_plan=any_blocked_plan,
+        )
+        error_summary = []
+
+    paper_eligible = (
+        formal_execution
+        and bool(condition_summaries)
+        and all_plans_paper_eligible
+        and len(condition_summaries) == len(expected_condition_keys)
+        and all(
+            summary["paper_eligible"] is True for summary in condition_summaries
+        )
+        and terminal_failure is None
+    )
+    _validate_recomputed_experiment_manifests(
+        suite_root=suite_root,
+        experiment_conditions=experiment_conditions,
+        plans=plans,
+        terminal_status=status if terminal_failure is not None else None,
+        formal_execution=formal_execution,
+    )
+    if suite_manifest.get("status") != status:
+        raise ValueError("suite manifest status does not match canonical evidence")
+    if suite_manifest.get("paper_eligible") is not paper_eligible:
+        raise ValueError(
+            "suite manifest paper eligibility does not match canonical evidence"
+        )
+
+    if len(currency_costs) > 1:
+        total_cost_estimate = 0.0
+        total_cost_estimate_status = "mixed_currency_not_aggregated"
+    elif currency_costs:
+        total_cost_estimate = next(iter(currency_costs.values()))
+        total_cost_estimate_status = (
+            "usage_missing"
+            if usage_missing_count
+            else "single_currency_estimate"
+        )
+    else:
+        total_cost_estimate = legacy_cost
+        total_cost_estimate_status = (
+            "usage_missing"
+            if usage_missing_count
+            else "single_currency_or_legacy"
+        )
+
+    canonical_evidence = {
+        "suite_manifest": _suite_file_ref(suite_root, "suite_manifest.json"),
+        "condition_results": _suite_file_ref(
+            suite_root,
+            "condition_results.jsonl",
+        ),
+        "current_run_sources": sorted(
+            source_refs,
+            key=lambda item: str(item["path"]),
+        ),
+    }
+    return {
+        "schema_version": "tokenshare.paper_recomputed_suite_summary.v1",
+        "suite_id": _required_replay_string(
+            frozen_suite.get("suite_id"),
+            "frozen suite_id",
+        ),
+        "status": status,
+        "experiment_ids": experiment_ids,
+        "condition_count": len(expected_condition_keys),
+        "run_count": len(expected_condition_keys),
+        "task_count": sum(
+            int(summary["task_count"]) for summary in condition_summaries
+        ),
+        "provider_attempt_count": sum(
+            int(summary["provider_attempt_count"])
+            for summary in condition_summaries
+        ),
+        "total_tokens": total_tokens,
+        "total_cost_estimate": total_cost_estimate,
+        "cost_estimate_by_currency": (
+            dict(sorted(currency_costs.items())) if currency_costs else None
+        ),
+        "total_cost_estimate_status": total_cost_estimate_status,
+        "paper_eligible": paper_eligible,
+        "error_summary": error_summary,
+        "condition_summaries": condition_summaries,
+        "canonical_evidence_digest": _digest_replay_summary(canonical_evidence),
+    }
+
+
+def _current_replay_run_evidence(
+    *,
+    suite_root: Path,
+    experiment_id: str,
+    condition_id: str,
+    repeat_id: int | str,
+) -> dict[str, Any]:
+    run_root = (
+        suite_root
+        / "experiments"
+        / experiment_id
+        / "runs"
+        / condition_id
+        / str(repeat_id)
+    )
+    tasks = FormalEvidenceStore(suite_root)._validate_run(
+        run_root,
+        experiment_id=experiment_id,
+    )
+    pointer = _required_json_object(run_root / "CURRENT.json", "run CURRENT")
+    generation_id = _required_replay_string(
+        pointer.get("generation_id"),
+        "run generation_id",
+    )
+    generation = run_root / ".generations" / generation_id
+    records = {
+        "tasks": tasks,
+        "attempts": _read_jsonl_records(
+            generation / "per_attempt_results.jsonl"
+        ),
+        "events": _read_jsonl_records(generation / "events" / "event_log.jsonl"),
+        "artifacts": _read_jsonl_records(
+            generation / "artifacts" / "artifact_index.jsonl"
+        ),
+    }
+    relative_paths = (
+        "run_manifest.json",
+        "per_task_results.jsonl",
+        "per_attempt_results.jsonl",
+        "events/event_log.jsonl",
+        "artifacts/artifact_index.jsonl",
+    )
+    records["source_refs"] = [
+        _suite_file_ref(
+            suite_root,
+            (generation / relative_path).relative_to(suite_root).as_posix(),
+        )
+        for relative_path in relative_paths
+    ]
+    return records
+
+
+def _validate_recomputed_condition_rows(
+    *,
+    suite_root: Path,
+    expected_condition_keys: set[tuple[str, str, str]],
+    condition_summaries: Sequence[Mapping[str, Any]],
+) -> None:
+    rows = _read_jsonl_records(suite_root / "condition_results.jsonl")
+    indexed: dict[tuple[str, str, str], Mapping[str, Any]] = {}
+    for row in rows:
+        key = (
+            str(row.get("experiment_id")),
+            str(row.get("condition_id")),
+            str(row.get("repeat_id")),
+        )
+        if key in indexed:
+            raise ValueError("duplicate persisted condition result")
+        indexed[key] = row
+    if set(indexed) != expected_condition_keys:
+        raise ValueError("persisted condition result inventory mismatch")
+    for summary in condition_summaries:
+        key = (
+            str(summary["experiment_id"]),
+            str(summary["condition_id"]),
+            str(summary["repeat_id"]),
+        )
+        row = indexed[key]
+        expected = {
+            "status": summary["status"],
+            "repeat_count": 1,
+            "task_count": summary["task_count"],
+            "completed_root_count": summary["completed_root_count"],
+            "failed_root_count": summary["failed_root_count"],
+            "blocked_root_count": summary["blocked_root_count"],
+            "provider_attempt_count": summary["provider_attempt_count"],
+            "paper_eligible": summary["paper_eligible"],
+        }
+        for field_name, expected_value in expected.items():
+            if row.get(field_name) != expected_value:
+                raise ValueError(
+                    "persisted condition result does not match canonical evidence: "
+                    + field_name
+                )
+
+
+def _validate_recomputed_experiment_manifests(
+    *,
+    suite_root: Path,
+    experiment_conditions: Mapping[str, Sequence[Mapping[str, Any]]],
+    plans: Sequence[Any],
+    terminal_status: str | None,
+    formal_execution: bool,
+) -> None:
+    plan_by_id = {
+        str(_required_replay_mapping(plan, "dispatch plan")["experiment_id"]):
+        _required_replay_mapping(plan, "dispatch plan")
+        for plan in plans
+    }
+    for experiment_id, conditions in experiment_conditions.items():
+        manifest = _required_json_object(
+            suite_root
+            / "experiments"
+            / experiment_id
+            / "experiment_manifest.json",
+            "experiment manifest",
+        )
+        plan = plan_by_id[experiment_id]
+        if plan.get("status") == "blocked":
+            expected_status = "blocked"
+        elif terminal_status is not None and any(
+            condition.get("dependency_blocked") is True
+            for condition in conditions
+        ):
+            expected_status = (
+                "incomplete" if terminal_status == "incomplete" else "blocked"
+            )
+        else:
+            expected_status = _recomputed_suite_status(
+                condition_statuses=[
+                    str(condition["status"]) for condition in conditions
+                ],
+                has_plans=True,
+                any_blocked_plan=False,
+            )
+        expected_paper_eligible = (
+            formal_execution
+            and plan.get("paper_eligible_possible") is True
+            and bool(conditions)
+            and all(
+                condition.get("paper_eligible") is True
+                for condition in conditions
+            )
+            and terminal_status is None
+        )
+        if manifest.get("status") != expected_status:
+            raise ValueError(
+                "experiment manifest status does not match canonical evidence"
+            )
+        if manifest.get("paper_eligible") is not expected_paper_eligible:
+            raise ValueError(
+                "experiment manifest paper eligibility does not match canonical evidence"
+            )
+
+
+def _validate_terminal_failure_against_checkpoint_tasks(
+    *,
+    terminal_failure: Mapping[str, Any],
+    condition_summaries: Sequence[Mapping[str, Any]],
+    suite_root: Path,
+) -> None:
+    required_fields = (
+        "outcome_status",
+        "evidence_integrity",
+        "failure_stage",
+        "failure_kind",
+    )
+    if any(not isinstance(terminal_failure.get(field), str) for field in required_fields):
+        raise ValueError("suite terminal failure summary is incomplete")
+    candidates: list[dict[str, Any]] = []
+    for summary in condition_summaries:
+        run = _current_replay_run_evidence(
+            suite_root=suite_root,
+            experiment_id=str(summary["experiment_id"]),
+            condition_id=str(summary["condition_id"]),
+            repeat_id=summary["repeat_id"],
+        )
+        candidates.extend(run["tasks"])
+    for task in candidates:
+        if all(
+            task.get(field_name) == terminal_failure.get(field_name)
+            for field_name in required_fields
+        ) and (
+            terminal_failure.get("condition_id") is None
+            or task.get("condition_id") == terminal_failure.get("condition_id")
+        ) and (
+            terminal_failure.get("task_id") is None
+            or task.get("task_id") == terminal_failure.get("task_id")
+        ):
+            return
+    raise ValueError("suite terminal failure is not backed by checkpoint task evidence")
+
+
+def _recomputed_suite_status(
+    *,
+    condition_statuses: Sequence[str],
+    has_plans: bool,
+    any_blocked_plan: bool,
+) -> str:
+    if not condition_statuses:
+        return "blocked" if has_plans else "completed"
+    statuses = set(condition_statuses)
+    if "budget_exhausted" in statuses:
+        return "budget_exhausted"
+    if "failed" in statuses:
+        return "failed"
+    if "blocked" in statuses or any_blocked_plan:
+        return "blocked"
+    if statuses.intersection({"planned", "running", "incomplete"}):
+        return "incomplete"
+    if "completed_with_failures" in statuses:
+        return "completed_with_failures"
+    return "completed"
+
+
+def _replay_summary_mismatches(
+    *,
+    persisted: Mapping[str, Any],
+    recomputed: Mapping[str, Any],
+) -> list[str]:
+    mismatches: list[str] = []
+    for field_name in _REPLAY_COMPARISON_FIELDS:
+        persisted_value = (
+            persisted.get(field_name, "single_currency_or_legacy")
+            if field_name == "total_cost_estimate_status"
+            else persisted.get(field_name)
+        )
+        recomputed_value = recomputed.get(field_name)
+        if field_name == "cost_estimate_by_currency":
+            if not _replay_cost_mapping_equal(persisted_value, recomputed_value):
+                mismatches.append(field_name)
+        elif field_name == "total_cost_estimate":
+            if not _replay_float_equal(persisted_value, recomputed_value):
+                mismatches.append(field_name)
+        elif persisted_value != recomputed_value:
+            mismatches.append(field_name)
+    return mismatches
+
+
+def _replay_cost_mapping_equal(left: Any, right: Any) -> bool:
+    if left is None or right is None:
+        return left is right
+    if not isinstance(left, Mapping) or not isinstance(right, Mapping):
+        return False
+    return set(left) == set(right) and all(
+        _replay_float_equal(left[currency], right[currency])
+        for currency in left
+    )
+
+
+def _replay_float_equal(left: Any, right: Any) -> bool:
+    if (
+        isinstance(left, bool)
+        or isinstance(right, bool)
+        or not isinstance(left, (int, float))
+        or not isinstance(right, (int, float))
+    ):
+        return False
+    return abs(float(left) - float(right)) <= 1e-12
+
+
+def _digest_replay_summary(body: Mapping[str, Any]) -> str:
+    return _sha256_bytes(
+        json.dumps(
+            body,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    )
+
+
+def _required_json_object(path: Path, label: str) -> dict[str, Any]:
+    if not path.is_file():
+        raise ValueError(f"{label} is missing")
+    body = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(body, dict):
+        raise ValueError(f"{label} must be a JSON object")
+    return body
+
+
+def _required_replay_mapping(value: Any, label: str) -> dict[str, Any]:
+    if not isinstance(value, Mapping):
+        raise ValueError(f"{label} must be an object")
+    return dict(value)
+
+
+def _required_replay_string(value: Any, label: str) -> str:
+    if not isinstance(value, str) or not value:
+        raise ValueError(f"{label} must be a non-empty string")
+    return value
+
+
 def _suite_result_from_evidence(suite_root: Path) -> PaperSuiteResult:
     path = suite_root / "formal_runner_result.json"
     if not path.is_file():
@@ -3774,12 +5764,67 @@ def _suite_result_from_evidence(suite_root: Path) -> PaperSuiteResult:
     )
 
 
+def _formal_suite_closure_complete(
+    *,
+    suite_root: Path,
+    plans: Sequence[PaperExperimentDispatchPlan],
+) -> bool:
+    """确认三层终态都已提交；缺任何一层时必须由 checkpoint 重建。"""
+
+    try:
+        persisted_result = _suite_result_from_evidence(suite_root)
+        suite_manifest = _required_json_object(
+            suite_root / "suite_manifest.json",
+            "suite manifest",
+        )
+        if suite_manifest.get("status") != _status_value(persisted_result.status):
+            return False
+        if suite_manifest.get("status") in {"planned", "running"}:
+            return False
+        rows = _read_jsonl_records(suite_root / "condition_results.jsonl")
+        row_keys = {
+            (
+                str(row["experiment_id"]),
+                str(row["condition_id"]),
+                str(row["repeat_id"]),
+            )
+            for row in rows
+        }
+        if len(row_keys) != len(rows):
+            return False
+        expected_keys = {
+            (
+                plan.experiment_id,
+                condition.condition_id,
+                str(condition.repeat_id),
+            )
+            for plan in plans
+            if plan.status == "planned"
+            for condition in plan.conditions
+        }
+        if not expected_keys.issubset(row_keys):
+            return False
+        for plan in plans:
+            manifest = _required_json_object(
+                suite_root
+                / "experiments"
+                / plan.experiment_id
+                / "experiment_manifest.json",
+                "experiment manifest",
+            )
+            if manifest.get("status") in {"planned", "running"}:
+                return False
+        return True
+    except (KeyError, OSError, TypeError, ValueError, json.JSONDecodeError):
+        return False
+
+
 def _usage_from_evidence(suite_root: Path) -> _UsageTotals:
     """resume 时以已持久化 suite result 继续累计硬预算。"""
 
     path = suite_root / "formal_runner_result.json"
     if not path.is_file():
-        return _UsageTotals()
+        return _usage_from_current_checkpoints(suite_root)
     body = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(body, Mapping):
         raise ValueError("formal runner result must be a JSON object")
@@ -3805,6 +5850,48 @@ def _usage_from_evidence(suite_root: Path) -> _UsageTotals:
             1 if body.get("total_cost_estimate_status") == "usage_missing" else 0
         ),
     )
+
+
+def _usage_from_current_checkpoints(suite_root: Path) -> _UsageTotals:
+    """suite finalizer 未提交时，从每个 canonical CURRENT generation 恢复 usage。"""
+
+    usage = _UsageTotals()
+    for pointer_path in sorted(
+        suite_root.glob("experiments/*/runs/*/*/CURRENT.json")
+    ):
+        pointer = _required_json_object(pointer_path, "condition CURRENT pointer")
+        generation_root = (
+            pointer_path.parent / ".generations" / str(pointer["generation_id"])
+        )
+        for attempt in _read_jsonl_records(
+            generation_root / "per_attempt_results.jsonl"
+        ):
+            if attempt.get("record_scope") != "protocol":
+                continue
+            usage.provider_attempt_count += _persisted_provider_attempt_count(
+                (attempt,)
+            )
+            total_tokens = attempt.get("total_tokens", 0)
+            if isinstance(total_tokens, int) and not isinstance(total_tokens, bool):
+                usage.total_tokens += max(0, total_tokens)
+            cost_estimate = attempt.get("cost_estimate", 0.0)
+            normalized_cost = (
+                float(cost_estimate)
+                if isinstance(cost_estimate, (int, float))
+                and not isinstance(cost_estimate, bool)
+                else 0.0
+            )
+            currency = attempt.get("cost_estimate_currency")
+            if isinstance(currency, str) and currency:
+                usage.cost_estimate_by_currency[currency] = (
+                    usage.cost_estimate_by_currency.get(currency, 0.0)
+                    + normalized_cost
+                )
+            else:
+                usage.total_cost_estimate += normalized_cost
+            if attempt.get("cost_estimate_status") == "usage_missing":
+                usage.usage_missing_count += 1
+    return usage
 
 
 def _all_selected_roots_completed(
@@ -4082,13 +6169,33 @@ def _record_with_context(value: Any, *, condition: Any, task_id: str) -> dict[st
     record = _as_json(value)
     if not isinstance(record, Mapping):
         raise ValueError("adapter evidence record must be an object")
-    return {
+    contextualized = {
         **dict(record),
         "experiment_id": condition.experiment_id,
         "condition_id": condition.condition_id,
         "repeat_id": condition.repeat_id,
         "task_id": task_id,
     }
+    protocol_task_id = record.get("task_id")
+    if isinstance(protocol_task_id, str) and protocol_task_id != task_id:
+        contextualized.setdefault("protocol_task_id", protocol_task_id)
+    return contextualized
+
+
+def _event_record_with_context(
+    value: Any,
+    *,
+    condition: Any,
+    task_id: str,
+) -> dict[str, Any]:
+    """协议 ledger event 属于哈希体；实验 case 映射由 evidence store 旁路保存。"""
+
+    record = _as_json(value)
+    if not isinstance(record, Mapping):
+        raise ValueError("adapter evidence event must be an object")
+    if _is_protocol_ledger_event(record):
+        return dict(record)
+    return _record_with_context(record, condition=condition, task_id=task_id)
 
 
 def _attempt_checkpoint_ineligibility_reasons(
@@ -4180,14 +6287,20 @@ def _task_checkpoint_ineligibility_reasons(
         reasons.append("source_task_evidence_incomplete")
     if _status_value(task.get("root_status") or "") == "partial":
         reasons.append("partial_root_result")
+    # paper_eligible 还会被 smoke/pilot 分类强制为 false；技术完整性只看独立原因字段。
     if not attempts or any(
-        attempt.get("paper_eligible") is not True for attempt in attempts
+        not isinstance(attempt.get("paper_ineligibility_reasons"), list)
+        or bool(attempt.get("paper_ineligibility_reasons"))
+        for attempt in attempts
     ):
         reasons.append("attempt_evidence_incomplete")
     protocol_events = [
         event
         for event in events
-        if event.get("record_scope") == "protocol"
+        if (
+            event.get("record_scope") == "protocol"
+            or _is_protocol_ledger_event(event)
+        )
         and isinstance(event.get("event_id"), str)
         and event.get("event_id")
     ]
@@ -4288,49 +6401,92 @@ def _adapter_artifact_refs(
     task: Any,
     attempts: Sequence[Mapping[str, Any]],
     faults: Sequence[Mapping[str, Any]],
+    *,
+    events: Sequence[Mapping[str, Any]] = (),
 ) -> tuple[Mapping[str, Any], ...]:
     refs: list[Mapping[str, Any]] = []
-    task_refs = _optional_field(task, "artifact_refs")
-    if isinstance(task_refs, Sequence) and not isinstance(task_refs, (str, bytes, bytearray)):
-        refs.extend(item for item in task_refs if isinstance(item, Mapping))
-    for attempt in attempts:
-        for field_name in (
-            "request_ref",
-            "raw_output_ref",
-            "parsed_output_ref",
-            "parse_failure_ref",
-            "provenance_ref",
-            "usage_ref",
-            "model_execution_record_ref",
-            "fault_injection_ref",
-        ):
-            ref = attempt.get(field_name)
-            if isinstance(ref, Mapping):
-                refs.append(ref)
-    for fault in faults:
-        for field_name in (
-            "record_ref",
-            "primitive_fault_record_ref",
-            "original_raw_output_ref",
-            "original_output_ref",
-            "mutated_output_ref",
-            "suppressed_output_ref",
-            "original_provenance_ref",
-            "mutated_provenance_ref",
-            "pre_fault_usage_ref",
-        ):
-            ref = fault.get(field_name)
-            if isinstance(ref, Mapping):
-                refs.append(ref)
+    for record_group in (task, attempts, faults, events):
+        refs.extend(_nested_artifact_refs(record_group))
     unique: list[Mapping[str, Any]] = []
-    seen: set[tuple[str, str]] = set()
+    seen: set[tuple[str, str, str]] = set()
     for ref in refs:
-        uri = ref.get("uri")
-        content_hash = ref.get("content_hash")
-        if isinstance(uri, str) and isinstance(content_hash, str) and (uri, content_hash) not in seen:
-            seen.add((uri, content_hash))
+        key = _artifact_ref_identity(ref)
+        if key not in seen:
+            seen.add(key)
             unique.append(ref)
     return tuple(unique)
+
+
+def _nested_artifact_refs(value: Any) -> list[Mapping[str, Any]]:
+    """递归发现 ArtifactRef；其 source/metadata 仍可能继续引用 artifact。"""
+
+    result: list[Mapping[str, Any]] = []
+    if isinstance(value, Mapping):
+        if _is_artifact_ref_candidate(value):
+            result.append(value)
+        for child in value.values():
+            result.extend(_nested_artifact_refs(child))
+    elif isinstance(value, Sequence) and not isinstance(
+        value,
+        (str, bytes, bytearray),
+    ):
+        for child in value:
+            result.extend(_nested_artifact_refs(child))
+    return result
+
+
+def _is_artifact_ref_candidate(value: Mapping[str, Any]) -> bool:
+    if value.get("schema_version") == "ArtifactRef.v1":
+        return True
+    return isinstance(value.get("uri"), str) and isinstance(
+        value.get("content_hash"),
+        str,
+    )
+
+
+def _artifact_ref_identity(ref: Mapping[str, Any]) -> tuple[str, str, str]:
+    artifact_id = ref.get("artifact_id")
+    uri = ref.get("uri")
+    content_hash = ref.get("content_hash")
+    if isinstance(artifact_id, str) and artifact_id:
+        return (
+            "artifact_id",
+            artifact_id,
+            content_hash if isinstance(content_hash, str) else "",
+        )
+    return (
+        "uri",
+        uri if isinstance(uri, str) else "",
+        content_hash if isinstance(content_hash, str) else "",
+    )
+
+
+def _validate_complete_artifact_ref(ref: Mapping[str, Any]) -> None:
+    if ref.get("schema_version") != "ArtifactRef.v1":
+        return
+    for field_name in (
+        "artifact_id",
+        "artifact_type",
+        "uri",
+        "content_hash",
+        "media_type",
+        "artifact_schema_id",
+        "artifact_schema_version",
+        "created_at",
+    ):
+        value = ref.get(field_name)
+        if not isinstance(value, str) or not value:
+            raise ValueError(f"complete ArtifactRef requires {field_name}")
+    size_bytes = ref.get("size_bytes")
+    if (
+        isinstance(size_bytes, bool)
+        or not isinstance(size_bytes, int)
+        or size_bytes < 0
+    ):
+        raise ValueError("complete ArtifactRef requires non-negative size_bytes")
+    for field_name in ("source", "metadata"):
+        if not isinstance(ref.get(field_name), Mapping):
+            raise ValueError(f"complete ArtifactRef requires mapping {field_name}")
 
 
 def _materialize_artifacts(
@@ -4353,43 +6509,135 @@ def _materialize_artifacts(
     )
     artifact_root.mkdir(parents=True, exist_ok=True)
     result: list[dict[str, Any]] = []
-    names: set[str] = set()
-    for index, source_ref in enumerate(source_refs):
+    queue = deque(source_refs)
+    seen: set[tuple[str, str, str]] = set()
+    artifact_id_hashes: dict[str, str] = {}
+    while queue:
+        source_ref = queue.popleft()
+        _validate_complete_artifact_ref(source_ref)
         uri = source_ref.get("uri")
+        expected_content_hash = source_ref.get("content_hash")
         if not isinstance(uri, str) or not uri:
             continue
+        if not isinstance(expected_content_hash, str) or not expected_content_hash:
+            raise ValueError(f"adapter artifact evidence hash is missing: {uri}")
+        artifact_id = source_ref.get("artifact_id")
+        key = _artifact_ref_identity(source_ref)
+        if key in seen:
+            continue
+        seen.add(key)
+        if isinstance(artifact_id, str) and artifact_id:
+            prior_hash = artifact_id_hashes.setdefault(
+                artifact_id,
+                expected_content_hash,
+            )
+            if prior_hash != expected_content_hash:
+                raise ValueError(
+                    f"adapter artifact_id has conflicting content: {artifact_id}"
+                )
         source = adapter_root / uri
         if not source.is_file():
             matches = _find_nested_adapter_artifacts(
                 adapter_root=adapter_root,
                 uri=uri,
-                expected_content_hash=source_ref.get("content_hash"),
+                expected_content_hash=expected_content_hash,
             )
             if len(matches) != 1:
                 raise ValueError(
                     f"adapter artifact evidence is missing: {uri}"
                 )
             source = matches[0]
-        name = Path(uri).name or f"artifact-{index}"
-        if name in names:
-            name = f"{index}-{name}"
-        names.add(name)
+        source_bytes = source.read_bytes()
+        if _sha256_bytes(source_bytes) != expected_content_hash:
+            raise ValueError(f"adapter artifact evidence hash mismatched: {uri}")
+        expected_size = source_ref.get("size_bytes")
+        if expected_size is not None and (
+            isinstance(expected_size, bool)
+            or not isinstance(expected_size, int)
+            or expected_size != len(source_bytes)
+        ):
+            raise ValueError(f"adapter artifact evidence size mismatched: {uri}")
+        name = _content_addressed_artifact_name(
+            uri=uri,
+            content_hash=expected_content_hash,
+            artifact_id=artifact_id,
+        )
         target = artifact_root / name
-        shutil.copyfile(source, target)
+        if target.is_file():
+            if _sha256_bytes(target.read_bytes()) != expected_content_hash:
+                raise ValueError(f"materialized artifact collision: {name}")
+        else:
+            shutil.copyfile(source, target)
         materialized_ref = {
             "experiment_id": condition.experiment_id,
             "condition_id": condition.condition_id,
             "repeat_id": condition.repeat_id,
             "task_id": task_id,
             "path": target.relative_to(suite_root).as_posix(),
-            "content_hash": _sha256_bytes(target.read_bytes()),
+            "content_hash": expected_content_hash,
+            "size_bytes": len(source_bytes),
+            "source_uri": uri,
+            "source_artifact_ref": dict(source_ref),
         }
-        if isinstance(source_ref.get("artifact_id"), str) and source_ref.get(
-            "artifact_id"
-        ):
-            materialized_ref["artifact_id"] = source_ref["artifact_id"]
+        if isinstance(artifact_id, str) and artifact_id:
+            materialized_ref["artifact_id"] = artifact_id
         result.append(materialized_ref)
+        queue.extend(_nested_artifact_refs(source_ref.get("source")))
+        queue.extend(_nested_artifact_refs(source_ref.get("metadata")))
+        declared_media_type = source_ref.get("media_type")
+        declared_json = (
+            isinstance(declared_media_type, str)
+            and (
+                declared_media_type.split(";", maxsplit=1)[0].strip().lower()
+                == "application/json"
+                or declared_media_type.split(";", maxsplit=1)[0]
+                .strip()
+                .lower()
+                .endswith("+json")
+            )
+        )
+        try:
+            payload = json.loads(source_bytes.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as error:
+            if declared_json:
+                raise ValueError(
+                    f"declared JSON artifact payload is invalid: {uri}"
+                ) from error
+            payload = None
+        if payload is not None:
+            queue.extend(_nested_artifact_refs(payload))
+    result.sort(
+        key=lambda item: (
+            str(item.get("artifact_id", "")),
+            str(item["path"]),
+            str(item["content_hash"]),
+        )
+    )
     return result
+
+
+def _content_addressed_artifact_name(
+    *,
+    uri: str,
+    content_hash: str,
+    artifact_id: Any,
+) -> str:
+    """用 digest 隔离同 basename artifact，并移除 Windows 非法文件名字符。"""
+
+    digest = content_hash.removeprefix("sha256:")
+    basename = Path(uri).name or "artifact"
+    invalid = '<>:"/\\|?*'
+    safe_basename = "".join(
+        "_" if character in invalid or ord(character) < 32 else character
+        for character in basename
+    )[:96]
+    identity_name = artifact_id if isinstance(artifact_id, str) else ""
+    safe_identity = "".join(
+        "_" if character in invalid or ord(character) < 32 else character
+        for character in identity_name
+    )[:64]
+    identity_prefix = f"{safe_identity}-" if safe_identity else ""
+    return f"{digest}-{identity_prefix}{safe_basename}"
 
 
 def _find_nested_adapter_artifacts(
@@ -4545,6 +6793,183 @@ def _write_json(path: Path, body: Any) -> None:
     )
 
 
+def _atomic_write_text(path: Path, content: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+    try:
+        # 使用 bytes 固定 LF；Windows text mode 的 CRLF 转换会破坏 intent digest。
+        temporary.write_bytes(content.encode("utf-8"))
+        temporary.replace(path)
+    finally:
+        if temporary.exists():
+            temporary.unlink()
+
+
+def _atomic_write_json(path: Path, body: Any) -> None:
+    _atomic_write_text(path, _serialized_json_text(body))
+
+
+def _atomic_write_jsonl(path: Path, rows: Sequence[Mapping[str, Any]]) -> None:
+    _atomic_write_text(path, _serialized_jsonl_text(rows))
+
+
+def _serialized_json_text(body: Any) -> str:
+    return (
+        json.dumps(
+            _as_json(body),
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        + "\n"
+    )
+
+
+def _serialized_jsonl_text(rows: Sequence[Mapping[str, Any]]) -> str:
+    return "".join(
+        json.dumps(
+            _as_json(row),
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        + "\n"
+        for row in rows
+    )
+
+
+def _file_digest_or_none(path: Path) -> str | None:
+    return _sha256_bytes(path.read_bytes()) if path.is_file() else None
+
+
+def _formal_finalization_target(
+    *,
+    suite_root: Path,
+    path: Path,
+    content: str,
+) -> dict[str, Any]:
+    return {
+        "path": path.relative_to(suite_root).as_posix(),
+        "expected_prior_digest": _file_digest_or_none(path),
+        "target_digest": _sha256_bytes(content.encode("utf-8")),
+        "content": content,
+    }
+
+
+def _apply_formal_finalization_target(
+    *,
+    suite_root: Path,
+    target: Mapping[str, Any],
+    expected_path: str,
+) -> None:
+    if set(target) != {
+        "path",
+        "expected_prior_digest",
+        "target_digest",
+        "content",
+    }:
+        raise ValueError("formal finalization target shape mismatch")
+    if target.get("path") != expected_path:
+        raise ValueError("formal finalization target path mismatch")
+    content = target.get("content")
+    target_digest = target.get("target_digest")
+    prior_digest = target.get("expected_prior_digest")
+    if not isinstance(content, str) or not isinstance(target_digest, str):
+        raise ValueError("formal finalization target content is invalid")
+    if prior_digest is not None and not isinstance(prior_digest, str):
+        raise ValueError("formal finalization prior digest is invalid")
+    if _sha256_bytes(content.encode("utf-8")) != target_digest:
+        raise ValueError("formal finalization target digest mismatch")
+    path = (suite_root / expected_path).resolve(strict=False)
+    if not path.is_relative_to(suite_root.resolve(strict=False)):
+        raise ValueError("formal finalization target escapes suite root")
+    actual_digest = _file_digest_or_none(path)
+    if actual_digest == target_digest:
+        return
+    if actual_digest != prior_digest:
+        raise ValueError("formal finalization target prior digest conflict")
+    _atomic_write_text(path, content)
+    if _file_digest_or_none(path) != target_digest:
+        raise ValueError("formal finalization target write verification failed")
+
+
+def _formal_finalization_hook(*, stage: str, suite_root: Path) -> None:
+    """供断点恢复测试注入进程中断；生产路径默认无操作。"""
+
+    del stage, suite_root
+
+
+def _repair_interrupted_formal_finalization(suite_root: Path) -> dict[str, Any] | None:
+    """只按 top-level intent 补完 runner 两个明确 target，并重建 inventory。"""
+
+    pending_path = suite_root / _FORMAL_FINALIZATION_PENDING
+    if not pending_path.is_file():
+        return None
+    pending = _required_json_object(pending_path, "formal finalization intent")
+    publication_kind = pending.get("publication_kind")
+    if publication_kind == "experiment_terminal_commit":
+        if set(pending) != {
+            "schema_version",
+            "publication_kind",
+            "experiment_id",
+            "condition_results_target",
+            "experiment_manifest_target",
+        } or pending.get("schema_version") != _FORMAL_FINALIZATION_SCHEMA:
+            raise ValueError("formal finalization intent shape mismatch")
+        experiment_id = pending.get("experiment_id")
+        if not isinstance(experiment_id, str) or not experiment_id:
+            raise ValueError("formal finalization experiment identity is invalid")
+        rows_target = pending.get("condition_results_target")
+        manifest_target = pending.get("experiment_manifest_target")
+        if not isinstance(rows_target, Mapping) or not isinstance(
+            manifest_target,
+            Mapping,
+        ):
+            raise ValueError("formal finalization targets are invalid")
+        _apply_formal_finalization_target(
+            suite_root=suite_root,
+            target=rows_target,
+            expected_path="condition_results.jsonl",
+        )
+        _apply_formal_finalization_target(
+            suite_root=suite_root,
+            target=manifest_target,
+            expected_path=(
+                f"experiments/{experiment_id}/experiment_manifest.json"
+            ),
+        )
+    elif publication_kind == "suite_terminal_commit":
+        if set(pending) != {
+            "schema_version",
+            "publication_kind",
+            "formal_runner_result_target",
+            "suite_manifest_target",
+        } or pending.get("schema_version") != _FORMAL_SUITE_FINALIZATION_SCHEMA:
+            raise ValueError("formal suite finalization intent shape mismatch")
+        result_target = pending.get("formal_runner_result_target")
+        suite_target = pending.get("suite_manifest_target")
+        if not isinstance(result_target, Mapping) or not isinstance(
+            suite_target,
+            Mapping,
+        ):
+            raise ValueError("formal suite finalization targets are invalid")
+        _apply_formal_finalization_target(
+            suite_root=suite_root,
+            target=result_target,
+            expected_path="formal_runner_result.json",
+        )
+        _apply_formal_finalization_target(
+            suite_root=suite_root,
+            target=suite_target,
+            expected_path="suite_manifest.json",
+        )
+    else:
+        raise ValueError("formal finalization intent schema mismatch")
+    FormalEvidenceStore(suite_root)._refresh_evidence_manifest()
+    pending_path.unlink()
+    return pending
+
+
 def _last_complete_event_ref(suite_root: Path) -> dict[str, Any] | None:
     candidates: list[tuple[Path, dict[str, Any]]] = []
     for pointer_path in sorted(suite_root.glob("experiments/*/runs/*/*/CURRENT.json")):
@@ -4583,6 +7008,18 @@ def _finalize_formal_manifests(
     condition_results: Sequence[PaperConditionResult],
     execution_classification: Mapping[str, Any] | None,
 ) -> None:
+    results_by_plan = _partition_condition_results(
+        plans=plans,
+        condition_results=condition_results,
+    )
+    for plan in plans:
+        _finalize_formal_experiment(
+            suite_root=suite_root,
+            plan=plan,
+            condition_results=results_by_plan[plan.experiment_id],
+            execution_classification=execution_classification,
+            suite_status=_status_value(suite_result.status),
+        )
     suite_path = suite_root / "suite_manifest.json"
     suite_manifest = json.loads(suite_path.read_text(encoding="utf-8"))
     suite_manifest["status"] = _status_value(suite_result.status)
@@ -4594,102 +7031,269 @@ def _finalize_formal_manifests(
         suite_manifest["last_complete_event_ref"] = _last_complete_event_ref(
             suite_root
         )
-    _write_json(suite_path, suite_manifest)
-    results_by_id = {result.condition_id: result for result in condition_results}
-    condition_rows: list[dict[str, Any]] = []
-    for plan in plans:
-        plan_results = [
-            results_by_id[condition.condition_id]
-            for condition in plan.conditions
-            if condition.condition_id in results_by_id
-        ]
-        infrastructure_blocked = any(
-            isinstance(result.metrics_ref, Mapping)
-            and result.metrics_ref.get("infrastructure_blocked") is True
-            for result in plan_results
-        )
-        if _status_value(suite_result.status) == "incomplete" and infrastructure_blocked:
-            experiment_status = PaperStatus.INCOMPLETE
-        elif plan.status == "blocked" or infrastructure_blocked:
-            experiment_status = PaperStatus.BLOCKED
-        elif plan_results:
-            experiment_status = _suite_status(plans=(plan,), results=plan_results)
-        else:
-            experiment_status = PaperStatus.PLANNED
-        manifest_path = (
-            suite_root
-            / "experiments"
-            / plan.experiment_id
-            / "experiment_manifest.json"
-        )
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        manifest["status"] = _status_value(experiment_status)
-        expected_ids = {condition.condition_id for condition in plan.conditions}
-        actual_ids = {result.condition_id for result in plan_results}
-        manifest["paper_eligible"] = (
-            execution_classification is None
-            and
-            plan.paper_eligible_possible
-            and plan.status != "blocked"
-            and bool(expected_ids)
-            and actual_ids == expected_ids
-            and all(
-                isinstance(result.metrics_ref, Mapping)
-                and result.metrics_ref.get("paper_eligible") is True
-                and bool(result.metrics_ref.get("evidence_refs"))
-                for result in plan_results
-            )
-        )
-        _write_json(manifest_path, manifest)
-        for condition in plan.conditions:
-            result = results_by_id.get(condition.condition_id)
-            if result is None:
-                continue
-            row = {
-                    **result.to_dict(),
-                    "experiment_id": plan.experiment_id,
-                    "repeat_id": condition.repeat_id,
-                    "formal": execution_classification is None,
-                    "pilot_only": execution_classification is not None,
-                    "regression_only": execution_classification is not None,
-                    "execution_scope": (
-                        "formal_matrix"
-                        if execution_classification is None
-                        else "smoke_suite"
-                    ),
-                    "ineligibility_reasons": (
-                        []
-                        if execution_classification is None
-                        else list(
-                            execution_classification["ineligibility_reasons"]
-                        )
-                    ),
-                    "paper_eligible": (
-                        execution_classification is None
-                        and
-                        isinstance(result.metrics_ref, Mapping)
-                        and result.metrics_ref.get("paper_eligible") is True
-                    ),
-                }
-            if isinstance(result.metrics_ref, Mapping):
-                outcome_counts = result.metrics_ref.get("outcome_counts")
-                if isinstance(outcome_counts, Mapping):
-                    row["outcome_counts"] = dict(outcome_counts)
-                    row["evidence_integrity"] = result.metrics_ref.get(
-                        "evidence_integrity",
-                        "invalid"
-                        if result.metrics_ref.get("infrastructure_blocked")
-                        else "complete",
-                    )
-            condition_rows.append(row)
-    path = suite_root / "condition_results.jsonl"
-    path.write_text(
-        "".join(
-            json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n"
-            for row in condition_rows
-        ),
-        encoding="utf-8",
+    result_path = suite_root / "formal_runner_result.json"
+    result_target = _formal_finalization_target(
+        suite_root=suite_root,
+        path=result_path,
+        content=_serialized_json_text(suite_result.to_dict()),
     )
+    suite_target = _formal_finalization_target(
+        suite_root=suite_root,
+        path=suite_path,
+        content=_serialized_json_text(suite_manifest),
+    )
+    pending_path = suite_root / _FORMAL_FINALIZATION_PENDING
+    _atomic_write_json(
+        pending_path,
+        {
+            "schema_version": _FORMAL_SUITE_FINALIZATION_SCHEMA,
+            "publication_kind": "suite_terminal_commit",
+            "formal_runner_result_target": result_target,
+            "suite_manifest_target": suite_target,
+        },
+    )
+    _apply_formal_finalization_target(
+        suite_root=suite_root,
+        target=result_target,
+        expected_path="formal_runner_result.json",
+    )
+    _formal_finalization_hook(
+        stage="formal_runner_result_written",
+        suite_root=suite_root,
+    )
+    _apply_formal_finalization_target(
+        suite_root=suite_root,
+        target=suite_target,
+        expected_path="suite_manifest.json",
+    )
+    _formal_finalization_hook(stage="suite_manifest_written", suite_root=suite_root)
+    FormalEvidenceStore(suite_root)._refresh_evidence_manifest()
+    _formal_finalization_hook(
+        stage="suite_inventory_refreshed",
+        suite_root=suite_root,
+    )
+    pending_path.unlink()
+
+
+def _partition_condition_results(
+    *,
+    plans: Sequence[PaperExperimentDispatchPlan],
+    condition_results: Sequence[PaperConditionResult],
+) -> dict[str, list[PaperConditionResult]]:
+    """按冻结 plan 顺序消费结果；不假设 condition_id 在实验间全局唯一。"""
+
+    remaining = list(condition_results)
+    result: dict[str, list[PaperConditionResult]] = {}
+    for plan in plans:
+        plan_results: list[PaperConditionResult] = []
+        for condition in plan.conditions:
+            if not remaining:
+                continue
+            if remaining[0].condition_id != condition.condition_id:
+                if plan.status == "blocked":
+                    continue
+                raise ValueError("condition results violate frozen dispatch order")
+            plan_results.append(remaining.pop(0))
+        result[plan.experiment_id] = plan_results
+    if remaining:
+        raise ValueError("condition results do not belong to frozen plans")
+    return result
+
+
+def _finalize_formal_experiment(
+    *,
+    suite_root: Path,
+    plan: PaperExperimentDispatchPlan,
+    condition_results: Sequence[PaperConditionResult],
+    execution_classification: Mapping[str, Any] | None,
+    suite_status: str | None = None,
+) -> None:
+    _repair_interrupted_formal_finalization(suite_root)
+    bindings = _condition_result_bindings(
+        plan=plan,
+        condition_results=condition_results,
+    )
+    rows_path = suite_root / "condition_results.jsonl"
+    indexed_rows: dict[tuple[str, str, str], dict[str, Any]] = {}
+    for row in _read_jsonl_records(rows_path):
+        key = (
+            str(row.get("experiment_id")),
+            str(row.get("condition_id")),
+            str(row.get("repeat_id")),
+        )
+        if key in indexed_rows:
+            raise ValueError("duplicate persisted condition result")
+        indexed_rows[key] = row
+    for condition, result in bindings:
+        row = _formal_condition_result_row(
+            plan=plan,
+            condition=condition,
+            result=result,
+            execution_classification=execution_classification,
+        )
+        key = (
+            plan.experiment_id,
+            condition.condition_id,
+            str(condition.repeat_id),
+        )
+        indexed_rows[key] = row
+    ordered_rows = [indexed_rows[key] for key in sorted(indexed_rows)]
+
+    infrastructure_blocked = any(
+        isinstance(result.metrics_ref, Mapping)
+        and result.metrics_ref.get("infrastructure_blocked") is True
+        for _condition, result in bindings
+    )
+    expected_keys = {
+        (condition.condition_id, str(condition.repeat_id))
+        for condition in plan.conditions
+    }
+    actual_keys = {
+        (condition.condition_id, str(condition.repeat_id))
+        for condition, _result in bindings
+    }
+    if suite_status == "incomplete" and infrastructure_blocked:
+        experiment_status: PaperStatus | str = PaperStatus.INCOMPLETE
+    elif plan.status == "blocked" or infrastructure_blocked:
+        experiment_status = PaperStatus.BLOCKED
+    elif expected_keys and actual_keys == expected_keys:
+        experiment_status = _suite_status(
+            plans=(plan,),
+            results=[result for _condition, result in bindings],
+        )
+    elif bindings:
+        experiment_status = PaperStatus.RUNNING
+    else:
+        experiment_status = (
+            PaperStatus.BLOCKED
+            if plan.status == "blocked"
+            else PaperStatus.PLANNED
+        )
+    manifest_path = (
+        suite_root
+        / "experiments"
+        / plan.experiment_id
+        / "experiment_manifest.json"
+    )
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["status"] = _status_value(experiment_status)
+    manifest["paper_eligible"] = (
+        execution_classification is None
+        and plan.paper_eligible_possible
+        and plan.status != "blocked"
+        and bool(expected_keys)
+        and actual_keys == expected_keys
+        and all(
+            isinstance(result.metrics_ref, Mapping)
+            and result.metrics_ref.get("paper_eligible") is True
+            and bool(result.metrics_ref.get("evidence_refs"))
+            for _condition, result in bindings
+        )
+    )
+    rows_target = _formal_finalization_target(
+        suite_root=suite_root,
+        path=rows_path,
+        content=_serialized_jsonl_text(ordered_rows),
+    )
+    manifest_target = _formal_finalization_target(
+        suite_root=suite_root,
+        path=manifest_path,
+        content=_serialized_json_text(manifest),
+    )
+    pending_path = suite_root / _FORMAL_FINALIZATION_PENDING
+    _atomic_write_json(
+        pending_path,
+        {
+            "schema_version": _FORMAL_FINALIZATION_SCHEMA,
+            "publication_kind": "experiment_terminal_commit",
+            "experiment_id": plan.experiment_id,
+            "condition_results_target": rows_target,
+            "experiment_manifest_target": manifest_target,
+        },
+    )
+    # rows 先 durable；experiment manifest 是 terminal commit marker。PENDING 使两步可恢复。
+    _apply_formal_finalization_target(
+        suite_root=suite_root,
+        target=rows_target,
+        expected_path="condition_results.jsonl",
+    )
+    _formal_finalization_hook(
+        stage="condition_results_written",
+        suite_root=suite_root,
+    )
+    _apply_formal_finalization_target(
+        suite_root=suite_root,
+        target=manifest_target,
+        expected_path=(
+            f"experiments/{plan.experiment_id}/experiment_manifest.json"
+        ),
+    )
+    _formal_finalization_hook(
+        stage="experiment_manifest_written",
+        suite_root=suite_root,
+    )
+    FormalEvidenceStore(suite_root)._refresh_evidence_manifest()
+    _formal_finalization_hook(stage="inventory_refreshed", suite_root=suite_root)
+    pending_path.unlink()
+
+
+def _condition_result_bindings(
+    *,
+    plan: PaperExperimentDispatchPlan,
+    condition_results: Sequence[PaperConditionResult],
+) -> list[tuple[Any, PaperConditionResult]]:
+    if len(condition_results) > len(plan.conditions):
+        raise ValueError("experiment condition results do not match frozen plan")
+    bindings = list(zip(plan.conditions, condition_results, strict=False))
+    if any(
+        result.condition_id != condition.condition_id
+        for condition, result in bindings
+    ):
+        raise ValueError("experiment condition results violate frozen order")
+    return bindings
+
+
+def _formal_condition_result_row(
+    *,
+    plan: PaperExperimentDispatchPlan,
+    condition: Any,
+    result: PaperConditionResult,
+    execution_classification: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    row = {
+        **result.to_dict(),
+        "experiment_id": plan.experiment_id,
+        "repeat_id": condition.repeat_id,
+        "formal": execution_classification is None,
+        "pilot_only": execution_classification is not None,
+        "regression_only": execution_classification is not None,
+        "execution_scope": (
+            "formal_matrix"
+            if execution_classification is None
+            else "smoke_suite"
+        ),
+        "ineligibility_reasons": (
+            []
+            if execution_classification is None
+            else list(execution_classification["ineligibility_reasons"])
+        ),
+        "paper_eligible": (
+            execution_classification is None
+            and isinstance(result.metrics_ref, Mapping)
+            and result.metrics_ref.get("paper_eligible") is True
+        ),
+    }
+    if isinstance(result.metrics_ref, Mapping):
+        outcome_counts = result.metrics_ref.get("outcome_counts")
+        if isinstance(outcome_counts, Mapping):
+            row["outcome_counts"] = dict(outcome_counts)
+            row["evidence_integrity"] = result.metrics_ref.get(
+                "evidence_integrity",
+                "invalid"
+                if result.metrics_ref.get("infrastructure_blocked")
+                else "complete",
+            )
+    return row
 
 
 def _catalog_cases_by_id(catalog_manifest: Any) -> dict[str, dict[str, Any]]:

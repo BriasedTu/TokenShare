@@ -1,0 +1,20 @@
+{
+  "artifact_id": "paper_fault_1247567ee3348b20_exp3_mutation_provenance",
+  "artifact_schema_id": "tokenshare.paper_exp3_mutation_provenance",
+  "artifact_schema_version": "v1",
+  "artifact_type": "FaultMutationProvenance",
+  "content_hash": "sha256:719aab248a1a311925e23a58637142a62da8f929a4ca9ddca03f2f5ccd131873",
+  "created_at": "2026-07-19T00:00:02Z",
+  "media_type": "application/json",
+  "metadata": {
+    "attempt_id": "attempt_primitive_integration",
+    "condition_id": "fault_primitive_integration"
+  },
+  "schema_version": "ArtifactRef.v1",
+  "size_bytes": 2306,
+  "source": {
+    "fault_id": "paper_fault_1247567ee3348b20",
+    "kind": "paper_exp3_fault_adapter"
+  },
+  "uri": "artifacts/paper_fault_1247567ee3348b20_exp3_mutation_provenance"
+}

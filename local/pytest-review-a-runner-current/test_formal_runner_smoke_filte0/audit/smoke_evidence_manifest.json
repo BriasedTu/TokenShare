@@ -1,0 +1,202 @@
+{
+  "file_count": 39,
+  "files": [
+    {
+      "content_hash": "sha256:6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d",
+      "path": ".formal-evidence.lock",
+      "size_bytes": 1
+    },
+    {
+      "content_hash": "sha256:5a7f4dadddceefb325c5d342474fad9710e7b15714f0f080dab561d9bff3975c",
+      "path": "audit/secret_scan_report.json",
+      "size_bytes": 220
+    },
+    {
+      "content_hash": "sha256:3f9c171a6f47032b0fe62f8e0806180ce77e277dd10afeaad3e45903c1a122b2",
+      "path": "audit/smoke_eligibility_report.json",
+      "size_bytes": 327
+    },
+    {
+      "content_hash": "sha256:8f465add11b5f216616647d38c75ce398f3bd3f95bf36520de202f4974dadd3c",
+      "path": "condition_results.jsonl",
+      "size_bytes": 2271
+    },
+    {
+      "content_hash": "sha256:11f54c41a1152bed8b5e5ba827b2ffad643413c7efa2a96fa100eaea07544727",
+      "path": "conditions.jsonl",
+      "size_bytes": 1190
+    },
+    {
+      "content_hash": "sha256:9be2107b4cf22ba171bb3b7f971bb01b2983bf354683c0b272424146c547c2e7",
+      "path": "exp1_real_ai_feasibility/experiment_manifest.json",
+      "size_bytes": 501
+    },
+    {
+      "content_hash": "sha256:a9d8c0877d8770c439df032e2ba417982b0ab11cca25bee7b36e3e529d5232f9",
+      "path": "exp1_real_ai_feasibility/runs/condition-1/0/.generations/f6d93986ce4645728830502bbf5e9c2a/artifacts/artifact_index.jsonl",
+      "size_bytes": 1795
+    },
+    {
+      "content_hash": "sha256:46c6fd2c885253e4ddd72159450e5344f6c2c69ce5b564f6cb985adc3428a912",
+      "path": "exp1_real_ai_feasibility/runs/condition-1/0/.generations/f6d93986ce4645728830502bbf5e9c2a/events/event_log.jsonl",
+      "size_bytes": 321
+    },
+    {
+      "content_hash": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "path": "exp1_real_ai_feasibility/runs/condition-1/0/.generations/f6d93986ce4645728830502bbf5e9c2a/fault_injections.jsonl",
+      "size_bytes": 0
+    },
+    {
+      "content_hash": "sha256:9e1ee5faa8a30432e58b36d752b50d2a789aaf8d5d94d0ed1f8eb8435f18e24d",
+      "path": "exp1_real_ai_feasibility/runs/condition-1/0/.generations/f6d93986ce4645728830502bbf5e9c2a/generation_manifest.json",
+      "size_bytes": 2082
+    },
+    {
+      "content_hash": "sha256:c32a31b0aac8f4542b55187922e8ffadb01991a713baec6d30d88e187023d3be",
+      "path": "exp1_real_ai_feasibility/runs/condition-1/0/.generations/f6d93986ce4645728830502bbf5e9c2a/per_attempt_results.jsonl",
+      "size_bytes": 2365
+    },
+    {
+      "content_hash": "sha256:0dc480537890de1e7cf2fce74f4d5ffb9c4c8c76d827d7d30aa408da7265d05c",
+      "path": "exp1_real_ai_feasibility/runs/condition-1/0/.generations/f6d93986ce4645728830502bbf5e9c2a/per_task_results.jsonl",
+      "size_bytes": 4266
+    },
+    {
+      "content_hash": "sha256:e0ee24e7d71d358857ff441ea0aaf2f649e26fd090a3963346ad339e313e79e9",
+      "path": "exp1_real_ai_feasibility/runs/condition-1/0/.generations/f6d93986ce4645728830502bbf5e9c2a/run_manifest.json",
+      "size_bytes": 266
+    },
+    {
+      "content_hash": "sha256:0e83af8c5c01f4afeff04d3457f594a3340832220eca6cdcdbca46ed5eaf5c6c",
+      "path": "exp1_real_ai_feasibility/runs/condition-1/0/artifacts/case-1/0e83af8c5c01f4afeff04d3457f594a3340832220eca6cdcdbca46ed5eaf5c6c-raw-output.txt-raw-output.txt",
+      "size_bytes": 16
+    },
+    {
+      "content_hash": "sha256:cff54f7b7872f55fa00bee4649094e51e6b5ebb7eab37cfdc799afb652175254",
+      "path": "exp1_real_ai_feasibility/runs/condition-1/0/artifacts/case-1/cff54f7b7872f55fa00bee4649094e51e6b5ebb7eab37cfdc799afb652175254-request.json-request.json",
+      "size_bytes": 18
+    },
+    {
+      "content_hash": "sha256:8af3dcacf2d4b2bcf2c8f90b58b25c57d2be718ddcafdd778bd011726733c60e",
+      "path": "exp1_real_ai_feasibility/runs/condition-1/0/condition_manifest.json",
+      "size_bytes": 3052
+    },
+    {
+      "content_hash": "sha256:bbc98aa60760da9e049ce31a1d546cee4d7d6520e95d5a697fd6c0b1fda6dd38",
+      "path": "exp1_real_ai_feasibility/runs/condition-1/0/CURRENT.json",
+      "size_bytes": 214
+    },
+    {
+      "content_hash": "sha256:f5005d084af9a9895010611a35db2b14c6802e184f3961c5a001a032182a68cf",
+      "path": "experiments/exp1_real_ai_feasibility/experiment_manifest.json",
+      "size_bytes": 503
+    },
+    {
+      "content_hash": "sha256:a9d8c0877d8770c439df032e2ba417982b0ab11cca25bee7b36e3e529d5232f9",
+      "path": "experiments/exp1_real_ai_feasibility/runs/condition-1/0/.generations/f6d93986ce4645728830502bbf5e9c2a/artifacts/artifact_index.jsonl",
+      "size_bytes": 1795
+    },
+    {
+      "content_hash": "sha256:46c6fd2c885253e4ddd72159450e5344f6c2c69ce5b564f6cb985adc3428a912",
+      "path": "experiments/exp1_real_ai_feasibility/runs/condition-1/0/.generations/f6d93986ce4645728830502bbf5e9c2a/events/event_log.jsonl",
+      "size_bytes": 321
+    },
+    {
+      "content_hash": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "path": "experiments/exp1_real_ai_feasibility/runs/condition-1/0/.generations/f6d93986ce4645728830502bbf5e9c2a/fault_injections.jsonl",
+      "size_bytes": 0
+    },
+    {
+      "content_hash": "sha256:9e1ee5faa8a30432e58b36d752b50d2a789aaf8d5d94d0ed1f8eb8435f18e24d",
+      "path": "experiments/exp1_real_ai_feasibility/runs/condition-1/0/.generations/f6d93986ce4645728830502bbf5e9c2a/generation_manifest.json",
+      "size_bytes": 2082
+    },
+    {
+      "content_hash": "sha256:c32a31b0aac8f4542b55187922e8ffadb01991a713baec6d30d88e187023d3be",
+      "path": "experiments/exp1_real_ai_feasibility/runs/condition-1/0/.generations/f6d93986ce4645728830502bbf5e9c2a/per_attempt_results.jsonl",
+      "size_bytes": 2365
+    },
+    {
+      "content_hash": "sha256:0dc480537890de1e7cf2fce74f4d5ffb9c4c8c76d827d7d30aa408da7265d05c",
+      "path": "experiments/exp1_real_ai_feasibility/runs/condition-1/0/.generations/f6d93986ce4645728830502bbf5e9c2a/per_task_results.jsonl",
+      "size_bytes": 4266
+    },
+    {
+      "content_hash": "sha256:e0ee24e7d71d358857ff441ea0aaf2f649e26fd090a3963346ad339e313e79e9",
+      "path": "experiments/exp1_real_ai_feasibility/runs/condition-1/0/.generations/f6d93986ce4645728830502bbf5e9c2a/run_manifest.json",
+      "size_bytes": 266
+    },
+    {
+      "content_hash": "sha256:0e83af8c5c01f4afeff04d3457f594a3340832220eca6cdcdbca46ed5eaf5c6c",
+      "path": "experiments/exp1_real_ai_feasibility/runs/condition-1/0/artifacts/case-1/0e83af8c5c01f4afeff04d3457f594a3340832220eca6cdcdbca46ed5eaf5c6c-raw-output.txt-raw-output.txt",
+      "size_bytes": 16
+    },
+    {
+      "content_hash": "sha256:cff54f7b7872f55fa00bee4649094e51e6b5ebb7eab37cfdc799afb652175254",
+      "path": "experiments/exp1_real_ai_feasibility/runs/condition-1/0/artifacts/case-1/cff54f7b7872f55fa00bee4649094e51e6b5ebb7eab37cfdc799afb652175254-request.json-request.json",
+      "size_bytes": 18
+    },
+    {
+      "content_hash": "sha256:8af3dcacf2d4b2bcf2c8f90b58b25c57d2be718ddcafdd778bd011726733c60e",
+      "path": "experiments/exp1_real_ai_feasibility/runs/condition-1/0/condition_manifest.json",
+      "size_bytes": 3052
+    },
+    {
+      "content_hash": "sha256:bbc98aa60760da9e049ce31a1d546cee4d7d6520e95d5a697fd6c0b1fda6dd38",
+      "path": "experiments/exp1_real_ai_feasibility/runs/condition-1/0/CURRENT.json",
+      "size_bytes": 214
+    },
+    {
+      "content_hash": "sha256:d72b43c1d950baf60364766a81ee03bc22bbdddabcce24fca7bb83fcbeb64235",
+      "path": "formal_runner_result.json",
+      "size_bytes": 775
+    },
+    {
+      "content_hash": "sha256:efa8e34ce4783275936703b8a9c561a1a679f550266b1c0c8be94353346f7756",
+      "path": "input_catalog_manifest.json",
+      "size_bytes": 257
+    },
+    {
+      "content_hash": "sha256:0b3130b39313127079cd306352b9edff1d9f45dea4b1906473e07c3491721274",
+      "path": "metrics/smoke_failures.json",
+      "size_bytes": 2849
+    },
+    {
+      "content_hash": "sha256:7442129777a6a206baf6c4e8eaefd8d121b7a382abdb7246c21b5ed371264118",
+      "path": "metrics/smoke_summary.csv",
+      "size_bytes": 1664
+    },
+    {
+      "content_hash": "sha256:a0afa7c5a0f046424e87ee5dafba52a52e60c8277246a3ab459288a4052b5f06",
+      "path": "metrics/smoke_summary.json",
+      "size_bytes": 3959
+    },
+    {
+      "content_hash": "sha256:37b08d689d6469ff71b352d77ac1894e632c3de27d28584f6e12dc7cc6846c2e",
+      "path": "paper_dispatch_plans.json",
+      "size_bytes": 3470
+    },
+    {
+      "content_hash": "sha256:d452986633d735222408b798be3c0ba8b537b155bc9b1ec71b5bf5419de41f36",
+      "path": "run_budget.json",
+      "size_bytes": 1896
+    },
+    {
+      "content_hash": "sha256:aa7147bb03ab5e508b7434aa2161c63ebb1b292f0a564dda19c5307d612c622f",
+      "path": "smoke_execution_plan.json",
+      "size_bytes": 685
+    },
+    {
+      "content_hash": "sha256:0a3c1ad31f8cc620625650a9e9a085f1055e49a752a67b7f06688f36783f5bdf",
+      "path": "smoke_profile.json",
+      "size_bytes": 103
+    },
+    {
+      "content_hash": "sha256:597365a185e7658198759ea16d599d9c5f8654c39b4add97df37a9e67843c238",
+      "path": "suite_manifest.json",
+      "size_bytes": 8977
+    }
+  ],
+  "paper_eligible": false,
+  "schema_version": "tokenshare.paper_smoke_evidence_manifest.v1"
+}

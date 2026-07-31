@@ -8,6 +8,8 @@ import json
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
+from tokenshare.experiments.paper_formal_evidence import FormalEvidenceStore
+
 
 SMOKE_SUMMARY_SCHEMA_VERSION = "tokenshare.paper_smoke_summary.v2"
 _CSV_FIELDS = (
@@ -31,13 +33,23 @@ _CSV_FIELDS = (
     "root_status",
     "outcome_status",
     "evidence_integrity",
+    "evidence_integrity_reasons",
     "accepted_validity",
+    "accepted_validity_unavailable_reason",
     "provider_attempt_count",
+    "provider_attempt_count_unavailable_reason",
     "total_tokens",
+    "total_tokens_sample_size",
+    "total_tokens_missing_count",
+    "total_tokens_unavailable_reason",
     "cost_estimate",
+    "cost_estimate_sample_size",
+    "cost_estimate_missing_count",
+    "cost_estimate_unavailable_reason",
     "provider_actual_billing",
     "provider_actual_billing_available",
     "wall_clock_ms",
+    "wall_clock_ms_unavailable_reason",
     "failure_stage",
     "failure_kind",
     "baseline_policy",
@@ -84,16 +96,50 @@ def generate_paper_smoke_report(
         "suite_status": suite.get("status"),
         "row_count": len(rows),
         "completed_root_count": sum(
-            row["root_status"] == "completed" for row in rows
+            row["smoke_execution_status"] == "completed" for row in rows
         ),
         "failed_or_blocked_root_count": sum(
-            row["root_status"] != "completed" for row in rows
+            row["smoke_execution_status"] != "completed" for row in rows
         ),
-        "provider_attempt_count": sum(
-            int(row["provider_attempt_count"]) for row in rows
+        "provider_attempt_count": _complete_sum(
+            rows,
+            "provider_attempt_count",
         ),
-        "total_tokens": sum(int(row["total_tokens"]) for row in rows),
-        "cost_estimate": sum(float(row["cost_estimate"]) for row in rows),
+        "provider_attempt_count_sample_size": sum(
+            row["provider_attempt_count"] is not None for row in rows
+        ),
+        "provider_attempt_count_missing_count": sum(
+            row["provider_attempt_count"] is None for row in rows
+        ),
+        "provider_attempt_count_unavailable_reason": _summary_missing_reason(
+            rows,
+            "provider_attempt_count",
+            "incomplete_provider_attempt_evidence",
+        ),
+        "total_tokens": _complete_sum(rows, "total_tokens"),
+        "total_tokens_sample_size": sum(
+            int(row["total_tokens_sample_size"]) for row in rows
+        ),
+        "total_tokens_missing_count": sum(
+            int(row["total_tokens_missing_count"]) for row in rows
+        ),
+        "total_tokens_unavailable_reason": _summary_missing_reason(
+            rows,
+            "total_tokens",
+            "incomplete_total_tokens_evidence",
+        ),
+        "cost_estimate": _complete_sum(rows, "cost_estimate"),
+        "cost_estimate_sample_size": sum(
+            int(row["cost_estimate_sample_size"]) for row in rows
+        ),
+        "cost_estimate_missing_count": sum(
+            int(row["cost_estimate_missing_count"]) for row in rows
+        ),
+        "cost_estimate_unavailable_reason": _summary_missing_reason(
+            rows,
+            "cost_estimate",
+            "incomplete_cost_estimate_evidence",
+        ),
         "provider_actual_billing": None,
         "provider_actual_billing_available": False,
         "expected_root_count": len(rows),
@@ -136,9 +182,13 @@ def generate_paper_smoke_report(
             "schema_version": "tokenshare.paper_smoke_failures.v1",
             "suite_id": suite.get("suite_id"),
             "failure_count": sum(
-                row["root_status"] != "completed" for row in rows
+                row["smoke_execution_status"] != "completed" for row in rows
             ),
-            "rows": [row for row in rows if row["root_status"] != "completed"],
+            "rows": [
+                row
+                for row in rows
+                if row["smoke_execution_status"] != "completed"
+            ],
             "paper_eligible": False,
         },
     )
@@ -196,8 +246,14 @@ def _row_from_persisted_evidence(
             item=item,
             selector=selector,
             baseline_policy=baseline_policy,
+            capturing=capturing,
         )
-    tasks = _read_jsonl(generation / "per_task_results.jsonl")
+    logical = FormalEvidenceStore(root).load_logical_run_records(
+        experiment_id=experiment_id,
+        condition_id=condition_id,
+        repeat_id=repeat_id,
+    )
+    tasks = logical["tasks"]
     matching_tasks = [task for task in tasks if task.get("task_id") == case_id]
     if len(matching_tasks) != 1:
         raise ValueError("persisted smoke task identity is missing or ambiguous")
@@ -218,28 +274,38 @@ def _row_from_persisted_evidence(
         raise ValueError("persisted smoke task eligibility flags are invalid")
     attempts = [
         attempt
-        for attempt in _read_jsonl(generation / "per_attempt_results.jsonl")
+        for attempt in logical["attempts"]
         if attempt.get("task_id") == case_id
     ]
+    protocol_event_ledger = task.get("protocol_event_ledger")
+    protocol_event_hashes = (
+        set(protocol_event_ledger.get("event_hashes", ()))
+        if isinstance(protocol_event_ledger, Mapping)
+        and isinstance(protocol_event_ledger.get("event_hashes"), list)
+        else set()
+    )
     events = [
         event
-        for event in _read_jsonl(generation / "events" / "event_log.jsonl")
-        if event.get("task_id") in {None, case_id}
+        for event in logical["events"]
+        if (
+            event.get("event_hash") in protocol_event_hashes
+            or event.get("task_id") in {None, case_id}
+        )
     ]
     artifacts = [
         artifact
-        for artifact in _read_jsonl(
-            generation / "artifacts" / "artifact_index.jsonl"
-        )
+        for artifact in logical["artifacts"]
         if artifact.get("task_id") in {None, case_id}
     ]
     faults = [
         fault
-        for fault in _read_jsonl(generation / "fault_injections.jsonl")
+        for fault in logical["faults"]
         if fault.get("task_id") in {None, case_id}
     ]
-    provider_attempt_count, total_tokens, cost_estimate = _actual_usage(
+    usage = _actual_usage(
         attempts,
+        root=root,
+        artifacts=artifacts,
         capturing=capturing,
     )
     reasons = list(
@@ -271,9 +337,79 @@ def _row_from_persisted_evidence(
                 else "failed_experimental"
             )
         )
-    evidence_integrity = task.get("evidence_integrity", "complete")
-    if evidence_integrity not in {"complete", "missing", "invalid", "corrupt"}:
+    declared_evidence_integrity = task.get("evidence_integrity")
+    if declared_evidence_integrity is not None and declared_evidence_integrity not in {
+        "complete",
+        "missing",
+        "invalid",
+        "corrupt",
+    }:
         raise ValueError("persisted smoke task evidence_integrity is invalid")
+    accepted_validity = _optional_bool(
+        task.get(
+            "accepted_validity",
+            task.get("final_deterministic_validity"),
+        )
+    )
+    accepted_validity_unavailable_reason = (
+        None
+        if accepted_validity is not None
+        else (
+            "not_applicable_failed_experimental"
+            if outcome_status == "failed_experimental"
+            else (
+                "not_applicable_blocked_dependency"
+                if outcome_status == "blocked_dependency"
+                else "missing_accepted_validity_evidence"
+            )
+        )
+    )
+    runtime_observation = task.get("runtime_observation")
+    wall_clock_ms = _optional_non_negative_number(task.get("wall_clock_ms"))
+    if wall_clock_ms is None and isinstance(runtime_observation, Mapping):
+        wall_clock_ms = _optional_non_negative_number(
+            runtime_observation.get("runtime_wall_clock_ms")
+        )
+    integrity_reasons = [
+        *(
+            [str(usage["evidence_issue"])]
+            if usage.get("evidence_issue") is not None
+            else []
+        ),
+        *(
+            ["missing_accepted_validity_evidence"]
+            if accepted_validity_unavailable_reason
+            == "missing_accepted_validity_evidence"
+            else []
+        ),
+        *(
+            ["missing_wall_clock_evidence"]
+            if wall_clock_ms is None
+            else []
+        ),
+    ]
+    derived_integrity = (
+        "invalid"
+        if usage.get("evidence_issue") == "invalid_model_execution_record_ref"
+        else ("missing" if integrity_reasons else "complete")
+    )
+    evidence_integrity = _least_complete_integrity(
+        declared_evidence_integrity,
+        derived_integrity,
+    )
+    smoke_execution_status = (
+        "incomplete"
+        if evidence_integrity != "complete"
+        else (
+            "completed"
+            if root_status == "completed"
+            else (
+                "blocked"
+                if root_status in {"blocked", "not_started"}
+                else "failed"
+            )
+        )
+    )
     return {
         "item_id": item.get("item_id"),
         "experiment_id": experiment_id,
@@ -307,18 +443,47 @@ def _row_from_persisted_evidence(
         "root_status": root_status,
         "outcome_status": outcome_status,
         "evidence_integrity": evidence_integrity,
-        "accepted_validity": bool(
-            task.get(
-                "accepted_validity",
-                task.get("final_deterministic_validity", False),
+        "evidence_integrity_reasons": list(
+            dict.fromkeys(
+                [
+                    *integrity_reasons,
+                    *(
+                        [f"declared_evidence_integrity:{declared_evidence_integrity}"]
+                        if declared_evidence_integrity
+                        not in {None, "complete"}
+                        else []
+                    ),
+                ]
             )
         ),
-        "provider_attempt_count": provider_attempt_count,
-        "total_tokens": total_tokens,
-        "cost_estimate": cost_estimate,
+        "accepted_validity": accepted_validity,
+        "accepted_validity_unavailable_reason": (
+            accepted_validity_unavailable_reason
+        ),
+        "provider_attempt_count": usage["provider_attempt_count"],
+        "provider_attempt_count_unavailable_reason": usage[
+            "provider_attempt_count_unavailable_reason"
+        ],
+        "total_tokens": usage["total_tokens"],
+        "total_tokens_sample_size": usage["total_tokens_sample_size"],
+        "total_tokens_missing_count": usage["total_tokens_missing_count"],
+        "total_tokens_unavailable_reason": usage[
+            "total_tokens_unavailable_reason"
+        ],
+        "cost_estimate": usage["cost_estimate"],
+        "cost_estimate_sample_size": usage["cost_estimate_sample_size"],
+        "cost_estimate_missing_count": usage["cost_estimate_missing_count"],
+        "cost_estimate_unavailable_reason": usage[
+            "cost_estimate_unavailable_reason"
+        ],
         "provider_actual_billing": None,
         "provider_actual_billing_available": False,
-        "wall_clock_ms": int(task.get("wall_clock_ms", 0) or 0),
+        "wall_clock_ms": wall_clock_ms,
+        "wall_clock_ms_unavailable_reason": (
+            "missing_wall_clock_evidence"
+            if wall_clock_ms is None
+            else None
+        ),
         "failure_stage": task.get("failure_stage"),
         "failure_kind": task.get("failure_kind", task.get("error_kind")),
         "baseline_policy": baseline_policy,
@@ -340,18 +505,13 @@ def _row_from_persisted_evidence(
             if isinstance(artifact.get("path"), str)
         ),
         "fault_refs": sorted(
-            str(
-                fault.get("record_ref", {}).get("path")
-                if isinstance(fault.get("record_ref"), Mapping)
-                else fault.get("fault_injection_id")
-            )
-            for fault in faults
-            if fault.get("record_ref") is not None
-            or fault.get("fault_injection_id") is not None
+            {
+                ref
+                for fault in faults
+                if (ref := _traceable_fault_ref(fault)) is not None
+            }
         ),
-        "smoke_execution_status": (
-            "completed" if root_status == "completed" else "failed"
-        ),
+        "smoke_execution_status": smoke_execution_status,
         "formal": False,
         "pilot_only": True,
         "regression_only": True,
@@ -365,7 +525,18 @@ def _blocked_row(
     item: Mapping[str, Any],
     selector: Mapping[str, Any],
     baseline_policy: str,
+    capturing: bool,
 ) -> dict[str, Any]:
+    usage = (
+        _actual_usage(
+            (),
+            root=Path(),
+            artifacts=(),
+            capturing=True,
+        )
+        if capturing
+        else _missing_usage("missing_provider_attempt_evidence")
+    )
     return {
         "item_id": item.get("item_id"),
         "experiment_id": item.get("experiment_id"),
@@ -391,13 +562,31 @@ def _blocked_row(
         "root_status": "blocked",
         "outcome_status": "blocked_dependency",
         "evidence_integrity": "missing",
-        "accepted_validity": False,
-        "provider_attempt_count": 0,
-        "total_tokens": 0,
-        "cost_estimate": 0.0,
+        "evidence_integrity_reasons": ["missing_persisted_evidence"],
+        "accepted_validity": None,
+        "accepted_validity_unavailable_reason": (
+            "missing_accepted_validity_evidence"
+        ),
+        "provider_attempt_count": usage["provider_attempt_count"],
+        "provider_attempt_count_unavailable_reason": usage[
+            "provider_attempt_count_unavailable_reason"
+        ],
+        "total_tokens": usage["total_tokens"],
+        "total_tokens_sample_size": usage["total_tokens_sample_size"],
+        "total_tokens_missing_count": usage["total_tokens_missing_count"],
+        "total_tokens_unavailable_reason": usage[
+            "total_tokens_unavailable_reason"
+        ],
+        "cost_estimate": usage["cost_estimate"],
+        "cost_estimate_sample_size": usage["cost_estimate_sample_size"],
+        "cost_estimate_missing_count": usage["cost_estimate_missing_count"],
+        "cost_estimate_unavailable_reason": usage[
+            "cost_estimate_unavailable_reason"
+        ],
         "provider_actual_billing": None,
         "provider_actual_billing_available": False,
-        "wall_clock_ms": 0,
+        "wall_clock_ms": None,
+        "wall_clock_ms_unavailable_reason": "missing_wall_clock_evidence",
         "failure_stage": "preflight",
         "failure_kind": item.get("blocked_reason", "missing_persisted_evidence"),
         "baseline_policy": baseline_policy,
@@ -420,50 +609,282 @@ def _blocked_row(
     }
 
 
+def _traceable_fault_ref(fault: Mapping[str, Any]) -> str | None:
+    record_ref = fault.get("record_ref")
+    candidates = (
+        *(
+            (
+                record_ref.get("path"),
+                record_ref.get("artifact_id"),
+                record_ref.get("uri"),
+            )
+            if isinstance(record_ref, Mapping)
+            else ()
+        ),
+        fault.get("fault_injection_id"),
+    )
+    return next(
+        (
+            candidate
+            for candidate in candidates
+            if isinstance(candidate, str) and candidate.strip()
+        ),
+        None,
+    )
+
+
 def _actual_usage(
     attempts: Sequence[Mapping[str, Any]],
     *,
+    root: Path,
+    artifacts: Sequence[Mapping[str, Any]],
     capturing: bool,
-) -> tuple[int, int, float]:
+) -> dict[str, Any]:
     if capturing:
-        return 0, 0, 0.0
+        return {
+            "provider_attempt_count": 0,
+            "provider_attempt_count_unavailable_reason": None,
+            "total_tokens": 0,
+            "total_tokens_sample_size": 0,
+            "total_tokens_missing_count": 0,
+            "total_tokens_unavailable_reason": None,
+            "cost_estimate": 0.0,
+            "cost_estimate_sample_size": 0,
+            "cost_estimate_missing_count": 0,
+            "cost_estimate_unavailable_reason": None,
+            "evidence_issue": None,
+        }
+    if not attempts:
+        return _missing_usage("missing_provider_attempt_evidence")
+
     provider_attempts = 0
-    tokens = 0
-    cost = 0.0
+    token_values: list[int] = []
+    cost_values: list[float] = []
+    token_missing = 0
+    cost_missing = 0
+    dispatched_attempt_count = 0
     for attempt in attempts:
-        recorded_count = attempt.get("provider_attempt_count")
-        if not isinstance(recorded_count, int) or isinstance(recorded_count, bool):
-            recorded_count = 0
-        recorded_count = max(0, recorded_count)
-        if isinstance(attempt.get("model_execution_record_ref"), Mapping):
-            # no_return 等 hook 会在 provider 已返回后抑制 submission；这类
-            # attempt 的旧聚合字段可能为 0，但持久化 execution record 证明
-            # 至少发生过一次真实 provider call。
-            recorded_count = max(1, recorded_count)
-        elif recorded_count == 0:
-            # 兼容早期只保存 provider_attempt_index 的回归夹具。
-            index = attempt.get("provider_attempt_index", 0)
-            if isinstance(index, int) and not isinstance(index, bool) and index > 0:
-                recorded_count = 1
-        provider_attempts += recorded_count
+        if _explicit_zero_call_attempt(attempt):
+            continue
+        dispatched_attempt_count += 1
+        try:
+            record = _verified_model_execution_record(
+                attempt=attempt,
+                root=root,
+                artifacts=artifacts,
+            )
+        except ValueError:
+            return _missing_usage("invalid_model_execution_record_ref")
+        actual_provider_attempts = record["actual_provider_attempts"]
+        provider_attempts += len(actual_provider_attempts)
+
         usage = attempt.get("usage_summary")
         if not isinstance(usage, Mapping):
             usage = {}
         total = attempt.get("total_tokens")
         if not isinstance(total, int) or isinstance(total, bool):
             total = usage.get("total_tokens")
-        if not isinstance(total, int) or isinstance(total, bool):
-            total = sum(
-                int(attempt.get(name, usage.get(name, 0)) or 0)
-                for name in ("prompt_tokens", "completion_tokens")
-            )
-        tokens += max(0, int(total))
+        if isinstance(total, int) and not isinstance(total, bool) and total >= 0:
+            token_values.append(total)
+        else:
+            token_missing += 1
+
         cost_value = attempt.get("cost_estimate")
         if not isinstance(cost_value, (int, float)) or isinstance(cost_value, bool):
-            cost_value = usage.get("cost_estimate", 0.0)
-        if isinstance(cost_value, (int, float)) and not isinstance(cost_value, bool):
-            cost += max(0.0, float(cost_value))
-    return provider_attempts, tokens, cost
+            cost_value = usage.get("cost_estimate")
+        if (
+            isinstance(cost_value, (int, float))
+            and not isinstance(cost_value, bool)
+            and float(cost_value) >= 0.0
+        ):
+            cost_values.append(float(cost_value))
+        else:
+            cost_missing += 1
+
+    if dispatched_attempt_count == 0:
+        return {
+            "provider_attempt_count": 0,
+            "provider_attempt_count_unavailable_reason": None,
+            "total_tokens": 0,
+            "total_tokens_sample_size": 0,
+            "total_tokens_missing_count": 0,
+            "total_tokens_unavailable_reason": None,
+            "cost_estimate": 0.0,
+            "cost_estimate_sample_size": 0,
+            "cost_estimate_missing_count": 0,
+            "cost_estimate_unavailable_reason": None,
+            "evidence_issue": None,
+        }
+    return {
+        "provider_attempt_count": provider_attempts,
+        "provider_attempt_count_unavailable_reason": None,
+        "total_tokens": sum(token_values) if token_missing == 0 else None,
+        "total_tokens_sample_size": len(token_values),
+        "total_tokens_missing_count": token_missing,
+        "total_tokens_unavailable_reason": (
+            "missing_total_tokens_evidence" if token_missing else None
+        ),
+        "cost_estimate": sum(cost_values) if cost_missing == 0 else None,
+        "cost_estimate_sample_size": len(cost_values),
+        "cost_estimate_missing_count": cost_missing,
+        "cost_estimate_unavailable_reason": (
+            "missing_cost_estimate_evidence" if cost_missing else None
+        ),
+        "evidence_issue": (
+            "missing_usage_evidence"
+            if token_missing or cost_missing
+            else None
+        ),
+    }
+
+
+def _missing_usage(reason: str) -> dict[str, Any]:
+    return {
+        "provider_attempt_count": None,
+        "provider_attempt_count_unavailable_reason": reason,
+        "total_tokens": None,
+        "total_tokens_sample_size": 0,
+        "total_tokens_missing_count": 1,
+        "total_tokens_unavailable_reason": reason,
+        "cost_estimate": None,
+        "cost_estimate_sample_size": 0,
+        "cost_estimate_missing_count": 1,
+        "cost_estimate_unavailable_reason": reason,
+        "evidence_issue": reason,
+    }
+
+
+def _explicit_zero_call_attempt(attempt: Mapping[str, Any]) -> bool:
+    return (
+        attempt.get("schema_version") == "tokenshare.paper_attempt_result.v2"
+        and attempt.get("attempt_status") == "executor_error"
+        and attempt.get("provider_attempt_count") == 0
+        and attempt.get("model_execution_record_ref") is None
+    )
+
+
+def _verified_model_execution_record(
+    *,
+    attempt: Mapping[str, Any],
+    root: Path,
+    artifacts: Sequence[Mapping[str, Any]],
+) -> dict[str, Any]:
+    record_ref = attempt.get("model_execution_record_ref")
+    if not isinstance(record_ref, Mapping):
+        raise ValueError("model execution record ref is missing")
+    artifact_id = record_ref.get("artifact_id")
+    content_hash = record_ref.get("content_hash")
+    if (
+        not isinstance(artifact_id, str)
+        or not artifact_id
+        or not isinstance(content_hash, str)
+        or not content_hash.startswith("sha256:")
+    ):
+        raise ValueError("model execution record ref is incomplete")
+    matches = [
+        artifact
+        for artifact in artifacts
+        if artifact.get("artifact_id") == artifact_id
+        and artifact.get("content_hash") == content_hash
+        and isinstance(artifact.get("path"), str)
+    ]
+    if len(matches) != 1:
+        raise ValueError("model execution record ref is unresolved")
+    path = root / str(matches[0]["path"])
+    if (
+        not path.is_file()
+        or "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest() != content_hash
+    ):
+        raise ValueError("model execution record artifact verification failed")
+    record = _read_object(path)
+    record_core = dict(record)
+    record_digest = record_core.pop("record_digest", None)
+    if (
+        record.get("schema_version")
+        != "tokenshare.paper_model_execution_record.v2"
+        or record_digest != _digest_json(record_core)
+    ):
+        raise ValueError("model execution record is not canonical")
+    expected_identity = {
+        "condition_id": attempt.get("condition_id"),
+        "repeat_id": attempt.get("repeat_id"),
+        "run_id": attempt.get("run_id"),
+        "task_id": attempt.get(
+            "protocol_task_id",
+            attempt.get("task_id"),
+        ),
+        "unit_id": attempt.get("unit_id"),
+        "attempt_id": attempt.get("attempt_id"),
+    }
+    for field_name, expected in expected_identity.items():
+        if expected is not None and record.get(field_name) != expected:
+            raise ValueError("model execution record identity mismatch")
+    provider_records = record.get("actual_provider_attempts")
+    request_identities = record.get("actual_request_identities")
+    if (
+        not isinstance(provider_records, list)
+        or not provider_records
+        or not all(isinstance(item, Mapping) for item in provider_records)
+        or not isinstance(request_identities, list)
+        or len(request_identities) != len(provider_records)
+        or not all(isinstance(item, Mapping) for item in request_identities)
+    ):
+        raise ValueError("model execution record provider attempts are invalid")
+    return record
+
+
+def _complete_sum(
+    rows: Sequence[Mapping[str, Any]],
+    field_name: str,
+) -> int | float | None:
+    values = [row.get(field_name) for row in rows]
+    if any(
+        isinstance(value, bool) or not isinstance(value, (int, float))
+        for value in values
+    ):
+        return None
+    return sum(values)
+
+
+def _summary_missing_reason(
+    rows: Sequence[Mapping[str, Any]],
+    field_name: str,
+    reason: str,
+) -> str | None:
+    return reason if any(row.get(field_name) is None for row in rows) else None
+
+
+def _optional_bool(value: Any) -> bool | None:
+    return value if isinstance(value, bool) else None
+
+
+def _optional_non_negative_number(value: Any) -> int | float | None:
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or value < 0
+    ):
+        return None
+    return value
+
+
+def _least_complete_integrity(
+    declared: Any,
+    derived: str,
+) -> str:
+    order = {"complete": 0, "missing": 1, "invalid": 2, "corrupt": 3}
+    declared_value = declared if declared in order else "complete"
+    return max((declared_value, derived), key=order.__getitem__)
+
+
+def _digest_json(body: Any) -> str:
+    encoded = json.dumps(
+        body,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return "sha256:" + hashlib.sha256(encoded).hexdigest()
 
 
 def _current_generation(

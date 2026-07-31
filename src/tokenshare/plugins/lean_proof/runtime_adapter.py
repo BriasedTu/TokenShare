@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import replace
-from typing import Any
+from typing import Any, Callable
 
 from tokenshare.core.expansion import ExpansionDecision, SplitStrategyInvocation
 from tokenshare.core.merge import ExpectedOutputResolution, MergeRecord
@@ -143,6 +143,7 @@ class LeanRuntimeAdapter:
         max_tokens: int = 1024,
         timeout_seconds: int = 30,
         created_at: str = NOW,
+        lifecycle_clock: Callable[[], str] | None = None,
     ) -> None:
         self.provider_family = provider_family
         self.environment_manifest = environment_manifest
@@ -155,7 +156,8 @@ class LeanRuntimeAdapter:
         )
         self.max_tokens = max_tokens
         self.timeout_seconds = timeout_seconds
-        self.created_at = created_at
+        self._created_at = created_at
+        self._lifecycle_clock = lifecycle_clock
         self.simple_split_report = simple_split_report
         self.descriptor = build_lean_proof_plugin_descriptor()
         supplied = dict(executor_requirements or {})
@@ -170,6 +172,7 @@ class LeanRuntimeAdapter:
             "provider_family": provider_family,
             **supplied,
         }
+
         base_ai_descriptor = build_ai_api_executor_descriptor(
             provider_family=provider_family
         )
@@ -207,6 +210,14 @@ class LeanRuntimeAdapter:
         self._merge_candidate_refs: dict[str, ArtifactRef] = {}
         self._merge_result: LeanProofMergeResult | LeanLemmaGraphMergeResult | None = None
         self._slot_integrity_violation_applied = False
+
+    @property
+    def created_at(self) -> str:
+        """真实 paper runtime 动态取 UTC；普通插件调用仍使用固定构造时间。"""
+
+        if self._lifecycle_clock is not None:
+            return self._lifecycle_clock()
+        return self._created_at
 
     def plan_root(
         self,

@@ -1,0 +1,76 @@
+{
+  "failure_count": 1,
+  "paper_eligible": false,
+  "rows": [
+    {
+      "ablation_mode": null,
+      "accepted_validity": null,
+      "accepted_validity_unavailable_reason": "missing_accepted_validity_evidence",
+      "artifact_refs": [
+        "experiments/exp1_real_ai_feasibility/runs/condition-1/0/artifacts/case-1/0e83af8c5c01f4afeff04d3457f594a3340832220eca6cdcdbca46ed5eaf5c6c-raw-output.txt-raw-output.txt",
+        "experiments/exp1_real_ai_feasibility/runs/condition-1/0/artifacts/case-1/cff54f7b7872f55fa00bee4649094e51e6b5ebb7eab37cfdc799afb652175254-request.json-request.json"
+      ],
+      "baseline": null,
+      "baseline_comparison_eligible": null,
+      "baseline_policy": "required_by_formal_plan",
+      "baseline_unavailable_reason": null,
+      "case_id": "case-1",
+      "cohort_member_id": null,
+      "condition_digest": "sha256:231f31013f4b0c1c706d7fb99b3766df11282ecdf628d9325dd9980e185a5bcb",
+      "condition_id": "condition-1",
+      "cost_estimate": 0.0,
+      "cost_estimate_missing_count": 0,
+      "cost_estimate_sample_size": 0,
+      "cost_estimate_unavailable_reason": null,
+      "dead_worker_count": null,
+      "difficulty": "easy",
+      "domain": "factorization",
+      "event_refs": [
+        "event-case-1"
+      ],
+      "evidence_integrity": "missing",
+      "evidence_integrity_reasons": [
+        "missing_accepted_validity_evidence"
+      ],
+      "experiment_id": "exp1_real_ai_feasibility",
+      "failure_kind": null,
+      "failure_stage": null,
+      "fault_rate": null,
+      "fault_refs": [],
+      "fault_type": null,
+      "formal": false,
+      "ineligibility_reasons": [
+        "smoke_suite",
+        "pilot_only"
+      ],
+      "item_id": "smoke-root",
+      "kill_progress_percent": null,
+      "outcome_status": "succeeded",
+      "paper_difficulty": null,
+      "paper_eligible": false,
+      "pilot_only": true,
+      "provider_actual_billing": null,
+      "provider_actual_billing_available": false,
+      "provider_attempt_count": 0,
+      "provider_attempt_count_unavailable_reason": null,
+      "provider_family": null,
+      "provider_model_id": null,
+      "regression_only": true,
+      "repeat_id": 0,
+      "root_status": "completed",
+      "selection_digest": "sha256:e5e75d2227993188d0e30d5757996487da35a657b41f537a1c7ba6de87c9ae8c",
+      "selection_id": "selection-1",
+      "smoke_execution_status": "incomplete",
+      "topic_family": null,
+      "total_tokens": 0,
+      "total_tokens_missing_count": 0,
+      "total_tokens_sample_size": 0,
+      "total_tokens_unavailable_reason": null,
+      "wall_clock_ms": 1000,
+      "wall_clock_ms_unavailable_reason": null,
+      "worker_count": 1
+    }
+  ],
+  "schema_version": "tokenshare.paper_smoke_failures.v1",
+  "suite_id": "test_smoke"
+}

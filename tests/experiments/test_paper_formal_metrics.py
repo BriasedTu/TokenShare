@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+from collections.abc import Iterator, Mapping
+import gc
 import hashlib
 import json
 from pathlib import Path
+import tempfile
+import tracemalloc
 
 import pytest
 
@@ -21,6 +25,634 @@ EXP2 = "exp2_real_ai_scalability"
 EXP3 = "exp3_real_ai_fault_recovery"
 EXP4 = "exp4_real_ai_protocol_ablation"
 EXP5 = "exp5_real_ai_model_endpoint_comparison"
+
+
+def test_lazy_formal_run_bundle_mapping_loads_on_demand_without_cache(
+    tmp_path: Path,
+) -> None:
+    _write_suite_manifest(tmp_path, (EXP1,))
+    generation = _write_run(
+        tmp_path,
+        experiment_id=EXP1,
+        condition_id="lazy-condition",
+        condition={},
+        task={"task_id": "task-1", "root_status": "completed"},
+        attempts=[_attempt(total_tokens=7, latency_ms=11)],
+        events=_timing_events(20),
+    )
+
+    with formal_metrics.LazyFormalRunBundleMapping(tmp_path) as bundles:
+        work_directory = bundles.work_directory
+        assert work_directory.is_dir()
+        assert list(bundles) == ["lazy-condition"]
+
+        first = bundles["lazy-condition"]
+        assert first["tasks"][0]["root_status"] == "completed"
+        del first
+        _write_jsonl(
+            generation / "per_task_results.jsonl",
+            [{"task_id": "task-1", "root_status": "failed"}],
+        )
+
+        second = bundles["lazy-condition"]
+        assert second["tasks"][0]["root_status"] == "failed"
+
+    assert not work_directory.exists()
+
+
+def test_lazy_mapping_preserves_windows_path_case_folded_order(
+    tmp_path: Path,
+) -> None:
+    _write_suite_manifest(tmp_path, (EXP1,))
+    for condition_id in ("B-condition", "a.txt", "a"):
+        _write_run(
+            tmp_path,
+            experiment_id=EXP1,
+            condition_id=condition_id,
+            condition={},
+            task={"task_id": condition_id, "root_status": "completed"},
+            attempts=[_attempt(total_tokens=1, latency_ms=1)],
+            events=_timing_events(2),
+        )
+
+    with formal_metrics.LazyFormalRunBundleMapping(tmp_path) as bundles:
+        assert list(bundles) == ["a", "a.txt", "B-condition"]
+
+
+def test_read_jsonl_streams_lines_without_path_read_text(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "records.jsonl"
+    _write_jsonl(path, [{"row": 1}, {"row": 2}])
+    original_read_text = Path.read_text
+
+    def forbidden_read_text(self: Path, *args: object, **kwargs: object) -> str:
+        if self == path:
+            raise AssertionError("JSONL reader must not materialize the whole file")
+        return original_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", forbidden_read_text)
+
+    assert formal_metrics._read_jsonl(path) == [{"row": 1}, {"row": 2}]
+
+
+def test_recompute_uses_lazy_run_bundle_loader(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_suite_manifest(tmp_path, (EXP1,))
+    for index in range(3):
+        _write_run(
+            tmp_path,
+            experiment_id=EXP1,
+            condition_id=f"lazy-recompute-{index}",
+            condition={"domain": "factorization", "worker_count": 1},
+            task={
+                "task_id": f"task-{index}",
+                "root_status": "completed",
+                "accepted_validity": True,
+                "paper_eligible": False,
+            },
+            attempts=[_attempt(total_tokens=index + 1, latency_ms=10)],
+            events=_timing_events(20),
+        )
+    load_count = 0
+    original_loader = formal_metrics._load_run_bundle
+
+    def tracking_loader(**kwargs: object) -> dict[str, object]:
+        nonlocal load_count
+        load_count += 1
+        return original_loader(**kwargs)
+
+    monkeypatch.setattr(formal_metrics, "_load_run_bundle", tracking_loader)
+
+    result = recompute_paper_formal_metrics(tmp_path)
+
+    assert len(result.condition_rows) == 3
+    assert load_count >= 3
+
+
+def test_digest_streams_json_encoder_without_json_dumps(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    value = {"b": [1, {"中文": "值"}], "a": 2.5}
+    expected = "sha256:" + hashlib.sha256(
+        json.dumps(
+            value,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+
+    def forbidden_dumps(*args: object, **kwargs: object) -> str:
+        raise AssertionError("digest must use JSONEncoder.iterencode")
+
+    monkeypatch.setattr(formal_metrics.json, "dumps", forbidden_dumps)
+
+    assert formal_metrics._digest(value) == expected
+
+
+def test_hash_file_reads_fixed_chunks_without_path_read_bytes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "large.bin"
+    content = b"abc123" * 400_000
+    path.write_bytes(content)
+
+    def forbidden_read_bytes(self: Path) -> bytes:
+        raise AssertionError("file hashing must be chunked")
+
+    monkeypatch.setattr(Path, "read_bytes", forbidden_read_bytes)
+
+    assert formal_metrics._hash_file(path) == (
+        "sha256:" + hashlib.sha256(content).hexdigest()
+    )
+
+
+def test_atomic_chunk_writer_preserves_existing_file_on_failure(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "result.jsonl"
+    path.write_text("old\n", encoding="utf-8")
+
+    def broken_chunks() -> object:
+        yield "new\n"
+        raise RuntimeError("sentinel write failure")
+
+    with pytest.raises(RuntimeError, match="sentinel write failure"):
+        formal_metrics._write_chunks_atomic(path, broken_chunks())
+
+    assert path.read_text(encoding="utf-8") == "old\n"
+    assert not path.with_name(path.name + ".tmp").exists()
+
+
+def test_metrics_outputs_stream_model_inventory_without_text_materialization(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def forbidden_model_text(*args: object, **kwargs: object) -> str:
+        raise AssertionError("production writer must stream model records")
+
+    monkeypatch.setattr(
+        formal_metrics,
+        "_model_record_text",
+        forbidden_model_text,
+    )
+
+    refs = formal_metrics._write_metrics_outputs(
+        root=tmp_path,
+        metrics_body={},
+        condition_rows=(),
+        experiment_rows={
+            EXP1: (),
+            EXP2: (),
+            EXP3: (),
+            EXP4: (),
+            EXP5: (),
+        },
+        run_bundles={},
+    )
+
+    canonical = tmp_path / "model_execution_records.jsonl"
+    compatibility = tmp_path / "metrics" / "model_execution_records.jsonl"
+    assert canonical.read_bytes() == compatibility.read_bytes() == b""
+    assert {ref["path"] for ref in refs}.issuperset(
+        {
+            "model_execution_records.jsonl",
+            "metrics/model_execution_records.jsonl",
+        }
+    )
+
+
+def test_model_inventory_schema_failure_closes_before_temp_cleanup(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FailingConnection:
+        closed = False
+
+        def executescript(self, script: str) -> None:
+            raise RuntimeError("schema init sentinel")
+
+        def close(self) -> None:
+            self.closed = True
+
+    connection = FailingConnection()
+
+    class GuardedTemporaryDirectory:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            self._inner = tempfile.TemporaryDirectory(
+                prefix="guarded-model-inventory-",
+                dir=tmp_path,
+            )
+
+        def __enter__(self) -> str:
+            return self._inner.__enter__()
+
+        def __exit__(self, *exc_info: object) -> object:
+            if not connection.closed:
+                raise PermissionError("open sqlite handle blocked cleanup")
+            return self._inner.__exit__(*exc_info)
+
+    monkeypatch.setattr(
+        formal_metrics,
+        "TemporaryDirectory",
+        GuardedTemporaryDirectory,
+    )
+    monkeypatch.setattr(
+        formal_metrics.sqlite3,
+        "connect",
+        lambda *args, **kwargs: connection,
+    )
+
+    with pytest.raises(RuntimeError, match="schema init sentinel"):
+        list(
+            formal_metrics._iter_model_record_chunks(
+                {},
+                work_parent=tmp_path,
+            )
+        )
+
+    assert connection.closed is True
+    assert not list(tmp_path.glob("guarded-model-inventory-*"))
+
+
+def test_model_inventory_rejects_same_artifact_id_with_conflicting_hashes(
+    tmp_path: Path,
+) -> None:
+    condition_id = "conflicting-artifact-condition"
+    attempts: list[dict[str, object]] = []
+    artifacts: list[dict[str, object]] = []
+    for index in range(2):
+        record = {
+            "schema_version": "tokenshare.paper_model_execution_record.v2",
+            "condition_id": condition_id,
+            "repeat_id": 0,
+            "run_id": f"run-{index}",
+            "task_id": f"task-{index}",
+            "unit_id": f"unit-{index}",
+            "attempt_id": f"attempt-{index}",
+        }
+        path = tmp_path / f"record-{index}.json"
+        path.write_text(
+            json.dumps(record, ensure_ascii=False, sort_keys=True),
+            encoding="utf-8",
+        )
+        content_hash = "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
+        model_ref = {
+            "artifact_id": "shared-artifact-id",
+            "content_hash": content_hash,
+        }
+        artifacts.append(
+            {
+                **model_ref,
+                "path": path.relative_to(tmp_path).as_posix(),
+            }
+        )
+        attempts.append(
+            {
+                "condition_id": condition_id,
+                "repeat_id": 0,
+                "run_id": f"run-{index}",
+                "task_id": f"task-{index}",
+                "unit_id": f"unit-{index}",
+                "attempt_id": f"attempt-{index}",
+                "attempt_status": "succeeded",
+                "executor_type": "ai_api",
+                "provider_attempt_count": 1,
+                "model_execution_record_ref": model_ref,
+            }
+        )
+    bundles = {
+        condition_id: {
+            "condition": {"condition_id": condition_id},
+            "suite_root": tmp_path,
+            "tasks": [],
+            "attempts": attempts,
+            "artifacts": artifacts,
+        }
+    }
+
+    with pytest.raises(ValueError, match="conflicting content hash"):
+        formal_metrics._model_record_text(bundles)
+
+
+def test_exp5_renderer_keeps_only_lazy_condition_keys(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    active = 0
+    max_active = 0
+    condition_ids = tuple(f"exp5-lazy-{index}" for index in range(8))
+
+    class TrackedBundle(dict[str, object]):
+        def __init__(self, condition_id: str) -> None:
+            nonlocal active, max_active
+            super().__init__(
+                condition={
+                    "condition_id": condition_id,
+                    "experiment_id": EXP5,
+                    "schema_version": "tokenshare.paper_condition.v3",
+                    "cohort_member_id": condition_id,
+                }
+            )
+            active += 1
+            max_active = max(max_active, active)
+
+        def __del__(self) -> None:
+            nonlocal active
+            active -= 1
+
+    class OnDemandBundles(Mapping[str, Mapping[str, object]]):
+        def __getitem__(self, key: str) -> Mapping[str, object]:
+            if key not in condition_ids:
+                raise KeyError(key)
+            return TrackedBundle(key)
+
+        def __iter__(self) -> Iterator[str]:
+            return iter(condition_ids)
+
+        def __len__(self) -> int:
+            return len(condition_ids)
+
+    monkeypatch.setattr(formal_metrics, "_exp5_v3_case_records", lambda _: ())
+    monkeypatch.setattr(formal_metrics, "_exp5_v3_execution_rows", lambda _: ())
+    monkeypatch.setattr(
+        formal_metrics,
+        "build_exp5_paired_comparison_rows",
+        lambda _: (),
+    )
+    monkeypatch.setattr(
+        formal_metrics,
+        "build_exp5_order_and_concurrency_rows",
+        lambda _: (),
+    )
+    monkeypatch.setattr(formal_metrics, "_exp5_overall_rows", lambda *a, **k: ())
+    monkeypatch.setattr(
+        formal_metrics,
+        "_exp5_domain_topic_rows",
+        lambda *a, **k: (),
+    )
+    monkeypatch.setattr(
+        formal_metrics,
+        "_exp5_failure_taxonomy_rows",
+        lambda _: (),
+    )
+
+    rows = formal_metrics._exp5_renderer_rows(
+        suite={"status": "completed"},
+        bundles=OnDemandBundles(),
+    )
+    del rows
+    gc.collect()
+
+    assert max_active <= 1
+    assert active == 0
+
+
+def test_exp5_renderer_full_empty_inventory_keeps_one_live_bundle() -> None:
+    active = 0
+    max_active = 0
+    condition_ids = tuple(f"exp5-full-lazy-{index}" for index in range(8))
+
+    class TrackedBundle(dict[str, object]):
+        def __init__(self, condition_id: str) -> None:
+            nonlocal active, max_active
+            super().__init__(
+                condition={
+                    "condition_id": condition_id,
+                    "experiment_id": EXP5,
+                    "schema_version": "tokenshare.paper_condition.v3",
+                    "cohort_member_id": condition_id,
+                    "domain": "factorization",
+                    "paper_difficulty": "hard",
+                    "repeat_id": 0,
+                },
+                tasks=(),
+                attempts=(),
+                artifacts=(),
+            )
+            active += 1
+            max_active = max(max_active, active)
+
+        def __del__(self) -> None:
+            nonlocal active
+            active -= 1
+
+    class OnDemandBundles(Mapping[str, Mapping[str, object]]):
+        def __getitem__(self, key: str) -> Mapping[str, object]:
+            if key not in condition_ids:
+                raise KeyError(key)
+            return TrackedBundle(key)
+
+        def __iter__(self) -> Iterator[str]:
+            return iter(condition_ids)
+
+        def __len__(self) -> int:
+            return len(condition_ids)
+
+    rows = formal_metrics._exp5_renderer_rows(
+        suite={"status": "incomplete"},
+        bundles=OnDemandBundles(),
+    )
+    del rows
+    gc.collect()
+
+    assert max_active <= 1
+    assert active == 0
+
+
+def test_recompute_large_suite_memory_is_bounded_by_local_run(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payload = "x" * (512 * 1024)
+
+    def build_suite(root: Path, run_count: int) -> None:
+        _write_suite_manifest(root, (EXP1,))
+        for index in range(run_count):
+            _write_run(
+                root,
+                experiment_id=EXP1,
+                condition_id=f"memory-condition-{index:03d}",
+                condition={"domain": "factorization", "worker_count": 1},
+                task={
+                    "task_id": f"task-{index:03d}",
+                    "root_status": "completed",
+                    "accepted_validity": True,
+                    "paper_eligible": False,
+                    "memory_sentinel": payload,
+                },
+                attempts=[_attempt(total_tokens=index + 1, latency_ms=10)],
+                events=_timing_events(20),
+            )
+
+    small_root = tmp_path / "small"
+    large_root = tmp_path / "large"
+    build_suite(small_root, 5)
+    build_suite(large_root, 20)
+
+    active = 0
+    max_active = 0
+    original_loader = formal_metrics._load_run_bundle
+
+    class TrackedBundle(dict[str, object]):
+        def __init__(self, value: Mapping[str, object]) -> None:
+            nonlocal active, max_active
+            super().__init__(value)
+            active += 1
+            max_active = max(max_active, active)
+
+        def __del__(self) -> None:
+            nonlocal active
+            active -= 1
+
+    def tracking_loader(**kwargs: object) -> dict[str, object]:
+        return TrackedBundle(original_loader(**kwargs))
+
+    monkeypatch.setattr(formal_metrics, "_load_run_bundle", tracking_loader)
+
+    def measured_peak(root: Path) -> int:
+        gc.collect()
+        tracemalloc.start()
+        recompute_paper_formal_metrics(root)
+        _, peak = tracemalloc.get_traced_memory()
+        tracemalloc.stop()
+        gc.collect()
+        return peak
+
+    small_peak = measured_peak(small_root)
+    large_peak = measured_peak(large_root)
+    (tmp_path / "bounded-memory-measurement.json").write_text(
+        json.dumps(
+            {
+                "small_run_count": 5,
+                "small_peak_bytes": small_peak,
+                "large_run_count": 20,
+                "large_peak_bytes": large_peak,
+                "max_live_bundles": max_active,
+            },
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    assert active == 0
+    assert max_active <= 1
+    assert large_peak <= int(small_peak * 1.20) + 1024 * 1024
+    assert large_peak - small_peak <= 64 * 1024 * 1024
+
+
+def test_exp3_missing_fault_identity_is_not_counted_as_zero_measurement(
+    tmp_path: Path,
+) -> None:
+    rows = {
+        "exp3-missing-fault-identity": {
+            "condition_id": "exp3-missing-fault-identity",
+            "wall_clock_ms": 10,
+            "total_tokens": 0,
+            "total_cost_estimate": 0.0,
+            "provider_latency_sum_ms": 0.0,
+            "paper_eligible": True,
+            "paper_ineligibility_reasons": [],
+        }
+    }
+    bundles = {
+        "exp3-missing-fault-identity": {
+            "condition": {
+                "experiment_id": EXP3,
+                "condition_id": "exp3-missing-fault-identity",
+                "fault_type": "false_negative",
+                "fault_rate": 1.0,
+            },
+            "faults": [{"fault_type": "false_negative"}],
+            "events": [],
+            "attempts": [],
+            "tasks": [],
+            "suite_root": tmp_path,
+        }
+    }
+
+    row = formal_metrics._exp3_rows(rows, bundles)[0]
+
+    assert row["reassignment_count"] is None
+    assert row["reassignment_count_sample_size"] == 0
+    assert row["reassignment_count_missing_count"] == 1
+    assert row["wasted_actual_tokens"] is None
+    assert row["wasted_actual_tokens_sample_size"] == 0
+    assert row["wasted_actual_tokens_missing_count"] == 1
+    assert "missing_fault_attempt_evidence" in row[
+        "paper_ineligibility_reasons"
+    ]
+
+
+def test_exp3_negative_recovery_interval_is_invalid_not_zero() -> None:
+    outcomes, reasons = formal_metrics._exp3_fault_outcomes(
+        faults=[
+            {
+                "fault_type": "false_negative",
+                "attempt_id": "fault-attempt",
+                "unit_id": "unit-1",
+            }
+        ],
+        attempts=[
+            {
+                "attempt_id": "fault-attempt",
+                "unit_id": "unit-1",
+                "attempt_status": "verification_rejected",
+                "ended_at": "2026-07-31T00:00:00.200+00:00",
+                "total_tokens": 5,
+            },
+            {
+                "attempt_id": "replacement-attempt",
+                "unit_id": "unit-1",
+                "attempt_status": "succeeded",
+                "canonical": True,
+                "started_at": "2026-07-31T00:00:00.100+00:00",
+            },
+        ],
+        events=[
+            {
+                "event_id": "verification-fault",
+                "event_type": "VERIFICATION_RECORDED",
+                "payload": {
+                    "attempt_id": "fault-attempt",
+                    "status": "failed",
+                },
+            },
+            {
+                "event_id": "recovery-fault",
+                "event_type": "RECOVERY_ACTION_RECORDED",
+                "payload": {
+                    "recovery_action": {
+                        "attempt_id": "fault-attempt",
+                        "retry_allowed": True,
+                    }
+                },
+            },
+            {
+                "event_id": "canonical-replacement",
+                "event_type": "CANONICAL_OUTPUTS_BOUND",
+                "payload": {
+                    "selected_attempt_id": "replacement-attempt",
+                    "unit_id": "unit-1",
+                },
+            },
+            {
+                "event_id": "completed-replacement",
+                "event_type": "TASK_UNIT_STATE_CHANGED",
+                "object_id": "unit-1",
+                "payload": {"new_state": "completed"},
+            },
+        ],
+    )
+
+    assert outcomes[0]["recovered"] is True
+    assert outcomes[0]["recovery_latency_ms"] is None
+    assert "invalid_recovery_timing_evidence" in reasons
 
 
 def test_formal_metrics_are_recomputed_from_mutable_input_evidence(
@@ -89,7 +721,13 @@ def test_formal_metrics_top_level_cannot_override_ineligible_lower_evidence(
     manifest = json.loads(
         (tmp_path / "suite_manifest.json").read_text(encoding="utf-8")
     )
-    manifest.update({"regression_only": False, "paper_eligible": True})
+    manifest.update(
+        {
+            "regression_only": False,
+            "capturing": True,
+            "paper_eligible": True,
+        }
+    )
     _write_json(tmp_path / "suite_manifest.json", manifest)
 
     result = recompute_paper_formal_metrics(tmp_path)
@@ -339,6 +977,397 @@ def test_formal_metrics_recompute_exp2_critical_path_and_all_experiment_views(
         assert (tmp_path / relative_path).is_file(), relative_path
 
 
+def test_formal_model_execution_inventory_aggregates_exp1_through_exp4_records(
+    tmp_path: Path,
+) -> None:
+    bundles: dict[str, dict[str, object]] = {}
+    expected_records = []
+    for index, experiment_id in enumerate((EXP1, EXP2, EXP3, EXP4), start=1):
+        condition_id = f"{experiment_id}-condition"
+        attempt_id = f"attempt-{index}"
+        artifact_id = f"model-record-{index}"
+        record = {
+            "schema_version": "tokenshare.paper_model_execution_record.v2",
+            "experiment_id": experiment_id,
+            "condition_id": condition_id,
+            "repeat_id": 0,
+            "run_id": f"run-{index}",
+            "task_id": f"task-{index}",
+            "unit_id": f"unit-{index}",
+            "attempt_id": attempt_id,
+            "identity_status": "matched",
+            "paper_eligible": True,
+        }
+        artifact_path = (
+            tmp_path
+            / "persisted-artifacts"
+            / f"{artifact_id}.json"
+        )
+        artifact_path.parent.mkdir(parents=True, exist_ok=True)
+        artifact_path.write_text(
+            json.dumps(record, ensure_ascii=False, sort_keys=True),
+            encoding="utf-8",
+        )
+        content_hash = "sha256:" + hashlib.sha256(
+            artifact_path.read_bytes()
+        ).hexdigest()
+        model_ref = {
+            "artifact_id": artifact_id,
+            "artifact_type": "PaperModelExecutionRecord",
+            "content_hash": content_hash,
+        }
+        bundles[condition_id] = {
+            "condition": {
+                "experiment_id": experiment_id,
+                "condition_id": condition_id,
+            },
+            "suite_root": tmp_path,
+            "tasks": [],
+            "attempts": [
+                {
+                    "attempt_id": attempt_id,
+                    "model_execution_record_ref": model_ref,
+                }
+            ],
+            "artifacts": [
+                {
+                    **model_ref,
+                    "path": artifact_path.relative_to(tmp_path).as_posix(),
+                }
+            ],
+        }
+        expected_records.append(record)
+
+    refs = formal_metrics._write_metrics_outputs(
+        root=tmp_path,
+        metrics_body={},
+        condition_rows=(),
+        experiment_rows={
+            EXP1: (),
+            EXP2: (),
+            EXP3: (),
+            EXP4: (),
+            EXP5: (),
+        },
+        run_bundles=bundles,
+    )
+
+    canonical_path = tmp_path / "model_execution_records.jsonl"
+    compatibility_path = tmp_path / "metrics" / "model_execution_records.jsonl"
+    assert [
+        json.loads(line)
+        for line in canonical_path.read_text(encoding="utf-8").splitlines()
+    ] == expected_records
+    assert compatibility_path.read_bytes() == canonical_path.read_bytes()
+    ref_paths = {ref["path"] for ref in refs}
+    assert "model_execution_records.jsonl" in ref_paths
+    assert "metrics/model_execution_records.jsonl" in ref_paths
+
+
+def test_formal_model_execution_inventory_rejects_missing_ai_record_ref(
+    tmp_path: Path,
+) -> None:
+    bundles = {
+        "exp1-condition": {
+            "condition": {
+                "experiment_id": EXP1,
+                "condition_id": "exp1-condition",
+            },
+            "suite_root": tmp_path,
+            "tasks": [{"task_id": "case-1"}],
+            "attempts": [
+                {
+                    "condition_id": "exp1-condition",
+                    "repeat_id": 0,
+                    "run_id": "run-1",
+                    "task_id": "case-1",
+                    "unit_id": "unit-1",
+                    "attempt_id": "attempt-1",
+                    "attempt_status": "succeeded",
+                    "executor_type": "ai_api",
+                    "provider_attempt_count": 1,
+                    "model_execution_record_ref": None,
+                }
+            ],
+            "artifacts": [],
+        }
+    }
+
+    with pytest.raises(
+        ValueError,
+        match="missing canonical model execution record ref",
+    ):
+        formal_metrics._model_record_text(bundles)
+
+
+def test_formal_model_execution_inventory_allows_explicit_zero_call_attempts(
+    tmp_path: Path,
+) -> None:
+    bundles = {
+        "exp1-condition": {
+            "condition": {
+                "experiment_id": EXP1,
+                "condition_id": "exp1-condition",
+            },
+            "suite_root": tmp_path,
+            "tasks": [{"task_id": "case-1"}],
+            "attempts": [
+                {
+                    "schema_version": "tokenshare.paper_attempt_result.v2",
+                    "condition_id": "exp1-condition",
+                    "repeat_id": 0,
+                    "run_id": "run-1",
+                    "task_id": "case-1",
+                    "unit_id": "unit-1",
+                    "attempt_id": "attempt-1",
+                    "attempt_status": "executor_error",
+                    "executor_type": "ai_api",
+                    "provider": None,
+                    "model": None,
+                    "provider_attempt_count": 0,
+                    "model_execution_record_ref": None,
+                }
+            ],
+            "artifacts": [],
+        }
+    }
+
+    assert formal_metrics._model_record_text(bundles) == ""
+
+
+def test_condition_provider_latency_keeps_post_provider_executor_error_missing(
+) -> None:
+    row = formal_metrics._condition_metrics(
+        {
+            "condition": {
+                "experiment_id": EXP1,
+                "condition_id": "exp1-post-provider-executor-error",
+                "repeat_id": 0,
+                "worker_count": 1,
+            },
+            "tasks": [
+                {
+                    "task_id": "case-1",
+                    "root_status": "failed",
+                    "paper_eligible": False,
+                }
+            ],
+            "attempts": [
+                {
+                    "schema_version": "tokenshare.paper_attempt_result.v2",
+                    "task_id": "case-1",
+                    "attempt_id": "attempt-1",
+                    "attempt_status": "executor_error",
+                    "record_scope": "protocol",
+                    "provider_attempt_count": 1,
+                    "latency_ms": None,
+                    "error_kind": "parser_bridge_error",
+                    "paper_eligible": False,
+                }
+            ],
+            "events": [],
+            "artifacts": [{"artifact_id": "request-1"}],
+        }
+    )
+
+    assert row["provider_attempt_count"] == 1
+    assert row["provider_latency_sum_ms"] is None
+    assert row["provider_latency_evidence_status"] == "incomplete"
+    assert (
+        row["provider_latency_unavailable_reason"]
+        == "missing_provider_latency_evidence"
+    )
+
+
+def test_formal_model_execution_inventory_rejects_cross_attempt_identity(
+    tmp_path: Path,
+) -> None:
+    record = {
+        "schema_version": "tokenshare.paper_model_execution_record.v2",
+        "experiment_id": EXP1,
+        "condition_id": "exp1-condition",
+        "repeat_id": 0,
+        "run_id": "run-1",
+        "task_id": "different-task",
+        "unit_id": "unit-1",
+        "attempt_id": "attempt-1",
+    }
+    artifact_path = tmp_path / "persisted-artifacts" / "model-record.json"
+    artifact_path.parent.mkdir(parents=True, exist_ok=True)
+    artifact_path.write_text(
+        json.dumps(record, ensure_ascii=False, sort_keys=True),
+        encoding="utf-8",
+    )
+    content_hash = "sha256:" + hashlib.sha256(artifact_path.read_bytes()).hexdigest()
+    model_ref = {
+        "artifact_id": "model-record",
+        "artifact_type": "PaperModelExecutionRecord",
+        "content_hash": content_hash,
+    }
+    bundles = {
+        "exp1-condition": {
+            "condition": {
+                "experiment_id": EXP1,
+                "condition_id": "exp1-condition",
+            },
+            "suite_root": tmp_path,
+            "tasks": [{"task_id": "case-1"}],
+            "attempts": [
+                {
+                    "condition_id": "exp1-condition",
+                    "repeat_id": 0,
+                    "run_id": "run-1",
+                    "task_id": "case-1",
+                    "unit_id": "unit-1",
+                    "attempt_id": "attempt-1",
+                    "attempt_status": "succeeded",
+                    "executor_type": "ai_api",
+                    "provider_attempt_count": 1,
+                    "model_execution_record_ref": model_ref,
+                }
+            ],
+            "artifacts": [
+                {
+                    **model_ref,
+                    "path": artifact_path.relative_to(tmp_path).as_posix(),
+                }
+            ],
+        }
+    }
+
+    with pytest.raises(ValueError, match="record identity is invalid"):
+        formal_metrics._model_record_text(bundles)
+
+
+def test_formal_model_execution_inventory_accepts_preserved_protocol_task_identity(
+    tmp_path: Path,
+) -> None:
+    record = {
+        "schema_version": "tokenshare.paper_model_execution_record.v2",
+        "experiment_id": EXP1,
+        "condition_id": "exp1-condition",
+        "repeat_id": 0,
+        "run_id": "run-1",
+        "task_id": "protocol-task-1",
+        "unit_id": "unit-1",
+        "attempt_id": "attempt-1",
+    }
+    artifact_path = tmp_path / "persisted-artifacts" / "model-record.json"
+    artifact_path.parent.mkdir(parents=True, exist_ok=True)
+    artifact_path.write_text(
+        json.dumps(record, ensure_ascii=False, sort_keys=True),
+        encoding="utf-8",
+    )
+    content_hash = "sha256:" + hashlib.sha256(artifact_path.read_bytes()).hexdigest()
+    model_ref = {
+        "artifact_id": "model-record",
+        "artifact_type": "PaperModelExecutionRecord",
+        "content_hash": content_hash,
+    }
+    bundles = {
+        "exp1-condition": {
+            "condition": {
+                "experiment_id": EXP1,
+                "condition_id": "exp1-condition",
+            },
+            "suite_root": tmp_path,
+            "tasks": [{"task_id": "case-1"}],
+            "attempts": [
+                {
+                    "condition_id": "exp1-condition",
+                    "repeat_id": 0,
+                    "run_id": "run-1",
+                    "task_id": "case-1",
+                    "protocol_task_id": "protocol-task-1",
+                    "unit_id": "unit-1",
+                    "attempt_id": "attempt-1",
+                    "attempt_status": "succeeded",
+                    "executor_type": "ai_api",
+                    "provider_attempt_count": 1,
+                    "model_execution_record_ref": model_ref,
+                }
+            ],
+            "artifacts": [
+                {
+                    **model_ref,
+                    "path": artifact_path.relative_to(tmp_path).as_posix(),
+                }
+            ],
+        }
+    }
+
+    assert formal_metrics._model_record_text(bundles) == (
+        json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n"
+    )
+
+
+def test_formal_model_execution_inventory_rejects_duplicate_attempt_identity(
+    tmp_path: Path,
+) -> None:
+    record = {
+        "schema_version": "tokenshare.paper_model_execution_record.v2",
+        "condition_id": "exp1-condition",
+        "repeat_id": 0,
+        "run_id": "run-1",
+        "task_id": "case-1",
+        "unit_id": "unit-1",
+        "attempt_id": "attempt-1",
+    }
+    artifact_path = tmp_path / "persisted-artifacts" / "model-record.json"
+    artifact_path.parent.mkdir(parents=True, exist_ok=True)
+    artifact_path.write_text(
+        json.dumps(record, ensure_ascii=False, sort_keys=True),
+        encoding="utf-8",
+    )
+    content_hash = "sha256:" + hashlib.sha256(artifact_path.read_bytes()).hexdigest()
+    refs = [
+        {
+            "artifact_id": f"model-record-{index}",
+            "artifact_type": "PaperModelExecutionRecord",
+            "content_hash": content_hash,
+        }
+        for index in (1, 2)
+    ]
+    base_attempt = {
+        "condition_id": "exp1-condition",
+        "repeat_id": 0,
+        "run_id": "run-1",
+        "task_id": "case-1",
+        "unit_id": "unit-1",
+        "attempt_id": "attempt-1",
+        "attempt_status": "succeeded",
+        "executor_type": "ai_api",
+        "provider_attempt_count": 1,
+    }
+    bundles = {
+        "exp1-condition": {
+            "condition": {
+                "experiment_id": EXP1,
+                "condition_id": "exp1-condition",
+            },
+            "suite_root": tmp_path,
+            "tasks": [{"task_id": "case-1"}],
+            "attempts": [
+                {**base_attempt, "model_execution_record_ref": model_ref}
+                for model_ref in refs
+            ],
+            "artifacts": [
+                {
+                    **model_ref,
+                    "path": artifact_path.relative_to(tmp_path).as_posix(),
+                }
+                for model_ref in refs
+            ],
+        }
+    }
+
+    with pytest.raises(
+        ValueError,
+        match="duplicate model execution attempt identity",
+    ):
+        formal_metrics._model_record_text(bundles)
+
+
 def test_exp2_scalability_csv_is_per_root_and_pairs_worker_one_by_case_repeat(
     tmp_path: Path,
 ) -> None:
@@ -506,6 +1535,14 @@ def test_formal_specialty_rows_follow_evidence_mutations_and_fail_closed(
             }
         ],
     )
+    exp4_raw_ref = {
+        "artifact_id": "raw-exp4",
+        "content_hash": "sha256:" + "4" * 64,
+    }
+    exp4_candidate_ref = {
+        "artifact_id": "candidate-exp4",
+        "content_hash": "sha256:" + "5" * 64,
+    }
     exp4_generation = _write_run(
         tmp_path,
         experiment_id=EXP4,
@@ -524,13 +1561,11 @@ def test_formal_specialty_rows_follow_evidence_mutations_and_fail_closed(
                 "case_id": "case-exp4",
                 "repeat_id": 0,
                 "mode": "NO_PARSER_POLICY",
-                "attempt_observations": [
-                    {
-                        "attempt_id": "attempt-12-30",
-                        "raw_output_ref": {"artifact_id": "raw-exp4"},
-                        "candidate_output_ref": {
-                            "artifact_id": "candidate-exp4"
-                        },
+                    "attempt_observations": [
+                        {
+                            "attempt_id": "attempt-12-30",
+                            "raw_output_ref": exp4_raw_ref,
+                            "candidate_output_ref": exp4_candidate_ref,
                         "canonical_output_refs": {},
                         "independent_candidate_validity": True,
                         "final_validity": True,
@@ -538,10 +1573,10 @@ def test_formal_specialty_rows_follow_evidence_mutations_and_fail_closed(
                 ],
                 "hook_observations": [
                     {
-                        "event_type": "EXPERIMENT_ABLATION_GATE_APPLIED",
-                        "ablation_mode": "NO_PARSER_POLICY",
-                        "disabled_mechanism": "parser_policy",
-                        "artifact_refs": [{"artifact_id": "raw-exp4"}],
+                            "event_type": "EXPERIMENT_ABLATION_GATE_APPLIED",
+                            "ablation_mode": "NO_PARSER_POLICY",
+                            "disabled_mechanism": "parser_policy",
+                            "artifact_refs": [exp4_raw_ref],
                         "hook_input": {
                             "task_id": "case-exp4",
                             "unit_id": "unit-1",
@@ -554,10 +1589,7 @@ def test_formal_specialty_rows_follow_evidence_mutations_and_fail_closed(
         },
         attempts=[_attempt(total_tokens=12, latency_ms=30)],
         events=[{"event_type": "EXPERIMENT_ABLATION_GATE_APPLIED"}],
-        artifacts=[
-            {"artifact_id": "raw-exp4"},
-            {"artifact_id": "candidate-exp4"},
-        ],
+        artifacts=[exp4_raw_ref, exp4_candidate_ref],
     )
     exp5_attempt = _attempt(total_tokens=13, latency_ms=25)
     exp5_model_item = _exp5_model_item(
@@ -828,6 +1860,8 @@ def test_exp3_metrics_derive_recovery_from_protocol_evidence_and_dedicated_basel
     assert row["recovery_latency_ms"] == pytest.approx(100.0)
     assert row["reassignment_count"] == 1
     assert row["wasted_actual_tokens"] == 10
+    assert row["wasted_actual_tokens_sample_size"] == 1
+    assert row["wasted_actual_tokens_missing_count"] == 0
     assert row["outcome_evidence_complete"] is True
     assert row["matched_baseline_source"] == "dedicated_condition_evidence"
     assert row["token_overhead"] == 10
@@ -878,6 +1912,21 @@ def test_exp3_metrics_derive_recovery_from_protocol_evidence_and_dedicated_basel
     assert "missing_recovery_event_evidence" in missing_recovery[
         "paper_ineligibility_reasons"
     ]
+
+    attempt_path = generation / "per_attempt_results.jsonl"
+    attempt_rows = [
+        json.loads(line)
+        for line in attempt_path.read_text(encoding="utf-8").splitlines()
+    ]
+    for attempt_row in attempt_rows:
+        if attempt_row["attempt_id"] == "fault-attempt":
+            attempt_row["total_tokens"] = None
+    _write_jsonl(attempt_path, attempt_rows)
+
+    missing_usage = recompute_paper_formal_metrics(tmp_path).experiment_rows[EXP3][0]
+    assert missing_usage["wasted_actual_tokens"] is None
+    assert missing_usage["wasted_actual_tokens_sample_size"] == 0
+    assert missing_usage["wasted_actual_tokens_missing_count"] == 1
 
 
 def test_exp3_metrics_use_shared_exp1_usage_and_null_failed_source_comparison(
@@ -1609,16 +2658,18 @@ def test_exp5_formal_endpoint_table_uses_strict_v2_rows_and_three_repeat_aggrega
     model_rows = [
         json.loads(line)
         for line in (
-            tmp_path / "metrics" / "model_execution_records.jsonl"
+            tmp_path / "model_execution_records.jsonl"
         ).read_text(encoding="utf-8").splitlines()
     ]
     assert len(model_rows) == 3
     assert all(
         row["schema_version"]
-        == "tokenshare.paper_exp5_model_execution_row.v1"
+        == "tokenshare.paper_model_execution_record.v2"
         for row in model_rows
     )
-    assert all("model_execution_record_ref" in row for row in model_rows)
+    assert (
+        tmp_path / "metrics" / "model_execution_records.jsonl"
+    ).read_bytes() == (tmp_path / "model_execution_records.jsonl").read_bytes()
     assert all("model_execution_ref" not in row for row in model_rows)
 
 
@@ -1796,7 +2847,65 @@ def test_exp4_empty_or_mismatched_hook_observations_are_ineligible() -> None:
     assert "ablation_mode_mismatch" in mismatched["paper_ineligibility_reasons"]
 
 
+def test_artifact_inventory_requires_id_hash_and_matches_all_provided_fields() -> None:
+    content_hash = "sha256:" + "1" * 64
+    inventory = [
+        {
+            "artifact_id": "artifact-1",
+            "content_hash": content_hash,
+            "path": "runs/case-1/artifacts/artifact-1",
+            "uri": "artifacts/artifact-1",
+        }
+    ]
+
+    assert formal_metrics._artifact_ref_in_inventory(
+        {"uri": "artifacts/artifact-1"},
+        inventory,
+    ) is False
+    assert formal_metrics._artifact_ref_in_inventory(
+        {
+            "artifact_id": "artifact-1",
+            "content_hash": content_hash,
+        },
+        inventory,
+    ) is True
+    assert formal_metrics._artifact_ref_in_inventory(
+        {
+            "artifact_id": "artifact-1",
+            "content_hash": content_hash,
+            "path": "runs/case-1/artifacts/artifact-1",
+            "uri": "artifacts/artifact-1",
+        },
+        inventory,
+    ) is True
+    for field_name, conflicting_value in (
+        ("artifact_id", "artifact-2"),
+        ("content_hash", "sha256:" + "2" * 64),
+        ("path", "runs/case-1/artifacts/artifact-2"),
+        ("uri", "artifacts/artifact-2"),
+    ):
+        reference = {
+            "artifact_id": "artifact-1",
+            "content_hash": content_hash,
+            "path": "runs/case-1/artifacts/artifact-1",
+            "uri": "artifacts/artifact-1",
+        }
+        reference[field_name] = conflicting_value
+        assert formal_metrics._artifact_ref_in_inventory(
+            reference,
+            inventory,
+        ) is False
+
+
 def test_exp4_applied_hook_requires_input_result_and_persisted_refs() -> None:
+    raw_ref = {
+        "artifact_id": "raw-1",
+        "content_hash": "sha256:" + "1" * 64,
+    }
+    candidate_ref = {
+        "artifact_id": "candidate-1",
+        "content_hash": "sha256:" + "2" * 64,
+    }
     base = {
         "experiment_id": EXP4,
         "condition_id": "condition-no-verification",
@@ -1819,8 +2928,8 @@ def test_exp4_applied_hook_requires_input_result_and_persisted_refs() -> None:
             "attempt_observations": [
                 {
                     "attempt_id": "attempt-1",
-                    "raw_output_ref": {"artifact_id": "raw-1"},
-                    "candidate_output_ref": {"artifact_id": "candidate-1"},
+                    "raw_output_ref": raw_ref,
+                    "candidate_output_ref": candidate_ref,
                     "canonical_output_refs": {},
                     "independent_candidate_validity": False,
                     "final_validity": False,
@@ -1869,10 +2978,7 @@ def test_exp4_applied_hook_requires_input_result_and_persisted_refs() -> None:
         task=task,
         attempts=[attempt],
         events=[{"event_id": "submission-1"}],
-        artifacts=[
-            {"artifact_id": "raw-1"},
-            {"artifact_id": "candidate-1"},
-        ],
+        artifacts=[raw_ref, candidate_ref],
     )
     assert complete["paper_eligible"] is True
 
@@ -2049,6 +3155,98 @@ def test_exp5_provider_retries_are_expanded_for_identity_coverage() -> None:
     assert audit["provider_attempt_identity_covered_count"] == 2
 
 
+def test_exp5_auditable_provider_failure_is_response_identity_na_not_mismatch() -> None:
+    attempt = {
+        **_attempt(total_tokens=0, latency_ms=20),
+        "attempt_id": "attempt-provider-failure",
+        "run_id": "run-case",
+        "provider_attempt_index": 0,
+        "provider_attempt_count": 2,
+        "attempt_status": "provider_error",
+        "error_kind": "timeout",
+        "paper_eligible": True,
+    }
+    item = _exp5_model_item(
+        condition_id="exp5-condition",
+        task_id="case-1",
+        attempt=attempt,
+    )
+    item["record"].update(
+        {
+            "raw_output_ref": None,
+            "resolved_model": None,
+            "response_model_status": "unavailable",
+            "identity_status": "not_observed",
+            "mismatch_reasons": [],
+            "paper_eligible": False,
+        }
+    )
+    item["record"]["actual_provider_attempts"] = [
+        {
+            **dict(item["record"]["actual_provider_attempts"][0]),
+            "result_kind": failure_kind,
+        }
+        for failure_kind in ("timeout", "provider_error")
+    ]
+    item["record"]["actual_request_identities"] = [
+        dict(item["record"]["actual_request_identities"][0]),
+        dict(item["record"]["actual_request_identities"][0]),
+    ]
+    item["raw_output"] = None
+    item["attempt"].update(
+        {
+            "raw_output_ref": None,
+            "attempt_status": "provider_error",
+            "provider_attempt_count": 2,
+            "error_kind": "timeout",
+        }
+    )
+    item["provider_errors"] = ["timeout", "provider_error"]
+    _refresh_model_record_digest(item["record"])
+    bundle = {
+        "condition": {
+            "experiment_id": EXP5,
+            "condition_id": "exp5-condition",
+            "provider_family": "siliconflow",
+            "model_entry_id": "glm_5_2_exp1_baseline",
+            "provider_model_id": "zai-org/GLM-5.2",
+        },
+        "tasks": [
+            {
+                "condition_id": "exp5-condition",
+                "repeat_id": 0,
+                "task_id": "case-1",
+                "paper_eligible": True,
+                "model_execution_records": [item],
+            }
+        ],
+        "attempts": [item["attempt"]],
+    }
+
+    audit = formal_metrics._exp5_identity_inventory(bundle)
+    row = formal_metrics._exp5_rows(
+        {
+            "exp5-condition": {
+                "condition_id": "exp5-condition",
+                "paper_eligible": True,
+                "paper_ineligibility_reasons": [],
+                "provider_error_count": 1,
+            }
+        },
+        {"exp5-condition": bundle},
+    )[0]
+
+    assert audit["paper_eligible"] is True
+    assert audit["provider_attempt_identity_denominator"] == 2
+    assert audit["provider_attempt_identity_covered_count"] == 2
+    assert row["identity_status"] == "not_observed"
+    assert row["model_identity_match_count"] == 0
+    assert row["model_identity_denominator"] == 0
+    assert row["model_identity_not_observed_count"] == 1
+    assert row["paper_eligible"] is True
+    assert "model_identity_mismatch" not in row["paper_ineligibility_reasons"]
+
+
 def test_exp5_v3_case_records_are_derived_from_root_and_attempt_evidence(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -2108,6 +3306,9 @@ def test_exp5_v3_case_records_are_derived_from_root_and_attempt_evidence(
             "cohort_member_id": "model-a",
             "condition_id": "exp5-v3-condition",
             "stratum_id": "lean_proof:hard:induction",
+            "domain": "lean_proof",
+            "topic_family": "induction",
+            "root_status": "completed",
             "root_completed": True,
             "accepted_validity": True,
             "total_tokens": 17,
@@ -2123,6 +3324,320 @@ def test_exp5_v3_case_records_are_derived_from_root_and_attempt_evidence(
             "observed_peak_concurrency": 1,
         },
     )
+
+
+def test_exp5_renderer_rows_preserve_failures_and_usage_missingness(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    condition = {
+        "schema_version": "tokenshare.paper_condition.v3",
+        "experiment_id": EXP5,
+        "condition_id": "exp5-v3-failed",
+        "repeat_id": 0,
+        "domain": "factorization",
+        "paper_difficulty": "hard",
+        "topic_family": None,
+        "cohort_member_id": "glm_5_2_siliconflow",
+    }
+    bundles = {
+        "exp5-v3-failed": {
+            "condition": condition,
+            "tasks": [
+                {
+                    "task_id": "case-1",
+                    "case_id": "case-1",
+                    "root_status": "failed",
+                    "accepted_validity": False,
+                    "failure_stage": "provider",
+                    "failure_kind": "provider_error",
+                    "paper_eligible": True,
+                    "evidence_artifact_refs": [
+                        {
+                            "artifact_id": "failure-1",
+                            "content_hash": "sha256:" + "1" * 64,
+                        }
+                    ],
+                }
+            ],
+            "attempts": [],
+            "events": [],
+            "artifacts": [],
+        }
+    }
+    case_rows = (
+        {
+            "case_id": "case-1",
+            "repeat_id": 0,
+            "cohort_member_id": "glm_5_2_siliconflow",
+            "condition_id": "exp5-v3-failed",
+            "stratum_id": "factorization:hard",
+            "root_completed": False,
+            "accepted_validity": False,
+            "total_tokens": None,
+            "provider_latency_ms": None,
+            "paper_eligible": True,
+        },
+    )
+    execution_rows = (
+        {
+            "schema_version": "tokenshare.paper_exp5_model_execution_row.v1",
+            "cohort_member_id": "glm_5_2_siliconflow",
+            "configured_model": "zai-org/GLM-5.2",
+            "identity_status": "matched",
+            "provider_attempt_count": 1,
+            "prompt_tokens": 10,
+            "reasoning_tokens": None,
+            "visible_output_tokens": None,
+            "total_tokens": None,
+            "latency_ms": None,
+            "cost_estimate": None,
+            "cost_estimate_status": "usage_missing",
+            "paper_eligible": True,
+        },
+    )
+    monkeypatch.setattr(
+        formal_metrics,
+        "_exp5_v3_case_records",
+        lambda _bundles: case_rows,
+    )
+    monkeypatch.setattr(
+        formal_metrics,
+        "_exp5_v3_execution_rows",
+        lambda _bundles: execution_rows,
+        raising=False,
+    )
+
+    rows = formal_metrics._exp5_renderer_rows(
+        suite={"status": "completed_with_failures"},
+        bundles=bundles,
+    )
+
+    overall = rows["overall_rows"][0]
+    assert rows["suite_status"] == "completed_with_failures"
+    assert overall["root_count"] == 1
+    assert overall["completion_count"] == 0
+    assert overall["completion_rate"] == 0.0
+    assert overall["prompt_tokens"] == 10
+    assert overall["prompt_tokens_sample_size"] == 1
+    assert overall["prompt_tokens_missing_count"] == 0
+    assert overall["reasoning_tokens"] is None
+    assert overall["reasoning_tokens_missing_count"] == 1
+    assert overall["total_tokens"] is None
+    assert overall["total_tokens_sample_size"] == 0
+    assert overall["total_tokens_missing_count"] == 1
+    assert overall["provider_latency_ms"] is None
+    assert overall["provider_latency_ms_sample_size"] == 0
+    assert overall["provider_latency_ms_missing_count"] == 1
+    assert overall["visible_output_tokens"] is None
+    assert overall["cost_estimate"] is None
+    assert rows["failure_taxonomy_rows"] == (
+        {
+            "cohort_member_id": "glm_5_2_siliconflow",
+            "domain": "factorization",
+            "topic_family": None,
+            "failure_stage": "provider",
+            "failure_kind": "provider_error",
+            "count": 1,
+            "evidence_ref": {
+                "artifact_id": "failure-1",
+                "content_hash": "sha256:" + "1" * 64,
+            },
+            "short_summary": (
+                "Observed provider_error at provider; see persisted evidence reference."
+            ),
+        },
+    )
+
+
+def test_exp5_failure_taxonomy_keeps_executor_error_separate_from_provider_error() -> None:
+    bundle = {
+        "condition": {
+            "cohort_member_id": "glm_5_2_siliconflow",
+            "domain": "factorization",
+            "topic_family": None,
+        },
+        "tasks": [
+            {
+                "root_status": "failed",
+                "failure_stage": "provider",
+                "failure_kind": "provider_error",
+                "evidence_artifact_refs": [],
+            },
+            {
+                "root_status": "failed",
+                "failure_stage": "executor",
+                "failure_kind": "executor_error",
+                "evidence_artifact_refs": [],
+            },
+        ],
+    }
+
+    rows = formal_metrics._exp5_failure_taxonomy_rows({"condition": bundle})
+
+    assert {(row["failure_stage"], row["failure_kind"]) for row in rows} == {
+        ("provider", "provider_error"),
+        ("executor", "executor_error"),
+    }
+
+
+def test_condition_metrics_preserve_provider_usage_missingness() -> None:
+    bundle = _evidence_complete_failed_condition_bundle(EXP5)
+    attempt = bundle["attempts"][0]
+    attempt.update(
+        {
+            "attempt_status": "provider_error",
+            "error_kind": "timeout",
+            "total_tokens": None,
+            "cost_estimate": None,
+            "paper_eligible": True,
+        }
+    )
+
+    row = formal_metrics._condition_metrics(bundle)
+
+    assert row["total_tokens"] is None
+    assert row["total_cost_estimate"] is None
+    assert row["token_p50"] is None
+    assert row["token_p95"] is None
+    assert row["provider_latency_sum_ms"] == 100
+    assert row["token_usage_missing_count"] == 1
+    assert row["cost_estimate_missing_count"] == 1
+
+
+def test_repeat_aggregate_keeps_fixed_denominator_when_usage_is_missing() -> None:
+    base = {
+        "row_scope": "repeat_condition",
+        "domain": "factorization",
+        "difficulty": "hard",
+        "paper_difficulty": "hard",
+        "worker_count": 1,
+        "fault_type": "none",
+        "fault_rate": 0.1,
+        "ablation_mode": "FULL",
+        "task_count": 1,
+        "completed_root_count": 0,
+        "wall_clock_ms": 100.0,
+        "paper_eligible": True,
+        "paper_ineligibility_reasons": [],
+    }
+    rows = [
+        {
+            **base,
+            "condition_id": "condition-0",
+            "repeat_id": 0,
+            "total_tokens": None,
+            "total_cost_estimate": None,
+            "token_usage_sample_size": 0,
+            "token_usage_missing_count": 1,
+            "cost_estimate_sample_size": 0,
+            "cost_estimate_missing_count": 1,
+        },
+        {
+            **base,
+            "condition_id": "condition-1",
+            "repeat_id": 1,
+            "total_tokens": 10,
+            "total_cost_estimate": 0.1,
+            "token_usage_sample_size": 1,
+            "token_usage_missing_count": 0,
+            "cost_estimate_sample_size": 1,
+            "cost_estimate_missing_count": 0,
+        },
+    ]
+
+    output = formal_metrics._with_repeat_aggregates(EXP3, rows)
+    aggregate = next(row for row in output if row["row_scope"] == "repeat_aggregate")
+
+    assert aggregate["repeat_count"] == 2
+    assert aggregate["total_tokens"] is None
+    assert aggregate["total_cost_estimate"] is None
+    assert aggregate["token_usage_sample_size"] == 1
+    assert aggregate["token_usage_missing_count"] == 1
+    assert aggregate["cost_estimate_sample_size"] == 1
+    assert aggregate["cost_estimate_missing_count"] == 1
+
+
+def test_exp5_renderer_rows_keep_audit_statistics_for_ineligible_inventory(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    condition_id = "exp5-v3-ineligible"
+    bundle = {
+        "condition": {
+            "schema_version": "tokenshare.paper_condition.v3",
+            "experiment_id": EXP5,
+            "condition_id": condition_id,
+            "repeat_id": 0,
+            "domain": "factorization",
+            "paper_difficulty": "hard",
+            "topic_family": None,
+            "cohort_member_id": "glm_5_2_siliconflow",
+        },
+        "tasks": (),
+        "attempts": (),
+        "events": (),
+        "artifacts": (),
+    }
+    case_rows = (
+        {
+            "case_id": "case-1",
+            "repeat_id": 0,
+            "cohort_member_id": "glm_5_2_siliconflow",
+            "condition_id": condition_id,
+            "stratum_id": "factorization:hard",
+            "root_completed": False,
+            "accepted_validity": False,
+            "total_tokens": None,
+            "total_tokens_unavailable_reason": "provider_usage_missing",
+            "provider_latency_ms": None,
+            "provider_latency_ms_unavailable_reason": "provider_latency_missing",
+            "paper_eligible": False,
+        },
+    )
+    observed: dict[str, tuple[dict, ...]] = {}
+
+    def paired(records):
+        observed["paired"] = tuple(dict(row) for row in records)
+        return ({"metric": "root_completion", "pairing_denominator": 1},)
+
+    def ordered(records):
+        observed["order"] = tuple(dict(row) for row in records)
+        return ({"row_scope": "order_sensitivity", "case_repeat_denominator": 1},)
+
+    monkeypatch.setattr(
+        formal_metrics,
+        "_exp5_v3_case_records",
+        lambda _bundles: case_rows,
+    )
+    monkeypatch.setattr(
+        formal_metrics,
+        "_exp5_v3_execution_rows",
+        lambda _bundles: (),
+    )
+    monkeypatch.setattr(
+        formal_metrics,
+        "build_exp5_paired_comparison_rows",
+        paired,
+    )
+    monkeypatch.setattr(
+        formal_metrics,
+        "build_exp5_order_and_concurrency_rows",
+        ordered,
+    )
+
+    rows = formal_metrics._exp5_renderer_rows(
+        suite={"status": "completed_with_failures"},
+        bundles={condition_id: bundle},
+    )
+
+    assert observed["paired"][0]["paper_eligible"] is True
+    assert observed["paired"][0]["root_completed"] is False
+    assert observed["paired"][0]["total_tokens"] is None
+    assert observed["order"] == observed["paired"]
+    assert rows["identity_complete"] is False
+    assert rows["paired_comparison_rows"][0]["pairing_denominator"] == 1
+    assert rows["paired_comparison_rows"][0]["paper_eligible"] is False
+    assert rows["order_concurrency_rows"][0]["case_repeat_denominator"] == 1
+    assert rows["order_concurrency_rows"][0]["paper_eligible"] is False
 
 
 def test_exp5_attempt_peak_uses_half_open_intervals_at_timestamp_ties() -> None:
@@ -2186,6 +3701,16 @@ def test_exp5_v3_formal_outputs_freeze_csv_and_jsonl(
 
     first = formal_metrics._exp5_v3_analysis_outputs(bundles)
     second = formal_metrics._exp5_v3_analysis_outputs(bundles)
+    renderer_rows = {
+        "suite_status": "completed",
+        "identity_complete": False,
+        "overall_rows": (),
+        "domain_topic_rows": (),
+        "paired_comparison_rows": (),
+        "model_execution_rows": (),
+        "order_concurrency_rows": (),
+        "failure_taxonomy_rows": (),
+    }
 
     assert first == second
     assert set(first) == {
@@ -2209,20 +3734,17 @@ def test_exp5_v3_formal_outputs_freeze_csv_and_jsonl(
             EXP5: (),
         },
         run_bundles=bundles,
+        exp5_artifact_rows=renderer_rows,
     )
     ref_paths = {ref["path"] for ref in refs}
-    assert set(first) <= ref_paths
-    assert (
-        tmp_path / "metrics" / "exp5_paired_comparisons.csv"
-    ).read_text(encoding="utf-8") == first[
-        "metrics/exp5_paired_comparisons.csv"
-    ]
-    first_hashes = {
-        path: formal_metrics._hash_bytes(
-            (tmp_path / path).read_bytes()
+    assert set(first).isdisjoint(ref_paths)
+    assert all(not (tmp_path / path).exists() for path in first)
+    assert "metrics/exp5_renderer_rows.json" in ref_paths
+    assert json.loads(
+        (tmp_path / "metrics" / "exp5_renderer_rows.json").read_text(
+            encoding="utf-8"
         )
-        for path in first
-    }
+    ) == {key: list(value) if isinstance(value, tuple) else value for key, value in renderer_rows.items()}
     formal_metrics._write_metrics_outputs(
         root=tmp_path,
         metrics_body={},
@@ -2235,13 +3757,9 @@ def test_exp5_v3_formal_outputs_freeze_csv_and_jsonl(
             EXP5: (),
         },
         run_bundles=bundles,
+        exp5_artifact_rows=renderer_rows,
     )
-    assert first_hashes == {
-        path: formal_metrics._hash_bytes(
-            (tmp_path / path).read_bytes()
-        )
-        for path in first
-    }
+    assert all(not (tmp_path / path).exists() for path in first)
 
 
 def test_exp2_rate_limit_views_keep_all_runs_and_list_exclusions() -> None:
@@ -2662,6 +4180,42 @@ def _write_run(
     )
     generation_id = "generation-1"
     generation = run_root / ".generations" / generation_id
+    task_body = json.loads(json.dumps(task))
+    attempt_bodies = json.loads(json.dumps(attempts))
+    artifact_bodies = json.loads(json.dumps(artifacts or []))
+    for model_item in task_body.get("model_execution_records", []):
+        record = model_item.get("record")
+        record_ref = model_item.get("record_ref")
+        if not isinstance(record, dict) or not isinstance(record_ref, dict):
+            continue
+        artifact_id = record_ref.get("artifact_id")
+        if not isinstance(artifact_id, str) or not artifact_id:
+            continue
+        artifact_path = (
+            generation
+            / "artifacts"
+            / "model_execution_records"
+            / f"{artifact_id}.json"
+        )
+        _write_json(artifact_path, record)
+        content_hash = "sha256:" + hashlib.sha256(
+            artifact_path.read_bytes()
+        ).hexdigest()
+        persisted_ref = {
+            "artifact_id": artifact_id,
+            "artifact_type": "PaperModelExecutionRecord",
+            "content_hash": content_hash,
+        }
+        model_item["record_ref"] = persisted_ref
+        for attempt in attempt_bodies:
+            if attempt.get("attempt_id") == record.get("attempt_id"):
+                attempt["model_execution_record_ref"] = persisted_ref
+        artifact_bodies.append(
+            {
+                **persisted_ref,
+                "path": artifact_path.relative_to(root).as_posix(),
+            }
+        )
     _write_json(run_root / "CURRENT.json", {"generation_id": generation_id})
     _write_jsonl(
         generation / "per_task_results.jsonl",
@@ -2670,7 +4224,7 @@ def _write_run(
                 "experiment_id": experiment_id,
                 "condition_id": condition_id,
                 "repeat_id": repeat_id,
-                **task,
+                **task_body,
             }
         ],
     )
@@ -2681,10 +4235,10 @@ def _write_run(
                 "experiment_id": experiment_id,
                 "condition_id": condition_id,
                 "repeat_id": repeat_id,
-                "task_id": task["task_id"],
+                "task_id": task_body["task_id"],
                 **attempt,
             }
-            for attempt in attempts
+            for attempt in attempt_bodies
         ],
     )
     _write_jsonl(
@@ -2694,7 +4248,7 @@ def _write_run(
                 "experiment_id": experiment_id,
                 "condition_id": condition_id,
                 "repeat_id": repeat_id,
-                "task_id": task["task_id"],
+                "task_id": task_body["task_id"],
                 **fault,
             }
             for fault in (faults or [])
@@ -2707,7 +4261,7 @@ def _write_run(
                 "experiment_id": experiment_id,
                 "condition_id": condition_id,
                 "repeat_id": repeat_id,
-                "task_id": task["task_id"],
+                "task_id": task_body["task_id"],
                 **event,
             }
             for event in events
@@ -2720,10 +4274,10 @@ def _write_run(
                 "experiment_id": experiment_id,
                 "condition_id": condition_id,
                 "repeat_id": repeat_id,
-                "task_id": task["task_id"],
+                "task_id": task_body["task_id"],
                 **artifact,
             }
-            for artifact in (artifacts or [])
+            for artifact in artifact_bodies
         ],
     )
     return generation

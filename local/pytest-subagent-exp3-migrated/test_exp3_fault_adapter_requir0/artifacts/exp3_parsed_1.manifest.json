@@ -1,0 +1,16 @@
+{
+  "artifact_id": "exp3_parsed_1",
+  "artifact_schema_id": "phase7.parsed_model_output",
+  "artifact_schema_version": "v1",
+  "artifact_type": "ParsedModelOutput",
+  "content_hash": "sha256:e8dd98566362bfd52520de4e81221126bd4d039087965c06100aaf0bfe34db2f",
+  "created_at": "2026-07-19T00:00:00Z",
+  "media_type": "application/json",
+  "metadata": {},
+  "schema_version": "ArtifactRef.v1",
+  "size_bytes": 114,
+  "source": {
+    "kind": "ai_api_executor"
+  },
+  "uri": "artifacts/exp3_parsed_1"
+}

@@ -1,0 +1,22 @@
+{
+  "artifact_id": "worker_death_unit-1_attempt_initial_progress_25",
+  "artifact_schema_id": "tokenshare.paper_worker_death",
+  "artifact_schema_version": "v1",
+  "artifact_type": "WorkerDeathRecord",
+  "content_hash": "sha256:4bbf1b51f4485cc5eaec449965bdcbb54e8b2acf14e3f70e40646870b656d3d8",
+  "created_at": "2026-07-20T00:00:11Z",
+  "media_type": "application/json",
+  "metadata": {
+    "dependency_graph_digest": "sha256:d410cd7549b7f8c8565411dda3371f45f929deb5399e79d9c648482a3cbba733",
+    "kill_point": "progress_25",
+    "unit_id": "unit-1"
+  },
+  "schema_version": "ArtifactRef.v1",
+  "size_bytes": 4437,
+  "source": {
+    "condition_id": "condition-worker-death",
+    "kind": "paper_worker_runtime_projection",
+    "run_id": "condition-worker-death-case-1-worker-death"
+  },
+  "uri": "artifacts/worker_death_unit-1_attempt_initial_progress_25"
+}

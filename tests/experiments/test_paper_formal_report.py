@@ -1,18 +1,129 @@
 from __future__ import annotations
 
+from hashlib import sha256
 import json
 from pathlib import Path
 
+import pytest
+
+import tokenshare.experiments.paper_formal_report as formal_report
 from tokenshare.experiments.paper_formal_metrics import (
     FormalMetricsResult,
     recompute_paper_formal_metrics,
 )
 from tokenshare.experiments.paper_exp5_artifacts import (
+    EXP5_AUDIT_FILES,
+    EXP5_PAPER_FILES,
     Exp5PaperArtifactResult,
 )
 from tokenshare.experiments.paper_formal_report import (
     generate_paper_formal_report,
 )
+
+
+def test_secret_scan_streams_paths_and_detects_cross_chunk_secrets(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    chunk_size = 1024 * 1024
+    configured_secret = "configured-secret-value-123456"
+    exact_path = tmp_path / "a-exact.bin"
+    exact_path.write_bytes(
+        b"x" * (chunk_size - 5) + configured_secret.encode("utf-8")
+    )
+    pattern_path = tmp_path / "nested" / "b-pattern.bin"
+    pattern_path.parent.mkdir(parents=True, exist_ok=True)
+    pattern_path.write_bytes(
+        b"y" * (chunk_size - 2) + b"sk-" + b"A" * 20
+    )
+    (tmp_path / "z-clean.txt").write_text("clean", encoding="utf-8")
+
+    def forbidden_rglob(self: Path, pattern: str) -> object:
+        raise AssertionError("secret scan must not materialize the full path tree")
+
+    def forbidden_read_bytes(self: Path) -> bytes:
+        raise AssertionError("secret scan must read files in chunks")
+
+    monkeypatch.setattr(Path, "rglob", forbidden_rglob)
+    monkeypatch.setattr(Path, "read_bytes", forbidden_read_bytes)
+
+    scan = formal_report._scan_formal_output(
+        tmp_path,
+        secret_values=(configured_secret,),
+    )
+
+    assert scan["passed"] is False
+    assert scan["files_scanned"] == 3
+    assert scan["findings"] == [
+        {
+            "path": "a-exact.bin",
+            "finding_kind": "configured_secret_value",
+        },
+        {
+            "path": "nested/b-pattern.bin",
+            "finding_kind": "api_key_pattern",
+        },
+    ]
+
+
+def test_secret_scan_preserves_windows_case_folded_path_order(
+    tmp_path: Path,
+) -> None:
+    secret = "configured-order-secret"
+    nested = tmp_path / "a"
+    nested.mkdir()
+    for relative in ("a/x.txt", "A-upper.txt", "a.txt", "b.txt"):
+        (tmp_path / relative).write_text(secret, encoding="utf-8")
+
+    scan = formal_report._scan_formal_output(
+        tmp_path,
+        secret_values=(secret,),
+    )
+
+    assert [finding["path"] for finding in scan["findings"]] == [
+        "a/x.txt",
+        "A-upper.txt",
+        "a.txt",
+        "b.txt",
+    ]
+
+
+def test_report_jsonl_reader_streams_without_path_read_text(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "records.jsonl"
+    path.write_text('{"row": 1}\n{"row": 2}\n', encoding="utf-8")
+    original_read_text = Path.read_text
+
+    def forbidden_read_text(self: Path, *args: object, **kwargs: object) -> str:
+        if self == path:
+            raise AssertionError("report JSONL reader must stream lines")
+        return original_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", forbidden_read_text)
+
+    assert formal_report._read_jsonl(path) == [{"row": 1}, {"row": 2}]
+
+
+def test_report_ref_hashes_file_in_chunks(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "report.bin"
+    content = b"report" * 400_000
+    path.write_bytes(content)
+    expected = "sha256:" + sha256(content).hexdigest()
+
+    def forbidden_read_bytes(self: Path) -> bytes:
+        raise AssertionError("report refs must hash files in chunks")
+
+    monkeypatch.setattr(Path, "read_bytes", forbidden_read_bytes)
+
+    assert formal_report._ref(tmp_path, path) == {
+        "path": "report.bin",
+        "content_hash": expected,
+    }
 
 
 def test_capturing_formal_report_is_audit_only_and_secret_scan_runs_first(
@@ -45,6 +156,199 @@ def test_capturing_formal_report_is_audit_only_and_secret_scan_runs_first(
     assert "exp4 rows pair each ablation with full by case_id × repeat_id" in (
         markdown.lower()
     )
+
+
+def test_formal_report_does_not_render_unbound_rows_carried_by_metrics(
+    tmp_path: Path,
+) -> None:
+    _write_claimed_formal_evidence(
+        tmp_path,
+        task_eligible=True,
+        attempt_eligible=True,
+        capturing=True,
+    )
+    metrics = _claimed_metrics(
+        condition_eligible=True,
+        capturing=True,
+        exp5_artifact_rows={
+            "suite_status": "completed",
+            "identity_complete": False,
+            "overall_rows": (),
+            "domain_topic_rows": (),
+            "paired_comparison_rows": (),
+            "model_execution_rows": (),
+            "order_concurrency_rows": (),
+            "failure_taxonomy_rows": (),
+        },
+    )
+
+    report = generate_paper_formal_report(output_root=tmp_path, metrics=metrics)
+
+    assert report.paper_eligible is False
+    assert report.exp5_artifact_refs == ()
+    assert all(
+        not (tmp_path / path).exists()
+        for path in EXP5_AUDIT_FILES + EXP5_PAPER_FILES
+    )
+
+
+def test_formal_report_rejects_exp5_rows_when_suite_has_no_exp5_evidence(
+    tmp_path: Path,
+) -> None:
+    _write_claimed_formal_evidence(
+        tmp_path,
+        task_eligible=True,
+        attempt_eligible=True,
+    )
+    metrics = _claimed_metrics(
+        condition_eligible=True,
+        exp5_artifact_rows=_minimal_exp5_artifact_rows(
+            suite_status="completed_with_failures"
+        ),
+    )
+
+    report = generate_paper_formal_report(
+        output_root=tmp_path,
+        metrics=metrics,
+        exp5_pdf_backend=lambda path, _spec: path.write_bytes(b"%PDF-1.4\n%%EOF\n"),
+    )
+
+    assert report.paper_eligible is False
+    assert report.exp5_artifact_refs == ()
+    assert all(
+        not (tmp_path / path).exists()
+        for path in EXP5_AUDIT_FILES + EXP5_PAPER_FILES
+    )
+    eligibility = json.loads(
+        (tmp_path / "audit" / "paper_eligibility_report.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert "exp5_renderer_rows_without_exp5_suite" in eligibility[
+        "ineligibility_reasons"
+    ]
+
+
+def test_formal_report_rejects_exp5_rows_whose_digest_is_not_bound(
+    tmp_path: Path,
+) -> None:
+    experiment_id = "exp5_real_ai_model_endpoint_comparison"
+    _write_claimed_formal_evidence(
+        tmp_path,
+        task_eligible=True,
+        attempt_eligible=True,
+        experiment_id=experiment_id,
+    )
+    rows = _minimal_exp5_artifact_rows(suite_status="completed_with_failures")
+    metrics = _claimed_metrics(
+        condition_eligible=True,
+        experiment_id=experiment_id,
+        exp5_artifact_rows=rows,
+        exp5_artifact_rows_digest="sha256:" + "9" * 64,
+    )
+    _write_persisted_metrics_binding(tmp_path, metrics)
+
+    report = generate_paper_formal_report(
+        output_root=tmp_path,
+        metrics=metrics,
+        exp5_pdf_backend=lambda path, _spec: path.write_bytes(b"%PDF-1.4\n%%EOF\n"),
+    )
+
+    assert report.paper_eligible is False
+    assert report.exp5_artifact_refs == ()
+    assert all(
+        not (tmp_path / path).exists()
+        for path in EXP5_AUDIT_FILES + EXP5_PAPER_FILES
+    )
+    eligibility = json.loads(
+        (tmp_path / "audit" / "paper_eligibility_report.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert "exp5_renderer_rows_digest_mismatch" in eligibility[
+        "ineligibility_reasons"
+    ]
+
+
+def test_formal_report_rejects_exp5_rows_when_metrics_digest_is_not_persisted(
+    tmp_path: Path,
+) -> None:
+    experiment_id = "exp5_real_ai_model_endpoint_comparison"
+    _write_claimed_formal_evidence(
+        tmp_path,
+        task_eligible=True,
+        attempt_eligible=True,
+        experiment_id=experiment_id,
+    )
+    rows = _minimal_exp5_artifact_rows(suite_status="completed_with_failures")
+    metrics = _claimed_metrics(
+        condition_eligible=True,
+        experiment_id=experiment_id,
+        exp5_artifact_rows=rows,
+        exp5_artifact_rows_digest=_digest_json(rows),
+    )
+    _write_persisted_metrics_binding(
+        tmp_path,
+        metrics,
+        metrics_digest="sha256:" + "8" * 64,
+    )
+
+    report = generate_paper_formal_report(
+        output_root=tmp_path,
+        metrics=metrics,
+        exp5_pdf_backend=lambda path, _spec: path.write_bytes(b"%PDF-1.4\n%%EOF\n"),
+    )
+
+    assert report.paper_eligible is False
+    assert report.exp5_artifact_refs == ()
+    assert all(
+        not (tmp_path / path).exists()
+        for path in EXP5_AUDIT_FILES + EXP5_PAPER_FILES
+    )
+    eligibility = json.loads(
+        (tmp_path / "audit" / "paper_eligibility_report.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert "exp5_metrics_digest_not_persisted" in eligibility[
+        "ineligibility_reasons"
+    ]
+
+
+def test_formal_report_rejects_exp5_rows_missing_persisted_renderer_bundle(
+    tmp_path: Path,
+) -> None:
+    experiment_id = "exp5_real_ai_model_endpoint_comparison"
+    _write_claimed_formal_evidence(
+        tmp_path,
+        task_eligible=True,
+        attempt_eligible=True,
+        experiment_id=experiment_id,
+    )
+    rows = _minimal_exp5_artifact_rows(suite_status="completed_with_failures")
+    metrics = _claimed_metrics(
+        condition_eligible=True,
+        experiment_id=experiment_id,
+        exp5_artifact_rows=rows,
+        exp5_artifact_rows_digest=_digest_json(rows),
+    )
+    _write_persisted_metrics_binding(tmp_path, metrics, persist_rows=False)
+
+    report = generate_paper_formal_report(
+        output_root=tmp_path,
+        metrics=metrics,
+        exp5_pdf_backend=lambda path, _spec: path.write_bytes(b"%PDF-1.4\n%%EOF\n"),
+    )
+
+    assert report.paper_eligible is False
+    eligibility = json.loads(
+        (tmp_path / "audit" / "paper_eligibility_report.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert "exp5_renderer_rows_not_persisted" in eligibility[
+        "ineligibility_reasons"
+    ]
 
 
 def test_formal_report_records_secret_scan_failure_without_paper_output(
@@ -206,11 +510,6 @@ def test_formal_report_fails_closed_when_exp5_paper_renderer_fails(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
-    _write_claimed_formal_evidence(
-        tmp_path,
-        task_eligible=True,
-        attempt_eligible=True,
-    )
     calls: list[dict[str, object]] = []
 
     def fake_renderer(**kwargs):
@@ -237,11 +536,8 @@ def test_formal_report_fails_closed_when_exp5_paper_renderer_fails(
         "failure_taxonomy_rows": (),
     }
 
-    report = generate_paper_formal_report(
-        output_root=tmp_path,
-        metrics=_claimed_metrics(condition_eligible=True),
-        exp5_artifact_rows=parsed_rows,
-    )
+    metrics = _write_bound_exp5_metrics(tmp_path, parsed_rows)
+    report = generate_paper_formal_report(output_root=tmp_path, metrics=metrics)
 
     assert calls and calls[0]["paper_eligible"] is True
     assert report.paper_eligible is False
@@ -264,15 +560,6 @@ def test_formal_report_catches_exp5_renderer_validation_error_and_retains_audit(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
-    _write_claimed_formal_evidence(
-        tmp_path,
-        task_eligible=True,
-        attempt_eligible=True,
-    )
-    audit_path = tmp_path / "metrics" / "exp5_model_overall.csv"
-    audit_path.parent.mkdir(parents=True, exist_ok=True)
-    audit_path.write_text("cohort_member_id\n", encoding="utf-8")
-
     def invalid_renderer(**_kwargs):
         raise ValueError("overall_rows contains an unsafe nested field")
 
@@ -291,11 +578,10 @@ def test_formal_report_catches_exp5_renderer_validation_error_and_retains_audit(
         "failure_taxonomy_rows": (),
     }
 
-    report = generate_paper_formal_report(
-        output_root=tmp_path,
-        metrics=_claimed_metrics(condition_eligible=True),
-        exp5_artifact_rows=parsed_rows,
-    )
+    metrics = _write_bound_exp5_metrics(tmp_path, parsed_rows)
+    audit_path = tmp_path / "metrics" / "exp5_model_overall.csv"
+    audit_path.write_text("cohort_member_id\n", encoding="utf-8")
+    report = generate_paper_formal_report(output_root=tmp_path, metrics=metrics)
 
     assert report.paper_eligible is False
     assert audit_path.read_text(encoding="utf-8") == "cohort_member_id\n"
@@ -410,9 +696,13 @@ def _claimed_metrics(
     *,
     condition_eligible: bool,
     experiment_eligible: bool | None = None,
+    capturing: bool = False,
+    exp5_artifact_rows: dict | None = None,
+    exp5_artifact_rows_digest: str | None = None,
+    experiment_id: str = "exp1_real_ai_feasibility",
 ) -> FormalMetricsResult:
     condition_row = {
-        "experiment_id": "exp1_real_ai_feasibility",
+        "experiment_id": experiment_id,
         "condition_id": "condition-1",
         "repeat_id": 0,
         "paper_eligible": condition_eligible,
@@ -424,26 +714,163 @@ def _claimed_metrics(
     return FormalMetricsResult(
         condition_rows=(condition_row,),
         experiment_rows={
-            "exp1_real_ai_feasibility": (
-                {
-                    **dict(condition_row),
-                    "paper_eligible": (
-                        condition_eligible
-                        if experiment_eligible is None
-                        else experiment_eligible
-                    ),
-                },
-            ),
-            "exp2_real_ai_scalability": (),
-            "exp3_real_ai_fault_recovery": (),
-            "exp4_real_ai_protocol_ablation": (),
-            "exp5_real_ai_model_endpoint_comparison": (),
+            candidate_id: (
+                (
+                    {
+                        **dict(condition_row),
+                        "paper_eligible": (
+                            condition_eligible
+                            if experiment_eligible is None
+                            else experiment_eligible
+                        ),
+                    },
+                )
+                if candidate_id == experiment_id
+                else ()
+            )
+            for candidate_id in (
+                "exp1_real_ai_feasibility",
+                "exp2_real_ai_scalability",
+                "exp3_real_ai_fault_recovery",
+                "exp4_real_ai_protocol_ablation",
+                "exp5_real_ai_model_endpoint_comparison",
+            )
         },
         metrics_digest="sha256:" + "1" * 64,
         paper_eligible=True,
-        capturing=False,
+        capturing=capturing,
         output_refs=(),
+        exp5_artifact_rows=exp5_artifact_rows,
+        exp5_artifact_rows_digest=exp5_artifact_rows_digest,
     )
+
+
+def _minimal_exp5_artifact_rows(*, suite_status: str) -> dict:
+    member_ids = (
+        "glm_5_2_siliconflow",
+        "qwen3_14b_siliconflow",
+        "minimax_m2_5_siliconflow",
+        "deepseek_v3_pro_siliconflow",
+    )
+    overall_rows = tuple(
+        {
+            "cohort_member_id": member_id,
+            "model_label": member_id,
+            "root_count": 1,
+            "completion_count": 0,
+            "completion_rate": 0.0,
+            "completion_ci_low": 0.0,
+            "completion_ci_high": 0.0,
+            "accepted_validity_count": 0,
+            "accepted_validity_rate": 0.0,
+            "accepted_validity_ci_low": 0.0,
+            "accepted_validity_ci_high": 0.0,
+            "provider_attempt_count": 1,
+            "prompt_tokens": 1,
+            "reasoning_tokens": None,
+            "visible_output_tokens": None,
+            "total_tokens": 1,
+            "total_tokens_median": 1.0,
+            "total_tokens_ci_low": 1.0,
+            "total_tokens_ci_high": 1.0,
+            "cost_estimate": None,
+            "cost_currency": None,
+            "cost_estimate_status": "unavailable",
+            "pricing_snapshot_digest": None,
+            "wall_clock_ms": 1.0,
+            "provider_latency_ms": 1.0,
+            "provider_latency_ms_median": 1.0,
+            "provider_latency_ms_ci_low": 1.0,
+            "provider_latency_ms_ci_high": 1.0,
+            "rate_limit_429_count": 0,
+            "timeout_count": 0,
+            "retry_count": 0,
+            "identity_coverage": 1.0,
+            "reasoning_tokens_missing_count": 1,
+            "visible_output_tokens_missing_count": 1,
+            "cost_estimate_missing_count": 1,
+            "paper_eligible": True,
+            "identity_complete": True,
+        }
+        for member_id in member_ids
+    )
+    return {
+        "suite_status": suite_status,
+        "identity_complete": True,
+        "overall_rows": overall_rows,
+        "domain_topic_rows": (),
+        "paired_comparison_rows": (),
+        "model_execution_rows": (),
+        "order_concurrency_rows": (),
+        "failure_taxonomy_rows": (),
+    }
+
+
+def _write_persisted_metrics_binding(
+    root: Path,
+    metrics: FormalMetricsResult,
+    *,
+    metrics_digest: str | None = None,
+    persist_rows: bool = True,
+) -> None:
+    path = root / "metrics" / "formal_metrics.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": "tokenshare.paper_formal_metrics_body.v1",
+                "metrics_digest": metrics_digest or metrics.metrics_digest,
+                "exp5_artifact_rows_digest": metrics.exp5_artifact_rows_digest,
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    if persist_rows:
+        (root / "metrics" / "exp5_renderer_rows.json").write_text(
+            json.dumps(
+                metrics.exp5_artifact_rows,
+                ensure_ascii=False,
+                sort_keys=True,
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+
+def _write_bound_exp5_metrics(
+    root: Path,
+    rows: dict,
+) -> FormalMetricsResult:
+    experiment_id = "exp5_real_ai_model_endpoint_comparison"
+    _write_claimed_formal_evidence(
+        root,
+        task_eligible=True,
+        attempt_eligible=True,
+        experiment_id=experiment_id,
+    )
+    metrics = _claimed_metrics(
+        condition_eligible=True,
+        experiment_id=experiment_id,
+        exp5_artifact_rows=rows,
+        exp5_artifact_rows_digest=_digest_json(rows),
+    )
+    _write_persisted_metrics_binding(root, metrics)
+    return metrics
+
+
+def _digest_json(value: object) -> str:
+    encoded = json.dumps(
+        value,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return "sha256:" + sha256(encoded).hexdigest()
 
 
 def _write_claimed_formal_evidence(
@@ -453,6 +880,7 @@ def _write_claimed_formal_evidence(
     attempt_eligible: bool,
     capturing: bool = False,
     include_refs: bool = True,
+    experiment_id: str = "exp1_real_ai_feasibility",
 ) -> None:
     root.mkdir(parents=True, exist_ok=True)
     (root / "suite_manifest.json").write_text(
@@ -464,18 +892,20 @@ def _write_claimed_formal_evidence(
                 "capturing": capturing,
                 "regression_only": capturing,
                 "paper_eligible": True,
-                "experiment_ids": ["exp1_real_ai_feasibility"],
+                "experiment_ids": [experiment_id],
             }
         )
         + "\n",
         encoding="utf-8",
     )
     condition = {
-        "experiment_id": "exp1_real_ai_feasibility",
+        "experiment_id": experiment_id,
         "condition_id": "condition-1",
         "repeat_id": 0,
         "domain": "factorization",
     }
+    if experiment_id == "exp5_real_ai_model_endpoint_comparison":
+        condition["schema_version"] = "tokenshare.paper_condition.v3"
     (root / "conditions.jsonl").write_text(
         json.dumps(condition) + "\n",
         encoding="utf-8",
@@ -484,7 +914,7 @@ def _write_claimed_formal_evidence(
         json.dumps({**condition, "paper_eligible": True}) + "\n",
         encoding="utf-8",
     )
-    experiment_root = root / "experiments" / "exp1_real_ai_feasibility"
+    experiment_root = root / "experiments" / experiment_id
     experiment_root.mkdir(parents=True, exist_ok=True)
     (experiment_root / "experiment_manifest.json").write_text(
         json.dumps({**condition, "paper_eligible": True}) + "\n",

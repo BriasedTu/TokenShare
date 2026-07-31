@@ -56,6 +56,16 @@ def _executor_error_attempt() -> PaperAttemptResult:
     )
 
 
+def _ai_pre_provider_executor_error_attempt() -> PaperAttemptResult:
+    return replace(
+        _executor_error_attempt(),
+        executor_id="executor_ai_api",
+        executor_type="ai_api_pre_provider",
+        provenance_ref={"artifact_id": "provenance-root-1"},
+        error_kind="config_error",
+    )
+
+
 @pytest.mark.parametrize(
     ("field_name", "invalid_value"),
     (
@@ -106,6 +116,115 @@ def test_executor_error_v2_rejects_values_outside_closed_schema(
 
     with pytest.raises(ValueError):
         replace(attempt, **{field_name: invalid_value})
+
+
+def test_executor_error_v2_allows_explicit_ai_pre_provider_source() -> None:
+    attempt = _ai_pre_provider_executor_error_attempt()
+
+    assert attempt.attempt_status == PaperAttemptStatus.EXECUTOR_ERROR
+    assert attempt.provider_attempt_count == 0
+    assert attempt.provider is None
+    assert attempt.raw_output_ref is None
+    assert attempt.usage_ref is None
+    assert attempt.model_execution_record_ref is None
+    assert attempt.provenance_ref == {"artifact_id": "provenance-root-1"}
+    assert attempt.executor_id == "executor_ai_api"
+    assert attempt.executor_type == "ai_api_pre_provider"
+
+
+def test_provider_failure_v3_serializes_missing_usage_as_null() -> None:
+    attempt = PaperAttemptResult(
+        condition_id="condition1",
+        repeat_id=0,
+        run_id="run1",
+        task_id="task1",
+        unit_id="unit1",
+        attempt_id="attempt1",
+        worker_id="worker1",
+        provider_attempt_index=0,
+        provider_attempt_count=1,
+        attempt_status=PaperAttemptStatus.PROVIDER_ERROR,
+        provider="siliconflow",
+        model="zai-org/GLM-5.2",
+        entry_id="glm_5_2_exp5_v3",
+        request_ref={"artifact_id": "request1"},
+        raw_output_ref=None,
+        parsed_output_ref=None,
+        parse_failure_ref=None,
+        provenance_ref={"artifact_id": "provenance1"},
+        usage_ref={"artifact_id": "usage1"},
+        model_execution_record_ref={"artifact_id": "model-record1"},
+        started_at="2026-07-31T00:00:00Z",
+        ended_at="2026-07-31T00:00:01Z",
+        latency_ms=1000,
+        prompt_tokens=None,
+        completion_tokens=None,
+        total_tokens=None,
+        cost_estimate=None,
+        cost_estimate_status="usage_missing",
+        error_kind="timeout",
+        fault_injection_ref=None,
+        paper_eligible=True,
+        schema_version="tokenshare.paper_attempt_result.v3",
+    )
+
+    body = attempt.to_dict()
+
+    assert body["prompt_tokens"] is None
+    assert body["completion_tokens"] is None
+    assert body["total_tokens"] is None
+    assert body["cost_estimate"] is None
+    assert body["cost_estimate_status"] == "usage_missing"
+
+    with pytest.raises(ValueError):
+        replace(
+            attempt,
+            prompt_tokens=10,
+            completion_tokens=20,
+            total_tokens=30,
+            cost_estimate=0.1,
+        )
+
+
+def test_provider_attempt_v3_accepts_only_latency_missing_with_complete_usage() -> None:
+    attempt = PaperAttemptResult(
+        condition_id="condition1",
+        repeat_id=0,
+        run_id="run1",
+        task_id="task1",
+        unit_id="unit1",
+        attempt_id="attempt1",
+        worker_id="worker1",
+        provider_attempt_index=0,
+        provider_attempt_count=1,
+        attempt_status=PaperAttemptStatus.SUCCEEDED,
+        provider="siliconflow",
+        model="zai-org/GLM-5.2",
+        entry_id="glm_5_2_exp5_v3",
+        request_ref={"artifact_id": "request1"},
+        raw_output_ref={"artifact_id": "raw1"},
+        parsed_output_ref={"artifact_id": "parsed1"},
+        parse_failure_ref=None,
+        provenance_ref={"artifact_id": "provenance1"},
+        usage_ref={"artifact_id": "usage1"},
+        model_execution_record_ref={"artifact_id": "model-record1"},
+        started_at="2026-07-31T00:00:00Z",
+        ended_at="2026-07-31T00:00:01Z",
+        latency_ms=None,
+        prompt_tokens=10,
+        completion_tokens=20,
+        total_tokens=30,
+        cost_estimate=0.1,
+        cost_estimate_status="estimated",
+        error_kind=None,
+        fault_injection_ref=None,
+        paper_eligible=True,
+        schema_version="tokenshare.paper_attempt_result.v3",
+    )
+
+    assert attempt.to_dict()["latency_ms"] is None
+    with pytest.raises(ValueError):
+        replace(attempt, cost_estimate_status="usage_missing")
 
 
 def test_model_execution_record_v2_represents_provider_failure_as_not_observed() -> None:
@@ -416,6 +535,23 @@ def test_paper_task_result_roundtrip_records_topic_and_provenance_fields() -> No
     assert body["construction_rule_id"] == "fixed_oracle_lemma_graph.pure_logic.v1"
     assert body["oracle_package_group"] == "lean_lemma_graph_oracle.pure_logic.v1"
     assert body["proof_assembly_shape"] == "recursive_lemma_dag_required_slots.v1"
+
+    with pytest.raises(ValueError):
+        replace(task, total_tokens=None)
+    nullable = replace(
+        task,
+        total_tokens=None,
+        cost_estimate=None,
+        cost_estimate_status="usage_missing",
+        schema_version="tokenshare.paper_task_result.v2",
+    )
+    assert nullable.to_dict()["total_tokens"] is None
+    with pytest.raises(ValueError):
+        replace(
+            task,
+            cost_estimate_status="usage_missing",
+            schema_version="tokenshare.paper_task_result.v2",
+        )
 
 
 def test_paper_condition_digest_changes_for_topic_family_or_construction_rule() -> None:

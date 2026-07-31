@@ -20,6 +20,9 @@ from tokenshare.experiments.paper_model_identity import (
     build_model_endpoint_identity,
     validate_fixed_entry_config_identity,
 )
+from tokenshare.experiments.paper_exp5_smoke_evidence import (
+    validate_exp5_smoke_evidence_bundle,
+)
 from tokenshare.experiments.paper_models import (
     JsonObject,
     digest_json,
@@ -358,6 +361,7 @@ def build_model_endpoint_cohort_preflight(
     entry_map: JsonObject,
     provider_configs: dict[str, AIAPIExecutorConfig],
     require_smoke_evidence: bool = True,
+    smoke_evidence_bundle: Mapping[str, Any] | None = None,
 ) -> JsonObject:
     cohort_id = str(cohort.get("cohort_id") or "")
     cohort_digest = str(cohort.get("model_cohort_digest") or digest_json(cohort))
@@ -381,6 +385,18 @@ def build_model_endpoint_cohort_preflight(
     ineligible_members: list[JsonObject] = []
     member_plans: dict[str, JsonObject] = {}
     cohort_level_reasons: list[str] = []
+    smoke_bundle_validation: JsonObject | None = None
+    if (
+        require_smoke_evidence
+        and cohort_id == PAPER_MODEL_ENDPOINT_COHORT_V3_ID
+    ):
+        smoke_bundle_validation = validate_exp5_smoke_evidence_bundle(
+            smoke_evidence_bundle,
+            entry_map=entry_map,
+            model_cohort_id=cohort_id,
+            model_cohort_digest=cohort_digest,
+            expected_member_ids=expected_member_ids_ordered,
+        )
 
     expected_member_ids = set(expected_member_ids_ordered)
     actual_member_ids = set(members_by_id)
@@ -518,31 +534,57 @@ def build_model_endpoint_cohort_preflight(
             else None
         )
         if require_smoke_evidence:
-            blocked_reasons.extend(
-                _smoke_evidence_blocked_reasons(
-                    smoke_evidence=spec.get("smoke_evidence_ref"),
-                    smoke_schema_version=str(
-                        definition["smoke_evidence_schema_version"]
-                    ),
-                    member_id=member_id,
-                    entry_id=entry_id,
-                    provider_family=provider_family,
-                    provider_model_id=provider_model_id,
-                    reasoning_profile_id=reasoning_profile_id,
-                    model_cohort_id=cohort_id,
-                    model_cohort_digest=cohort_digest,
-                    source_provider_config_digest=(
-                        config.config_digest if config is not None else None
-                    ),
-                    model_endpoint_identity_digest=(
-                        endpoint_identity.model_endpoint_identity_digest
-                        if endpoint_identity is not None
-                        else None
-                    ),
-                    request_controls_digest=request_controls_digest,
-                    pricing_snapshot_digest=pricing_snapshot_digest,
+            smoke_evidence = spec.get("smoke_evidence_ref")
+            validate_member_smoke = True
+            if cohort_id == PAPER_MODEL_ENDPOINT_COHORT_V3_ID:
+                bundle_members = (
+                    smoke_evidence_bundle.get("members")
+                    if isinstance(smoke_evidence_bundle, Mapping)
+                    else None
                 )
-            )
+                if not isinstance(bundle_members, Mapping):
+                    blocked_reasons.append("missing_smoke_evidence_bundle")
+                    smoke_evidence = None
+                    validate_member_smoke = False
+                else:
+                    smoke_evidence = bundle_members.get(member_id)
+                if smoke_bundle_validation is not None:
+                    blocked_reasons.extend(
+                        smoke_bundle_validation.get("global_reasons", [])
+                    )
+                    member_bundle_reasons = smoke_bundle_validation.get(
+                        "member_reasons"
+                    )
+                    if isinstance(member_bundle_reasons, Mapping):
+                        blocked_reasons.extend(
+                            member_bundle_reasons.get(member_id, [])
+                        )
+            if validate_member_smoke:
+                blocked_reasons.extend(
+                    _smoke_evidence_blocked_reasons(
+                        smoke_evidence=smoke_evidence,
+                        smoke_schema_version=str(
+                            definition["smoke_evidence_schema_version"]
+                        ),
+                        member_id=member_id,
+                        entry_id=entry_id,
+                        provider_family=provider_family,
+                        provider_model_id=provider_model_id,
+                        reasoning_profile_id=reasoning_profile_id,
+                        model_cohort_id=cohort_id,
+                        model_cohort_digest=cohort_digest,
+                        source_provider_config_digest=(
+                            config.config_digest if config is not None else None
+                        ),
+                        model_endpoint_identity_digest=(
+                            endpoint_identity.model_endpoint_identity_digest
+                            if endpoint_identity is not None
+                            else None
+                        ),
+                        request_controls_digest=request_controls_digest,
+                        pricing_snapshot_digest=pricing_snapshot_digest,
+                    )
+                )
         blocked_reasons = list(dict.fromkeys(blocked_reasons))
         plan = {
             "schema_version": "tokenshare.paper_model_endpoint_member_plan.v1",
@@ -651,6 +693,11 @@ def build_model_endpoint_cohort_preflight(
             else None
         ),
         "required_common_controls": required_common_controls,
+        "smoke_evidence_bundle_digest": (
+            smoke_evidence_bundle.get("bundle_digest")
+            if isinstance(smoke_evidence_bundle, Mapping)
+            else None
+        ),
     }
 
 
@@ -1065,7 +1112,7 @@ def _smoke_evidence_blocked_reasons(
             "request_controls_match",
             "usage_schema_verified",
             "thinking_breakdown_verified",
-            "timeout_path_verified",
+            "timeout_limit_verified",
         }
         capability_checks = smoke_evidence.get("capability_checks")
         if (

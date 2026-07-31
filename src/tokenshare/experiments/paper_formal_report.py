@@ -5,9 +5,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from hashlib import sha256
 import json
+import os
 from pathlib import Path
 import re
-from typing import Any, Callable, Iterable, Mapping
+from typing import Any, Callable, Iterable, Iterator, Mapping
 
 from tokenshare.experiments.paper_exp5_artifacts import (
     EXP5_AUDIT_FILES,
@@ -19,6 +20,9 @@ from tokenshare.experiments.paper_exp5_artifacts import (
 from tokenshare.experiments.paper_formal_metrics import FormalMetricsResult
 
 
+EXP5 = "exp5_real_ai_model_endpoint_comparison"
+
+
 @dataclass(frozen=True, kw_only=True)
 class FormalReportResult:
     paper_eligible: bool
@@ -27,6 +31,7 @@ class FormalReportResult:
     report_ref: dict[str, Any]
     eligibility_report_ref: dict[str, Any]
     secret_scan_report_ref: dict[str, Any]
+    exp5_artifact_refs: tuple[dict[str, str], ...] = ()
     schema_version: str = "tokenshare.paper_formal_report.v1"
 
     def to_dict(self) -> dict[str, Any]:
@@ -38,6 +43,9 @@ class FormalReportResult:
             "report_ref": dict(self.report_ref),
             "eligibility_report_ref": dict(self.eligibility_report_ref),
             "secret_scan_report_ref": dict(self.secret_scan_report_ref),
+            "exp5_artifact_refs": [
+                dict(ref) for ref in self.exp5_artifact_refs
+            ],
         }
 
 
@@ -46,7 +54,6 @@ def generate_paper_formal_report(
     output_root: str | Path,
     metrics: FormalMetricsResult,
     secret_values: Iterable[str] = (),
-    exp5_artifact_rows: Mapping[str, Any] | None = None,
     exp5_pdf_backend: Callable[[Path, PlotSpec], None] | None = None,
 ) -> FormalReportResult:
     """先扫描已持久化 evidence，再决定生成 regression 或 paper report。"""
@@ -76,36 +83,56 @@ def generate_paper_formal_report(
         reasons.append("non_formal_condition_status_present")
     reasons.extend(persisted_audit["ineligibility_reasons"])
     exp5_artifact_result: Exp5PaperArtifactResult | None = None
+    exp5_artifact_rows = metrics.exp5_artifact_rows
     if exp5_artifact_rows is not None:
-        try:
-            renderer_keys = (
-                "suite_status",
-                "identity_complete",
-                "overall_rows",
-                "domain_topic_rows",
-                "paired_comparison_rows",
-                "model_execution_rows",
-                "order_concurrency_rows",
-                "failure_taxonomy_rows",
-            )
-            renderer_args = {
-                key: exp5_artifact_rows[key]
-                for key in renderer_keys
-            }
-            exp5_artifact_result = render_exp5_paper_artifacts(
-                output_root=root,
-                paper_eligible=not reasons,
-                pdf_backend=exp5_pdf_backend,
-                **renderer_args,
-            )
-        except (KeyError, TypeError, ValueError, OSError, RuntimeError) as exc:
-            _clear_exp5_paper_outputs(root)
+        binding_reasons = _exp5_renderer_binding_reasons(
+            root,
+            metrics=metrics,
+        )
+        reasons.extend(binding_reasons)
+        if binding_reasons:
+            _clear_exp5_outputs(root)
             exp5_artifact_result = Exp5PaperArtifactResult(
-                status="paper_artifact_render_failed",
+                status="exp5_artifact_rows_unbound",
                 paper_eligible=False,
-                artifact_refs=_existing_exp5_audit_refs(root),
-                failure_reason=str(exc),
+                artifact_refs=(),
+                failure_reason=", ".join(binding_reasons),
             )
+        else:
+            try:
+                persisted_exp5_rows = _read_json_object(
+                    root / "metrics" / "exp5_renderer_rows.json"
+                )
+                if persisted_exp5_rows is None:
+                    raise ValueError("persisted Exp5 renderer rows are missing")
+                renderer_keys = (
+                    "suite_status",
+                    "identity_complete",
+                    "overall_rows",
+                    "domain_topic_rows",
+                    "paired_comparison_rows",
+                    "model_execution_rows",
+                    "order_concurrency_rows",
+                    "failure_taxonomy_rows",
+                )
+                renderer_args = {
+                    key: persisted_exp5_rows[key]
+                    for key in renderer_keys
+                }
+                exp5_artifact_result = render_exp5_paper_artifacts(
+                    output_root=root,
+                    paper_eligible=not reasons,
+                    pdf_backend=exp5_pdf_backend,
+                    **renderer_args,
+                )
+            except (KeyError, TypeError, ValueError, OSError, RuntimeError) as exc:
+                _clear_exp5_paper_outputs(root)
+                exp5_artifact_result = Exp5PaperArtifactResult(
+                    status="paper_artifact_render_failed",
+                    paper_eligible=False,
+                    artifact_refs=_existing_exp5_audit_refs(root),
+                    failure_reason=str(exc),
+                )
         if exp5_artifact_result.status != "rendered":
             reasons.append(exp5_artifact_result.status)
     paper_eligible = not reasons
@@ -151,6 +178,11 @@ def generate_paper_formal_report(
         report_ref=_ref(root, report_path),
         eligibility_report_ref=_ref(root, eligibility_path),
         secret_scan_report_ref=_ref(root, scan_path),
+        exp5_artifact_refs=(
+            exp5_artifact_result.artifact_refs
+            if exp5_artifact_result is not None
+            else ()
+        ),
     )
     _write_json(root / "formal_report_result.json", result.to_dict())
     return result
@@ -160,8 +192,7 @@ def _existing_exp5_audit_refs(root: Path) -> tuple[dict[str, str], ...]:
     return tuple(
         {
             "path": relative_path,
-            "content_hash": "sha256:"
-            + sha256((root / relative_path).read_bytes()).hexdigest(),
+            "content_hash": _hash_file(root / relative_path),
         }
         for relative_path in EXP5_AUDIT_FILES
         if (root / relative_path).is_file()
@@ -177,6 +208,74 @@ def _clear_exp5_paper_outputs(root: Path) -> None:
             paper_root.rmdir()
         except OSError:
             pass
+
+
+def _clear_exp5_outputs(root: Path) -> None:
+    for relative_path in EXP5_AUDIT_FILES + EXP5_PAPER_FILES:
+        (root / relative_path).unlink(missing_ok=True)
+    for directory in (root / "metrics", root / "paper"):
+        if directory.is_dir():
+            try:
+                directory.rmdir()
+            except OSError:
+                pass
+
+
+def _exp5_renderer_binding_reasons(
+    root: Path,
+    *,
+    metrics: FormalMetricsResult,
+) -> list[str]:
+    """把 renderer rows 绑定到本次 suite 与已持久化 metrics digest。"""
+
+    reasons: list[str] = []
+    suite = _read_json_object(root / "suite_manifest.json") or {}
+    experiment_ids = suite.get("experiment_ids")
+    if (
+        not isinstance(experiment_ids, (list, tuple))
+        or EXP5 not in experiment_ids
+    ):
+        reasons.append("exp5_renderer_rows_without_exp5_suite")
+    conditions = _read_jsonl(root / "conditions.jsonl")
+    if not any(
+        row.get("experiment_id") == EXP5
+        and row.get("schema_version") == "tokenshare.paper_condition.v3"
+        for row in conditions
+    ):
+        reasons.append("exp5_renderer_rows_without_v3_condition_evidence")
+
+    rows_digest = _digest_json(metrics.exp5_artifact_rows)
+    if metrics.exp5_artifact_rows_digest != rows_digest:
+        reasons.append("exp5_renderer_rows_digest_mismatch")
+    persisted = _read_json_object(root / "metrics" / "formal_metrics.json")
+    if persisted is None or persisted.get("metrics_digest") != metrics.metrics_digest:
+        reasons.append("exp5_metrics_digest_not_persisted")
+    if (
+        persisted is None
+        or persisted.get("exp5_artifact_rows_digest")
+        != metrics.exp5_artifact_rows_digest
+    ):
+        reasons.append("exp5_renderer_rows_digest_not_persisted")
+    persisted_rows = _read_json_object(
+        root / "metrics" / "exp5_renderer_rows.json"
+    )
+    if persisted_rows is None:
+        reasons.append("exp5_renderer_rows_not_persisted")
+    elif _digest_json(persisted_rows) != rows_digest:
+        reasons.append("exp5_persisted_renderer_rows_digest_mismatch")
+    return list(dict.fromkeys(reasons))
+
+
+def _digest_json(value: Any) -> str:
+    digest = sha256()
+    encoder = json.JSONEncoder(
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    for chunk in encoder.iterencode(value):
+        digest.update(chunk.encode("utf-8"))
+    return "sha256:" + digest.hexdigest()
 
 
 def _audit_persisted_report_evidence(
@@ -487,19 +586,26 @@ def _complete_ref(value: Any) -> bool:
 
 def _read_json_object(path: Path) -> dict[str, Any] | None:
     try:
-        value = json.loads(path.read_text(encoding="utf-8"))
+        with path.open("r", encoding="utf-8") as handle:
+            value = json.load(handle)
     except (OSError, json.JSONDecodeError):
         return None
     return value if isinstance(value, dict) else None
 
 
 def _read_jsonl(path: Path) -> list[dict[str, Any]]:
+    values: list[dict[str, Any]] = []
     try:
-        lines = path.read_text(encoding="utf-8").splitlines()
-        values = [json.loads(line) for line in lines if line.strip()]
+        with path.open("r", encoding="utf-8") as handle:
+            for line in handle:
+                if not line.strip():
+                    continue
+                value = json.loads(line)
+                if isinstance(value, dict):
+                    values.append(value)
     except (OSError, json.JSONDecodeError):
         return []
-    return [value for value in values if isinstance(value, dict)]
+    return values
 
 
 def _scan_formal_output(
@@ -515,19 +621,19 @@ def _scan_formal_output(
     token_pattern = re.compile(rb"(?:sk|sf)-[A-Za-z0-9_-]{20,}")
     findings: list[dict[str, Any]] = []
     scanned = 0
-    for path in sorted(root.rglob("*")):
-        if not path.is_file():
-            continue
+    for path in _iter_files_streaming(root):
         relative = path.relative_to(root).as_posix()
         if relative in {
             "audit/secret_scan_report.json",
             "audit/paper_eligibility_report.json",
         }:
             continue
-        data = path.read_bytes()
         scanned += 1
-        exact_match = any(secret in data for secret in encoded)
-        pattern_match = token_pattern.search(data) is not None
+        exact_match, pattern_match = _scan_file_for_secrets(
+            path,
+            encoded=encoded,
+            token_pattern=token_pattern,
+        )
         if exact_match or pattern_match:
             findings.append(
                 {
@@ -545,6 +651,52 @@ def _scan_formal_output(
         "finding_count": len(findings),
         "findings": findings,
     }
+
+
+def _iter_files_streaming(root: Path) -> Iterator[Path]:
+    """按旧全路径字典序逐层枚举，但不保存整棵目录树。"""
+
+    if not root.is_dir():
+        return
+    with os.scandir(root) as iterator:
+        entries = sorted(
+            iterator,
+            key=lambda entry: os.path.normcase(entry.name),
+        )
+    for entry in entries:
+        path = Path(entry.path)
+        if entry.is_dir(follow_symlinks=False):
+            yield from _iter_files_streaming(path)
+        elif entry.is_file(follow_symlinks=True):
+            yield path
+
+
+def _scan_file_for_secrets(
+    path: Path,
+    *,
+    encoded: tuple[bytes, ...],
+    token_pattern: re.Pattern[bytes],
+    chunk_size: int = 1024 * 1024,
+) -> tuple[bool, bool]:
+    overlap_size = max(
+        (len(secret) - 1 for secret in encoded),
+        default=0,
+    )
+    overlap_size = max(overlap_size, len(b"sk-") + 20 - 1)
+    tail = b""
+    exact_match = False
+    pattern_match = False
+    with path.open("rb") as handle:
+        while chunk := handle.read(chunk_size):
+            window = tail + chunk
+            exact_match = exact_match or any(
+                secret in window for secret in encoded
+            )
+            pattern_match = pattern_match or token_pattern.search(window) is not None
+            if exact_match:
+                break
+            tail = window[-overlap_size:] if overlap_size else b""
+    return exact_match, pattern_match
 
 
 def _regression_markdown(
@@ -600,19 +752,27 @@ def _paper_markdown(metrics: FormalMetricsResult) -> str:
         "- metrics/paper_table_ablation.csv",
         "- metrics/paper_table_model_comparison.csv",
         "- metrics/paper_table_model_endpoint_comparison.csv",
-        "- metrics/model_execution_records.jsonl",
+        "- model_execution_records.jsonl（权威聚合）",
+        "- metrics/model_execution_records.jsonl（兼容别名）",
+        "- audit/replay_report.json",
         "",
     ]
     return "\n".join(lines)
 
 
 def _ref(root: Path, path: Path) -> dict[str, Any]:
-    import hashlib
-
     return {
         "path": path.relative_to(root).as_posix(),
-        "content_hash": "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest(),
+        "content_hash": _hash_file(path),
     }
+
+
+def _hash_file(path: Path, *, chunk_size: int = 1024 * 1024) -> str:
+    digest = sha256()
+    with path.open("rb") as handle:
+        while chunk := handle.read(chunk_size):
+            digest.update(chunk)
+    return "sha256:" + digest.hexdigest()
 
 
 def _write_json(path: Path, body: Any) -> None:

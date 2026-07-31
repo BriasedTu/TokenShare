@@ -26,6 +26,9 @@ from tokenshare.experiments.paper_faults import (
     inject_post_ai_fault,
     select_fault_targets,
 )
+from tokenshare.experiments.paper_factorization_sampling import (
+    FACTOR_PAPER_DIFFICULTIES,
+)
 from tokenshare.experiments.paper_models import (
     EXP1_TO_EXP4_DEEPSEEK_MAX_TOKENS,
     EXP1_TO_EXP4_DEEPSEEK_TIMEOUT_SECONDS,
@@ -37,6 +40,10 @@ from tokenshare.experiments.paper_models import (
     PaperStatus,
     digest_json,
     evaluate_paper_eligibility,
+)
+from tokenshare.experiments.paper_suite_scale import (
+    PaperSuiteScaleProfile,
+    validate_paper_suite_scale_policy,
 )
 from tokenshare.experiments.paper_workers import WORKER_DEATH_RECORD_SCHEMA_VERSION
 from tokenshare.storage.artifacts import ArtifactStore
@@ -97,20 +104,10 @@ V1_EXPECTED_ROOT_RUN_COUNTS = {
     "worker_death": 72,
     "total": 462,
 }
-EXPECTED_ROOT_RUN_COUNTS = {
-    "rate_fault_factorization": 30_000,
-    "rate_fault_lean_proof": 90,
-    "worker_death": 6_036,
-    "total": 36_126,
-}
-V2_FACTOR_CASE_COUNTS_BY_DIFFICULTY = {
-    "easy": 167,
-    "medium": 167,
-    "hard": 166,
-}
-
-_FACTOR_DIFFICULTIES = ("easy", "medium", "hard")
 _RATE_FACTOR_SELECTION_ID = "exp3_rate_fault_factorization_slice_v1"
+_RATE_FACTOR_PROFILE_SELECTION_ID = (
+    "exp3_rate_fault_factorization_profile_slice_v2"
+)
 
 
 class _MissingCatalogSlice(ValueError):
@@ -398,7 +395,7 @@ def expand_exp3_conditions(
                         endpoint_identity=identity,
                     )
                 )
-    for difficulty in _FACTOR_DIFFICULTIES:
+    for difficulty in FACTOR_PAPER_DIFFICULTIES:
         for dead_count in WORKER_DEATH_COUNTS:
             for kill_progress in WORKER_DEATH_KILL_PROGRESS_PERCENT:
                 for repeat_id in REPEAT_IDS:
@@ -469,7 +466,51 @@ def _expected_root_run_counts(catalog: Mapping[str, Any]) -> Mapping[str, int]:
     if catalog_version == "v1":
         return V1_EXPECTED_ROOT_RUN_COUNTS
     if catalog_version == "v2":
-        return EXPECTED_ROOT_RUN_COUNTS
+        _profile, selected_by_difficulty = _validated_factor_sampling_profile(catalog)
+        factor_case_count = sum(len(ids) for ids in selected_by_difficulty.values())
+        rate_factor = (
+            factor_case_count
+            * len(RATE_FAULT_TYPES)
+            * len(FACTOR_RATE_FAULT_RATES_PERCENT)
+            * len(REPEAT_IDS)
+        )
+        rate_lean_cases = sum(
+            len(_case_tuple(case_ids))
+            for case_ids in _mapping(
+                _required_catalog_value(
+                    catalog,
+                    "exp3_rate_fault_lean_case_ids_by_topic",
+                )
+            ).values()
+        )
+        rate_lean = (
+            rate_lean_cases
+            * len(RATE_FAULT_TYPES)
+            * len(LEAN_RATE_FAULT_RATES_PERCENT)
+            * len(REPEAT_IDS)
+        )
+        death_lean_cases = sum(
+            len(_case_tuple(case_ids))
+            for case_ids in _mapping(
+                _required_catalog_value(
+                    catalog,
+                    "exp3_worker_death_lean_case_ids_by_topic",
+                )
+            ).values()
+        )
+        worker_death = (
+            factor_case_count + death_lean_cases
+        ) * (
+            len(WORKER_DEATH_COUNTS)
+            * len(WORKER_DEATH_KILL_PROGRESS_PERCENT)
+            * len(REPEAT_IDS)
+        )
+        return {
+            "rate_fault_factorization": rate_factor,
+            "rate_fault_lean_proof": rate_lean,
+            "worker_death": worker_death,
+            "total": rate_factor + rate_lean + worker_death,
+        }
     raise ValueError("Experiment 3 supports only catalog v1 or v2")
 
 
@@ -798,21 +839,14 @@ def _shared_exp1_reference_policy_entry(
         ).removeprefix("sha256:")[:24]
         for case_id in selection.ordered_case_ids
     }
-    reference_policy_id = "exp1_shared_policy_" + digest_json(
-        {
-            **source_identity,
-            "source_reference_ids_by_case": source_reference_ids_by_case,
-        }
-    ).removeprefix("sha256:")[:24]
-    policy_body: JsonObject = {
+    # 共享基线按实际来源身份与有序 case 集合复用，不能把故障条件自己的
+    # selection_id/digest 混进同一 reference_policy_id 对应的持久化正文。
+    # 否则不同故障条件会产生“同 ID、不同正文”的不可审计冲突。
+    policy_body_without_id: JsonObject = {
         **source_identity,
-        "reference_policy_id": reference_policy_id,
         "comparison_kind": "shared_reference",
         "source_kind": "shared_exp1_reference",
         "additional_execution_required": False,
-        "selection_id": selection.selection_id,
-        "selection_digest": selection.selection_digest,
-        "selection": _selection_contract_body(selection),
         "ordered_case_ids": list(selection.ordered_case_ids),
         "source_reference_ids_by_case": source_reference_ids_by_case,
         "provider_calls_made": 0,
@@ -821,7 +855,13 @@ def _shared_exp1_reference_policy_entry(
         "total_tokens": 0,
         "cost_estimate": 0.0,
     }
-    return policy_body
+    reference_policy_id = "exp1_shared_policy_" + digest_json(
+        policy_body_without_id
+    ).removeprefix("sha256:")[:24]
+    return {
+        **policy_body_without_id,
+        "reference_policy_id": reference_policy_id,
+    }
 
 
 def _validate_condition_matches_expected(
@@ -1234,7 +1274,7 @@ def _selection_for_condition(
         case_ids = _expected_case_ids_for_condition(condition, catalog=catalog)
     except _MissingCatalogSlice:
         return selection_type(
-            selection_id=_selection_id_for_key(key),
+            selection_id=_selection_id_for_key(key, catalog_version=catalog_version),
             experiment_id=EXP3_EXPERIMENT_ID,
             suite_version=suite_version,
             catalog_version=catalog_version,
@@ -1249,7 +1289,7 @@ def _selection_for_condition(
         )
     expected_ai_units = _expected_ai_unit_count(case_ids, catalog=catalog)
     return selection_type(
-        selection_id=_selection_id_for_key(key),
+        selection_id=_selection_id_for_key(key, catalog_version=catalog_version),
         experiment_id=EXP3_EXPERIMENT_ID,
         suite_version=suite_version,
         catalog_version=catalog_version,
@@ -1263,13 +1303,24 @@ def _selection_for_condition(
     )
 
 
-def _selection_id_for_key(key: _ConditionKey) -> str:
+def _selection_id_for_key(
+    key: _ConditionKey,
+    *,
+    catalog_version: str,
+) -> str:
     if key.matrix_kind == "rate_fault" and key.domain == "factorization":
-        return _RATE_FACTOR_SELECTION_ID
+        return (
+            _RATE_FACTOR_PROFILE_SELECTION_ID
+            if catalog_version == "v2"
+            else _RATE_FACTOR_SELECTION_ID
+        )
     if key.matrix_kind == "rate_fault" and key.domain == "lean_proof":
         return f"exp3_rate_fault_lean_{key.task_slice_key}_slice_v1"
     if key.matrix_kind == "worker_death" and key.domain == "factorization":
-        return f"exp3_worker_death_factorization_{key.task_slice_key}_slice_v1"
+        suffix = "profile_slice_v2" if catalog_version == "v2" else "slice_v1"
+        return (
+            f"exp3_worker_death_factorization_{key.task_slice_key}_{suffix}"
+        )
     return f"exp3_worker_death_lean_{key.task_slice_key}_slice_v1"
 
 
@@ -1288,6 +1339,10 @@ def _expected_case_ids_for_condition(
 ) -> tuple[str, ...]:
     key = _parse_condition_id(condition.condition_id)
     catalog_version = str(catalog.get("catalog_version") or "v1")
+    if catalog_version == "v2":
+        _profile, selected_by_difficulty = _validated_factor_sampling_profile(catalog)
+    else:
+        profile = None
     if key.matrix_kind == "rate_fault" and key.domain == "factorization":
         case_ids = _case_tuple(
             _required_catalog_value(
@@ -1295,7 +1350,11 @@ def _expected_case_ids_for_condition(
                 "exp3_rate_fault_factorization_case_ids",
             )
         )
-        expected_count = 5 if catalog_version == "v1" else 500
+        expected_count = (
+            5
+            if catalog_version == "v1"
+            else sum(len(ids) for ids in selected_by_difficulty.values())
+        )
         if catalog_version not in {"v1", "v2"} or len(case_ids) != expected_count:
             raise ValueError(
                 "factorization rate-fault slice count drift for frozen catalog"
@@ -1339,7 +1398,7 @@ def _expected_case_ids_for_condition(
         expected_count = (
             1
             if catalog_version == "v1"
-            else V2_FACTOR_CASE_COUNTS_BY_DIFFICULTY.get(key.task_slice_key)
+            else len(selected_by_difficulty.get(key.task_slice_key, ()))
         )
         if expected_count is None or len(case_ids) != expected_count:
             raise ValueError(
@@ -1360,6 +1419,48 @@ def _expected_case_ids_for_condition(
     if len(case_ids) != 1:
         raise ValueError("worker-death Lean slice must contain 1 case")
     return case_ids
+
+
+def _validated_factor_sampling_profile(
+    catalog: Mapping[str, Any],
+) -> tuple[PaperSuiteScaleProfile, Mapping[str, tuple[str, ...]]]:
+    expected_by_difficulty = _mapping(
+        _required_catalog_value(
+            catalog,
+            "exp3_worker_death_factorization_case_ids_by_difficulty",
+        )
+    )
+    normalized_by_difficulty = {
+        difficulty: _case_tuple(expected_by_difficulty.get(difficulty))
+        for difficulty in FACTOR_PAPER_DIFFICULTIES
+    }
+    expected_rate = tuple(
+        case_id
+        for difficulty in FACTOR_PAPER_DIFFICULTIES
+        for case_id in normalized_by_difficulty[difficulty]
+    )
+    if expected_rate != _case_tuple(
+        _required_catalog_value(
+            catalog,
+            "exp3_rate_fault_factorization_case_ids",
+        )
+    ):
+        raise ValueError("Factorization policy IDs drift from rate-fault slice")
+    suite_policy = catalog.get("paper_suite_scale_policy")
+    if suite_policy is None:
+        raise ValueError(
+            "Experiment 3 catalog v2 requires explicit paper suite scale policy"
+        )
+    profile, selected_by_difficulty = validate_paper_suite_scale_policy(
+        suite_policy,
+        catalog_id=str(catalog.get("catalog_id") or ""),
+        catalog_version=str(catalog.get("catalog_version") or ""),
+        catalog_digest=str(catalog.get("catalog_digest") or ""),
+        experiment_id=EXP3_EXPERIMENT_ID,
+    )
+    if dict(selected_by_difficulty) != normalized_by_difficulty:
+        raise ValueError("Factorization suite policy IDs drift from Exp3 slices")
+    return profile, selected_by_difficulty
 
 
 def _expected_ai_unit_count(

@@ -1,0 +1,51 @@
+{
+  "defaults": {
+    "max_provider_attempts": 1,
+    "max_tokens": 1024,
+    "stream": false,
+    "temperature": 0.0,
+    "timeout_seconds": 100,
+    "top_p": 1.0
+  },
+  "entries": [
+    {
+      "api_key_env": "TOKENSHARE_EXP1_BASELINE_API_KEY",
+      "base_url": "https://api.siliconflow.cn/v1",
+      "enabled": true,
+      "endpoint": "/chat/completions",
+      "entry_id": "glm_5_2_exp1_baseline",
+      "model": "zai-org/GLM-5.2",
+      "pricing": {
+        "currency": "USD",
+        "input_per_million_tokens": 1.0,
+        "output_per_million_tokens": 2.0
+      },
+      "request_overrides": {
+        "enable_thinking": false,
+        "temperature": 0.0
+      },
+      "supports_json_mode": true,
+      "supports_streaming": false,
+      "tags": [
+        "paper",
+        "exp1_baseline",
+        "pilot"
+      ]
+    }
+  ],
+  "executor_id": "executor_ai_api_exp1_baseline",
+  "local_concurrency": {
+    "max_in_flight_global": 10
+  },
+  "metadata": {
+    "approval_snapshot": "exp1_minimal_pilot_v1",
+    "pricing_note": "Conservative planning ceiling for Task 11 budget approval; actual provider usage and cost remain evidence-derived.",
+    "secret_policy": "api_key_env_only"
+  },
+  "provider_family": "siliconflow",
+  "schema_version": "phase7.ai_api_executor_config.v1",
+  "selection_policy": {
+    "kind": "uniform_random_without_weights",
+    "seed_source": "request_or_environment_seed"
+  }
+}

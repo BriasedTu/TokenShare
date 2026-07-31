@@ -1,0 +1,16 @@
+{
+  "artifact_id": "prompt_formal-post-raw-hook",
+  "artifact_schema_id": "phase3.prompt_package",
+  "artifact_schema_version": "v1",
+  "artifact_type": "PromptPackage",
+  "content_hash": "sha256:4e759cbd9862d955135273ec3ae0deed3c2502cf5479dd8cff12378a8c144375",
+  "created_at": "2026-06-28T00:00:00Z",
+  "media_type": "application/json",
+  "metadata": {},
+  "schema_version": "ArtifactRef.v1",
+  "size_bytes": 445,
+  "source": {
+    "kind": "phase7_test"
+  },
+  "uri": "artifacts/prompt_formal-post-raw-hook"
+}

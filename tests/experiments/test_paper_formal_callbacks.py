@@ -63,7 +63,182 @@ def test_exp1_strategy_consumes_complete_frozen_order() -> None:
     assert calls == ["case-c", "case-a", "case-b"]
     assert result.ordered_case_ids == ("case-c", "case-a", "case-b")
     assert result.outcomes == ("case-c", "case-a", "case-b")
-    assert result.metrics["observed_max_parallel_slots"] == 0
+    assert result.metrics["observed_max_parallel_slots"] is None
+    assert result.metrics["runtime_evidence_status"] == "unavailable"
+    assert (
+        result.metrics["runtime_evidence_unavailable_reason"]
+        == "missing_worker_execution_facts"
+    )
+
+
+def test_scheduler_uses_persisted_runtime_observation_and_retry_attempt_identity() -> None:
+    runtime_observation = {
+        "schema_version": "tokenshare.protocol_runtime_observation.v1",
+        "run_id": "run-case-1",
+        "runtime_started_at": "2026-07-20T00:00:00.000Z",
+        "runtime_ended_at": "2026-07-20T00:00:00.250Z",
+        "runtime_wall_clock_ms": 250.0,
+        "worker_execution_facts": [
+            {
+                "attempt_id": "attempt-root",
+                "execution_index": 1,
+                "unit_id": "root",
+                "started_at": "2026-07-20T00:00:00.000Z",
+                "ended_at": "2026-07-20T00:00:00.010Z",
+                "dependencies": [],
+                "result_kind": "succeeded",
+            },
+            {
+                "attempt_id": "attempt-a-failed",
+                "execution_index": 2,
+                "unit_id": "child-a",
+                "started_at": "2026-07-20T00:00:00.010Z",
+                "ended_at": "2026-07-20T00:00:00.110Z",
+                "dependencies": ["root"],
+                "result_kind": "executor_error",
+            },
+            {
+                "attempt_id": "attempt-b",
+                "execution_index": 3,
+                "unit_id": "child-b",
+                "started_at": "2026-07-20T00:00:00.010Z",
+                "ended_at": "2026-07-20T00:00:00.160Z",
+                "dependencies": ["root"],
+                "result_kind": "succeeded",
+            },
+            {
+                "attempt_id": "attempt-a-retry",
+                "execution_index": 4,
+                "unit_id": "child-a",
+                "started_at": "2026-07-20T00:00:00.110Z",
+                "ended_at": "2026-07-20T00:00:00.210Z",
+                "dependencies": ["root"],
+                "result_kind": "succeeded",
+            },
+            {
+                "attempt_id": "attempt-merge",
+                "execution_index": 5,
+                "unit_id": "merge",
+                "started_at": "2026-07-20T00:00:00.210Z",
+                "ended_at": "2026-07-20T00:00:00.230Z",
+                "dependencies": ["child-a", "child-b"],
+                "result_kind": "succeeded",
+            },
+        ],
+    }
+
+    result = run_scheduled_cases(
+        ordered_case_ids=("case-1",),
+        worker_count=2,
+        execute_case=lambda case_id, worker_count: {
+            "case_id": case_id,
+            "adapter_result": {
+                "run_evidence": {
+                    "protocol_runtime": {
+                        "runtime_observation": runtime_observation,
+                    }
+                }
+            },
+            "provider_latency_ms": 350,
+            "provider_error_kind": "executor_error",
+        },
+    )
+
+    assert result.metrics["runtime_evidence_status"] == "complete"
+    assert result.metrics["runtime_evidence_unavailable_reason"] is None
+    assert result.metrics["condition_started_at"] == "2026-07-20T00:00:00.000Z"
+    assert result.metrics["condition_ended_at"] == "2026-07-20T00:00:00.250Z"
+    assert result.metrics["wall_clock_ms"] == 250
+    assert result.metrics["observed_max_parallel_slots"] == 2
+    assert result.metrics["critical_path_ms"] == 230
+    assert result.metrics["throughput_completed_units_per_second"] == 16
+    assert result.metrics["critical_path_evidence_status"] == "complete"
+    assert result.metrics["critical_path_unavailable_reason"] is None
+
+
+def test_scheduler_does_not_invent_critical_path_without_dependency_evidence() -> None:
+    runtime_observation = {
+        "schema_version": "tokenshare.protocol_runtime_observation.v1",
+        "run_id": "run-case-1",
+        "runtime_started_at": "2026-07-20T00:00:00.000Z",
+        "runtime_ended_at": "2026-07-20T00:00:00.250Z",
+        "runtime_wall_clock_ms": 250.0,
+        "worker_execution_facts": [
+            {
+                "attempt_id": "attempt-a",
+                "execution_index": 1,
+                "unit_id": "child-a",
+                "started_at": "2026-07-20T00:00:00.000Z",
+                "ended_at": "2026-07-20T00:00:00.200Z",
+                "result_kind": "succeeded",
+            },
+            {
+                "attempt_id": "attempt-b",
+                "execution_index": 2,
+                "unit_id": "child-b",
+                "started_at": "2026-07-20T00:00:00.000Z",
+                "ended_at": "2026-07-20T00:00:00.150Z",
+                "result_kind": "succeeded",
+            },
+            {
+                "attempt_id": "attempt-merge",
+                "execution_index": 3,
+                "unit_id": "merge",
+                "started_at": "2026-07-20T00:00:00.200Z",
+                "ended_at": "2026-07-20T00:00:00.250Z",
+                "result_kind": "succeeded",
+            },
+        ],
+    }
+
+    result = run_scheduled_cases(
+        ordered_case_ids=("case-1",),
+        worker_count=2,
+        execute_case=lambda case_id, worker_count: {
+            "case_id": case_id,
+            "adapter_result": {
+                "run_evidence": {
+                    "protocol_runtime": {
+                        "runtime_observation": runtime_observation,
+                    }
+                }
+            },
+        },
+    )
+
+    assert result.metrics["runtime_evidence_status"] == "complete"
+    assert result.metrics["wall_clock_ms"] == 250
+    assert result.metrics["observed_max_parallel_slots"] == 2
+    assert result.metrics["throughput_completed_units_per_second"] == 12
+    assert result.metrics["critical_path_ms"] is None
+    assert result.metrics["critical_path_evidence_status"] == "unavailable"
+    assert (
+        result.metrics["critical_path_unavailable_reason"]
+        == "missing_protocol_dependency_evidence"
+    )
+
+
+def test_scheduler_marks_executed_case_without_runtime_facts_as_missing() -> None:
+    result = run_scheduled_cases(
+        ordered_case_ids=("case-1",),
+        worker_count=10,
+        execute_case=lambda case_id, worker_count: {"case_id": case_id},
+    )
+
+    assert result.metrics["runtime_evidence_status"] == "unavailable"
+    assert (
+        result.metrics["runtime_evidence_unavailable_reason"]
+        == "missing_worker_execution_facts"
+    )
+    for field_name in (
+        "observed_max_parallel_slots",
+        "condition_started_at",
+        "condition_ended_at",
+        "wall_clock_ms",
+        "critical_path_ms",
+        "throughput_completed_units_per_second",
+    ):
+        assert result.metrics[field_name] is None
 
 
 def test_exp2_scheduler_delegates_capacity_to_one_root_runtime() -> None:
@@ -116,6 +291,86 @@ def test_exp2_scheduler_delegates_capacity_to_one_root_runtime() -> None:
     assert parallel.metrics["provider_latency_sum_ms"] == 28
     assert parallel.metrics["provider_latency_sum_ms"] != parallel.metrics["wall_clock_ms"]
     assert parallel.metrics["provider_error_count"] == 1
+
+
+def test_online_scheduler_releases_each_full_outcome_after_callback() -> None:
+    class TrackedOutcome:
+        live = 0
+        max_live = 0
+
+        def __init__(self, case_id: str) -> None:
+            self.case_id = case_id
+            self.provider_attempt_count = 0
+            self.provider_latency_ms = None
+            self.provider_error_kind = None
+            self.runtime_records = ()
+            type(self).live += 1
+            type(self).max_live = max(type(self).max_live, type(self).live)
+
+        def __del__(self) -> None:
+            type(self).live -= 1
+
+    checkpointed: list[str] = []
+    result = run_scheduled_cases(
+        ordered_case_ids=tuple(f"case-{index}" for index in range(20)),
+        worker_count=1,
+        execute_case=lambda case_id, worker_count: TrackedOutcome(case_id),
+        on_case_complete=lambda case_id, outcome: checkpointed.append(case_id),
+        retain_outcomes=False,
+    )
+
+    assert checkpointed == list(result.ordered_case_ids)
+    assert result.outcomes == ()
+    assert TrackedOutcome.max_live == 1
+    assert TrackedOutcome.live == 0
+
+
+def test_scheduler_provider_latency_is_null_when_required_latency_is_missing() -> None:
+    outcomes = {
+        "case-complete": {
+            "case_id": "case-complete",
+            "provider_attempt_count": 1,
+            "provider_latency_ms": 28,
+        },
+        "case-missing": {
+            "case_id": "case-missing",
+            "provider_attempt_count": 1,
+            "provider_latency_ms": None,
+        },
+    }
+
+    result = run_scheduled_cases(
+        ordered_case_ids=("case-complete", "case-missing"),
+        worker_count=1,
+        execute_case=lambda case_id, _worker_count: outcomes[case_id],
+    )
+
+    assert result.metrics["provider_latency_sum_ms"] is None
+    assert result.metrics["provider_latency_evidence_status"] == "incomplete"
+    assert (
+        result.metrics["provider_latency_unavailable_reason"]
+        == "missing_provider_latency_evidence"
+    )
+
+
+def test_scheduler_zero_call_latency_is_explicitly_not_applicable() -> None:
+    result = run_scheduled_cases(
+        ordered_case_ids=("case-pre-provider-error",),
+        worker_count=1,
+        execute_case=lambda case_id, _worker_count: {
+            "case_id": case_id,
+            "provider_attempt_count": 0,
+            "provider_latency_ms": 0,
+            "provider_error_kind": "executor_error",
+        },
+    )
+
+    assert result.metrics["provider_latency_sum_ms"] == 0
+    assert result.metrics["provider_latency_evidence_status"] == "not_applicable"
+    assert (
+        result.metrics["provider_latency_unavailable_reason"]
+        == "no_provider_attempts"
+    )
 
 
 def test_exp2_scheduler_reports_unsupported_level_without_executing() -> None:

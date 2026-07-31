@@ -47,6 +47,10 @@ from tokenshare.experiments.paper_models import (
     evaluate_paper_eligibility,
 )
 from tokenshare.experiments.paper_report import scan_artifact_store_for_secrets
+from tokenshare.experiments.paper_runtime_clock import (
+    FixedLifecycleClock,
+    runtime_lifecycle_clock,
+)
 from tokenshare.experiments.paper_projection import project_paper_protocol_run
 from tokenshare.experiments.paper_ablation import runtime_controls_for_mode
 from tokenshare.experiments.paper_unit_commitments import (
@@ -950,6 +954,12 @@ def _run_factorization_full_via_coordinator(
         config=config,
         binding=validated_binding,
     )
+    lifecycle_clock = runtime_lifecycle_clock(
+        real_transport=real_transport,
+        transport=active_transport,
+        deterministic_now=NOW,
+        provider_family=config.provider_family,
+    )
     plugin_runtime = FactorizationRuntimeAdapter(
         provider_family=config.provider_family,
         seed=condition.seed,
@@ -957,7 +967,13 @@ def _run_factorization_full_via_coordinator(
         executor_requirements=executor_requirements,
         max_tokens=max_tokens,
         timeout_seconds=timeout_seconds,
-        created_at=NOW,
+        created_at=lifecycle_clock(),
+        lifecycle_clock=lifecycle_clock,
+        clock_policy=(
+            "fixed"
+            if isinstance(lifecycle_clock, FixedLifecycleClock)
+            else "utc_wall_clock"
+        ),
     )
     ai_executor = AIAPIExecutor(
         executor_id=AI_EXECUTOR_ID,
@@ -988,7 +1004,8 @@ def _run_factorization_full_via_coordinator(
         ),
         artifact_store=store,
         event_ledger=ledger,
-        now=lambda: NOW,
+        now=lifecycle_clock,
+        observation_clock=lifecycle_clock,
     )
     controls = runtime_controls_for_mode(ablation_mode)
     execution_bridge = FactorizationExecutionBridge(
@@ -999,20 +1016,20 @@ def _run_factorization_full_via_coordinator(
         ProcessWorkerBackend(
             executor=execution_bridge,
             capacity=condition.worker_count,
-            submitted_at=lambda: NOW,
+            submitted_at=lifecycle_clock,
             termination_policy=worker_termination_policy,
         )
         if worker_termination_policy is not None
         else
         SequentialWorkerBackend(
             executor=execution_bridge,
-            submitted_at=lambda: NOW,
+            submitted_at=lifecycle_clock,
         )
         if condition.worker_count == 1
         else ThreadWorkerBackend(
             executor=execution_bridge,
             capacity=condition.worker_count,
-            submitted_at=lambda: NOW,
+            submitted_at=lifecycle_clock,
         )
     )
     protocol_request = ProtocolRunRequest(
@@ -1511,6 +1528,7 @@ def _enrich_worker_death_attempts(
                 completion_tokens=captured_attempt.completion_tokens,
                 total_tokens=captured_attempt.total_tokens,
                 cost_estimate=captured_attempt.cost_estimate,
+                cost_estimate_status=captured_attempt.cost_estimate_status,
                 error_kind="worker_died",
                 fault_injection_ref=record_ref_by_attempt.get(attempt.attempt_id),
                 paper_eligible=model_record_eligible,
@@ -1518,6 +1536,7 @@ def _enrich_worker_death_attempts(
                     captured_attempt.model_execution_record_ref
                 ),
                 planned_ai_unit_id=planned_ai_unit_id,
+                schema_version=captured_attempt.schema_version,
             )
         )
     return enriched

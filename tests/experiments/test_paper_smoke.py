@@ -21,7 +21,10 @@ from tokenshare.experiments.paper_smoke import (
     load_paper_smoke_profile,
     resolve_paper_smoke_execution_plan,
 )
-from tokenshare.experiments.paper_smoke_report import generate_paper_smoke_report
+from tokenshare.experiments.paper_smoke_report import (
+    _actual_usage,
+    generate_paper_smoke_report,
+)
 
 
 CATALOG_DIGEST = "sha256:" + "1" * 64
@@ -205,6 +208,23 @@ def test_exp5_v3_standalone_smoke_profile_contains_only_eight_roots() -> None:
     )
     assert profile.exp5_v3_contract is not None
     assert profile.paper_eligible is False
+
+
+def test_exp5_v4_standalone_smoke_profile_binds_active_selection() -> None:
+    profile = load_paper_smoke_profile(
+        Path("benchmarks/paper/paper_smoke_exp5_profile.v4.json")
+    )
+
+    assert profile.suite_id == "paper_smoke_exp5_v4"
+    assert profile.profile_version == "v4"
+    assert profile.expected_root_runs == 8
+    assert profile.exp5_v3_contract is not None
+    assert profile.exp5_v3_contract["selection_id"] == (
+        "tokenshare.paper.exp5.parent_quarter.v4"
+    )
+    assert profile.exp5_v3_contract["selection_digest"] == (
+        "sha256:452f25dcc53a1eb0387665c6f451f1320095efb0c4bf154af62bf5e388afb6b2"
+    )
 
 
 def test_smoke_profile_v3_contract_drift_fails_closed(tmp_path: Path) -> None:
@@ -676,6 +696,20 @@ def test_smoke_report_recomputes_usage_and_refs_from_persisted_evidence(
     (run_root / "CURRENT.json").write_text(
         json.dumps({"generation_id": "generation-1"}), encoding="utf-8"
     )
+    record_ref_1, record_index_1 = _persist_model_execution_record(
+        suite_root=tmp_path,
+        generation=generation,
+        task_id="factor_v2_easy_001",
+        attempt_id="attempt-1",
+        provider_attempt_count=1,
+    )
+    record_ref_2, record_index_2 = _persist_model_execution_record(
+        suite_root=tmp_path,
+        generation=generation,
+        task_id="factor_v2_easy_001",
+        attempt_id="attempt-2",
+        provider_attempt_count=2,
+    )
     _write_jsonl(
         generation / "per_task_results.jsonl",
         [
@@ -703,7 +737,7 @@ def test_smoke_report_recomputes_usage_and_refs_from_persisted_evidence(
                 "task_id": "factor_v2_easy_001",
                 "provider_attempt_index": 0,
                 "provider_attempt_count": 0,
-                "model_execution_record_ref": {"artifact_id": "model-record-1"},
+                "model_execution_record_ref": record_ref_1,
                 "prompt_tokens": 7,
                 "completion_tokens": 5,
                 "total_tokens": 12,
@@ -714,7 +748,7 @@ def test_smoke_report_recomputes_usage_and_refs_from_persisted_evidence(
                 "task_id": "factor_v2_easy_001",
                 "provider_attempt_index": 0,
                 "provider_attempt_count": 2,
-                "model_execution_record_ref": {"artifact_id": "model-record-2"},
+                "model_execution_record_ref": record_ref_2,
                 "prompt_tokens": 2,
                 "completion_tokens": 1,
                 "total_tokens": 3,
@@ -734,7 +768,9 @@ def test_smoke_report_recomputes_usage_and_refs_from_persisted_evidence(
                 "path": "artifacts/raw.json",
                 "content_hash": "sha256:" + "6" * 64,
                 "task_id": "factor_v2_easy_001",
-            }
+            },
+            record_index_1,
+            record_index_2,
         ],
     )
 
@@ -743,13 +779,23 @@ def test_smoke_report_recomputes_usage_and_refs_from_persisted_evidence(
     row = report["rows"][0]
     assert row["provider_attempt_count"] == 3
     assert row["total_tokens"] == 15
+    assert row["total_tokens_sample_size"] == 2
+    assert row["total_tokens_missing_count"] == 0
     assert row["cost_estimate"] == pytest.approx(0.15)
+    assert row["cost_estimate_sample_size"] == 2
+    assert row["cost_estimate_missing_count"] == 0
     assert row["provider_actual_billing"] is None
     assert row["provider_actual_billing_available"] is False
     assert row["outcome_status"] == "succeeded"
     assert row["evidence_integrity"] == "complete"
     assert row["event_refs"] == ["event-1"]
-    assert row["artifact_refs"] == ["artifacts/raw.json"]
+    assert row["artifact_refs"] == sorted(
+        [
+            record_index_1["path"],
+            record_index_2["path"],
+            "artifacts/raw.json",
+        ]
+    )
     assert row["paper_eligible"] is False
     assert {"smoke_suite", "pilot_only"}.issubset(
         row["ineligibility_reasons"]
@@ -759,6 +805,337 @@ def test_smoke_report_recomputes_usage_and_refs_from_persisted_evidence(
     assert (tmp_path / "audit" / "smoke_eligibility_report.json").is_file()
     assert (tmp_path / "audit" / "smoke_evidence_manifest.json").is_file()
     assert (tmp_path / "audit" / "secret_scan_report.json").is_file()
+
+
+def test_smoke_report_fault_refs_use_traceable_fallbacks_without_none(
+    tmp_path: Path,
+) -> None:
+    experiment_id = "exp3_real_ai_fault_recovery"
+    condition_id = "exp3_fault_refs"
+    case_id = "factor_v2_easy_001"
+    repeat_id = 0
+    (tmp_path / "suite_manifest.json").write_text(
+        json.dumps(
+            {
+                "suite_id": "test_smoke",
+                "status": "completed",
+                "formal": False,
+                "pilot_only": True,
+                "regression_only": True,
+                "paper_eligible": False,
+                "execution_scope": "smoke_suite",
+                "ineligibility_reasons": ["smoke_suite", "pilot_only"],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "smoke_execution_plan.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "tokenshare.paper_smoke_execution_plan.v1",
+                "suite_id": "test_smoke",
+                "items": [
+                    {
+                        "item_id": "exp3_fault_refs",
+                        "experiment_id": experiment_id,
+                        "condition_id": condition_id,
+                        "case_id": case_id,
+                        "repeat_id": repeat_id,
+                        "condition_selector": {"domain": "factorization"},
+                    }
+                ],
+                "formal": False,
+                "pilot_only": True,
+                "regression_only": True,
+                "paper_eligible": False,
+            }
+        ),
+        encoding="utf-8",
+    )
+    run_root = (
+        tmp_path
+        / "experiments"
+        / experiment_id
+        / "runs"
+        / condition_id
+        / str(repeat_id)
+    )
+    generation = run_root / ".generations" / "generation-1"
+    (generation / "events").mkdir(parents=True)
+    (generation / "artifacts").mkdir(parents=True)
+    (run_root / "CURRENT.json").write_text(
+        json.dumps({"generation_id": "generation-1"}),
+        encoding="utf-8",
+    )
+    _write_jsonl(
+        generation / "per_task_results.jsonl",
+        [
+            {
+                "task_id": case_id,
+                "experiment_id": experiment_id,
+                "condition_id": condition_id,
+                "repeat_id": repeat_id,
+                "root_status": "completed",
+                "formal": False,
+                "pilot_only": True,
+                "regression_only": True,
+                "paper_eligible": False,
+            }
+        ],
+    )
+    _write_jsonl(generation / "per_attempt_results.jsonl", [])
+    _write_jsonl(generation / "events" / "event_log.jsonl", [])
+    _write_jsonl(generation / "artifacts" / "artifact_index.jsonl", [])
+    _write_jsonl(
+        generation / "fault_injections.jsonl",
+        [
+            {
+                "task_id": case_id,
+                "record_ref": {
+                    "path": "faults/z.json",
+                    "artifact_id": "shadow-artifact",
+                    "uri": "artifact://shadow",
+                },
+                "fault_injection_id": "shadow-fault-id",
+            },
+            {
+                "task_id": case_id,
+                "record_ref": {
+                    "artifact_id": "fault-artifact-a",
+                    "uri": "artifact://shadow-a",
+                },
+                "fault_injection_id": "shadow-fault-id-a",
+            },
+            {
+                "task_id": case_id,
+                "record_ref": {"uri": "artifact://fault-b"},
+                "fault_injection_id": "shadow-fault-id-b",
+            },
+            {
+                "task_id": case_id,
+                "record_ref": {},
+                "fault_injection_id": "fault-id-c",
+            },
+            {"task_id": case_id, "fault_injection_id": "fault-id-d"},
+            {
+                "task_id": case_id,
+                "record_ref": {"path": "faults/z.json"},
+            },
+            {
+                "task_id": case_id,
+                "record_ref": {"path": None, "artifact_id": "", "uri": "   "},
+                "fault_injection_id": "",
+            },
+        ],
+    )
+
+    report = generate_paper_smoke_report(output_root=tmp_path)
+
+    assert report["rows"][0]["fault_refs"] == [
+        "artifact://fault-b",
+        "fault-artifact-a",
+        "fault-id-c",
+        "fault-id-d",
+        "faults/z.json",
+    ]
+    row = report["rows"][0]
+    assert row["provider_attempt_count"] is None
+    assert row["provider_attempt_count_unavailable_reason"] == (
+        "missing_provider_attempt_evidence"
+    )
+    assert row["total_tokens"] is None
+    assert row["total_tokens_sample_size"] == 0
+    assert row["total_tokens_missing_count"] == 1
+    assert row["total_tokens_unavailable_reason"] == (
+        "missing_provider_attempt_evidence"
+    )
+    assert row["cost_estimate"] is None
+    assert row["cost_estimate_sample_size"] == 0
+    assert row["cost_estimate_missing_count"] == 1
+    assert row["cost_estimate_unavailable_reason"] == (
+        "missing_provider_attempt_evidence"
+    )
+    assert row["accepted_validity"] is None
+    assert row["accepted_validity_unavailable_reason"] == (
+        "missing_accepted_validity_evidence"
+    )
+    assert row["wall_clock_ms"] is None
+    assert row["wall_clock_ms_unavailable_reason"] == (
+        "missing_wall_clock_evidence"
+    )
+    assert row["evidence_integrity"] == "missing"
+    assert row["smoke_execution_status"] == "incomplete"
+    assert report["completed_root_count"] == 0
+    assert report["failed_or_blocked_root_count"] == 1
+    assert report["provider_attempt_count"] is None
+    assert report["provider_attempt_count_missing_count"] == 1
+    assert report["total_tokens"] is None
+    assert report["total_tokens_missing_count"] == 1
+    assert report["cost_estimate"] is None
+    assert report["cost_estimate_missing_count"] == 1
+
+
+def test_smoke_usage_does_not_infer_provider_call_from_ref_shape(
+    tmp_path: Path,
+) -> None:
+    observation = _actual_usage(
+        [
+            {
+                "attempt_id": "attempt-1",
+                "task_id": "case-1",
+                "provider_attempt_count": 0,
+                "model_execution_record_ref": {"artifact_id": "shape-only"},
+                "total_tokens": 12,
+                "cost_estimate": 0.125,
+            }
+        ],
+        root=tmp_path,
+        artifacts=(),
+        capturing=False,
+    )
+
+    assert observation["provider_attempt_count"] is None
+    assert observation["provider_attempt_count_unavailable_reason"] == (
+        "invalid_model_execution_record_ref"
+    )
+    assert observation["total_tokens"] is None
+    assert observation["total_tokens_sample_size"] == 0
+    assert observation["total_tokens_missing_count"] == 1
+    assert observation["cost_estimate"] is None
+    assert observation["cost_estimate_sample_size"] == 0
+    assert observation["cost_estimate_missing_count"] == 1
+
+
+def test_smoke_usage_is_complete_or_null_for_verified_provider_calls(
+    tmp_path: Path,
+) -> None:
+    generation = tmp_path / "generation"
+    (generation / "artifacts").mkdir(parents=True)
+    record_ref, record_index = _persist_model_execution_record(
+        suite_root=tmp_path,
+        generation=generation,
+        task_id="case-1",
+        attempt_id="attempt-1",
+        provider_attempt_count=1,
+    )
+
+    observation = _actual_usage(
+        [
+            {
+                "attempt_id": "attempt-1",
+                "task_id": "case-1",
+                "provider_attempt_count": 1,
+                "model_execution_record_ref": record_ref,
+                "total_tokens": None,
+                "cost_estimate": None,
+            }
+        ],
+        root=tmp_path,
+        artifacts=(record_index,),
+        capturing=False,
+    )
+
+    assert observation["provider_attempt_count"] == 1
+    assert observation["total_tokens"] is None
+    assert observation["total_tokens_sample_size"] == 0
+    assert observation["total_tokens_missing_count"] == 1
+    assert observation["total_tokens_unavailable_reason"] == (
+        "missing_total_tokens_evidence"
+    )
+    assert observation["cost_estimate"] is None
+    assert observation["cost_estimate_sample_size"] == 0
+    assert observation["cost_estimate_missing_count"] == 1
+    assert observation["cost_estimate_unavailable_reason"] == (
+        "missing_cost_estimate_evidence"
+    )
+
+    capturing = _actual_usage(
+        (),
+        root=tmp_path,
+        artifacts=(),
+        capturing=True,
+    )
+    assert capturing["provider_attempt_count"] == 0
+    assert capturing["total_tokens"] == 0
+    assert capturing["total_tokens_missing_count"] == 0
+    assert capturing["cost_estimate"] == 0.0
+    assert capturing["cost_estimate_missing_count"] == 0
+
+
+def test_smoke_usage_joins_model_record_on_protocol_task_id(
+    tmp_path: Path,
+) -> None:
+    generation = tmp_path / "generation"
+    (generation / "artifacts").mkdir(parents=True)
+    record_ref, record_index = _persist_model_execution_record(
+        suite_root=tmp_path,
+        generation=generation,
+        task_id="protocol-child-1",
+        attempt_id="attempt-1",
+        provider_attempt_count=1,
+    )
+
+    observation = _actual_usage(
+        [
+            {
+                "attempt_id": "attempt-1",
+                "task_id": "case-1",
+                "protocol_task_id": "protocol-child-1",
+                "provider_attempt_count": 1,
+                "model_execution_record_ref": record_ref,
+                "total_tokens": 12,
+                "cost_estimate": 0.125,
+            }
+        ],
+        root=tmp_path,
+        artifacts=(record_index,),
+        capturing=False,
+    )
+
+    assert observation["provider_attempt_count"] == 1
+    assert observation["provider_attempt_count_unavailable_reason"] is None
+    assert observation["total_tokens"] == 12
+    assert observation["cost_estimate"] == pytest.approx(0.125)
+
+
+def _persist_model_execution_record(
+    *,
+    suite_root: Path,
+    generation: Path,
+    task_id: str,
+    attempt_id: str,
+    provider_attempt_count: int,
+) -> tuple[dict, dict]:
+    record = {
+        "schema_version": "tokenshare.paper_model_execution_record.v2",
+        "task_id": task_id,
+        "attempt_id": attempt_id,
+        "actual_provider_attempts": [
+            {"provider_attempt_index": index}
+            for index in range(provider_attempt_count)
+        ],
+        "actual_request_identities": [
+            {"provider_attempt_index": index}
+            for index in range(provider_attempt_count)
+        ],
+    }
+    record["record_digest"] = digest_json(record)
+    path = generation / "artifacts" / f"{attempt_id}-model-record.json"
+    path.write_text(
+        json.dumps(record, ensure_ascii=False, sort_keys=True),
+        encoding="utf-8",
+    )
+    content_hash = "sha256:" + sha256(path.read_bytes()).hexdigest()
+    artifact_id = f"model-record-{attempt_id}"
+    ref = {
+        "artifact_id": artifact_id,
+        "content_hash": content_hash,
+    }
+    return ref, {
+        **ref,
+        "path": path.relative_to(suite_root).as_posix(),
+        "task_id": task_id,
+    }
 
 
 def _profile_body() -> dict:

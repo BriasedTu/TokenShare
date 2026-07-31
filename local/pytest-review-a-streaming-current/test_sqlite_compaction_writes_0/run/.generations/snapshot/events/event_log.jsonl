@@ -1,0 +1,4 @@
+{"event_id":"case-0-event","task_id":"case-0"}
+{"event_id":"case-1-event","task_id":"case-1"}
+{"event_id":"case-2-event","task_id":"case-2"}
+{"event_id":"merge","event_type":"MERGE_GATE_COMPLETED"}

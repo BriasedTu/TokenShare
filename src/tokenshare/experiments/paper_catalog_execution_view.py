@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -58,7 +58,7 @@ class PaperCatalogExecutionView(Mapping[str, Any]):
     def __getitem__(self, key: str) -> Any:
         if self.manifest is not None:
             if key == "factorization_cases":
-                return self.manifest.factorization_cases
+                return self.factorization_cases
             if key == "lean_cases":
                 return self.manifest.lean_cases
             if key == "lean_lemma_graph_cases":
@@ -96,7 +96,21 @@ class PaperCatalogExecutionView(Mapping[str, Any]):
 
     @property
     def factorization_cases(self) -> tuple[JsonObject, ...]:
-        return self._require_manifest().factorization_cases
+        manifest = self._require_manifest()
+        selected_ids = self.view_body.get("factorization_case_ids")
+        if selected_ids is None:
+            return manifest.factorization_cases
+        ordered_ids = tuple(str(case_id) for case_id in selected_ids)
+        if len(set(ordered_ids)) != len(ordered_ids):
+            raise ValueError("execution view Factorization selection has duplicates")
+        cases_by_id = {
+            str(case["case_id"]): case for case in manifest.factorization_cases
+        }
+        try:
+            selected = tuple(cases_by_id[case_id] for case_id in ordered_ids)
+        except KeyError as exc:
+            raise ValueError("execution view Factorization selection references unknown case")
+        return selected
 
     @property
     def lean_cases(self) -> tuple[JsonObject, ...]:
@@ -130,7 +144,15 @@ class PaperCatalogExecutionView(Mapping[str, Any]):
         return _json_copy(value) if isinstance(value, Mapping) else None
 
     def cases_for(self, **kwargs: Any) -> tuple[JsonObject, ...]:
-        return self._require_manifest().cases_for(**kwargs)
+        cases = self._require_manifest().cases_for(**kwargs)
+        if kwargs.get("domain") != "factorization":
+            return cases
+        matching = {str(case["case_id"]) for case in cases}
+        return tuple(
+            case
+            for case in self.factorization_cases
+            if str(case["case_id"]) in matching
+        )
 
     def to_dict(self) -> JsonObject:
         return {
@@ -153,6 +175,8 @@ def build_manifest_execution_view(
     task15_budget_input: Mapping[str, Any],
     lean_task14_readiness: Mapping[str, Any],
     optional_worker_preflight: Mapping[str, Any] | None,
+    factorization_case_ids: Sequence[str] | None = None,
+    paper_suite_scale_policy: Mapping[str, Any] | None = None,
 ) -> PaperCatalogExecutionView:
     body: JsonObject = {
         "catalog_id": manifest.catalog_id,
@@ -167,6 +191,10 @@ def build_manifest_execution_view(
             optional_worker_preflight or {}
         ),
     }
+    if factorization_case_ids is not None:
+        body["factorization_case_ids"] = [str(case_id) for case_id in factorization_case_ids]
+    if paper_suite_scale_policy is not None:
+        body["paper_suite_scale_policy"] = _json_copy(paper_suite_scale_policy)
     return _build(
         view_kind=MANIFEST_VIEW_KIND,
         catalog_manifest_digest=manifest.catalog_digest,

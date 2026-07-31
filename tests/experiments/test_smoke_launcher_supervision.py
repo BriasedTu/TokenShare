@@ -1,3 +1,4 @@
+import hashlib
 import json
 import subprocess
 import time
@@ -42,6 +43,7 @@ def test_runtime_path_helper_preserves_absolute_and_resolves_relative(
     for launcher_name in (
         "run_exp1_exp4_v3_smoke.ps1",
         "run_exp3_exp4_v3_smoke.ps1",
+        "run_exp5_v3_smoke.ps1",
     ):
         source = (REPO_ROOT / "local" / launcher_name).read_text(encoding="utf-8-sig")
         assert "$OutputRoot = Resolve-TokenShareRuntimePath -Path $OutputRoot" in source
@@ -107,6 +109,18 @@ def test_native_process_helper_captures_both_streams_and_preserves_exit_code(
     assert 'Join-Path $SupervisorRoot "wrapper_terminal.json"' in launcher_text
 
 
+def test_smoke_launchers_propagate_runner_exit_code() -> None:
+    for launcher_name in (
+        "run_exp1_exp4_v3_smoke.ps1",
+        "run_exp3_exp4_v3_smoke.ps1",
+        "run_exp5_v3_smoke.ps1",
+    ):
+        source = (REPO_ROOT / "local" / launcher_name).read_text(encoding="utf-8-sig")
+
+        assert "runner_exit_code = $runnerExitCode" in source
+        assert source.rstrip().endswith("exit $runnerExitCode")
+
+
 def test_exp1_exp4_launcher_freezes_run_instance_identity_before_secret() -> None:
     launcher = REPO_ROOT / "local" / "run_exp1_exp4_v3_smoke.ps1"
     launcher_text = launcher.read_text(encoding="utf-8-sig")
@@ -131,6 +145,101 @@ def test_exp1_exp4_launcher_freezes_run_instance_identity_before_secret() -> Non
     )
 
 
+def test_exp5_v3_launcher_freezes_endpoint_identity_and_bundle_contract() -> None:
+    launcher = REPO_ROOT / "local" / "run_exp5_v3_smoke.ps1"
+    launcher_text = launcher.read_text(encoding="utf-8-sig")
+
+    assert "--smoke-identity-only" in launcher_text
+    assert "paper_smoke_exp5_profile.v4.json" in launcher_text
+    assert "model_comparison_cohort.v3.json" in launcher_text
+    assert "model_comparison_entry_map.v3.json" in launcher_text
+    assert "exp5_siliconflow_provider_config.v3.json" in launcher_text
+    assert "--local-ai-api-config" in launcher_text
+    assert "--expect-smoke-execution-plan-digest" in launcher_text
+    assert "--expect-smoke-budget-digest" in launcher_text
+    assert "paper_smoke_exp5_v4" in launcher_text
+    assert "sha256:ef3b46948dee69ff640d4e21a25c3d84979045e2a8be93d0429fd9474e6b0dd6" in launcher_text
+    assert "sha256:eb1a7c33103fe4ef514627c8bf905de5d179e5547d98328fd17b00b62591e9b1" in launcher_text
+    assert "$semantics.direct_root_runs -ne 8" in launcher_text
+    assert "$semantics.actual_scheduled_root_runs -ne 8" in launcher_text
+    assert "$semantics.planned_first_attempt_ai_units -ne 60" in launcher_text
+    assert "$semantics.budget_provider_attempt_upper_bound -ne 60" in launcher_text
+    assert "$semantics.provider_retry_limit -ne 0" in launcher_text
+    assert "$semantics.worker_counts -join \",\"" in launcher_text
+    assert '"3"' in launcher_text
+    assert "max_in_flight_global = 3" in launcher_text
+    assert "zai-org/GLM-5.2" in launcher_text
+    assert "Qwen/Qwen3-14B" in launcher_text
+    assert "MiniMaxAI/MiniMax-M2.5" in launcher_text
+    assert "Pro/deepseek-ai/DeepSeek-V3" in launcher_text
+    assert "thinking_budget -ne 32768" in launcher_text
+    assert "max_tokens -ne 32768" in launcher_text
+    assert "timeout_seconds -ne 600" in launcher_text
+    assert "audit/exp5_endpoint_smoke_evidence.json" in launcher_text
+    assert "-SecretValues $localSecrets" in launcher_text
+
+
+def test_exp5_v4_selection_and_smoke_digest_layers_are_distinct_and_bound() -> None:
+    selection_path = (
+        REPO_ROOT / "benchmarks" / "paper" / "exp5_parent_quarter_selection.v4.json"
+    )
+    selection_bytes = selection_path.read_bytes()
+    selection = json.loads(selection_bytes.decode("utf-8"))
+    semantic_selection_digest = selection.pop("selection_digest")
+
+    # selection_digest 绑定 canonical JSON 语义；content digest 绑定 tracked 文件原始字节。
+    canonical_selection = json.dumps(
+        selection,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    assert semantic_selection_digest == (
+        "sha256:452f25dcc53a1eb0387665c6f451f1320095efb0c4bf154af62bf5e388afb6b2"
+    )
+    assert "sha256:" + hashlib.sha256(canonical_selection).hexdigest() == (
+        semantic_selection_digest
+    )
+    assert "sha256:" + hashlib.sha256(selection_bytes).hexdigest() == (
+        "sha256:e6c5c05e4310b385495ca3dccfcc2d7f38b71841d451726c89a1fe45200beb67"
+    )
+
+    profile_path = (
+        REPO_ROOT / "benchmarks" / "paper" / "paper_smoke_exp5_profile.v4.json"
+    )
+    profile_bytes = profile_path.read_bytes()
+    profile = json.loads(profile_bytes.decode("utf-8"))
+    semantic_profile_digest = profile.pop("profile_digest")
+    canonical_profile = json.dumps(
+        profile,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    assert profile["exp5_v3_contract"]["selection_digest"] == (
+        semantic_selection_digest
+    )
+    assert semantic_profile_digest == (
+        "sha256:ef3b46948dee69ff640d4e21a25c3d84979045e2a8be93d0429fd9474e6b0dd6"
+    )
+    assert "sha256:" + hashlib.sha256(canonical_profile).hexdigest() == (
+        semantic_profile_digest
+    )
+    assert "sha256:" + hashlib.sha256(profile_bytes).hexdigest() == (
+        "sha256:8378ce5c5a3c76339344088a36f995eda5c862059b9c9eecf5e34347985de5df"
+    )
+
+    # launcher 的 eb1a... 是 identity-only 输出对 8-item selection_inventory 的 digest。
+    launcher_text = (
+        REPO_ROOT / "local" / "run_exp5_v3_smoke.ps1"
+    ).read_text(encoding="utf-8-sig")
+    assert "selection_bundle_digest" in launcher_text
+    assert "sha256:eb1a7c33103fe4ef514627c8bf905de5d179e5547d98328fd17b00b62591e9b1" in (
+        launcher_text
+    )
+    assert "selection bundle identity drift" in launcher_text
+
+
 def test_native_process_helper_redacts_both_streams_before_live_disk_append(
     tmp_path: Path,
 ) -> None:
@@ -138,6 +247,7 @@ def test_native_process_helper_redacts_both_streams_before_live_disk_append(
     stdout_path = tmp_path / "live.stdout.log"
     stderr_path = tmp_path / "live.stderr.log"
     ready_path = tmp_path / "child.ready"
+    terminate_path = tmp_path / "child.terminate"
     child_path = tmp_path / "long_lived_child.ps1"
     wrapper_path = tmp_path / "invoke_wrapper.ps1"
     long_secret = "sentinel-live-secret-1234567890"
@@ -151,6 +261,7 @@ def test_native_process_helper_redacts_both_streams_before_live_disk_append(
             (
                 f"$longSecret = '{ps_quote(long_secret)}'",
                 f"$shortSecret = '{ps_quote(short_secret)}'",
+                f"$terminatePath = '{ps_quote(terminate_path)}'",
                 "[Console]::Out.WriteLine('stdout-marker')",
                 "[Console]::Out.WriteLine($longSecret)",
                 "[Console]::Out.WriteLine($longSecret.Substring(0, 8))",
@@ -164,9 +275,10 @@ def test_native_process_helper_redacts_both_streams_before_live_disk_append(
                 "[Console]::Error.WriteLine('empty-secret-marker')",
                 "[Console]::Error.Flush()",
                 f"Set-Content -Encoding UTF8 -LiteralPath '{ps_quote(ready_path)}' -Value $PID",
-                "while ($true) {",
+                "while (-not (Test-Path -LiteralPath $terminatePath)) {",
                 "    Start-Sleep -Milliseconds 25",
                 "}",
+                "exit 17",
             )
         ),
         encoding="utf-8-sig",
@@ -216,17 +328,14 @@ def test_native_process_helper_redacts_both_streams_before_live_disk_append(
         assert all(fragment not in stderr for fragment in fragments)
         assert "empty-secret-marker" in stdout
         assert "empty-secret-marker" in stderr
+        terminate_path.write_text("terminate", encoding="utf-8")
+        assert process.wait(timeout=10) == 17
     finally:
-        if ready_path.exists():
-            child_pid = int(ready_path.read_text(encoding="utf-8-sig").strip())
-            subprocess.run(
-                ["taskkill.exe", "/PID", str(child_pid), "/F"],
-                check=False,
-                text=True,
-                capture_output=True,
-            )
-        try:
-            process.communicate(timeout=10)
-        except subprocess.TimeoutExpired:
-            process.terminate()
-            process.communicate(timeout=10)
+        if process.poll() is None:
+            terminate_path.write_text("terminate", encoding="utf-8")
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                process.terminate()
+                process.wait(timeout=5)
+        process.communicate(timeout=5)

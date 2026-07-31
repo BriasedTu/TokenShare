@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import inspect
+import json
 from dataclasses import replace
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -30,6 +32,10 @@ from tokenshare.experiments.paper_workers import (
     WorkerDeathKillPoint,
     freeze_worker_death_plan,
     record_worker_death_observation,
+)
+from tokenshare.experiments.paper_suite_scale import (
+    build_paper_suite_scale_policy,
+    load_paper_suite_scale_profile,
 )
 from tokenshare.experiments.paper_formal_runner import (
     _FormalConditionExecutionCallback,
@@ -123,11 +129,58 @@ def test_exp3_v2_matrix_freezes_the_preregistered_two_repeat_root_counts() -> No
 
     assert manifest["condition_count"] == 162
     assert manifest["root_run_counts"] == {
-        "rate_fault_factorization": 30_000,
+        "rate_fault_factorization": 3_000,
         "rate_fault_lean_proof": 90,
-        "worker_death": 6_036,
-        "total": 36_126,
+        "worker_death": 636,
+        "total": 3_726,
     }
+    factor_rate_selections = {
+        selection.ordered_case_ids
+        for condition, selection in zip(conditions, selections, strict=True)
+        if condition.condition_id.startswith("exp3_rate_fault_factorization__")
+    }
+    assert len(factor_rate_selections) == 1
+    assert len(next(iter(factor_rate_selections))) == 50
+    factor_death_sizes = {
+        condition.paper_difficulty: len(selection.ordered_case_ids)
+        for condition, selection in zip(conditions, selections, strict=True)
+        if condition.condition_id.startswith("exp3_worker_death_factorization__")
+    }
+    assert factor_death_sizes == {"easy": 17, "medium": 17, "hard": 16}
+
+    one_percent_rows = [
+        row
+        for row in manifest["fault_target_manifest"]
+        if row["domain"] == "factorization"
+        and row["fault_rate_percent"] == 1
+    ]
+    assert len(one_percent_rows) == 10
+    assert {row["candidate_target_count"] for row in one_percent_rows} == {230}
+    assert {row["selected_target_count"] for row in one_percent_rows} == {3}
+
+
+def test_exp3_v2_rejects_suite_scale_selection_rule_drift() -> None:
+    catalog = _catalog_v2()
+    policy = catalog["paper_suite_scale_policy"]
+    binding = policy["profile_binding"]
+    binding["profile_body"]["selection_rule"]["rule_id"] = "catalog_prefix"
+    binding["profile_source_digest"] = digest_json(binding["profile_body"])
+    binding["binding_digest"] = digest_json(
+        {key: value for key, value in binding.items() if key != "binding_digest"}
+    )
+    policy["policy_digest"] = digest_json(
+        {
+            key: value
+            for key, value in policy.items()
+            if key != "policy_digest"
+        }
+    )
+    context = _context(catalog=catalog)
+    module = Experiment3FaultRecoveryModule()
+    conditions = module.expand_conditions(context)
+
+    with pytest.raises(ValueError, match="selection rule"):
+        module.freeze_case_selections(context, conditions)
 
 
 def test_exp3_freezes_task_slices_and_fault_target_manifest_without_resampling() -> None:
@@ -1149,6 +1202,15 @@ def test_exp3_plan_freezes_shared_exp1_references_without_supporting_execution()
         condition.condition_id for condition in conditions
     }
     assert plan["baseline_policy"] == "shared_exp1_reference"
+    for reference_policy in plan["matched_baseline_manifest"]:
+        expected_policy_id = "exp1_shared_policy_" + digest_json(
+            {
+                key: value
+                for key, value in reference_policy.items()
+                if key != "reference_policy_id"
+            }
+        ).removeprefix("sha256:")[:24]
+        assert reference_policy["reference_policy_id"] == expected_policy_id
     assert plan["matched_baseline_root_run_counts"] == {
         "reused_rate_fault_zero": 0,
         "dedicated_worker_death": 0,
@@ -2059,22 +2121,52 @@ def _catalog() -> dict[str, Any]:
 
 def _catalog_v2() -> dict[str, Any]:
     catalog = dict(_catalog())
-    factor_rate_cases = tuple(f"factor_rate_v2_{index}" for index in range(500))
-    factor_death_by_difficulty = {
-        "easy": tuple(f"factor_death_v2_easy_{index}" for index in range(167)),
-        "medium": tuple(
-            f"factor_death_v2_medium_{index}" for index in range(167)
-        ),
-        "hard": tuple(f"factor_death_v2_hard_{index}" for index in range(166)),
+    profile = load_paper_suite_scale_profile(
+        "benchmarks/paper/paper_suite_scale_profile.v1.json"
+    )
+    raw_cases = tuple(
+        json.loads(line)
+        for line in Path(profile.factorization_catalog_path)
+        .read_text(encoding="utf-8")
+        .splitlines()
+        if line.strip()
+    )
+    candidates_by_difficulty = {
+        difficulty: tuple(
+            case
+            for case in raw_cases
+            if case["paper_difficulty"] == difficulty
+        )
+        for difficulty in ("easy", "medium", "hard")
     }
+    suite_policy, selected_by_scope = build_paper_suite_scale_policy(
+        profile=profile,
+        catalog_id=profile.catalog_id,
+        catalog_version=profile.catalog_version,
+        catalog_digest=profile.catalog_digest,
+        candidates_by_difficulty=candidates_by_difficulty,
+    )
+    selected = selected_by_scope[EXP3_EXPERIMENT_ID]
+    factor_death_by_difficulty = {
+        difficulty: tuple(str(case["case_id"]) for case in cases)
+        for difficulty, cases in selected.items()
+    }
+    factor_rate_cases = tuple(
+        case_id
+        for difficulty in ("easy", "medium", "hard")
+        for case_id in factor_death_by_difficulty[difficulty]
+    )
     catalog.update(
         {
+            "catalog_id": profile.catalog_id,
+            "catalog_digest": profile.catalog_digest,
             "catalog_version": "v2",
             "suite_version": "paper_v2",
             "exp3_rate_fault_factorization_case_ids": factor_rate_cases,
             "exp3_worker_death_factorization_case_ids_by_difficulty": (
                 factor_death_by_difficulty
             ),
+            "paper_suite_scale_policy": suite_policy,
         }
     )
     case_ids = list(factor_rate_cases)
@@ -2084,8 +2176,16 @@ def _catalog_v2() -> dict[str, Any]:
         case_ids.extend(values)
     for values in catalog["exp3_worker_death_lean_case_ids_by_topic"].values():
         case_ids.extend(values)
+    unit_count_by_case_id = {
+        case_id: unit_count
+        for difficulty, unit_count in (("easy", 2), ("medium", 4), ("hard", 8))
+        for case_id in factor_death_by_difficulty[difficulty]
+    }
     catalog["ai_units_by_case_id"] = {
-        case_id: (f"{case_id}_unit_0", f"{case_id}_unit_1")
+        case_id: tuple(
+            f"{case_id}_unit_{index}"
+            for index in range(unit_count_by_case_id.get(case_id, 2))
+        )
         for case_id in case_ids
     }
     return catalog

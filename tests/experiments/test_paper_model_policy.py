@@ -230,6 +230,7 @@ def test_model_endpoint_policy_preflights_v3_four_member_contract(
         cohort=cohort,
         entry_map=entry_map,
         provider_configs=provider_configs,
+        require_smoke_evidence=False,
     )
 
     assert cohort["cohort_id"] == "tokenshare.paper.model_endpoint_cohort.v3"
@@ -380,7 +381,7 @@ def test_v3_smoke_bootstrap_preflight_does_not_require_prior_smoke_evidence(
 
     assert formal_preflight["status"] == "blocked"
     assert all(
-        plan["blocked_reasons"] == ["missing_smoke_evidence"]
+        plan["blocked_reasons"] == ["missing_smoke_evidence_bundle"]
         for plan in formal_preflight["member_plans"].values()
     )
     assert smoke_bootstrap["status"] == "planned"
@@ -529,10 +530,76 @@ def test_v3_smoke_v2_binds_actual_identity_controls_and_pricing(
         policy=_policy_module(),
         tmp_path=tmp_path,
         monkeypatch=monkeypatch,
+        require_smoke_evidence=False,
     )
 
     assert preflight["status"] == "planned"
     assert preflight["provider_calls_made"] == 0
+
+
+def test_v3_formal_preflight_rejects_inline_smoke_refs_without_artifact_backed_bundle(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    preflight = _preflight_from_tracked_v3(
+        policy=_policy_module(),
+        tmp_path=tmp_path,
+        monkeypatch=monkeypatch,
+    )
+
+    assert preflight["status"] == "blocked"
+    assert all(
+        "missing_smoke_evidence_bundle" in plan["blocked_reasons"]
+        for plan in preflight["member_plans"].values()
+    )
+
+
+def test_v3_formal_preflight_rejects_bundle_without_resolvable_source_suite(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    policy = _policy_module()
+    monkeypatch.setenv("SILICONFLOW_API_KEY", "test-key")
+    cohort = policy.load_model_endpoint_cohort(V3_COHORT_PATH)
+    entry_map = policy.load_model_entry_map(V3_ENTRY_MAP_PATH)
+    provider_configs = policy.load_provider_config_map(
+        {"siliconflow": V3_PROVIDER_CONFIG_PATH}
+    )
+    config = provider_configs["siliconflow"]
+    members_by_id = {
+        member["cohort_member_id"]: member for member in cohort["members"]
+    }
+    smoke_members = {
+        member_id: _v3_smoke_evidence(
+            policy=policy,
+            cohort=cohort,
+            config=config,
+            member=members_by_id[member_id],
+            entry_id=spec["entry_id"],
+        )
+        for member_id, spec in entry_map["members"].items()
+    }
+    bundle = {
+        "schema_version": "tokenshare.paper_exp5_endpoint_smoke_evidence_bundle.v1",
+        "source_suite_ref": {
+            "source_suite_root": "Z:/missing-exp5-smoke-suite",
+        },
+        "entry_map_digest": policy.digest_json(entry_map),
+        "members": smoke_members,
+    }
+    bundle["bundle_digest"] = policy.digest_json(bundle)
+
+    preflight = policy.build_model_endpoint_cohort_preflight(
+        cohort=cohort,
+        entry_map=entry_map,
+        provider_configs=provider_configs,
+        smoke_evidence_bundle=bundle,
+    )
+
+    assert preflight["status"] == "blocked"
+    assert all(
+        "smoke_evidence_source_suite_missing" in plan["blocked_reasons"]
+        for plan in preflight["member_plans"].values()
+    )
 
 
 @pytest.mark.parametrize(
@@ -581,7 +648,7 @@ def test_v3_smoke_v2_binds_actual_identity_controls_and_pricing(
         (
             "missing_capability",
             lambda _member_id, smoke: smoke["capability_checks"].pop(
-                "timeout_path_verified"
+                "timeout_limit_verified"
             ),
         ),
         (
@@ -1998,6 +2065,7 @@ def _preflight_from_tracked_v3(
     mutate_config: Callable[[dict], None] | None = None,
     mutate_smoke: Callable[[str, dict], None] | None = None,
     set_key: bool = True,
+    require_smoke_evidence: bool = True,
 ) -> dict:
     cohort_body = _load_json(V3_COHORT_PATH)
     if mutate_cohort is not None:
@@ -2051,6 +2119,7 @@ def _preflight_from_tracked_v3(
         cohort=cohort,
         entry_map=policy.load_model_entry_map(entry_map_path),
         provider_configs=provider_configs,
+        require_smoke_evidence=require_smoke_evidence,
     )
 
 
@@ -2111,7 +2180,7 @@ def _v3_smoke_evidence(
             "request_controls_match": True,
             "usage_schema_verified": True,
             "thinking_breakdown_verified": True,
-            "timeout_path_verified": True,
+            "timeout_limit_verified": True,
         },
         "provider_attempt_count": 1,
         "raw_output_ref": {

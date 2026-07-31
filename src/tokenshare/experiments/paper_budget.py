@@ -52,6 +52,23 @@ EXP1_PILOT_EXPERIMENT_ID = "exp1_real_ai_feasibility"
 EXP1_BASELINE_COHORT_ID = "tokenshare.paper.exp1_baseline.v1"
 EXP5_EXPERIMENT_ID = "exp5_real_ai_model_endpoint_comparison"
 EXP5_V3_PROMPT_TOKEN_UPPER_BOUND_PER_PROVIDER_ATTEMPT = 4_096
+_FORMAL_DISK_POLICY: JsonObject = {
+    "schema_version": "tokenshare.paper_disk_calibration.v2",
+    "p95_root_bytes": 262_144,
+    "p95_ai_unit_bytes": 65_536,
+    "p95_attempt_envelope_bytes": 98_304,
+    "p95_model_execution_record_bytes": 65_536,
+    "model_execution_record_duplicate_multiplier": 2,
+    "p95_provider_attempt_payload_bytes": 327_680,
+    "provider_attempt_payload_observed_p95_bytes": 289_246,
+    "provider_attempt_payload_observed_max_bytes": 1_232_946,
+    "provider_attempt_calibration_attempt_count": 88,
+    "provider_attempt_payload_sample_count": 87,
+    "provider_attempt_payload_calibration_source": "external_read_only_run04",
+    "utf8_bytes_per_token": 4,
+    "fixed_manifest_bytes": 67_108_864,
+    "fixed_temp_bytes": 536_870_912,
+}
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -454,6 +471,9 @@ def plan_paper_suite(
     }
     planned_root_runs = 0
     planned_ai_units = 0
+    max_condition_root_runs = 0
+    max_condition_ai_units = 0
+    max_condition_provider_attempts = 0
     exp4_requeue_ai_unit_upper_bound = 0
     headline_root_runs_by_experiment: dict[str, int] = {}
     headline_ai_units_by_experiment: dict[str, int] = {}
@@ -561,6 +581,16 @@ def plan_paper_suite(
         replacement_count = _condition_replacement_reserve(
             condition=condition,
             condition_ai_units=condition_ai_units,
+        )
+        max_condition_root_runs = max(max_condition_root_runs, len(cases))
+        max_condition_ai_units = max(
+            max_condition_ai_units,
+            condition_ai_units,
+        )
+        max_condition_provider_attempts = max(
+            max_condition_provider_attempts,
+            (condition_ai_units + replacement_count)
+            * max_provider_attempts_per_ai_unit,
         )
         if replacement_count:
             replacement_reserve_by_experiment[condition.experiment_id] = (
@@ -773,7 +803,9 @@ def plan_paper_suite(
         "request_limits": _json_copy(
             request_limits
             or {
-                "max_provider_attempts_per_ai_unit": max_provider_attempts_per_ai_unit,
+                "max_provider_attempts_per_ai_unit": (
+                    max_provider_attempts_per_ai_unit
+                ),
                 "token_upper_bound_per_provider_attempt": (
                     token_upper_bound_per_provider_attempt
                 ),
@@ -839,6 +871,18 @@ def plan_paper_suite(
         body["model_policy_preflight"] = model_policy_preflight
     if model_endpoint_cohort_preflight is not None:
         body["model_endpoint_cohort_preflight"] = model_endpoint_cohort_preflight
+    disk_estimate = _paper_disk_estimate(
+        planned_conditions=len(condition_tuple),
+        planned_root_runs=planned_root_runs,
+        planned_ai_units=planned_ai_units,
+        provider_attempt_upper_bound=max_provider_attempts,
+        max_tokens=token_upper_bound_per_provider_attempt,
+        token_upper_bound=token_upper_bound,
+        max_condition_root_runs=max_condition_root_runs,
+        max_condition_ai_units=max_condition_ai_units,
+        max_condition_provider_attempts=max_condition_provider_attempts,
+    )
+    body["disk_estimate"] = disk_estimate
     if budget_mode == "unlimited":
         body["budget_authorization"] = {
             "budget_mode": "unlimited",
@@ -910,9 +954,7 @@ def plan_paper_suite(
             ),
         },
         rate_limit_preflight={"status": "not_checked"},
-        disk_estimate={
-            "bytes": max(4096, planned_root_runs * 2048 + planned_ai_units * 1024)
-        },
+        disk_estimate=disk_estimate,
         status=PaperStatus.PLANNED,
         budget_mode=budget_mode,
         approval_required=(False if budget_mode == "unlimited" else None),
@@ -920,6 +962,110 @@ def plan_paper_suite(
         authorization_source=("cli" if budget_mode == "unlimited" else None),
         hard_limits=({} if budget_mode == "unlimited" else None),
     )
+
+
+def _paper_disk_estimate(
+    *,
+    planned_conditions: int = 1,
+    planned_root_runs: int,
+    planned_ai_units: int,
+    provider_attempt_upper_bound: int,
+    max_tokens: int,
+    token_upper_bound: int | None = None,
+    max_condition_root_runs: int | None = None,
+    max_condition_ai_units: int | None = None,
+    max_condition_provider_attempts: int | None = None,
+) -> JsonObject:
+    """按冻结 p95/envelope policy 计算 formal suite 的磁盘 forecast。"""
+
+    inputs = {
+        "planned_conditions": int(planned_conditions),
+        "planned_root_runs": int(planned_root_runs),
+        "planned_ai_units": int(planned_ai_units),
+        "provider_attempt_upper_bound": int(provider_attempt_upper_bound),
+        "max_tokens": int(max_tokens),
+        "token_upper_bound": int(
+            provider_attempt_upper_bound * max_tokens
+            if token_upper_bound is None
+            else token_upper_bound
+        ),
+        "max_condition_root_runs": int(
+            planned_root_runs
+            if max_condition_root_runs is None
+            else max_condition_root_runs
+        ),
+        "max_condition_ai_units": int(
+            planned_ai_units
+            if max_condition_ai_units is None
+            else max_condition_ai_units
+        ),
+        "max_condition_provider_attempts": int(
+            provider_attempt_upper_bound
+            if max_condition_provider_attempts is None
+            else max_condition_provider_attempts
+        ),
+    }
+    if any(value < 0 for value in inputs.values()):
+        raise ValueError("formal disk estimate inputs must be non-negative")
+    components = {
+        "root_evidence_bytes": (
+            inputs["planned_root_runs"] * int(_FORMAL_DISK_POLICY["p95_root_bytes"])
+        ),
+        "ai_unit_evidence_bytes": (
+            inputs["planned_ai_units"]
+            * int(_FORMAL_DISK_POLICY["p95_ai_unit_bytes"])
+        ),
+        "provider_attempt_envelope_bytes": (
+            inputs["provider_attempt_upper_bound"]
+            * int(_FORMAL_DISK_POLICY["p95_attempt_envelope_bytes"])
+        ),
+        "forecast_provider_attempt_payload_bytes": (
+            inputs["provider_attempt_upper_bound"]
+            * int(_FORMAL_DISK_POLICY["p95_provider_attempt_payload_bytes"])
+        ),
+        "model_execution_record_duplicate_bytes": (
+            inputs["provider_attempt_upper_bound"]
+            * int(_FORMAL_DISK_POLICY["p95_model_execution_record_bytes"])
+            * int(
+                _FORMAL_DISK_POLICY[
+                    "model_execution_record_duplicate_multiplier"
+                ]
+            )
+        ),
+        "fixed_manifest_bytes": int(
+            _FORMAL_DISK_POLICY["fixed_manifest_bytes"]
+        ),
+        "fixed_temp_bytes": int(_FORMAL_DISK_POLICY["fixed_temp_bytes"]),
+    }
+    max_condition_compaction_bytes = (
+        inputs["max_condition_root_runs"]
+        * int(_FORMAL_DISK_POLICY["p95_root_bytes"])
+        + inputs["max_condition_ai_units"]
+        * int(_FORMAL_DISK_POLICY["p95_ai_unit_bytes"])
+        + inputs["max_condition_provider_attempts"]
+        * int(_FORMAL_DISK_POLICY["p95_attempt_envelope_bytes"])
+        + inputs["max_condition_provider_attempts"]
+        * int(_FORMAL_DISK_POLICY["p95_provider_attempt_payload_bytes"])
+        + inputs["max_condition_provider_attempts"]
+        * int(_FORMAL_DISK_POLICY["p95_model_execution_record_bytes"])
+        * int(
+            _FORMAL_DISK_POLICY[
+                "model_execution_record_duplicate_multiplier"
+            ]
+        )
+    )
+    return {
+        "schema_version": "tokenshare.paper_disk_estimate.v3",
+        "inputs": inputs,
+        "policy": _json_copy(_FORMAL_DISK_POLICY),
+        "components": components,
+        "forecast_bytes": sum(components.values()),
+        "theoretical_max_payload_bytes": (
+            inputs["token_upper_bound"]
+            * int(_FORMAL_DISK_POLICY["utf8_bytes_per_token"])
+        ),
+        "max_condition_compaction_bytes": max_condition_compaction_bytes,
+    }
 
 
 def _prepare_exp5_v3_endpoint_budget_specs(

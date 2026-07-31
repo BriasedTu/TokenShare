@@ -76,6 +76,7 @@ from tokenshare.experiments.paper_unit_commitments import (
     lean_lemma_graph_plugin_payload,
     lean_simple_plugin_payload,
 )
+from tokenshare.experiments.paper_runtime_clock import runtime_lifecycle_clock
 from tokenshare.experiments.paper_workers import (
     PaperAIUnit,
     project_worker_death_records,
@@ -852,6 +853,12 @@ def _run_lean_full_via_coordinator(
         config=config,
         binding=validated_binding,
     )
+    lifecycle_clock = runtime_lifecycle_clock(
+        real_transport=real_transport,
+        transport=active_transport,
+        deterministic_now=NOW,
+        provider_family=config.provider_family,
+    )
     plugin_runtime = LeanRuntimeAdapter(
         provider_family=config.provider_family,
         environment_manifest=environment_manifest,
@@ -861,7 +868,8 @@ def _run_lean_full_via_coordinator(
         executor_requirements=executor_requirements,
         max_tokens=max_tokens,
         timeout_seconds=timeout_seconds,
-        created_at=NOW,
+        created_at=lifecycle_clock(),
+        lifecycle_clock=lifecycle_clock,
     )
     capturing_executor = _FixedIdentityLeanExecutor(
         store=store,
@@ -884,7 +892,8 @@ def _run_lean_full_via_coordinator(
         ),
         artifact_store=store,
         event_ledger=ledger,
-        now=lambda: NOW,
+        now=lifecycle_clock,
+        observation_clock=lifecycle_clock,
     )
     controls = runtime_controls_for_mode(ablation_mode)
     execution_bridge = LeanExecutionBridge(
@@ -895,20 +904,20 @@ def _run_lean_full_via_coordinator(
         ProcessWorkerBackend(
             executor=execution_bridge,
             capacity=condition.worker_count,
-            submitted_at=lambda: NOW,
+            submitted_at=lifecycle_clock,
             termination_policy=worker_termination_policy,
         )
         if worker_termination_policy is not None
         else
         SequentialWorkerBackend(
             executor=execution_bridge,
-            submitted_at=lambda: NOW,
+            submitted_at=lifecycle_clock,
         )
         if condition.worker_count == 1
         else ThreadWorkerBackend(
             executor=execution_bridge,
             capacity=condition.worker_count,
-            submitted_at=lambda: NOW,
+            submitted_at=lifecycle_clock,
         )
     )
     protocol_request = ProtocolRunRequest(
@@ -1440,6 +1449,7 @@ def _enrich_lean_worker_death_attempts(
                 completion_tokens=captured_attempt.completion_tokens,
                 total_tokens=captured_attempt.total_tokens,
                 cost_estimate=captured_attempt.cost_estimate,
+                cost_estimate_status=captured_attempt.cost_estimate_status,
                 error_kind="worker_died",
                 fault_injection_ref=record_ref_by_attempt.get(attempt.attempt_id),
                 paper_eligible=model_record_eligible,
@@ -1447,6 +1457,7 @@ def _enrich_lean_worker_death_attempts(
                     captured_attempt.model_execution_record_ref
                 ),
                 planned_ai_unit_id=planned_ai_unit_id,
+                schema_version=captured_attempt.schema_version,
             )
         )
     return enriched

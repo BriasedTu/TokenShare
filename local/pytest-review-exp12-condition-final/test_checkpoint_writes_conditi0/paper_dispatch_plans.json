@@ -1,0 +1,1 @@
+{"plans":[{"conditions":[{"condition_id":"condition-a","experiment_id":"exp-a","repeat_id":0}],"experiment_id":"exp-a"},{"conditions":[{"condition_id":"condition-b","experiment_id":"exp-b","repeat_id":0}],"experiment_id":"exp-b"}],"schema_version":"tokenshare.paper_dispatch.v1"}

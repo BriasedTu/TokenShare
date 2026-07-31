@@ -23,18 +23,19 @@ from tokenshare.experiments.paper_models import (
     PaperExperimentCondition,
     digest_json,
 )
+from tokenshare.experiments.paper_suite_scale import (
+    validate_paper_suite_scale_policy,
+)
 
 
 EXP2_EXPERIMENT_ID = "exp2_real_ai_scalability"
 EXP2_SUITE_VERSION = "paper_v1"
 EXP2_CATALOG_VERSION = "v1"
 EXP2_FACTOR_CASE_COUNTS_BY_DIFFICULTY = {
-    "easy": 167,
-    "medium": 167,
-    "hard": 166,
+    "hard": 50,
 }
 EXP2_V1_EXPECTED_ROOT_RUNS = 60
-EXP2_EXPECTED_ROOT_RUNS = 1_992
+EXP2_EXPECTED_ROOT_RUNS = 600
 EXP2_SPLIT_PROFILE_ID = "factorization.exp2_contiguous_20way.v1"
 EXP2_SPLIT_PROFILE_REQUESTED_CHILD_COUNT = 20
 MANDATORY_WORKER_LEVELS = (1, 3, 7, 10, 30, 50)
@@ -488,6 +489,20 @@ def _factorization_selection(
         == condition.paper_difficulty
     )
     catalog_version = str(_catalog(context).get("catalog_version") or "v1")
+    if catalog_version == "v2":
+        catalog = _catalog(context)
+        _profile, selected_by_difficulty = validate_paper_suite_scale_policy(
+            catalog.get("paper_suite_scale_policy"),
+            catalog_id=str(catalog.get("catalog_id") or ""),
+            catalog_version=catalog_version,
+            catalog_digest=_catalog_digest(context),
+            experiment_id=EXP2_EXPERIMENT_ID,
+        )
+        expected_ids = selected_by_difficulty["hard"]
+        if tuple(_case_id(case) for case in available_cases) != expected_ids:
+            raise ValueError(
+                "Experiment 2 Factorization cases drift from suite scale profile"
+            )
     expected_case_count = _factor_case_count(
         catalog_version,
         str(condition.paper_difficulty),
@@ -1968,7 +1983,7 @@ def _catalog_cases(
 def _catalog_digest(context: PaperExecutionContext) -> str:
     catalog = _catalog(context)
     digest = _require_complete_digest("catalog_digest", catalog.get("catalog_digest"))
-    if all(
+    if catalog.get("paper_suite_scale_policy") is None and all(
         field_name in catalog
         for field_name in (
             "factorization_cases",

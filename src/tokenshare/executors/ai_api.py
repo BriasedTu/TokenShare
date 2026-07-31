@@ -216,6 +216,7 @@ class AIAPIExecutor:
         final_request_identity: JsonObject | None = None
         last_attempted_entry = None
         last_request_identity: JsonObject | None = None
+        provider_call_count = 0
         terminal_error: (
             SiliconFlowProviderError | OpenAIProviderError | DeepSeekProviderError | None
         ) = None
@@ -240,6 +241,7 @@ class AIAPIExecutor:
                 )
                 last_request_identity = request_identity
                 api_key = entry.resolve_api_key()
+                provider_call_count += 1
                 response = self._transport.post_chat_completion(
                     entry=entry,
                     api_key=api_key,
@@ -313,7 +315,23 @@ class AIAPIExecutor:
                     terminal_error = exc
                     break
         if final_result is None or final_entry is None or final_request_identity is None:
-            result_kind = terminal_error.error_kind if terminal_error is not None else "executor_error"
+            last_result_kind = (
+                str(attempts[-1].get("result_kind")) if attempts else ""
+            )
+            result_kind = (
+                terminal_error.error_kind
+                if terminal_error is not None
+                else last_result_kind
+                if last_result_kind
+                in {
+                    "timeout",
+                    "connection_error",
+                    "rate_limited",
+                    "provider_error",
+                    "auth_error",
+                }
+                else "executor_error"
+            )
             parse_failure_ref = None
             if result_kind == "invalid_output":
                 parse_failure_ref = self._save_parse_failure(
@@ -339,7 +357,7 @@ class AIAPIExecutor:
             if last_attempted_entry is None:
                 failure_usage_summary: JsonObject = {
                     "provider_family": self._config.provider_family,
-                    "provider_attempt_count": len(attempts),
+                    "provider_attempt_count": provider_call_count,
                     "cost_estimate": None,
                     "cost_estimate_status": "usage_missing",
                     "cost_estimate_basis": "usage_missing",
@@ -354,7 +372,7 @@ class AIAPIExecutor:
                         )
                     ),
                     usage=None,
-                    attempt_count=len(attempts),
+                    attempt_count=provider_call_count,
                     enable_thinking=_request_identity_enable_thinking(
                         last_request_identity
                     ),
@@ -407,7 +425,7 @@ class AIAPIExecutor:
             final_entry,
             requested_model=str(final_request_identity["requested_model"]),
             usage=final_result.usage,
-            attempt_count=len(attempts),
+            attempt_count=provider_call_count,
             enable_thinking=_request_identity_enable_thinking(
                 final_request_identity
             ),
@@ -526,7 +544,7 @@ class AIAPIExecutor:
                                 final_request_identity["requested_model"]
                             ),
                             usage=final_result.usage,
-                            attempt_count=len(attempts),
+                            attempt_count=provider_call_count,
                             enable_thinking=_request_identity_enable_thinking(
                                 final_request_identity
                             ),
@@ -575,7 +593,7 @@ class AIAPIExecutor:
                             final_request_identity["requested_model"]
                         ),
                         usage=final_result.usage,
-                        attempt_count=len(attempts),
+                        attempt_count=provider_call_count,
                         enable_thinking=_request_identity_enable_thinking(
                             final_request_identity
                         ),

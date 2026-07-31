@@ -1,0 +1,1 @@
+{"suite_id": "test_smoke", "status": "completed", "formal": false, "pilot_only": true, "regression_only": true, "paper_eligible": false, "execution_scope": "smoke_suite", "ineligibility_reasons": ["smoke_suite", "pilot_only"]}

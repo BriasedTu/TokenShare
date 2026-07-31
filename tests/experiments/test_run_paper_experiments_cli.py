@@ -39,6 +39,26 @@ APPROVED_EXP1_PILOT_DIGEST = (
 )
 
 
+@pytest.mark.parametrize(
+    ("status", "expected_exit_code"),
+    (
+        (PaperStatus.COMPLETED, 0),
+        (PaperStatus.COMPLETED_WITH_FAILURES, 0),
+        (PaperStatus.BLOCKED, 3),
+        (PaperStatus.FAILED, 3),
+        (PaperStatus.BUDGET_EXHAUSTED, 3),
+        (PaperStatus.INCOMPLETE, 3),
+    ),
+)
+def test_execution_result_exit_code_preserves_terminal_semantics(
+    status: PaperStatus,
+    expected_exit_code: int,
+) -> None:
+    result = SimpleNamespace(to_dict=lambda: {"status": status.value})
+
+    assert paper_cli._execution_result_exit_code(result) == expected_exit_code
+
+
 def test_paper_cli_plan_only_writes_budget_and_suite_manifest(tmp_path: Path) -> None:
     exit_code = main(
         [
@@ -187,6 +207,262 @@ def test_exp5_v3_cli_plan_only_uses_endpoint_budget_identity_without_calls(
     assert dispatch["plans"][0]["condition_count"] == 48
 
 
+def test_authoritative_exp1_to_exp5_plan_only_disk_forecast_fits_439_85_gib(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    preflight = _exp5_v3_cli_preflight()
+    monkeypatch.setattr(
+        paper_cli,
+        "_model_endpoint_cohort_preflight_for_suite",
+        lambda **_kwargs: (
+            preflight,
+            {"cohort_id": PAPER_MODEL_ENDPOINT_COHORT_V3_ID},
+        ),
+    )
+    provider_calls: list[dict] = []
+
+    def forbidden_transport(**kwargs):
+        provider_calls.append(kwargs)
+        raise AssertionError("authoritative plan-only must not call provider")
+
+    exit_code = main(
+        [
+            "--output-root",
+            str(tmp_path),
+            "--experiments",
+            "exp1,exp2,exp3,exp4,exp5",
+            "--plan-only",
+        ],
+        gate_c_transport=forbidden_transport,
+    )
+
+    budget = json.loads(
+        (tmp_path / "run_budget.json").read_text(encoding="utf-8")
+    )
+    assert exit_code == 0
+    assert provider_calls == []
+    assert budget["planned_root_runs"] == 6_384
+    assert budget["planned_ai_units"] == 40_520
+    assert budget["max_provider_attempts"] == 81_272
+    assert budget["token_upper_bound"] == 23_503_151_360
+    assert budget["cost_upper_bound"] == pytest.approx(7_346.259328)
+    experiment_budget = budget["quota_preflight"]["budget_commitments"][
+        "experiment_budget_identity"
+    ]
+    assert experiment_budget["actual_scheduled_root_runs_by_experiment"] == {
+        "exp1_real_ai_feasibility": 435,
+        "exp2_real_ai_scalability": 600,
+        "exp3_real_ai_fault_recovery": 3_726,
+        "exp4_real_ai_protocol_ablation": 975,
+        "exp5_real_ai_model_endpoint_comparison": 648,
+    }
+    assert experiment_budget["planned_first_attempt_ai_units_by_experiment"] == {
+        "exp1_real_ai_feasibility": 1_970,
+        "exp2_real_ai_scalability": 12_000,
+        "exp3_real_ai_fault_recovery": 17_148,
+        "exp4_real_ai_protocol_ablation": 4_410,
+        "exp5_real_ai_model_endpoint_comparison": 4_992,
+    }
+    assert experiment_budget["replacement_reserve_by_experiment"] == {
+        "exp3_real_ai_fault_recovery": 37_224,
+        "exp4_real_ai_protocol_ablation": 3_528,
+    }
+    inputs = budget["disk_estimate"]["inputs"]
+    assert inputs["max_condition_root_runs"] == 100
+    assert inputs["max_condition_ai_units"] == 1_000
+    assert inputs["max_condition_provider_attempts"] == 1_000
+    estimate = budget["disk_estimate"]
+    forecast = int(estimate["forecast_bytes"])
+    required = (
+        forecast
+        + max((forecast + 3) // 4, 2 * 1024**3)
+        + int(estimate["max_condition_compaction_bytes"])
+    )
+    assert forecast == 50_206_081_024
+    assert required == 63_406_407_680
+    assert required < int(439.85 * 1024**3)
+    assert int(estimate["theoretical_max_payload_bytes"]) not in {
+        forecast,
+        required,
+    }
+
+
+def test_exp5_v3_formal_preflight_loads_explicit_smoke_evidence_bundle(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bundle_path = tmp_path / "exp5_endpoint_smoke_evidence.json"
+    bundle = {
+        "schema_version": "tokenshare.paper_exp5_endpoint_smoke_evidence_bundle.v1",
+        "bundle_digest": "sha256:" + "5" * 64,
+    }
+    cohort = {
+        "cohort_id": PAPER_MODEL_ENDPOINT_COHORT_V3_ID,
+        "members": [
+            {"cohort_member_id": member_id}
+            for member_id in PAPER_MODEL_ENDPOINT_COHORT_V3_MEMBER_IDS
+        ],
+    }
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(paper_cli, "load_model_endpoint_cohort", lambda _path: cohort)
+    monkeypatch.setattr(paper_cli, "load_model_entry_map", lambda _path: {"members": {}})
+    monkeypatch.setattr(paper_cli, "load_provider_config_map", lambda _paths: {})
+    monkeypatch.setattr(
+        paper_cli,
+        "load_exp5_smoke_evidence_bundle",
+        lambda path: bundle if Path(path) == bundle_path else pytest.fail("wrong bundle"),
+        raising=False,
+    )
+
+    def build_preflight(**kwargs):
+        captured.update(kwargs)
+        return {"status": "planned", "provider_calls_made": 0}
+
+    monkeypatch.setattr(paper_cli, "build_model_endpoint_cohort_preflight", build_preflight)
+
+    preflight, loaded_cohort = paper_cli._model_endpoint_cohort_preflight_for_suite(
+        experiment_ids=("exp5_real_ai_model_endpoint_comparison",),
+        model_cohort_file="cohort.json",
+        model_entry_map="entry-map.json",
+        provider_config_args=(),
+        smoke_evidence_bundle=bundle_path.as_posix(),
+    )
+
+    assert preflight["status"] == "planned"
+    assert loaded_cohort == cohort
+    assert captured["smoke_evidence_bundle"] == bundle
+
+
+def test_exp5_v3_blocked_preflight_reports_canonical_member_ids() -> None:
+    cohort = {
+        "cohort_id": PAPER_MODEL_ENDPOINT_COHORT_V3_ID,
+        "members": [
+            {"cohort_member_id": member_id}
+            for member_id in PAPER_MODEL_ENDPOINT_COHORT_V3_MEMBER_IDS
+        ],
+    }
+
+    preflight = paper_cli._blocked_model_endpoint_cohort_preflight(
+        message="blocked fixture",
+        cohort=cohort,
+    )
+
+    assert preflight["expected_member_ids"] == list(
+        PAPER_MODEL_ENDPOINT_COHORT_V3_MEMBER_IDS
+    )
+
+
+def test_blocked_suite_persists_exp5_cohort_preflight_diagnostics(
+    tmp_path: Path,
+) -> None:
+    preflight = paper_cli._blocked_model_endpoint_cohort_preflight(
+        message="missing artifact-backed smoke evidence bundle",
+        cohort=None,
+    )
+
+    paper_cli._write_blocked_suite(
+        output_root=tmp_path,
+        experiment_ids=("exp5_real_ai_model_endpoint_comparison",),
+        failure_kind="gate_c_plan_blocked",
+        message="invalid Experiment 5 v3 cohort preflight",
+        model_endpoint_cohort_preflight=preflight,
+    )
+
+    suite = json.loads(
+        (tmp_path / "suite_manifest.json").read_text(encoding="utf-8")
+    )
+    assert suite["model_endpoint_cohort_preflight"] == preflight
+    assert suite["model_endpoint_cohort_preflight"]["expected_member_ids"] == list(
+        PAPER_MODEL_ENDPOINT_COHORT_V3_MEMBER_IDS
+    )
+
+
+def test_completed_exp5_smoke_writes_endpoint_bundle_and_refreshes_manifest(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, object]] = []
+    entry_map_path = tmp_path / "entry-map.json"
+    entry_map = {"members": {}}
+    monkeypatch.setattr(paper_cli, "load_model_entry_map", lambda path: entry_map)
+
+    def write_bundle(**kwargs):
+        calls.append(("write", kwargs))
+        return {"bundle_digest": "sha256:" + "6" * 64}
+
+    monkeypatch.setattr(
+        paper_cli,
+        "write_exp5_smoke_evidence_bundle",
+        write_bundle,
+        raising=False,
+    )
+
+    class EvidenceStore:
+        def __init__(self, root):
+            calls.append(("store", Path(root)))
+
+        def _refresh_evidence_manifest(self):
+            calls.append(("refresh", None))
+
+    monkeypatch.setattr(paper_cli, "FormalEvidenceStore", EvidenceStore)
+    result = SimpleNamespace(to_dict=lambda: {"status": "completed"})
+    profile = SimpleNamespace(suite_id="paper_smoke_exp5_v3")
+
+    bundle = paper_cli._write_completed_exp5_smoke_evidence(
+        profile=profile,
+        output_root=tmp_path,
+        result=result,
+        entry_map_path=entry_map_path,
+    )
+
+    assert bundle["bundle_digest"] == "sha256:" + "6" * 64
+    assert calls[0][0] == "write"
+    assert calls[0][1]["source_suite_root"] == tmp_path
+    assert calls[0][1]["entry_map"] == entry_map
+    assert calls[0][1]["output_path"] == (
+        tmp_path / "audit" / "exp5_endpoint_smoke_evidence.json"
+    )
+    assert calls[-1] == ("refresh", None)
+
+
+def test_completed_with_failures_exp5_smoke_still_writes_endpoint_bundle(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    entry_map_path = tmp_path / "entry-map.json"
+    monkeypatch.setattr(
+        paper_cli,
+        "load_model_entry_map",
+        lambda _path: {"members": {}},
+    )
+    calls: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        paper_cli,
+        "write_exp5_smoke_evidence_bundle",
+        lambda **kwargs: calls.append(kwargs) or {"bundle_digest": "sha256:" + "6" * 64},
+    )
+
+    class EvidenceStore:
+        def __init__(self, _root):
+            pass
+
+        def _refresh_evidence_manifest(self):
+            pass
+
+    monkeypatch.setattr(paper_cli, "FormalEvidenceStore", EvidenceStore)
+
+    bundle = paper_cli._write_completed_exp5_smoke_evidence(
+        profile=SimpleNamespace(suite_id="paper_smoke_exp5_v3"),
+        output_root=tmp_path,
+        result=SimpleNamespace(to_dict=lambda: {"status": "completed_with_failures"}),
+        entry_map_path=entry_map_path,
+    )
+
+    assert bundle is not None
+    assert len(calls) == 1
+
+
 def test_exp5_standalone_smoke_identity_injects_local_key_without_prior_evidence(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -214,7 +490,7 @@ def test_exp5_standalone_smoke_identity_injects_local_key_without_prior_evidence
     exit_code = main(
         [
             "--smoke-profile",
-            "benchmarks/paper/paper_smoke_exp5_profile.v3.json",
+            "benchmarks/paper/paper_smoke_exp5_profile.v4.json",
             "--output-root",
             str(output_root),
             "--model-cohort-file",
@@ -304,11 +580,17 @@ def test_exp5_standalone_execution_does_not_require_unused_exp1_secret(
         "execute_paper_smoke_suite",
         capture_smoke_suite,
     )
+    smoke_evidence_calls: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        paper_cli,
+        "_write_completed_exp5_smoke_evidence",
+        lambda **kwargs: smoke_evidence_calls.append(kwargs),
+    )
     output_root = tmp_path / "exp5-only-execution"
     exit_code = main(
         [
             "--smoke-profile",
-            "benchmarks/paper/paper_smoke_exp5_profile.v3.json",
+            "benchmarks/paper/paper_smoke_exp5_profile.v4.json",
             "--output-root",
             str(output_root),
             "--model-cohort-file",
@@ -329,6 +611,8 @@ def test_exp5_standalone_execution_does_not_require_unused_exp1_secret(
     assert "DEEPSEEK_API_KEY" not in os.environ
     assert os.environ["SILICONFLOW_API_KEY"] == secret
     assert captured["execution_plan"].direct_root_run_count == 8
+    assert len(smoke_evidence_calls) == 1
+    assert smoke_evidence_calls[0]["output_root"] == output_root
 
 
 def test_exp5_standalone_prelaunch_failure_persists_blocked_evidence(
@@ -365,7 +649,7 @@ def test_exp5_standalone_prelaunch_failure_persists_blocked_evidence(
     exit_code = main(
         [
             "--smoke-profile",
-            "benchmarks/paper/paper_smoke_exp5_profile.v3.json",
+            "benchmarks/paper/paper_smoke_exp5_profile.v4.json",
             "--output-root",
             str(output_root),
             "--model-cohort-file",
@@ -865,8 +1149,8 @@ def test_exp5_v3_hard_limit_resume_without_calls_preserves_valid_prefix(
     )
 
     evidence = json.loads(before.decode("utf-8"))
-    assert first_exit == 0
-    assert resume_exit == 0
+    assert first_exit == 3
+    assert resume_exit == 3
     assert evidence["observed_member_order"] == list(
         PAPER_MODEL_ENDPOINT_COHORT_V3_MEMBER_IDS[:2]
     )
@@ -2148,18 +2432,37 @@ def test_paper_cli_plan_only_p0_core_uses_shared_exp1_without_supporting_roots(
         162,
         90,
     ]
-    assert identity["headline_p0_core_root_runs"] == 46_478
-    assert identity["actual_p0_core_root_runs"] == 46_478
+    assert identity["headline_p0_core_root_runs"] == 16_028
+    assert identity["actual_p0_core_root_runs"] == 16_028
     assert identity["supporting_baseline_root_runs_by_experiment"] == {}
     assert identity["planned_first_attempt_ai_units_by_experiment"] == {
         "exp1_real_ai_feasibility": 2_900,
         "exp2_real_ai_scalability": 39_840,
-        "exp3_real_ai_fault_recovery": 168_348,
-        "exp4_real_ai_protocol_ablation": 35_910,
+        "exp3_real_ai_fault_recovery": 50_988,
+        "exp4_real_ai_protocol_ablation": 11_460,
     }
-    assert budget["planned_root_runs"] == 46_478
-    assert budget["planned_ai_units"] == 246_998
-    assert budget["max_provider_attempts"] > budget["planned_ai_units"]
+    assert budget["planned_root_runs"] == 16_028
+    assert budget["planned_ai_units"] == 105_188
+    assert budget["max_provider_attempts"] == 224_900
+    assert budget["disk_estimate"]["inputs"] == {
+        "planned_conditions": 276,
+        "planned_root_runs": 16_028,
+        "planned_ai_units": 105_188,
+        "provider_attempt_upper_bound": 224_900,
+        "max_tokens": 304_096,
+        "token_upper_bound": 68_391_190_400,
+        "max_condition_root_runs": 167,
+        "max_condition_ai_units": 3_320,
+        "max_condition_provider_attempts": 3_320,
+    }
+    estimate = budget["disk_estimate"]
+    forecast = int(estimate["forecast_bytes"])
+    required = (
+        forecast
+        + max((forecast + 3) // 4, 2 * 1024**3)
+        + int(estimate["max_condition_compaction_bytes"])
+    )
+    assert required < int(439.85 * 1024**3)
     assert budget["quota_preflight"]["provider_calls_made"] == 0
     assert dispatch["provider_calls_made"] == 0
 
@@ -2469,6 +2772,56 @@ def test_paper_cli_routes_formal_capturing_run_to_formal_suite(
     assert suite["paper_eligible"] is False
 
 
+def test_paper_cli_reports_disk_block_as_structured_json_without_creating_run_root(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _patch_budget_policy_cli_boundaries(monkeypatch)
+    run_root = tmp_path / "disk-blocked"
+
+    def blocked_formal_suite(**kwargs: object) -> object:
+        assert Path(kwargs["output_root"]) == run_root
+        assert not run_root.exists()
+        raise formal_runner.PaperInfrastructureBlockedError(
+            "formal disk preflight failed: insufficient disk capacity",
+            evidence_integrity=formal_runner.PaperEvidenceIntegrity.INVALID,
+            failure_stage="disk_preflight",
+            failure_kind="insufficient_disk_capacity",
+            diagnostics={"required_bytes": 101, "available_bytes": 100},
+        )
+
+    monkeypatch.setattr(
+        paper_cli,
+        "execute_paper_formal_suite",
+        blocked_formal_suite,
+    )
+
+    exit_code = main(
+        [
+            "--output-root",
+            str(run_root),
+            "--experiments",
+            "exp1",
+            "--real-transport",
+        ],
+        gate_c_transport=object(),
+        gate_c_ai_api_configs={"capture": object()},
+    )
+
+    summary = json.loads(capsys.readouterr().out)
+    assert exit_code == 3
+    assert summary["status"] == "blocked"
+    assert summary["failure_stage"] == "disk_preflight"
+    assert summary["failure_kind"] == "insufficient_disk_capacity"
+    assert summary["resource_diagnostics"] == {
+        "required_bytes": 101,
+        "available_bytes": 100,
+    }
+    assert summary["provider_calls_made"] == 0
+    assert not run_root.exists()
+
+
 def test_paper_cli_formal_capturing_e2e_writes_all_tables_without_real_usage(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -2580,9 +2933,11 @@ def test_paper_cli_formal_capturing_e2e_writes_all_tables_without_real_usage(
         "metrics/paper_table_ablation.csv",
         "metrics/paper_table_model_comparison.csv",
         "metrics/paper_table_model_endpoint_comparison.csv",
+        "model_execution_records.jsonl",
         "metrics/model_execution_records.jsonl",
         "metrics/failure_examples.json",
         "metrics/formal_metrics.json",
+        "audit/replay_report.json",
         "formal_regression_report.md",
     ):
         assert (tmp_path / relative_path).is_file(), relative_path
@@ -2618,6 +2973,11 @@ def test_paper_cli_formal_replay_skips_catalog_and_provider_config_loading(
         paper_cli,
         "replay_paper_formal_suite",
         lambda **_kwargs: calls.append("replay") or replay_result,
+    )
+    monkeypatch.setattr(
+        paper_cli,
+        "write_paper_formal_replay_report",
+        lambda **_kwargs: calls.append("replay-report"),
     )
     monkeypatch.setattr(
         paper_cli,
@@ -2662,7 +3022,47 @@ def test_paper_cli_formal_replay_skips_catalog_and_provider_config_loading(
     )
 
     assert exit_code == 0
-    assert calls == ["replay", "metrics", "report", "refresh"]
+    assert calls == ["replay", "replay-report", "metrics", "report", "refresh"]
+
+
+def test_formal_cli_exit_gate_rejects_failed_report_for_paper_eligible_suite() -> None:
+    execution_result = PaperSuiteResult(
+        suite_id="paper-report-gate-test",
+        status=PaperStatus.COMPLETED_WITH_FAILURES,
+        output_root="unused",
+        started_at="2026-07-31T00:00:00Z",
+        ended_at="2026-07-31T00:00:01Z",
+        experiment_ids=["exp5_real_ai_model_endpoint_comparison"],
+        condition_count=48,
+        run_count=1284,
+        task_count=1284,
+        provider_attempt_count=9888,
+        total_tokens=1,
+        total_cost_estimate=0.1,
+        paper_eligible=True,
+        eligibility_report_ref=None,
+        budget_ref=None,
+        metrics_refs=[],
+        audit_refs=[],
+        error_summary=[],
+    )
+    failed_report = SimpleNamespace(
+        paper_eligible=False,
+        formal_paper_table_generated=False,
+    )
+
+    assert paper_cli._formal_execution_exit_code(
+        execution_result,
+        failed_report,
+    ) == 3
+    successful_report = SimpleNamespace(
+        paper_eligible=True,
+        formal_paper_table_generated=True,
+    )
+    assert paper_cli._formal_execution_exit_code(
+        execution_result,
+        successful_report,
+    ) == 0
 
 
 def test_exp1_pilot_cli_plan_only_writes_independent_zero_call_budget(

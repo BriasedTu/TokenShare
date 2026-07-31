@@ -1,6 +1,9 @@
 import json
 from dataclasses import replace
 
+import pytest
+
+import tokenshare.executors.ai_api as ai_api
 from tests.phase7_fixtures import (
     FakeProviderResponse,
     FakeSiliconFlowTransport,
@@ -168,18 +171,44 @@ def test_ai_api_executor_failover_after_client_timeout(tmp_path, monkeypatch) ->
     assert "timeout" in provenance
 
 
-def test_ai_api_executor_returns_executor_error_after_all_entries_fail(tmp_path, monkeypatch) -> None:
+@pytest.mark.parametrize(
+    ("responses", "expected_kind"),
+    (
+        (
+            [
+                FakeProviderResponse(status_code=503, body={"message": "overloaded"}),
+                FakeProviderResponse(status_code=504, body={"message": "timeout"}),
+            ],
+            "provider_error",
+        ),
+        (
+            [
+                FakeProviderResponse(status_code=429, body={"message": "rate limit"}),
+                FakeProviderResponse(status_code=429, body={"message": "rate limit"}),
+            ],
+            "rate_limited",
+        ),
+        (
+            [
+                FakeProviderResponse(status_code=0, error="timeout"),
+                FakeProviderResponse(status_code=0, error="timeout"),
+            ],
+            "timeout",
+        ),
+    ),
+)
+def test_ai_api_executor_preserves_terminal_transport_failure_taxonomy(
+    tmp_path,
+    monkeypatch,
+    responses,
+    expected_kind,
+) -> None:
     monkeypatch.setenv("SILICONFLOW_API_KEY_A", "secret-a")
     monkeypatch.setenv("SILICONFLOW_API_KEY_B", "secret-b")
     store = ArtifactStore(tmp_path)
     request = make_ai_request(store, request_id="request_all_fail")
     config = load_ai_api_config(make_config_dict())
-    transport = FakeSiliconFlowTransport(
-        [
-            FakeProviderResponse(status_code=503, body={"message": "overloaded"}),
-            FakeProviderResponse(status_code=504, body={"message": "timeout"}),
-        ]
-    )
+    transport = FakeSiliconFlowTransport(responses)
     executor = AIAPIExecutor(
         executor_id="executor_ai_api",
         executor_version="0.1.0",
@@ -194,11 +223,93 @@ def test_ai_api_executor_returns_executor_error_after_all_entries_fail(tmp_path,
         submitted_at="2026-06-28T00:00:02Z",
     )
 
-    assert submission.result_kind == "executor_error"
+    assert submission.result_kind == expected_kind
     assert submission.raw_output_ref is None
     assert submission.provenance_ref is not None
-    assert submission.error["kind"] == "executor_error"
+    assert submission.error["kind"] == expected_kind
     assert submission.usage_summary["provider_attempt_count"] == 2
+    provenance = json.loads(store.read_bytes(submission.provenance_ref).decode("utf-8"))
+    assert provenance["final_result_kind"] == expected_kind
+    assert provenance["attempts"][-1]["result_kind"] == expected_kind
+
+
+def test_ai_api_executor_preserves_terminal_connection_error(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("SILICONFLOW_API_KEY_A", "secret-a")
+    monkeypatch.setenv("SILICONFLOW_API_KEY_B", "secret-b")
+
+    class ConnectionErrorTransport(FakeSiliconFlowTransport):
+        def post_chat_completion(self, **kwargs):
+            self.calls.append(
+                {
+                    "entry_id": kwargs["entry"].entry_id,
+                    "model": kwargs["entry"].model,
+                }
+            )
+            raise OSError("network unreachable")
+
+    store = ArtifactStore(tmp_path)
+    request = make_ai_request(store, request_id="request_all_connections_fail")
+    config = load_ai_api_config(make_config_dict())
+    transport = ConnectionErrorTransport([])
+    submission = AIAPIExecutor(
+        executor_id="executor_ai_api",
+        executor_version="0.1.0",
+        artifact_store=store,
+        config=config,
+        transport=transport,
+    ).execute(
+        request,
+        submission_id="submission_all_connections_fail",
+        submitted_at="2026-06-28T00:00:02Z",
+    )
+
+    assert submission.result_kind == "connection_error"
+    assert submission.error["kind"] == "connection_error"
+    assert submission.usage_summary["provider_attempt_count"] == 2
+    provenance = json.loads(store.read_bytes(submission.provenance_ref).decode("utf-8"))
+    assert provenance["final_result_kind"] == "connection_error"
+    assert len(transport.calls) == 2
+
+
+def test_ai_api_executor_does_not_count_pre_provider_config_failures_as_calls(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("SILICONFLOW_API_KEY_A", "secret-a")
+    monkeypatch.setenv("SILICONFLOW_API_KEY_B", "secret-b")
+
+    def invalid_request_builder(**_kwargs):
+        raise ValueError("invalid local request controls")
+
+    monkeypatch.setattr(
+        ai_api,
+        "_provider_adapter",
+        lambda _provider_family: (invalid_request_builder, lambda _response: None),
+    )
+    store = ArtifactStore(tmp_path)
+    request = make_ai_request(store, request_id="request_local_config_failure")
+    transport = FakeSiliconFlowTransport([])
+    submission = AIAPIExecutor(
+        executor_id="executor_ai_api",
+        executor_version="0.1.0",
+        artifact_store=store,
+        config=load_ai_api_config(make_config_dict()),
+        transport=transport,
+    ).execute(
+        request,
+        submission_id="submission_local_config_failure",
+        submitted_at="2026-06-28T00:00:02Z",
+    )
+
+    assert submission.result_kind == "executor_error"
+    assert submission.error["kind"] == "executor_error"
+    assert submission.usage_summary["provider_attempt_count"] == 0
+    assert transport.calls == []
+    provenance = json.loads(store.read_bytes(submission.provenance_ref).decode("utf-8"))
+    assert [attempt["result_kind"] for attempt in provenance["attempts"]] == [
+        "config_error",
+        "config_error",
+    ]
 
 
 def test_ai_api_executor_invalid_provider_envelope_does_not_failover(tmp_path, monkeypatch) -> None:

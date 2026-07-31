@@ -4,20 +4,27 @@ from __future__ import annotations
 
 from collections import defaultdict
 from collections.abc import Mapping, Sequence
+from contextlib import closing
 import csv
 from dataclasses import dataclass
 from datetime import datetime
 import hashlib
 import io
 import json
+import os
 from pathlib import Path
 import re
-from typing import Any
+import sqlite3
+from tempfile import TemporaryDirectory
+from typing import Any, Iterator
 
 from tokenshare.experiments.paper_exp5_model_comparison import (
     build_exp5_model_execution_rows,
 )
 from tokenshare.experiments.paper_exp5_statistics import (
+    EXP5_BOOTSTRAP_RESAMPLES,
+    EXP5_BOOTSTRAP_SEED,
+    _cluster_bootstrap_ci,
     build_exp5_order_and_concurrency_rows,
     build_exp5_paired_comparison_rows,
 )
@@ -48,6 +55,8 @@ class FormalMetricsResult:
     paper_eligible: bool
     capturing: bool
     output_refs: tuple[dict[str, Any], ...]
+    exp5_artifact_rows: Mapping[str, Any] | None = None
+    exp5_artifact_rows_digest: str | None = None
     schema_version: str = "tokenshare.paper_formal_metrics.v1"
 
     def to_dict(self) -> dict[str, Any]:
@@ -62,7 +71,219 @@ class FormalMetricsResult:
             "paper_eligible": self.paper_eligible,
             "capturing": self.capturing,
             "output_refs": [dict(ref) for ref in self.output_refs],
+            "exp5_artifact_rows_digest": self.exp5_artifact_rows_digest,
         }
+
+
+def _compare_path_component_keys(left: str, right: str) -> int:
+    """按旧 WindowsPath 的规范化组件 tuple 语义比较 SQLite key。"""
+
+    left_components = tuple(json.loads(left))
+    right_components = tuple(json.loads(right))
+    return (left_components > right_components) - (
+        left_components < right_components
+    )
+
+
+class LazyFormalRunBundleMapping(Mapping[str, Mapping[str, Any]]):
+    """把 run 索引放在临时 SQLite，并在取值时只加载一个 generation。"""
+
+    def __init__(self, root: str | Path) -> None:
+        self._root = Path(root)
+        self._temporary_directory = TemporaryDirectory(
+            prefix=".tokenshare-formal-metrics-",
+            dir=str(self._root.parent),
+        )
+        self.work_directory = Path(self._temporary_directory.name)
+        self._connection = sqlite3.connect(
+            self.work_directory / "run-index.sqlite3"
+        )
+        self._connection.create_collation(
+            "PATH_COMPONENTS",
+            _compare_path_component_keys,
+        )
+        try:
+            self._initialize_index()
+        except BaseException:
+            self.close()
+            raise
+
+    def _initialize_index(self) -> None:
+        self._connection.executescript(
+            """
+            PRAGMA journal_mode = OFF;
+            PRAGMA synchronous = OFF;
+            PRAGMA temp_store = FILE;
+            CREATE TABLE conditions (
+                condition_id TEXT PRIMARY KEY,
+                body_json TEXT NOT NULL
+            );
+            CREATE TABLE runs (
+                condition_id TEXT PRIMARY KEY,
+                run_root TEXT NOT NULL,
+                generation_root TEXT NOT NULL,
+                run_sort_key TEXT COLLATE PATH_COMPONENTS NOT NULL,
+                discovery_order INTEGER NOT NULL
+            );
+            """
+        )
+        for condition in _iter_jsonl(self._root / "conditions.jsonl"):
+            condition_id = str(condition["condition_id"])
+            self._connection.execute(
+                """
+                INSERT INTO conditions(condition_id, body_json)
+                VALUES (?, ?)
+                ON CONFLICT(condition_id) DO UPDATE SET
+                    body_json = excluded.body_json
+                """,
+                (
+                    condition_id,
+                    json.dumps(condition, ensure_ascii=False),
+                ),
+            )
+        for discovery_order, run_root in enumerate(
+            _iter_run_roots(self._root)
+        ):
+            condition_id = run_root.parent.name
+            condition_row = self._connection.execute(
+                "SELECT 1 FROM conditions WHERE condition_id = ?",
+                (condition_id,),
+            ).fetchone()
+            if condition_row is None:
+                raise ValueError(
+                    f"condition evidence is missing: {condition_id}"
+                )
+            generation = _current_generation(run_root)
+            self._connection.execute(
+                """
+                INSERT INTO runs(
+                    condition_id,
+                    run_root,
+                    generation_root,
+                    run_sort_key,
+                    discovery_order
+                )
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(condition_id) DO UPDATE SET
+                    run_root = excluded.run_root,
+                    generation_root = excluded.generation_root,
+                    run_sort_key = excluded.run_sort_key,
+                    discovery_order = excluded.discovery_order
+                WHERE excluded.run_sort_key > runs.run_sort_key
+                   OR (
+                       excluded.run_sort_key = runs.run_sort_key
+                       AND excluded.discovery_order > runs.discovery_order
+                   )
+                """,
+                (
+                    condition_id,
+                    str(run_root),
+                    str(generation),
+                    json.dumps(
+                        tuple(
+                            os.path.normcase(component)
+                            for component in run_root.parts
+                        ),
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                    ),
+                    discovery_order,
+                ),
+            )
+        self._connection.commit()
+
+    def __getitem__(self, condition_id: str) -> Mapping[str, Any]:
+        row = self._connection.execute(
+            """
+            SELECT c.body_json, r.generation_root
+            FROM runs AS r
+            JOIN conditions AS c USING (condition_id)
+            WHERE r.condition_id = ?
+            """,
+            (condition_id,),
+        ).fetchone()
+        if row is None:
+            raise KeyError(condition_id)
+        condition = json.loads(str(row[0]))
+        if not isinstance(condition, dict):
+            raise ValueError("formal condition evidence must be an object")
+        return _load_run_bundle(
+            suite_root=self._root,
+            generation=Path(str(row[1])),
+            condition=condition,
+        )
+
+    def condition(self, condition_id: str) -> Mapping[str, Any]:
+        row = self._connection.execute(
+            """
+            SELECT c.body_json
+            FROM runs AS r
+            JOIN conditions AS c USING (condition_id)
+            WHERE r.condition_id = ?
+            """,
+            (condition_id,),
+        ).fetchone()
+        if row is None:
+            raise KeyError(condition_id)
+        value = json.loads(str(row[0]))
+        if not isinstance(value, dict):
+            raise ValueError("formal condition evidence must be an object")
+        return value
+
+    def __iter__(self) -> Iterator[str]:
+        cursor = self._connection.execute(
+            """
+            SELECT condition_id
+            FROM runs
+            ORDER BY run_sort_key COLLATE PATH_COMPONENTS, discovery_order
+            """
+        )
+        for row in cursor:
+            yield str(row[0])
+
+    def __len__(self) -> int:
+        row = self._connection.execute("SELECT COUNT(*) FROM runs").fetchone()
+        return int(row[0]) if row is not None else 0
+
+    def __enter__(self) -> "LazyFormalRunBundleMapping":
+        return self
+
+    def __exit__(self, *exc_info: object) -> None:
+        self.close()
+
+    def close(self) -> None:
+        connection = getattr(self, "_connection", None)
+        if connection is not None:
+            connection.close()
+            self._connection = None
+        temporary_directory = getattr(self, "_temporary_directory", None)
+        if temporary_directory is not None:
+            temporary_directory.cleanup()
+            self._temporary_directory = None
+
+
+class _RunBundleKeyView(Mapping[str, Mapping[str, Any]]):
+    """只保留 condition key，value 始终委托给上游 lazy Mapping。"""
+
+    def __init__(
+        self,
+        source: Mapping[str, Mapping[str, Any]],
+        keys: Sequence[str],
+    ) -> None:
+        self._source = source
+        self._keys = tuple(keys)
+        self._key_set = frozenset(self._keys)
+
+    def __getitem__(self, key: str) -> Mapping[str, Any]:
+        if key not in self._key_set:
+            raise KeyError(key)
+        return self._source[key]
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self._keys)
+
+    def __len__(self) -> int:
+        return len(self._keys)
 
 
 def recompute_paper_formal_metrics(
@@ -76,37 +297,25 @@ def recompute_paper_formal_metrics(
         raise ValueError("formal metrics require formal non-pilot evidence")
     if suite.get("execution_scope") != "formal_matrix":
         raise ValueError("formal metrics require formal_matrix evidence")
-    conditions = {
-        str(row["condition_id"]): row
-        for row in _read_jsonl(root / "conditions.jsonl")
-    }
+    with LazyFormalRunBundleMapping(root) as run_bundles:
+        return _recompute_metrics_from_bundles(
+            root=root,
+            suite=suite,
+            run_bundles=run_bundles,
+        )
+
+
+def _recompute_metrics_from_bundles(
+    *,
+    root: Path,
+    suite: Mapping[str, Any],
+    run_bundles: Mapping[str, Mapping[str, Any]],
+) -> FormalMetricsResult:
     condition_rows: list[dict[str, Any]] = []
-    run_bundles: dict[str, dict[str, Any]] = {}
-    for run_root in _run_roots(root):
-        condition_id = run_root.parent.name
-        condition = conditions.get(condition_id)
-        if condition is None:
-            raise ValueError(f"condition evidence is missing: {condition_id}")
-        generation = _current_generation(run_root)
-        bundle = {
-            "condition": condition,
-            "suite_root": root,
-            "tasks": _read_jsonl(generation / "per_task_results.jsonl"),
-            "attempts": _read_jsonl(generation / "per_attempt_results.jsonl"),
-            "faults": _read_jsonl(generation / "fault_injections.jsonl"),
-            "events": _read_jsonl(generation / "events" / "event_log.jsonl"),
-            "artifacts": (
-                _read_jsonl(generation / "artifacts" / "artifact_index.jsonl")
-                if (
-                    generation / "artifacts" / "artifact_index.jsonl"
-                ).is_file()
-                else []
-            ),
-        }
-        if not bundle["tasks"] or not bundle["attempts"] or not bundle["events"]:
-            raise ValueError(f"incomplete formal evidence: {condition_id}")
-        run_bundles[condition_id] = bundle
+    for condition_id in run_bundles:
+        bundle = run_bundles[condition_id]
         condition_rows.append(_condition_metrics(bundle))
+        del bundle
 
     rows_by_id = {row["condition_id"]: row for row in condition_rows}
     experiment_rows = {
@@ -153,6 +362,15 @@ def recompute_paper_formal_metrics(
     ):
         eligibility_reasons.append("experiment_evidence_not_paper_eligible")
     paper_eligible = not eligibility_reasons
+    exp5_artifact_rows = _exp5_renderer_rows(
+        suite=suite,
+        bundles=run_bundles,
+    )
+    exp5_artifact_rows_digest = (
+        _digest(exp5_artifact_rows)
+        if exp5_artifact_rows is not None
+        else None
+    )
     metrics_body = {
         "schema_version": "tokenshare.paper_formal_metrics_body.v1",
         "formal": True,
@@ -161,6 +379,7 @@ def recompute_paper_formal_metrics(
         "capturing": capturing,
         "paper_eligible": paper_eligible,
         "paper_ineligibility_reasons": eligibility_reasons,
+        "exp5_artifact_rows_digest": exp5_artifact_rows_digest,
         "condition_rows": condition_rows,
         "experiment_rows": {
             key: list(value) for key, value in experiment_rows.items()
@@ -174,6 +393,8 @@ def recompute_paper_formal_metrics(
         condition_rows=condition_rows,
         experiment_rows=experiment_rows,
         run_bundles=run_bundles,
+        exp5_artifact_rows=exp5_artifact_rows,
+        require_complete_model_inventory=not capturing,
     )
     return FormalMetricsResult(
         condition_rows=tuple(condition_rows),
@@ -182,6 +403,8 @@ def recompute_paper_formal_metrics(
         paper_eligible=paper_eligible,
         capturing=capturing,
         output_refs=tuple(output_refs),
+        exp5_artifact_rows=exp5_artifact_rows,
+        exp5_artifact_rows_digest=exp5_artifact_rows_digest,
     )
 
 
@@ -195,14 +418,21 @@ def _condition_metrics(bundle: Mapping[str, Any]) -> dict[str, Any]:
     accepted_valid = sum(_task_validity(task) for task in tasks)
     task_count = len(tasks)
     provider_attempts = _provider_attempt_records(attempts)
-    token_values = [
-        int(_number(attempt.get("total_tokens")))
-        for attempt in provider_attempts
-    ]
-    latency_values = [
-        float(_number(attempt.get("latency_ms")))
-        for attempt in provider_attempts
-    ]
+    token_values = _complete_numeric_values(provider_attempts, "total_tokens")
+    cost_values = _complete_numeric_values(provider_attempts, "cost_estimate")
+    latency_values = _complete_numeric_values(provider_attempts, "latency_ms")
+    if not provider_attempts:
+        provider_latency_sum_ms: float | None = 0.0
+        provider_latency_evidence_status = "not_applicable"
+        provider_latency_unavailable_reason: str | None = "no_provider_attempts"
+    elif latency_values is None:
+        provider_latency_sum_ms = None
+        provider_latency_evidence_status = "incomplete"
+        provider_latency_unavailable_reason = "missing_provider_latency_evidence"
+    else:
+        provider_latency_sum_ms = float(sum(latency_values))
+        provider_latency_evidence_status = "complete"
+        provider_latency_unavailable_reason = None
     failure_breakdown: dict[str, int] = defaultdict(int)
     for task in tasks:
         status = _status(task.get("root_status"))
@@ -285,9 +515,28 @@ def _condition_metrics(bundle: Mapping[str, Any]) -> dict[str, Any]:
         "completion_rate": _rate(completed, task_count),
         "accepted_validity_rate": _rate(accepted_valid, task_count),
         "provider_attempt_count": len(provider_attempts),
-        "total_tokens": sum(token_values),
-        "total_cost_estimate": sum(
-            float(_number(attempt.get("cost_estimate")))
+        "total_tokens": sum(token_values) if token_values is not None else None,
+        "total_cost_estimate": (
+            sum(cost_values) if cost_values is not None else None
+        ),
+        "token_usage_missing_count": (
+            0 if token_values is not None else sum(
+                not _is_number(attempt.get("total_tokens"))
+                for attempt in provider_attempts
+            )
+        ),
+        "token_usage_sample_size": sum(
+            _is_number(attempt.get("total_tokens"))
+            for attempt in provider_attempts
+        ),
+        "cost_estimate_missing_count": (
+            0 if cost_values is not None else sum(
+                not _is_number(attempt.get("cost_estimate"))
+                for attempt in provider_attempts
+            )
+        ),
+        "cost_estimate_sample_size": sum(
+            _is_number(attempt.get("cost_estimate"))
             for attempt in provider_attempts
         ),
         "wall_clock_ms": wall_clock_ms,
@@ -308,9 +557,27 @@ def _condition_metrics(bundle: Mapping[str, Any]) -> dict[str, Any]:
             if interval_metrics is not None
             else None
         ),
-        "provider_latency_sum_ms": sum(latency_values),
-        "token_p50": _quantile(token_values, 0.5),
-        "token_p95": _quantile(token_values, 0.95),
+        "provider_latency_sum_ms": provider_latency_sum_ms,
+        "provider_latency_evidence_status": provider_latency_evidence_status,
+        "provider_latency_unavailable_reason": (
+            provider_latency_unavailable_reason
+        ),
+        "provider_latency_missing_count": (
+            0 if latency_values is not None else sum(
+                not _is_number(attempt.get("latency_ms"))
+                for attempt in provider_attempts
+            )
+        ),
+        "provider_latency_sample_size": sum(
+            _is_number(attempt.get("latency_ms"))
+            for attempt in provider_attempts
+        ),
+        "token_p50": (
+            _quantile(token_values, 0.5) if token_values is not None else None
+        ),
+        "token_p95": (
+            _quantile(token_values, 0.95) if token_values is not None else None
+        ),
         "provider_error_count": sum(
             _status(attempt.get("attempt_status")) == "provider_error"
             or (
@@ -347,11 +614,13 @@ def _exp1_rows(
     rows: Mapping[str, Mapping[str, Any]],
     bundles: Mapping[str, Mapping[str, Any]],
 ) -> list[dict[str, Any]]:
-    return [
-        dict(rows[condition_id])
-        for condition_id, bundle in bundles.items()
-        if bundle["condition"]["experiment_id"] == EXP1
-    ]
+    result: list[dict[str, Any]] = []
+    for condition_id in bundles:
+        bundle = bundles[condition_id]
+        if bundle["condition"]["experiment_id"] == EXP1:
+            result.append(dict(rows[condition_id]))
+        del bundle
+    return result
 
 
 def _exp2_rows(
@@ -359,9 +628,11 @@ def _exp2_rows(
     bundles: Mapping[str, Mapping[str, Any]],
 ) -> list[dict[str, Any]]:
     source: list[dict[str, Any]] = []
-    for condition_id, bundle in bundles.items():
+    for condition_id in bundles:
+        bundle = bundles[condition_id]
         condition = bundle["condition"]
         if condition["experiment_id"] != EXP2:
+            del bundle
             continue
         condition_row = dict(rows[condition_id])
         tasks = bundle["tasks"]
@@ -562,6 +833,7 @@ def _exp2_rows(
                     },
                 )
             )
+        del bundle
     baselines: dict[tuple[str, int], float] = {}
     for row in source:
         if (
@@ -619,8 +891,10 @@ def _exp3_rows(
     bundles: Mapping[str, Mapping[str, Any]],
 ) -> list[dict[str, Any]]:
     result: list[dict[str, Any]] = []
-    for condition_id, bundle in bundles.items():
+    for condition_id in bundles:
+        bundle = bundles[condition_id]
         if bundle["condition"]["experiment_id"] != EXP3:
+            del bundle
             continue
         row = dict(rows[condition_id])
         faults = bundle["faults"]
@@ -645,6 +919,18 @@ def _exp3_rows(
         ]
         recoverable_values = [outcome["recoverable"] for outcome in outcomes]
         recovered_values = [outcome["recovered"] for outcome in outcomes]
+        wasted_token_values = [
+            outcome["wasted_actual_tokens"]
+            for outcome in outcomes
+            if _is_number(outcome.get("wasted_actual_tokens"))
+        ]
+        wasted_token_missing = len(outcomes) - len(wasted_token_values)
+        reassignment_values = [
+            outcome["reassignment_count"]
+            for outcome in outcomes
+            if _is_number(outcome.get("reassignment_count"))
+        ]
+        reassignment_missing = len(outcomes) - len(reassignment_values)
         complete_outcomes = sum(
             all(
                 outcome[field_name] is not None
@@ -752,10 +1038,14 @@ def _exp3_rows(
         else:
             baseline_row = rows.get(str(baseline_condition_id))
         if not shared_references and baseline_row is not None:
-            baseline_wall = float(baseline_row["wall_clock_ms"])
-            baseline_tokens = int(baseline_row["total_tokens"])
-            baseline_cost = float(baseline_row["total_cost_estimate"])
-            baseline_latency = float(baseline_row["provider_latency_sum_ms"])
+            baseline_wall = _optional_number(baseline_row.get("wall_clock_ms"))
+            baseline_tokens = _optional_number(baseline_row.get("total_tokens"))
+            baseline_cost = _optional_number(
+                baseline_row.get("total_cost_estimate")
+            )
+            baseline_latency = _optional_number(
+                baseline_row.get("provider_latency_sum_ms")
+            )
             baseline_source = "matched_condition_evidence"
         elif not shared_references and not baseline_reasons:
             baseline_metrics, baseline_reasons = _dedicated_baseline_metrics(
@@ -784,18 +1074,21 @@ def _exp3_rows(
             else None
         )
         token_delta = (
-            int(row["total_tokens"]) - int(baseline_tokens)
-            if baseline_tokens is not None
+            float(row["total_tokens"]) - float(baseline_tokens)
+            if _is_number(row.get("total_tokens"))
+            and baseline_tokens is not None
             else None
         )
         cost_delta = (
             float(row["total_cost_estimate"]) - float(baseline_cost)
-            if baseline_cost is not None
+            if _is_number(row.get("total_cost_estimate"))
+            and baseline_cost is not None
             else None
         )
         latency_delta = (
             float(row["provider_latency_sum_ms"]) - float(baseline_latency)
-            if baseline_latency is not None
+            if _is_number(row.get("provider_latency_sum_ms"))
+            and baseline_latency is not None
             else None
         )
         result.append(
@@ -835,12 +1128,20 @@ def _exp3_rows(
                         and outcome["recovery_latency_ms"] is not None
                     ]
                 ),
-                "reassignment_count": sum(
-                    outcome["reassignment_count"] for outcome in outcomes
+                "reassignment_count": (
+                    sum(reassignment_values)
+                    if reassignment_missing == 0
+                    else None
                 ),
-                "wasted_actual_tokens": sum(
-                    outcome["wasted_actual_tokens"] for outcome in outcomes
+                "reassignment_count_sample_size": len(reassignment_values),
+                "reassignment_count_missing_count": reassignment_missing,
+                "wasted_actual_tokens": (
+                    sum(wasted_token_values)
+                    if wasted_token_missing == 0
+                    else None
                 ),
+                "wasted_actual_tokens_sample_size": len(wasted_token_values),
+                "wasted_actual_tokens_missing_count": wasted_token_missing,
                 "worker_death_count": len(worker_faults),
                 "worker_replacement_complete_rate": _rate(
                     sum(value is True for value in recovered_values),
@@ -904,6 +1205,7 @@ def _exp3_rows(
                     events=events,
                 )
             )
+        del bundle
     return result
 
 
@@ -1106,10 +1408,11 @@ def _exp3_fault_outcomes(
             if ended_at is None or replacement_started_at is None:
                 reasons.append("missing_recovery_timing_evidence")
             else:
-                recovery_latency_ms = max(
-                    0.0,
-                    replacement_started_at - ended_at,
-                )
+                interval_ms = replacement_started_at - ended_at
+                if interval_ms < 0:
+                    reasons.append("invalid_recovery_timing_evidence")
+                else:
+                    recovery_latency_ms = interval_ms
         outcomes.append(
             {
                 "detected": detected,
@@ -1118,8 +1421,8 @@ def _exp3_fault_outcomes(
                 "recovered": recovered,
                 "recovery_latency_ms": recovery_latency_ms,
                 "reassignment_count": len(recovery_events),
-                "wasted_actual_tokens": int(
-                    _number(attempt.get("total_tokens"))
+                "wasted_actual_tokens": _optional_number(
+                    attempt.get("total_tokens")
                 ),
             }
         )
@@ -1133,8 +1436,8 @@ def _empty_exp3_fault_outcome() -> dict[str, Any]:
         "recoverable": None,
         "recovered": None,
         "recovery_latency_ms": None,
-        "reassignment_count": 0,
-        "wasted_actual_tokens": 0,
+        "reassignment_count": None,
+        "wasted_actual_tokens": None,
     }
 
 
@@ -1565,6 +1868,8 @@ def _worker_death_task_rows(
         task_id = str(task.get("task_id") or "")
         task_attempts = _records_for_task(attempts, task, tasks)
         provider_attempts = _provider_attempt_records(task_attempts)
+        token_values = _complete_numeric_values(provider_attempts, "total_tokens")
+        cost_values = _complete_numeric_values(provider_attempts, "cost_estimate")
         task_faults = _records_for_task(worker_faults, task, tasks)
         task_events = _records_for_task(events, task, tasks)
         metrics, reasons = _worker_death_recovery_metrics(
@@ -1589,12 +1894,26 @@ def _worker_death_task_rows(
                     "failed_root_count": 1 - completed,
                     "completion_rate": float(completed),
                     "provider_attempt_count": len(provider_attempts),
-                    "total_tokens": sum(
-                        int(_number(attempt.get("total_tokens")))
+                    "total_tokens": (
+                        sum(token_values) if token_values is not None else None
+                    ),
+                    "total_cost_estimate": (
+                        sum(cost_values) if cost_values is not None else None
+                    ),
+                    "token_usage_sample_size": sum(
+                        _is_number(attempt.get("total_tokens"))
                         for attempt in provider_attempts
                     ),
-                    "total_cost_estimate": sum(
-                        float(_number(attempt.get("cost_estimate")))
+                    "token_usage_missing_count": sum(
+                        not _is_number(attempt.get("total_tokens"))
+                        for attempt in provider_attempts
+                    ),
+                    "cost_estimate_sample_size": sum(
+                        _is_number(attempt.get("cost_estimate"))
+                        for attempt in provider_attempts
+                    ),
+                    "cost_estimate_missing_count": sum(
+                        not _is_number(attempt.get("cost_estimate"))
                         for attempt in provider_attempts
                     ),
                     **metrics,
@@ -1884,10 +2203,15 @@ def _shared_exp1_reference_metrics(
                 False
             ), "missing_shared_exp1_timing_evidence"
         totals["wall_clock_ms"] += wall_clock_ms or 0.0
-        totals["provider_latency_sum_ms"] += sum(
-            float(_number(attempt.get("latency_ms")))
-            for attempt in _shared_provider_attempt_records(attempts)
+        shared_provider_attempts = _shared_provider_attempt_records(attempts)
+        latency_values = _complete_numeric_values(
+            shared_provider_attempts,
+            "latency_ms",
         )
+        if latency_values is None or totals["provider_latency_sum_ms"] is None:
+            totals["provider_latency_sum_ms"] = None
+        else:
+            totals["provider_latency_sum_ms"] += sum(latency_values)
 
     source_usage["cost_estimate"] = round(
         float(source_usage["cost_estimate"]),
@@ -1935,9 +2259,7 @@ def _valid_frozen_artifact_reference(
     if not isinstance(relative_path, str) or not isinstance(content_hash, str):
         return False
     path = suite_root / relative_path
-    return path.is_file() and content_hash == (
-        "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
-    )
+    return path.is_file() and content_hash == _hash_file(path)
 
 
 def _valid_shared_execution_versions(value: Any) -> bool:
@@ -2099,8 +2421,7 @@ def _dedicated_baseline_metrics(
         path = suite_root / relative_path
         if (
             not path.is_file()
-            or reference.get("content_hash")
-            != "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
+            or reference.get("content_hash") != _hash_file(path)
         ):
             return None, ["invalid_matched_baseline_evidence_ref"]
         body = _read_json(path)
@@ -2179,19 +2500,19 @@ def _dedicated_baseline_metrics(
         if wall_clock_ms is None:
             return None, ["missing_matched_baseline_timing_evidence"]
         provider_attempts = _provider_attempt_records(attempts)
+        token_values = _complete_numeric_values(provider_attempts, "total_tokens")
+        cost_values = _complete_numeric_values(provider_attempts, "cost_estimate")
+        latency_values = _complete_numeric_values(provider_attempts, "latency_ms")
         totals["wall_clock_ms"] += wall_clock_ms
-        totals["total_tokens"] += sum(
-            int(_number(attempt.get("total_tokens")))
-            for attempt in provider_attempts
-        )
-        totals["total_cost_estimate"] += sum(
-            float(_number(attempt.get("cost_estimate")))
-            for attempt in provider_attempts
-        )
-        totals["provider_latency_sum_ms"] += sum(
-            float(_number(attempt.get("latency_ms")))
-            for attempt in provider_attempts
-        )
+        for field_name, values in (
+            ("total_tokens", token_values),
+            ("total_cost_estimate", cost_values),
+            ("provider_latency_sum_ms", latency_values),
+        ):
+            if values is None or totals[field_name] is None:
+                totals[field_name] = None
+            else:
+                totals[field_name] += sum(values)
     return totals, []
 
 
@@ -2200,8 +2521,10 @@ def _exp4_rows(
     bundles: Mapping[str, Mapping[str, Any]],
 ) -> list[dict[str, Any]]:
     result: list[dict[str, Any]] = []
-    for condition_id, bundle in bundles.items():
+    for condition_id in bundles:
+        bundle = bundles[condition_id]
         if bundle["condition"]["experiment_id"] != EXP4:
+            del bundle
             continue
         base_row = rows[condition_id]
         task_rows = [
@@ -2222,6 +2545,7 @@ def _exp4_rows(
             )
         )
         result.extend(task_rows)
+        del bundle
     return result
 
 
@@ -2332,14 +2656,10 @@ def _exp4_task_row(
     reasons = list(runtime_audit["reasons"])
     completed = int(_status(task.get("root_status")) == "completed")
     provider_attempts = _provider_attempt_records(task_attempts)
-    total_tokens = sum(
-        int(_number(attempt.get("total_tokens")))
-        for attempt in provider_attempts
-    )
-    total_cost = sum(
-        float(_number(attempt.get("cost_estimate")))
-        for attempt in provider_attempts
-    )
+    token_values = _complete_numeric_values(provider_attempts, "total_tokens")
+    cost_values = _complete_numeric_values(provider_attempts, "cost_estimate")
+    total_tokens = sum(token_values) if token_values is not None else None
+    total_cost = sum(cost_values) if cost_values is not None else None
     return _with_specialty_eligibility(
         base_row,
         reasons,
@@ -2358,6 +2678,22 @@ def _exp4_task_row(
             "total_tokens": total_tokens,
             "total_cost_estimate": total_cost,
             "cost": total_cost,
+            "token_usage_sample_size": sum(
+                _is_number(attempt.get("total_tokens"))
+                for attempt in provider_attempts
+            ),
+            "token_usage_missing_count": sum(
+                not _is_number(attempt.get("total_tokens"))
+                for attempt in provider_attempts
+            ),
+            "cost_estimate_sample_size": sum(
+                _is_number(attempt.get("cost_estimate"))
+                for attempt in provider_attempts
+            ),
+            "cost_estimate_missing_count": sum(
+                not _is_number(attempt.get("cost_estimate"))
+                for attempt in provider_attempts
+            ),
             "wrong_canonical_count": wrong_canonical_count,
             "wrong_canonical_acceptance_count": wrong_canonical_count,
             "invalid_candidate_count": invalid_candidate_count,
@@ -2664,22 +3000,31 @@ def _artifact_ref_in_inventory(
 ) -> bool:
     if not isinstance(value, Mapping) or not value:
         return False
+    stable_identity_fields = ("artifact_id", "content_hash")
+    if any(
+        not isinstance(value.get(field_name), str)
+        or not value.get(field_name)
+        for field_name in stable_identity_fields
+    ):
+        return False
+    comparable_fields = ("artifact_id", "content_hash", "path", "uri")
+    provided_fields = tuple(
+        field_name for field_name in comparable_fields if field_name in value
+    )
+    if any(
+        not isinstance(value[field_name], str) or not value[field_name]
+        for field_name in provided_fields
+    ):
+        return False
     for artifact in artifacts:
-        if value.get("artifact_id") is not None and (
-            artifact.get("artifact_id") != value.get("artifact_id")
-        ):
-            continue
-        if value.get("path") is not None and artifact.get("path") != value.get("path"):
-            continue
-        if value.get("content_hash") is not None and (
-            artifact.get("content_hash") != value.get("content_hash")
-        ):
+        if not isinstance(artifact, Mapping):
             continue
         if any(
-            value.get(field_name) is not None
-            for field_name in ("artifact_id", "path", "uri")
+            artifact.get(field_name) != value[field_name]
+            for field_name in provided_fields
         ):
-            return True
+            continue
+        return True
     return False
 
 
@@ -2750,14 +3095,30 @@ def _exp4_rollup_row(
             "provider_attempt_count": sum(
                 int(row["provider_attempt_count"]) for row in source_rows
             ),
-            "total_tokens": sum(
-                int(row["total_tokens"]) for row in source_rows
+            "total_tokens": _sum_complete_numeric_field(
+                source_rows, "total_tokens"
             ),
-            "total_cost_estimate": sum(
-                float(row["total_cost_estimate"]) for row in source_rows
+            "total_cost_estimate": _sum_complete_numeric_field(
+                source_rows, "total_cost_estimate"
             ),
-            "cost": sum(
-                float(row["total_cost_estimate"]) for row in source_rows
+            "cost": _sum_complete_numeric_field(
+                source_rows, "total_cost_estimate"
+            ),
+            "token_usage_sample_size": sum(
+                int(row.get("token_usage_sample_size", 0))
+                for row in source_rows
+            ),
+            "token_usage_missing_count": sum(
+                int(row.get("token_usage_missing_count", 0))
+                for row in source_rows
+            ),
+            "cost_estimate_sample_size": sum(
+                int(row.get("cost_estimate_sample_size", 0))
+                for row in source_rows
+            ),
+            "cost_estimate_missing_count": sum(
+                int(row.get("cost_estimate_missing_count", 0))
+                for row in source_rows
             ),
             "wrong_canonical_count": wrong_canonical_count,
             "wrong_canonical_acceptance_count": wrong_canonical_count,
@@ -2825,6 +3186,15 @@ def _sum_complete_field(
     if not values or any(
         isinstance(value, bool) or not isinstance(value, int) for value in values
     ):
+        return None
+    return sum(values)
+
+
+def _sum_complete_numeric_field(
+    rows: Sequence[Mapping[str, Any]], field_name: str
+) -> int | float | None:
+    values = [row.get(field_name) for row in rows]
+    if not values or any(not _is_number(value) for value in values):
         return None
     return sum(values)
 
@@ -2986,6 +3356,30 @@ def _exp5_identity_inventory(bundle: Mapping[str, Any]) -> dict[str, Any]:
             continue
         row = dict(joined[0])
         row["provider_attempt_index"] = key[-1]
+        row["provider_attempt_count"] = provider_attempt_count
+        usage = item.get("usage")
+        if isinstance(usage, Mapping):
+            for field_name in (
+                "reasoning_tokens",
+                "visible_output_tokens",
+                "visible_output_basis",
+            ):
+                row[field_name] = usage.get(field_name)
+            pricing_snapshot = usage.get("pricing_snapshot")
+            row["pricing_snapshot_digest"] = (
+                _digest(pricing_snapshot)
+                if isinstance(pricing_snapshot, Mapping)
+                else None
+            )
+        else:
+            row.update(
+                {
+                    "reasoning_tokens": None,
+                    "visible_output_tokens": None,
+                    "visible_output_basis": None,
+                    "pricing_snapshot_digest": None,
+                }
+            )
         rows.append(row)
         record = item.get("record", item)
         provider_attempts = (
@@ -3001,7 +3395,7 @@ def _exp5_identity_inventory(bundle: Mapping[str, Any]) -> dict[str, Any]:
         ):
             mismatch_count += 1
             reasons.append("provider_attempt_identity_coverage_mismatch")
-        elif row.get("paper_eligible") is True:
+        elif _exp5_identity_is_auditable(row):
             provider_attempt_covered += provider_attempt_count
         else:
             mismatch_count += 1
@@ -3051,9 +3445,11 @@ def _exp5_rows(
     bundles: Mapping[str, Mapping[str, Any]],
 ) -> list[dict[str, Any]]:
     result: list[dict[str, Any]] = []
-    for condition_id, bundle in bundles.items():
+    for condition_id in bundles:
+        bundle = bundles[condition_id]
         condition = bundle["condition"]
         if condition["experiment_id"] != EXP5:
+            del bundle
             continue
         identity_audit = _exp5_identity_inventory(bundle)
         strict_rows = tuple(identity_audit["rows"])
@@ -3061,19 +3457,31 @@ def _exp5_rows(
             _strict_exp5_identity_matches(record, condition)
             for record in strict_rows
         )
-        identity_denominator = int(identity_audit["identity_denominator"])
+        auditable = sum(_exp5_identity_is_auditable(record) for record in strict_rows)
+        identity_inventory_denominator = int(identity_audit["identity_denominator"])
+        identity_not_observed = sum(
+            record.get("identity_status") == "not_observed"
+            and _exp5_identity_is_auditable(record)
+            for record in strict_rows
+        )
+        identity_denominator = sum(
+            record.get("identity_status") != "not_observed"
+            for record in strict_rows
+        )
         identity_status = (
             "not_observed"
             if not strict_rows
             else "matched"
-            if matches == identity_denominator
+            if matches == identity_inventory_denominator
+            else "not_observed"
+            if auditable == identity_inventory_denominator
             else "model_identity_mismatch"
         )
         specialty_reasons: list[str] = []
         specialty_reasons.extend(identity_audit["paper_ineligibility_reasons"])
-        if matches != identity_denominator:
+        if auditable != identity_inventory_denominator:
             specialty_reasons.append("model_identity_mismatch")
-        if any(record.get("paper_eligible") is not True for record in strict_rows):
+        if any(not _exp5_identity_is_auditable(record) for record in strict_rows):
             specialty_reasons.append("model_execution_join_ineligible")
         base_row = rows[condition_id]
         result.append(
@@ -3088,6 +3496,8 @@ def _exp5_rows(
                 "model_identity_match_count": matches,
                 "model_identity_denominator": identity_denominator,
                 "model_identity_match_rate": _rate(matches, identity_denominator),
+                "model_identity_not_observed_count": identity_not_observed,
+                "model_execution_attempt_denominator": identity_inventory_denominator,
                 "identity_status": identity_status,
                 "model_identity_missing_record_count": identity_audit[
                     "missing_record_count"
@@ -3112,6 +3522,7 @@ def _exp5_rows(
                 },
             )
         )
+        del bundle
     return result
 
 
@@ -3128,6 +3539,7 @@ def _exp5_v3_case_records(
             condition.get("experiment_id") != EXP5
             or condition.get("schema_version") != "tokenshare.paper_condition.v3"
         ):
+            del bundle
             continue
         identity_eligible = _exp5_identity_inventory(bundle)["paper_eligible"] is True
         attempts = tuple(
@@ -3135,31 +3547,39 @@ def _exp5_v3_case_records(
             for attempt in bundle.get("attempts", ())
             if isinstance(attempt, Mapping)
         )
-        started_values = [
-            attempt.get("started_at")
+        timed_attempts = tuple(
+            attempt
             for attempt in attempts
             if _observed_time_ms(attempt.get("started_at")) is not None
+            and _observed_time_ms(attempt.get("ended_at")) is not None
+        )
+        started_values = [
+            attempt.get("started_at")
+            for attempt in timed_attempts
         ]
         ended_values = [
             attempt.get("ended_at")
-            for attempt in attempts
-            if _observed_time_ms(attempt.get("ended_at")) is not None
+            for attempt in timed_attempts
         ]
-        if (
-            not attempts
-            or len(started_values) != len(attempts)
-            or len(ended_values) != len(attempts)
-        ):
-            raise ValueError("Exp5 v3 condition timing evidence is incomplete")
-        condition_started_at = min(
-            started_values,
-            key=lambda value: float(_observed_time_ms(value)),
+        condition_started_at = (
+            min(
+                started_values,
+                key=lambda value: float(_observed_time_ms(value)),
+            )
+            if started_values
+            else None
         )
-        condition_ended_at = max(
-            ended_values,
-            key=lambda value: float(_observed_time_ms(value)),
+        condition_ended_at = (
+            max(
+                ended_values,
+                key=lambda value: float(_observed_time_ms(value)),
+            )
+            if ended_values
+            else None
         )
-        observed_peak = _attempt_interval_peak(attempts)
+        observed_peak = (
+            _attempt_interval_peak(timed_attempts) if timed_attempts else None
+        )
         tasks = tuple(
             task
             for task in bundle.get("tasks", ())
@@ -3174,13 +3594,15 @@ def _exp5_v3_case_records(
                 raise ValueError("Exp5 v3 task requires a case identity")
             task_attempts = _records_for_task(attempts, task, tasks)
             provider_attempts = _provider_attempt_records(task_attempts)
-            token_values = _complete_numeric_values(
-                provider_attempts,
-                "total_tokens",
+            token_values = (
+                _complete_numeric_values(provider_attempts, "total_tokens")
+                if provider_attempts
+                else None
             )
-            latency_values = _complete_numeric_values(
-                provider_attempts,
-                "latency_ms",
+            latency_values = (
+                _complete_numeric_values(provider_attempts, "latency_ms")
+                if provider_attempts
+                else None
             )
             root_status = task.get("root_status")
             root_completed = (
@@ -3205,6 +3627,9 @@ def _exp5_v3_case_records(
                 "cohort_member_id": condition.get("cohort_member_id"),
                 "condition_id": condition.get("condition_id"),
                 "stratum_id": _exp5_v3_stratum_id(condition),
+                "domain": condition.get("domain"),
+                "topic_family": condition.get("topic_family"),
+                "root_status": root_status,
                 "root_completed": root_completed,
                 "accepted_validity": accepted_validity,
                 "total_tokens": (
@@ -3248,20 +3673,564 @@ def _exp5_v3_case_records(
                     "provider_latency_missing"
                 )
             result.append(row)
+        del bundle
     return tuple(result)
 
+
+def _exp5_renderer_rows(
+    *,
+    suite: Mapping[str, Any],
+    bundles: Mapping[str, Mapping[str, Any]],
+) -> dict[str, Any] | None:
+    """从 formal checkpoint 派生 Exp5 renderer 的唯一输入。"""
+
+    exp5_condition_ids: list[str] = []
+    condition_reader = getattr(bundles, "condition", None)
+    for condition_id in bundles:
+        if callable(condition_reader):
+            condition = condition_reader(condition_id)
+        else:
+            bundle = bundles[condition_id]
+            condition = bundle.get("condition", {})
+        if (
+            isinstance(condition, Mapping)
+            and condition.get("experiment_id") == EXP5
+            and condition.get("schema_version")
+            == "tokenshare.paper_condition.v3"
+        ):
+            exp5_condition_ids.append(condition_id)
+        if not callable(condition_reader):
+            del bundle
+    exp5_bundles = _RunBundleKeyView(bundles, exp5_condition_ids)
+    if not exp5_bundles:
+        return None
+    case_records = _exp5_v3_case_records(exp5_bundles)
+    execution_rows = _exp5_v3_execution_rows(exp5_bundles)
+    identity_complete = bool(execution_rows)
+    if identity_complete:
+        for condition_id in exp5_bundles:
+            bundle = exp5_bundles[condition_id]
+            condition_eligible = (
+                _exp5_identity_inventory(bundle).get("paper_eligible") is True
+            )
+            del bundle
+            if not condition_eligible:
+                identity_complete = False
+                break
+    audit_statistics_records = _exp5_audit_statistics_records(case_records)
+    try:
+        paired_rows = tuple(
+            {
+                **dict(row),
+                "paper_eligible": identity_complete,
+                "identity_complete": identity_complete,
+            }
+            for row in build_exp5_paired_comparison_rows(
+                audit_statistics_records
+            )
+        )
+        order_rows = tuple(
+            {
+                **dict(row),
+                "paper_eligible": identity_complete,
+                "identity_complete": identity_complete,
+            }
+            for row in build_exp5_order_and_concurrency_rows(
+                audit_statistics_records
+            )
+        )
+    except ValueError:
+        paired_rows = ()
+        order_rows = ()
+        identity_complete = False
+    member_inventory: dict[str, None] = {}
+    for condition_id in exp5_bundles:
+        bundle = exp5_bundles[condition_id]
+        member_inventory[str(bundle["condition"]["cohort_member_id"])] = None
+        del bundle
+    members = tuple(member_inventory)
+    return {
+        "suite_status": str(suite.get("status") or "incomplete"),
+        "identity_complete": identity_complete,
+        "overall_rows": _exp5_overall_rows(
+            case_records,
+            execution_rows,
+            members=members,
+            identity_complete=identity_complete,
+        ),
+        "domain_topic_rows": _exp5_domain_topic_rows(
+            case_records,
+            members=members,
+            identity_complete=identity_complete,
+        ),
+        "paired_comparison_rows": paired_rows,
+        "model_execution_rows": execution_rows,
+        "order_concurrency_rows": order_rows,
+        "failure_taxonomy_rows": _exp5_failure_taxonomy_rows(exp5_bundles),
+    }
+
+
+def _exp5_audit_statistics_records(
+    case_records: Sequence[Mapping[str, Any]],
+) -> tuple[dict[str, Any], ...]:
+    """保留失败/未开始分母，最终输出仍由 identity_complete 标为不合格。"""
+
+    return tuple(
+        {
+            **dict(row),
+            # statistics validator 的该字段是输入完整性门；audit 视图不能因此
+            # 丢掉已物化的失败或 not_started root。输出行会重新写入真实总门禁。
+            "paper_eligible": True,
+        }
+        for row in case_records
+    )
+
+
+def _exp5_v3_execution_rows(
+    bundles: Mapping[str, Mapping[str, Any]],
+) -> tuple[dict[str, Any], ...]:
+    rows: list[dict[str, Any]] = []
+    for condition_id in sorted(bundles):
+        bundle = bundles[condition_id]
+        rows.extend(dict(row) for row in _strict_exp5_model_rows(bundle))
+        del bundle
+    rows.sort(
+        key=lambda row: (
+            int(row.get("repeat_id", -1)),
+            str(row.get("cohort_member_id")),
+            str(row.get("condition_id")),
+            str(row.get("task_id")),
+            str(row.get("unit_id")),
+            str(row.get("attempt_id")),
+            int(row.get("provider_attempt_index", -1)),
+        )
+    )
+    return tuple(rows)
+
+
+def _exp5_overall_rows(
+    case_records: Sequence[Mapping[str, Any]],
+    execution_rows: Sequence[Mapping[str, Any]],
+    *,
+    members: Sequence[str],
+    identity_complete: bool,
+) -> tuple[dict[str, Any], ...]:
+    rows: list[dict[str, Any]] = []
+    for member_id in members:
+        cases = [
+            row for row in case_records
+            if row.get("cohort_member_id") == member_id
+        ]
+        executions = [
+            row for row in execution_rows
+            if row.get("cohort_member_id") == member_id
+        ]
+        completion = _exp5_metric_summary(
+            cases, field_name="root_completed", statistic="mean"
+        )
+        validity = _exp5_metric_summary(
+            cases, field_name="accepted_validity", statistic="mean"
+        )
+        tokens = _exp5_metric_summary(
+            cases, field_name="total_tokens", statistic="median"
+        )
+        latency = _exp5_metric_summary(
+            cases, field_name="provider_latency_ms", statistic="median"
+        )
+        prompt = _exp5_available_numbers(executions, "prompt_tokens")
+        reasoning = _exp5_available_numbers(executions, "reasoning_tokens")
+        visible = _exp5_available_numbers(executions, "visible_output_tokens")
+        costs = _exp5_available_numbers(executions, "cost_estimate")
+        currencies = {
+            str(row["cost_estimate_currency"])
+            for row in executions
+            if isinstance(row.get("cost_estimate_currency"), str)
+            and row.get("cost_estimate_currency")
+        }
+        pricing_digests = {
+            str(row["pricing_snapshot_digest"])
+            for row in executions
+            if isinstance(row.get("pricing_snapshot_digest"), str)
+            and row.get("pricing_snapshot_digest")
+        }
+        provider_attempt_count = sum(
+            int(row.get("provider_attempt_count", 0))
+            for row in executions
+            if type(row.get("provider_attempt_count")) is int
+        )
+        reasoning_missing = len(executions) - len(reasoning)
+        prompt_missing = len(executions) - len(prompt)
+        visible_missing = len(executions) - len(visible)
+        cost_missing = len(executions) - len(costs)
+        row_eligible = (
+            identity_complete
+            and bool(cases)
+            and bool(executions)
+            and all(row.get("paper_eligible") is True for row in cases)
+            and all(row.get("paper_eligible") is True for row in executions)
+            and completion["value"] is not None
+            and validity["value"] is not None
+        )
+        token_values = _exp5_available_numbers(cases, "total_tokens")
+        latency_values = _exp5_available_numbers(
+            cases, "provider_latency_ms"
+        )
+        rows.append(
+            {
+                "cohort_member_id": member_id,
+                "model_label": _exp5_model_label(executions, member_id),
+                "root_count": len(cases),
+                "completion_count": sum(
+                    row.get("root_completed") is True for row in cases
+                ),
+                "completion_rate": completion["value"],
+                "completion_ci_low": completion["ci_low"],
+                "completion_ci_high": completion["ci_high"],
+                "accepted_validity_count": sum(
+                    row.get("accepted_validity") is True for row in cases
+                ),
+                "accepted_validity_rate": validity["value"],
+                "accepted_validity_ci_low": validity["ci_low"],
+                "accepted_validity_ci_high": validity["ci_high"],
+                "provider_attempt_count": provider_attempt_count,
+                "prompt_tokens": sum(prompt) if prompt_missing == 0 else None,
+                "prompt_tokens_sample_size": len(prompt),
+                "prompt_tokens_missing_count": prompt_missing,
+                "reasoning_tokens": (
+                    sum(reasoning) if reasoning_missing == 0 else None
+                ),
+                "visible_output_tokens": (
+                    sum(visible) if visible_missing == 0 else None
+                ),
+                "total_tokens": (
+                    sum(token_values)
+                    if cases and len(token_values) == len(cases)
+                    else None
+                ),
+                "total_tokens_sample_size": tokens["sample_size"],
+                "total_tokens_missing_count": len(cases) - len(token_values),
+                "total_tokens_median": tokens["value"],
+                "total_tokens_ci_low": tokens["ci_low"],
+                "total_tokens_ci_high": tokens["ci_high"],
+                "cost_estimate": (
+                    sum(costs) if cost_missing == 0 and executions else None
+                ),
+                "cost_currency": (
+                    next(iter(currencies)) if len(currencies) == 1 else None
+                ),
+                "cost_estimate_status": (
+                    "available"
+                    if cost_missing == 0 and executions and len(currencies) == 1
+                    else "unavailable"
+                ),
+                "pricing_snapshot_digest": (
+                    next(iter(pricing_digests))
+                    if len(pricing_digests) == 1 else None
+                ),
+                "wall_clock_ms": _exp5_member_wall_clock_ms(cases),
+                "provider_latency_ms": (
+                    sum(latency_values)
+                    if cases and len(latency_values) == len(cases)
+                    else None
+                ),
+                "provider_latency_ms_sample_size": latency["sample_size"],
+                "provider_latency_ms_missing_count": (
+                    len(cases) - len(latency_values)
+                ),
+                "provider_latency_ms_median": latency["value"],
+                "provider_latency_ms_ci_low": latency["ci_low"],
+                "provider_latency_ms_ci_high": latency["ci_high"],
+                "rate_limit_429_count": sum(
+                    row.get("error_kind") in {"rate_limited", "429"}
+                    for row in executions
+                ),
+                "timeout_count": sum(
+                    row.get("error_kind") == "timeout"
+                    for row in executions
+                ),
+                "retry_count": sum(
+                    max(0, int(row.get("provider_attempt_count", 0)) - 1)
+                    for row in executions
+                    if type(row.get("provider_attempt_count")) is int
+                ),
+                "identity_coverage": _rate(
+                    sum(
+                        int(row.get("provider_attempt_count", 0))
+                        for row in executions
+                        if _exp5_identity_is_auditable(row)
+                        and type(row.get("provider_attempt_count")) is int
+                    ),
+                    provider_attempt_count,
+                ),
+                "reasoning_tokens_missing_count": reasoning_missing,
+                "visible_output_tokens_missing_count": visible_missing,
+                "cost_estimate_missing_count": cost_missing,
+                "reasoning_tokens_unavailable_reason": (
+                    "provider_usage_missing" if reasoning_missing else None
+                ),
+                "prompt_tokens_unavailable_reason": (
+                    "provider_usage_missing" if prompt_missing else None
+                ),
+                "visible_output_tokens_unavailable_reason": (
+                    "provider_usage_missing" if visible_missing else None
+                ),
+                "cost_estimate_unavailable_reason": (
+                    "provider_cost_evidence_missing" if cost_missing else None
+                ),
+                "paper_eligible": row_eligible,
+                "identity_complete": identity_complete,
+            }
+        )
+    return tuple(rows)
+
+
+def _exp5_domain_topic_rows(
+    case_records: Sequence[Mapping[str, Any]],
+    *,
+    members: Sequence[str],
+    identity_complete: bool,
+) -> tuple[dict[str, Any], ...]:
+    strata = tuple(
+        dict.fromkeys(
+            (row.get("domain"), row.get("topic_family"))
+            for row in case_records
+        )
+    )
+    rows: list[dict[str, Any]] = []
+    for member_id in members:
+        for domain, topic_family in strata:
+            cases = [
+                row for row in case_records
+                if row.get("cohort_member_id") == member_id
+                and row.get("domain") == domain
+                and row.get("topic_family") == topic_family
+            ]
+            if not cases:
+                continue
+            completion = _exp5_metric_summary(
+                cases, field_name="root_completed", statistic="mean"
+            )
+            validity = _exp5_metric_summary(
+                cases, field_name="accepted_validity", statistic="mean"
+            )
+            rows.append(
+                {
+                    "cohort_member_id": member_id,
+                    "model_label": member_id,
+                    "domain": domain,
+                    "topic_family": topic_family,
+                    "root_count": len(cases),
+                    "completion_count": sum(
+                        row.get("root_completed") is True for row in cases
+                    ),
+                    "completion_rate": completion["value"],
+                    "accepted_validity_count": sum(
+                        row.get("accepted_validity") is True for row in cases
+                    ),
+                    "accepted_validity_rate": validity["value"],
+                    "paper_eligible": (
+                        identity_complete
+                        and all(
+                            row.get("paper_eligible") is True
+                            for row in cases
+                        )
+                        and completion["sample_size"] == len(cases)
+                        and validity["sample_size"] == len(cases)
+                    ),
+                    "identity_complete": identity_complete,
+                }
+            )
+    return tuple(rows)
+
+
+def _exp5_metric_summary(
+    rows: Sequence[Mapping[str, Any]],
+    *,
+    field_name: str,
+    statistic: str,
+) -> dict[str, float | int | None]:
+    observed = []
+    for row in rows:
+        case_id = row.get("case_id")
+        value = row.get(field_name)
+        if (
+            isinstance(case_id, str)
+            and case_id
+            and (
+                isinstance(value, bool)
+                or (
+                    not isinstance(value, bool)
+                    and isinstance(value, (int, float))
+                )
+            )
+        ):
+            observed.append((case_id, float(value), 0.0))
+    values = [value for _, value, _ in observed]
+    point = (
+        sum(values) / len(values)
+        if values and statistic == "mean"
+        else float(_quantile(values, 0.5))
+        if values else None
+    )
+    estimator = (
+        (lambda sample: sum(sample) / len(sample))
+        if statistic == "mean"
+        else (lambda sample: float(_quantile(sample, 0.5)))
+    )
+    ci_low, ci_high = _cluster_bootstrap_ci(
+        observed,
+        statistic=estimator,
+        seed=EXP5_BOOTSTRAP_SEED,
+        resamples=EXP5_BOOTSTRAP_RESAMPLES,
+    )
+    return {
+        "value": point,
+        "ci_low": ci_low,
+        "ci_high": ci_high,
+        "sample_size": len(values),
+    }
+
+
+def _exp5_available_numbers(
+    rows: Sequence[Mapping[str, Any]],
+    field_name: str,
+) -> list[float]:
+    return [
+        float(row[field_name])
+        for row in rows
+        if not isinstance(row.get(field_name), bool)
+        and isinstance(row.get(field_name), (int, float))
+    ]
+
+
+def _exp5_member_wall_clock_ms(
+    case_records: Sequence[Mapping[str, Any]],
+) -> float | None:
+    windows = {
+        str(row["condition_id"]): (
+            float(_observed_time_ms(row["condition_started_at"])),
+            float(_observed_time_ms(row["condition_ended_at"])),
+        )
+        for row in case_records
+        if isinstance(row.get("condition_id"), str)
+        and _observed_time_ms(row.get("condition_started_at")) is not None
+        and _observed_time_ms(row.get("condition_ended_at")) is not None
+    }
+    return (
+        sum(ended - started for started, ended in windows.values())
+        if windows else None
+    )
+
+
+def _exp5_model_label(
+    execution_rows: Sequence[Mapping[str, Any]],
+    member_id: str,
+) -> str:
+    labels = {
+        str(row["configured_model"])
+        for row in execution_rows
+        if isinstance(row.get("configured_model"), str)
+        and row.get("configured_model")
+    }
+    return next(iter(labels)) if len(labels) == 1 else member_id
+
+
+def _exp5_failure_taxonomy_rows(
+    bundles: Mapping[str, Mapping[str, Any]],
+) -> tuple[dict[str, Any], ...]:
+    grouped: dict[tuple[str, str, Any, str, str], dict[str, Any]] = {}
+    for condition_id in bundles:
+        bundle = bundles[condition_id]
+        condition = bundle["condition"]
+        for task in bundle.get("tasks", ()):
+            if (
+                not isinstance(task, Mapping)
+                or _status(task.get("root_status")) == "completed"
+            ):
+                continue
+            failure_kind = str(
+                task.get("failure_kind")
+                or task.get("error_kind")
+                or _status(task.get("root_status"))
+                or "unknown_failure"
+            )
+            failure_stage = str(
+                task.get("failure_stage") or "experiment_runtime"
+            )
+            key = (
+                str(condition.get("cohort_member_id") or ""),
+                str(condition.get("domain") or ""),
+                condition.get("topic_family"),
+                failure_stage,
+                failure_kind,
+            )
+            references = task.get("evidence_artifact_refs", ())
+            evidence_ref = (
+                _exp5_audit_ref(references[0])
+                if isinstance(references, Sequence)
+                and not isinstance(references, (str, bytes))
+                and references else None
+            )
+            row = grouped.setdefault(
+                key,
+                {
+                    "cohort_member_id": key[0],
+                    "domain": key[1],
+                    "topic_family": key[2],
+                    "failure_stage": failure_stage,
+                    "failure_kind": failure_kind,
+                    "count": 0,
+                    "evidence_ref": evidence_ref,
+                    "short_summary": (
+                        f"Observed {failure_kind} at {failure_stage}; "
+                        "see persisted evidence reference."
+                    ),
+                },
+            )
+            row["count"] += 1
+        del bundle
+    return tuple(grouped[key] for key in sorted(grouped, key=str))
+
+
+def _exp5_audit_ref(value: Any) -> dict[str, Any] | None:
+    if not isinstance(value, Mapping):
+        return None
+    fields = (
+        "artifact_id",
+        "path",
+        "uri",
+        "content_hash",
+        "schema_version",
+        "media_type",
+        "record_digest",
+        "digest",
+    )
+    result = {
+        field_name: value[field_name]
+        for field_name in fields
+        if value.get(field_name) is not None
+    }
+    if type(value.get("size_bytes")) is int:
+        result["byte_size"] = value["size_bytes"]
+    return result if isinstance(result.get("artifact_id"), str) else None
 
 def _exp5_v3_analysis_outputs(
     bundles: Mapping[str, Mapping[str, Any]],
 ) -> dict[str, str]:
     """仅在正式 v3 evidence 存在时生成冻结统计输出。"""
 
-    has_v3 = any(
-        bundle.get("condition", {}).get("experiment_id") == EXP5
-        and bundle.get("condition", {}).get("schema_version")
-        == "tokenshare.paper_condition.v3"
-        for bundle in bundles.values()
-    )
+    has_v3 = False
+    for condition_id in bundles:
+        bundle = bundles[condition_id]
+        condition = bundle.get("condition", {})
+        has_v3 = (
+            condition.get("experiment_id") == EXP5
+            and condition.get("schema_version")
+            == "tokenshare.paper_condition.v3"
+        )
+        del bundle
+        if has_v3:
+            break
     if not has_v3:
         return {}
     case_records = _exp5_v3_case_records(bundles)
@@ -3288,6 +4257,7 @@ def _exp5_v3_execution_record_text(
             and condition.get("schema_version") == "tokenshare.paper_condition.v3"
         ):
             records.extend(_strict_exp5_model_rows(bundle))
+        del bundle
     records.sort(
         key=lambda row: (
             int(row.get("repeat_id", -1)),
@@ -3358,66 +4328,104 @@ def _write_metrics_outputs(
     condition_rows: Sequence[Mapping[str, Any]],
     experiment_rows: Mapping[str, Sequence[Mapping[str, Any]]],
     run_bundles: Mapping[str, Mapping[str, Any]],
+    exp5_artifact_rows: Mapping[str, Any] | None = None,
+    require_complete_model_inventory: bool = True,
 ) -> list[dict[str, Any]]:
     exp2_root_rows = [
         row for row in experiment_rows[EXP2] if row.get("row_scope") == "root_run"
     ]
     exp2_views = _exp2_rate_limit_views(exp2_root_rows)
-    paths_and_content = {
-        "metrics/per_condition_summary.csv": _csv_text(condition_rows),
-        "metrics/paper_table_feasibility.csv": _csv_text(experiment_rows[EXP1]),
-        "metrics/paper_plot_scalability.csv": _csv_text(experiment_rows[EXP2]),
-        "metrics/paper_plot_scalability_all_runs.csv": _csv_text(
-            _annotated_rate_limit_view_rows(exp2_views["all_runs"])
-        ),
-        "metrics/paper_plot_scalability_rate_limit_excluded_sensitivity.csv": (
-            _csv_text(
-                _annotated_rate_limit_view_rows(
-                    exp2_views["rate_limit_excluded"]
-                )
-            )
-        ),
-        "metrics/paper_plot_scalability_views.json": json.dumps(
-            exp2_views,
-            ensure_ascii=False,
-            sort_keys=True,
-            indent=2,
-        )
-        + "\n",
-        "metrics/paper_plot_robustness.csv": _csv_text(experiment_rows[EXP3]),
-        "metrics/paper_table_ablation.csv": _csv_text(experiment_rows[EXP4]),
-        "metrics/paper_table_model_comparison.csv": _csv_text(
-            experiment_rows[EXP5]
-        ),
-        "metrics/paper_table_model_endpoint_comparison.csv": _csv_text(
-            experiment_rows[EXP5]
-        ),
-        "metrics/model_execution_records.jsonl": _model_record_text(run_bundles),
-        "metrics/failure_examples.json": json.dumps(
-            _failure_examples(run_bundles),
-            ensure_ascii=False,
-            sort_keys=True,
-            indent=2,
-        )
-        + "\n",
-        "metrics/formal_metrics.json": json.dumps(
-            metrics_body,
-            ensure_ascii=False,
-            sort_keys=True,
-            indent=2,
-        )
-        + "\n",
-    }
-    paths_and_content.update(_exp5_v3_analysis_outputs(run_bundles))
     refs: list[dict[str, Any]] = []
-    for relative_path, content in paths_and_content.items():
+
+    def publish(relative_path: str, chunks: Iterator[str | bytes]) -> None:
         path = root / relative_path
-        _write_text(path, content)
+        content_hash = _write_chunks_atomic(path, chunks)
         refs.append(
             {
                 "path": relative_path,
-                "content_hash": _hash_bytes(path.read_bytes()),
+                "content_hash": content_hash,
             }
+        )
+
+    publish(
+        "metrics/per_condition_summary.csv",
+        _iter_csv_chunks(condition_rows),
+    )
+    publish(
+        "metrics/paper_table_feasibility.csv",
+        _iter_csv_chunks(experiment_rows[EXP1]),
+    )
+    publish(
+        "metrics/paper_plot_scalability.csv",
+        _iter_csv_chunks(experiment_rows[EXP2]),
+    )
+    publish(
+        "metrics/paper_plot_scalability_all_runs.csv",
+        _iter_csv_chunks(
+            _annotated_rate_limit_view_rows(exp2_views["all_runs"])
+        ),
+    )
+    publish(
+        "metrics/paper_plot_scalability_rate_limit_excluded_sensitivity.csv",
+        _iter_csv_chunks(
+            _annotated_rate_limit_view_rows(
+                exp2_views["rate_limit_excluded"]
+            )
+        ),
+    )
+    publish(
+        "metrics/paper_plot_scalability_views.json",
+        _iter_json_chunks(exp2_views, indent=2, trailing_newline=True),
+    )
+    publish(
+        "metrics/paper_plot_robustness.csv",
+        _iter_csv_chunks(experiment_rows[EXP3]),
+    )
+    publish(
+        "metrics/paper_table_ablation.csv",
+        _iter_csv_chunks(experiment_rows[EXP4]),
+    )
+    publish(
+        "metrics/paper_table_model_comparison.csv",
+        _iter_csv_chunks(experiment_rows[EXP5]),
+    )
+    publish(
+        "metrics/paper_table_model_endpoint_comparison.csv",
+        _iter_csv_chunks(experiment_rows[EXP5]),
+    )
+    canonical_model_path = "model_execution_records.jsonl"
+    publish(
+        canonical_model_path,
+        _iter_model_record_chunks(
+            run_bundles,
+            require_complete_inventory=require_complete_model_inventory,
+            work_parent=root.parent,
+        ),
+    )
+    publish(
+        "metrics/model_execution_records.jsonl",
+        _iter_file_chunks(root / canonical_model_path),
+    )
+    publish(
+        "metrics/failure_examples.json",
+        _iter_json_chunks(
+            _failure_examples(run_bundles),
+            indent=2,
+            trailing_newline=True,
+        ),
+    )
+    publish(
+        "metrics/formal_metrics.json",
+        _iter_json_chunks(metrics_body, indent=2, trailing_newline=True),
+    )
+    if exp5_artifact_rows is not None:
+        publish(
+            "metrics/exp5_renderer_rows.json",
+            _iter_json_chunks(
+                exp5_artifact_rows,
+                indent=2,
+                trailing_newline=True,
+            ),
         )
     return refs
 
@@ -3497,27 +4505,229 @@ def _exp2_rate_limit_views(
     }
 
 
-def _model_record_text(bundles: Mapping[str, Mapping[str, Any]]) -> str:
-    records: list[dict[str, Any]] = []
-    for bundle in bundles.values():
-        condition = bundle["condition"]
-        if condition["experiment_id"] != EXP5:
-            continue
-        records.extend(_strict_exp5_model_rows(bundle))
+def _model_record_text(
+    bundles: Mapping[str, Mapping[str, Any]],
+    *,
+    require_complete_inventory: bool = True,
+) -> str:
+    """小 fixture 兼容入口；正式输出使用 chunk iterator，避免全量文本。"""
+
     return "".join(
-        json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n"
-        for record in records
+        chunk.decode("utf-8") if isinstance(chunk, bytes) else chunk
+        for chunk in _iter_model_record_chunks(
+            bundles,
+            require_complete_inventory=require_complete_inventory,
+        )
     )
+
+
+def _iter_model_record_chunks(
+    bundles: Mapping[str, Mapping[str, Any]],
+    *,
+    require_complete_inventory: bool = True,
+    work_parent: Path | None = None,
+) -> Iterator[str]:
+    """从 canonical artifact 逐条校验并输出 v2 record JSONL。"""
+
+    directory_argument = str(work_parent) if work_parent is not None else None
+    with TemporaryDirectory(
+        prefix=".tokenshare-model-inventory-",
+        dir=directory_argument,
+    ) as temporary_directory:
+        with closing(
+            sqlite3.connect(Path(temporary_directory) / "seen.sqlite3")
+        ) as connection:
+            connection.executescript(
+                """
+                PRAGMA journal_mode = OFF;
+                PRAGMA synchronous = OFF;
+                PRAGMA temp_store = FILE;
+                CREATE TABLE seen_artifacts (
+                    artifact_id TEXT PRIMARY KEY,
+                    content_hash TEXT NOT NULL,
+                    CHECK (content_hash != '')
+                );
+                CREATE TABLE seen_attempts (
+                    identity_json TEXT PRIMARY KEY
+                );
+                """
+            )
+            for condition_id in bundles:
+                bundle = bundles[condition_id]
+                condition = bundle.get("condition")
+                if not isinstance(condition, Mapping):
+                    raise ValueError(
+                        "model execution condition identity is invalid"
+                    )
+                artifacts = bundle.get("artifacts", ())
+                if not isinstance(artifacts, Sequence) or isinstance(
+                    artifacts,
+                    (str, bytes),
+                ):
+                    raise ValueError(
+                        "model execution artifact inventory must be a sequence"
+                    )
+                for attempt in bundle.get("attempts", ()):
+                    if not isinstance(attempt, Mapping):
+                        raise ValueError(
+                            "model execution attempt inventory is invalid"
+                        )
+                    model_ref = attempt.get("model_execution_record_ref")
+                    if model_ref is None:
+                        if (
+                            require_complete_inventory
+                            and _formal_attempt_requires_model_record(attempt)
+                        ):
+                            raise ValueError(
+                                "missing canonical model execution record ref"
+                            )
+                        continue
+                    if not isinstance(model_ref, Mapping):
+                        raise ValueError(
+                            "model execution record ref must be an object"
+                        )
+                    artifact_id = model_ref.get("artifact_id")
+                    content_hash = model_ref.get("content_hash")
+                    suite_root_value = bundle.get("suite_root")
+                    if not isinstance(suite_root_value, (str, Path)):
+                        raise ValueError(
+                            "model execution suite root is invalid"
+                        )
+                    suite_root = Path(suite_root_value)
+                    if not isinstance(artifact_id, str) or not isinstance(
+                        content_hash,
+                        str,
+                    ):
+                        raise ValueError(
+                            "model execution record ref is incomplete"
+                        )
+                    try:
+                        connection.execute(
+                            "INSERT INTO seen_artifacts VALUES (?, ?)",
+                            (artifact_id, content_hash),
+                        )
+                    except sqlite3.IntegrityError as exc:
+                        existing = connection.execute(
+                            """
+                            SELECT content_hash
+                            FROM seen_artifacts
+                            WHERE artifact_id = ?
+                            """,
+                            (artifact_id,),
+                        ).fetchone()
+                        if existing is not None and existing[0] != content_hash:
+                            raise ValueError(
+                                "model execution artifact id has conflicting "
+                                "content hash"
+                            ) from exc
+                        raise ValueError(
+                            "duplicate model execution record ref"
+                        ) from exc
+                    match: Mapping[str, Any] | None = None
+                    match_count = 0
+                    for artifact in artifacts:
+                        if (
+                            isinstance(artifact, Mapping)
+                            and artifact.get("artifact_id") == artifact_id
+                            and artifact.get("content_hash") == content_hash
+                        ):
+                            match = artifact
+                            match_count += 1
+                    if (
+                        match_count != 1
+                        or match is None
+                        or not isinstance(match.get("path"), str)
+                    ):
+                        raise ValueError(
+                            "model execution record ref is unresolved"
+                        )
+                    path = suite_root / str(match["path"])
+                    if (
+                        not path.is_file()
+                        or _hash_file(path) != content_hash
+                    ):
+                        raise ValueError(
+                            "model execution record artifact verification failed"
+                        )
+                    record = _read_json(path)
+                    expected_identity = {
+                        "condition_id": condition.get("condition_id"),
+                        "repeat_id": attempt.get("repeat_id"),
+                        "run_id": attempt.get("run_id"),
+                        "task_id": attempt.get(
+                            "protocol_task_id",
+                            attempt.get("task_id"),
+                        ),
+                        "unit_id": attempt.get("unit_id"),
+                        "attempt_id": attempt.get("attempt_id"),
+                    }
+                    if record.get("schema_version") != (
+                        "tokenshare.paper_model_execution_record.v2"
+                    ) or any(
+                        expected is not None
+                        and record.get(field_name) != expected
+                        for field_name, expected in expected_identity.items()
+                    ):
+                        raise ValueError(
+                            "model execution record identity is invalid"
+                        )
+                    identity_json = json.dumps(
+                        list(expected_identity.values()),
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                    )
+                    try:
+                        connection.execute(
+                            "INSERT INTO seen_attempts VALUES (?)",
+                            (identity_json,),
+                        )
+                    except sqlite3.IntegrityError as exc:
+                        raise ValueError(
+                            "duplicate model execution attempt identity"
+                        ) from exc
+                    yield from _iter_json_chunks(record, compact=False)
+                    yield "\n"
+                del bundle
+
+
+def _formal_attempt_requires_model_record(attempt: Mapping[str, Any]) -> bool:
+    """判定正式 attempt 是否必须绑定 canonical v2 model record。"""
+
+    provider_attempt_count = attempt.get("provider_attempt_count")
+    if (
+        isinstance(provider_attempt_count, int)
+        and not isinstance(provider_attempt_count, bool)
+        and provider_attempt_count > 0
+    ):
+        return True
+    ai_identity_present = (
+        attempt.get("executor_type") == "ai_api"
+        or any(
+            isinstance(attempt.get(field_name), str) and attempt.get(field_name)
+            for field_name in ("provider", "model", "entry_id")
+        )
+    )
+    if not ai_identity_present:
+        return False
+    explicit_pre_provider_zero_call = (
+        provider_attempt_count == 0
+        and attempt.get("schema_version") == "tokenshare.paper_attempt_result.v2"
+        and _status(attempt.get("attempt_status")) == "executor_error"
+    )
+    return not explicit_pre_provider_zero_call
 
 
 def _failure_examples(bundles: Mapping[str, Mapping[str, Any]]) -> list[dict[str, Any]]:
     examples: list[dict[str, Any]] = []
-    for bundle in bundles.values():
+    for condition_id in bundles:
+        bundle = bundles[condition_id]
         for task in bundle["tasks"]:
             if _status(task.get("root_status")) != "completed":
                 examples.append(dict(task))
                 if len(examples) == 20:
+                    del bundle
                     return examples
+        del bundle
     return examples
 
 
@@ -3972,10 +5182,24 @@ def _records_for_task(
     """按持久化 task_id 隔离单个 root；单 root 兼容无上下文字段的旧夹具。"""
 
     task_id = task.get("task_id")
+    protocol_event_ledger = task.get("protocol_event_ledger")
+    protocol_event_hashes = (
+        set(protocol_event_ledger.get("event_hashes", ()))
+        if isinstance(protocol_event_ledger, Mapping)
+        and isinstance(protocol_event_ledger.get("event_hashes"), list)
+        else set()
+    )
     matched = [
         record
         for record in records
-        if isinstance(task_id, str) and record.get("task_id") == task_id
+        if (
+            isinstance(task_id, str)
+            and record.get("task_id") == task_id
+        )
+        or (
+            isinstance(record.get("event_hash"), str)
+            and record.get("event_hash") in protocol_event_hashes
+        )
     ]
     if matched or len(all_tasks) != 1:
         return matched
@@ -4010,6 +5234,26 @@ def _strict_exp5_identity_matches(
         and record.get("configured_model") == condition.get("provider_model_id")
         and record.get("requested_model") == condition.get("provider_model_id")
         and record.get("resolved_model") == condition.get("provider_model_id")
+    )
+
+
+def _exp5_identity_is_auditable(record: Mapping[str, Any]) -> bool:
+    """区分真实 provider 无响应与实际 model identity mismatch。"""
+
+    if record.get("paper_eligible") is not True:
+        return False
+    if record.get("identity_status") == "matched":
+        return True
+    provider_errors = record.get("provider_errors")
+    return (
+        record.get("identity_status") == "not_observed"
+        and record.get("response_model_status") == "unavailable"
+        and record.get("resolved_model") is None
+        and record.get("raw_output_ref") is None
+        and record.get("attempt_status") == "provider_error"
+        and isinstance(provider_errors, Sequence)
+        and not isinstance(provider_errors, (str, bytes))
+        and bool(provider_errors)
     )
 
 
@@ -4066,9 +5310,21 @@ def _with_repeat_aggregates(
                 int(row["completed_root_count"]) for row in ordered
             ),
             "task_count": sum(int(row["task_count"]) for row in ordered),
-            "total_tokens": sum(int(row["total_tokens"]) for row in ordered),
-            "total_cost_estimate": sum(
-                float(row["total_cost_estimate"]) for row in ordered
+            "total_tokens": _sum_complete_numeric_field(ordered, "total_tokens"),
+            "total_cost_estimate": _sum_complete_numeric_field(
+                ordered, "total_cost_estimate"
+            ),
+            "token_usage_sample_size": sum(
+                int(row.get("token_usage_sample_size", 0)) for row in ordered
+            ),
+            "token_usage_missing_count": sum(
+                int(row.get("token_usage_missing_count", 0)) for row in ordered
+            ),
+            "cost_estimate_sample_size": sum(
+                int(row.get("cost_estimate_sample_size", 0)) for row in ordered
+            ),
+            "cost_estimate_missing_count": sum(
+                int(row.get("cost_estimate_missing_count", 0)) for row in ordered
             ),
             "paper_eligible": all(
                 row.get("paper_eligible") is True for row in ordered
@@ -4372,11 +5628,10 @@ def _repeat_group_key(
     )
 
 
-def _run_roots(root: Path) -> list[Path]:
+def _iter_run_roots(root: Path) -> Iterator[Path]:
     experiments_root = root / "experiments"
     if not experiments_root.is_dir():
-        return []
-    result: list[Path] = []
+        return
     for experiment_root in experiments_root.iterdir():
         runs_root = experiment_root / "runs"
         if not experiment_root.is_dir() or not runs_root.is_dir():
@@ -4384,13 +5639,17 @@ def _run_roots(root: Path) -> list[Path]:
         for condition_root in runs_root.iterdir():
             if not condition_root.is_dir():
                 continue
-            result.extend(
-                repeat_root
-                for repeat_root in condition_root.iterdir()
-                if repeat_root.is_dir()
-                and (repeat_root / "CURRENT.json").is_file()
-            )
-    return sorted(result)
+            for repeat_root in condition_root.iterdir():
+                if repeat_root.is_dir() and (
+                    repeat_root / "CURRENT.json"
+                ).is_file():
+                    yield repeat_root
+
+
+def _run_roots(root: Path) -> list[Path]:
+    """保留内部兼容入口；正式复算改由 SQLite 对 iterator 做磁盘排序。"""
+
+    return sorted(_iter_run_roots(root))
 
 
 def _current_generation(run_root: Path) -> Path:
@@ -4401,6 +5660,17 @@ def _current_generation(run_root: Path) -> Path:
     generation = run_root / ".generations" / generation_id
     if not generation.is_dir():
         raise ValueError("CURRENT generation is missing")
+    manifest_path = generation / "generation_manifest.json"
+    if manifest_path.is_file():
+        manifest = _read_json(manifest_path)
+        schema = manifest.get("schema_version")
+        if (
+            schema == "tokenshare.paper_checkpoint_generation.v3"
+            and manifest.get("generation_kind") != "snapshot"
+        ):
+            raise ValueError(
+                "terminal formal metrics require a v3 snapshot generation"
+            )
     return generation
 
 
@@ -4485,6 +5755,14 @@ def _number(value: Any) -> int | float:
     return value if isinstance(value, (int, float)) and not isinstance(value, bool) else 0
 
 
+def _is_number(value: Any) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def _optional_number(value: Any) -> int | float | None:
+    return value if _is_number(value) else None
+
+
 def _status(value: Any) -> str:
     return str(getattr(value, "value", value or "unknown"))
 
@@ -4495,8 +5773,18 @@ def _provider_attempt_records(
     return tuple(
         attempt
         for attempt in attempts
-        if _status(attempt.get("attempt_status")) != "executor_error"
-        and attempt.get("record_scope") != "experiment"
+        if attempt.get("record_scope") != "experiment"
+        and (
+            (
+                isinstance(attempt.get("provider_attempt_count"), int)
+                and not isinstance(attempt.get("provider_attempt_count"), bool)
+                and int(attempt["provider_attempt_count"]) > 0
+            )
+            or (
+                attempt.get("provider_attempt_count") is None
+                and _status(attempt.get("attempt_status")) != "executor_error"
+            )
+        )
     )
 
 
@@ -4505,10 +5793,19 @@ def _provider_attempt_count(attempts: Sequence[Mapping[str, Any]]) -> int:
 
 
 def _csv_text(rows: Sequence[Mapping[str, Any]]) -> str:
+    return "".join(_iter_csv_chunks(rows))
+
+
+def _iter_csv_chunks(
+    rows: Sequence[Mapping[str, Any]],
+) -> Iterator[str]:
     fields = sorted({key for row in rows for key in row}) or ["no_rows"]
     handle = io.StringIO(newline="")
     writer = csv.DictWriter(handle, fieldnames=fields, lineterminator="\n")
     writer.writeheader()
+    yield handle.getvalue()
+    handle.seek(0)
+    handle.truncate(0)
     for row in rows:
         writer.writerow(
             {
@@ -4520,48 +5817,130 @@ def _csv_text(rows: Sequence[Mapping[str, Any]]) -> str:
                 for field, value in row.items()
             }
         )
-    return handle.getvalue()
+        yield handle.getvalue()
+        handle.seek(0)
+        handle.truncate(0)
 
 
 def _read_json(path: Path) -> dict[str, Any]:
     if not path.is_file():
         raise ValueError(f"required formal evidence is missing: {path.name}")
-    body = json.loads(path.read_text(encoding="utf-8"))
+    with path.open("r", encoding="utf-8") as handle:
+        body = json.load(handle)
     if not isinstance(body, dict):
         raise ValueError(f"formal evidence must be an object: {path.name}")
     return body
 
 
 def _read_jsonl(path: Path) -> list[dict[str, Any]]:
+    return list(_iter_jsonl(path))
+
+
+def _iter_jsonl(path: Path) -> Iterator[dict[str, Any]]:
     if not path.is_file():
         raise ValueError(f"required formal evidence is missing: {path.name}")
-    records: list[dict[str, Any]] = []
-    for line in path.read_text(encoding="utf-8").splitlines():
-        if not line.strip():
-            continue
-        body = json.loads(line)
-        if not isinstance(body, dict):
-            raise ValueError(f"formal JSONL record must be an object: {path.name}")
-        records.append(body)
-    return records
+    with path.open("r", encoding="utf-8") as handle:
+        for line in handle:
+            if not line.strip():
+                continue
+            body = json.loads(line)
+            if not isinstance(body, dict):
+                raise ValueError(
+                    f"formal JSONL record must be an object: {path.name}"
+                )
+            yield body
+
+
+def _load_run_bundle(
+    *,
+    suite_root: Path,
+    generation: Path,
+    condition: Mapping[str, Any],
+) -> dict[str, Any]:
+    bundle = {
+        "condition": dict(condition),
+        "suite_root": suite_root,
+        "tasks": _read_jsonl(generation / "per_task_results.jsonl"),
+        "attempts": _read_jsonl(generation / "per_attempt_results.jsonl"),
+        "faults": _read_jsonl(generation / "fault_injections.jsonl"),
+        "events": _read_jsonl(generation / "events" / "event_log.jsonl"),
+        "artifacts": (
+            _read_jsonl(generation / "artifacts" / "artifact_index.jsonl")
+            if (generation / "artifacts" / "artifact_index.jsonl").is_file()
+            else []
+        ),
+    }
+    if not bundle["tasks"] or not bundle["attempts"] or not bundle["events"]:
+        raise ValueError(
+            f"incomplete formal evidence: {condition.get('condition_id')}"
+        )
+    return bundle
 
 
 def _write_text(path: Path, content: str) -> None:
+    _write_chunks_atomic(path, iter((content,)))
+
+
+def _write_chunks_atomic(
+    path: Path,
+    chunks: Iterator[str | bytes],
+) -> str:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(path.name + ".tmp")
-    temporary.write_text(content, encoding="utf-8")
-    temporary.replace(path)
+    digest = hashlib.sha256()
+    try:
+        with temporary.open("wb") as handle:
+            for chunk in chunks:
+                encoded = chunk.encode("utf-8") if isinstance(chunk, str) else chunk
+                handle.write(encoded)
+                digest.update(encoded)
+        temporary.replace(path)
+    except BaseException:
+        temporary.unlink(missing_ok=True)
+        raise
+    return "sha256:" + digest.hexdigest()
+
+
+def _iter_json_chunks(
+    value: Any,
+    *,
+    indent: int | None = None,
+    trailing_newline: bool = False,
+    compact: bool = True,
+) -> Iterator[str]:
+    encoder = json.JSONEncoder(
+        ensure_ascii=False,
+        sort_keys=True,
+        indent=indent,
+        separators=(",", ":") if indent is None and compact else None,
+    )
+    yield from encoder.iterencode(value)
+    if trailing_newline:
+        yield "\n"
+
+
+def _iter_file_chunks(
+    path: Path,
+    *,
+    chunk_size: int = 1024 * 1024,
+) -> Iterator[bytes]:
+    with path.open("rb") as handle:
+        while chunk := handle.read(chunk_size):
+            yield chunk
+
+
+def _hash_file(path: Path, *, chunk_size: int = 1024 * 1024) -> str:
+    digest = hashlib.sha256()
+    for chunk in _iter_file_chunks(path, chunk_size=chunk_size):
+        digest.update(chunk)
+    return "sha256:" + digest.hexdigest()
 
 
 def _digest(value: Any) -> str:
-    return _hash_bytes(
-        json.dumps(
-            value,
-            ensure_ascii=False,
-            sort_keys=True,
-            separators=(",", ":"),
-        ).encode("utf-8")
-    )
+    digest = hashlib.sha256()
+    for chunk in _iter_json_chunks(value):
+        digest.update(chunk.encode("utf-8"))
+    return "sha256:" + digest.hexdigest()
 
 
 def _hash_bytes(content: bytes) -> str:

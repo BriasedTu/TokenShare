@@ -77,6 +77,7 @@ class PaperFailureStage(str, Enum):
 class PaperFailureKind(str, Enum):
     MODEL_IDENTITY_MISMATCH = "model_identity_mismatch"
     PROVIDER_ERROR = "provider_error"
+    EXECUTOR_ERROR = "executor_error"
     RATE_LIMITED = "rate_limited"
     PARSE_FAILURE = "parse_failure"
     VERIFIER_REJECTED = "verifier_rejected"
@@ -405,14 +406,42 @@ class PaperTaskResult:
     attempt_count: int
     provider_attempt_count: int
     wall_clock_ms: int
-    total_tokens: int
-    cost_estimate: float
+    total_tokens: int | None
+    cost_estimate: float | None
     event_refs: list[JsonObject] | tuple[JsonObject, ...]
     artifact_refs: list[JsonObject] | tuple[JsonObject, ...]
     paper_eligible: bool
     cost_estimate_currency: str | None = None
     cost_estimate_status: str | None = None
     schema_version: str = "tokenshare.paper_task_result.v1"
+
+    def __post_init__(self) -> None:
+        if self.schema_version == "tokenshare.paper_task_result.v1":
+            if type(self.total_tokens) is not int or self.total_tokens < 0:
+                raise ValueError("paper task result v1 requires numeric total_tokens")
+            if (
+                isinstance(self.cost_estimate, bool)
+                or not isinstance(self.cost_estimate, (int, float))
+                or float(self.cost_estimate) < 0.0
+            ):
+                raise ValueError("paper task result v1 requires numeric cost_estimate")
+            return
+        if self.schema_version != "tokenshare.paper_task_result.v2":
+            raise ValueError("unsupported paper task result schema")
+        if self.cost_estimate_status not in {"usage_missing", "usage_invalid"}:
+            raise ValueError("paper task result v2 requires missing usage status")
+        if self.total_tokens is not None and (
+            type(self.total_tokens) is not int or self.total_tokens < 0
+        ):
+            raise ValueError("paper task result v2 has invalid total_tokens")
+        if self.cost_estimate is not None and (
+            isinstance(self.cost_estimate, bool)
+            or not isinstance(self.cost_estimate, (int, float))
+            or float(self.cost_estimate) < 0.0
+        ):
+            raise ValueError("paper task result v2 has invalid cost_estimate")
+        if self.total_tokens is not None and self.cost_estimate is not None:
+            raise ValueError("paper task result v2 requires a nullable usage field")
 
     def to_dict(self) -> JsonObject:
         body = {
@@ -448,7 +477,11 @@ class PaperTaskResult:
             "provider_attempt_count": self.provider_attempt_count,
             "wall_clock_ms": self.wall_clock_ms,
             "total_tokens": self.total_tokens,
-            "cost_estimate": float(self.cost_estimate),
+            "cost_estimate": (
+                float(self.cost_estimate)
+                if self.cost_estimate is not None
+                else None
+            ),
             "event_refs": _json_value(list(self.event_refs)),
             "artifact_refs": _json_value(list(self.artifact_refs)),
             "paper_eligible": self.paper_eligible,
@@ -482,11 +515,11 @@ class PaperAttemptResult:
     usage_ref: JsonObject | None
     started_at: str
     ended_at: str
-    latency_ms: int
-    prompt_tokens: int
-    completion_tokens: int
-    total_tokens: int
-    cost_estimate: float
+    latency_ms: int | None
+    prompt_tokens: int | None
+    completion_tokens: int | None
+    total_tokens: int | None
+    cost_estimate: float | None
     error_kind: str | None
     fault_injection_ref: JsonObject | None
     paper_eligible: bool
@@ -538,12 +571,12 @@ class PaperAttemptResult:
                 )
             if any(value is not None for value in (self.provider, self.model, self.entry_id)):
                 raise ValueError("executor_error attempt cannot claim provider identity")
-            if self.executor_id != "executor_factorization_runtime":
-                raise ValueError(
-                    "executor_error attempt requires executor_factorization_runtime"
-                )
-            if self.executor_type != "deterministic_local":
-                raise ValueError("executor_error attempt requires deterministic_local")
+            executor_source = (self.executor_id, self.executor_type)
+            if executor_source not in {
+                ("executor_factorization_runtime", "deterministic_local"),
+                ("executor_ai_api", "ai_api_pre_provider"),
+            }:
+                raise ValueError("executor_error attempt source is unsupported")
             _require_non_empty("error_kind", self.error_kind)
             if not isinstance(self.request_ref, Mapping) or not self.request_ref:
                 raise ValueError("executor_error attempt requires request_ref")
@@ -553,18 +586,82 @@ class PaperAttemptResult:
                     self.raw_output_ref,
                     self.parsed_output_ref,
                     self.parse_failure_ref,
-                    self.provenance_ref,
                     self.usage_ref,
                     self.fault_injection_ref,
                     self.model_execution_record_ref,
                 )
             ):
                 raise ValueError("executor_error attempt cannot claim provider artifacts")
+            if executor_source == (
+                "executor_factorization_runtime",
+                "deterministic_local",
+            ):
+                if self.provenance_ref is not None:
+                    raise ValueError(
+                        "deterministic executor_error cannot claim AI provenance"
+                    )
+            elif not isinstance(self.provenance_ref, Mapping) or not self.provenance_ref:
+                raise ValueError(
+                    "AI pre-provider executor_error requires provenance_ref"
+                )
             if self.paper_eligible is not False:
                 raise ValueError("executor_error attempt must be paper-ineligible")
             return
+        if self.schema_version == "tokenshare.paper_attempt_result.v3":
+            for field_name in (
+                "latency_ms",
+                "prompt_tokens",
+                "completion_tokens",
+                "total_tokens",
+            ):
+                value = getattr(self, field_name)
+                if value is not None and (type(value) is not int or value < 0):
+                    raise ValueError(
+                        f"nullable provider attempt has invalid {field_name}"
+                    )
+            if self.cost_estimate is not None and (
+                isinstance(self.cost_estimate, bool)
+                or not isinstance(self.cost_estimate, (int, float))
+                or float(self.cost_estimate) < 0.0
+            ):
+                raise ValueError(
+                    "nullable provider attempt has invalid cost_estimate"
+                )
+            usage_missing = any(
+                value is None
+                for value in (
+                    self.prompt_tokens,
+                    self.completion_tokens,
+                    self.total_tokens,
+                    self.cost_estimate,
+                )
+            )
+            latency_missing = self.latency_ms is None
+            if not usage_missing and not latency_missing:
+                raise ValueError(
+                    "nullable provider attempt requires a missing observation"
+                )
+            if usage_missing and self.cost_estimate_status not in {
+                "usage_missing",
+                "usage_invalid",
+            }:
+                raise ValueError(
+                    "nullable provider attempt requires explicit missing usage status"
+                )
+            if (
+                not usage_missing
+                and (
+                    not isinstance(self.cost_estimate_status, str)
+                    or not self.cost_estimate_status
+                    or self.cost_estimate_status in {"usage_missing", "usage_invalid"}
+                )
+            ):
+                raise ValueError(
+                    "latency-only missing attempt requires observed usage status"
+                )
+            return
         if self.schema_version != "tokenshare.paper_attempt_result.v1":
-            raise ValueError("provider-dispatched attempt requires v1 schema")
+            raise ValueError("provider-dispatched attempt requires v1 or v3 schema")
 
     def to_dict(self) -> JsonObject:
         body = {
@@ -597,7 +694,11 @@ class PaperAttemptResult:
             "prompt_tokens": self.prompt_tokens,
             "completion_tokens": self.completion_tokens,
             "total_tokens": self.total_tokens,
-            "cost_estimate": float(self.cost_estimate),
+            "cost_estimate": (
+                float(self.cost_estimate)
+                if self.cost_estimate is not None
+                else None
+            ),
             "error_kind": self.error_kind,
             "fault_injection_ref": _json_value(self.fault_injection_ref),
             "paper_eligible": self.paper_eligible,
@@ -1052,6 +1153,63 @@ def _attempt_ineligibility_reasons(
             allowed_types={"ExecutionRequest"},
             allowed_source_kinds=None,
         )
+        return reasons
+    if (
+        attempt.get("attempt_status") == PaperAttemptStatus.PROVIDER_ERROR.value
+        and attempt.get("schema_version")
+        in {
+            "tokenshare.paper_attempt_result.v1",
+            "tokenshare.paper_attempt_result.v3",
+        }
+        and attempt.get("cost_estimate_status")
+        in {"usage_missing", "usage_invalid"}
+    ):
+        for field_name in ("provider", "model", "entry_id"):
+            if not isinstance(attempt.get(field_name), str) or not attempt.get(
+                field_name
+            ):
+                reasons.append(f"attempt:{attempt_id}:missing_{field_name}")
+        if not _non_negative_int(attempt.get("provider_attempt_index")):
+            reasons.append(f"attempt:{attempt_id}:missing_provider_attempt_index")
+        if not _positive_int(attempt.get("provider_attempt_count")):
+            reasons.append(f"attempt:{attempt_id}:missing_provider_attempt_count")
+        if attempt.get("latency_ms") is not None and not _non_negative_int(
+            attempt.get("latency_ms")
+        ):
+            reasons.append(f"attempt:{attempt_id}:invalid_latency_ms")
+        for field_name in ("started_at", "ended_at"):
+            if not isinstance(attempt.get(field_name), str) or not attempt.get(
+                field_name
+            ):
+                reasons.append(f"attempt:{attempt_id}:missing_{field_name}")
+        for field_name, allowed_types, allowed_source_kinds in (
+            ("request_ref", {"ExecutionRequest", "PromptPackage"}, None),
+            (
+                "provenance_ref",
+                {"AIProviderCallProvenance"},
+                {"ai_api_executor"},
+            ),
+            ("usage_ref", {"AIUsageSummary", "UsageSummary"}, None),
+            (
+                "model_execution_record_ref",
+                {"PaperModelExecutionRecord"},
+                {"ai_api_executor"},
+            ),
+        ):
+            _check_required_artifact_ref(
+                attempt,
+                field_name,
+                attempt_id,
+                reasons,
+                artifact_inventory=artifact_inventory,
+                scanned_artifact_ids=scanned_artifact_ids,
+                allowed_types=allowed_types,
+                allowed_source_kinds=allowed_source_kinds,
+            )
+        if attempt.get("raw_output_ref") is not None:
+            reasons.append(f"attempt:{attempt_id}:provider_error_claims_raw_output")
+        if attempt.get("parsed_output_ref") is not None:
+            reasons.append(f"attempt:{attempt_id}:provider_error_claims_parsed_output")
         return reasons
     if attempt.get("attempt_status") == PaperAttemptStatus.MODEL_IDENTITY_MISMATCH.value:
         reasons.append(f"attempt:{attempt_id}:model_identity_mismatch")

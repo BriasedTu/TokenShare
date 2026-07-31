@@ -1,0 +1,357 @@
+{
+  "file_count": 70,
+  "files": [
+    {
+      "content_hash": "sha256:6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d",
+      "path": ".formal-evidence.lock",
+      "size_bytes": 1
+    },
+    {
+      "content_hash": "sha256:1633228d05577d933f9dd44d00e49cb8c12b3c29126ec4679505b7fdc616174a",
+      "path": "audit/secret_scan_report.json",
+      "size_bytes": 220
+    },
+    {
+      "content_hash": "sha256:69e8910c77898d5256c6fd88e91c6df89ec424746125aafa0b7aff197c8505a2",
+      "path": "audit/smoke_eligibility_report.json",
+      "size_bytes": 348
+    },
+    {
+      "content_hash": "sha256:d7f262e918ca71aa7f9af628b6222dfc5fcce6d6f632cc7484aebffa8f628219",
+      "path": "condition_results.jsonl",
+      "size_bytes": 5094
+    },
+    {
+      "content_hash": "sha256:64fc503635398d18dc6babae1a6afd10e26e388f49c1f4728def7dd432a9eb95",
+      "path": "conditions.jsonl",
+      "size_bytes": 2467
+    },
+    {
+      "content_hash": "sha256:c25a4845dc8cf92c94c7657cdaa6b963b1afc11b37b91e3f2e5b16a91f28eada",
+      "path": "exp3_real_ai_fault_recovery/experiment_manifest.json",
+      "size_bytes": 607
+    },
+    {
+      "content_hash": "sha256:f7241ca04d3f21a5801dce83e751f8971bcc5cd59290aa49fbf20168b4eb7253",
+      "path": "exp3_real_ai_fault_recovery/runs/exp3_worker_death_factorization__failed__dead1__p50__rep0/0/.generations/36f0457be143451c81ed7d5395df8784/artifacts/artifact_index.jsonl",
+      "size_bytes": 1991
+    },
+    {
+      "content_hash": "sha256:d29655c87b3540425b53e597c934f4e8723b1e2d355f64ba33cc59e958ccb5bd",
+      "path": "exp3_real_ai_fault_recovery/runs/exp3_worker_death_factorization__failed__dead1__p50__rep0/0/.generations/36f0457be143451c81ed7d5395df8784/events/event_log.jsonl",
+      "size_bytes": 401
+    },
+    {
+      "content_hash": "sha256:38d68a0b0faf9cc076a6718eb1ea7a90c9c2e4563c31032f53a91846b56d2922",
+      "path": "exp3_real_ai_fault_recovery/runs/exp3_worker_death_factorization__failed__dead1__p50__rep0/0/.generations/36f0457be143451c81ed7d5395df8784/fault_injections.jsonl",
+      "size_bytes": 590
+    },
+    {
+      "content_hash": "sha256:b4e9fa9406b37d7e8913d18deffb266e33ac91d971e990cb17516e3c62680e95",
+      "path": "exp3_real_ai_fault_recovery/runs/exp3_worker_death_factorization__failed__dead1__p50__rep0/0/.generations/36f0457be143451c81ed7d5395df8784/generation_manifest.json",
+      "size_bytes": 2084
+    },
+    {
+      "content_hash": "sha256:9ed8dd25e451e18f9907ef126f6092e4dc3d2c7ca2da2b7e80fe9dc49852a38e",
+      "path": "exp3_real_ai_fault_recovery/runs/exp3_worker_death_factorization__failed__dead1__p50__rep0/0/.generations/36f0457be143451c81ed7d5395df8784/per_attempt_results.jsonl",
+      "size_bytes": 2456
+    },
+    {
+      "content_hash": "sha256:b1f469cf11d700d2a90d040fbedd96d06d43e0662f4d865ac2b7043ef807eb41",
+      "path": "exp3_real_ai_fault_recovery/runs/exp3_worker_death_factorization__failed__dead1__p50__rep0/0/.generations/36f0457be143451c81ed7d5395df8784/per_task_results.jsonl",
+      "size_bytes": 4906
+    },
+    {
+      "content_hash": "sha256:0bb9aaf12703f32d89fd2f64c906c86bed6fa986d8dd3cb4a7fa3ff35dfc5589",
+      "path": "exp3_real_ai_fault_recovery/runs/exp3_worker_death_factorization__failed__dead1__p50__rep0/0/.generations/36f0457be143451c81ed7d5395df8784/run_manifest.json",
+      "size_bytes": 321
+    },
+    {
+      "content_hash": "sha256:0e83af8c5c01f4afeff04d3457f594a3340832220eca6cdcdbca46ed5eaf5c6c",
+      "path": "exp3_real_ai_fault_recovery/runs/exp3_worker_death_factorization__failed__dead1__p50__rep0/0/artifacts/case-1/0e83af8c5c01f4afeff04d3457f594a3340832220eca6cdcdbca46ed5eaf5c6c-raw-output.txt-raw-output.txt",
+      "size_bytes": 16
+    },
+    {
+      "content_hash": "sha256:cff54f7b7872f55fa00bee4649094e51e6b5ebb7eab37cfdc799afb652175254",
+      "path": "exp3_real_ai_fault_recovery/runs/exp3_worker_death_factorization__failed__dead1__p50__rep0/0/artifacts/case-1/cff54f7b7872f55fa00bee4649094e51e6b5ebb7eab37cfdc799afb652175254-request.json-request.json",
+      "size_bytes": 18
+    },
+    {
+      "content_hash": "sha256:98ceba1d90ced5311a0411341845942715844fae8318a988a0dee05bf4598b2d",
+      "path": "exp3_real_ai_fault_recovery/runs/exp3_worker_death_factorization__failed__dead1__p50__rep0/0/condition_manifest.json",
+      "size_bytes": 3350
+    },
+    {
+      "content_hash": "sha256:e58841244323b68e5f47e3056319c35d9490711c6525ed0db6f114184bce0812",
+      "path": "exp3_real_ai_fault_recovery/runs/exp3_worker_death_factorization__failed__dead1__p50__rep0/0/CURRENT.json",
+      "size_bytes": 214
+    },
+    {
+      "content_hash": "sha256:13af95b9ba7252f25c0960a5f45247d2975e00b984ac6f8ece47465a7e5d4810",
+      "path": "exp4_real_ai_protocol_ablation/experiment_manifest.json",
+      "size_bytes": 586
+    },
+    {
+      "content_hash": "sha256:bac522bad8ce72359334ba2df487830da3f44601b10bdf8e73537f2cbdb61e8c",
+      "path": "exp4_real_ai_protocol_ablation/runs/condition-exp4-after-worker-death/0/.generations/40b23544c70b4018be343925ac0f7939/artifacts/artifact_index.jsonl",
+      "size_bytes": 5105
+    },
+    {
+      "content_hash": "sha256:1766b24e244558c6628266b79828c00acb24eb820cda923b606cad2238ffc1ee",
+      "path": "exp4_real_ai_protocol_ablation/runs/condition-exp4-after-worker-death/0/.generations/40b23544c70b4018be343925ac0f7939/events/event_log.jsonl",
+      "size_bytes": 3258
+    },
+    {
+      "content_hash": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "path": "exp4_real_ai_protocol_ablation/runs/condition-exp4-after-worker-death/0/.generations/40b23544c70b4018be343925ac0f7939/fault_injections.jsonl",
+      "size_bytes": 0
+    },
+    {
+      "content_hash": "sha256:74c05e932310e465881195ea3f9adaab96ea38a0730a687368d52d8c8876560a",
+      "path": "exp4_real_ai_protocol_ablation/runs/condition-exp4-after-worker-death/0/.generations/40b23544c70b4018be343925ac0f7939/generation_manifest.json",
+      "size_bytes": 2083
+    },
+    {
+      "content_hash": "sha256:51e5be85e408a36629849c3cc53f898d97965a0e4af80c889d56cb2d698f32fb",
+      "path": "exp4_real_ai_protocol_ablation/runs/condition-exp4-after-worker-death/0/.generations/40b23544c70b4018be343925ac0f7939/per_attempt_results.jsonl",
+      "size_bytes": 3790
+    },
+    {
+      "content_hash": "sha256:697f2a3f4c79dd85ce2d9ade71b35edb1b79ba2d07436e131c18ed10aeb7101e",
+      "path": "exp4_real_ai_protocol_ablation/runs/condition-exp4-after-worker-death/0/.generations/40b23544c70b4018be343925ac0f7939/per_task_results.jsonl",
+      "size_bytes": 8755
+    },
+    {
+      "content_hash": "sha256:681bdbfdecd952795b5acdc98c44afadbb58e1af9723e62206ecb5cdc7b9ec15",
+      "path": "exp4_real_ai_protocol_ablation/runs/condition-exp4-after-worker-death/0/.generations/40b23544c70b4018be343925ac0f7939/run_manifest.json",
+      "size_bytes": 300
+    },
+    {
+      "content_hash": "sha256:11a9395362d89c0679ddfef5b4e77c2380c521b96e282f7b258a221ff19b93be",
+      "path": "exp4_real_ai_protocol_ablation/runs/condition-exp4-after-worker-death/0/artifacts/case-1/11a9395362d89c0679ddfef5b4e77c2380c521b96e282f7b258a221ff19b93be-provenance-case-1-rejected-provenance-case-1-rejected",
+      "size_bytes": 59
+    },
+    {
+      "content_hash": "sha256:41dd828b510ec3ad894a4f96b402febc299afbfbf00112ccc5665f45de63dc20",
+      "path": "exp4_real_ai_protocol_ablation/runs/condition-exp4-after-worker-death/0/artifacts/case-1/41dd828b510ec3ad894a4f96b402febc299afbfbf00112ccc5665f45de63dc20-request-case-1-rejected-request-case-1-rejected",
+      "size_bytes": 27
+    },
+    {
+      "content_hash": "sha256:5baa36d7f270336060c33c95633b57a6811a7ae20a58004d7e51c0f9d78df7d8",
+      "path": "exp4_real_ai_protocol_ablation/runs/condition-exp4-after-worker-death/0/artifacts/case-1/5baa36d7f270336060c33c95633b57a6811a7ae20a58004d7e51c0f9d78df7d8-usage-case-1-rejected-usage-case-1-rejected",
+      "size_bytes": 41
+    },
+    {
+      "content_hash": "sha256:ad0599c1ab41b37136ac8c7a21cda63857da1d6beb79bf65c13c40474aa0cc1a",
+      "path": "exp4_real_ai_protocol_ablation/runs/condition-exp4-after-worker-death/0/artifacts/case-1/ad0599c1ab41b37136ac8c7a21cda63857da1d6beb79bf65c13c40474aa0cc1a-raw-case-1-rejected-raw-case-1-rejected",
+      "size_bytes": 50
+    },
+    {
+      "content_hash": "sha256:e8dd98566362bfd52520de4e81221126bd4d039087965c06100aaf0bfe34db2f",
+      "path": "exp4_real_ai_protocol_ablation/runs/condition-exp4-after-worker-death/0/artifacts/case-1/e8dd98566362bfd52520de4e81221126bd4d039087965c06100aaf0bfe34db2f-parsed-case-1-rejected-parsed-case-1-rejected",
+      "size_bytes": 114
+    },
+    {
+      "content_hash": "sha256:47135fbd072c3256d999f32994efd21e47c95ed206ca61b45f68116f50238086",
+      "path": "exp4_real_ai_protocol_ablation/runs/condition-exp4-after-worker-death/0/condition_manifest.json",
+      "size_bytes": 3239
+    },
+    {
+      "content_hash": "sha256:65e76e54dd6d8fd63e821681faf86d9d3b37d9789cf6a543b047ed7317a803e2",
+      "path": "exp4_real_ai_protocol_ablation/runs/condition-exp4-after-worker-death/0/CURRENT.json",
+      "size_bytes": 214
+    },
+    {
+      "content_hash": "sha256:eae71cb6ba0fae9bb9073b63f174259048d06cda232d8bbd409c2a8f871a7cb5",
+      "path": "experiments/exp3_real_ai_fault_recovery/experiment_manifest.json",
+      "size_bytes": 623
+    },
+    {
+      "content_hash": "sha256:f7241ca04d3f21a5801dce83e751f8971bcc5cd59290aa49fbf20168b4eb7253",
+      "path": "experiments/exp3_real_ai_fault_recovery/runs/exp3_worker_death_factorization__failed__dead1__p50__rep0/0/.generations/36f0457be143451c81ed7d5395df8784/artifacts/artifact_index.jsonl",
+      "size_bytes": 1991
+    },
+    {
+      "content_hash": "sha256:d29655c87b3540425b53e597c934f4e8723b1e2d355f64ba33cc59e958ccb5bd",
+      "path": "experiments/exp3_real_ai_fault_recovery/runs/exp3_worker_death_factorization__failed__dead1__p50__rep0/0/.generations/36f0457be143451c81ed7d5395df8784/events/event_log.jsonl",
+      "size_bytes": 401
+    },
+    {
+      "content_hash": "sha256:38d68a0b0faf9cc076a6718eb1ea7a90c9c2e4563c31032f53a91846b56d2922",
+      "path": "experiments/exp3_real_ai_fault_recovery/runs/exp3_worker_death_factorization__failed__dead1__p50__rep0/0/.generations/36f0457be143451c81ed7d5395df8784/fault_injections.jsonl",
+      "size_bytes": 590
+    },
+    {
+      "content_hash": "sha256:b4e9fa9406b37d7e8913d18deffb266e33ac91d971e990cb17516e3c62680e95",
+      "path": "experiments/exp3_real_ai_fault_recovery/runs/exp3_worker_death_factorization__failed__dead1__p50__rep0/0/.generations/36f0457be143451c81ed7d5395df8784/generation_manifest.json",
+      "size_bytes": 2084
+    },
+    {
+      "content_hash": "sha256:9ed8dd25e451e18f9907ef126f6092e4dc3d2c7ca2da2b7e80fe9dc49852a38e",
+      "path": "experiments/exp3_real_ai_fault_recovery/runs/exp3_worker_death_factorization__failed__dead1__p50__rep0/0/.generations/36f0457be143451c81ed7d5395df8784/per_attempt_results.jsonl",
+      "size_bytes": 2456
+    },
+    {
+      "content_hash": "sha256:b1f469cf11d700d2a90d040fbedd96d06d43e0662f4d865ac2b7043ef807eb41",
+      "path": "experiments/exp3_real_ai_fault_recovery/runs/exp3_worker_death_factorization__failed__dead1__p50__rep0/0/.generations/36f0457be143451c81ed7d5395df8784/per_task_results.jsonl",
+      "size_bytes": 4906
+    },
+    {
+      "content_hash": "sha256:0bb9aaf12703f32d89fd2f64c906c86bed6fa986d8dd3cb4a7fa3ff35dfc5589",
+      "path": "experiments/exp3_real_ai_fault_recovery/runs/exp3_worker_death_factorization__failed__dead1__p50__rep0/0/.generations/36f0457be143451c81ed7d5395df8784/run_manifest.json",
+      "size_bytes": 321
+    },
+    {
+      "content_hash": "sha256:0e83af8c5c01f4afeff04d3457f594a3340832220eca6cdcdbca46ed5eaf5c6c",
+      "path": "experiments/exp3_real_ai_fault_recovery/runs/exp3_worker_death_factorization__failed__dead1__p50__rep0/0/artifacts/case-1/0e83af8c5c01f4afeff04d3457f594a3340832220eca6cdcdbca46ed5eaf5c6c-raw-output.txt-raw-output.txt",
+      "size_bytes": 16
+    },
+    {
+      "content_hash": "sha256:cff54f7b7872f55fa00bee4649094e51e6b5ebb7eab37cfdc799afb652175254",
+      "path": "experiments/exp3_real_ai_fault_recovery/runs/exp3_worker_death_factorization__failed__dead1__p50__rep0/0/artifacts/case-1/cff54f7b7872f55fa00bee4649094e51e6b5ebb7eab37cfdc799afb652175254-request.json-request.json",
+      "size_bytes": 18
+    },
+    {
+      "content_hash": "sha256:98ceba1d90ced5311a0411341845942715844fae8318a988a0dee05bf4598b2d",
+      "path": "experiments/exp3_real_ai_fault_recovery/runs/exp3_worker_death_factorization__failed__dead1__p50__rep0/0/condition_manifest.json",
+      "size_bytes": 3350
+    },
+    {
+      "content_hash": "sha256:e58841244323b68e5f47e3056319c35d9490711c6525ed0db6f114184bce0812",
+      "path": "experiments/exp3_real_ai_fault_recovery/runs/exp3_worker_death_factorization__failed__dead1__p50__rep0/0/CURRENT.json",
+      "size_bytes": 214
+    },
+    {
+      "content_hash": "sha256:618d19c31ec0e9e8fc9ceee3de4b0d7ab266107d809a7b3e2dea79d7da281055",
+      "path": "experiments/exp4_real_ai_protocol_ablation/experiment_manifest.json",
+      "size_bytes": 602
+    },
+    {
+      "content_hash": "sha256:bac522bad8ce72359334ba2df487830da3f44601b10bdf8e73537f2cbdb61e8c",
+      "path": "experiments/exp4_real_ai_protocol_ablation/runs/condition-exp4-after-worker-death/0/.generations/40b23544c70b4018be343925ac0f7939/artifacts/artifact_index.jsonl",
+      "size_bytes": 5105
+    },
+    {
+      "content_hash": "sha256:1766b24e244558c6628266b79828c00acb24eb820cda923b606cad2238ffc1ee",
+      "path": "experiments/exp4_real_ai_protocol_ablation/runs/condition-exp4-after-worker-death/0/.generations/40b23544c70b4018be343925ac0f7939/events/event_log.jsonl",
+      "size_bytes": 3258
+    },
+    {
+      "content_hash": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "path": "experiments/exp4_real_ai_protocol_ablation/runs/condition-exp4-after-worker-death/0/.generations/40b23544c70b4018be343925ac0f7939/fault_injections.jsonl",
+      "size_bytes": 0
+    },
+    {
+      "content_hash": "sha256:74c05e932310e465881195ea3f9adaab96ea38a0730a687368d52d8c8876560a",
+      "path": "experiments/exp4_real_ai_protocol_ablation/runs/condition-exp4-after-worker-death/0/.generations/40b23544c70b4018be343925ac0f7939/generation_manifest.json",
+      "size_bytes": 2083
+    },
+    {
+      "content_hash": "sha256:51e5be85e408a36629849c3cc53f898d97965a0e4af80c889d56cb2d698f32fb",
+      "path": "experiments/exp4_real_ai_protocol_ablation/runs/condition-exp4-after-worker-death/0/.generations/40b23544c70b4018be343925ac0f7939/per_attempt_results.jsonl",
+      "size_bytes": 3790
+    },
+    {
+      "content_hash": "sha256:697f2a3f4c79dd85ce2d9ade71b35edb1b79ba2d07436e131c18ed10aeb7101e",
+      "path": "experiments/exp4_real_ai_protocol_ablation/runs/condition-exp4-after-worker-death/0/.generations/40b23544c70b4018be343925ac0f7939/per_task_results.jsonl",
+      "size_bytes": 8755
+    },
+    {
+      "content_hash": "sha256:681bdbfdecd952795b5acdc98c44afadbb58e1af9723e62206ecb5cdc7b9ec15",
+      "path": "experiments/exp4_real_ai_protocol_ablation/runs/condition-exp4-after-worker-death/0/.generations/40b23544c70b4018be343925ac0f7939/run_manifest.json",
+      "size_bytes": 300
+    },
+    {
+      "content_hash": "sha256:11a9395362d89c0679ddfef5b4e77c2380c521b96e282f7b258a221ff19b93be",
+      "path": "experiments/exp4_real_ai_protocol_ablation/runs/condition-exp4-after-worker-death/0/artifacts/case-1/11a9395362d89c0679ddfef5b4e77c2380c521b96e282f7b258a221ff19b93be-provenance-case-1-rejected-provenance-case-1-rejected",
+      "size_bytes": 59
+    },
+    {
+      "content_hash": "sha256:41dd828b510ec3ad894a4f96b402febc299afbfbf00112ccc5665f45de63dc20",
+      "path": "experiments/exp4_real_ai_protocol_ablation/runs/condition-exp4-after-worker-death/0/artifacts/case-1/41dd828b510ec3ad894a4f96b402febc299afbfbf00112ccc5665f45de63dc20-request-case-1-rejected-request-case-1-rejected",
+      "size_bytes": 27
+    },
+    {
+      "content_hash": "sha256:5baa36d7f270336060c33c95633b57a6811a7ae20a58004d7e51c0f9d78df7d8",
+      "path": "experiments/exp4_real_ai_protocol_ablation/runs/condition-exp4-after-worker-death/0/artifacts/case-1/5baa36d7f270336060c33c95633b57a6811a7ae20a58004d7e51c0f9d78df7d8-usage-case-1-rejected-usage-case-1-rejected",
+      "size_bytes": 41
+    },
+    {
+      "content_hash": "sha256:ad0599c1ab41b37136ac8c7a21cda63857da1d6beb79bf65c13c40474aa0cc1a",
+      "path": "experiments/exp4_real_ai_protocol_ablation/runs/condition-exp4-after-worker-death/0/artifacts/case-1/ad0599c1ab41b37136ac8c7a21cda63857da1d6beb79bf65c13c40474aa0cc1a-raw-case-1-rejected-raw-case-1-rejected",
+      "size_bytes": 50
+    },
+    {
+      "content_hash": "sha256:e8dd98566362bfd52520de4e81221126bd4d039087965c06100aaf0bfe34db2f",
+      "path": "experiments/exp4_real_ai_protocol_ablation/runs/condition-exp4-after-worker-death/0/artifacts/case-1/e8dd98566362bfd52520de4e81221126bd4d039087965c06100aaf0bfe34db2f-parsed-case-1-rejected-parsed-case-1-rejected",
+      "size_bytes": 114
+    },
+    {
+      "content_hash": "sha256:47135fbd072c3256d999f32994efd21e47c95ed206ca61b45f68116f50238086",
+      "path": "experiments/exp4_real_ai_protocol_ablation/runs/condition-exp4-after-worker-death/0/condition_manifest.json",
+      "size_bytes": 3239
+    },
+    {
+      "content_hash": "sha256:65e76e54dd6d8fd63e821681faf86d9d3b37d9789cf6a543b047ed7317a803e2",
+      "path": "experiments/exp4_real_ai_protocol_ablation/runs/condition-exp4-after-worker-death/0/CURRENT.json",
+      "size_bytes": 214
+    },
+    {
+      "content_hash": "sha256:92886e674856108ebf42f3d1cc6b7d7a6de455644cfa20c60a98c26b57a26d8e",
+      "path": "formal_runner_result.json",
+      "size_bytes": 846
+    },
+    {
+      "content_hash": "sha256:cc91ddee29b63c7ed0076743c8469f3cc1cd01af992238405c81dc9a394adaee",
+      "path": "input_catalog_manifest.json",
+      "size_bytes": 209
+    },
+    {
+      "content_hash": "sha256:ff7ed225a10776dcfe18825b47f44959f2794b88ba6dd0c2fac2568c00daadc3",
+      "path": "metrics/smoke_failures.json",
+      "size_bytes": 6822
+    },
+    {
+      "content_hash": "sha256:85b8a1938d0ee6cf3d6962a927827ca54d3bcff5787b90a811b8749818d43964",
+      "path": "metrics/smoke_summary.csv",
+      "size_bytes": 3577
+    },
+    {
+      "content_hash": "sha256:ec8378fd77e469a56027232a847eace0adac9e4901a0879165025f614357397e",
+      "path": "metrics/smoke_summary.json",
+      "size_bytes": 7951
+    },
+    {
+      "content_hash": "sha256:7b4ffcaab28962c8d6336fb45dbbe1b637c6ce357ab9238a53e36d3c7aaac7c3",
+      "path": "paper_dispatch_plans.json",
+      "size_bytes": 7037
+    },
+    {
+      "content_hash": "sha256:518179227a60d2f005d362396ada26afb77b0341fb738f743ae88bed7f3f1efb",
+      "path": "run_budget.json",
+      "size_bytes": 1989
+    },
+    {
+      "content_hash": "sha256:261d6844abf3618dc3b90834984813aeef06a07c9931b7a50a3579f542bf9f75",
+      "path": "smoke_execution_plan.json",
+      "size_bytes": 2109
+    },
+    {
+      "content_hash": "sha256:801c4cca55c32d9d25189dac9cfce9c355ce517c02f6f3b051b5de823686f9ed",
+      "path": "smoke_launch_manifest.json",
+      "size_bytes": 135
+    },
+    {
+      "content_hash": "sha256:3fb511f06dc93ed5fe2bfe1d0c25056621dcce7c3e6ac9c6bbe46dc9a0104ad5",
+      "path": "smoke_profile.json",
+      "size_bytes": 1271
+    },
+    {
+      "content_hash": "sha256:f088ae99bc299272eb26873ccc40a10c214c5fd9024008adbc24e012c94aab29",
+      "path": "suite_manifest.json",
+      "size_bytes": 14290
+    }
+  ],
+  "paper_eligible": false,
+  "schema_version": "tokenshare.paper_smoke_evidence_manifest.v1"
+}

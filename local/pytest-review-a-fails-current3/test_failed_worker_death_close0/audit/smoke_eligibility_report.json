@@ -1,0 +1,14 @@
+{
+  "all_rows_ineligible": true,
+  "formal": false,
+  "ineligibility_reasons": [
+    "smoke_suite",
+    "pilot_only"
+  ],
+  "paper_eligible": false,
+  "pilot_only": true,
+  "regression_only": true,
+  "row_count": 2,
+  "schema_version": "tokenshare.paper_smoke_eligibility_report.v1",
+  "suite_id": "worker-death-continuation-smoke"
+}

@@ -29,6 +29,9 @@ from tokenshare.experiments.paper_models import (
     PaperStatus,
     digest_json,
 )
+from tokenshare.experiments.paper_suite_scale import (
+    validate_paper_suite_scale_policy,
+)
 
 
 EXP1_FORMAL_EXPERIMENT_ID = "exp1_real_ai_feasibility"
@@ -36,10 +39,10 @@ EXP1_FORMAL_SUITE_VERSION = "paper_v1"
 EXP1_FORMAL_REPEAT_COUNT = 1
 EXP1_FORMAL_WORKER_COUNT = 10
 EXP1_FORMAL_SEED_FAMILY = (1,)
-EXP1_FACTOR_CASE_COUNTS_BY_DIFFICULTY = {"easy": 167, "medium": 167, "hard": 166}
+EXP1_FACTOR_CASE_COUNTS_BY_DIFFICULTY = {"easy": 100, "medium": 100, "hard": 100}
 EXP1_LEAN_CASES_PER_CELL = 15
-EXP1_EXPECTED_UNIQUE_ROOTS = 635
-EXP1_EXPECTED_ROOT_RUNS = 635
+EXP1_EXPECTED_UNIQUE_ROOTS = 435
+EXP1_EXPECTED_ROOT_RUNS = 435
 
 EXP1_BASELINE_PROVIDER_CONFIG_ID = "exp1_baseline_deepseek"
 EXP1_BASELINE_ENTRY_ID = "deepseek_v4_pro_exp1_baseline"
@@ -292,14 +295,17 @@ def _selection_for_condition(
             paper_difficulty=condition.paper_difficulty,
             topic_family=None,
         )
-        expected_case_count = _factor_case_count(
-            _catalog_version(context.catalog),
-            str(condition.paper_difficulty),
+        _profile, selected_by_difficulty = validate_paper_suite_scale_policy(
+            _field(context.catalog, "paper_suite_scale_policy"),
+            catalog_id=str(_field(context.catalog, "catalog_id") or ""),
+            catalog_version=_catalog_version(context.catalog),
+            catalog_digest=_catalog_digest(context.catalog),
+            experiment_id=EXP1_FORMAL_EXPERIMENT_ID,
         )
-        if len(cases) != expected_case_count:
+        expected_ids = selected_by_difficulty[str(condition.paper_difficulty)]
+        if tuple(str(case["case_id"]) for case in cases) != expected_ids:
             raise ValueError(
-                "Experiment 1 factorization catalog must contain exactly "
-                f"{expected_case_count} cases for {condition.paper_difficulty}"
+                "Experiment 1 Factorization cases drift from suite scale profile"
             )
         return _executable_selection(
             context=context,

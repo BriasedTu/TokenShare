@@ -4,22 +4,25 @@
   "stage": "paper-real-ai-experiments",
   "active_feature": "feat-011",
   "active_focus": {
-    "id": "repository-context-and-data-boundary",
-    "summary": "在不改变协议与论文实验语义的前提下，压缩 Agent 启动上下文、归档过期设计、把运行数据迁出仓库，并保持历史 evidence 可校验。",
-    "status": "completed",
+    "id": "paper-metric-contract-trace-bank-and-traceability-plan",
+    "summary": "逐项冻结 Experiment 1–5 论文指标，并从论文指标反推实验直接结果、真实回答库 acquisition/trace-backed execution evidence、runner/metrics/renderer/replay 部件和完整实施验证计划。",
+    "status": "in-progress",
     "scope": [
-      "Tier 1 上下文预算与状态文件瘦身",
-      "文档权威分层和历史设计归档",
-      "新实验默认写入仓库外 TokenShareData",
-      "历史 artifact 绝对/仓库相对/suite 相对路径的只读重定位",
-      "启动器绝对路径支持和迁移清单校验"
+      "Experiment 1–5 论文指标、固定分母与 missingness 口径",
+      "指标到直接实验结果、attempt/event/artifact evidence 的逐层追溯",
+      "machine-readable metric contract、paper table 与 renderer/replay 迁移范围",
+      "Experiment 2–4 两阶段真实回答库、稳定请求摘要、独立 sample/replacement slots 与双 provenance",
+      "Experiment 2 缩小题集六档在线并发检查、Experiment 3 小型在线恢复检查",
+      "acquisition actual spend、trace attribution、人民币 1000 calls/tokens/CNY/in-flight 预算硬门",
+      "完整实施顺序、测试、离线重放与真实 smoke/正式矩阵门禁"
     ],
     "out_of_scope": [
-      "重写正式实验矩阵、模型或请求参数",
-      "运行真实付费 API 实验",
-      "大规模业务模块拆分；另立 feature 处理"
+      "本轮记录阶段直接修改 response-bank/executor/metrics/runner/renderer 代码",
+      "重新运行真实付费 API 实验",
+      "修改由其他工作调整中的 Experiment 3 正式规模",
+      "人为注入攻击与安全工程"
     ],
-    "next_action": "维护焦点已完成；feat-011 继续闭合 Exp5 v3 的 P1 门禁，正式 P0-full 仍保持 NO-GO。"
+    "next_action": "下一步只编写完整实施计划：先从冻结指标反推 direct result/evidence，再覆盖 response bank 全面设施改造、Exp2 六档在线检查、Exp3 在线恢复检查、预算硬门和一次性验收；计划获用户确认前不执行，不启动旧 smoke 或正式矩阵。既有 full-resource A 未闭合项必须纳入新计划重新排序。"
   },
   "authorities": {
     "agent_start": "AGENTS.md",
@@ -139,18 +142,29 @@
       "name": "Paper Real AI Experiments",
       "status": "in-progress",
       "dependencies": ["feat-009"],
-      "summary": "按唯一权威设计完成真实 AI Experiment 1–5；当前 P0-full 因 Exp5 v3 artifact-backed 8-root smoke 未完成而 blocked。",
+      "summary": "按唯一权威设计完成真实 AI Experiment 1–5；Experiment 3/4/5 代码与离线 smoke/paper evidence 门禁已闭合，历史 Exp3/4 真实 smoke canonical 证据无效，P0-full 等待新的 Exp3/4 11-root 与 Exp5 8-root smoke evidence。",
       "acceptance": [
-        "正式结果实际调用批准的真实 API",
+        "online evidence 当次调用批准的真实 API；trace-backed evidence 的每个 slot 可追溯到批准的真实 API acquisition，且当次完整运行协议状态机",
         "协议生命周期与 artifact/event evidence 完整",
         "replay 不重复调用 provider",
         "论文指标可追溯到逐 task/attempt evidence"
       ],
       "evidence": [
         "维护通过最终 47 项迁移接线回归、真实 suite 708 文件只读快照和独立 code/doc review；完整证据见 progress.md；用户要求不继续本轮 Full",
-        "历史失败 smoke 保持只读，不升级为论文证据"
+        "历史失败 smoke 保持只读，不升级为论文证据",
+        "2026-07-31 exp34-smoke-20260731-041442：11 roots/36 DeepSeek HTTP 200 attempts/839054 tokens，8 completed + 3 experimental failures；真实性 PASS、历史 canonical 论文证据 FAIL",
+        "canonical no-return/ledger/timing/model inventory/replay/smoke missingness 与基础设施退出码已 fail-closed 修复；统一核心 356 passed，launcher 9 passed，最终 Fast 457 passed/1 skipped，独立结果完整性复审 Ready",
+        "2026-07-31 根集成定向集 442 passed，Fast 456 passed/1 skipped；Exp3/4 独立 87+5+11+13+2 项通过；Exp5 identity-only 8 roots/60 units/60 attempts",
+        "Exp5 formal 无 artifact-backed bundle 时 0 provider call、canonical 四 member 结构化 blocked；capturing/scripted 不能生成 formal bundle 或论文结果",
+        "EPD-025 已冻结 Exp5 零 retry、两张按模型汇总表、删除 pairwise/recovery/旧正确率名；权威设计已同步，代码迁移与验证待完整指标追溯实施计划",
+        "EPD-025 文档与 harness 状态同步后 Fast 457 passed/1 skipped；未运行 Full、LeanAudit 或真实 API",
+        "EPD-026 已冻结 active scale profile paper_suite_scale_300_50_54.v1 与 Exp5 selection/smoke v4；正式 exact plan 为 Exp1–5 6384 roots/40520 units/81272 attempt upper，token ceiling 23503151360，cost ceiling 7346.259328",
+        "EPD-026 离线验证：scale/Exp3/4 reviewer 50、Exp3 26、Exp4 39、Exp5 model 90、Exp5 smoke/evidence/supervision 48、authoritative CLI exact plan-only 1 项通过；provider calls=0，未运行 Full/LeanAudit/真实 API/全量",
+        "2026-07-31 用户暂停点：checkpoint/evidence 142 项与 shared dispatch/fail-close/resume 3 项离线通过；收尾 Fast 458 passed/1 skipped；shared terminal-snapshot-only index、500-root live-outcome 压力证据和最新 formal runner 整体回归尚未闭合，正式全量维持 NO-GO",
+        "EPD-027 已冻结 Experiment 2–4 两阶段真实回答库、Exp2 缩小题集全六 worker 档真实在线检查、Exp3 小型真实在线恢复检查，并明确其为跨 identity/executor/artifact/eligibility/budget/runner/metrics/replay 的全面设施改造；当前仅 design_synced、未实现",
+        "EPD-027 文档/harness 同步后 Fast：458 passed/1 skipped；JSON/SQLite、harness、compileall 通过，未联网、未调用真实 API"
       ],
-      "next_action": "闭合 Exp5 v3 canonical provider binding、artifact-backed 8-root smoke evidence、missingness 分母和 production renderer/replay 门禁；获得授权前不启动真实 API。"
+      "next_action": "先完成从论文指标到 direct result/evidence/组件的完整实施计划，并把 EPD-027 response-bank 全面改造、既有 full-resource A 残留、Exp2 六档在线检查、Exp3 在线恢复检查和最终 paper traceability 门禁统一排序；计划写完后等待用户确认，不直接执行。获得明确付费授权前不得运行任何新 API。"
     }
   ]
 }

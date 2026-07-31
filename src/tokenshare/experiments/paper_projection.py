@@ -123,7 +123,38 @@ def project_paper_protocol_run(
             attempt_id=attempt_id,
             request_id=str(request.get("request_id") or ""),
         )
+        fault_injection_ref, fault_record = _artifact_for_execution(
+            inventory,
+            artifact_store,
+            artifact_types={"FaultInjectionRecord"},
+            attempt_id=attempt_id,
+        )
+        runtime_fault_ref, runtime_fault_record = _artifact_for_execution(
+            inventory,
+            artifact_store,
+            artifact_types={"RuntimeFaultInjectionRecord"},
+            attempt_id=attempt_id,
+        )
         provenance_ref = _mapping_or_none(submission.get("provenance_ref"))
+        raw_output_ref = _mapping_or_none(submission.get("raw_output_ref"))
+        auditable_no_return = _auditable_no_return_evidence(
+            condition=condition,
+            submission_event=submission_event,
+            submission=submission,
+            request=request,
+            request_ref=request_ref,
+            model_record=model_record,
+            fault_record=fault_record,
+            fault_injection_ref=fault_injection_ref,
+            runtime_fault_record=runtime_fault_record,
+            runtime_fault_ref=runtime_fault_ref,
+            store=artifact_store,
+        )
+        if auditable_no_return:
+            raw_output_ref = auditable_no_return["raw_output_ref"]
+            provenance_ref = auditable_no_return["provenance_ref"]
+            usage_ref = auditable_no_return["usage_ref"]
+            usage = _read_ref_body(artifact_store, usage_ref)
         provenance = _read_ref_body(artifact_store, provenance_ref)
         provider_attempts = provenance.get("attempts", ()) if isinstance(provenance, dict) else ()
         if not isinstance(provider_attempts, list):
@@ -147,7 +178,19 @@ def project_paper_protocol_run(
             canonical=attempt_id in canonical_attempt_ids,
             recovery=recovery,
             model_record=model_record,
+            auditable_no_return=bool(auditable_no_return),
         )
+        provider_attempt_count = _submission_provider_attempt_count(
+            submission=submission,
+            usage=usage,
+            provider_attempts=provider_attempts,
+        )
+        pre_provider_executor_error = status == PaperAttemptStatus.EXECUTOR_ERROR
+        if pre_provider_executor_error:
+            usage_ref = None
+            usage = {}
+            model_record_ref = None
+            model_record = {}
         unit_metadata = dict(metadata_by_unit.get(unit_id, {}))
         task_unit_snapshot = request.get("task_unit_snapshot")
         if isinstance(task_unit_snapshot, dict) and isinstance(
@@ -158,17 +201,58 @@ def project_paper_protocol_run(
         prompt_tokens = _non_negative_int(usage.get("prompt_tokens"))
         completion_tokens = _non_negative_int(usage.get("completion_tokens"))
         total_tokens = _non_negative_int(usage.get("total_tokens"))
+        cost_estimate = _non_negative_number(usage.get("cost_estimate"))
+        latency_ms = _non_negative_int(last_provider_attempt.get("latency_ms"))
+        if pre_provider_executor_error:
+            prompt_tokens = 0
+            completion_tokens = 0
+            total_tokens = 0
+            cost_estimate = 0.0
+            latency_ms = 0
+        provider_usage_missing = (
+            not pre_provider_executor_error
+            and any(
+                value is None
+                for value in (
+                    prompt_tokens,
+                    completion_tokens,
+                    total_tokens,
+                    cost_estimate,
+                )
+            )
+        )
+        nullable_provider_observation = (
+            not pre_provider_executor_error
+            and any(
+                value is None
+                for value in (
+                    latency_ms,
+                    prompt_tokens,
+                    completion_tokens,
+                    total_tokens,
+                    cost_estimate,
+                )
+            )
+        )
         provider_attempt_index = next_provider_attempt_index_by_unit.get(unit_id, 0)
         next_provider_attempt_index_by_unit[unit_id] = provider_attempt_index + 1
         attempt_evidence_complete = all(
             (
                 request_ref is not None,
-                _mapping_or_none(submission.get("raw_output_ref")) is not None,
                 provenance_ref is not None,
                 usage_ref is not None,
                 model_record_ref is not None,
-                model_record.get("paper_eligible") is True,
                 bool(provider_attempts),
+                (
+                    _provider_failure_identity_is_auditable(
+                        model_record=model_record,
+                        provider_attempts=provider_attempts,
+                    )
+                    if status == PaperAttemptStatus.PROVIDER_ERROR
+                    and raw_output_ref is None
+                    else raw_output_ref is not None
+                    and model_record.get("paper_eligible") is True
+                ),
             )
         )
         attempts.append(
@@ -186,33 +270,45 @@ def project_paper_protocol_run(
                 ),
                 provider_attempt_index=provider_attempt_index,
                 attempt_status=status,
-                provider=str(
-                    usage.get("provider_family")
-                    or last_provider_attempt.get("provider_family")
-                    or condition.provider_family
-                    or "unknown"
+                provider=(
+                    None
+                    if pre_provider_executor_error
+                    else str(
+                        usage.get("provider_family")
+                        or last_provider_attempt.get("provider_family")
+                        or condition.provider_family
+                        or "unknown"
+                    )
                 ),
-                model=str(
-                    usage.get("model")
-                    or usage.get("configured_model")
-                    or last_provider_attempt.get("configured_model")
-                    or condition.provider_model_id
-                    or "unknown"
+                model=(
+                    None
+                    if pre_provider_executor_error
+                    else str(
+                        usage.get("model")
+                        or usage.get("configured_model")
+                        or last_provider_attempt.get("configured_model")
+                        or condition.provider_model_id
+                        or "unknown"
+                    )
                 ),
-                entry_id=str(
-                    usage.get("entry_id")
-                    or last_provider_attempt.get("entry_id")
-                    or condition.model_entry_id
-                    or "unknown"
+                entry_id=(
+                    None
+                    if pre_provider_executor_error
+                    else str(
+                        usage.get("entry_id")
+                        or last_provider_attempt.get("entry_id")
+                        or condition.model_entry_id
+                        or "unknown"
+                    )
                 ),
                 request_ref=request_ref,
-                raw_output_ref=_mapping_or_none(submission.get("raw_output_ref")),
+                raw_output_ref=raw_output_ref,
                 parsed_output_ref=_mapping_or_none(submission.get("parsed_output_ref")),
                 parse_failure_ref=_mapping_or_none(submission.get("parse_failure_ref")),
                 provenance_ref=provenance_ref,
                 usage_ref=usage_ref,
                 model_execution_record_ref=model_record_ref,
-                provider_attempt_count=len(provider_attempts),
+                provider_attempt_count=provider_attempt_count,
                 started_at=str(
                     worker_fact.get("started_at")
                     or request.get("created_at")
@@ -224,17 +320,13 @@ def project_paper_protocol_run(
                     or snapshot.get("finished_at")
                     or events[-1]["occurred_at"]
                 ),
-                latency_ms=_non_negative_int(last_provider_attempt.get("latency_ms")),
+                latency_ms=latency_ms,
                 prompt_tokens=prompt_tokens,
                 completion_tokens=completion_tokens,
                 total_tokens=total_tokens,
-                cost_estimate=_non_negative_number(usage.get("cost_estimate")),
+                cost_estimate=cost_estimate,
                 error_kind=error_kind,
-                fault_injection_ref=_fault_ref_for_attempt(
-                    inventory,
-                    artifact_store,
-                    attempt_id,
-                ),
+                fault_injection_ref=fault_injection_ref,
                 paper_eligible=attempt_evidence_complete,
                 paper_difficulty=condition.paper_difficulty,
                 topic_family=condition.topic_family,
@@ -247,6 +339,33 @@ def project_paper_protocol_run(
                 dependency_path=tuple(unit_metadata.get("dependency_path") or ()),
                 planned_ai_unit_id=_string_or_none(
                     unit_metadata.get("planned_ai_unit_id")
+                ),
+                executor_id=(
+                    str(executor_id) if pre_provider_executor_error else None
+                ),
+                executor_type=(
+                    "ai_api_pre_provider" if pre_provider_executor_error else None
+                ),
+                cost_estimate_currency=_string_or_none(usage.get("currency")),
+                cost_estimate_status=(
+                    (
+                        "usage_missing"
+                        if provider_usage_missing
+                        and _string_or_none(usage.get("cost_estimate_status"))
+                        not in {"usage_missing", "usage_invalid"}
+                        else _string_or_none(usage.get("cost_estimate_status"))
+                    )
+                    if nullable_provider_observation
+                    else _string_or_none(usage.get("cost_estimate_status"))
+                    if not pre_provider_executor_error
+                    else None
+                ),
+                schema_version=(
+                    "tokenshare.paper_attempt_result.v2"
+                    if pre_provider_executor_error
+                    else "tokenshare.paper_attempt_result.v3"
+                    if nullable_provider_observation
+                    else "tokenshare.paper_attempt_result.v1"
                 ),
             )
         )
@@ -273,6 +392,11 @@ def project_paper_protocol_run(
         runtime_result.artifact_refs,
         attempts,
     )
+    task_total_tokens = _complete_attempt_sum(attempts, "total_tokens")
+    task_cost_estimate = _complete_attempt_sum(attempts, "cost_estimate")
+    task_usage_missing = (
+        task_total_tokens is None or task_cost_estimate is None
+    )
     task_result = PaperTaskResult(
         condition_id=condition.condition_id,
         repeat_id=condition.repeat_id,
@@ -290,13 +414,25 @@ def project_paper_protocol_run(
         failure_stage=failure_stage,
         failure_kind=failure_kind,
         attempt_count=len(attempts),
-        provider_attempt_count=len(attempts),
+        provider_attempt_count=sum(
+            attempt.provider_attempt_count for attempt in attempts
+        ),
         wall_clock_ms=_runtime_wall_clock_ms(runtime_observation, events),
-        total_tokens=sum(attempt.total_tokens for attempt in attempts),
-        cost_estimate=sum(attempt.cost_estimate for attempt in attempts),
+        total_tokens=task_total_tokens,
+        cost_estimate=task_cost_estimate,
         event_refs=[_event_ref(event) for event in events],
         artifact_refs=all_artifact_refs,
         paper_eligible=paper_eligible,
+        cost_estimate_status=(
+            "usage_missing"
+            if task_usage_missing
+            else None
+        ),
+        schema_version=(
+            "tokenshare.paper_task_result.v2"
+            if task_usage_missing
+            else "tokenshare.paper_task_result.v1"
+        ),
     )
     generation_identity = {
         "schema_version": "tokenshare.paper_runtime_generation_identity.v1",
@@ -455,18 +591,149 @@ def _artifact_for_execution(
     return None, {}
 
 
-def _fault_ref_for_attempt(
-    inventory: Sequence[ArtifactRef],
+def _auditable_no_return_evidence(
+    *,
+    condition: PaperExperimentCondition,
+    submission_event: Mapping[str, Any],
+    submission: Mapping[str, Any],
+    request: Mapping[str, Any],
+    request_ref: JsonObject,
+    model_record: Mapping[str, Any],
+    fault_record: Mapping[str, Any],
+    fault_injection_ref: JsonObject | None,
+    runtime_fault_record: Mapping[str, Any],
+    runtime_fault_ref: JsonObject | None,
     store: ArtifactStore,
-    attempt_id: str,
-) -> JsonObject | None:
-    ref, _body = _artifact_for_execution(
-        inventory,
+) -> JsonObject:
+    """只接受 provider 响应已持久化后被确定性丢弃的 no_return。"""
+
+    attempt_id = str(request.get("attempt_id") or "")
+    request_id = str(request.get("request_id") or "")
+    if (
+        submission_event
+        or submission
+        or condition.fault_type != "no_return"
+        or not attempt_id
+        or not request_id
+        or fault_injection_ref is None
+        or runtime_fault_ref is None
+        or runtime_fault_record.get("attempt_id") != attempt_id
+        or runtime_fault_record.get("fault_type") != "no_return"
+        or runtime_fault_record.get("applicability_status") != "injected"
+        or runtime_fault_record.get("hook_stage")
+        != "after_raw_provenance_usage_before_parser"
+        or runtime_fault_record.get("injection_point")
+        != "after_raw_output_before_submission"
+        or runtime_fault_record.get("mutated_attempt_status") != "lease_expired"
+        or runtime_fault_record.get("original_attempt_status") != "succeeded"
+        or not _same_artifact_ref(
+            runtime_fault_record.get("primitive_fault_record_ref"),
+            fault_injection_ref,
+        )
+        or fault_record.get("attempt_id") != attempt_id
+        or fault_record.get("fault_type") != "no_return"
+        or fault_record.get("injection_point") != "after_raw_output_before_submission"
+        or fault_record.get("mutated_attempt_status") != "lease_expired"
+        or fault_record.get("original_attempt_status") != "succeeded"
+        or not isinstance(fault_record.get("mutation_summary"), Mapping)
+        or fault_record["mutation_summary"].get("mutation_kind")
+        != "no_return_drop_submission"
+        or model_record.get("attempt_id") != attempt_id
+        or model_record.get("paper_eligible") is not True
+        or model_record.get("identity_status") != "matched"
+        or not _same_artifact_ref(model_record.get("request_ref"), request_ref)
+    ):
+        return {}
+
+    raw_output_ref, raw_output = _verified_artifact_body(
         store,
-        artifact_types={"FaultInjectionRecord"},
-        attempt_id=attempt_id,
+        runtime_fault_record.get("original_raw_output_ref"),
     )
-    return ref
+    provenance_ref, provenance = _verified_artifact_body(
+        store,
+        runtime_fault_record.get("original_provenance_ref"),
+    )
+    pre_fault_usage_ref, pre_fault_usage = _verified_artifact_body(
+        store,
+        runtime_fault_record.get("pre_fault_usage_ref"),
+    )
+    model_usage_ref, model_usage = _verified_artifact_body(
+        store,
+        model_record.get("usage_ref"),
+    )
+    if (
+        raw_output_ref is None
+        or provenance_ref is None
+        or pre_fault_usage_ref is None
+        or model_usage_ref is None
+        or not raw_output
+        or not provenance
+        or not pre_fault_usage
+        or not model_usage
+        or not _same_artifact_ref(model_record.get("raw_output_ref"), raw_output_ref)
+        or not _same_artifact_ref(
+            model_record.get("provenance_ref"),
+            provenance_ref,
+        )
+        or not _same_artifact_ref(
+            fault_record.get("original_raw_output_ref"),
+            raw_output_ref,
+        )
+        or provenance.get("request_id") != request_id
+        or provenance.get("lifecycle_stage")
+        != "provider_response_persisted_before_parser"
+        or not _same_artifact_ref(provenance.get("raw_output_ref"), raw_output_ref)
+        or not isinstance(provenance.get("attempts"), list)
+        or not provenance["attempts"]
+        or pre_fault_usage.get("request_id") != request_id
+        or pre_fault_usage.get("lifecycle_stage")
+        != "provider_response_persisted_before_parser"
+        or not _same_artifact_ref(pre_fault_usage.get("raw_output_ref"), raw_output_ref)
+        or (
+            model_usage.get("request_id") is not None
+            and model_usage.get("request_id") != request_id
+        )
+    ):
+        return {}
+    return {
+        "raw_output_ref": raw_output_ref,
+        "provenance_ref": provenance_ref,
+        "usage_ref": model_usage_ref,
+    }
+
+
+def _verified_artifact_body(
+    store: ArtifactStore,
+    value: Any,
+) -> tuple[JsonObject | None, JsonObject]:
+    ref = _mapping_or_none(value)
+    if ref is None:
+        return None, {}
+    try:
+        return ref, _read_ref_body(store, ref)
+    except (KeyError, TypeError, ValueError, OSError, json.JSONDecodeError):
+        return None, {}
+
+
+def _same_artifact_ref(left: Any, right: Any) -> bool:
+    left_ref = _mapping_or_none(left)
+    right_ref = _mapping_or_none(right)
+    if left_ref is None or right_ref is None:
+        return False
+    left_identity = tuple(
+        left_ref.get(field_name)
+        for field_name in ("artifact_id", "content_hash", "uri")
+    )
+    right_identity = tuple(
+        right_ref.get(field_name)
+        for field_name in ("artifact_id", "content_hash", "uri")
+    )
+    if any(
+        not isinstance(value, str) or not value
+        for value in (*left_identity, *right_identity)
+    ):
+        return False
+    return left_identity == right_identity
 
 
 def _read_ref_body(store: ArtifactStore, value: JsonObject | None) -> JsonObject:
@@ -491,10 +758,13 @@ def _attempt_status(
     canonical: bool,
     recovery: JsonObject,
     model_record: JsonObject,
+    auditable_no_return: bool = False,
 ) -> tuple[PaperAttemptStatus, str | None]:
     if model_record.get("identity_status") == "model_identity_mismatch":
         return PaperAttemptStatus.MODEL_IDENTITY_MISMATCH, "model_identity_mismatch"
     if not submission_event or not submission:
+        if auditable_no_return:
+            return PaperAttemptStatus.LEASE_EXPIRED, "lease_expired"
         return PaperAttemptStatus.PROVIDER_ERROR, "missing_submission_event"
     rejection_reason = submission_event.get("payload", {}).get("rejection_reason")
     if rejection_reason in {"lease_expired", "deadline_exceeded", "late_submission"}:
@@ -502,11 +772,24 @@ def _attempt_status(
     result_kind = str(submission.get("result_kind") or "")
     if result_kind == "parse_failed":
         return PaperAttemptStatus.PARSE_FAILED, "parse_failure"
+    if result_kind in {"executor_error", "fatal_executor_error"}:
+        error_kind = _submission_error_kind(submission, default=result_kind)
+        usage_summary = submission.get("usage_summary")
+        provider_attempt_count = (
+            usage_summary.get("provider_attempt_count")
+            if isinstance(usage_summary, Mapping)
+            else None
+        )
+        if provider_attempt_count == 0 and submission.get("raw_output_ref") is None:
+            return PaperAttemptStatus.EXECUTOR_ERROR, error_kind
+        return PaperAttemptStatus.PROVIDER_ERROR, error_kind
     if result_kind in {
         "provider_error",
         "rate_limited",
-        "executor_error",
-        "fatal_executor_error",
+        "timeout",
+        "connection_error",
+        "auth_error",
+        "client_error",
         "no_return",
     }:
         error = submission.get("error")
@@ -537,6 +820,98 @@ def _attempt_status(
     if snapshot.get("state") in {"Failed", "Superseded", "Rejected"}:
         return PaperAttemptStatus.PROVIDER_ERROR, str(snapshot.get("failure_kind") or "provider_error")
     return PaperAttemptStatus.SUCCEEDED, None
+
+
+def _provider_failure_identity_is_auditable(
+    *,
+    model_record: Mapping[str, Any],
+    provider_attempts: Sequence[Mapping[str, Any]],
+) -> bool:
+    """确认无响应失败仍绑定到冻结 endpoint/request identity。"""
+
+    if (
+        model_record.get("schema_version")
+        != "tokenshare.paper_model_execution_record.v2"
+        or model_record.get("identity_status") != "not_observed"
+        or model_record.get("response_model_status") != "unavailable"
+        or model_record.get("raw_output_ref") is not None
+        or tuple(model_record.get("mismatch_reasons") or ())
+    ):
+        return False
+    expected = model_record.get("expected_identity")
+    request_identities = model_record.get("actual_request_identities")
+    recorded_attempts = model_record.get("actual_provider_attempts")
+    if (
+        not isinstance(expected, Mapping)
+        or not isinstance(request_identities, list)
+        or not isinstance(recorded_attempts, list)
+        or len(request_identities) != len(provider_attempts)
+        or len(recorded_attempts) != len(provider_attempts)
+        or recorded_attempts != list(provider_attempts)
+    ):
+        return False
+    expected_provider = expected.get("provider_family")
+    expected_model = expected.get("provider_model_id")
+    expected_entry = expected.get("selected_entry_id")
+    return all(
+        isinstance(identity, Mapping)
+        and identity.get("schema_version")
+        == "phase7.provider_request_identity.v2"
+        and identity.get("provider_family") == expected_provider
+        and identity.get("entry_id") == expected_entry
+        and identity.get("configured_model") == expected_model
+        and identity.get("requested_model") == expected_model
+        and isinstance(identity.get("reasoning_controls"), Mapping)
+        and isinstance(identity.get("effective_request_controls_digest"), str)
+        and str(identity["effective_request_controls_digest"]).startswith("sha256:")
+        for identity in request_identities
+    )
+
+
+def _submission_provider_attempt_count(
+    *,
+    submission: Mapping[str, Any],
+    usage: Mapping[str, Any],
+    provider_attempts: Sequence[Mapping[str, Any]],
+) -> int:
+    """优先使用 executor 持久化的真实 provider call 计数。"""
+
+    usage_summary = submission.get("usage_summary")
+    candidates = (
+        usage_summary.get("provider_attempt_count")
+        if isinstance(usage_summary, Mapping)
+        else None,
+        usage.get("provider_attempt_count"),
+    )
+    for value in candidates:
+        if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+            return value
+    return len(provider_attempts)
+
+
+def _submission_error_kind(
+    submission: Mapping[str, Any],
+    *,
+    default: str,
+) -> str:
+    error = submission.get("error")
+    if not isinstance(error, Mapping):
+        return default
+    attempts = error.get("attempts")
+    if isinstance(attempts, Sequence) and not isinstance(
+        attempts,
+        (str, bytes, bytearray),
+    ):
+        for attempt in reversed(attempts):
+            if isinstance(attempt, Mapping):
+                result_kind = attempt.get("result_kind")
+                if isinstance(result_kind, str) and result_kind:
+                    return result_kind
+    reason = error.get("reason")
+    if isinstance(reason, str) and reason:
+        return reason
+    kind = error.get("kind")
+    return str(kind) if isinstance(kind, str) and kind else default
 
 
 def _paper_task_status(status: str) -> PaperTaskStatus:
@@ -632,6 +1007,10 @@ def _task_failure(
                 PaperFailureStage.PROVIDER,
                 PaperFailureKind.PROVIDER_ERROR,
             ),
+            PaperAttemptStatus.EXECUTOR_ERROR: (
+                PaperFailureStage.REQUEST,
+                PaperFailureKind.EXECUTOR_ERROR,
+            ),
         }
         if attempt.attempt_status in mapping:
             return mapping[attempt.attempt_status]
@@ -679,25 +1058,39 @@ def _string_or_none(value: Any) -> str | None:
     return str(value) if isinstance(value, str) and value else None
 
 
-def _non_negative_int(value: Any) -> int:
+def _non_negative_int(value: Any) -> int | None:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
-        return 0
-    return max(0, int(value))
+        return None
+    if value < 0:
+        raise ValueError("negative integer measurement is invalid")
+    return int(value)
 
 
-def _non_negative_number(value: Any) -> float:
+def _non_negative_number(value: Any) -> float | None:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
-        return 0.0
-    return max(0.0, float(value))
+        return None
+    if value < 0:
+        raise ValueError("negative numeric measurement is invalid")
+    return float(value)
+
+
+def _complete_attempt_sum(
+    attempts: Sequence[PaperAttemptResult],
+    field_name: str,
+) -> int | float | None:
+    values = [getattr(attempt, field_name) for attempt in attempts]
+    if any(value is None for value in values):
+        return None
+    return sum(values)
 
 
 def _wall_clock_ms(events: Sequence[JsonObject]) -> int:
-    try:
-        started = _timestamp(events[0]["occurred_at"])
-        ended = _timestamp(events[-1]["occurred_at"])
-    except ValueError:
-        return 0
-    return max(0, int((ended - started).total_seconds() * 1000))
+    started = _timestamp(events[0]["occurred_at"])
+    ended = _timestamp(events[-1]["occurred_at"])
+    interval_ms = int((ended - started).total_seconds() * 1000)
+    if interval_ms < 0:
+        raise ValueError("negative event timing is invalid")
+    return interval_ms
 
 
 def _runtime_observation(runtime_result: ProtocolRunResult) -> JsonObject:
@@ -734,7 +1127,9 @@ def _runtime_wall_clock_ms(
 ) -> int:
     value = runtime_observation.get("runtime_wall_clock_ms")
     if isinstance(value, (int, float)) and not isinstance(value, bool):
-        return max(0, int(value))
+        if value < 0:
+            raise ValueError("negative runtime wall clock is invalid")
+        return int(value)
     return _wall_clock_ms(events)
 
 

@@ -74,6 +74,7 @@ _OVERALL_FIELDS = (
     "reasoning_tokens",
     "visible_output_tokens",
     "total_tokens",
+    "total_tokens_sample_size",
     "total_tokens_median",
     "total_tokens_ci_low",
     "total_tokens_ci_high",
@@ -83,6 +84,7 @@ _OVERALL_FIELDS = (
     "pricing_snapshot_digest",
     "wall_clock_ms",
     "provider_latency_ms",
+    "provider_latency_ms_sample_size",
     "provider_latency_ms_median",
     "provider_latency_ms_ci_low",
     "provider_latency_ms_ci_high",
@@ -93,6 +95,9 @@ _OVERALL_FIELDS = (
     "reasoning_tokens_missing_count",
     "visible_output_tokens_missing_count",
     "cost_estimate_missing_count",
+    "reasoning_tokens_unavailable_reason",
+    "visible_output_tokens_unavailable_reason",
+    "cost_estimate_unavailable_reason",
     "paper_eligible",
     "identity_complete",
 )
@@ -310,9 +315,9 @@ class PdfBackendUnavailable(RuntimeError):
 class PlotPoint:
     cohort_member_id: str
     model_label: str
-    value: float
-    ci_low: float
-    ci_high: float
+    value: float | None
+    ci_low: float | None
+    ci_high: float | None
     sample_size: int
 
 
@@ -429,7 +434,7 @@ def _render_exp5_paper_artifacts(
         "failure": _parsed_rows(failure_taxonomy_rows, "failure_taxonomy_rows"),
     }
     if (
-        suite_status != "completed"
+        suite_status not in {"completed", "completed_with_failures"}
         or paper_eligible is not True
         or identity_complete is not True
     ):
@@ -446,6 +451,7 @@ def _render_exp5_paper_artifacts(
     _validate_four_model_inventory(normalized["overall"])
     _write_audit_outputs(root, normalized)
     audit_refs = _artifact_refs(root, EXP5_AUDIT_FILES)
+    _validate_required_paper_inventory(normalized)
 
     row_identity_complete = all(
         _row_is_paper_eligible(row, group_name)
@@ -540,12 +546,32 @@ def _row_is_paper_eligible(row: Mapping[str, Any], group_name: str) -> bool:
         if schema_version is not None and schema_version != _EXECUTION_SCHEMA_VERSION:
             return False
         if schema_version == _EXECUTION_SCHEMA_VERSION:
-            return row.get("identity_status") == "matched"
+            return _execution_identity_is_auditable(row)
     if row.get("paper_eligible") is not True:
         return False
     if row.get("identity_complete") is True:
         return True
     return False
+
+
+def _execution_identity_is_auditable(row: Mapping[str, Any]) -> bool:
+    """允许已绑定请求身份但 provider 未返回响应的真实失败行。"""
+
+    if row.get("paper_eligible") is not True:
+        return False
+    if row.get("identity_status") == "matched":
+        return True
+    provider_errors = row.get("provider_errors")
+    return (
+        row.get("identity_status") == "not_observed"
+        and row.get("response_model_status") == "unavailable"
+        and row.get("resolved_model") is None
+        and row.get("raw_output_ref") is None
+        and row.get("attempt_status") == "provider_error"
+        and isinstance(provider_errors, Sequence)
+        and not isinstance(provider_errors, (str, bytes))
+        and bool(provider_errors)
+    )
 
 
 def _parsed_rows(
@@ -603,6 +629,18 @@ def _validate_four_model_inventory(rows: Sequence[Mapping[str, Any]]) -> None:
         raise ValueError("Exp5 paper artifacts require the exact four-model inventory")
 
 
+def _validate_required_paper_inventory(
+    rows: Mapping[str, Sequence[Mapping[str, Any]]],
+) -> None:
+    """正式论文输出不能把缺失的审计分组当作空但完整的结果。"""
+
+    for group_name in ("domain", "paired", "execution", "order"):
+        if not rows[group_name]:
+            raise ValueError(
+                f"Exp5 paper artifacts require non-empty {group_name} inventory"
+            )
+
+
 def _write_audit_outputs(
     root: Path,
     rows: Mapping[str, tuple[dict[str, Any], ...]],
@@ -654,6 +692,7 @@ def _execution_audit_row(row: Mapping[str, Any]) -> dict[str, Any]:
         elif field == "cost_estimate_currency" and value is None:
             value = row.get("cost_currency")
         if field in _EXECUTION_REF_FIELDS:
+            value = _safe_reference_projection(value)
             _validate_safe_reference(value, field)
         elif field in _EXECUTION_STRING_LIST_FIELDS:
             if value is None:
@@ -676,6 +715,19 @@ def _failure_audit_row(row: Mapping[str, Any]) -> dict[str, Any]:
     elif evidence_ref is not None and not isinstance(evidence_ref, str):
         raise ValueError("evidence_ref must be a safe reference or path")
     return dict(row)
+
+
+def _safe_reference_projection(value: Any) -> Any:
+    if not isinstance(value, Mapping):
+        return value
+    projected = {
+        field_name: value[field_name]
+        for field_name in _SAFE_REFERENCE_FIELDS
+        if value.get(field_name) is not None
+    }
+    if "byte_size" not in projected and type(value.get("size_bytes")) is int:
+        projected["byte_size"] = value["size_bytes"]
+    return projected
 
 
 def _validate_safe_reference(value: Any, field_name: str) -> None:
@@ -801,6 +853,7 @@ def _tokens_latency_plot_spec(
                 value_field="total_tokens_median",
                 low_field="total_tokens_ci_low",
                 high_field="total_tokens_ci_high",
+                sample_size_field="total_tokens_sample_size",
             ),
             _series_from_rows(
                 rows,
@@ -810,6 +863,7 @@ def _tokens_latency_plot_spec(
                 value_field="provider_latency_ms_median",
                 low_field="provider_latency_ms_ci_low",
                 high_field="provider_latency_ms_ci_high",
+                sample_size_field="provider_latency_ms_sample_size",
             ),
         ),
     )
@@ -824,6 +878,7 @@ def _series_from_rows(
     value_field: str,
     low_field: str,
     high_field: str,
+    sample_size_field: str | None = None,
     fixed_maximum: float | None = None,
 ) -> PlotSeries:
     points: list[PlotPoint] = []
@@ -832,12 +887,25 @@ def _series_from_rows(
             PlotPoint(
                 cohort_member_id=str(row["cohort_member_id"]),
                 model_label=str(row.get("model_label") or row["cohort_member_id"]),
-                value=_number(row.get(value_field), value_field),
-                ci_low=_number(row.get(low_field), low_field),
-                ci_high=_number(row.get(high_field), high_field),
-                sample_size=_exact_int(row.get("root_count"), "root_count"),
+                value=_optional_number(row.get(value_field)),
+                ci_low=_optional_number(row.get(low_field)),
+                ci_high=_optional_number(row.get(high_field)),
+                sample_size=_exact_int(
+                    row.get(sample_size_field)
+                    if sample_size_field is not None
+                    and row.get(sample_size_field) is not None
+                    else row.get("root_count"),
+                    sample_size_field or "root_count",
+                ),
             )
         )
+        point = points[-1]
+        if (point.value is None) != (
+            point.ci_low is None and point.ci_high is None
+        ) or (point.ci_low is None) != (point.ci_high is None):
+            raise ValueError(
+                f"{value_field} and its confidence interval must be jointly available"
+            )
     return PlotSeries(
         series_id=series_id,
         label=label,
@@ -915,6 +983,13 @@ def _svg_plot(spec: PlotSpec) -> str:
             maximum = maximum_by_axis[series.axis_label]
             offset = (series_index - (len(spec.series) - 1) / 2) * 18
             x = base_x + offset
+            if point.value is None:
+                lines.append(
+                    f'<text x="{x:.2f}" y="{bottom - 8:.2f}" text-anchor="middle" '
+                    'font-family="Arial, sans-serif" font-size="10">unavailable</text>'
+                )
+                continue
+            assert point.ci_low is not None and point.ci_high is not None
             value_y = _plot_y(point.value, maximum, top, bottom)
             low_y = _plot_y(point.ci_low, maximum, top, bottom)
             high_y = _plot_y(point.ci_high, maximum, top, bottom)
@@ -944,18 +1019,24 @@ def _svg_plot(spec: PlotSpec) -> str:
 
 def _plot_maximum_by_axis(spec: PlotSpec) -> dict[str, float]:
     axes = tuple(dict.fromkeys(series.axis_label for series in spec.series))
-    return {
-        axis: max(
-            (
-                series.fixed_maximum
-                if series.fixed_maximum is not None
-                else max(point.ci_high for point in series.points) * 1.1
-            )
-            for series in spec.series
-            if series.axis_label == axis
-        )
-        for axis in axes
-    }
+    result: dict[str, float] = {}
+    for axis in axes:
+        maxima: list[float] = []
+        for series in spec.series:
+            if series.axis_label != axis:
+                continue
+            if series.fixed_maximum is not None:
+                maxima.append(series.fixed_maximum)
+                continue
+            values = [
+                point.ci_high
+                for point in series.points
+                if point.ci_high is not None
+            ]
+            if values:
+                maxima.append(max(values) * 1.1)
+        result[axis] = max(maxima) if maxima else 1.0
+    return result
 
 
 def _format_tick(value: float, maximum: float) -> str:
@@ -1357,10 +1438,16 @@ def _plot_tex_document(spec: PlotSpec) -> str:
         for series_index, series in enumerate(spec.series):
             point = series.points[model_index]
             maximum = maximum_by_axis[series.axis_label]
+            px = x + (series_index * 12 - 6)
+            if point.value is None:
+                lines.append(
+                    rf"\put({px},35){{\makebox(0,0){{\scriptsize N/A}}}}"
+                )
+                continue
+            assert point.ci_low is not None and point.ci_high is not None
             y = 35 + round(200 * max(0.0, min(point.value, maximum)) / maximum)
             low = 35 + round(200 * max(0.0, min(point.ci_low, maximum)) / maximum)
             high = 35 + round(200 * max(0.0, min(point.ci_high, maximum)) / maximum)
-            px = x + (series_index * 12 - 6)
             lines.extend(
                 (
                     rf"\put({px},{low}){{\line(0,1){{{max(1, high-low)}}}}}",

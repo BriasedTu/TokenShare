@@ -40,11 +40,17 @@ from tokenshare.experiments.paper_catalog_execution_view import (
     restore_catalog_execution_view,
 )
 from tokenshare.experiments.paper_model_policy import (
-    PAPER_MODEL_ENDPOINT_COHORT_MEMBER_IDS,
+    PAPER_MODEL_ENDPOINT_COHORT_V3_MEMBER_IDS,
     build_model_endpoint_cohort_preflight,
     load_model_endpoint_cohort,
     load_model_entry_map,
     load_provider_config_map,
+)
+from tokenshare.experiments.paper_exp5_smoke_evidence import (
+    EXP5_SMOKE_SUITE_ID,
+    Exp5SmokeEvidenceError,
+    load_exp5_smoke_evidence_bundle,
+    write_exp5_smoke_evidence_bundle,
 )
 from tokenshare.experiments.paper_models import (
     PAPER_FORMAL_AI_TIMEOUT_SECONDS,
@@ -55,8 +61,10 @@ from tokenshare.experiments.paper_models import (
 )
 from tokenshare.experiments.paper_formal_runner import (
     APPROVED_ENDPOINT_BINDINGS_KEY,
+    PaperInfrastructureBlockedError,
     execute_paper_formal_suite,
     replay_paper_formal_suite,
+    write_paper_formal_replay_report,
 )
 from tokenshare.experiments.paper_exp1 import EXP1_FORMAL_REQUEST_CONTROLS
 from tokenshare.experiments.paper_formal_evidence import FormalEvidenceStore
@@ -83,6 +91,9 @@ from tokenshare.experiments.paper_smoke import (
     replay_paper_smoke_suite,
     resolve_paper_smoke_execution_plan,
 )
+from tokenshare.experiments.paper_suite_scale import (
+    load_paper_suite_scale_profile,
+)
 from tokenshare.runtime_paths import default_data_root, resolve_experiment_output_root
 
 
@@ -96,6 +107,9 @@ DEFAULT_LEAN_LEMMA_GRAPH_CATALOG = Path(
 )
 DEFAULT_EXP1_PILOT_PROFILE = Path(
     "benchmarks/paper/exp1_minimal_pilot_profile.v3.json"
+)
+DEFAULT_PAPER_SUITE_SCALE_PROFILE = Path(
+    "benchmarks/paper/paper_suite_scale_profile.v1.json"
 )
 EXP1_EXP4_ONLY_EXPERIMENT_IDS = (
     "exp1_real_ai_feasibility",
@@ -682,6 +696,7 @@ def _build_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument("--local-ai-api-config", default=None)
     parser.add_argument("--model-cohort-file", default=None)
     parser.add_argument("--model-entry-map", default=None)
+    parser.add_argument("--exp5-smoke-evidence-bundle", default=None)
     parser.add_argument("--provider-config", action="append", default=[])
     return parser
 
@@ -735,10 +750,6 @@ def main(
         return 3
 
     output_base = _paper_output_root(args.output_root)
-    # 离线 identity preflight 不能占用真实 run 的全新 output root。
-    # smoke 在隔离检查通过前也不得创建或补写目标目录。
-    if not args.smoke_identity_only and args.smoke_profile is None:
-        output_base.mkdir(parents=True, exist_ok=True)
     output_root = output_base
     pilot_blocked_output_root: Path | None = None
     unlimited_conflicts = (
@@ -937,8 +948,9 @@ def main(
     if args.replay_only and not args.pilot:
         try:
             execution_result = replay_paper_formal_suite(output_root=output_root)
+            write_paper_formal_replay_report(output_root=output_root)
             metrics = recompute_paper_formal_metrics(output_root)
-            generate_paper_formal_report(
+            report_result = generate_paper_formal_report(
                 output_root=output_root,
                 metrics=metrics,
                 secret_values=(),
@@ -965,13 +977,14 @@ def main(
                 sort_keys=True,
             )
         )
-        return _execution_result_exit_code(execution_result)
+        return _formal_execution_exit_code(execution_result, report_result)
     model_endpoint_cohort_preflight, model_cohort = (
         _model_endpoint_cohort_preflight_for_suite(
             experiment_ids=experiment_ids,
             model_cohort_file=args.model_cohort_file,
             model_entry_map=args.model_entry_map,
             provider_config_args=tuple(args.provider_config),
+            smoke_evidence_bundle=args.exp5_smoke_evidence_bundle,
         )
     )
 
@@ -1001,12 +1014,16 @@ def main(
     if pilot_profile is None:
         planning_profile = load_exp1_pilot_profile(DEFAULT_EXP1_PILOT_PROFILE)
         try:
+            suite_scale_profile = load_paper_suite_scale_profile(
+                DEFAULT_PAPER_SUITE_SCALE_PROFILE
+            )
             dispatch_plans = build_gate_c_dispatch_plans(
                 catalog_manifest=catalog_manifest,
                 lean_3x3_matrix=lean_3x3_matrix,
                 experiment_ids=experiment_ids,
                 baseline_endpoint_binding=_baseline_endpoint_binding(planning_profile),
                 model_endpoint_cohort_preflight=model_endpoint_cohort_preflight,
+                paper_suite_scale_profile=suite_scale_profile,
                 output_root=output_root,
             )
         except ValueError as exc:
@@ -1015,6 +1032,7 @@ def main(
                 experiment_ids=experiment_ids,
                 failure_kind="gate_c_plan_blocked",
                 message=str(exc),
+                model_endpoint_cohort_preflight=model_endpoint_cohort_preflight,
             )
             return 3
         conditions = tuple(
@@ -1080,6 +1098,18 @@ def main(
                     "suite_version": "paper_v1",
                     "execution_scope": "formal_matrix",
                     "experiment_ids": list(experiment_ids),
+                    "paper_suite_scale_profile_source_path": (
+                        suite_scale_profile.source_path
+                    ),
+                    "paper_suite_scale_profile_digest": (
+                        suite_scale_profile.profile_digest
+                    ),
+                    "exp5_selection_path": (
+                        suite_scale_profile.exp5_source_selection_path
+                    ),
+                    "exp5_selection_digest": (
+                        suite_scale_profile.exp5_source_selection_digest
+                    ),
                 },
                 output_identity={
                     "output_root": output_root.resolve(strict=False).as_posix(),
@@ -1313,19 +1343,35 @@ def main(
             )
         )
         budget_approval.setdefault("budget_digest", budget.budget_digest)
-        execution_result = execute_paper_formal_suite(
-            dispatch_plans=dispatch_plans,
-            catalog_manifest=catalog_manifest,
-            budget=budget,
-            budget_approval=budget_approval,
-            output_root=output_root,
-            ai_api_configs=execution_configs,
-            transport=gate_c_transport,
-            real_transport=args.real_transport,
-            hard_limits=hard_limits,
-            resume=args.resume,
-            replay_only=args.replay_only,
-        )
+        try:
+            execution_result = execute_paper_formal_suite(
+                dispatch_plans=dispatch_plans,
+                catalog_manifest=catalog_manifest,
+                budget=budget,
+                budget_approval=budget_approval,
+                output_root=output_root,
+                ai_api_configs=execution_configs,
+                transport=gate_c_transport,
+                real_transport=args.real_transport,
+                hard_limits=hard_limits,
+                resume=args.resume,
+                replay_only=args.replay_only,
+            )
+        except PaperInfrastructureBlockedError as error:
+            print(
+                json.dumps(
+                    {
+                        "status": "blocked",
+                        **error.to_summary(),
+                        "message": str(error),
+                        "provider_calls_made": 0,
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                    sort_keys=True,
+                )
+            )
+            return 3
         budget_path = output_root / "run_budget.json"
         if not budget_path.is_file():
             budget_path.write_text(
@@ -1337,6 +1383,7 @@ def main(
                 ),
                 encoding="utf-8",
             )
+        report_result = None
         suite_manifest_path = output_root / "suite_manifest.json"
         if not suite_manifest_path.is_file():
             _write_suite(output_root, execution_result)
@@ -1345,8 +1392,9 @@ def main(
                 suite_manifest_path.read_text(encoding="utf-8")
             )
             if suite_manifest.get("formal") is True:
+                write_paper_formal_replay_report(output_root=output_root)
                 metrics = recompute_paper_formal_metrics(output_root)
-                generate_paper_formal_report(
+                report_result = generate_paper_formal_report(
                     output_root=output_root,
                     metrics=metrics,
                     secret_values=_configured_secret_values(execution_configs),
@@ -1360,7 +1408,7 @@ def main(
                 sort_keys=True,
             )
         )
-        return _execution_result_exit_code(execution_result)
+        return _formal_execution_exit_code(execution_result, report_result)
 
     _write_plan_artifacts(
         output_root=output_root,
@@ -1902,12 +1950,16 @@ def _run_smoke_cli(
         )
         if planning_profile is None:
             planning_profile = load_exp1_pilot_profile(DEFAULT_EXP1_PILOT_PROFILE)
+        suite_scale_profile = load_paper_suite_scale_profile(
+            DEFAULT_PAPER_SUITE_SCALE_PROFILE
+        )
         canonical_plans = build_gate_c_dispatch_plans(
             catalog_manifest=catalog_manifest,
             lean_3x3_matrix=lean_3x3_matrix,
             experiment_ids=experiment_ids,
             baseline_endpoint_binding=_baseline_endpoint_binding(planning_profile),
             model_endpoint_cohort_preflight=model_endpoint_cohort_preflight,
+            paper_suite_scale_profile=suite_scale_profile,
             output_root=output_root,
         )
         execution_plan = resolve_paper_smoke_execution_plan(
@@ -2011,6 +2063,18 @@ def _run_smoke_cli(
                 "profile_digest": profile.profile_digest,
                 "execution_plan_digest": execution_plan.execution_plan_digest,
                 "experiment_ids": list(experiment_ids),
+                "paper_suite_scale_profile_source_path": (
+                    suite_scale_profile.source_path
+                ),
+                "paper_suite_scale_profile_digest": (
+                    suite_scale_profile.profile_digest
+                ),
+                "exp5_selection_path": (
+                    suite_scale_profile.exp5_source_selection_path
+                ),
+                "exp5_selection_digest": (
+                    suite_scale_profile.exp5_source_selection_digest
+                ),
             },
             output_identity={
                 "output_root": output_root.resolve(strict=False).as_posix(),
@@ -2187,6 +2251,16 @@ def _run_smoke_cli(
             raise ValueError(
                 "Exp5 v3 execution schedule evidence failed closed"
             )
+        _write_completed_exp5_smoke_evidence(
+            profile=profile,
+            output_root=output_root,
+            result=result,
+            entry_map_path=(
+                Path(args.model_entry_map)
+                if args.model_entry_map is not None
+                else None
+            ),
+        )
     except (OSError, RuntimeError, ValueError) as exc:
         error_payload = {
             "status": "failed",
@@ -2227,10 +2301,29 @@ def _execution_result_exit_code(result: object) -> int:
     if status in {
         PaperStatus.COMPLETED.value,
         PaperStatus.COMPLETED_WITH_FAILURES.value,
-        PaperStatus.BUDGET_EXHAUSTED.value,
     }:
         return 0
     return 3
+
+
+def _formal_execution_exit_code(
+    execution_result: object,
+    report_result: object | None,
+) -> int:
+    """正式 suite 声称可写论文时，renderer 失败必须传播到监督进程。"""
+
+    execution_exit_code = _execution_result_exit_code(execution_result)
+    if execution_exit_code != 0:
+        return execution_exit_code
+    to_dict = getattr(execution_result, "to_dict", None)
+    if not callable(to_dict) or to_dict().get("paper_eligible") is not True:
+        return execution_exit_code
+    if (
+        getattr(report_result, "paper_eligible", None) is not True
+        or getattr(report_result, "formal_paper_table_generated", None) is not True
+    ):
+        return 3
+    return execution_exit_code
 
 
 def _write_smoke_blocked_suite(
@@ -3308,6 +3401,7 @@ def _write_blocked_suite(
     failure_kind: str,
     message: str,
     suite_id: str = "paper_v1_blocked",
+    model_endpoint_cohort_preflight: Mapping[str, object] | None = None,
 ) -> None:
     suite = PaperSuiteResult(
         suite_id=suite_id,
@@ -3328,6 +3422,11 @@ def _write_blocked_suite(
         metrics_refs=[],
         audit_refs=[],
         error_summary=[{"failure_kind": failure_kind, "message": message}],
+        model_endpoint_cohort_preflight=(
+            dict(model_endpoint_cohort_preflight)
+            if model_endpoint_cohort_preflight is not None
+            else None
+        ),
     )
     _write_suite(output_root, suite)
     print(json.dumps(suite.to_dict(), ensure_ascii=False, indent=2, sort_keys=True))
@@ -3401,6 +3500,7 @@ def _model_endpoint_cohort_preflight_for_suite(
     model_entry_map: str | None,
     provider_config_args: tuple[str, ...],
     require_smoke_evidence: bool = True,
+    smoke_evidence_bundle: str | None = None,
 ) -> tuple[dict | None, dict | None]:
     if "exp5_real_ai_model_endpoint_comparison" not in experiment_ids:
         return None, None
@@ -3428,16 +3528,31 @@ def _model_endpoint_cohort_preflight_for_suite(
         provider_configs = load_provider_config_map(
             _parse_provider_config_args(provider_config_args)
         )
+        smoke_bundle = (
+            load_exp5_smoke_evidence_bundle(Path(smoke_evidence_bundle))
+            if require_smoke_evidence and smoke_evidence_bundle is not None
+            else None
+        )
         preflight = build_model_endpoint_cohort_preflight(
             cohort=cohort,
             entry_map=entry_map,
             provider_configs=provider_configs,
             require_smoke_evidence=require_smoke_evidence,
+            smoke_evidence_bundle=smoke_bundle,
         )
         return preflight, cohort
     except (FileNotFoundError, json.JSONDecodeError, ValueError) as exc:
+        reasons = (
+            [exc.reason]
+            if isinstance(exc, Exp5SmokeEvidenceError)
+            else ["incomplete_model_cohort"]
+        )
         return (
-            _blocked_model_endpoint_cohort_preflight(message=str(exc), cohort=cohort),
+            _blocked_model_endpoint_cohort_preflight(
+                message=str(exc),
+                cohort=cohort,
+                ineligibility_reasons=reasons,
+            ),
             cohort,
         )
 
@@ -3446,13 +3561,32 @@ def _blocked_model_endpoint_cohort_preflight(
     *,
     message: str,
     cohort: dict | None = None,
+    ineligibility_reasons: Sequence[str] = ("incomplete_model_cohort",),
 ) -> dict:
+    members = cohort.get("members") if isinstance(cohort, dict) else None
+    cohort_member_ids = (
+        [
+            str(member["cohort_member_id"])
+            for member in members
+            if isinstance(member, Mapping)
+            and isinstance(member.get("cohort_member_id"), str)
+            and member["cohort_member_id"]
+        ]
+        if isinstance(members, Sequence)
+        and not isinstance(members, (str, bytes))
+        else []
+    )
+    expected_member_ids = (
+        cohort_member_ids
+        if cohort_member_ids
+        else list(PAPER_MODEL_ENDPOINT_COHORT_V3_MEMBER_IDS)
+    )
     return {
         "schema_version": "tokenshare.paper_model_endpoint_cohort_preflight.v1",
         "status": "blocked",
         "paper_eligible_possible": False,
         "blocked_reason": "incomplete_model_cohort",
-        "ineligibility_reasons": ["incomplete_model_cohort"],
+        "ineligibility_reasons": list(dict.fromkeys(ineligibility_reasons)),
         "message": message,
         "provider_calls_made": 0,
         "model_policy": "fixed_entry",
@@ -3460,13 +3594,42 @@ def _blocked_model_endpoint_cohort_preflight(
         "model_cohort_digest": (
             cohort.get("model_cohort_digest") if isinstance(cohort, dict) else None
         ),
-        "expected_member_ids": list(PAPER_MODEL_ENDPOINT_COHORT_MEMBER_IDS),
+        "expected_member_ids": expected_member_ids,
         "missing_members": [],
         "missing_provider_configs": [],
         "missing_entry_ids": [],
         "ineligible_members": [],
         "member_plans": {},
     }
+
+
+def _write_completed_exp5_smoke_evidence(
+    *,
+    profile: object,
+    output_root: Path,
+    result: object,
+    entry_map_path: Path | None,
+) -> dict | None:
+    """仅为成功的独立 Exp5 bootstrap smoke 派生 formal 门禁证据。"""
+
+    if getattr(profile, "suite_id", None) != EXP5_SMOKE_SUITE_ID:
+        return None
+    to_dict = getattr(result, "to_dict", None)
+    terminal_statuses = {
+        PaperStatus.COMPLETED.value,
+        PaperStatus.COMPLETED_WITH_FAILURES.value,
+    }
+    if not callable(to_dict) or to_dict().get("status") not in terminal_statuses:
+        return None
+    if entry_map_path is None:
+        raise ValueError("completed Exp5 smoke requires --model-entry-map")
+    bundle = write_exp5_smoke_evidence_bundle(
+        source_suite_root=output_root,
+        entry_map=load_model_entry_map(entry_map_path),
+        output_path=output_root / "audit" / "exp5_endpoint_smoke_evidence.json",
+    )
+    FormalEvidenceStore(output_root)._refresh_evidence_manifest()
+    return bundle
 
 if __name__ == "__main__":
     raise SystemExit(main())

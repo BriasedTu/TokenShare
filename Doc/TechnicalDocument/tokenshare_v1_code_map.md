@@ -1,6 +1,6 @@
 # TokenShare V1 当前 Code Map
 
-更新时间：2026-07-30
+更新时间：2026-08-01
 
 状态：当前总体代码归属权威。本文回答“改动应该放哪里、哪些边界不能跨”，不记录逐次修复历史。协议语义看 `tokenshare_v1_complete_spec.md`，论文实验参数看 `tokenshare_latest_real_plugin_experiment_design.md`。
 
@@ -125,8 +125,10 @@ Secret 只能进入当前进程环境和脱敏后的 transport；event/artifact/
 |---|---|
 | `paper_models.py` | paper condition/result/budget/fault/eligibility schema 和 digest。 |
 | `paper_catalog.py`、`paper_factorization_catalog.py` | catalog 加载、manifest、selection 与 oracle/preflight。 |
+| `paper_factorization_sampling.py` | Factorization 分层稳定评分、采样 profile 校验与 immutable catalog slice；不拥有全 suite 各实验题量。 |
 | `paper_catalog_execution_view.py` | 冻结规划时 catalog view，供 execute/resume/replay 使用同一 body/digest。 |
 | `paper_experiment_contracts.py` | 冻结 selection、execution context 和 contract digest。 |
+| `paper_suite_scale.py` | 加载 `paper_suite_scale_profile.v1.json`，从不可变 catalog 按 difficulty 内稳定 hash 物化 Exp1–4 Factorization scopes，并绑定 active Exp5 v4 selection；缺失/旧 profile 不得静默回退。 |
 | `paper_model_identity.py` | experiment-layer endpoint/reasoning identity 与 pre/post-call audit。 |
 | `paper_model_policy.py` | Exp5 cohort/entry map/preflight；当前为四模型 v3。 |
 | `paper_unit_commitments.py` | plan/condition/request/attempt 的 AI unit binding。 |
@@ -140,11 +142,13 @@ Secret 只能进入当前进程环境和脱敏后的 transport；event/artifact/
 | `paper_formal_runner.py` | 正式/smoke suite orchestration、preflight、dispatch、checkpoint、resume/replay。 |
 | `paper_formal_callbacks.py` | provider/executor callback 绑定。 |
 | `paper_formal_evidence.py` | 正式 evidence store、manifest、checkpoint 和完整性校验。 |
+| `paper_formal_checkpoint.py` | generation v3 root-delta checkpoint、resume 与 terminal streaming SQLite compaction；保持逐 root 释放，避免全 suite outcome 常驻。 |
 | `paper_faults.py`、`paper_workers.py` | 五类 rate-fault 与 worker-death 的预注册 hook/投影。 |
 | `paper_exp1.py`、`paper_exp2_scalability.py`、`paper_exp3_fault_recovery.py`、`paper_exp4_ablation_runner.py` | 各实验的独立行为/指标 helper。 |
 | `paper_ablation.py` | `FULL + 4` protocol mechanism policy。 |
 | `paper_terminal_outcomes.py` | succeeded/failed/blocked/incomplete 终态语义。 |
 | `paper_smoke.py` | smoke profile、identity 与非论文执行。 |
+| `paper_exp5_smoke_evidence.py` | Exp5 v4 8-root smoke 的 artifact/event/hash-chain/identity evidence validator；raw LedgerEvent 保持原 envelope/hash，实验分类通过 task binding 关联。 |
 
 `paper_formal_runner.py` 是当前最大风险热点。未来拆分优先提取纯 preflight、dispatch、evidence finalization 边界；任何拆分先锁 characterization tests，禁止复制一套生命周期。
 
@@ -158,6 +162,23 @@ Secret 只能进入当前进程环境和脱敏后的 transport；event/artifact/
 | `paper_report.py`、`paper_formal_report.py`、`paper_smoke_report.py` | 通用/正式/smoke 输出；smoke 永远 paper-ineligible。 |
 | `paper_exp5_artifacts.py`、`paper_exp5_model_comparison.py`、`paper_exp5_statistics.py` | Exp5 v3 artifact、比较与统计。 |
 | `paper_budget.py` | plan-only roots/units/attempt/token/cost/time/space 预算与门禁。 |
+
+正式规模和资源边界由 `paper_suite_scale.py`、`paper_budget.py`、`paper_formal_checkpoint.py` 与 `paper_formal_metrics.py` 共同约束：当前 Exp1–5 精确总量为 `6,384 roots / 40,520 units / 81,272 attempt upper`，最大单 condition 为 `100/1,000/1,000`；generation 逐 root delta、terminal SQLite streaming compaction、metrics lazy bundle mapping 和 JSONL/chunked scan 使内存按最大单 outcome/当前 bundle 定界，而不是把全 suite 同时载入。磁盘 forecast/compaction/safety reserve 必须写入 `run_budget.json` 并在 provider dispatch 前检查目标卷。
+
+### EPD-027 待实施的实验设施全面改造
+
+2026-08-01 已冻结 Experiment 2–4 两阶段真实回答库设计，但本节描述的是待实施边界，不表示代码已经存在。现有 `ai_api_replay.py` 与 `paper_formal_runner.py` replay 只恢复或复算既有 evidence，不能以回答库输入重新驱动完整状态机；当前 `ExecutionRequest`/prompt identity 也没有可跨 condition 安全复用的稳定 outbound-body digest。
+
+后续完整实施计划必须同时覆盖：
+
+- executor 层的稳定 `inference_request_digest`、不可变 bank entry 与 acquisition actual usage；
+- experiment 层的 bank inventory、sample/replacement slot、trace-backed executor binding、当前 submission 到 source entry 的双 provenance；
+- `online_real_provider` 与 `real_model_trace_protocol_run` 两类 paper eligibility，禁止把 trace consumption 冒充当前 provider call；
+- acquisition actual spend 与 per-condition trace attribution 两套资源账，以及 calls/tokens/CNY/in-flight 人民币 1,000 硬门；
+- Experiment 2 缩小题集六 worker 档在线并发检查、Experiment 3 小型在线恢复检查；
+- metrics/report/renderer/replay/audit 与 smoke/canary 身份迁移。
+
+这是一项跨 `tokenshare.executors`、`tokenshare.experiments`、两插件 runtime adapter 和输出 schema 的全面设施修改，不得在 `paper_formal_runner.py` 内临时塞入读取文件的旁路，也不得复制一套协议生命周期。实现前先建立 characterization/RED tests，并以唯一权威实验设计 EPD-027 为准。
 
 指标不得使用固定协议时间、自填成功字段或丢失失败/未开始分母；所有汇总必须能回到逐 task/attempt/event/artifact。
 
@@ -177,7 +198,7 @@ Secret 只能进入当前进程环境和脱敏后的 transport；event/artifact/
 
 | 位置 | 内容 |
 |---|---|
-| `benchmarks/paper/` | tracked catalogs、selection、safe provider config、cohort、smoke profiles。 |
+| `benchmarks/paper/` | tracked catalogs、selection、safe provider config、cohort、smoke profiles；active 规模为 `paper_suite_scale_profile.v1.json`，Exp5 active selection/smoke 为 v4，历史 v1/v3 文件只供 replay/provenance。 |
 | `local/*.local.json` | gitignored secret/local config；不得归档或迁入 tracked 文档。 |
 | `local/run_*_smoke.ps1` | 真实 smoke launcher；输出和 supervision 可使用外部绝对路径。 |
 | `verification/` | Fast/Full runner、Fast manifest、Lean canary manifest。 |

@@ -321,10 +321,15 @@ def load_paper_smoke_profile(path: str | Path) -> PaperSmokeProfile:
     if schema_version == PAPER_SMOKE_PROFILE_V3_SCHEMA_VERSION:
         if set(body).difference(_V3_PROFILE_FIELDS):
             raise ValueError("paper smoke v3 profile contains unsupported fields")
-        if body.get("profile_version") != "v3":
-            raise ValueError("paper smoke profile v2 schema requires profile_version=v3")
+        if body.get("profile_version") not in {"v3", "v4"}:
+            raise ValueError(
+                "paper smoke profile v2 schema requires profile_version=v3 or v4"
+            )
         declared_v3_profile_digest = _required_digest(body, "profile_digest")
-        exp5_v3_contract = _load_exp5_v3_contract(body)
+        exp5_v3_contract = _load_exp5_v3_contract(
+            body,
+            profile_version=str(body["profile_version"]),
+        )
     if body.get("formal") is not False:
         raise ValueError("paper smoke profile requires formal=false")
     if body.get("pilot_only") is not True:
@@ -396,7 +401,11 @@ def load_paper_smoke_profile(path: str | Path) -> PaperSmokeProfile:
     return profile
 
 
-def _load_exp5_v3_contract(body: Mapping[str, Any]) -> Mapping[str, Any]:
+def _load_exp5_v3_contract(
+    body: Mapping[str, Any],
+    *,
+    profile_version: str,
+) -> Mapping[str, Any]:
     contract = _required_mapping(body, "exp5_v3_contract")
     if set(contract) != _EXP5_V3_CONTRACT_FIELDS:
         raise ValueError("paper smoke Exp5 v3 contract fields do not match schema")
@@ -409,7 +418,12 @@ def _load_exp5_v3_contract(body: Mapping[str, Any]) -> Mapping[str, Any]:
         raise ValueError("paper smoke Exp5 v3 cohort_id mismatch")
     if contract.get("provider_config_id") != "executor_ai_api_exp5_siliconflow_v3":
         raise ValueError("paper smoke Exp5 v3 provider_config_id mismatch")
-    if contract.get("selection_id") != "tokenshare.paper.exp5.hard_half.v3":
+    expected_selection_id = (
+        "tokenshare.paper.exp5.parent_quarter.v4"
+        if profile_version == "v4"
+        else "tokenshare.paper.exp5.hard_half.v3"
+    )
+    if contract.get("selection_id") != expected_selection_id:
         raise ValueError("paper smoke Exp5 v3 selection_id mismatch")
     for field_name in (
         "cohort_digest",
@@ -429,7 +443,9 @@ def _load_exp5_v3_contract(body: Mapping[str, Any]) -> Mapping[str, Any]:
         raise ValueError("paper smoke Exp5 v3 requires sequential model arms")
     if contract.get("repeat_member_order") != _EXP5_V3_REPEAT_MEMBER_ORDER:
         raise ValueError("paper smoke Exp5 v3 repeat_member_order mismatch")
-    canonical_digests = _canonical_exp5_v3_contract_digests()
+    canonical_digests = _canonical_exp5_v3_contract_digests(
+        profile_version=profile_version
+    )
     for field_name, expected_digest in canonical_digests.items():
         if contract.get(field_name) != expected_digest:
             raise ValueError(
@@ -448,13 +464,17 @@ def _load_exp5_v3_contract(body: Mapping[str, Any]) -> Mapping[str, Any]:
     }
 
 
-def _canonical_exp5_v3_contract_digests() -> Mapping[str, str]:
+def _canonical_exp5_v3_contract_digests(
+    *,
+    profile_version: str,
+) -> Mapping[str, str]:
     """从当前 canonical artifacts 和常量重建 v3 smoke identity。"""
 
     from tokenshare.executors.ai_api_config import load_ai_api_config
     from tokenshare.experiments.paper_exp5_model_comparison import (
         EXP5_V3_SEQUENCE_PLAN_DIGEST,
         load_exp5_v3_selection,
+        load_exp5_v4_selection,
     )
     from tokenshare.experiments.paper_model_policy import (
         load_model_endpoint_cohort,
@@ -471,7 +491,11 @@ def _canonical_exp5_v3_contract_digests() -> Mapping[str, str]:
         ).read_text(encoding="utf-8")
     )
     provider_config = load_ai_api_config(provider_config_body)
-    selection = load_exp5_v3_selection()
+    selection = (
+        load_exp5_v4_selection()
+        if profile_version == "v4"
+        else load_exp5_v3_selection()
+    )
     return {
         "cohort_digest": str(cohort["model_cohort_digest"]),
         "provider_config_digest": provider_config.config_digest,

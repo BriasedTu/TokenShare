@@ -1,11 +1,13 @@
 import json
 from dataclasses import replace
+from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 import tokenshare.experiments.factorization_paper_adapter as factorization_paper_adapter_module
+import tokenshare.experiments.paper_formal_metrics as paper_formal_metrics
 from tokenshare.core.models import ArtifactRef
 from tokenshare.executors.ai_api import build_ai_api_executor_descriptor
 from tokenshare.executors.ai_api_config import load_ai_api_config
@@ -883,6 +885,101 @@ def test_factorization_paper_adapter_accepts_openai_real_transport_through_execu
         assert request["capability_snapshot"]["provider_family"] == "openai"
         assert request["hard_requirements"]["provider_family"] == "openai"
         assert _registry_provider_matches(request) == ["openai"]
+
+
+def test_factorization_real_transport_uses_attempt_clock_domain_and_numeric_critical_path(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    catalog = load_paper_catalogs(
+        factorization_path=FACTOR_CATALOG,
+        lean_path=LEAN_CATALOG,
+    )
+    case = catalog.cases_for(domain="factorization", difficulty="easy")[0]
+    condition = _condition(catalog.catalog_digest)
+    monkeypatch.setenv("TOKENSHARE_OPENAI_REAL_TRANSPORT_GUARD_KEY", "test-key")
+    transport = UrlLibOpenAITransport()
+    scripted = ScriptedFactorizationRangeTransport()
+    monkeypatch.setattr(
+        transport,
+        "post_chat_completion",
+        scripted.post_chat_completion,
+    )
+
+    result = run_factorization_paper_case(
+        case=case,
+        condition=condition,
+        output_root=tmp_path,
+        transport=transport,
+        real_transport=True,
+        ai_api_config=_openai_real_transport_config(),
+        entry_id="openai_real_transport_guard",
+    )
+
+    attempts = [attempt.to_dict() for attempt in result.attempt_results]
+    assert all(
+        _read_request_artifact(result.output_root, attempt.request_ref)[
+            "environment_ref"
+        ]["clock_policy"]
+        == "utc_wall_clock"
+        for attempt in result.attempt_results
+    )
+    protocol_runtime = result.run_evidence["protocol_runtime"]
+    task = {
+        **result.task_result.to_dict(),
+        "runtime_generation_identity": protocol_runtime["generation_identity"],
+    }
+    critical_path = paper_formal_metrics._protocol_critical_path(
+        task=task,
+        attempts=attempts,
+        events=result.event_records,
+    )
+    observed_times = [
+        datetime.fromisoformat(value.replace("Z", "+00:00"))
+        for value in (
+            *(event["occurred_at"] for event in result.event_records),
+            *(attempt["started_at"] for attempt in attempts),
+            *(attempt["ended_at"] for attempt in attempts),
+        )
+    ]
+
+    assert result.task_result.root_status == PaperTaskStatus.COMPLETED
+    assert (max(observed_times) - min(observed_times)).total_seconds() < 60
+    assert len({event["occurred_at"] for event in result.event_records}) > 5
+    assert all(
+        event["occurred_at"] != factorization_paper_adapter_module.NOW
+        for event in result.event_records
+    )
+    assert abs(
+        (datetime.now(timezone.utc) - max(observed_times)).total_seconds()
+    ) < 60
+    assert critical_path["critical_path_ms"] is not None, critical_path
+    assert critical_path["critical_path_ms"] >= 0
+    assert critical_path["critical_path_source"] == "protocol_dependency_graph"
+    assert critical_path["paper_ineligibility_reasons"] == []
+    event_seqs = [event["event_seq"] for event in result.event_records]
+    # event_seq 只证明 ledger commit order；并发 occurred_at 不要求随其全局单调。
+    assert event_seqs == sorted(event_seqs)
+    assert len(event_seqs) == len(set(event_seqs))
+
+
+def test_factorization_scripted_transport_keeps_fixed_protocol_clock(
+    tmp_path: Path,
+) -> None:
+    case = generate_factorization_paper_cases()[0]
+
+    result = run_factorization_paper_case(
+        case=case,
+        condition=_v2_condition(case),
+        output_root=tmp_path,
+        transport=ScriptedFactorizationRangeTransport(),
+        real_transport=False,
+        entry_id="factorization_paper_scripted",
+    )
+
+    assert {
+        event["occurred_at"] for event in result.event_records
+    } == {factorization_paper_adapter_module.NOW}
 
 
 def test_factorization_paper_adapter_rejects_openai_url_transport_without_real_flag(

@@ -1,3 +1,5 @@
+from dataclasses import replace
+
 from tokenshare.experiments.paper_models import (
     PaperAttemptResult,
     PaperAttemptStatus,
@@ -166,6 +168,39 @@ def test_real_ai_gate_marks_executor_error_ineligible_without_provider_artifact_
         assert f"attempt:attempt_root_1:{forbidden}" not in reasons
 
 
+def test_real_ai_gate_accepts_audited_provider_failure_with_missing_usage() -> None:
+    model_record_ref = _artifact_ref(
+        "model-record",
+        "PaperModelExecutionRecord",
+        "tokenshare.paper_model_execution_record",
+    )
+    attempt = replace(
+        _valid_attempt(),
+        attempt_status=PaperAttemptStatus.PROVIDER_ERROR,
+        raw_output_ref=None,
+        parsed_output_ref=None,
+        model_execution_record_ref=model_record_ref,
+        provider_attempt_count=1,
+        latency_ms=1234,
+        prompt_tokens=None,
+        completion_tokens=None,
+        total_tokens=None,
+        cost_estimate=None,
+        cost_estimate_status="usage_missing",
+        error_kind="timeout",
+        paper_eligible=True,
+        schema_version="tokenshare.paper_attempt_result.v3",
+    )
+
+    report = evaluate_paper_eligibility(
+        attempts=[attempt],
+        run_evidence=_valid_run_evidence([attempt.to_dict()]),
+    )
+
+    assert report.paper_eligible is True
+    assert report.ineligibility_reasons == ()
+
+
 def _valid_attempt() -> PaperAttemptResult:
     ref = _artifact_ref("request", "ExecutionRequest", "phase3.execution_request", source_kind="protocol_engine")
     raw_ref = _artifact_ref("raw", "RawModelOutput", "phase7.raw_model_output")
@@ -231,6 +266,7 @@ def _valid_run_evidence(attempts: list[dict]) -> dict:
             "parse_failure_ref",
             "provenance_ref",
             "usage_ref",
+            "model_execution_record_ref",
         ):
             ref = attempt.get(field_name)
             if ref is not None:

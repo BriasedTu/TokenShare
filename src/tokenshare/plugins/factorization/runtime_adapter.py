@@ -6,7 +6,7 @@ import json
 from dataclasses import replace
 from hashlib import sha256
 from math import isqrt
-from typing import Any
+from typing import Any, Callable
 
 from tokenshare.core.expansion import ExpansionDecision, SplitStrategyInvocation
 from tokenshare.core.merge import ExpectedOutputResolution, MergeRecord
@@ -116,6 +116,8 @@ class FactorizationRuntimeAdapter:
         max_tokens: int = 512,
         timeout_seconds: int = 30,
         created_at: str = NOW,
+        lifecycle_clock: Callable[[], str] | None = None,
+        clock_policy: str = "fixed",
     ) -> None:
         self.provider_family = provider_family
         self.seed = seed
@@ -126,7 +128,9 @@ class FactorizationRuntimeAdapter:
         )
         self.max_tokens = max_tokens
         self.timeout_seconds = timeout_seconds
-        self.created_at = created_at
+        self._created_at = created_at
+        self._lifecycle_clock = lifecycle_clock
+        self.clock_policy = clock_policy
         self.descriptor = build_factorization_plugin_descriptor()
         base_executor_descriptor = build_ai_api_executor_descriptor(
             provider_family=provider_family
@@ -172,6 +176,14 @@ class FactorizationRuntimeAdapter:
         self._range_input_refs_by_request_id: dict[str, ArtifactRef] = {}
         self._merge_candidate_refs: dict[str, Any] = {}
         self._slot_integrity_violation_applied = False
+
+    @property
+    def created_at(self) -> str:
+        """真实 paper runtime 动态取 UTC；普通插件调用仍使用固定构造时间。"""
+
+        if self._lifecycle_clock is not None:
+            return self._lifecycle_clock()
+        return self._created_at
 
     def plan_root(
         self,
@@ -795,7 +807,7 @@ class FactorizationRuntimeAdapter:
             resource_limits={"timeout_seconds": self.timeout_seconds},
             fixture_profile_digest="sha256:factorization_runtime",
             seed=self.seed,
-            clock_policy="fixed",
+            clock_policy=self.clock_policy,
             created_at=self.created_at,
         )
 
@@ -1103,6 +1115,7 @@ class FactorizationRuntimeAdapter:
     ) -> MergeResolutionAction:
         canonical = context.canonical_selection
         link = context.merge_task_link
+        resolved_at = self.created_at
         record = MergeRecord(
             merge_record_id=(
                 f"merge_record:{link.merge_plan_id}:"
@@ -1137,7 +1150,7 @@ class FactorizationRuntimeAdapter:
             parent_output_mapping_digest=digest_json(
                 context.merge_plan.parent_output_mapping
             ),
-            created_at=self.created_at,
+            created_at=resolved_at,
         )
         expected = context.expected_output_refs[0]
         output_ref = canonical.canonical_output_refs[
@@ -1159,7 +1172,7 @@ class FactorizationRuntimeAdapter:
             merge_canonical_selection_id=record.canonical_selection_id,
             resolved_output_ref=output_ref.to_dict(),
             resolved_output_digest=output_ref.content_hash,
-            resolved_at=self.created_at,
+            resolved_at=resolved_at,
         )
         return MergeResolutionAction(
             merge_record=record,

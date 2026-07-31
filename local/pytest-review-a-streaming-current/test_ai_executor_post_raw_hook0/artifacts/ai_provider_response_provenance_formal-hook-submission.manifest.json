@@ -1,0 +1,19 @@
+{
+  "artifact_id": "ai_provider_response_provenance_formal-hook-submission",
+  "artifact_schema_id": "phase7.ai_provider_response_provenance",
+  "artifact_schema_version": "v1",
+  "artifact_type": "AIProviderResponseProvenance",
+  "content_hash": "sha256:96908bc02bfee9a8ab9b82b60b920e6e4df0b1146223d7df7f500f637661e1c5",
+  "created_at": "2026-07-20T00:00:02Z",
+  "media_type": "application/json",
+  "metadata": {
+    "executor_id": "formal-hook-test"
+  },
+  "schema_version": "ArtifactRef.v1",
+  "size_bytes": 1874,
+  "source": {
+    "kind": "ai_api_executor",
+    "request_id": "formal-post-raw-hook"
+  },
+  "uri": "artifacts/ai_provider_response_provenance_formal-hook-submission"
+}

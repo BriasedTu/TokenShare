@@ -62,10 +62,19 @@ EXP5_V3_SELECTION_PATH = (
     Path(__file__).resolve().parents[3]
     / "benchmarks/paper/exp5_hard_half_selection.v3.json"
 )
+EXP5_V4_SELECTION_SCHEMA_VERSION = (
+    "tokenshare.paper_exp5_parent_quarter_selection.v4"
+)
+EXP5_V4_SELECTION_ID = "tokenshare.paper.exp5.parent_quarter.v4"
+EXP5_V4_SELECTION_VERSION = "v4"
+EXP5_V4_SELECTION_PATH = (
+    Path(__file__).resolve().parents[3]
+    / "benchmarks/paper/exp5_parent_quarter_selection.v4.json"
+)
 EXP5_V3_WORKER_COUNT = 3
 EXP5_V3_EXPECTED_CONDITION_COUNT = 48
-EXP5_V3_EXPECTED_ROOT_RUNS = 1_284
-EXP5_V3_EXPECTED_AI_UNIT_COUNT = 9_888
+EXP5_V3_EXPECTED_ROOT_RUNS = 648
+EXP5_V3_EXPECTED_AI_UNIT_COUNT = 4_992
 EXP5_V3_STRATUM_ORDER = (
     "factorization:hard",
     "lean_proof:hard:pure_logic",
@@ -77,6 +86,12 @@ EXP5_V3_RETAINED_COUNTS = {
     "lean_proof:hard:pure_logic": 8,
     "lean_proof:hard:function_set": 8,
     "lean_proof:hard:induction": 8,
+}
+EXP5_V4_RETAINED_COUNTS = {
+    "factorization:hard": 42,
+    "lean_proof:hard:pure_logic": 4,
+    "lean_proof:hard:function_set": 4,
+    "lean_proof:hard:induction": 4,
 }
 EXP5_V3_SOURCE_COUNTS = {
     "factorization:hard": 166,
@@ -436,12 +451,150 @@ def load_exp5_v3_selection(
     return normalized
 
 
+def load_exp5_v4_selection(
+    path: str | Path = EXP5_V4_SELECTION_PATH,
+    *,
+    catalog: Any | None = None,
+) -> JsonObject:
+    """Load the active parent-derived 54-root selection and verify v3 nesting."""
+
+    selection_path = Path(path)
+    try:
+        body = json.loads(selection_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError("unable to load Experiment 5 v4 selection") from exc
+    if not isinstance(body, Mapping):
+        raise ValueError("Experiment 5 v4 selection must be a JSON object")
+    normalized = dict(body)
+    if set(normalized) != {
+        "schema_version",
+        "selection_id",
+        "selection_version",
+        "derivation",
+        "counts_by_stratum",
+        "retained_count",
+        "ordered_case_ids",
+        "strata",
+        "selection_digest",
+    }:
+        raise ValueError("Experiment 5 v4 selection fields drift")
+    if (
+        normalized.get("schema_version") != EXP5_V4_SELECTION_SCHEMA_VERSION
+        or normalized.get("selection_id") != EXP5_V4_SELECTION_ID
+        or normalized.get("selection_version") != EXP5_V4_SELECTION_VERSION
+    ):
+        raise ValueError("Experiment 5 v4 selection identity drift")
+    declared_digest = normalized.get("selection_digest")
+    _require_complete_digest("selection_digest", declared_digest)
+    digest_body = dict(normalized)
+    digest_body.pop("selection_digest")
+    if digest_json(digest_body) != declared_digest:
+        raise ValueError("Experiment 5 v4 selection digest mismatch")
+
+    derivation = normalized.get("derivation")
+    expected_parent_path = "benchmarks/paper/exp5_hard_half_selection.v3.json"
+    if not isinstance(derivation, Mapping) or dict(derivation) != {
+        "rule_id": "ordered_parent_prefix_by_stratum.v1",
+        "parent_selection_path": expected_parent_path,
+        "parent_selection_digest": (
+            "sha256:fbec153a02befa4071b4ad4d639e51e910a3bc4c433cc9eea4b19ac6489a3490"
+        ),
+        "stratum_order": list(EXP5_V3_STRATUM_ORDER),
+    }:
+        raise ValueError("Experiment 5 v4 parent derivation drift")
+    parent = load_exp5_v3_selection(
+        Path(__file__).resolve().parents[3] / expected_parent_path,
+        catalog=catalog,
+    )
+    if parent.get("selection_digest") != derivation.get(
+        "parent_selection_digest"
+    ):
+        raise ValueError("Experiment 5 v4 parent selection digest drift")
+    parent_strata = {
+        str(stratum["stratum_id"]): stratum for stratum in parent["strata"]
+    }
+
+    _require_exact_int_mapping(
+        "counts_by_stratum",
+        normalized.get("counts_by_stratum"),
+        EXP5_V4_RETAINED_COUNTS,
+    )
+    if normalized.get("retained_count") != sum(EXP5_V4_RETAINED_COUNTS.values()):
+        raise ValueError("Experiment 5 v4 retained count drift")
+    strata = normalized.get("strata")
+    if not isinstance(strata, list) or len(strata) != len(EXP5_V3_STRATUM_ORDER):
+        raise ValueError("Experiment 5 v4 strata drift")
+    normalized_strata: list[JsonObject] = []
+    concatenated_ids: list[str] = []
+    for stratum_id, raw_stratum in zip(
+        EXP5_V3_STRATUM_ORDER,
+        strata,
+        strict=True,
+    ):
+        if not isinstance(raw_stratum, Mapping) or set(raw_stratum) != {
+            "stratum_id",
+            "domain",
+            "paper_difficulty",
+            "topic_family",
+            "parent_count",
+            "retained_count",
+            "ordered_case_ids",
+        }:
+            raise ValueError("Experiment 5 v4 stratum fields drift")
+        stratum = dict(raw_stratum)
+        parent_stratum = parent_strata[stratum_id]
+        case_ids = _normalize_case_ids(stratum.get("ordered_case_ids"))
+        retained_count = EXP5_V4_RETAINED_COUNTS[stratum_id]
+        parent_ids = tuple(str(parent_id) for parent_id in parent_stratum[
+            "ordered_case_ids"
+        ])
+        if (
+            stratum.get("stratum_id") != stratum_id
+            or stratum.get("domain") != parent_stratum.get("domain")
+            or stratum.get("paper_difficulty")
+            != parent_stratum.get("paper_difficulty")
+            or stratum.get("topic_family") != parent_stratum.get("topic_family")
+            or stratum.get("parent_count") != len(parent_ids)
+            or stratum.get("retained_count") != retained_count
+            or case_ids != parent_ids[:retained_count]
+        ):
+            raise ValueError("Experiment 5 v4 stratum is not a parent prefix")
+        stratum["ordered_case_ids"] = list(case_ids)
+        normalized_strata.append(stratum)
+        concatenated_ids.extend(case_ids)
+    if normalized.get("ordered_case_ids") != concatenated_ids:
+        raise ValueError("Experiment 5 v4 ordered case inventory drift")
+    normalized["strata"] = normalized_strata
+    normalized["parent_catalog"] = dict(_mapping(parent["parent_catalog"]))
+    return normalized
+
+
+def _load_active_exp5_selection(
+    path: str | Path,
+    *,
+    catalog: Any | None = None,
+) -> JsonObject:
+    selection_path = Path(path)
+    try:
+        body = json.loads(selection_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError("unable to identify Experiment 5 selection schema") from exc
+    if not isinstance(body, Mapping):
+        raise ValueError("Experiment 5 selection must be a JSON object")
+    schema_version = body.get("schema_version")
+    if schema_version == EXP5_V3_SELECTION_SCHEMA_VERSION:
+        return load_exp5_v3_selection(path, catalog=catalog)
+    if schema_version == EXP5_V4_SELECTION_SCHEMA_VERSION:
+        return load_exp5_v4_selection(path, catalog=catalog)
+    raise ValueError("unsupported Experiment 5 selection schema")
+
+
 def expand_exp5_v3_conditions(
     context: PaperExecutionContext,
     *,
-    selection_path: str | Path = EXP5_V3_SELECTION_PATH,
+    selection_path: str | Path = EXP5_V4_SELECTION_PATH,
 ) -> tuple[Exp5V3Condition, ...]:
-    selection = load_exp5_v3_selection(selection_path)
+    selection = _load_active_exp5_selection(selection_path)
     member_plans = _validated_v3_member_plans(
         context.approved_endpoint_binding
     )
@@ -501,7 +654,7 @@ def freeze_exp5_v3_case_selections(
     context: PaperExecutionContext,
     conditions: Sequence[PaperExperimentCondition],
     *,
-    selection_path: str | Path = EXP5_V3_SELECTION_PATH,
+    selection_path: str | Path = EXP5_V4_SELECTION_PATH,
 ) -> FrozenCaseSelectionBatch:
     canonical_conditions = expand_exp5_v3_conditions(
         context,
@@ -511,7 +664,7 @@ def freeze_exp5_v3_case_selections(
         condition.condition_digest for condition in canonical_conditions
     ):
         raise ValueError("Experiment 5 v3 condition order or identity drift")
-    selection_body = load_exp5_v3_selection(
+    selection_body = _load_active_exp5_selection(
         selection_path,
         catalog=context.catalog,
     )
@@ -596,7 +749,7 @@ def count_exp5_v3_root_runs(
             or selection.topic_family != condition.topic_family
             or selection.catalog_digest != condition.catalog_digest
             or len(selection.ordered_case_ids)
-            != EXP5_V3_RETAINED_COUNTS[stratum_id]
+            != EXP5_V4_RETAINED_COUNTS[stratum_id]
             or selection.is_blocked
         ):
             raise ValueError("Experiment 5 v3 selection shape drift")
@@ -1082,15 +1235,30 @@ def _model_execution_row(item: Mapping[str, Any]) -> JsonObject:
     ):
         failure_reasons.append("attempt_artifact_ref_mismatch")
     provider_errors = _provider_errors(item, attempt, provider_attempts)
-    if provider_errors:
-        failure_reasons.append("provider_error")
     if pilot_only:
         failure_reasons.append("pilot_only")
     stable_reasons = tuple(dict.fromkeys(failure_reasons))
+    provider_failure_without_response = (
+        bool(provider_errors)
+        and schema_version == "tokenshare.paper_model_execution_record.v2"
+        and record_body.get("identity_status") == "not_observed"
+        and record_body.get("response_model_status") == "unavailable"
+        and record_body.get("raw_output_ref") is None
+        and raw_output is None
+        and attempt.get("attempt_status") == "provider_error"
+        and attempt.get("raw_output_ref") is None
+        and bool(request_identities)
+        and bool(provider_attempts)
+    )
     paper_eligible = (
         schema_version == "tokenshare.paper_model_execution_record.v2"
-        and record_body.get("identity_status") == "matched"
-        and record_body.get("paper_eligible") is True
+        and (
+            (
+                record_body.get("identity_status") == "matched"
+                and record_body.get("paper_eligible") is True
+            )
+            or provider_failure_without_response
+        )
         and task_paper_eligible
         and not stable_reasons
     )
@@ -1104,6 +1272,10 @@ def _model_execution_row(item: Mapping[str, Any]) -> JsonObject:
         usage_evidence.get("cost_estimate_status")
         if isinstance(usage_evidence, Mapping)
         else None
+    )
+    usage_missing = (
+        provider_failure_without_response
+        and cost_estimate_status in {"usage_missing", "usage_invalid"}
     )
 
     return {
@@ -1162,22 +1334,30 @@ def _model_execution_row(item: Mapping[str, Any]) -> JsonObject:
         "usage_evidence_joined": joined_evidence["usage"] is not None,
         "started_at": attempt.get("started_at"),
         "ended_at": attempt.get("ended_at"),
-        "latency_ms": _non_negative_int(attempt["latency_ms"], "latency_ms"),
-        "prompt_tokens": _non_negative_int(
-            attempt["prompt_tokens"],
-            "prompt_tokens",
+        "latency_ms": _optional_non_negative_int(
+            attempt["latency_ms"], "latency_ms"
         ),
-        "completion_tokens": _non_negative_int(
-            attempt["completion_tokens"],
-            "completion_tokens",
+        "prompt_tokens": (
+            None
+            if usage_missing
+            else _non_negative_int(attempt["prompt_tokens"], "prompt_tokens")
         ),
-        "total_tokens": _non_negative_int(
-            attempt["total_tokens"],
-            "total_tokens",
+        "completion_tokens": (
+            None
+            if usage_missing
+            else _non_negative_int(
+                attempt["completion_tokens"], "completion_tokens"
+            )
         ),
-        "cost_estimate": _non_negative_number(
-            attempt["cost_estimate"],
-            "cost_estimate",
+        "total_tokens": (
+            None
+            if usage_missing
+            else _non_negative_int(attempt["total_tokens"], "total_tokens")
+        ),
+        "cost_estimate": (
+            None
+            if usage_missing
+            else _non_negative_number(attempt["cost_estimate"], "cost_estimate")
         ),
         "cost_estimate_currency": (
             str(cost_estimate_currency)
@@ -1302,14 +1482,22 @@ def _validate_required_attempt_fields(
         attempt["provider_attempt_index"],
         "provider_attempt_index",
     )
-    for field_name in (
-        "latency_ms",
-        "prompt_tokens",
-        "completion_tokens",
-        "total_tokens",
-    ):
-        _non_negative_int(attempt[field_name], field_name)
-    _non_negative_number(attempt["cost_estimate"], "cost_estimate")
+    provider_usage_missing = (
+        attempt.get("attempt_status") == "provider_error"
+        and isinstance(item.get("usage"), Mapping)
+        and item["usage"].get("cost_estimate_status")
+        in {"usage_missing", "usage_invalid"}
+    )
+    _optional_non_negative_int(attempt["latency_ms"], "latency_ms")
+    for field_name in ("prompt_tokens", "completion_tokens", "total_tokens"):
+        if provider_usage_missing:
+            _optional_non_negative_int(attempt[field_name], field_name)
+        else:
+            _non_negative_int(attempt[field_name], field_name)
+    if provider_usage_missing:
+        _optional_non_negative_number(attempt["cost_estimate"], "cost_estimate")
+    else:
+        _non_negative_number(attempt["cost_estimate"], "cost_estimate")
     if not isinstance(attempt["paper_eligible"], bool):
         raise ValueError("paper_eligible must be a bool")
     for field_name in (
@@ -1433,6 +1621,12 @@ def _non_negative_int(value: Any, field_name: str) -> int:
     return value
 
 
+def _optional_non_negative_int(value: Any, field_name: str) -> int | None:
+    if value is None:
+        return None
+    return _non_negative_int(value, field_name)
+
+
 def _non_negative_number(value: Any, field_name: str) -> float:
     if (
         isinstance(value, bool)
@@ -1442,6 +1636,12 @@ def _non_negative_number(value: Any, field_name: str) -> float:
     ):
         raise ValueError(f"{field_name} must be a number >= 0")
     return float(value)
+
+
+def _optional_non_negative_number(value: Any, field_name: str) -> float | None:
+    if value is None:
+        return None
+    return _non_negative_number(value, field_name)
 
 
 def _case_id_rank_key(case_id: str) -> tuple[str, str]:
@@ -2687,6 +2887,7 @@ __all__ = [
     "EXP5_V3_EXPECTED_CONDITION_COUNT",
     "EXP5_V3_EXPECTED_ROOT_RUNS",
     "EXP5_V3_SELECTION_PATH",
+    "EXP5_V4_SELECTION_PATH",
     "EXP5_V3_SEQUENCE_PLAN",
     "EXP5_V3_SEQUENCE_PLAN_DIGEST",
     "Exp5CohortGate",
@@ -2706,6 +2907,7 @@ __all__ = [
     "freeze_exp5_case_selections",
     "freeze_exp5_v3_case_selections",
     "load_exp5_v3_selection",
+    "load_exp5_v4_selection",
     "run_condition",
     "summarize",
     "summarize_exp5_model_comparison",

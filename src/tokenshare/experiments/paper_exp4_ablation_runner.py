@@ -29,6 +29,10 @@ from tokenshare.experiments.paper_models import (
     PaperStatus,
     UNSUPPORTED_PAPER_TRANSPORTS,
 )
+from tokenshare.experiments.paper_suite_scale import (
+    PaperSuiteScaleProfile,
+    validate_paper_suite_scale_policy,
+)
 
 
 EXP4_EXPERIMENT_ID = "exp4_real_ai_protocol_ablation"
@@ -38,13 +42,7 @@ EXP4_SUPPORTED_CATALOG_VERSIONS = ("v1", "v2")
 EXP4_REPEATS = 3
 EXP4_WORKER_COUNT = 10
 EXP4_TASKS_PER_DIFFICULTY = 5
-EXP4_FACTOR_CASE_COUNTS_BY_DIFFICULTY = {
-    "easy": 167,
-    "medium": 167,
-    "hard": 166,
-}
 EXP4_V1_ROOT_RUN_COUNT = 450
-EXP4_ROOT_RUN_COUNT = 7_725
 EXP4_SEED_BASE = 4000
 
 BASELINE_PROVIDER_CONFIG_ID = "exp1_baseline_deepseek"
@@ -299,13 +297,13 @@ def count_exp4_root_runs(
     for condition, selection in zip(conditions, selections, strict=True):
         _validate_selection_condition_shape(selection, condition)
         if selection.is_executable:
-            expected_count = _selection_case_count(
-                catalog_version=selection.catalog_version,
-                domain=condition.domain,
-                paper_difficulty=str(condition.paper_difficulty),
-            )
-            if len(selection.ordered_case_ids) != expected_count:
+            if (
+                selection.catalog_version == "v1"
+                and len(selection.ordered_case_ids) != EXP4_TASKS_PER_DIFFICULTY
+            ):
                 raise ValueError("Experiment 4 selection count drift")
+            if selection.catalog_version not in EXP4_SUPPORTED_CATALOG_VERSIONS:
+                raise ValueError("Experiment 4 supports only catalog v1 or v2")
             total += len(selection.ordered_case_ids)
     return total
 
@@ -774,18 +772,21 @@ def _validate_complete_formal_evidence(
         tuple[str, str],
         set[tuple[str, tuple[str, ...]]],
     ] = defaultdict(set)
+    factor_counts_by_difficulty: dict[str, set[int]] = defaultdict(set)
     for (domain, paper_difficulty, _), records in grouped.items():
         repeat_ids = sorted(record["repeat_id"] for record, _ in records)
         if repeat_ids != list(range(EXP4_REPEATS)):
             raise ValueError("formal repeat set must be exactly 0, 1, 2")
         for record, tasks in records:
-            expected_count = _selection_case_count(
-                catalog_version=catalog_version,
-                domain=domain,
-                paper_difficulty=paper_difficulty,
+            expected_count = (
+                EXP4_TASKS_PER_DIFFICULTY
+                if domain == "lean_proof" or catalog_version == "v1"
+                else len(tasks)
             )
             if len(tasks) != expected_count:
                 raise ValueError("formal Experiment 4 condition count drift")
+            if domain == "factorization":
+                factor_counts_by_difficulty[paper_difficulty].add(len(tasks))
             root_run_count += len(tasks)
             slice_signatures[(domain, paper_difficulty)].add(
                 (
@@ -793,7 +794,15 @@ def _validate_complete_formal_evidence(
                     tuple(record["ordered_case_ids"]),
                 )
             )
-    expected_root_runs = _expected_root_runs(catalog_version)
+    if any(len(counts) != 1 for counts in factor_counts_by_difficulty.values()):
+        raise ValueError("formal Experiment 4 factorization count drift")
+    expected_root_runs = _expected_root_runs(
+        catalog_version,
+        factor_counts_by_difficulty={
+            difficulty: next(iter(counts))
+            for difficulty, counts in factor_counts_by_difficulty.items()
+        },
+    )
     if root_run_count != expected_root_runs:
         raise ValueError("formal Experiment 4 root-run count drift")
     if any(len(signatures) != 1 for signatures in slice_signatures.values()):
@@ -905,18 +914,32 @@ def _selection_case_count(
     if domain == "lean_proof" or catalog_version == "v1":
         return EXP4_TASKS_PER_DIFFICULTY
     if catalog_version == "v2" and domain == "factorization":
-        try:
-            return EXP4_FACTOR_CASE_COUNTS_BY_DIFFICULTY[paper_difficulty]
-        except KeyError as exc:
-            raise ValueError("unsupported Factorization paper difficulty") from exc
+        raise ValueError("v2 Factorization count requires sampling profile binding")
     raise ValueError("Experiment 4 supports only catalog v1 or v2")
 
 
-def _expected_root_runs(catalog_version: str) -> int:
+def _expected_root_runs(
+    catalog_version: str,
+    *,
+    factor_counts_by_difficulty: Mapping[str, int] | None = None,
+) -> int:
     if catalog_version == "v1":
         return EXP4_V1_ROOT_RUN_COUNT
     if catalog_version == "v2":
-        return EXP4_ROOT_RUN_COUNT
+        if factor_counts_by_difficulty is None or set(
+            factor_counts_by_difficulty
+        ) != set(FACTOR_PAPER_DIFFICULTIES):
+            raise ValueError("v2 root count requires sampling profile-derived counts")
+        factor_roots = sum(factor_counts_by_difficulty.values()) * len(
+            EXP4_MODES
+        ) * EXP4_REPEATS
+        lean_roots = (
+            len(LEAN_PAPER_DIFFICULTIES)
+            * EXP4_TASKS_PER_DIFFICULTY
+            * len(EXP4_MODES)
+            * EXP4_REPEATS
+        )
+        return factor_roots + lean_roots
     raise ValueError("Experiment 4 supports only catalog v1 or v2")
 
 
@@ -969,10 +992,16 @@ def _factorization_selection(
         by_difficulty.get(condition.paper_difficulty),
         field_name=f"catalog.factorization_slices.{condition.paper_difficulty}",
     )
-    expected_count = _selection_case_count(
-        catalog_version=str(catalog_view.get("catalog_version")),
-        domain="factorization",
-        paper_difficulty=str(condition.paper_difficulty),
+    catalog_version = str(catalog_view.get("catalog_version"))
+    validated_scale = (
+        _validated_factor_sampling_profile(catalog_view)
+        if catalog_version == "v2"
+        else None
+    )
+    expected_count = (
+        len(validated_scale[1][str(condition.paper_difficulty)])
+        if validated_scale is not None
+        else EXP4_TASKS_PER_DIFFICULTY
     )
     if len(cases) != expected_count:
         raise ValueError("Experiment 4 factorization selection count drift")
@@ -1106,19 +1135,25 @@ def _selection_from_cases(
         for case in cases
     )
     catalog = _mapping(context.catalog, "catalog")
+    catalog_version = _non_empty_catalog_value(catalog, "catalog_version")
     selection_class = (
         Exp4MixedLeanCaseSelection
         if condition.domain == "lean_proof"
         else FrozenCaseSelection
     )
+    selection_suffix = (
+        ":factor_profile_v2"
+        if condition.domain == "factorization" and catalog_version == "v2"
+        else ""
+    )
     return selection_class(
         selection_id=(
             f"{EXP4_EXPERIMENT_ID}:{condition.domain}:"
-            f"{condition.paper_difficulty}"
+            f"{condition.paper_difficulty}{selection_suffix}"
         ),
         experiment_id=EXP4_EXPERIMENT_ID,
         suite_version=_non_empty_catalog_value(catalog, "suite_version"),
-        catalog_version=_non_empty_catalog_value(catalog, "catalog_version"),
+        catalog_version=catalog_version,
         domain=condition.domain,
         paper_difficulty=str(condition.paper_difficulty),
         topic_family=None,
@@ -1223,6 +1258,34 @@ def _validate_shared_lean_slice_digest(
     )
     if actual_digest != expected_digest:
         raise ValueError("Experiment 4 shared Lean slice digest mismatch")
+
+
+def _validated_factor_sampling_profile(
+    catalog_view: Mapping[str, Any],
+) -> tuple[PaperSuiteScaleProfile, Mapping[str, tuple[str, ...]]]:
+    factorization_slices = _mapping(
+        catalog_view.get("factorization_slices"),
+        "catalog.factorization_slices",
+    )
+    expected_by_difficulty: dict[str, tuple[str, ...]] = {}
+    for difficulty in FACTOR_PAPER_DIFFICULTIES:
+        expected_by_difficulty[difficulty] = tuple(
+            _case_id(case)
+            for case in _case_list(
+                factorization_slices.get(difficulty),
+                field_name=f"catalog.factorization_slices.{difficulty}",
+            )
+        )
+    profile, selected_by_difficulty = validate_paper_suite_scale_policy(
+        catalog_view.get("paper_suite_scale_policy"),
+        catalog_id=str(catalog_view.get("catalog_id") or ""),
+        catalog_version=str(catalog_view.get("catalog_version") or ""),
+        catalog_digest=str(catalog_view.get("catalog_digest") or ""),
+        experiment_id=EXP4_EXPERIMENT_ID,
+    )
+    if dict(selected_by_difficulty) != expected_by_difficulty:
+        raise ValueError("Factorization suite policy IDs drift from Exp4 slices")
+    return profile, selected_by_difficulty
 
 
 def _case_list(value: Any, *, field_name: str) -> tuple[Mapping[str, Any], ...]:
@@ -1439,7 +1502,6 @@ __all__ = [
     "BASELINE_PROVIDER_MODEL_ID",
     "EXP4_EXPERIMENT_ID",
     "EXP4_REPEATS",
-    "EXP4_ROOT_RUN_COUNT",
     "EXP4_V1_ROOT_RUN_COUNT",
     "Exp4ModeExecutionConfig",
     "Exp4MixedLeanCaseSelection",

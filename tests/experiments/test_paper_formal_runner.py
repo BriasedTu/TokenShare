@@ -1,3 +1,4 @@
+import hashlib
 import inspect
 import json
 from dataclasses import replace
@@ -8,6 +9,7 @@ from types import SimpleNamespace
 
 import pytest
 
+import tokenshare.experiments.paper_budget as paper_budget
 import tokenshare.experiments.paper_formal_runner as formal_runner
 from tokenshare.core.models import ArtifactRef
 from tokenshare.executors.ai_api_config import (
@@ -33,6 +35,7 @@ from tokenshare.experiments.paper_models import (
 from tokenshare.experiments.paper_smoke_report import generate_paper_smoke_report
 from tokenshare.local_runtime import ParsedCandidateContext, WorkerTerminationPolicy
 from tokenshare.storage.artifacts import ArtifactStore
+from tokenshare.storage.events import EventLedger
 
 
 CATALOG_DIGEST = "sha256:" + "1" * 64
@@ -45,6 +48,207 @@ ENDPOINT_DIGEST = "sha256:" + "3" * 64
 EXP5_EXPERIMENT_ID = "exp5_real_ai_model_endpoint_comparison"
 MODEL_COHORT_ID = "paper-model-endpoint-cohort-v1"
 MODEL_COHORT_DIGEST = "sha256:" + "4" * 64
+
+
+def _smoke_execution_classification() -> dict[str, object]:
+    return {
+        "formal": False,
+        "pilot_only": True,
+        "regression_only": True,
+        "paper_eligible": False,
+        "execution_scope": "smoke_suite",
+        "ineligibility_reasons": ["smoke_suite", "pilot_only"],
+    }
+
+
+def _condition_result(
+    status: PaperStatus,
+    *,
+    evidence_complete_experimental_failure: bool = False,
+) -> PaperConditionResult:
+    return PaperConditionResult(
+        condition_id="condition-status-probe",
+        status=status,
+        repeat_count=1,
+        task_count=1,
+        completed_root_count=0,
+        failed_root_count=1,
+        blocked_root_count=0,
+        provider_attempt_count=1,
+        metrics_ref=(
+            {
+                "evidence_integrity": "complete",
+                "outcome_counts": {"failed_experimental": 1},
+            }
+            if evidence_complete_experimental_failure
+            else None
+        ),
+    )
+
+
+@pytest.mark.parametrize(
+    "status",
+    (
+        PaperStatus.FAILED,
+        PaperStatus.BLOCKED,
+        PaperStatus.BUDGET_EXHAUSTED,
+        PaperStatus.INCOMPLETE,
+    ),
+)
+def test_suite_status_preserves_infrastructure_terminal_status(
+    status: PaperStatus,
+) -> None:
+    assert formal_runner._suite_status(
+        plans=(SimpleNamespace(status="planned"),),
+        results=[_condition_result(status)],
+    ) is status
+
+
+@pytest.mark.parametrize(
+    "status",
+    (
+        PaperStatus.FAILED,
+        PaperStatus.BLOCKED,
+        PaperStatus.BUDGET_EXHAUSTED,
+    ),
+)
+def test_smoke_classification_does_not_wash_infrastructure_status(
+    status: PaperStatus,
+) -> None:
+    assert formal_runner._classified_suite_status(
+        status,
+        classification=_smoke_execution_classification(),
+    ) is status
+
+
+def test_smoke_keeps_evidence_complete_experimental_failure_nonfatal() -> None:
+    status = formal_runner._suite_status(
+        plans=(SimpleNamespace(status="planned"),),
+        results=[
+            _condition_result(
+                PaperStatus.COMPLETED_WITH_FAILURES,
+                evidence_complete_experimental_failure=True,
+            )
+        ],
+    )
+
+    assert status is PaperStatus.COMPLETED_WITH_FAILURES
+    assert formal_runner._classified_suite_status(
+        status,
+        classification=_smoke_execution_classification(),
+    ) is PaperStatus.COMPLETED_WITH_FAILURES
+
+
+def test_smoke_classification_does_not_make_technical_attempt_evidence_incomplete() -> None:
+    classification = _smoke_execution_classification()
+    classified_attempt = {
+        "paper_eligible": False,
+        "paper_ineligibility_reasons": [],
+        "ineligibility_reasons": classification["ineligibility_reasons"],
+    }
+
+    reasons = formal_runner._task_checkpoint_ineligibility_reasons(
+        task={
+            "record_scope": "protocol",
+            "root_status": "completed",
+            "evidence_artifact_refs": [{"artifact_id": "artifact-complete"}],
+        },
+        attempts=(classified_attempt,),
+        events=({"record_scope": "protocol", "event_id": "event-complete"},),
+        protocol_runtime={
+            "execution_scope": "whole_root",
+            "selected_ai_unit_ids": [],
+        },
+        real_transport=True,
+        transport=object(),
+        source_task_eligible=True,
+    )
+    classified_flags = formal_runner._evidence_flags(
+        paper_eligible=True,
+        execution_classification=classification,
+    )
+
+    assert "attempt_evidence_incomplete" not in reasons
+    assert classified_attempt["paper_eligible"] is False
+    assert classified_attempt["paper_ineligibility_reasons"] == []
+    assert classified_flags["paper_eligible"] is False
+    assert classified_flags["ineligibility_reasons"] == [
+        "smoke_suite",
+        "pilot_only",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("condition_status", "expected_suite_status"),
+    (
+        ("completed", "completed"),
+        ("completed_with_failures", "completed_with_failures"),
+        ("blocked", "blocked"),
+        ("failed", "failed"),
+        ("budget_exhausted", "budget_exhausted"),
+        ("incomplete", "incomplete"),
+    ),
+)
+def test_recomputed_suite_status_matches_live_terminal_semantics(
+    condition_status: str,
+    expected_suite_status: str,
+) -> None:
+    assert formal_runner._recomputed_suite_status(
+        condition_statuses=[condition_status],
+        has_plans=True,
+        any_blocked_plan=False,
+    ) == expected_suite_status
+
+
+def test_protocol_event_projection_does_not_mutate_hashed_ledger_body(
+    tmp_path: Path,
+) -> None:
+    ledger = EventLedger(tmp_path / "source-events.jsonl")
+    event = ledger.append(
+        event_type="TASK_REGISTERED",
+        object_type="Task",
+        object_id="paper_factorization_case-1",
+        payload={"root_task_id": "paper_factorization_case-1"},
+        idempotency_key="register-paper-factorization-case-1",
+        task_id="paper_factorization_case-1",
+        occurred_at="2026-07-31T00:00:00Z",
+    ).to_dict()
+    condition = SimpleNamespace(
+        experiment_id=EXPERIMENT_ID,
+        condition_id="condition-1",
+        repeat_id=0,
+    )
+
+    projected = formal_runner._event_record_with_context(
+        event,
+        condition=condition,
+        task_id="case-1",
+    )
+
+    assert projected == event
+
+
+def test_provider_latency_observation_is_complete_or_null() -> None:
+    incomplete = formal_runner._provider_latency_observation(
+        attempts=(
+            SimpleNamespace(provider_attempt_count=1, latency_ms=25),
+            SimpleNamespace(provider_attempt_count=1, latency_ms=None),
+        ),
+        expected_provider_attempt_count=2,
+    )
+    zero_call = formal_runner._provider_latency_observation(
+        attempts=(
+            SimpleNamespace(provider_attempt_count=0, latency_ms=0),
+        ),
+        expected_provider_attempt_count=0,
+    )
+
+    assert incomplete == (
+        None,
+        "incomplete",
+        "missing_provider_latency_evidence",
+    )
+    assert zero_call == (0.0, "not_applicable", "no_provider_attempts")
 
 
 def _shared_exp1_manifest(
@@ -681,6 +885,13 @@ def test_formal_runner_checkpoints_required_evidence_and_reuses_it(
         ((EXPERIMENT_ID, CallbackModule()),),
     )
     monkeypatch.setattr(formal_runner, "dispatch_paper_case", fake_case_dispatch)
+    monkeypatch.setattr(
+        formal_runner.shutil,
+        "copytree",
+        lambda *_args, **_kwargs: pytest.fail(
+            "formal execution must not publish a compatibility copy"
+        ),
+    )
     kwargs = _formal_execution_kwargs(tmp_path=tmp_path, config=config, plan=plan)
 
     executed = formal_runner.execute_paper_formal_suite(**kwargs)
@@ -707,15 +918,23 @@ def test_formal_runner_checkpoints_required_evidence_and_reuses_it(
     assert suite_manifest["execution_scope"] == "formal_matrix"
     assert suite_manifest["regression_only"] is True
     assert suite_manifest["paper_eligible"] is False
-    assert (tmp_path / EXPERIMENT_ID / "experiment_manifest.json").is_file()
+    assert not (tmp_path / EXPERIMENT_ID / "experiment_manifest.json").exists()
 
-    run_root = tmp_path / EXPERIMENT_ID / "runs" / "condition-1" / "0"
-    for relative_path in (
-        "CURRENT.json",
-        "artifacts/case-1/raw-output.txt",
-        "artifacts/case-1/request.json",
-    ):
-        assert (run_root / relative_path).is_file(), relative_path
+    adapter_root = (
+        tmp_path / EXPERIMENT_ID / "runs" / "condition-1" / "case-1"
+    )
+    assert not adapter_root.exists()
+    run_root = (
+        tmp_path
+        / "experiments"
+        / EXPERIMENT_ID
+        / "runs"
+        / "condition-1"
+        / "0"
+    )
+    assert (run_root / "CURRENT.json").is_file()
+    assert len(list((run_root / "artifacts" / "case-1").glob("*-raw-output.txt"))) == 1
+    assert len(list((run_root / "artifacts" / "case-1").glob("*-request.json"))) == 1
     current = json.loads((run_root / "CURRENT.json").read_text(encoding="utf-8"))
     checkpoint_task = json.loads(
         (
@@ -742,38 +961,7 @@ def test_formal_runner_checkpoints_required_evidence_and_reuses_it(
         "planned_ai_unit_ids"
     ] == ["range_0"]
 
-    canonical_late_file = (
-        tmp_path
-        / "experiments"
-        / EXPERIMENT_ID
-        / "runs"
-        / "condition-1"
-        / "0"
-        / "compatibility-late.json"
-    )
-    canonical_late_file.write_text('{"kind":"canonical"}\n', encoding="utf-8")
     evidence_store = formal_runner.FormalEvidenceStore(tmp_path)
-    evidence_store._refresh_evidence_manifest()
-    compatibility_late_file = (
-        tmp_path
-        / EXPERIMENT_ID
-        / "runs"
-        / "condition-1"
-        / "0"
-        / "compatibility-late.json"
-    )
-    compatibility_late_file.write_bytes(canonical_late_file.read_bytes())
-    with pytest.raises(
-        ValueError,
-        match="evidence manifest does not exactly index stored files",
-    ):
-        evidence_store._validate_evidence_manifest()
-
-    repair = evidence_store.repair_stale_compatibility_manifest()
-
-    assert repair is not None
-    assert repair["unindexed_compatibility_file_count"] == 1
-    assert repair["original_manifest_ref"]["path"].startswith("repairs/")
     evidence_store._validate_evidence_manifest()
 
     recovery_path = "smoke_recoveries/smoke_recovery_test.json"
@@ -799,6 +987,483 @@ def test_formal_runner_checkpoints_required_evidence_and_reuses_it(
     )
     assert replayed.to_dict() == executed.to_dict()
     assert adapter_calls == ["case-1"]
+
+    replay_report_ref = formal_runner.write_paper_formal_replay_report(
+        output_root=tmp_path
+    )
+    replay_report_path = tmp_path / "audit" / "replay_report.json"
+    replay_report = json.loads(replay_report_path.read_text(encoding="utf-8"))
+    assert replay_report_ref["path"] == "audit/replay_report.json"
+    assert replay_report_ref["content_hash"] == (
+        "sha256:" + hashlib.sha256(replay_report_path.read_bytes()).hexdigest()
+    )
+    assert replay_report["schema_version"] == "tokenshare.paper_replay_report.v1"
+    assert replay_report["status"] == "replay_verified"
+    assert replay_report["provider_calls_made"] == 0
+    assert replay_report["replayed_result"] == executed.to_dict()
+    assert replay_report["replayed_result_digest"].startswith("sha256:")
+    assert replay_report["persisted_result_ref"]["path"] == (
+        "formal_runner_result.json"
+    )
+    assert replay_report["persisted_result_ref"]["content_hash"].startswith("sha256:")
+    assert replay_report["comparison"]["status"] == "matched"
+    assert replay_report["comparison"]["mismatched_fields"] == []
+    recomputed = replay_report["independently_recomputed_summary"]
+    assert recomputed["status"] == "completed"
+    assert recomputed["condition_count"] == 1
+    assert recomputed["run_count"] == 1
+    assert recomputed["task_count"] == 1
+    assert recomputed["provider_attempt_count"] == 1
+    assert recomputed["total_tokens"] == 11
+    assert recomputed["total_cost_estimate"] == pytest.approx(0.125)
+    assert recomputed["paper_eligible"] is False
+    assert recomputed["error_summary"] == []
+    assert replay_report["independently_recomputed_summary_digest"].startswith(
+        "sha256:"
+    )
+    assert replay_report["source_refs"]["formal_runner_result"]["path"] == (
+        "formal_runner_result.json"
+    )
+    assert replay_report["source_refs"]["evidence_manifest"]["path"] == (
+        "evidence_manifest.json"
+    )
+    formal_runner.FormalEvidenceStore(tmp_path)._validate_evidence_manifest()
+    first_report_bytes = replay_report_path.read_bytes()
+    formal_runner.FormalEvidenceStore(tmp_path)._refresh_evidence_manifest()
+    repeated_ref = formal_runner.write_paper_formal_replay_report(
+        output_root=tmp_path
+    )
+    assert replay_report_path.read_bytes() == first_report_bytes
+    assert repeated_ref == replay_report_ref
+
+
+def test_formal_runner_preserves_adapter_tree_when_checkpoint_fails(
+    tmp_path: Path,
+) -> None:
+    config = _ai_config()
+    plan = _planned_dispatch_plan(tmp_path, config=config)
+    condition, _selection = plan.bound_items()[0]
+    adapter_root = (
+        Path(plan.output_root)
+        / "runs"
+        / condition.condition_id
+        / "case-1"
+    )
+    adapter_result = _complete_adapter_result(
+        output_root=adapter_root,
+        condition=condition,
+        case_id="case-1",
+    )
+
+    class FailingEvidenceStore:
+        output_root = tmp_path
+
+        def checkpoint_root(self, **_kwargs):
+            raise RuntimeError("checkpoint publication failed")
+
+    budget = _budget(
+        planned_conditions=1,
+        planned_root_runs=1,
+        planned_ai_units=1,
+    )
+    callback = formal_runner._FormalConditionExecutionCallback(
+        catalog_manifest={},
+        config=config,
+        transport=object(),
+        real_transport=False,
+        output_root=Path(plan.output_root),
+        request_limits=config.defaults,
+        evidence_store=FailingEvidenceStore(),
+        completed_task_keys=set(),
+        usage=SimpleNamespace(),
+        budget=budget,
+        rolling_disk_forecast=_rolling_tracker(budget),
+        hard_limits={},
+        root_case_ids=None,
+        execution_classification=None,
+    )
+
+    with pytest.raises(RuntimeError, match="checkpoint publication failed"):
+        callback._checkpoint_adapter_result(
+            condition=condition,
+            task_id="case-1",
+            task=adapter_result.task_result,
+            adapter_result=adapter_result,
+            adapter_root=adapter_root,
+        )
+
+    assert adapter_root.is_dir()
+    assert any(path.is_file() for path in adapter_root.rglob("*"))
+    assert not (
+        tmp_path
+        / "experiments"
+        / EXPERIMENT_ID
+        / "runs"
+        / "condition-1"
+        / "0"
+        / "CURRENT.json"
+    ).exists()
+
+
+@pytest.mark.parametrize("terminal_kind", ("exception", "budget"))
+def test_terminal_checkpoint_removes_existing_exact_adapter_case(
+    tmp_path: Path,
+    terminal_kind: str,
+) -> None:
+    config = _ai_config()
+    plan = _planned_dispatch_plan(tmp_path, config=config)
+    condition, _selection = plan.bound_items()[0]
+    task_id = "case-1"
+    adapter_root = (
+        Path(plan.output_root)
+        / "runs"
+        / condition.condition_id
+        / task_id
+    )
+    adapter_root.mkdir(parents=True)
+    (adapter_root / "working.txt").write_text("working", encoding="utf-8")
+    canonical_run_root = (
+        tmp_path
+        / "experiments"
+        / condition.experiment_id
+        / "runs"
+        / condition.condition_id
+        / str(condition.repeat_id)
+    )
+    canonical_run_root.mkdir(parents=True)
+    (canonical_run_root / "CURRENT.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "tokenshare.paper_checkpoint_current.v1",
+                "generation_id": "generation-1",
+                "generation_manifest_digest": "sha256:" + "1" * 64,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class CommitEvidenceStore:
+        output_root = tmp_path
+
+        def checkpoint_root(self, **_kwargs):
+            return {
+                "schema_version": "tokenshare.paper_checkpoint_commit.v1",
+                "experiment_id": condition.experiment_id,
+                "condition_id": condition.condition_id,
+                "repeat_id": str(condition.repeat_id),
+                "task_id": task_id,
+                "run_root": (
+                    Path("experiments")
+                    / condition.experiment_id
+                    / "runs"
+                    / condition.condition_id
+                    / str(condition.repeat_id)
+                ).as_posix(),
+                "generation_id": "generation-1",
+                "generation_manifest_digest": "sha256:" + "1" * 64,
+            }
+
+    budget = _budget(
+        planned_conditions=1,
+        planned_root_runs=1,
+        planned_ai_units=1,
+    )
+    callback = formal_runner._FormalConditionExecutionCallback(
+        catalog_manifest={},
+        config=config,
+        transport=object(),
+        real_transport=False,
+        output_root=Path(plan.output_root),
+        request_limits=config.defaults,
+        evidence_store=CommitEvidenceStore(),
+        completed_task_keys=set(),
+        usage=formal_runner._UsageTotals(),
+        budget=budget,
+        rolling_disk_forecast=_rolling_tracker(budget),
+        hard_limits={},
+        root_case_ids=None,
+        execution_classification=None,
+    )
+
+    if terminal_kind == "exception":
+        callback._checkpoint_exception(
+            condition=condition,
+            task_id=task_id,
+            error=RuntimeError("experiment failure"),
+        )
+    else:
+        callback._checkpoint_budget_exhausted(
+            condition=condition,
+            task_id=task_id,
+        )
+
+    assert not adapter_root.exists()
+
+
+def test_formal_adapter_cleanup_rejects_non_exact_target(
+    tmp_path: Path,
+) -> None:
+    plan_root = tmp_path / EXPERIMENT_ID
+    outside = tmp_path / "outside" / "case-1"
+    outside.mkdir(parents=True)
+    marker = outside / "preserve.txt"
+    marker.write_text("preserve", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="exact adapter case root"):
+        formal_runner._verified_adapter_case_root(
+            plan_root=plan_root,
+            condition_id="condition-1",
+            task_id="case-1",
+            adapter_root=outside,
+        )
+
+    assert marker.read_text(encoding="utf-8") == "preserve"
+
+
+def test_resume_cleanup_deletes_only_checkpointed_adapter_case(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = _ai_config()
+    plan = _two_case_dispatch_plan(tmp_path, config=config)
+    condition, selection = plan.bound_items()[0]
+    checkpointed_case, uncheckpointed_case = selection.ordered_case_ids
+
+    class CallbackModule:
+        def expand_conditions(self, context):
+            raise AssertionError("formal execution consumes the frozen plan")
+
+        def freeze_case_selections(self, context, conditions):
+            return FrozenCaseSelectionBatch(())
+
+        def run_condition(self, context, condition, selection):
+            return context.execution_callback(
+                context=context,
+                condition=condition,
+                selection=selection,
+            )
+
+        def summarize(self, evidence):
+            return ExperimentSummaryRows(experiment_id=EXPERIMENT_ID, rows=())
+
+    def fake_case_dispatch(**kwargs):
+        return _complete_adapter_result(
+            output_root=Path(kwargs["output_root"]),
+            condition=kwargs["condition"],
+            case_id=kwargs["case"]["case_id"],
+        )
+
+    monkeypatch.setitem(
+        formal_runner.dispatch_paper_condition.__globals__,
+        "_MODULES",
+        ((EXPERIMENT_ID, CallbackModule()),),
+    )
+    monkeypatch.setattr(formal_runner, "dispatch_paper_case", fake_case_dispatch)
+    kwargs = {
+        **_formal_execution_kwargs(tmp_path=tmp_path, config=config, plan=plan),
+        "budget": _budget(
+            planned_conditions=1,
+            planned_root_runs=1,
+            planned_ai_units=1,
+        ),
+        "root_case_filter": {
+            condition.condition_id: (checkpointed_case,),
+        },
+    }
+    formal_runner.execute_paper_formal_suite(**kwargs)
+    plan_root = Path(plan.output_root)
+    checkpointed_root = (
+        plan_root / "runs" / condition.condition_id / checkpointed_case
+    )
+    uncheckpointed_root = (
+        plan_root / "runs" / condition.condition_id / uncheckpointed_case
+    )
+    for working_root in (checkpointed_root, uncheckpointed_root):
+        working_root.mkdir(parents=True, exist_ok=True)
+        (working_root / "working.txt").write_text("working", encoding="utf-8")
+    formal_runner.FormalEvidenceStore(tmp_path)._refresh_evidence_manifest()
+    order: list[str] = []
+    original_load = formal_runner.FormalEvidenceStore.load.__func__
+    original_cleanup = formal_runner._cleanup_checkpointed_adapter_trees
+
+    def traced_load(cls, **load_kwargs):
+        order.append("load")
+        return original_load(cls, **load_kwargs)
+
+    def traced_cleanup(**cleanup_kwargs):
+        assert order == ["load"]
+        order.append("cleanup")
+        return original_cleanup(**cleanup_kwargs)
+
+    monkeypatch.setattr(
+        formal_runner.FormalEvidenceStore,
+        "load",
+        classmethod(traced_load),
+    )
+    monkeypatch.setattr(
+        formal_runner,
+        "_cleanup_checkpointed_adapter_trees",
+        traced_cleanup,
+    )
+    monkeypatch.setattr(
+        formal_runner.FormalEvidenceStore,
+        "archive_uncheckpointed_adapter_runs",
+        lambda self: pytest.fail("resume must not archive before full load"),
+    )
+
+    formal_runner.execute_paper_formal_suite(**kwargs, resume=True)
+
+    assert order == ["load", "cleanup"]
+    assert not checkpointed_root.exists()
+    assert (uncheckpointed_root / "working.txt").is_file()
+
+
+def test_resume_cleanup_uses_full_load_terminal_keys_without_per_root_validation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = _ai_config()
+    plan = _planned_dispatch_plan(tmp_path, config=config)
+    condition, selection = plan.bound_items()[0]
+    task_ids = tuple(f"case-{index:03d}" for index in range(500))
+    selection = replace(
+        selection,
+        ordered_case_ids=task_ids,
+        expected_ai_unit_count=len(task_ids),
+    )
+    plan = replace(
+        plan,
+        condition_selection_bindings=(
+            FrozenConditionSelectionBinding.from_condition(
+                condition,
+                selection,
+            ),
+        ),
+    )
+    plan_root = Path(plan.output_root)
+    for task_id in task_ids:
+        working_root = plan_root / "runs" / condition.condition_id / task_id
+        working_root.mkdir(parents=True)
+        (working_root / "working.txt").write_text("working", encoding="utf-8")
+    terminal_ids = set(task_ids[:250])
+    terminal_keys = {
+        formal_runner._formal_task_key(condition, task_id)
+        for task_id in terminal_ids
+    }
+    monkeypatch.setattr(
+        formal_runner.FormalEvidenceStore,
+        "_validate_run",
+        lambda *_args, **_kwargs: pytest.fail(
+            "batch cleanup must consume the full-load terminal key set"
+        ),
+    )
+
+    removed = formal_runner._cleanup_checkpointed_adapter_trees(
+        suite_root=tmp_path,
+        bound_plans=((plan, plan.bound_items()),),
+        normalized_root_filter={},
+        terminal_task_keys=terminal_keys,
+    )
+
+    assert removed == 250
+    assert all(
+        not (
+            plan_root / "runs" / condition.condition_id / task_id
+        ).exists()
+        for task_id in terminal_ids
+    )
+    assert all(
+        (
+            plan_root / "runs" / condition.condition_id / task_id
+        ).is_dir()
+        for task_id in task_ids[250:]
+    )
+
+
+@pytest.mark.parametrize(
+    ("field_name", "mutated_value"),
+    (
+        ("status", "failed"),
+        ("condition_count", 7),
+        ("run_count", 7),
+        ("task_count", 7),
+        ("provider_attempt_count", 7),
+        ("total_tokens", 777),
+        ("total_cost_estimate", 777.0),
+        ("paper_eligible", True),
+        (
+            "error_summary",
+            [
+                {
+                    "failure_stage": "tampered_summary",
+                    "failure_kind": "not_canonical_evidence",
+                }
+            ],
+        ),
+    ),
+)
+def test_formal_replay_report_rejects_runner_summary_drift_after_manifest_refresh(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    field_name: str,
+    mutated_value: object,
+) -> None:
+    config = _ai_config()
+    plan = _planned_dispatch_plan(tmp_path, config=config)
+
+    class CallbackModule:
+        def expand_conditions(self, context):
+            raise AssertionError("formal execution consumes the frozen plan")
+
+        def freeze_case_selections(self, context, conditions):
+            return FrozenCaseSelectionBatch(())
+
+        def run_condition(self, context, condition, selection):
+            return context.execution_callback(
+                context=context,
+                condition=condition,
+                selection=selection,
+            )
+
+        def summarize(self, evidence):
+            return ExperimentSummaryRows(experiment_id=EXPERIMENT_ID, rows=())
+
+    def fake_case_dispatch(**kwargs):
+        return _complete_adapter_result(
+            output_root=Path(kwargs["output_root"]),
+            condition=kwargs["condition"],
+            case_id=kwargs["case"]["case_id"],
+        )
+
+    monkeypatch.setitem(
+        formal_runner.dispatch_paper_condition.__globals__,
+        "_MODULES",
+        ((EXPERIMENT_ID, CallbackModule()),),
+    )
+    monkeypatch.setattr(formal_runner, "dispatch_paper_case", fake_case_dispatch)
+    formal_runner.execute_paper_formal_suite(
+        **_formal_execution_kwargs(tmp_path=tmp_path, config=config, plan=plan)
+    )
+
+    result_path = tmp_path / "formal_runner_result.json"
+    persisted = json.loads(result_path.read_text(encoding="utf-8"))
+    persisted[field_name] = mutated_value
+    result_path.write_text(
+        json.dumps(persisted, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    formal_runner.FormalEvidenceStore(tmp_path)._refresh_evidence_manifest()
+    monkeypatch.setattr(
+        formal_runner,
+        "dispatch_paper_case",
+        lambda **_kwargs: pytest.fail("replay must not call provider dispatch"),
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="formal runner result does not match independently recomputed evidence",
+    ):
+        formal_runner.write_paper_formal_replay_report(output_root=tmp_path)
 
 
 def test_formal_runner_rejects_completed_protocol_result_without_real_evidence(
@@ -988,6 +1653,481 @@ def test_formal_runner_accepts_frozen_supporting_baseline_budget_identity(
     assert persisted_budget["planned_ai_units"] == 3
 
 
+def test_completed_experiment_is_committed_before_later_experiment_crash(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = _ai_config()
+    exp1_plan = _plan_for_experiment(
+        tmp_path=tmp_path,
+        config=config,
+        experiment_id=EXPERIMENT_ID,
+        condition_id="condition-exp1-commit",
+    )
+    exp2_plan = _plan_for_experiment(
+        tmp_path=tmp_path,
+        config=config,
+        experiment_id=formal_runner.EXP2_EXPERIMENT_ID,
+        condition_id="condition-exp2-crash",
+    )
+    committed_result = PaperConditionResult(
+        condition_id="condition-exp1-commit",
+        status=PaperStatus.COMPLETED,
+        repeat_count=1,
+        task_count=1,
+        completed_root_count=1,
+        failed_root_count=0,
+        blocked_root_count=0,
+        provider_attempt_count=1,
+        metrics_ref={
+            "paper_eligible": True,
+            "evidence_refs": [{"path": "committed-exp1"}],
+        },
+    )
+
+    def interrupted_dispatch(*, context, plan, condition_id):
+        del context
+        if plan.experiment_id == formal_runner.EXP2_EXPERIMENT_ID:
+            raise RuntimeError("later experiment crashed")
+        assert condition_id == committed_result.condition_id
+        return committed_result
+
+    def hard_stop_before_suite_finalizer(**_kwargs):
+        raise RuntimeError("process stopped before suite finalizer")
+
+    monkeypatch.setattr(
+        formal_runner,
+        "dispatch_paper_condition",
+        interrupted_dispatch,
+    )
+    monkeypatch.setattr(
+        formal_runner,
+        "_close_blocked_formal_suite",
+        hard_stop_before_suite_finalizer,
+    )
+    with pytest.raises(RuntimeError, match="process stopped"):
+        formal_runner.execute_paper_formal_suite(
+            dispatch_plans=(exp1_plan, exp2_plan),
+            catalog_manifest={
+                "catalog_digest": CATALOG_DIGEST,
+                "factorization_cases": (
+                    {"case_id": "case-1", "expected_ai_unit_count": 1},
+                ),
+                "lean_cases": (),
+                "lean_lemma_graph_cases": (),
+            },
+            budget=_budget(
+                planned_experiments=(
+                    EXPERIMENT_ID,
+                    formal_runner.EXP2_EXPERIMENT_ID,
+                ),
+                planned_conditions=2,
+                planned_root_runs=2,
+                planned_ai_units=2,
+            ),
+            budget_approval={
+                "approval_mode": "user_bypassed",
+                "budget_digest": BUDGET_DIGEST,
+            },
+            output_root=tmp_path,
+            ai_api_configs={PROVIDER_CONFIG_ID: config},
+            transport=object(),
+            real_transport=False,
+            hard_limits={},
+        )
+
+    exp1_manifest = json.loads(
+        (
+            tmp_path
+            / "experiments"
+            / EXPERIMENT_ID
+            / "experiment_manifest.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert exp1_manifest["status"] == "completed"
+    rows = [
+        json.loads(line)
+        for line in (tmp_path / "condition_results.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+        if line.strip()
+    ]
+    assert {
+        (row["experiment_id"], row["condition_id"], row["repeat_id"])
+        for row in rows
+    } == {(EXPERIMENT_ID, "condition-exp1-commit", 0)}
+    suite_manifest = json.loads(
+        (tmp_path / "suite_manifest.json").read_text(encoding="utf-8")
+    )
+    assert suite_manifest["status"] == "running"
+    assert suite_manifest["paper_eligible"] is False
+    rows_path = tmp_path / "condition_results.jsonl"
+    manifest_path = (
+        tmp_path
+        / "experiments"
+        / EXPERIMENT_ID
+        / "experiment_manifest.json"
+    )
+    before = (rows_path.read_bytes(), manifest_path.read_bytes())
+
+    formal_runner._finalize_formal_experiment(
+        suite_root=tmp_path,
+        plan=exp1_plan,
+        condition_results=(committed_result,),
+        execution_classification=None,
+    )
+
+    assert (rows_path.read_bytes(), manifest_path.read_bytes()) == before
+
+
+def test_resume_rebuilds_missing_experiment_and_suite_closure_from_checkpoints(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = _ai_config()
+    plan = _planned_dispatch_plan(tmp_path, config=config)
+    adapter_calls: list[str] = []
+
+    class CallbackModule:
+        def expand_conditions(self, context):
+            raise AssertionError("formal execution consumes the frozen plan")
+
+        def freeze_case_selections(self, context, conditions):
+            return FrozenCaseSelectionBatch(())
+
+        def run_condition(self, context, condition, selection):
+            return context.execution_callback(
+                context=context,
+                condition=condition,
+                selection=selection,
+            )
+
+        def summarize(self, evidence):
+            return ExperimentSummaryRows(experiment_id=EXPERIMENT_ID, rows=())
+
+    def fake_case_dispatch(**kwargs):
+        case_id = kwargs["case"]["case_id"]
+        adapter_calls.append(case_id)
+        return _complete_adapter_result(
+            output_root=Path(kwargs["output_root"]),
+            condition=kwargs["condition"],
+            case_id=case_id,
+        )
+
+    original_finalizer = formal_runner._finalize_formal_experiment
+
+    def hard_stop_after_checkpoint(**_kwargs):
+        raise RuntimeError("process stopped after canonical checkpoint")
+
+    monkeypatch.setitem(
+        formal_runner.dispatch_paper_condition.__globals__,
+        "_MODULES",
+        ((EXPERIMENT_ID, CallbackModule()),),
+    )
+    monkeypatch.setattr(formal_runner, "dispatch_paper_case", fake_case_dispatch)
+    monkeypatch.setattr(
+        formal_runner,
+        "_finalize_formal_experiment",
+        hard_stop_after_checkpoint,
+    )
+    monkeypatch.setattr(
+        formal_runner,
+        "_close_blocked_formal_suite",
+        hard_stop_after_checkpoint,
+    )
+    kwargs = _formal_execution_kwargs(tmp_path=tmp_path, config=config, plan=plan)
+
+    with pytest.raises(RuntimeError, match="canonical checkpoint"):
+        formal_runner.execute_paper_formal_suite(**kwargs)
+
+    assert adapter_calls == ["case-1"]
+    assert not (tmp_path / "formal_runner_result.json").exists()
+    monkeypatch.setattr(
+        formal_runner,
+        "_finalize_formal_experiment",
+        original_finalizer,
+    )
+
+    resumed = formal_runner.execute_paper_formal_suite(**kwargs, resume=True)
+
+    assert resumed.status == PaperStatus.COMPLETED
+    assert resumed.provider_attempt_count == 1
+    assert resumed.total_tokens == 11
+    assert resumed.total_cost_estimate == pytest.approx(0.125)
+    assert adapter_calls == ["case-1"]
+    experiment_manifest = json.loads(
+        (
+            tmp_path
+            / "experiments"
+            / EXPERIMENT_ID
+            / "experiment_manifest.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert experiment_manifest["status"] == "completed"
+    assert (tmp_path / "formal_runner_result.json").is_file()
+
+
+@pytest.mark.parametrize(
+    "crash_stage",
+    (
+        "condition_results_written",
+        "experiment_manifest_written",
+        "inventory_refreshed",
+    ),
+)
+def test_resume_repairs_experiment_finalization_intent_at_each_stage(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    crash_stage: str,
+) -> None:
+    config = _ai_config()
+    plan = _planned_dispatch_plan(tmp_path, config=config)
+    adapter_calls: list[str] = []
+
+    class CallbackModule:
+        def expand_conditions(self, context):
+            raise AssertionError("formal execution consumes the frozen plan")
+
+        def freeze_case_selections(self, context, conditions):
+            return FrozenCaseSelectionBatch(())
+
+        def run_condition(self, context, condition, selection):
+            return context.execution_callback(
+                context=context,
+                condition=condition,
+                selection=selection,
+            )
+
+        def summarize(self, evidence):
+            return ExperimentSummaryRows(experiment_id=EXPERIMENT_ID, rows=())
+
+    def fake_case_dispatch(**kwargs):
+        case_id = kwargs["case"]["case_id"]
+        adapter_calls.append(case_id)
+        return _complete_adapter_result(
+            output_root=Path(kwargs["output_root"]),
+            condition=kwargs["condition"],
+            case_id=case_id,
+        )
+
+    original_hook = formal_runner._formal_finalization_hook
+
+    def crash_hook(*, stage, suite_root):
+        del suite_root
+        if stage == crash_stage:
+            raise RuntimeError(f"crash at {stage}")
+
+    def preserve_crash_seam(**_kwargs):
+        raise RuntimeError("process stopped before blocked-suite closure")
+
+    monkeypatch.setitem(
+        formal_runner.dispatch_paper_condition.__globals__,
+        "_MODULES",
+        ((EXPERIMENT_ID, CallbackModule()),),
+    )
+    monkeypatch.setattr(formal_runner, "dispatch_paper_case", fake_case_dispatch)
+    monkeypatch.setattr(formal_runner, "_formal_finalization_hook", crash_hook)
+    monkeypatch.setattr(
+        formal_runner,
+        "_close_blocked_formal_suite",
+        preserve_crash_seam,
+    )
+    kwargs = _formal_execution_kwargs(tmp_path=tmp_path, config=config, plan=plan)
+
+    with pytest.raises(RuntimeError, match="blocked-suite closure"):
+        formal_runner.execute_paper_formal_suite(**kwargs)
+
+    assert adapter_calls == ["case-1"]
+    assert (tmp_path / "PENDING.json").is_file()
+    monkeypatch.setattr(formal_runner, "_formal_finalization_hook", original_hook)
+
+    resumed = formal_runner.execute_paper_formal_suite(**kwargs, resume=True)
+
+    assert resumed.status == PaperStatus.COMPLETED
+    assert resumed.provider_attempt_count == 1
+    assert resumed.total_tokens == 11
+    assert resumed.total_cost_estimate == pytest.approx(0.125)
+    assert adapter_calls == ["case-1"]
+    assert not (tmp_path / "PENDING.json").exists()
+    formal_runner.FormalEvidenceStore(tmp_path)._validate_evidence_manifest()
+
+
+@pytest.mark.parametrize(
+    "crash_stage",
+    (
+        "formal_runner_result_written",
+        "suite_manifest_written",
+        "suite_inventory_refreshed",
+    ),
+)
+def test_resume_repairs_suite_finalization_intent_at_each_stage(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    crash_stage: str,
+) -> None:
+    config = _ai_config()
+    plan = _planned_dispatch_plan(tmp_path, config=config)
+    adapter_calls: list[str] = []
+
+    class CallbackModule:
+        def expand_conditions(self, context):
+            raise AssertionError("formal execution consumes the frozen plan")
+
+        def freeze_case_selections(self, context, conditions):
+            return FrozenCaseSelectionBatch(())
+
+        def run_condition(self, context, condition, selection):
+            return context.execution_callback(
+                context=context,
+                condition=condition,
+                selection=selection,
+            )
+
+        def summarize(self, evidence):
+            return ExperimentSummaryRows(experiment_id=EXPERIMENT_ID, rows=())
+
+    def fake_case_dispatch(**kwargs):
+        case_id = kwargs["case"]["case_id"]
+        adapter_calls.append(case_id)
+        return _complete_adapter_result(
+            output_root=Path(kwargs["output_root"]),
+            condition=kwargs["condition"],
+            case_id=case_id,
+        )
+
+    original_hook = formal_runner._formal_finalization_hook
+
+    def crash_hook(*, stage, suite_root):
+        del suite_root
+        if stage == crash_stage:
+            raise RuntimeError(f"crash at {stage}")
+
+    monkeypatch.setitem(
+        formal_runner.dispatch_paper_condition.__globals__,
+        "_MODULES",
+        ((EXPERIMENT_ID, CallbackModule()),),
+    )
+    monkeypatch.setattr(formal_runner, "dispatch_paper_case", fake_case_dispatch)
+    monkeypatch.setattr(formal_runner, "_formal_finalization_hook", crash_hook)
+    kwargs = _formal_execution_kwargs(tmp_path=tmp_path, config=config, plan=plan)
+
+    with pytest.raises(RuntimeError, match=crash_stage):
+        formal_runner.execute_paper_formal_suite(**kwargs)
+
+    assert adapter_calls == ["case-1"]
+    assert (tmp_path / "PENDING.json").is_file()
+    monkeypatch.setattr(formal_runner, "_formal_finalization_hook", original_hook)
+
+    resumed = formal_runner.execute_paper_formal_suite(**kwargs, resume=True)
+
+    assert resumed.status == PaperStatus.COMPLETED
+    assert resumed.provider_attempt_count == 1
+    assert resumed.total_tokens == 11
+    assert resumed.total_cost_estimate == pytest.approx(0.125)
+    assert adapter_calls == ["case-1"]
+    assert not (tmp_path / "PENDING.json").exists()
+    formal_runner.FormalEvidenceStore(tmp_path)._validate_evidence_manifest()
+
+
+def test_resume_rebuilds_failed_terminal_root_without_provider_retry(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = _ai_config()
+    plan = _planned_dispatch_plan(tmp_path, config=config)
+    adapter_calls: list[str] = []
+
+    class CallbackModule:
+        def expand_conditions(self, context):
+            raise AssertionError("formal execution consumes the frozen plan")
+
+        def freeze_case_selections(self, context, conditions):
+            return FrozenCaseSelectionBatch(())
+
+        def run_condition(self, context, condition, selection):
+            return context.execution_callback(
+                context=context,
+                condition=condition,
+                selection=selection,
+            )
+
+        def summarize(self, evidence):
+            return ExperimentSummaryRows(experiment_id=EXPERIMENT_ID, rows=())
+
+    def rejected_case_dispatch(**kwargs):
+        case_id = kwargs["case"]["case_id"]
+        adapter_calls.append(case_id)
+        result = _complete_adapter_result(
+            output_root=Path(kwargs["output_root"]),
+            condition=kwargs["condition"],
+            case_id=case_id,
+        )
+        return SimpleNamespace(
+            **{
+                **vars(result),
+                "task_result": SimpleNamespace(
+                    **{
+                        **vars(result.task_result),
+                        "root_status": PaperTaskStatus.FAILED,
+                    }
+                ),
+                "attempt_results": [
+                    replace(
+                        result.attempt_results[0],
+                        attempt_status=PaperAttemptStatus.VERIFICATION_REJECTED,
+                        error_kind="verifier_rejected",
+                    )
+                ],
+            }
+        )
+
+    original_hook = formal_runner._formal_finalization_hook
+
+    def crash_after_failed_condition_row(*, stage, suite_root):
+        del suite_root
+        if stage == "condition_results_written":
+            raise RuntimeError("crash after failed terminal checkpoint")
+
+    def preserve_crash_seam(**_kwargs):
+        raise RuntimeError("process stopped before failure closure")
+
+    monkeypatch.setitem(
+        formal_runner.dispatch_paper_condition.__globals__,
+        "_MODULES",
+        ((EXPERIMENT_ID, CallbackModule()),),
+    )
+    monkeypatch.setattr(
+        formal_runner,
+        "dispatch_paper_case",
+        rejected_case_dispatch,
+    )
+    monkeypatch.setattr(
+        formal_runner,
+        "_formal_finalization_hook",
+        crash_after_failed_condition_row,
+    )
+    monkeypatch.setattr(
+        formal_runner,
+        "_close_blocked_formal_suite",
+        preserve_crash_seam,
+    )
+    kwargs = _formal_execution_kwargs(tmp_path=tmp_path, config=config, plan=plan)
+
+    with pytest.raises(RuntimeError, match="failure closure"):
+        formal_runner.execute_paper_formal_suite(**kwargs)
+
+    assert adapter_calls == ["case-1"]
+    monkeypatch.setattr(formal_runner, "_formal_finalization_hook", original_hook)
+
+    resumed = formal_runner.execute_paper_formal_suite(**kwargs, resume=True)
+
+    assert resumed.status == PaperStatus.COMPLETED_WITH_FAILURES
+    assert resumed.provider_attempt_count == 1
+    assert resumed.total_tokens == 11
+    assert resumed.total_cost_estimate == pytest.approx(0.125)
+    assert adapter_calls == ["case-1"]
+
+
 def test_formal_runner_materializes_nested_windows_ads_artifact_name(
     tmp_path: Path,
 ) -> None:
@@ -1020,6 +2160,507 @@ def test_formal_runner_materializes_nested_windows_ads_artifact_name(
     assert len(refs) == 1
     copied = tmp_path / "suite" / refs[0]["path"]
     assert copied.read_bytes() == b"nested-merge-input"
+
+
+def test_formal_runner_materializer_rejects_truncated_source_bytes(
+    tmp_path: Path,
+) -> None:
+    adapter_root = tmp_path / "adapter"
+    source = adapter_root / "artifacts" / "raw-output.json"
+    source.parent.mkdir(parents=True)
+    source.write_bytes(b'{"truncated":')
+
+    with pytest.raises(ValueError, match="hash mismatched"):
+        formal_runner._materialize_artifacts(
+            suite_root=tmp_path / "suite",
+            condition=SimpleNamespace(
+                experiment_id=EXPERIMENT_ID,
+                condition_id="condition-1",
+                repeat_id=0,
+            ),
+            task_id="case-1",
+            adapter_root=adapter_root,
+            source_refs=(
+                {
+                    "artifact_id": "raw-output.json",
+                    "uri": "artifacts/raw-output.json",
+                    "content_hash": formal_runner._sha256_bytes(
+                        b'{"complete":true}'
+                    ),
+                },
+            ),
+        )
+
+
+def test_adapter_artifact_refs_discovers_event_only_nested_ref() -> None:
+    event_only_ref = {
+        "schema_version": "ArtifactRef.v1",
+        "artifact_id": "event-only",
+        "artifact_type": "EventOnlyEvidence",
+        "uri": "artifacts/event-only.json",
+        "content_hash": "sha256:" + "a" * 64,
+        "size_bytes": 2,
+        "media_type": "application/json",
+        "artifact_schema_id": "test.event_only",
+        "artifact_schema_version": "v1",
+        "source": {},
+        "metadata": {},
+        "created_at": "2026-07-20T00:00:00Z",
+    }
+
+    refs = formal_runner._adapter_artifact_refs(
+        {},
+        (),
+        (),
+        events=({"payload": {"deeply_nested": [event_only_ref]}},),
+    )
+
+    assert refs == (event_only_ref,)
+
+
+def test_materialize_artifacts_recursively_closes_metadata_and_json_payload_refs(
+    tmp_path: Path,
+) -> None:
+    adapter_root = tmp_path / "adapter"
+
+    def write_ref(
+        relative_path: str,
+        *,
+        artifact_id: str,
+        body: bytes,
+        source: dict[str, object] | None = None,
+        metadata: dict[str, object] | None = None,
+    ) -> dict[str, object]:
+        path = adapter_root / relative_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(body)
+        return {
+            "schema_version": "ArtifactRef.v1",
+            "artifact_id": artifact_id,
+            "artifact_type": "RecursiveEvidence",
+            "uri": relative_path,
+            "content_hash": formal_runner._sha256_bytes(body),
+            "size_bytes": len(body),
+            "media_type": "application/json",
+            "artifact_schema_id": "test.recursive_evidence",
+            "artifact_schema_version": "v1",
+            "source": source or {},
+            "metadata": metadata or {},
+            "created_at": "2026-07-20T00:00:00Z",
+        }
+
+    metadata_ref = write_ref(
+        "one/artifacts/result.json",
+        artifact_id="metadata-child",
+        body=b'{"source":"metadata"}',
+    )
+    payload_ref = write_ref(
+        "two/artifacts/result.json",
+        artifact_id="payload-child",
+        body=b'{"source":"payload"}',
+    )
+    root_body = json.dumps(
+        {"payload_ref": payload_ref},
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    root_ref = write_ref(
+        "root/artifacts/root.json",
+        artifact_id="root",
+        body=root_body,
+        metadata={"metadata_ref": metadata_ref},
+    )
+
+    refs = formal_runner._materialize_artifacts(
+        suite_root=tmp_path / "suite",
+        condition=SimpleNamespace(
+            experiment_id=EXPERIMENT_ID,
+            condition_id="condition-1",
+            repeat_id=0,
+        ),
+        task_id="case-1",
+        adapter_root=adapter_root,
+        source_refs=(root_ref,),
+    )
+
+    assert {ref["artifact_id"] for ref in refs} == {
+        "root",
+        "metadata-child",
+        "payload-child",
+    }
+    assert len({ref["path"] for ref in refs}) == 3
+    child_paths = {
+        Path(ref["path"]).name
+        for ref in refs
+        if ref["artifact_id"] in {"metadata-child", "payload-child"}
+    }
+    assert len(child_paths) == 2
+    for ref in refs:
+        assert ref["source_artifact_ref"]["artifact_id"] == ref["artifact_id"]
+        assert ref["source_uri"] == ref["source_artifact_ref"]["uri"]
+        copied = tmp_path / "suite" / ref["path"]
+        assert copied.read_bytes()
+
+
+def test_materialize_artifacts_rejects_size_mismatch(tmp_path: Path) -> None:
+    adapter_root = tmp_path / "adapter"
+    source = adapter_root / "artifacts" / "size.json"
+    source.parent.mkdir(parents=True)
+    source.write_bytes(b"{}")
+
+    with pytest.raises(ValueError, match="size mismatched"):
+        formal_runner._materialize_artifacts(
+            suite_root=tmp_path / "suite",
+            condition=SimpleNamespace(
+                experiment_id=EXPERIMENT_ID,
+                condition_id="condition-1",
+                repeat_id=0,
+            ),
+            task_id="case-1",
+            adapter_root=adapter_root,
+            source_refs=(
+                {
+                    "schema_version": "ArtifactRef.v1",
+                    "artifact_id": "size",
+                    "artifact_type": "SizeEvidence",
+                    "uri": "artifacts/size.json",
+                    "content_hash": formal_runner._sha256_bytes(b"{}"),
+                    "size_bytes": 3,
+                    "media_type": "application/json",
+                    "artifact_schema_id": "test.size_evidence",
+                    "artifact_schema_version": "v1",
+                    "source": {},
+                    "metadata": {},
+                    "created_at": "2026-07-20T00:00:00Z",
+                },
+            ),
+        )
+
+
+def test_materialize_artifacts_rejects_complete_ref_missing_size(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(ValueError, match="size_bytes"):
+        formal_runner._materialize_artifacts(
+            suite_root=tmp_path / "suite",
+            condition=SimpleNamespace(
+                experiment_id=EXPERIMENT_ID,
+                condition_id="condition-1",
+                repeat_id=0,
+            ),
+            task_id="case-1",
+            adapter_root=tmp_path / "adapter",
+            source_refs=(
+                {
+                    "schema_version": "ArtifactRef.v1",
+                    "artifact_id": "missing-size",
+                    "artifact_type": "MalformedEvidence",
+                    "uri": "artifacts/missing-size.json",
+                    "content_hash": "sha256:" + "a" * 64,
+                    "media_type": "application/json",
+                    "artifact_schema_id": "test.malformed_evidence",
+                    "artifact_schema_version": "v1",
+                    "source": {},
+                    "metadata": {},
+                    "created_at": "2026-07-20T00:00:00Z",
+                },
+            ),
+        )
+
+
+def test_materialize_artifacts_rejects_invalid_declared_json(
+    tmp_path: Path,
+) -> None:
+    adapter_root = tmp_path / "adapter"
+    source = adapter_root / "artifacts" / "bad.json"
+    source.parent.mkdir(parents=True)
+    source.write_bytes(b'{"truncated":')
+    source_ref = {
+        "schema_version": "ArtifactRef.v1",
+        "artifact_id": "bad-json",
+        "artifact_type": "MalformedJsonEvidence",
+        "uri": "artifacts/bad.json",
+        "content_hash": formal_runner._sha256_bytes(source.read_bytes()),
+        "size_bytes": len(source.read_bytes()),
+        "media_type": "application/json",
+        "artifact_schema_id": "test.malformed_json_evidence",
+        "artifact_schema_version": "v1",
+        "source": {},
+        "metadata": {},
+        "created_at": "2026-07-20T00:00:00Z",
+    }
+
+    with pytest.raises(ValueError, match="declared JSON"):
+        formal_runner._materialize_artifacts(
+            suite_root=tmp_path / "suite",
+            condition=SimpleNamespace(
+                experiment_id=EXPERIMENT_ID,
+                condition_id="condition-1",
+                repeat_id=0,
+            ),
+            task_id="case-1",
+            adapter_root=adapter_root,
+            source_refs=(source_ref,),
+        )
+
+
+def test_materialize_artifacts_deduplicates_same_identity_uri_alias(
+    tmp_path: Path,
+) -> None:
+    adapter_root = tmp_path / "adapter"
+    body = b'{"same":true}'
+    refs = []
+    for directory in ("one", "two"):
+        relative_path = f"{directory}/artifacts/alias.json"
+        source = adapter_root / relative_path
+        source.parent.mkdir(parents=True)
+        source.write_bytes(body)
+        refs.append(
+            {
+                "schema_version": "ArtifactRef.v1",
+                "artifact_id": "stable-identity",
+                "artifact_type": "AliasEvidence",
+                "uri": relative_path,
+                "content_hash": formal_runner._sha256_bytes(body),
+                "size_bytes": len(body),
+                "media_type": "application/json",
+                "artifact_schema_id": "test.alias_evidence",
+                "artifact_schema_version": "v1",
+                "source": {},
+                "metadata": {},
+                "created_at": "2026-07-20T00:00:00Z",
+            }
+        )
+
+    materialized = formal_runner._materialize_artifacts(
+        suite_root=tmp_path / "suite",
+        condition=SimpleNamespace(
+            experiment_id=EXPERIMENT_ID,
+            condition_id="condition-1",
+            repeat_id=0,
+        ),
+        task_id="case-1",
+        adapter_root=adapter_root,
+        source_refs=refs,
+    )
+
+    assert len(materialized) == 1
+    assert materialized[0]["artifact_id"] == "stable-identity"
+
+
+def test_formal_checkpoint_materializes_nested_no_return_artifact_graph(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = _ai_config()
+    plan = _planned_dispatch_plan(tmp_path, config=config)
+    condition = plan.conditions[0]
+    expected_ids = {
+        "no-return-request",
+        "no-return-raw",
+        "no-return-provenance",
+        "no-return-usage",
+        "no-return-model-record",
+        "no-return-primitive-fault",
+        "no-return-runtime-fault",
+    }
+
+    class CheckpointModule:
+        def expand_conditions(self, context):
+            raise AssertionError("formal execution consumes the frozen dispatch plan")
+
+        def freeze_case_selections(self, context, conditions):
+            return FrozenCaseSelectionBatch(())
+
+        def run_condition(self, context, condition, selection):
+            return context.execution_callback(
+                context=context,
+                condition=condition,
+                selection=selection,
+            )
+
+        def summarize(self, evidence):
+            return ExperimentSummaryRows(experiment_id=EXPERIMENT_ID, rows=())
+
+    def nested_no_return_dispatch(**kwargs):
+        adapter_root = Path(kwargs["output_root"])
+        case_id = kwargs["case"]["case_id"]
+        base = _complete_adapter_result(
+            output_root=adapter_root,
+            condition=kwargs["condition"],
+            case_id=case_id,
+        )
+        store = ArtifactStore(adapter_root / "nested" / "runtime")
+        created_at = "2026-07-20T00:00:00Z"
+
+        def save_json(artifact_id: str, artifact_type: str, body: dict[str, object]):
+            assert artifact_id in expected_ids
+            return store.save_json(
+                body,
+                artifact_id=artifact_id,
+                artifact_type=artifact_type,
+                artifact_schema_id=f"test.{artifact_type.lower()}",
+                artifact_schema_version="v1",
+                source={"test": "formal-no-return-materialization"},
+                metadata={},
+                created_at=created_at,
+            )
+
+        request_ref = save_json(
+            "no-return-request",
+            "ExecutionRequest",
+            {"request_id": "request-case-1", "attempt_id": "attempt-case-1"},
+        )
+        raw_ref = save_json(
+            "no-return-raw",
+            "RawModelOutput",
+            {"content_text": "{}"},
+        )
+        provenance_ref = save_json(
+            "no-return-provenance",
+            "AIProviderResponseProvenance",
+            {
+                "request_id": "request-case-1",
+                "raw_output_ref": raw_ref.to_dict(),
+            },
+        )
+        usage_ref = save_json(
+            "no-return-usage",
+            "AIUsageSummary",
+            {"request_id": "request-case-1", "total_tokens": 11},
+        )
+        model_ref = save_json(
+            "no-return-model-record",
+            "PaperModelExecutionRecord",
+            {
+                "attempt_id": "attempt-case-1",
+                "request_ref": request_ref.to_dict(),
+                "raw_output_ref": raw_ref.to_dict(),
+                "provenance_ref": provenance_ref.to_dict(),
+                "usage_ref": usage_ref.to_dict(),
+            },
+        )
+        primitive_fault_ref = save_json(
+            "no-return-primitive-fault",
+            "FaultInjectionRecord",
+            {
+                "attempt_id": "attempt-case-1",
+                "fault_type": "no_return",
+            },
+        )
+        runtime_fault_ref = save_json(
+            "no-return-runtime-fault",
+            "RuntimeFaultInjectionRecord",
+            {
+                "attempt_id": "attempt-case-1",
+                "fault_type": "no_return",
+                "primitive_fault_record_ref": primitive_fault_ref.to_dict(),
+                "original_raw_output_ref": raw_ref.to_dict(),
+                "original_provenance_ref": provenance_ref.to_dict(),
+                "pre_fault_usage_ref": usage_ref.to_dict(),
+            },
+        )
+        attempt = SimpleNamespace(
+            **{
+                **vars(base.attempt_results[0]),
+                "attempt_status": PaperAttemptStatus.LEASE_EXPIRED,
+                "request_ref": request_ref.to_dict(),
+                "raw_output_ref": raw_ref.to_dict(),
+                "provenance_ref": provenance_ref.to_dict(),
+                "usage_ref": usage_ref.to_dict(),
+                "model_execution_record_ref": model_ref.to_dict(),
+                "fault_injection_ref": primitive_fault_ref.to_dict(),
+                "error_kind": "lease_expired",
+                "paper_eligible": True,
+            }
+        )
+        task = SimpleNamespace(
+            **{
+                **vars(base.task_result),
+                "artifact_refs": [
+                    request_ref.to_dict(),
+                    runtime_fault_ref.to_dict(),
+                ],
+                "paper_eligible": True,
+            }
+        )
+        runtime_fault = {
+            "fault_injection_id": "no-return-runtime-fault",
+            "record_ref": runtime_fault_ref.to_dict(),
+            "primitive_fault_record_ref": primitive_fault_ref.to_dict(),
+            "original_raw_output_ref": raw_ref.to_dict(),
+            "original_provenance_ref": provenance_ref.to_dict(),
+            "pre_fault_usage_ref": usage_ref.to_dict(),
+        }
+        return SimpleNamespace(
+            **{
+                **vars(base),
+                "task_result": task,
+                "attempt_results": [attempt],
+                "fault_records": [runtime_fault],
+            }
+        )
+
+    monkeypatch.setitem(
+        formal_runner.dispatch_paper_condition.__globals__,
+        "_MODULES",
+        ((EXPERIMENT_ID, CheckpointModule()),),
+    )
+    monkeypatch.setattr(
+        formal_runner,
+        "dispatch_paper_case",
+        nested_no_return_dispatch,
+    )
+
+    formal_runner.execute_paper_formal_suite(
+        **_formal_execution_kwargs(tmp_path=tmp_path, config=config, plan=plan)
+    )
+
+    run_root = (
+        tmp_path
+        / "experiments"
+        / EXPERIMENT_ID
+        / "runs"
+        / condition.condition_id
+        / str(condition.repeat_id)
+    )
+    current = json.loads((run_root / "CURRENT.json").read_text(encoding="utf-8"))
+    generation_root = run_root / ".generations" / current["generation_id"]
+    artifact_index = _generation_records(
+        tmp_path,
+        EXPERIMENT_ID,
+        condition.condition_id,
+        "artifacts/artifact_index.jsonl",
+    )
+    assert {
+        str(ref["artifact_id"]) for ref in artifact_index
+    } == expected_ids
+    for ref in artifact_index:
+        payload = tmp_path / str(ref["path"])
+        assert payload.is_file()
+        assert formal_runner._sha256_bytes(payload.read_bytes()) == ref["content_hash"]
+
+    attempts = _generation_records(
+        tmp_path,
+        EXPERIMENT_ID,
+        condition.condition_id,
+        "per_attempt_results.jsonl",
+    )
+    assert (
+        generation_root / "artifacts" / "artifact_index.jsonl"
+    ).is_file()
+    for field_name in (
+        "request_ref",
+        "raw_output_ref",
+        "provenance_ref",
+        "usage_ref",
+        "model_execution_record_ref",
+        "fault_injection_ref",
+    ):
+        assert formal_runner._persisted_artifact_ref_resolves(
+            attempts[0][field_name],
+            artifact_index,
+        )
 
 
 def test_formal_runner_builds_endpoint_context_through_registered_module(
@@ -1413,6 +3054,108 @@ def test_formal_runner_hard_limit_blocks_second_root_and_resume_keeps_first_root
     assert adapter_calls == ["case-1"]
 
 
+def test_resume_hard_limit_rebuilds_missing_closure_without_provider_retry(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = _ai_config()
+    plan = _two_case_dispatch_plan(tmp_path, config=config)
+    adapter_calls: list[str] = []
+
+    class CallbackModule:
+        def expand_conditions(self, context):
+            raise AssertionError("formal execution consumes the frozen plan")
+
+        def freeze_case_selections(self, context, conditions):
+            return FrozenCaseSelectionBatch(())
+
+        def run_condition(self, context, condition, selection):
+            return context.execution_callback(
+                context=context,
+                condition=condition,
+                selection=selection,
+            )
+
+        def summarize(self, evidence):
+            return ExperimentSummaryRows(experiment_id=EXPERIMENT_ID, rows=())
+
+    def fake_case_dispatch(**kwargs):
+        case_id = kwargs["case"]["case_id"]
+        adapter_calls.append(case_id)
+        return _complete_adapter_result(
+            output_root=Path(kwargs["output_root"]),
+            condition=kwargs["condition"],
+            case_id=case_id,
+        )
+
+    original_finalizer = formal_runner._finalize_formal_experiment
+
+    def hard_stop_after_condition_checkpoint(**_kwargs):
+        raise RuntimeError("process stopped before hard-limit closure")
+
+    monkeypatch.setitem(
+        formal_runner.dispatch_paper_condition.__globals__,
+        "_MODULES",
+        ((EXPERIMENT_ID, CallbackModule()),),
+    )
+    monkeypatch.setattr(formal_runner, "dispatch_paper_case", fake_case_dispatch)
+    monkeypatch.setattr(
+        formal_runner,
+        "_finalize_formal_experiment",
+        hard_stop_after_condition_checkpoint,
+    )
+    monkeypatch.setattr(
+        formal_runner,
+        "_close_blocked_formal_suite",
+        hard_stop_after_condition_checkpoint,
+    )
+    kwargs = {
+        **_formal_execution_kwargs(tmp_path=tmp_path, config=config, plan=plan),
+        "catalog_manifest": {
+            "catalog_digest": CATALOG_DIGEST,
+            "factorization_cases": (
+                {"case_id": "case-1", "expected_ai_unit_count": 1},
+                {"case_id": "case-2", "expected_ai_unit_count": 1},
+            ),
+            "lean_cases": (),
+            "lean_lemma_graph_cases": (),
+        },
+        "budget": _budget(
+            planned_conditions=1,
+            planned_root_runs=2,
+            planned_ai_units=2,
+        ),
+        "hard_limits": {"max_total_provider_attempts": 1},
+    }
+
+    with pytest.raises(RuntimeError, match="hard-limit closure"):
+        formal_runner.execute_paper_formal_suite(**kwargs)
+
+    assert adapter_calls == ["case-1"]
+    monkeypatch.setattr(
+        formal_runner,
+        "_finalize_formal_experiment",
+        original_finalizer,
+    )
+
+    resumed = formal_runner.execute_paper_formal_suite(**kwargs, resume=True)
+
+    assert resumed.status == PaperStatus.BUDGET_EXHAUSTED
+    assert resumed.provider_attempt_count == 1
+    assert resumed.total_tokens == 11
+    assert resumed.total_cost_estimate == pytest.approx(0.125)
+    assert adapter_calls == ["case-1"]
+    experiment_manifest = json.loads(
+        (
+            tmp_path
+            / "experiments"
+            / EXPERIMENT_ID
+            / "experiment_manifest.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert experiment_manifest["status"] == "budget_exhausted"
+
+
 def test_smoke_unexpected_runner_error_records_reportable_blocked_roots(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1651,6 +3394,10 @@ def test_formal_runner_exp2_delegates_worker_count_to_protocol_runtime(
 
     assert suite.status == PaperStatus.COMPLETED
     assert observed_max == 1
+    condition_result = json.loads(
+        (tmp_path / "condition_results.jsonl").read_text(encoding="utf-8").splitlines()[0]
+    )
+    assert condition_result["metrics_ref"]["worker_count"] == 2
     run_root = (
         tmp_path
         / "experiments"
@@ -2038,7 +3785,9 @@ def test_formal_runner_exp3_worker_death_does_not_fabricate_process_recovery(
         tmp_path=tmp_path,
         config=config,
         experiment_id=experiment_id,
-        condition_id="condition-exp3-worker-death",
+        condition_id=(
+            "exp3_worker_death_factorization__test__dead3__p25__rep0"
+        ),
         fault_type="worker_death",
         fault_rate=0.0,
     )
@@ -2115,7 +3864,9 @@ def test_formal_runner_exp3_worker_death_does_not_fabricate_process_recovery(
     )
 
     assert suite.status == PaperStatus.COMPLETED
-    assert dispatched_condition_ids == ["condition-exp3-worker-death"]
+    assert dispatched_condition_ids == [
+        "exp3_worker_death_factorization__test__dead3__p25__rep0"
+    ]
     assert termination_policies[0] == WorkerTerminationPolicy(
         target_planned_ai_unit_ids=("range_0", "range_1"),
         termination_count_target=3,
@@ -2124,10 +3875,16 @@ def test_formal_runner_exp3_worker_death_does_not_fabricate_process_recovery(
         process_timeout_seconds=60.0,
     )
     faults = _generation_records(
-        tmp_path, experiment_id, "condition-exp3-worker-death", "fault_injections.jsonl"
+        tmp_path,
+        experiment_id,
+        "exp3_worker_death_factorization__test__dead3__p25__rep0",
+        "fault_injections.jsonl",
     )
     task = _generation_records(
-        tmp_path, experiment_id, "condition-exp3-worker-death", "per_task_results.jsonl"
+        tmp_path,
+        experiment_id,
+        "exp3_worker_death_factorization__test__dead3__p25__rep0",
+        "per_task_results.jsonl",
     )[0]
     assert faults == []
     assert task["worker_death_count"] == 0
@@ -2153,7 +3910,9 @@ def test_failed_exp1_shared_baseline_keeps_exp3_dispatch_and_nulls_comparison(
         tmp_path=tmp_path,
         config=config,
         experiment_id=experiment_id,
-        condition_id="condition-exp3-failed-shared-source",
+        condition_id=(
+            "exp3_worker_death_factorization__failed_shared__dead1__p50__rep0"
+        ),
         fault_type="worker_death",
     )
 
@@ -2241,11 +4000,13 @@ def test_failed_exp1_shared_baseline_keeps_exp3_dispatch_and_nulls_comparison(
     )
 
     assert suite.status == PaperStatus.COMPLETED
-    assert provider_dispatches == ["condition-exp3-failed-shared-source"]
+    assert provider_dispatches == [
+        "exp3_worker_death_factorization__failed_shared__dead1__p50__rep0"
+    ]
     task = _generation_records(
         tmp_path,
         experiment_id,
-        "condition-exp3-failed-shared-source",
+        "exp3_worker_death_factorization__failed_shared__dead1__p50__rep0",
         "per_task_results.jsonl",
     )[0]
     assert task["baseline"]["source_root_status"] == "failed"
@@ -2422,7 +4183,9 @@ def test_failed_worker_death_closes_manifests_and_continues_exp4_in_both_paths(
         tmp_path=tmp_path,
         config=config,
         experiment_id=exp3,
-        condition_id="condition-exp3-worker-death-failed",
+        condition_id=(
+            "exp3_worker_death_factorization__failed__dead1__p50__rep0"
+        ),
         fault_type="worker_death",
     )
     exp4_plan = _plan_for_experiment(
@@ -2498,7 +4261,9 @@ def test_failed_worker_death_closes_manifests_and_continues_exp4_in_both_paths(
             condition=condition,
             case_id=kwargs["case"]["case_id"],
         )
-        if condition.condition_id == "condition-exp3-worker-death-failed":
+        if condition.condition_id == (
+            "exp3_worker_death_factorization__failed__dead1__p50__rep0"
+        ):
             attempt = replace(
                 base.attempt_results[0],
                 attempt_status=PaperAttemptStatus.WORKER_DIED,
@@ -2685,13 +4450,13 @@ def test_failed_worker_death_closes_manifests_and_continues_exp4_in_both_paths(
 
     assert suite.status == PaperStatus.COMPLETED_WITH_FAILURES
     assert dispatched == [
-        "condition-exp3-worker-death-failed",
+        "exp3_worker_death_factorization__failed__dead1__p50__rep0",
         "condition-exp4-after-worker-death",
     ]
     exp3_task = _generation_records(
         tmp_path,
         exp3,
-        "condition-exp3-worker-death-failed",
+        "exp3_worker_death_factorization__failed__dead1__p50__rep0",
         "per_task_results.jsonl",
     )[0]
     assert exp3_task["root_status"] == "failed"
@@ -2730,6 +4495,13 @@ def test_failed_worker_death_closes_manifests_and_continues_exp4_in_both_paths(
         )
         assert exp3_row["outcome_status"] == "failed_experimental"
         assert exp3_row["evidence_integrity"] == "complete"
+        assert exp3_row["accepted_validity"] is None
+        assert exp3_row["accepted_validity_unavailable_reason"] == (
+            "not_applicable_failed_experimental"
+        )
+        assert exp3_row["wall_clock_ms"] == 1000
+        assert exp3_row["wall_clock_ms_unavailable_reason"] is None
+        assert exp3_row["smoke_execution_status"] == "failed"
         expected_outputs = (
             "metrics/smoke_summary.json",
             "metrics/smoke_failures.json",
@@ -3033,7 +4805,7 @@ def test_formal_runner_exp5_persists_v2_observed_identity_without_fixed_entry_ov
         }
     )
 
-    assert suite.status == PaperStatus.COMPLETED
+    assert suite.status == PaperStatus.COMPLETED_WITH_FAILURES
     task = _generation_records(
         tmp_path, EXP5_EXPERIMENT_ID, condition.condition_id, "per_task_results.jsonl"
     )[0]
@@ -3052,7 +4824,186 @@ def test_formal_runner_exp5_persists_v2_observed_identity_without_fixed_entry_ov
     assert "resolved_model_mismatch" in model_input["record"]["mismatch_reasons"]
     assert attempt["model_identity_audit"] == "model_identity_mismatch"
     assert attempt["model_identity_audit"] != "fixed_entry_match"
+    assert task["root_status"] == "ineligible"
+    assert attempt["attempt_status"] == "model_identity_mismatch"
     assert attempt["cohort_member_id"] == COHORT_MEMBER_ID
+
+
+def test_formal_runner_exp5_identity_mismatch_stops_condition_and_materializes_remaining_inventory(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = _ai_config()
+    base = _two_case_dispatch_plan(tmp_path, config=config)
+    base_condition, base_selection = base.bound_items()[0]
+    first_condition = replace(
+        base_condition,
+        experiment_id=EXP5_EXPERIMENT_ID,
+        condition_id="condition-exp5-first",
+        model_cohort_id=MODEL_COHORT_ID,
+        model_cohort_digest=MODEL_COHORT_DIGEST,
+        cohort_member_id=COHORT_MEMBER_ID,
+    )
+    second_condition = replace(
+        first_condition,
+        condition_id="condition-exp5-second",
+    )
+    first_selection = replace(
+        base_selection,
+        experiment_id=EXP5_EXPERIMENT_ID,
+    )
+    second_selection = replace(
+        first_selection,
+        selection_id="selection-exp5-second",
+        ordered_case_ids=("case-3",),
+        expected_ai_unit_count=1,
+    )
+    plan = replace(
+        base,
+        experiment_id=EXP5_EXPERIMENT_ID,
+        output_root=(tmp_path / EXP5_EXPERIMENT_ID).as_posix(),
+        conditions=(first_condition, second_condition),
+        condition_selection_bindings=(
+            FrozenConditionSelectionBinding.from_condition(
+                first_condition,
+                first_selection,
+            ),
+            FrozenConditionSelectionBinding.from_condition(
+                second_condition,
+                second_selection,
+            ),
+        ),
+    )
+    request_controls = _normalized_exp5_request_controls(config)
+    member_plan = {
+        "cohort_id": MODEL_COHORT_ID,
+        "model_cohort_digest": MODEL_COHORT_DIGEST,
+        "cohort_member_id": COHORT_MEMBER_ID,
+        "provider_config_id": PROVIDER_CONFIG_ID,
+        "selected_entry_id": MODEL_ENTRY_ID,
+        "provider_family": "siliconflow",
+        "provider_model_id": PROVIDER_MODEL_ID,
+        "reasoning_profile_id": "default",
+        "source_provider_config_digest": config.config_digest,
+        "model_endpoint_identity_digest": ENDPOINT_DIGEST,
+        "request_controls": request_controls,
+    }
+    dispatch_calls: list[tuple[str, str]] = []
+
+    class Exp5CallbackModule:
+        def expand_conditions(self, context):
+            raise AssertionError("formal execution consumes the frozen plan")
+
+        def freeze_case_selections(self, context, conditions):
+            return FrozenCaseSelectionBatch(())
+
+        def run_condition(self, context, condition, selection):
+            return context.execution_callback(
+                context=context,
+                condition=condition,
+                selection=selection,
+                experiment_id=EXP5_EXPERIMENT_ID,
+            )
+
+        def summarize(self, evidence):
+            return ExperimentSummaryRows(experiment_id=EXP5_EXPERIMENT_ID, rows=())
+
+    def mismatching_dispatch(**kwargs):
+        condition = kwargs["condition"]
+        case_id = kwargs["case"]["case_id"]
+        dispatch_calls.append((condition.condition_id, case_id))
+        return _exp5_adapter_result(
+            output_root=Path(kwargs["output_root"]),
+            condition=condition,
+            case_id=case_id,
+            resolved_model="unexpected/resolved-model",
+        )
+
+    monkeypatch.setitem(
+        formal_runner.dispatch_paper_condition.__globals__,
+        "_MODULES",
+        ((EXP5_EXPERIMENT_ID, Exp5CallbackModule()),),
+    )
+    monkeypatch.setattr(formal_runner, "dispatch_paper_case", mismatching_dispatch)
+    execution_kwargs = {
+        **_formal_execution_kwargs(tmp_path=tmp_path, config=config, plan=plan),
+        "catalog_manifest": {
+            "catalog_digest": CATALOG_DIGEST,
+            "factorization_cases": tuple(
+                {"case_id": case_id, "expected_ai_unit_count": 1}
+                for case_id in ("case-1", "case-2", "case-3")
+            ),
+            "lean_cases": (),
+            "lean_lemma_graph_cases": (),
+        },
+        "ai_api_configs": {
+            PROVIDER_CONFIG_ID: config,
+            formal_runner.APPROVED_ENDPOINT_BINDINGS_KEY: {
+                EXP5_EXPERIMENT_ID: {
+                    "status": "planned",
+                    "cohort_id": MODEL_COHORT_ID,
+                    "model_cohort_digest": MODEL_COHORT_DIGEST,
+                    "member_plans": {COHORT_MEMBER_ID: member_plan},
+                    "request_controls_snapshot": request_controls["comparable"],
+                    "request_controls_snapshot_digest": request_controls[
+                        "comparable_digest"
+                    ],
+                }
+            },
+        },
+        "budget": _budget(
+            planned_experiments=(EXP5_EXPERIMENT_ID,),
+            planned_conditions=2,
+            planned_root_runs=3,
+            planned_ai_units=3,
+        ),
+    }
+    suite = formal_runner.execute_paper_formal_suite(**execution_kwargs)
+
+    assert suite.status == PaperStatus.COMPLETED_WITH_FAILURES
+    assert suite.task_count == 3
+    assert suite.provider_attempt_count == 2
+    assert dispatch_calls == [
+        (first_condition.condition_id, "case-1"),
+        (second_condition.condition_id, "case-3"),
+    ]
+    first_tasks = _generation_records(
+        tmp_path,
+        EXP5_EXPERIMENT_ID,
+        first_condition.condition_id,
+        "per_task_results.jsonl",
+    )
+    first_attempts = _generation_records(
+        tmp_path,
+        EXP5_EXPERIMENT_ID,
+        first_condition.condition_id,
+        "per_attempt_results.jsonl",
+    )
+    assert [task["task_id"] for task in first_tasks] == ["case-1", "case-2"]
+    assert [task["root_status"] for task in first_tasks] == [
+        "ineligible",
+        "not_started",
+    ]
+    assert first_tasks[1]["error_kind"] == "model_identity_fail_stop"
+    assert [attempt["attempt_status"] for attempt in first_attempts] == [
+        "model_identity_mismatch",
+        "not_started",
+    ]
+    assert first_attempts[0]["provider_attempt_count"] == 1
+    assert first_attempts[1]["provider_attempt_index"] == 0
+    assert all(
+        task["cohort_member_id"] == COHORT_MEMBER_ID for task in first_tasks
+    )
+
+    resumed = formal_runner.execute_paper_formal_suite(
+        **execution_kwargs,
+        resume=True,
+    )
+    assert resumed.status == PaperStatus.COMPLETED_WITH_FAILURES
+    assert dispatch_calls == [
+        (first_condition.condition_id, "case-1"),
+        (second_condition.condition_id, "case-3"),
+    ]
 
 
 def _planned_dispatch_plan(
@@ -3218,6 +5169,17 @@ def _budget(
         if max_provider_attempts is None
         else max_provider_attempts
     )
+    max_tokens = 1024
+    disk_estimate = paper_budget._paper_disk_estimate(
+        planned_conditions=planned_conditions,
+        planned_root_runs=planned_root_runs,
+        planned_ai_units=planned_ai_units,
+        provider_attempt_upper_bound=attempt_upper_bound,
+        max_tokens=max_tokens,
+        max_condition_root_runs=planned_root_runs,
+        max_condition_ai_units=planned_ai_units,
+        max_condition_provider_attempts=attempt_upper_bound,
+    )
     return PaperBudgetResult(
         budget_digest=BUDGET_DIGEST,
         planned_experiments=planned_experiments,
@@ -3225,13 +5187,39 @@ def _budget(
         planned_root_runs=planned_root_runs,
         planned_ai_units=planned_ai_units,
         max_provider_attempts=attempt_upper_bound,
-        token_upper_bound=attempt_upper_bound * 1024,
+        token_upper_bound=attempt_upper_bound * max_tokens,
         cost_upper_bound=attempt_upper_bound * 0.01,
         wall_clock_estimate=float(max(1, planned_ai_units)),
-        quota_preflight={"provider_calls_made": 0},
+        quota_preflight={
+            "provider_calls_made": 0,
+            "budget_commitments": {
+                "request_limits": {
+                    "token_upper_bound_per_provider_attempt": max_tokens,
+                }
+            },
+        },
         rate_limit_preflight={"status": "not_checked"},
-        disk_estimate={"bytes": 0},
+        disk_estimate=disk_estimate,
         status=PaperStatus.PLANNED,
+    )
+
+
+def _rolling_tracker(budget: PaperBudgetResult) -> formal_runner._RollingDiskForecast:
+    estimate = budget.disk_estimate
+    inputs = estimate["inputs"]
+    policy = estimate["policy"]
+    return formal_runner._RollingDiskForecast(
+        remaining_root_runs=int(inputs["planned_root_runs"]),
+        remaining_ai_units=int(inputs["planned_ai_units"]),
+        remaining_provider_attempts=int(inputs["provider_attempt_upper_bound"]),
+        fixed_forecast_bytes=(
+            int(policy["fixed_manifest_bytes"])
+            + int(policy["fixed_temp_bytes"])
+        ),
+        max_condition_compaction_bytes=int(
+            estimate["max_condition_compaction_bytes"]
+        ),
+        policy=policy,
     )
 
 
@@ -3266,6 +5254,788 @@ def _formal_execution_kwargs(
         "real_transport": False,
         "hard_limits": {},
     }
+
+
+def _disk_test_budget() -> PaperBudgetResult:
+    return _budget(
+        planned_conditions=1,
+        planned_root_runs=1,
+        planned_ai_units=1,
+    )
+
+
+def test_formal_disk_preflight_allows_exact_available_capacity(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    budget = _disk_test_budget()
+    estimate_bytes = int(budget.disk_estimate["forecast_bytes"])
+    condition_compaction_bytes = int(
+        budget.disk_estimate["max_condition_compaction_bytes"]
+    )
+    headroom_bytes = max((estimate_bytes + 3) // 4, 2 * 1024**3)
+    required = estimate_bytes + headroom_bytes + condition_compaction_bytes
+    monkeypatch.setattr(
+        formal_runner.shutil,
+        "disk_usage",
+        lambda _path: SimpleNamespace(total=required, used=0, free=required),
+    )
+
+    details = formal_runner._preflight_formal_disk_capacity(
+        output_root=tmp_path / "new-suite",
+        budget=budget,
+        resume=False,
+    )
+
+    assert details["required_bytes"] == required
+    assert details["available_bytes"] == required
+    assert details["headroom_bytes"] == headroom_bytes
+    assert details["condition_compaction_bytes"] == condition_compaction_bytes
+
+
+def test_formal_disk_preflight_blocks_one_byte_short_before_evidence_or_provider(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    suite_root = tmp_path / "disk-blocked-suite"
+    config = _ai_config()
+    plan = _planned_dispatch_plan(suite_root, config=config)
+    kwargs = _formal_execution_kwargs(
+        tmp_path=suite_root,
+        config=config,
+        plan=plan,
+    )
+    budget = _disk_test_budget()
+    estimate_bytes = int(budget.disk_estimate["forecast_bytes"])
+    condition_compaction_bytes = int(
+        budget.disk_estimate["max_condition_compaction_bytes"]
+    )
+    headroom_bytes = max((estimate_bytes + 3) // 4, 2 * 1024**3)
+    required = estimate_bytes + headroom_bytes + condition_compaction_bytes
+    kwargs["budget"] = budget
+    calls = {"evidence": 0, "provider": 0}
+
+    def forbidden_initialize(**_kwargs: object) -> object:
+        calls["evidence"] += 1
+        raise AssertionError("evidence initialize must follow disk preflight")
+
+    class ForbiddenTransport:
+        def complete(self, **_kwargs: object) -> object:
+            calls["provider"] += 1
+            raise AssertionError("provider must follow disk preflight")
+
+    kwargs["transport"] = ForbiddenTransport()
+    monkeypatch.setattr(
+        formal_runner.FormalEvidenceStore,
+        "initialize",
+        forbidden_initialize,
+    )
+    monkeypatch.setattr(
+        formal_runner.shutil,
+        "disk_usage",
+        lambda _path: SimpleNamespace(
+            total=required,
+            used=1,
+            free=required - 1,
+        ),
+    )
+
+    with pytest.raises(
+        formal_runner.PaperInfrastructureBlockedError,
+        match="formal disk preflight failed",
+    ) as captured:
+        formal_runner.execute_paper_formal_suite(**kwargs)
+
+    summary = captured.value.to_summary()
+    assert summary["failure_stage"] == "disk_preflight"
+    assert summary["failure_kind"] == "insufficient_disk_capacity"
+    assert summary["resource_diagnostics"]["required_bytes"] == required
+    assert summary["resource_diagnostics"]["available_bytes"] == required - 1
+    assert summary["resource_diagnostics"]["components"] == {
+        **budget.disk_estimate["components"],
+        "condition_compaction_bytes": condition_compaction_bytes,
+        "headroom_bytes": headroom_bytes,
+    }
+    assert calls == {"evidence": 0, "provider": 0}
+    assert not suite_root.exists()
+
+
+def test_formal_rolling_root_disk_guard_allows_exact_capacity_and_blocks_one_short(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    budget = _budget(
+        planned_conditions=1,
+        planned_root_runs=1,
+        planned_ai_units=2,
+        max_provider_attempts=6,
+    )
+    case = {"case_id": "case-1", "expected_ai_unit_count": 2}
+    request_limits = {"max_provider_attempts": 3, "max_tokens": 100_000}
+    policy = budget.disk_estimate["policy"]
+    tracker = formal_runner._RollingDiskForecast(
+        remaining_root_runs=1,
+        remaining_ai_units=2,
+        remaining_provider_attempts=6,
+        fixed_forecast_bytes=(
+            int(policy["fixed_manifest_bytes"])
+            + int(policy["fixed_temp_bytes"])
+        ),
+        max_condition_compaction_bytes=int(
+            budget.disk_estimate["max_condition_compaction_bytes"]
+        ),
+        policy=policy,
+    )
+    forecast = int(budget.disk_estimate["forecast_bytes"])
+    headroom = max((forecast + 3) // 4, 2 * 1024**3)
+    theoretical = 2 * 3 * 100_000 * int(policy["utf8_bytes_per_token"])
+    forecast_payload = 6 * int(policy["p95_provider_attempt_payload_bytes"])
+    theoretical_over_forecast = max(0, theoretical - forecast_payload)
+    expected = (
+        forecast
+        + headroom
+        + int(budget.disk_estimate["max_condition_compaction_bytes"])
+        + theoretical_over_forecast
+    )
+    available = iter((expected, expected - 1))
+    monkeypatch.setattr(
+        formal_runner.shutil,
+        "disk_usage",
+        lambda _path: SimpleNamespace(total=expected, used=0, free=next(available)),
+    )
+
+    details = formal_runner._preflight_formal_root_capacity(
+        output_root=tmp_path / "rolling-root",
+        condition=SimpleNamespace(
+            condition_id="condition-1",
+            experiment_id="exp1_real_ai_feasibility",
+        ),
+        task_id="case-1",
+        case=case,
+        request_limits=request_limits,
+        rolling_forecast=tracker,
+    )
+
+    assert details["required_bytes"] == expected
+    assert details["available_bytes"] == expected
+    assert details["theoretical_response_bytes"] == theoretical
+    assert details["theoretical_over_forecast_bytes"] == theoretical_over_forecast
+    assert details["remaining_forecast_bytes"] == forecast
+    assert details["headroom_bytes"] == headroom
+    assert tracker.remaining_root_runs == 0
+    assert tracker.remaining_ai_units == 0
+    assert tracker.remaining_provider_attempts == 0
+    assert tracker.in_flight_forecast_bytes == details["root_reservation_bytes"]
+    tracker.consume_root_forecast(
+        root_reservation_bytes=int(details["root_reservation_bytes"])
+    )
+    assert tracker.in_flight_forecast_bytes == 0
+    tracker_short = formal_runner._RollingDiskForecast(
+        remaining_root_runs=1,
+        remaining_ai_units=2,
+        remaining_provider_attempts=6,
+        fixed_forecast_bytes=(
+            int(policy["fixed_manifest_bytes"])
+            + int(policy["fixed_temp_bytes"])
+        ),
+        max_condition_compaction_bytes=int(
+            budget.disk_estimate["max_condition_compaction_bytes"]
+        ),
+        policy=policy,
+    )
+    with pytest.raises(
+        formal_runner.PaperInfrastructureBlockedError,
+        match="rolling root disk guard failed",
+    ) as captured:
+        formal_runner._preflight_formal_root_capacity(
+            output_root=tmp_path / "rolling-root",
+            condition=SimpleNamespace(
+                condition_id="condition-1",
+                experiment_id="exp1_real_ai_feasibility",
+            ),
+            task_id="case-1",
+            case=case,
+            request_limits=request_limits,
+            rolling_forecast=tracker_short,
+        )
+    summary = captured.value.to_summary()
+    assert summary["failure_kind"] == "insufficient_rolling_root_capacity"
+    assert summary["condition_id"] == "condition-1"
+    assert summary["task_id"] == "case-1"
+    assert summary["resource_diagnostics"]["available_bytes"] == expected - 1
+    assert tracker_short.remaining_root_runs == 1
+    assert tracker_short.remaining_ai_units == 2
+    assert tracker_short.remaining_provider_attempts == 6
+    assert tracker_short.in_flight_forecast_bytes == 0
+
+
+def test_formal_condition_compaction_guard_has_exact_boundary(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    reachable = 3 * 1024**3
+    required = reachable + 2 * 1024**3
+    available = iter((required, required - 1))
+    monkeypatch.setattr(
+        formal_runner.shutil,
+        "disk_usage",
+        lambda _path: SimpleNamespace(total=required, used=0, free=next(available)),
+    )
+
+    details = formal_runner._preflight_formal_condition_compaction_capacity(
+        output_root=tmp_path / "compaction-root",
+        condition_id="condition-1",
+        current_condition_reachable_bytes=reachable,
+    )
+
+    assert details["required_bytes"] == required
+    assert details["available_bytes"] == required
+    with pytest.raises(
+        formal_runner.PaperInfrastructureBlockedError,
+        match="condition compaction disk guard failed",
+    ) as captured:
+        formal_runner._preflight_formal_condition_compaction_capacity(
+            output_root=tmp_path / "compaction-root",
+            condition_id="condition-1",
+            current_condition_reachable_bytes=reachable,
+        )
+    assert captured.value.to_summary()["failure_kind"] == (
+        "insufficient_condition_compaction_capacity"
+    )
+
+
+def test_compaction_guard_resume_reuses_nonempty_tail_without_provider_call(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = _ai_config()
+    plan = _planned_dispatch_plan(tmp_path, config=config)
+    condition, _selection = plan.bound_items()[0]
+    adapter_calls: list[str] = []
+
+    class CallbackModule:
+        def expand_conditions(self, context):
+            raise AssertionError("formal execution consumes the frozen plan")
+
+        def freeze_case_selections(self, context, conditions):
+            return FrozenCaseSelectionBatch(())
+
+        def run_condition(self, context, condition, selection):
+            return context.execution_callback(
+                context=context,
+                condition=condition,
+                selection=selection,
+            )
+
+        def summarize(self, evidence):
+            return ExperimentSummaryRows(experiment_id=EXPERIMENT_ID, rows=())
+
+    def fake_case_dispatch(**kwargs):
+        adapter_calls.append(kwargs["case"]["case_id"])
+        return _complete_adapter_result(
+            output_root=Path(kwargs["output_root"]),
+            condition=kwargs["condition"],
+            case_id=kwargs["case"]["case_id"],
+        )
+
+    original_schedule = formal_runner.run_scheduled_cases
+
+    def scheduled_with_terminal_event(**kwargs):
+        result = original_schedule(**kwargs)
+        if result.ordered_case_ids:
+            return replace(
+                result,
+                events=(
+                    {
+                        "experiment_id": condition.experiment_id,
+                        "condition_id": condition.condition_id,
+                        "repeat_id": condition.repeat_id,
+                        "task_id": "case-1",
+                        "event_id": "merge-gate-condition-1",
+                        "event_type": "MERGE_GATE_COMPLETED",
+                    },
+                ),
+            )
+        return result
+
+    guard_calls = 0
+
+    def fail_then_allow_guard(**_kwargs):
+        nonlocal guard_calls
+        guard_calls += 1
+        if guard_calls == 1:
+            raise formal_runner.PaperInfrastructureBlockedError(
+                "synthetic compaction guard failure",
+                evidence_integrity=formal_runner.PaperEvidenceIntegrity.INVALID,
+                failure_stage="condition_compaction",
+                failure_kind="insufficient_condition_compaction_capacity",
+                condition_id=condition.condition_id,
+            )
+        return {"required_bytes": 1, "available_bytes": 1}
+
+    monkeypatch.setitem(
+        formal_runner.dispatch_paper_condition.__globals__,
+        "_MODULES",
+        ((EXPERIMENT_ID, CallbackModule()),),
+    )
+    monkeypatch.setattr(formal_runner, "dispatch_paper_case", fake_case_dispatch)
+    monkeypatch.setattr(formal_runner, "run_scheduled_cases", scheduled_with_terminal_event)
+    monkeypatch.setattr(
+        formal_runner,
+        "_preflight_formal_condition_compaction_capacity",
+        fail_then_allow_guard,
+    )
+    kwargs = _formal_execution_kwargs(tmp_path=tmp_path, config=config, plan=plan)
+
+    first = formal_runner.execute_paper_formal_suite(**kwargs)
+
+    assert first.status == PaperStatus.BLOCKED
+    assert adapter_calls == ["case-1"]
+    run_root = (
+        tmp_path
+        / "experiments"
+        / EXPERIMENT_ID
+        / "runs"
+        / condition.condition_id
+        / "0"
+    )
+    current = json.loads((run_root / "CURRENT.json").read_text(encoding="utf-8"))
+    tail_root = run_root / ".generations" / current["generation_id"]
+    tail_manifest = json.loads(
+        (tail_root / "generation_manifest.json").read_text(encoding="utf-8")
+    )
+    assert tail_manifest["delta_role"] == "condition_tail_events"
+    assert "MERGE_GATE_COMPLETED" in (
+        tail_root / "events" / "event_log.jsonl"
+    ).read_text(encoding="utf-8")
+    parent_ids = {path.name for path in (run_root / ".generations").iterdir()}
+    assert len(parent_ids) == 2
+
+    resumed = formal_runner.execute_paper_formal_suite(**kwargs, resume=True)
+
+    assert resumed.status == PaperStatus.COMPLETED
+    assert adapter_calls == ["case-1"]
+    assert guard_calls == 2
+    current = json.loads((run_root / "CURRENT.json").read_text(encoding="utf-8"))
+    snapshot_root = run_root / ".generations" / current["generation_id"]
+    snapshot_manifest = json.loads(
+        (snapshot_root / "generation_manifest.json").read_text(encoding="utf-8")
+    )
+    assert snapshot_manifest["generation_kind"] == "snapshot"
+    assert {path.name for path in (run_root / ".generations").iterdir()} == {
+        current["generation_id"]
+    }
+
+
+def test_formal_rolling_guard_counts_prior_in_flight_theoretical_reservation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    budget = _budget(
+        planned_conditions=1,
+        planned_root_runs=2,
+        planned_ai_units=2,
+        max_provider_attempts=2,
+    )
+    policy = budget.disk_estimate["policy"]
+    tracker = formal_runner._RollingDiskForecast(
+        remaining_root_runs=2,
+        remaining_ai_units=2,
+        remaining_provider_attempts=2,
+        fixed_forecast_bytes=(
+            int(policy["fixed_manifest_bytes"])
+            + int(policy["fixed_temp_bytes"])
+        ),
+        max_condition_compaction_bytes=int(
+            budget.disk_estimate["max_condition_compaction_bytes"]
+        ),
+        policy=policy,
+    )
+    free = {"bytes": 10**15}
+    monkeypatch.setattr(
+        formal_runner.shutil,
+        "disk_usage",
+        lambda _path: SimpleNamespace(
+            total=10**15,
+            used=0,
+            free=free["bytes"],
+        ),
+    )
+    condition = SimpleNamespace(
+        condition_id="condition-1",
+        experiment_id="exp1_real_ai_feasibility",
+    )
+    first = formal_runner._preflight_formal_root_capacity(
+        output_root=tmp_path,
+        condition=condition,
+        task_id="case-1",
+        case={"case_id": "case-1", "expected_ai_unit_count": 1},
+        request_limits={"max_provider_attempts": 1, "max_tokens": 100_000},
+        rolling_forecast=tracker,
+    )
+    assert first["theoretical_over_forecast_bytes"] > 0
+    assert tracker.in_flight_forecast_bytes == first["root_reservation_bytes"]
+    free["bytes"] = int(first["required_bytes"])
+
+    with pytest.raises(
+        formal_runner.PaperInfrastructureBlockedError,
+        match="rolling root disk guard failed",
+    ) as captured:
+        formal_runner._preflight_formal_root_capacity(
+            output_root=tmp_path,
+            condition=condition,
+            task_id="case-2",
+            case={"case_id": "case-2", "expected_ai_unit_count": 1},
+            request_limits={
+                "max_provider_attempts": 1,
+                "max_tokens": 100_000,
+            },
+            rolling_forecast=tracker,
+        )
+
+    diagnostics = captured.value.to_summary()["resource_diagnostics"]
+    assert diagnostics["required_bytes"] > first["required_bytes"]
+    assert diagnostics["remaining_forecast_bytes"] > (
+        first["remaining_forecast_bytes"] - first["root_forecast_bytes"]
+    )
+
+
+def test_formal_rolling_root_guard_blocks_before_provider_dispatch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    suite_root = tmp_path / "rolling-provider-blocked"
+    config = _ai_config()
+    plan = _planned_dispatch_plan(suite_root, config=config)
+    kwargs = _formal_execution_kwargs(
+        tmp_path=suite_root,
+        config=config,
+        plan=plan,
+    )
+    disk_checks = {"count": 0}
+    provider_calls = {"count": 0}
+
+    class ForbiddenTransport:
+        def complete(self, **_kwargs: object) -> object:
+            provider_calls["count"] += 1
+            raise AssertionError("provider dispatch must follow rolling disk guard")
+
+    def disk_usage(_path: object) -> SimpleNamespace:
+        disk_checks["count"] += 1
+        free = 10**15 if disk_checks["count"] == 1 else 0
+        return SimpleNamespace(total=10**15, used=0, free=free)
+
+    kwargs["transport"] = ForbiddenTransport()
+    monkeypatch.setattr(formal_runner.shutil, "disk_usage", disk_usage)
+    monkeypatch.setattr(
+        formal_runner,
+        "dispatch_paper_condition",
+        lambda *, context, plan, condition_id: context.execution_callback(
+            condition=plan.conditions[0],
+            selection=plan.condition_selection_bindings[0].selection,
+        ),
+    )
+    monkeypatch.setattr(
+        formal_runner,
+        "_checkpoint_dependency_outcome",
+        lambda **_kwargs: pytest.fail(
+            "disk-resource closure must not checkpoint remaining roots"
+        ),
+    )
+
+    result = formal_runner.execute_paper_formal_suite(**kwargs)
+
+    assert result.status == PaperStatus.BLOCKED
+    assert result.error_summary[0]["failure_kind"] == (
+        "insufficient_rolling_root_capacity"
+    )
+    assert provider_calls["count"] == 0
+    assert disk_checks["count"] >= 2
+    marker = json.loads(
+        (suite_root / "infrastructure_blocked.json").read_text(encoding="utf-8")
+    )
+    assert marker["remaining_task_count"] == 1
+    assert marker["failure"]["failure_kind"] == (
+        "insufficient_rolling_root_capacity"
+    )
+
+
+def test_disk_resource_block_closure_writes_one_bounded_marker_for_50k_remaining(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    condition = SimpleNamespace(
+        experiment_id=EXPERIMENT_ID,
+        condition_id="condition-50k",
+        repeat_id=0,
+    )
+    selection = SimpleNamespace(
+        ordered_case_ids=tuple(f"case-{index:05d}" for index in range(50_000))
+    )
+    plan = SimpleNamespace(experiment_id=EXPERIMENT_ID, status="planned")
+    writes: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        formal_runner,
+        "_atomic_write_json",
+        lambda _path, body: writes.append(dict(body)),
+    )
+    monkeypatch.setattr(
+        formal_runner,
+        "_checkpoint_dependency_outcome",
+        lambda **_kwargs: pytest.fail("disk closure must not write per-root evidence"),
+    )
+    blocked_error = formal_runner.PaperInfrastructureBlockedError(
+        "rolling capacity exhausted",
+        evidence_integrity=formal_runner.PaperEvidenceIntegrity.INVALID,
+        failure_stage="disk_preflight",
+        failure_kind="insufficient_rolling_root_capacity",
+        condition_id=condition.condition_id,
+        task_id="case-00000",
+        diagnostics={"required_bytes": 2, "available_bytes": 1},
+    )
+
+    result = formal_runner._close_disk_resource_blocked_suite(
+        suite_root=tmp_path,
+        suite_id="suite-50k",
+        started_at="2026-07-31T00:00:00Z",
+        plans=(plan,),
+        bound_plans=((plan, ((condition, selection),)),),
+        condition_results=(),
+        blocked_error=blocked_error,
+        root_case_filter={},
+        usage=formal_runner._UsageTotals(),
+        budget=_budget(
+            planned_conditions=1,
+            planned_root_runs=50_000,
+            planned_ai_units=50_000,
+        ),
+        budget_approval={"approval_mode": "user_bypassed"},
+        completed_task_keys=set(),
+    )
+
+    assert result.status == PaperStatus.BLOCKED
+    assert result.task_count == 50_000
+    assert len(writes) == 1
+    assert writes[0]["remaining_task_count"] == 50_000
+    assert len(json.dumps(writes[0])) < 5_000
+
+
+def test_formal_disk_preflight_resume_conservatively_keeps_full_forecast(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    suite_root = tmp_path / "resume-suite"
+    suite_root.mkdir()
+    budget = _disk_test_budget()
+    estimate_bytes = int(budget.disk_estimate["forecast_bytes"])
+    reachable_bytes = estimate_bytes + 500
+    (suite_root / "evidence_manifest.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "tokenshare.paper_evidence_manifest.v2",
+                "static_files": [{"path": "suite_manifest.json", "size": 700}],
+                "conditions": [
+                    {
+                        "experiment_id": EXPERIMENT_ID,
+                        "condition_id": "condition-1",
+                        "repeat_id": 0,
+                        "condition_manifest_ref": {
+                            "path": "condition_manifest.json",
+                            "size": 100,
+                        },
+                        "reachable_size_bytes": reachable_bytes,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    two_gib = 2 * 1024**3
+    headroom = max((estimate_bytes + 3) // 4, two_gib)
+    required = estimate_bytes + headroom + reachable_bytes
+    monkeypatch.setattr(
+        formal_runner.shutil,
+        "disk_usage",
+        lambda _path: SimpleNamespace(total=required, used=0, free=required),
+    )
+
+    details = formal_runner._preflight_formal_disk_capacity(
+        output_root=suite_root,
+        budget=budget,
+        resume=True,
+    )
+
+    assert details["existing_canonical_bytes"] == 700 + reachable_bytes
+    assert details["remaining_forecast_bytes"] == estimate_bytes
+    assert details["headroom_bytes"] == headroom
+    assert details["condition_compaction_bytes"] == reachable_bytes
+    assert details["required_bytes"] == required
+
+
+def test_formal_disk_preflight_resume_includes_largest_condition_cow(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    suite_root = tmp_path / "resume-cow-suite"
+    suite_root.mkdir()
+    three_gib = 3 * 1024**3
+    (suite_root / "evidence_manifest.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "tokenshare.paper_evidence_manifest.v2",
+                "static_files": [],
+                "conditions": [
+                    {
+                        "experiment_id": EXPERIMENT_ID,
+                        "condition_id": "condition-large",
+                        "repeat_id": 0,
+                        "condition_manifest_ref": {
+                            "path": "condition_manifest.json",
+                            "size": 100,
+                        },
+                        "reachable_size_bytes": three_gib,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    forecast = int(_disk_test_budget().disk_estimate["forecast_bytes"])
+    headroom = max((forecast + 3) // 4, 2 * 1024**3)
+    required = forecast + headroom + three_gib
+    monkeypatch.setattr(
+        formal_runner.shutil,
+        "disk_usage",
+        lambda _path: SimpleNamespace(total=required, used=0, free=required),
+    )
+
+    details = formal_runner._preflight_formal_disk_capacity(
+        output_root=suite_root,
+        budget=_disk_test_budget(),
+        resume=True,
+    )
+
+    assert details["remaining_forecast_bytes"] == int(
+        _disk_test_budget().disk_estimate["forecast_bytes"]
+    )
+    assert details["condition_compaction_bytes"] == three_gib
+    assert details["headroom_bytes"] == 2 * 1024**3
+    assert details["required_bytes"] == required
+
+
+def test_formal_replay_only_skips_disk_preflight(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    expected = SimpleNamespace(status="replayed")
+    monkeypatch.setattr(
+        formal_runner,
+        "replay_paper_formal_suite",
+        lambda *, output_root: expected,
+    )
+    monkeypatch.setattr(
+        formal_runner.shutil,
+        "disk_usage",
+        lambda _path: pytest.fail("replay must skip disk preflight"),
+    )
+
+    result = formal_runner.execute_paper_formal_suite(
+        dispatch_plans=(),
+        catalog_manifest={},
+        budget=_disk_test_budget(),
+        budget_approval={},
+        output_root=tmp_path,
+        ai_api_configs={},
+        transport=object(),
+        real_transport=False,
+        hard_limits={},
+        replay_only=True,
+    )
+
+    assert result is expected
+
+
+@pytest.mark.parametrize(
+    "drift_kind",
+    (
+        "schema",
+        "forecast_sum",
+        "policy",
+        "input_count",
+        "negative_component",
+        "theoretical_payload",
+        "token_identity",
+        "extra_top_level",
+    ),
+)
+def test_formal_disk_preflight_rejects_estimate_drift_before_evidence_or_provider(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    drift_kind: str,
+) -> None:
+    suite_root = tmp_path / f"disk-drift-{drift_kind}"
+    config = _ai_config()
+    plan = _planned_dispatch_plan(suite_root, config=config)
+    kwargs = _formal_execution_kwargs(
+        tmp_path=suite_root,
+        config=config,
+        plan=plan,
+    )
+    budget = _disk_test_budget()
+    estimate = json.loads(json.dumps(budget.disk_estimate))
+    if drift_kind == "schema":
+        estimate["schema_version"] = "tokenshare.paper_disk_estimate.v1"
+    elif drift_kind == "forecast_sum":
+        estimate["forecast_bytes"] = 0
+    elif drift_kind == "policy":
+        estimate["policy"]["utf8_bytes_per_token"] = 3
+    elif drift_kind == "input_count":
+        estimate["inputs"]["planned_root_runs"] = 2
+    elif drift_kind == "negative_component":
+        estimate["components"]["forecast_provider_attempt_payload_bytes"] = -1
+    elif drift_kind == "theoretical_payload":
+        estimate["theoretical_max_payload_bytes"] = 0
+    elif drift_kind == "token_identity":
+        quota = json.loads(json.dumps(budget.quota_preflight))
+        quota["budget_commitments"]["request_limits"][
+            "token_upper_bound_per_provider_attempt"
+        ] = 2048
+        budget = replace(budget, quota_preflight=quota)
+    elif drift_kind == "extra_top_level":
+        estimate["unexpected"] = True
+    kwargs["budget"] = replace(budget, disk_estimate=estimate)
+    calls = {"evidence": 0, "provider": 0}
+
+    def forbidden_initialize(**_kwargs: object) -> object:
+        calls["evidence"] += 1
+        raise AssertionError("invalid estimate reached EvidenceStore")
+
+    class ForbiddenTransport:
+        def complete(self, **_kwargs: object) -> object:
+            calls["provider"] += 1
+            raise AssertionError("invalid estimate reached provider")
+
+    kwargs["transport"] = ForbiddenTransport()
+    monkeypatch.setattr(
+        formal_runner.FormalEvidenceStore,
+        "initialize",
+        forbidden_initialize,
+    )
+    monkeypatch.setattr(
+        formal_runner.shutil,
+        "disk_usage",
+        lambda _path: pytest.fail("invalid estimate reached disk usage"),
+    )
+
+    with pytest.raises(
+        formal_runner.PaperInfrastructureBlockedError,
+        match="formal disk estimate is invalid",
+    ) as captured:
+        formal_runner.execute_paper_formal_suite(**kwargs)
+
+    assert captured.value.to_summary()["failure_stage"] == "disk_preflight"
+    assert calls == {"evidence": 0, "provider": 0}
+    assert not suite_root.exists()
 
 
 def _normalized_exp5_request_controls(
@@ -3444,6 +6214,7 @@ def _exp5_adapter_result(
         provenance_ref=provenance_ref.to_dict(),
         usage_ref=usage_ref.to_dict(),
         model_execution_record_ref=model_ref.to_dict(),
+        provider_attempt_count=1,
     )
     task = SimpleNamespace(
         **{
@@ -3486,7 +6257,7 @@ def _complete_adapter_result(
         created_at="2026-07-20T00:00:00Z",
     )
     request_ref = adapter_store.save_bytes(
-        b"request body",
+        b'{"request":"body"}',
         artifact_id="request.json",
         artifact_type="provider_request",
         media_type="application/json",
@@ -3729,21 +6500,21 @@ def _generation_records(
     condition_id: str,
     relative_path: str,
 ) -> list[dict[str, object]]:
-    run_root = (
+    logical = formal_runner.FormalEvidenceStore(
         suite_root
-        / "experiments"
-        / experiment_id
-        / "runs"
-        / condition_id
-        / "0"
+    ).load_logical_run_records(
+        experiment_id=experiment_id,
+        condition_id=condition_id,
+        repeat_id=0,
     )
-    current = json.loads((run_root / "CURRENT.json").read_text(encoding="utf-8"))
-    path = run_root / ".generations" / current["generation_id"] / relative_path
-    return [
-        json.loads(line)
-        for line in path.read_text(encoding="utf-8").splitlines()
-        if line.strip()
-    ]
+    key_by_path = {
+        "per_task_results.jsonl": "tasks",
+        "per_attempt_results.jsonl": "attempts",
+        "fault_injections.jsonl": "faults",
+        "events/event_log.jsonl": "events",
+        "artifacts/artifact_index.jsonl": "artifacts",
+    }
+    return list(logical[key_by_path[relative_path]])
 
 
 def test_formal_runner_smoke_filter_executes_one_canonical_root_and_freezes_flags(
@@ -3861,6 +6632,21 @@ def test_formal_runner_smoke_filter_executes_one_canonical_root_and_freezes_flag
     assert suite_manifest["formal"] is False
     assert suite_manifest["pilot_only"] is True
     assert suite_manifest["regression_only"] is True
+    compatibility_root = tmp_path / EXPERIMENT_ID
+    assert (compatibility_root / "experiment_manifest.json").is_file()
+    assert (
+        compatibility_root
+        / "runs"
+        / condition.condition_id
+        / "0"
+        / "CURRENT.json"
+    ).is_file()
+    assert not (
+        compatibility_root
+        / "runs"
+        / condition.condition_id
+        / selected_case_id
+    ).exists()
     tasks = _generation_records(
         tmp_path,
         EXPERIMENT_ID,

@@ -1,0 +1,1 @@
+{"actual_provider_attempts": [{"provider_attempt_index": 0}], "actual_request_identities": [{"provider_attempt_index": 0}], "attempt_id": "attempt-1", "record_digest": "sha256:172a54cb62c437d5435af42161b4db484feeef90e09de971fc5a0b218b287290", "schema_version": "tokenshare.paper_model_execution_record.v2", "task_id": "protocol-child-1"}

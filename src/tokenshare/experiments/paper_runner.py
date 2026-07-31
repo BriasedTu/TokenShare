@@ -54,6 +54,14 @@ from tokenshare.experiments.paper_experiment_contracts import (
     PaperExecutionContext,
     canonical_contract_digest,
 )
+from tokenshare.experiments.paper_factorization_sampling import (
+    FACTOR_PAPER_DIFFICULTIES,
+    FactorizationSamplingProfile,
+)
+from tokenshare.experiments.paper_suite_scale import (
+    PaperSuiteScaleProfile,
+    build_paper_suite_scale_policy,
+)
 from tokenshare.experiments.paper_catalog_execution_view import (
     EXP3_VIEW_KIND,
     EXP4_VIEW_KIND,
@@ -85,6 +93,12 @@ class _FormalPaperCatalogView:
     suite_version: str = "paper_v1"
     lean_semantic_readiness_passed: bool = True
     optional_worker_preflight: JsonObject | None = None
+    factorization_sampling_profile: FactorizationSamplingProfile | None = None
+    paper_suite_scale_profile: PaperSuiteScaleProfile | None = None
+    paper_suite_scale_policy: JsonObject | None = None
+    selected_factorization_by_experiment: Mapping[
+        str, Mapping[str, tuple[Mapping[str, Any], ...]]
+    ] | None = None
 
     @property
     def catalog_id(self) -> str:
@@ -970,6 +984,8 @@ def execute_gate_c_pilot_case(
     ai_api_configs: Mapping[str, AIAPIExecutorConfig],
     transport: Any | None,
     real_transport: bool,
+    factorization_sampling_profile: FactorizationSamplingProfile | None = None,
+    paper_suite_scale_profile: PaperSuiteScaleProfile | None = None,
     resume: bool = False,
     replay_only: bool = False,
 ) -> GateCPilotExecutionResult:
@@ -1006,6 +1022,8 @@ def execute_gate_c_pilot_case(
             "max_total_tokens": budget.token_upper_bound,
             "max_cost_estimate": budget.cost_upper_bound,
         },
+        factorization_sampling_profile=factorization_sampling_profile,
+        paper_suite_scale_profile=paper_suite_scale_profile,
     )
     plan = plan_paper_experiment(context=context, experiment_id=experiment_id)
     try:
@@ -1105,6 +1123,8 @@ def build_gate_c_dispatch_plans(
     baseline_endpoint_binding: JsonObject,
     model_endpoint_cohort_preflight: JsonObject | None,
     output_root: str | Path,
+    factorization_sampling_profile: FactorizationSamplingProfile | None = None,
+    paper_suite_scale_profile: PaperSuiteScaleProfile | None = None,
 ) -> tuple[PaperExperimentDispatchPlan, ...]:
     """通过各模块的 Gate B Protocol 实现生成共享调度计划。"""
 
@@ -1120,6 +1140,8 @@ def build_gate_c_dispatch_plans(
             output_root=base_output / experiment_id,
             execution_callback=_forbidden_plan_execution,
             hard_limits={"max_total_provider_attempts": 0},
+            factorization_sampling_profile=factorization_sampling_profile,
+            paper_suite_scale_profile=paper_suite_scale_profile,
         )
         plans.append(
             plan_paper_experiment(
@@ -1140,6 +1162,8 @@ def _gate_c_context(
     output_root: str | Path,
     execution_callback: Callable[..., PaperConditionResult],
     hard_limits: Mapping[str, Any],
+    factorization_sampling_profile: FactorizationSamplingProfile | None,
+    paper_suite_scale_profile: PaperSuiteScaleProfile | None,
 ) -> PaperExecutionContext:
     bound_lean_matrix = _bind_lean_matrix_to_catalog(
         lean_3x3_matrix,
@@ -1148,17 +1172,57 @@ def _gate_c_context(
     task15_budget_input = bound_lean_matrix.get("task15_budget_input")
     if not isinstance(task15_budget_input, dict):
         raise ValueError("Gate C planning requires Task14 task15_budget_input")
+    suite_policy: JsonObject | None = None
+    selected_factorization: dict[
+        str, dict[str, tuple[Mapping[str, Any], ...]]
+    ] | None = None
+    if catalog_manifest.catalog_version == "v2":
+        if paper_suite_scale_profile is None:
+            raise ValueError(
+                "catalog v2 planning requires an explicit paper suite scale profile"
+            )
+        candidates_by_difficulty = {
+            difficulty: catalog_manifest.cases_for(
+                domain="factorization",
+                difficulty=difficulty,
+                paper_difficulty=difficulty,
+            )
+            for difficulty in FACTOR_PAPER_DIFFICULTIES
+        }
+        suite_policy, selected_factorization = build_paper_suite_scale_policy(
+            profile=paper_suite_scale_profile,
+            catalog_id=catalog_manifest.catalog_id,
+            catalog_version=catalog_manifest.catalog_version,
+            catalog_digest=catalog_manifest.catalog_digest,
+            candidates_by_difficulty=candidates_by_difficulty,
+        )
     formal_catalog = _FormalPaperCatalogView(
         manifest=catalog_manifest,
         task15_budget_input=_json_copy(task15_budget_input),
         lean_task14_readiness=_json_copy(bound_lean_matrix),
         optional_worker_preflight={},
+        factorization_sampling_profile=factorization_sampling_profile,
+        paper_suite_scale_profile=paper_suite_scale_profile,
+        paper_suite_scale_policy=suite_policy,
+        selected_factorization_by_experiment=selected_factorization,
     )
+    selected_case_ids = None
+    if selected_factorization is not None and experiment_id in {
+        "exp1_real_ai_feasibility",
+        "exp2_real_ai_scalability",
+    }:
+        selected_case_ids = tuple(
+            str(case["case_id"])
+            for difficulty in FACTOR_PAPER_DIFFICULTIES
+            for case in selected_factorization[experiment_id].get(difficulty, ())
+        )
     manifest_view = build_manifest_execution_view(
         manifest=catalog_manifest,
         task15_budget_input=task15_budget_input,
         lean_task14_readiness=bound_lean_matrix,
         optional_worker_preflight={},
+        factorization_case_ids=selected_case_ids,
+        paper_suite_scale_policy=suite_policy,
     )
     if experiment_id == "exp3_real_ai_fault_recovery":
         catalog: Any = build_prepared_mapping_execution_view(
@@ -1344,7 +1408,7 @@ def _exp3_catalog_view(catalog: _FormalPaperCatalogView) -> JsonObject:
             difficulty=difficulty,
             paper_difficulty=difficulty,
         )
-        for difficulty in ("easy", "medium", "hard")
+        for difficulty in FACTOR_PAPER_DIFFICULTIES
     }
     medium_lean_by_topic = {
         topic: catalog.cases_for(
@@ -1356,14 +1420,25 @@ def _exp3_catalog_view(catalog: _FormalPaperCatalogView) -> JsonObject:
         for topic in ("pure_logic", "function_set", "induction")
     }
     if catalog.catalog_version == "v2":
+        factor_selection_policy, selected_factor_by_difficulty = (
+            _factor_sampling_policy_and_slices(
+                catalog,
+                factor_by_difficulty,
+                experiment_id="exp3_real_ai_fault_recovery",
+            )
+        )
         factor_rate = tuple(
-            str(case["case_id"]) for case in catalog.factorization_cases
+            str(case["case_id"])
+            for difficulty in FACTOR_PAPER_DIFFICULTIES
+            for case in selected_factor_by_difficulty[difficulty]
         )
     else:
+        selected_factor_by_difficulty = factor_by_difficulty
         factor_rate = tuple(
             str(case["case_id"])
             for case in factor_by_difficulty["medium"][:5]
         )
+        factor_selection_policy = None
     rate_lean = {
         topic: (str(cases[0]["case_id"]),)
         for topic, cases in medium_lean_by_topic.items()
@@ -1372,7 +1447,11 @@ def _exp3_catalog_view(catalog: _FormalPaperCatalogView) -> JsonObject:
     death_factor = {
         difficulty: tuple(
             str(case["case_id"])
-            for case in (cases if catalog.catalog_version == "v2" else cases[:1])
+            for case in (
+                selected_factor_by_difficulty[difficulty]
+                if catalog.catalog_version == "v2"
+                else cases[:1]
+            )
         )
         for difficulty, cases in factor_by_difficulty.items()
         if cases
@@ -1390,7 +1469,8 @@ def _exp3_catalog_view(catalog: _FormalPaperCatalogView) -> JsonObject:
             + catalog.lean_lemma_graph_cases
         )
     }
-    return {
+    body = {
+        "catalog_id": catalog.catalog_id,
         "catalog_digest": catalog.catalog_digest,
         "catalog_version": catalog.catalog_version,
         "suite_version": catalog.suite_version,
@@ -1408,19 +1488,39 @@ def _exp3_catalog_view(catalog: _FormalPaperCatalogView) -> JsonObject:
             for case_id in dict.fromkeys(selected_case_ids)
         },
     }
+    if factor_selection_policy is not None:
+        body["factorization_selection_policy"] = factor_selection_policy
+        body["paper_suite_scale_policy"] = factor_selection_policy
+    return body
 
 
 def _exp4_catalog_view(catalog: _FormalPaperCatalogView) -> JsonObject:
+    factor_by_difficulty = {
+        difficulty: catalog.cases_for(
+            domain="factorization",
+            difficulty=difficulty,
+            paper_difficulty=difficulty,
+        )
+        for difficulty in FACTOR_PAPER_DIFFICULTIES
+    }
+    selected_factor_by_difficulty = (
+        _factor_sampling_policy_and_slices(
+            catalog,
+            factor_by_difficulty,
+            experiment_id="exp4_real_ai_protocol_ablation",
+        )[1]
+        if catalog.catalog_version == "v2"
+        else {
+            difficulty: cases[:5]
+            for difficulty, cases in factor_by_difficulty.items()
+        }
+    )
     factorization_slices = {
         difficulty: [
             _case_plan_summary(case)
-            for case in catalog.cases_for(
-                domain="factorization",
-                difficulty=difficulty,
-                paper_difficulty=difficulty,
-            )[: (None if catalog.catalog_version == "v2" else 5)]
+            for case in selected_factor_by_difficulty[difficulty]
         ]
-        for difficulty in ("easy", "medium", "hard")
+        for difficulty in FACTOR_PAPER_DIFFICULTIES
     }
     allocations = {
         "simple": {"pure_logic": 2, "function_set": 2, "induction": 1},
@@ -1457,9 +1557,10 @@ def _exp4_catalog_view(catalog: _FormalPaperCatalogView) -> JsonObject:
         )
         for paper_difficulty, by_topic in shared_lean_slices.items()
     }
-    return {
+    body = {
         "schema_version": "tokenshare.paper_exp4_catalog_view.v1",
         "catalog_source_kind": "paper_input_catalog_manifest",
+        "catalog_id": catalog.catalog_id,
         "suite_version": catalog.suite_version,
         "catalog_version": catalog.catalog_version,
         "catalog_digest": catalog.catalog_digest,
@@ -1470,6 +1571,37 @@ def _exp4_catalog_view(catalog: _FormalPaperCatalogView) -> JsonObject:
         "shared_lean_slices": shared_lean_slices,
         "shared_lean_slice_digests": shared_digests,
     }
+    if catalog.catalog_version == "v2":
+        body["factorization_selection_policy"] = (
+            _factor_sampling_policy_and_slices(
+                catalog,
+                factor_by_difficulty,
+                experiment_id="exp4_real_ai_protocol_ablation",
+            )[0]
+        )
+        body["paper_suite_scale_policy"] = body[
+            "factorization_selection_policy"
+        ]
+    return body
+
+
+def _factor_sampling_policy_and_slices(
+    catalog: _FormalPaperCatalogView,
+    factor_by_difficulty: Mapping[str, tuple[JsonObject, ...]],
+    *,
+    experiment_id: str,
+) -> tuple[JsonObject, dict[str, tuple[Mapping[str, Any], ...]]]:
+    if (
+        catalog.paper_suite_scale_policy is None
+        or catalog.selected_factorization_by_experiment is None
+    ):
+        raise ValueError(
+            "catalog v2 planning requires an explicit paper suite scale policy"
+        )
+    selected = catalog.selected_factorization_by_experiment.get(experiment_id)
+    if selected is None:
+        raise ValueError("paper suite scale experiment selection is missing")
+    return catalog.paper_suite_scale_policy, dict(selected)
 
 
 def _case_plan_summary(case: JsonObject) -> JsonObject:

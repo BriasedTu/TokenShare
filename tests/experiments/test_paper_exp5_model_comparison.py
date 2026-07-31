@@ -65,6 +65,30 @@ def test_exp5_v3_selection_artifact_freezes_107_hard_roots() -> None:
     assert len(selection["ordered_case_ids"]) == 107
 
 
+def test_exp5_v4_selection_is_a_validated_54_root_prefix_of_v3() -> None:
+    module = _load_module()
+    parent = module.load_exp5_v3_selection()
+    active = module.load_exp5_v4_selection()
+
+    assert active["counts_by_stratum"] == {
+        "factorization:hard": 42,
+        "lean_proof:hard:pure_logic": 4,
+        "lean_proof:hard:function_set": 4,
+        "lean_proof:hard:induction": 4,
+    }
+    assert len(active["ordered_case_ids"]) == 54
+    parent_by_stratum = {
+        str(stratum["stratum_id"]): stratum for stratum in parent["strata"]
+    }
+    assert all(
+        tuple(stratum["ordered_case_ids"])
+        == tuple(parent_by_stratum[str(stratum["stratum_id"])]["ordered_case_ids"])[
+            : int(stratum["retained_count"])
+        ]
+        for stratum in active["strata"]
+    )
+
+
 def test_exp5_v3_expands_48_repeat_major_conditions() -> None:
     module = _load_module()
     conditions = module.expand_exp5_v3_conditions(
@@ -126,7 +150,7 @@ def test_exp5_v3_expands_48_repeat_major_conditions() -> None:
             predecessor = member_id
 
 
-def test_exp5_v3_freezes_1284_roots_and_9888_first_attempt_units() -> None:
+def test_exp5_v3_cohort_uses_v4_selection_for_648_roots_and_4992_units() -> None:
     module = _load_module()
     context = _context(
         catalog=_tracked_v3_catalog(),
@@ -135,9 +159,9 @@ def test_exp5_v3_freezes_1284_roots_and_9888_first_attempt_units() -> None:
     conditions = module.expand_exp5_v3_conditions(context)
     selections = module.freeze_exp5_v3_case_selections(context, conditions)
 
-    assert module.count_exp5_v3_root_runs(conditions, selections) == 1_284
+    assert module.count_exp5_v3_root_runs(conditions, selections) == 648
     assert sum(selection.expected_ai_unit_count for selection in selections) == (
-        9_888
+        4_992
     )
     ids_by_scope: dict[tuple[str, str], set[tuple[str, ...]]] = {}
     for condition, selection in zip(conditions, selections, strict=True):
@@ -147,13 +171,13 @@ def test_exp5_v3_freezes_1284_roots_and_9888_first_attempt_units() -> None:
         )
         ids_by_scope.setdefault(scope, set()).add(selection.ordered_case_ids)
         assert condition.exp5_selection_digest == (
-            "sha256:fbec153a02befa4071b4ad4d639e51e910a3bc4c433cc9eea4b19ac6489a3490"
+            "sha256:452f25dcc53a1eb0387665c6f451f1320095efb0c4bf154af62bf5e388afb6b2"
         )
     assert {scope: len(next(iter(ids))) for scope, ids in ids_by_scope.items()} == {
-        ("factorization", "hard"): 83,
-        ("lean_proof", "pure_logic"): 8,
-        ("lean_proof", "function_set"): 8,
-        ("lean_proof", "induction"): 8,
+        ("factorization", "hard"): 42,
+        ("lean_proof", "pure_logic"): 4,
+        ("lean_proof", "function_set"): 4,
+        ("lean_proof", "induction"): 4,
     }
     assert all(len(ids) == 1 for ids in ids_by_scope.values())
 
@@ -336,7 +360,7 @@ def test_exp5_public_v3_rejects_non_integer_preflight_counts_and_controls(
     assert calls == []
 
 
-def test_exp5_public_module_dispatches_v3_expansion_and_freeze() -> None:
+def test_exp5_public_module_dispatches_active_v4_selection() -> None:
     module = _load_module()
     context = _context(
         catalog=_tracked_v3_catalog(),
@@ -354,14 +378,14 @@ def test_exp5_public_module_dispatches_v3_expansion_and_freeze() -> None:
         for condition in conditions
     )
     assert {len(selection.ordered_case_ids) for selection in selections} == {
-        8,
-        83,
+        4,
+        42,
     }
     with pytest.raises(ValueError, match="condition order or identity drift"):
         experiment.freeze_case_selections(context, tuple(reversed(conditions)))
 
 
-def test_exp5_public_module_runs_v3_selection_and_rejects_digest_drift() -> None:
+def test_exp5_public_module_runs_active_v4_selection_and_rejects_digest_drift() -> None:
     module = _load_module()
     calls: list[tuple[str, int]] = []
 
@@ -411,7 +435,7 @@ def test_exp5_public_module_runs_v3_selection_and_rejects_digest_drift() -> None
         selections[lean_index],
     )
 
-    assert calls == [("factorization", 83), ("lean_proof", 8)]
+    assert calls == [("factorization", 42), ("lean_proof", 4)]
     with pytest.raises(ValueError, match="canonical Experiment 5 v3 selection"):
         experiment.run_condition(
             context,
@@ -432,7 +456,7 @@ def test_exp5_public_module_runs_v3_selection_and_rejects_digest_drift() -> None
             ),
             selections[factor_index],
         )
-    assert calls == [("factorization", 83), ("lean_proof", 8)]
+    assert calls == [("factorization", 42), ("lean_proof", 4)]
 
 
 def test_exp5_epd006_uses_all_exp1_hard_roots_without_exp2_slice() -> None:
@@ -749,6 +773,56 @@ def test_exp5_model_execution_join_returns_auditable_v2_fields() -> None:
     ]
     assert row["paper_eligible"] is True
     assert summary.rows == rows
+
+
+def test_exp5_model_execution_join_keeps_audited_provider_failure_eligible() -> None:
+    module = _load_module()
+    item = _provider_failure_model_execution_item()
+
+    row = module.build_exp5_model_execution_rows(
+        {"model_execution_records": [item]}
+    )[0]
+
+    assert row["attempt_status"] == "provider_error"
+    assert row["error_kind"] == "timeout"
+    assert row["provider_errors"] == ["timeout"]
+    assert row["raw_output_ref"] is None
+    assert row["resolved_model"] is None
+    assert row["identity_status"] == "not_observed"
+    assert row["request_evidence_joined"] is True
+    assert row["provenance_evidence_joined"] is True
+    assert row["usage_evidence_joined"] is True
+    assert row["prompt_tokens"] is None
+    assert row["completion_tokens"] is None
+    assert row["total_tokens"] is None
+    assert row["cost_estimate"] is None
+    assert row["cost_estimate_status"] == "usage_missing"
+    assert row["failure_reasons"] == []
+    assert row["paper_eligible"] is True
+
+
+def test_exp5_model_execution_join_normalizes_legacy_zero_filled_failure_usage() -> None:
+    module = _load_module()
+    item = _provider_failure_model_execution_item()
+    item["attempt"].update(
+        {
+            "schema_version": "tokenshare.paper_attempt_result.v1",
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 0,
+            "cost_estimate": 0.0,
+        }
+    )
+
+    row = module.build_exp5_model_execution_rows(
+        {"model_execution_records": [item]}
+    )[0]
+
+    assert row["prompt_tokens"] is None
+    assert row["completion_tokens"] is None
+    assert row["total_tokens"] is None
+    assert row["cost_estimate"] is None
+    assert row["cost_estimate_status"] == "usage_missing"
 
 
 def test_exp5_model_execution_join_uses_final_task_eligibility_for_standard_attempt() -> None:
@@ -1264,6 +1338,75 @@ def _model_execution_item(
         "provider_errors": [],
         "pilot_only": False,
     }
+
+
+def _provider_failure_model_execution_item() -> dict[str, Any]:
+    item = _model_execution_item()
+    record = item["record"]
+    request_identity = record["actual_request_identities"][0]
+    provider_attempt = {
+        "provider_family": "openai",
+        "entry_id": "gpt-entry",
+        "configured_model": "gpt-5.6-sol",
+        "result_kind": "timeout",
+        "provider_request_identity": request_identity,
+    }
+    record.update(
+        {
+            "raw_output_ref": None,
+            "actual_provider_attempts": [provider_attempt],
+            "resolved_model": None,
+            "response_model_status": "unavailable",
+            "identity_status": "not_observed",
+            "mismatch_reasons": [],
+            "paper_eligible": False,
+        }
+    )
+    record["record_digest"] = digest_json(
+        {key: value for key, value in record.items() if key != "record_digest"}
+    )
+    item.update(
+        {
+            "raw_output": None,
+            "request": {"request_id": "request1"},
+            "provenance": {
+                "final_result_kind": "timeout",
+                "attempts": [provider_attempt],
+            },
+            "usage": {
+                "provider_attempt_count": 1,
+                "cost_estimate": None,
+                "cost_estimate_status": "usage_missing",
+            },
+            "provider_errors": ["timeout"],
+            "formal_strict_join": True,
+        }
+    )
+    item["attempt"].update(
+        {
+            "schema_version": "tokenshare.paper_attempt_result.v3",
+            "attempt_status": "provider_error",
+            "raw_output_ref": None,
+            "error_kind": "timeout",
+            "provider_attempt_count": 1,
+            "prompt_tokens": None,
+            "completion_tokens": None,
+            "total_tokens": None,
+            "cost_estimate": None,
+            "cost_estimate_status": "usage_missing",
+            "paper_eligible": True,
+        }
+    )
+    item["task"].update(
+        {
+            "root_status": "failed",
+            "accepted_validity": None,
+            "failure_stage": "provider",
+            "failure_kind": "provider_error",
+            "paper_eligible": True,
+        }
+    )
+    return item
 
 
 def _cohort_preflight() -> dict[str, Any]:

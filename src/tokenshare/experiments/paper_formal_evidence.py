@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import deque
 import hashlib
 import json
 import os
@@ -15,6 +16,14 @@ from dataclasses import asdict, dataclass, is_dataclass
 from enum import Enum
 from pathlib import Path
 from typing import Any, Mapping, Sequence
+
+from tokenshare.experiments.paper_formal_checkpoint import (
+    V3_GENERATION_SCHEMA,
+    V3GenerationDescriptor,
+    compact_v3_delta_chain_to_snapshot,
+    validate_v3_delta_chain,
+    validate_v3_generation_manifest,
+)
 
 
 _ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
@@ -41,8 +50,10 @@ _TERMINAL_CHECKPOINT_STATUSES = _SUCCESS_STATUSES | {
     "budget_exhausted",
     "failed",
     "ineligible",
+    "not_started",
     "partial",
     "timeout",
+    "worker_died",
 }
 _SUITE_RUNTIME_FIELDS = frozenset(
     {
@@ -61,6 +72,38 @@ _SUITE_RUNTIME_FIELDS = frozenset(
 _ROOT_LOCKS_GUARD = threading.Lock()
 _ROOT_LOCKS: dict[str, threading.RLock] = {}
 _LOCK_FILE_NAME = ".formal-evidence.lock"
+_PENDING_FILE_NAME = "PENDING.json"
+_PENDING_KEYS = {
+    "schema_version",
+    "target_generation_id",
+    "target_generation_manifest_digest",
+    "expected_prior_generation_id",
+    "expected_prior_generation_manifest_digest",
+    "expected_prior_current_digest",
+    "experiment_id",
+    "condition_id",
+    "repeat_id",
+    "task_id",
+}
+_PENDING_V2_KEYS = {
+    "schema_version",
+    "publication_kind",
+    "target_generation_id",
+    "target_generation_manifest_digest",
+    "expected_prior_generation_id",
+    "expected_prior_generation_manifest_digest",
+    "expected_prior_current_digest",
+    "experiment_id",
+    "condition_id",
+    "repeat_id",
+    "task_id",
+    "selection_ordinal",
+    "anchor_task_id",
+    "condition_events_digest",
+    "compacted_prior_head_generation_id",
+    "compacted_prior_head_generation_manifest_digest",
+    "compacted_chain_digest",
+}
 
 
 class SharedEvidenceError(ValueError):
@@ -86,7 +129,18 @@ _CURRENT_KEYS = {
     "generation_id",
     "generation_manifest_digest",
 }
-_GENERATION_MANIFEST_KEYS = {"schema_version", "generation_id", "files"}
+_GENERATION_MANIFEST_V1_KEYS = {
+    "schema_version",
+    "generation_id",
+    "files",
+}
+_GENERATION_MANIFEST_V2_KEYS = {
+    "schema_version",
+    "generation_id",
+    "parent_generation_id",
+    "parent_generation_manifest_digest",
+    "files",
+}
 _RUN_MANIFEST_KEYS = {
     "schema_version",
     "generation_id",
@@ -96,6 +150,55 @@ _RUN_MANIFEST_KEYS = {
     "task_ids",
     "completed_task_ids",
     "status",
+}
+_CONDITION_MANIFEST_KEYS = {
+    "schema_version",
+    "experiment_id",
+    "condition_id",
+    "repeat_id",
+    "condition_identity",
+    "expected_root_count",
+    "observed_root_count",
+    "terminal_root_count",
+    "status",
+    "terminal",
+    "current_ref",
+    "generation_manifest_ref",
+    "run_manifest_ref",
+    "paper_eligible",
+    "ineligibility_reasons",
+}
+_CONDITION_MANIFEST_V2_KEYS = _CONDITION_MANIFEST_KEYS | {
+    "head_generation_kind",
+    "chain_generation_count",
+    "root_delta_count",
+    "condition_event_delta_count",
+    "logical_task_count",
+    "reachable_size_bytes",
+    "commit_chain_digest",
+    "logical_records_digest",
+}
+_LEDGER_EVENT_V1_KEYS = {
+    "schema_version",
+    "event_seq",
+    "event_id",
+    "event_type",
+    "occurred_at",
+    "task_id",
+    "object_type",
+    "object_id",
+    "actor",
+    "correlation_id",
+    "causation_event_id",
+    "idempotency_key",
+    "payload",
+    "prev_event_hash",
+    "event_hash",
+}
+_LEDGER_EVENT_V2_KEYS = _LEDGER_EVENT_V1_KEYS | {
+    "batch_id",
+    "batch_index",
+    "batch_size",
 }
 
 
@@ -180,6 +283,17 @@ class FormalEvidenceStore:
         self._lock = _lock_for_root(self.output_root)
         self._conditions = self._load_condition_index()
         self._expected_task_counts = self._load_expected_task_counts()
+        self._selection_ordinals = self._load_selection_ordinals()
+        self._v3_commit_cache: dict[
+            tuple[str, str, str, str], tuple[str, dict[str, Any]]
+        ] = {}
+        self._v3_root_chain_cache: dict[
+            str,
+            tuple[
+                tuple[str, str],
+                dict[str, tuple[str, dict[str, Any]]],
+            ],
+        ] = {}
 
     @classmethod
     def initialize(
@@ -299,12 +413,13 @@ class FormalEvidenceStore:
         experiment_id: str,
         condition: Any,
         repeat_id: int | str,
+        selection_ordinal: int | None = None,
         task: Any,
         attempts: Sequence[Any],
         faults: Sequence[Any],
         events: Sequence[Any],
         artifact_refs: Sequence[Any],
-    ) -> None:
+    ) -> dict[str, Any]:
         """合并一个 root task checkpoint；已成功 task 永不被后写覆盖。"""
 
         experiment_id = _safe_id(experiment_id, "experiment_id")
@@ -325,6 +440,19 @@ class FormalEvidenceStore:
         )
         task_body = _require_object(task, "task")
         task_id = _safe_id(task_body.get("task_id"), "task_id")
+        frozen_ordinal = self._selection_ordinals.get(
+            (experiment_id, condition_id, task_id)
+        )
+        if frozen_ordinal is not None:
+            if selection_ordinal is not None and selection_ordinal != frozen_ordinal:
+                raise ValueError("checkpoint selection ordinal conflicts with frozen selection")
+            selection_ordinal = frozen_ordinal
+        elif selection_ordinal is not None and (
+            isinstance(selection_ordinal, bool)
+            or not isinstance(selection_ordinal, int)
+            or selection_ordinal < 0
+        ):
+            raise ValueError("checkpoint selection ordinal must be non-negative")
         _validate_context(
             task_body,
             experiment_id=experiment_id,
@@ -337,6 +465,22 @@ class FormalEvidenceStore:
         event_bodies = [_require_object(item, "event") for item in events]
         fault_bodies = [_require_object(item, "fault") for item in faults]
         artifact_bodies = [_require_object(item, "artifact ref") for item in artifact_refs]
+        protocol_events = [
+            item for item in event_bodies if _is_protocol_ledger_event(item)
+        ]
+        if protocol_events:
+            protocol_event_ledger = _protocol_event_ledger_metadata(
+                case_task_id=task_id,
+                events=protocol_events,
+            )
+            existing_protocol_event_ledger = task_body.get("protocol_event_ledger")
+            if (
+                existing_protocol_event_ledger is not None
+                and _canonical_bytes(existing_protocol_event_ledger)
+                != _canonical_bytes(protocol_event_ledger)
+            ):
+                raise ValueError("protocol event ledger metadata conflicts with events")
+            task_body["protocol_event_ledger"] = protocol_event_ledger
         if not attempt_bodies:
             raise ValueError("checkpoint requires attempt evidence")
         if not event_bodies:
@@ -347,6 +491,8 @@ class FormalEvidenceStore:
             ("fault", fault_bodies),
         ):
             for record in records:
+                if label == "event" and _is_protocol_ledger_event(record):
+                    continue
                 _validate_context(
                     record,
                     experiment_id=experiment_id,
@@ -368,17 +514,106 @@ class FormalEvidenceStore:
             raise ValueError("completed task requires artifact evidence")
         with self._lock:
             with _exclusive_output_root_lock(self.output_root):
-                self._publish_checkpoint_generation(
+                return self._publish_checkpoint_generation(
                     run_root=run_root,
                     experiment_id=experiment_id,
                     condition_id=condition_id,
                     repeat_id=repeat_id,
                     task_id=task_id,
+                    selection_ordinal=selection_ordinal,
                     task_body=task_body,
                     attempt_bodies=attempt_bodies,
                     fault_bodies=fault_bodies,
                     event_bodies=event_bodies,
                     artifact_bodies=artifact_bodies,
+                )
+
+    def checkpoint_condition_tail_events(
+        self,
+        *,
+        experiment_id: str,
+        condition: Any,
+        repeat_id: int | str,
+        anchor_task_id: str,
+        events: Sequence[Any],
+    ) -> dict[str, Any]:
+        """提交 condition 唯一 closure；空 events 仍写 event-only delta。"""
+
+        experiment_id = _safe_id(experiment_id, "experiment_id")
+        repeat_name = _safe_id(str(repeat_id), "repeat_id")
+        condition_body = _require_object(condition, "condition")
+        condition_id = _safe_id(condition_body.get("condition_id"), "condition_id")
+        expected_condition = self._conditions.get((experiment_id, condition_id))
+        if expected_condition is None or _canonical_bytes(condition_body) != (
+            _canonical_bytes(expected_condition)
+        ):
+            raise ValueError("condition experiment identity mismatch")
+        anchor_task_id = _safe_id(anchor_task_id, "anchor_task_id")
+        event_bodies = [_require_object(item, "condition event") for item in events]
+        for event in event_bodies:
+            event_type = event.get("event_type")
+            if not isinstance(event_type, str) or not event_type.startswith(
+                "MERGE_GATE_"
+            ):
+                raise ValueError("condition tail events must be MERGE_GATE events")
+        run_root = (
+            self.output_root
+            / "experiments"
+            / experiment_id
+            / "runs"
+            / condition_id
+            / repeat_name
+        )
+        with self._lock:
+            with _exclusive_output_root_lock(self.output_root):
+                return self._publish_condition_tail_generation(
+                    run_root=run_root,
+                    experiment_id=experiment_id,
+                    condition_id=condition_id,
+                    repeat_id=repeat_id,
+                    anchor_task_id=anchor_task_id,
+                    event_bodies=event_bodies,
+                )
+
+    def compact_condition_snapshot(
+        self,
+        *,
+        experiment_id: str,
+        condition: Any,
+        repeat_id: int | str,
+        temp_parent: str | Path | None = None,
+    ) -> dict[str, Any]:
+        """把已闭合的完整delta chain原子发布为terminal snapshot。"""
+
+        experiment_id = _safe_id(experiment_id, "experiment_id")
+        repeat_name = _safe_id(str(repeat_id), "repeat_id")
+        condition_body = _require_object(condition, "condition")
+        condition_id = _safe_id(condition_body.get("condition_id"), "condition_id")
+        expected_condition = self._conditions.get((experiment_id, condition_id))
+        if expected_condition is None or _canonical_bytes(condition_body) != (
+            _canonical_bytes(expected_condition)
+        ):
+            raise ValueError("condition experiment identity mismatch")
+        run_root = (
+            self.output_root
+            / "experiments"
+            / experiment_id
+            / "runs"
+            / condition_id
+            / repeat_name
+        )
+        with self._lock:
+            with _exclusive_output_root_lock(self.output_root):
+                return self._publish_terminal_snapshot(
+                    run_root=run_root,
+                    experiment_id=experiment_id,
+                    condition_id=condition_id,
+                    repeat_id=repeat_id,
+                    temp_parent=(
+                        Path(temp_parent).resolve(strict=False)
+                        if temp_parent is not None
+                        else self.output_root.parent
+                    ),
                 )
 
     def build_shared_root_reference(
@@ -451,16 +686,17 @@ class FormalEvidenceStore:
             if not run_root.is_dir():
                 continue
             try:
-                tasks = self._validate_run(
-                    run_root,
+                logical = self.load_logical_run_records(
                     experiment_id=source_experiment_id,
+                    condition_id=condition_root.name,
+                    repeat_id=source_repeat_id,
                 )
             except (ValueError, json.JSONDecodeError) as error:
                 raise SharedEvidenceError(
                     "shared source checkpoint integrity validation failed",
                     evidence_integrity="corrupt",
                 ) from error
-            for task in tasks:
+            for task in logical["tasks"]:
                 task_case_id = task.get("case_id", task.get("task_id"))
                 if task_case_id != case_id:
                     continue
@@ -468,6 +704,7 @@ class FormalEvidenceStore:
                     {
                         "run_root": run_root,
                         "task": task,
+                        "logical": logical,
                     }
                 )
         if not matches:
@@ -484,6 +721,7 @@ class FormalEvidenceStore:
         match = matches[0]
         run_root = match["run_root"]
         task = match["task"]
+        logical = match["logical"]
         condition_id = run_root.parent.name
         condition = self._conditions.get((source_experiment_id, condition_id))
         if condition is None:
@@ -512,36 +750,47 @@ class FormalEvidenceStore:
                 "shared source evidence is not terminal",
                 evidence_integrity="invalid",
             )
-        generation_root = self._current_generation_root(run_root, required=True)
-        assert generation_root is not None
-        current = _read_json(run_root / "CURRENT.json")
+        source_generation_roots = tuple(logical["source_generation_roots"])
+        generation_root = next(
+            (
+                source_root
+                for source_root in source_generation_roots
+                if any(
+                    item.get("task_id") == task.get("task_id")
+                    for item in _read_jsonl(
+                        source_root / "per_task_results.jsonl"
+                    )
+                )
+            ),
+            None,
+        )
+        if generation_root is None:
+            raise SharedEvidenceError(
+                "shared source task generation is missing",
+                evidence_integrity="corrupt",
+            )
+        generation_manifest = _read_json(
+            generation_root / "generation_manifest.json"
+        )
         run_manifest = _read_json(generation_root / "run_manifest.json")
         attempts = [
             item
-            for item in _read_jsonl(
-                generation_root / "per_attempt_results.jsonl"
-            )
+            for item in logical["attempts"]
             if item.get("task_id") == task.get("task_id")
         ]
         events = [
             item
-            for item in _read_jsonl(
-                generation_root / "events" / "event_log.jsonl"
-            )
-            if item.get("task_id") == task.get("task_id")
+            for item in logical["events"]
+            if _event_belongs_to_task(item, task)
         ]
         faults = [
             item
-            for item in _read_jsonl(
-                generation_root / "fault_injections.jsonl"
-            )
+            for item in logical["faults"]
             if item.get("task_id") == task.get("task_id")
         ]
         artifacts = [
             item
-            for item in _read_jsonl(
-                generation_root / "artifacts" / "artifact_index.jsonl"
-            )
+            for item in logical["artifacts"]
             if item.get("task_id") == task.get("task_id")
         ]
         if not attempts or not events:
@@ -555,6 +804,22 @@ class FormalEvidenceStore:
         comparison_eligible = _is_success(task) and bool(
             source_usage["usage_complete"]
         )
+        def record_generation(relative_path: str, record: Mapping[str, Any]) -> Path:
+            matches = [
+                source_root
+                for source_root in source_generation_roots
+                if any(
+                    _canonical_bytes(item) == _canonical_bytes(record)
+                    for item in _read_jsonl(source_root / relative_path)
+                )
+            ]
+            if len(matches) != 1:
+                raise SharedEvidenceError(
+                    "shared source record generation is ambiguous",
+                    evidence_integrity="corrupt",
+                )
+            return matches[0]
+
         source_record_refs = {
             "source_task_ref": _generation_record_ref(
                 self.output_root,
@@ -565,7 +830,7 @@ class FormalEvidenceStore:
             "source_attempt_refs": [
                 _generation_record_ref(
                     self.output_root,
-                    generation_root,
+                    record_generation("per_attempt_results.jsonl", item),
                     "per_attempt_results.jsonl",
                     item,
                 )
@@ -574,7 +839,7 @@ class FormalEvidenceStore:
             "source_event_refs": [
                 _generation_record_ref(
                     self.output_root,
-                    generation_root,
+                    record_generation("events/event_log.jsonl", item),
                     "events/event_log.jsonl",
                     item,
                 )
@@ -583,7 +848,7 @@ class FormalEvidenceStore:
             "source_fault_refs": [
                 _generation_record_ref(
                     self.output_root,
-                    generation_root,
+                    record_generation("fault_injections.jsonl", item),
                     "fault_injections.jsonl",
                     item,
                 )
@@ -621,9 +886,9 @@ class FormalEvidenceStore:
             "source_suite_id": suite_manifest.get("suite_id"),
             "source_run_id": f"{condition_id}/{source_repeat_id}",
             "source_generation_id": generation_root.name,
-            "source_generation_manifest_digest": current[
-                "generation_manifest_digest"
-            ],
+            "source_generation_manifest_digest": _digest_json(
+                generation_manifest
+            ),
             "source_experiment_id": source_experiment_id,
             "source_condition_id": condition_id,
             "source_condition_digest": _digest_json(condition),
@@ -680,24 +945,78 @@ class FormalEvidenceStore:
         condition_id: str,
         repeat_id: int | str,
         task_id: str,
+        selection_ordinal: int | None,
         task_body: dict[str, Any],
         attempt_bodies: list[dict[str, Any]],
         fault_bodies: list[dict[str, Any]],
         event_bodies: list[dict[str, Any]],
         artifact_bodies: list[dict[str, Any]],
-    ) -> None:
+    ) -> dict[str, Any]:
+        """发布只包含当前 root 的 v3 immutable delta。"""
+
+        if (run_root / _PENDING_FILE_NAME).exists():
+            raise ValueError(
+                "checkpoint publication is pending; repair before a new checkpoint"
+            )
+        commit_key = (experiment_id, condition_id, str(repeat_id), task_id)
+        checkpoint_digest = _digest_json(
+            {
+                "selection_ordinal": selection_ordinal,
+                "task": task_body,
+                "attempts": attempt_bodies,
+                "faults": fault_bodies,
+                "events": event_bodies,
+                "artifacts": artifact_bodies,
+            }
+        )
         current_root = self._current_generation_root(run_root, required=False)
-        prior_tasks = _generation_jsonl(current_root, "per_task_results.jsonl")
-        prior_attempts = _generation_jsonl(
-            current_root, "per_attempt_results.jsonl"
+        prior_current = (
+            _read_json(run_root / "CURRENT.json")
+            if current_root is not None
+            else None
         )
-        prior_faults = _generation_jsonl(current_root, "fault_injections.jsonl")
-        prior_events = _generation_jsonl(current_root, "events/event_log.jsonl")
-        prior_artifacts = _generation_jsonl(
-            current_root, "artifacts/artifact_index.jsonl"
+        prior_generation_manifest = (
+            _read_json(current_root / "generation_manifest.json")
+            if current_root is not None
+            else None
         )
-        prior_by_id = {str(item.get("task_id")): item for item in prior_tasks}
-        prior = prior_by_id.get(task_id)
+        if prior_generation_manifest is not None:
+            if prior_generation_manifest.get("schema_version") != V3_GENERATION_SCHEMA:
+                raise ValueError("historical checkpoint generation is read-only")
+            prior_descriptor = validate_v3_generation_manifest(
+                current_root,
+                prior_generation_manifest,
+                expected_experiment_id=experiment_id,
+                expected_condition_id=condition_id,
+                expected_repeat_id=repeat_id,
+            )
+            if prior_descriptor.generation_kind != "delta":
+                raise ValueError("terminal checkpoint snapshot is immutable")
+            assert prior_current is not None
+            persisted_roots = self._index_v3_root_chain(
+                run_root=run_root,
+                head=prior_descriptor,
+                head_manifest_digest=str(
+                    prior_current["generation_manifest_digest"]
+                ),
+                expected_root_count=self._expected_task_counts.get(
+                    (experiment_id, condition_id),
+                    0,
+                ),
+            )
+            persisted = persisted_roots.get(task_id)
+            if persisted is not None:
+                stored_digest, token = persisted
+                if stored_digest != checkpoint_digest:
+                    raise ValueError(
+                        "checkpoint terminal task evidence drift is immutable"
+                    )
+                self._v3_commit_cache[commit_key] = (
+                    checkpoint_digest,
+                    dict(token),
+                )
+                return dict(token)
+
         self._validate_artifact_refs(
             artifact_bodies,
             experiment_id=experiment_id,
@@ -706,39 +1025,26 @@ class FormalEvidenceStore:
             task_id=task_id,
             run_root=run_root,
         )
-        if prior is not None and _is_success(prior):
-            prior_refs = [
-                item for item in prior_artifacts if item.get("task_id") == task_id
-            ]
-            if _canonical_bytes(prior_refs) != _canonical_bytes(artifact_bodies):
-                raise ValueError("completed task artifact evidence is immutable")
-            return
+        prior_condition = (
+            _read_json(run_root / "condition_manifest.json")
+            if (run_root / "condition_manifest.json").is_file()
+            else None
+        )
+        if prior_condition is not None and prior_condition.get("schema_version") != (
+            "tokenshare.paper_condition_evidence.v2"
+        ):
+            raise ValueError("historical condition checkpoint is read-only")
+        if selection_ordinal is None:
+            selection_ordinal = (
+                int(prior_condition.get("logical_task_count", 0))
+                if prior_condition is not None
+                else 0
+            )
+        if isinstance(selection_ordinal, bool) or not isinstance(
+            selection_ordinal, int
+        ) or selection_ordinal < 0:
+            raise ValueError("checkpoint selection ordinal must be non-negative")
 
-        prior_by_id[task_id] = task_body
-        merged_tasks = list(prior_by_id.values())
-        merged_attempts = _merge_records(
-            prior_attempts,
-            attempt_bodies,
-            key="attempt_id",
-        )
-        merged_faults = _merge_records(
-            prior_faults,
-            fault_bodies,
-            key="fault_injection_id",
-        )
-        merged_events = _merge_records(
-            prior_events,
-            event_bodies,
-            key="event_id",
-        )
-        merged_artifacts = _merge_records(
-            prior_artifacts,
-            artifact_bodies,
-            key="path",
-        )
-        completed_task_ids = [
-            str(item["task_id"]) for item in merged_tasks if _is_success(item)
-        ]
         generation_id = uuid.uuid4().hex
         generation_root = run_root / ".generations" / generation_id
         run_manifest = {
@@ -747,36 +1053,49 @@ class FormalEvidenceStore:
             "experiment_id": experiment_id,
             "condition_id": condition_id,
             "repeat_id": repeat_id,
-            "task_ids": [str(item["task_id"]) for item in merged_tasks],
-            "completed_task_ids": completed_task_ids,
+            "task_ids": [task_id],
+            "completed_task_ids": [task_id] if _is_success(task_body) else [],
             "status": _derived_run_status(
-                merged_tasks,
-                expected_task_count=self._expected_task_counts.get(
-                    (experiment_id, condition_id),
-                    len(merged_tasks),
-                ),
+                [task_body],
+                expected_task_count=1,
             ),
         }
         _atomic_write_json(generation_root / "run_manifest.json", run_manifest)
         _atomic_write_jsonl(
-            generation_root / "per_task_results.jsonl", merged_tasks
+            generation_root / "per_task_results.jsonl", [task_body]
         )
         _atomic_write_jsonl(
-            generation_root / "per_attempt_results.jsonl", merged_attempts
+            generation_root / "per_attempt_results.jsonl", attempt_bodies
         )
         _atomic_write_jsonl(
-            generation_root / "fault_injections.jsonl", merged_faults
+            generation_root / "fault_injections.jsonl", fault_bodies
         )
         _atomic_write_jsonl(
-            generation_root / "events" / "event_log.jsonl", merged_events
+            generation_root / "events" / "event_log.jsonl", event_bodies
         )
         _atomic_write_jsonl(
             generation_root / "artifacts" / "artifact_index.jsonl",
-            merged_artifacts,
+            artifact_bodies,
         )
         generation_manifest = {
-            "schema_version": "tokenshare.paper_checkpoint_generation.v1",
+            "schema_version": V3_GENERATION_SCHEMA,
             "generation_id": generation_id,
+            "generation_kind": "delta",
+            "delta_role": "root_outcome",
+            "selection_ordinal": selection_ordinal,
+            "anchor_task_id": task_id,
+            "parent_generation_id": (
+                current_root.name if current_root is not None else None
+            ),
+            "parent_generation_manifest_digest": (
+                prior_current.get("generation_manifest_digest")
+                if prior_current is not None
+                else None
+            ),
+            "compacted_from_head_generation_id": None,
+            "compacted_from_head_generation_manifest_digest": None,
+            "compacted_chain_digest": None,
+            "compacted_generation_count": 0,
             "files": [
                 _file_evidence(generation_root, generation_root / relative_path)
                 for relative_path in _RUN_FILES
@@ -784,6 +1103,61 @@ class FormalEvidenceStore:
         }
         _atomic_write_json(
             generation_root / "generation_manifest.json", generation_manifest
+        )
+        validate_v3_generation_manifest(
+            generation_root,
+            generation_manifest,
+            expected_experiment_id=experiment_id,
+            expected_condition_id=condition_id,
+            expected_repeat_id=repeat_id,
+        )
+        self._checkpoint_publication_hook(
+            stage="target_written",
+            run_root=run_root,
+        )
+        pending = {
+            "schema_version": "tokenshare.paper_checkpoint_pending.v2",
+            "publication_kind": "root_delta",
+            "target_generation_id": generation_id,
+            "target_generation_manifest_digest": _digest_json(
+                generation_manifest
+            ),
+            "expected_prior_generation_id": (
+                current_root.name if current_root is not None else None
+            ),
+            "expected_prior_generation_manifest_digest": (
+                prior_current.get("generation_manifest_digest")
+                if prior_current is not None
+                else None
+            ),
+            "expected_prior_current_digest": (
+                _digest_json(prior_current)
+                if prior_current is not None
+                else None
+            ),
+            "experiment_id": experiment_id,
+            "condition_id": condition_id,
+            "repeat_id": repeat_id,
+            "task_id": task_id,
+            "selection_ordinal": selection_ordinal,
+            "anchor_task_id": task_id,
+            "condition_events_digest": None,
+            "compacted_prior_head_generation_id": None,
+            "compacted_prior_head_generation_manifest_digest": None,
+            "compacted_chain_digest": None,
+        }
+        _atomic_write_json(run_root / _PENDING_FILE_NAME, pending)
+        self._checkpoint_publication_hook(
+            stage="intent_written",
+            run_root=run_root,
+        )
+        self._checkpoint_publication_hook(
+            stage="generation_manifest_written",
+            run_root=run_root,
+        )
+        self._validate_pending_prior_current(
+            run_root=run_root,
+            pending=pending,
         )
         _atomic_write_json(
             run_root / "CURRENT.json",
@@ -793,11 +1167,952 @@ class FormalEvidenceStore:
                 "generation_manifest_digest": _digest_json(generation_manifest),
             },
         )
-        generations_root = run_root / ".generations"
-        for candidate in generations_root.iterdir():
-            if candidate.is_dir() and candidate != generation_root:
-                shutil.rmtree(candidate)
-        self._refresh_evidence_manifest()
+        self._checkpoint_publication_hook(
+            stage="current_written",
+            run_root=run_root,
+        )
+        _atomic_write_json(
+            run_root / "condition_manifest.json",
+            self._condition_manifest_v2_body(
+                run_root=run_root,
+                generation_root=generation_root,
+                task_body=task_body,
+                artifact_bodies=artifact_bodies,
+                prior_condition=prior_condition,
+            ),
+        )
+        self._checkpoint_publication_hook(
+            stage="condition_manifest_written",
+            run_root=run_root,
+        )
+        self._refresh_evidence_manifest(run_root=run_root)
+        self._checkpoint_publication_hook(
+            stage="inventory_refreshed",
+            run_root=run_root,
+        )
+        (run_root / _PENDING_FILE_NAME).unlink()
+        current_body = _read_json(run_root / "CURRENT.json")
+        token = {
+            "schema_version": "tokenshare.paper_checkpoint_commit.v1",
+            "experiment_id": experiment_id,
+            "condition_id": condition_id,
+            "repeat_id": str(repeat_id),
+            "task_id": task_id,
+            "run_root": run_root.relative_to(self.output_root).as_posix(),
+            "generation_id": generation_id,
+            "generation_manifest_digest": _digest_json(generation_manifest),
+            "current_digest": _digest_json(current_body),
+            "selection_ordinal": selection_ordinal,
+        }
+        self._v3_commit_cache[commit_key] = (checkpoint_digest, dict(token))
+        run_cache_key = run_root.resolve(strict=False).as_posix()
+        cached_chain = self._v3_root_chain_cache.get(run_cache_key)
+        cached_entries = (
+            dict(cached_chain[1])
+            if cached_chain is not None
+            and (
+                prior_current is None
+                or cached_chain[0]
+                == (
+                    str(prior_current["generation_id"]),
+                    str(prior_current["generation_manifest_digest"]),
+                )
+            )
+            else {}
+        )
+        cached_entries[task_id] = (checkpoint_digest, dict(token))
+        self._v3_root_chain_cache[run_cache_key] = (
+            (generation_id, _digest_json(generation_manifest)),
+            cached_entries,
+        )
+        return token
+
+    def _publish_condition_tail_generation(
+        self,
+        *,
+        run_root: Path,
+        experiment_id: str,
+        condition_id: str,
+        repeat_id: int | str,
+        anchor_task_id: str,
+        event_bodies: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        if (run_root / _PENDING_FILE_NAME).exists():
+            raise ValueError(
+                "checkpoint publication is pending; repair before condition closure"
+            )
+        commit_key = (
+            experiment_id,
+            condition_id,
+            str(repeat_id),
+            "__condition_tail_events__",
+        )
+        checkpoint_digest = _digest_json(
+            {"anchor_task_id": anchor_task_id, "events": event_bodies}
+        )
+        cached = self._v3_commit_cache.get(commit_key)
+        if cached is not None:
+            cached_digest, cached_token = cached
+            if cached_digest != checkpoint_digest:
+                raise ValueError("condition tail event evidence drift is immutable")
+            return dict(cached_token)
+
+        current_root = self._current_generation_root(run_root, required=True)
+        assert current_root is not None
+        prior_current = _read_json(run_root / "CURRENT.json")
+        prior_generation_manifest = _read_json(
+            current_root / "generation_manifest.json"
+        )
+        prior_descriptor = validate_v3_generation_manifest(
+            current_root,
+            prior_generation_manifest,
+            expected_experiment_id=experiment_id,
+            expected_condition_id=condition_id,
+            expected_repeat_id=repeat_id,
+        )
+        if prior_descriptor.generation_kind != "delta":
+            raise ValueError("terminal checkpoint snapshot is immutable")
+        prior_condition = _read_json(run_root / "condition_manifest.json")
+        _require_exact_keys(
+            prior_condition,
+            _CONDITION_MANIFEST_V2_KEYS,
+            "condition manifest v2",
+        )
+        if prior_condition.get("condition_event_delta_count") == 1:
+            if prior_descriptor.delta_role != "condition_tail_events":
+                raise ValueError("condition closure count conflicts with CURRENT")
+            stored_events = _read_jsonl(current_root / "events" / "event_log.jsonl")
+            if (
+                prior_descriptor.anchor_task_id != anchor_task_id
+                or _digest_json(stored_events) != _digest_json(event_bodies)
+            ):
+                raise ValueError("condition tail event evidence drift is immutable")
+            token = self._v3_commit_token(
+                run_root=run_root,
+                experiment_id=experiment_id,
+                condition_id=condition_id,
+                repeat_id=repeat_id,
+                task_id=None,
+                selection_ordinal=None,
+                generation_id=current_root.name,
+                generation_manifest_digest=prior_current[
+                    "generation_manifest_digest"
+                ],
+            )
+            self._v3_commit_cache[commit_key] = (checkpoint_digest, dict(token))
+            return token
+        expected_count = int(prior_condition["expected_root_count"])
+        if (
+            prior_condition.get("root_delta_count") != expected_count
+            or prior_condition.get("terminal_root_count") != expected_count
+        ):
+            raise ValueError("condition closure requires all frozen roots terminal")
+        last_case = next(
+            (
+                case_id
+                for (exp_id, cond_id, case_id), ordinal in self._selection_ordinals.items()
+                if exp_id == experiment_id
+                and cond_id == condition_id
+                and ordinal == expected_count - 1
+            ),
+            None,
+        )
+        if last_case is not None and anchor_task_id != last_case:
+            raise ValueError("condition closure anchor conflicts with frozen selection")
+
+        generation_id = uuid.uuid4().hex
+        generation_root = run_root / ".generations" / generation_id
+        _atomic_write_json(
+            generation_root / "run_manifest.json",
+            {
+                "schema_version": "tokenshare.paper_run_evidence.v1",
+                "generation_id": generation_id,
+                "experiment_id": experiment_id,
+                "condition_id": condition_id,
+                "repeat_id": repeat_id,
+                "task_ids": [],
+                "completed_task_ids": [],
+                "status": "running",
+            },
+        )
+        for relative_path in (
+            "per_task_results.jsonl",
+            "per_attempt_results.jsonl",
+            "fault_injections.jsonl",
+            "artifacts/artifact_index.jsonl",
+        ):
+            _atomic_write_jsonl(generation_root / relative_path, [])
+        _atomic_write_jsonl(
+            generation_root / "events" / "event_log.jsonl",
+            event_bodies,
+        )
+        generation_manifest = {
+            "schema_version": V3_GENERATION_SCHEMA,
+            "generation_id": generation_id,
+            "generation_kind": "delta",
+            "delta_role": "condition_tail_events",
+            "selection_ordinal": None,
+            "anchor_task_id": anchor_task_id,
+            "parent_generation_id": current_root.name,
+            "parent_generation_manifest_digest": prior_current[
+                "generation_manifest_digest"
+            ],
+            "compacted_from_head_generation_id": None,
+            "compacted_from_head_generation_manifest_digest": None,
+            "compacted_chain_digest": None,
+            "compacted_generation_count": 0,
+            "files": [
+                _file_evidence(generation_root, generation_root / relative_path)
+                for relative_path in _RUN_FILES
+            ],
+        }
+        _atomic_write_json(
+            generation_root / "generation_manifest.json",
+            generation_manifest,
+        )
+        validate_v3_generation_manifest(
+            generation_root,
+            generation_manifest,
+            expected_experiment_id=experiment_id,
+            expected_condition_id=condition_id,
+            expected_repeat_id=repeat_id,
+        )
+        self._checkpoint_publication_hook(stage="target_written", run_root=run_root)
+        pending = {
+            "schema_version": "tokenshare.paper_checkpoint_pending.v2",
+            "publication_kind": "condition_tail_events",
+            "target_generation_id": generation_id,
+            "target_generation_manifest_digest": _digest_json(generation_manifest),
+            "expected_prior_generation_id": current_root.name,
+            "expected_prior_generation_manifest_digest": prior_current[
+                "generation_manifest_digest"
+            ],
+            "expected_prior_current_digest": _digest_json(prior_current),
+            "experiment_id": experiment_id,
+            "condition_id": condition_id,
+            "repeat_id": repeat_id,
+            "task_id": None,
+            "selection_ordinal": None,
+            "anchor_task_id": anchor_task_id,
+            "condition_events_digest": _digest_json(event_bodies),
+            "compacted_prior_head_generation_id": None,
+            "compacted_prior_head_generation_manifest_digest": None,
+            "compacted_chain_digest": None,
+        }
+        _atomic_write_json(run_root / _PENDING_FILE_NAME, pending)
+        self._checkpoint_publication_hook(stage="intent_written", run_root=run_root)
+        self._validate_pending_prior_current(run_root=run_root, pending=pending)
+        _atomic_write_json(
+            run_root / "CURRENT.json",
+            {
+                "schema_version": "tokenshare.paper_checkpoint_current.v1",
+                "generation_id": generation_id,
+                "generation_manifest_digest": _digest_json(generation_manifest),
+            },
+        )
+        self._checkpoint_publication_hook(stage="current_written", run_root=run_root)
+        _atomic_write_json(
+            run_root / "condition_manifest.json",
+            self._condition_manifest_v2_tail_body(
+                run_root=run_root,
+                generation_root=generation_root,
+                prior_condition=prior_condition,
+            ),
+        )
+        self._checkpoint_publication_hook(
+            stage="condition_manifest_written",
+            run_root=run_root,
+        )
+        self._refresh_evidence_manifest(run_root=run_root)
+        self._checkpoint_publication_hook(
+            stage="inventory_refreshed",
+            run_root=run_root,
+        )
+        (run_root / _PENDING_FILE_NAME).unlink()
+        token = self._v3_commit_token(
+            run_root=run_root,
+            experiment_id=experiment_id,
+            condition_id=condition_id,
+            repeat_id=repeat_id,
+            task_id=None,
+            selection_ordinal=None,
+            generation_id=generation_id,
+            generation_manifest_digest=_digest_json(generation_manifest),
+        )
+        self._v3_commit_cache[commit_key] = (checkpoint_digest, dict(token))
+        return token
+
+    def _publish_terminal_snapshot(
+        self,
+        *,
+        run_root: Path,
+        experiment_id: str,
+        condition_id: str,
+        repeat_id: int | str,
+        temp_parent: Path,
+    ) -> dict[str, Any]:
+        if (run_root / _PENDING_FILE_NAME).exists():
+            raise ValueError(
+                "checkpoint publication is pending; repair before compaction"
+            )
+        current_root = self._current_generation_root(run_root, required=True)
+        assert current_root is not None
+        prior_current = _read_json(run_root / "CURRENT.json")
+        prior_manifest = _read_json(current_root / "generation_manifest.json")
+        head = validate_v3_generation_manifest(
+            current_root,
+            prior_manifest,
+            expected_experiment_id=experiment_id,
+            expected_condition_id=condition_id,
+            expected_repeat_id=repeat_id,
+        )
+        if head.generation_kind == "snapshot":
+            condition = _read_json(run_root / "condition_manifest.json")
+            if condition.get("terminal") is not True:
+                raise ValueError("terminal snapshot condition manifest is incomplete")
+            return self._v3_commit_token(
+                run_root=run_root,
+                experiment_id=experiment_id,
+                condition_id=condition_id,
+                repeat_id=repeat_id,
+                task_id=None,
+                selection_ordinal=None,
+                generation_id=head.generation_id,
+                generation_manifest_digest=head.manifest_digest,
+            )
+        expected_count = self._expected_task_counts.get(
+            (experiment_id, condition_id)
+        )
+        if expected_count is None:
+            raise ValueError("terminal snapshot frozen denominator is missing")
+        chain = validate_v3_delta_chain(
+            run_root,
+            head,
+            expected_root_count=expected_count,
+        )
+        if head.delta_role != "condition_tail_events":
+            raise ValueError("terminal snapshot requires condition closure")
+        prior_condition = _read_json(run_root / "condition_manifest.json")
+        _require_exact_keys(
+            prior_condition,
+            _CONDITION_MANIFEST_V2_KEYS,
+            "condition manifest v2",
+        )
+        if (
+            prior_condition.get("head_generation_kind") != "delta"
+            or prior_condition.get("root_delta_count") != expected_count
+            or prior_condition.get("terminal_root_count") != expected_count
+            or prior_condition.get("condition_event_delta_count") != 1
+            or prior_condition.get("terminal") is not False
+        ):
+            raise ValueError("terminal snapshot condition is not ready")
+
+        generation_id = uuid.uuid4().hex
+        generation_root = run_root / ".generations" / generation_id
+        try:
+            compacted = compact_v3_delta_chain_to_snapshot(
+                run_root,
+                head,
+                target_root=generation_root,
+                generation_id=generation_id,
+                expected_root_count=expected_count,
+                temp_parent=temp_parent,
+            )
+        except BaseException:
+            if generation_root.exists():
+                shutil.rmtree(generation_root)
+            raise
+        generation_manifest = compacted["manifest"]
+        generation_digest = _digest_json(generation_manifest)
+        pending = {
+            "schema_version": "tokenshare.paper_checkpoint_pending.v2",
+            "publication_kind": "terminal_snapshot",
+            "target_generation_id": generation_id,
+            "target_generation_manifest_digest": generation_digest,
+            "expected_prior_generation_id": head.generation_id,
+            "expected_prior_generation_manifest_digest": head.manifest_digest,
+            "expected_prior_current_digest": _digest_json(prior_current),
+            "experiment_id": experiment_id,
+            "condition_id": condition_id,
+            "repeat_id": repeat_id,
+            "task_id": None,
+            "selection_ordinal": None,
+            "anchor_task_id": None,
+            "condition_events_digest": None,
+            "compacted_prior_head_generation_id": head.generation_id,
+            "compacted_prior_head_generation_manifest_digest": head.manifest_digest,
+            "compacted_chain_digest": generation_manifest[
+                "compacted_chain_digest"
+            ],
+        }
+        _atomic_write_json(run_root / _PENDING_FILE_NAME, pending)
+        self._checkpoint_publication_hook(
+            stage="compaction_intent_written",
+            run_root=run_root,
+        )
+        self._validate_pending_prior_current(run_root=run_root, pending=pending)
+        _atomic_write_json(
+            run_root / "CURRENT.json",
+            {
+                "schema_version": "tokenshare.paper_checkpoint_current.v1",
+                "generation_id": generation_id,
+                "generation_manifest_digest": generation_digest,
+            },
+        )
+        self._checkpoint_publication_hook(
+            stage="current_snapshot_written",
+            run_root=run_root,
+        )
+        _atomic_write_json(
+            run_root / "condition_manifest.json",
+            self._condition_manifest_v2_snapshot_body(
+                run_root=run_root,
+                generation_root=generation_root,
+                prior_condition=prior_condition,
+                logical_records_digest=str(
+                    compacted["logical_records_digest"]
+                ),
+            ),
+        )
+        self._checkpoint_publication_hook(
+            stage="condition_terminal_written",
+            run_root=run_root,
+        )
+        self._refresh_evidence_manifest(run_root=run_root)
+        self._validate_evidence_manifest()
+        self._checkpoint_publication_hook(
+            stage="inventory_terminal_written",
+            run_root=run_root,
+        )
+        (run_root / _PENDING_FILE_NAME).unlink()
+        for descriptor in chain:
+            if descriptor.generation_root != generation_root:
+                shutil.rmtree(descriptor.generation_root)
+        self._v3_root_chain_cache.pop(
+            run_root.resolve(strict=False).as_posix(),
+            None,
+        )
+        return self._v3_commit_token(
+            run_root=run_root,
+            experiment_id=experiment_id,
+            condition_id=condition_id,
+            repeat_id=repeat_id,
+            task_id=None,
+            selection_ordinal=None,
+            generation_id=generation_id,
+            generation_manifest_digest=generation_digest,
+        )
+
+    def _v3_commit_token(
+        self,
+        *,
+        run_root: Path,
+        experiment_id: str,
+        condition_id: str,
+        repeat_id: int | str,
+        task_id: str | None,
+        selection_ordinal: int | None,
+        generation_id: str,
+        generation_manifest_digest: str,
+    ) -> dict[str, Any]:
+        current = _read_json(run_root / "CURRENT.json")
+        if (
+            current.get("generation_id") != generation_id
+            or current.get("generation_manifest_digest")
+            != generation_manifest_digest
+        ):
+            raise ValueError("checkpoint commit token does not bind actual CURRENT")
+        return {
+            "schema_version": "tokenshare.paper_checkpoint_commit.v1",
+            "experiment_id": experiment_id,
+            "condition_id": condition_id,
+            "repeat_id": str(repeat_id),
+            "task_id": task_id,
+            "run_root": run_root.relative_to(self.output_root).as_posix(),
+            "generation_id": generation_id,
+            "generation_manifest_digest": generation_manifest_digest,
+            "current_digest": _digest_json(current),
+            "selection_ordinal": selection_ordinal,
+        }
+
+    def _index_v3_root_chain(
+        self,
+        *,
+        run_root: Path,
+        head: V3GenerationDescriptor,
+        head_manifest_digest: str,
+        expected_root_count: int,
+    ) -> dict[str, tuple[str, dict[str, Any]]]:
+        """每个CURRENT链只验证一次，并缓存root稳定identity与原始commit token。"""
+
+        run_cache_key = run_root.resolve(strict=False).as_posix()
+        marker = (head.generation_id, head_manifest_digest)
+        cached = self._v3_root_chain_cache.get(run_cache_key)
+        if cached is not None and cached[0] == marker:
+            return cached[1]
+        chain = validate_v3_delta_chain(
+            run_root,
+            head,
+            expected_root_count=expected_root_count,
+        )
+        indexed: dict[str, tuple[str, dict[str, Any]]] = {}
+        for descriptor in chain:
+            if descriptor.delta_role != "root_outcome":
+                continue
+            assert descriptor.anchor_task_id is not None
+            tasks = _read_jsonl(
+                descriptor.generation_root / "per_task_results.jsonl"
+            )
+            stored_digest = _digest_json(
+                {
+                    "selection_ordinal": descriptor.selection_ordinal,
+                    "task": tasks[0] if len(tasks) == 1 else None,
+                    "attempts": _read_jsonl(
+                        descriptor.generation_root
+                        / "per_attempt_results.jsonl"
+                    ),
+                    "faults": _read_jsonl(
+                        descriptor.generation_root / "fault_injections.jsonl"
+                    ),
+                    "events": _read_jsonl(
+                        descriptor.generation_root
+                        / "events"
+                        / "event_log.jsonl"
+                    ),
+                    "artifacts": _read_jsonl(
+                        descriptor.generation_root
+                        / "artifacts"
+                        / "artifact_index.jsonl"
+                    ),
+                }
+            )
+            generation_digest = descriptor.manifest_digest
+            historical_current = {
+                "schema_version": "tokenshare.paper_checkpoint_current.v1",
+                "generation_id": descriptor.generation_id,
+                "generation_manifest_digest": generation_digest,
+            }
+            token = {
+                "schema_version": "tokenshare.paper_checkpoint_commit.v1",
+                "experiment_id": descriptor.experiment_id,
+                "condition_id": descriptor.condition_id,
+                "repeat_id": str(descriptor.repeat_id),
+                "task_id": descriptor.anchor_task_id,
+                "run_root": run_root.relative_to(self.output_root).as_posix(),
+                "generation_id": descriptor.generation_id,
+                "generation_manifest_digest": generation_digest,
+                "current_digest": _digest_json(historical_current),
+                "selection_ordinal": descriptor.selection_ordinal,
+            }
+            indexed[descriptor.anchor_task_id] = (stored_digest, token)
+        self._v3_root_chain_cache[run_cache_key] = (marker, indexed)
+        return indexed
+
+    def _validate_pending_prior_current(
+        self,
+        *,
+        run_root: Path,
+        pending: Mapping[str, Any],
+    ) -> None:
+        prior_generation_id = pending.get("expected_prior_generation_id")
+        prior_generation_manifest_digest = pending.get(
+            "expected_prior_generation_manifest_digest"
+        )
+        prior_current_digest = pending.get("expected_prior_current_digest")
+        current_path = run_root / "CURRENT.json"
+        if prior_generation_id is None:
+            if (
+                prior_generation_manifest_digest is not None
+                or prior_current_digest is not None
+                or current_path.exists()
+            ):
+                raise ValueError("checkpoint publication prior CURRENT conflict")
+            return
+        if not current_path.is_file():
+            raise ValueError("checkpoint publication prior CURRENT is missing")
+        current = _read_json(current_path)
+        if (
+            current.get("generation_id") != prior_generation_id
+            or current.get("generation_manifest_digest")
+            != prior_generation_manifest_digest
+            or _digest_json(current) != prior_current_digest
+        ):
+            raise ValueError("checkpoint publication prior CURRENT conflict")
+
+    def _checkpoint_publication_hook(self, *, stage: str, run_root: Path) -> None:
+        """供断点恢复测试注入进程中断；生产路径默认无操作。"""
+
+        del stage, run_root
+
+    def _condition_manifest_body(
+        self,
+        *,
+        run_root: Path,
+        generation_root: Path,
+    ) -> dict[str, Any]:
+        run_manifest = _read_json(generation_root / "run_manifest.json")
+        experiment_id = _safe_id(
+            run_manifest.get("experiment_id"),
+            "experiment_id",
+        )
+        condition_id = _safe_id(
+            run_manifest.get("condition_id"),
+            "condition_id",
+        )
+        condition = self._conditions.get((experiment_id, condition_id))
+        if condition is None:
+            raise ValueError("condition manifest identity is not frozen")
+        tasks = _read_jsonl(generation_root / "per_task_results.jsonl")
+        expected_count = self._expected_task_counts.get(
+            (experiment_id, condition_id),
+            len(tasks),
+        )
+        terminal_count = sum(_is_terminal_checkpoint(task) for task in tasks)
+        status = str(run_manifest.get("status"))
+        terminal = (
+            len(tasks) == expected_count
+            and terminal_count == expected_count
+            and status != "running"
+        )
+        suite_manifest = _read_json(self.output_root / "suite_manifest.json")
+        suite_identity = suite_manifest.get("suite_identity")
+        frozen_suite = (
+            suite_identity.get("suite", {}).get("body")
+            if isinstance(suite_identity, Mapping)
+            and isinstance(suite_identity.get("suite"), Mapping)
+            else None
+        )
+        if not isinstance(frozen_suite, Mapping):
+            raise ValueError("condition manifest suite identity is missing")
+        capturing = suite_manifest.get("capturing")
+        if not isinstance(capturing, bool):
+            raise ValueError("condition manifest capturing identity is invalid")
+        classification = _execution_classification(
+            dict(frozen_suite),
+            capturing=capturing,
+        )
+        reasons = set(classification["ineligibility_reasons"])
+        if not terminal:
+            reasons.add("condition_incomplete")
+        outcome_status_eligible = status in {
+            "completed",
+            "completed_with_failures",
+        }
+        if terminal and not outcome_status_eligible:
+            reasons.add(f"condition_status:{status}")
+        tasks_eligible = bool(tasks) and all(
+            task.get("paper_eligible") is True for task in tasks
+        )
+        if not tasks_eligible:
+            reasons.add("task_ineligible")
+        paper_eligible = (
+            classification["paper_eligible"] is True
+            and terminal
+            and tasks_eligible
+            and outcome_status_eligible
+        )
+        return {
+            "schema_version": "tokenshare.paper_condition_evidence.v1",
+            "experiment_id": experiment_id,
+            "condition_id": condition_id,
+            "repeat_id": run_manifest.get("repeat_id"),
+            "condition_identity": {
+                "body": condition,
+                "digest": _digest_json(condition),
+            },
+            "expected_root_count": expected_count,
+            "observed_root_count": len(tasks),
+            "terminal_root_count": terminal_count,
+            "status": status,
+            "terminal": terminal,
+            "current_ref": _file_evidence(
+                self.output_root,
+                run_root / "CURRENT.json",
+            ),
+            "generation_manifest_ref": _file_evidence(
+                self.output_root,
+                generation_root / "generation_manifest.json",
+            ),
+            "run_manifest_ref": _file_evidence(
+                self.output_root,
+                generation_root / "run_manifest.json",
+            ),
+            "paper_eligible": paper_eligible,
+            "ineligibility_reasons": sorted(reasons),
+        }
+
+    def _condition_manifest_v2_body(
+        self,
+        *,
+        run_root: Path,
+        generation_root: Path,
+        task_body: Mapping[str, Any],
+        artifact_bodies: Sequence[Mapping[str, Any]],
+        prior_condition: Mapping[str, Any] | None,
+    ) -> dict[str, Any]:
+        """从 prior condition 摘要和单个新 delta 增量构造 running v2。"""
+
+        run_manifest = _read_json(generation_root / "run_manifest.json")
+        experiment_id = _safe_id(run_manifest.get("experiment_id"), "experiment_id")
+        condition_id = _safe_id(run_manifest.get("condition_id"), "condition_id")
+        condition = self._conditions.get((experiment_id, condition_id))
+        if condition is None:
+            raise ValueError("condition manifest identity is not frozen")
+        prior_root_count = 0
+        prior_terminal_count = 0
+        prior_chain_count = 0
+        prior_event_delta_count = 0
+        prior_reachable_size = 0
+        prior_commit_digest: str | None = None
+        prior_expected_count: int | None = None
+        if prior_condition is not None:
+            _require_exact_keys(
+                prior_condition,
+                _CONDITION_MANIFEST_V2_KEYS,
+                "condition manifest v2",
+            )
+            prior_root_count = int(prior_condition["root_delta_count"])
+            prior_terminal_count = int(prior_condition["terminal_root_count"])
+            prior_chain_count = int(prior_condition["chain_generation_count"])
+            prior_event_delta_count = int(
+                prior_condition["condition_event_delta_count"]
+            )
+            prior_reachable_size = int(prior_condition["reachable_size_bytes"])
+            prior_commit_digest = str(prior_condition["commit_chain_digest"])
+            prior_expected_count = int(prior_condition["expected_root_count"])
+        expected_count = self._expected_task_counts.get(
+            (experiment_id, condition_id),
+            prior_expected_count
+            if prior_expected_count is not None
+            else prior_root_count + 1,
+        )
+        if prior_expected_count is not None and expected_count != prior_expected_count:
+            raise ValueError("condition expected root count drift")
+        new_root_count = prior_root_count + 1
+        if new_root_count > expected_count:
+            raise ValueError("condition root delta exceeds frozen denominator")
+        generation_manifest = _read_json(
+            generation_root / "generation_manifest.json"
+        )
+        generation_manifest_digest = _digest_json(generation_manifest)
+        generation_bytes = sum(
+            int(entry["size"])
+            for entry in generation_manifest["files"]
+            if isinstance(entry, Mapping)
+        ) + (generation_root / "generation_manifest.json").stat().st_size
+        payload_bytes = 0
+        for artifact in artifact_bodies:
+            relative_path = artifact.get("path")
+            if isinstance(relative_path, str):
+                payload_bytes += (self.output_root / relative_path).stat().st_size
+        reachable_size = prior_reachable_size + generation_bytes + payload_bytes
+        commit_chain_digest = _digest_json(
+            {
+                "prior_commit_chain_digest": prior_commit_digest,
+                "generation_id": generation_root.name,
+                "generation_manifest_digest": generation_manifest_digest,
+            }
+        )
+        terminal_count = prior_terminal_count + int(_is_terminal_checkpoint(task_body))
+        suite_manifest = _read_json(self.output_root / "suite_manifest.json")
+        suite_identity = suite_manifest.get("suite_identity")
+        frozen_suite = (
+            suite_identity.get("suite", {}).get("body")
+            if isinstance(suite_identity, Mapping)
+            and isinstance(suite_identity.get("suite"), Mapping)
+            else None
+        )
+        if not isinstance(frozen_suite, Mapping):
+            raise ValueError("condition manifest suite identity is missing")
+        capturing = suite_manifest.get("capturing")
+        if not isinstance(capturing, bool):
+            raise ValueError("condition manifest capturing identity is invalid")
+        classification = _execution_classification(
+            dict(frozen_suite),
+            capturing=capturing,
+        )
+        reasons = set(classification["ineligibility_reasons"])
+        reasons.add("condition_incomplete")
+        if task_body.get("paper_eligible") is not True:
+            reasons.add("task_ineligible")
+        return {
+            "schema_version": "tokenshare.paper_condition_evidence.v2",
+            "experiment_id": experiment_id,
+            "condition_id": condition_id,
+            "repeat_id": run_manifest.get("repeat_id"),
+            "condition_identity": {
+                "body": condition,
+                "digest": _digest_json(condition),
+            },
+            "expected_root_count": expected_count,
+            "observed_root_count": new_root_count,
+            "terminal_root_count": terminal_count,
+            "status": "running",
+            "terminal": False,
+            "head_generation_kind": "delta",
+            "chain_generation_count": prior_chain_count + 1,
+            "root_delta_count": new_root_count,
+            "condition_event_delta_count": prior_event_delta_count,
+            "logical_task_count": new_root_count,
+            "reachable_size_bytes": reachable_size,
+            "commit_chain_digest": commit_chain_digest,
+            "logical_records_digest": None,
+            "current_ref": _file_evidence(
+                self.output_root,
+                run_root / "CURRENT.json",
+            ),
+            "generation_manifest_ref": _file_evidence(
+                self.output_root,
+                generation_root / "generation_manifest.json",
+            ),
+            "run_manifest_ref": _file_evidence(
+                self.output_root,
+                generation_root / "run_manifest.json",
+            ),
+            "paper_eligible": False,
+            "ineligibility_reasons": sorted(reasons),
+        }
+
+    def _condition_manifest_v2_tail_body(
+        self,
+        *,
+        run_root: Path,
+        generation_root: Path,
+        prior_condition: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        """把唯一 closure delta 增量并入 running condition 摘要。"""
+
+        _require_exact_keys(
+            prior_condition,
+            _CONDITION_MANIFEST_V2_KEYS,
+            "condition manifest v2",
+        )
+        if prior_condition.get("condition_event_delta_count") != 0:
+            raise ValueError("condition closure already exists")
+        generation_manifest = _read_json(
+            generation_root / "generation_manifest.json"
+        )
+        generation_manifest_digest = _digest_json(generation_manifest)
+        generation_bytes = sum(
+            int(entry["size"])
+            for entry in generation_manifest["files"]
+            if isinstance(entry, Mapping)
+        ) + (generation_root / "generation_manifest.json").stat().st_size
+        result = dict(prior_condition)
+        result.update(
+            {
+                "head_generation_kind": "delta",
+                "chain_generation_count": int(
+                    prior_condition["chain_generation_count"]
+                )
+                + 1,
+                "condition_event_delta_count": 1,
+                "reachable_size_bytes": int(
+                    prior_condition["reachable_size_bytes"]
+                )
+                + generation_bytes,
+                "commit_chain_digest": _digest_json(
+                    {
+                        "prior_commit_chain_digest": prior_condition[
+                            "commit_chain_digest"
+                        ],
+                        "generation_id": generation_root.name,
+                        "generation_manifest_digest": generation_manifest_digest,
+                    }
+                ),
+                "logical_records_digest": None,
+                "current_ref": _file_evidence(
+                    self.output_root,
+                    run_root / "CURRENT.json",
+                ),
+                "generation_manifest_ref": _file_evidence(
+                    self.output_root,
+                    generation_root / "generation_manifest.json",
+                ),
+                "run_manifest_ref": _file_evidence(
+                    self.output_root,
+                    generation_root / "run_manifest.json",
+                ),
+            }
+        )
+        return result
+
+    def _condition_manifest_v2_snapshot_body(
+        self,
+        *,
+        run_root: Path,
+        generation_root: Path,
+        prior_condition: Mapping[str, Any],
+        logical_records_digest: str,
+    ) -> dict[str, Any]:
+        """从已验证snapshot与running摘要构造terminal condition v2。"""
+
+        _require_exact_keys(
+            prior_condition,
+            _CONDITION_MANIFEST_V2_KEYS,
+            "condition manifest v2",
+        )
+        base = self._condition_manifest_body(
+            run_root=run_root,
+            generation_root=generation_root,
+        )
+        if base.get("terminal") is not True:
+            raise ValueError("terminal snapshot task denominator is incomplete")
+        manifest = _read_json(generation_root / "generation_manifest.json")
+        descriptor = validate_v3_generation_manifest(
+            generation_root,
+            manifest,
+            expected_experiment_id=str(base["experiment_id"]),
+            expected_condition_id=str(base["condition_id"]),
+            expected_repeat_id=base["repeat_id"],
+        )
+        if descriptor.generation_kind != "snapshot":
+            raise ValueError("terminal condition must point to a snapshot")
+        artifacts = _read_jsonl(
+            generation_root / "artifacts" / "artifact_index.jsonl"
+        )
+        payload_paths: set[Path] = set()
+        for artifact in artifacts:
+            task_id = _safe_id(artifact.get("task_id"), "task_id")
+            self._validate_artifact_refs(
+                [artifact],
+                experiment_id=str(base["experiment_id"]),
+                condition_id=str(base["condition_id"]),
+                repeat_id=base["repeat_id"],
+                task_id=task_id,
+                run_root=run_root,
+            )
+            payload_paths.add(
+                (self.output_root / str(artifact["path"])).resolve(
+                    strict=False
+                )
+            )
+        reachable_size = (
+            (generation_root / "generation_manifest.json").stat().st_size
+            + sum(
+                int(entry["size"])
+                for entry in manifest["files"]
+                if isinstance(entry, Mapping)
+            )
+            + sum(path.stat().st_size for path in payload_paths)
+        )
+        result = dict(base)
+        result.update(
+            {
+                "schema_version": "tokenshare.paper_condition_evidence.v2",
+                "head_generation_kind": "snapshot",
+                "chain_generation_count": 1,
+                "root_delta_count": int(prior_condition["root_delta_count"]),
+                "condition_event_delta_count": int(
+                    prior_condition["condition_event_delta_count"]
+                ),
+                "logical_task_count": int(base["observed_root_count"]),
+                "reachable_size_bytes": reachable_size,
+                "commit_chain_digest": descriptor.compacted_chain_digest,
+                "logical_records_digest": logical_records_digest,
+            }
+        )
+        return result
 
     @classmethod
     def load(
@@ -862,6 +2177,7 @@ class FormalEvidenceStore:
         if _canonical_bytes(actual_conditions) != _canonical_bytes(frozen_conditions):
             raise ValueError("suite identity file mismatch: conditions")
 
+        store.repair_interrupted_checkpoint_publication()
         store._validate_evidence_manifest()
         store._validate_suite_and_experiment_manifests(
             suite_manifest=suite_manifest,
@@ -1058,33 +2374,69 @@ class FormalEvidenceStore:
         generation_root = generations_root / generation_id
         if not generation_root.is_dir():
             raise ValueError("checkpoint CURRENT generation is missing")
+        generation_manifest = self._validate_generation_root(generation_root)
+        if pointer.get("generation_manifest_digest") != _digest_json(
+            generation_manifest
+        ):
+            raise ValueError("checkpoint commit marker digest mismatch")
+        return generation_root
+
+    def _validate_generation_root(
+        self,
+        generation_root: Path,
+    ) -> dict[str, Any]:
         manifest_path = generation_root / "generation_manifest.json"
         if not manifest_path.is_file():
             raise ValueError("checkpoint generation manifest is missing")
         generation_manifest = _read_json(manifest_path)
+        generation_schema = generation_manifest.get("schema_version")
+        if generation_schema == V3_GENERATION_SCHEMA:
+            validate_v3_generation_manifest(
+                generation_root,
+                generation_manifest,
+            )
+            return generation_manifest
+        if generation_schema not in {
+            "tokenshare.paper_checkpoint_generation.v1",
+            "tokenshare.paper_checkpoint_generation.v2",
+        }:
+            raise ValueError("checkpoint generation schema version mismatch")
+        expected_keys = (
+            _GENERATION_MANIFEST_V1_KEYS
+            if generation_schema == "tokenshare.paper_checkpoint_generation.v1"
+            else _GENERATION_MANIFEST_V2_KEYS
+        )
         _require_exact_keys(
             generation_manifest,
-            _GENERATION_MANIFEST_KEYS,
+            expected_keys,
             "checkpoint generation manifest",
         )
-        if (
-            generation_manifest.get("schema_version")
-            != "tokenshare.paper_checkpoint_generation.v1"
-        ):
-            raise ValueError("checkpoint generation schema version mismatch")
         _require_string(
             generation_manifest,
             "generation_id",
             "checkpoint generation manifest",
         )
+        if generation_schema == "tokenshare.paper_checkpoint_generation.v2":
+            parent_generation_id = generation_manifest.get("parent_generation_id")
+            parent_generation_digest = generation_manifest.get(
+                "parent_generation_manifest_digest"
+            )
+            if parent_generation_id is None:
+                if parent_generation_digest is not None:
+                    raise ValueError(
+                        "checkpoint generation parent binding is invalid"
+                    )
+            else:
+                _safe_id(parent_generation_id, "parent_generation_id")
+                if (
+                    not isinstance(parent_generation_digest, str)
+                    or not parent_generation_digest.startswith("sha256:")
+                ):
+                    raise ValueError("checkpoint generation parent digest is invalid")
         if not isinstance(generation_manifest.get("files"), list):
             raise ValueError("checkpoint generation manifest files type is invalid")
-        if generation_manifest.get("generation_id") != generation_id:
+        if generation_manifest.get("generation_id") != generation_root.name:
             raise ValueError("checkpoint generation identity mismatch")
-        if pointer.get("generation_manifest_digest") != _digest_json(
-            generation_manifest
-        ):
-            raise ValueError("checkpoint commit marker digest mismatch")
         entries = generation_manifest.get("files")
         assert isinstance(entries, list)
         expected_paths = set(_RUN_FILES)
@@ -1110,7 +2462,7 @@ class FormalEvidenceStore:
         }
         if actual_paths != expected_paths | {"generation_manifest.json"}:
             raise ValueError("checkpoint generation contains incomplete evidence")
-        return generation_root
+        return generation_manifest
 
     def _load_condition_index(self) -> dict[tuple[str, str], dict[str, Any]]:
         path = self.output_root / "conditions.jsonl"
@@ -1170,6 +2522,62 @@ class FormalEvidenceStore:
                     result[(experiment_id, condition_id)] = len(filtered)
         return result
 
+    def _load_selection_ordinals(self) -> dict[tuple[str, str, str], int]:
+        """从冻结 dispatch selection 构造 case→ordinal，只在 store 建立时读取一次。"""
+
+        suite_path = self.output_root / "suite_manifest.json"
+        if not suite_path.is_file():
+            return {}
+        suite = _read_json(suite_path)
+        identity = suite.get("suite_identity")
+        dispatch_component = (
+            identity.get("dispatch") if isinstance(identity, Mapping) else None
+        )
+        dispatch = (
+            dispatch_component.get("body")
+            if isinstance(dispatch_component, Mapping)
+            else None
+        )
+        suite_component = (
+            identity.get("suite") if isinstance(identity, Mapping) else None
+        )
+        suite_body = (
+            suite_component.get("body")
+            if isinstance(suite_component, Mapping)
+            else None
+        )
+        root_case_filter = (
+            suite_body.get("root_case_filter", {})
+            if isinstance(suite_body, Mapping)
+            else {}
+        )
+        if not isinstance(root_case_filter, Mapping):
+            raise ValueError("suite root_case_filter must be an object")
+        result: dict[tuple[str, str, str], int] = {}
+        for plan in _dispatch_plans(dispatch):
+            experiment_id = str(plan["experiment_id"])
+            conditions = plan.get("conditions", [])
+            selections = plan.get("selections", [])
+            if not isinstance(conditions, list) or not isinstance(selections, list):
+                continue
+            if len(conditions) != len(selections):
+                continue
+            for condition, selection in zip(conditions, selections, strict=True):
+                condition_id = str(condition["condition_id"])
+                ordered = selection.get("ordered_case_ids", [])
+                if not isinstance(ordered, list):
+                    continue
+                filtered = root_case_filter.get(condition_id, ordered)
+                if not isinstance(filtered, list):
+                    raise ValueError("suite root_case_filter entry must be a list")
+                for ordinal, case_id_value in enumerate(filtered):
+                    case_id = _safe_id(case_id_value, "case_id")
+                    key = (experiment_id, condition_id, case_id)
+                    if key in result:
+                        raise ValueError("duplicate case in frozen condition selection")
+                    result[key] = ordinal
+        return result
+
     def _validate_artifact_refs(
         self,
         refs: Sequence[dict[str, Any]],
@@ -1202,36 +2610,667 @@ class FormalEvidenceStore:
             path = (self.output_root / relative_path).resolve(strict=False)
             if not _is_relative_to(path, artifact_root) or path == artifact_root:
                 raise ValueError("artifact ref crosses run artifact path isolation")
-            if not path.is_file() or _digest_bytes(path.read_bytes()) != digest:
+            if not path.is_file():
                 raise ValueError("artifact evidence is missing or hash mismatched")
+            artifact_bytes = path.read_bytes()
+            if _digest_bytes(artifact_bytes) != digest:
+                raise ValueError("artifact evidence is missing or hash mismatched")
+            expected_size = ref.get("size_bytes")
+            if expected_size is not None and (
+                isinstance(expected_size, bool)
+                or not isinstance(expected_size, int)
+                or expected_size != len(artifact_bytes)
+            ):
+                raise ValueError("artifact evidence size mismatched")
+            if isinstance(ref.get("source_artifact_ref"), Mapping) and (
+                expected_size is None
+            ):
+                raise ValueError("materialized artifact evidence requires size_bytes")
 
-    def _refresh_evidence_manifest(self) -> None:
-        entries = []
-        for path in sorted(self.output_root.rglob("*")):
-            relative_path = (
-                path.relative_to(self.output_root).as_posix()
-                if path.is_file()
-                else ""
+    def _validate_reachable_artifact_closure(
+        self,
+        *,
+        records: Sequence[Mapping[str, Any]],
+        artifacts: Sequence[Mapping[str, Any]],
+    ) -> None:
+        """从 run 记录的 ArtifactRef 种子重算并验证完整可达闭包。"""
+
+        indexed: dict[tuple[str, str, str, str], Mapping[str, Any]] = {}
+        task_ids_by_identity: dict[tuple[str, str, str], set[str]] = {}
+        artifact_id_hashes: dict[tuple[str, str], str] = {}
+        for artifact in artifacts:
+            source_ref = artifact.get("source_artifact_ref")
+            if not isinstance(source_ref, Mapping):
+                continue
+            _validate_complete_source_artifact_ref(source_ref)
+            task_id = str(artifact.get("task_id") or "")
+            if not task_id:
+                raise ValueError("reachable artifact closure task identity is missing")
+            artifact_id = str(source_ref["artifact_id"])
+            content_hash = str(source_ref["content_hash"])
+            prior_hash = artifact_id_hashes.setdefault(
+                (task_id, artifact_id),
+                content_hash,
             )
+            if prior_hash != content_hash:
+                raise ValueError("reachable artifact closure identity conflict")
+            source_identity = _source_artifact_identity(source_ref)
+            task_ids_by_identity.setdefault(source_identity, set()).add(task_id)
+            key = (task_id, *source_identity)
+            prior = indexed.setdefault(key, artifact)
+            if prior is not artifact and prior.get("path") != artifact.get("path"):
+                raise ValueError("reachable artifact closure index is ambiguous")
+
+        queue: deque[tuple[str, Mapping[str, Any]]] = deque()
+        for record in records:
+            task_id = str(record.get("task_id") or "")
+            for source_ref in _nested_source_artifact_refs(record):
+                if task_id:
+                    queue.append((task_id, source_ref))
+                    continue
+                source_identity = _source_artifact_identity(source_ref)
+                matching_task_ids = task_ids_by_identity.get(source_identity, set())
+                if not matching_task_ids:
+                    queue.append(("__unbound__", source_ref))
+                else:
+                    queue.extend(
+                        (matching_task_id, source_ref)
+                        for matching_task_id in sorted(matching_task_ids)
+                    )
+        seen: set[tuple[str, str, str, str]] = set()
+        while queue:
+            task_id, source_ref = queue.popleft()
+            _validate_complete_source_artifact_ref(source_ref)
+            key = (task_id, *_source_artifact_identity(source_ref))
+            if key in seen:
+                continue
+            seen.add(key)
+            artifact = indexed.get(key)
+            if artifact is None:
+                raise ValueError(
+                    "reachable artifact closure is missing an artifact index row"
+                )
+            if artifact.get("content_hash") != source_ref.get("content_hash"):
+                raise ValueError("reachable artifact closure hash identity mismatch")
+            if artifact.get("size_bytes") != source_ref.get("size_bytes"):
+                raise ValueError("reachable artifact closure size identity mismatch")
+            source_uri = artifact.get("source_uri")
+            if source_uri is not None and source_uri != source_ref.get("uri"):
+                raise ValueError("reachable artifact closure source URI mismatch")
+
+            indexed_source_ref = artifact.get("source_artifact_ref")
+            assert isinstance(indexed_source_ref, Mapping)
+            queue.extend(
+                (task_id, child)
+                for child in _nested_source_artifact_refs(
+                    indexed_source_ref.get("source")
+                )
+            )
+            queue.extend(
+                (task_id, child)
+                for child in _nested_source_artifact_refs(
+                    indexed_source_ref.get("metadata")
+                )
+            )
+            relative_path = artifact.get("path")
+            if not isinstance(relative_path, str) or not relative_path:
+                raise ValueError("reachable artifact closure requires path evidence")
+            path = self.output_root / relative_path
+            payload_bytes = path.read_bytes()
+            media_type = indexed_source_ref.get("media_type")
+            declared_json = _declares_json_media_type(media_type)
+            try:
+                payload = json.loads(payload_bytes.decode("utf-8"))
+            except (UnicodeDecodeError, json.JSONDecodeError) as error:
+                if declared_json:
+                    raise ValueError(
+                        "reachable artifact closure contains invalid declared JSON"
+                    ) from error
+                payload = None
+            if payload is not None:
+                queue.extend(
+                    (task_id, child)
+                    for child in _nested_source_artifact_refs(payload)
+                )
+
+    def _refresh_evidence_manifest(self, *, run_root: Path | None = None) -> None:
+        """新运行写v2；root热路径只替换一个condition entry。"""
+
+        manifest_path = self.output_root / "evidence_manifest.json"
+        existing = _read_json(manifest_path) if manifest_path.is_file() else None
+        if existing is not None and existing.get("schema_version") == (
+            "tokenshare.paper_evidence_manifest.v1"
+        ):
+            raise ValueError("historical evidence manifest v1 is read-only")
+        if existing is not None:
+            _require_exact_keys(
+                existing,
+                {"schema_version", "files", "conditions"},
+                "evidence manifest v2",
+            )
+            if existing.get("schema_version") != (
+                "tokenshare.paper_evidence_manifest.v2"
+            ):
+                raise ValueError("evidence manifest schema version mismatch")
+        if run_root is None:
+            files = [
+                _file_evidence(self.output_root, path)
+                for path in self._v2_static_paths()
+            ]
+            conditions = list(existing.get("conditions", [])) if existing else []
+        else:
+            if existing is None:
+                raise ValueError("evidence manifest v2 must exist before checkpoint")
+            files = list(existing["files"])
+            conditions = list(existing["conditions"])
+            condition_path = run_root / "condition_manifest.json"
+            condition = _read_json(condition_path)
+            _require_exact_keys(
+                condition,
+                _CONDITION_MANIFEST_V2_KEYS,
+                "condition manifest v2",
+            )
+            entry = {
+                "experiment_id": condition["experiment_id"],
+                "condition_id": condition["condition_id"],
+                "repeat_id": condition["repeat_id"],
+                "condition_manifest_ref": _file_evidence(
+                    self.output_root,
+                    condition_path,
+                ),
+                "reachable_size_bytes": condition["reachable_size_bytes"],
+            }
+            key = (
+                str(entry["experiment_id"]),
+                str(entry["condition_id"]),
+                str(entry["repeat_id"]),
+            )
+            retained = [
+                item
+                for item in conditions
+                if (
+                    str(item.get("experiment_id")),
+                    str(item.get("condition_id")),
+                    str(item.get("repeat_id")),
+                )
+                != key
+            ]
+            retained.append(entry)
+            conditions = sorted(
+                retained,
+                key=lambda item: (
+                    str(item["experiment_id"]),
+                    str(item["condition_id"]),
+                    str(item["repeat_id"]),
+                ),
+            )
+        _atomic_write_json(
+            manifest_path,
+            {
+                "schema_version": "tokenshare.paper_evidence_manifest.v2",
+                "files": files,
+                "conditions": conditions,
+            },
+        )
+
+    def _v2_static_paths(self) -> list[Path]:
+        result: list[Path] = []
+        for path in sorted(self.output_root.rglob("*")):
+            if not path.is_file():
+                continue
+            relative_path = path.relative_to(self.output_root).as_posix()
+            parts = Path(relative_path).parts
             if (
-                not path.is_file()
-                or path.name == "evidence_manifest.json"
-                or path.name == _LOCK_FILE_NAME
+                path.name in {
+                    "evidence_manifest.json",
+                    _LOCK_FILE_NAME,
+                    _PENDING_FILE_NAME,
+                }
                 or path.name.endswith(".tmp")
-                or _is_noncurrent_generation_path(
+                or (
+                    len(parts) >= 3
+                    and parts[0] == "experiments"
+                    and parts[2] == "runs"
+                )
+                or _is_adapter_compatibility_path(
                     self.output_root,
                     relative_path,
                 )
             ):
                 continue
-            entries.append(_file_evidence(self.output_root, path))
-        _atomic_write_json(
-            self.output_root / "evidence_manifest.json",
-            {
-                "schema_version": "tokenshare.paper_evidence_manifest.v1",
-                "files": entries,
-            },
+            result.append(path)
+        return result
+
+    def repair_interrupted_checkpoint_publication(self) -> dict[str, Any] | None:
+        """只按原子 PENDING intent 补完已完整落盘的 v2 checkpoint。"""
+
+        pending_paths = sorted(
+            self.output_root.glob(
+                f"experiments/*/runs/*/*/{_PENDING_FILE_NAME}"
+            )
         )
+        if not pending_paths:
+            return None
+        repaired: list[dict[str, Any]] = []
+        repaired_pending_paths: list[Path] = []
+        cleanup_generations: list[tuple[Path, tuple[str, ...]]] = []
+        with self._lock:
+            with _exclusive_output_root_lock(self.output_root):
+                for pending_path in pending_paths:
+                    run_root = pending_path.parent
+                    pending = _read_json(pending_path)
+                    if pending.get("schema_version") == (
+                        "tokenshare.paper_checkpoint_pending.v2"
+                    ):
+                        repair_result = self._repair_v3_pending_publication(
+                            run_root=run_root,
+                            pending=pending,
+                        )
+                        cleanup_ids = tuple(
+                            repair_result.pop("cleanup_generation_ids", [])
+                        )
+                        repaired.append(repair_result)
+                        if cleanup_ids:
+                            cleanup_generations.append((run_root, cleanup_ids))
+                        repaired_pending_paths.append(pending_path)
+                        continue
+                    _require_exact_keys(
+                        pending,
+                        _PENDING_KEYS,
+                        "checkpoint PENDING",
+                    )
+                    if (
+                        pending.get("schema_version")
+                        != "tokenshare.paper_checkpoint_pending.v1"
+                    ):
+                        raise ValueError("checkpoint PENDING schema mismatch")
+                    for field_name in (
+                        "target_generation_id",
+                        "target_generation_manifest_digest",
+                        "experiment_id",
+                        "condition_id",
+                        "task_id",
+                    ):
+                        _require_string(pending, field_name, "checkpoint PENDING")
+                    target_generation_id = _safe_id(
+                        pending["target_generation_id"],
+                        "target_generation_id",
+                    )
+                    target_root = (
+                        run_root / ".generations" / target_generation_id
+                    )
+                    target_manifest = self._validate_generation_root(target_root)
+                    if (
+                        target_manifest.get("schema_version")
+                        != "tokenshare.paper_checkpoint_generation.v2"
+                    ):
+                        raise ValueError(
+                            "checkpoint PENDING cannot promote a v1 generation"
+                        )
+                    if pending.get("target_generation_manifest_digest") != (
+                        _digest_json(target_manifest)
+                    ):
+                        raise ValueError("checkpoint PENDING target digest mismatch")
+                    if (
+                        target_manifest.get("parent_generation_id")
+                        != pending.get("expected_prior_generation_id")
+                        or target_manifest.get(
+                            "parent_generation_manifest_digest"
+                        )
+                        != pending.get(
+                            "expected_prior_generation_manifest_digest"
+                        )
+                    ):
+                        raise ValueError(
+                            "checkpoint PENDING parent generation conflict"
+                        )
+                    experiment_id = _safe_id(
+                        pending["experiment_id"],
+                        "experiment_id",
+                    )
+                    condition_id = _safe_id(
+                        pending["condition_id"],
+                        "condition_id",
+                    )
+                    repeat_id = pending.get("repeat_id")
+                    if (
+                        run_root.parents[2].name != experiment_id
+                        or run_root.parent.name != condition_id
+                        or run_root.name != str(repeat_id)
+                    ):
+                        raise ValueError("checkpoint PENDING run identity mismatch")
+                    target_run_manifest = _read_json(
+                        target_root / "run_manifest.json"
+                    )
+                    if (
+                        target_run_manifest.get("experiment_id") != experiment_id
+                        or target_run_manifest.get("condition_id") != condition_id
+                        or target_run_manifest.get("repeat_id") != repeat_id
+                    ):
+                        raise ValueError(
+                            "checkpoint PENDING target run identity mismatch"
+                        )
+                    target_tasks = _read_jsonl(
+                        target_root / "per_task_results.jsonl"
+                    )
+                    if pending.get("task_id") not in {
+                        task.get("task_id") for task in target_tasks
+                    }:
+                        raise ValueError(
+                            "checkpoint PENDING task identity is missing"
+                        )
+
+                    current_path = run_root / "CURRENT.json"
+                    current = (
+                        _read_json(current_path)
+                        if current_path.is_file()
+                        else None
+                    )
+                    if (
+                        current is not None
+                        and current.get("generation_id") == target_generation_id
+                    ):
+                        if current.get("generation_manifest_digest") != _digest_json(
+                            target_manifest
+                        ):
+                            raise ValueError(
+                                "checkpoint PENDING committed target conflicts"
+                            )
+                    else:
+                        self._validate_pending_prior_current(
+                            run_root=run_root,
+                            pending=pending,
+                        )
+                        _atomic_write_json(
+                            current_path,
+                            {
+                                "schema_version": (
+                                    "tokenshare.paper_checkpoint_current.v1"
+                                ),
+                                "generation_id": target_generation_id,
+                                "generation_manifest_digest": _digest_json(
+                                    target_manifest
+                                ),
+                            },
+                        )
+
+                    _atomic_write_json(
+                        run_root / "condition_manifest.json",
+                        self._condition_manifest_body(
+                            run_root=run_root,
+                            generation_root=target_root,
+                        ),
+                    )
+                    for candidate in (run_root / ".generations").iterdir():
+                        if candidate.is_dir() and candidate != target_root:
+                            shutil.rmtree(candidate)
+                    repaired_pending_paths.append(pending_path)
+                    repaired.append(
+                        {
+                            "experiment_id": experiment_id,
+                            "condition_id": condition_id,
+                            "repeat_id": repeat_id,
+                            "generation_id": target_generation_id,
+                        }
+                    )
+                self._refresh_evidence_manifest()
+                self._validate_evidence_manifest()
+                for pending_path in repaired_pending_paths:
+                    pending_path.unlink()
+                for cleanup_root, generation_ids in cleanup_generations:
+                    for generation_id in generation_ids:
+                        candidate = cleanup_root / ".generations" / generation_id
+                        if candidate.is_dir():
+                            shutil.rmtree(candidate)
+        self._validate_evidence_manifest()
+        return {
+            "schema_version": "tokenshare.paper_checkpoint_repair.v1",
+            "repaired_publications": repaired,
+        }
+
+    def _repair_v3_pending_publication(
+        self,
+        *,
+        run_root: Path,
+        pending: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        """按 exact prior/target 二态幂等补完 v3 root delta intent。"""
+
+        _require_exact_keys(pending, _PENDING_V2_KEYS, "checkpoint PENDING v2")
+        publication_kind = pending.get("publication_kind")
+        if publication_kind not in {
+            "root_delta",
+            "condition_tail_events",
+            "terminal_snapshot",
+        }:
+            raise ValueError("unsupported checkpoint PENDING v2 publication kind")
+        experiment_id = _safe_id(pending.get("experiment_id"), "experiment_id")
+        condition_id = _safe_id(pending.get("condition_id"), "condition_id")
+        task_id = (
+            _safe_id(pending.get("task_id"), "task_id")
+            if publication_kind == "root_delta"
+            else None
+        )
+        repeat_id = pending.get("repeat_id")
+        selection_ordinal = pending.get("selection_ordinal")
+        anchor_task_id = (
+            None
+            if publication_kind == "terminal_snapshot"
+            else _safe_id(
+                pending.get("anchor_task_id"),
+                "anchor_task_id",
+            )
+        )
+        if publication_kind == "root_delta":
+            if (
+                isinstance(selection_ordinal, bool)
+                or not isinstance(selection_ordinal, int)
+                or selection_ordinal < 0
+            ):
+                raise ValueError("checkpoint PENDING selection ordinal is invalid")
+            if anchor_task_id != task_id:
+                raise ValueError("checkpoint PENDING root anchor conflicts with task")
+            if pending.get("condition_events_digest") is not None:
+                raise ValueError("checkpoint root PENDING has condition events")
+        elif publication_kind == "condition_tail_events" and (
+            pending.get("task_id") is not None
+            or selection_ordinal is not None
+            or not isinstance(pending.get("condition_events_digest"), str)
+        ):
+            raise ValueError("checkpoint tail PENDING fields are invalid")
+        if publication_kind == "terminal_snapshot":
+            if (
+                pending.get("task_id") is not None
+                or selection_ordinal is not None
+                or pending.get("anchor_task_id") is not None
+                or pending.get("condition_events_digest") is not None
+                or pending.get("compacted_prior_head_generation_id")
+                != pending.get("expected_prior_generation_id")
+                or pending.get(
+                    "compacted_prior_head_generation_manifest_digest"
+                )
+                != pending.get("expected_prior_generation_manifest_digest")
+                or not isinstance(pending.get("compacted_chain_digest"), str)
+            ):
+                raise ValueError("checkpoint snapshot PENDING fields are invalid")
+        elif (
+            pending.get("compacted_prior_head_generation_id") is not None
+            or pending.get(
+                "compacted_prior_head_generation_manifest_digest"
+            )
+            is not None
+            or pending.get("compacted_chain_digest") is not None
+        ):
+            raise ValueError("checkpoint delta PENDING has compacted bindings")
+        if (
+            run_root.parents[2].name != experiment_id
+            or run_root.parent.name != condition_id
+            or run_root.name != str(repeat_id)
+        ):
+            raise ValueError("checkpoint PENDING run identity mismatch")
+        target_generation_id = _safe_id(
+            pending.get("target_generation_id"),
+            "target_generation_id",
+        )
+        target_root = run_root / ".generations" / target_generation_id
+        target_manifest = _read_json(target_root / "generation_manifest.json")
+        target_descriptor = validate_v3_generation_manifest(
+            target_root,
+            target_manifest,
+            expected_experiment_id=experiment_id,
+            expected_condition_id=condition_id,
+            expected_repeat_id=repeat_id,
+        )
+        if publication_kind == "terminal_snapshot":
+            if (
+                target_descriptor.generation_kind != "snapshot"
+                or target_descriptor.compacted_from_head_generation_id
+                != pending.get("compacted_prior_head_generation_id")
+                or target_descriptor.compacted_from_head_generation_manifest_digest
+                != pending.get(
+                    "compacted_prior_head_generation_manifest_digest"
+                )
+                or target_descriptor.compacted_chain_digest
+                != pending.get("compacted_chain_digest")
+            ):
+                raise ValueError(
+                    "checkpoint PENDING target snapshot identity mismatch"
+                )
+        elif (
+            target_descriptor.generation_kind != "delta"
+            or target_descriptor.delta_role
+            != (
+                "root_outcome"
+                if publication_kind == "root_delta"
+                else "condition_tail_events"
+            )
+            or target_descriptor.anchor_task_id != anchor_task_id
+            or target_descriptor.selection_ordinal != selection_ordinal
+        ):
+            raise ValueError("checkpoint PENDING target delta identity mismatch")
+        target_digest = _digest_json(target_manifest)
+        if pending.get("target_generation_manifest_digest") != target_digest:
+            raise ValueError("checkpoint PENDING target digest mismatch")
+        if publication_kind != "terminal_snapshot" and (
+            target_descriptor.parent_generation_id
+            != pending.get("expected_prior_generation_id")
+            or target_descriptor.parent_generation_manifest_digest
+            != pending.get("expected_prior_generation_manifest_digest")
+        ):
+            raise ValueError("checkpoint PENDING parent generation conflict")
+        if publication_kind == "condition_tail_events":
+            target_events = _read_jsonl(
+                target_root / "events" / "event_log.jsonl"
+            )
+            if pending.get("condition_events_digest") != _digest_json(target_events):
+                raise ValueError("checkpoint PENDING tail events digest mismatch")
+
+        current_path = run_root / "CURRENT.json"
+        current = _read_json(current_path) if current_path.is_file() else None
+        if current is not None and current.get("generation_id") == target_generation_id:
+            if current.get("generation_manifest_digest") != target_digest:
+                raise ValueError("checkpoint PENDING committed target conflicts")
+        else:
+            self._validate_pending_prior_current(
+                run_root=run_root,
+                pending=pending,
+            )
+            _atomic_write_json(
+                current_path,
+                {
+                    "schema_version": "tokenshare.paper_checkpoint_current.v1",
+                    "generation_id": target_generation_id,
+                    "generation_manifest_digest": target_digest,
+                },
+            )
+
+        condition_path = run_root / "condition_manifest.json"
+        existing_condition = (
+            _read_json(condition_path) if condition_path.is_file() else None
+        )
+        target_manifest_path = (
+            target_root / "generation_manifest.json"
+        ).relative_to(self.output_root).as_posix()
+        condition_is_target = (
+            isinstance(existing_condition, Mapping)
+            and isinstance(existing_condition.get("generation_manifest_ref"), Mapping)
+            and existing_condition["generation_manifest_ref"].get("path")
+            == target_manifest_path
+        )
+        if condition_is_target:
+            _require_exact_keys(
+                existing_condition,
+                _CONDITION_MANIFEST_V2_KEYS,
+                "condition manifest v2",
+            )
+        else:
+            prior_condition = existing_condition
+            if publication_kind == "root_delta":
+                tasks = _read_jsonl(target_root / "per_task_results.jsonl")
+                artifacts = _read_jsonl(
+                    target_root / "artifacts" / "artifact_index.jsonl"
+                )
+                if len(tasks) != 1 or tasks[0].get("task_id") != task_id:
+                    raise ValueError(
+                        "checkpoint PENDING target task identity is missing"
+                    )
+                condition_body = self._condition_manifest_v2_body(
+                    run_root=run_root,
+                    generation_root=target_root,
+                    task_body=tasks[0],
+                    artifact_bodies=artifacts,
+                    prior_condition=prior_condition,
+                )
+            elif publication_kind == "condition_tail_events":
+                if not isinstance(prior_condition, Mapping):
+                    raise ValueError("checkpoint PENDING prior condition is missing")
+                condition_body = self._condition_manifest_v2_tail_body(
+                    run_root=run_root,
+                    generation_root=target_root,
+                    prior_condition=prior_condition,
+                )
+            else:
+                if not isinstance(prior_condition, Mapping):
+                    raise ValueError("checkpoint PENDING prior condition is missing")
+                condition_body = self._condition_manifest_v2_snapshot_body(
+                    run_root=run_root,
+                    generation_root=target_root,
+                    prior_condition=prior_condition,
+                    logical_records_digest=_logical_records_digest(
+                        target_manifest
+                    ),
+                )
+            _atomic_write_json(
+                condition_path,
+                condition_body,
+            )
+        effective_condition = (
+            existing_condition if condition_is_target else condition_body
+        )
+        assert isinstance(effective_condition, Mapping)
+        self._refresh_evidence_manifest(run_root=run_root)
+        result = {
+            "experiment_id": experiment_id,
+            "condition_id": condition_id,
+            "repeat_id": repeat_id,
+            "generation_id": target_generation_id,
+        }
+        if publication_kind == "terminal_snapshot":
+            result["cleanup_generation_ids"] = [
+                descriptor.generation_id
+                for descriptor in validate_v3_delta_chain(
+                    run_root,
+                    validate_v3_generation_manifest(
+                        run_root
+                        / ".generations"
+                        / str(pending["expected_prior_generation_id"])
+                    ),
+                    expected_root_count=int(
+                        effective_condition["expected_root_count"]
+                    ),
+                )
+            ]
+        return result
 
     def repair_stale_compatibility_manifest(self) -> dict[str, Any] | None:
         """仅修复与 canonical evidence 逐字节一致的未索引兼容镜像。"""
@@ -1504,6 +3543,15 @@ class FormalEvidenceStore:
             if not (self.output_root / relative_path).is_file():
                 raise ValueError(f"required evidence file is missing: {relative_path}")
         manifest = _read_json(self.output_root / "evidence_manifest.json")
+        if manifest.get("schema_version") == (
+            "tokenshare.paper_evidence_manifest.v2"
+        ):
+            self._validate_evidence_manifest_v2(manifest)
+            return
+        if manifest.get("schema_version") != (
+            "tokenshare.paper_evidence_manifest.v1"
+        ):
+            raise ValueError("evidence manifest schema version mismatch")
         entries = manifest.get("files")
         if not isinstance(entries, list):
             raise ValueError("evidence manifest file index is missing")
@@ -1513,8 +3561,15 @@ class FormalEvidenceStore:
                 raise ValueError("invalid evidence manifest entry")
             relative_path = entry["path"]
             if (
-                Path(relative_path).name == _LOCK_FILE_NAME
+                Path(relative_path).name in {
+                    _LOCK_FILE_NAME,
+                    _PENDING_FILE_NAME,
+                }
                 or _is_noncurrent_generation_path(
+                    self.output_root,
+                    relative_path,
+                )
+                or _is_adapter_compatibility_path(
                     self.output_root,
                     relative_path,
                 )
@@ -1536,14 +3591,339 @@ class FormalEvidenceStore:
             if path.is_file()
             and path.name != "evidence_manifest.json"
             and path.name != _LOCK_FILE_NAME
+            and path.name != _PENDING_FILE_NAME
             and not path.name.endswith(".tmp")
             and not _is_noncurrent_generation_path(
+                self.output_root,
+                path.relative_to(self.output_root).as_posix(),
+            )
+            and not _is_adapter_compatibility_path(
                 self.output_root,
                 path.relative_to(self.output_root).as_posix(),
             )
         }
         if actual_paths != seen:
             raise ValueError("evidence manifest does not exactly index stored files")
+
+    def _validate_evidence_manifest_v2(
+        self,
+        manifest: Mapping[str, Any],
+    ) -> None:
+        """冷路径递归验证static refs与每个v3 condition可达链。"""
+
+        _require_exact_keys(
+            manifest,
+            {"schema_version", "files", "conditions"},
+            "evidence manifest v2",
+        )
+        static_entries = manifest.get("files")
+        condition_entries = manifest.get("conditions")
+        if not isinstance(static_entries, list) or not isinstance(
+            condition_entries, list
+        ):
+            raise ValueError("evidence manifest v2 inventories must be lists")
+        static_seen: set[str] = set()
+        for entry in static_entries:
+            if not isinstance(entry, Mapping) or not isinstance(
+                entry.get("path"), str
+            ):
+                raise ValueError("invalid evidence manifest v2 static entry")
+            relative_path = str(entry["path"])
+            if relative_path in static_seen:
+                raise ValueError("duplicate evidence manifest v2 static path")
+            static_seen.add(relative_path)
+            path = (self.output_root / relative_path).resolve(strict=False)
+            if not _is_relative_to(path, self.output_root) or not path.is_file():
+                raise ValueError("evidence manifest v2 static file is missing")
+            if _file_evidence(self.output_root, path) != dict(entry):
+                raise ValueError("evidence manifest v2 static integrity mismatch")
+        actual_static = {
+            path.relative_to(self.output_root).as_posix()
+            for path in self._v2_static_paths()
+        }
+        if static_seen != actual_static:
+            raise ValueError("evidence manifest v2 static inventory mismatch")
+
+        condition_seen: set[tuple[str, str, str]] = set()
+        for entry in condition_entries:
+            if not isinstance(entry, Mapping):
+                raise ValueError("invalid evidence manifest v2 condition entry")
+            _require_exact_keys(
+                entry,
+                {
+                    "experiment_id",
+                    "condition_id",
+                    "repeat_id",
+                    "condition_manifest_ref",
+                    "reachable_size_bytes",
+                },
+                "evidence manifest v2 condition entry",
+            )
+            experiment_id = _safe_id(entry.get("experiment_id"), "experiment_id")
+            condition_id = _safe_id(entry.get("condition_id"), "condition_id")
+            repeat_id = entry.get("repeat_id")
+            repeat_name = _safe_id(str(repeat_id), "repeat_id")
+            key = (experiment_id, condition_id, repeat_name)
+            if key in condition_seen:
+                raise ValueError("duplicate evidence manifest v2 condition entry")
+            condition_seen.add(key)
+            run_root = (
+                self.output_root
+                / "experiments"
+                / experiment_id
+                / "runs"
+                / condition_id
+                / repeat_name
+            )
+            condition_path = run_root / "condition_manifest.json"
+            expected_condition_ref = _file_evidence(
+                self.output_root,
+                condition_path,
+            )
+            if entry.get("condition_manifest_ref") != expected_condition_ref:
+                raise ValueError("condition inventory manifest ref mismatch")
+            condition = _read_json(condition_path)
+            _require_exact_keys(
+                condition,
+                _CONDITION_MANIFEST_V2_KEYS,
+                "condition manifest v2",
+            )
+            if (
+                condition.get("experiment_id") != experiment_id
+                or condition.get("condition_id") != condition_id
+                or str(condition.get("repeat_id")) != repeat_name
+            ):
+                raise ValueError("condition manifest v2 identity mismatch")
+            current_path = run_root / "CURRENT.json"
+            current = _read_json(current_path)
+            _require_exact_keys(current, _CURRENT_KEYS, "checkpoint CURRENT")
+            if condition.get("current_ref") != _file_evidence(
+                self.output_root,
+                current_path,
+            ):
+                raise ValueError("condition manifest v2 CURRENT ref mismatch")
+            generation_id = _safe_id(current.get("generation_id"), "generation_id")
+            generation_root = run_root / ".generations" / generation_id
+            generation_manifest = _read_json(
+                generation_root / "generation_manifest.json"
+            )
+            descriptor = validate_v3_generation_manifest(
+                generation_root,
+                generation_manifest,
+                expected_experiment_id=experiment_id,
+                expected_condition_id=condition_id,
+                expected_repeat_id=repeat_id,
+            )
+            if current.get("generation_manifest_digest") != _digest_json(
+                generation_manifest
+            ):
+                raise ValueError("condition CURRENT generation digest mismatch")
+            if condition.get("generation_manifest_ref") != _file_evidence(
+                self.output_root,
+                generation_root / "generation_manifest.json",
+            ):
+                raise ValueError("condition generation manifest ref mismatch")
+            if condition.get("run_manifest_ref") != _file_evidence(
+                self.output_root,
+                generation_root / "run_manifest.json",
+            ):
+                raise ValueError("condition run manifest ref mismatch")
+            expected_count = int(condition["expected_root_count"])
+            frozen_expected_count = self._expected_task_counts.get(
+                (experiment_id, condition_id)
+            )
+            if (
+                frozen_expected_count is not None
+                and expected_count != frozen_expected_count
+            ):
+                raise ValueError("condition manifest evidence mismatch")
+            if descriptor.generation_kind == "snapshot":
+                if descriptor.compacted_generation_count != expected_count + 1:
+                    raise ValueError(
+                        "terminal snapshot compacted denominator mismatch"
+                    )
+                run_manifest = _read_json(
+                    generation_root / "run_manifest.json"
+                )
+                tasks = _read_jsonl(
+                    generation_root / "per_task_results.jsonl"
+                )
+                artifacts = _read_jsonl(
+                    generation_root / "artifacts" / "artifact_index.jsonl"
+                )
+                payload_paths: set[Path] = set()
+                for artifact in artifacts:
+                    task_id = _safe_id(artifact.get("task_id"), "task_id")
+                    self._validate_artifact_refs(
+                        [artifact],
+                        experiment_id=experiment_id,
+                        condition_id=condition_id,
+                        repeat_id=repeat_id,
+                        task_id=task_id,
+                        run_root=run_root,
+                    )
+                    payload_paths.add(
+                        (self.output_root / str(artifact["path"])).resolve(
+                            strict=False
+                        )
+                    )
+                reachable_size = (
+                    (generation_root / "generation_manifest.json").stat().st_size
+                    + sum(
+                        int(file_entry["size"])
+                        for file_entry in generation_manifest["files"]
+                        if isinstance(file_entry, Mapping)
+                    )
+                    + sum(path.stat().st_size for path in payload_paths)
+                )
+                logical_records_digest = _digest_json(
+                    [
+                        {
+                            "path": file_entry["path"],
+                            "record_count": file_entry["record_count"],
+                            "records_digest": file_entry["records_digest"],
+                        }
+                        for file_entry in generation_manifest["files"]
+                        if isinstance(file_entry, Mapping)
+                    ]
+                )
+                terminal_count = sum(
+                    _is_terminal_checkpoint(task) for task in tasks
+                )
+                expected_fields = {
+                    "head_generation_kind": "snapshot",
+                    "chain_generation_count": 1,
+                    "root_delta_count": expected_count,
+                    "condition_event_delta_count": 1,
+                    "logical_task_count": expected_count,
+                    "observed_root_count": expected_count,
+                    "terminal_root_count": expected_count,
+                    "reachable_size_bytes": reachable_size,
+                    "commit_chain_digest": descriptor.compacted_chain_digest,
+                    "logical_records_digest": logical_records_digest,
+                    "terminal": True,
+                    "status": run_manifest["status"],
+                }
+                if len(tasks) != expected_count or terminal_count != expected_count:
+                    raise ValueError("terminal snapshot task denominator mismatch")
+                for field_name, expected_value in expected_fields.items():
+                    if condition.get(field_name) != expected_value:
+                        raise ValueError(
+                            f"condition manifest v2 {field_name} mismatch"
+                        )
+                base = self._condition_manifest_body(
+                    run_root=run_root,
+                    generation_root=generation_root,
+                )
+                for field_name in (
+                    "experiment_id",
+                    "condition_id",
+                    "repeat_id",
+                    "condition_identity",
+                    "expected_root_count",
+                    "observed_root_count",
+                    "terminal_root_count",
+                    "status",
+                    "terminal",
+                    "current_ref",
+                    "generation_manifest_ref",
+                    "run_manifest_ref",
+                    "paper_eligible",
+                    "ineligibility_reasons",
+                ):
+                    if condition.get(field_name) != base.get(field_name):
+                        raise ValueError(
+                            f"condition manifest v2 {field_name} mismatch"
+                        )
+                if entry.get("reachable_size_bytes") != reachable_size:
+                    raise ValueError("condition inventory reachable size mismatch")
+                continue
+            chain = validate_v3_delta_chain(
+                run_root,
+                descriptor,
+                expected_root_count=expected_count,
+            )
+            root_deltas = [
+                item for item in chain if item.delta_role == "root_outcome"
+            ]
+            tail_deltas = [
+                item
+                for item in chain
+                if item.delta_role == "condition_tail_events"
+            ]
+            terminal_count = 0
+            reachable_size = 0
+            payload_paths: set[Path] = set()
+            commit_digest: str | None = None
+            for generation in chain:
+                body = _read_json(
+                    generation.generation_root / "generation_manifest.json"
+                )
+                reachable_size += (
+                    generation.generation_root / "generation_manifest.json"
+                ).stat().st_size
+                reachable_size += sum(
+                    int(file_entry["size"])
+                    for file_entry in body["files"]
+                    if isinstance(file_entry, Mapping)
+                )
+                commit_digest = _digest_json(
+                    {
+                        "prior_commit_chain_digest": commit_digest,
+                        "generation_id": generation.generation_id,
+                        "generation_manifest_digest": generation.manifest_digest,
+                    }
+                )
+                if generation.delta_role != "root_outcome":
+                    continue
+                tasks = _read_jsonl(
+                    generation.generation_root / "per_task_results.jsonl"
+                )
+                terminal_count += sum(
+                    _is_terminal_checkpoint(task) for task in tasks
+                )
+                artifacts = _read_jsonl(
+                    generation.generation_root
+                    / "artifacts"
+                    / "artifact_index.jsonl"
+                )
+                for artifact in artifacts:
+                    task_id = _safe_id(artifact.get("task_id"), "task_id")
+                    self._validate_artifact_refs(
+                        [artifact],
+                        experiment_id=experiment_id,
+                        condition_id=condition_id,
+                        repeat_id=repeat_id,
+                        task_id=task_id,
+                        run_root=run_root,
+                    )
+                    payload_paths.add(
+                        (self.output_root / str(artifact["path"])).resolve(
+                            strict=False
+                        )
+                    )
+            reachable_size += sum(path.stat().st_size for path in payload_paths)
+            expected_fields = {
+                "head_generation_kind": "delta",
+                "chain_generation_count": len(chain),
+                "root_delta_count": len(root_deltas),
+                "condition_event_delta_count": len(tail_deltas),
+                "logical_task_count": len(root_deltas),
+                "observed_root_count": len(root_deltas),
+                "terminal_root_count": terminal_count,
+                "reachable_size_bytes": reachable_size,
+                "commit_chain_digest": commit_digest,
+                "logical_records_digest": None,
+                "terminal": False,
+                "status": "running",
+            }
+            for field_name, expected_value in expected_fields.items():
+                if condition.get(field_name) != expected_value:
+                    raise ValueError(
+                        f"condition manifest v2 {field_name} mismatch"
+                    )
+            if entry.get("reachable_size_bytes") != reachable_size:
+                raise ValueError("condition inventory reachable size mismatch")
 
     def _validate_run(
         self,
@@ -1553,7 +3933,124 @@ class FormalEvidenceStore:
     ) -> list[dict[str, Any]]:
         generation_root = self._current_generation_root(run_root, required=True)
         assert generation_root is not None
-        run_manifest = _read_json(generation_root / "run_manifest.json")
+        generation_manifest = _read_json(
+            generation_root / "generation_manifest.json"
+        )
+        is_v3 = generation_manifest.get("schema_version") == V3_GENERATION_SCHEMA
+        if is_v3:
+            condition_manifest = _read_json(run_root / "condition_manifest.json")
+            _require_exact_keys(
+                condition_manifest,
+                _CONDITION_MANIFEST_V2_KEYS,
+                "condition manifest v2",
+            )
+            expected_count = int(condition_manifest["expected_root_count"])
+            head = validate_v3_generation_manifest(
+                generation_root,
+                generation_manifest,
+                expected_experiment_id=experiment_id,
+                expected_condition_id=run_root.parent.name,
+            )
+            if head.generation_kind == "snapshot":
+                run_manifest = _read_json(
+                    generation_root / "run_manifest.json"
+                )
+                tasks = _read_jsonl(
+                    generation_root / "per_task_results.jsonl"
+                )
+                attempts = _read_jsonl(
+                    generation_root / "per_attempt_results.jsonl"
+                )
+                faults = _read_jsonl(
+                    generation_root / "fault_injections.jsonl"
+                )
+                events = _read_jsonl(
+                    generation_root / "events" / "event_log.jsonl"
+                )
+                artifacts = _read_jsonl(
+                    generation_root / "artifacts" / "artifact_index.jsonl"
+                )
+            else:
+                chain = validate_v3_delta_chain(
+                    run_root,
+                    head,
+                    expected_root_count=expected_count,
+                )
+                roots = sorted(
+                    (
+                        item for item in chain if item.delta_role == "root_outcome"
+                    ),
+                    key=lambda item: int(item.selection_ordinal),
+                )
+                tails = [
+                    item
+                    for item in chain
+                    if item.delta_role == "condition_tail_events"
+                ]
+                tasks = [
+                    record
+                    for item in roots
+                    for record in _read_jsonl(
+                        item.generation_root / "per_task_results.jsonl"
+                    )
+                ]
+                attempts = [
+                    record
+                    for item in roots
+                    for record in _read_jsonl(
+                        item.generation_root / "per_attempt_results.jsonl"
+                    )
+                ]
+                faults = [
+                    record
+                    for item in roots
+                    for record in _read_jsonl(
+                        item.generation_root / "fault_injections.jsonl"
+                    )
+                ]
+                artifacts = [
+                    record
+                    for item in roots
+                    for record in _read_jsonl(
+                        item.generation_root
+                        / "artifacts"
+                        / "artifact_index.jsonl"
+                    )
+                ]
+                events = [
+                    record
+                    for item in [*roots, *tails]
+                    for record in _read_jsonl(
+                        item.generation_root / "events" / "event_log.jsonl"
+                    )
+                ]
+                repeat_id = head.repeat_id
+                run_manifest = {
+                    "schema_version": "tokenshare.paper_run_evidence.v1",
+                    "generation_id": generation_root.name,
+                    "experiment_id": experiment_id,
+                    "condition_id": run_root.parent.name,
+                    "repeat_id": repeat_id,
+                    "task_ids": [str(item["task_id"]) for item in tasks],
+                    "completed_task_ids": [
+                        str(item["task_id"])
+                        for item in tasks
+                        if _is_success(item)
+                    ],
+                    "status": _derived_run_status(
+                        tasks,
+                        expected_task_count=expected_count,
+                    ),
+                }
+        else:
+            run_manifest = _read_json(generation_root / "run_manifest.json")
+            tasks = _read_jsonl(generation_root / "per_task_results.jsonl")
+            attempts = _read_jsonl(generation_root / "per_attempt_results.jsonl")
+            events = _read_jsonl(generation_root / "events" / "event_log.jsonl")
+            faults = _read_jsonl(generation_root / "fault_injections.jsonl")
+            artifacts = _read_jsonl(
+                generation_root / "artifacts" / "artifact_index.jsonl"
+            )
         _require_exact_keys(run_manifest, _RUN_MANIFEST_KEYS, "run manifest")
         if (
             run_manifest.get("schema_version")
@@ -1583,13 +4080,6 @@ class FormalEvidenceStore:
             raise ValueError("run manifest repeat identity mismatch")
         if run_manifest.get("generation_id") != generation_root.name:
             raise ValueError("run manifest generation identity mismatch")
-        tasks = _read_jsonl(generation_root / "per_task_results.jsonl")
-        attempts = _read_jsonl(generation_root / "per_attempt_results.jsonl")
-        events = _read_jsonl(generation_root / "events" / "event_log.jsonl")
-        faults = _read_jsonl(generation_root / "fault_injections.jsonl")
-        artifacts = _read_jsonl(
-            generation_root / "artifacts" / "artifact_index.jsonl"
-        )
         if tasks and not attempts:
             raise ValueError("attempt evidence is missing")
         if tasks and not events:
@@ -1604,6 +4094,8 @@ class FormalEvidenceStore:
             ("fault", faults),
         ):
             for record in records:
+                if label == "event" and _is_protocol_ledger_event(record):
+                    continue
                 task_id = _safe_id(record.get("task_id"), "task_id")
                 _validate_context(
                     record,
@@ -1617,6 +4109,7 @@ class FormalEvidenceStore:
                     raise ValueError(f"{label} evidence references an unknown task")
                 if label == "fault" and str(task_id) not in task_ids:
                     raise ValueError("fault evidence references an unknown task")
+        _validate_stored_protocol_event_ledgers(tasks=tasks, events=events)
         expected_task_ids = [str(item["task_id"]) for item in tasks]
         expected_completed_ids = [
             str(item["task_id"]) for item in tasks if _is_success(item)
@@ -1652,7 +4145,126 @@ class FormalEvidenceStore:
                 task_id=artifact_task_id,
                 run_root=run_root,
             )
+        self._validate_reachable_artifact_closure(
+            records=[*tasks, *attempts, *faults, *events],
+            artifacts=artifacts,
+        )
+        if (
+            generation_manifest.get("schema_version")
+            == "tokenshare.paper_checkpoint_generation.v2"
+        ):
+            condition_path = run_root / "condition_manifest.json"
+            if not condition_path.is_file():
+                raise ValueError("condition manifest is missing")
+            condition_manifest = _read_json(condition_path)
+            _require_exact_keys(
+                condition_manifest,
+                _CONDITION_MANIFEST_KEYS,
+                "condition manifest",
+            )
+            expected_condition_manifest = self._condition_manifest_body(
+                run_root=run_root,
+                generation_root=generation_root,
+            )
+            if _canonical_bytes(condition_manifest) != _canonical_bytes(
+                expected_condition_manifest
+            ):
+                raise ValueError("condition manifest evidence mismatch")
         return tasks
+
+    def load_logical_run_records(
+        self,
+        *,
+        experiment_id: str,
+        condition_id: str,
+        repeat_id: int | str,
+    ) -> dict[str, Any]:
+        """读取已验证 run 的逻辑全量记录，统一覆盖历史 full generation、v3 chain 与 snapshot。"""
+
+        experiment_id = _safe_id(experiment_id, "experiment_id")
+        condition_id = _safe_id(condition_id, "condition_id")
+        if isinstance(repeat_id, bool) or not isinstance(repeat_id, (int, str)):
+            raise ValueError("repeat_id type is invalid")
+        run_root = (
+            self.output_root
+            / "experiments"
+            / experiment_id
+            / "runs"
+            / condition_id
+            / str(repeat_id)
+        )
+        tasks = self._validate_run(run_root, experiment_id=experiment_id)
+        generation_root = self._current_generation_root(run_root, required=True)
+        assert generation_root is not None
+        generation_manifest = _read_json(
+            generation_root / "generation_manifest.json"
+        )
+        is_v3 = generation_manifest.get("schema_version") == V3_GENERATION_SCHEMA
+        source_generations: list[Path]
+        if not is_v3:
+            source_generations = [generation_root]
+        else:
+            condition_manifest = _read_json(run_root / "condition_manifest.json")
+            expected_count = int(condition_manifest["expected_root_count"])
+            head = validate_v3_generation_manifest(
+                generation_root,
+                generation_manifest,
+                expected_experiment_id=experiment_id,
+                expected_condition_id=condition_id,
+                expected_repeat_id=repeat_id,
+            )
+            if head.generation_kind == "snapshot":
+                source_generations = [generation_root]
+            else:
+                chain = validate_v3_delta_chain(
+                    run_root,
+                    head,
+                    expected_root_count=expected_count,
+                )
+                roots = sorted(
+                    (
+                        descriptor
+                        for descriptor in chain
+                        if descriptor.delta_role == "root_outcome"
+                    ),
+                    key=lambda descriptor: int(descriptor.selection_ordinal),
+                )
+                tails = [
+                    descriptor
+                    for descriptor in chain
+                    if descriptor.delta_role == "condition_tail_events"
+                ]
+                source_generations = [
+                    descriptor.generation_root for descriptor in [*roots, *tails]
+                ]
+
+        def records(relative_path: str, *, include_tail: bool = False) -> list[dict[str, Any]]:
+            sources = source_generations
+            if is_v3 and len(source_generations) > 1 and not include_tail:
+                sources = [
+                    source
+                    for source in source_generations
+                    if _read_json(source / "generation_manifest.json").get(
+                        "delta_role"
+                    )
+                    == "root_outcome"
+                ]
+            return [
+                record
+                for source in sources
+                for record in _read_jsonl(source / relative_path)
+            ]
+
+        if len(source_generations) == 1:
+            tasks = records("per_task_results.jsonl")
+        return {
+            "tasks": tasks,
+            "attempts": records("per_attempt_results.jsonl"),
+            "faults": records("fault_injections.jsonl"),
+            "events": records("events/event_log.jsonl", include_tail=True),
+            "artifacts": records("artifacts/artifact_index.jsonl"),
+            "source_generation_roots": tuple(source_generations),
+        }
 
 
 def _frozen_identity_body(
@@ -1828,6 +4440,126 @@ def _validate_context(
             raise ValueError(f"{label} evidence crosses experiment/run identity")
 
 
+def _is_protocol_ledger_event(record: Mapping[str, Any]) -> bool:
+    return record.get("schema_version") in {"LedgerEvent.v1", "LedgerEvent.v2"}
+
+
+def _protocol_event_ledger_metadata(
+    *,
+    case_task_id: str,
+    events: Sequence[Mapping[str, Any]],
+) -> dict[str, Any]:
+    _validate_protocol_event_hash_chain(events)
+    event_hashes = [str(event["event_hash"]) for event in events]
+    protocol_task_ids = list(
+        dict.fromkeys(
+            str(event["task_id"])
+            for event in events
+            if isinstance(event.get("task_id"), str) and event.get("task_id")
+        )
+    )
+    return {
+        "schema_version": "tokenshare.protocol_event_ledger_mapping.v1",
+        "case_task_id": case_task_id,
+        "protocol_task_ids": protocol_task_ids,
+        "event_count": len(events),
+        "event_hashes": event_hashes,
+        "first_event_hash": event_hashes[0],
+        "last_event_hash": event_hashes[-1],
+    }
+
+
+def _validate_protocol_event_hash_chain(
+    events: Sequence[Mapping[str, Any]],
+) -> None:
+    if not events:
+        raise ValueError("protocol event hash chain is empty")
+    previous_hash: str | None = None
+    for expected_seq, event in enumerate(events, start=1):
+        schema_version = event.get("schema_version")
+        expected_keys = (
+            _LEDGER_EVENT_V2_KEYS
+            if schema_version == "LedgerEvent.v2"
+            else _LEDGER_EVENT_V1_KEYS
+            if schema_version == "LedgerEvent.v1"
+            else None
+        )
+        if expected_keys is None or set(event) != expected_keys:
+            raise ValueError("protocol event hash chain envelope is invalid")
+        if event.get("event_seq") != expected_seq:
+            raise ValueError("protocol event hash chain sequence is invalid")
+        if event.get("prev_event_hash") != previous_hash:
+            raise ValueError("protocol event hash chain predecessor is invalid")
+        event_hash = event.get("event_hash")
+        hash_input = {key: value for key, value in event.items() if key != "event_hash"}
+        if (
+            not isinstance(event_hash, str)
+            or event_hash
+            != "sha256:" + hashlib.sha256(_canonical_bytes(hash_input)).hexdigest()
+        ):
+            raise ValueError("protocol event hash chain content hash is invalid")
+        previous_hash = event_hash
+
+
+def _event_belongs_to_task(
+    event: Mapping[str, Any],
+    task: Mapping[str, Any],
+) -> bool:
+    mapping = task.get("protocol_event_ledger")
+    if _is_protocol_ledger_event(event) and isinstance(mapping, Mapping):
+        event_hashes = mapping.get("event_hashes")
+        return (
+            isinstance(event_hashes, list)
+            and event.get("event_hash") in event_hashes
+        )
+    return event.get("task_id") == task.get("task_id")
+
+
+def _validate_stored_protocol_event_ledgers(
+    *,
+    tasks: Sequence[Mapping[str, Any]],
+    events: Sequence[Mapping[str, Any]],
+) -> None:
+    protocol_events = [
+        event for event in events if _is_protocol_ledger_event(event)
+    ]
+    if not protocol_events:
+        return
+    events_by_hash: dict[str, Mapping[str, Any]] = {}
+    for event in protocol_events:
+        event_hash = event.get("event_hash")
+        if not isinstance(event_hash, str) or event_hash in events_by_hash:
+            raise ValueError("protocol event ledger event hash inventory is invalid")
+        events_by_hash[event_hash] = event
+    accounted_hashes: set[str] = set()
+    for task in tasks:
+        mapping = task.get("protocol_event_ledger")
+        if not isinstance(mapping, Mapping):
+            continue
+        event_hashes = mapping.get("event_hashes")
+        if (
+            not isinstance(event_hashes, list)
+            or not event_hashes
+            or any(not isinstance(value, str) for value in event_hashes)
+        ):
+            raise ValueError("protocol event ledger mapping is invalid")
+        if any(value in accounted_hashes for value in event_hashes):
+            raise ValueError("protocol event ledger mapping overlaps another task")
+        try:
+            task_events = [events_by_hash[value] for value in event_hashes]
+        except KeyError as error:
+            raise ValueError("protocol event ledger mapping references missing event") from error
+        expected_mapping = _protocol_event_ledger_metadata(
+            case_task_id=str(task.get("task_id")),
+            events=task_events,
+        )
+        if _canonical_bytes(mapping) != _canonical_bytes(expected_mapping):
+            raise ValueError("protocol event ledger mapping does not match events")
+        accounted_hashes.update(event_hashes)
+    if accounted_hashes != set(events_by_hash):
+        raise ValueError("protocol event ledger contains unmapped events")
+
+
 def _merge_records(
     existing: Sequence[dict[str, Any]],
     incoming: Sequence[dict[str, Any]],
@@ -1854,6 +4586,47 @@ def _merge_records(
             positions[text] = len(merged)
             merged.append(record)
     return merged
+
+
+def _merge_event_records(
+    existing: Sequence[dict[str, Any]],
+    incoming: Sequence[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    merged = list(existing)
+    positions = {
+        _event_merge_identity(record): index
+        for index, record in enumerate(merged)
+    }
+    for record in incoming:
+        identity = _event_merge_identity(record)
+        if identity in positions:
+            if _canonical_bytes(merged[positions[identity]]) != _canonical_bytes(
+                record
+            ):
+                raise ValueError("conflicting checkpoint event evidence")
+            continue
+        positions[identity] = len(merged)
+        merged.append(record)
+    return merged
+
+
+def _event_merge_identity(record: Mapping[str, Any]) -> tuple[str, ...]:
+    if _is_protocol_ledger_event(record):
+        event_hash = record.get("event_hash")
+        if not isinstance(event_hash, str) or not event_hash:
+            raise ValueError("protocol event hash chain event_hash is missing")
+        return ("protocol", event_hash)
+    event_id = record.get("event_id")
+    if not isinstance(event_id, str) or not event_id:
+        raise ValueError("experiment event_id is missing")
+    return (
+        "experiment",
+        str(record.get("experiment_id")),
+        str(record.get("condition_id")),
+        str(record.get("repeat_id")),
+        str(record.get("task_id")),
+        event_id,
+    )
 
 
 def _is_success(task: Mapping[str, Any]) -> bool:
@@ -2156,8 +4929,90 @@ def _digest_json(value: Any) -> str:
     return _digest_bytes(_canonical_bytes(value))
 
 
+def _logical_records_digest(generation_manifest: Mapping[str, Any]) -> str:
+    files = generation_manifest.get("files")
+    if not isinstance(files, list):
+        raise ValueError("snapshot generation files inventory is invalid")
+    return _digest_json(
+        [
+            {
+                "path": entry["path"],
+                "record_count": entry["record_count"],
+                "records_digest": entry["records_digest"],
+            }
+            for entry in files
+            if isinstance(entry, Mapping)
+        ]
+    )
+
+
 def _digest_bytes(value: bytes) -> str:
     return "sha256:" + hashlib.sha256(value).hexdigest()
+
+
+def _nested_source_artifact_refs(value: Any) -> list[Mapping[str, Any]]:
+    result: list[Mapping[str, Any]] = []
+    if isinstance(value, Mapping):
+        if value.get("schema_version") == "ArtifactRef.v1":
+            result.append(value)
+        for child in value.values():
+            result.extend(_nested_source_artifact_refs(child))
+    elif isinstance(value, Sequence) and not isinstance(
+        value,
+        (str, bytes, bytearray),
+    ):
+        for child in value:
+            result.extend(_nested_source_artifact_refs(child))
+    return result
+
+
+def _source_artifact_identity(
+    ref: Mapping[str, Any],
+) -> tuple[str, str, str]:
+    artifact_id = ref.get("artifact_id")
+    content_hash = ref.get("content_hash")
+    if isinstance(artifact_id, str) and artifact_id:
+        return ("artifact_id", artifact_id, str(content_hash))
+    return ("uri", str(ref.get("uri")), str(content_hash))
+
+
+def _validate_complete_source_artifact_ref(ref: Mapping[str, Any]) -> None:
+    if ref.get("schema_version") != "ArtifactRef.v1":
+        raise ValueError("reachable artifact closure requires ArtifactRef.v1")
+    for field_name in (
+        "artifact_id",
+        "artifact_type",
+        "uri",
+        "content_hash",
+        "media_type",
+        "artifact_schema_id",
+        "artifact_schema_version",
+        "created_at",
+    ):
+        value = ref.get(field_name)
+        if not isinstance(value, str) or not value:
+            raise ValueError(
+                f"reachable artifact closure requires source {field_name}"
+            )
+    size_bytes = ref.get("size_bytes")
+    if (
+        isinstance(size_bytes, bool)
+        or not isinstance(size_bytes, int)
+        or size_bytes < 0
+    ):
+        raise ValueError("reachable artifact closure requires source size_bytes")
+    for field_name in ("source", "metadata"):
+        if not isinstance(ref.get(field_name), Mapping):
+            raise ValueError(
+                f"reachable artifact closure requires source {field_name} mapping"
+            )
+
+
+def _declares_json_media_type(value: Any) -> bool:
+    if not isinstance(value, str):
+        return False
+    normalized = value.split(";", maxsplit=1)[0].strip().lower()
+    return normalized == "application/json" or normalized.endswith("+json")
 
 
 def _safe_id(value: Any, field_name: str) -> str:
@@ -2172,6 +5027,15 @@ def _is_relative_to(path: Path, root: Path) -> bool:
     except ValueError:
         return False
     return True
+
+
+def _is_adapter_compatibility_path(root: Path, relative_path: str) -> bool:
+    """plan-root working/compatibility tree 不属于 canonical evidence 闭包。"""
+
+    parts = Path(relative_path).parts
+    if not parts or parts[0] in {"experiments", "repairs"}:
+        return False
+    return (root / "experiments" / parts[0]).is_dir()
 
 
 def _lock_for_root(root: Path) -> threading.RLock:

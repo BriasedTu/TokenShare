@@ -20,6 +20,13 @@ from tokenshare.experiments.paper_catalog import PaperInputCatalogManifest
 from tokenshare.experiments.paper_factorization_catalog import (
     CATALOG_GENERATOR_VERSION as FACTORIZATION_V2_GENERATOR_VERSION,
 )
+from tokenshare.experiments.paper_factorization_sampling import (
+    FACTORIZATION_SAMPLING_PROFILE_SCHEMA_VERSION,
+    load_factorization_sampling_profile,
+)
+from tokenshare.experiments.paper_suite_scale import (
+    load_paper_suite_scale_profile,
+)
 from tokenshare.experiments.paper_experiment_contracts import (
     ExperimentSummaryRows,
     FrozenCaseSelection,
@@ -61,6 +68,138 @@ EXPERIMENT_IDS = (
 
 def test_gate_c_shared_dispatcher_module_exists() -> None:
     assert find_spec("tokenshare.experiments.paper_dispatcher") is not None
+
+
+def test_factor150_selection_is_seeded_order_independent_and_not_catalog_prefix() -> None:
+    profile = _tracked_factor_sampling_profile()
+    cases = tuple(
+        {"case_id": f"factor_v2_easy_{index:03d}"}
+        for index in range(167)
+    )
+
+    selected = profile.select_cases_by_difficulty({"easy": cases, "medium": cases, "hard": cases})["easy"]
+    selected_from_reversed = profile.select_cases_by_difficulty(
+        {"easy": tuple(reversed(cases)), "medium": cases, "hard": cases}
+    )["easy"]
+
+    assert profile.seed == 315_150
+    assert len(selected) == 50
+    assert tuple(case["case_id"] for case in selected) == tuple(
+        case["case_id"] for case in selected_from_reversed
+    )
+    assert tuple(case["case_id"] for case in selected) != tuple(
+        case["case_id"] for case in cases[:50]
+    )
+    assert set(case["case_id"] for case in selected[:30]).issubset(
+        case["case_id"] for case in selected
+    )
+
+
+def test_exp3_exp4_catalog_views_share_one_frozen_factor150_profile() -> None:
+    catalog = _frozen_formal_catalog_v2()
+    readiness = json.loads(
+        Path("benchmarks/paper/lean_task14_3x3_readiness.v1.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    bound = paper_runner._bind_lean_matrix_to_catalog(
+        readiness,
+        catalog_manifest=catalog,
+    )
+    formal_catalog = paper_runner._FormalPaperCatalogView(
+        manifest=catalog,
+        task15_budget_input=bound["task15_budget_input"],
+        lean_task14_readiness=bound,
+        factorization_sampling_profile=_tracked_factor_sampling_profile(),
+    )
+
+    exp3 = paper_runner._exp3_catalog_view(formal_catalog)
+    exp4 = paper_runner._exp4_catalog_view(formal_catalog)
+
+    assert exp3["factorization_selection_policy"] == exp4[
+        "factorization_selection_policy"
+    ]
+    policy = exp3["factorization_selection_policy"]
+    assert policy["schema_version"] == (
+        "tokenshare.paper_factorization_stratified_selection.v2"
+    )
+    binding = policy["profile_binding"]
+    assert binding["profile_body"]["profile_id"] == (
+        "factorization_150_stable_hash.v2"
+    )
+    assert binding["profile_body"]["selection_rule"]["seed"] == 315_150
+    assert binding["profile_source_path"] == (
+        "benchmarks/paper/paper_factorization_sampling_profile.v1.json"
+    )
+    assert binding["profile_source_digest"].startswith("sha256:")
+    assert policy["case_count_by_difficulty"] == {
+        "easy": 50,
+        "medium": 50,
+        "hard": 50,
+    }
+    assert policy["selection_digest"].startswith("sha256:")
+
+    exp3_rate = tuple(exp3["exp3_rate_fault_factorization_case_ids"])
+    exp3_death = exp3[
+        "exp3_worker_death_factorization_case_ids_by_difficulty"
+    ]
+    exp4_slices = exp4["factorization_slices"]
+    assert exp3_rate == tuple(
+        case_id
+        for difficulty in ("easy", "medium", "hard")
+        for case_id in exp3_death[difficulty]
+    )
+    for difficulty in ("easy", "medium", "hard"):
+        exp4_ids = tuple(case["case_id"] for case in exp4_slices[difficulty])
+        assert exp4_ids == tuple(exp3_death[difficulty])
+
+    repeat_exp3 = paper_runner._exp3_catalog_view(formal_catalog)
+    assert repeat_exp3["factorization_selection_policy"] == policy
+
+
+def test_exp3_exp4_v2_plans_derive_root_counts_from_sampling_profile(
+    tmp_path: Path,
+) -> None:
+    catalog = _frozen_formal_catalog_v2()
+    readiness = json.loads(
+        Path("benchmarks/paper/lean_task14_3x3_readiness.v1.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    pilot_profile = load_exp1_pilot_profile(
+        "benchmarks/paper/exp1_minimal_pilot_profile.v3.json"
+    )
+    sampling_profile_path = tmp_path / "factor-sampling-90.json"
+    sampling_profile_path.write_text(
+        json.dumps(_factor_sampling_profile_payload(cases_per_difficulty=30)),
+        encoding="utf-8",
+    )
+    sampling_profile = load_factorization_sampling_profile(sampling_profile_path)
+
+    plans = build_gate_c_dispatch_plans(
+        catalog_manifest=catalog,
+        lean_3x3_matrix=readiness,
+        experiment_ids=(
+            "exp3_real_ai_fault_recovery",
+            "exp4_real_ai_protocol_ablation",
+        ),
+        baseline_endpoint_binding=_baseline_binding(pilot_profile),
+        model_endpoint_cohort_preflight=None,
+        factorization_sampling_profile=sampling_profile,
+        output_root=tmp_path,
+    )
+
+    assert [
+        sum(len(selection.ordered_case_ids) for selection in plan.selections)
+        for plan in plans
+    ] == [6_606, 1_575]
+    assert {
+        len(selection.ordered_case_ids)
+        for plan in plans
+        for condition, selection in plan.bound_items()
+        if condition.domain == "factorization"
+        and condition.paper_difficulty in {"easy", "medium", "hard"}
+    } == {30, 90}
 
 
 def test_gate_c_dispatcher_registers_all_modules_through_protocol() -> None:
@@ -113,6 +252,8 @@ def test_gate_c_plans_all_real_modules_from_frozen_formal_catalog(tmp_path) -> N
         experiment_ids=EXPERIMENT_IDS,
         baseline_endpoint_binding=baseline_binding,
         model_endpoint_cohort_preflight={"status": "blocked"},
+        factorization_sampling_profile=_tracked_factor_sampling_profile(),
+        paper_suite_scale_profile=_tracked_suite_scale_profile(),
         output_root=tmp_path,
     )
 
@@ -121,7 +262,7 @@ def test_gate_c_plans_all_real_modules_from_frozen_formal_catalog(tmp_path) -> N
     assert [
         sum(len(selection.ordered_case_ids) for selection in plan.selections)
         for plan in plans
-    ] == [635, 1_992, 36_126, 7_725, 0]
+    ] == [435, 600, 3_726, 975, 0]
     assert all(plan.provider_calls_made == 0 for plan in plans)
     assert [plan.status for plan in plans] == [
         "planned",
@@ -164,6 +305,7 @@ def test_gate_c_v2_plans_freeze_current_p0_matrix_and_budget_identity(
         experiment_ids=EXPERIMENT_IDS,
         baseline_endpoint_binding=_baseline_binding(profile),
         model_endpoint_cohort_preflight=cohort_preflight,
+        factorization_sampling_profile=_tracked_factor_sampling_profile(),
         output_root=tmp_path,
     )
 
@@ -171,30 +313,49 @@ def test_gate_c_v2_plans_freeze_current_p0_matrix_and_budget_identity(
         sum(len(selection.ordered_case_ids) for selection in plan.selections)
         for plan in plans
     ]
-    assert root_runs == [635, 1_992, 36_126, 7_725, 1_899]
-    assert sum(root_runs[:4]) == 46_478
-    assert sum(root_runs) == 48_377
+    assert root_runs == [635, 1_992, 10_926, 2_475, 1_899]
+    assert sum(root_runs[:4]) == 16_028
+    assert sum(root_runs) == 17_927
 
     all_factor_ids = {
         str(case["case_id"]) for case in catalog.factorization_cases
     }
-    expected_sizes = {"easy": 167, "medium": 167, "hard": 166}
-    for plan in (plans[0], plans[3]):
-        grouped: dict[str, set[tuple[str, ...]]] = {}
-        for condition, selection in plan.bound_items():
-            if condition.domain != "factorization":
-                continue
-            grouped.setdefault(str(condition.paper_difficulty), set()).add(
+    full_sizes = {"easy": 167, "medium": 167, "hard": 166}
+    exp1_grouped: dict[str, set[tuple[str, ...]]] = {}
+    for condition, selection in plans[0].bound_items():
+        if condition.domain == "factorization":
+            exp1_grouped.setdefault(str(condition.paper_difficulty), set()).add(
                 tuple(selection.ordered_case_ids)
             )
-        assert set(grouped) == set(expected_sizes)
-        assert all(len(selections) == 1 for selections in grouped.values())
-        selected_union: set[str] = set()
-        for difficulty, selections in grouped.items():
-            ordered_ids = next(iter(selections))
-            assert len(ordered_ids) == expected_sizes[difficulty]
-            selected_union.update(ordered_ids)
-        assert selected_union == all_factor_ids
+    assert set(exp1_grouped) == set(full_sizes)
+    assert all(len(selections) == 1 for selections in exp1_grouped.values())
+    assert {
+        case_id
+        for selections in exp1_grouped.values()
+        for case_id in next(iter(selections))
+    } == all_factor_ids
+
+    exp4_grouped: dict[str, set[tuple[str, ...]]] = {}
+    for condition, selection in plans[3].bound_items():
+        if condition.domain == "factorization":
+            exp4_grouped.setdefault(str(condition.paper_difficulty), set()).add(
+                tuple(selection.ordered_case_ids)
+            )
+    assert set(exp4_grouped) == {"easy", "medium", "hard"}
+    assert all(len(selections) == 1 for selections in exp4_grouped.values())
+    exp4_selected_union: set[str] = set()
+    for difficulty, selections in exp4_grouped.items():
+        ordered_ids = next(iter(selections))
+        catalog_order = tuple(
+            str(case["case_id"])
+            for case in catalog.factorization_cases
+            if case["difficulty"] == difficulty
+        )
+        assert len(ordered_ids) == 50
+        assert ordered_ids != catalog_order[:50]
+        exp4_selected_union.update(ordered_ids)
+    assert len(exp4_selected_union) == 150
+    assert exp4_selected_union < all_factor_ids
 
     hard_factor_ids = {
         str(case["case_id"])
@@ -217,7 +378,19 @@ def test_gate_c_v2_plans_freeze_current_p0_matrix_and_budget_identity(
         and condition.fault_type != "worker_death"
     }
     assert len(exp3_rate_selections) == 1
-    assert set(next(iter(exp3_rate_selections))) == all_factor_ids
+    assert set(next(iter(exp3_rate_selections))) == exp4_selected_union
+    assert all(
+        "profile" in selection.selection_id
+        and selection.selection_id.endswith("v2")
+        for condition, selection in plans[2].bound_items()
+        if condition.domain == "factorization"
+    )
+    assert all(
+        "profile" in selection.selection_id
+        and selection.selection_id.endswith("v2")
+        for condition, selection in plans[3].bound_items()
+        if condition.domain == "factorization"
+    )
 
     exp3_death_by_difficulty: dict[str, set[tuple[str, ...]]] = {}
     for condition, selection in plans[2].bound_items():
@@ -229,7 +402,7 @@ def test_gate_c_v2_plans_freeze_current_p0_matrix_and_budget_identity(
         exp3_death_by_difficulty.setdefault(
             str(condition.paper_difficulty), set()
         ).add(tuple(selection.ordered_case_ids))
-    assert set(exp3_death_by_difficulty) == set(expected_sizes)
+    assert set(exp3_death_by_difficulty) == {"easy", "medium", "hard"}
     assert all(
         len(selections) == 1
         for selections in exp3_death_by_difficulty.values()
@@ -237,9 +410,9 @@ def test_gate_c_v2_plans_freeze_current_p0_matrix_and_budget_identity(
     exp3_death_union: set[str] = set()
     for difficulty, selections in exp3_death_by_difficulty.items():
         ordered_ids = next(iter(selections))
-        assert len(ordered_ids) == expected_sizes[difficulty]
+        assert len(ordered_ids) == 50
         exp3_death_union.update(ordered_ids)
-    assert exp3_death_union == all_factor_ids
+    assert exp3_death_union == exp4_selected_union
 
     conditions = tuple(
         condition for plan in plans for condition in plan.conditions
@@ -269,34 +442,34 @@ def test_gate_c_v2_plans_freeze_current_p0_matrix_and_budget_identity(
     assert identity["headline_root_runs_by_experiment"] == {
         "exp1_real_ai_feasibility": 635,
         "exp2_real_ai_scalability": 1_992,
-        "exp3_real_ai_fault_recovery": 36_126,
-        "exp4_real_ai_protocol_ablation": 7_725,
+        "exp3_real_ai_fault_recovery": 10_926,
+        "exp4_real_ai_protocol_ablation": 2_475,
         "exp5_real_ai_model_endpoint_comparison": 1_899,
     }
     assert identity["supporting_baseline_root_runs_by_experiment"] == {}
     assert identity["actual_scheduled_root_runs_by_experiment"] == {
         "exp1_real_ai_feasibility": 635,
         "exp2_real_ai_scalability": 1_992,
-        "exp3_real_ai_fault_recovery": 36_126,
-        "exp4_real_ai_protocol_ablation": 7_725,
+        "exp3_real_ai_fault_recovery": 10_926,
+        "exp4_real_ai_protocol_ablation": 2_475,
         "exp5_real_ai_model_endpoint_comparison": 1_899,
     }
     assert identity["planned_first_attempt_ai_units_by_experiment"] == {
         "exp1_real_ai_feasibility": 2_900,
         "exp2_real_ai_scalability": 39_840,
-        "exp3_real_ai_fault_recovery": 168_348,
-        "exp4_real_ai_protocol_ablation": 35_910,
+        "exp3_real_ai_fault_recovery": 50_988,
+        "exp4_real_ai_protocol_ablation": 11_460,
         "exp5_real_ai_model_endpoint_comparison": 14_652,
     }
-    assert identity["headline_p0_core_root_runs"] == 46_478
-    assert identity["headline_p0_full_root_runs"] == 48_377
-    assert identity["actual_p0_core_root_runs"] == 46_478
-    assert identity["actual_p0_full_root_runs"] == 48_377
+    assert identity["headline_p0_core_root_runs"] == 16_028
+    assert identity["headline_p0_full_root_runs"] == 17_927
+    assert identity["actual_p0_core_root_runs"] == 16_028
+    assert identity["actual_p0_full_root_runs"] == 17_927
     assert identity["exp2_no_early_stop_ai_unit_upper_bound"] == 39_840
     assert identity["exp4_replacement_reserve"] > 0
     assert identity["exp3_replacement_reserve"] > 0
-    assert budget.planned_root_runs == 48_377
-    assert budget.planned_ai_units == 261_650
+    assert budget.planned_root_runs == 17_927
+    assert budget.planned_ai_units == 119_840
     assert budget.max_provider_attempts == (
         budget.planned_ai_units
         + identity["exp3_replacement_reserve"]
@@ -487,6 +660,7 @@ def test_gate_c_pilot_executes_registered_module_and_replays_without_transport(
         experiment_ids=("exp2_real_ai_scalability",),
         baseline_endpoint_binding=binding,
         model_endpoint_cohort_preflight=None,
+        factorization_sampling_profile=_tracked_factor_sampling_profile(),
         output_root=tmp_path / "plan",
     )[0]
     frozen = [
@@ -552,6 +726,7 @@ def test_gate_c_pilot_executes_registered_module_and_replays_without_transport(
         },
         transport=transport,
         real_transport=True,
+        factorization_sampling_profile=_tracked_factor_sampling_profile(),
     )
 
     assert result.experiment_id == "exp2_real_ai_scalability"
@@ -769,6 +944,7 @@ def test_gate_c_supported_registered_experiments_reach_real_mode_capture(
         experiment_ids=(experiment_id,),
         baseline_endpoint_binding=baseline_binding,
         model_endpoint_cohort_preflight=endpoint_preflight,
+        factorization_sampling_profile=_tracked_factor_sampling_profile(),
         output_root=tmp_path / "plans",
     )[0]
     condition, selection = _capturing_condition_and_selection(plan)
@@ -839,6 +1015,7 @@ def test_gate_c_supported_registered_experiments_reach_real_mode_capture(
         ai_api_configs=configs,
         transport=transport,
         real_transport=True,
+        factorization_sampling_profile=_tracked_factor_sampling_profile(),
     )
 
     assert result.experiment_id == experiment_id
@@ -882,6 +1059,7 @@ def test_gate_c_pilot_does_not_fabricate_removed_exp3_zero_rate_baseline(
         experiment_ids=("exp3_real_ai_fault_recovery",),
         baseline_endpoint_binding=_baseline_binding(profile),
         model_endpoint_cohort_preflight=None,
+        factorization_sampling_profile=_tracked_factor_sampling_profile(),
         output_root=tmp_path,
     )[0]
 
@@ -915,6 +1093,7 @@ def test_gate_c_exp2_excludes_lean_and_exp5_reuses_exp1_hard_lean_selection(
         ),
         baseline_endpoint_binding=_baseline_binding(profile),
         model_endpoint_cohort_preflight=cohort_preflight,
+        factorization_sampling_profile=_tracked_factor_sampling_profile(),
         output_root=tmp_path,
     )
 
@@ -969,6 +1148,7 @@ def test_gate_c_registered_exp1_reaches_lean_checker_and_merge(
         experiment_ids=("exp1_real_ai_feasibility",),
         baseline_endpoint_binding=binding,
         model_endpoint_cohort_preflight=None,
+        factorization_sampling_profile=_tracked_factor_sampling_profile(),
         output_root=tmp_path / "plan",
     )[0]
     condition, selection = next(
@@ -1014,6 +1194,7 @@ def test_gate_c_registered_exp1_reaches_lean_checker_and_merge(
         },
         transport=transport,
         real_transport=True,
+        factorization_sampling_profile=_tracked_factor_sampling_profile(),
     )
 
     assert result.status == "completed"
@@ -1053,6 +1234,7 @@ def test_formal_exp1_reuses_planning_catalog_view_when_crossing_to_lean(
         experiment_ids=("exp1_real_ai_feasibility",),
         baseline_endpoint_binding=binding,
         model_endpoint_cohort_preflight=None,
+        factorization_sampling_profile=_tracked_factor_sampling_profile(),
         output_root=tmp_path,
     )[0]
     factor_item = next(
@@ -1192,6 +1374,7 @@ def test_gate_c_exp5_openai_member_preserves_high_reasoning_controls(
         experiment_ids=("exp5_real_ai_model_endpoint_comparison",),
         baseline_endpoint_binding=binding,
         model_endpoint_cohort_preflight=cohort_preflight,
+        factorization_sampling_profile=_tracked_factor_sampling_profile(),
         output_root=tmp_path / "plan",
     )[0]
     condition, selection = next(
@@ -1266,6 +1449,7 @@ def test_gate_c_budget_selection_and_identity_drift_stop_before_transport(
         experiment_ids=("exp2_real_ai_scalability",),
         baseline_endpoint_binding=binding,
         model_endpoint_cohort_preflight=None,
+        factorization_sampling_profile=_tracked_factor_sampling_profile(),
         output_root=tmp_path / "plan",
     )[0]
     condition, selection = _capturing_condition_and_selection(plan)
@@ -1300,6 +1484,7 @@ def test_gate_c_budget_selection_and_identity_drift_stop_before_transport(
             ai_api_configs=configs,
             transport=wrong_digest_transport,
             real_transport=True,
+            factorization_sampling_profile=_tracked_factor_sampling_profile(),
         )
     assert wrong_digest_transport.calls == 0
 
@@ -1328,6 +1513,7 @@ def test_gate_c_budget_selection_and_identity_drift_stop_before_transport(
             ai_api_configs=configs,
             transport=selection_transport,
             real_transport=True,
+            factorization_sampling_profile=_tracked_factor_sampling_profile(),
         )
     assert selection_transport.calls == 0
 
@@ -1354,6 +1540,7 @@ def test_gate_c_budget_selection_and_identity_drift_stop_before_transport(
             },
             transport=identity_transport,
             real_transport=True,
+            factorization_sampling_profile=_tracked_factor_sampling_profile(),
         )
     assert identity_transport.calls == 0
 
@@ -1677,6 +1864,46 @@ def _context() -> PaperExecutionContext:
         artifact_store=object(),
         event_store=object(),
         execution_callback=lambda **_kwargs: None,
+    )
+
+
+def _factor_sampling_profile_payload(
+    *,
+    cases_per_difficulty: int,
+) -> dict[str, object]:
+    body: dict[str, object] = {
+        "schema_version": FACTORIZATION_SAMPLING_PROFILE_SCHEMA_VERSION,
+        "profile_id": "factorization_150_stable_hash.v2",
+        "approved_catalog_versions": ["v2"],
+        "experiment_ids": [
+            "exp3_real_ai_fault_recovery",
+            "exp4_real_ai_protocol_ablation",
+        ],
+        "selection_rule": {
+            "rule_id": "stable_hash_by_difficulty_not_catalog_prefix",
+            "score_schema_version": (
+                "tokenshare.paper_factorization_stratified_score.v2"
+            ),
+            "seed": 315150,
+        },
+        "difficulty_order": ["easy", "medium", "hard"],
+        "case_count_by_difficulty": {
+            difficulty: cases_per_difficulty
+            for difficulty in ("easy", "medium", "hard")
+        },
+    }
+    return body
+
+
+def _tracked_factor_sampling_profile():
+    return load_factorization_sampling_profile(
+        "benchmarks/paper/paper_factorization_sampling_profile.v1.json"
+    )
+
+
+def _tracked_suite_scale_profile():
+    return load_paper_suite_scale_profile(
+        "benchmarks/paper/paper_suite_scale_profile.v1.json"
     )
 
 
