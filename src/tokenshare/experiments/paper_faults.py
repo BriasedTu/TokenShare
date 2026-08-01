@@ -27,6 +27,8 @@ from tokenshare.local_runtime import (
     ParsedCandidateDirective,
     RawOutputContext,
     RawOutputDirective,
+    RuntimeHookObservationV1,
+    build_experiment_fault_injected_observation,
 )
 from tokenshare.storage.artifacts import ArtifactStore
 
@@ -240,15 +242,15 @@ class PaperFaultRuntimeHooks(NoOpRuntimeHooks):
         self._not_applicable_target_count = 0
         self._raw_context_by_attempt_id: dict[str, RawOutputContext] = {}
         self._records: list[JsonObject] = []
-        self._events: list[JsonObject] = []
+        self._events: list[RuntimeHookObservationV1] = []
 
     @property
     def records(self) -> tuple[JsonObject, ...]:
         return tuple(dict(record) for record in self._records)
 
     @property
-    def events(self) -> tuple[JsonObject, ...]:
-        return tuple(dict(event) for event in self._events)
+    def events(self) -> tuple[RuntimeHookObservationV1, ...]:
+        return tuple(self._events)
 
     @property
     def applicability_counts(self) -> JsonObject:
@@ -365,25 +367,24 @@ class PaperFaultRuntimeHooks(NoOpRuntimeHooks):
             created_at=context.submitted_at,
         )
         record["record_ref"] = runtime_record_ref.to_dict()
-        event = {
-            "event_type": "EXPERIMENT_FAULT_INJECTED",
-            "condition_id": self._condition_id,
-            "run_id": context.run_id,
-            "task_id": context.task_id,
-            "unit_id": context.unit_id,
-            "selected_target_ai_unit_id": selected_target_id,
-            "attempt_id": context.attempt_id,
-            "fault_type": self._fault_type.value,
-            "protocol_event_refs": [],
-            "artifact_refs": [
-                raw_ref.to_dict(),
-                provenance_ref.to_dict(),
-                usage_ref.to_dict(),
-                outcome.mutated_output_ref.to_dict(),
-                runtime_record_ref.to_dict(),
-            ],
-            "occurred_at": context.submitted_at,
-        }
+        event = build_experiment_fault_injected_observation(
+            condition_id=self._condition_id,
+            run_id=context.run_id,
+            task_id=context.task_id,
+            unit_id=context.unit_id,
+            selected_target_ai_unit_id=selected_target_id,
+            attempt_id=context.attempt_id,
+            fault_type=self._fault_type.value,
+            protocol_event_refs=(),
+            artifact_refs=(
+                raw_ref,
+                provenance_ref,
+                usage_ref,
+                outcome.mutated_output_ref,
+                runtime_record_ref,
+            ),
+            occurred_at=context.submitted_at,
+        )
         self._injected_unit_ids.add(selected_target_id)
         self._records.append(record)
         self._events.append(event)
@@ -574,25 +575,24 @@ class PaperFaultRuntimeHooks(NoOpRuntimeHooks):
             created_at=context.submitted_at,
         )
         record["record_ref"] = runtime_record_ref.to_dict()
-        event = {
-            "event_type": "EXPERIMENT_FAULT_INJECTED",
-            "condition_id": self._condition_id,
-            "run_id": context.run_id,
-            "task_id": context.task_id,
-            "unit_id": context.unit_id,
-            "selected_target_ai_unit_id": selected_target_id,
-            "attempt_id": context.attempt_id,
-            "fault_type": self._fault_type.value,
-            "protocol_event_refs": [],
-            "artifact_refs": [
-                raw_ref.to_dict(),
-                parsed_ref.to_dict(),
-                outcome.mutated_output_ref.to_dict(),
-                mutated_candidate_ref.to_dict(),
-                runtime_record_ref.to_dict(),
-            ],
-            "occurred_at": context.submitted_at,
-        }
+        event = build_experiment_fault_injected_observation(
+            condition_id=self._condition_id,
+            run_id=context.run_id,
+            task_id=context.task_id,
+            unit_id=context.unit_id,
+            selected_target_ai_unit_id=selected_target_id,
+            attempt_id=context.attempt_id,
+            fault_type=self._fault_type.value,
+            protocol_event_refs=(),
+            artifact_refs=(
+                raw_ref,
+                parsed_ref,
+                outcome.mutated_output_ref,
+                mutated_candidate_ref,
+                runtime_record_ref,
+            ),
+            occurred_at=context.submitted_at,
+        )
         self._injected_unit_ids.add(selected_target_id)
         self._active_target_ids.discard(selected_target_id)
         self._records.append(record)

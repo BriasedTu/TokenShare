@@ -3,6 +3,9 @@
 from tokenshare.local_runtime.contracts import (
     CanonicalUnitContext,
     CompleteAction,
+    ExperimentAblationGateAppliedPayloadV1,
+    ExperimentFaultInjectedPayloadV1,
+    ExperimentPrematureMergeAttemptedPayloadV1,
     ExpandAction,
     GateDirective,
     MergeAction,
@@ -25,12 +28,18 @@ from tokenshare.local_runtime.contracts import (
     RawOutputDirective,
     RecoveryContext,
     RootProtocolPlan,
+    RuntimeHookObservationKind,
+    RuntimeHookObservationPayloadV1,
+    RuntimeHookObservationV1,
     RuntimeHooks,
     UnitProgressContext,
     VerificationContext,
     WorkerBackend,
     WorkerDirective,
     WorkerTerminationPolicy,
+    build_experiment_ablation_gate_applied_observation,
+    build_experiment_fault_injected_observation,
+    build_experiment_premature_merge_attempted_observation,
 )
 from tokenshare.local_runtime.coordinator import ProtocolRunCoordinator
 from tokenshare.local_runtime.projection import (
@@ -51,6 +60,9 @@ from tokenshare.local_runtime.workers import (
 __all__ = [
     "CanonicalUnitContext",
     "CompleteAction",
+    "ExperimentAblationGateAppliedPayloadV1",
+    "ExperimentFaultInjectedPayloadV1",
+    "ExperimentPrematureMergeAttemptedPayloadV1",
     "ExpandAction",
     "GateDirective",
     "MergeAction",
@@ -75,6 +87,9 @@ __all__ = [
     "RecoveryContext",
     "RootProtocolPlan",
     "ProtocolRunCoordinator",
+    "RuntimeHookObservationKind",
+    "RuntimeHookObservationPayloadV1",
+    "RuntimeHookObservationV1",
     "RuntimeHooks",
     "RuntimeAttemptView",
     "RuntimeUnitView",
@@ -88,6 +103,9 @@ __all__ = [
     "WorkerTerminationPolicy",
     "WorkerExecutionFact",
     "WorkerProcessBootstrapError",
+    "build_experiment_ablation_gate_applied_observation",
+    "build_experiment_fault_injected_observation",
+    "build_experiment_premature_merge_attempted_observation",
     "build_runtime_observation",
     "project_protocol_run",
 ]

@@ -11,6 +11,7 @@ import tracemalloc
 import pytest
 
 import tokenshare.experiments.paper_formal_metrics as formal_metrics
+from tokenshare.core.models import ArtifactRef
 from tokenshare.experiments.paper_formal_metrics import (
     recompute_paper_formal_metrics,
 )
@@ -18,6 +19,9 @@ from tokenshare.experiments.paper_exp5_model_comparison import (
     EXP5_V3_SEQUENCE_PLAN_DIGEST,
 )
 from tokenshare.experiments.paper_models import PaperModelExecutionRecord
+from tokenshare.local_runtime import (
+    build_experiment_ablation_gate_applied_observation,
+)
 
 
 EXP1 = "exp1_real_ai_feasibility"
@@ -25,6 +29,26 @@ EXP2 = "exp2_real_ai_scalability"
 EXP3 = "exp3_real_ai_fault_recovery"
 EXP4 = "exp4_real_ai_protocol_ablation"
 EXP5 = "exp5_real_ai_model_endpoint_comparison"
+
+
+def _runtime_artifact_ref(
+    *,
+    artifact_id: str = "runtime-hook-artifact",
+    digest_character: str = "9",
+) -> ArtifactRef:
+    return ArtifactRef(
+        artifact_id=artifact_id,
+        artifact_type="experiment_evidence",
+        uri=f"artifacts/{artifact_id}.json",
+        content_hash="sha256:" + digest_character * 64,
+        size_bytes=17,
+        media_type="application/json",
+        artifact_schema_id="tokenshare.test.runtime_hook",
+        artifact_schema_version="v1",
+        source={"kind": "pytest"},
+        metadata={},
+        created_at="2026-08-01T00:00:00Z",
+    )
 
 
 def test_lazy_formal_run_bundle_mapping_loads_on_demand_without_cache(
@@ -1535,10 +1559,10 @@ def test_formal_specialty_rows_follow_evidence_mutations_and_fail_closed(
             }
         ],
     )
-    exp4_raw_ref = {
-        "artifact_id": "raw-exp4",
-        "content_hash": "sha256:" + "4" * 64,
-    }
+    exp4_raw_ref = _runtime_artifact_ref(
+        artifact_id="raw-exp4",
+        digest_character="4",
+    ).to_dict()
     exp4_candidate_ref = {
         "artifact_id": "candidate-exp4",
         "content_hash": "sha256:" + "5" * 64,
@@ -1572,18 +1596,19 @@ def test_formal_specialty_rows_follow_evidence_mutations_and_fail_closed(
                     }
                 ],
                 "hook_observations": [
-                    {
-                            "event_type": "EXPERIMENT_ABLATION_GATE_APPLIED",
-                            "ablation_mode": "NO_PARSER_POLICY",
-                            "disabled_mechanism": "parser_policy",
-                            "artifact_refs": [exp4_raw_ref],
-                        "hook_input": {
+                    build_experiment_ablation_gate_applied_observation(
+                        ablation_mode="NO_PARSER_POLICY",
+                        disabled_mechanism="parser_policy",
+                        protocol_event_refs=(),
+                        artifact_refs=(exp4_raw_ref,),
+                        hook_input={
                             "task_id": "case-exp4",
                             "unit_id": "unit-1",
                             "attempt_id": "attempt-12-30",
+                            "lease_id": "lease-1",
                         },
-                        "hook_result": {"bypass": True, "stop": False},
-                    }
+                        hook_result={"bypass": True, "stop": False},
+                    ).to_dict()
                 ],
             },
         },
@@ -2324,10 +2349,10 @@ def test_exp4_csv_is_evidence_derived_paired_and_three_level(tmp_path: Path) -> 
             condition_id = f"exp4-{mode.lower()}-r{repeat_id}"
             attempt_id = f"attempt-{mode.lower()}-{repeat_id}"
             invalid = mode != "FULL"
-            raw_ref = {
-                "artifact_id": f"raw-{mode.lower()}-{repeat_id}",
-                "content_hash": "sha256:" + "1" * 64,
-            }
+            raw_ref = _runtime_artifact_ref(
+                artifact_id=f"raw-{mode.lower()}-{repeat_id}",
+                digest_character="1",
+            ).to_dict()
             candidate_ref = {
                 "artifact_id": f"candidate-{mode.lower()}-{repeat_id}",
                 "content_hash": "sha256:" + "2" * 64,
@@ -2387,21 +2412,22 @@ def test_exp4_csv_is_evidence_derived_paired_and_three_level(tmp_path: Path) -> 
                             []
                             if mode == "FULL"
                             else [
-                                {
-                                    "event_type": "EXPERIMENT_ABLATION_GATE_APPLIED",
-                                    "ablation_mode": mode,
-                                    "disabled_mechanism": "verification",
-                                    "artifact_refs": [raw_ref],
-                                    "hook_input": {
+                                build_experiment_ablation_gate_applied_observation(
+                                    ablation_mode=mode,
+                                    disabled_mechanism="verification",
+                                    protocol_event_refs=(),
+                                    artifact_refs=(raw_ref,),
+                                    hook_input={
                                         "task_id": "shared-case",
                                         "unit_id": f"unit-{mode.lower()}-{repeat_id}",
                                         "attempt_id": attempt_id,
+                                        "lease_id": f"lease-{repeat_id}",
                                     },
-                                    "hook_result": {
+                                    hook_result={
                                         "bypass": True,
                                         "stop": False,
                                     },
-                                }
+                                ).to_dict()
                             ]
                         ),
                     },
@@ -2847,6 +2873,143 @@ def test_exp4_empty_or_mismatched_hook_observations_are_ineligible() -> None:
     assert "ablation_mode_mismatch" in mismatched["paper_ineligibility_reasons"]
 
 
+def test_exp4_formal_metrics_consumes_official_typed_ablation_observation() -> None:
+    raw_ref = _runtime_artifact_ref().to_dict()
+    candidate_ref = {
+        "artifact_id": "candidate-1",
+        "content_hash": "sha256:" + "8" * 64,
+    }
+    event_ref = {
+        "event_id": "submission-1",
+        "event_seq": 1,
+        "event_type": "SUBMISSION_RECORDED",
+    }
+    observation = build_experiment_ablation_gate_applied_observation(
+        ablation_mode="NO_VERIFICATION",
+        disabled_mechanism="verification",
+        protocol_event_refs=(event_ref,),
+        artifact_refs=(raw_ref,),
+        hook_input={
+            "task_id": "case-1",
+            "unit_id": "unit-1",
+            "attempt_id": "attempt-1",
+            "lease_id": "lease-1",
+        },
+        hook_result={"bypass": True, "stop": False},
+    ).to_dict()
+    row = formal_metrics._exp4_task_row(
+        base_row={
+            "experiment_id": EXP4,
+            "condition_id": "condition-no-verification",
+            "repeat_id": 0,
+            "ablation_mode": "NO_VERIFICATION",
+            "paper_eligible": True,
+            "paper_ineligibility_reasons": [],
+        },
+        task={
+            "task_id": "case-1",
+            "case_id": "case-1",
+            "root_status": "completed",
+            "ablation_runtime": {
+                "schema_version": "tokenshare.paper_ablation_runtime.v1",
+                "condition_id": "condition-no-verification",
+                "case_id": "case-1",
+                "repeat_id": 0,
+                "mode": "NO_VERIFICATION",
+                "attempt_observations": [
+                    {
+                        "attempt_id": "attempt-1",
+                        "raw_output_ref": raw_ref,
+                        "candidate_output_ref": candidate_ref,
+                        "canonical_output_refs": {},
+                        "independent_candidate_validity": False,
+                        "final_validity": False,
+                    }
+                ],
+                "hook_observations": [observation],
+            },
+        },
+        attempts=[{"attempt_id": "attempt-1", "task_id": "case-1"}],
+        events=[event_ref],
+        artifacts=[raw_ref, candidate_ref],
+    )
+
+    assert row["paper_eligible"] is True
+    assert row["wrong_canonical_count"] == 0
+    assert "target_ablation_hook_not_observed" not in row[
+        "paper_ineligibility_reasons"
+    ]
+
+
+@pytest.mark.parametrize(
+    "hook_observation",
+    (
+        {
+            "event_type": "EXPERIMENT_ABLATION_GATE_APPLIED",
+            "ablation_mode": "NO_VERIFICATION",
+            "disabled_mechanism": "verification",
+            "protocol_event_refs": [],
+            "artifact_refs": [],
+            "hook_input": {
+                "task_id": "case-1",
+                "unit_id": "unit-1",
+                "attempt_id": "attempt-1",
+                "lease_id": "lease-1",
+            },
+            "hook_result": {"bypass": True, "stop": False},
+        },
+        {
+            "schema_version": "tokenshare.runtime_hook_observation.v1",
+            "kind": "UNKNOWN_RUNTIME_HOOK",
+            "payload": {},
+            "observation_digest": "sha256:" + "7" * 64,
+        },
+    ),
+)
+def test_exp4_formal_metrics_rejects_flat_or_unknown_hook_observation(
+    hook_observation: dict[str, object],
+) -> None:
+    row = formal_metrics._exp4_task_row(
+        base_row={
+            "experiment_id": EXP4,
+            "condition_id": "condition-no-verification",
+            "repeat_id": 0,
+            "ablation_mode": "NO_VERIFICATION",
+            "paper_eligible": True,
+            "paper_ineligibility_reasons": [],
+        },
+        task={
+            "task_id": "case-1",
+            "case_id": "case-1",
+            "root_status": "failed",
+            "ablation_runtime": {
+                "schema_version": "tokenshare.paper_ablation_runtime.v1",
+                "condition_id": "condition-no-verification",
+                "case_id": "case-1",
+                "repeat_id": 0,
+                "mode": "NO_VERIFICATION",
+                "attempt_observations": [
+                    {
+                        "attempt_id": "attempt-1",
+                        "raw_output_ref": None,
+                        "candidate_output_ref": None,
+                        "canonical_output_refs": {},
+                        "independent_candidate_validity": False,
+                        "final_validity": False,
+                    }
+                ],
+                "hook_observations": [hook_observation],
+            },
+        },
+        attempts=[{"attempt_id": "attempt-1", "task_id": "case-1"}],
+    )
+
+    assert row["paper_eligible"] is False
+    assert "invalid_ablation_hook_observations" in row[
+        "paper_ineligibility_reasons"
+    ]
+
+
 def test_artifact_inventory_requires_id_hash_and_matches_all_provided_fields() -> None:
     content_hash = "sha256:" + "1" * 64
     inventory = [
@@ -2897,11 +3060,11 @@ def test_artifact_inventory_requires_id_hash_and_matches_all_provided_fields() -
         ) is False
 
 
-def test_exp4_applied_hook_requires_input_result_and_persisted_refs() -> None:
-    raw_ref = {
-        "artifact_id": "raw-1",
-        "content_hash": "sha256:" + "1" * 64,
-    }
+def test_exp4_applied_hook_requires_typed_envelope_and_persisted_refs() -> None:
+    raw_ref = _runtime_artifact_ref(
+        artifact_id="raw-1",
+        digest_character="1",
+    ).to_dict()
     candidate_ref = {
         "artifact_id": "candidate-1",
         "content_hash": "sha256:" + "2" * 64,
@@ -2952,17 +3115,30 @@ def test_exp4_applied_hook_requires_input_result_and_persisted_refs() -> None:
         attempts=[attempt],
     )
     assert incomplete["paper_eligible"] is False
-    assert "incomplete_ablation_hook_observation" in incomplete[
+    assert "invalid_ablation_hook_observations" in incomplete[
         "paper_ineligibility_reasons"
     ]
 
-    hook = task["ablation_runtime"]["hook_observations"][0]
-    hook["hook_input"] = {
-        "task_id": "case-1",
-        "unit_id": "unit-1",
-        "attempt_id": "attempt-1",
+    event_ref = {
+        "event_id": "submission-1",
+        "event_seq": 1,
+        "event_type": "SUBMISSION_RECORDED",
     }
-    hook["hook_result"] = {"bypass": True, "stop": False}
+    task["ablation_runtime"]["hook_observations"] = [
+        build_experiment_ablation_gate_applied_observation(
+            ablation_mode="NO_VERIFICATION",
+            disabled_mechanism="verification",
+            protocol_event_refs=(event_ref,),
+            artifact_refs=(raw_ref,),
+            hook_input={
+                "task_id": "case-1",
+                "unit_id": "unit-1",
+                "attempt_id": "attempt-1",
+                "lease_id": "lease-1",
+            },
+            hook_result={"bypass": True, "stop": False},
+        ).to_dict()
+    ]
     unresolved = formal_metrics._exp4_task_row(
         base_row=base,
         task=task,
@@ -2977,7 +3153,7 @@ def test_exp4_applied_hook_requires_input_result_and_persisted_refs() -> None:
         base_row=base,
         task=task,
         attempts=[attempt],
-        events=[{"event_id": "submission-1"}],
+        events=[event_ref],
         artifacts=[raw_ref, candidate_ref],
     )
     assert complete["paper_eligible"] is True

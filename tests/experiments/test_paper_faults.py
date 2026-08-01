@@ -17,7 +17,13 @@ from tokenshare.experiments.paper_models import (
     PaperAttemptStatus,
 )
 from tokenshare.storage.artifacts import ArtifactStore
-from tokenshare.local_runtime import ParsedCandidateContext, RawOutputContext
+from tokenshare.local_runtime import (
+    ExperimentFaultInjectedPayloadV1,
+    ParsedCandidateContext,
+    RawOutputContext,
+    RuntimeHookObservationKind,
+    RuntimeHookObservationV1,
+)
 
 
 NOW = "2026-07-15T00:00:00Z"
@@ -84,8 +90,12 @@ def test_runtime_fault_hook_waits_for_raw_provenance_and_usage_artifacts(
     assert hooks.records[0]["original_raw_output_ref"] == raw_ref.to_dict()
     assert hooks.records[0]["original_provenance_ref"] == provenance_ref.to_dict()
     assert hooks.records[0]["pre_fault_usage_ref"] == usage_ref.to_dict()
-    assert hooks.events[0]["event_type"] == "EXPERIMENT_FAULT_INJECTED"
-    assert hooks.events[0]["artifact_refs"]
+    observation = hooks.events[0]
+    assert isinstance(observation, RuntimeHookObservationV1)
+    assert observation.kind is RuntimeHookObservationKind.EXPERIMENT_FAULT_INJECTED
+    assert isinstance(observation.payload, ExperimentFaultInjectedPayloadV1)
+    assert observation.payload.artifact_refs
+    assert directive.experiment_records == (observation,)
 
     replacement_context = replace(context, attempt_id="attempt_2")
     assert hooks.after_raw_output_persisted(replacement_context) is None
@@ -164,8 +174,11 @@ def test_runtime_fault_hook_maps_frozen_planned_target_to_real_protocol_unit(
     assert directive.result_kind == "no_return"
     assert hooks.records[0]["unit_id"] == "unit_root_digest_range_0"
     assert hooks.records[0]["selected_target_ai_unit_id"] == "case-1:range_0"
-    assert hooks.events[0]["unit_id"] == "unit_root_digest_range_0"
-    assert hooks.events[0]["selected_target_ai_unit_id"] == "case-1:range_0"
+    assert hooks.events[0].payload.unit_id == "unit_root_digest_range_0"
+    assert (
+        hooks.events[0].payload.selected_target_ai_unit_id
+        == "case-1:range_0"
+    )
     assert hooks.after_raw_output_persisted(
         replace(context, attempt_id="attempt_2")
     ) is None

@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 import pytest
 
 from tokenshare.experiments.paper_ablation import (
@@ -17,7 +19,12 @@ from tokenshare.experiments.paper_workers import (
     PaperAIUnit,
     validate_ai_unit_dependency_graph,
 )
-from tokenshare.local_runtime import MergeContext, NoOpRuntimeHooks
+from tokenshare.local_runtime import (
+    ExperimentAblationGateAppliedPayloadV1,
+    MergeContext,
+    NoOpRuntimeHooks,
+    RuntimeHookObservationKind,
+)
 
 
 @pytest.mark.parametrize(
@@ -74,7 +81,11 @@ def test_merge_ablation_hook_emits_experiment_observation_with_protocol_refs() -
         required_child_unit_ids=("child_1", "child_2"),
         gate_satisfied=False,
         protocol_event_refs=(
-            {"event_id": "event-canonical-1", "event_seq": 7},
+            {
+                "event_id": "event-canonical-1",
+                "event_seq": 7,
+                "event_type": "CANONICAL_OUTPUTS_BOUND",
+            },
         ),
     )
 
@@ -82,15 +93,34 @@ def test_merge_ablation_hook_emits_experiment_observation_with_protocol_refs() -
 
     assert directive is not None
     assert directive.bypass is True
-    assert directive.experiment_records[0]["event_type"] == (
-        "EXPERIMENT_ABLATION_GATE_APPLIED"
+    observation = directive.experiment_records[0]
+    assert observation.kind is (
+        RuntimeHookObservationKind.EXPERIMENT_ABLATION_GATE_APPLIED
     )
-    assert directive.experiment_records[0]["protocol_event_refs"] == [
-        {"event_id": "event-canonical-1", "event_seq": 7}
-    ]
+    assert isinstance(
+        observation.payload,
+        ExperimentAblationGateAppliedPayloadV1,
+    )
+    assert observation.payload.protocol_event_refs[0] == {
+        "event_id": "event-canonical-1",
+        "event_seq": 7,
+        "event_type": "CANONICAL_OUTPUTS_BOUND",
+    }
 
 
-def test_exp4_condition_expansion_includes_all_protocol_ablation_modes() -> None:
+def test_exp4_condition_expansion_includes_all_protocol_ablation_modes(
+    monkeypatch,
+) -> None:
+    frozen_environment_digest = "sha256:" + "cdc9de4cb0a8407f17ddd7cf423a3fb5640a4560c3b55bd6a70116f5a14de731"
+    monkeypatch.setattr(
+        "tokenshare.experiments.paper_catalog."
+        "_current_lean_environment_manifest_without_preflight",
+        lambda: SimpleNamespace(environment_digest=frozen_environment_digest),
+    )
+    monkeypatch.setattr(
+        "tokenshare.experiments.paper_catalog.lean_checker_implementation_digest",
+        lambda: "sha256:" + "59a3ca34d1c845d777b48bc7ee10f43e6c0c65f08d04cdd5e8fb6f3a318e95c1",
+    )
     catalog = load_paper_catalogs(
         factorization_path="benchmarks/paper/factorization_catalog.v1.jsonl",
         lean_path="benchmarks/paper/lean_catalog.v1.jsonl",

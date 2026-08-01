@@ -485,9 +485,10 @@ def test_task7_no_requeue_stops_after_engine_records_recovery(tmp_path) -> None:
     assert actions[0]["retry_allowed"] is True
     assert result.status == "ready"
     observation = result.summary["runtime_hook_observations"][0]
-    assert observation["event_type"] == "EXPERIMENT_ABLATION_GATE_APPLIED"
-    assert observation["disabled_mechanism"] == "requeue"
-    assert observation["protocol_event_refs"]
+    assert observation["kind"] == "EXPERIMENT_ABLATION_GATE_APPLIED"
+    assert observation["payload"]["disabled_mechanism"] == "requeue"
+    assert observation["payload"]["protocol_event_refs"]
+    assert observation["observation_digest"].startswith("sha256:")
     assert not any(
         event.event_type == EventType.SETTLEMENT_RECORDED
         for event in ledger.read_all()

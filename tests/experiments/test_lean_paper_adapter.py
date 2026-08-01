@@ -1,4 +1,5 @@
 import json
+from hashlib import sha256
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -30,7 +31,12 @@ from tokenshare.experiments.paper_models import (
     PaperFailureStage,
     PaperTaskStatus,
 )
-from tokenshare.local_runtime import ProtocolRunCoordinator, WorkerTerminationPolicy
+from tokenshare.local_runtime import (
+    ProtocolRunCoordinator,
+    RuntimeHookObservationV1,
+    WorkerTerminationPolicy,
+    build_experiment_ablation_gate_applied_observation,
+)
 from tests.support.lean_checker import RecordingLeanChecker
 from tokenshare.plugins.lean_proof.checker import (
     LeanCheckerMode,
@@ -48,8 +54,48 @@ def _use_recording_checker_for_adapter_regressions(
     monkeypatch: pytest.MonkeyPatch,
 ) -> RecordingLeanChecker:
     checker = RecordingLeanChecker()
+    repo_root = Path(__file__).resolve().parents[2]
+    tracked_manifest = json.loads(
+        (repo_root / "benchmarks/paper/lean_checker_preflight.v1.json").read_text(
+            encoding="utf-8"
+        )
+    )
     environment_manifest = (
         paper_catalog_module._current_lean_environment_manifest_without_preflight()
+    )
+    object.__setattr__(
+        environment_manifest,
+        "environment_digest",
+        tracked_manifest["environment_digest"],
+    )
+    oracle_source = (
+        repo_root
+        / "fixtures/lean_proof_project/TokenShare/LemmaGraphOracle.lean"
+    ).resolve()
+    original_file_digest = paper_catalog_module._file_digest
+
+    def worktree_file_digest(path: Path) -> str:
+        resolved = Path(path).resolve()
+        if resolved != oracle_source:
+            return original_file_digest(resolved)
+        logical_source = resolved.read_text(encoding="utf-8")
+        logical_source = logical_source.replace("\r\n", "\n").replace("\r", "\n")
+        return f"sha256:{sha256(logical_source.encode('utf-8')).hexdigest()}"
+
+    monkeypatch.setattr(
+        paper_catalog_module,
+        "_current_lean_environment_manifest_without_preflight",
+        lambda: environment_manifest,
+    )
+    monkeypatch.setattr(
+        paper_catalog_module,
+        "lean_checker_implementation_digest",
+        lambda: tracked_manifest["checker_implementation_digest"],
+    )
+    monkeypatch.setattr(
+        paper_catalog_module,
+        "_file_digest",
+        worktree_file_digest,
     )
     monkeypatch.setattr(lean_paper_adapter, "check_lean_proof", checker)
     monkeypatch.setattr(
@@ -58,6 +104,72 @@ def _use_recording_checker_for_adapter_regressions(
         lambda: environment_manifest,
     )
     return checker
+
+
+def test_lean_adapter_officially_parses_runtime_hook_observations() -> None:
+    observation = build_experiment_ablation_gate_applied_observation(
+        ablation_mode="NO_VERIFICATION",
+        disabled_mechanism="verification",
+        protocol_event_refs=(),
+        artifact_refs=(),
+        hook_input={
+            "task_id": "task-1",
+            "unit_id": "unit-1",
+            "attempt_id": "attempt-1",
+            "lease_id": "lease-1",
+        },
+        hook_result={"bypass": True, "stop": False},
+    )
+
+    parsed = lean_paper_adapter._parse_runtime_hook_observations(
+        (observation.to_dict(),)
+    )
+
+    assert parsed == (observation,)
+    assert all(isinstance(item, RuntimeHookObservationV1) for item in parsed)
+
+    tampered = observation.to_dict()
+    tampered["payload"]["disabled_mechanism"] = "requeue"
+    with pytest.raises(ValueError, match="observation_digest mismatch"):
+        lean_paper_adapter._parse_runtime_hook_observations((tampered,))
+
+
+@pytest.mark.parametrize(
+    ("mode", "mechanism", "business_result_field"),
+    (
+        ("NO_MERGE_GATE", "merge_gate", "premature_merge_attempted"),
+        ("NO_SLOT_INTEGRITY", "slot_integrity", "slot_integrity_violation"),
+    ),
+)
+def test_lean_ablation_gate_alone_does_not_claim_business_result(
+    mode: str,
+    mechanism: str,
+    business_result_field: str,
+) -> None:
+    observation = build_experiment_ablation_gate_applied_observation(
+        ablation_mode=mode,
+        disabled_mechanism=mechanism,
+        protocol_event_refs=(),
+        artifact_refs=(),
+        hook_input={
+            "task_id": "task-1",
+            "unit_id": "unit-1",
+            "attempt_id": "attempt-1",
+            "lease_id": "lease-1",
+        },
+        hook_result={"bypass": True, "stop": False},
+    )
+
+    runtime = lean_paper_adapter._lean_ablation_runtime_evidence(
+        mode=mode,
+        attempts=[],
+        merge_summary={},
+        root_validity=None,
+        hook_observations=(observation,),
+    )
+
+    assert runtime[business_result_field] is False
+    assert runtime["hook_observations"] == [observation.to_dict()]
 
 
 def test_lean_paper_adapter_runs_split_children_through_ai_api_checker_and_merge(
@@ -180,7 +292,8 @@ def test_lean_no_slot_integrity_binds_wrong_slot_inside_local_runtime(
         "slot_integrity_violation"
     ] is True
     assert any(
-        observation["disabled_mechanism"] == "slot_integrity"
+        observation["kind"] == "EXPERIMENT_ABLATION_GATE_APPLIED"
+        and observation["payload"]["disabled_mechanism"] == "slot_integrity"
         for observation in result.run_evidence["ablation_runtime"][
             "hook_observations"
         ]

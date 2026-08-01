@@ -28,6 +28,12 @@ from tokenshare.experiments.paper_exp5_statistics import (
     build_exp5_order_and_concurrency_rows,
     build_exp5_paired_comparison_rows,
 )
+from tokenshare.local_runtime import (
+    ExperimentAblationGateAppliedPayloadV1,
+    ExperimentPrematureMergeAttemptedPayloadV1,
+    RuntimeHookObservationKind,
+    RuntimeHookObservationV1,
+)
 
 
 EXP1 = "exp1_real_ai_feasibility"
@@ -322,7 +328,13 @@ def _recompute_metrics_from_bundles(
         EXP1: tuple(_exp1_rows(rows_by_id, run_bundles)),
         EXP2: tuple(_exp2_rows(rows_by_id, run_bundles)),
         EXP3: tuple(_exp3_rows(rows_by_id, run_bundles)),
-        EXP4: tuple(_exp4_rows(rows_by_id, run_bundles)),
+        EXP4: tuple(
+            _exp4_rows(
+                rows_by_id,
+                run_bundles,
+                allow_legacy_flat_hooks=suite.get("regression_only") is True,
+            )
+        ),
         EXP5: tuple(_exp5_rows(rows_by_id, run_bundles)),
     }
     experiment_rows = {
@@ -2519,6 +2531,8 @@ def _dedicated_baseline_metrics(
 def _exp4_rows(
     rows: Mapping[str, Mapping[str, Any]],
     bundles: Mapping[str, Mapping[str, Any]],
+    *,
+    allow_legacy_flat_hooks: bool = False,
 ) -> list[dict[str, Any]]:
     result: list[dict[str, Any]] = []
     for condition_id in bundles:
@@ -2534,6 +2548,7 @@ def _exp4_rows(
                 attempts=bundle["attempts"],
                 events=bundle["events"],
                 artifacts=bundle.get("artifacts", ()),
+                allow_legacy_flat_hooks=allow_legacy_flat_hooks,
             )
             for task in bundle["tasks"]
         ]
@@ -2556,6 +2571,7 @@ def _exp4_task_row(
     attempts: Sequence[Mapping[str, Any]],
     events: Sequence[Mapping[str, Any]] = (),
     artifacts: Sequence[Mapping[str, Any]] = (),
+    allow_legacy_flat_hooks: bool = False,
 ) -> dict[str, Any]:
     task_id = str(task.get("task_id") or task.get("case_id") or "unknown")
     task_attempts = [
@@ -2569,6 +2585,7 @@ def _exp4_task_row(
         task_attempts=task_attempts,
         events=events,
         artifacts=artifacts,
+        allow_legacy_flat_hooks=allow_legacy_flat_hooks,
     )
     attempt_observations = runtime_audit["attempt_observations"]
     hook_observations = runtime_audit["hook_observations"]
@@ -2597,9 +2614,14 @@ def _exp4_task_row(
         if bool(observation.get("canonical_output_refs"))
     ]
     requeue_gate_observed = any(
-        observation.get("event_type") == "EXPERIMENT_ABLATION_GATE_APPLIED"
-        and observation.get("disabled_mechanism") == "requeue"
-        and bool(observation.get("protocol_event_refs"))
+        observation.kind
+        is RuntimeHookObservationKind.EXPERIMENT_ABLATION_GATE_APPLIED
+        and isinstance(
+            observation.payload,
+            ExperimentAblationGateAppliedPayloadV1,
+        )
+        and observation.payload.disabled_mechanism == "requeue"
+        and bool(observation.payload.protocol_event_refs)
         for observation in hook_observations
     )
     stuck_task_count = int(
@@ -2609,15 +2631,19 @@ def _exp4_task_row(
     premature_merge_observations = [
         observation
         for observation in hook_observations
-        if observation.get("event_type")
-        == "EXPERIMENT_PREMATURE_MERGE_ATTEMPTED"
+        if observation.kind
+        is RuntimeHookObservationKind.EXPERIMENT_PREMATURE_MERGE_ATTEMPTED
+        and isinstance(
+            observation.payload,
+            ExperimentPrematureMergeAttemptedPayloadV1,
+        )
     ]
     premature_merge_failure_count = sum(
-        observation.get("root_check_passed") is False
+        observation.payload.root_check_passed is False
         for observation in premature_merge_observations
     )
     premature_merge_escape_count = sum(
-        observation.get("root_check_passed") is True
+        observation.payload.root_check_passed is True
         for observation in premature_merge_observations
     )
 
@@ -2765,6 +2791,7 @@ def _exp4_runtime_audit(
     task_attempts: Sequence[Mapping[str, Any]],
     events: Sequence[Mapping[str, Any]],
     artifacts: Sequence[Mapping[str, Any]],
+    allow_legacy_flat_hooks: bool = False,
 ) -> dict[str, Any]:
     runtime = task.get("ablation_runtime")
     reasons: list[str] = []
@@ -2800,13 +2827,31 @@ def _exp4_runtime_audit(
         attempt_observations: list[Mapping[str, Any]] = []
     else:
         attempt_observations = list(raw_attempts)
-    if not isinstance(raw_hooks, list) or any(
-        not isinstance(item, Mapping) for item in raw_hooks
-    ):
+    hook_observations: list[RuntimeHookObservationV1] = []
+    legacy_hook_observations: list[Mapping[str, Any]] = []
+    if not isinstance(raw_hooks, list):
         reasons.append("invalid_ablation_hook_observations")
-        hook_observations: list[Mapping[str, Any]] = []
     else:
-        hook_observations = list(raw_hooks)
+        for raw_hook in raw_hooks:
+            if not isinstance(raw_hook, Mapping):
+                reasons.append("invalid_ablation_hook_observations")
+                continue
+            try:
+                observation = RuntimeHookObservationV1.from_dict(raw_hook)
+            except (TypeError, ValueError):
+                if allow_legacy_flat_hooks and _is_legacy_flat_exp4_hook(raw_hook):
+                    legacy_hook_observations.append(raw_hook)
+                    reasons.append("legacy_flat_ablation_hook_observation")
+                else:
+                    reasons.append("invalid_ablation_hook_observations")
+                continue
+            if observation.kind not in {
+                RuntimeHookObservationKind.EXPERIMENT_ABLATION_GATE_APPLIED,
+                RuntimeHookObservationKind.EXPERIMENT_PREMATURE_MERGE_ATTEMPTED,
+            }:
+                reasons.append("invalid_ablation_hook_observations")
+                continue
+            hook_observations.append(observation)
 
     expected_attempt_ids = {
         str(attempt.get("attempt_id"))
@@ -2845,10 +2890,13 @@ def _exp4_runtime_audit(
     }:
         reasons.append("unsupported_ablation_mode")
     for observation in hook_observations:
-        observed_mode = observation.get("ablation_mode", observation.get("mode"))
-        if observed_mode is not None and observed_mode != mode:
+        payload = observation.payload
+        if (
+            isinstance(payload, ExperimentAblationGateAppliedPayloadV1)
+            and payload.ablation_mode != mode
+        ):
             reasons.append("ablation_hook_mode_mismatch")
-        refs = _observation_refs(observation)
+        refs = _runtime_hook_observation_refs(observation)
         if not refs:
             reasons.append("missing_ablation_hook_evidence_ref")
         evidence_refs.extend(refs)
@@ -2858,62 +2906,108 @@ def _exp4_runtime_audit(
             events=events,
             artifacts=artifacts,
         )
-        for observation in (*attempt_observations, *hook_observations)
+        for observation in attempt_observations
+    ) or any(
+        not _runtime_hook_observation_refs_resolve(
+            observation,
+            events=events,
+            artifacts=artifacts,
+        )
+        for observation in hook_observations
     ):
         reasons.append("unresolved_ablation_evidence_ref")
+    not_applicable_summary = runtime.get("target_hook_not_applicable")
+    valid_not_applicable = False
+    if not_applicable_summary is not None:
+        if not _valid_exp4_not_applicable_summary(
+            not_applicable_summary,
+            mode=mode,
+            target_mechanism=target_mechanism,
+        ):
+            reasons.append("invalid_ablation_not_applicable_summary")
+        else:
+            valid_not_applicable = True
+            summary_refs = _observation_refs(not_applicable_summary)
+            if not summary_refs:
+                reasons.append("missing_ablation_not_applicable_evidence_ref")
+            evidence_refs.extend(summary_refs)
+            if not _ablation_observation_refs_resolve(
+                not_applicable_summary,
+                events=events,
+                artifacts=artifacts,
+            ):
+                reasons.append("unresolved_ablation_evidence_ref")
     if target_mechanism is not None:
         applied = [
             observation
             for observation in hook_observations
-            if observation.get("event_type") == "EXPERIMENT_ABLATION_GATE_APPLIED"
-            and observation.get("disabled_mechanism") == target_mechanism
+            if observation.kind
+            is RuntimeHookObservationKind.EXPERIMENT_ABLATION_GATE_APPLIED
+            and isinstance(
+                observation.payload,
+                ExperimentAblationGateAppliedPayloadV1,
+            )
+            and observation.payload.disabled_mechanism == target_mechanism
         ]
-        not_applicable = [
-            observation
-            for observation in hook_observations
-            if observation.get("disabled_mechanism") == target_mechanism
-            and observation.get("applicability") == "not_applicable"
-            and isinstance(observation.get("not_applicable_reason"), str)
-            and observation.get("not_applicable_reason")
-        ]
-        if not applied and not not_applicable:
+        if not applied and not valid_not_applicable:
             reasons.append("target_ablation_hook_not_observed")
-        for observation in (*applied, *not_applicable):
-            hook_input = observation.get("hook_input")
-            hook_result = observation.get("hook_result")
-            if (
-                not isinstance(hook_input, Mapping)
-                or not hook_input
-                or not isinstance(hook_result, Mapping)
-                or not hook_result
-            ):
-                reasons.append("incomplete_ablation_hook_observation")
-                continue
-            if observation in applied and (
-                not isinstance(hook_result.get("bypass"), bool)
-                or not isinstance(hook_result.get("stop"), bool)
-            ):
-                reasons.append("incomplete_ablation_hook_observation")
     if mode == "NO_MERGE_GATE":
         premature = [
             observation
             for observation in hook_observations
-            if observation.get("event_type")
-            == "EXPERIMENT_PREMATURE_MERGE_ATTEMPTED"
+            if observation.kind
+            is RuntimeHookObservationKind.EXPERIMENT_PREMATURE_MERGE_ATTEMPTED
+            and isinstance(
+                observation.payload,
+                ExperimentPrematureMergeAttemptedPayloadV1,
+            )
         ]
-        if not premature or any(
-            observation.get("attempt_status") != "executed"
-            or not isinstance(observation.get("root_check_passed"), bool)
-            or not isinstance(observation.get("result_artifact_ref"), Mapping)
-            for observation in premature
-        ):
+        if not premature:
             reasons.append("missing_premature_merge_execution_evidence")
     return {
         "attempt_observations": attempt_observations,
         "hook_observations": hook_observations,
+        "legacy_hook_observations": legacy_hook_observations,
         "evidence_refs": _stable_evidence_refs(evidence_refs),
         "reasons": list(dict.fromkeys(reasons)),
     }
+
+
+def _is_legacy_flat_exp4_hook(observation: Mapping[str, Any]) -> bool:
+    """仅为显式 regression-only replay 识别旧夹具，绝不升级为正式证据。"""
+
+    return observation.get("event_type") in {
+        "EXPERIMENT_ABLATION_GATE_APPLIED",
+        "EXPERIMENT_PREMATURE_MERGE_ATTEMPTED",
+        "EXPERIMENT_ABLATION_NOT_APPLICABLE",
+    }
+
+
+def _valid_exp4_not_applicable_summary(
+    value: object,
+    *,
+    mode: str,
+    target_mechanism: str | None,
+) -> bool:
+    if not isinstance(value, Mapping) or set(value) != {
+        "ablation_mode",
+        "disabled_mechanism",
+        "applicability",
+        "not_applicable_reason",
+        "protocol_event_refs",
+        "artifact_refs",
+    }:
+        return False
+    return (
+        target_mechanism is not None
+        and value.get("ablation_mode") == mode
+        and value.get("disabled_mechanism") == target_mechanism
+        and value.get("applicability") == "not_applicable"
+        and isinstance(value.get("not_applicable_reason"), str)
+        and bool(value.get("not_applicable_reason"))
+        and isinstance(value.get("protocol_event_refs"), list)
+        and isinstance(value.get("artifact_refs"), list)
+    )
 
 
 def _observation_refs(observation: Mapping[str, Any]) -> list[dict[str, Any]]:
@@ -2949,6 +3043,58 @@ def _observation_refs(observation: Mapping[str, Any]) -> list[dict[str, Any]]:
                 and value
             )
     return refs
+
+
+def _runtime_hook_observation_refs(
+    observation: RuntimeHookObservationV1,
+) -> list[dict[str, Any]]:
+    payload = observation.payload
+    payload_body = observation.to_dict()["payload"]
+    refs = [
+        {"evidence_kind": "protocol_event_refs", **dict(ref)}
+        for ref in payload.protocol_event_refs
+    ]
+    if isinstance(payload, ExperimentAblationGateAppliedPayloadV1):
+        refs.extend(
+            {"evidence_kind": "artifact_refs", **dict(ref)}
+            for ref in payload_body["artifact_refs"]
+        )
+    elif isinstance(payload, ExperimentPrematureMergeAttemptedPayloadV1):
+        refs.append(
+            {
+                "evidence_kind": "result_artifact_ref",
+                **dict(payload_body["result_artifact_ref"]),
+            }
+        )
+    return refs
+
+
+def _runtime_hook_observation_refs_resolve(
+    observation: RuntimeHookObservationV1,
+    *,
+    events: Sequence[Mapping[str, Any]],
+    artifacts: Sequence[Mapping[str, Any]],
+) -> bool:
+    event_ids = {
+        str(event.get("event_id"))
+        for event in events
+        if isinstance(event.get("event_id"), str) and event.get("event_id")
+    }
+    payload = observation.payload
+    if any(str(ref["event_id"]) not in event_ids for ref in payload.protocol_event_refs):
+        return False
+    payload_body = observation.to_dict()["payload"]
+    artifact_refs = (
+        payload_body["artifact_refs"]
+        if isinstance(payload, ExperimentAblationGateAppliedPayloadV1)
+        else (payload_body["result_artifact_ref"],)
+        if isinstance(payload, ExperimentPrematureMergeAttemptedPayloadV1)
+        else ()
+    )
+    return all(
+        _artifact_ref_in_inventory(ref, artifacts)
+        for ref in artifact_refs
+    )
 
 
 def _ablation_observation_refs_resolve(

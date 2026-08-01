@@ -33,7 +33,11 @@ from tokenshare.experiments.paper_models import (
     PaperTaskStatus,
 )
 from tokenshare.experiments.paper_smoke_report import generate_paper_smoke_report
-from tokenshare.local_runtime import ParsedCandidateContext, WorkerTerminationPolicy
+from tokenshare.local_runtime import (
+    ParsedCandidateContext,
+    WorkerTerminationPolicy,
+    build_experiment_ablation_gate_applied_observation,
+)
 from tokenshare.storage.artifacts import ArtifactStore
 from tokenshare.storage.events import EventLedger
 
@@ -4606,6 +4610,130 @@ def test_formal_runner_exp4_persists_mode_specific_wrapper_evidence(
         event["event_type"] == "EXPERIMENT_ABLATION_OBSERVED"
         for event in events
     )
+
+
+def _apply_exp4_runtime_probe(
+    *,
+    tmp_path: Path,
+    hook_observations: list[dict[str, object]],
+) -> formal_runner._RootExecutionOutcome:
+    condition = SimpleNamespace(
+        condition_id="condition-exp4-probe",
+        repeat_id=0,
+        ablation_mode="NO_VERIFICATION",
+    )
+    task = {
+        "task_id": "case-exp4-probe",
+        "root_status": "completed",
+        "event_refs": [],
+        "artifact_refs": [],
+    }
+    outcome = formal_runner._RootExecutionOutcome(
+        case_id="case-exp4-probe",
+        root_status="completed",
+        adapter_root=tmp_path,
+        worker_id="worker-1",
+        task=task,
+        adapter_result={
+            "task_result": task,
+            "attempt_results": [{"attempt_status": "succeeded"}],
+            "fault_records": [],
+            "event_records": [],
+            "run_evidence": {
+                "ablation_runtime": {
+                    "schema_version": "tokenshare.paper_ablation_runtime.v1",
+                    "hook_observations": hook_observations,
+                }
+            },
+        },
+    )
+    return formal_runner._FormalConditionExecutionCallback._apply_exp4_mode(
+        None,
+        condition=condition,
+        outcome=outcome,
+        callback_kwargs={
+            "mode_config": {"ablation_mode": "NO_VERIFICATION"}
+        },
+    )
+
+
+def test_formal_runner_exp4_preserves_typed_hook_envelope_without_flat_fields(
+    tmp_path: Path,
+) -> None:
+    artifact_ref = ArtifactRef(
+        artifact_id="runtime-hook-artifact",
+        artifact_type="experiment_evidence",
+        uri="artifacts/runtime-hook-artifact.json",
+        content_hash="sha256:" + "8" * 64,
+        size_bytes=17,
+        media_type="application/json",
+        artifact_schema_id="tokenshare.test.runtime_hook",
+        artifact_schema_version="v1",
+        source={"kind": "pytest"},
+        metadata={},
+        created_at="2026-08-01T00:00:00Z",
+    )
+    observation = build_experiment_ablation_gate_applied_observation(
+        ablation_mode="NO_VERIFICATION",
+        disabled_mechanism="verification",
+        protocol_event_refs=(),
+        artifact_refs=(artifact_ref,),
+        hook_input={
+            "task_id": "case-exp4-probe",
+            "unit_id": "unit-1",
+            "attempt_id": "attempt-1",
+            "lease_id": "lease-1",
+        },
+        hook_result={"bypass": True, "stop": False},
+    ).to_dict()
+
+    result = _apply_exp4_runtime_probe(
+        tmp_path=tmp_path,
+        hook_observations=[observation],
+    )
+
+    assert result.task["ablation_runtime"]["hook_observations"] == [
+        observation
+    ]
+    assert set(
+        result.task["ablation_runtime"]["hook_observations"][0]
+    ) == {"schema_version", "kind", "payload", "observation_digest"}
+
+
+def test_formal_runner_exp4_keeps_not_applicable_summary_outside_hooks(
+    tmp_path: Path,
+) -> None:
+    result = _apply_exp4_runtime_probe(
+        tmp_path=tmp_path,
+        hook_observations=[],
+    )
+    runtime = result.task["ablation_runtime"]
+
+    assert runtime["hook_observations"] == []
+    assert runtime["target_hook_not_applicable"] == {
+        "ablation_mode": "NO_VERIFICATION",
+        "disabled_mechanism": "verification",
+        "applicability": "not_applicable",
+        "not_applicable_reason": "target_lifecycle_boundary_not_reached",
+        "protocol_event_refs": [],
+        "artifact_refs": [],
+    }
+
+
+def test_formal_runner_exp4_rejects_legacy_flat_hook_in_formal_path(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(ValueError, match="runtime hook observation"):
+        _apply_exp4_runtime_probe(
+            tmp_path=tmp_path,
+            hook_observations=[
+                {
+                    "event_type": "EXPERIMENT_ABLATION_GATE_APPLIED",
+                    "ablation_mode": "NO_VERIFICATION",
+                    "disabled_mechanism": "verification",
+                }
+            ],
+        )
 
 
 @pytest.mark.parametrize(

@@ -3,10 +3,14 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import replace
+from hashlib import sha256
 from pathlib import Path
 from threading import Lock
 
 import pytest
+
+import tokenshare.experiments.lean_paper_adapter as lean_paper_adapter_module
+import tokenshare.experiments.paper_catalog as paper_catalog_module
 
 from tests.local_runtime.test_coordinator_full_lifecycle import (
     _ArtifactExecutor,
@@ -61,6 +65,58 @@ LEAN_GRAPH_CATALOG = (
     REPO_ROOT / "benchmarks/paper/lean_lemma_graph_catalog.v1.jsonl"
 )
 EXP1_PROFILE = REPO_ROOT / "benchmarks/paper/exp1_minimal_pilot_profile.v1.json"
+
+
+@pytest.fixture(autouse=True)
+def _use_tracked_lean_catalog_identity(monkeypatch: pytest.MonkeyPatch) -> None:
+    repo_root = REPO_ROOT
+    tracked_manifest = json.loads(
+        (repo_root / "benchmarks/paper/lean_checker_preflight.v1.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    environment_manifest = (
+        paper_catalog_module._current_lean_environment_manifest_without_preflight()
+    )
+    object.__setattr__(
+        environment_manifest,
+        "environment_digest",
+        tracked_manifest["environment_digest"],
+    )
+    oracle_source = (
+        repo_root
+        / "fixtures/lean_proof_project/TokenShare/LemmaGraphOracle.lean"
+    ).resolve()
+    original_file_digest = paper_catalog_module._file_digest
+
+    def worktree_file_digest(path: Path) -> str:
+        resolved = Path(path).resolve()
+        if resolved != oracle_source:
+            return original_file_digest(resolved)
+        logical_source = resolved.read_text(encoding="utf-8")
+        logical_source = logical_source.replace("\r\n", "\n").replace("\r", "\n")
+        return f"sha256:{sha256(logical_source.encode('utf-8')).hexdigest()}"
+
+    monkeypatch.setattr(
+        paper_catalog_module,
+        "_current_lean_environment_manifest_without_preflight",
+        lambda: environment_manifest,
+    )
+    monkeypatch.setattr(
+        paper_catalog_module,
+        "lean_checker_implementation_digest",
+        lambda: tracked_manifest["checker_implementation_digest"],
+    )
+    monkeypatch.setattr(
+        paper_catalog_module,
+        "_file_digest",
+        worktree_file_digest,
+    )
+    monkeypatch.setattr(
+        lean_paper_adapter_module,
+        "default_lean_paper_environment_manifest",
+        lambda: environment_manifest,
+    )
 
 FULL_LIFECYCLE_EVENTS = {
     EventType.TASK_REGISTERED.value,
@@ -569,7 +625,7 @@ def test_five_ablation_modes_are_observed_from_runtime_gates(
         assert runtime["disabled_mechanism"] is not None
         assert runtime["hook_observations"]
         assert all(
-            observation["event_type"]
+            observation["kind"]
             in {
                 "EXPERIMENT_ABLATION_GATE_APPLIED",
                 "EXPERIMENT_PREMATURE_MERGE_ATTEMPTED",
@@ -578,9 +634,9 @@ def test_five_ablation_modes_are_observed_from_runtime_gates(
         )
         if mode in {"NO_REQUEUE", "NO_MERGE_GATE"}:
             assert all(
-                observation["protocol_event_refs"]
+                observation["payload"]["protocol_event_refs"]
                 for observation in runtime["hook_observations"]
-                if observation["event_type"] == "EXPERIMENT_ABLATION_GATE_APPLIED"
+                if observation["kind"] == "EXPERIMENT_ABLATION_GATE_APPLIED"
             )
     if mode == "NO_VERIFICATION":
         assert result.task_result.accepted_validity is False
@@ -611,13 +667,15 @@ def test_five_ablation_modes_are_observed_from_runtime_gates(
         premature = [
             observation
             for observation in runtime["hook_observations"]
-            if observation["event_type"]
+            if observation["kind"]
             == "EXPERIMENT_PREMATURE_MERGE_ATTEMPTED"
         ]
         assert premature
-        assert premature[0]["attempt_status"] == "executed"
-        assert premature[0]["root_check_passed"] is False
-        assert premature[0]["result_artifact_ref"]["content_hash"].startswith(
+        assert premature[0]["payload"]["attempt_status"] == "executed"
+        assert premature[0]["payload"]["root_check_passed"] is False
+        assert premature[0]["payload"]["result_artifact_ref"][
+            "content_hash"
+        ].startswith(
             "sha256:"
         )
 
@@ -742,10 +800,4 @@ class _ParsedCandidateOrderingHook(NoOpRuntimeHooks):
                 name: replacement_ref
                 for name in context.candidate_output_refs
             },
-            experiment_records=(
-                {
-                    "event_type": "EXPERIMENT_PARSED_CANDIDATE_MUTATED",
-                    "attempt_id": context.attempt_id,
-                },
-            ),
         )

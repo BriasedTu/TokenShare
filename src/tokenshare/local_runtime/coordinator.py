@@ -30,8 +30,10 @@ from tokenshare.local_runtime.contracts import (
     ProtocolRunResult,
     RecoveryContext,
     RootProtocolPlan,
+    RuntimeHookObservationV1,
     UnitProgressContext,
     VerificationContext,
+    build_experiment_premature_merge_attempted_observation,
 )
 from tokenshare.local_runtime.projection import (
     build_runtime_observation,
@@ -108,7 +110,7 @@ class ProtocolRunCoordinator:
         schedule_ordinal = 0
         terminal_child_failure = None
         pending_executions: list[tuple[object, object, WorkerBatchOutcome]] = []
-        runtime_observations: list[dict[str, object]] = []
+        runtime_observations: list[RuntimeHookObservationV1] = []
         worker_execution_facts: list[dict[str, object]] = []
         partial_observation = False
         witness_observed_at: str | None = None
@@ -596,13 +598,30 @@ class ProtocolRunCoordinator:
                             created_at=self._now(),
                         )
                         runtime_observations.append(
-                            {
-                                "event_type": (
-                                    "EXPERIMENT_PREMATURE_MERGE_ATTEMPTED"
+                            build_experiment_premature_merge_attempted_observation(
+                                attempt_schema_version=attempt_body["schema_version"],
+                                run_id=request.run_id,
+                                task_id=graph.task_id,
+                                parent_unit_id=registration.root_unit.unit_id,
+                                required_child_unit_ids=tuple(
+                                    attempt_body["required_child_unit_ids"]
                                 ),
-                                **attempt_body,
-                                "result_artifact_ref": result_ref.to_dict(),
-                            }
+                                canonical_child_unit_ids=tuple(
+                                    attempt_body["canonical_child_unit_ids"]
+                                ),
+                                missing_child_unit_ids=tuple(
+                                    attempt_body["missing_child_unit_ids"]
+                                ),
+                                attempt_status=attempt_body["attempt_status"],
+                                plugin_result_type=plugin_result_type,
+                                plugin_error=plugin_error,
+                                root_check_passed=False,
+                                failure_kind=attempt_body["failure_kind"],
+                                protocol_event_refs=tuple(
+                                    attempt_body["protocol_event_refs"]
+                                ),
+                                result_artifact_ref=result_ref,
+                            )
                         )
                         break
                     selected_child_unit_ids = set(
@@ -728,7 +747,9 @@ class ProtocolRunCoordinator:
             projected,
             summary={
                 **projected.summary,
-                "runtime_hook_observations": runtime_observations,
+                "runtime_hook_observations": [
+                    record.to_dict() for record in runtime_observations
+                ],
             },
         )
     def _record_parent_failure(
@@ -1314,13 +1335,18 @@ def _observe(hook, context):
     return hook(context)
 
 
-def _collect_observations(observations: list[dict], directive) -> None:
+def _collect_observations(
+    observations: list[RuntimeHookObservationV1],
+    directive,
+) -> None:
     if directive is None:
         return
     for record in getattr(directive, "experiment_records", ()):
-        if not isinstance(record, dict):
-            raise TypeError("runtime hook experiment records must be objects")
-        observations.append(dict(record))
+        if not isinstance(record, RuntimeHookObservationV1):
+            raise TypeError(
+                "runtime hook experiment records must be RuntimeHookObservationV1"
+            )
+        observations.append(record)
 
 
 def _replacement_submission(submission, directive):

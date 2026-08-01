@@ -23,7 +23,9 @@ from tokenshare.local_runtime import (
     ParserContext,
     ProtocolMechanismPolicy,
     RecoveryContext,
+    RuntimeHookObservationV1,
     VerificationContext,
+    build_experiment_ablation_gate_applied_observation,
 )
 
 
@@ -258,11 +260,11 @@ class PaperAblationRuntimeHooks(NoOpRuntimeHooks):
 
     def __init__(self, mode: PaperAblationMode | str) -> None:
         self.mode = PaperAblationMode(mode)
-        self._events: list[JsonObject] = []
+        self._events: list[RuntimeHookObservationV1] = []
 
     @property
-    def events(self) -> tuple[JsonObject, ...]:
-        return tuple(dict(event) for event in self._events)
+    def events(self) -> tuple[RuntimeHookObservationV1, ...]:
+        return tuple(self._events)
 
     def before_parser(self, context: ParserContext) -> GateDirective | None:
         if self.mode != PaperAblationMode.NO_PARSER_POLICY:
@@ -332,15 +334,14 @@ class PaperAblationRuntimeHooks(NoOpRuntimeHooks):
         bypass: bool = False,
         stop: bool = False,
     ) -> GateDirective:
-        event = {
-            "event_type": "EXPERIMENT_ABLATION_GATE_APPLIED",
-            "ablation_mode": self.mode.value,
-            "disabled_mechanism": mechanism,
-            "protocol_event_refs": [dict(ref) for ref in protocol_event_refs],
-            "artifact_refs": [dict(ref) for ref in artifact_refs],
-            "hook_input": dict(hook_input),
-            "hook_result": {"bypass": bypass, "stop": stop},
-        }
+        event = build_experiment_ablation_gate_applied_observation(
+            ablation_mode=self.mode.value,
+            disabled_mechanism=mechanism,
+            protocol_event_refs=protocol_event_refs,
+            artifact_refs=artifact_refs,
+            hook_input=hook_input,
+            hook_result={"bypass": bypass, "stop": stop},
+        )
         self._events.append(event)
         return GateDirective(
             bypass=bypass,

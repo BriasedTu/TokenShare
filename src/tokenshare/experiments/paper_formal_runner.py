@@ -66,10 +66,13 @@ from tokenshare.experiments.paper_terminal_outcomes import (
 )
 from tokenshare.storage.artifacts import ArtifactStore
 from tokenshare.local_runtime import (
+    ExperimentAblationGateAppliedPayloadV1,
     NoOpRuntimeHooks,
     ParsedCandidateContext,
     ParsedCandidateDirective,
     RawOutputContext,
+    RuntimeHookObservationKind,
+    RuntimeHookObservationV1,
     WorkerTerminationPolicy,
 )
 from tokenshare.plugins.factorization.schemas import (
@@ -4172,10 +4175,18 @@ class _FormalConditionExecutionCallback:
         runtime_body = _as_json(runtime or {})
         if not isinstance(runtime_body, Mapping):
             runtime_body = {}
+        raw_hook_observations = runtime_body.get("hook_observations", [])
+        if not isinstance(raw_hook_observations, list):
+            raise ValueError("runtime hook observations must be a list")
+        typed_hook_observations: list[RuntimeHookObservationV1] = []
+        for item in raw_hook_observations:
+            if not isinstance(item, Mapping):
+                raise ValueError("runtime hook observation must be an object")
+            typed_hook_observations.append(
+                RuntimeHookObservationV1.from_dict(item)
+            )
         hook_observations = [
-            {**dict(item), "ablation_mode": strategy.mode}
-            for item in runtime_body.get("hook_observations", ())
-            if isinstance(item, Mapping)
+            observation.to_dict() for observation in typed_hook_observations
         ]
         target_mechanism = {
             "NO_VERIFICATION": "verification",
@@ -4184,34 +4195,29 @@ class _FormalConditionExecutionCallback:
             "NO_MERGE_GATE": "merge_gate",
         }.get(strategy.mode)
         target_observed = any(
-            item.get("disabled_mechanism") == target_mechanism
-            for item in hook_observations
+            observation.kind
+            is RuntimeHookObservationKind.EXPERIMENT_ABLATION_GATE_APPLIED
+            and isinstance(
+                observation.payload,
+                ExperimentAblationGateAppliedPayloadV1,
+            )
+            and observation.payload.disabled_mechanism == target_mechanism
+            for observation in typed_hook_observations
         )
+        not_applicable_summary: dict[str, Any] | None = None
         if (
             target_mechanism is not None
             and not target_observed
             and strategy.metrics.get("applicable") is False
         ):
-            hook_observations.append(
-                {
-                    "event_type": "EXPERIMENT_ABLATION_NOT_APPLICABLE",
-                    "ablation_mode": strategy.mode,
-                    "disabled_mechanism": target_mechanism,
-                    "applicability": "not_applicable",
-                    "not_applicable_reason": "target_lifecycle_boundary_not_reached",
-                    "protocol_event_refs": list(
-                        observation["protocol_event_refs"]
-                    ),
-                    "artifact_refs": list(observation["artifact_refs"]),
-                    "hook_input": {
-                        key: value
-                        for key, value in observation.items()
-                        if key
-                        not in {"protocol_event_refs", "artifact_refs"}
-                    },
-                    "hook_result": {"applicable": False},
-                }
-            )
+            not_applicable_summary = {
+                "ablation_mode": strategy.mode,
+                "disabled_mechanism": target_mechanism,
+                "applicability": "not_applicable",
+                "not_applicable_reason": "target_lifecycle_boundary_not_reached",
+                "protocol_event_refs": list(observation["protocol_event_refs"]),
+                "artifact_refs": list(observation["artifact_refs"]),
+            }
         runtime_body = {
             **dict(runtime_body),
             "condition_id": condition.condition_id,
@@ -4225,6 +4231,9 @@ class _FormalConditionExecutionCallback:
             ],
             "hook_observations": hook_observations,
         }
+        runtime_body.pop("target_hook_not_applicable", None)
+        if not_applicable_summary is not None:
+            runtime_body["target_hook_not_applicable"] = not_applicable_summary
         task_body["ablation_runtime"] = runtime_body
         adapter_result = _adapter_result_with(
             outcome.adapter_result,

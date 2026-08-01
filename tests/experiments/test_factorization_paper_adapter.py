@@ -1,12 +1,14 @@
 import json
 from dataclasses import replace
 from datetime import datetime, timezone
+from hashlib import sha256
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 import tokenshare.experiments.factorization_paper_adapter as factorization_paper_adapter_module
+import tokenshare.experiments.paper_catalog as paper_catalog_module
 import tokenshare.experiments.paper_formal_metrics as paper_formal_metrics
 from tokenshare.core.models import ArtifactRef
 from tokenshare.executors.ai_api import build_ai_api_executor_descriptor
@@ -55,14 +57,76 @@ from tokenshare.local_runtime import (
     NoOpRuntimeHooks,
     ProtocolRunCoordinator,
     RawOutputContext,
+    RuntimeHookObservationV1,
     SequentialWorkerBackend,
     WorkerTerminationPolicy,
+    build_experiment_ablation_gate_applied_observation,
 )
 from tokenshare.storage.events import EventLedger, EventType
 
 
 FACTOR_CATALOG = "benchmarks/paper/factorization_catalog.v1.jsonl"
 LEAN_CATALOG = "benchmarks/paper/lean_catalog.v1.jsonl"
+
+
+@pytest.fixture(autouse=True)
+def _use_tracked_lean_catalog_identity(monkeypatch: pytest.MonkeyPatch) -> None:
+    repo_root = Path(__file__).resolve().parents[2]
+    tracked_manifest = json.loads(
+        (repo_root / "benchmarks/paper/lean_checker_preflight.v1.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    monkeypatch.setattr(
+        paper_catalog_module,
+        "default_lean_fixture_project_path",
+        lambda: repo_root / "fixtures/lean_proof_project",
+    )
+    environment_manifest = (
+        paper_catalog_module._current_lean_environment_manifest_without_preflight()
+    )
+    object.__setattr__(
+        environment_manifest,
+        "environment_digest",
+        tracked_manifest["environment_digest"],
+    )
+    oracle_source = (
+        repo_root
+        / "fixtures/lean_proof_project/TokenShare/LemmaGraphOracle.lean"
+    ).resolve()
+    original_file_digest = paper_catalog_module._file_digest
+
+    def worktree_file_digest(path: Path) -> str:
+        resolved = Path(path).resolve()
+        if resolved != oracle_source:
+            return original_file_digest(resolved)
+        logical_source = resolved.read_text(encoding="utf-8")
+        logical_source = logical_source.replace("\r\n", "\n").replace("\r", "\n")
+        return f"sha256:{sha256(logical_source.encode('utf-8')).hexdigest()}"
+
+    monkeypatch.setattr(
+        paper_catalog_module,
+        "_current_lean_environment_manifest_without_preflight",
+        lambda: environment_manifest,
+    )
+    monkeypatch.setattr(
+        paper_catalog_module,
+        "lean_checker_implementation_digest",
+        lambda: tracked_manifest["checker_implementation_digest"],
+    )
+    monkeypatch.setattr(
+        paper_catalog_module,
+        "_file_digest",
+        worktree_file_digest,
+    )
+
+
+def test_factorization_catalog_fixture_is_bound_to_current_worktree() -> None:
+    repo_root = Path(__file__).resolve().parents[2]
+
+    assert paper_catalog_module.default_lean_fixture_project_path().resolve().is_relative_to(
+        repo_root
+    )
 
 
 class _AlwaysServerErrorFactorizationTransport:
@@ -91,6 +155,73 @@ class _FailBeforeProviderExecutor:
         del request, submission_id, submitted_at
         self.calls += 1
         raise RuntimeError("offline deterministic root failure")
+
+
+def test_factorization_adapter_officially_parses_runtime_hook_observations() -> None:
+    observation = build_experiment_ablation_gate_applied_observation(
+        ablation_mode="NO_VERIFICATION",
+        disabled_mechanism="verification",
+        protocol_event_refs=(),
+        artifact_refs=(),
+        hook_input={
+            "task_id": "task-1",
+            "unit_id": "unit-1",
+            "attempt_id": "attempt-1",
+            "lease_id": "lease-1",
+        },
+        hook_result={"bypass": True, "stop": False},
+    )
+
+    parsed = factorization_paper_adapter_module._parse_runtime_hook_observations(
+        (observation.to_dict(),)
+    )
+
+    assert parsed == (observation,)
+    assert all(isinstance(item, RuntimeHookObservationV1) for item in parsed)
+
+    tampered = observation.to_dict()
+    tampered["payload"]["disabled_mechanism"] = "requeue"
+    with pytest.raises(ValueError, match="observation_digest mismatch"):
+        factorization_paper_adapter_module._parse_runtime_hook_observations(
+            (tampered,)
+        )
+
+
+@pytest.mark.parametrize(
+    ("mode", "mechanism", "business_result_field"),
+    (
+        ("NO_MERGE_GATE", "merge_gate", "premature_merge_attempted"),
+        ("NO_SLOT_INTEGRITY", "slot_integrity", "slot_integrity_violation"),
+    ),
+)
+def test_factorization_ablation_gate_alone_does_not_claim_business_result(
+    mode: str,
+    mechanism: str,
+    business_result_field: str,
+) -> None:
+    observation = build_experiment_ablation_gate_applied_observation(
+        ablation_mode=mode,
+        disabled_mechanism=mechanism,
+        protocol_event_refs=(),
+        artifact_refs=(),
+        hook_input={
+            "task_id": "task-1",
+            "unit_id": "unit-1",
+            "attempt_id": "attempt-1",
+            "lease_id": "lease-1",
+        },
+        hook_result={"bypass": True, "stop": False},
+    )
+
+    runtime = factorization_paper_adapter_module._ablation_runtime_evidence(
+        mode=mode,
+        attempts=[],
+        merge_summary={},
+        hook_observations=(observation,),
+    )
+
+    assert runtime[business_result_field] is False
+    assert runtime["hook_observations"] == [observation.to_dict()]
 
 
 def test_factorization_v2_all_500_cases_pass_adapter_complete_domain_preflight() -> None:
@@ -702,7 +833,8 @@ def test_factorization_exp4_ablation_modes_execute_inside_adapter_lifecycle(
             for item in result.range_results
         )
         assert any(
-            observation["disabled_mechanism"] == "verification"
+            observation["kind"] == "EXPERIMENT_ABLATION_GATE_APPLIED"
+            and observation["payload"]["disabled_mechanism"] == "verification"
             for observation in runtime["hook_observations"]
         )
         assert result.task_result.accepted_validity is False
@@ -716,7 +848,8 @@ def test_factorization_exp4_ablation_modes_execute_inside_adapter_lifecycle(
         )
         assert runtime["raw_only_exposed"] is True
         assert any(
-            observation["disabled_mechanism"] == "parser_policy"
+            observation["kind"] == "EXPERIMENT_ABLATION_GATE_APPLIED"
+            and observation["payload"]["disabled_mechanism"] == "parser_policy"
             for observation in runtime["hook_observations"]
         )
     elif mode == "NO_REQUEUE":
@@ -728,7 +861,8 @@ def test_factorization_exp4_ablation_modes_execute_inside_adapter_lifecycle(
         assert runtime["premature_merge_attempted"] is True
         assert runtime["root_validity_audit_passed"] is False
         assert any(
-            observation["disabled_mechanism"] == "merge_gate"
+            observation["kind"] == "EXPERIMENT_ABLATION_GATE_APPLIED"
+            and observation["payload"]["disabled_mechanism"] == "merge_gate"
             for observation in runtime["hook_observations"]
         )
     else:
@@ -740,7 +874,8 @@ def test_factorization_exp4_ablation_modes_execute_inside_adapter_lifecycle(
             == "local_runtime_policy"
         )
         assert any(
-            observation["disabled_mechanism"] == "slot_integrity"
+            observation["kind"] == "EXPERIMENT_ABLATION_GATE_APPLIED"
+            and observation["payload"]["disabled_mechanism"] == "slot_integrity"
             for observation in runtime["hook_observations"]
         )
 
@@ -2670,18 +2805,21 @@ def test_fixed_identity_request_mismatch_is_fatal_without_provider_call(
     assert result.run_evidence["protocol_runtime"]["status"] == "failed"
     assert result.task_result.root_status == PaperTaskStatus.FAILED
     assert result.attempt_results
+    expected_status_by_error_kind = {
+        "executor_requirement_mismatch": PaperAttemptStatus.EXECUTOR_ERROR,
+        "missing_submission_event": PaperAttemptStatus.PROVIDER_ERROR,
+    }
+    assert len(result.attempt_results) == len(expected_status_by_error_kind)
+    assert {
+        attempt.error_kind: attempt.attempt_status
+        for attempt in result.attempt_results
+    } == expected_status_by_error_kind
     assert all(
-        attempt.attempt_status == PaperAttemptStatus.PROVIDER_ERROR
-        and attempt.error_kind
-        in {"executor_requirement_mismatch", "missing_submission_event"}
-        and attempt.provenance_ref is None
+        attempt.provenance_ref is None
         and attempt.model_execution_record_ref is None
         and attempt.paper_eligible is False
         for attempt in result.attempt_results
     )
-    assert {
-        attempt.error_kind for attempt in result.attempt_results
-    } == {"executor_requirement_mismatch", "missing_submission_event"}
     ledger = EventLedger(
         Path(result.output_root)
         / "events"

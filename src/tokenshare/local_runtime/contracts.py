@@ -3,8 +3,12 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass, field
+from enum import Enum
 from hashlib import sha256
+from math import isfinite
+from types import MappingProxyType
 from typing import Any, Callable, Protocol
 
 from tokenshare.core.expansion import (
@@ -327,13 +331,478 @@ class UnitProgressContext:
     lease: Lease | None = None
 
 
+RUNTIME_HOOK_OBSERVATION_SCHEMA_VERSION = (
+    "tokenshare.runtime_hook_observation.v1"
+)
+
+
+class RuntimeHookObservationKind(str, Enum):
+    """正式 runtime hook observation 的三个稳定判别值。"""
+
+    EXPERIMENT_FAULT_INJECTED = "EXPERIMENT_FAULT_INJECTED"
+    EXPERIMENT_ABLATION_GATE_APPLIED = "EXPERIMENT_ABLATION_GATE_APPLIED"
+    EXPERIMENT_PREMATURE_MERGE_ATTEMPTED = (
+        "EXPERIMENT_PREMATURE_MERGE_ATTEMPTED"
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class ExperimentFaultInjectedPayloadV1:
+    """受控 fault hook 的领域无关事实。"""
+
+    condition_id: str
+    run_id: str
+    task_id: str
+    unit_id: str
+    selected_target_ai_unit_id: str
+    attempt_id: str
+    fault_type: str
+    protocol_event_refs: tuple[Mapping[str, object], ...]
+    artifact_refs: tuple[ArtifactRef, ...]
+    occurred_at: str
+
+    def __post_init__(self) -> None:
+        for field_name in (
+            "condition_id",
+            "run_id",
+            "task_id",
+            "unit_id",
+            "selected_target_ai_unit_id",
+            "attempt_id",
+            "occurred_at",
+        ):
+            _require_non_empty_string(field_name, getattr(self, field_name))
+        if self.fault_type not in _RUNTIME_FAULT_TYPES:
+            raise ValueError("fault_type must be a registered paper fault type")
+        object.__setattr__(
+            self,
+            "protocol_event_refs",
+            _freeze_event_refs(self.protocol_event_refs),
+        )
+        object.__setattr__(
+            self,
+            "artifact_refs",
+            _freeze_artifact_refs(self.artifact_refs, require_non_empty=True),
+        )
+
+    def to_dict(self) -> JsonObject:
+        return {
+            "condition_id": self.condition_id,
+            "run_id": self.run_id,
+            "task_id": self.task_id,
+            "unit_id": self.unit_id,
+            "selected_target_ai_unit_id": self.selected_target_ai_unit_id,
+            "attempt_id": self.attempt_id,
+            "fault_type": self.fault_type,
+            "protocol_event_refs": _event_refs_to_json(self.protocol_event_refs),
+            "artifact_refs": _artifact_refs_to_json(self.artifact_refs),
+            "occurred_at": self.occurred_at,
+        }
+
+
+@dataclass(frozen=True, kw_only=True)
+class ExperimentAblationGateAppliedPayloadV1:
+    """ablation gate 的输入、输出与引用事实。"""
+
+    ablation_mode: str
+    disabled_mechanism: str
+    protocol_event_refs: tuple[Mapping[str, object], ...]
+    artifact_refs: tuple[ArtifactRef, ...]
+    hook_input: Mapping[str, object]
+    hook_result: Mapping[str, bool]
+
+    def __post_init__(self) -> None:
+        if self.ablation_mode not in _RUNTIME_ABLATION_MODES:
+            raise ValueError("ablation_mode must be a registered paper ablation mode")
+        if self.disabled_mechanism not in _RUNTIME_DISABLED_MECHANISMS:
+            raise ValueError("disabled_mechanism must be a registered mechanism")
+        object.__setattr__(
+            self,
+            "protocol_event_refs",
+            _freeze_event_refs(self.protocol_event_refs),
+        )
+        object.__setattr__(
+            self,
+            "artifact_refs",
+            _freeze_artifact_refs(self.artifact_refs),
+        )
+        object.__setattr__(self, "hook_input", _freeze_hook_input(self.hook_input))
+        object.__setattr__(
+            self,
+            "hook_result",
+            _freeze_hook_result(self.hook_result),
+        )
+
+    def to_dict(self) -> JsonObject:
+        return {
+            "ablation_mode": self.ablation_mode,
+            "disabled_mechanism": self.disabled_mechanism,
+            "protocol_event_refs": _event_refs_to_json(self.protocol_event_refs),
+            "artifact_refs": _artifact_refs_to_json(self.artifact_refs),
+            "hook_input": _thaw_json(self.hook_input),
+            "hook_result": _thaw_json(self.hook_result),
+        }
+
+
+@dataclass(frozen=True, kw_only=True)
+class ExperimentPrematureMergeAttemptedPayloadV1:
+    """merge gate 被绕过后实际尝试的结果事实。"""
+
+    attempt_schema_version: str
+    run_id: str
+    task_id: str
+    parent_unit_id: str
+    required_child_unit_ids: tuple[str, ...]
+    canonical_child_unit_ids: tuple[str, ...]
+    missing_child_unit_ids: tuple[str, ...]
+    attempt_status: str
+    plugin_result_type: str | None
+    plugin_error: str | None
+    root_check_passed: bool
+    failure_kind: str
+    protocol_event_refs: tuple[Mapping[str, object], ...]
+    result_artifact_ref: ArtifactRef
+
+    def __post_init__(self) -> None:
+        if self.attempt_schema_version != "tokenshare.premature_merge_attempt.v1":
+            raise ValueError("attempt_schema_version is unsupported")
+        for field_name in ("run_id", "task_id", "parent_unit_id"):
+            _require_non_empty_string(field_name, getattr(self, field_name))
+        for field_name in (
+            "required_child_unit_ids",
+            "canonical_child_unit_ids",
+            "missing_child_unit_ids",
+        ):
+            object.__setattr__(
+                self,
+                field_name,
+                _freeze_non_empty_strings(getattr(self, field_name), field_name),
+            )
+        if self.attempt_status != "executed":
+            raise ValueError("attempt_status must be executed")
+        for field_name in ("plugin_result_type", "plugin_error"):
+            value = getattr(self, field_name)
+            if value is not None:
+                _require_non_empty_string(field_name, value)
+        _require_exact_bool("root_check_passed", self.root_check_passed)
+        if self.failure_kind != "merge_readiness_unsatisfied":
+            raise ValueError("failure_kind must be merge_readiness_unsatisfied")
+        object.__setattr__(
+            self,
+            "protocol_event_refs",
+            _freeze_event_refs(self.protocol_event_refs),
+        )
+        object.__setattr__(
+            self,
+            "result_artifact_ref",
+            _strict_artifact_ref(self.result_artifact_ref, "result_artifact_ref"),
+        )
+
+    def to_dict(self) -> JsonObject:
+        return {
+            "schema_version": self.attempt_schema_version,
+            "run_id": self.run_id,
+            "task_id": self.task_id,
+            "parent_unit_id": self.parent_unit_id,
+            "required_child_unit_ids": list(self.required_child_unit_ids),
+            "canonical_child_unit_ids": list(self.canonical_child_unit_ids),
+            "missing_child_unit_ids": list(self.missing_child_unit_ids),
+            "attempt_status": self.attempt_status,
+            "plugin_result_type": self.plugin_result_type,
+            "plugin_error": self.plugin_error,
+            "root_check_passed": self.root_check_passed,
+            "failure_kind": self.failure_kind,
+            "protocol_event_refs": _event_refs_to_json(self.protocol_event_refs),
+            "result_artifact_ref": _artifact_ref_to_json(
+                self.result_artifact_ref
+            ),
+        }
+
+
+RuntimeHookObservationPayloadV1 = (
+    ExperimentFaultInjectedPayloadV1
+    | ExperimentAblationGateAppliedPayloadV1
+    | ExperimentPrematureMergeAttemptedPayloadV1
+)
+
+
+@dataclass(frozen=True, kw_only=True)
+class RuntimeHookObservationV1:
+    """带 canonical digest 的 runtime hook discriminated union envelope。"""
+
+    kind: RuntimeHookObservationKind
+    payload: RuntimeHookObservationPayloadV1
+    observation_digest: str | None = None
+    schema_version: str = RUNTIME_HOOK_OBSERVATION_SCHEMA_VERSION
+
+    def __post_init__(self) -> None:
+        if self.schema_version != RUNTIME_HOOK_OBSERVATION_SCHEMA_VERSION:
+            raise ValueError("runtime hook observation schema_version is unsupported")
+        if not isinstance(self.kind, RuntimeHookObservationKind):
+            raise TypeError("runtime hook observation kind must be typed")
+        expected_type = _RUNTIME_PAYLOAD_BY_KIND[self.kind]
+        if not isinstance(self.payload, expected_type):
+            raise TypeError("runtime hook observation payload does not match kind")
+        expected_digest = _json_digest(self._digest_body())
+        if self.observation_digest is None:
+            object.__setattr__(self, "observation_digest", expected_digest)
+            return
+        _require_sha256_digest("observation_digest", self.observation_digest)
+        if self.observation_digest != expected_digest:
+            raise ValueError("runtime hook observation_digest mismatch")
+
+    def _digest_body(self) -> JsonObject:
+        return {
+            "schema_version": self.schema_version,
+            "kind": self.kind.value,
+            "payload": self.payload.to_dict(),
+        }
+
+    def to_dict(self) -> JsonObject:
+        return {
+            **self._digest_body(),
+            "observation_digest": self.observation_digest,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, object]) -> "RuntimeHookObservationV1":
+        _require_exact_keys(
+            data,
+            {"schema_version", "kind", "payload", "observation_digest"},
+            "runtime hook observation",
+        )
+        if data["schema_version"] != RUNTIME_HOOK_OBSERVATION_SCHEMA_VERSION:
+            raise ValueError("runtime hook observation schema_version is unsupported")
+        try:
+            kind = RuntimeHookObservationKind(data["kind"])
+        except (TypeError, ValueError) as exc:
+            raise ValueError("runtime hook observation kind is unsupported") from exc
+        payload = _runtime_payload_from_dict(kind, data["payload"])
+        return cls(
+            schema_version=RUNTIME_HOOK_OBSERVATION_SCHEMA_VERSION,
+            kind=kind,
+            payload=payload,
+            observation_digest=data["observation_digest"],
+        )
+
+
+_RUNTIME_FAULT_TYPES = frozenset(
+    {
+        "false_positive",
+        "false_negative",
+        "no_return",
+        "late_submission",
+        "executor_error",
+    }
+)
+_RUNTIME_ABLATION_MODES = frozenset(
+    {
+        "FULL",
+        "NO_PARSER_POLICY",
+        "NO_VERIFICATION",
+        "NO_REQUEUE",
+        "NO_MERGE_GATE",
+        "NO_SLOT_INTEGRITY",
+    }
+)
+_RUNTIME_DISABLED_MECHANISMS = frozenset(
+    {"parser_policy", "verification", "requeue", "merge_gate", "slot_integrity"}
+)
+_RUNTIME_PAYLOAD_BY_KIND = {
+    RuntimeHookObservationKind.EXPERIMENT_FAULT_INJECTED: (
+        ExperimentFaultInjectedPayloadV1
+    ),
+    RuntimeHookObservationKind.EXPERIMENT_ABLATION_GATE_APPLIED: (
+        ExperimentAblationGateAppliedPayloadV1
+    ),
+    RuntimeHookObservationKind.EXPERIMENT_PREMATURE_MERGE_ATTEMPTED: (
+        ExperimentPrematureMergeAttemptedPayloadV1
+    ),
+}
+
+
+def build_experiment_fault_injected_observation(
+    *,
+    condition_id: str,
+    run_id: str,
+    task_id: str,
+    unit_id: str,
+    selected_target_ai_unit_id: str,
+    attempt_id: str,
+    fault_type: str,
+    protocol_event_refs: tuple[Mapping[str, object], ...],
+    artifact_refs: tuple[ArtifactRef | Mapping[str, object], ...],
+    occurred_at: str,
+) -> RuntimeHookObservationV1:
+    """构造受控 fault observation，不写入协议 event。"""
+
+    return RuntimeHookObservationV1(
+        kind=RuntimeHookObservationKind.EXPERIMENT_FAULT_INJECTED,
+        payload=ExperimentFaultInjectedPayloadV1(
+            condition_id=condition_id,
+            run_id=run_id,
+            task_id=task_id,
+            unit_id=unit_id,
+            selected_target_ai_unit_id=selected_target_ai_unit_id,
+            attempt_id=attempt_id,
+            fault_type=fault_type,
+            protocol_event_refs=protocol_event_refs,
+            artifact_refs=artifact_refs,
+            occurred_at=occurred_at,
+        ),
+    )
+
+
+def build_experiment_ablation_gate_applied_observation(
+    *,
+    ablation_mode: str,
+    disabled_mechanism: str,
+    protocol_event_refs: tuple[Mapping[str, object], ...],
+    artifact_refs: tuple[ArtifactRef | Mapping[str, object], ...],
+    hook_input: Mapping[str, object],
+    hook_result: Mapping[str, object],
+) -> RuntimeHookObservationV1:
+    """构造 ablation gate observation，不解释 gate 的业务适用性。"""
+
+    return RuntimeHookObservationV1(
+        kind=RuntimeHookObservationKind.EXPERIMENT_ABLATION_GATE_APPLIED,
+        payload=ExperimentAblationGateAppliedPayloadV1(
+            ablation_mode=ablation_mode,
+            disabled_mechanism=disabled_mechanism,
+            protocol_event_refs=protocol_event_refs,
+            artifact_refs=artifact_refs,
+            hook_input=hook_input,
+            hook_result=hook_result,
+        ),
+    )
+
+
+def build_experiment_premature_merge_attempted_observation(
+    *,
+    attempt_schema_version: str,
+    run_id: str,
+    task_id: str,
+    parent_unit_id: str,
+    required_child_unit_ids: tuple[str, ...],
+    canonical_child_unit_ids: tuple[str, ...],
+    missing_child_unit_ids: tuple[str, ...],
+    attempt_status: str,
+    plugin_result_type: str | None,
+    plugin_error: str | None,
+    root_check_passed: bool,
+    failure_kind: str,
+    protocol_event_refs: tuple[Mapping[str, object], ...],
+    result_artifact_ref: ArtifactRef | Mapping[str, object],
+) -> RuntimeHookObservationV1:
+    """构造 premature merge observation，不创建 merge/canonical 结果。"""
+
+    return RuntimeHookObservationV1(
+        kind=RuntimeHookObservationKind.EXPERIMENT_PREMATURE_MERGE_ATTEMPTED,
+        payload=ExperimentPrematureMergeAttemptedPayloadV1(
+            attempt_schema_version=attempt_schema_version,
+            run_id=run_id,
+            task_id=task_id,
+            parent_unit_id=parent_unit_id,
+            required_child_unit_ids=required_child_unit_ids,
+            canonical_child_unit_ids=canonical_child_unit_ids,
+            missing_child_unit_ids=missing_child_unit_ids,
+            attempt_status=attempt_status,
+            plugin_result_type=plugin_result_type,
+            plugin_error=plugin_error,
+            root_check_passed=root_check_passed,
+            failure_kind=failure_kind,
+            protocol_event_refs=protocol_event_refs,
+            result_artifact_ref=result_artifact_ref,
+        ),
+    )
+
+
+def _runtime_payload_from_dict(
+    kind: RuntimeHookObservationKind,
+    value: object,
+) -> RuntimeHookObservationPayloadV1:
+    if not isinstance(value, Mapping):
+        raise TypeError("runtime hook observation payload must be an object")
+    if kind is RuntimeHookObservationKind.EXPERIMENT_FAULT_INJECTED:
+        _require_exact_keys(
+            value,
+            {
+                "condition_id",
+                "run_id",
+                "task_id",
+                "unit_id",
+                "selected_target_ai_unit_id",
+                "attempt_id",
+                "fault_type",
+                "protocol_event_refs",
+                "artifact_refs",
+                "occurred_at",
+            },
+            "fault observation payload",
+        )
+        return ExperimentFaultInjectedPayloadV1(**dict(value))
+    if kind is RuntimeHookObservationKind.EXPERIMENT_ABLATION_GATE_APPLIED:
+        _require_exact_keys(
+            value,
+            {
+                "ablation_mode",
+                "disabled_mechanism",
+                "protocol_event_refs",
+                "artifact_refs",
+                "hook_input",
+                "hook_result",
+            },
+            "ablation observation payload",
+        )
+        return ExperimentAblationGateAppliedPayloadV1(**dict(value))
+    _require_exact_keys(
+        value,
+        {
+            "schema_version",
+            "run_id",
+            "task_id",
+            "parent_unit_id",
+            "required_child_unit_ids",
+            "canonical_child_unit_ids",
+            "missing_child_unit_ids",
+            "attempt_status",
+            "plugin_result_type",
+            "plugin_error",
+            "root_check_passed",
+            "failure_kind",
+            "protocol_event_refs",
+            "result_artifact_ref",
+        },
+        "premature merge observation payload",
+    )
+    return ExperimentPrematureMergeAttemptedPayloadV1(
+        attempt_schema_version=value["schema_version"],
+        run_id=value["run_id"],
+        task_id=value["task_id"],
+        parent_unit_id=value["parent_unit_id"],
+        required_child_unit_ids=value["required_child_unit_ids"],
+        canonical_child_unit_ids=value["canonical_child_unit_ids"],
+        missing_child_unit_ids=value["missing_child_unit_ids"],
+        attempt_status=value["attempt_status"],
+        plugin_result_type=value["plugin_result_type"],
+        plugin_error=value["plugin_error"],
+        root_check_passed=value["root_check_passed"],
+        failure_kind=value["failure_kind"],
+        protocol_event_refs=value["protocol_event_refs"],
+        result_artifact_ref=value["result_artifact_ref"],
+    )
+
+
 @dataclass(frozen=True, kw_only=True)
 class RawOutputDirective:
     """只改变 parser 输入或声明受控 result kind，不写协议状态。"""
 
     content_text: str | None = None
     result_kind: str | None = None
-    experiment_records: tuple[JsonObject, ...] = ()
+    experiment_records: tuple[RuntimeHookObservationV1, ...] = ()
+
+    def __post_init__(self) -> None:
+        _require_runtime_observation_tuple(self.experiment_records)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -341,7 +810,10 @@ class ParsedCandidateDirective:
     """只替换 verifier 将读取的 candidate refs，并返回实验观察。"""
 
     replacement_candidate_output_refs: dict[str, ArtifactRef]
-    experiment_records: tuple[JsonObject, ...] = ()
+    experiment_records: tuple[RuntimeHookObservationV1, ...] = ()
+
+    def __post_init__(self) -> None:
+        _require_runtime_observation_tuple(self.experiment_records)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -351,7 +823,10 @@ class GateDirective:
     bypass: bool = False
     stop: bool = False
     replacement: Any | None = None
-    experiment_records: tuple[JsonObject, ...] = ()
+    experiment_records: tuple[RuntimeHookObservationV1, ...] = ()
+
+    def __post_init__(self) -> None:
+        _require_runtime_observation_tuple(self.experiment_records)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -360,7 +835,10 @@ class WorkerDirective:
 
     action: str
     worker_id: str | None = None
-    experiment_records: tuple[JsonObject, ...] = ()
+    experiment_records: tuple[RuntimeHookObservationV1, ...] = ()
+
+    def __post_init__(self) -> None:
+        _require_runtime_observation_tuple(self.experiment_records)
 
 
 class RuntimeHooks(Protocol):
@@ -706,3 +1184,248 @@ def _require_sha256_digest(field_name: str, value: object) -> None:
         or any(character not in "0123456789abcdef" for character in value[7:])
     ):
         raise ValueError(f"{field_name} must be a sha256 digest")
+
+
+def _require_exact_keys(
+    value: object,
+    expected: set[str],
+    field_name: str,
+) -> None:
+    if not isinstance(value, Mapping) or set(value) != expected:
+        raise ValueError(f"{field_name} must have exact keys")
+
+
+def _require_exact_bool(field_name: str, value: object) -> None:
+    if type(value) is not bool:
+        raise TypeError(f"{field_name} must be an exact bool")
+
+
+def _require_runtime_observation_tuple(value: object) -> None:
+    if not isinstance(value, tuple) or any(
+        not isinstance(item, RuntimeHookObservationV1) for item in value
+    ):
+        raise TypeError(
+            "experiment_records must be a tuple of RuntimeHookObservationV1"
+        )
+
+
+def _require_exact_int(field_name: str, value: object, *, minimum: int) -> None:
+    if type(value) is not int or value < minimum:
+        raise TypeError(f"{field_name} must be an exact int >= {minimum}")
+
+
+def _freeze_non_empty_strings(value: object, field_name: str) -> tuple[str, ...]:
+    if not isinstance(value, (list, tuple)):
+        raise TypeError(f"{field_name} must be a list or tuple")
+    result = tuple(value)
+    for index, item in enumerate(result):
+        _require_non_empty_string(f"{field_name}[{index}]", item)
+    return result
+
+
+def _freeze_event_refs(value: object) -> tuple[Mapping[str, object], ...]:
+    if not isinstance(value, (list, tuple)):
+        raise TypeError("protocol_event_refs must be a list or tuple")
+    result: list[Mapping[str, object]] = []
+    basic_keys = {"event_id", "event_seq", "event_type"}
+    hashed_keys = {"event_id", "event_seq", "event_type", "event_hash"}
+    for index, ref in enumerate(value):
+        keys = set(ref) if isinstance(ref, Mapping) else set()
+        if not isinstance(ref, Mapping) or (
+            keys != basic_keys and keys != hashed_keys
+        ):
+            raise ValueError(
+                f"protocol_event_refs[{index}] must have exact keys"
+            )
+        _require_non_empty_string(
+            f"protocol_event_refs[{index}].event_id", ref["event_id"]
+        )
+        _require_exact_int(
+            f"protocol_event_refs[{index}].event_seq",
+            ref["event_seq"],
+            minimum=1,
+        )
+        body: dict[str, object] = {
+            "event_id": ref["event_id"],
+            "event_seq": ref["event_seq"],
+            "event_type": ref["event_type"],
+        }
+        _require_non_empty_string(
+            f"protocol_event_refs[{index}].event_type", ref["event_type"]
+        )
+        if keys == hashed_keys:
+            _require_sha256_digest(
+                f"protocol_event_refs[{index}].event_hash", ref["event_hash"]
+            )
+            body.update(
+                event_hash=ref["event_hash"],
+            )
+        result.append(MappingProxyType(body))
+    return tuple(result)
+
+
+def _event_refs_to_json(
+    refs: tuple[Mapping[str, object], ...],
+) -> list[JsonObject]:
+    return [{str(key): _thaw_json(value) for key, value in ref.items()} for ref in refs]
+
+
+def _freeze_artifact_refs(
+    value: object,
+    *,
+    require_non_empty: bool = False,
+) -> tuple[ArtifactRef, ...]:
+    if not isinstance(value, (list, tuple)):
+        raise TypeError("artifact_refs must be a list or tuple")
+    if require_non_empty and not value:
+        raise ValueError("artifact_refs must be non-empty")
+    return tuple(
+        _strict_artifact_ref(ref, f"artifact_refs[{index}]")
+        for index, ref in enumerate(value)
+    )
+
+
+def _strict_artifact_ref(value: object, field_name: str) -> ArtifactRef:
+    if isinstance(value, ArtifactRef):
+        body = _artifact_ref_to_json(value)
+    elif isinstance(value, Mapping):
+        body = dict(value)
+    else:
+        raise TypeError(f"{field_name} must be an ArtifactRef or object")
+    keys = {
+        "schema_version",
+        "artifact_id",
+        "artifact_type",
+        "uri",
+        "content_hash",
+        "size_bytes",
+        "media_type",
+        "artifact_schema_id",
+        "artifact_schema_version",
+        "source",
+        "metadata",
+        "created_at",
+    }
+    _require_exact_keys(body, keys, field_name)
+    if body["schema_version"] != "ArtifactRef.v1":
+        raise ValueError(f"{field_name}.schema_version is unsupported")
+    for key in (
+        "artifact_id",
+        "artifact_type",
+        "uri",
+        "media_type",
+        "artifact_schema_id",
+        "artifact_schema_version",
+        "created_at",
+    ):
+        _require_non_empty_string(f"{field_name}.{key}", body[key])
+    _require_sha256_digest(f"{field_name}.content_hash", body["content_hash"])
+    _require_exact_int(f"{field_name}.size_bytes", body["size_bytes"], minimum=0)
+    if not isinstance(body["source"], Mapping):
+        raise TypeError(f"{field_name}.source must be an object")
+    if not isinstance(body["metadata"], Mapping):
+        raise TypeError(f"{field_name}.metadata must be an object")
+    source = _freeze_json(body["source"], f"{field_name}.source")
+    metadata = _freeze_json(body["metadata"], f"{field_name}.metadata")
+    return ArtifactRef(
+        artifact_id=body["artifact_id"],
+        artifact_type=body["artifact_type"],
+        uri=body["uri"],
+        content_hash=body["content_hash"],
+        size_bytes=body["size_bytes"],
+        media_type=body["media_type"],
+        artifact_schema_id=body["artifact_schema_id"],
+        artifact_schema_version=body["artifact_schema_version"],
+        source=source,
+        metadata=metadata,
+        created_at=body["created_at"],
+        schema_version="ArtifactRef.v1",
+    )
+
+
+def _artifact_ref_to_json(ref: ArtifactRef) -> JsonObject:
+    return {
+        "schema_version": ref.schema_version,
+        "artifact_id": ref.artifact_id,
+        "artifact_type": ref.artifact_type,
+        "uri": ref.uri,
+        "content_hash": ref.content_hash,
+        "size_bytes": ref.size_bytes,
+        "media_type": ref.media_type,
+        "artifact_schema_id": ref.artifact_schema_id,
+        "artifact_schema_version": ref.artifact_schema_version,
+        "source": _thaw_json(ref.source),
+        "metadata": _thaw_json(ref.metadata),
+        "created_at": ref.created_at,
+    }
+
+
+def _artifact_refs_to_json(refs: tuple[ArtifactRef, ...]) -> list[JsonObject]:
+    return [_artifact_ref_to_json(ref) for ref in refs]
+
+
+def _freeze_hook_input(value: object) -> Mapping[str, object]:
+    if not isinstance(value, Mapping):
+        raise TypeError("hook_input must be an object")
+    keys = set(value)
+    identity_keys = {"task_id", "unit_id", "attempt_id", "lease_id"}
+    recovery_keys = {*identity_keys, "trigger"}
+    merge_keys = {"gate_satisfied", "required_child_unit_ids"}
+    if keys == identity_keys:
+        body = dict(value)
+        for key in identity_keys:
+            _require_non_empty_string(f"hook_input.{key}", body[key])
+    elif keys == recovery_keys:
+        body = dict(value)
+        for key in recovery_keys:
+            _require_non_empty_string(f"hook_input.{key}", body[key])
+    elif keys == merge_keys:
+        body = dict(value)
+        _require_exact_bool("hook_input.gate_satisfied", body["gate_satisfied"])
+        body["required_child_unit_ids"] = _freeze_non_empty_strings(
+            body["required_child_unit_ids"],
+            "hook_input.required_child_unit_ids",
+        )
+    else:
+        raise ValueError("hook_input must have exact keys")
+    return MappingProxyType(body)
+
+
+def _freeze_hook_result(value: object) -> Mapping[str, bool]:
+    _require_exact_keys(value, {"bypass", "stop"}, "hook_result")
+    body = dict(value)
+    _require_exact_bool("hook_result.bypass", body["bypass"])
+    _require_exact_bool("hook_result.stop", body["stop"])
+    return MappingProxyType(body)
+
+
+def _freeze_json(value: object, field_name: str) -> object:
+    if value is None or type(value) is bool or type(value) is int:
+        return value
+    if type(value) is float:
+        if not isfinite(value):
+            raise ValueError(f"{field_name} float must be finite")
+        return value
+    if isinstance(value, str):
+        _require_non_empty_string(field_name, value)
+        return value
+    if isinstance(value, Mapping):
+        frozen: dict[str, object] = {}
+        for key, item in value.items():
+            _require_non_empty_string(f"{field_name} key", key)
+            frozen[key] = _freeze_json(item, f"{field_name}.{key}")
+        return MappingProxyType(frozen)
+    if isinstance(value, (list, tuple)):
+        return tuple(
+            _freeze_json(item, f"{field_name}[{index}]")
+            for index, item in enumerate(value)
+        )
+    raise TypeError(f"{field_name} contains a non-JSON value")
+
+
+def _thaw_json(value: object) -> Any:
+    if isinstance(value, Mapping):
+        return {str(key): _thaw_json(item) for key, item in value.items()}
+    if isinstance(value, tuple):
+        return [_thaw_json(item) for item in value]
+    return value

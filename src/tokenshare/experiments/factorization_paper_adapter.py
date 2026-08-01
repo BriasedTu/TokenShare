@@ -61,10 +61,13 @@ from tokenshare.experiments.paper_workers import (
     project_worker_death_records,
 )
 from tokenshare.local_runtime import (
+    ExperimentPrematureMergeAttemptedPayloadV1,
     ProcessWorkerBackend,
     ProtocolExecutionScope,
     ProtocolRunCoordinator,
     ProtocolRunRequest,
+    RuntimeHookObservationKind,
+    RuntimeHookObservationV1,
     SequentialWorkerBackend,
     ThreadWorkerBackend,
     WorkerTerminationPolicy,
@@ -1398,11 +1401,8 @@ def _run_factorization_full_via_coordinator(
         canonical_refs_by_attempt=canonical_refs_by_attempt,
         independent_validity_by_attempt=independent_validity_by_attempt,
         final_validity=accepted_validity,
-        hook_observations=tuple(
-            dict(item)
-            for item in runtime_result.summary.get(
-                "runtime_hook_observations", ()
-            )
+        hook_observations=_parse_runtime_hook_observations(
+            runtime_result.summary.get("runtime_hook_observations", ())
         ),
     )
     eligibility = evaluate_paper_eligibility(
@@ -1737,6 +1737,14 @@ def _normalize_ablation_mode(value: str | None) -> str:
     return mode
 
 
+def _parse_runtime_hook_observations(
+    value: object,
+) -> tuple[RuntimeHookObservationV1, ...]:
+    if not isinstance(value, (list, tuple)):
+        raise TypeError("runtime_hook_observations must be a list or tuple")
+    return tuple(RuntimeHookObservationV1.from_dict(item) for item in value)
+
+
 def _ablation_runtime_evidence(
     *,
     mode: str,
@@ -1749,7 +1757,7 @@ def _ablation_runtime_evidence(
     canonical_refs_by_attempt: dict[str, dict[str, ArtifactRef]] | None = None,
     independent_validity_by_attempt: dict[str, bool] | None = None,
     final_validity: bool | None = None,
-    hook_observations: tuple[JsonObject, ...] = (),
+    hook_observations: tuple[RuntimeHookObservationV1, ...] = (),
 ) -> JsonObject:
     submitted_candidate_refs_by_attempt = (
         submitted_candidate_refs_by_attempt or {}
@@ -1764,11 +1772,13 @@ def _ablation_runtime_evidence(
         "NO_MERGE_GATE": "merge_gate",
         "NO_SLOT_INTEGRITY": "slot_integrity",
     }[mode]
-    observed_mechanisms = {
-        str(item.get("disabled_mechanism"))
+    premature_payloads = tuple(
+        item.payload
         for item in hook_observations
-        if item.get("event_type") == "EXPERIMENT_ABLATION_GATE_APPLIED"
-    }
+        if item.kind
+        is RuntimeHookObservationKind.EXPERIMENT_PREMATURE_MERGE_ATTEMPTED
+        and isinstance(item.payload, ExperimentPrematureMergeAttemptedPayloadV1)
+    )
     return {
         "schema_version": "tokenshare.paper_ablation_runtime.v1",
         "mode": mode,
@@ -1795,11 +1805,10 @@ def _ablation_runtime_evidence(
         ),
         "premature_merge_attempted": bool(
             merge_summary.get("premature_merge_attempted")
-            or "merge_gate" in observed_mechanisms
+            or premature_payloads
         ),
         "slot_integrity_violation": bool(
             merge_summary.get("slot_integrity_violation")
-            or "slot_integrity" in observed_mechanisms
         ),
         "root_validity_audit_passed": bool(
             merge_summary.get("root_validity_audit_passed")
@@ -1836,7 +1845,7 @@ def _ablation_runtime_evidence(
             }
             for attempt in attempts
         ],
-        "hook_observations": [dict(item) for item in hook_observations],
+        "hook_observations": [item.to_dict() for item in hook_observations],
     }
 
 
