@@ -166,18 +166,20 @@ Secret 只能进入当前进程环境和脱敏后的 transport；event/artifact/
 | `paper_formal_metrics.py` | 正式 Exp1–5 指标表生产路径。 |
 | `paper_report.py`、`paper_formal_report.py`、`paper_smoke_report.py` | 通用/正式/smoke 输出；smoke 永远 paper-ineligible。 |
 | `paper_exp5_artifacts.py`、`paper_exp5_model_comparison.py`、`paper_exp5_statistics.py` | Exp5 v3 artifact、比较与统计。 |
-| `paper_budget.py` | plan-only roots/units/attempt/token/cost/time/space 预算与门禁；Task 6 把完整 bank inventory 的 roots/units/slots、terminal provider failure、在线检查与磁盘估算写入预算投影。 |
+| `paper_budget.py` | plan-only roots/units/attempt/token/cost/time/space 预算与门禁；Task 6 把完整 bank inventory 写入预算投影，Task 7 增加 provider-writing 硬预算 limits 与禁止 unlimited mode 的入口门禁。 |
 | `paper_response_bank.py` | Task 6 complete semantic-slot inventory/zero-engine preflight：从 adapter-built exact bodies 生成 canonical inventory entry/semantic slot/inference request/admission identity，冻结 Exp2–4 sample/replacement sharing 与最大恢复深度，拒绝 one-slot-two-digests，并在 coordinator 构造前以独立 preflight record fail closed。 |
+| `paper_budget_ledger.py` | Task 7 SQLite WAL atomic budget authority：以 `BEGIN IMMEDIATE` 原子校验 preregistered inventory identity、calls/tokens/CNY 与 DeepSeek 累计硬门，持久化 reservation/dispatch/ambiguous/terminal/settled 状态并支持幂等 reconciliation；JSONL 仅为 committed rows 的审计导出。 |
+| `paper_resource_accounting.py` | Task 7 按 frozen pricing 核算 terminal provider usage；usage 缺失时保留完整 token/CNY reservation upper，避免少计实际 acquisition spend。 |
 
 正式规模和资源边界由 `paper_suite_scale.py`、`paper_budget.py`、`paper_formal_checkpoint.py` 与 `paper_formal_metrics.py` 共同约束：当前 Exp1–5 精确总量为 `6,384 roots / 40,520 units / 81,272 attempt upper`，最大单 condition 为 `100/1,000/1,000`；generation 逐 root delta、terminal SQLite streaming compaction、metrics lazy bundle mapping 和 JSONL/chunked scan 使内存按最大单 outcome/当前 bundle 定界，而不是把全 suite 同时载入。磁盘 forecast/compaction/safety reserve 必须写入 `run_budget.json` 并在 provider dispatch 前检查目标卷。
 
 ### EPD-027 实施进度与后续实验设施改造
 
-2026-08-01 已冻结 Experiment 2–4 两阶段真实回答库设计。当前 35 个实施 Task 中 Task 0–6 已 accepted：离线 network tripwire、profile/budget、machine-readable metric contract、canonical direct-results、exact prepared outbound request identity/admission/Lean prompt v2、immutable bank object/index/opaque locator、complete semantic slot inventory/zero-engine preflight，以及 verified-ledger/typed-hook producer binding 已存在。Task 6 commit=`5f97034c`，canonical combined `44 passed in 25.14s`，comprehensive final review PASS，C1 terminal conflict/C2 repeat-sample 跨 replacement closure 已闭合。这个 `7/35` 状态不代表 acquisition 或整条 paper pipeline 已实现：`paper_formal_runner.py` 尚不能以回答库输入重新驱动完整状态机；Task 7 SQLite WAL atomic budget authority 保持 queued 且尚未开始。
+2026-08-01 已冻结 Experiment 2–4 两阶段真实回答库设计。当前 35 个实施 Task 中 Task 0–7 已 accepted：Task 6 以前的 contract/direct-results/request identity/bank inventory 等前置保持不变；Task 7 SQLite WAL atomic budget authority commit=`aadbd483`，post-min final test `12 passed in 2.18s`，真实本地 two-process race，comprehensive review PASS 且 Critical/Important/Minor=`0/0/0`，provider/network/secret=`0`，3 个 production 文件 `py_compile` exit `0`，测试压缩仅删除 1 个冗余 assert。这个 `8/35` 状态不代表 acquisition 或整条 paper pipeline 已实现：Task 8 acquire/publish/resume/reconcile bank entries 为 queued/next，`paper_formal_runner.py` 尚不能以回答库输入重新驱动完整状态机。本次未运行 Fast/Full/LeanAudit。
 
 后续完整实施计划必须同时覆盖：
 
-- response-bank acquisition actual usage 与 SQLite WAL atomic budget authority（稳定 `inference_request_digest` 已由 Task 4 提供，immutable bank primitives 已由 Task 5 提供，complete semantic-slot inventory/sample/replacement slots 已由 Task 6 提供）；
+- response-bank acquire/publish/resume/reconcile 与 actual usage 写入（SQLite WAL atomic budget authority 已由 Task 7 提供）；
 - trace-backed executor binding、当前 submission 到 source entry 的双 provenance；
 - `online_real_provider` 与 `real_model_trace_protocol_run` 两类 paper eligibility，禁止把 trace consumption 冒充当前 provider call；
 - acquisition actual spend 与 per-condition trace attribution 两套资源账，以及 calls/tokens/CNY/in-flight 人民币 1,000 硬门；
