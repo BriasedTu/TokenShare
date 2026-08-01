@@ -1,6 +1,6 @@
 # EPD-027 最小交接摘要（2026-08-01）
 
-> 本摘要是 2026-08-02 Task 4 最终 review PASS 后的 fresh 状态快照。Task 4 已 accepted，以本摘要中的 accepted 状态为当前权威。
+> 本摘要是 2026-08-02 Task 5 最终 review PASS 后的 fresh 状态快照。Task 5 已 accepted，以本摘要中的 accepted 状态为当前权威。
 
 ## 1. Active feature / focus
 
@@ -9,7 +9,7 @@
 - 工作树：`C:\Users\32133\.config\superpowers\worktrees\TokenShare\codex-feat-011-epd027-pipeline`。
 - 分支：`codex/feat-011-epd027-pipeline`。
 - 权威实施计划：`Doc/archive/design-history/2026-08-01-feat-011-response-bank-paper-pipeline-implementation-plan.md`。
-- 当前停止点：Task 0–4 已接受（`5/35`）。Task 4 已提交；Task 5 是 queued/next，尚未开始。
+- 当前停止点：Task 0–5 已接受（`6/35`）。Task 5 已提交；Task 6 是 queued/next，尚未开始。
 
 ## 2. Task 0–34 状态
 
@@ -20,7 +20,7 @@
 | 2 | accepted | 机器可执行 paper metric contract；已通过多轮双审并提交。 |
 | 3 | accepted | canonical direct-results projector；两项通用前置与 Task 3 均已复审 PASS，Task 3 已提交为 `f9773944`。 |
 | 4 | accepted | exact outbound bytes / request identity / admission / Lean prompt v2；commit `0cbda1df`，最终 review PASS。 |
-| 5 | queued | immutable response-bank objects/index/opaque locator。 |
+| 5 | accepted | immutable response-bank objects/index/opaque locator；commit `58cda71f`，最终 review PASS。 |
 | 6 | queued | semantic slot inventory / zero-engine preflight。 |
 | 7 | queued | SQLite WAL atomic budget authority。 |
 | 8 | queued | acquire/publish/resume/reconcile bank entries。 |
@@ -120,7 +120,14 @@
 - 验证：focused `125 passed`；canonical 初次 `323 passed / 39 failed` 后 fixture 逐步收敛；最终正式 E2E nodeid exit `0`，`1 passed in 6.68s`（total `7.635s`），日志=`%TEMP%\tokenshare_task4_canonical_single_selection_nodeid.log`；provider calls=`0`，network tripwire loaded。
 - Review：最终 `PASS`，Critical/Important=`0/0`。post-accept test minimization 运行 3 分钟，结论 `NO_CHANGE`，保留 5 个 distinct tests。`py_compile`、diff-check、name-only 均 exit `0`。
 - 用户批准的唯一计划外 production：`src/tokenshare/experiments/paper_formal_evidence.py` 将 immutable `protocol_task_id` 映射到 case task-id closure，映射冲突 fail closed；修复 canonical selection evidence，review 确认无 shadow protocol path。
-- 隔离 dirty：approved implementation plan 保持未暂存 `28 additions / 8 deletions` user override；它不属于 Task 4，不得暂存、修改或回退。
+- 本轮未运行 Fast、Full、LeanAudit，未联网，未调用 provider。
+
+### Task 5 — accepted
+
+- Commit：`58cda71f`（`feat(executors): add opaque external response-bank locator`），严格五文件。
+- 文件：`src/tokenshare/executors/response_bank.py`、`tests/executors/test_response_bank.py`、`src/tokenshare/storage/artifacts.py`、`src/tokenshare/executors/ai_api_replay.py`、`tests/executors/test_ai_api_replay_guard.py`。
+- 验证：canonical combined exit `0`，`17 passed / 0 failed / 0 skipped in 0.81s`；provider/network calls=`0`；3 个 production 文件 `py_compile` exit `0`；diff-check exit `0`。
+- Review：综合 review=`PASS`，Critical/Important/Minor=`0/0/0`；post-task test minimization `<5min`=`NO_CHANGE`，保留 17 个 distinct cases。
 - 本轮未运行 Fast、Full、LeanAudit，未联网，未调用 provider。
 
 ### 最新仓库级 Fast 证据
@@ -131,21 +138,20 @@
 
 ## 4. 当前协作状态
 
-- Task 4 已 accepted；Task 5 是下一项，保持 queued 且尚未开始。
+- Task 5 已 accepted；Task 6 是下一项，保持 queued 且尚未开始。
 - Task 4 之前的 `READY_AFTER_TASK3` 只作历史 provenance，已被 final review PASS 覆盖。
 
 ## 5. 当前风险 / 注意事项
 
-1. Task 4 已闭合；`failed_root_count`/canonical summary 与 reachable-artifact closure 的旧 blocker 均已收敛。
-2. Task 4 production/tests 已独立提交；状态提交只能包含四个 harness 文件与 code map，不能夹带 approved plan 的 `28/8` user override。
-3. Task 0–4 只覆盖 `5/35`；Task 5 及以后保持 queued，`feat-011` 保持 `in-progress`，正式全量维持 NO-GO。
+1. Task 5 已闭合；immutable bank object/index/opaque locator 已实现并通过 review。
+2. Task 5 production/tests 已独立提交；本次状态提交只能包含 minimal handoff、`progress.md`、`feature_list.json`、`session-handoff.md` 与 code map。
+3. Task 0–5 只覆盖 `6/35`；Task 6 及以后保持 queued，`feat-011` 保持 `in-progress`，正式全量维持 NO-GO。
 4. 未获用户提供且经 Task 26 校验的 paid receipt，不得调用真实 API；离线 implementation approval 不构成付费授权。
 
 ## 6. 下一批可直接派发任务
 
-1. 保持 Task 4=`accepted` 和 accepted=`5/35`。
-2. Task 5 是 queued/next，尚未开始；按严格串行门禁另行实施与复审。
-3. approved implementation plan 的隔离 `28 additions / 8 deletions` user override 保持未暂存原状，不得修改或回退。
+1. 保持 Task 5=`accepted` 和 accepted=`6/35`。
+2. Task 6 是 queued/next，尚未开始；按严格串行门禁另行实施与复审。
 
 ## 7. 禁止命令与付费 API 门禁
 
@@ -160,4 +166,4 @@
 - 缺 receipt、缺 bank entry、超预算或证据不完整必须 fail closed，不得临时 scripted 生成。
 - 预算硬停止线：人民币 1000 元；达到即停止新的 provider dispatch，已有证据正常收口。
 - Experiment 1/5 保持真实 API；Experiment 2/3/4 按批准的两阶段 real-trace paired 设计；Exp2/Exp3 保留小型在线检查。
-- 当前 state/docs 已同步到 Task 4 accepted；Task 5 保持 queued 且尚未开始，不得自动调用 API。
+- 当前 state/docs 已同步到 Task 5 accepted；Task 6 保持 queued 且尚未开始，不得自动调用 API。

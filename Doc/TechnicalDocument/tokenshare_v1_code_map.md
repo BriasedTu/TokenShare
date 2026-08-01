@@ -107,7 +107,8 @@ AI 只能生成预注册 proof unit 的候选内容，不能决定协议级拆�
 | `ai_api_transport.py` | DeepSeek/OpenAI-compatible/SiliconFlow transport；只消费已校验的 exact endpoint/bytes ABI，不二次序列化。 |
 | `ai_api.py` | 执行请求、attempt/provenance/usage 收集；在 secret resolution/transport 前完成 prepared validation、prompt admission 与 artifact persistence。 |
 | `ai_api_artifacts.py` | raw/parsed/failure/provenance/usage/model record artifact。 |
-| `ai_api_replay.py` | 从 artifact 恢复结果，不重新调用 API。 |
+| `response_bank.py` | Task 5 immutable bank object/index/opaque external locator：规范化 manifest/inventory entry/current wrapper，校验 self-excluding entry identity、role 完整性、root marker 绑定，并在流式 hash 验证后解析 bank-internal object。 |
+| `ai_api_replay.py` | 从 artifact 或显式绑定的 external response bank 恢复结果，不重新调用 API；bank replay 要求相同 root binding。 |
 
 Secret 只能进入当前进程环境和脱敏后的 transport；event/artifact/SQLite/log/config digest 不得保存 secret。
 
@@ -171,18 +172,18 @@ Secret 只能进入当前进程环境和脱敏后的 transport；event/artifact/
 
 ### EPD-027 实施进度与后续实验设施改造
 
-2026-08-01 已冻结 Experiment 2–4 两阶段真实回答库设计。当前 35 个实施 Task 中 Task 0–4 已 accepted：离线 network tripwire、profile/budget、machine-readable metric contract、canonical direct-results、exact prepared outbound request identity/admission/Lean prompt v2，以及 verified-ledger/typed-hook producer binding 已存在。这个 `5/35` 状态不代表 response bank 或整条 paper pipeline 已实现：现有 `ai_api_replay.py` 与 `paper_formal_runner.py` replay 仍只恢复或复算既有 evidence，不能以回答库输入重新驱动完整状态机；Task 5 immutable response bank 保持 queued 且尚未开始。
+2026-08-01 已冻结 Experiment 2–4 两阶段真实回答库设计。当前 35 个实施 Task 中 Task 0–5 已 accepted：离线 network tripwire、profile/budget、machine-readable metric contract、canonical direct-results、exact prepared outbound request identity/admission/Lean prompt v2、immutable bank object/index/opaque locator，以及 verified-ledger/typed-hook producer binding 已存在。Task 5 commit=`58cda71f`，canonical combined `17 passed`，综合 review PASS。这个 `6/35` 状态不代表 semantic inventory/acquisition 或整条 paper pipeline 已实现：`paper_formal_runner.py` 尚不能以回答库输入重新驱动完整状态机；Task 6 semantic slot inventory/zero-engine preflight 保持 queued 且尚未开始。
 
 后续完整实施计划必须同时覆盖：
 
-- executor 层的不可变 bank entry 与 acquisition actual usage（稳定 `inference_request_digest` 已由 Task 4 提供）；
-- experiment 层的 bank inventory、sample/replacement slot、trace-backed executor binding、当前 submission 到 source entry 的双 provenance；
+- experiment 层的完整 semantic-slot bank inventory、sample/replacement slot 与 acquisition actual usage（稳定 `inference_request_digest` 已由 Task 4 提供，immutable bank primitives 已由 Task 5 提供）；
+- trace-backed executor binding、当前 submission 到 source entry 的双 provenance；
 - `online_real_provider` 与 `real_model_trace_protocol_run` 两类 paper eligibility，禁止把 trace consumption 冒充当前 provider call；
 - acquisition actual spend 与 per-condition trace attribution 两套资源账，以及 calls/tokens/CNY/in-flight 人民币 1,000 硬门；
 - Experiment 2 缩小题集六 worker 档在线并发检查、Experiment 3 小型在线恢复检查；
 - metrics/report/renderer/replay/audit 与 smoke/canary 身份迁移。
 
-这是一项跨 `tokenshare.executors`、`tokenshare.experiments`、两插件 runtime adapter 和输出 schema 的全面设施修改，不得在 `paper_formal_runner.py` 内临时塞入读取文件的旁路，也不得复制一套协议生命周期。已接受的 ledger/hook/direct-result 边界不改变 `ProtocolEngine` 状态机；response-bank、trace-backed executor、projector registry 与 formal runner/metrics/renderer/replay 的正式 pipeline 接线属于后续 Task。后续继续先建 characterization/RED tests，并以唯一权威实验设计 EPD-027 为准。
+这是一项跨 `tokenshare.executors`、`tokenshare.experiments`、两插件 runtime adapter 和输出 schema 的全面设施修改，不得在 `paper_formal_runner.py` 内临时塞入读取文件的旁路，也不得复制一套协议生命周期。已接受的 ledger/hook/direct-result 与 immutable bank 边界不改变 `ProtocolEngine` 状态机；semantic inventory/acquisition、trace-backed executor、projector registry 与 formal runner/metrics/renderer/replay 的正式 pipeline 接线属于后续 Task。后续继续先建 characterization/RED tests，并以唯一权威实验设计 EPD-027 为准。
 
 指标不得使用固定协议时间、自填成功字段或丢失失败/未开始分母；所有汇总必须能回到逐 task/attempt/event/artifact。
 
