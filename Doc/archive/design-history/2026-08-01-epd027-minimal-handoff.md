@@ -1,6 +1,6 @@
 # EPD-027 最小交接摘要（2026-08-01）
 
-> 本摘要是 2026-08-02 Task 4 综合 review follow-up 与用户继续修正授权后的 fresh 状态快照。Task 4 状态为 `needs_rework`；旧停止点只作历史 provenance，不再代表当前状态。
+> 本摘要是 2026-08-02 Task 4 最终 review PASS 后的 fresh 状态快照。Task 4 已 accepted，以本摘要中的 accepted 状态为当前权威。
 
 ## 1. Active feature / focus
 
@@ -9,7 +9,7 @@
 - 工作树：`C:\Users\32133\.config\superpowers\worktrees\TokenShare\codex-feat-011-epd027-pipeline`。
 - 分支：`codex/feat-011-epd027-pipeline`。
 - 权威实施计划：`Doc/archive/design-history/2026-08-01-feat-011-response-bank-paper-pipeline-implementation-plan.md`。
-- 当前停止点：Task 0–3 已接受（`4/35`）；accepted count 不变。Task 4 是唯一 active focus，基本实现已存在，但未 accepted、未提交，当前 `needs_rework`。Task 5 保持 queued，不得进入。
+- 当前停止点：Task 0–4 已接受（`5/35`）。Task 4 已提交；Task 5 是 queued/next，尚未开始。
 
 ## 2. Task 0–34 状态
 
@@ -19,7 +19,7 @@
 | 1 | accepted | 冻结 EPD-027 profile、离线批准与 paid authority 分离；已提交。 |
 | 2 | accepted | 机器可执行 paper metric contract；已通过多轮双审并提交。 |
 | 3 | accepted | canonical direct-results projector；两项通用前置与 Task 3 均已复审 PASS，Task 3 已提交为 `f9773944`。 |
-| 4 | needs_rework | exact outbound bytes / request identity / admission / Lean prompt v2 基本实现存在，未 accepted/未提交；唯一 blocker 见下文。 |
+| 4 | accepted | exact outbound bytes / request identity / admission / Lean prompt v2；commit `0cbda1df`，最终 review PASS。 |
 | 5 | queued | immutable response-bank objects/index/opaque locator。 |
 | 6 | queued | semantic slot inventory / zero-engine preflight。 |
 | 7 | queued | SQLite WAL atomic budget authority。 |
@@ -114,14 +114,13 @@
 - Evidence：`ProtocolRunLedgerBinding` 绑定 verified ledger bytes/events/tip；`RuntimeHookObservationV1.from_dict()` 关闭三类 hook schema；direct projector 从 canonical runtime facts 与预注册 inventory 生成固定分母结果。独立审查确认正式路径没有影子 TokenShare/影子状态机，禁用 `ProtocolEngine` 时不能铸造 paper-eligible success；手工 typed fixture 仅用于组件测试。
 - Post-task 测试压缩：commit `66643084`（`test(experiments): compact Task 3 regressions`），仅修改 5 个已复审测试文件，production 零修改；test defs / 估算 cases 从 `77/153` 降至 `66/118`。canonical scoped 结果为 exit `0`、`118 passed in 5.55s`，provider calls=`0`；独立 reviewer=`PASS`，Critical/Important/Minor=`0/0/0`。
 - 本次压缩未重复运行 Fast、Full 或 LeanAudit；上述 canonical 结果为压缩执行阶段已接受证据。
-### Task 4 — needs_rework
+### Task 4 — accepted
 
-- 当前实现：exact outbound bytes / request identity / admission / Lean prompt v2 基本实现已存在；Task 4 production/tests 仍为未暂存 dirty，没有 accepted commit。
-- 实现证据：focused `125 passed`；canonical exit `1`，`323 passed / 39 failed in 326.47s`；provider calls=`0`，network tripwire loaded。
-- 最小化证据：多轮失败子集最终仅剩 `tests/experiments/test_run_paper_experiments_cli.py::test_paper_cli_formal_capturing_e2e_writes_all_tables_without_real_usage`，exit `1`，`0 passed / 1 failed in 30.42s`。日志：`C:\Users\32133\AppData\Local\Temp\tokenshare_task4_unique_correction_nodeid.log`。
-- 修正结果：reachable-artifact closure 缺 index row 已解决；新且唯一 blocker 是 `condition_results.jsonl.failed_root_count` 与 canonical recomputed condition summary 不一致。
-- Review：综合 follow-up 曾 verdict=`BLOCKED`；用户随后明确授权继续同一 Task 4 修正，直到计划内 E2E GREEN 后再 review。无 production 计划外修改。
-- 隔离 dirty：approved implementation plan 中有未暂存 36-line user override diff；它不属于 Task 4，不得暂存、修改或回退。
+- Commit：`0cbda1df`（`feat(executors): migrate all dispatch paths to prepared ABI`），26 个 production/tests 文件。
+- 验证：focused `125 passed`；canonical 初次 `323 passed / 39 failed` 后 fixture 逐步收敛；最终正式 E2E nodeid exit `0`，`1 passed in 6.68s`（total `7.635s`），日志=`%TEMP%\tokenshare_task4_canonical_single_selection_nodeid.log`；provider calls=`0`，network tripwire loaded。
+- Review：最终 `PASS`，Critical/Important=`0/0`。post-accept test minimization 运行 3 分钟，结论 `NO_CHANGE`，保留 5 个 distinct tests。`py_compile`、diff-check、name-only 均 exit `0`。
+- 用户批准的唯一计划外 production：`src/tokenshare/experiments/paper_formal_evidence.py` 将 immutable `protocol_task_id` 映射到 case task-id closure，映射冲突 fail closed；修复 canonical selection evidence，review 确认无 shadow protocol path。
+- 隔离 dirty：approved implementation plan 保持未暂存 `28 additions / 8 deletions` user override；它不属于 Task 4，不得暂存、修改或回退。
 - 本轮未运行 Fast、Full、LeanAudit，未联网，未调用 provider。
 
 ### 最新仓库级 Fast 证据
@@ -132,22 +131,21 @@
 
 ## 4. 当前协作状态
 
-- Task 4 是唯一 active focus，综合 review follow-up 曾给出 `BLOCKED`；用户已授权继续修正，当前状态为 `needs_rework`。未通过前不得进入 Task 5。
-- Task 4 之前的 `READY_AFTER_TASK3` 只是实施前只读预检结论，已被当前 needs_rework 状态覆盖。
+- Task 4 已 accepted；Task 5 是下一项，保持 queued 且尚未开始。
+- Task 4 之前的 `READY_AFTER_TASK3` 只作历史 provenance，已被 final review PASS 覆盖。
 
 ## 5. 当前风险 / 注意事项
 
-1. Task 4 当前唯一 blocker 是 `failed_root_count`/canonical condition summary 不一致；已修正的 reachable-artifact index row 不再是当前 blocker。
-2. Task 4 production/tests 尚未 accepted/未提交；状态提交只能包含四个 harness 文件，不能夹带 Task 4 实现、测试或 approved plan 的 36-line user override。
-3. Task 0–3 只覆盖 `4/35`；Task 5 及以后保持 queued，`feat-011` 保持 `in-progress`，正式全量维持 NO-GO。
+1. Task 4 已闭合；`failed_root_count`/canonical summary 与 reachable-artifact closure 的旧 blocker 均已收敛。
+2. Task 4 production/tests 已独立提交；状态提交只能包含四个 harness 文件与 code map，不能夹带 approved plan 的 `28/8` user override。
+3. Task 0–4 只覆盖 `5/35`；Task 5 及以后保持 queued，`feat-011` 保持 `in-progress`，正式全量维持 NO-GO。
 4. 未获用户提供且经 Task 26 校验的 paid receipt，不得调用真实 API；离线 implementation approval 不构成付费授权。
 
 ## 6. 下一批可直接派发任务
 
-1. 保持 Task 4=`needs_rework` 和 accepted=`4/35`；不得把基本实现存在写成 accepted。
-2. 继续解决 `condition_results.jsonl.failed_root_count` 与 canonical recomputed condition summary 的唯一不一致，直到计划内 E2E GREEN 后重新 review。
-3. Task 4 计划内 E2E 与 review 通过前不得 accepted/提交 production/tests，不得进入 Task 5。
-4. approved implementation plan 的隔离 36-line user override 保持未暂存原状，不得修改或回退。
+1. 保持 Task 4=`accepted` 和 accepted=`5/35`。
+2. Task 5 是 queued/next，尚未开始；按严格串行门禁另行实施与复审。
+3. approved implementation plan 的隔离 `28 additions / 8 deletions` user override 保持未暂存原状，不得修改或回退。
 
 ## 7. 禁止命令与付费 API 门禁
 
@@ -162,4 +160,4 @@
 - 缺 receipt、缺 bank entry、超预算或证据不完整必须 fail closed，不得临时 scripted 生成。
 - 预算硬停止线：人民币 1000 元；达到即停止新的 provider dispatch，已有证据正常收口。
 - Experiment 1/5 保持真实 API；Experiment 2/3/4 按批准的两阶段 real-trace paired 设计；Exp2/Exp3 保留小型在线检查。
-- 当前 state/docs 已同步到 Task 4 needs_rework；Task 5 保持 queued，不得自动调用 API。
+- 当前 state/docs 已同步到 Task 4 accepted；Task 5 保持 queued 且尚未开始，不得自动调用 API。

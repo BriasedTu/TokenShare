@@ -103,8 +103,9 @@ AI 只能生成预注册 proof unit 的候选内容，不能决定协议级拆�
 | `deterministic.py`、`mock_ai.py` | 无网络回归执行器。 |
 | `ai_api_config.py`、`ai_api_local_config.py` | tracked safe config 和本地 secret 注入；tracked config 只保存 `api_key_env`。 |
 | `ai_api_selector.py` | entry/capability 选择。 |
-| `ai_api_transport.py` | DeepSeek/OpenAI-compatible/SiliconFlow transport。 |
-| `ai_api.py` | 执行请求、attempt/provenance/usage 收集。 |
+| `ai_api_request_identity.py` | 唯一 prepared-request factory：冻结 canonical UTF-8 body bytes、normalized absolute endpoint、content type、admission profile 与稳定 inference request digest，并重算一致性后才允许 dispatch。 |
+| `ai_api_transport.py` | DeepSeek/OpenAI-compatible/SiliconFlow transport；只消费已校验的 exact endpoint/bytes ABI，不二次序列化。 |
+| `ai_api.py` | 执行请求、attempt/provenance/usage 收集；在 secret resolution/transport 前完成 prepared validation、prompt admission 与 artifact persistence。 |
 | `ai_api_artifacts.py` | raw/parsed/failure/provenance/usage/model record artifact。 |
 | `ai_api_replay.py` | 从 artifact 恢复结果，不重新调用 API。 |
 
@@ -143,7 +144,7 @@ Secret 只能进入当前进程环境和脱敏后的 transport；event/artifact/
 | `paper_dispatcher.py` | 把 paper case/scope 交给 system runtime。 |
 | `paper_formal_runner.py` | 正式/smoke suite orchestration、preflight、dispatch、checkpoint、resume/replay。 |
 | `paper_formal_callbacks.py` | provider/executor callback 绑定。 |
-| `paper_formal_evidence.py` | 正式 evidence store、manifest、checkpoint 和完整性校验。 |
+| `paper_formal_evidence.py` | 正式 evidence store、manifest、checkpoint 和完整性校验；以 immutable protocol task id 到 case task-id closure 的显式映射闭合 canonical selection evidence，映射冲突 fail closed。 |
 | `paper_formal_checkpoint.py` | generation v3 root-delta checkpoint、resume 与 terminal streaming SQLite compaction；保持逐 root 释放，避免全 suite outcome 常驻。 |
 | `paper_faults.py`、`paper_workers.py` | 五类 rate-fault 与 worker-death 的预注册 hook/投影。 |
 | `paper_exp1.py`、`paper_exp2_scalability.py`、`paper_exp3_fault_recovery.py`、`paper_exp4_ablation_runner.py` | 各实验的独立行为/指标 helper。 |
@@ -170,11 +171,11 @@ Secret 只能进入当前进程环境和脱敏后的 transport；event/artifact/
 
 ### EPD-027 实施进度与后续实验设施改造
 
-2026-08-01 已冻结 Experiment 2–4 两阶段真实回答库设计。当前 35 个实施 Task 中 Task 0–3 已 accepted：离线 network tripwire、profile/budget、machine-readable metric contract、canonical direct-results，以及其依赖的 verified-ledger/typed-hook producer binding 已存在。这个 `4/35` 状态不代表 response bank 或整条 paper pipeline 已实现：现有 `ai_api_replay.py` 与 `paper_formal_runner.py` replay 仍只恢复或复算既有 evidence，不能以回答库输入重新驱动完整状态机；当前 `ExecutionRequest`/prompt identity 也还没有可跨 condition 安全复用的稳定 outbound-body digest。
+2026-08-01 已冻结 Experiment 2–4 两阶段真实回答库设计。当前 35 个实施 Task 中 Task 0–4 已 accepted：离线 network tripwire、profile/budget、machine-readable metric contract、canonical direct-results、exact prepared outbound request identity/admission/Lean prompt v2，以及 verified-ledger/typed-hook producer binding 已存在。这个 `5/35` 状态不代表 response bank 或整条 paper pipeline 已实现：现有 `ai_api_replay.py` 与 `paper_formal_runner.py` replay 仍只恢复或复算既有 evidence，不能以回答库输入重新驱动完整状态机；Task 5 immutable response bank 保持 queued 且尚未开始。
 
 后续完整实施计划必须同时覆盖：
 
-- executor 层的稳定 `inference_request_digest`、不可变 bank entry 与 acquisition actual usage；
+- executor 层的不可变 bank entry 与 acquisition actual usage（稳定 `inference_request_digest` 已由 Task 4 提供）；
 - experiment 层的 bank inventory、sample/replacement slot、trace-backed executor binding、当前 submission 到 source entry 的双 provenance；
 - `online_real_provider` 与 `real_model_trace_protocol_run` 两类 paper eligibility，禁止把 trace consumption 冒充当前 provider call；
 - acquisition actual spend 与 per-condition trace attribution 两套资源账，以及 calls/tokens/CNY/in-flight 人民币 1,000 硬门；
