@@ -570,31 +570,57 @@ def _public_init_values(value: Any) -> dict[str, Any]:
     }
 
 
-def test_caller_boolean_kwargs_are_rejected() -> None:
-    with pytest.raises(TypeError):
-        CanonicalDirectRootEvidence(
-            independently_verified_correct=True,
-            paper_evidence_complete=True,
-            identity_consistent=True,
-        )
-
-
 def test_public_row_cannot_mint_success_or_publishable_projection(
     tmp_path: Path,
 ) -> None:
     row, condition_manifest, catalog = _inventory_row()
     kwargs, *_ = _canonical_fixture(tmp_path, row)
+    formal = build_canonical_direct_evidence(**kwargs)
     projection = _project(
         _inventory_manifest(row),
         (condition_manifest,),
         (catalog,),
-        {row.preregistered_root_run_id: build_canonical_direct_evidence(**kwargs)},
+        {row.preregistered_root_run_id: formal},
     )
     successful = projection.rows[0]
     assert successful.end_to_end_verified_success is True
 
-    with pytest.raises(ValueError, match="canonical factory"):
-        PaperDirectRootResult(**_public_init_values(successful))
+    manual = CanonicalDirectRootEvidence._from_validated(
+        **_public_init_values(formal)
+    )
+    forged_entries = (
+        (
+            lambda: CanonicalDirectRootEvidence(
+                independently_verified_correct=True,
+                paper_evidence_complete=True,
+                identity_consistent=True,
+            ),
+            TypeError,
+            None,
+        ),
+        (
+            lambda: PaperDirectRootResult(**_public_init_values(successful)),
+            ValueError,
+            "canonical factory",
+        ),
+        (
+            lambda: _project(
+                _inventory_manifest(row),
+                (condition_manifest,),
+                (catalog,),
+                {row.preregistered_root_run_id: manual},
+            ),
+            ValueError,
+            "canonical evidence factory",
+        ),
+    )
+    for forge, error_type, error_match in forged_entries:
+        if error_match is None:
+            with pytest.raises(error_type):
+                forge()
+        else:
+            with pytest.raises(error_type, match=error_match):
+                forge()
 
     public_projection = PaperDirectProjection(
         inventory_id=projection.inventory_id,
@@ -606,25 +632,6 @@ def test_public_row_cannot_mint_success_or_publishable_projection(
         build_direct_boolean_aggregate(
             public_projection,
             outcome_field="end_to_end_verified_success",
-        )
-
-
-def test_manual_typed_canonical_fixture_cannot_enter_formal_projection(
-    tmp_path: Path,
-) -> None:
-    row, condition_manifest, catalog = _inventory_row()
-    kwargs, *_ = _canonical_fixture(tmp_path, row)
-    formal = build_canonical_direct_evidence(**kwargs)
-    manual = CanonicalDirectRootEvidence._from_validated(
-        **_public_init_values(formal)
-    )
-
-    with pytest.raises(ValueError, match="canonical evidence factory"):
-        _project(
-            _inventory_manifest(row),
-            (condition_manifest,),
-            (catalog,),
-            {row.preregistered_root_run_id: manual},
         )
 
 
@@ -691,37 +698,6 @@ def test_component_row_and_projection_deep_freeze_mutable_inputs(
     assert public_projection.denominator_inventory_ids == (
         component.preregistered_root_run_id,
     )
-
-
-def test_every_preregistered_root_has_direct_row_including_not_started(
-    tmp_path: Path,
-) -> None:
-    row, condition_manifest, catalog = _inventory_row()
-    missing, _, _ = _inventory_row(root_id="inventory:not-started")
-    inventory = _inventory_manifest(row, missing)
-    kwargs, *_ = _canonical_fixture(tmp_path, row)
-    projection = _project(
-        inventory,
-        (condition_manifest,),
-        (catalog,),
-        {row.preregistered_root_run_id: build_canonical_direct_evidence(**kwargs)},
-    )
-    assert projection.denominator_inventory_ids == (
-        row.preregistered_root_run_id,
-        missing.preregistered_root_run_id,
-    )
-    not_started = projection.rows[1]
-    assert not_started.root_status == "not_started"
-    assert not_started.execution_binding is None
-    assert not_started.event_refs == ()
-    assert not_started.artifact_refs == ()
-    assert not_started.current_provider_object_refs == ()
-    assert not_started.source_bank_object_locators == ()
-    assert not_started.actual_resource_book_ref is None
-    assert not_started.trace_resource_book_ref is None
-    assert projection.provider_calls == 0
-    assert projection.recompute_only is True
-    assert projection.paper_eligible is False
 
 
 def test_manifest_missing_root_wrong_digest_and_foreign_observed_are_rejected(
@@ -819,27 +795,6 @@ def test_case_id_and_catalog_order_never_reconstruct_position_stratum() -> None:
     ] == ["front", "front"]
 
 
-def test_condition_axis_bool_is_not_accepted_as_integer() -> None:
-    row, _, catalog = _inventory_row()
-    bad_axes = {**dict(row.condition_axes), "worker_count": True}
-    condition_manifest, condition_ref = _condition_manifest(
-        row.condition_id,
-        bad_axes,
-    )
-    candidate = _replace_inventory_row(
-        row,
-        condition_axes=bad_axes,
-        preregistered_condition_ref=condition_ref,
-    )
-    with pytest.raises(ValueError, match="worker_count"):
-        _project(
-            _inventory_manifest(candidate),
-            (condition_manifest,),
-            (catalog,),
-            {},
-        )
-
-
 def test_cross_task_artifact_and_changed_hash_or_size_are_rejected(
     tmp_path: Path,
 ) -> None:
@@ -892,31 +847,27 @@ def test_completion_requires_canonical_runtime_final_and_merge_provenance(
     assert "missing_merge_provenance" in direct.ineligibility_reasons
 
 
-@pytest.mark.parametrize(
-    ("event_type", "state"),
-    (
-        (EventType.TASK_UNIT_CREATED, "Completed"),
-        (EventType.TASK_UNIT_STATE_CHANGED, "Processing"),
-    ),
-)
 def test_terminal_root_ref_rejects_wrong_event_type_or_nonterminal_state(
     tmp_path: Path,
-    event_type: EventType,
-    state: str,
 ) -> None:
-    row, _, _ = _inventory_row()
-    kwargs, *_ = _canonical_fixture(
-        tmp_path,
-        row,
-        terminal_event_type=event_type,
-        terminal_state=state,
+    cases = (
+        (EventType.TASK_UNIT_CREATED, "Completed"),
+        (EventType.TASK_UNIT_STATE_CHANGED, "Processing"),
     )
+    for index, (event_type, state) in enumerate(cases):
+        row, _, _ = _inventory_row(root_id=f"inventory:terminal:{index}")
+        kwargs, *_ = _canonical_fixture(
+            tmp_path,
+            row,
+            terminal_event_type=event_type,
+            terminal_state=state,
+        )
 
-    evidence = build_canonical_direct_evidence(**kwargs)
+        evidence = build_canonical_direct_evidence(**kwargs)
 
-    assert evidence.terminal_root_event_ref is None
-    assert "missing_terminal_root_provenance" in evidence.ineligibility_reasons
-    assert evidence.paper_evidence_complete is False
+        assert evidence.terminal_root_event_ref is None
+        assert "missing_terminal_root_provenance" in evidence.ineligibility_reasons
+        assert evidence.paper_evidence_complete is False
 
 
 def test_duplicate_seq_hash_bad_prev_chain_and_ledger_swap_are_rejected(
@@ -1108,43 +1059,42 @@ def test_runtime_result_rejects_noncanonical_typed_hook_observations(
                     ),
                 }
             )
-@pytest.mark.parametrize(
-    "units_by_event_seq",
-    (
-        {3: "unit:foreign"},
-        {2: "unit:foreign", 3: "unit:foreign", 4: "unit:foreign"},
-    ),
-)
+
+
 def test_attempt_chain_rejects_cross_unit_or_noncanonical_unit_identity(
     tmp_path: Path,
-    units_by_event_seq: dict[int, str],
 ) -> None:
-    row, _, _ = _inventory_row()
-    kwargs, ledger, store, runtime_result, _ = _canonical_fixture(tmp_path, row)
-    swapped = _replay_ledger_with_attempt_unit_changes(
-        ledger,
-        path=ledger.path.parent / "cross-unit-ledger.jsonl",
-        units_by_event_seq=units_by_event_seq,
+    cases = (
+        {3: "unit:foreign"},
+        {2: "unit:foreign", 3: "unit:foreign", 4: "unit:foreign"},
     )
-    swapped_result = project_protocol_run(
-        run_id=runtime_result.run_id,
-        task_id=runtime_result.task_id,
-        root_unit_id=runtime_result.root_unit_id,
-        event_ledger=swapped,
-        artifact_store=store,
-    )
+    for index, units_by_event_seq in enumerate(cases):
+        row, _, _ = _inventory_row(root_id=f"inventory:cross-unit:{index}")
+        kwargs, ledger, store, runtime_result, _ = _canonical_fixture(tmp_path, row)
+        swapped = _replay_ledger_with_attempt_unit_changes(
+            ledger,
+            path=ledger.path.parent / f"cross-unit-ledger-{index}.jsonl",
+            units_by_event_seq=units_by_event_seq,
+        )
+        swapped_result = project_protocol_run(
+            run_id=runtime_result.run_id,
+            task_id=runtime_result.task_id,
+            root_unit_id=runtime_result.root_unit_id,
+            event_ledger=swapped,
+            artifact_store=store,
+        )
 
-    evidence = build_canonical_direct_evidence(
-        **{
-            **kwargs,
-            "event_ledger": swapped,
-            "runtime_result": swapped_result,
-        }
-    )
+        evidence = build_canonical_direct_evidence(
+            **{
+                **kwargs,
+                "event_ledger": swapped,
+                "runtime_result": swapped_result,
+            }
+        )
 
-    assert evidence.identity_consistent is False
-    assert "missing_bound_attempt_chain" in evidence.ineligibility_reasons
-    assert evidence.paper_evidence_complete is False
+        assert evidence.identity_consistent is False
+        assert "missing_bound_attempt_chain" in evidence.ineligibility_reasons
+        assert evidence.paper_evidence_complete is False
 
 
 def test_zero_verifier_refs_cannot_succeed_and_blocks_publish(tmp_path: Path) -> None:
@@ -1196,37 +1146,6 @@ def test_completion_and_e2e_four_gates_are_derived_from_canonical_evidence(
     assert wrong.ineligibility_reasons == ()
 
 
-def test_current_source_roles_are_mutually_exclusive_and_locators_are_canonical(
-    tmp_path: Path,
-) -> None:
-    trace, _, _ = _inventory_row(evidence_class="real_model_trace_protocol_run")
-    kwargs, _, store, runtime_result, _ = _canonical_fixture(tmp_path, trace)
-    reversed_locators = tuple(reversed(kwargs["source_bank_object_locators"]))
-    evidence = build_canonical_direct_evidence(
-        **{**kwargs, "source_bank_object_locators": reversed_locators}
-    )
-    assert evidence.source_bank_object_locators == tuple(
-        sorted(
-            reversed_locators,
-            key=lambda item: (item.entry_id, item.object_role, item.object_digest),
-        )
-    )
-    current_ref = _save_role_artifact(
-        store,
-        label="current_for_exclusivity",
-        role="request_body",
-        execution_id=kwargs["execution_id"],
-        task_id=runtime_result.task_id,
-    )
-    with pytest.raises(ValueError, match="mutually exclusive"):
-        build_canonical_direct_evidence(
-            **{
-                **kwargs,
-                "current_provider_object_refs": (current_ref,),
-            }
-        )
-
-
 def test_nested_input_mutation_does_not_change_inventory_or_evidence_snapshot(
     tmp_path: Path,
 ) -> None:
@@ -1244,7 +1163,7 @@ def test_nested_input_mutation_does_not_change_inventory_or_evidence_snapshot(
 def test_strict_unknown_bool_int_and_duplicate_locator_inputs_are_rejected(
     tmp_path: Path,
 ) -> None:
-    row, _, _ = _inventory_row()
+    row, _, catalog = _inventory_row()
     values = row.to_dict()
     values.pop("schema_version")
     values["unknown"] = "no"
@@ -1271,8 +1190,36 @@ def test_strict_unknown_bool_int_and_duplicate_locator_inputs_are_rejected(
             object_digest=_digest("unknown"),
         )
 
+    bad_axes = {**dict(row.condition_axes), "worker_count": True}
+    condition_manifest, condition_ref = _condition_manifest(
+        row.condition_id,
+        bad_axes,
+    )
+    candidate = _replace_inventory_row(
+        row,
+        condition_axes=bad_axes,
+        preregistered_condition_ref=condition_ref,
+    )
+    with pytest.raises(ValueError, match="worker_count"):
+        _project(
+            _inventory_manifest(candidate),
+            (condition_manifest,),
+            (catalog,),
+            {},
+        )
+
     trace, _, _ = _inventory_row(evidence_class="real_model_trace_protocol_run")
-    kwargs, *_ = _canonical_fixture(tmp_path, trace)
+    kwargs, _, store, runtime_result, _ = _canonical_fixture(tmp_path, trace)
+    reversed_locators = tuple(reversed(kwargs["source_bank_object_locators"]))
+    evidence = build_canonical_direct_evidence(
+        **{**kwargs, "source_bank_object_locators": reversed_locators}
+    )
+    assert evidence.source_bank_object_locators == tuple(
+        sorted(
+            reversed_locators,
+            key=lambda item: (item.entry_id, item.object_role, item.object_digest),
+        )
+    )
     first = next(
         locator
         for locator in kwargs["source_bank_object_locators"]
@@ -1286,6 +1233,20 @@ def test_strict_unknown_bool_int_and_duplicate_locator_inputs_are_rejected(
                     *kwargs["source_bank_object_locators"],
                     first,
                 ),
+            }
+        )
+    current_ref = _save_role_artifact(
+        store,
+        label="current_for_exclusivity",
+        role="request_body",
+        execution_id=kwargs["execution_id"],
+        task_id=runtime_result.task_id,
+    )
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        build_canonical_direct_evidence(
+            **{
+                **kwargs,
+                "current_provider_object_refs": (current_ref,),
             }
         )
 
@@ -1313,7 +1274,7 @@ def test_regression_only_cannot_be_upgraded_to_paper_evidence(tmp_path: Path) ->
 def test_four_root_hand_calculation_keeps_denominator_four_and_blocks(
     tmp_path: Path,
 ) -> None:
-    base, condition_manifest, catalog = _inventory_row()
+    _, condition_manifest, catalog = _inventory_row()
     rows = tuple(
         _inventory_row(root_id=f"inventory:{kind}")[0]
         for kind in ("correct", "wrong", "invalid", "not-started")
@@ -1347,6 +1308,21 @@ def test_four_root_hand_calculation_keeps_denominator_four_and_blocks(
         outcome_field="end_to_end_verified_success",
     )
     assert len(projection.rows) == 4
+    assert projection.denominator_inventory_ids == tuple(
+        row.preregistered_root_run_id for row in rows
+    )
+    not_started = projection.rows[3]
+    assert not_started.root_status == "not_started"
+    assert not_started.execution_binding is None
+    assert not_started.event_refs == ()
+    assert not_started.artifact_refs == ()
+    assert not_started.current_provider_object_refs == ()
+    assert not_started.source_bank_object_locators == ()
+    assert not_started.actual_resource_book_ref is None
+    assert not_started.trace_resource_book_ref is None
+    assert projection.provider_calls == 0
+    assert projection.recompute_only is True
+    assert projection.paper_eligible is False
     assert sum(row.final_result_reference_complete for row in projection.rows) == 2
     assert sum(row.end_to_end_verified_success for row in projection.rows) == 1
     assert aggregate.audit_denominator_count == 4

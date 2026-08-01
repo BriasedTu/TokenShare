@@ -397,9 +397,8 @@ def test_runtime_public_contracts_are_frozen() -> None:
     }
 
 
-@pytest.mark.parametrize(
-    ("binding_identity", "mismatched_field"),
-    (
+def test_protocol_run_ledger_binding_is_strict_and_identity_bound(tmp_path) -> None:
+    cases = (
         (
             {
                 "run_id": "run_other",
@@ -424,9 +423,16 @@ def test_runtime_public_contracts_are_frozen() -> None:
             },
             "root_unit_id",
         ),
-    ),
-)
-def test_protocol_run_ledger_binding_is_strict_and_identity_bound(
+    )
+    for binding_identity, mismatched_field in cases:
+        _assert_protocol_run_ledger_binding_is_strict_and_identity_bound(
+            tmp_path,
+            binding_identity,
+            mismatched_field,
+        )
+
+
+def _assert_protocol_run_ledger_binding_is_strict_and_identity_bound(
     tmp_path,
     binding_identity: dict[str, str],
     mismatched_field: str,
@@ -481,8 +487,17 @@ def test_protocol_run_ledger_binding_is_strict_and_identity_bound(
         )
 
 
-@pytest.mark.parametrize("field_name", ("event_count", "tip_event_seq"))
 def test_protocol_run_ledger_binding_rejects_bool_for_integer_identity_fields(
+    tmp_path,
+) -> None:
+    for field_name in ("event_count", "tip_event_seq"):
+        _assert_protocol_run_ledger_binding_rejects_bool_for_integer_identity_field(
+            tmp_path,
+            field_name,
+        )
+
+
+def _assert_protocol_run_ledger_binding_rejects_bool_for_integer_identity_field(
     tmp_path,
     field_name: str,
 ) -> None:

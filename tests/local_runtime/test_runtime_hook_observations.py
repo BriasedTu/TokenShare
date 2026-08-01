@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-from dataclasses import replace
 from hashlib import sha256
 from types import MappingProxyType
 
@@ -112,9 +111,8 @@ def _premature_observation() -> RuntimeHookObservationV1:
     )
 
 
-@pytest.mark.parametrize(
-    ("factory", "kind", "payload_type"),
-    (
+def test_runtime_hook_observation_builders_round_trip_canonical_envelopes() -> None:
+    cases = (
         (
             _fault_observation,
             RuntimeHookObservationKind.EXPERIMENT_FAULT_INJECTED,
@@ -130,38 +128,37 @@ def _premature_observation() -> RuntimeHookObservationV1:
             RuntimeHookObservationKind.EXPERIMENT_PREMATURE_MERGE_ATTEMPTED,
             ExperimentPrematureMergeAttemptedPayloadV1,
         ),
-    ),
-)
-def test_runtime_hook_observation_builders_round_trip_canonical_envelopes(
-    factory,
-    kind,
-    payload_type,
-) -> None:
-    observation = factory()
+    )
+    for factory, kind, payload_type in cases:
+        observation = factory()
 
-    assert observation.schema_version == SCHEMA_VERSION
-    assert observation.kind is kind
-    assert isinstance(observation.payload, payload_type)
-    body = observation.to_dict()
-    assert set(body) == {
-        "schema_version",
-        "kind",
-        "payload",
-        "observation_digest",
-    }
-    digest_body = {key: body[key] for key in ("schema_version", "kind", "payload")}
-    encoded = json.dumps(
-        digest_body,
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-    ).encode("utf-8")
-    assert body["observation_digest"] == f"sha256:{sha256(encoded).hexdigest()}"
+        assert observation.schema_version == SCHEMA_VERSION
+        assert observation.kind is kind
+        assert isinstance(observation.payload, payload_type)
+        body = observation.to_dict()
+        assert set(body) == {
+            "schema_version",
+            "kind",
+            "payload",
+            "observation_digest",
+        }
+        digest_body = {
+            key: body[key] for key in ("schema_version", "kind", "payload")
+        }
+        encoded = json.dumps(
+            digest_body,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        assert body["observation_digest"] == (
+            f"sha256:{sha256(encoded).hexdigest()}"
+        )
 
-    parsed = RuntimeHookObservationV1.from_dict(body)
+        parsed = RuntimeHookObservationV1.from_dict(body)
 
-    assert parsed.to_dict() == body
-    assert isinstance(parsed.payload, payload_type)
+        assert parsed.to_dict() == body
+        assert isinstance(parsed.payload, payload_type)
 
 
 def test_runtime_hook_observation_is_deeply_immutable_and_serializes_fresh_json() -> None:
@@ -193,89 +190,108 @@ def test_runtime_hook_observation_is_deeply_immutable_and_serializes_fresh_json(
     ]
 
 
-@pytest.mark.parametrize(
-    ("mutator", "message"),
-    (
-        (lambda body: body.update(extra=True), "exact keys"),
-        (lambda body: body.update(schema_version="unknown.v1"), "schema_version"),
-        (lambda body: body.update(kind="EXPERIMENT_UNKNOWN"), "kind"),
+def test_runtime_hook_observation_from_dict_rejects_unknown_or_mutated_envelope() -> None:
+    cases = (
+        (_fault_observation, lambda body: body.update(extra=True), True, "exact keys"),
         (
+            _fault_observation,
+            lambda body: body.update(schema_version="unknown.v1"),
+            True,
+            "schema_version",
+        ),
+        (
+            _fault_observation,
+            lambda body: body.update(kind="EXPERIMENT_UNKNOWN"),
+            True,
+            "kind",
+        ),
+        (
+            _fault_observation,
             lambda body: body.update(observation_digest="sha256:" + "0" * 64),
+            False,
             "observation_digest mismatch",
         ),
-        (lambda body: body["payload"].update(extra=True), "exact keys"),
-    ),
-)
-def test_runtime_hook_observation_from_dict_rejects_unknown_or_mutated_envelope(
-    mutator,
-    message,
-) -> None:
-    body = _fault_observation().to_dict()
-    mutator(body)
-
-    with pytest.raises((TypeError, ValueError), match=message):
-        RuntimeHookObservationV1.from_dict(body)
-
-
-@pytest.mark.parametrize(
-    "mutator",
-    (
-        lambda body: body["payload"]["protocol_event_refs"][0].update(extra=True),
-        lambda body: body["payload"]["protocol_event_refs"][0].pop("event_type"),
-        lambda body: body["payload"]["hook_result"].update(extra=True),
-        lambda body: body["payload"]["hook_input"].update(extra=True),
-    ),
-)
-def test_runtime_hook_observation_rejects_unknown_nested_shapes(mutator) -> None:
-    body = _ablation_observation().to_dict()
-    mutator(body)
-    body["observation_digest"] = _digest_for(body)
-
-    with pytest.raises((TypeError, ValueError), match="exact keys"):
-        RuntimeHookObservationV1.from_dict(body)
-
-
-@pytest.mark.parametrize(
-    "mutator",
-    (
-        lambda body: body["payload"]["protocol_event_refs"][0].update(event_seq=True),
-        lambda body: body["payload"]["artifact_refs"][0].update(size_bytes=True),
-        lambda body: body["payload"]["artifact_refs"][0]["metadata"].update(
-            score=float("nan")
+        (
+            _fault_observation,
+            lambda body: body["payload"].update(extra=True),
+            True,
+            "exact keys",
         ),
-        lambda body: body["payload"].update(disabled_mechanism=""),
-    ),
-)
-def test_runtime_hook_observation_rejects_invalid_scalar_types(mutator) -> None:
-    body = _ablation_observation().to_dict()
-    mutator(body)
-    body["observation_digest"] = _digest_for(body)
+        (
+            _ablation_observation,
+            lambda body: body["payload"]["protocol_event_refs"][0].update(
+                extra=True
+            ),
+            True,
+            "exact keys",
+        ),
+        (
+            _ablation_observation,
+            lambda body: body["payload"]["protocol_event_refs"][0].pop(
+                "event_type"
+            ),
+            True,
+            "exact keys",
+        ),
+        (
+            _ablation_observation,
+            lambda body: body["payload"]["hook_result"].update(extra=True),
+            True,
+            "exact keys",
+        ),
+        (
+            _ablation_observation,
+            lambda body: body["payload"]["hook_input"].update(extra=True),
+            True,
+            "exact keys",
+        ),
+        (
+            _ablation_observation,
+            lambda body: body["payload"]["protocol_event_refs"][0].update(
+                event_seq=True
+            ),
+            True,
+            None,
+        ),
+        (
+            _ablation_observation,
+            lambda body: body["payload"]["artifact_refs"][0].update(
+                size_bytes=True
+            ),
+            True,
+            "size_bytes",
+        ),
+        (
+            _ablation_observation,
+            lambda body: body["payload"]["artifact_refs"][0]["metadata"].update(
+                score=float("nan")
+            ),
+            True,
+            None,
+        ),
+        (
+            _ablation_observation,
+            lambda body: body["payload"].update(disabled_mechanism=""),
+            True,
+            None,
+        ),
+    )
+    for factory, mutator, recompute_digest, message in cases:
+        body = factory().to_dict()
+        mutator(body)
+        if recompute_digest:
+            body["observation_digest"] = _digest_for(body)
 
-    with pytest.raises((TypeError, ValueError)):
-        RuntimeHookObservationV1.from_dict(body)
+        if message is None:
+            with pytest.raises((TypeError, ValueError)):
+                RuntimeHookObservationV1.from_dict(body)
+        else:
+            with pytest.raises((TypeError, ValueError), match=message):
+                RuntimeHookObservationV1.from_dict(body)
 
 
-def test_runtime_hook_observation_strictly_validates_artifacts_before_construction() -> None:
-    invalid_ref = replace(_artifact_ref(), size_bytes=True)
-
-    with pytest.raises((TypeError, ValueError), match="size_bytes"):
-        build_experiment_fault_injected_observation(
-            condition_id="condition-1",
-            run_id="run-1",
-            task_id="task-1",
-            unit_id="unit-1",
-            selected_target_ai_unit_id="planned-unit-1",
-            attempt_id="attempt-1",
-            fault_type="no_return",
-            protocol_event_refs=(),
-            artifact_refs=(invalid_ref,),
-            occurred_at=NOW,
-        )
-
-
-@pytest.mark.parametrize(
-    "factory",
-    (
+def test_coordinator_observation_collector_has_no_mapping_fallback() -> None:
+    factories = (
         lambda records: RawOutputDirective(experiment_records=records),
         lambda records: ParsedCandidateDirective(
             replacement_candidate_output_refs={},
@@ -283,26 +299,19 @@ def test_runtime_hook_observation_strictly_validates_artifacts_before_constructi
         ),
         lambda records: GateDirective(experiment_records=records),
         lambda records: WorkerDirective(action="continue", experiment_records=records),
-    ),
-)
-def test_runtime_directives_accept_only_typed_observation_tuples(factory) -> None:
-    observation = _fault_observation()
-
-    assert factory((observation,)).experiment_records == (observation,)
-    with pytest.raises(TypeError, match="RuntimeHookObservationV1"):
-        factory((observation.to_dict(),))
-
-
-def test_coordinator_observation_collector_has_no_mapping_fallback() -> None:
-    observation = _fault_observation()
-    observations: list[RuntimeHookObservationV1] = []
-
-    _collect_observations(
-        observations,
-        RawOutputDirective(experiment_records=(observation,)),
     )
+    for factory in factories:
+        observation = _fault_observation()
+        directive = factory((observation,))
+        observations: list[RuntimeHookObservationV1] = []
+        assert directive.experiment_records == (observation,)
+        _collect_observations(observations, directive)
+        assert observations == [observation]
+        with pytest.raises(TypeError, match="RuntimeHookObservationV1"):
+            factory((observation.to_dict(),))
 
-    assert observations == [observation]
+    observation = _fault_observation()
+    observations = []
 
     class LegacyDirective:
         experiment_records = (observation.to_dict(),)

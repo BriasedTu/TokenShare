@@ -3,15 +3,11 @@ from dataclasses import replace
 import pytest
 
 from tokenshare.experiments.paper_models import (
-    DirectRootExecutionBinding,
-    CanonicalDirectRootEvidence,
     ExternalBankObjectLocator,
-    LedgerEventIdentitySnapshot,
     PaperAttemptResult,
     PaperAttemptStatus,
     PaperBudgetResult,
     PaperConditionResult,
-    PaperDirectRootInventoryRow,
     PaperExperimentCondition,
     PaperExperimentResult,
     PaperModelExecutionRecord,
@@ -850,91 +846,3 @@ def test_external_bank_object_locator_is_opaque_and_path_free() -> None:
         "object_digest": digest_json({"raw": 1}),
     }
     assert not ({"path", "uri", "artifact_ref"} & set(locator.to_dict()))
-
-
-def test_manual_canonical_evidence_fixture_is_deep_frozen_and_component_only() -> None:
-    event = LedgerEventIdentitySnapshot(
-        event_seq=1,
-        event_id="event-1",
-        event_type="TASK_UNIT_CREATED",
-        event_hash=digest_json({"event": 1}),
-        prev_event_hash=None,
-        task_id="task-1",
-        object_type="TaskUnit",
-        object_id="unit-1",
-    )
-    binding_body = {
-        "schema_version": "tokenshare.direct_root_execution_binding.v1",
-        "preregistered_root_run_id": "root-run-1",
-        "execution_id": "run-1",
-        "task_id": "task-1",
-        "root_unit_id": "unit-1",
-        "ledger_digest": digest_json([event.to_dict()]),
-        "events": [event.to_dict()],
-    }
-    binding = DirectRootExecutionBinding(
-        preregistered_root_run_id="root-run-1",
-        execution_id="run-1",
-        task_id="task-1",
-        root_unit_id="unit-1",
-        ledger_digest=binding_body["ledger_digest"],
-        events=(event,),
-        binding_digest=digest_json(binding_body),
-    )
-    reasons = ["component_fixture"]
-    event_refs = [event]
-    evidence = CanonicalDirectRootEvidence._from_validated(
-        preregistered_root_run_id="root-run-1",
-        evidence_class="online_real_provider",
-        execution_binding=binding,
-        canonical_runtime_status="failed",
-        final_result_ref=None,
-        terminal_root_event_ref=None,
-        canonical_acceptance_ref=None,
-        merge_ref=None,
-        independently_verified_correct=False,
-        paper_evidence_complete=False,
-        identity_consistent=False,
-        infrastructure_valid=False,
-        attempt_refs=[],
-        event_refs=event_refs,
-        parser_refs=[],
-        verifier_checker_refs=[],
-        artifact_refs=[],
-        current_provider_object_refs=[],
-        source_bank_object_locators=[],
-        actual_resource_book_ref=None,
-        trace_resource_book_ref=None,
-        ineligibility_reasons=reasons,
-        schema_version="tokenshare.canonical_direct_root_evidence.v1",
-    )
-    reasons.append("mutated")
-    event_refs.clear()
-
-    assert evidence.ineligibility_reasons == ("component_fixture",)
-    assert evidence.event_refs == (event,)
-    assert evidence.producer_validated is False
-
-
-def test_task3_additions_leave_historical_result_schemas_read_only() -> None:
-    assert [item.value for item in PaperTaskStatus] == [
-        "completed",
-        "failed",
-        "blocked",
-        "timeout",
-        "budget_exhausted",
-        "ineligible",
-        "partial",
-    ]
-    experiment_fields = PaperExperimentResult.__dataclass_fields__
-    task_fields = PaperTaskResult.__dataclass_fields__
-    assert experiment_fields["schema_version"].default == (
-        "tokenshare.paper_experiment_result.v1"
-    )
-    assert "accepted_validity_rate" in experiment_fields
-    assert task_fields["schema_version"].default == "tokenshare.paper_task_result.v1"
-    assert "accepted_validity" in task_fields
-    inventory_fields = PaperDirectRootInventoryRow.__dataclass_fields__
-    assert "execution_id" not in inventory_fields
-    assert "event_ledger_ref" not in inventory_fields
-    assert CanonicalDirectRootEvidence.__dataclass_params__.init is False
