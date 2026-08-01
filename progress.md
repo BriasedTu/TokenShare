@@ -1,19 +1,20 @@
 # TokenShare 当前进度
 
-更新时间：2026-08-01
+更新时间：2026-08-02
 
 本文件只保存当前事实与最近验证。历史过程由 git history、`Doc/archive/` 和仓库外 `TokenShareData` 保留。
 
 ## 当前状态
 
 - Active feature：`feat-011`（Paper Real AI Experiments），状态仍为 `in-progress`。
-- Active focus 已进入 EPD-027 实施阶段；实施计划共 35 个 Task，Task 0–3 已 accepted（`4/35`），Task 4 为下一项且仍 queued。Task 0–2 的 accepted 原提交保持不变：`ed0b056a`、`78fbddaa`、`d2b16f89`。
+- Active focus 仍是 EPD-027 Task 4，状态为 **NEEDS_REWORK**。实施计划共 35 个 Task，Task 0–3 已 accepted（`4/35`），accepted count 未变；Task 5 保持 queued，不得进入。Task 0–2 的 accepted 原提交保持不变：`ed0b056a`、`78fbddaa`、`d2b16f89`。
 - Task 3 的两项通用前置均已 accepted：ledger-binding `860b7c48` 最终 focused `40 passed`、review PASS；typed-hook `4ea293b1` 最终 `69 + 286 passed`、review PASS。Task 3 四文件提交=`f9773944`，最终 focused `101 passed`、独立 review PASS，provider calls=`0`。
 - Task 3 post-task 测试压缩已完成并提交为 `66643084`：仅修改 5 个测试文件，production 零修改；test defs / 估算 cases 从 `77/153` 降至 `66/118`。canonical scoped 结果 exit `0`，`118 passed in 5.55s`，provider calls=`0`；独立 review PASS，Critical/Important/Minor=`0/0/0`。本次提交与状态同步未重复运行 Fast、Full 或 LeanAudit。
 - Task 3 反影子结论：正式 direct-results 路径消费 canonical `ProtocolRunResult`、verified ledger binding 与 official typed-hook parser；没有复制 `ProtocolEngine`/状态机，禁用 `ProtocolEngine` 不能铸造 paper-eligible success。手工 typed fixture 仅用于组件测试。
 - 最新 Fast 证据（2026-08-01）：`.\init.ps1` exit `0`，`468 passed, 1 skipped in 20.19s`；JSON/SQLite、harness、compileall 均通过，provider calls=`0`。本次按用户指令 intentionally not run Full；LeanAudit 与真实 API 也未运行。
-- 用户新增流程门禁：每个 Task accepted 后先压缩相关测试，删除一次性/重复/实现细节型覆盖，只保留最小协议边界与回归证据；压缩方案确认并复审前不进入下一 Task。Task 3 测试压缩现已闭环；Task 4 仍 queued/next，尚未开始。
-- Task 4 只读预检=`READY_AFTER_TASK3`。计划的 Task 4 文件/命令漏列 `tests/test_paper_network_tripwire.py`，但该测试仍命中旧 transport body-dict ABI；实现前必须纳入静态 allowlist、迁移范围与 focused command 核对。
+- Task 4 exact outbound bytes/request identity/admission/Lean prompt v2 基本实现已存在，但未 accepted、未提交。实现证据为 focused `125 passed`；canonical exit `1`，`323 passed / 39 failed in 326.47s`；多轮最小失败子集最终缩到唯一 nodeid，全程 provider calls=`0`，network tripwire loaded。
+- 修正轮已先解决 reachable-artifact closure 缺 index row；新且唯一 blocker 为 `condition_results.jsonl.failed_root_count` 与 canonical recomputed condition summary 不一致。唯一失败 nodeid 为 `tests/experiments/test_run_paper_experiments_cli.py::test_paper_cli_formal_capturing_e2e_writes_all_tables_without_real_usage`，exit `1`，`0 passed / 1 failed in 30.42s`；日志为 `C:\Users\32133\AppData\Local\Temp\tokenshare_task4_unique_correction_nodeid.log`。
+- 综合 review follow-up 曾 verdict=`BLOCKED`；用户随后明确授权继续同一 Task 4 修正，直到计划内 E2E GREEN 后再 review，未通过前绝不进入 Task 5。无 production 计划外修改；approved implementation plan 中有隔离的未暂存 36-line user override diff，不属于 Task 4，不得归入、修改或回退。本轮 Fast/Full/LeanAudit 均未运行。
 - EPD-027 已按用户确认写入权威设计：Experiment 1/5 继续真实在线；Experiment 2–4 改为不可变真实回答库驱动的完整协议运行。同一 repeat 的配对条件共享回答、不同 repeat 使用独立 sample slot，replacement 按冻结最大恢复深度准备。
 - Experiment 2 另在缩小且预注册的题集上，用真实 API 覆盖 `1,3,7,10,30,50` 全六个 worker 档位；Experiment 3 另保留 verifier/checker 拒绝后 replacement 与 worker death 后重新分派的小型真实在线恢复检查。完整实施计划已形成，相关题集、重复、阈值、预算与 profile 仍须由后续 Task 实现、复审并在付费门禁前验证。
 - EPD-027 是实验设施全面改造，涉及稳定 provider-body digest、response-bank schema/inventory、trace-backed executor、source/consumer 双 provenance、双 paper evidence class、预算分账与硬门、runner/metrics/report/renderer/replay/audit；不是现有 replay 的局部修补。Task 0–3 已实现网络门禁、profile/budget、metric contract、canonical direct-results 及其通用 producer 前置，但其余 `31/35` 仍未实施，正式全量继续 **NO-GO**。
@@ -61,6 +62,8 @@
 
 ## 最近验证证据
 
+- EPD-027 Task 4 needs_rework 证据：focused `125 passed`；canonical exit `1`，`323 passed / 39 failed in 326.47s`；最终唯一 nodeid exit `1`，`0 passed / 1 failed in 30.42s`。失败已缩小到 `condition_results.jsonl.failed_root_count` 与 canonical recomputed condition summary 不一致；provider calls=`0`，network tripwire loaded。
+- Task 4 本轮未运行 Fast、Full、LeanAudit，也未联网或调用真实 API；以上 pytest 证据均来自已完成的实现/修正轮，本次状态持久化不重跑。
 - EPD-027 Task 3 post-task 测试压缩 `66643084`：test defs / 估算 cases=`77/153 → 66/118`；canonical scoped exit `0`，`118 passed in 5.55s`；独立 reviewer PASS，Critical/Important/Minor=`0/0/0`，provider calls=`0`。本次未重复运行 Fast、Full 或 LeanAudit。
 - EPD-027 Task 3 accepted 后 Fast：`.\init.ps1` exit `0`，`468 passed, 1 skipped in 20.19s`；JSON/SQLite、harness、compileall 通过，provider calls=`0`；Full intentionally not run per user instruction，LeanAudit/API 未运行。
 - 状态同步时直接调用 `verification/run_verification.py`，误判其为无 pytest harness，实际重复执行 Fast：exit `0`，`468 passed, 1 skipped in 18.78s`。该次不算新增覆盖；后续不得用此命令规避 Fast 去重门禁。
@@ -87,11 +90,11 @@
 
 - EPD-025/027 的实施已不再是“只完成设计同步”：Task 2 machine-readable metric contract 与 Task 3 canonical direct-results projector 已 accepted；formal metrics/report/renderer、execute/replay 与论文管线正式接线仍须按后续 Task 完成。本轮没有启动真实 API。
 - 按用户要求，本次审计/修复没有新运行 Full、LeanAudit、force-all、真实 API smoke 或正式矩阵；未检查人为注入攻击。上面的真实调用来自用户此前启动的历史 smoke。
-- 历史审计时当前进程的 `DEEPSEEK_API_KEY` 非空；这只证明当时环境曾配置，不构成当前付费授权，也不把 secret 写入仓库或输出。Task 3 测试压缩已完成，当前下一项是仍 queued 的 Task 4；旧 Exp3/4 与 Exp5 smoke 继续暂停。
+- 历史审计时当前进程的 `DEEPSEEK_API_KEY` 非空；这只证明当时环境曾配置，不构成当前付费授权，也不把 secret 写入仓库或输出。Task 4 当前 needs_rework，Task 5 保持 queued；旧 Exp3/4 与 Exp5 smoke 继续暂停。
 - TTFT 当前没有持久化来源，保持缺失，不伪造为 0。
 - Exp5 bundle digest 仍包含 source suite 持久化路径字符串，属于跨机器可移植性 P2，不影响当前本机 lifecycle/artifact 绑定。
 - PowerShell 日志 helper 在“runner 已退出但其后代长期持有继承管道写端”的极端路径仍可能等待 EOF；正常 launcher 实时脱敏、受控退出与退出码传播测试通过。该 P2 未伪装成已修复，不影响本轮结果完整性结论。
 - 全量资源 A 支线暂停点：`build_shared_root_reference()` 尚未替换为 terminal snapshot-only 的 `ValidatedSharedRootReferenceIndex`；还需补 stale/duplicate source rejection、同一 suite 共享索引复用、500 synthetic roots 的 `max_live_full_outcomes <= 1` 证据，并在完成后重跑 formal runner 与 Fast。完成这些之前不得启动正式全量。
 - EPD-027 Task 0–3 的基础与 direct projector 已存在，但 response-bank/trace-backed executor、正式 pipeline 接线仍未实现；现有 replay 只恢复或复算已闭合 evidence，不能以回答库重新驱动完整状态机。旧 Exp3/4 11-root 与 Exp5 8-root smoke 仍暂停；未获单独付费授权不得运行在线并发/恢复检查。
-- Task 0–3、两项 Task 3 通用前置与 Task 3 测试压缩均已有独立 commit；本轮不 push、不 merge、不创建 PR。
-- 本轮状态持久化未联网、未调用 provider，未引入外部资料；code map 无需更新，因为 production 零修改。
+- Task 0–3、两项 Task 3 通用前置与 Task 3 测试压缩均已有独立 commit；Task 4 production/tests 仍是未暂存 dirty，不得与状态提交混合。本轮不 push、不 merge、不创建 PR。
+- 本轮状态持久化未联网、未调用 provider，未引入外部资料；只修改四个状态文件，code map 无需更新。

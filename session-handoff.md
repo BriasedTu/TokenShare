@@ -1,6 +1,6 @@
 # Session Handoff
 
-更新时间：2026-08-01
+更新时间：2026-08-02
 
 ## 开工顺序
 
@@ -8,9 +8,9 @@
 2. 阅读 `Doc/agent-navigation.md` 与唯一实验权威 `Doc/TechnicalDocument/tokenshare_latest_real_plugin_experiment_design.md`。
 3. 运行 `.\init.ps1`；除非用户改变要求，不要运行 Full。
 
-## 2026-08-01 EPD-027 当前实施交接（Task 3 accepted，测试压缩已完成）
+## 2026-08-02 EPD-027 当前实施交接（Task 4 needs_rework）
 
-- Active feature=`feat-011`，仍为 `in-progress`；active focus id 保持 `paper-metric-contract-trace-bank-and-traceability-plan`。35 个实施 Task 中 Task 0–3 已 accepted（`4/35`），其余 queued。
+- Active feature=`feat-011`，仍为 `in-progress`；active focus id 保持 `paper-metric-contract-trace-bank-and-traceability-plan`，active focus status=`needs_rework`。Task 0–3 已 accepted（`4/35`），accepted count 未变；Task 4 needs_rework，Task 5 保持 queued。
 - Task 0–2 accepted 原提交不变：Task 0=`ed0b056a`，Task 1=`78fbddaa`，Task 2=`d2b16f89`。
 - Task 3 的通用 ledger-binding prerequisite=`860b7c48`（7 files changed），最终 focused `40 passed`、独立 review PASS、provider calls=`0`。
 - Task 3 的 typed-hook prerequisite=`4ea293b1`（18 files changed），最终 `69 + 286 passed`、独立 review PASS、provider calls=`0`。
@@ -20,8 +20,11 @@
 - Task 3 accepted 后 Fast：`.\init.ps1` exit `0`，`468 passed, 1 skipped in 20.19s`；JSON/SQLite、harness、compileall 通过，provider calls=`0`。
 - 状态同步时 `verification/run_verification.py` 被误判为无 pytest harness，实际重复执行 Fast：exit `0`，`468 passed, 1 skipped in 18.78s`；不算新增覆盖证据，后续不得重复。
 - Task 3 测试压缩提交与本次状态同步未重复运行 Fast、Full 或 LeanAudit，也未调用真实 API。当前没有 paid receipt/付费授权，不得调用 provider。
-- 用户新增流程门禁：每个 Task accepted 后必须先压缩相关测试，删除一次性/重复/实现细节型覆盖，保留最小协议边界与回归证据，并在复审后才进入下一 Task。Task 3 测试压缩现已闭环；Task 4 继续 queued/next，尚未开始。
-- Task 4 只读预检=`READY_AFTER_TASK3`。实施计划 Task 4 漏列 `tests/test_paper_network_tripwire.py`，但该文件仍命中旧 transport body-dict ABI；实现前必须把它纳入静态 ABI allowlist、实际迁移范围和 focused command 核对。
+- Task 4 exact outbound bytes/request identity/admission/Lean prompt v2 基本实现已存在，但未 accepted、未提交。实现证据：focused `125 passed`；canonical exit `1`，`323 passed / 39 failed in 326.47s`；provider calls=`0`，network tripwire loaded。
+- 多轮最小失败子集最终仅剩 `tests/experiments/test_run_paper_experiments_cli.py::test_paper_cli_formal_capturing_e2e_writes_all_tables_without_real_usage`，exit `1`，`0 passed / 1 failed in 30.42s`。日志：`C:\Users\32133\AppData\Local\Temp\tokenshare_task4_unique_correction_nodeid.log`。
+- 修正轮已解决 reachable-artifact closure 缺 index row；当前唯一 blocker 是 `condition_results.jsonl.failed_root_count` 与 canonical recomputed condition summary 不一致。综合 review follow-up 曾 verdict=`BLOCKED`；用户随后明确授权继续同一 Task 4 修正，直到计划内 E2E GREEN 后再 review。
+- 无 production 计划外修改。approved implementation plan 中的未暂存 36-line user override diff 与 Task 4 隔离，不得归入、修改或回退；Task 4 production/tests 也不得被状态提交暂存。
+- 本轮 Fast、Full、LeanAudit 均未运行；未联网、未调用 provider。下一动作是继续处理唯一 blocker，未通过计划内 E2E 与 review 前 Task 5 保持 queued。
 
 ## 2026-07-31 用户暂停点（历史）
 
@@ -46,7 +49,7 @@
 
 ## 当前业务状态
 
-- Active feature：`feat-011`。EPD-027 当前实施进度为 `4/35`：network tripwire、profile/budget、machine-readable metric contract、canonical direct-results 及其 ledger/hook producer 前置已 accepted，Task 3 post-task 测试压缩也已闭环；response bank、trace-backed executor 与 formal runner/metrics/renderer/replay 接线仍属后续 Task，因此整体 paper readiness 未闭合。
+- Active feature：`feat-011`。EPD-027 accepted 进度仍为 `4/35`：Task 4 基本实现存在但未 accepted，当前 needs_rework；Task 5 及以后保持 queued。response bank、trace-backed executor 与 formal runner/metrics/renderer/replay 接线仍属后续 Task，因此整体 paper readiness 未闭合。
 - Active focus 已从“只写计划”进入严格串行实施。EPD-025 的 Experiment 5 `max_retries=0`、两张 model 汇总表、无六组 pairwise 继续冻结；Task 2/3 已提供 contract/direct facts，正式 consumer/renderer/replay 接线仍待后续 Task。
 - 真实 `exp34-smoke-20260731-041442` 已结束：11 roots、36 provider attempts、839,054 tokens、8 completed、3 evidence-complete experimental failures；配置口径 cost estimate CNY 4.6147626，actual billing unavailable。
 - 真实性审计 PASS：36 个 DeepSeek HTTP 200 response ID 与 36 个 canonical v2 model records，v3 模型/请求身份一致，TokenShare coordinator/engine/ledger/artifact 路径完整，secret scan 零命中。
@@ -87,6 +90,8 @@
 
 ## 当前验证与残留
 
+- Task 4 needs_rework：focused `125 passed`；canonical exit `1`，`323 passed / 39 failed in 326.47s`；最终唯一 nodeid exit `1`，`0 passed / 1 failed in 30.42s`。唯一 blocker 是 `condition_results.jsonl.failed_root_count` 与 canonical recomputed condition summary 不一致。
+- Task 4 本轮未运行 Fast/Full/LeanAudit，provider calls=`0`，network tripwire loaded。Task 4 production/tests 与 approved plan 的 36-line user override 保持未暂存 dirty，不得与状态提交混合。
 - Task 3 post-task 测试压缩 `66643084`：test defs / 估算 cases=`77/153 → 66/118`；canonical scoped exit `0`，`118 passed in 5.55s`；独立 reviewer PASS，Critical/Important/Minor=`0/0/0`，provider calls=`0`。本次未重复 Fast、Full 或 LeanAudit。
 - 最新 Fast：`.\init.ps1` exit `0`，`468 passed, 1 skipped in 20.19s`；JSON/SQLite、harness、compileall 通过，provider calls=`0`。Full intentionally not run per user instruction；LeanAudit/API 未运行。
 - Task 3 证据：`860b7c48` focused 40 + review PASS；`4ea293b1` 69+286 + review PASS；`f9773944` focused 101 + review PASS；provider calls 均为 0。
@@ -97,7 +102,7 @@
 - 当前工作树暂停收尾 Fast：`458 passed, 1 skipped in 21.06s`；JSON/SQLite、harness、compileall 通过。
 - EPD-027 文档/harness 同步后 Fast：`458 passed, 1 skipped in 17.96s`；未联网、未调用真实 API、未运行 Full。
 - Exp5 identity-only v4：8/60/60，suite=`paper_smoke_exp5_v4`；launcher fail-closed profile/selection identity 已同步 v4。
-- 本次 state/docs 同步未运行 pytest/Fast/Full/LeanAudit/force-all/真实 API/攻击测试；只持久化已接受的测试压缩证据，不 push、不 merge、不创建 PR。
+- 本次 state/docs 同步未运行 pytest/Fast/Full/LeanAudit/force-all/真实 API/攻击测试；只持久化 Task 4 needs_rework 与已有验证事实，不 push、不 merge、不创建 PR。
 - TTFT 无持久化来源，保持缺失；bundle source path 参与 digest 是本机可移植性 P2。
 - Exp5 identity fail-stop 的 raw checkpoint placeholder 使用 `attempt_status=not_started`；当前 metrics/replay 直接消费并有回归覆盖，未来若引入严格 `PaperAttemptStatus` 反序列化需先版本化该状态。
 - PowerShell helper 在 runner 已退出但后代长期持有继承管道写端时仍可能等待 EOF；正常实时日志脱敏、受控退出和精确退出码路径已通过。该项为 P2，不得写成已修复。
