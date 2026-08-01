@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import json
+import math
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from hashlib import sha256
+from types import MappingProxyType
 from typing import Any
 
 
@@ -22,6 +24,27 @@ PAPER_FORMAL_AI_TIMEOUT_SECONDS = 100
 EXP1_TO_EXP4_DEEPSEEK_TIMEOUT_SECONDS = 600
 EXP1_TO_EXP4_DEEPSEEK_MAX_TOKENS = 300_000
 UNSUPPORTED_PAPER_TRANSPORTS = frozenset({"scripted", "fake", "deterministic", "mock"})
+PAPER_DIRECT_EVIDENCE_CLASSES = frozenset(
+    {
+        "online_real_provider",
+        "real_model_trace_protocol_run",
+        "regression_only",
+    }
+)
+EXTERNAL_BANK_OBJECT_ROLES = frozenset(
+    {
+        "request_body",
+        "raw_output_or_provider_failure",
+        "raw_output",
+        "provenance",
+        "usage_status",
+        "latency",
+        "pricing",
+        "acquisition_attempt",
+        "model_record",
+    }
+)
+_CANONICAL_DIRECT_EVIDENCE_FACTORY_TOKEN = object()
 
 
 class PaperStatus(str, Enum):
@@ -59,6 +82,18 @@ class PaperAttemptStatus(str, Enum):
     CANCELLED_BY_BUDGET = "cancelled_by_budget"
 
 
+class PaperDirectRootStatus(str, Enum):
+    """新 direct-result schema 的 root 状态；不修改历史 PaperTaskStatus。"""
+
+    COMPLETED = "completed"
+    FAILED = "failed"
+    BLOCKED = "blocked"
+    TIMEOUT = "timeout"
+    BUDGET_EXHAUSTED = "budget_exhausted"
+    INELIGIBLE = "ineligible"
+    NOT_STARTED = "not_started"
+
+
 class PaperFailureStage(str, Enum):
     CATALOG = "catalog"
     SPLIT = "split"
@@ -92,6 +127,426 @@ class PaperFailureKind(str, Enum):
     MISSING_MODEL_ENTRY = "missing_model_entry"
     SECRET_LEAK = "secret_leak"
     INTERNAL_ERROR = "internal_error"
+
+
+@dataclass(frozen=True, kw_only=True)
+class ExternalBankObjectLocator:
+    """只保存 bank object 身份；filesystem capability 由进程外 resolver 持有。"""
+
+    bank_root_id: str
+    manifest_digest: str
+    entry_id: str
+    object_role: str
+    object_digest: str
+    schema_version: str = "tokenshare.external_bank_object_locator.v1"
+
+    def __post_init__(self) -> None:
+        if self.schema_version != "tokenshare.external_bank_object_locator.v1":
+            raise ValueError("unsupported external bank object locator schema")
+        _require_non_empty("bank_root_id", self.bank_root_id)
+        _require_non_empty("entry_id", self.entry_id)
+        _require_identity_digest("manifest_digest", self.manifest_digest)
+        _require_identity_digest("object_digest", self.object_digest)
+        if self.object_role not in EXTERNAL_BANK_OBJECT_ROLES:
+            raise ValueError("unsupported external bank object role")
+
+    def to_dict(self) -> JsonObject:
+        return {
+            "schema_version": self.schema_version,
+            "bank_root_id": self.bank_root_id,
+            "manifest_digest": self.manifest_digest,
+            "entry_id": self.entry_id,
+            "object_role": self.object_role,
+            "object_digest": self.object_digest,
+        }
+
+
+@dataclass(frozen=True, kw_only=True)
+class PaperDirectRootInventoryRow:
+    """预注册 root；不包含 execution、ledger 或任何运行时事实。"""
+
+    inventory_id: str
+    preregistered_root_run_id: str
+    experiment_id: str
+    condition_id: str
+    preregistered_condition_ref: JsonObject
+    condition_axes: JsonObject
+    case_id: str
+    preregistered_case_ref: JsonObject
+    repeat_id: int
+    evidence_class: str
+    inventory_row_digest: str
+    schema_version: str = "tokenshare.paper_direct_root_inventory_row.v2"
+
+    def __post_init__(self) -> None:
+        if self.schema_version != "tokenshare.paper_direct_root_inventory_row.v2":
+            raise ValueError("unsupported paper direct root inventory schema")
+        for field_name in (
+            "inventory_id",
+            "preregistered_root_run_id",
+            "experiment_id",
+            "condition_id",
+            "case_id",
+        ):
+            _require_non_empty(field_name, getattr(self, field_name))
+        _require_integer("repeat_id", self.repeat_id, min_value=0)
+        if self.evidence_class not in PAPER_DIRECT_EVIDENCE_CLASSES:
+            raise ValueError("unsupported paper direct evidence class")
+        for field_name in (
+            "preregistered_condition_ref",
+            "condition_axes",
+            "preregistered_case_ref",
+        ):
+            value = getattr(self, field_name)
+            if not isinstance(value, Mapping) or not value:
+                raise ValueError(f"{field_name} must be a non-empty persisted mapping")
+            object.__setattr__(self, field_name, _freeze_json(value))
+        _require_identity_digest("inventory_row_digest", self.inventory_row_digest)
+        if self.inventory_row_digest != digest_json(self._digest_body()):
+            raise ValueError("inventory row digest mismatch")
+
+    def _digest_body(self) -> JsonObject:
+        return {
+            "schema_version": self.schema_version,
+            "inventory_id": self.inventory_id,
+            "preregistered_root_run_id": self.preregistered_root_run_id,
+            "experiment_id": self.experiment_id,
+            "condition_id": self.condition_id,
+            "preregistered_condition_ref": _thaw_json(
+                self.preregistered_condition_ref
+            ),
+            "condition_axes": _thaw_json(self.condition_axes),
+            "case_id": self.case_id,
+            "preregistered_case_ref": _thaw_json(self.preregistered_case_ref),
+            "repeat_id": self.repeat_id,
+            "evidence_class": self.evidence_class,
+        }
+
+    def to_dict(self) -> JsonObject:
+        return {
+            **self._digest_body(),
+            "inventory_row_digest": self.inventory_row_digest,
+        }
+
+
+@dataclass(frozen=True, kw_only=True)
+class PreregisteredRootInventoryManifest:
+    """固定 direct denominator 的完整、digest-bound manifest。"""
+
+    inventory_id: str
+    rows: tuple[PaperDirectRootInventoryRow, ...]
+    root_count: int
+    inventory_digest: str
+    schema_version: str = "tokenshare.preregistered_root_inventory_manifest.v1"
+
+    def __post_init__(self) -> None:
+        if self.schema_version != "tokenshare.preregistered_root_inventory_manifest.v1":
+            raise ValueError("unsupported preregistered root inventory schema")
+        _require_non_empty("inventory_id", self.inventory_id)
+        _require_integer("root_count", self.root_count, min_value=1)
+        rows = tuple(self.rows)
+        if any(not isinstance(row, PaperDirectRootInventoryRow) for row in rows):
+            raise ValueError("inventory rows must be typed root rows")
+        root_ids = tuple(row.preregistered_root_run_id for row in rows)
+        if any(row.inventory_id != self.inventory_id for row in rows):
+            raise ValueError("inventory row inventory_id mismatch")
+        if len(rows) != self.root_count:
+            raise ValueError("inventory root_count mismatch")
+        if len(set(root_ids)) != len(root_ids):
+            raise ValueError("duplicate root in inventory manifest")
+        if len({row.inventory_row_digest for row in rows}) != len(rows):
+            raise ValueError("duplicate inventory row digest")
+        object.__setattr__(self, "rows", rows)
+        _require_identity_digest("inventory_digest", self.inventory_digest)
+        if self.inventory_digest != digest_json(self._digest_body()):
+            raise ValueError("inventory digest mismatch")
+
+    def _digest_body(self) -> JsonObject:
+        return {
+            "schema_version": self.schema_version,
+            "inventory_id": self.inventory_id,
+            "root_count": self.root_count,
+            "rows": [row.to_dict() for row in self.rows],
+        }
+
+    def to_dict(self) -> JsonObject:
+        return {**self._digest_body(), "inventory_digest": self.inventory_digest}
+
+
+@dataclass(frozen=True, kw_only=True)
+class ArtifactIdentitySnapshot:
+    """ArtifactRef 的深冻结 identity；不保留可变 source/metadata。"""
+
+    artifact_id: str
+    artifact_type: str
+    uri: str
+    content_hash: str
+    size_bytes: int
+    media_type: str
+    artifact_schema_id: str
+    artifact_schema_version: str
+    source_role: str
+    source_task_id: str
+    source_execution_id: str
+    created_at: str
+    schema_version: str = "tokenshare.artifact_identity_snapshot.v1"
+
+    def __post_init__(self) -> None:
+        if self.schema_version != "tokenshare.artifact_identity_snapshot.v1":
+            raise ValueError("unsupported artifact identity snapshot schema")
+        for field_name in (
+            "artifact_id",
+            "artifact_type",
+            "uri",
+            "content_hash",
+            "media_type",
+            "artifact_schema_id",
+            "artifact_schema_version",
+            "source_role",
+            "source_task_id",
+            "source_execution_id",
+            "created_at",
+        ):
+            _require_non_empty(field_name, getattr(self, field_name))
+        _require_identity_digest("content_hash", self.content_hash)
+        _require_integer("size_bytes", self.size_bytes, min_value=0)
+
+    def to_dict(self) -> JsonObject:
+        return {
+            "schema_version": self.schema_version,
+            "artifact_id": self.artifact_id,
+            "artifact_type": self.artifact_type,
+            "uri": self.uri,
+            "content_hash": self.content_hash,
+            "size_bytes": self.size_bytes,
+            "media_type": self.media_type,
+            "artifact_schema_id": self.artifact_schema_id,
+            "artifact_schema_version": self.artifact_schema_version,
+            "source_role": self.source_role,
+            "source_task_id": self.source_task_id,
+            "source_execution_id": self.source_execution_id,
+            "created_at": self.created_at,
+        }
+
+
+@dataclass(frozen=True, kw_only=True)
+class LedgerEventIdentitySnapshot:
+    event_seq: int
+    event_id: str
+    event_type: str
+    event_hash: str
+    prev_event_hash: str | None
+    task_id: str
+    object_type: str
+    object_id: str
+    schema_version: str = "tokenshare.ledger_event_identity_snapshot.v1"
+
+    def __post_init__(self) -> None:
+        if self.schema_version != "tokenshare.ledger_event_identity_snapshot.v1":
+            raise ValueError("unsupported ledger event identity snapshot schema")
+        _require_integer("event_seq", self.event_seq, min_value=1)
+        for field_name in (
+            "event_id",
+            "event_type",
+            "event_hash",
+            "task_id",
+            "object_type",
+            "object_id",
+        ):
+            _require_non_empty(field_name, getattr(self, field_name))
+        _require_identity_digest("event_hash", self.event_hash)
+        if self.prev_event_hash is not None:
+            _require_identity_digest("prev_event_hash", self.prev_event_hash)
+
+    def to_dict(self) -> JsonObject:
+        return {
+            "schema_version": self.schema_version,
+            "event_seq": self.event_seq,
+            "event_id": self.event_id,
+            "event_type": self.event_type,
+            "event_hash": self.event_hash,
+            "prev_event_hash": self.prev_event_hash,
+            "task_id": self.task_id,
+            "object_type": self.object_type,
+            "object_id": self.object_id,
+        }
+
+
+@dataclass(frozen=True, kw_only=True)
+class DirectRootExecutionBinding:
+    """direct 专用的 canonical execution/ledger snapshot。"""
+
+    preregistered_root_run_id: str
+    execution_id: str
+    task_id: str
+    root_unit_id: str
+    ledger_digest: str
+    events: tuple[LedgerEventIdentitySnapshot, ...]
+    binding_digest: str
+    schema_version: str = "tokenshare.direct_root_execution_binding.v1"
+
+    def __post_init__(self) -> None:
+        if self.schema_version != "tokenshare.direct_root_execution_binding.v1":
+            raise ValueError("unsupported direct root execution binding schema")
+        for field_name in (
+            "preregistered_root_run_id",
+            "execution_id",
+            "task_id",
+            "root_unit_id",
+        ):
+            _require_non_empty(field_name, getattr(self, field_name))
+        _require_identity_digest("ledger_digest", self.ledger_digest)
+        events = tuple(self.events)
+        if not events or any(
+            not isinstance(event, LedgerEventIdentitySnapshot) for event in events
+        ):
+            raise ValueError("execution binding requires typed ledger events")
+        object.__setattr__(self, "events", events)
+        _require_identity_digest("binding_digest", self.binding_digest)
+        if self.binding_digest != digest_json(self._digest_body()):
+            raise ValueError("direct root execution binding digest mismatch")
+
+    def _digest_body(self) -> JsonObject:
+        return {
+            "schema_version": self.schema_version,
+            "preregistered_root_run_id": self.preregistered_root_run_id,
+            "execution_id": self.execution_id,
+            "task_id": self.task_id,
+            "root_unit_id": self.root_unit_id,
+            "ledger_digest": self.ledger_digest,
+            "events": [event.to_dict() for event in self.events],
+        }
+
+    def to_dict(self) -> JsonObject:
+        return {
+            **self._digest_body(),
+            "binding_digest": self.binding_digest,
+        }
+
+
+@dataclass(frozen=True, init=False)
+class CanonicalDirectRootEvidence:
+    """只能由 canonical evidence factory 形成的冻结结果。"""
+
+    preregistered_root_run_id: str
+    evidence_class: str
+    execution_binding: DirectRootExecutionBinding
+    canonical_runtime_status: str
+    final_result_ref: ArtifactIdentitySnapshot | None
+    terminal_root_event_ref: LedgerEventIdentitySnapshot | None
+    canonical_acceptance_ref: LedgerEventIdentitySnapshot | None
+    merge_ref: LedgerEventIdentitySnapshot | None
+    independently_verified_correct: bool
+    paper_evidence_complete: bool
+    identity_consistent: bool
+    infrastructure_valid: bool
+    attempt_refs: tuple[LedgerEventIdentitySnapshot, ...]
+    event_refs: tuple[LedgerEventIdentitySnapshot, ...]
+    parser_refs: tuple[ArtifactIdentitySnapshot, ...]
+    verifier_checker_refs: tuple[ArtifactIdentitySnapshot, ...]
+    artifact_refs: tuple[ArtifactIdentitySnapshot, ...]
+    current_provider_object_refs: tuple[ArtifactIdentitySnapshot, ...]
+    source_bank_object_locators: tuple[ExternalBankObjectLocator, ...]
+    actual_resource_book_ref: ArtifactIdentitySnapshot | None
+    trace_resource_book_ref: ArtifactIdentitySnapshot | None
+    ineligibility_reasons: tuple[str, ...]
+    schema_version: str
+    _producer_validated: bool = field(
+        init=False,
+        default=False,
+        repr=False,
+        compare=False,
+    )
+
+    @classmethod
+    def _from_validated(
+        cls,
+        *,
+        _factory_token: object | None = None,
+        **values: Any,
+    ) -> "CanonicalDirectRootEvidence":
+        expected = set(cls.__dataclass_fields__) - {"_producer_validated"}
+        if set(values) != expected:
+            raise ValueError("canonical direct evidence factory field mismatch")
+        if values["schema_version"] != "tokenshare.canonical_direct_root_evidence.v1":
+            raise ValueError("unsupported canonical direct evidence schema")
+        _require_non_empty(
+            "preregistered_root_run_id",
+            values["preregistered_root_run_id"],
+        )
+        if values["evidence_class"] not in PAPER_DIRECT_EVIDENCE_CLASSES:
+            raise ValueError("unsupported paper direct evidence class")
+        binding = values["execution_binding"]
+        if not isinstance(binding, DirectRootExecutionBinding):
+            raise TypeError("execution_binding must be DirectRootExecutionBinding")
+        if (
+            binding.preregistered_root_run_id
+            != values["preregistered_root_run_id"]
+        ):
+            raise ValueError("canonical evidence root binding mismatch")
+        _require_non_empty(
+            "canonical_runtime_status",
+            values["canonical_runtime_status"],
+        )
+        for field_name in (
+            "independently_verified_correct",
+            "paper_evidence_complete",
+            "identity_consistent",
+            "infrastructure_valid",
+        ):
+            if type(values[field_name]) is not bool:
+                raise ValueError(f"{field_name} must be a bool")
+        for field_name, expected_type in (
+            ("final_result_ref", ArtifactIdentitySnapshot),
+            ("terminal_root_event_ref", LedgerEventIdentitySnapshot),
+            ("canonical_acceptance_ref", LedgerEventIdentitySnapshot),
+            ("merge_ref", LedgerEventIdentitySnapshot),
+            ("actual_resource_book_ref", ArtifactIdentitySnapshot),
+            ("trace_resource_book_ref", ArtifactIdentitySnapshot),
+        ):
+            value = values[field_name]
+            if value is not None and not isinstance(value, expected_type):
+                raise TypeError(f"{field_name} must be typed")
+        for field_name, expected_type in (
+            ("attempt_refs", LedgerEventIdentitySnapshot),
+            ("event_refs", LedgerEventIdentitySnapshot),
+            ("parser_refs", ArtifactIdentitySnapshot),
+            ("verifier_checker_refs", ArtifactIdentitySnapshot),
+            ("artifact_refs", ArtifactIdentitySnapshot),
+            ("current_provider_object_refs", ArtifactIdentitySnapshot),
+            ("source_bank_object_locators", ExternalBankObjectLocator),
+        ):
+            items = tuple(values[field_name])
+            if any(not isinstance(item, expected_type) for item in items):
+                raise TypeError(f"{field_name} must contain typed values")
+            values[field_name] = items
+        reasons = tuple(values["ineligibility_reasons"])
+        if any(not isinstance(reason, str) or not reason for reason in reasons):
+            raise ValueError("ineligibility reasons must be non-empty strings")
+        values["ineligibility_reasons"] = reasons
+        if (
+            values["current_provider_object_refs"]
+            and values["source_bank_object_locators"]
+        ):
+            raise ValueError("current and source provider evidence are exclusive")
+        if (
+            values["actual_resource_book_ref"] is not None
+            and values["trace_resource_book_ref"] is not None
+        ):
+            raise ValueError("actual and trace resource books are exclusive")
+        instance = object.__new__(cls)
+        for field_name, value in values.items():
+            object.__setattr__(instance, field_name, value)
+        object.__setattr__(
+            instance,
+            "_producer_validated",
+            _factory_token is _CANONICAL_DIRECT_EVIDENCE_FACTORY_TOKEN,
+        )
+        return instance
+
+    @property
+    def producer_validated(self) -> bool:
+        return self._producer_validated
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -600,9 +1055,13 @@ class PaperAttemptResult:
                     raise ValueError(
                         "deterministic executor_error cannot claim AI provenance"
                     )
-            elif not isinstance(self.provenance_ref, Mapping) or not self.provenance_ref:
+            elif self.provenance_ref is not None and (
+                not isinstance(self.provenance_ref, Mapping)
+                or not self.provenance_ref
+            ):
                 raise ValueError(
-                    "AI pre-provider executor_error requires provenance_ref"
+                    "AI pre-provider executor_error provenance_ref must be a "
+                    "non-empty object when present"
                 )
             if self.paper_eligible is not False:
                 raise ValueError("executor_error attempt must be paper-ineligible")
@@ -1461,7 +1920,7 @@ def _json_value(value: Any) -> Any:
         return value.value
     if hasattr(value, "to_dict") and callable(value.to_dict):
         return value.to_dict()
-    if isinstance(value, dict):
+    if isinstance(value, Mapping):
         return {str(key): _json_value(item) for key, item in value.items()}
     if isinstance(value, (list, tuple)):
         return [_json_value(item) for item in value]
@@ -1557,3 +2016,27 @@ def _require_identity_digest(field_name: str, value: str) -> None:
         or any(character not in "0123456789abcdef" for character in value[7:])
     ):
         raise ValueError(f"{field_name} must be a complete sha256 digest")
+
+
+def _freeze_json(value: Any) -> Any:
+    """递归复制并冻结 JSON-like 输入，避免 nested mutation。"""
+
+    if isinstance(value, Mapping):
+        return MappingProxyType(
+            {str(key): _freeze_json(item) for key, item in value.items()}
+        )
+    if isinstance(value, (list, tuple)):
+        return tuple(_freeze_json(item) for item in value)
+    if type(value) is float and not math.isfinite(value):
+        raise ValueError("floating-point values must be finite")
+    if value is None or type(value) in {bool, int, float, str}:
+        return value
+    raise ValueError("value must be JSON-compatible")
+
+
+def _thaw_json(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return {str(key): _thaw_json(item) for key, item in value.items()}
+    if isinstance(value, tuple):
+        return [_thaw_json(item) for item in value]
+    return value

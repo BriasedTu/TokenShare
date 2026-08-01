@@ -3,10 +3,15 @@ from dataclasses import replace
 import pytest
 
 from tokenshare.experiments.paper_models import (
+    DirectRootExecutionBinding,
+    CanonicalDirectRootEvidence,
+    ExternalBankObjectLocator,
+    LedgerEventIdentitySnapshot,
     PaperAttemptResult,
     PaperAttemptStatus,
     PaperBudgetResult,
     PaperConditionResult,
+    PaperDirectRootInventoryRow,
     PaperExperimentCondition,
     PaperExperimentResult,
     PaperModelExecutionRecord,
@@ -15,6 +20,7 @@ from tokenshare.experiments.paper_models import (
     PaperSuiteResult,
     PaperTaskResult,
     PaperTaskStatus,
+    digest_json,
 )
 
 
@@ -130,6 +136,19 @@ def test_executor_error_v2_allows_explicit_ai_pre_provider_source() -> None:
     assert attempt.provenance_ref == {"artifact_id": "provenance-root-1"}
     assert attempt.executor_id == "executor_ai_api"
     assert attempt.executor_type == "ai_api_pre_provider"
+
+
+def test_ai_pre_provider_executor_error_without_provenance_stays_ineligible() -> None:
+    attempt = replace(
+        _ai_pre_provider_executor_error_attempt(),
+        provenance_ref=None,
+    )
+
+    assert attempt.provenance_ref is None
+    assert attempt.provider_attempt_count == 0
+    assert attempt.paper_eligible is False
+    with pytest.raises(ValueError, match="paper-ineligible"):
+        replace(attempt, paper_eligible=True)
 
 
 def test_provider_failure_v3_serializes_missing_usage_as_null() -> None:
@@ -811,3 +830,111 @@ def _formal_exp5_condition_body() -> dict:
         "seed": 1,
         "catalog_digest": "sha256:" + "1" * 64,
     }
+
+
+def test_external_bank_object_locator_is_opaque_and_path_free() -> None:
+    locator = ExternalBankObjectLocator(
+        bank_root_id="approved-bank-root",
+        manifest_digest=digest_json({"manifest": 1}),
+        entry_id="entry-1",
+        object_role="raw_output",
+        object_digest=digest_json({"raw": 1}),
+    )
+
+    assert locator.to_dict() == {
+        "schema_version": "tokenshare.external_bank_object_locator.v1",
+        "bank_root_id": "approved-bank-root",
+        "manifest_digest": digest_json({"manifest": 1}),
+        "entry_id": "entry-1",
+        "object_role": "raw_output",
+        "object_digest": digest_json({"raw": 1}),
+    }
+    assert not ({"path", "uri", "artifact_ref"} & set(locator.to_dict()))
+
+
+def test_manual_canonical_evidence_fixture_is_deep_frozen_and_component_only() -> None:
+    event = LedgerEventIdentitySnapshot(
+        event_seq=1,
+        event_id="event-1",
+        event_type="TASK_UNIT_CREATED",
+        event_hash=digest_json({"event": 1}),
+        prev_event_hash=None,
+        task_id="task-1",
+        object_type="TaskUnit",
+        object_id="unit-1",
+    )
+    binding_body = {
+        "schema_version": "tokenshare.direct_root_execution_binding.v1",
+        "preregistered_root_run_id": "root-run-1",
+        "execution_id": "run-1",
+        "task_id": "task-1",
+        "root_unit_id": "unit-1",
+        "ledger_digest": digest_json([event.to_dict()]),
+        "events": [event.to_dict()],
+    }
+    binding = DirectRootExecutionBinding(
+        preregistered_root_run_id="root-run-1",
+        execution_id="run-1",
+        task_id="task-1",
+        root_unit_id="unit-1",
+        ledger_digest=binding_body["ledger_digest"],
+        events=(event,),
+        binding_digest=digest_json(binding_body),
+    )
+    reasons = ["component_fixture"]
+    event_refs = [event]
+    evidence = CanonicalDirectRootEvidence._from_validated(
+        preregistered_root_run_id="root-run-1",
+        evidence_class="online_real_provider",
+        execution_binding=binding,
+        canonical_runtime_status="failed",
+        final_result_ref=None,
+        terminal_root_event_ref=None,
+        canonical_acceptance_ref=None,
+        merge_ref=None,
+        independently_verified_correct=False,
+        paper_evidence_complete=False,
+        identity_consistent=False,
+        infrastructure_valid=False,
+        attempt_refs=[],
+        event_refs=event_refs,
+        parser_refs=[],
+        verifier_checker_refs=[],
+        artifact_refs=[],
+        current_provider_object_refs=[],
+        source_bank_object_locators=[],
+        actual_resource_book_ref=None,
+        trace_resource_book_ref=None,
+        ineligibility_reasons=reasons,
+        schema_version="tokenshare.canonical_direct_root_evidence.v1",
+    )
+    reasons.append("mutated")
+    event_refs.clear()
+
+    assert evidence.ineligibility_reasons == ("component_fixture",)
+    assert evidence.event_refs == (event,)
+    assert evidence.producer_validated is False
+
+
+def test_task3_additions_leave_historical_result_schemas_read_only() -> None:
+    assert [item.value for item in PaperTaskStatus] == [
+        "completed",
+        "failed",
+        "blocked",
+        "timeout",
+        "budget_exhausted",
+        "ineligible",
+        "partial",
+    ]
+    experiment_fields = PaperExperimentResult.__dataclass_fields__
+    task_fields = PaperTaskResult.__dataclass_fields__
+    assert experiment_fields["schema_version"].default == (
+        "tokenshare.paper_experiment_result.v1"
+    )
+    assert "accepted_validity_rate" in experiment_fields
+    assert task_fields["schema_version"].default == "tokenshare.paper_task_result.v1"
+    assert "accepted_validity" in task_fields
+    inventory_fields = PaperDirectRootInventoryRow.__dataclass_fields__
+    assert "execution_id" not in inventory_fields
+    assert "event_ledger_ref" not in inventory_fields
+    assert CanonicalDirectRootEvidence.__dataclass_params__.init is False
