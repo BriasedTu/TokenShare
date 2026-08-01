@@ -95,6 +95,37 @@ class ArtifactStore:
             created_at=created_at,
         )
 
+    def save_external_trace_wrapper(
+        self,
+        data: JsonObject,
+        *,
+        artifact_id: str,
+        created_at: str,
+    ) -> ArtifactRef:
+        """只保存 current wrapper；拒绝把 source-bank bytes/位置带入当前 store。"""
+
+        forbidden = {
+            "path",
+            "root_path",
+            "uri",
+            "artifact_ref",
+            "bank_owned_artifact_ref",
+            "source_bytes",
+        }
+        present = forbidden.intersection(data)
+        if present or any(isinstance(value, (bytes, bytearray)) for value in data.values()):
+            raise ValueError("current store cannot materialize source bank object")
+        return self.save_json(
+            data,
+            artifact_id=artifact_id,
+            artifact_type="CurrentTraceWrapper",
+            artifact_schema_id="tokenshare.current_trace_wrapper",
+            artifact_schema_version="v1",
+            source={"kind": "external_response_bank_locator"},
+            metadata={},
+            created_at=created_at,
+        )
+
     def read_bytes(self, artifact_ref: ArtifactRef) -> bytes:
         return self._resolve_uri(artifact_ref.uri).read_bytes()
 

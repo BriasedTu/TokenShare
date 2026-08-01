@@ -12,7 +12,41 @@ from tests.phase7_fixtures import (
 from tokenshare.executors.ai_api import AIAPIExecutor
 from tokenshare.executors.ai_api_config import load_ai_api_config
 from tokenshare.executors.ai_api_replay import verify_ai_api_submission_artifacts
+from tokenshare.executors.response_bank import CurrentTraceWrapper, ResponseBankBlockedError
 from tokenshare.storage.artifacts import ArtifactStore
+
+
+def test_response_bank_replay_blocks_without_explicit_root_before_resolver_access(
+    monkeypatch,
+) -> None:
+    def forbidden_open(*args, **kwargs):
+        raise AssertionError("resolver must not run without an explicit root capability")
+
+    monkeypatch.setattr(ai_api_replay.ResponseBankResolver, "open", forbidden_open)
+    wrapper = CurrentTraceWrapper(
+        current_run_id="run",
+        current_task_id="task",
+        current_unit_id="unit",
+        current_attempt_id="attempt",
+        attempt_ordinal=1,
+        bank_root_id="bank",
+        manifest_digest="sha256:manifest",
+        root_binding_marker_digest="sha256:marker",
+        inference_request_digest="sha256:request",
+        entry_id="entry",
+        locator_digests={},
+        logical_started_at="2026-08-01T00:00:00Z",
+        logical_finished_at="2026-08-01T00:00:01Z",
+        source_latency_ms=1,
+        current_parse_ref=None,
+        current_verifier_ref=None,
+        current_checker_ref=None,
+        current_canonical_ref=None,
+        current_ledger_ref=None,
+    )
+
+    with pytest.raises(ResponseBankBlockedError, match="explicit external bank root"):
+        ai_api_replay.replay_response_bank_trace(external_bank_root=None, wrapper=wrapper)
 
 
 def test_replay_guard_verifies_artifacts_without_calling_transport(tmp_path, monkeypatch) -> None:
