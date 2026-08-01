@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
+from decimal import Decimal
 from math import isfinite
 from pathlib import Path
 from typing import Any, Sequence
@@ -48,6 +49,37 @@ from tokenshare.plugins.factorization.split_strategy import partition_candidate_
 
 class PaperBudgetApprovalError(ValueError):
     pass
+
+
+@dataclass(frozen=True, kw_only=True)
+class PaperBudgetLimits:
+    """Provider-writing acquisition 的三维硬预算。"""
+
+    calls: int
+    tokens: int
+    cny: Decimal
+    deepseek_cumulative_cny: Decimal = Decimal("1000")
+
+    def __post_init__(self) -> None:
+        if self.calls < 1 or self.tokens < 1:
+            raise ValueError("budget calls and tokens must be positive")
+        if self.cny <= 0 or self.deepseek_cumulative_cny <= 0:
+            raise ValueError("budget CNY limits must be positive")
+
+
+L3_SMALL_PAID_BUDGET_LIMITS = PaperBudgetLimits(
+    calls=516,
+    tokens=171_708_288,
+    cny=Decimal("979.524864"),
+    deepseek_cumulative_cny=Decimal("1000"),
+)
+
+
+def validate_provider_budget_mode(*, provider_writing: bool, budget_mode: str) -> None:
+    """任何会写 provider 的路径都不得关闭预算门。"""
+
+    if provider_writing and budget_mode == "unlimited":
+        raise ValueError("unlimited budget is forbidden for provider-writing mode")
 
 
 def build_response_bank_budget_report(
