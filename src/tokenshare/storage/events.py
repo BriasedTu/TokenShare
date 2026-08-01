@@ -139,6 +139,20 @@ class EventDraft:
     occurred_at: str | None = None
 
 
+@dataclass(frozen=True, kw_only=True)
+class VerifiedLedgerSnapshot:
+    """从同一次持久化字节读取形成的已验证 ledger 快照。"""
+
+    events: tuple[LedgerEvent, ...]
+    ledger_bytes_digest: str
+    ledger_events_digest: str
+    event_count: int
+    tip_event_seq: int | None
+    tip_event_id: str | None
+    tip_event_hash: str | None
+    schema_version: str = "tokenshare.verified_ledger_snapshot.v1"
+
+
 class EventLedger:
     """JSONL ledger with event sequence, idempotency, and hash chain."""
 
@@ -328,6 +342,41 @@ class EventLedger:
                     raise ValueError(f"invalid JSONL event at line {line_number}") from error
         return events
 
+    def read_verified_snapshot(self) -> VerifiedLedgerSnapshot:
+        """读取一次持久化字节并形成带内容身份的不可变快照。"""
+
+        ledger_bytes = self.path.read_bytes() if self.path.exists() else b""
+        events: list[LedgerEvent] = []
+        try:
+            ledger_text = ledger_bytes.decode("utf-8")
+        except UnicodeDecodeError as error:
+            raise ValueError("event ledger is not valid UTF-8") from error
+        for line_number, line in enumerate(ledger_text.splitlines(), start=1):
+            stripped = line.strip()
+            if not stripped:
+                continue
+            try:
+                events.append(LedgerEvent.from_dict(json.loads(stripped)))
+            except (json.JSONDecodeError, KeyError, TypeError, ValueError) as error:
+                raise ValueError(
+                    f"invalid JSONL event at line {line_number}"
+                ) from error
+        event_tuple = tuple(events)
+        _verify_snapshot_events(event_tuple)
+        canonical_events = _canonical_json(
+            [event.to_dict() for event in event_tuple]
+        ).encode("utf-8")
+        tip = event_tuple[-1] if event_tuple else None
+        return VerifiedLedgerSnapshot(
+            events=event_tuple,
+            ledger_bytes_digest=_sha256_digest(ledger_bytes),
+            ledger_events_digest=_sha256_digest(canonical_events),
+            event_count=len(event_tuple),
+            tip_event_seq=tip.event_seq if tip is not None else None,
+            tip_event_id=tip.event_id if tip is not None else None,
+            tip_event_hash=tip.event_hash if tip is not None else None,
+        )
+
     def verify_hash_chain(self) -> bool:
         previous_hash: str | None = None
         for expected_seq, event in enumerate(self.read_all(), start=1):
@@ -432,5 +481,33 @@ def _event_hash(event_dict: JsonObject) -> str:
     return f"sha256:{sha256(_canonical_json(hash_input).encode('utf-8')).hexdigest()}"
 
 
-def _canonical_json(data: JsonObject) -> str:
+def _verify_snapshot_events(events: tuple[LedgerEvent, ...]) -> None:
+    previous_hash: str | None = None
+    event_ids: set[str] = set()
+    event_hashes: set[str] = set()
+    for expected_seq, event in enumerate(events, start=1):
+        if event.event_seq != expected_seq:
+            raise ValueError(
+                "event ledger must have continuous event_seq starting at 1"
+            )
+        if event.event_id in event_ids:
+            raise ValueError(f"duplicate event_id: {event.event_id}")
+        if event.event_hash in event_hashes:
+            raise ValueError(f"duplicate event_hash: {event.event_hash}")
+        event_ids.add(event.event_id)
+        event_hashes.add(event.event_hash)
+        if event.prev_event_hash != previous_hash:
+            raise ValueError(
+                f"prev_event_hash mismatch at event_seq {event.event_seq}"
+            )
+        if _event_hash(event.to_dict()) != event.event_hash:
+            raise ValueError(f"event_hash mismatch at event_seq {event.event_seq}")
+        previous_hash = event.event_hash
+
+
+def _sha256_digest(data: bytes) -> str:
+    return f"sha256:{sha256(data).hexdigest()}"
+
+
+def _canonical_json(data: Any) -> str:
     return json.dumps(data, ensure_ascii=False, sort_keys=True, separators=(",", ":"))

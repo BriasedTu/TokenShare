@@ -9,9 +9,12 @@ from typing import Any
 from collections.abc import Mapping, Sequence
 
 from tokenshare.core.models import ArtifactRef, JsonObject
-from tokenshare.local_runtime.contracts import ProtocolRunResult
+from tokenshare.local_runtime.contracts import (
+    ProtocolRunLedgerBinding,
+    ProtocolRunResult,
+)
 from tokenshare.storage.artifacts import ArtifactStore
-from tokenshare.storage.events import EventLedger, EventType
+from tokenshare.storage.events import EventLedger, EventType, VerifiedLedgerSnapshot
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -99,7 +102,31 @@ def project_protocol_run(
 ) -> ProtocolRunResult:
     """只从 ledger 事实派生结果，并仅返回 event/artifact 引用及摘要。"""
 
-    events = [event for event in event_ledger.read_all() if event.task_id == task_id]
+    verified_snapshot = event_ledger.read_verified_snapshot()
+    return _project_protocol_run_from_verified_snapshot(
+        run_id=run_id,
+        task_id=task_id,
+        root_unit_id=root_unit_id,
+        verified_snapshot=verified_snapshot,
+        artifact_store=artifact_store,
+        runtime_observation=runtime_observation,
+    )
+
+
+def _project_protocol_run_from_verified_snapshot(
+    *,
+    run_id: str,
+    task_id: str,
+    root_unit_id: str,
+    verified_snapshot: VerifiedLedgerSnapshot,
+    artifact_store: ArtifactStore,
+    runtime_observation: Mapping[str, Any] | None,
+) -> ProtocolRunResult:
+    """从同一已验证快照派生状态摘要和 producer ledger binding。"""
+
+    events = [
+        event for event in verified_snapshot.events if event.task_id == task_id
+    ]
     units: dict[str, JsonObject] = {}
     attempts: dict[str, JsonObject] = {}
     attempts_by_unit: dict[str, list[str]] = {}
@@ -178,6 +205,12 @@ def project_protocol_run(
     }
     if runtime_observation is not None:
         summary["runtime_observation"] = dict(runtime_observation)
+    ledger_binding = ProtocolRunLedgerBinding.from_verified_snapshot(
+        run_id=run_id,
+        task_id=task_id,
+        root_unit_id=root_unit_id,
+        verified_snapshot=verified_snapshot,
+    )
     return ProtocolRunResult(
         run_id=run_id,
         task_id=task_id,
@@ -199,6 +232,7 @@ def project_protocol_run(
             artifact_refs[key] for key in sorted(artifact_refs)
         ),
         summary=summary,
+        ledger_binding=ledger_binding,
     )
 
 

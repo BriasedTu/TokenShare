@@ -29,7 +29,7 @@ from tokenshare.executors.contracts import ExecutionRequest, ExecutionSubmission
 from tokenshare.executors.registry import ExecutorRegistry
 from tokenshare.plugins.registry import PluginRegistry
 from tokenshare.storage.artifacts import ArtifactStore
-from tokenshare.storage.events import LedgerEvent
+from tokenshare.storage.events import LedgerEvent, VerifiedLedgerSnapshot
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -557,6 +557,102 @@ class ProtocolRunRequest:
 
 
 @dataclass(frozen=True, kw_only=True)
+class ProtocolRunLedgerBinding:
+    """把 run/task/root 身份绑定到一次已验证的 producer ledger 快照。"""
+
+    run_id: str
+    task_id: str
+    root_unit_id: str
+    ledger_bytes_digest: str
+    ledger_events_digest: str
+    event_count: int
+    tip_event_seq: int | None
+    tip_event_id: str | None
+    tip_event_hash: str | None
+    binding_digest: str
+    schema_version: str = "tokenshare.protocol_run_ledger_binding.v1"
+
+    def __post_init__(self) -> None:
+        if self.schema_version != "tokenshare.protocol_run_ledger_binding.v1":
+            raise ValueError("unsupported protocol run ledger binding schema")
+        for field_name in ("run_id", "task_id", "root_unit_id"):
+            _require_non_empty_string(field_name, getattr(self, field_name))
+        _require_sha256_digest("ledger_bytes_digest", self.ledger_bytes_digest)
+        _require_sha256_digest("ledger_events_digest", self.ledger_events_digest)
+        if isinstance(self.event_count, bool) or not isinstance(self.event_count, int):
+            raise TypeError("event_count must be an integer")
+        if self.event_count < 0:
+            raise ValueError("event_count must be non-negative")
+        if self.event_count == 0:
+            if any(
+                value is not None
+                for value in (
+                    self.tip_event_seq,
+                    self.tip_event_id,
+                    self.tip_event_hash,
+                )
+            ):
+                raise ValueError("empty ledger binding cannot have a tip")
+        else:
+            if type(self.tip_event_seq) is not int:
+                raise TypeError("tip_event_seq must be an integer")
+            if self.tip_event_seq <= 0:
+                raise ValueError("tip_event_seq must be positive")
+            if self.tip_event_seq != self.event_count:
+                raise ValueError("tip_event_seq must equal event_count")
+            _require_non_empty_string("tip_event_id", self.tip_event_id)
+            _require_sha256_digest("tip_event_hash", self.tip_event_hash)
+        _require_sha256_digest("binding_digest", self.binding_digest)
+        if self.binding_digest != self.recompute_binding_digest():
+            raise ValueError("protocol run ledger binding_digest mismatch")
+
+    @classmethod
+    def from_verified_snapshot(
+        cls,
+        *,
+        run_id: str,
+        task_id: str,
+        root_unit_id: str,
+        verified_snapshot: VerifiedLedgerSnapshot,
+    ) -> "ProtocolRunLedgerBinding":
+        if not isinstance(verified_snapshot, VerifiedLedgerSnapshot):
+            raise TypeError("verified_snapshot must be VerifiedLedgerSnapshot")
+        body = {
+            "schema_version": "tokenshare.protocol_run_ledger_binding.v1",
+            "run_id": run_id,
+            "task_id": task_id,
+            "root_unit_id": root_unit_id,
+            "ledger_bytes_digest": verified_snapshot.ledger_bytes_digest,
+            "ledger_events_digest": verified_snapshot.ledger_events_digest,
+            "event_count": verified_snapshot.event_count,
+            "tip_event_seq": verified_snapshot.tip_event_seq,
+            "tip_event_id": verified_snapshot.tip_event_id,
+            "tip_event_hash": verified_snapshot.tip_event_hash,
+        }
+        return cls(**body, binding_digest=_json_digest(body))
+
+    def _digest_body(self) -> JsonObject:
+        return {
+            "schema_version": self.schema_version,
+            "run_id": self.run_id,
+            "task_id": self.task_id,
+            "root_unit_id": self.root_unit_id,
+            "ledger_bytes_digest": self.ledger_bytes_digest,
+            "ledger_events_digest": self.ledger_events_digest,
+            "event_count": self.event_count,
+            "tip_event_seq": self.tip_event_seq,
+            "tip_event_id": self.tip_event_id,
+            "tip_event_hash": self.tip_event_hash,
+        }
+
+    def recompute_binding_digest(self) -> str:
+        return _json_digest(self._digest_body())
+
+    def to_dict(self) -> JsonObject:
+        return {**self._digest_body(), "binding_digest": self.binding_digest}
+
+
+@dataclass(frozen=True, kw_only=True)
 class ProtocolRunResult:
     """运行结果只携带权威引用和派生摘要，不充当状态机。"""
 
@@ -567,9 +663,27 @@ class ProtocolRunResult:
     event_refs: tuple[JsonObject, ...] = ()
     artifact_refs: tuple[ArtifactRef, ...] = ()
     summary: JsonObject = field(default_factory=dict)
+    ledger_binding: ProtocolRunLedgerBinding | None = None
+
+    def __post_init__(self) -> None:
+        binding = self.ledger_binding
+        if binding is None:
+            return
+        if not isinstance(binding, ProtocolRunLedgerBinding):
+            raise TypeError("ledger_binding must be ProtocolRunLedgerBinding")
+        if (
+            binding.run_id != self.run_id
+            or binding.task_id != self.task_id
+            or binding.root_unit_id != self.root_unit_id
+        ):
+            raise ValueError("protocol run ledger binding identity mismatch")
 
 
 def _merge_readiness_digest(body: JsonObject) -> str:
+    return _json_digest(body)
+
+
+def _json_digest(body: JsonObject) -> str:
     encoded = json.dumps(
         body,
         ensure_ascii=False,
@@ -577,3 +691,18 @@ def _merge_readiness_digest(body: JsonObject) -> str:
         separators=(",", ":"),
     ).encode("utf-8")
     return f"sha256:{sha256(encoded).hexdigest()}"
+
+
+def _require_non_empty_string(field_name: str, value: object) -> None:
+    if not isinstance(value, str) or not value:
+        raise ValueError(f"{field_name} must be a non-empty string")
+
+
+def _require_sha256_digest(field_name: str, value: object) -> None:
+    if (
+        not isinstance(value, str)
+        or len(value) != 71
+        or not value.startswith("sha256:")
+        or any(character not in "0123456789abcdef" for character in value[7:])
+    ):
+        raise ValueError(f"{field_name} must be a sha256 digest")

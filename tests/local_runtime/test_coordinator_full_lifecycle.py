@@ -15,6 +15,7 @@ from tokenshare.local_runtime import (
     MergeExecutionContext,
     MergeResolutionAction,
     ProtocolMechanismPolicy,
+    ProtocolRunLedgerBinding,
     ProtocolRunCoordinator,
     ProtocolRunRequest,
     RootProtocolPlan,
@@ -647,6 +648,12 @@ def test_coordinator_runs_expand_children_merge_completion_and_settlement_throug
     assert EventType.SETTLEMENT_RECORDED in event_types
     assert all(set(ref) <= {"event_id", "event_seq", "event_type"} for ref in result.event_refs)
     assert result.artifact_refs
+    assert result.ledger_binding == ProtocolRunLedgerBinding.from_verified_snapshot(
+        run_id=result.run_id,
+        task_id=result.task_id,
+        root_unit_id=result.root_unit_id,
+        verified_snapshot=ledger.read_verified_snapshot(),
+    )
     assert result.summary["unit_state_counts"]["Completed"] == 3
     assert result.summary["unit_state_counts"]["Processing"] == 1
     projected = project_protocol_run(
@@ -857,3 +864,103 @@ def test_projection_rejects_partial_artifact_reference(tmp_path: Path) -> None:
             event_ledger=ledger,
             artifact_store=store,
         )
+
+
+def test_projection_reads_one_verified_snapshot_without_legacy_second_read(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    store = ArtifactStore(tmp_path / "store")
+    ledger = EventLedger(tmp_path / "events" / "single_snapshot.jsonl")
+    ledger.append(
+        event_type=EventType.TASK_UNIT_CREATED,
+        object_type="TaskUnit",
+        object_id="root_snapshot",
+        task_id="task_snapshot",
+        actor={"kind": "runtime_test"},
+        correlation_id="corr_snapshot",
+        idempotency_key="root_snapshot:created",
+        payload={
+            "task_unit": {
+                "unit_id": "root_snapshot",
+                "state": "Completed",
+            }
+        },
+        occurred_at="2026-08-01T00:00:00Z",
+    )
+    original_snapshot_reader = ledger.read_verified_snapshot
+    snapshot_reads = 0
+
+    def counted_snapshot_reader():
+        nonlocal snapshot_reads
+        snapshot_reads += 1
+        return original_snapshot_reader()
+
+    def forbidden_legacy_read(*_args, **_kwargs):
+        raise AssertionError("projection performed an independent legacy ledger read")
+
+    monkeypatch.setattr(ledger, "read_verified_snapshot", counted_snapshot_reader)
+    monkeypatch.setattr(ledger, "read_all", forbidden_legacy_read)
+    monkeypatch.setattr(ledger, "verify_hash_chain", forbidden_legacy_read)
+
+    result = project_protocol_run(
+        run_id="run_snapshot",
+        task_id="task_snapshot",
+        root_unit_id="root_snapshot",
+        event_ledger=ledger,
+        artifact_store=store,
+    )
+
+    assert snapshot_reads == 1
+    assert result.status == "completed"
+    assert result.ledger_binding is not None
+    assert result.ledger_binding.run_id == "run_snapshot"
+
+
+def test_projection_binding_distinguishes_legal_producer_ledgers_with_same_refs(
+    tmp_path: Path,
+) -> None:
+    results = []
+    for marker in ("producer-a", "producer-b"):
+        root = tmp_path / marker
+        ledger = EventLedger(root / "events.jsonl")
+        ledger.append(
+            event_type=EventType.TASK_UNIT_CREATED,
+            object_type="TaskUnit",
+            object_id="root_bound",
+            task_id="task_bound",
+            actor={"kind": "runtime_test"},
+            correlation_id="corr_bound",
+            idempotency_key="root_bound:created",
+            payload={
+                "task_unit": {
+                    "unit_id": "root_bound",
+                    "state": "Completed",
+                },
+                "producer_marker": marker,
+            },
+            occurred_at="2026-08-01T00:00:00Z",
+        )
+        results.append(
+            project_protocol_run(
+                run_id="run_bound",
+                task_id="task_bound",
+                root_unit_id="root_bound",
+                event_ledger=ledger,
+                artifact_store=ArtifactStore(root / "store"),
+            )
+        )
+
+    first, second = results
+    assert first.status == second.status == "completed"
+    assert first.event_refs == second.event_refs
+    assert first.artifact_refs == second.artifact_refs == ()
+    assert first.ledger_binding is not None
+    assert second.ledger_binding is not None
+    assert first.ledger_binding.ledger_bytes_digest != (
+        second.ledger_binding.ledger_bytes_digest
+    )
+    assert first.ledger_binding.ledger_events_digest != (
+        second.ledger_binding.ledger_events_digest
+    )
+    assert first.ledger_binding.binding_digest != second.ledger_binding.binding_digest

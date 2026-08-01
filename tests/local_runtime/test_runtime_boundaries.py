@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import ast
 import inspect
+import json
 from collections import Counter
-from dataclasses import fields, is_dataclass
+from dataclasses import FrozenInstanceError, fields, is_dataclass, replace
+from hashlib import sha256
 from importlib.util import resolve_name
 from pathlib import Path
 
@@ -16,6 +18,7 @@ from tokenshare.experiments import (
 from tokenshare.local_runtime import (
     NoOpRuntimeHooks,
     ProtocolMechanismPolicy,
+    ProtocolRunLedgerBinding,
     ProtocolRunRequest,
     ProtocolRunResult,
     ProtocolTaskPluginRuntime,
@@ -286,6 +289,7 @@ def _parameter_kinds(callable_object: object) -> dict[str, inspect._ParameterKin
 
 def test_runtime_public_contracts_are_frozen() -> None:
     assert is_dataclass(ProtocolRunRequest)
+    assert is_dataclass(ProtocolRunLedgerBinding)
     assert is_dataclass(ProtocolRunResult)
     assert ProtocolTaskPluginRuntime._is_protocol
     assert RuntimeHooks._is_protocol
@@ -308,6 +312,19 @@ def test_runtime_public_contracts_are_frozen() -> None:
             "event_refs",
             "artifact_refs",
             "summary",
+            "ledger_binding",
+        },
+        ProtocolRunLedgerBinding: {
+            "run_id",
+            "task_id",
+            "root_unit_id",
+            "ledger_bytes_digest",
+            "ledger_events_digest",
+            "event_count",
+            "tip_event_seq",
+            "tip_event_id",
+            "tip_event_hash",
+            "binding_digest",
         },
         ProtocolMechanismPolicy: {
             "parser_policy_enabled",
@@ -378,6 +395,137 @@ def test_runtime_public_contracts_are_frozen() -> None:
     assert _parameter_kinds(WorkerBackend.execute) == {
         "request": inspect.Parameter.POSITIONAL_OR_KEYWORD,
     }
+
+
+@pytest.mark.parametrize(
+    ("binding_identity", "mismatched_field"),
+    (
+        (
+            {
+                "run_id": "run_other",
+                "task_id": "task_bound",
+                "root_unit_id": "root_bound",
+            },
+            "run_id",
+        ),
+        (
+            {
+                "run_id": "run_bound",
+                "task_id": "task_other",
+                "root_unit_id": "root_bound",
+            },
+            "task_id",
+        ),
+        (
+            {
+                "run_id": "run_bound",
+                "task_id": "task_bound",
+                "root_unit_id": "root_other",
+            },
+            "root_unit_id",
+        ),
+    ),
+)
+def test_protocol_run_ledger_binding_is_strict_and_identity_bound(
+    tmp_path,
+    binding_identity: dict[str, str],
+    mismatched_field: str,
+) -> None:
+    from tokenshare.storage.events import EventLedger, EventType
+
+    ledger = EventLedger(tmp_path / f"{mismatched_field}.jsonl")
+    ledger.append(
+        event_type=EventType.TASK_REGISTERED,
+        object_type="TaskSpec",
+        object_id="task_bound",
+        payload={"task_spec": {"task_id": "task_bound"}},
+        task_id="task_bound",
+        actor={"kind": "protocol"},
+        idempotency_key="register_task:task_bound",
+        occurred_at="2026-08-01T00:00:00Z",
+    )
+    snapshot = ledger.read_verified_snapshot()
+    binding = ProtocolRunLedgerBinding.from_verified_snapshot(
+        verified_snapshot=snapshot,
+        **binding_identity,
+    )
+
+    assert binding.recompute_binding_digest() == binding.binding_digest
+    assert binding.ledger_bytes_digest == snapshot.ledger_bytes_digest
+    assert binding.ledger_events_digest == snapshot.ledger_events_digest
+    assert binding.event_count == snapshot.event_count
+    assert binding.tip_event_hash == snapshot.tip_event_hash
+    assert set(binding.to_dict()) == {
+        "schema_version",
+        "run_id",
+        "task_id",
+        "root_unit_id",
+        "ledger_bytes_digest",
+        "ledger_events_digest",
+        "event_count",
+        "tip_event_seq",
+        "tip_event_id",
+        "tip_event_hash",
+        "binding_digest",
+    }
+    with pytest.raises(FrozenInstanceError):
+        binding.run_id = "mutated"
+    with pytest.raises(ValueError, match="binding_digest mismatch"):
+        replace(binding, binding_digest=f"sha256:{'0' * 64}")
+    with pytest.raises(ValueError, match="identity mismatch"):
+        ProtocolRunResult(
+            run_id="run_bound",
+            task_id="task_bound",
+            root_unit_id="root_bound",
+            ledger_binding=binding,
+        )
+
+
+@pytest.mark.parametrize("field_name", ("event_count", "tip_event_seq"))
+def test_protocol_run_ledger_binding_rejects_bool_for_integer_identity_fields(
+    tmp_path,
+    field_name: str,
+) -> None:
+    from tokenshare.storage.events import EventLedger, EventType
+
+    ledger = EventLedger(tmp_path / f"bool_{field_name}.jsonl")
+    ledger.append(
+        event_type=EventType.TASK_REGISTERED,
+        object_type="TaskSpec",
+        object_id="task_bound",
+        payload={"task_spec": {"task_id": "task_bound"}},
+        task_id="task_bound",
+        actor={"kind": "protocol"},
+        idempotency_key="register_task:task_bound",
+        occurred_at="2026-08-01T00:00:00Z",
+    )
+    binding = ProtocolRunLedgerBinding.from_verified_snapshot(
+        run_id="run_bound",
+        task_id="task_bound",
+        root_unit_id="root_bound",
+        verified_snapshot=ledger.read_verified_snapshot(),
+    )
+    binding_body = binding.to_dict()
+    binding_body.pop("binding_digest")
+    binding_body[field_name] = True
+    encoded = json.dumps(
+        binding_body,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+
+    with pytest.raises(TypeError, match=f"{field_name} must be an integer"):
+        ProtocolRunLedgerBinding(
+            **binding_body,
+            binding_digest=f"sha256:{sha256(encoded).hexdigest()}",
+        )
+
+
+def test_historical_protocol_run_result_remains_constructible_without_binding() -> None:
+    result = ProtocolRunResult(run_id="run_historical")
+
+    assert result.ledger_binding is None
 
 
 def test_full_policy_and_noop_hooks_preserve_default_runtime_semantics() -> None:
