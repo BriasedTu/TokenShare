@@ -141,15 +141,12 @@ class _CapturingFactorizationTransport:
         self._delegate = ScriptedFactorizationRangeTransport()
         self.calls: list[dict] = []
 
-    def post_chat_completion(self, *, entry, api_key, body, timeout_seconds):
-        response = self._delegate.post_chat_completion(
-            entry=entry,
-            api_key=api_key,
-            body=body,
-            timeout_seconds=timeout_seconds,
-        )
-        response.body["model"] = entry.model
-        self.calls.append(json.loads(json.dumps(body)))
+    def post_chat_completion(self, **kwargs):
+        response = self._delegate.post_chat_completion(**kwargs)
+        response.body["model"] = json.loads(
+            kwargs["body_bytes"].decode("utf-8")
+        )["model"]
+        self.calls.append(kwargs["body_bytes"])
         return response
 
 
@@ -162,15 +159,12 @@ class _CapturingLeanTransport:
         )
         self.calls: list[dict] = []
 
-    def post_chat_completion(self, *, entry, api_key, body, timeout_seconds):
-        response = self._delegate.post_chat_completion(
-            entry=entry,
-            api_key=api_key,
-            body=body,
-            timeout_seconds=timeout_seconds,
-        )
-        response.body["model"] = entry.model
-        self.calls.append(json.loads(json.dumps(body)))
+    def post_chat_completion(self, **kwargs):
+        response = self._delegate.post_chat_completion(**kwargs)
+        response.body["model"] = json.loads(
+            kwargs["body_bytes"].decode("utf-8")
+        )["model"]
+        self.calls.append(kwargs["body_bytes"])
         return response
 
 

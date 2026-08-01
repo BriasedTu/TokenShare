@@ -2,7 +2,7 @@ from dataclasses import replace
 
 import pytest
 
-from tests.phase7_fixtures import FakeProviderResponse, make_config_dict
+from tests.phase7_fixtures import FakeProviderResponse, make_config_dict, prepared_wire_kwargs
 from tokenshare.executors.ai_api_config import load_ai_api_config
 from tokenshare.executors.ai_api_transport import (
     SiliconFlowProviderError,
@@ -270,9 +270,12 @@ def test_urllib_transport_maps_invalid_json_body_to_provider_error(monkeypatch) 
 
     try:
         UrlLibSiliconFlowTransport().post_chat_completion(
-            entry=entry,
             api_key="secret",
-            body={"model": entry.model},
+            **prepared_wire_kwargs(
+                entry,
+                {"model": entry.model, "messages": []},
+                provider_family="siliconflow",
+            ),
             timeout_seconds=30,
         )
     except SiliconFlowProviderError as exc:

@@ -3,6 +3,8 @@ import json
 from tokenshare.plugins.lean_proof.models import LeanTheoremPayload
 from tokenshare.plugins.lean_proof.prompt_builder import (
     build_lean_proof_candidate_prompt_package,
+    derive_lean_proof_candidate_id_v2,
+    legacy_lean_v1_candidate_id_for_replay,
     parse_lean_proof_candidate_ai_output,
 )
 
@@ -20,13 +22,17 @@ def test_lean_prompt_package_requests_only_proof_candidate_not_split_plan() -> N
         theorem_payload=payload,
         created_at=CREATED_AT,
         seed=7,
+        planned_ai_unit_id="planned_lemma_A",
+    )
+    expected_candidate_id = derive_lean_proof_candidate_id_v2(
+        theorem_payload_digest=payload.payload_digest,
+        planned_ai_unit_id="planned_lemma_A",
     )
 
     assert prompt.prompt_package_id == "lean_proof_candidate_prompt:request_lean_ai_1"
     assert prompt.input_summary["theorem_payload_digest"] == payload.payload_digest
-    assert prompt.input_summary["expected_proof_candidate_id"] == (
-        "proof_candidate:request_lean_ai_1"
-    )
+    assert prompt.input_summary["expected_proof_candidate_id"] == expected_candidate_id
+    assert prompt.input_summary["planned_ai_unit_id"] == "planned_lemma_A"
     assert prompt.output_schema == {
         "schema_version": "lean_proof.proof_candidate.v1",
         "media_type": "application/json",
@@ -38,7 +44,7 @@ def test_lean_prompt_package_requests_only_proof_candidate_not_split_plan() -> N
             "created_at",
         ],
         "proof_candidate_id_prefix": "proof_candidate:",
-        "expected_proof_candidate_id": "proof_candidate:request_lean_ai_1",
+        "expected_proof_candidate_id": expected_candidate_id,
         "proof_source_scope": "proof_body_only",
     }
     assert prompt.constraints["strict_json_only"] is True
@@ -52,13 +58,41 @@ def test_lean_prompt_package_requests_only_proof_candidate_not_split_plan() -> N
         "claim_canonical_output",
         "claim_settlement",
     ]
-    assert "Return only one JSON object" in prompt.prompt_text
-    assert "proof_source" in prompt.prompt_text
-    assert "proof_candidate:request_lean_ai_1" in prompt.prompt_text
-    assert "proof body only" in prompt.prompt_text
-    assert "Do not include import lines" in prompt.prompt_text
-    assert "Do not propose child tasks" in prompt.prompt_text
-    assert "Do not return a split plan" in prompt.prompt_text
+
+
+def test_lean_v2_candidate_id_is_stable_across_attempts_and_v1_is_unchanged() -> None:
+    payload = _payload()
+    first = build_lean_proof_candidate_prompt_package(
+        request_id="request_attempt_1",
+        task_id="task_lean",
+        unit_id="volatile_unit_1",
+        theorem_payload=payload,
+        created_at=CREATED_AT,
+        planned_ai_unit_id="planned_lemma_A",
+    )
+    second = build_lean_proof_candidate_prompt_package(
+        request_id="request_attempt_2",
+        task_id="task_lean",
+        unit_id="volatile_unit_2",
+        theorem_payload=payload,
+        created_at=CREATED_AT,
+        planned_ai_unit_id="planned_lemma_A",
+    )
+
+    assert (
+        first.input_summary["expected_proof_candidate_id"]
+        == second.input_summary["expected_proof_candidate_id"]
+    )
+    assert legacy_lean_v1_candidate_id_for_replay("request_lean_ai_1") == (
+        "proof_candidate:request_lean_ai_1"
+    )
+    assert "Return only one JSON object" in first.prompt_text
+    assert "proof_source" in first.prompt_text
+    assert first.input_summary["expected_proof_candidate_id"] in first.prompt_text
+    assert "proof body only" in first.prompt_text
+    assert "Do not include import lines" in first.prompt_text
+    assert "Do not propose child tasks" in first.prompt_text
+    assert "Do not return a split plan" in first.prompt_text
 
 
 def test_lean_parse_policy_maps_valid_json_to_proof_candidate() -> None:

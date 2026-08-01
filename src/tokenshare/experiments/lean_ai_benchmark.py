@@ -121,18 +121,20 @@ class ScriptedLeanProofTransport:
     def post_chat_completion(
         self,
         *,
-        entry,
         api_key: str,
-        body: JsonObject,
+        body_bytes: bytes,
+        normalized_absolute_endpoint: str,
+        content_type: str,
         timeout_seconds: int,
     ):
+        body = json.loads(body_bytes.decode("utf-8"))
         self.calls.append(
             {
-                "entry_id": entry.entry_id,
-                "model": entry.model,
                 "timeout_seconds": timeout_seconds,
                 "api_key_seen": bool(api_key),
-                "body": json.loads(json.dumps(body, sort_keys=True)),
+                "body_bytes": body_bytes,
+                "normalized_absolute_endpoint": normalized_absolute_endpoint,
+                "content_type": content_type,
             }
         )
         user_prompt = _user_prompt(body)
@@ -596,6 +598,7 @@ def _build_ai_request(
         theorem_payload=child_payload,
         created_at=NOW,
         seed=seed,
+        planned_ai_unit_id=child_key,
     )
     prompt_ref = store.save_json(
         prompt.to_dict(),

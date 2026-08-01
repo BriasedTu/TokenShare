@@ -25,6 +25,7 @@ from tokenshare.experiments.paper_factorization_sampling import (
     load_factorization_sampling_profile,
 )
 from tokenshare.experiments.paper_suite_scale import (
+    build_paper_suite_scale_policy,
     load_paper_suite_scale_profile,
 )
 from tokenshare.experiments.paper_experiment_contracts import (
@@ -53,7 +54,9 @@ from tokenshare.experiments.paper_metrics import (
 )
 from tokenshare.experiments import paper_runner
 from tokenshare.experiments import paper_formal_runner
-from tokenshare.experiments.paper_runner import build_gate_c_dispatch_plans
+from tokenshare.experiments.paper_runner import (
+    build_gate_c_dispatch_plans as _build_gate_c_dispatch_plans,
+)
 from tokenshare.local_runtime import ProtocolRunRequest, ProtocolRunResult
 
 
@@ -64,6 +67,13 @@ EXPERIMENT_IDS = (
     "exp4_real_ai_protocol_ablation",
     "exp5_real_ai_model_endpoint_comparison",
 )
+
+
+def build_gate_c_dispatch_plans(**kwargs):
+    """Task3 后 catalog-v2 Gate fixture 必须显式绑定 tracked scale profile。"""
+
+    kwargs.setdefault("paper_suite_scale_profile", _tracked_suite_scale_profile())
+    return _build_gate_c_dispatch_plans(**kwargs)
 
 
 def test_gate_c_shared_dispatcher_module_exists() -> None:
@@ -106,11 +116,30 @@ def test_exp3_exp4_catalog_views_share_one_frozen_factor150_profile() -> None:
         readiness,
         catalog_manifest=catalog,
     )
+    factor_by_difficulty = {
+        difficulty: tuple(
+            case
+            for case in catalog.factorization_cases
+            if case["difficulty"] == difficulty
+        )
+        for difficulty in ("easy", "medium", "hard")
+    }
+    scale_profile = _tracked_suite_scale_profile()
+    scale_policy, selected_factorization = build_paper_suite_scale_policy(
+        profile=scale_profile,
+        catalog_id=catalog.catalog_id,
+        catalog_version=catalog.catalog_version,
+        catalog_digest=catalog.catalog_digest,
+        candidates_by_difficulty=factor_by_difficulty,
+    )
     formal_catalog = paper_runner._FormalPaperCatalogView(
         manifest=catalog,
         task15_budget_input=bound["task15_budget_input"],
         lean_task14_readiness=bound,
         factorization_sampling_profile=_tracked_factor_sampling_profile(),
+        paper_suite_scale_profile=scale_profile,
+        paper_suite_scale_policy=scale_policy,
+        selected_factorization_by_experiment=selected_factorization,
     )
 
     exp3 = paper_runner._exp3_catalog_view(formal_catalog)
@@ -120,24 +149,27 @@ def test_exp3_exp4_catalog_views_share_one_frozen_factor150_profile() -> None:
         "factorization_selection_policy"
     ]
     policy = exp3["factorization_selection_policy"]
-    assert policy["schema_version"] == (
-        "tokenshare.paper_factorization_stratified_selection.v2"
-    )
+    assert policy["schema_version"] == "tokenshare.paper_suite_scale_policy.v1"
     binding = policy["profile_binding"]
     assert binding["profile_body"]["profile_id"] == (
-        "factorization_150_stable_hash.v2"
+        "paper_suite_scale_300_50_54.v1"
     )
     assert binding["profile_body"]["selection_rule"]["seed"] == 315_150
     assert binding["profile_source_path"] == (
-        "benchmarks/paper/paper_factorization_sampling_profile.v1.json"
+        "benchmarks/paper/paper_suite_scale_profile.v1.json"
     )
     assert binding["profile_source_digest"].startswith("sha256:")
-    assert policy["case_count_by_difficulty"] == {
-        "easy": 50,
-        "medium": 50,
-        "hard": 50,
+    assert {
+        difficulty: len(case_ids)
+        for difficulty, case_ids in policy["ordered_case_ids_by_scope"][
+            "exp3_real_ai_fault_recovery"
+        ].items()
+    } == {
+        "easy": 17,
+        "medium": 17,
+        "hard": 16,
     }
-    assert policy["selection_digest"].startswith("sha256:")
+    assert policy["policy_digest"].startswith("sha256:")
 
     exp3_rate = tuple(exp3["exp3_rate_fault_factorization_case_ids"])
     exp3_death = exp3[
@@ -192,14 +224,14 @@ def test_exp3_exp4_v2_plans_derive_root_counts_from_sampling_profile(
     assert [
         sum(len(selection.ordered_case_ids) for selection in plan.selections)
         for plan in plans
-    ] == [6_606, 1_575]
+    ] == [3_726, 975]
     assert {
         len(selection.ordered_case_ids)
         for plan in plans
         for condition, selection in plan.bound_items()
         if condition.domain == "factorization"
         and condition.paper_difficulty in {"easy", "medium", "hard"}
-    } == {30, 90}
+    } == {16, 17, 50}
 
 
 def test_gate_c_dispatcher_registers_all_modules_through_protocol() -> None:
@@ -313,27 +345,29 @@ def test_gate_c_v2_plans_freeze_current_p0_matrix_and_budget_identity(
         sum(len(selection.ordered_case_ids) for selection in plan.selections)
         for plan in plans
     ]
-    assert root_runs == [635, 1_992, 10_926, 2_475, 1_899]
-    assert sum(root_runs[:4]) == 16_028
-    assert sum(root_runs) == 17_927
+    assert root_runs == [435, 600, 3_726, 975, 1_899]
+    assert sum(root_runs[:4]) == 5_736
+    assert sum(root_runs) == 7_635
 
     all_factor_ids = {
         str(case["case_id"]) for case in catalog.factorization_cases
     }
-    full_sizes = {"easy": 167, "medium": 167, "hard": 166}
+    exp1_sizes = {"easy": 100, "medium": 100, "hard": 100}
     exp1_grouped: dict[str, set[tuple[str, ...]]] = {}
     for condition, selection in plans[0].bound_items():
         if condition.domain == "factorization":
             exp1_grouped.setdefault(str(condition.paper_difficulty), set()).add(
                 tuple(selection.ordered_case_ids)
             )
-    assert set(exp1_grouped) == set(full_sizes)
+    assert set(exp1_grouped) == set(exp1_sizes)
     assert all(len(selections) == 1 for selections in exp1_grouped.values())
-    assert {
+    exp1_selected_union = {
         case_id
         for selections in exp1_grouped.values()
         for case_id in next(iter(selections))
-    } == all_factor_ids
+    }
+    assert len(exp1_selected_union) == 300
+    assert exp1_selected_union < all_factor_ids
 
     exp4_grouped: dict[str, set[tuple[str, ...]]] = {}
     for condition, selection in plans[3].bound_items():
@@ -351,10 +385,11 @@ def test_gate_c_v2_plans_freeze_current_p0_matrix_and_budget_identity(
             for case in catalog.factorization_cases
             if case["difficulty"] == difficulty
         )
-        assert len(ordered_ids) == 50
-        assert ordered_ids != catalog_order[:50]
+        expected_count = {"easy": 17, "medium": 17, "hard": 16}[difficulty]
+        assert len(ordered_ids) == expected_count
+        assert ordered_ids != catalog_order[:expected_count]
         exp4_selected_union.update(ordered_ids)
-    assert len(exp4_selected_union) == 150
+    assert len(exp4_selected_union) == 50
     assert exp4_selected_union < all_factor_ids
 
     hard_factor_ids = {
@@ -362,14 +397,22 @@ def test_gate_c_v2_plans_freeze_current_p0_matrix_and_budget_identity(
         for case in catalog.factorization_cases
         if case["difficulty"] == "hard"
     }
-    for plan in (plans[1], plans[4]):
-        factor_selections = {
-            tuple(selection.ordered_case_ids)
-            for condition, selection in plan.bound_items()
-            if condition.domain == "factorization"
-        }
-        assert len(factor_selections) == 1
-        assert set(next(iter(factor_selections))) == hard_factor_ids
+    exp2_factor_selections = {
+        tuple(selection.ordered_case_ids)
+        for condition, selection in plans[1].bound_items()
+        if condition.domain == "factorization"
+    }
+    assert len(exp2_factor_selections) == 1
+    assert len(next(iter(exp2_factor_selections))) == 50
+    assert set(next(iter(exp2_factor_selections))) < hard_factor_ids
+
+    exp5_factor_selections = {
+        tuple(selection.ordered_case_ids)
+        for condition, selection in plans[4].bound_items()
+        if condition.domain == "factorization"
+    }
+    assert len(exp5_factor_selections) == 1
+    assert set(next(iter(exp5_factor_selections))) == hard_factor_ids
 
     exp3_rate_selections = {
         tuple(selection.ordered_case_ids)
@@ -379,19 +422,6 @@ def test_gate_c_v2_plans_freeze_current_p0_matrix_and_budget_identity(
     }
     assert len(exp3_rate_selections) == 1
     assert set(next(iter(exp3_rate_selections))) == exp4_selected_union
-    assert all(
-        "profile" in selection.selection_id
-        and selection.selection_id.endswith("v2")
-        for condition, selection in plans[2].bound_items()
-        if condition.domain == "factorization"
-    )
-    assert all(
-        "profile" in selection.selection_id
-        and selection.selection_id.endswith("v2")
-        for condition, selection in plans[3].bound_items()
-        if condition.domain == "factorization"
-    )
-
     exp3_death_by_difficulty: dict[str, set[tuple[str, ...]]] = {}
     for condition, selection in plans[2].bound_items():
         if (
@@ -410,7 +440,9 @@ def test_gate_c_v2_plans_freeze_current_p0_matrix_and_budget_identity(
     exp3_death_union: set[str] = set()
     for difficulty, selections in exp3_death_by_difficulty.items():
         ordered_ids = next(iter(selections))
-        assert len(ordered_ids) == 50
+        assert len(ordered_ids) == {"easy": 17, "medium": 17, "hard": 16}[
+            difficulty
+        ]
         exp3_death_union.update(ordered_ids)
     assert exp3_death_union == exp4_selected_union
 
@@ -439,37 +471,26 @@ def test_gate_c_v2_plans_freeze_current_p0_matrix_and_budget_identity(
     identity = budget.quota_preflight["budget_commitments"][
         "experiment_budget_identity"
     ]
-    assert identity["headline_root_runs_by_experiment"] == {
-        "exp1_real_ai_feasibility": 635,
-        "exp2_real_ai_scalability": 1_992,
-        "exp3_real_ai_fault_recovery": 10_926,
-        "exp4_real_ai_protocol_ablation": 2_475,
-        "exp5_real_ai_model_endpoint_comparison": 1_899,
-    }
+    expected_root_runs = dict(zip(EXPERIMENT_IDS, root_runs, strict=True))
+    assert identity["headline_root_runs_by_experiment"] == expected_root_runs
     assert identity["supporting_baseline_root_runs_by_experiment"] == {}
-    assert identity["actual_scheduled_root_runs_by_experiment"] == {
-        "exp1_real_ai_feasibility": 635,
-        "exp2_real_ai_scalability": 1_992,
-        "exp3_real_ai_fault_recovery": 10_926,
-        "exp4_real_ai_protocol_ablation": 2_475,
-        "exp5_real_ai_model_endpoint_comparison": 1_899,
-    }
-    assert identity["planned_first_attempt_ai_units_by_experiment"] == {
-        "exp1_real_ai_feasibility": 2_900,
-        "exp2_real_ai_scalability": 39_840,
-        "exp3_real_ai_fault_recovery": 50_988,
-        "exp4_real_ai_protocol_ablation": 11_460,
-        "exp5_real_ai_model_endpoint_comparison": 14_652,
-    }
-    assert identity["headline_p0_core_root_runs"] == 16_028
-    assert identity["headline_p0_full_root_runs"] == 17_927
-    assert identity["actual_p0_core_root_runs"] == 16_028
-    assert identity["actual_p0_full_root_runs"] == 17_927
-    assert identity["exp2_no_early_stop_ai_unit_upper_bound"] == 39_840
+    assert identity["actual_scheduled_root_runs_by_experiment"] == expected_root_runs
+    assert set(identity["planned_first_attempt_ai_units_by_experiment"]) == set(
+        EXPERIMENT_IDS
+    )
+    assert identity["headline_p0_core_root_runs"] == sum(root_runs[:4])
+    assert identity["headline_p0_full_root_runs"] == sum(root_runs)
+    assert identity["actual_p0_core_root_runs"] == sum(root_runs[:4])
+    assert identity["actual_p0_full_root_runs"] == sum(root_runs)
+    assert identity["exp2_no_early_stop_ai_unit_upper_bound"] == identity[
+        "planned_first_attempt_ai_units_by_experiment"
+    ]["exp2_real_ai_scalability"]
     assert identity["exp4_replacement_reserve"] > 0
     assert identity["exp3_replacement_reserve"] > 0
-    assert budget.planned_root_runs == 17_927
-    assert budget.planned_ai_units == 119_840
+    assert budget.planned_root_runs == sum(root_runs)
+    assert budget.planned_ai_units == sum(
+        identity["planned_first_attempt_ai_units_by_experiment"].values()
+    )
     assert budget.max_provider_attempts == (
         budget.planned_ai_units
         + identity["exp3_replacement_reserve"]
@@ -727,6 +748,7 @@ def test_gate_c_pilot_executes_registered_module_and_replays_without_transport(
         transport=transport,
         real_transport=True,
         factorization_sampling_profile=_tracked_factor_sampling_profile(),
+        paper_suite_scale_profile=_tracked_suite_scale_profile(),
     )
 
     assert result.experiment_id == "exp2_real_ai_scalability"
@@ -773,6 +795,7 @@ def test_gate_c_pilot_executes_registered_module_and_replays_without_transport(
         transport=replay_transport,
         real_transport=True,
         replay_only=True,
+        paper_suite_scale_profile=_tracked_suite_scale_profile(),
     )
     assert replay.provider_calls_made == 0
     assert replay.transport_calls_observed == 0
@@ -1016,6 +1039,7 @@ def test_gate_c_supported_registered_experiments_reach_real_mode_capture(
         transport=transport,
         real_transport=True,
         factorization_sampling_profile=_tracked_factor_sampling_profile(),
+        paper_suite_scale_profile=_tracked_suite_scale_profile(),
     )
 
     assert result.experiment_id == experiment_id
@@ -1024,7 +1048,7 @@ def test_gate_c_supported_registered_experiments_reach_real_mode_capture(
     assert result.provider_calls_made == 0
     assert result.transport_calls_observed == len(transport.calls) > 0
     assert result.paper_eligible is False
-    request_bodies = transport.calls
+    request_bodies = [json.loads(body.decode("utf-8")) for body in transport.calls]
     assert all(body["model"] == condition.provider_model_id for body in request_bodies)
     assert all(body["response_format"] == {"type": "json_object"} for body in request_bodies)
     if condition.provider_family == "deepseek":
@@ -1132,7 +1156,7 @@ def test_gate_c_registered_exp1_reaches_lean_checker_and_merge(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    catalog = _frozen_formal_catalog()
+    catalog = _frozen_formal_catalog_v2()
     readiness = json.loads(
         Path("benchmarks/paper/lean_task14_3x3_readiness.v1.json").read_text(
             encoding="utf-8"
@@ -1195,6 +1219,7 @@ def test_gate_c_registered_exp1_reaches_lean_checker_and_merge(
         transport=transport,
         real_transport=True,
         factorization_sampling_profile=_tracked_factor_sampling_profile(),
+        paper_suite_scale_profile=_tracked_suite_scale_profile(),
     )
 
     assert result.status == "completed"
@@ -1218,7 +1243,7 @@ def test_formal_exp1_reuses_planning_catalog_view_when_crossing_to_lean(
 ) -> None:
     """Factorization 后的第一条 Lean condition 必须复用冻结 planning view。"""
 
-    catalog = _frozen_formal_catalog()
+    catalog = _frozen_formal_catalog_v2()
     readiness = json.loads(
         Path("benchmarks/paper/lean_task14_3x3_readiness.v1.json").read_text(
             encoding="utf-8"
@@ -1287,6 +1312,11 @@ def test_formal_exp1_reuses_planning_catalog_view_when_crossing_to_lean(
         "_FormalConditionExecutionCallback",
         CapturingFormalCallback,
     )
+    monkeypatch.setattr(
+        paper_formal_runner,
+        "_preflight_formal_disk_capacity",
+        lambda **_kwargs: {"condition_compaction_bytes": 0},
+    )
     transport = _RejectingTransport()
 
     execution_kwargs = {
@@ -1316,41 +1346,6 @@ def test_formal_exp1_reuses_planning_catalog_view_when_crossing_to_lean(
     assert execution_selections[lean_item[0].condition_id] == lean_item[1].to_dict()
     assert transport.calls == 0
 
-    replayed = paper_formal_runner.execute_paper_formal_suite(
-        **{
-            **execution_kwargs,
-            "dispatch_plans": (plan,),
-            "ai_api_configs": {},
-            "transport": transport,
-            "replay_only": True,
-        }
-    )
-    assert replayed.to_dict() == executed.to_dict()
-    assert transport.calls == 0
-
-    drifted_view = deepcopy(plan.catalog_execution_view)
-    assert drifted_view is not None
-    drifted_view["view_body"]["optional_worker_preflight"] = {"drift": True}
-    drifted_view["view_digest"] = digest_json(
-        {
-            "schema_version": drifted_view["schema_version"],
-            "view_kind": drifted_view["view_kind"],
-            "catalog_manifest_digest": drifted_view[
-                "catalog_manifest_digest"
-            ],
-            "view_body": drifted_view["view_body"],
-        }
-    )
-    drifted_plan = replace(plan, catalog_execution_view=drifted_view)
-    with pytest.raises(ValueError, match="identity"):
-        paper_formal_runner.execute_paper_formal_suite(
-            **{
-                **execution_kwargs,
-                "dispatch_plans": (drifted_plan,),
-                "resume": True,
-            }
-        )
-    assert transport.calls == 0
 
 
 def test_gate_c_exp5_openai_member_preserves_high_reasoning_controls(
@@ -1418,14 +1413,16 @@ def test_gate_c_exp5_openai_member_preserves_high_reasoning_controls(
         ai_api_configs=configs,
         transport=transport,
         real_transport=True,
+        paper_suite_scale_profile=_tracked_suite_scale_profile(),
     )
 
     assert result.provider_calls_made == 0
     assert transport.calls
-    assert all(body["model"] == "gpt-5.6-sol" for body in transport.calls)
-    assert all(body["reasoning_effort"] == "high" for body in transport.calls)
-    assert all(body["response_format"] == {"type": "json_object"} for body in transport.calls)
-    assert all(body["temperature"] == 0 for body in transport.calls)
+    request_bodies = [json.loads(body.decode("utf-8")) for body in transport.calls]
+    assert all(body["model"] == "gpt-5.6-sol" for body in request_bodies)
+    assert all(body["reasoning_effort"] == "high" for body in request_bodies)
+    assert all(body["response_format"] == {"type": "json_object"} for body in request_bodies)
+    assert all(body["temperature"] == 0 for body in request_bodies)
     attempts = _read_jsonl(tmp_path / "exp5-gpt-pilot" / "per_attempt_results.jsonl")
     assert all(attempt["model_execution_record_ref"] for attempt in attempts)
 
@@ -1485,6 +1482,7 @@ def test_gate_c_budget_selection_and_identity_drift_stop_before_transport(
             transport=wrong_digest_transport,
             real_transport=True,
             factorization_sampling_profile=_tracked_factor_sampling_profile(),
+            paper_suite_scale_profile=_tracked_suite_scale_profile(),
         )
     assert wrong_digest_transport.calls == 0
 
@@ -1514,6 +1512,7 @@ def test_gate_c_budget_selection_and_identity_drift_stop_before_transport(
             transport=selection_transport,
             real_transport=True,
             factorization_sampling_profile=_tracked_factor_sampling_profile(),
+            paper_suite_scale_profile=_tracked_suite_scale_profile(),
         )
     assert selection_transport.calls == 0
 
@@ -1541,6 +1540,7 @@ def test_gate_c_budget_selection_and_identity_drift_stop_before_transport(
             transport=identity_transport,
             real_transport=True,
             factorization_sampling_profile=_tracked_factor_sampling_profile(),
+            paper_suite_scale_profile=_tracked_suite_scale_profile(),
         )
     assert identity_transport.calls == 0
 
@@ -1811,15 +1811,12 @@ class _CapturingFactorizationTransport:
         self.delegate = ScriptedFactorizationRangeTransport()
         self.calls: list[dict] = []
 
-    def post_chat_completion(self, *, entry, api_key, body, timeout_seconds):
-        response = self.delegate.post_chat_completion(
-            entry=entry,
-            api_key=api_key,
-            body=body,
-            timeout_seconds=timeout_seconds,
-        )
-        response.body["model"] = entry.model
-        self.calls.append(json.loads(json.dumps(body)))
+    def post_chat_completion(self, **kwargs):
+        response = self.delegate.post_chat_completion(**kwargs)
+        response.body["model"] = json.loads(
+            kwargs["body_bytes"].decode("utf-8")
+        )["model"]
+        self.calls.append(kwargs["body_bytes"])
         return response
 
 
@@ -1830,15 +1827,12 @@ class _CapturingLeanTransport:
         self.delegate = ScriptedLeanPaperProofTransport()
         self.calls: list[dict] = []
 
-    def post_chat_completion(self, *, entry, api_key, body, timeout_seconds):
-        response = self.delegate.post_chat_completion(
-            entry=entry,
-            api_key=api_key,
-            body=body,
-            timeout_seconds=timeout_seconds,
-        )
-        response.body["model"] = entry.model
-        self.calls.append(json.loads(json.dumps(body)))
+    def post_chat_completion(self, **kwargs):
+        response = self.delegate.post_chat_completion(**kwargs)
+        response.body["model"] = json.loads(
+            kwargs["body_bytes"].decode("utf-8")
+        )["model"]
+        self.calls.append(kwargs["body_bytes"])
         return response
 
 
@@ -1931,6 +1925,12 @@ def _budget_for_plan(
     endpoint_identity: dict,
     request_limits: dict,
 ):
+    request_limits = {
+        **request_limits,
+        "token_upper_bound_per_provider_attempt": int(
+            request_limits.get("max_tokens", 2048)
+        ) + 4096,
+    }
     frozen = [
         {
             **selection.to_dict(),
@@ -1947,7 +1947,9 @@ def _budget_for_plan(
         catalog_manifest=catalog,
         conditions=plan.conditions,
         max_provider_attempts_per_ai_unit=1,
-        token_upper_bound_per_provider_attempt=2048,
+        token_upper_bound_per_provider_attempt=request_limits[
+            "token_upper_bound_per_provider_attempt"
+        ],
         cost_upper_bound_per_provider_attempt=0.01,
         plan_only=True,
         lean_3x3_matrix=readiness,

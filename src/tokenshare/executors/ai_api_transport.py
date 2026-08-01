@@ -391,20 +391,19 @@ class UrlLibSiliconFlowTransport:
     def post_chat_completion(
         self,
         *,
-        entry: AIAPIProviderEntry,
         api_key: str,
-        body: JsonObject,
+        body_bytes: bytes,
+        normalized_absolute_endpoint: str,
+        content_type: str,
         timeout_seconds: int,
     ):
-        url = f"{entry.base_url}{entry.endpoint}"
-        data = json.dumps(body, ensure_ascii=False).encode("utf-8")
         request = urllib.request.Request(
-            url,
-            data=data,
+            normalized_absolute_endpoint,
+            data=body_bytes,
             method="POST",
             headers={
                 "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
+                "Content-Type": content_type,
             },
         )
         try:
@@ -438,20 +437,19 @@ class UrlLibOpenAITransport:
     def post_chat_completion(
         self,
         *,
-        entry: AIAPIProviderEntry,
         api_key: str,
-        body: JsonObject,
+        body_bytes: bytes,
+        normalized_absolute_endpoint: str,
+        content_type: str,
         timeout_seconds: int,
     ):
-        url = f"{entry.base_url}{entry.endpoint}"
-        data = json.dumps(body, ensure_ascii=False).encode("utf-8")
         request = urllib.request.Request(
-            url,
-            data=data,
+            normalized_absolute_endpoint,
+            data=body_bytes,
             method="POST",
             headers={
                 "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
+                "Content-Type": content_type,
             },
         )
         try:
@@ -485,20 +483,19 @@ class UrlLibDeepSeekTransport:
     def post_chat_completion(
         self,
         *,
-        entry: AIAPIProviderEntry,
         api_key: str,
-        body: JsonObject,
+        body_bytes: bytes,
+        normalized_absolute_endpoint: str,
+        content_type: str,
         timeout_seconds: int,
     ):
-        url = f"{entry.base_url}{entry.endpoint}"
-        data = json.dumps(body, ensure_ascii=False).encode("utf-8")
         request = urllib.request.Request(
-            url,
-            data=data,
+            normalized_absolute_endpoint,
+            data=body_bytes,
             method="POST",
             headers={
                 "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
+                "Content-Type": content_type,
             },
         )
         try:

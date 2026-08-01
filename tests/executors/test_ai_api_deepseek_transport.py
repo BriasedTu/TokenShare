@@ -8,6 +8,7 @@ from tests.phase7_fixtures import (
     FakeSiliconFlowTransport,
     make_ai_request,
     make_config_dict,
+    prepared_wire_kwargs,
 )
 from tokenshare.executors import ai_api_transport
 from tokenshare.executors.ai_api import AIAPIExecutor, _usage_summary
@@ -227,9 +228,12 @@ def test_deepseek_transport_rejects_empty_or_invalid_json(monkeypatch, response_
 
     with pytest.raises(error_type) as error:
         transport_type().post_chat_completion(
-            entry=_deepseek_config().entries[0],
             api_key="offline-test-secret",
-            body={"model": "deepseek-v4-pro"},
+            **prepared_wire_kwargs(
+                _deepseek_config().entries[0],
+                {"model": "deepseek-v4-pro", "messages": []},
+                provider_family="deepseek",
+            ),
             timeout_seconds=30,
         )
     assert error.value.error_kind == "invalid_output"
@@ -250,9 +254,12 @@ def test_deepseek_transport_accepts_blank_keepalive_before_json(monkeypatch) -> 
     )
 
     result = transport_type().post_chat_completion(
-        entry=_deepseek_config().entries[0],
         api_key="offline-test-secret",
-        body={"model": "deepseek-v4-pro"},
+        **prepared_wire_kwargs(
+            _deepseek_config().entries[0],
+            {"model": "deepseek-v4-pro", "messages": []},
+            provider_family="deepseek",
+        ),
         timeout_seconds=30,
     )
 
@@ -270,9 +277,12 @@ def test_deepseek_transport_classifies_timeout(monkeypatch) -> None:
 
     with pytest.raises(error_type) as error:
         transport_type().post_chat_completion(
-            entry=_deepseek_config().entries[0],
             api_key="offline-test-secret",
-            body={"model": "deepseek-v4-pro"},
+            **prepared_wire_kwargs(
+                _deepseek_config().entries[0],
+                {"model": "deepseek-v4-pro", "messages": []},
+                provider_family="deepseek",
+            ),
             timeout_seconds=30,
         )
     assert error.value.error_kind == "timeout"
@@ -345,8 +355,9 @@ def test_deepseek_executor_persists_reasoning_and_safe_resolved_metadata(
         "thinking": {"type": "enabled"},
     }
     assert "messages" not in request_identity
-    assert "temperature" not in transport.calls[0]["body"]
-    assert "top_p" not in transport.calls[0]["body"]
+    sent_body = json.loads(transport.calls[0]["body_bytes"].decode("utf-8"))
+    assert "temperature" not in sent_body
+    assert "top_p" not in sent_body
     assert submission.usage_summary["reasoning_tokens"] == 3
     assert b"offline-deepseek-test-secret" not in store.read_bytes(
         submission.provenance_ref

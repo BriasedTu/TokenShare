@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from tokenshare.executors.contracts import ExecutionRequest, PromptPackage
+from tokenshare.executors.ai_api_request_identity import PreparedOutboundRequestFactory
 from tokenshare.storage.artifacts import ArtifactStore
 from tests.phase2_fixtures import make_unit
 from tests.phase3_fixtures import make_environment_ref, make_output_contract
@@ -138,6 +139,32 @@ def make_config_dict():
     }
 
 
+def prepared_wire_kwargs(entry, body: dict[str, Any], *, provider_family: str) -> dict[str, Any]:
+    prepared = PreparedOutboundRequestFactory.prepare(
+        body_obj=body,
+        base_url=entry.base_url,
+        endpoint=entry.endpoint,
+        provider_config_digest="sha256:test-config",
+        entry_id=entry.entry_id,
+        configured_model=entry.model,
+        effective_controls_digest="sha256:test-controls",
+        plugin_id="test_plugin",
+        plugin_version="v1",
+        prompt_profile_id="test.prompt.v1",
+        prompt_serialization_schema="phase3.prompt_package.v1",
+        body_serialization_schema=f"{provider_family}.chat_completions.v1",
+        case_id="test_case",
+        planned_ai_unit_id="test_unit",
+        sample_slot_index=0,
+        replacement_slot=0,
+    )
+    return {
+        "body_bytes": prepared.body_bytes,
+        "normalized_absolute_endpoint": prepared.normalized_absolute_endpoint,
+        "content_type": "application/json",
+    }
+
+
 @dataclass
 class FakeProviderResponse:
     status_code: int
@@ -154,16 +181,17 @@ class FakeSiliconFlowTransport:
     def post_chat_completion(
         self,
         *,
-        entry,
         api_key: str,
-        body: dict[str, Any],
+        body_bytes: bytes,
+        normalized_absolute_endpoint: str,
+        content_type: str,
         timeout_seconds: int,
     ):
         self.calls.append(
             {
-                "entry_id": entry.entry_id,
-                "model": entry.model,
-                "body": json.loads(json.dumps(body, sort_keys=True)),
+                "body_bytes": body_bytes,
+                "normalized_absolute_endpoint": normalized_absolute_endpoint,
+                "content_type": content_type,
                 "timeout_seconds": timeout_seconds,
                 "api_key_seen": bool(api_key),
             }

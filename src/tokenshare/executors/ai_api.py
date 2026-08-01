@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import random
 from collections.abc import Mapping
 from hashlib import sha256
 from inspect import Parameter, signature
@@ -16,7 +17,11 @@ from tokenshare.executors.ai_api_artifacts import (
     build_raw_model_identity_fields,
 )
 from tokenshare.executors.ai_api_config import AIAPIExecutorConfig
-from tokenshare.executors.ai_api_selector import build_provider_selection, entries_by_attempt_order
+from tokenshare.executors.ai_api_request_identity import (
+    PreparedOutboundRequestFactory,
+    validate_prepared_request,
+)
+from tokenshare.executors.ai_api_selector import AIProviderSelection, entries_by_attempt_order
 from tokenshare.executors.ai_api_transport import (
     DeepSeekProviderError,
     OpenAIProviderError,
@@ -171,7 +176,7 @@ class AIAPIExecutor:
                 },
             )
         try:
-            selection = build_provider_selection(
+            selection = _build_pre_secret_provider_selection(
                 config=self._config,
                 request_id=request.request_id,
                 environment_seed=request.environment_ref.seed,
@@ -239,13 +244,66 @@ class AIAPIExecutor:
                     entry=entry,
                     body=body,
                 )
+                prepared_request = PreparedOutboundRequestFactory.prepare(
+                    body_obj=body,
+                    base_url=entry.base_url,
+                    endpoint=entry.endpoint,
+                    provider_config_digest=self._config.config_digest,
+                    entry_id=entry.entry_id,
+                    configured_model=entry.model,
+                    effective_controls_digest=str(
+                        request_identity["effective_request_controls_digest"]
+                    ),
+                    plugin_id=str(request.plugin.get("plugin_id", "unknown")),
+                    plugin_version=str(request.plugin.get("plugin_version", "unknown")),
+                    prompt_profile_id=str(prompt.get("fixture_profile", "unknown")),
+                    prompt_serialization_schema=str(
+                        prompt.get("schema_version", "phase3.prompt_package.v1")
+                    ),
+                    body_serialization_schema=(
+                        f"{self._config.provider_family}.chat_completions.v1"
+                    ),
+                    case_id=_stable_case_id(request),
+                    planned_ai_unit_id=_stable_planned_ai_unit_id(request),
+                    sample_slot_index=_stable_slot_index(
+                        request, "sample_slot_index"
+                    ),
+                    replacement_slot=_stable_slot_index(request, "replacement_slot"),
+                )
+                validate_prepared_request(prepared_request)
+                self._artifact_store.save_bytes(
+                    prepared_request.body_bytes,
+                    artifact_id=(
+                        f"prepared_outbound_{_safe_artifact_part(request.request_id)}_"
+                        f"{_safe_artifact_part(entry.entry_id)}"
+                    ),
+                    artifact_type="PreparedOutboundRequest",
+                    media_type="application/json",
+                    artifact_schema_id="tokenshare.prepared_outbound_request",
+                    artifact_schema_version="v1",
+                    source={"kind": "ai_api_executor", "request_id": request.request_id},
+                    metadata=prepared_request.provenance_dict(),
+                    created_at=submitted_at,
+                )
+                validate_prepared_request(prepared_request)
+                request_identity = {
+                    **request_identity,
+                    "prepared_request": prepared_request.provenance_dict(),
+                }
                 last_request_identity = request_identity
                 api_key = entry.resolve_api_key()
                 provider_call_count += 1
-                response = self._transport.post_chat_completion(
-                    entry=entry,
+                validate_prepared_request(prepared_request)
+                transport = _exact_transport_for_provider(
+                    self._transport, self._config.provider_family
+                )
+                response = transport.post_chat_completion(
                     api_key=api_key,
-                    body=body,
+                    body_bytes=prepared_request.body_bytes,
+                    normalized_absolute_endpoint=(
+                        prepared_request.normalized_absolute_endpoint
+                    ),
+                    content_type="application/json",
                     timeout_seconds=int(self._config.defaults.get("timeout_seconds", 30)),
                 )
                 final_result = parse_provider_response(response)
@@ -1308,3 +1366,68 @@ def _require_json_mode_constraint(prompt: JsonObject) -> bool:
     if not isinstance(value, bool):
         raise ValueError("prompt constraints.requires_json_mode must be a boolean")
     return value
+
+
+def _stable_case_id(request: ExecutionRequest) -> str:
+    hints = request.soft_hints or {}
+    snapshot = request.task_unit_snapshot
+    metadata = snapshot.get("metadata", {})
+    for value in (
+        hints.get("case_id"),
+        metadata.get("case_id") if isinstance(metadata, Mapping) else None,
+        snapshot.get("task_id"),
+        request.task_id,
+    ):
+        if isinstance(value, str) and value:
+            return value
+    return request.task_id
+
+
+def _stable_planned_ai_unit_id(request: ExecutionRequest) -> str:
+    value = (request.soft_hints or {}).get("planned_ai_unit_id")
+    return str(value) if isinstance(value, str) and value else request.unit_id
+
+
+def _stable_slot_index(request: ExecutionRequest, field: str) -> int:
+    value = (request.soft_hints or {}).get(field, 0)
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise ValueError(f"{field} must be a non-negative integer")
+    return value
+
+
+def _build_pre_secret_provider_selection(
+    *,
+    config: AIAPIExecutorConfig,
+    request_id: str,
+    environment_seed: int | None,
+    require_json_mode: bool,
+) -> AIProviderSelection:
+    """只按静态配置选 entry；secret 必须等 prepared artifact 后才读取。"""
+
+    eligible = [
+        entry
+        for entry in config.entries
+        if entry.enabled and (not require_json_mode or entry.supports_json_mode)
+    ]
+    if not eligible:
+        raise ValueError("no eligible ai api entries")
+    seed_material = f"{config.config_digest}|{request_id}|{environment_seed}"
+    seed_digest = f"sha256:{sha256(seed_material.encode('utf-8')).hexdigest()}"
+    ordered = list(eligible)
+    random.Random(seed_digest).shuffle(ordered)
+    max_attempts = int(config.defaults.get("max_provider_attempts", len(ordered)))
+    ordered = ordered[: max(1, min(max_attempts, len(ordered)))]
+    eligible_ids = [entry.entry_id for entry in eligible]
+    return AIProviderSelection(
+        selection_policy_id=str(config.selection_policy["kind"]),
+        eligible_entry_ids=eligible_ids,
+        selected_entry_id=ordered[0].entry_id,
+        attempt_entry_ids=[entry.entry_id for entry in ordered],
+        random_seed_material_digest=seed_digest,
+        selection_index=eligible_ids.index(ordered[0].entry_id),
+    )
+
+
+def _exact_transport_for_provider(transport: Any, provider_family: str) -> Any:
+    resolver = getattr(transport, "tokenshare_transport_for_provider", None)
+    return resolver(provider_family) if callable(resolver) else transport

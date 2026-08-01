@@ -211,11 +211,13 @@ class ScriptedLeanPaperProofTransport:
     def post_chat_completion(
         self,
         *,
-        entry,
         api_key: str,
-        body: JsonObject,
+        body_bytes: bytes,
+        normalized_absolute_endpoint: str,
+        content_type: str,
         timeout_seconds: int,
     ):
+        body = json.loads(body_bytes.decode("utf-8"))
         user_prompt = _user_prompt(body)
         theorem_payload_digest = _prompt_value(
             user_prompt,
@@ -240,12 +242,12 @@ class ScriptedLeanPaperProofTransport:
         )
         self.calls.append(
             {
-                "entry_id": entry.entry_id,
-                "model": entry.model,
                 "timeout_seconds": timeout_seconds,
                 "api_key_seen": bool(api_key),
                 "statement_source": statement_source,
-                "body": json.loads(json.dumps(body, ensure_ascii=False, sort_keys=True)),
+                "body_bytes": body_bytes,
+                "normalized_absolute_endpoint": normalized_absolute_endpoint,
+                "content_type": content_type,
                 "proof_source": proof_source,
             }
         )
@@ -2610,6 +2612,7 @@ def _build_lemma_node_execution_request(
         theorem_payload=node_payload,
         created_at=NOW,
         seed=condition.seed + index,
+        planned_ai_unit_id=node_id,
     )
     prompt_ref = store.save_json(
         prompt.to_dict(),
@@ -2713,6 +2716,7 @@ def _build_child_execution_request(
         theorem_payload=child_payload,
         created_at=NOW,
         seed=condition.seed + index,
+        planned_ai_unit_id=child_key,
     )
     prompt_ref = store.save_json(
         prompt.to_dict(),

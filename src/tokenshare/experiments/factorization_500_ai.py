@@ -119,19 +119,21 @@ class ScriptedDirectFactorizationTransport:
     def post_chat_completion(
         self,
         *,
-        entry,
         api_key: str,
-        body: dict[str, Any],
+        body_bytes: bytes,
+        normalized_absolute_endpoint: str,
+        content_type: str,
         timeout_seconds: int,
     ):
         if not self._cases:
             raise AssertionError("scripted direct transport has no remaining case")
         case = self._cases.pop(0)
+        body = json.loads(body_bytes.decode("utf-8"))
         self.calls.append(
             {
-                "entry_id": entry.entry_id,
-                "model": entry.model,
-                "body": json.loads(json.dumps(body, sort_keys=True)),
+                "body_bytes": body_bytes,
+                "normalized_absolute_endpoint": normalized_absolute_endpoint,
+                "content_type": content_type,
                 "timeout_seconds": timeout_seconds,
                 "api_key_seen": bool(api_key),
             }
@@ -140,7 +142,7 @@ class ScriptedDirectFactorizationTransport:
             status_code=200,
             body={
                 "id": f"factorization-500-scripted-{case.input_index}",
-                "model": entry.model,
+                "model": str(body["model"]),
                 "choices": [
                     {
                         "message": {

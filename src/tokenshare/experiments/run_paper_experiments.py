@@ -159,30 +159,6 @@ class _ProviderFamilyTransportRouter:
                 f"unsupported routed provider_family: {provider_family}"
             ) from exc
 
-    def post_chat_completion(
-        self,
-        *,
-        entry,
-        api_key: str,
-        body: dict,
-        timeout_seconds: int,
-    ):
-        try:
-            provider_family = self._provider_family_by_entry_id[str(entry.entry_id)]
-        except (AttributeError, KeyError) as exc:
-            raise ValueError(
-                "provider family binding is missing for routed entry"
-            ) from exc
-        return self.tokenshare_transport_for_provider(
-            provider_family
-        ).post_chat_completion(
-            entry=entry,
-            api_key=api_key,
-            body=body,
-            timeout_seconds=timeout_seconds,
-        )
-
-
 def _provider_family_bindings_from_execution_configs(
     ai_api_configs: Mapping[str, object],
 ) -> dict[str, str]:
@@ -224,6 +200,7 @@ class _Exp5V3SharedProviderTransport:
         *,
         delegate: object,
         member_id_by_entry_id: Mapping[str, str],
+        member_id_by_model: Mapping[str, str] | None = None,
         schedule_binding: Mapping[str, object],
         prior_evidence: Mapping[str, object] | None = None,
     ) -> None:
@@ -247,6 +224,7 @@ class _Exp5V3SharedProviderTransport:
         )
         self._delegate = delegate
         self._member_id_by_entry_id = dict(member_id_by_entry_id)
+        self._member_id_by_model = dict(member_id_by_model or {})
         self._schedule_binding = normalized_binding
         self._max_in_flight_global = max_in_flight_global
         self._prior_evidence = (
@@ -278,11 +256,9 @@ class _Exp5V3SharedProviderTransport:
         return json.loads(json.dumps(self._prior_evidence))
 
     def tokenshare_transport_for_provider(self, provider_family: str):
-        resolver = getattr(
-            self._delegate,
-            "tokenshare_transport_for_provider",
-            None,
-        )
+        if provider_family == "siliconflow":
+            return self
+        resolver = getattr(self._delegate, "tokenshare_transport_for_provider", None)
         if callable(resolver):
             return resolver(provider_family)
         return self._delegate
@@ -290,26 +266,41 @@ class _Exp5V3SharedProviderTransport:
     def post_chat_completion(
         self,
         *,
-        entry,
         api_key: str,
-        body: dict,
+        body_bytes: bytes,
+        normalized_absolute_endpoint: str,
+        content_type: str,
         timeout_seconds: int,
     ):
-        member_id = self._member_id_by_entry_id.get(str(entry.entry_id))
+        body = json.loads(body_bytes.decode("utf-8"))
+        explicit_member = body.get("member_id") if isinstance(body, dict) else None
+        member_id = (
+            str(explicit_member)
+            if explicit_member in self._member_id_by_entry_id.values()
+            else self._member_id_by_model.get(str(body.get("model", "")))
+            if isinstance(body, dict)
+            else None
+        )
+        delegate = self._delegate
+        resolver = getattr(delegate, "tokenshare_transport_for_provider", None)
+        if callable(resolver):
+            delegate = resolver("siliconflow")
         if member_id is None:
-            return self._delegate.post_chat_completion(
-                entry=entry,
+            return delegate.post_chat_completion(
                 api_key=api_key,
-                body=body,
+                body_bytes=body_bytes,
+                normalized_absolute_endpoint=normalized_absolute_endpoint,
+                content_type=content_type,
                 timeout_seconds=timeout_seconds,
             )
         with self._semaphore:
             self._record_call_started(member_id)
             try:
-                return self._delegate.post_chat_completion(
-                    entry=entry,
+                return delegate.post_chat_completion(
                     api_key=api_key,
-                    body=body,
+                    body_bytes=body_bytes,
+                    normalized_absolute_endpoint=normalized_absolute_endpoint,
+                    content_type=content_type,
                     timeout_seconds=timeout_seconds,
                 )
             finally:
@@ -1635,6 +1626,7 @@ def _exp5_v3_smoke_execution_transport(
         raise ValueError("Exp5 v3 shared provider member inventory drift")
     provider_namespace = str(contract["provider_config_id"])
     member_id_by_entry_id: dict[str, str] = {}
+    member_id_by_model: dict[str, str] = {}
     exp5_provider_family_by_entry_id: dict[str, str] = {}
     member_provider_config_ids: set[str] = set()
     for member_id in expected_member_order:
@@ -1661,6 +1653,10 @@ def _exp5_v3_smoke_execution_transport(
         if entry_id in member_id_by_entry_id:
             raise ValueError("Exp5 v3 shared provider entry identities must be unique")
         member_id_by_entry_id[entry_id] = str(member_id)
+        provider_model_id = member_plan.get("provider_model_id")
+        if not isinstance(provider_model_id, str) or not provider_model_id:
+            raise ValueError("Exp5 v3 shared provider model identity is missing")
+        member_id_by_model[provider_model_id] = str(member_id)
         exp5_provider_family_by_entry_id[entry_id] = str(
             member_plan["provider_family"]
         )
@@ -1692,6 +1688,7 @@ def _exp5_v3_smoke_execution_transport(
     limiter = _Exp5V3SharedProviderTransport(
         delegate=delegate,
         member_id_by_entry_id=member_id_by_entry_id,
+        member_id_by_model=member_id_by_model,
         schedule_binding=schedule_binding,
         prior_evidence=prior_evidence,
     )

@@ -43,6 +43,10 @@ def _effective_controls_digest(body: dict) -> str:
     return f"sha256:{sha256(encoded).hexdigest()}"
 
 
+def _sent_body(call: dict) -> dict:
+    return json.loads(call["body_bytes"].decode("utf-8"))
+
+
 def _openai_config_dict():
     body = make_config_dict()
     body["provider_family"] = "openai"
@@ -167,8 +171,8 @@ def test_ai_api_executor_uses_openai_provider_family_in_request_and_provenance(
     provenance = json.loads(store.read_bytes(submission.provenance_ref).decode("utf-8"))
 
     assert submission.result_kind == "succeeded"
-    assert transport.calls[0]["body"]["reasoning_effort"] == "high"
-    assert "enable_thinking" not in transport.calls[0]["body"]
+    assert _sent_body(transport.calls[0])["reasoning_effort"] == "high"
+    assert "enable_thinking" not in _sent_body(transport.calls[0])
     assert submission.environment_summary["provider_family"] == "openai"
     assert submission.usage_summary["provider_family"] == "openai"
     assert raw["provider_family"] == "openai"
@@ -184,6 +188,7 @@ def test_ai_api_executor_uses_openai_provider_family_in_request_and_provenance(
     assert submission.provenance_ref.artifact_schema_version == "v2"
     assert provenance["attempts"][0]["provider_family"] == "openai"
     provider_request_identity = provenance["attempts"][0]["provider_request_identity"]
+    prepared_identity = provider_request_identity.pop("prepared_request")
     assert provider_request_identity == {
         "schema_version": "phase7.provider_request_identity.v2",
         "provider_family": "openai",
@@ -192,9 +197,15 @@ def test_ai_api_executor_uses_openai_provider_family_in_request_and_provenance(
         "requested_model": "gpt-5.6-sol",
         "reasoning_controls": {"reasoning_effort": "high"},
         "effective_request_controls_digest": _effective_controls_digest(
-            transport.calls[0]["body"]
+        _sent_body(transport.calls[0])
         ),
     }
+    assert prepared_identity["body_digest"] == (
+        f"sha256:{sha256(transport.calls[0]['body_bytes']).hexdigest()}"
+    )
+    assert prepared_identity["normalized_absolute_endpoint"] == (
+        transport.calls[0]["normalized_absolute_endpoint"]
+    )
     assert "messages" not in provider_request_identity
     assert "Authorization" not in provider_request_identity
     assert b"openai-secret" not in store.read_bytes(submission.provenance_ref)
@@ -413,7 +424,7 @@ def test_ai_api_executor_provenance_records_effective_siliconflow_reasoning_cont
     assert provider_request_identity["requested_model"] == "Qwen/Qwen3.6-27B"
     assert provider_request_identity["reasoning_controls"] == {"enable_thinking": False}
     assert provider_request_identity["effective_request_controls_digest"] == (
-        _effective_controls_digest(transport.calls[0]["body"])
+        _effective_controls_digest(_sent_body(transport.calls[0]))
     )
     assert "messages" not in provider_request_identity
     assert b"secret-a" not in store.read_bytes(submission.provenance_ref)
@@ -554,7 +565,7 @@ def test_ai_api_executor_derives_visible_output_from_usage_and_effective_thinkin
         expected_reasoning_controls["thinking_budget"] = 32768
     assert request_identity["reasoning_controls"] == expected_reasoning_controls
     assert request_identity["effective_request_controls_digest"] == (
-        _effective_controls_digest(transport.calls[0]["body"])
+        _effective_controls_digest(_sent_body(transport.calls[0]))
     )
     assert submission.usage_summary["reasoning_tokens"] == expected_reasoning_tokens
     assert (
@@ -786,7 +797,7 @@ def test_ai_api_executor_sends_full_prompt_package_context_to_provider(
         submitted_at="2026-06-28T00:00:02Z",
     )
 
-    sent_prompt = transport.calls[0]["body"]["messages"][-1]["content"]
+    sent_prompt = _sent_body(transport.calls[0])["messages"][-1]["content"]
     assert "Authoritative PromptPackage input_summary" in sent_prompt
     assert '"question": "demo"' in sent_prompt
     assert "Authoritative PromptPackage output_schema" in sent_prompt

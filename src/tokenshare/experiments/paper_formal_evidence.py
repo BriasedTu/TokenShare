@@ -2661,12 +2661,29 @@ class FormalEvidenceStore:
             if prior is not artifact and prior.get("path") != artifact.get("path"):
                 raise ValueError("reachable artifact closure index is ambiguous")
 
+        protocol_task_ids: dict[str, str] = {}
+        for record in records:
+            task_id = str(record.get("task_id") or "")
+            protocol_task_id = record.get("protocol_task_id")
+            if (
+                not task_id
+                or not isinstance(protocol_task_id, str)
+                or not protocol_task_id
+            ):
+                continue
+            prior_task_id = protocol_task_ids.setdefault(protocol_task_id, task_id)
+            if prior_task_id != task_id:
+                raise ValueError(
+                    "reachable artifact closure protocol task mapping conflict"
+                )
+
         queue: deque[tuple[str, Mapping[str, Any]]] = deque()
         for record in records:
             task_id = str(record.get("task_id") or "")
+            artifact_task_id = protocol_task_ids.get(task_id, task_id)
             for source_ref in _nested_source_artifact_refs(record):
-                if task_id:
-                    queue.append((task_id, source_ref))
+                if artifact_task_id:
+                    queue.append((artifact_task_id, source_ref))
                     continue
                 source_identity = _source_artifact_identity(source_ref)
                 matching_task_ids = task_ids_by_identity.get(source_identity, set())

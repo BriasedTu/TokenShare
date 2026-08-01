@@ -391,6 +391,7 @@ class LeanRuntimeAdapter:
                 theorem_payload=payload,
                 created_at=self.created_at,
                 seed=self.seed,
+                planned_ai_unit_id=self._planned_ai_unit_id(logical_key),
             )
             prompt_ref = store.save_json(
                 prompt.to_dict(),

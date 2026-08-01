@@ -135,12 +135,13 @@ class _AlwaysServerErrorFactorizationTransport:
     def post_chat_completion(
         self,
         *,
-        entry,
         api_key: str,
-        body: dict,
+        body_bytes: bytes,
+        normalized_absolute_endpoint: str,
+        content_type: str,
         timeout_seconds: int,
     ):
-        del entry, api_key, body, timeout_seconds
+        del api_key, body_bytes, normalized_absolute_endpoint, content_type, timeout_seconds
         return factorization_paper_adapter_module._ProviderResponse(
             status_code=500,
             body={"error": {"message": "offline injected server error"}},
@@ -644,7 +645,7 @@ def test_factorization_adapter_resolves_exp2_20way_profile_inside_plugin(
         for attempt in result.attempt_results
     )
 
-    provider_prompt = json.dumps(transport.calls[0]["body"], ensure_ascii=False)
+    provider_prompt = transport.calls[0]["body_bytes"].decode("utf-8")
     assert "factorization.range_result.v1" in provider_prompt
     assert "Search divisor range" in provider_prompt
     assert "direct_factorization_answer" not in provider_prompt
@@ -958,21 +959,24 @@ def test_factorization_paper_adapter_accepts_openai_real_transport_through_execu
     transport = UrlLibOpenAITransport()
     calls = []
 
-    def fake_openai_call(*, entry, api_key: str, body, timeout_seconds: int):
+    def fake_openai_call(**kwargs):
+        body = json.loads(kwargs["body_bytes"].decode("utf-8"))
         calls.append(
             {
-                "entry_id": entry.entry_id,
-                "model": entry.model,
-                "api_key_seen": bool(api_key),
-                "body": body,
-                "timeout_seconds": timeout_seconds,
+                "model": body["model"],
+                "api_key_seen": bool(kwargs["api_key"]),
+                "body_bytes": kwargs["body_bytes"],
+                "normalized_absolute_endpoint": kwargs[
+                    "normalized_absolute_endpoint"
+                ],
+                "timeout_seconds": kwargs["timeout_seconds"],
             }
         )
         return _TransportResponse(
             status_code=200,
             body={
                 "id": "fake-openai-factorization",
-                "model": entry.model,
+                    "model": body["model"],
                 "choices": [
                     {
                         "message": {"content": "not-json"},
@@ -1222,8 +1226,11 @@ def test_factorization_fixed_entry_503_does_not_failover_to_sibling_model(
     assert result.task_result.failure_stage == PaperFailureStage.PROVIDER
     assert result.task_result.provider_attempt_count == expected_ai_units
     assert len(transport.calls) == expected_ai_units
-    assert {call["entry_id"] for call in transport.calls} == {"gpt-entry"}
-    assert {call["model"] for call in transport.calls} == {"gpt-5.6-sol"}
+    assert {
+        json.loads(call["body_bytes"].decode("utf-8"))["model"]
+        for call in transport.calls
+    } == {"gpt-5.6-sol"}
+    assert len({call["normalized_absolute_endpoint"] for call in transport.calls}) == 1
     for attempt in result.attempt_results:
         assert attempt.provenance_ref is not None
         provenance = json.loads(
@@ -1424,12 +1431,13 @@ def test_factorization_missing_resolved_model_records_audit_and_stops_later_unit
 
 
 class _CustomRealTransportSubclass(UrlLibSiliconFlowTransport):
-    def post_chat_completion(self, *, entry, api_key: str, body, timeout_seconds: int):
+    def post_chat_completion(self, **kwargs):
+        model = json.loads(kwargs["body_bytes"].decode("utf-8"))["model"]
         return _TransportResponse(
             status_code=200,
             body={
                 "id": "fake-real-subclass",
-                "model": entry.model,
+                "model": model,
                 "choices": [{"message": {"content": "not-json"}}],
                 "usage": {
                     "prompt_tokens": 7,
@@ -1448,12 +1456,13 @@ class _TransportResponse:
 
 
 class _InvalidJsonTransport:
-    def post_chat_completion(self, *, entry, api_key: str, body, timeout_seconds: int):
+    def post_chat_completion(self, **kwargs):
+        model = json.loads(kwargs["body_bytes"].decode("utf-8"))["model"]
         return _TransportResponse(
             status_code=200,
             body={
                 "id": "invalid-json",
-                "model": entry.model,
+                "model": model,
                 "choices": [{"message": {"content": "not-json"}}],
                 "usage": {
                     "prompt_tokens": 7,
@@ -1465,7 +1474,7 @@ class _InvalidJsonTransport:
 
 
 class _ProviderErrorTransport:
-    def post_chat_completion(self, *, entry, api_key: str, body, timeout_seconds: int):
+    def post_chat_completion(self, **_kwargs):
         return _TransportResponse(
             status_code=503,
             body={"message": "provider overloaded"},
@@ -1485,20 +1494,8 @@ class _WitnessWithOneFailedSiblingTransport(
         self.witness_count = 0
         self.failed_sibling_count = 0
 
-    def post_chat_completion(
-        self,
-        *,
-        entry,
-        api_key: str,
-        body,
-        timeout_seconds: int,
-    ):
-        response = super().post_chat_completion(
-            entry=entry,
-            api_key=api_key,
-            body=body,
-            timeout_seconds=timeout_seconds,
-        )
+    def post_chat_completion(self, **kwargs):
+        response = super().post_chat_completion(**kwargs)
         result = self.calls[-1]["range_result"]
         if result["result_kind"] == "found_factor":
             self.witness_count += 1
@@ -1521,7 +1518,7 @@ class _WitnessWithOneFailedSiblingTransport(
             status_code=200,
             body={
                 "id": "factorization-paper-scripted-rejected-sibling",
-                "model": entry.model,
+                "model": json.loads(kwargs["body_bytes"].decode("utf-8"))["model"],
                 "choices": [
                     {
                         "message": {
@@ -1547,14 +1544,13 @@ class _RecordingProviderErrorTransport:
     def __init__(self) -> None:
         self.calls: list[dict] = []
 
-    def post_chat_completion(self, *, entry, api_key: str, body, timeout_seconds: int):
+    def post_chat_completion(self, **kwargs):
         self.calls.append(
             {
-                "entry_id": entry.entry_id,
-                "model": entry.model,
-                "api_key_seen": bool(api_key),
-                "body": body,
-                "timeout_seconds": timeout_seconds,
+                "api_key_seen": bool(kwargs["api_key"]),
+                "body_bytes": kwargs["body_bytes"],
+                "normalized_absolute_endpoint": kwargs["normalized_absolute_endpoint"],
+                "timeout_seconds": kwargs["timeout_seconds"],
             }
         )
         return _TransportResponse(
@@ -1570,20 +1566,8 @@ class _ForgedWitnessIdentityTransport(
         super().__init__()
         self.forged_witness_count = 0
 
-    def post_chat_completion(
-        self,
-        *,
-        entry,
-        api_key: str,
-        body,
-        timeout_seconds: int,
-    ):
-        response = super().post_chat_completion(
-            entry=entry,
-            api_key=api_key,
-            body=body,
-            timeout_seconds=timeout_seconds,
-        )
+    def post_chat_completion(self, **kwargs):
+        response = super().post_chat_completion(**kwargs)
         result = self.calls[-1]["range_result"]
         if result["result_kind"] != "found_factor":
             return response
@@ -1597,7 +1581,7 @@ class _ForgedWitnessIdentityTransport(
             status_code=200,
             body={
                 "id": "factorization-paper-scripted-forged-witness",
-                "model": entry.model,
+                "model": json.loads(kwargs["body_bytes"].decode("utf-8"))["model"],
                 "choices": [
                     {
                         "message": {
@@ -1626,13 +1610,8 @@ class _ResolvedModelMismatchFactorizationTransport(
         super().__init__()
         self.resolved_model = resolved_model
 
-    def post_chat_completion(self, *, entry, api_key: str, body, timeout_seconds: int):
-        response = super().post_chat_completion(
-            entry=entry,
-            api_key=api_key,
-            body=body,
-            timeout_seconds=timeout_seconds,
-        )
+    def post_chat_completion(self, **kwargs):
+        response = super().post_chat_completion(**kwargs)
         response.body["model"] = self.resolved_model
         response.text = json.dumps(response.body, ensure_ascii=False)
         return response
@@ -1641,13 +1620,8 @@ class _ResolvedModelMismatchFactorizationTransport(
 class _MissingResolvedModelFactorizationTransport(
     ScriptedFactorizationRangeTransport
 ):
-    def post_chat_completion(self, *, entry, api_key: str, body, timeout_seconds: int):
-        response = super().post_chat_completion(
-            entry=entry,
-            api_key=api_key,
-            body=body,
-            timeout_seconds=timeout_seconds,
-        )
+    def post_chat_completion(self, **kwargs):
+        response = super().post_chat_completion(**kwargs)
         response.body.pop("model", None)
         response.text = json.dumps(response.body, ensure_ascii=False)
         return response

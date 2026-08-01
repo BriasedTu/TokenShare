@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
+from hashlib import sha256
 from typing import Any
 
 from tokenshare.core.models import JsonObject
@@ -15,10 +16,12 @@ from tokenshare.plugins.lean_proof.schemas import (
     LEAN_FAILURE_REPORT_SCHEMA_VERSION,
     LEAN_PROOF_CANDIDATE_SCHEMA_VERSION,
     PROOF_CANDIDATE_PARSER_ID,
+    PLUGIN_ID,
+    PLUGIN_VERSION,
 )
 
 
-LEAN_PROOF_CANDIDATE_PROMPT_PROFILE = "lean_proof.proof_candidate_prompt.v1"
+LEAN_PROOF_CANDIDATE_PROMPT_PROFILE = "lean_proof.proof_candidate_prompt.v2"
 PROOF_CANDIDATE_OUTPUT_NAME = "proof_candidate"
 
 _PROOF_CANDIDATE_REQUIRED_FIELDS = [
@@ -66,10 +69,15 @@ def build_lean_proof_candidate_prompt_package(
     theorem_payload: LeanTheoremPayload,
     created_at: str,
     seed: int | None = None,
+    planned_ai_unit_id: str | None = None,
 ) -> PromptPackage:
     """Build the plugin-owned prompt package for proof candidate generation."""
 
-    expected_candidate_id = f"proof_candidate:{request_id}"
+    stable_planned_unit = planned_ai_unit_id or unit_id
+    expected_candidate_id = derive_lean_proof_candidate_id_v2(
+        theorem_payload_digest=theorem_payload.payload_digest,
+        planned_ai_unit_id=stable_planned_unit,
+    )
     return PromptPackage(
         prompt_package_id=f"lean_proof_candidate_prompt:{request_id}",
         request_id=request_id,
@@ -84,6 +92,7 @@ def build_lean_proof_candidate_prompt_package(
             "theorem_name": theorem_payload.theorem_name,
             "theorem_payload_digest": theorem_payload.payload_digest,
             "expected_proof_candidate_id": expected_candidate_id,
+            "planned_ai_unit_id": stable_planned_unit,
             "imports": list(theorem_payload.imports),
             "namespace": theorem_payload.namespace,
             "parameters_source": theorem_payload.parameters_source,
@@ -124,6 +133,34 @@ def build_lean_proof_candidate_prompt_package(
         fixture_profile=LEAN_PROOF_CANDIDATE_PROMPT_PROFILE,
         created_at=created_at,
     )
+
+
+def derive_lean_proof_candidate_id_v2(
+    *,
+    theorem_payload_digest: str,
+    planned_ai_unit_id: str,
+) -> str:
+    """从定理与计划单元派生跨 attempt 稳定的 v2 candidate id。"""
+
+    preimage = json.dumps(
+        {
+            "plugin_id": PLUGIN_ID,
+            "plugin_version": PLUGIN_VERSION,
+            "prompt_profile_id": LEAN_PROOF_CANDIDATE_PROMPT_PROFILE,
+            "planned_ai_unit_id": planned_ai_unit_id,
+            "theorem_payload_digest": theorem_payload_digest,
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return f"proof_candidate:{sha256(preimage).hexdigest()}"
+
+
+def legacy_lean_v1_candidate_id_for_replay(request_id: str) -> str:
+    """仅供历史 v1 replay 校验旧 raw；不得用于新请求。"""
+
+    return f"proof_candidate:{request_id}"
 
 
 def parse_lean_proof_candidate_ai_output(

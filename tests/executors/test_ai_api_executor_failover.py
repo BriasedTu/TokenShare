@@ -59,10 +59,12 @@ def test_ai_api_executor_failover_after_rate_limit(tmp_path, monkeypatch) -> Non
     assert len(provenance["attempts"]) == 2
     for attempt, call in zip(provenance["attempts"], transport.calls, strict=True):
         provider_request_identity = attempt["provider_request_identity"]
+        sent_body = json.loads(call["body_bytes"].decode("utf-8"))
         assert provider_request_identity["provider_family"] == "siliconflow"
-        assert provider_request_identity["entry_id"] == call["entry_id"]
-        assert provider_request_identity["configured_model"] == call["model"]
-        assert provider_request_identity["requested_model"] == call["body"]["model"]
+        assert provider_request_identity["requested_model"] == sent_body["model"]
+        assert provider_request_identity["prepared_request"][
+            "normalized_absolute_endpoint"
+        ] == call["normalized_absolute_endpoint"]
         assert provider_request_identity["reasoning_controls"] == {
             "enable_thinking": False
         }
@@ -241,8 +243,10 @@ def test_ai_api_executor_preserves_terminal_connection_error(tmp_path, monkeypat
         def post_chat_completion(self, **kwargs):
             self.calls.append(
                 {
-                    "entry_id": kwargs["entry"].entry_id,
-                    "model": kwargs["entry"].model,
+                    "body_bytes": kwargs["body_bytes"],
+                    "normalized_absolute_endpoint": kwargs[
+                        "normalized_absolute_endpoint"
+                    ],
                 }
             )
             raise OSError("network unreachable")
@@ -381,7 +385,10 @@ def test_ai_api_executor_skips_missing_secret_entry_and_returns_artifact_backed_
     assert submission.provenance_ref is not None
     assert submission.parse_failure_ref is None
     assert submission.error["kind"] == "executor_error"
-    assert submission.error["reason"] == "no_eligible_entries"
+    assert {attempt["result_kind"] for attempt in submission.error["attempts"]} == {
+        "secret_missing"
+    }
+    assert submission.usage_summary["provider_attempt_count"] == 0
     assert len(transport.calls) == 0
     provenance = store.read_bytes(submission.provenance_ref).decode("utf-8")
     assert "SILICONFLOW_API_KEY_A" in provenance
@@ -397,9 +404,11 @@ def test_ai_api_executor_failover_after_transport_network_error(tmp_path, monkey
             if not self.calls:
                 self.calls.append(
                     {
-                        "entry_id": kwargs["entry"].entry_id,
-                        "model": kwargs["entry"].model,
-                        "body": kwargs["body"],
+                        "body_bytes": kwargs["body_bytes"],
+                        "normalized_absolute_endpoint": kwargs[
+                            "normalized_absolute_endpoint"
+                        ],
+                        "content_type": kwargs["content_type"],
                         "timeout_seconds": kwargs["timeout_seconds"],
                         "api_key_seen": bool(kwargs["api_key"]),
                     }

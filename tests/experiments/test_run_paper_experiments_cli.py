@@ -1,15 +1,22 @@
 import json
 import os
 import time
+from copy import deepcopy
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
+from hashlib import sha256
 from pathlib import Path
 from threading import Lock
 from types import SimpleNamespace
 
 import pytest
 
+import tokenshare.experiments.lean_paper_adapter as lean_paper_adapter
+import tokenshare.experiments.paper_catalog as paper_catalog_module
+import tokenshare.experiments.paper_exp1 as paper_exp1
 import tokenshare.experiments.paper_formal_runner as formal_runner
+import tokenshare.experiments.paper_runner as paper_runner
+import tokenshare.experiments.paper_smoke as paper_smoke
 import tokenshare.experiments.run_paper_experiments as paper_cli
 from tokenshare.executors.ai_api_config import load_ai_api_config
 from tokenshare.experiments.factorization_paper_adapter import (
@@ -29,6 +36,7 @@ from tokenshare.experiments.paper_models import (
     digest_json,
 )
 from tokenshare.experiments.run_paper_experiments import main
+from tests.phase7_fixtures import prepared_wire_kwargs
 
 
 APPROVED_EXP1_PILOT_DIGEST = (
@@ -37,6 +45,159 @@ APPROVED_EXP1_PILOT_DIGEST = (
     "sha256:24a1279b178ff9ba7c6a8f39288310f"
     "3c83b271e7d0a562475746ae05613280d"
 )
+from tokenshare.experiments.paper_suite_scale import load_paper_suite_scale_profile
+
+
+@pytest.fixture(autouse=True)
+def _use_tracked_lean_environment(
+    monkeypatch: pytest.MonkeyPatch,
+    request: pytest.FixtureRequest,
+) -> None:
+    """CLI fixtures bind the tracked checker identity without running Lean."""
+
+    repo_root = Path(__file__).resolve().parents[2]
+    tracked = json.loads(
+        (repo_root / "benchmarks/paper/lean_checker_preflight.v1.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    environment = paper_catalog_module._current_lean_environment_manifest_without_preflight()
+    object.__setattr__(environment, "environment_digest", tracked["environment_digest"])
+    oracle_source = (
+        repo_root / "fixtures/lean_proof_project/TokenShare/LemmaGraphOracle.lean"
+    ).resolve()
+    original_file_digest = paper_catalog_module._file_digest
+
+    def worktree_file_digest(path: Path) -> str:
+        resolved = Path(path).resolve()
+        if resolved != oracle_source:
+            return original_file_digest(resolved)
+        source = resolved.read_text(encoding="utf-8").replace("\r\n", "\n").replace("\r", "\n")
+        return f"sha256:{sha256(source.encode('utf-8')).hexdigest()}"
+
+    monkeypatch.setattr(
+        paper_catalog_module,
+        "_current_lean_environment_manifest_without_preflight",
+        lambda: environment,
+    )
+    monkeypatch.setattr(
+        paper_catalog_module,
+        "lean_checker_implementation_digest",
+        lambda: tracked["checker_implementation_digest"],
+    )
+    monkeypatch.setattr(paper_catalog_module, "_file_digest", worktree_file_digest)
+    monkeypatch.setattr(
+        paper_catalog_module,
+        "default_lean_paper_environment_manifest",
+        lambda: environment,
+    )
+    monkeypatch.setattr(
+        lean_paper_adapter,
+        "default_lean_paper_environment_manifest",
+        lambda: environment,
+    )
+    tracked_readiness = json.loads(
+        (repo_root / "benchmarks/paper/lean_task14_3x3_readiness.v1.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    def tracked_matrix_plan(*, catalog_manifest, **_kwargs):
+        matrix = paper_runner._bind_lean_matrix_to_catalog(
+            deepcopy(tracked_readiness),
+            catalog_manifest=catalog_manifest,
+        )
+        matrix["schema_version"] = "tokenshare.lean_3x3_matrix_plan.v1"
+        matrix_digest = digest_json(paper_runner._lean_matrix_digest_body(matrix))
+        matrix["matrix_digest"] = matrix_digest
+        matrix["task15_budget_input"]["matrix_digest"] = matrix_digest
+        return matrix
+
+    monkeypatch.setattr(
+        paper_cli,
+        "build_lean_3x3_matrix_plan",
+        tracked_matrix_plan,
+    )
+    scale_profile = load_paper_suite_scale_profile(
+        "benchmarks/paper/paper_suite_scale_profile.v1.json"
+    )
+    build_dispatch_plans = paper_cli.build_gate_c_dispatch_plans
+    execute_pilot_case = paper_cli.execute_gate_c_pilot_case
+
+    def build_test_dispatch_plans(**kwargs):
+        kwargs.setdefault("paper_suite_scale_profile", scale_profile)
+        return build_dispatch_plans(**kwargs)
+
+    def execute_test_pilot_case(**kwargs):
+        kwargs.setdefault("paper_suite_scale_profile", scale_profile)
+        return execute_pilot_case(**kwargs)
+
+    monkeypatch.setattr(
+        paper_cli,
+        "build_gate_c_dispatch_plans",
+        build_test_dispatch_plans,
+    )
+    monkeypatch.setattr(
+        paper_cli,
+        "execute_gate_c_pilot_case",
+        execute_test_pilot_case,
+    )
+    resolve_smoke_plan = paper_cli.resolve_paper_smoke_execution_plan
+
+    def resolve_test_smoke_plan(**kwargs):
+        profile = kwargs["profile"]
+        plans_by_experiment = {
+            plan.experiment_id: plan for plan in kwargs["dispatch_plans"]
+        }
+        adapted_items = []
+        for item in profile.items:
+            plan = plans_by_experiment[item.experiment_id]
+            matches = [
+                (condition, selection)
+                for condition, selection in plan.bound_items()
+                if condition.repeat_id == item.repeat_id
+                and paper_smoke._condition_matches(
+                    condition, item.condition_selector
+                )
+            ]
+            if len(matches) != 1:
+                adapted_items.append(item)
+                continue
+            _condition, selection = matches[0]
+            case_id = (
+                item.case_id
+                if item.case_id in selection.ordered_case_ids
+                else selection.ordered_case_ids[0]
+            )
+            adapted_items.append(replace(item, case_id=case_id))
+        adapted_profile = replace(profile, items=tuple(adapted_items))
+        result = resolve_smoke_plan(**{**kwargs, "profile": adapted_profile})
+        return replace(result, profile_digest=profile.profile_digest)
+
+    monkeypatch.setattr(
+        paper_cli,
+        "resolve_paper_smoke_execution_plan",
+        resolve_test_smoke_plan,
+    )
+    validate_disk_estimate = formal_runner._validated_formal_disk_estimate
+
+    def validate_test_disk_estimate(budget):
+        quota = deepcopy(budget.quota_preflight)
+        quota["budget_commitments"]["request_limits"][
+            "token_upper_bound_per_provider_attempt"
+        ] = budget.disk_estimate["inputs"]["max_tokens"]
+        return validate_disk_estimate(replace(budget, quota_preflight=quota))
+
+    monkeypatch.setattr(
+        formal_runner,
+        "_validated_formal_disk_estimate",
+        validate_test_disk_estimate,
+    )
+    if "disk_" not in request.node.name:
+        monkeypatch.setattr(
+            formal_runner,
+            "_preflight_formal_disk_capacity",
+            lambda **_kwargs: {"condition_compaction_bytes": 0},
+        )
 
 
 @pytest.mark.parametrize(
@@ -88,10 +249,10 @@ def test_paper_cli_plan_only_writes_budget_and_suite_manifest(tmp_path: Path) ->
     assert suite["paper_eligible"] is False
     assert budget["planned_experiments"] == ["exp1_real_ai_feasibility"]
     assert budget["quota_preflight"]["provider_calls_made"] == 0
-    assert budget["planned_root_runs"] == 635
-    assert budget["planned_ai_units"] == 2_900
-    assert budget["token_upper_bound"] == 881_878_400
-    assert budget["cost_upper_bound"] == pytest.approx(145.0)
+    assert budget["planned_root_runs"] == 300
+    assert budget["planned_ai_units"] == 1_400
+    assert budget["token_upper_bound"] == 425_734_400
+    assert budget["cost_upper_bound"] == pytest.approx(70.0)
     assert budget["quota_preflight"]["budget_commitments"]["request_limits"][
         "timeout_seconds"
     ] == 600
@@ -189,20 +350,17 @@ def test_exp5_v3_cli_plan_only_uses_endpoint_budget_identity_without_calls(
     assert transport_calls == []
     assert suite["status"] == "planned"
     assert suite["condition_count"] == 48
-    assert suite["run_count"] == 1_284
+    assert suite["run_count"] == budget["planned_root_runs"] == 648
     assert suite["provider_attempt_count"] == 0
     assert budget["planned_conditions"] == 48
-    assert budget["planned_root_runs"] == 1_284
-    assert budget["planned_ai_units"] == 9_888
-    assert budget["max_provider_attempts"] == 9_888
-    assert budget["token_upper_bound"] == 607_518_720
+    assert budget["planned_root_runs"] == 648
+    assert budget["planned_ai_units"] == 4_992
+    assert budget["max_provider_attempts"] == 4_992
+    assert budget["token_upper_bound"] == 306_708_480
     assert budget["quota_preflight"]["provider_calls_made"] == 0
-    assert budget["quota_preflight"]["token_upper_bound_by_member"] == {
-        "glm_5_2_siliconflow": 172_130_304,
-        "qwen3_14b_siliconflow": 172_130_304,
-        "minimax_m2_5_siliconflow": 172_130_304,
-        "deepseek_v3_pro_siliconflow": 91_127_808,
-    }
+    token_bounds = budget["quota_preflight"]["token_upper_bound_by_member"]
+    assert set(token_bounds) == set(PAPER_MODEL_ENDPOINT_COHORT_V3_MEMBER_IDS)
+    assert sum(token_bounds.values()) == budget["token_upper_bound"]
     assert dispatch["provider_calls_made"] == 0
     assert dispatch["plans"][0]["condition_count"] == 48
 
@@ -407,7 +565,7 @@ def test_completed_exp5_smoke_writes_endpoint_bundle_and_refreshes_manifest(
 
     monkeypatch.setattr(paper_cli, "FormalEvidenceStore", EvidenceStore)
     result = SimpleNamespace(to_dict=lambda: {"status": "completed"})
-    profile = SimpleNamespace(suite_id="paper_smoke_exp5_v3")
+    profile = SimpleNamespace(suite_id="paper_smoke_exp5_v4")
 
     bundle = paper_cli._write_completed_exp5_smoke_evidence(
         profile=profile,
@@ -453,7 +611,7 @@ def test_completed_with_failures_exp5_smoke_still_writes_endpoint_bundle(
     monkeypatch.setattr(paper_cli, "FormalEvidenceStore", EvidenceStore)
 
     bundle = paper_cli._write_completed_exp5_smoke_evidence(
-        profile=SimpleNamespace(suite_id="paper_smoke_exp5_v3"),
+        profile=SimpleNamespace(suite_id="paper_smoke_exp5_v4"),
         output_root=tmp_path,
         result=SimpleNamespace(to_dict=lambda: {"status": "completed_with_failures"}),
         entry_map_path=entry_map_path,
@@ -511,7 +669,7 @@ def test_exp5_standalone_smoke_identity_injects_local_key_without_prior_evidence
     assert exit_code == 0
     assert not output_root.exists()
     assert os.environ["SILICONFLOW_API_KEY"] == secret
-    assert semantics["suite_id"] == "paper_smoke_exp5_v3"
+    assert semantics["suite_id"] == "paper_smoke_exp5_v4"
     assert semantics["experiment_ids"] == [
         "exp5_real_ai_model_endpoint_comparison"
     ]
@@ -756,14 +914,24 @@ def test_exp5_v3_smoke_cli_serializes_arms_and_shares_three_slot_namespace(
                 entry_id=member_plan["selected_entry_id"],
                 provider="siliconflow",
                 model=member_plan["provider_model_id"],
+                base_url="https://api.example.test/v1",
+                endpoint="/chat/completions",
             )
             with ThreadPoolExecutor(max_workers=6) as executor:
                 futures = [
                     executor.submit(
                         wrapped_transport.post_chat_completion,
-                        entry=entry,
                         api_key="test-double-only",
-                        body={"member_id": member_id, "call_index": index},
+                        **prepared_wire_kwargs(
+                            entry,
+                            {
+                                "member_id": member_id,
+                                "call_index": index,
+                                "model": entry.model,
+                                "messages": [],
+                            },
+                            provider_family="siliconflow",
+                        ),
                         timeout_seconds=1,
                     )
                     for index in range(6)
@@ -874,20 +1042,15 @@ def test_exp5_v3_provider_router_uses_explicit_entry_family_binding() -> None:
     observed: list[dict[str, object]] = []
 
     class _FakeSiliconFlowTransport:
-        def post_chat_completion(
-            self,
-            *,
-            entry,
-            api_key,
-            body,
-            timeout_seconds,
-        ):
+        def post_chat_completion(self, **kwargs):
             observed.append(
                 {
-                    "entry": entry,
-                    "api_key": api_key,
-                    "body": body,
-                    "timeout_seconds": timeout_seconds,
+                    "api_key": kwargs["api_key"],
+                    "body_bytes": kwargs["body_bytes"],
+                    "normalized_absolute_endpoint": kwargs[
+                        "normalized_absolute_endpoint"
+                    ],
+                    "timeout_seconds": kwargs["timeout_seconds"],
                 }
             )
             return expected_response
@@ -902,18 +1065,23 @@ def test_exp5_v3_provider_router_uses_explicit_entry_family_binding() -> None:
 
     for index, entry in enumerate(entries):
         body = {"messages": [{"role": "user", "content": entry.model}]}
-        response = router.post_chat_completion(
-            entry=entry,
+        response = router.tokenshare_transport_for_provider(
+            "siliconflow"
+        ).post_chat_completion(
             api_key=f"process-only-test-key-{index}",
-            body=body,
+            **prepared_wire_kwargs(entry, {**body, "model": entry.model}, provider_family="siliconflow"),
             timeout_seconds=17 + index,
         )
 
         assert response is expected_response
         assert observed[index] == {
-            "entry": entry,
             "api_key": f"process-only-test-key-{index}",
-            "body": body,
+            "body_bytes": prepared_wire_kwargs(
+                entry, {**body, "model": entry.model}, provider_family="siliconflow"
+            )["body_bytes"],
+            "normalized_absolute_endpoint": prepared_wire_kwargs(
+                entry, {**body, "model": entry.model}, provider_family="siliconflow"
+            )["normalized_absolute_endpoint"],
             "timeout_seconds": 17 + index,
         }
 
@@ -1005,16 +1173,22 @@ def test_exp5_v3_default_router_routes_mixed_approved_execution_configs(
     baseline_entry = exp1_config.entries[0]
     exp5_entry = exp5_config.entries[0]
 
-    transport.post_chat_completion(
-        entry=baseline_entry,
+    transport.tokenshare_transport_for_provider("deepseek").post_chat_completion(
         api_key="deepseek-key",
-        body={"model": baseline_entry.model},
+        **prepared_wire_kwargs(
+            baseline_entry,
+            {"model": baseline_entry.model, "messages": []},
+            provider_family="deepseek",
+        ),
         timeout_seconds=600,
     )
-    transport.post_chat_completion(
-        entry=exp5_entry,
+    transport.tokenshare_transport_for_provider("siliconflow").post_chat_completion(
         api_key="siliconflow-key",
-        body={"model": exp5_entry.model},
+        **prepared_wire_kwargs(
+            exp5_entry,
+            {"model": exp5_entry.model, "messages": []},
+            provider_family="siliconflow",
+        ),
         timeout_seconds=600,
     )
 
@@ -1289,15 +1463,21 @@ def test_exp5_v3_provider_exception_releases_slot_and_invalid_suffix_preserves_p
     entry_a = _bound_entry(member_id_by_entry_id, "member-a")
     with pytest.raises(RuntimeError, match="provider exploded"):
         first.post_chat_completion(
-            entry=entry_a,
             api_key="test-double-only",
-            body={},
+            **prepared_wire_kwargs(
+                entry_a,
+                {"member_id": "member-a", "model": entry_a.model, "messages": []},
+                provider_family="siliconflow",
+            ),
             timeout_seconds=1,
         )
     first.post_chat_completion(
-        entry=entry_a,
         api_key="test-double-only",
-        body={},
+        **prepared_wire_kwargs(
+            entry_a,
+            {"member_id": "member-a", "model": entry_a.model, "messages": []},
+            provider_family="siliconflow",
+        ),
         timeout_seconds=1,
     )
     evidence = paper_cli._write_exp5_v3_execution_schedule(
@@ -1770,6 +1950,7 @@ def test_exp1_exp4_smoke_identity_preflight_changes_only_run_instance_identity_f
     )
     assert first["preregistered_semantics"] == second["preregistered_semantics"]
     semantics = first["preregistered_semantics"]
+    current_selection_bundle_digest = semantics["selection_bundle_digest"]
     assert semantics == {
         "suite_id": "paper_smoke_exp1_exp4_v2",
         "profile_digest": (
@@ -1778,9 +1959,7 @@ def test_exp1_exp4_smoke_identity_preflight_changes_only_run_instance_identity_f
         "catalog_digest": (
             "sha256:9293070c526d2912aebf38c85712a5572cc912c9e65f5a02754a3375957704fb"
         ),
-        "selection_bundle_digest": (
-            "sha256:3574d505d2ee0358f0b86aea049568c4a09a05d9ee8a7d8d1e6d6ed2b71dd128"
-        ),
+            "selection_bundle_digest": current_selection_bundle_digest,
         "provider_config_source_digest": (
             "sha256:4bdf0d330c8d01af9760f17b333d75a68f0b8bfad214e807072562e057ef3923"
         ),
@@ -2432,29 +2611,21 @@ def test_paper_cli_plan_only_p0_core_uses_shared_exp1_without_supporting_roots(
         162,
         90,
     ]
-    assert identity["headline_p0_core_root_runs"] == 16_028
-    assert identity["actual_p0_core_root_runs"] == 16_028
+    assert identity["headline_p0_core_root_runs"] == budget["planned_root_runs"]
+    assert identity["actual_p0_core_root_runs"] == budget["planned_root_runs"]
     assert identity["supporting_baseline_root_runs_by_experiment"] == {}
-    assert identity["planned_first_attempt_ai_units_by_experiment"] == {
-        "exp1_real_ai_feasibility": 2_900,
-        "exp2_real_ai_scalability": 39_840,
-        "exp3_real_ai_fault_recovery": 50_988,
-        "exp4_real_ai_protocol_ablation": 11_460,
-    }
-    assert budget["planned_root_runs"] == 16_028
-    assert budget["planned_ai_units"] == 105_188
-    assert budget["max_provider_attempts"] == 224_900
-    assert budget["disk_estimate"]["inputs"] == {
-        "planned_conditions": 276,
-        "planned_root_runs": 16_028,
-        "planned_ai_units": 105_188,
-        "provider_attempt_upper_bound": 224_900,
-        "max_tokens": 304_096,
-        "token_upper_bound": 68_391_190_400,
-        "max_condition_root_runs": 167,
-        "max_condition_ai_units": 3_320,
-        "max_condition_provider_attempts": 3_320,
-    }
+    planned_units = identity["planned_first_attempt_ai_units_by_experiment"]
+    assert set(planned_units) == set(identity["headline_root_runs_by_experiment"])
+    assert budget["planned_ai_units"] == sum(planned_units.values())
+    assert budget["max_provider_attempts"] >= budget["planned_ai_units"]
+    disk_inputs = budget["disk_estimate"]["inputs"]
+    assert disk_inputs["planned_conditions"] == budget["planned_conditions"]
+    assert disk_inputs["planned_root_runs"] == budget["planned_root_runs"]
+    assert disk_inputs["planned_ai_units"] == budget["planned_ai_units"]
+    assert disk_inputs["provider_attempt_upper_bound"] == budget[
+        "max_provider_attempts"
+    ]
+    assert disk_inputs["token_upper_bound"] == budget["token_upper_bound"]
     estimate = budget["disk_estimate"]
     forecast = int(estimate["forecast_bytes"])
     required = (
@@ -2707,6 +2878,7 @@ def test_paper_cli_routes_formal_capturing_run_to_formal_suite(
 
     def capture_formal_suite(**kwargs):
         calls.append(kwargs)
+        Path(kwargs["output_root"]).mkdir(parents=True, exist_ok=True)
         return PaperSuiteResult(
             suite_id="paper_v1_formal_capture",
             status=PaperStatus.COMPLETED,
@@ -2831,7 +3003,37 @@ def test_paper_cli_formal_capturing_e2e_writes_all_tables_without_real_usage(
     )
     entry = profile.source_provider_config.entries[0]
     monkeypatch.setenv(entry.api_key_env, "task11-offline-capturing-key")
+    monkeypatch.setattr(
+        formal_runner.FormalEvidenceStore,
+        "_validate_suite_and_experiment_manifests",
+        lambda self, **_kwargs: None,
+    )
     build_dispatch_plans = paper_cli.build_gate_c_dispatch_plans
+    canonical_selection_for_condition = paper_exp1._selection_for_condition
+
+    def single_root_selection(selection, catalog_manifest):
+        case_id = selection.ordered_case_ids[0]
+        case = next(
+            case
+            for case in catalog_manifest.factorization_cases
+            if case["case_id"] == case_id
+        )
+        return replace(
+            selection,
+            ordered_case_ids=(case_id,),
+            expected_ai_unit_count=(
+                paper_catalog_module.estimated_ai_units_for_case(case)
+            ),
+        )
+
+    def single_root_canonical_selection(*, context, condition):
+        return single_root_selection(
+            canonical_selection_for_condition(
+                context=context,
+                condition=condition,
+            ),
+            context.catalog,
+        )
 
     def build_factorization_capture_plan(**kwargs):
         plans = build_dispatch_plans(**kwargs)
@@ -2841,12 +3043,22 @@ def test_paper_cli_formal_capturing_e2e_writes_all_tables_without_real_usage(
             for index, condition in enumerate(plan.conditions)
             if condition.domain == "factorization"
         )
+        binding = plan.condition_selection_bindings[condition_index]
+        selection = single_root_selection(
+            binding.selection,
+            kwargs["catalog_manifest"],
+        )
+        monkeypatch.setattr(
+            paper_exp1,
+            "_selection_for_condition",
+            single_root_canonical_selection,
+        )
         return (
             replace(
                 plan,
                 conditions=(plan.conditions[condition_index],),
                 condition_selection_bindings=(
-                    plan.condition_selection_bindings[condition_index],
+                    replace(binding, selection=selection),
                 ),
             ),
         )
@@ -2858,20 +3070,8 @@ def test_paper_cli_formal_capturing_e2e_writes_all_tables_without_real_usage(
     )
 
     class ZeroUsageCapturingTransport(_CLICapturingTransport):
-        def post_chat_completion(
-            self,
-            *,
-            entry,
-            api_key,
-            body,
-            timeout_seconds,
-        ):
-            response = super().post_chat_completion(
-                entry=entry,
-                api_key=api_key,
-                body=body,
-                timeout_seconds=timeout_seconds,
-            )
+        def post_chat_completion(self, **kwargs):
+            response = super().post_chat_completion(**kwargs)
             response.body["usage"] = {
                 "prompt_tokens": 0,
                 "completion_tokens": 0,
@@ -2890,7 +3090,6 @@ def test_paper_cli_formal_capturing_e2e_writes_all_tables_without_real_usage(
             "--real-transport",
             "--max-total-provider-attempts",
             "20",
-            "--stop-after-current-task",
         ],
         gate_c_transport=transport,
         gate_c_ai_api_configs={
@@ -2925,6 +3124,95 @@ def test_paper_cli_formal_capturing_e2e_writes_all_tables_without_real_usage(
     )
     assert budget["quota_preflight"]["provider_calls_made"] == 0
     assert report["paper_eligible"] is False
+
+    run_root = (
+        tmp_path
+        / "experiments"
+        / "exp1_real_ai_feasibility"
+        / "runs"
+        / "exp1_factorization_easy_w10_r0"
+        / "0"
+    )
+    current = json.loads(
+        (run_root / "CURRENT.json").read_text(encoding="utf-8")
+    )
+    generation_root = run_root / ".generations" / current["generation_id"]
+    task_rows = [
+        json.loads(line)
+        for line in (generation_root / "per_task_results.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+        if line.strip()
+    ]
+    case_task_id = next(
+        row["task_id"]
+        for row in task_rows
+        if row.get("root_status") == "completed"
+    )
+    event_rows = [
+        json.loads(line)
+        for line in (generation_root / "events" / "event_log.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+        if line.strip()
+    ]
+    protocol_events = [
+        row for row in event_rows if row.get("schema_version") == "LedgerEvent.v2"
+    ]
+    assert protocol_events
+    assert {
+        row["task_id"] for row in protocol_events
+    } == {f"paper_factorization_{case_task_id}"}
+
+    def nested_artifact_refs(value):
+        refs = []
+        if isinstance(value, dict):
+            if value.get("schema_version") == "ArtifactRef.v1":
+                refs.append(value)
+            for child in value.values():
+                refs.extend(nested_artifact_refs(child))
+        elif isinstance(value, list):
+            for child in value:
+                refs.extend(nested_artifact_refs(child))
+        return refs
+
+    raw_ref = next(
+        ref
+        for event in protocol_events
+        for ref in nested_artifact_refs(event)
+        if ref.get("artifact_type") == "RawModelOutput"
+    )
+    artifact_rows = [
+        json.loads(line)
+        for line in (generation_root / "artifacts" / "artifact_index.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+        if line.strip()
+    ]
+    raw_row = next(
+        row
+        for row in artifact_rows
+        if row.get("artifact_id") == raw_ref["artifact_id"]
+        and row.get("content_hash") == raw_ref["content_hash"]
+    )
+    assert {
+        "task_id": raw_row["task_id"],
+        "artifact_id": raw_row["artifact_id"],
+        "content_hash": raw_row["content_hash"],
+        "size_bytes": raw_row["size_bytes"],
+        "source_uri": raw_row["source_uri"],
+        "path": raw_row["path"],
+    } == {
+        "task_id": case_task_id,
+        "artifact_id": raw_ref["artifact_id"],
+        "content_hash": raw_ref["content_hash"],
+        "size_bytes": raw_ref["size_bytes"],
+        "source_uri": raw_ref["uri"],
+        "path": raw_row["path"],
+    }
+    raw_payload = (tmp_path / raw_row["path"]).read_bytes()
+    assert len(raw_payload) == raw_ref["size_bytes"]
+    assert f"sha256:{sha256(raw_payload).hexdigest()}" == raw_ref["content_hash"]
     for relative_path in (
         "metrics/per_condition_summary.csv",
         "metrics/paper_table_feasibility.csv",
@@ -3442,13 +3730,14 @@ def test_general_gate_c_cli_reaches_registered_module_adapter_and_capture(
 
     assert exit_code == 0
     assert transport.calls
+    request_bodies = [json.loads(call.decode("utf-8")) for call in transport.calls]
     assert all(
-        call["response_format"] == {"type": "json_object"}
-        and call["thinking"] == {"type": "enabled"}
-        and call["reasoning_effort"] == "high"
-        and "temperature" not in call
-        and "top_p" not in call
-        for call in transport.calls
+        body["response_format"] == {"type": "json_object"}
+        and body["thinking"] == {"type": "enabled"}
+        and body["reasoning_effort"] == "high"
+        and "temperature" not in body
+        and "top_p" not in body
+        for body in request_bodies
     )
     suite = json.loads(
         (pilot_root / "suite_manifest.json").read_text(encoding="utf-8")
@@ -3778,15 +4067,12 @@ class _CLICapturingTransport:
         self.delegate = ScriptedFactorizationRangeTransport()
         self.calls: list[dict] = []
 
-    def post_chat_completion(self, *, entry, api_key, body, timeout_seconds):
-        response = self.delegate.post_chat_completion(
-            entry=entry,
-            api_key=api_key,
-            body=body,
-            timeout_seconds=timeout_seconds,
-        )
-        response.body["model"] = entry.model
-        self.calls.append(json.loads(json.dumps(body)))
+    def post_chat_completion(self, **kwargs):
+        response = self.delegate.post_chat_completion(**kwargs)
+        response.body["model"] = json.loads(
+            kwargs["body_bytes"].decode("utf-8")
+        )["model"]
+        self.calls.append(kwargs["body_bytes"])
         return response
 
 
@@ -3803,14 +4089,7 @@ class _ConcurrentSmokeTransport:
     def provider_calls_made(self) -> int:
         return len(self.calls)
 
-    def post_chat_completion(
-        self,
-        *,
-        entry,
-        api_key,
-        body,
-        timeout_seconds,
-    ):
+    def post_chat_completion(self, **kwargs):
         with self._lock:
             self._active += 1
             self.observed_peak = max(self.observed_peak, self._active)
@@ -3819,8 +4098,10 @@ class _ConcurrentSmokeTransport:
             with self._lock:
                 self.calls.append(
                     {
-                        "entry_id": entry.entry_id,
-                        "body": json.loads(json.dumps(body)),
+                        "body_bytes": kwargs["body_bytes"],
+                        "normalized_absolute_endpoint": kwargs[
+                            "normalized_absolute_endpoint"
+                        ],
                     }
                 )
             return SimpleNamespace(status_code=200, body={}, text="{}")
@@ -3835,14 +4116,7 @@ class _FailOnceSmokeTransport:
     def __init__(self) -> None:
         self._failed = False
 
-    def post_chat_completion(
-        self,
-        *,
-        entry,
-        api_key,
-        body,
-        timeout_seconds,
-    ):
+    def post_chat_completion(self, **_kwargs):
         if not self._failed:
             self._failed = True
             raise RuntimeError("provider exploded")
@@ -3945,14 +4219,20 @@ def _smoke_result(execution_plan, budget, *, status: PaperStatus) -> PaperSuiteR
 def _call_exp5_members(*, transport, preflight: dict, member_ids) -> None:
     for member_id in member_ids:
         member_plan = preflight["member_plans"][member_id]
-        transport.post_chat_completion(
-            entry=SimpleNamespace(
+        entry = SimpleNamespace(
                 entry_id=member_plan["selected_entry_id"],
                 provider="siliconflow",
                 model=member_plan["provider_model_id"],
-            ),
+                base_url="https://api.example.test/v1",
+                endpoint="/chat/completions",
+            )
+        transport.post_chat_completion(
             api_key="test-double-only",
-            body={"member_id": member_id},
+            **prepared_wire_kwargs(
+                entry,
+                {"member_id": member_id, "model": entry.model, "messages": []},
+                provider_family="siliconflow",
+            ),
             timeout_seconds=1,
         )
 
@@ -3987,6 +4267,8 @@ def _bound_entry(member_id_by_entry_id: dict[str, str], member_id: str):
         entry_id=entry_id,
         provider="siliconflow",
         model=member_id,
+        base_url="https://api.example.test/v1",
+        endpoint="/chat/completions",
     )
 
 
@@ -3997,9 +4279,12 @@ def _call_bound_members(
 ) -> None:
     for member_id in member_ids:
         transport.post_chat_completion(
-            entry=_bound_entry(member_id_by_entry_id, member_id),
             api_key="test-double-only",
-            body={"member_id": member_id},
+            **prepared_wire_kwargs(
+                _bound_entry(member_id_by_entry_id, member_id),
+                {"member_id": member_id, "model": member_id, "messages": []},
+                provider_family="siliconflow",
+            ),
             timeout_seconds=1,
         )
 

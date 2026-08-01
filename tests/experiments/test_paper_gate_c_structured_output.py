@@ -1,9 +1,13 @@
 from __future__ import annotations
 
 import json
+from hashlib import sha256
 from pathlib import Path
 
 import pytest
+
+import tokenshare.experiments.lean_paper_adapter as lean_paper_adapter
+import tokenshare.experiments.paper_catalog as paper_catalog_module
 
 from tokenshare.experiments.factorization_paper_adapter import (
     ScriptedFactorizationRangeTransport,
@@ -19,10 +23,64 @@ from tokenshare.experiments.paper_models import (
     PaperExperimentCondition,
     PaperTaskStatus,
 )
+from tests.support.lean_checker import RecordingLeanChecker
 
 
 FACTOR_CATALOG = "benchmarks/paper/factorization_catalog.v1.jsonl"
 LEAN_CATALOG = "benchmarks/paper/lean_catalog.v1.jsonl"
+
+
+@pytest.fixture(autouse=True)
+def _use_tracked_lean_environment_and_recording_checker(
+    monkeypatch: pytest.MonkeyPatch,
+    request: pytest.FixtureRequest,
+) -> None:
+    repo_root = Path(__file__).resolve().parents[2]
+    tracked = json.loads(
+        (repo_root / "benchmarks/paper/lean_checker_preflight.v1.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    environment = paper_catalog_module._current_lean_environment_manifest_without_preflight()
+    object.__setattr__(environment, "environment_digest", tracked["environment_digest"])
+    oracle_source = (
+        repo_root / "fixtures/lean_proof_project/TokenShare/LemmaGraphOracle.lean"
+    ).resolve()
+    original_file_digest = paper_catalog_module._file_digest
+
+    def worktree_file_digest(path: Path) -> str:
+        resolved = Path(path).resolve()
+        if resolved != oracle_source:
+            return original_file_digest(resolved)
+        source = resolved.read_text(encoding="utf-8").replace("\r\n", "\n").replace("\r", "\n")
+        return f"sha256:{sha256(source.encode('utf-8')).hexdigest()}"
+
+    monkeypatch.setattr(
+        paper_catalog_module,
+        "_current_lean_environment_manifest_without_preflight",
+        lambda: environment,
+    )
+    monkeypatch.setattr(
+        paper_catalog_module,
+        "lean_checker_implementation_digest",
+        lambda: tracked["checker_implementation_digest"],
+    )
+    monkeypatch.setattr(paper_catalog_module, "_file_digest", worktree_file_digest)
+    checker = (
+        RecordingLeanChecker.reject_all()
+        if request.node.name.startswith(
+            "test_gate_c_semantically_wrong_json_reaches_authoritative_rejection"
+        )
+        and getattr(request.node, "callspec", None) is not None
+        and request.node.callspec.params.get("domain") == "lean_proof"
+        else RecordingLeanChecker()
+    )
+    monkeypatch.setattr(lean_paper_adapter, "check_lean_proof", checker)
+    monkeypatch.setattr(
+        lean_paper_adapter,
+        "default_lean_paper_environment_manifest",
+        lambda: environment,
+    )
 
 
 def test_gate_c_real_mode_allows_explicit_offline_capture_without_paper_eligibility(
@@ -101,13 +159,21 @@ def test_gate_c_capturing_transport_persists_valid_structured_output_chain(
     )
 
     assert transport.calls
-    assert all(call["entry"]["supports_json_mode"] is True for call in transport.calls)
+    assert all(call["content_type"] == "application/json" for call in transport.calls)
+    assert all(call["normalized_absolute_endpoint"].startswith("https://") for call in transport.calls)
     assert all(
-        call["body"]["response_format"] == {"type": "json_object"}
+        json.loads(call["body_bytes"].decode("utf-8"))["response_format"]
+        == {"type": "json_object"}
         for call in transport.calls
     )
-    assert all(call["body"]["enable_thinking"] is False for call in transport.calls)
-    assert all(call["body"]["temperature"] == 0 for call in transport.calls)
+    assert all(
+        json.loads(call["body_bytes"].decode("utf-8"))["enable_thinking"] is False
+        for call in transport.calls
+    )
+    assert all(
+        json.loads(call["body_bytes"].decode("utf-8"))["temperature"] == 0
+        for call in transport.calls
+    )
     assert result.task_result.root_status == PaperTaskStatus.COMPLETED
     assert all(attempt.raw_output_ref for attempt in result.attempt_results)
     assert all(attempt.parsed_output_ref for attempt in result.attempt_results)
@@ -229,21 +295,21 @@ class _CapturingTransport:
         )
         self.calls: list[dict] = []
 
-    def post_chat_completion(self, *, entry, api_key, body, timeout_seconds):
-        response = self.delegate.post_chat_completion(
-            entry=entry,
-            api_key=api_key,
-            body=body,
-            timeout_seconds=timeout_seconds,
-        )
+    def post_chat_completion(self, **kwargs):
+        response = self.delegate.post_chat_completion(**kwargs)
         response_body = json.loads(json.dumps(response.body))
-        response_body["model"] = entry.model
+        response_body["model"] = json.loads(
+            kwargs["body_bytes"].decode("utf-8")
+        )["model"]
         content = response_body["choices"][0]["message"]["content"]
         response_body["choices"][0]["message"]["content"] = self._mutate(content)
         self.calls.append(
             {
-                "entry": entry.to_safe_dict(),
-                "body": json.loads(json.dumps(body)),
+                "body_bytes": kwargs["body_bytes"],
+                "normalized_absolute_endpoint": kwargs[
+                    "normalized_absolute_endpoint"
+                ],
+                "content_type": kwargs["content_type"],
             }
         )
         return _TransportResponse(response_body)

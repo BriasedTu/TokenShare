@@ -249,7 +249,7 @@ def test_lean_paper_adapter_runs_split_children_through_ai_api_checker_and_merge
         for attempt in result.attempt_results
     )
 
-    provider_prompt = json.dumps(transport.calls[0]["body"], ensure_ascii=False)
+    provider_prompt = transport.calls[0]["body_bytes"].decode("utf-8")
     assert "lean_proof.proof_candidate.v1" in provider_prompt
     assert "Do not return a split plan" in provider_prompt
     assert "claim_checker_success" in provider_prompt
@@ -463,7 +463,7 @@ def test_lean_paper_adapter_runs_v2_medium_pure_logic_lemma_dag_nodes_through_ai
         for attempt in result.attempt_results
     )
 
-    prompt = json.dumps(transport.calls[0]["body"], ensure_ascii=False)
+    prompt = transport.calls[0]["body_bytes"].decode("utf-8")
     assert "Do not return a split plan" in prompt
     assert "Do not propose child tasks" in prompt
 
@@ -899,21 +899,24 @@ def test_lean_paper_adapter_accepts_openai_real_transport_through_executor(
     transport = UrlLibOpenAITransport()
     calls = []
 
-    def fake_openai_call(*, entry, api_key: str, body, timeout_seconds: int):
+    def fake_openai_call(**kwargs):
+        body = json.loads(kwargs["body_bytes"].decode("utf-8"))
         calls.append(
             {
-                "entry_id": entry.entry_id,
-                "model": entry.model,
-                "api_key_seen": bool(api_key),
-                "body": body,
-                "timeout_seconds": timeout_seconds,
+                "model": body["model"],
+                "api_key_seen": bool(kwargs["api_key"]),
+                "body_bytes": kwargs["body_bytes"],
+                "normalized_absolute_endpoint": kwargs[
+                    "normalized_absolute_endpoint"
+                ],
+                "timeout_seconds": kwargs["timeout_seconds"],
             }
         )
         return _TransportResponse(
             status_code=200,
             body={
                 "id": "fake-openai-lean",
-                "model": entry.model,
+                    "model": body["model"],
                 "choices": [
                     {
                         "message": {"content": "not-json"},
@@ -993,21 +996,24 @@ def test_lean_paper_adapter_v2_openai_request_artifacts_record_openai(
     transport = UrlLibOpenAITransport()
     calls = []
 
-    def fake_openai_call(*, entry, api_key: str, body, timeout_seconds: int):
+    def fake_openai_call(**kwargs):
+        body = json.loads(kwargs["body_bytes"].decode("utf-8"))
         calls.append(
             {
-                "entry_id": entry.entry_id,
-                "model": entry.model,
-                "api_key_seen": bool(api_key),
-                "body": body,
-                "timeout_seconds": timeout_seconds,
+                "model": body["model"],
+                "api_key_seen": bool(kwargs["api_key"]),
+                "body_bytes": kwargs["body_bytes"],
+                "normalized_absolute_endpoint": kwargs[
+                    "normalized_absolute_endpoint"
+                ],
+                "timeout_seconds": kwargs["timeout_seconds"],
             }
         )
         return _TransportResponse(
             status_code=200,
             body={
                 "id": "fake-openai-lean-lemma-graph",
-                "model": entry.model,
+                    "model": body["model"],
                 "choices": [
                     {
                         "message": {"content": "not-json"},
@@ -1197,8 +1203,10 @@ def test_lean_retry_keeps_original_identity_and_rejects_changed_config(
     assert replacement.task_result.root_status == PaperTaskStatus.COMPLETED
     assert initial.condition is condition
     assert replacement.condition is condition
-    assert {call["entry_id"] for call in replacement_transport.calls} == {"gpt-entry"}
-    assert {call["model"] for call in replacement_transport.calls} == {"gpt-5.6-sol"}
+    assert {
+        json.loads(call["body_bytes"].decode("utf-8"))["model"]
+        for call in replacement_transport.calls
+    } == {"gpt-5.6-sol"}
     for attempt in replacement.attempt_results:
         assert attempt.model_execution_record_ref is not None
         execution_record = _read_artifact(
@@ -1488,25 +1496,21 @@ def _assert_missing_resolved_model_stops_condition(result, transport) -> None:
 
 
 class _MissingResolvedModelLeanTransport(ScriptedLeanPaperProofTransport):
-    def post_chat_completion(self, *, entry, api_key: str, body, timeout_seconds: int):
-        response = super().post_chat_completion(
-            entry=entry,
-            api_key=api_key,
-            body=body,
-            timeout_seconds=timeout_seconds,
-        )
+    def post_chat_completion(self, **kwargs):
+        response = super().post_chat_completion(**kwargs)
         response.body.pop("model", None)
         response.text = json.dumps(response.body, ensure_ascii=False)
         return response
 
 
 class _CustomRealTransportSubclass(UrlLibSiliconFlowTransport):
-    def post_chat_completion(self, *, entry, api_key: str, body, timeout_seconds: int):
+    def post_chat_completion(self, **kwargs):
+        model = json.loads(kwargs["body_bytes"].decode("utf-8"))["model"]
         return _TransportResponse(
             status_code=200,
             body={
                 "id": "fake-real-subclass",
-                "model": entry.model,
+                "model": model,
                 "choices": [{"message": {"content": "not-json"}}],
                 "usage": {
                     "prompt_tokens": 7,
@@ -1525,12 +1529,13 @@ class _TransportResponse:
 
 
 class _InvalidJsonTransport:
-    def post_chat_completion(self, *, entry, api_key: str, body, timeout_seconds: int):
+    def post_chat_completion(self, **kwargs):
+        model = json.loads(kwargs["body_bytes"].decode("utf-8"))["model"]
         return _TransportResponse(
             status_code=200,
             body={
                 "id": "invalid-json",
-                "model": entry.model,
+                "model": model,
                 "choices": [{"message": {"content": "not-json"}}],
                 "usage": {
                     "prompt_tokens": 7,
@@ -1542,7 +1547,7 @@ class _InvalidJsonTransport:
 
 
 class _ProviderErrorTransport:
-    def post_chat_completion(self, *, entry, api_key: str, body, timeout_seconds: int):
+    def post_chat_completion(self, **_kwargs):
         return _TransportResponse(
             status_code=503,
             body={"message": "provider overloaded"},
