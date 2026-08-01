@@ -21,8 +21,8 @@
 1. 本文件是独立 reviewers 判定初稿 NO-GO 后的重构版计划，不表示任何实现、验证、网络调用或论文结果已经完成。
 2. 本轮计划作者只修改本文件；不得修改代码、测试、配置、authority、harness 或其他文档，不得调用网络、AI API 或付费实验。
 3. 用户批准本计划只授权离线实现。任何 provider-writing action 还必须取得用户显式提供、digest/scope/expiry/fresh-output 绑定的 paid receipt，并同时传入 `--allow-provider-calls`；自动实施 agent 不得创建、推断或伪造 paid receipt。
-4. 实施严格按 Task 0–34 单 Task 串行。每个 Task 都使用一个 fresh `gpt-5.6-sol`、`reasoning_effort=ultra` developer 做 RED→最小实现→GREEN；随后依次由 fresh spec reviewer 和另一 fresh code-quality/full-chain reviewer 审查。两名 reviewers 的 Critical/Important 全清零后，才允许建议 commit 和下一 Task。
-5. 不允许并行实现、批量 ownership 或“先集成后复审”。Reviewers 只读；修复回到该 Task 的 developer，再按 spec→quality/full-chain 顺序复审。
+4. 实施严格按 Task 0–34 单 Task 串行。Task 0–3 保留已经落盘的验收方式与证据；从 Task 4 起，每个 Task 使用一个 fresh `gpt-5.6-sol` developer 做 RED→最小实现→GREEN，默认 `reasoning_effort=high`，只有论文指标边界、正式全链路或真实 Critical 才升级 `ultra`；随后由一个 fresh 综合独立 reviewer 同时完成规格、质量、全链与影子 TokenShare 审查。Critical/Important 清零且该 Task accepted 后，才允许建议 commit 和下一 Task。
+5. 不允许并行实现、批量 ownership 或“先集成后复审”。综合 reviewer 只读；审查或修正未通过时，修复必须回到当前 Task 的 developer，并由当前同一个综合 reviewer 做 follow-up，继续在同一 Task 内修正和复核直至 PASS；Task 未 accepted 绝不得进入下一 Task，不得引入第二 reviewer。
 6. 离线 Task 的每条 RED/GREEN 命令必须显式加载最低层 network tripwire；tripwire 在 socket/urllib outbound 边界拒绝网络，且断言 provider calls=0。
 7. 本轮只允许运行定向 pytest、四个 focused verification profiles、`.\init.ps1` Fast、一个 Lean fixture/最多两个 checker calls，以及在有效 paid receipt 下的冻结 L3 小型真实 smoke。
 8. 明确禁止 `.\init.ps1 -Full`、全量 `pytest tests`、LeanAudit、force-all、600-entry/大批 Lean、正式 response-bank 全量 acquisition、Exp1/Exp5 full online、P0-core/P0-full 正式矩阵和人工攻击/篡改测试，除非用户未来另行授权。
@@ -474,17 +474,38 @@ class PaidExecutionReceipt:
  -> 34 L4 + docs/handoff
 ```
 
-没有 parallel boundary。每条箭头都是硬依赖；每 Task 两个 reviewer gate后才进入下一 Task。
+没有 parallel boundary。每条箭头都是硬依赖。Task 0–3 沿用已经落盘的历史验收证据；从 Task 4 起，每个 Task 只设一个同时承担规格、质量、全链与影子 TokenShare 检查的综合独立 reviewer gate；未 PASS 或未 accepted 时必须留在当前 Task 修正和复核，通过后才进入下一 Task。
 
 ## 9. Task execution template
 
-每个 Task 必须包含：exact files、named RED tests、明确列出的完整 RED command及预期失败、最小实现、同一完整命令 GREEN、spec review、quality/full-chain review、suggested commit。所有离线 pytest 命令统一前缀：
+每个 Task 必须包含：exact files、named RED tests、明确列出的完整 RED command及预期失败、最小实现、同一完整命令 GREEN、一个由同一综合独立 reviewer 同时完成规格/质量/全链/影子 TokenShare 检查的 review、suggested commit。所有离线 pytest 命令统一前缀：
 
 ```powershell
 conda run -n tokenshare python -m pytest -p verification.pytest_network_tripwire
 ```
 
 Tripwire Task 0 自己用 isolated bootstrap test证明网络拒绝；Task 0之后任何离线命令漏掉plugin都不算证据。
+
+### 9.1 Task 4–34 审查、范围与耗时硬门（2026-08-02 user override）
+
+本节自 Task 4 起覆盖本计划其他通用执行模板；Task 0–3 保持已经 accepted 的状态，不因本节重新打开。总监督者给实现或审查 Agent 的自包含 prompt 必须要求先读取本节，并把本节的范围、阻塞条件和 deferred 规则作为当前 Task 的验收前置。
+
+1. **计划范围是硬边界。** 当前 Task 的 `Files`、目标和验收条件构成唯一写入与审查范围；不得把发现的通用架构改进隐含扩展为当前 Task 的 prerequisite。
+2. **只有五类问题可以阻塞当前 Task：**
+   - 会直接导致论文指标、固定分母或结论边界错误；
+   - 实验设施复制协议状态机、验证、重试、合并或终态，形成影子 TokenShare；
+   - 正式论文结果不是从真实 TokenShare 系统持久化的 event/artifact 投影得到；
+   - replay 会重新调用 provider，或无法复用已经持久化的结果；
+   - 当前 Task 计划列出的定向测试失败。
+3. **默认登记为 `deferred_followup`、不得阻塞当前 Task：** deep immutability；closed schema 的全面加固；非正常输入的排列组合；duplicate/ordering/strict-type 的穷举；不影响当前正式路径的通用 typed API 重构；security、攻击者模型或 runner 输入防火墙。
+4. **计划外 production 文件门禁。** 如果审查要求修改当前 Task `Files` 未列出的 production 文件，必须先判断正常正式路径是否确实无法工作：仍可正确工作时不得扩展范围，只记录 `deferred_followup`；确实阻塞时，必须先向用户报告计划外文件、阻塞原因和预计时间，不得静默实施。
+5. **Agent 与复审预算。** 每个 Task 只允许一个实现 Agent、一个综合独立审查 Agent；该 reviewer 必须在同一次综合 review 中同时审规格、质量、全链与影子 TokenShare，并且只有当前 reviewer 可以做 follow-up，不得引入第二 reviewer。“最多一轮”只限制发起一次综合 review 和一次 follow-up 的调度节奏；follow-up 未 PASS 时保持打开，由当前 developer 与 reviewer 继续在同一 Task 内修正和复核，直至 Critical/Important 清零且该 Task PASS/accepted。“最多一轮”不得成为停止修复、降低 PASS 标准或越过当前 Task 的理由。Minor 不得延迟验收。
+6. **时间门禁。** 普通 Task 目标耗时为 60–90 分钟。达到 90 分钟仍未 accepted 时，必须立即报告已完成内容、当前阻塞、是否发生范围扩张、计划外修改文件和继续完成的预计时间；未经用户确认不得继续扩大范围。
+7. **验证去重。** 总监督者不得重新运行子 Agent 已返回精确命令、退出码和测试计数的同一测试。测试超时时优先拆分或从最小受影响范围重跑，不默认重跑整个大套件。
+8. **验收后测试最小化限时 15 分钟。** 只合并明显重复的参数矩阵和等价断言；不再为压缩安排第二轮完整独立审查；只运行被修改的最小测试文件。超过 15 分钟时登记为里程碑测试整理任务，不得阻塞下一 Task。
+9. **推理强度。** 实现 Agent 默认使用 `high`；只有论文指标边界、正式全链路或出现真实 Critical 时才升级 `ultra`。
+10. **Task 3 不重新审查。** Task 3 已 accepted；本规则从 Task 4 直接生效。
+11. **总监督持续推进。** 阶段性返回、状态报告或耗时报告只用于同步进度，不等于总监督停止；除非用户明确要求停止，或 Task 34 已完成收口，否则总监督者必须继续推动当前 Task 至 accepted，再按硬依赖推进下一 Task。
 
 ## 10. Implementation tasks
 
@@ -502,7 +523,7 @@ Tripwire Task 0 自己用 isolated bootstrap test证明网络拒绝；Task 0之�
   Expected：plugin import/behavior tests fail；不产生真实连接。
 - [ ] Minimal implementation：pytest plugin 在 test start 前 patch `socket.create_connection`、`socket.socket.connect`、`urllib.request.urlopen` 与三个 production `UrlLib*Transport.post_chat_completion`，统一抛 `network tripwire: outbound provider access forbidden`；fake/capturing transport不受影响；session finish断言 production provider call count=0。
 - [ ] GREEN：同命令全部 pass。再运行一条 isolated probe，预期 outbound call 被拒且无 server response。
-- [ ] Spec review：确认覆盖最低层和现有三个 transport。Quality/full-chain review：确认无环境变量/secret读取、不会误把 fake transport计为provider。
+- [ ] 综合 review（同一 reviewer 同时覆盖规格/质量/全链/影子 TokenShare）：确认覆盖最低层和现有三个 transport；确认无环境变量/secret读取、不会误把 fake transport计为provider。
 - [ ] Suggested commit：`git add verification/pytest_network_tripwire.py tests/test_paper_network_tripwire.py; git commit -m "test(verification): block network in paper offline tests"`
 
 ### Task 1: Freeze profile and separate offline approval from paid authority
@@ -521,7 +542,7 @@ Tripwire Task 0 自己用 isolated bootstrap test证明网络拒绝；Task 0之�
   Expected：module/profile absent；partial implementation must fail `offline plan approval is not a paid execution receipt`。
 - [ ] Minimal implementation：写入第3.1/5节全部 exact admission/budget values和24项 canonical Exp2 condition records；loader复算admission canonical JSON digest、`4+480+12=496`、`496+20=516`、`516*332768=171708288`、`516*1.898304=979.524864`；budget digest显式绑定admission digest；验证 `max_concurrent_roots=1`、catalog case membership/position、Lean readiness case、DeepSeek v3 config。Offline approval只记录 plan/profile digest和`offline_implementation`，无 provider scope/expiry/output binding。
 - [ ] GREEN：同命令 pass，provider calls=0。
-- [ ] Spec review：逐值复算 profile。Quality/full-chain review：证明任何 provider-writing function拒绝 offline approval object。
+- [ ] 综合 review（同一 reviewer 同时覆盖规格/质量/全链/影子 TokenShare）：逐值复算 profile；证明任何 provider-writing function拒绝 offline approval object。
 - [ ] Suggested commit：`git add benchmarks/paper/epd027_pipeline_profile.v1.json src/tokenshare/experiments/paper_pipeline_profile.py src/tokenshare/experiments/paper_budget.py tests/experiments/test_paper_pipeline_profile.py tests/experiments/test_paper_budget.py; git commit -m "feat(experiments): freeze reviewed EPD-027 profile"`
 
 ### Task 2: Create machine-readable metric contract
@@ -534,7 +555,7 @@ Tripwire Task 0 自己用 isolated bootstrap test证明网络拒绝；Task 0之�
 - [ ] RED command：`conda run -n tokenshare python -m pytest -p verification.pytest_network_tripwire tests/experiments/test_paper_metric_contract.py -q`。Expected：file/module absent；incomplete row error names exact metric id。
 - [ ] Minimal implementation：每项固定 `metric_id/formula_id/evidence_classes/required_current_provider_roles/required_source_bank_roles/row_scope/numerator/denominator/null/applicability/pair_key/producer/consumer/table/deprecated_aliases`；冻结 global infra-invalid publish-block、Exp2 absolute+paired resource metrics/union、Exp3 trace+online recovery table、Exp3 absolute overhead、Exp4 four modes、Exp5 two tables/enclosing elapsed/captions。
 - [ ] GREEN：上述完整 RED command pass；provider calls=0。
-- [ ] Spec review：逐项对照第4节。Quality/full-chain review：任一 numeric output field没有contract时loader fail closed。
+- [ ] 综合 review（同一 reviewer 同时覆盖规格/质量/全链/影子 TokenShare）：逐项对照第4节；任一 numeric output field没有contract时loader fail closed。
 - [ ] Suggested commit：`git add benchmarks/paper/paper_metric_contract.v1.json src/tokenshare/experiments/paper_metric_contract.py tests/experiments/test_paper_metric_contract.py; git commit -m "feat(metrics): add reviewed paper metric contract"`
 
 ### Task 3: Implement direct-result schema and fixed denominator
@@ -547,7 +568,7 @@ Tripwire Task 0 自己用 isolated bootstrap test证明网络拒绝；Task 0之�
 - [ ] RED command：`conda run -n tokenshare python -m pytest -p verification.pytest_network_tripwire tests/experiments/test_paper_direct_results.py tests/experiments/test_paper_models.py -q`。Expected：new schema absent；existing completion/accepted-validity coupling fails four-gate invariant。
 - [ ] Minimal implementation：实现第3.5节dataclass/projector；manifest/catalog rows分别提供digest-bound condition/case refs、完整axes/quantile/stratum，禁用condition-id/case-id/order parser；observed missing生成`not_started`；只有完整 final artifact+terminal+canonical+merge refs才计completion；evidence-complete wrong final是completion true/success false；current provider/source locator分栏；infra invalid aggregate `{value:null,status:blocked,denominator_inventory_ids:[...]}`；历史schemas只读。
 - [ ] GREEN：fixture correct/wrong/infra/not-started 4 roots reports audit denominator 4、publish blocked；provider calls=0。
-- [ ] Spec review：检查所有refs/booleans。Quality/full-chain review：从inventory到aggregate手算并确认无root消失。
+- [ ] 综合 review（同一 reviewer 同时覆盖规格/质量/全链/影子 TokenShare）：检查所有refs/booleans；从inventory到aggregate手算并确认无root消失。
 - [ ] Suggested commit：`git add src/tokenshare/experiments/paper_direct_results.py src/tokenshare/experiments/paper_models.py tests/experiments/test_paper_direct_results.py tests/experiments/test_paper_models.py; git commit -m "refactor(experiments): add evidence-gated direct results"`
 
 ### Task 4: Prepare exact outbound bytes once and migrate Lean prompt v2
@@ -560,7 +581,7 @@ Tripwire Task 0 自己用 isolated bootstrap test证明网络拒绝；Task 0之�
 - [ ] RED command：`conda run -n tokenshare python -m pytest -p verification.pytest_network_tripwire tests/executors/test_ai_api_request_identity.py tests/executors/test_ai_api_executor_success.py tests/executors/test_ai_api_executor_failover.py tests/executors/test_ai_api_artifacts.py tests/executors/test_ai_api_transport.py tests/executors/test_ai_api_deepseek_transport.py tests/executors/test_ai_api_openai_transport.py tests/test_phase7_ai_api_execution_flow.py tests/experiments/test_ai_profile_suite.py tests/experiments/test_factorization_500_ai.py tests/experiments/test_lean_ai_benchmark.py tests/experiments/test_factorization_paper_adapter.py tests/experiments/test_lean_paper_adapter.py tests/experiments/test_run_paper_experiments_cli.py tests/experiments/test_paper_gate_c_dispatcher.py tests/experiments/test_paper_gate_c_structured_output.py tests/integration/test_paper_protocol_runtime_integration.py tests/plugins/lean_proof/test_lean_prompt_and_parse_policy.py -q`。Expected：static allowlist至少命中一个旧body-dict ABI或旧`kwargs['body']`断言；failover/Gate C/integration transport bytes/endpoint或admission digest不一致；超长/Unicode drift prompt到达reserve；Lean candidate id随request id变化。
 - [ ] Minimal implementation：维护全仓dispatch ABI static allowlist，逐个迁移production/router/wrapper、`lean_ai_benchmark.py`、`tests/phase7_fixtures.py`及实际命中test doubles到唯一 factory；明确保留的historical entrypoint必须在secret/dispatch前fail-closed退役。Body builder returns `PreparedOutboundRequest`；canonical JSON UTF-8 serialization occurs once且三元一致性反复重算校验；冻结admission profile/Unicode算法在reserve/secret/dispatch前；artifact write before secret；DeepSeek/OpenAI/base transport只收 exact bytes + content type + normalized endpoint。Lean v2 stable；v1 raw immutable。
 - [ ] GREEN：上述完整 RED command pass；所有旧`kwargs['body']`测试替换为exact `PreparedOutboundRequest.body_bytes + normalized_absolute_endpoint` ABI断言；spy order=`prepared_validated,prompt_admitted,prepared_persisted,budget_reserved,dispatch_intent,secret_resolved,transport_exact_endpoint_bytes`；provider network zero。
-- [ ] Spec review：byte/digest/endpoint/version field audit。Quality/full-chain review：search transport for secondary JSON serialization and verify old raw hashes。
+- [ ] 综合 review（同一 reviewer 同时覆盖规格/质量/全链/影子 TokenShare）：byte/digest/endpoint/version field audit；search transport for secondary JSON serialization and verify old raw hashes。
 - [ ] Suggested commit：`git add src/tokenshare/executors/ai_api_request_identity.py src/tokenshare/executors/ai_api.py src/tokenshare/executors/ai_api_transport.py src/tokenshare/experiments/ai_profile.py src/tokenshare/experiments/factorization_500_ai.py src/tokenshare/experiments/lean_ai_benchmark.py src/tokenshare/experiments/factorization_paper_adapter.py src/tokenshare/experiments/lean_paper_adapter.py src/tokenshare/experiments/run_ai_profile.py src/tokenshare/experiments/run_factorization_500_ai.py src/tokenshare/experiments/run_paper_experiments.py src/tokenshare/plugins/lean_proof/prompt_builder.py src/tokenshare/plugins/lean_proof/runtime_adapter.py tests/phase7_fixtures.py tests/test_phase7_ai_api_execution_flow.py tests/executors/test_ai_api_request_identity.py tests/executors/test_ai_api_executor_success.py tests/executors/test_ai_api_executor_failover.py tests/executors/test_ai_api_artifacts.py tests/executors/test_ai_api_transport.py tests/executors/test_ai_api_deepseek_transport.py tests/executors/test_ai_api_openai_transport.py tests/experiments/test_ai_profile_suite.py tests/experiments/test_factorization_500_ai.py tests/experiments/test_lean_ai_benchmark.py tests/experiments/test_factorization_paper_adapter.py tests/experiments/test_lean_paper_adapter.py tests/experiments/test_run_paper_experiments_cli.py tests/experiments/test_paper_gate_c_dispatcher.py tests/experiments/test_paper_gate_c_structured_output.py tests/integration/test_paper_protocol_runtime_integration.py tests/plugins/lean_proof/test_lean_prompt_and_parse_policy.py; git commit -m "feat(executors): migrate all dispatch paths to prepared ABI"`
 
 ### Task 5: Implement immutable bank objects, index, and opaque external locator
@@ -573,7 +594,7 @@ Tripwire Task 0 自己用 isolated bootstrap test证明网络拒绝；Task 0之�
 - [ ] RED command：`conda run -n tokenshare python -m pytest -p verification.pytest_network_tripwire tests/executors/test_response_bank.py -q`。Expected：module absent；any path/ArtifactRef locator field fails schema assertion。
 - [ ] Minimal implementation：实现第3.2节 inventory-row self-excluding id serializer/recalculator、manifest/entry/current-wrapper/locator、bank-internal resolver/root marker、`ValidatedResponseBankIndex`、success/failure role invariants与replay binding；任何row tamper在index前fail closed；stream hash后才向consumer提供bytes；consumer wrapper只存locator digest/current refs/timing。
 - [ ] GREEN：上述完整 RED command pass；consumer tree无source digest payload file；provider calls=0。
-- [ ] Spec review：object schema和failure semantics。Quality/full-chain review：monkeypatch `_materialize/copytree/save_*` 证明runner不复制source。
+- [ ] 综合 review（同一 reviewer 同时覆盖规格/质量/全链/影子 TokenShare）：object schema和failure semantics；monkeypatch `_materialize/copytree/save_*` 证明runner不复制source。
 - [ ] Suggested commit：`git add src/tokenshare/executors/response_bank.py src/tokenshare/storage/artifacts.py src/tokenshare/executors/ai_api_replay.py tests/executors/test_response_bank.py tests/executors/test_ai_api_replay_guard.py; git commit -m "feat(executors): add opaque external response-bank locator"`
 
 ### Task 6: Plan complete semantic slot inventory and zero-engine preflight
@@ -586,7 +607,7 @@ Tripwire Task 0 自己用 isolated bootstrap test证明网络拒绝；Task 0之�
 - [ ] RED command：`conda run -n tokenshare python -m pytest -p verification.pytest_network_tripwire tests/experiments/test_paper_response_bank.py tests/experiments/test_paper_budget.py -q`。Expected：planner absent；missing fixture must show no task/lease/request/provider event after implementation。
 - [ ] Minimal implementation：plan adapter-built exact bodies for all semantic sample/replacement slots；为每row写canonical `inventory_entry_id/semantic_slot_key/inference_request_digest/prompt_admission_profile_digest`，拒绝one-slot-two-digests；write roots/units/slots/model/concurrency/calls/tokens/CNY/disk estimates and all 24 Exp2 condition refs/axes in frozen order；validate `max_concurrent_roots=1`；complete validation happens before coordinator construction。Blocked preflight record uses separate preflight ledger/schema, not ProtocolEngine event ledger。
 - [ ] GREEN：上述完整 RED command pass；plan-only provider calls=0；missing=1 produces one preflight blocked record and protocol event count=0。
-- [ ] Spec review：recompute pairing/retry depths。Quality/full-chain review：prove condition/worker absent from digest and early stop does not alter expected inventory。
+- [ ] 综合 review（同一 reviewer 同时覆盖规格/质量/全链/影子 TokenShare）：recompute pairing/retry depths；prove condition/worker absent from digest and early stop does not alter expected inventory。
 - [ ] Suggested commit：`git add src/tokenshare/experiments/paper_response_bank.py src/tokenshare/experiments/paper_budget.py tests/experiments/test_paper_response_bank.py tests/experiments/test_paper_budget.py; git commit -m "feat(experiments): plan complete response-bank inventory"`
 
 ### Task 7: Make SQLite WAL the atomic budget authority
@@ -600,7 +621,7 @@ Tripwire Task 0 自己用 isolated bootstrap test证明网络拒绝；Task 0之�
 - [ ] Minimal implementation：实现第3.7节SQLite schema/state machine；`journal_mode=WAL`、`busy_timeout`、有界lock retry；`BEGIN IMMEDIATE`读取preregistered row并验证slot/request/admission digests，reads settled+reserved, checks calls/tokens/CNY, inserts `(inventory_digest,inventory_entry_id)` unique reservation and commits；terminal publish/ref keyed reconciliation idempotently moves reservation to settled；JSONL generated from committed rows only。No resend/no duplicate charge。
 - [ ] Boundary tests use L3 `516/171708288/979.524864` and absolute CNY1000；provider cost field named `cost_estimate` with frozen pricing basis。
 - [ ] GREEN：上述完整 RED command pass，包括two real local Python processes racing one final reservation；network zero。
-- [ ] Spec review：transaction/state arithmetic。Quality/full-chain review：kill process at reserve/publish/settle boundaries and reopen/reconcile。
+- [ ] 综合 review（同一 reviewer 同时覆盖规格/质量/全链/影子 TokenShare）：transaction/state arithmetic；kill process at reserve/publish/settle boundaries and reopen/reconcile。
 - [ ] Suggested commit：`git add src/tokenshare/experiments/paper_budget_ledger.py src/tokenshare/experiments/paper_resource_accounting.py src/tokenshare/experiments/paper_budget.py tests/experiments/test_paper_budget_ledger.py; git commit -m "feat(experiments): make SQLite the provider budget authority"`
 
 ### Task 8: Acquire, publish, resume, and reconcile bank entries
@@ -614,7 +635,7 @@ Tripwire Task 0 自己用 isolated bootstrap test证明网络拒绝；Task 0之�
 - [ ] Minimal implementation：durable order=`paid receipt/invocation-mode/output marker validate → factory prepare+consistency → prompt admission → prepared artifact temp/fsync/rename/marker → BEGIN IMMEDIATE inventory-row equality+reserve → dispatch_intent → secret resolve → exact endpoint/body send once → response/failure/provenance/usage/latency/model objects durable commit → immutable terminal entry publish+marker → terminal_published → settle`。Startup按第3.7节reconcile；dispatch intent后未terminal=`ambiguous`; never automatic resend。One reacquisition requires unexpired remaining receipt scope/reserve and links prior ambiguous attempt；expired receipt only reconciles/closes already-published state。Same semantic-slot loser never invokes transport。
 - [ ] Provider failure raw可空，但request/failure/provenance/usage-status/latency/pricing/acquisition/model refs完整。Secret只从env进入transport，artifact/log/SQLite/JSONL无secret。
 - [ ] GREEN：上述完整 RED command pass；fake transport calls exactly missing+explicit reacquisition；network tripwire proves production transport unused。
-- [ ] Spec review：state machine/order/failure taxonomy。Quality/full-chain review：resume/reconcile/secret/object graph audit。
+- [ ] 综合 review（同一 reviewer 同时覆盖规格/质量/全链/影子 TokenShare）：state machine/order/failure taxonomy；resume/reconcile/secret/object graph audit。
 - [ ] Suggested commit：`git add src/tokenshare/executors/ai_api.py src/tokenshare/experiments/paper_response_bank.py src/tokenshare/experiments/paper_budget_ledger.py src/tokenshare/storage/artifacts.py tests/experiments/test_paper_response_bank_acquisition.py tests/executors/test_ai_api_executor_success.py tests/executors/test_ai_api_executor_failover.py tests/executors/test_ai_api_artifacts.py tests/storage/test_artifact_store.py; git commit -m "feat(experiments): acquire and reconcile immutable bank entries"`
 
 ### Task 9: Add deterministic logical source-latency scheduler
@@ -627,7 +648,7 @@ Tripwire Task 0 自己用 isolated bootstrap test证明网络拒绝；Task 0之�
 - [ ] RED command：`conda run -n tokenshare python -m pytest -p verification.pytest_network_tripwire tests/local_runtime/test_logical_scheduler.py tests/local_runtime/test_coordinator_logical_schedule.py tests/local_runtime/test_coordinator_full_lifecycle.py tests/local_runtime/test_submission_and_recovery.py tests/local_runtime/test_worker_death_recovery.py -q`。Expected：module absent；coordinator仍按child return顺序而非frozen queue commit；noop sleeper incorrectly reports zero elapsed until rejected。
 - [ ] Minimal implementation：priority queue event scheduler with frozen tie-break；worker completion contract返回scheduled event而不直接commit；coordinator只弹queue并推进clock/commit，lease/deadline/fault/death/early-stop/retry/resume timestamps都来自queue；logical makespan not CPU duration。Trace requires policy exact `logical_source_latency_1x`; online path explicitly chooses real clock。
 - [ ] GREEN：known latencies `[100,300,200]` yield w1=600ms and w2=300ms under frozen dispatch order；early stop/retry/late/fence/death/checkpoint resume矩阵与replay全序pass；no real sleep/network。
-- [ ] Spec review：1x semantics/tie-break。Quality/full-chain review：ensure all trace timestamps share scheduler and no wallclock leak。
+- [ ] 综合 review（同一 reviewer 同时覆盖规格/质量/全链/影子 TokenShare）：1x semantics/tie-break；ensure all trace timestamps share scheduler and no wallclock leak。
 - [ ] Suggested commit：`git add src/tokenshare/local_runtime/logical_scheduler.py src/tokenshare/experiments/paper_runtime_clock.py src/tokenshare/local_runtime/contracts.py src/tokenshare/local_runtime/coordinator.py src/tokenshare/local_runtime/workers.py src/tokenshare/local_runtime/process_worker_child.py tests/local_runtime/test_logical_scheduler.py tests/local_runtime/test_coordinator_logical_schedule.py tests/local_runtime/test_coordinator_full_lifecycle.py tests/local_runtime/test_submission_and_recovery.py tests/local_runtime/test_worker_death_recovery.py; git commit -m "feat(runtime): add deterministic trace event scheduler"`
 
 ### Task 10: Persist attempt ordinal and unify parent-side worker commit ABI
@@ -641,7 +662,7 @@ Tripwire Task 0 自己用 isolated bootstrap test证明网络拒绝；Task 0之�
 - [ ] Minimal implementation：按第3.3节修改core model/lease/protocol event/SQLite schema与migration；per-unit initial0、每个new-attempt transition +1、replay稳定且不复用global ordinal；opaque binding pre-dispatch；exact `PreparedTraceDelivery.v1` serializer/digest；parent验证worker sequence/killed/lease/fence后durably stage artifacts，再以exact `TraceConsumptionCore` payload append one `TRACE_DELIVERY_COMMITTED.v1` visibility record；payload不含event ref/seq/hash，projection从finalized outer header派生committed ref并与SQLite幂等同步。No self-hash、no multi-visible-event batch；pre-event orphan invisible；partial tail fail closed。
 - [ ] Replacement resolver uses persisted ordinal only。Killed/fenced create `TraceDeliveryAttempt` status records, never consumption。
 - [ ] GREEN：sequential/thread/process matrix pass；process death after child prepare yields killed record, zero consumption；replay ordinal stable。
-- [ ] Spec review：ABI/types/event atomicity。Quality/full-chain review：inspect process boundary serialization and all backend call graphs。
+- [ ] 综合 review（同一 reviewer 同时覆盖规格/质量/全链/影子 TokenShare）：ABI/types/event atomicity；inspect process boundary serialization and all backend call graphs。
 - [ ] Suggested commit：`git add src/tokenshare/executors/contracts.py src/tokenshare/core/models.py src/tokenshare/core/leases.py src/tokenshare/protocol_engine.py src/tokenshare/storage/events.py src/tokenshare/storage/sqlite_index.py src/tokenshare/local_runtime/contracts.py src/tokenshare/local_runtime/coordinator.py src/tokenshare/local_runtime/workers.py src/tokenshare/local_runtime/process_worker_child.py src/tokenshare/local_runtime/projection.py tests/core/test_phase1_models.py tests/core/test_lease_manager.py tests/test_phase3_execution_flow.py tests/storage/test_event_ledger.py tests/storage/test_sqlite_index.py tests/storage/test_attempt_ordinal_migration.py tests/local_runtime/test_submission_and_recovery.py tests/local_runtime/test_worker_death_recovery.py tests/local_runtime/test_runtime_boundaries.py tests/local_runtime/test_trace_delivery_parent_commit.py; git commit -m "refactor(runtime): commit prepared deliveries in parent"`
 
 ### Task 11: Implement trace-backed executor and dual provenance
@@ -655,7 +676,7 @@ Tripwire Task 0 自己用 isolated bootstrap test证明网络拒绝；Task 0之�
 - [ ] Minimal implementation：adapter freezes opaque binding before dispatch；executor resolves/stream-verifies external source, schedules logical latency, parses into `PreparedTraceDelivery`; parent stages wrapper/parser/provenance/usage/canonical refs，serializes exact `TraceConsumptionCore` as the sole commit payload，then projection uses finalized outer header to construct `TraceConsumptionRecord`。No event-header field in payload、no hash self-reference、no source raw copy、no source attempt identity reuse、no multi-event visibility batch、current provider calls=0。
 - [ ] Evidence classification carried as source metadata but eligibility deferred to Task18；regression/synthetic hard false regardless completeness。
 - [ ] GREEN：上述完整 RED command pass；object graph contains locator digest/current wrappers only；worker death uses next ordinal/slot。
-- [ ] Spec review：source/current/clock/ABI chain。Quality/full-chain review：Factor and one Lean checker trace from binding to parent commit。
+- [ ] 综合 review（同一 reviewer 同时覆盖规格/质量/全链/影子 TokenShare）：source/current/clock/ABI chain；Factor and one Lean checker trace from binding to parent commit。
 - [ ] Suggested commit：`git add src/tokenshare/executors/trace_backed.py src/tokenshare/experiments/factorization_paper_adapter.py src/tokenshare/experiments/lean_paper_adapter.py tests/executors/test_trace_backed.py tests/experiments/test_factorization_paper_adapter.py tests/experiments/test_lean_paper_adapter.py; git commit -m "feat(executors): deliver external traces through parent commit"`
 
 ### Task 12: Implement standalone Exp1 projector only
@@ -668,7 +689,7 @@ Tripwire Task 0 自己用 isolated bootstrap test证明网络拒绝；Task 0之�
 - [ ] RED command：`conda run -n tokenshare python -m pytest -p verification.pytest_network_tripwire tests/experiments/test_paper_exp1_metrics.py -q`。Expected：module absent。
 - [ ] Minimal implementation：pure `build_exp1_observations(direct_rows, contract)`，不import formal runner/renderer，不修改registry。每个numeric value返回observation draft membership/denominator/null metadata。
 - [ ] GREEN：correct/wrong/infra/not-started fixture hand-calculates expected cells；network zero。
-- [ ] Spec review：Exp1 contract。Quality/full-chain review：pure module/import boundary/missingness。
+- [ ] 综合 review（同一 reviewer 同时覆盖规格/质量/全链/影子 TokenShare）：Exp1 contract；pure module/import boundary/missingness。
 - [ ] Suggested commit：`git add src/tokenshare/experiments/paper_exp1_metrics.py tests/experiments/test_paper_exp1_metrics.py; git commit -m "feat(metrics): add standalone Exp1 projector"`
 
 ### Task 13: Implement standalone Exp2 projector only
@@ -681,7 +702,7 @@ Tripwire Task 0 自己用 isolated bootstrap test证明网络拒绝；Task 0之�
 - [ ] RED command：`conda run -n tokenshare python -m pytest -p verification.pytest_network_tripwire tests/experiments/test_paper_exp2_metrics.py -q`。Expected：module absent。
 - [ ] Minimal implementation：pure main/online projectors。Main pair key=`case-record-digest×repeat×sample×w1/wk`；position strata/quantile只从validated `preregistered_case_ref`读取，不解析case id或依赖hard-50顺序；two repeat raw/min/max/relative difference；absolute slot/token/cost由committed consumptions逐项归因，paired multipliers只在w1分母正且两边完整时计算；online union=`count(unique first attempts with 429 or timeout)/actual first attempts at worker`。Intersection>=3/severe outputs are `not_evaluated_pre_bank` until complete main trace provided。
 - [ ] GREEN：hand fixtures verify ratios、union de-dup、post-bank gate；network zero。
-- [ ] Spec review：Exp2 formulas/timing。Quality/full-chain review：failure retention and no external/provider assumptions。
+- [ ] 综合 review（同一 reviewer 同时覆盖规格/质量/全链/影子 TokenShare）：Exp2 formulas/timing；failure retention and no external/provider assumptions。
 - [ ] Suggested commit：`git add src/tokenshare/experiments/paper_exp2_metrics.py tests/experiments/test_paper_exp2_metrics.py; git commit -m "feat(metrics): add standalone Exp2 projector"`
 
 ### Task 14: Implement standalone Exp3 projector only
@@ -694,7 +715,7 @@ Tripwire Task 0 自己用 isolated bootstrap test证明网络拒绝；Task 0之�
 - [ ] RED command：`conda run -n tokenshare python -m pytest -p verification.pytest_network_tripwire tests/experiments/test_paper_exp3_metrics.py -q`。Expected：module absent。
 - [ ] Minimal implementation：同一模块提供 pure trace projector 与 pure online recovery projector；trace使用same sample-slot reference、absolute ms/token/cost differences、ratio only `*_ratio_audit`、rate-fault completeness null；online严格验证有序 `fault/death → new ordinal attempt → dispatch → raw/failure → provenance → usage → model` 链并产生actual calls/prompt-completion-total usage/cost estimate/wasted actual tokens drafts；missing role使相关cell null/ineligible。
 - [ ] GREEN：manual trace false-positive/death与online rejection/death fixtures pass；network zero。
-- [ ] Spec review：Exp3 denominator/reference/caption inputs。Quality/full-chain review：identity joins and null propagation。
+- [ ] 综合 review（同一 reviewer 同时覆盖规格/质量/全链/影子 TokenShare）：Exp3 denominator/reference/caption inputs；identity joins and null propagation。
 - [ ] Suggested commit：`git add src/tokenshare/experiments/paper_exp3_metrics.py tests/experiments/test_paper_exp3_metrics.py; git commit -m "feat(metrics): add standalone Exp3 projector"`
 
 ### Task 15: Implement standalone Exp4 projector only
@@ -707,7 +728,7 @@ Tripwire Task 0 自己用 isolated bootstrap test证明网络拒绝；Task 0之�
 - [ ] RED command：`conda run -n tokenshare python -m pytest -p verification.pytest_network_tripwire tests/experiments/test_paper_exp4_metrics.py -q`。Expected：module absent。
 - [ ] Minimal implementation：pure pair/projector；四 transition counts；all prereg pairs retained；exact mode formulas from4.1；zero denominators null+reason；identity/resource incomplete pair retained but publish null。
 - [ ] GREEN：four transition fixtures and each zero denominator pass；network zero。
-- [ ] Spec review：all modes/formulas。Quality/full-chain review：pair inventory and no hook inference from mode name alone。
+- [ ] 综合 review（同一 reviewer 同时覆盖规格/质量/全链/影子 TokenShare）：all modes/formulas；pair inventory and no hook inference from mode name alone。
 - [ ] Suggested commit：`git add src/tokenshare/experiments/paper_exp4_metrics.py tests/experiments/test_paper_exp4_metrics.py; git commit -m "feat(metrics): add standalone Exp4 projector"`
 
 ### Task 16: Implement standalone Exp5 projector only
@@ -720,7 +741,7 @@ Tripwire Task 0 自己用 isolated bootstrap test证明网络拒绝；Task 0之�
 - [ ] RED command：`conda run -n tokenshare python -m pytest -p verification.pytest_network_tripwire tests/experiments/test_paper_exp5_metrics.py -q`。Expected：module absent。
 - [ ] Minimal implementation：pure quality/resources projector；provider failure first nonpass；max_retries=0；model×repeat enclosing elapsed=`max(root_terminal)-first_protocol_dispatch`；aggregate median+min/max/range with 3 raw values；exact two table payloads and confounding caption metadata。
 - [ ] GREEN：overlapping root clocks prove enclosing elapsed differs from sum；all tests pass/network zero。
-- [ ] Spec review：Exp5 denominators/wallclock/caption。Quality/full-chain review：no pairwise/significance/retry/recovery/accepted-validity outputs。
+- [ ] 综合 review（同一 reviewer 同时覆盖规格/质量/全链/影子 TokenShare）：Exp5 denominators/wallclock/caption；no pairwise/significance/retry/recovery/accepted-validity outputs。
 - [ ] Suggested commit：`git add src/tokenshare/experiments/paper_exp5_metrics.py tests/experiments/test_paper_exp5_metrics.py; git commit -m "feat(metrics): add standalone Exp5 projector"`
 
 ### Task 17: Integrate projector registry and formal metrics serially
@@ -733,7 +754,7 @@ Tripwire Task 0 自己用 isolated bootstrap test证明网络拒绝；Task 0之�
 - [ ] RED command：`conda run -n tokenshare python -m pytest -p verification.pytest_network_tripwire tests/experiments/test_paper_metric_registry.py tests/experiments/test_paper_formal_metrics.py -q`。Expected：registry absent；central module still derives old formulas/headers。
 - [ ] Minimal implementation：registry maps contract table ids to Tasks12–16 pure functions，且Exp3 trace/online recovery两张表都指向Task14；central module only loads direct rows, invokes registry, validates contract field set and publishes intermediate metric drafts；remove old formula branches/sensitivity/pairwise aliases。
 - [ ] GREEN：上述完整 RED command pass；all five experiment modules and both Exp3 projectors invoked through one registry；network zero。
-- [ ] Spec review：mapping/contract completeness。Quality/full-chain review：central file contains no duplicate metric arithmetic。
+- [ ] 综合 review（同一 reviewer 同时覆盖规格/质量/全链/影子 TokenShare）：mapping/contract completeness；central file contains no duplicate metric arithmetic。
 - [ ] Suggested commit：`git add src/tokenshare/experiments/paper_metric_registry.py src/tokenshare/experiments/paper_formal_metrics.py tests/experiments/test_paper_metric_registry.py tests/experiments/test_paper_formal_metrics.py; git commit -m "refactor(metrics): register standalone paper projectors"`
 
 ### Task 18: Version evidence classes and enforce acquisition eligibility
@@ -746,7 +767,7 @@ Tripwire Task 0 自己用 isolated bootstrap test证明网络拒绝；Task 0之�
 - [ ] RED command：`conda run -n tokenshare python -m pytest -p verification.pytest_network_tripwire tests/experiments/test_paper_models.py tests/experiments/test_paper_formal_evidence.py -q`。Expected：current classification only understands real transport/capturing and misclassifies trace/regression。
 - [ ] Minimal implementation：new schema versions include source classification, paid receipt scope/digest, manifest completeness, current/source refs/calls, direct evidence/identity flags。Necessary trace eligibility=`source_class=approved_real_full_acquisition AND paid scope full_bank AND complete expected inventory AND current calls=0 AND full current lifecycle`；capability still paper false。
 - [ ] GREEN：上述完整 RED command pass；regression fixture completes pipeline but paper false；network zero。
-- [ ] Spec review：classification truth table。Quality/full-chain review：old decoders read-only and no type-confusion between receipt classes。
+- [ ] 综合 review（同一 reviewer 同时覆盖规格/质量/全链/影子 TokenShare）：classification truth table；old decoders read-only and no type-confusion between receipt classes。
 - [ ] Suggested commit：`git add src/tokenshare/experiments/paper_models.py src/tokenshare/experiments/paper_formal_evidence.py tests/experiments/test_paper_models.py tests/experiments/test_paper_formal_evidence.py; git commit -m "feat(experiments): enforce trace acquisition eligibility"`
 
 ### Task 19: Integrate formal runner with preflight, scheduler, and normal lifecycle
@@ -759,7 +780,7 @@ Tripwire Task 0 自己用 isolated bootstrap test证明网络拒绝；Task 0之�
 - [ ] RED command：`conda run -n tokenshare python -m pytest -p verification.pytest_network_tripwire tests/experiments/test_paper_formal_runner.py tests/experiments/test_paper_formal_callbacks.py -q`。Expected：runner lacks new path or emits engine events before bank completeness check；shared baseline path may still run。
 - [ ] Minimal implementation：preflight constructs validated metadata index/locator before coordinator；missing writes only `paper_preflight_blocked.v1` outside protocol ledger then returns。Complete trace runs existing coordinator with injected clock/executor/hooks；no replay shortcut/no provider/no source materialization。
 - [ ] GREEN：上述完整 RED command pass；one Factor + one Lean fixture traverses full lifecycle；missing case protocol events exactly 0。
-- [ ] Spec review：preflight/event boundary and full lifecycle。Quality/full-chain review：manual current/source object graph and worker death trace。
+- [ ] 综合 review（同一 reviewer 同时覆盖规格/质量/全链/影子 TokenShare）：preflight/event boundary and full lifecycle；manual current/source object graph and worker death trace。
 - [ ] Suggested commit：`git add src/tokenshare/experiments/paper_formal_runner.py src/tokenshare/experiments/paper_formal_callbacks.py tests/experiments/test_paper_formal_runner.py tests/experiments/test_paper_formal_callbacks.py; git commit -m "feat(experiments): run traces through normal formal lifecycle"`
 
 ### Task 20: Materialize one lineage observation for every numeric cell
@@ -772,7 +793,7 @@ Tripwire Task 0 自己用 isolated bootstrap test证明网络拒绝；Task 0之�
 - [ ] RED command：`conda run -n tokenshare python -m pytest -p verification.pytest_network_tripwire tests/experiments/test_paper_metric_observations.py tests/experiments/test_paper_formal_metrics.py -q`。Expected：module absent；current metric rows have row-level refs only。
 - [ ] Minimal implementation：implement 第3.6 dataclass/required-role matrix、canonical observation id/digest；builder joins direct refs/current task-attempt-events/parser-verifier-checker-canonical-ledger，并按evidence class分别填current provider refs或source bank locators与N/A roles。Exp3 online drafts必须完整进入。Count/denominator/range也各自有observation。Missing required lineage makes cell null and table blocked。
 - [ ] GREEN：上述完整 RED command pass；fixture numeric cell coverage=1.0；network zero。
-- [ ] Spec review：field/role completeness。Quality/full-chain review：randomly select cells and recompute solely from observation membership。
+- [ ] 综合 review（同一 reviewer 同时覆盖规格/质量/全链/影子 TokenShare）：field/role completeness；randomly select cells and recompute solely from observation membership。
 - [ ] Suggested commit：`git add src/tokenshare/experiments/paper_metric_observations.py src/tokenshare/experiments/paper_formal_metrics.py tests/experiments/test_paper_metric_observations.py tests/experiments/test_paper_formal_metrics.py; git commit -m "feat(metrics): attach lineage to every numeric cell"`
 
 ### Task 21: Render/report only contract observations and audit claims
@@ -785,7 +806,7 @@ Tripwire Task 0 自己用 isolated bootstrap test证明网络拒绝；Task 0之�
 - [ ] RED command：`conda run -n tokenshare python -m pytest -p verification.pytest_network_tripwire tests/experiments/test_paper_metric_renderer_contract.py tests/experiments/test_paper_exp5_artifacts.py tests/experiments/test_paper_formal_report.py -q`。Expected：old outputs/claims and row-level refs fail exact inventory/caption tests。
 - [ ] Minimal implementation：renderer input is observation collection；contract allowlist determines numeric columns；exact tables=Exp1 feasibility、Exp2 trace/online、Exp3 trace robustness、Exp3 online `paper_table_recovery_online.csv`、Exp4 ablation、Exp5 quality/resources；audit JSONL separate。No zero-fill、no uncontracted derived score。
 - [ ] GREEN：上述完整 RED command pass；all caption/claim tests pass/network zero。
-- [ ] Spec review：table/header/caption inventory。Quality/full-chain review：one observation→CSV/TEX/report cell and unsafe raw scan。
+- [ ] 综合 review（同一 reviewer 同时覆盖规格/质量/全链/影子 TokenShare）：table/header/caption inventory；one observation→CSV/TEX/report cell and unsafe raw scan。
 - [ ] Suggested commit：`git add src/tokenshare/experiments/paper_exp5_artifacts.py src/tokenshare/experiments/paper_formal_report.py tests/experiments/test_paper_metric_renderer_contract.py tests/experiments/test_paper_exp5_artifacts.py tests/experiments/test_paper_formal_report.py; git commit -m "refactor(report): render lineage-backed paper cells"`
 
 ### Task 22: Replace legacy full-resource A with external bank pressure path
@@ -798,7 +819,7 @@ Tripwire Task 0 自己用 isolated bootstrap test证明网络拒绝；Task 0之�
 - [ ] RED command：`conda run -n tokenshare python -m pytest -p verification.pytest_network_tripwire tests/experiments/test_paper_full_resource_trace.py tests/experiments/test_paper_formal_checkpoint.py tests/experiments/test_paper_formal_evidence.py tests/experiments/test_paper_formal_runner.py -q`。Expected：shared builder/current path still found；old scan/copy behavior fails pressure probes。
 - [ ] Minimal implementation：delete current-path shared functions/writers；retain historical decoder；route via validated index/external locator；preserve root-delta/streaming/rolling forecast；500-root synthetic Factor-compatible source uses logical clock/no provider/no Lean。
 - [ ] GREEN：上述完整 RED command pass；`max_live_full_outcomes<=1`、source hash unchanged、no copied raw/network。
-- [ ] Spec review：legacy deletion/preserved generics。Quality/full-chain review：memory/object graph/checkpoint replay。
+- [ ] 综合 review（同一 reviewer 同时覆盖规格/质量/全链/影子 TokenShare）：legacy deletion/preserved generics；memory/object graph/checkpoint replay。
 - [ ] Suggested commit：`git add src/tokenshare/experiments/paper_formal_evidence.py src/tokenshare/experiments/paper_formal_runner.py src/tokenshare/experiments/paper_formal_checkpoint.py tests/experiments/test_paper_full_resource_trace.py tests/experiments/test_paper_formal_checkpoint.py tests/experiments/test_paper_formal_evidence.py tests/experiments/test_paper_formal_runner.py; git commit -m "refactor(experiments): replace shared scans with external bank index"`
 
 ### Task 23: Import frozen historical real success fixture and prove L2 path
@@ -811,7 +832,7 @@ Tripwire Task 0 自己用 isolated bootstrap test证明网络拒绝；Task 0之�
 - [ ] RED command：`conda run -n tokenshare python -m pytest -p verification.pytest_network_tripwire tests/experiments/test_paper_historical_real_fixture.py -q`。Expected：importer/fixture absent；do not substitute Exp3/4 negative source。
 - [ ] Minimal implementation：read only指定source；按第6.2节真实row predicate与case-row/batch/tree/raw/provenance digests验证，绝不要求或写入不存在的`summary.passed`。Importer保留raw payload bytes不改写，仅脱敏另存所需metadata对象并记录source/object digests。Dedicated adapter只接受该fixture marker，把target建为single leaf并走current normal coordinator/direct-factor parser/product+primality+oracle verifier/canonical/explicit single-leaf merge/ledger/direct/observations/regression table；拒绝正式range catalog/condition。
 - [ ] GREEN：同命令从tracked fixture运行，即使测试时不读external source也pass；provider calls=0；paper eligible=false；输出明确`facility_path_only/not_formal_range_semantics`。Negative smoke expected-fail and pre/post source inventory identical。
-- [ ] Spec review：source identity/hash/classification。Quality/full-chain review：sanitization and source→state machine→table trace。
+- [ ] 综合 review（同一 reviewer 同时覆盖规格/质量/全链/影子 TokenShare）：source identity/hash/classification；sanitization and source→state machine→table trace。
 - [ ] Suggested commit：`git add src/tokenshare/experiments/paper_historical_fixture.py src/tokenshare/experiments/historical_real_factorization_single_leaf.py tests/experiments/test_paper_historical_real_fixture.py tests/fixtures/paper/historical_real_factorization_v1; git commit -m "test(experiments): freeze historical real L2 fixture"`
 
 ### Task 24: Make replay and cell-lineage recomputation deterministic
@@ -824,7 +845,7 @@ Tripwire Task 0 自己用 isolated bootstrap test证明网络拒绝；Task 0之�
 - [ ] RED command：`conda run -n tokenshare python -m pytest -p verification.pytest_network_tripwire tests/experiments/test_paper_traceability.py tests/experiments/test_paper_formal_runner.py tests/experiments/test_paper_formal_report.py -q`。Expected：no cell-level lineage digest or second recomputation equality。
 - [ ] Minimal implementation：canonical sort observations by table/row/column/observation id；recompute from direct/current/source immutable inputs through registry/renderer；write `audit/paper_cell_lineage.jsonl` and digests；locator read-only。Missing object blocks，never acquisition。
 - [ ] GREEN：same input twice yields three identical digests；network/provider zero；source hashes unchanged。
-- [ ] Spec review：determinism and completeness。Quality/full-chain review：select one cell per experiment and recalc without renderer state。
+- [ ] 综合 review（同一 reviewer 同时覆盖规格/质量/全链/影子 TokenShare）：determinism and completeness；select one cell per experiment and recalc without renderer state。
 - [ ] Suggested commit：`git add src/tokenshare/experiments/paper_traceability.py src/tokenshare/experiments/paper_formal_runner.py src/tokenshare/experiments/paper_formal_report.py tests/experiments/test_paper_traceability.py tests/experiments/test_paper_formal_runner.py tests/experiments/test_paper_formal_report.py; git commit -m "feat(experiments): deterministically recompute cell lineage"`
 
 ### Task 25: Plan L3 online/capability runs and produce compliant direct/current evidence
@@ -837,7 +858,7 @@ Tripwire Task 0 自己用 isolated bootstrap test证明网络拒绝；Task 0之�
 - [ ] RED command：`conda run -n tokenshare python -m pytest -p verification.pytest_network_tripwire tests/experiments/test_paper_online_checks.py tests/experiments/test_paper_formal_callbacks.py -q`。Expected：plan/evidence producer module absent，或现有online path缺digest-bound direct/current provider链并混入metric/gate逻辑。
 - [ ] Minimal implementation：只实现pure plan与evidence producer contract；capability controlled initial rejection hooks preregistered且保留source raw；Exp2 producer输出24 ordered condition refs、`max_concurrent_roots=1`和current provider direct rows；Exp3 producer输出ordered fault/death/new-attempt/provider objects与actual resource inputs。所有公式仍由Tasks13/14，registry由17，observation由20，renderer由21，gates由28；Task25不得计算union/severe/wasted/cost cell。
 - [ ] GREEN：synthetic plan/evidence fixtures pass/network zero；产物可被Task13/14消费，online rows never merge into main 600-root table。
-- [ ] Spec review：counts/condition/output schema。Quality/full-chain review：identity/time ordering且静态扫描无formula/gate实现。
+- [ ] 综合 review（同一 reviewer 同时覆盖规格/质量/全链/影子 TokenShare）：counts/condition/output schema；identity/time ordering且静态扫描无formula/gate实现。
 - [ ] Suggested commit：`git add src/tokenshare/experiments/paper_online_checks.py src/tokenshare/experiments/paper_formal_callbacks.py tests/experiments/test_paper_online_checks.py tests/experiments/test_paper_formal_callbacks.py; git commit -m "feat(experiments): plan L3 checks and emit online evidence"`
 
 ### Task 26: Validate user-supplied paid receipts without creating them
@@ -850,7 +871,7 @@ Tripwire Task 0 自己用 isolated bootstrap test证明网络拒绝；Task 0之�
 - [ ] RED command：`conda run -n tokenshare python -m pytest -p verification.pytest_network_tripwire tests/experiments/test_paper_paid_authorization.py -q`。Expected：module absent；any permissive offline approval path fails。
 - [ ] Minimal implementation：parse/validate第5.3与3.7 schema；receipt canonical digest只排除`receipt_digest`自身并绑定authorized plan/inventory/admission；clock validation uses explicit now parameter。CLI invocation mode独立于receipt：`new_run`在receipt验证后以create-new派生marker绑定不存在root，同一receipt的`resume`验证既有marker全部digests；expired只进入pure reconcile/close branch。Validator只读receipt且只能建立/验证marker。No `approve/create/mint/record-paid` API。
 - [ ] GREEN：上述完整 RED command pass/network zero；validation failure happens before API-key env read and budget reserve。
-- [ ] Spec review：scope matrix。Quality/full-chain review：search CLI/module for receipt creation path and implicit authorization。
+- [ ] 综合 review（同一 reviewer 同时覆盖规格/质量/全链/影子 TokenShare）：scope matrix；search CLI/module for receipt creation path and implicit authorization。
 - [ ] Suggested commit：`git add src/tokenshare/experiments/paper_paid_authorization.py tests/experiments/test_paper_paid_authorization.py; git commit -m "feat(experiments): validate scoped paid execution receipts"`
 
 ### Task 27: Add bounded pipeline CLI commands
@@ -863,7 +884,7 @@ Tripwire Task 0 自己用 isolated bootstrap test证明网络拒绝；Task 0之�
 - [ ] RED command：`conda run -n tokenshare python -m pytest -p verification.pytest_network_tripwire tests/experiments/test_run_paper_pipeline.py tests/experiments/test_run_paper_experiments_cli.py -q`。Expected：new module/subcommands absent。
 - [ ] Minimal implementation：each thin subcommand delegates one existing service and prints versioned JSON `{status,scope,profile/budget/inventory/receipt/output-marker digests,evidence_class,provider_calls}`。Offline commands reject provider option；provider commands validate receipt→new/resume marker→prepared prompt admission→budget before secret。`--external-bank-root`仅传process-local resolver。两个gate parsers存在但policy在Task28。
 - [ ] GREEN：all CLI fake/offline tests pass；provider network zero；unknown/missing args exit2 with no output mutation。
-- [ ] Spec review：command/schema matrix。Quality/full-chain review：argv/env/log secret and state-change boundaries。
+- [ ] 综合 review（同一 reviewer 同时覆盖规格/质量/全链/影子 TokenShare）：command/schema matrix；argv/env/log secret and state-change boundaries。
 - [ ] Suggested commit：`git add src/tokenshare/experiments/run_paper_pipeline.py src/tokenshare/experiments/run_paper_experiments.py tests/experiments/test_run_paper_pipeline.py tests/experiments/test_run_paper_experiments_cli.py; git commit -m "feat(experiments): add bounded EPD-027 pipeline CLI"`
 
 ### Task 28: Split formal execution gate from paper publication gate
@@ -876,7 +897,7 @@ Tripwire Task 0 自己用 isolated bootstrap test证明网络拒绝；Task 0之�
 - [ ] RED command：`conda run -n tokenshare python -m pytest -p verification.pytest_network_tripwire tests/experiments/test_paper_formal_gate.py tests/experiments/test_run_paper_pipeline.py -q`。Expected：parsers exist but execution/publication policies absent or cyclically require outputs before execution。
 - [ ] Minimal implementation：`formal_execution_gate(selected_experiments, prerequisites)`只检查运行前可得的L1/L2、authority、profile/contract、selected receipt/budget/inventory/output binding以及full-bank completeness（若selected Exp2–4）；绝不要求本次尚未产出的formal L4、tables或post-bank severe。`paper_publication_gate(selected_experiments, terminal_evidence)`只在terminal outputs后检查selected evidence eligibility、formal cell audit/determinism和Exp2 online/main intersection>=3/no severe。Small facility gate fixtures仅标`facility_gate_verified`。Return exact blocked reasons and provider calls0。
 - [ ] GREEN：两阶段truth table pass；execution gate可在空fresh output通过，publication gate对同一空output blocked；selected Exp1不询问Exp5，P0-full才聚合全部scope。
-- [ ] Spec review：pre/post truth table与无循环DAG。Quality/full-chain review：CLI binding、stage type、no side effects/provider。
+- [ ] 综合 review（同一 reviewer 同时覆盖规格/质量/全链/影子 TokenShare）：pre/post truth table与无循环DAG；CLI binding、stage type、no side effects/provider。
 - [ ] Suggested commit：`git add src/tokenshare/experiments/paper_formal_gate.py src/tokenshare/experiments/run_paper_pipeline.py tests/experiments/test_paper_formal_gate.py tests/experiments/test_run_paper_pipeline.py; git commit -m "feat(experiments): split execution and publication gates"`
 
 ### Task 29: Supersede old launchers and add scoped new launchers
@@ -889,7 +910,7 @@ Tripwire Task 0 自己用 isolated bootstrap test证明网络拒绝；Task 0之�
 - [ ] RED command：`conda run -n tokenshare python -m pytest -p verification.pytest_network_tripwire tests/experiments/test_smoke_launcher_supervision.py tests/experiments/test_paper_smoke.py -q`。Expected：old scripts still dispatch/contain unlimited semantics；new scripts absent。
 - [ ] Minimal implementation：old scripts print EPD-027 supersession and exit2 before env/key。New wrappers bind `new_run|resume` marker、scope、receipt path、explicit PowerShell `-AllowProviderCalls`; invoke exact CLI subcommand。Exp1 routes `run-exp1-online`；Exp5 capability/full分别routes `run-exp5-capability-smoke`/`run-exp5-online`并拒绝scope互换；formal launchers dispatch前execution gate、terminal后publication gate。Supervisor/log redaction reused；所有新provider launchers当前只实现/离线验收，不在本计划执行。
 - [ ] GREEN：scripts parse in no-provider tests；old exit2；wrong receipts fail pre-secret/network。
-- [ ] Spec review：launcher/scope matrix。Quality/full-chain review：PowerShell argv quoting、secret timing、exit propagation/log redaction。
+- [ ] 综合 review（同一 reviewer 同时覆盖规格/质量/全链/影子 TokenShare）：launcher/scope matrix；PowerShell argv quoting、secret timing、exit propagation/log redaction。
 - [ ] Suggested commit：`git add local/run_epd027_l3_checks.ps1 local/run_epd027_bank_acquisition.ps1 local/run_epd027_trace_matrix.ps1 local/run_epd027_exp1_online.ps1 local/run_epd027_exp5_capability.ps1 local/run_epd027_exp5_online.ps1 local/run_exp1_exp4_v3_smoke.ps1 local/run_exp3_exp4_v3_smoke.ps1 local/run_exp5_v3_smoke.ps1 tests/experiments/test_smoke_launcher_supervision.py tests/experiments/test_paper_smoke.py; git commit -m "feat(experiments): replace legacy smoke launchers"`
 
 ### Task 30: Assemble four exact verification profiles
@@ -902,7 +923,7 @@ Tripwire Task 0 自己用 isolated bootstrap test证明网络拒绝；Task 0之�
 - [ ] RED command：`conda run -n tokenshare python -m pytest -p verification.pytest_network_tripwire tests/test_init_verification_profiles.py -q`。Expected：profiles/`--profile` behavior absent。
 - [ ] Minimal implementation：profile manifests list exact nodeids, not directories。L1 covers Tasks0–29全部offline component nodeids（含Tasks25–29）、Task24 pure component、small facility gate fixture和one Lean trace fixture/<=2 checker calls；L2 Task23 positive+negative；L3只audit supplied artifact root且不能dispatch；L4含Task24 artifact-root lineage/digest audit。`run_verification.py --profile NAME --artifact-root PATH` validates profile dir and prints profile digest/count/status；init optional focused profile preserves default Fast。
 - [ ] GREEN：run four profile parser tests；each offline run loads tripwire；missing L3 artifact returns `blocked` nonzero, not pass。
-- [ ] Spec review：nodeid/level mapping。Quality/full-chain review：prove Fast coverage is not substituted and no profile launches provider。
+- [ ] 综合 review（同一 reviewer 同时覆盖规格/质量/全链/影子 TokenShare）：nodeid/level mapping；prove Fast coverage is not substituted and no profile launches provider。
 - [ ] Suggested commit：`git add verification/profiles verification/run_verification.py init.ps1 init.sh tests/test_init_verification_profiles.py; git commit -m "test(verification): add strict L1 to L4 profiles"`
 
 ### Task 31: Execute and review L1 component acceptance
@@ -921,7 +942,7 @@ Tripwire Task 0 自己用 isolated bootstrap test证明网络拒绝；Task 0之�
   Expected：Tasks0–29全部offline nodeids（明确含Tasks25–29）、Task24 pure component、两阶段gate mini fixture均pass；provider calls=0；one Lean root、checker calls<=2；profile result `l1_components=passed`，但不得设置formal L3/L4 pass。
 - [ ] Run `.\init.ps1` Fast。Expected exit0；it is regression evidence only。
 - [ ] Explicitly do not run Full、all-tests pytest、LeanAudit、force-all or large Lean。
-- [ ] Spec reviewer validates L1 entrance/coverage/results。Quality/full-chain reviewer selects PreparedOutboundRequest→bank→budget→scheduler→parent commit→direct→observation chain and reruns profile。Any Critical/Important returns to owning Task。
+- [ ] 一个综合独立 reviewer 同时覆盖规格、质量、全链与影子 TokenShare 检查：验证 L1 entrance/coverage/results，并选取 PreparedOutboundRequest→bank→budget→scheduler→parent commit→direct→observation chain 后复核 profile；任何 Critical/Important 返回 owning Task。
 - [ ] Suggested commit：none for runtime evidence alone；defect fixes use owning Task commit after both reviews。
 
 ### Task 32: Execute and review L2 historical-real full-path acceptance
@@ -938,7 +959,7 @@ Tripwire Task 0 自己用 isolated bootstrap test证明网络拒绝；Task 0之�
 
   Expected：positive source manifest records actual per-number predicate `status=passed/final_correctness=true/oracle_match=true`，and exact case-row/batch/tree/raw/provenance digests；unmodified saved raw payload经dedicated single-leaf adapter到terminal current protocol/direct/observations/regression table；provider calls=0；classification regression_only/paper eligible false/not formal range semantics。Negative Exp3/4 expected-fail leaves source hashes unchanged。Result=`l2_historical_real=passed` only when all hold。
 - [ ] Run replay twice for L2 and require equal observation/table/lineage digests；this supports determinism but does not replace L4。
-- [ ] Spec reviewer verifies the frozen positive source, not 2026-07-31 negative, is used。Quality/full-chain reviewer manually traces source object→locator→current full lifecycle→one numeric cell。Blocked/fail returns to owning Task。
+- [ ] 一个综合独立 reviewer 同时覆盖规格、质量、全链与影子 TokenShare 检查：验证使用 frozen positive source（不是 2026-07-31 negative），并人工追踪 source object→locator→current full lifecycle→one numeric cell；Blocked/fail 返回 owning Task。
 - [ ] Suggested commit：none for ignored L2 outputs；fixture/source changes are forbidden here and must return to Task23。
 
 ### Task 33: Conditionally execute L3 new-real smoke under paid receipt
@@ -957,7 +978,7 @@ Tripwire Task 0 自己用 isolated bootstrap test证明网络拒绝；Task 0之�
 
   Expected：4 capability calls exactly (Factor initial/replacement + Lean initial/replacement), immutable complete capability manifest, capability trace through current full path/tables；Exp2 24 roots按frozen sequence、`max_concurrent_roots=1`、all six levels/480 upper；Exp3 2 roots/12 upper。Task25只产生compliant direct/current evidence；Task13计算per-worker union fraction<=0.2；Task14→17→20→21生成Exp3 recovery online actual calls/usage/cost estimate/wasted actual tokens和两条ordered chains。No pre-bank severe/intersection requirement。
 - [ ] Audit with `paper-l3-new-real-smoke-audit` profile。Exit `l3_new_real_smoke_verified` only if all L3 criteria in6.3 pass and settled+reserved budget stays within all limits；budget/quota/provider failure yields blocked/budget-exhausted, not pass。
-- [ ] Spec reviewer validates receipt/counts/threshold timing。Quality/full-chain reviewer traces both capability roots and all online evidence classes, budget reconciliation and secret scan。
+- [ ] 一个综合独立 reviewer 同时覆盖规格、质量、全链与影子 TokenShare 检查：验证 receipt/counts/threshold timing，并追踪两个 capability roots、全部 online evidence classes、budget reconciliation 与 secret scan。
 - [ ] Suggested commit：none for paid/ignored outputs；any code fix returns to owning Task and invalidates/restarts fresh-output L3。
 
 ### Task 34: Execute L4 cell audit when eligible, then update docs/handoff
@@ -973,7 +994,7 @@ Tripwire Task 0 自己用 isolated bootstrap test证明网络拒绝；Task 0之�
 - [ ] Update code map for all source changes。Update latest design stale “EPD-027未实现” only to exact verified facility status；keep no formal results/full bank language。Append implementation evidence to decision log without rewriting history。
 - [ ] Second documentation review：search current docs for shared Exp1 actual、old next smoke、old evidence class/metrics、actual bill wording；correct current prose or mark historical explicitly。
 - [ ] Rerun affected four focused profiles where prerequisites exist and `.\init.ps1` Fast；blocked L3/L4 profiles remain blocked, not silently omitted。Do not run prohibited broad commands。
-- [ ] Spec reviewer checks all 24 reviewed requirements and status truthfulness。Quality/full-chain reviewer checks source→state→direct→observation→table→cell lineage, commands/results/docs/formal gate。Critical/Important must clear。
+- [ ] 一个综合独立 reviewer 同时覆盖规格、质量、全链与影子 TokenShare 检查：检查全部 24 项要求和状态真实性，以及 source→state→direct→observation→table→cell lineage、commands/results/docs/formal gate；Critical/Important 必须清零。
 - [ ] Suggested commit：`git add progress.md feature_list.json session-handoff.md Doc/TechnicalDocument/tokenshare_v1_code_map.md Doc/TechnicalDocument/tokenshare_experiment_parameter_decision_log.md Doc/TechnicalDocument/tokenshare_latest_real_plugin_experiment_design.md Doc/agent-navigation.md; git commit -m "docs(experiments): record reviewed EPD-027 facility status"`
 
 ## 11. Artifact ownership, rollback, and recovery
@@ -1013,7 +1034,7 @@ Offline facility DoD：Tasks0–32 completed/reviewed，L1/L2 passed，Fast pass
 
 L3/L4 DoD are separate and only pass under sections6.3/6.4；otherwise exact blocked statuses。Formal matrix remains `NO-GO` in this implementation scope。
 
-Handoff must record：branch/worktree/user dirty files；Task0–34 developer/spec/quality reviewer identities and findings；profile/authority/contract/fixture/inventory/budget/receipt/manifest digests；calls/tokens/CNY/reservation peak/terminal/missing/ambiguous counts；L1–L4 statuses；minimal Lean root/checker count；source hashes；prohibited broad commands not run；future selected-scope requirements。
+Handoff must record：branch/worktree/user dirty files；Task0–34 developer/综合 reviewer identities and findings；profile/authority/contract/fixture/inventory/budget/receipt/manifest digests；calls/tokens/CNY/reservation peak/terminal/missing/ambiguous counts；L1–L4 statuses；minimal Lean root/checker count；source hashes；prohibited broad commands not run；future selected-scope requirements。
 
 ## 14. Five highest execution risks
 
