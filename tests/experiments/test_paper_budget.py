@@ -1,15 +1,18 @@
 import json
 import os
 from dataclasses import replace
+from hashlib import sha256
 from pathlib import Path
 
 import pytest
 
 import tokenshare.experiments.paper_budget as paper_budget
+import tokenshare.experiments.paper_catalog as paper_catalog_module
 from tokenshare.executors.ai_api_config import AIAPIProviderEntry
 from tokenshare.experiments.paper_budget import (
     PAPER_EXPERIMENT_TASK_LIMITS,
     PaperBudgetApprovalError,
+    build_response_bank_budget_report,
     load_exp1_pilot_profile,
     plan_exp1_pilot,
     plan_paper_suite,
@@ -29,9 +32,105 @@ from tokenshare.experiments.paper_model_policy import (
     PAPER_MODEL_ENDPOINT_COHORT_V3_MEMBERS,
 )
 from tokenshare.experiments.paper_pipeline_profile import (
-    load_paper_pipeline_profile,
+    OfflineImplementationApproval,
 )
 from tokenshare.experiments.paper_runner import expand_plan_conditions
+
+
+@pytest.fixture(autouse=True)
+def _use_tracked_lean_budget_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Budget tests bind to tracked checker evidence, not host-local Lean bytes."""
+
+    repo_root = Path(__file__).resolve().parents[2]
+    tracked = json.loads(
+        (repo_root / "benchmarks/paper/lean_checker_preflight.v1.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    environment = (
+        paper_catalog_module._current_lean_environment_manifest_without_preflight()
+    )
+    object.__setattr__(
+        environment,
+        "environment_digest",
+        tracked["environment_digest"],
+    )
+    oracle_source = (
+        repo_root
+        / "fixtures/lean_proof_project/TokenShare/LemmaGraphOracle.lean"
+    ).resolve()
+    original_file_digest = paper_catalog_module._file_digest
+
+    def tracked_file_digest(path: Path) -> str:
+        resolved = Path(path).resolve()
+        if resolved != oracle_source:
+            return original_file_digest(resolved)
+        source = resolved.read_text(encoding="utf-8")
+        source = source.replace("\r\n", "\n").replace("\r", "\n")
+        return f"sha256:{sha256(source.encode('utf-8')).hexdigest()}"
+
+    monkeypatch.setattr(
+        paper_catalog_module,
+        "_current_lean_environment_manifest_without_preflight",
+        lambda: environment,
+    )
+    monkeypatch.setattr(
+        paper_catalog_module,
+        "default_lean_paper_environment_manifest",
+        lambda: environment,
+    )
+    monkeypatch.setattr(
+        paper_catalog_module,
+        "lean_checker_implementation_digest",
+        lambda: tracked["checker_implementation_digest"],
+    )
+    monkeypatch.setattr(
+        paper_catalog_module,
+        "_file_digest",
+        tracked_file_digest,
+    )
+
+
+def test_response_bank_budget_report_exports_complete_plan_estimates() -> None:
+    class InventoryPlan:
+        expected_slot_count = 7
+        max_concurrent_roots = 1
+        terminal_provider_failure_count = 2
+        terminal_success_count = 3
+        terminal_unacquired_count = 2
+
+    budget = paper_budget.PaperBudgetResult(
+        budget_digest="sha256:" + "b" * 64,
+        planned_experiments=["exp2_real_ai_scalability"],
+        planned_conditions=24,
+        planned_root_runs=600,
+        planned_ai_units=12000,
+        max_provider_attempts=12000,
+        token_upper_bound=300000,
+        cost_upper_bound=100.0,
+        wall_clock_estimate=1.0,
+        quota_preflight={"provider_calls_made": 0},
+        rate_limit_preflight={"status": "not_checked"},
+        disk_estimate={"bytes": 8192},
+        status=PaperStatus.PLANNED,
+    )
+    report = build_response_bank_budget_report(
+        budget=budget,
+        inventory_plan=InventoryPlan(),
+        model_ids=("deepseek-v4-pro",),
+    )
+    assert report["planned_root_runs"] == 600
+    assert report["planned_first_attempt_ai_units"] == 12000
+    assert report["semantic_slot_count"] == 7
+    assert report["model_ids"] == ["deepseek-v4-pro"]
+    assert report["max_concurrent_roots"] == 1
+    assert report["provider_calls_upper"] == 7
+    assert report["token_upper_bound"] == 175
+    assert report["cost_upper_bound_cny"] == pytest.approx(7 / 120)
+    assert report["disk_estimate"] == {"bytes": 8192}
+    assert report["terminal_provider_failure_count"] == 2
 
 
 def _sample_conditions(catalog_digest: str) -> tuple[PaperExperimentCondition, ...]:
@@ -340,7 +439,12 @@ def test_budget_planner_rejects_offline_approval_before_approval_record(
 ) -> None:
     catalog = _raw_paper_catalog_manifest()
     conditions = _sample_conditions(catalog.catalog_digest)
-    profile = load_paper_pipeline_profile()
+    offline_approval = OfflineImplementationApproval(
+        schema_version="tokenshare.offline_implementation_approval.v1",
+        approval_kind="offline_implementation",
+        approved_plan_digest="sha256:" + "1" * 64,
+        approved_profile_digest="sha256:" + "2" * 64,
+    )
     counters = {"secret": 0, "post_approval": 0}
 
     def forbidden_secret(*args: object, **kwargs: object) -> str:
@@ -371,7 +475,7 @@ def test_budget_planner_rejects_offline_approval_before_approval_record(
             token_upper_bound_per_provider_attempt=100,
             cost_upper_bound_per_provider_attempt=0.01,
             plan_only=False,
-            approve_budget_digest=profile.offline_approval,
+            approve_budget_digest=offline_approval,
         )
 
     after_provider_calls = counter_path.read_text(encoding="utf-8").count(

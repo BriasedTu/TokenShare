@@ -4,7 +4,7 @@
   "profile_version": 1,
   "authorities": {
     "implementation_plan_path": "Doc/archive/design-history/2026-08-01-feat-011-response-bank-paper-pipeline-implementation-plan.md",
-    "implementation_plan_content_digest": "sha256:44d656a655b028a09eca17ccb9910d9aa806ba169a31455c16eafbd00357bc3b",
+    "implementation_plan_content_digest": "sha256:26dd23ee23cc8d723101855a166039e799c9d6b9a83a1e47f38aa15dbdbb60d4",
     "factorization_catalog_path": "benchmarks/paper/factorization_catalog.v2.jsonl",
     "factorization_catalog_content_digest": "sha256:9ce2b31a199455a37c0ca5afdee68e03540dc4912c4c4fe28e87ed3503467774",
     "paper_suite_scale_profile_path": "benchmarks/paper/paper_suite_scale_profile.v1.json",
@@ -168,8 +168,8 @@
   "offline_approval": {
     "schema_version": "tokenshare.offline_implementation_approval.v1",
     "approval_kind": "offline_implementation",
-    "approved_plan_digest": "sha256:44d656a655b028a09eca17ccb9910d9aa806ba169a31455c16eafbd00357bc3b",
-    "approved_profile_digest": "sha256:1e7040219bef550d671db4d44d6632e2c7cd69a372e219a3b8401672c9600aae"
+    "approved_plan_digest": "sha256:26dd23ee23cc8d723101855a166039e799c9d6b9a83a1e47f38aa15dbdbb60d4",
+    "approved_profile_digest": "sha256:e8e8c1f10b638607054c094f6fee409c62aade27ed01ca8645e9afdb79c14fb7"
   },
-  "profile_digest": "sha256:1e7040219bef550d671db4d44d6632e2c7cd69a372e219a3b8401672c9600aae"
+  "profile_digest": "sha256:e8e8c1f10b638607054c094f6fee409c62aade27ed01ca8645e9afdb79c14fb7"
 }

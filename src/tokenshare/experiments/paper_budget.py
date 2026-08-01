@@ -7,7 +7,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from math import isfinite
 from pathlib import Path
-from typing import Any
+from typing import Any, Sequence
 
 from tokenshare.executors.ai_api_config import (
     AIAPIExecutorConfig,
@@ -48,6 +48,48 @@ from tokenshare.plugins.factorization.split_strategy import partition_candidate_
 
 class PaperBudgetApprovalError(ValueError):
     pass
+
+
+def build_response_bank_budget_report(
+    *,
+    budget: PaperBudgetResult,
+    inventory_plan: Any,
+    model_ids: Sequence[str],
+) -> JsonObject:
+    """把既有 plan-only budget 与去重后的 semantic inventory 汇成审计摘要。"""
+
+    semantic_slot_count = int(inventory_plan.expected_slot_count)
+    provider_attempt_ceiling = int(budget.max_provider_attempts)
+    if semantic_slot_count and provider_attempt_ceiling < 1:
+        raise ValueError("response-bank estimate requires provider attempt ceiling")
+    token_per_attempt = (
+        (int(budget.token_upper_bound) + provider_attempt_ceiling - 1)
+        // provider_attempt_ceiling
+        if provider_attempt_ceiling
+        else 0
+    )
+    cost_per_attempt = (
+        float(budget.cost_upper_bound) / provider_attempt_ceiling
+        if provider_attempt_ceiling
+        else 0.0
+    )
+    return {
+        "schema_version": "tokenshare.response_bank_budget_report.v1",
+        "planned_root_runs": int(budget.planned_root_runs),
+        "planned_first_attempt_ai_units": int(budget.planned_ai_units),
+        "semantic_slot_count": semantic_slot_count,
+        "model_ids": list(model_ids),
+        "max_concurrent_roots": int(inventory_plan.max_concurrent_roots),
+        "provider_calls_upper": semantic_slot_count,
+        "token_upper_bound": token_per_attempt * semantic_slot_count,
+        "cost_upper_bound_cny": cost_per_attempt * semantic_slot_count,
+        "disk_estimate": dict(budget.disk_estimate),
+        "terminal_provider_failure_count": int(
+            inventory_plan.terminal_provider_failure_count
+        ),
+        "terminal_success_count": int(inventory_plan.terminal_success_count),
+        "terminal_unacquired_count": int(inventory_plan.terminal_unacquired_count),
+    }
 
 
 EXP1_PILOT_PROFILE_SCHEMA_VERSION = "tokenshare.paper_exp1_pilot_profile.v1"
