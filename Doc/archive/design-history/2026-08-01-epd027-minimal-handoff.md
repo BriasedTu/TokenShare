@@ -1,6 +1,6 @@
 # EPD-027 最小交接摘要（2026-08-01）
 
-> 本摘要是 2026-08-02 Task 5 最终 review PASS 后的 fresh 状态快照。Task 5 已 accepted，以本摘要中的 accepted 状态为当前权威。
+> 本摘要是 2026-08-02 Task 6 comprehensive final review PASS 后的 fresh 状态快照。Task 6 已 accepted，以本摘要中的 accepted 状态为当前权威。
 
 ## 1. Active feature / focus
 
@@ -9,7 +9,7 @@
 - 工作树：`C:\Users\32133\.config\superpowers\worktrees\TokenShare\codex-feat-011-epd027-pipeline`。
 - 分支：`codex/feat-011-epd027-pipeline`。
 - 权威实施计划：`Doc/archive/design-history/2026-08-01-feat-011-response-bank-paper-pipeline-implementation-plan.md`。
-- 当前停止点：Task 0–5 已接受（`6/35`）。Task 5 已提交；Task 6 是 queued/next，尚未开始。
+- 当前停止点：Task 0–6 已接受（`7/35`）。Task 6 已提交；Task 7 是 queued/next，尚未开始。
 
 ## 2. Task 0–34 状态
 
@@ -21,7 +21,7 @@
 | 3 | accepted | canonical direct-results projector；两项通用前置与 Task 3 均已复审 PASS，Task 3 已提交为 `f9773944`。 |
 | 4 | accepted | exact outbound bytes / request identity / admission / Lean prompt v2；commit `0cbda1df`，最终 review PASS。 |
 | 5 | accepted | immutable response-bank objects/index/opaque locator；commit `58cda71f`，最终 review PASS。 |
-| 6 | queued | semantic slot inventory / zero-engine preflight。 |
+| 6 | accepted | semantic slot inventory / zero-engine preflight；commit `5f97034c`，final review PASS。 |
 | 7 | queued | SQLite WAL atomic budget authority。 |
 | 8 | queued | acquire/publish/resume/reconcile bank entries。 |
 | 9 | queued | deterministic logical source-latency scheduler。 |
@@ -130,6 +130,15 @@
 - Review：综合 review=`PASS`，Critical/Important/Minor=`0/0/0`；post-task test minimization `<5min`=`NO_CHANGE`，保留 17 个 distinct cases。
 - 本轮未运行 Fast、Full、LeanAudit，未联网，未调用 provider。
 
+### Task 6 — accepted
+
+- Commit：`5f97034c`（`feat(experiments): plan complete response-bank inventory`），严格五文件。
+- 文件：`src/tokenshare/experiments/paper_response_bank.py`、`tests/experiments/test_paper_response_bank.py`、`src/tokenshare/experiments/paper_budget.py`、`tests/experiments/test_paper_budget.py`，以及用户授权的唯一计划外 `benchmarks/paper/epd027_pipeline_profile.v1.json`。
+- 验证：canonical combined exit `0`，`44 passed in 25.14s`；network tripwire/provider calls=`0`；2 个 production 文件 `py_compile` 与 diff-check exit `0`。
+- Review：comprehensive final review=`PASS`，C1 terminal conflict 与 C2 repeat-sample 跨 replacement closure 已闭合，Critical/Important=`0/0`；post-task test minimization `<5min`=`NO_CHANGE`。
+- Profile：仅同步 plan authority/profile 派生 digest，budget digest 保持不变；模型、题量、repeat、fault、worker、evidence 参数均无漂移。
+- 本轮未运行 Fast、Full、LeanAudit，未联网，未调用 provider。
+
 ### 最新仓库级 Fast 证据
 
 - 2026-08-01 `.\init.ps1`：exit `0`，`468 passed, 1 skipped in 20.19s`；JSON/SQLite、harness、compileall 均通过。
@@ -138,20 +147,20 @@
 
 ## 4. 当前协作状态
 
-- Task 5 已 accepted；Task 6 是下一项，保持 queued 且尚未开始。
+- Task 6 已 accepted；Task 7 是下一项，保持 queued 且尚未开始。
 - Task 4 之前的 `READY_AFTER_TASK3` 只作历史 provenance，已被 final review PASS 覆盖。
 
 ## 5. 当前风险 / 注意事项
 
-1. Task 5 已闭合；immutable bank object/index/opaque locator 已实现并通过 review。
-2. Task 5 production/tests 已独立提交；本次状态提交只能包含 minimal handoff、`progress.md`、`feature_list.json`、`session-handoff.md` 与 code map。
-3. Task 0–5 只覆盖 `6/35`；Task 6 及以后保持 queued，`feat-011` 保持 `in-progress`，正式全量维持 NO-GO。
+1. Task 6 已闭合；complete semantic slot inventory/zero-engine preflight 已实现并通过 review。
+2. Task 6 production/tests/profile 已独立提交；本次状态提交只能包含 minimal handoff、`progress.md`、`feature_list.json`、`session-handoff.md` 与 code map。
+3. Task 0–6 只覆盖 `7/35`；Task 7 及以后保持 queued，`feat-011` 保持 `in-progress`，正式全量维持 NO-GO。
 4. 未获用户提供且经 Task 26 校验的 paid receipt，不得调用真实 API；离线 implementation approval 不构成付费授权。
 
 ## 6. 下一批可直接派发任务
 
-1. 保持 Task 5=`accepted` 和 accepted=`6/35`。
-2. Task 6 是 queued/next，尚未开始；按严格串行门禁另行实施与复审。
+1. 保持 Task 6=`accepted` 和 accepted=`7/35`。
+2. Task 7 是 queued/next，尚未开始；按严格串行门禁另行实施与复审。
 
 ## 7. 禁止命令与付费 API 门禁
 
@@ -166,4 +175,4 @@
 - 缺 receipt、缺 bank entry、超预算或证据不完整必须 fail closed，不得临时 scripted 生成。
 - 预算硬停止线：人民币 1000 元；达到即停止新的 provider dispatch，已有证据正常收口。
 - Experiment 1/5 保持真实 API；Experiment 2/3/4 按批准的两阶段 real-trace paired 设计；Exp2/Exp3 保留小型在线检查。
-- 当前 state/docs 已同步到 Task 5 accepted；Task 6 保持 queued 且尚未开始，不得自动调用 API。
+- 当前 state/docs 已同步到 Task 6 accepted；Task 7 保持 queued 且尚未开始，不得自动调用 API。

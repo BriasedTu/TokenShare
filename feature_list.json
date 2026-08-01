@@ -5,7 +5,7 @@
   "active_feature": "feat-011",
   "active_focus": {
     "id": "paper-metric-contract-trace-bank-and-traceability-plan",
-    "summary": "EPD-027 严格串行实施为 6/35 accepted：Task 0–5 已 accepted；Task 5 immutable response-bank objects/index/opaque locator 已提交并通过最终 review，Task 6 为 queued/next 且尚未开始。",
+    "summary": "EPD-027 严格串行实施为 7/35 accepted：Task 0–6 已 accepted；Task 6 semantic slot inventory/zero-engine preflight 已提交并通过最终 review，Task 7 为 queued/next 且尚未开始。",
     "status": "queued",
     "scope": [
       "Experiment 1–5 论文指标、固定分母与 missingness 口径",
@@ -17,12 +17,12 @@
       "完整实施顺序、测试、离线重放与真实 smoke/正式矩阵门禁"
     ],
     "out_of_scope": [
-      "本次 accepted 状态持久化直接修改 Task 6 及后续 executor/metrics/runner/renderer 代码",
+      "本次 accepted 状态持久化直接修改 Task 7 及后续 executor/metrics/runner/renderer 代码",
       "重新运行真实付费 API 实验",
       "修改由其他工作调整中的 Experiment 3 正式规模",
       "人为注入攻击与安全工程"
     ],
-    "next_action": "Task 6 semantic slot inventory/zero-engine preflight 为 queued/next，尚未开始；无经 Task 26 校验的 paid receipt 不得调用真实 API。"
+    "next_action": "Task 7 SQLite WAL atomic budget authority 为 queued/next，尚未开始；无经 Task 26 校验的 paid receipt 不得调用真实 API。"
   },
   "authorities": {
     "agent_start": "AGENTS.md",
@@ -163,7 +163,7 @@
         "2026-07-31 用户暂停点：checkpoint/evidence 142 项与 shared dispatch/fail-close/resume 3 项离线通过；收尾 Fast 458 passed/1 skipped；shared terminal-snapshot-only index、500-root live-outcome 压力证据和最新 formal runner 整体回归尚未闭合，正式全量维持 NO-GO",
         "EPD-027 已冻结 Experiment 2–4 两阶段真实回答库、Exp2 缩小题集全六 worker 档真实在线检查、Exp3 小型真实在线恢复检查，并明确其为跨 identity/executor/artifact/eligibility/budget/runner/metrics/replay 的全面设施改造；design_synced/未实现是实施前历史快照",
         "EPD-027 文档/harness 历史同步 Fast：458 passed/1 skipped；JSON/SQLite、harness、compileall 通过，未联网、未调用真实 API",
-        "EPD-027 实施进度 6/35：Task 0–2 accepted 原提交 ed0b056a、78fbddaa、d2b16f89 不变；通用 ledger-binding 860b7c48 focused 40 passed/review PASS，typed-hook 4ea293b1 final 69+286 passed/review PASS",
+        "EPD-027 实施进度 7/35：Task 0–2 accepted 原提交 ed0b056a、78fbddaa、d2b16f89 不变；通用 ledger-binding 860b7c48 focused 40 passed/review PASS，typed-hook 4ea293b1 final 69+286 passed/review PASS",
         "Task 3 accepted commit f9773944：canonical direct-results 四文件，focused 101 passed、独立 review PASS、provider calls=0；正式路径无影子 TokenShare，ProtocolEngine disabled 时不能铸造 paper-eligible success",
         "2026-08-01 Task 3 accepted 后 Fast：.\\init.ps1 exit 0，468 passed/1 skipped in 20.19s；JSON/SQLite、harness、compileall 通过，provider calls=0；Full intentionally not run per user instruction，LeanAudit/API 未运行",
         "状态同步时 verification/run_verification.py 被误判为无 pytest harness，实际重复执行 Fast：468 passed/1 skipped in 18.78s；不计新增覆盖，后续不得重复",
@@ -172,9 +172,10 @@
         "Task 4 accepted commit 0cbda1df：focused 125 passed；canonical 初次 323 passed/39 failed 后 fixture 逐步收敛；最终正式 E2E nodeid exit 0，1 passed in 6.68s（total 7.635s），log=%TEMP%\\tokenshare_task4_canonical_single_selection_nodeid.log；provider calls=0，network tripwire loaded",
         "Task 4 final review PASS，Critical/Important=0/0；post-accept test minimization 3min NO_CHANGE（5 distinct tests）；py_compile/diff-check/name-only 均 exit 0；Fast/Full/LeanAudit 未运行",
         "用户批准唯一计划外 production src/tokenshare/experiments/paper_formal_evidence.py：immutable protocol_task_id 修正为 case task-id closure mapping，mapping conflict fail closed；review 确认无 shadow protocol path",
-        "Task 5 accepted commit 58cda71f：严格五文件；canonical combined exit 0，17 passed/0 failed/0 skipped in 0.81s；provider/network calls=0；3 个 production 文件 py_compile 与 diff-check exit 0；综合 review PASS，Critical/Important/Minor=0/0/0；test minimization <5min NO_CHANGE（17 distinct cases）；Fast/Full/LeanAudit 未运行；Task 6 queued/next 且尚未开始"
+        "Task 5 accepted commit 58cda71f：严格五文件；canonical combined exit 0，17 passed/0 failed/0 skipped in 0.81s；provider/network calls=0；3 个 production 文件 py_compile 与 diff-check exit 0；综合 review PASS，Critical/Important/Minor=0/0/0；test minimization <5min NO_CHANGE（17 distinct cases）；Fast/Full/LeanAudit 未运行",
+        "Task 6 accepted commit 5f97034c：严格五文件（计划四文件 + 用户授权 epd027 pipeline profile）；canonical combined exit 0，44 passed in 25.14s；network tripwire/provider calls=0；2 个 production 文件 py_compile 与 diff-check exit 0；comprehensive final review PASS，C1 terminal conflict 与 C2 repeat-sample 跨 replacement closure 已闭合，Critical/Important=0/0；test minimization <5min NO_CHANGE；profile 仅同步 plan authority/profile 派生 digest，budget digest 保持不变且无实验参数漂移；Fast/Full/LeanAudit 未运行；Task 7 queued/next 且尚未开始"
       ],
-      "next_action": "Task 5 已 accepted，accepted count=6/35。Task 6 queued/next 且尚未开始；无经 Task 26 校验的 paid receipt 不得运行真实 API。"
+      "next_action": "Task 6 已 accepted，accepted count=7/35。Task 7 queued/next 且尚未开始；无经 Task 26 校验的 paid receipt 不得运行真实 API。"
     }
   ]
 }
