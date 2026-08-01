@@ -5,7 +5,7 @@
   "active_feature": "feat-011",
   "active_focus": {
     "id": "paper-metric-contract-trace-bank-and-traceability-plan",
-    "summary": "EPD-027 已进入严格串行实施：35 个 Task 中 Task 0–3 已 accepted（4/35），已闭合离线 network tripwire、profile/budget、machine-readable metric contract、canonical direct-results projector 及其 verified-ledger/typed-hook producer 前置；Task 4 queued。",
+    "summary": "EPD-027 已进入严格串行实施：35 个 Task 中 Task 0–3 已 accepted（4/35），已闭合离线 network tripwire、profile/budget、machine-readable metric contract、canonical direct-results projector 及其 verified-ledger/typed-hook producer 前置；Task 3 post-task 测试压缩已复审并提交，Task 4 仍 queued。",
     "status": "in-progress",
     "scope": [
       "Experiment 1–5 论文指标、固定分母与 missingness 口径",
@@ -22,7 +22,7 @@
       "修改由其他工作调整中的 Experiment 3 正式规模",
       "人为注入攻击与安全工程"
     ],
-    "next_action": "先按用户最新门禁完成 Task 3 相关测试压缩设计、实施与独立复审：删除一次性/重复/实现细节型覆盖，只保留最小协议边界与回归证据。随后严格串行实施 Task 4，并把计划漏列的 tests/test_paper_network_tripwire.py 纳入实际迁移与 focused command。无经 Task 26 校验的 paid receipt，不得调用真实 API。"
+    "next_action": "Task 3 测试压缩已完成；下一步严格串行实施仍 queued 的 Task 4，并把计划漏列的 tests/test_paper_network_tripwire.py 纳入实际迁移与 focused command。Task 4 尚未开始；无经 Task 26 校验的 paid receipt，不得调用真实 API。"
   },
   "authorities": {
     "agent_start": "AGENTS.md",
@@ -167,9 +167,11 @@
         "Task 3 accepted commit f9773944：canonical direct-results 四文件，focused 101 passed、独立 review PASS、provider calls=0；正式路径无影子 TokenShare，ProtocolEngine disabled 时不能铸造 paper-eligible success",
         "2026-08-01 Task 3 accepted 后 Fast：.\\init.ps1 exit 0，468 passed/1 skipped in 20.19s；JSON/SQLite、harness、compileall 通过，provider calls=0；Full intentionally not run per user instruction，LeanAudit/API 未运行",
         "状态同步时 verification/run_verification.py 被误判为无 pytest harness，实际重复执行 Fast：468 passed/1 skipped in 18.78s；不计新增覆盖，后续不得重复",
-        "用户新增门禁：每个 Task accepted 后先压缩相关测试并独立复审，再进入下一 Task；当前先处理 Task 3，Task 4 继续 queued；无 paid receipt/付费授权"
+        "用户新增门禁：每个 Task accepted 后先压缩相关测试并独立复审，再进入下一 Task",
+        "Task 3 post-task 测试压缩 commit 66643084：仅 5 个测试文件，production 零修改；test defs/估算 cases 77/153→66/118；canonical 118 passed in 5.55s，review PASS 且 Critical/Important/Minor=0/0/0，provider calls=0；本次未重复 Fast/Full/LeanAudit",
+        "Task 3 仍 accepted，EPD-027 accepted count 仍为 4/35；Task 4 仍 queued/next，尚未开始；无 paid receipt/付费授权"
       ],
-      "next_action": "先完成 Task 3 accepted 后的相关测试压缩设计、实施与独立复审，再进入 Task 4 exact outbound bytes/request identity/Lean prompt v2；Task 4 须纳入 tests/test_paper_network_tripwire.py 的旧 ABI 命中，并在 accepted 后同样压缩测试。其余 31/35 Task 保持 queued；无经 Task 26 校验的 paid receipt 不得运行真实 API。"
+      "next_action": "下一步严格启动仍 queued 的 Task 4 exact outbound bytes/request identity/Lean prompt v2；Task 4 须纳入 tests/test_paper_network_tripwire.py 的旧 ABI 命中，并在 accepted 后同样压缩测试。其余 31/35 Task 保持 queued；无经 Task 26 校验的 paid receipt 不得运行真实 API。"
     }
   ]
 }

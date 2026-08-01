@@ -37,6 +37,13 @@
 
 ### Task 3 首次执行范围
 
-- [ ] Base=`d2b16f89`；accepted commits=`860b7c48`,`4ea293b1`,`f9773944`。
-- [ ] 只审上述提交实际新增/修改的测试 hunks；保护 Task 0 network tripwire 与 Task 2 metric-contract测试。
-- [ ] 优先压缩 direct-result、ledger-binding、typed-hook三组重复 strict-schema/permutation测试；至少保留 ledger swap、bool-as-int、forged hook payload、pre-provider provenance、固定分母与禁用 engine 不得paper假成功的回归。
+- [x] Base=`d2b16f89`；accepted commits=`860b7c48`,`4ea293b1`,`f9773944`。
+- [x] 只审上述提交实际新增/修改的测试 hunks；保护 Task 0 network tripwire 与 Task 2 metric-contract测试。
+- [x] 优先压缩 direct-result、ledger-binding、typed-hook三组重复 strict-schema/permutation测试；至少保留 ledger swap、bool-as-int、forged hook payload、pre-provider provenance、固定分母与禁用 engine 不得paper假成功的回归。
+
+### Task 3 完成记录
+
+- 测试压缩 commit=`66643084`（`test(experiments): compact Task 3 regressions`）；仅修改 5 个已复审测试文件，production 零修改。
+- test defs / 估算 cases：`77/153 → 66/118`；canonical scoped 验证 exit `0`，`118 passed in 5.55s`，provider calls=`0`。
+- 独立 reviewer=`PASS`，Critical/Important/Minor=`0/0/0`。本次提交与状态同步未重复运行 Fast、Full 或 LeanAudit。
+- Task 3 仍为 accepted，EPD-027 accepted count 仍为 `4/35`；Task 4 仍 queued/next，尚未开始。

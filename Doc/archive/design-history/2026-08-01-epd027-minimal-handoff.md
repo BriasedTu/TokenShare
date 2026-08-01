@@ -1,6 +1,6 @@
 # EPD-027 最小交接摘要（2026-08-01）
 
-> 本摘要是 Task 3 accepted 后的 fresh 状态快照；提交、改动文件、focused review 与 Fast 证据均已重新核对。旧停止点只作历史 provenance，不再代表当前状态。
+> 本摘要是 Task 3 accepted 且 post-task 测试压缩完成后的 fresh 状态快照；提交、改动文件、focused review 与 Fast 证据均已重新核对。旧停止点只作历史 provenance，不再代表当前状态。
 
 ## 1. Active feature / focus
 
@@ -9,7 +9,7 @@
 - 工作树：`C:\Users\32133\.config\superpowers\worktrees\TokenShare\codex-feat-011-epd027-pipeline`。
 - 分支：`codex/feat-011-epd027-pipeline`。
 - 权威实施计划：`Doc/archive/design-history/2026-08-01-feat-011-response-bank-paper-pipeline-implementation-plan.md`。
-- 当前停止点：Task 0–3 已接受（`4/35`）；Task 3 已由独立 reviewer 复审 PASS，并提交为 `f9773944`。通用 ledger-binding 前置为 `860b7c48`，typed-hook 前置为 `4ea293b1`。按用户最新要求，进入 Task 4 前先完成 Task 3 相关测试压缩设计、实施与复审。
+- 当前停止点：Task 0–3 已接受（`4/35`）；Task 3 已由独立 reviewer 复审 PASS，并提交为 `f9773944`。通用 ledger-binding 前置为 `860b7c48`，typed-hook 前置为 `4ea293b1`。Task 3 post-task 测试压缩也已复审 PASS，并提交为 `66643084`；Task 4 仍为 queued/next，尚未开始。
 
 ## 2. Task 0–34 状态
 
@@ -112,7 +112,9 @@
   - `tests/experiments/test_paper_models.py`（修改）
 - Validation：canonical focused 命令族为 `conda run -n tokenshare python -m pytest -p verification.pytest_network_tripwire tests/experiments/test_paper_direct_results.py tests/experiments/test_paper_models.py -q`；最终退出码 `0`，`101 passed`，provider calls `0`。
 - Evidence：`ProtocolRunLedgerBinding` 绑定 verified ledger bytes/events/tip；`RuntimeHookObservationV1.from_dict()` 关闭三类 hook schema；direct projector 从 canonical runtime facts 与预注册 inventory 生成固定分母结果。独立审查确认正式路径没有影子 TokenShare/影子状态机，禁用 `ProtocolEngine` 时不能铸造 paper-eligible success；手工 typed fixture 仅用于组件测试。
-- Next action：Task 3 不再返工；严格进入 Task 4，不回写已接受提交。
+- Post-task 测试压缩：commit `66643084`（`test(experiments): compact Task 3 regressions`），仅修改 5 个已复审测试文件，production 零修改；test defs / 估算 cases 从 `77/153` 降至 `66/118`。canonical scoped 结果为 exit `0`、`118 passed in 5.55s`，provider calls=`0`；独立 reviewer=`PASS`，Critical/Important/Minor=`0/0/0`。
+- 本次压缩未重复运行 Fast、Full 或 LeanAudit；上述 canonical 结果为压缩执行阶段已接受证据。
+- Next action：Task 3 与其测试压缩均不再返工；Task 4 仍 queued，下一步严格启动 Task 4，不回写已接受提交。
 
 ### 最新仓库级 Fast 证据
 
@@ -120,11 +122,10 @@
 - 状态同步时误把 `verification/run_verification.py` 当成无 pytest harness，实际再次进入 Fast：exit `0`，`468 passed, 1 skipped in 18.78s`。这是一次重复验证，不作为新增覆盖证据；后续不得再用该命令规避 Fast 门禁。
 - 本次 Fast provider calls=`0`。Full、LeanAudit、真实 API 均未运行；Full 是按用户指令 intentionally not run。
 
-## 4. 当前子智能体
+## 4. 当前协作状态
 
-- `state_docs`：running；仅同步本摘要、`progress.md`、`feature_list.json`、`session-handoff.md` 与 code map，不改代码/测试/计划/权威设计，不 stage/commit。
-- `task3_ledger_binding_diagnosis`、`task3_ledger_binding_prereq`、`task3_hook_schema_diagnosis`、`task3_typed_hook_prereq`、`task3_review_fixes`、`task3_independent_review`：均已完成；最终结果见 Task 3 accepted 证据。
-- `task4_readonly_preflight`：已完成，结论=`READY_AFTER_TASK3`。
+- Task 3 实现、两项 prerequisite、测试压缩与独立复审均已完成；最终结果见 Task 3 accepted 与 post-task 测试压缩证据。
+- `task4_readonly_preflight` 已完成，结论=`READY_AFTER_TASK3`；Task 4 仍 queued，未开始实现。
 
 ## 5. 当前风险 / 注意事项
 
@@ -135,8 +136,8 @@
 
 ## 6. 下一批可直接派发任务
 
-1. 先按用户最新要求压缩 Task 3 及两项 prerequisite 的相关测试：删一次性/重复/实现细节覆盖，保留最小协议边界与回归证据；方案须先经用户确认，压缩后独立复审。
-2. 测试压缩 accepted 后严格串行启动 Task 4：exact outbound bytes / request identity / Lean prompt v2。
+1. Task 3 测试压缩已由 `66643084` 闭环；不要重复压缩或回写该 accepted 提交。
+2. 严格串行启动 Task 4：exact outbound bytes / request identity / Lean prompt v2；Task 4 当前仍 queued，尚未开始。
 3. Task 4 实现前把 `tests/test_paper_network_tripwire.py` 的旧 ABI 命中纳入实际检查与 focused command；不修改已归档实施计划原文。
 4. Task 4 仍须按 RED→GREEN→独立 review→accepted commit→测试压缩闭环；Task 5 及以后继续 queued。
 
@@ -153,4 +154,4 @@
 - 缺 receipt、缺 bank entry、超预算或证据不完整必须 fail closed，不得临时 scripted 生成。
 - 预算硬停止线：人民币 1000 元；达到即停止新的 provider dispatch，已有证据正常收口。
 - Experiment 1/5 保持真实 API；Experiment 2/3/4 按批准的两阶段 real-trace paired 设计；Exp2/Exp3 保留小型在线检查。
-- 当前 state/docs 已同步；下一实施项是 Task 3 accepted 后的测试压缩设计。测试压缩完成前不进入 Task 4；不得自动调用 API。
+- 当前 state/docs 已同步；Task 3 post-task 测试压缩已完成，下一实施项是仍 queued 的 Task 4；不得自动调用 API。
