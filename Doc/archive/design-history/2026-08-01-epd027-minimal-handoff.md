@@ -1,6 +1,6 @@
 # EPD-027 最小交接摘要（2026-08-01）
 
-> 本摘要是 2026-08-02 Task 7 comprehensive review PASS 后的 fresh 状态快照。Task 7 已 accepted，以本摘要中的 accepted 状态为当前权威。
+> 本摘要是 2026-08-02 Task 8 comprehensive review PASS 后的 fresh 状态快照。Task 8 已 accepted，以本摘要中的 accepted 状态为当前权威。
 
 ## 1. Active feature / focus
 
@@ -9,7 +9,7 @@
 - 工作树：`C:\Users\32133\.config\superpowers\worktrees\TokenShare\codex-feat-011-epd027-pipeline`。
 - 分支：`codex/feat-011-epd027-pipeline`。
 - 权威实施计划：`Doc/archive/design-history/2026-08-01-feat-011-response-bank-paper-pipeline-implementation-plan.md`。
-- 当前停止点：Task 0–7 已接受（`8/35`）。Task 7 已提交；Task 8 是 queued/next，尚未开始。
+- 当前停止点：Task 0–8 已接受（`9/35`）。Task 8 已提交；Task 9 是 queued/next，尚未开始。
 
 ## 2. Task 0–34 状态
 
@@ -23,7 +23,7 @@
 | 5 | accepted | immutable response-bank objects/index/opaque locator；commit `58cda71f`，最终 review PASS。 |
 | 6 | accepted | semantic slot inventory / zero-engine preflight；commit `5f97034c`，final review PASS。 |
 | 7 | accepted | SQLite WAL atomic budget authority；commit `aadbd483`，final review PASS。 |
-| 8 | queued | acquire/publish/resume/reconcile bank entries。 |
+| 8 | accepted | acquire/publish/resume/reconcile bank entries；commit `6802918d`，final review PASS。 |
 | 9 | queued | deterministic logical source-latency scheduler。 |
 | 10 | queued | attempt ordinal / parent-side worker commit ABI。 |
 | 11 | queued | trace-backed executor / dual provenance。 |
@@ -147,6 +147,15 @@
 - Review：comprehensive review=`PASS`，Critical/Important/Minor=`0/0/0`；test compaction 仅删除 1 个冗余 assert。
 - 本次接受状态持久化未运行任何测试、Fast、Full、LeanAudit，未联网，未调用 provider。
 
+### Task 8 — accepted
+
+- Commit：`6802918d`（`feat(experiments): acquire and reconcile immutable bank entries`），严格六个实际变更文件。
+- 文件：`src/tokenshare/executors/ai_api.py`、`src/tokenshare/experiments/paper_response_bank.py`、`src/tokenshare/experiments/paper_budget_ledger.py`、`src/tokenshare/storage/artifacts.py`、`tests/experiments/test_paper_response_bank_acquisition.py`、`tests/storage/test_artifact_store.py`；计划中的三个 executor 测试文件无变更且未 stage。
+- 验证：最终 exact 5-file command exit `0`，`77 passed in 15.20s`；manifest 专项 `3 passed`、cross-check `4 passed`；fake-only，真实 provider/network/secret=`0`。
+- 静态与边界：4 个 production 文件 `py_compile`、diff-check、allowlist、secret scan 均 exit `0`。
+- Review：final=`PASS`，Critical/Important/Minor=`0/0/0`；manifest 修复已闭合。post-task test minimization 3 分钟=`NO_CHANGE`，collect-only=`19`（行为用例 `18`）。
+- 本次没有 paid receipt；未运行 Fast、Full、LeanAudit，未联网、未调用 provider。
+
 ### 最新仓库级 Fast 证据
 
 - 2026-08-01 `.\init.ps1`：exit `0`，`468 passed, 1 skipped in 20.19s`；JSON/SQLite、harness、compileall 均通过。
@@ -155,20 +164,20 @@
 
 ## 4. 当前协作状态
 
-- Task 7 已 accepted；Task 8 是下一项，保持 queued 且尚未开始。
+- Task 8 已 accepted；Task 9 是下一项，保持 queued 且尚未开始。
 - Task 4 之前的 `READY_AFTER_TASK3` 只作历史 provenance，已被 final review PASS 覆盖。
 
 ## 5. 当前风险 / 注意事项
 
-1. Task 7 已闭合；SQLite WAL atomic budget authority 已实现并通过 review。
-2. Task 7 production/tests 已独立提交；本次状态提交只能包含 minimal handoff、`progress.md`、`feature_list.json`、`session-handoff.md` 与 code map。
-3. Task 0–7 只覆盖 `8/35`；Task 8 及以后保持 queued，`feat-011` 保持 `in-progress`，正式全量维持 NO-GO。
+1. Task 8 已闭合；durable acquisition/publish/resume/reconcile 已实现并通过 review，但没有 paid receipt 或真实调用。
+2. Task 8 production/tests 已独立提交；本次状态提交只能包含 minimal handoff、`progress.md`、`feature_list.json`、`session-handoff.md` 与 code map。
+3. Task 0–8 只覆盖 `9/35`；Task 9 及以后保持 queued，`feat-011` 保持 `in-progress`，正式全量维持 NO-GO。
 4. 未获用户提供且经 Task 26 校验的 paid receipt，不得调用真实 API；离线 implementation approval 不构成付费授权。
 
 ## 6. 下一批可直接派发任务
 
-1. 保持 Task 7=`accepted` 和 accepted=`8/35`。
-2. Task 8 是 queued/next，尚未开始；按严格串行门禁另行实施与复审。
+1. 保持 Task 8=`accepted` 和 accepted=`9/35`。
+2. Task 9 是 queued/next，尚未开始；按严格串行门禁另行实施与复审。
 
 ## 7. 禁止命令与付费 API 门禁
 
@@ -183,4 +192,4 @@
 - 缺 receipt、缺 bank entry、超预算或证据不完整必须 fail closed，不得临时 scripted 生成。
 - 预算硬停止线：人民币 1000 元；达到即停止新的 provider dispatch，已有证据正常收口。
 - Experiment 1/5 保持真实 API；Experiment 2/3/4 按批准的两阶段 real-trace paired 设计；Exp2/Exp3 保留小型在线检查。
-- 当前 state/docs 已同步到 Task 7 accepted；Task 8 保持 queued 且尚未开始，不得自动调用 API。
+- 当前 state/docs 已同步到 Task 8 accepted；Task 9 保持 queued 且尚未开始，不得自动调用 API。
