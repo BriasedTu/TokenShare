@@ -98,6 +98,22 @@ class ReservationDecision:
     reservation: ReservationRecord
 
 
+@dataclass(frozen=True, kw_only=True)
+class ReacquisitionRecord:
+    reacquisition_id: str
+    inventory_digest: str
+    inventory_entry_id: str
+    linked_ambiguous_attempt_id: str
+    paid_scope_digest: str
+    state: BudgetState
+    terminal_ref: str | None
+    terminal_kind: str | None
+    charged_tokens: int | None
+    cost_estimate: Decimal | None
+    usage_missing: bool | None
+    revision: int
+
+
 class PaperBudgetLedger:
     """只管理 provider acquisition accounting，不映射 ProtocolEngine 终态。"""
 
@@ -175,6 +191,34 @@ class PaperBudgetLedger:
                     PRIMARY KEY (inventory_digest, inventory_entry_id),
                     UNIQUE (inventory_digest, semantic_slot_key),
                     UNIQUE (terminal_ref),
+                    FOREIGN KEY (inventory_digest, inventory_entry_id)
+                        REFERENCES inventory_rows(inventory_digest, inventory_entry_id)
+                );
+                CREATE TABLE IF NOT EXISTS reacquisitions (
+                    reacquisition_id TEXT PRIMARY KEY,
+                    inventory_digest TEXT NOT NULL,
+                    inventory_entry_id TEXT NOT NULL,
+                    linked_ambiguous_attempt_id TEXT NOT NULL,
+                    paid_scope_digest TEXT NOT NULL,
+                    state TEXT NOT NULL CHECK (state IN (
+                        'reserved', 'dispatch_intent', 'ambiguous',
+                        'terminal_published', 'settled'
+                    )),
+                    call_count INTEGER NOT NULL CHECK (call_count = 1),
+                    token_upper_bound INTEGER NOT NULL CHECK (token_upper_bound > 0),
+                    cost_upper_bound TEXT NOT NULL,
+                    provider_family TEXT NOT NULL,
+                    frozen_pricing_json TEXT NOT NULL,
+                    terminal_ref TEXT UNIQUE,
+                    terminal_kind TEXT CHECK (
+                        terminal_kind IS NULL OR terminal_kind IN ('success', 'provider_failure')
+                    ),
+                    charged_tokens INTEGER,
+                    cost_estimate TEXT,
+                    usage_missing INTEGER,
+                    usage_json TEXT,
+                    revision INTEGER NOT NULL DEFAULT 0,
+                    UNIQUE (inventory_digest, inventory_entry_id),
                     FOREIGN KEY (inventory_digest, inventory_entry_id)
                         REFERENCES inventory_rows(inventory_digest, inventory_entry_id)
                 );
@@ -357,26 +401,9 @@ class PaperBudgetLedger:
                     granted=False, reservation=_record_from_row(winner)
                 )
 
-            totals = connection.execute(
-                """
-                SELECT COALESCE(SUM(call_count), 0) AS calls,
-                       COALESCE(SUM(CASE WHEN state = 'settled'
-                           THEN charged_tokens ELSE token_upper_bound END), 0) AS tokens
-                FROM reservations
-                """
-            ).fetchone()
-            cost_total = sum(
-                (
-                    Decimal(row["cost_estimate"])
-                    if row["state"] == "settled"
-                    else Decimal(row["cost_upper_bound"])
-                )
-                for row in connection.execute(
-                    "SELECT state, cost_upper_bound, cost_estimate FROM reservations"
-                ).fetchall()
-            )
-            next_calls = int(totals["calls"]) + 1
-            next_tokens = int(totals["tokens"]) + request.token_upper_bound
+            calls, tokens, cost_total = self._budget_totals(connection)
+            next_calls = calls + 1
+            next_tokens = tokens + request.token_upper_bound
             next_cost = cost_total + request.cost_upper_bound
             if next_calls > self.limits.calls:
                 raise BudgetExceededError("provider call hard limit exceeded")
@@ -433,6 +460,287 @@ class PaperBudgetLedger:
             )
 
         return self._write(reserve_once)
+
+    def release_reserved(
+        self, inventory_digest: str, inventory_entry_id: str
+    ) -> bool:
+        """恢复只可释放尚未产生 dispatch intent 的安全 reservation。"""
+
+        def release(connection: sqlite3.Connection) -> bool:
+            current = self._select_reservation(
+                connection, inventory_digest, inventory_entry_id
+            )
+            if current["state"] != "reserved":
+                return False
+            connection.execute(
+                """
+                DELETE FROM reservations
+                WHERE inventory_digest = ? AND inventory_entry_id = ? AND state = 'reserved'
+                """,
+                (inventory_digest, inventory_entry_id),
+            )
+            return True
+
+        return self._write(release)
+
+    def reserve_reacquisition(
+        self,
+        request: ReservationRequest,
+        *,
+        reacquisition_id: str,
+        linked_ambiguous_attempt_id: str,
+        paid_scope_digest: str,
+    ) -> ReacquisitionRecord:
+        """为 ambiguous attempt 仅建立一笔显式、付费 scope 绑定的重取预留。"""
+
+        if not reacquisition_id or not linked_ambiguous_attempt_id or not paid_scope_digest:
+            raise ValueError("reacquisition identity and paid scope must be non-empty")
+
+        def reserve(connection: sqlite3.Connection) -> ReacquisitionRecord:
+            rows = self._validate_inventory(connection, request.inventory_digest)
+            registered = next(
+                (
+                    row
+                    for row in rows
+                    if row.inventory_entry_id == request.inventory_entry_id
+                ),
+                None,
+            )
+            if registered is None:
+                raise InventoryIdentityError("inventory_entry_id is not preregistered")
+            for field_name in (
+                "semantic_slot_key",
+                "inference_request_digest",
+                "prompt_admission_profile_digest",
+            ):
+                if getattr(request, field_name) != getattr(registered, field_name):
+                    raise InventoryIdentityError(
+                        f"request {field_name} does not match preregistered row"
+                    )
+            primary = self._select_reservation(
+                connection, request.inventory_digest, request.inventory_entry_id
+            )
+            if primary["state"] != "ambiguous":
+                raise InvalidBudgetStateTransition(
+                    "reacquisition requires an ambiguous primary reservation"
+                )
+            existing = connection.execute(
+                """
+                SELECT * FROM reacquisitions
+                WHERE inventory_digest = ? AND inventory_entry_id = ?
+                """,
+                (request.inventory_digest, request.inventory_entry_id),
+            ).fetchone()
+            if existing is not None:
+                if (
+                    existing["reacquisition_id"] != reacquisition_id
+                    or existing["linked_ambiguous_attempt_id"]
+                    != linked_ambiguous_attempt_id
+                    or existing["paid_scope_digest"] != paid_scope_digest
+                ):
+                    raise InventoryIdentityError("conflicting reacquisition identity")
+                return _reacquisition_record_from_row(existing)
+            calls, tokens, cost_total = self._budget_totals(connection)
+            next_calls = calls + 1
+            next_tokens = tokens + request.token_upper_bound
+            next_cost = cost_total + request.cost_upper_bound
+            if next_calls > self.limits.calls:
+                raise BudgetExceededError("provider call hard limit exceeded")
+            if next_tokens > self.limits.tokens:
+                raise BudgetExceededError("token hard limit exceeded")
+            if next_cost > self.limits.cny:
+                raise BudgetExceededError("CNY reservation hard limit exceeded")
+            if (
+                request.provider_family == "deepseek"
+                and next_cost > self.limits.deepseek_cumulative_cny
+            ):
+                raise BudgetExceededError("DeepSeek cumulative CNY hard stop exceeded")
+            pricing_json = json.dumps(
+                {
+                    "currency": request.frozen_pricing.currency,
+                    "input_per_million_tokens": str(
+                        request.frozen_pricing.input_per_million_tokens
+                    ),
+                    "output_per_million_tokens": str(
+                        request.frozen_pricing.output_per_million_tokens
+                    ),
+                },
+                sort_keys=True,
+            )
+            connection.execute(
+                """
+                INSERT INTO reacquisitions(
+                    reacquisition_id, inventory_digest, inventory_entry_id,
+                    linked_ambiguous_attempt_id, paid_scope_digest, state,
+                    call_count, token_upper_bound, cost_upper_bound,
+                    provider_family, frozen_pricing_json
+                ) VALUES (?, ?, ?, ?, ?, 'reserved', 1, ?, ?, ?, ?)
+                """,
+                (
+                    reacquisition_id,
+                    request.inventory_digest,
+                    request.inventory_entry_id,
+                    linked_ambiguous_attempt_id,
+                    paid_scope_digest,
+                    request.token_upper_bound,
+                    str(request.cost_upper_bound),
+                    request.provider_family,
+                    pricing_json,
+                ),
+            )
+            row = connection.execute(
+                "SELECT * FROM reacquisitions WHERE reacquisition_id = ?",
+                (reacquisition_id,),
+            ).fetchone()
+            assert row is not None
+            return _reacquisition_record_from_row(row)
+
+        return self._write(reserve)
+
+    def mark_reacquisition_dispatch_intent(
+        self, reacquisition_id: str
+    ) -> ReacquisitionRecord:
+        return self._transition_reacquisition(
+            reacquisition_id, expected={"reserved"}, target="dispatch_intent"
+        )
+
+    def mark_reacquisition_ambiguous(
+        self, reacquisition_id: str
+    ) -> ReacquisitionRecord:
+        return self._transition_reacquisition(
+            reacquisition_id,
+            expected={"dispatch_intent"},
+            target="ambiguous",
+        )
+
+    def publish_reacquisition_terminal(
+        self,
+        reacquisition_id: str,
+        *,
+        terminal_ref: str,
+        terminal_kind: TerminalKind,
+    ) -> ReacquisitionRecord:
+        if not terminal_ref or terminal_kind not in {"success", "provider_failure"}:
+            raise ValueError("terminal publication requires a ref and supported kind")
+
+        def publish(connection: sqlite3.Connection) -> ReacquisitionRecord:
+            current = self._select_reacquisition(connection, reacquisition_id)
+            if current["state"] in {"terminal_published", "settled"}:
+                if (
+                    current["terminal_ref"] == terminal_ref
+                    and current["terminal_kind"] == terminal_kind
+                ):
+                    return _reacquisition_record_from_row(current)
+                raise InvalidBudgetStateTransition("conflicting terminal publication")
+            if current["state"] not in {"dispatch_intent", "ambiguous"}:
+                raise InvalidBudgetStateTransition(
+                    f"cannot publish terminal from {current['state']}"
+                )
+            connection.execute(
+                """
+                UPDATE reacquisitions
+                SET state = 'terminal_published', terminal_ref = ?, terminal_kind = ?,
+                    revision = revision + 1
+                WHERE reacquisition_id = ?
+                """,
+                (terminal_ref, terminal_kind, reacquisition_id),
+            )
+            return _reacquisition_record_from_row(
+                self._select_reacquisition(connection, reacquisition_id)
+            )
+
+        return self._write(publish)
+
+    def reconcile_reacquisition(
+        self, reacquisition_id: str, *, usage: ProviderUsage | None
+    ) -> ReacquisitionRecord:
+        def reconcile(connection: sqlite3.Connection) -> ReacquisitionRecord:
+            current = self._select_reacquisition(connection, reacquisition_id)
+            if current["state"] == "settled":
+                return _reacquisition_record_from_row(current)
+            if current["state"] != "terminal_published":
+                raise InvalidBudgetStateTransition(
+                    f"cannot settle reacquisition from {current['state']}"
+                )
+            self._settle_row(
+                connection, table="reacquisitions", key_field="reacquisition_id",
+                key_value=reacquisition_id, current=current, usage=usage
+            )
+            return _reacquisition_record_from_row(
+                self._select_reacquisition(connection, reacquisition_id)
+            )
+
+        return self._write(reconcile)
+
+    def _transition_reacquisition(
+        self, reacquisition_id: str, *, expected: set[str], target: BudgetState
+    ) -> ReacquisitionRecord:
+        def transition(connection: sqlite3.Connection) -> ReacquisitionRecord:
+            current = self._select_reacquisition(connection, reacquisition_id)
+            if current["state"] not in expected:
+                raise InvalidBudgetStateTransition(
+                    f"cannot transition {current['state']} to {target}"
+                )
+            connection.execute(
+                """
+                UPDATE reacquisitions SET state = ?, revision = revision + 1
+                WHERE reacquisition_id = ?
+                """,
+                (target, reacquisition_id),
+            )
+            return _reacquisition_record_from_row(
+                self._select_reacquisition(connection, reacquisition_id)
+            )
+
+        return self._write(transition)
+
+    @staticmethod
+    def _select_reacquisition(
+        connection: sqlite3.Connection, reacquisition_id: str
+    ) -> sqlite3.Row:
+        row = connection.execute(
+            "SELECT * FROM reacquisitions WHERE reacquisition_id = ?",
+            (reacquisition_id,),
+        ).fetchone()
+        if row is None:
+            raise InventoryIdentityError("reacquisition is not registered")
+        return row
+
+    def list_reacquisitions(self) -> tuple[ReacquisitionRecord, ...]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                "SELECT * FROM reacquisitions ORDER BY reacquisition_id"
+            ).fetchall()
+        return tuple(_reacquisition_record_from_row(row) for row in rows)
+
+    def _budget_totals(
+        self, connection: sqlite3.Connection
+    ) -> tuple[int, int, Decimal]:
+        rows = connection.execute(
+            """
+            SELECT state, call_count, token_upper_bound, cost_upper_bound,
+                   charged_tokens, cost_estimate FROM reservations
+            UNION ALL
+            SELECT state, call_count, token_upper_bound, cost_upper_bound,
+                   charged_tokens, cost_estimate FROM reacquisitions
+            """
+        ).fetchall()
+        calls = sum(int(row["call_count"]) for row in rows)
+        tokens = sum(
+            int(row["charged_tokens"])
+            if row["state"] == "settled"
+            else int(row["token_upper_bound"])
+            for row in rows
+        )
+        cost = sum(
+            (
+                Decimal(row["cost_estimate"])
+                if row["state"] == "settled"
+                else Decimal(row["cost_upper_bound"])
+            )
+            for row in rows
+        )
+        return calls, tokens, cost
 
     def mark_dispatch_intent(
         self, inventory_digest: str, inventory_entry_id: str
@@ -613,6 +921,53 @@ class PaperBudgetLedger:
             )
         )
 
+    @staticmethod
+    def _settle_row(
+        connection: sqlite3.Connection,
+        *,
+        table: str,
+        key_field: str,
+        key_value: str,
+        current: sqlite3.Row,
+        usage: ProviderUsage | None,
+    ) -> None:
+        if (table, key_field) != ("reacquisitions", "reacquisition_id"):
+            raise ValueError("unsupported settlement table")
+        pricing_body = json.loads(current["frozen_pricing_json"])
+        pricing = FrozenPricing(
+            currency=pricing_body["currency"],
+            input_per_million_tokens=Decimal(
+                pricing_body["input_per_million_tokens"]
+            ),
+            output_per_million_tokens=Decimal(
+                pricing_body["output_per_million_tokens"]
+            ),
+        )
+        charge = account_terminal_usage(
+            token_upper_bound=int(current["token_upper_bound"]),
+            cost_upper_bound=Decimal(current["cost_upper_bound"]),
+            pricing=pricing,
+            usage=usage,
+        )
+        usage_json = (
+            None if usage is None else json.dumps(asdict(usage), sort_keys=True)
+        )
+        connection.execute(
+            f"""
+            UPDATE {table}
+            SET state = 'settled', charged_tokens = ?, cost_estimate = ?,
+                usage_missing = ?, usage_json = ?, revision = revision + 1
+            WHERE {key_field} = ?
+            """,
+            (
+                charge.charged_tokens,
+                str(charge.cost_estimate),
+                int(charge.usage_missing),
+                usage_json,
+                key_value,
+            ),
+        )
+
     def _select_reservation(
         self,
         connection: sqlite3.Connection,
@@ -677,6 +1032,29 @@ def _record_from_row(row: sqlite3.Row) -> ReservationRecord:
         token_upper_bound=int(row["token_upper_bound"]),
         cost_upper_bound=Decimal(row["cost_upper_bound"]),
         provider_family=row["provider_family"],
+        terminal_ref=row["terminal_ref"],
+        terminal_kind=row["terminal_kind"],
+        charged_tokens=(
+            None if row["charged_tokens"] is None else int(row["charged_tokens"])
+        ),
+        cost_estimate=(
+            None if row["cost_estimate"] is None else Decimal(row["cost_estimate"])
+        ),
+        usage_missing=(
+            None if row["usage_missing"] is None else bool(row["usage_missing"])
+        ),
+        revision=int(row["revision"]),
+    )
+
+
+def _reacquisition_record_from_row(row: sqlite3.Row) -> ReacquisitionRecord:
+    return ReacquisitionRecord(
+        reacquisition_id=row["reacquisition_id"],
+        inventory_digest=row["inventory_digest"],
+        inventory_entry_id=row["inventory_entry_id"],
+        linked_ambiguous_attempt_id=row["linked_ambiguous_attempt_id"],
+        paid_scope_digest=row["paid_scope_digest"],
+        state=row["state"],
         terminal_ref=row["terminal_ref"],
         terminal_kind=row["terminal_kind"],
         charged_tokens=(

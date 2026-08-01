@@ -6,10 +6,11 @@ import json
 import os
 import random
 from collections.abc import Mapping
+from dataclasses import dataclass
 from hashlib import sha256
 from inspect import Parameter, signature
 from time import perf_counter
-from typing import Any, Callable
+from typing import Any, Callable, Literal
 
 from tokenshare.core.models import ArtifactRef, JsonObject
 from tokenshare.executors.ai_api_artifacts import (
@@ -18,6 +19,7 @@ from tokenshare.executors.ai_api_artifacts import (
 )
 from tokenshare.executors.ai_api_config import AIAPIExecutorConfig
 from tokenshare.executors.ai_api_request_identity import (
+    PreparedOutboundRequest,
     PreparedOutboundRequestFactory,
     validate_prepared_request,
 )
@@ -40,6 +42,139 @@ from tokenshare.executors.contracts import (
     ExecutorStatus,
 )
 from tokenshare.storage.artifacts import ArtifactStore
+
+
+PROVIDER_FAILURE_TAXONOMY = (
+    "timeout",
+    "connection_error",
+    "rate_limited",
+    "provider_error",
+    "auth_error",
+    "client_error",
+    "invalid_output",
+)
+
+
+@dataclass(frozen=True, kw_only=True)
+class PreparedDispatchEvidence:
+    """一次 exact wire 调用的 acquisition-only 结果；不做 parser/protocol 判定。"""
+
+    terminal_kind: Literal["success", "provider_failure"]
+    failure_kind: str | None
+    raw_response_json: JsonObject | None
+    content_text: str | None
+    reasoning_content: str | None
+    provider_response_id: str | None
+    finish_reason: str | None
+    usage: JsonObject | None
+    latency_ms: int
+    http_status: int | None
+    resolved_model: str | None
+    response_model_status: str
+    error_message: str | None
+
+
+def dispatch_prepared_request_once(
+    *,
+    prepared_request: PreparedOutboundRequest,
+    provider_family: str,
+    transport: Any,
+    api_key: str,
+    timeout_seconds: int,
+) -> PreparedDispatchEvidence:
+    """发送已经冻结的 endpoint/body bytes 恰好一次并保留 provider taxonomy。"""
+
+    prepared = validate_prepared_request(prepared_request)
+    if provider_family not in {"siliconflow", "openai", "deepseek"}:
+        raise ValueError(f"unsupported ai api provider_family: {provider_family}")
+    if not isinstance(api_key, str) or not api_key:
+        raise ValueError("resolved API key must be non-empty")
+    if timeout_seconds < 1:
+        raise ValueError("timeout_seconds must be positive")
+    _build_body, parse_provider_response = _provider_adapter(provider_family)
+    exact_transport = _exact_transport_for_provider(transport, provider_family)
+    started = perf_counter()
+    response: Any | None = None
+    try:
+        response = exact_transport.post_chat_completion(
+            api_key=api_key,
+            body_bytes=prepared.body_bytes,
+            normalized_absolute_endpoint=prepared.normalized_absolute_endpoint,
+            content_type="application/json",
+            timeout_seconds=timeout_seconds,
+        )
+        parsed = parse_provider_response(response)
+    except TimeoutError:
+        return _prepared_failure_evidence(
+            failure_kind="timeout",
+            latency_ms=int((perf_counter() - started) * 1000),
+            http_status=None,
+            message="provider request timed out",
+        )
+    except OSError as exc:
+        return _prepared_failure_evidence(
+            failure_kind="connection_error",
+            latency_ms=int((perf_counter() - started) * 1000),
+            http_status=None,
+            message=_redact_single_secret(str(exc), api_key),
+        )
+    except (SiliconFlowProviderError, OpenAIProviderError, DeepSeekProviderError) as exc:
+        failure_kind = (
+            exc.error_kind
+            if exc.error_kind in PROVIDER_FAILURE_TAXONOMY
+            else "provider_error"
+        )
+        return _prepared_failure_evidence(
+            failure_kind=failure_kind,
+            latency_ms=int((perf_counter() - started) * 1000),
+            http_status=exc.http_status,
+            message=_redact_single_secret(exc.message, api_key),
+        )
+    return PreparedDispatchEvidence(
+        terminal_kind="success",
+        failure_kind=None,
+        raw_response_json=dict(parsed.raw_response_json),
+        content_text=parsed.content_text,
+        reasoning_content=getattr(parsed, "reasoning_content", None),
+        provider_response_id=parsed.provider_response_id,
+        finish_reason=parsed.finish_reason,
+        usage=(None if parsed.usage is None else dict(parsed.usage)),
+        latency_ms=int((perf_counter() - started) * 1000),
+        http_status=(None if response is None else int(response.status_code)),
+        resolved_model=getattr(parsed, "resolved_model", None),
+        response_model_status=str(
+            getattr(parsed, "response_model_status", "missing")
+        ),
+        error_message=None,
+    )
+
+
+def _prepared_failure_evidence(
+    *,
+    failure_kind: str,
+    latency_ms: int,
+    http_status: int | None,
+    message: str,
+) -> PreparedDispatchEvidence:
+    return PreparedDispatchEvidence(
+        terminal_kind="provider_failure",
+        failure_kind=failure_kind,
+        raw_response_json=None,
+        content_text=None,
+        reasoning_content=None,
+        provider_response_id=None,
+        finish_reason=None,
+        usage=None,
+        latency_ms=max(0, latency_ms),
+        http_status=http_status,
+        resolved_model=None,
+        response_model_status="unavailable_provider_failure",
+        error_message=message[:500],
+    )
+
+
+def _redact_single_secret(message: str, secret: str) -> str:
+    return message.replace(secret, "[REDACTED_API_KEY]") if secret else message
 
 
 def build_ai_api_executor_descriptor(
