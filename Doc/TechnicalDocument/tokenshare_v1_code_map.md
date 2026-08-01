@@ -51,7 +51,7 @@ experiments ──> local_runtime ──> protocol_engine/core ──> storage
 
 | 文件 | 职责 |
 |---|---|
-| `events.py` | append-only JSONL event ledger、读取和校验。 |
+| `events.py` | append-only JSONL event ledger、读取和校验；`VerifiedLedgerSnapshot` 与 `EventLedger.read_verified_snapshot()` 从同一份持久化 bytes 校验 event/hash chain，并冻结 bytes/events digest、count 与 tip identity。 |
 | `artifacts.py` | content-addressed artifact、manifest、hash/URI 验证。 |
 | `sqlite_index.py` | 从 ledger 构建/重建 SQLite 查询索引；不是第二状态源。 |
 
@@ -61,13 +61,15 @@ experiments ──> local_runtime ──> protocol_engine/core ──> storage
 
 | 文件 | 职责 |
 |---|---|
-| `contracts.py` | `ProtocolRunRequest`、execution scope、plugin hooks、worker/backend 等稳定接口。 |
+| `contracts.py` | `ProtocolRunRequest`、execution scope、plugin hooks、worker/backend 等稳定接口；`ProtocolRunLedgerBinding` 把 run/task/root 绑定到 verified ledger snapshot；`RuntimeHookObservationV1` 是三 variant 的 closed typed envelope。 |
 | `coordinator.py` | 组装 scheduler/lease/executor/plugin/engine，推进完整本地协议生命周期。 |
 | `workers.py` | sequential/thread/process worker、liveness、真实 process death 与 capacity。 |
 | `process_worker_child.py` | Windows 独立子解释器 worker 的原子文件 handshake/result sidecar。 |
-| `projection.py` | 从 ledger/artifacts 派生通用 run/unit/attempt 只读视图。 |
+| `projection.py` | 从同一次 verified ledger snapshot 派生通用 run/unit/attempt 只读视图，并把 `ProtocolRunLedgerBinding` 放入正式 `ProtocolRunResult`。 |
 
 worker backend 只报告执行和死亡事实；是否 retry/requeue 由协议规则决定。不要把 Windows process 退回 multiprocessing spawn pipe/Event 路径。
+
+`RuntimeHookObservationV1` 的三个正式 variant 是 `EXPERIMENT_FAULT_INJECTED`、`EXPERIMENT_ABLATION_GATE_APPLIED`、`EXPERIMENT_PREMATURE_MERGE_ATTEMPTED`。正式 producer 分别位于 `paper_faults.py`、`paper_ablation.py` 与 `local_runtime/coordinator.py`；`paper_formal_metrics.py` 和 `paper_direct_results.py` 通过同一个 `RuntimeHookObservationV1.from_dict()` closed-schema parser 消费，不能把自由形状 summary dict 当作 hook 事实。
 
 ## `tokenshare.plugins.factorization`
 
@@ -157,6 +159,7 @@ Secret 只能进入当前进程环境和脱敏后的 transport；event/artifact/
 | 文件 | 职责 |
 |---|---|
 | `paper_projection.py` | 从 system projection/events/artifacts 派生 task/attempt rows。 |
+| `paper_direct_results.py` | Task 3 已接受的 canonical facts projector：从正式 runtime result、verified ledger binding、artifact 与 official typed-hook parser 构造 deep-immutable direct rows；以 preregistered root inventory 固定分母并显式生成 `not_started`，不从 gate bool/summary 自填成功。输出供后续 metric observation/projector registry 接线，当前不是 formal metrics/renderer 的替代入口。 |
 | `paper_metrics.py` | evidence-derived 通用统计与 integrity validation。 |
 | `paper_formal_metrics.py` | 正式 Exp1–5 指标表生产路径。 |
 | `paper_report.py`、`paper_formal_report.py`、`paper_smoke_report.py` | 通用/正式/smoke 输出；smoke 永远 paper-ineligible。 |
@@ -165,9 +168,9 @@ Secret 只能进入当前进程环境和脱敏后的 transport；event/artifact/
 
 正式规模和资源边界由 `paper_suite_scale.py`、`paper_budget.py`、`paper_formal_checkpoint.py` 与 `paper_formal_metrics.py` 共同约束：当前 Exp1–5 精确总量为 `6,384 roots / 40,520 units / 81,272 attempt upper`，最大单 condition 为 `100/1,000/1,000`；generation 逐 root delta、terminal SQLite streaming compaction、metrics lazy bundle mapping 和 JSONL/chunked scan 使内存按最大单 outcome/当前 bundle 定界，而不是把全 suite 同时载入。磁盘 forecast/compaction/safety reserve 必须写入 `run_budget.json` 并在 provider dispatch 前检查目标卷。
 
-### EPD-027 待实施的实验设施全面改造
+### EPD-027 实施进度与后续实验设施改造
 
-2026-08-01 已冻结 Experiment 2–4 两阶段真实回答库设计，但本节描述的是待实施边界，不表示代码已经存在。现有 `ai_api_replay.py` 与 `paper_formal_runner.py` replay 只恢复或复算既有 evidence，不能以回答库输入重新驱动完整状态机；当前 `ExecutionRequest`/prompt identity 也没有可跨 condition 安全复用的稳定 outbound-body digest。
+2026-08-01 已冻结 Experiment 2–4 两阶段真实回答库设计。当前 35 个实施 Task 中 Task 0–3 已 accepted：离线 network tripwire、profile/budget、machine-readable metric contract、canonical direct-results，以及其依赖的 verified-ledger/typed-hook producer binding 已存在。这个 `4/35` 状态不代表 response bank 或整条 paper pipeline 已实现：现有 `ai_api_replay.py` 与 `paper_formal_runner.py` replay 仍只恢复或复算既有 evidence，不能以回答库输入重新驱动完整状态机；当前 `ExecutionRequest`/prompt identity 也还没有可跨 condition 安全复用的稳定 outbound-body digest。
 
 后续完整实施计划必须同时覆盖：
 
@@ -178,7 +181,7 @@ Secret 只能进入当前进程环境和脱敏后的 transport；event/artifact/
 - Experiment 2 缩小题集六 worker 档在线并发检查、Experiment 3 小型在线恢复检查；
 - metrics/report/renderer/replay/audit 与 smoke/canary 身份迁移。
 
-这是一项跨 `tokenshare.executors`、`tokenshare.experiments`、两插件 runtime adapter 和输出 schema 的全面设施修改，不得在 `paper_formal_runner.py` 内临时塞入读取文件的旁路，也不得复制一套协议生命周期。实现前先建立 characterization/RED tests，并以唯一权威实验设计 EPD-027 为准。
+这是一项跨 `tokenshare.executors`、`tokenshare.experiments`、两插件 runtime adapter 和输出 schema 的全面设施修改，不得在 `paper_formal_runner.py` 内临时塞入读取文件的旁路，也不得复制一套协议生命周期。已接受的 ledger/hook/direct-result 边界不改变 `ProtocolEngine` 状态机；response-bank、trace-backed executor、projector registry 与 formal runner/metrics/renderer/replay 的正式 pipeline 接线属于后续 Task。后续继续先建 characterization/RED tests，并以唯一权威实验设计 EPD-027 为准。
 
 指标不得使用固定协议时间、自填成功字段或丢失失败/未开始分母；所有汇总必须能回到逐 task/attempt/event/artifact。
 

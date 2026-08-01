@@ -5,7 +5,7 @@
   "active_feature": "feat-011",
   "active_focus": {
     "id": "paper-metric-contract-trace-bank-and-traceability-plan",
-    "summary": "逐项冻结 Experiment 1–5 论文指标，并从论文指标反推实验直接结果、真实回答库 acquisition/trace-backed execution evidence、runner/metrics/renderer/replay 部件和完整实施验证计划。",
+    "summary": "EPD-027 已进入严格串行实施：35 个 Task 中 Task 0–3 已 accepted（4/35），已闭合离线 network tripwire、profile/budget、machine-readable metric contract、canonical direct-results projector 及其 verified-ledger/typed-hook producer 前置；Task 4 queued。",
     "status": "in-progress",
     "scope": [
       "Experiment 1–5 论文指标、固定分母与 missingness 口径",
@@ -22,7 +22,7 @@
       "修改由其他工作调整中的 Experiment 3 正式规模",
       "人为注入攻击与安全工程"
     ],
-    "next_action": "下一步只编写完整实施计划：先从冻结指标反推 direct result/evidence，再覆盖 response bank 全面设施改造、Exp2 六档在线检查、Exp3 在线恢复检查、预算硬门和一次性验收；计划获用户确认前不执行，不启动旧 smoke 或正式矩阵。既有 full-resource A 未闭合项必须纳入新计划重新排序。"
+    "next_action": "先按用户最新门禁完成 Task 3 相关测试压缩设计、实施与独立复审：删除一次性/重复/实现细节型覆盖，只保留最小协议边界与回归证据。随后严格串行实施 Task 4，并把计划漏列的 tests/test_paper_network_tripwire.py 纳入实际迁移与 focused command。无经 Task 26 校验的 paid receipt，不得调用真实 API。"
   },
   "authorities": {
     "agent_start": "AGENTS.md",
@@ -161,10 +161,15 @@
         "EPD-026 已冻结 active scale profile paper_suite_scale_300_50_54.v1 与 Exp5 selection/smoke v4；正式 exact plan 为 Exp1–5 6384 roots/40520 units/81272 attempt upper，token ceiling 23503151360，cost ceiling 7346.259328",
         "EPD-026 离线验证：scale/Exp3/4 reviewer 50、Exp3 26、Exp4 39、Exp5 model 90、Exp5 smoke/evidence/supervision 48、authoritative CLI exact plan-only 1 项通过；provider calls=0，未运行 Full/LeanAudit/真实 API/全量",
         "2026-07-31 用户暂停点：checkpoint/evidence 142 项与 shared dispatch/fail-close/resume 3 项离线通过；收尾 Fast 458 passed/1 skipped；shared terminal-snapshot-only index、500-root live-outcome 压力证据和最新 formal runner 整体回归尚未闭合，正式全量维持 NO-GO",
-        "EPD-027 已冻结 Experiment 2–4 两阶段真实回答库、Exp2 缩小题集全六 worker 档真实在线检查、Exp3 小型真实在线恢复检查，并明确其为跨 identity/executor/artifact/eligibility/budget/runner/metrics/replay 的全面设施改造；当前仅 design_synced、未实现",
-        "EPD-027 文档/harness 同步后 Fast：458 passed/1 skipped；JSON/SQLite、harness、compileall 通过，未联网、未调用真实 API"
+        "EPD-027 已冻结 Experiment 2–4 两阶段真实回答库、Exp2 缩小题集全六 worker 档真实在线检查、Exp3 小型真实在线恢复检查，并明确其为跨 identity/executor/artifact/eligibility/budget/runner/metrics/replay 的全面设施改造；design_synced/未实现是实施前历史快照",
+        "EPD-027 文档/harness 历史同步 Fast：458 passed/1 skipped；JSON/SQLite、harness、compileall 通过，未联网、未调用真实 API",
+        "EPD-027 实施进度 4/35：Task 0–2 accepted 原提交 ed0b056a、78fbddaa、d2b16f89 不变；通用 ledger-binding 860b7c48 focused 40 passed/review PASS，typed-hook 4ea293b1 final 69+286 passed/review PASS",
+        "Task 3 accepted commit f9773944：canonical direct-results 四文件，focused 101 passed、独立 review PASS、provider calls=0；正式路径无影子 TokenShare，ProtocolEngine disabled 时不能铸造 paper-eligible success",
+        "2026-08-01 Task 3 accepted 后 Fast：.\\init.ps1 exit 0，468 passed/1 skipped in 20.19s；JSON/SQLite、harness、compileall 通过，provider calls=0；Full intentionally not run per user instruction，LeanAudit/API 未运行",
+        "状态同步时 verification/run_verification.py 被误判为无 pytest harness，实际重复执行 Fast：468 passed/1 skipped in 18.78s；不计新增覆盖，后续不得重复",
+        "用户新增门禁：每个 Task accepted 后先压缩相关测试并独立复审，再进入下一 Task；当前先处理 Task 3，Task 4 继续 queued；无 paid receipt/付费授权"
       ],
-      "next_action": "先完成从论文指标到 direct result/evidence/组件的完整实施计划，并把 EPD-027 response-bank 全面改造、既有 full-resource A 残留、Exp2 六档在线检查、Exp3 在线恢复检查和最终 paper traceability 门禁统一排序；计划写完后等待用户确认，不直接执行。获得明确付费授权前不得运行任何新 API。"
+      "next_action": "先完成 Task 3 accepted 后的相关测试压缩设计、实施与独立复审，再进入 Task 4 exact outbound bytes/request identity/Lean prompt v2；Task 4 须纳入 tests/test_paper_network_tripwire.py 的旧 ABI 命中，并在 accepted 后同样压缩测试。其余 31/35 Task 保持 queued；无经 Task 26 校验的 paid receipt 不得运行真实 API。"
     }
   ]
 }
