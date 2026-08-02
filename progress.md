@@ -7,13 +7,13 @@
 ## 当前状态
 
 - Active feature：`feat-011`（Paper Real AI Experiments），状态仍为 `in-progress`。
-- EPD-027 实施计划共 35 个 Task，Task 0–18 已 accepted（`19/35`）。Task 18 evidence-class versioning/acquisition eligibility commit=`18d2c12a`；Task 19 formal runner integration 为 `blocked/next`，等待计划外 production 接线授权。
+- EPD-027 实施计划共 35 个 Task，Task 0–18 已 accepted（`19/35`）。Task 18 evidence-class versioning/acquisition eligibility commit=`18d2c12a`；Task 19 formal runner integration 已获计划外 production 接线授权并进入 `in_progress`。
 - Task 18 初始 RED=`183 passed, 9 failed in 27.64s`，初始 GREEN=`193 passed in 26.28s`。首轮 reviewer BLOCK=`3 Critical/1 Important`；逐 identity-chain targeted RED=`9 failed in 1.04s`，修复后 canonical=`193 passed in 25.40s`。
 - Task 18 第二轮 reviewer BLOCK=`2 Critical/1 Important`；补全部 replacements canonical ownership 与 terminal-aware lifecycle，targeted RED 后 `2 passed in 0.18s`，最终 canonical=`193 passed in 24.78s`，final reviewer=`PASS`、Critical/Important/Minor=`0/0/0`。
 - Online evidence 逐 executed unit 精确绑定 current provider attempt/lifecycle；trace evidence 逐 planned unit/replacement/entry 绑定 canonical manifest、source provenance 与 receipt creator，current calls=`0`；Factor/Lean success 与 provider failure 使用不同 terminal truth table，旧 schema/`PaidAcquisitionContext` 不得升级或冒充 receipt。
 - Task 18 子智能体 post-accept test minimization=`CHANGED`，只删除 15 个重复/fixture 细节断言和 1 个无用变量；六个计划 tests 与全部真实缺陷回归保留，最终 canonical=`193 passed in 26.83s`。
-- Task 19 只读预检发现原计划四文件缺少正常 trace dispatcher/stager 与纯 preflight seam；候选计划外 production 为 `paper_response_bank.py`（纯 completeness API，20–30 分钟，可前置微 Task）、`paper_dispatcher.py`（typed trace context，20–30 分钟）及 `factorization_paper_adapter.py`/`lean_paper_adapter.py`（分别接正式 runtime/bridge/stager/scheduler，各 45–75 分钟，须并入 Task 19）。在用户明确批准前不得实施，不得用 runner 内旁路或 coordinator 私有字段形成影子 TokenShare。
-- 用户已授权每个后续 Task 持续执行实现/review/fix/follow-up 至 PASS 后直接推进；post-accept 测试最小化一律由子智能体执行。当前先请求 Task 19 计划外 production 文件授权；不得调用真实 API。
+- Task 19 只读预检发现原计划四文件缺少正常 trace dispatcher/stager 与纯 preflight seam；用户已明确批准计划外 production `paper_response_bank.py`（纯 completeness API）、`paper_dispatcher.py`（typed trace context）及 `factorization_paper_adapter.py`/`lean_paper_adapter.py`（正式 runtime/bridge/stager/scheduler）。Task 19 精确 allowlist 为原计划四文件加上述四文件，共 8 文件；不得继续扩张或用 runner 旁路形成影子 TokenShare。
+- 用户已授权每个后续 Task 持续执行实现/review/fix/follow-up 至 PASS 后直接推进；post-accept 测试最小化一律由子智能体执行。当前实施 Task 19；不得进入 Task 20 或调用真实 API。
 - 本轮 provider/network calls=`0`，无 paid receipt；Fast 未重复，Full/LeanAudit 未运行，正式矩阵继续 **NO-GO**。
 - Task 3 的两项通用前置均已 accepted：ledger-binding `860b7c48` 最终 focused `40 passed`、review PASS；typed-hook `4ea293b1` 最终 `69 + 286 passed`、review PASS。Task 3 四文件提交=`f9773944`，最终 focused `101 passed`、独立 review PASS，provider calls=`0`。
 - Task 3 post-task 测试压缩已完成并提交为 `66643084`：仅修改 5 个测试文件，production 零修改；test defs / 估算 cases 从 `77/153` 降至 `66/118`。canonical scoped 结果 exit `0`，`118 passed in 5.55s`，provider calls=`0`；独立 review PASS，Critical/Important/Minor=`0/0/0`。本次提交与状态同步未重复运行 Fast、Full 或 LeanAudit。
@@ -112,7 +112,7 @@
 
 - EPD-025/027 的实施已不再是“只完成设计同步”：Task 2–18 的 metric contract、canonical direct results、stable request identity、immutable bank、inventory/preflight、budget、acquisition、logical scheduler、parent-owned commit ABI、trace-backed executor / dual provenance、standalone Exp1–5 projectors、registry/formal metric drafts 与 versioned evidence eligibility 已 accepted；formal runner/report/renderer、execute/replay 与论文管线正式接线仍须按后续 Task 完成。本轮没有启动真实 API。
 - 按用户要求，本次审计/修复没有新运行 Full、LeanAudit、force-all、真实 API smoke 或正式矩阵；未检查人为注入攻击。上面的真实调用来自用户此前启动的历史 smoke。
-- 历史审计时当前进程的 `DEEPSEEK_API_KEY` 非空；这只证明当时环境曾配置，不构成当前付费授权，也不把 secret 写入仓库或输出。Task 0–18 已 accepted，Task 19 因计划外 production 接线待授权而 blocked/next；旧 Exp3/4 与 Exp5 smoke 继续暂停。
+- 历史审计时当前进程的 `DEEPSEEK_API_KEY` 非空；这只证明当时环境曾配置，不构成当前付费授权，也不把 secret 写入仓库或输出。Task 0–18 已 accepted，Task 19 已获计划外 production 接线授权并为 in_progress；旧 Exp3/4 与 Exp5 smoke 继续暂停。
 - TTFT 当前没有持久化来源，保持缺失，不伪造为 0。
 - Exp5 bundle digest 仍包含 source suite 持久化路径字符串，属于跨机器可移植性 P2，不影响当前本机 lifecycle/artifact 绑定。
 - PowerShell 日志 helper 在“runner 已退出但其后代长期持有继承管道写端”的极端路径仍可能等待 EOF；正常 launcher 实时脱敏、受控退出与退出码传播测试通过。该 P2 未伪装成已修复，不影响本轮结果完整性结论。

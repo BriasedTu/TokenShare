@@ -5,7 +5,7 @@
   "active_feature": "feat-011",
   "active_focus": {
     "id": "paper-metric-contract-trace-bank-and-traceability-plan",
-    "summary": "EPD-027 严格串行实施为 19/35 accepted：Task 0–18 已 accepted；Task 19 formal runner integration 因计划外 production 接线待用户授权而 blocked/next。",
+    "summary": "EPD-027 严格串行实施为 19/35 accepted：Task 0–18 已 accepted；Task 19 formal runner integration 已获四个计划外 production 接线授权并进入 in_progress。",
     "status": "in_progress",
     "scope": [
       "Experiment 1–5 论文指标、固定分母与 missingness 口径",
@@ -17,12 +17,12 @@
       "完整实施顺序、测试、离线重放与真实 smoke/正式矩阵门禁"
     ],
     "out_of_scope": [
-      "用户批准计划外 production 接线前实施 Task 19 formal runner integration",
+      "Task 19 accepted 前进入 Task 20 metric lineage observations",
       "重新运行真实付费 API 实验",
       "修改由其他工作调整中的 Experiment 3 正式规模",
       "人为注入攻击与安全工程"
     ],
-    "next_action": "向用户报告 Task 19 正常 trace lifecycle 所需的最小计划外 production 接线；取得明确授权后才启动 Task 19，期间不得调用真实 API。"
+    "next_action": "启动单一 Task 19 实现 Agent，严格修改原计划四文件与用户批准的四个 trace/preflight 接线文件；不得进入 Task 20 或调用真实 API。"
   },
   "authorities": {
     "agent_start": "AGENTS.md",
@@ -186,9 +186,10 @@
         "Task 16 accepted commit 440c1ef9：严格2文件；module-absent RED 1 collection error/pytest0.28s（outer wrapper0但conda failed），初始GREEN 9 passed/0.81s；reviewer BLOCK 1 Critical/2 Important，targeted RED 5 failed/0.36s与identity-shadow RED 1 failed/0.48s，最终review GREEN 9 passed/1.20s；canonical PaperModelEndpointIdentity、planned-call与cross-root timing门禁闭合；final reviewer PASS 0/0/0；子智能体test minimization CHANGED后9 passed/1.17s；provider/network0，无paid receipt；Fast/Full/LeanAudit未运行",
         "Task 17 accepted commit 8ded3681：严格4文件；初始RED 2 collection errors/0.33s（outer wrapper0但conda failed），初始GREEN 6 passed/0.42s；reviewer BLOCK 2 Critical/2 Important，3个缺失/旁路nodeid各先失败后1 passed/0.13s；最终canonical 6 passed/0.43s；contract row-kind/metric inventory、真实registry/contract identity与8-table write-before-publish门禁闭合；final reviewer PASS 0/0/0；子智能体test minimization CHANGED后6 passed/0.47s；provider/network0，无paid receipt；Fast/Full/LeanAudit未运行",
         "Task 18 accepted commit 18d2c12a：严格4文件；初始RED 183 passed/9 failed/27.64s，初始GREEN 193 passed/26.28s；首轮review BLOCK 3 Critical/1 Important，identity-chain RED 9 failed/1.04s后canonical 193 passed/25.40s；第二轮review BLOCK 2 Critical/1 Important，replacement/terminal targeted RED→2 passed/0.18s，canonical 193 passed/24.78s；逐unit/attempt与全部replacement/entry/manifest/receipt creator绑定、Factor/Lean success和provider-failure terminal truth table闭合；final reviewer PASS 0/0/0；子智能体test minimization CHANGED后193 passed/26.83s；provider/network0，无paid receipt；Fast/Full/LeanAudit未运行",
-        "Task 19 只读预检 blocker：原计划4文件缺少正常 trace 接线；需用户批准计划外 production paper_response_bank.py（纯 completeness seam）、paper_dispatcher.py（typed trace context）及 factorization_paper_adapter.py/lean_paper_adapter.py（正式 runtime/bridge/stager/scheduler 注入），否则只能重复 preflight、继续旧 backend 或形成 shadow/private-ABI 路径"
+        "Task 19 只读预检 blocker：原计划4文件缺少正常 trace 接线；需用户批准计划外 production paper_response_bank.py（纯 completeness seam）、paper_dispatcher.py（typed trace context）及 factorization_paper_adapter.py/lean_paper_adapter.py（正式 runtime/bridge/stager/scheduler 注入），否则只能重复 preflight、继续旧 backend 或形成 shadow/private-ABI 路径",
+        "2026-08-02 用户明确批准 Task 19 修改上述四个计划外 production 文件；Task 19 allowlist 因此为原计划4文件加这4个production接线文件，共8文件，仍禁止其他计划外production与真实API"
       ],
-      "next_action": "Task 0–18 accepted count=19/35；Task 19 blocked/next，须先取得计划外 production 接线明确授权；不得调用真实API。"
+      "next_action": "Task 0–18 accepted count=19/35；Task 19 in_progress。仅实施批准的8文件allowlist，不得进入Task20或调用真实API。"
     }
   ]
 }

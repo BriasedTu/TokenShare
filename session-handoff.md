@@ -6,11 +6,11 @@
 
 1. 先完整阅读 `AGENTS.md` 与 `Doc/archive/design-history/2026-08-01-epd027-minimal-handoff.md`。
 2. 执行 `git status --short --branch` 与 `git log -3 --oneline`，确认 Task 18 代码提交和状态提交。
-3. Task 0–18 已 accepted；Task 19 因计划外 production 接线待用户授权而 blocked/next，未获授权不得实施。
+3. Task 0–18 已 accepted；Task 19 的四个计划外 production 接线已获用户明确授权，按 8 文件 allowlist 实施，不得进入 Task 20。
 
 ## 2026-08-02 EPD-027 当前实施交接（Task 18 accepted）
 
-- Active feature=`feat-011`，仍为 `in-progress`；active focus id 保持 `paper-metric-contract-trace-bank-and-traceability-plan`，status=`in_progress`。Task 0–18 已 accepted（`19/35`）；Task 19 为 `blocked/next`；正式矩阵仍为 **NO-GO**。
+- Active feature=`feat-011`，仍为 `in-progress`；active focus id 保持 `paper-metric-contract-trace-bank-and-traceability-plan`，status=`in_progress`。Task 0–18 已 accepted（`19/35`）；Task 19 为 `in_progress`；正式矩阵仍为 **NO-GO**。
 - 当前分支=`codex/feat-011-epd027-pipeline`；Task 18 evidence eligibility commit=`18d2c12a`，状态提交在其后。
 - Task 0–2 accepted 原提交不变：Task 0=`ed0b056a`，Task 1=`78fbddaa`，Task 2=`d2b16f89`。
 - Task 3–9 已 accepted；提交依次包括 `f9773944`/`66643084`、`0cbda1df`、`58cda71f`、`5f97034c`、`aadbd483`、`6802918d`、`1109e852`，均有 scoped exit `0` 与最终 review PASS，provider/network calls=`0`。完整文件、测试和复审证据见 minimal handoff/progress。
@@ -27,8 +27,8 @@
 - Task 14 review-fix targeted RED=`6 failed in 2.52s`，contract nodeid RED=`1 failed in 0.39s`；contract full=`197 passed in 15.74s`。第二轮 online missingness targeted RED=`2 failed in 0.70s`；最终 canonical=`12 passed in 1.79s`，py_compile/diff-check 通过。
 - Task 14 final reviewer=`PASS`，Critical/Important=`0/0`；post-accept test minimization=`NO_CHANGE`。接管 Fast 仅运行一次：`497 passed, 1 skipped in 32.15s`；Full/LeanAudit 未运行，provider/network calls=`0`，无 paid receipt。
 - Task 18 初始 RED=`183 passed/9 failed in 27.64s`、GREEN=`193 passed in 26.28s`；两轮 reviewer BLOCK=`3C/1I` 与 `2C/1I`，逐 unit/attempt、全部 replacement/entry/manifest/receipt creator 与 terminal-aware lifecycle 修复后最终 canonical=`193 passed in 24.78s`。final reviewer PASS=`0/0/0`；子智能体 test minimization=`CHANGED` 后 canonical=`193 passed in 26.83s`；provider/network=`0/0`。
-- 用户已授权后续每个 Task 持续实施/review/fix/follow-up 直至 PASS 后直接推进，且 post-accept 测试最小化必须由子智能体执行。下一动作是取得 Task 19 最小计划外 production 接线明确授权；授权前不得实施 Task 19。
-- Task 19 计划外候选精确为 `paper_response_bank.py`（纯 completeness seam）、`paper_dispatcher.py`（typed trace context）、`factorization_paper_adapter.py` 与 `lean_paper_adapter.py`（正式 trace runtime/bridge/stager/scheduler 接线）。不修改会导致重复 preflight、继续旧 backend 或缺失 parent commit/checker/canonical lifecycle；禁止 runner 旁路与 coordinator 私有 ABI。
+- 用户已授权后续每个 Task 持续实施/review/fix/follow-up 直至 PASS 后直接推进，且 post-accept 测试最小化必须由子智能体执行。下一动作是实施 Task 19；Task 20 仍保持 queued。
+- 用户已明确批准 Task 19 计划外 `paper_response_bank.py`（纯 completeness seam）、`paper_dispatcher.py`（typed trace context）、`factorization_paper_adapter.py` 与 `lean_paper_adapter.py`（正式 trace runtime/bridge/stager/scheduler 接线）。加原计划 runner/callbacks 与两个 tests，共 8 文件；禁止其他计划外 production、runner 旁路与 coordinator 私有 ABI。
 
 ## 2026-07-31 用户暂停点（历史）
 
@@ -53,7 +53,7 @@
 
 ## 当前业务状态
 
-- Active feature：`feat-011`。EPD-027 accepted 进度为 `19/35`：Task 0–18 已 accepted；Task 19 为 blocked/next，Task 20 及以后保持 queued。immutable bank、inventory/preflight、budget、acquisition、logical scheduler、parent-owned commit ABI、trace-backed executor / dual provenance、standalone Exp1–5 projectors、registry/formal metrics 与 evidence eligibility 已 accepted；formal runner/renderer/replay 接线仍未闭合。
+- Active feature：`feat-011`。EPD-027 accepted 进度为 `19/35`：Task 0–18 已 accepted；Task 19 为 in_progress，Task 20 及以后保持 queued。immutable bank、inventory/preflight、budget、acquisition、logical scheduler、parent-owned commit ABI、trace-backed executor / dual provenance、standalone Exp1–5 projectors、registry/formal metrics 与 evidence eligibility 已 accepted；formal runner/renderer/replay 接线仍未闭合。
 - Active focus 已从“只写计划”进入严格串行实施。EPD-025 的 Experiment 5 `max_retries=0`、两张 model 汇总表、无六组 pairwise 继续冻结；Task 2–16 已提供 contract/direct facts/stable request identity/immutable bank/inventory/budget/acquisition/scheduler/parent commit ABI/trace-backed executor/Exp1–5 projectors，正式 consumer/renderer/replay 接线仍待后续 Task。
 - 真实 `exp34-smoke-20260731-041442` 已结束：11 roots、36 provider attempts、839,054 tokens、8 completed、3 evidence-complete experimental failures；配置口径 cost estimate CNY 4.6147626，actual billing unavailable。
 - 真实性审计 PASS：36 个 DeepSeek HTTP 200 response ID 与 36 个 canonical v2 model records，v3 模型/请求身份一致，TokenShare coordinator/engine/ledger/artifact 路径完整，secret scan 零命中。

@@ -7,7 +7,7 @@
 - 工作树：`C:\Users\32133\.config\superpowers\worktrees\TokenShare\codex-feat-011-epd027-pipeline`。
 - 分支：`codex/feat-011-epd027-pipeline`；Task 18 代码 HEAD=`18d2c12a`；状态/交接提交在其后。
 - Active feature：`feat-011`，仍为 `in-progress`；正式矩阵保持 **NO-GO**。
-- Task 0–18 已 accepted（`19/35`）；不得重做。Task 19 为 `blocked/next`，须先取得计划外 production 接线授权。
+- Task 0–18 已 accepted（`19/35`）；不得重做。Task 19 已获四个计划外 production 接线授权并为 `in_progress`；不得进入 Task 20。
 - 用户已授权每个后续 Task 持续执行“实现 → 独立综合 review → 集中修正 → follow-up”循环直至 reviewer PASS，再直接推进下一 Task。
 - 每个 Task 的 post-accept 测试最小化必须分派给子智能体；监督者不得亲自执行测试内容审计，只负责范围门禁、结构化证据验收与精确提交。
 - 当前没有活动写入者。provider/network 调用均为 `0`，无 paid receipt。
@@ -44,8 +44,8 @@ Task 14 contract digest=`sha256:b72307e727e28f5233de934df28e1701cf46ffb711b99aa8
 
 ## 精确下一动作
 
-1. Task 19 只读预检认为原计划四文件缺少正常 trace 接线；待授权候选为 `paper_response_bank.py`（纯 completeness，20–30 分钟）、`paper_dispatcher.py`（typed trace context，20–30 分钟）、`factorization_paper_adapter.py` 与 `lean_paper_adapter.py`（正式 runtime/bridge/stager/scheduler，各 45–75 分钟）。
-2. 未获明确授权不得修改计划外 production 文件，也不得在 runner 内复制 preflight/dispatcher 或私改 coordinator 形成影子 TokenShare。
+1. Task 19 精确 allowlist：原计划 `paper_formal_runner.py`、`paper_formal_callbacks.py` 及对应两个 tests，加用户批准的 `paper_response_bank.py`、`paper_dispatcher.py`、`factorization_paper_adapter.py`、`lean_paper_adapter.py`，共 8 文件。
+2. 按 TDD 接入纯 preflight、typed trace context、正常 coordinator/runtime/bridge/stager/scheduler；不得复制 preflight/dispatcher、私改 coordinator 或形成影子 TokenShare。
 3. 当前 Task 进入 review 后才可做下一 Task 只读预检；同一时间只允许一个写入者。
 
 恢复期间继续遵守：无经 Task 26 校验的 paid receipt 不得调用真实 API；不 push、不 merge、不创建 PR。
