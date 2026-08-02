@@ -5,7 +5,7 @@
   "active_feature": "feat-011",
   "active_focus": {
     "id": "paper-metric-contract-trace-bank-and-traceability-plan",
-    "summary": "EPD-027 严格串行实施为 11/35 accepted：Task 0–10 已 accepted；Task 10 attempt ordinal / parent-owned trace delivery commit ABI 已提交并通过最终 review，Task 11 为 queued/next。",
+    "summary": "EPD-027 严格串行实施为 12/35 accepted：Task 0–11 已 accepted；Task 11 trace-backed executor / dual provenance 已提交并通过最终 review，Task 12 为 queued/next。",
     "status": "queued",
     "scope": [
       "Experiment 1–5 论文指标、固定分母与 missingness 口径",
@@ -17,12 +17,12 @@
       "完整实施顺序、测试、离线重放与真实 smoke/正式矩阵门禁"
     ],
     "out_of_scope": [
-      "本次 accepted 状态持久化直接修改 Task 11 及后续 executor/metrics/runner/renderer 代码",
+      "本次 accepted 状态持久化直接修改 Task 12 及后续 metrics/runner/renderer/replay 代码",
       "重新运行真实付费 API 实验",
       "修改由其他工作调整中的 Experiment 3 正式规模",
       "人为注入攻击与安全工程"
     ],
-    "next_action": "Task 11 trace-backed executor / dual provenance 为 queued/next；无经 Task 26 校验的 paid receipt 不得调用真实 API。"
+    "next_action": "Task 12 为 queued/next；无经 Task 26 校验的 paid receipt 不得调用真实 API。"
   },
   "authorities": {
     "agent_start": "AGENTS.md",
@@ -163,7 +163,7 @@
         "2026-07-31 用户暂停点：checkpoint/evidence 142 项与 shared dispatch/fail-close/resume 3 项离线通过；收尾 Fast 458 passed/1 skipped；shared terminal-snapshot-only index、500-root live-outcome 压力证据和最新 formal runner 整体回归尚未闭合，正式全量维持 NO-GO",
         "EPD-027 已冻结 Experiment 2–4 两阶段真实回答库、Exp2 缩小题集全六 worker 档真实在线检查、Exp3 小型真实在线恢复检查，并明确其为跨 identity/executor/artifact/eligibility/budget/runner/metrics/replay 的全面设施改造；design_synced/未实现是实施前历史快照",
         "EPD-027 文档/harness 历史同步 Fast：458 passed/1 skipped；JSON/SQLite、harness、compileall 通过，未联网、未调用真实 API",
-        "EPD-027 实施进度 11/35：Task 0–2 accepted 原提交 ed0b056a、78fbddaa、d2b16f89 不变；通用 ledger-binding 860b7c48 focused 40 passed/review PASS，typed-hook 4ea293b1 final 69+286 passed/review PASS",
+        "EPD-027 实施进度 12/35：Task 0–2 accepted 原提交 ed0b056a、78fbddaa、d2b16f89 不变；通用 ledger-binding 860b7c48 focused 40 passed/review PASS，typed-hook 4ea293b1 final 69+286 passed/review PASS",
         "Task 3 accepted commit f9773944：canonical direct-results 四文件，focused 101 passed、独立 review PASS、provider calls=0；正式路径无影子 TokenShare，ProtocolEngine disabled 时不能铸造 paper-eligible success",
         "2026-08-01 Task 3 accepted 后 Fast：.\\init.ps1 exit 0，468 passed/1 skipped in 20.19s；JSON/SQLite、harness、compileall 通过，provider calls=0；Full intentionally not run per user instruction，LeanAudit/API 未运行",
         "状态同步时 verification/run_verification.py 被误判为无 pytest harness，实际重复执行 Fast：468 passed/1 skipped in 18.78s；不计新增覆盖，后续不得重复",
@@ -177,9 +177,10 @@
         "Task 7 accepted commit aadbd483：严格四文件；post-min final test exit 0，12 passed in 2.18s；two-process race 覆盖；comprehensive review PASS，Critical/Important/Minor=0/0/0；test compaction 仅删除 1 个冗余 assert；provider/network/secret=0；3 个 production 文件 py_compile exit 0；Fast/Full/LeanAudit 未运行",
         "Task 8 accepted commit 6802918d：严格六个实际变更文件；最终 exact 5-file command exit 0，77 passed in 15.20s；manifest 专项3 passed/cross-check4 passed；fake-only，真实 provider/network/secret=0；4 个 production 文件 py_compile、diff-check、allowlist、secret scan exit 0；final review PASS，Critical/Important/Minor=0/0/0；test minimization 3min NO_CHANGE，collect-only=19（行为18）；无 paid receipt，Fast/Full/LeanAudit 未运行",
         "Task 9 accepted commit 1109e852：严格12文件（计划11文件 + 用户授权 src/tokenshare/storage/artifacts.py）；final canonical exit 0，42 passed in 36.58s；final review PASS，Critical/Important/Minor=0/0/0；C1 typed in-process checkpoint/resume、C2六类queue闭合；test minimization NO_CHANGE；7个production文件py_compile与diff-check exit 0；artifact变更仅Windows normal-path映射且logical identity不变；provider/network calls=0；Fast/Full/LeanAudit未运行",
-        "Task 10 accepted commit 933ca71bd3aca9b62ad4f4b399f43a8f5d8092e1：严格16文件（11 production + 5 tests）；canonical exit 0，106 passed in 48.71s；11 production py_compile exit 0；final reviewer PASS；验收后仅2个测试文件删37行/3 cases，最小验证 exit 0，35 passed in 10.61s；provider_calls=0，无 paid receipt；Full intentionally not run per user，Fast/LeanAudit/network/provider未运行；Task 11 queued/next"
+        "Task 10 accepted commit 933ca71bd3aca9b62ad4f4b399f43a8f5d8092e1：严格16文件（11 production + 5 tests）；canonical exit 0，106 passed in 48.71s；11 production py_compile exit 0；final reviewer PASS；验收后仅2个测试文件删37行/3 cases，最小验证 exit 0，35 passed in 10.61s；provider_calls=0，无 paid receipt；Full intentionally not run per user，Fast/LeanAudit/network/provider未运行",
+        "Task 11 accepted commit 1b5d098ebfdbf3a13ab1175a5708ddc057a1bddc：严格10文件（6 production + 4 tests），含用户批准的4个最小plan-out接点；post-min trace final exit 0，10 passed in 3.58s；parent32/logical5/Factor+Lean2/recovery39/descriptor3通过；6 production compile/diff/allowlist/secret-output通过；final reviewer PASS；canonical首次tool timeout，cache暴露3个v2失败，修复后3 nodeids pass，明确不记录canonical PASS；测试最小化删7行/1 test；provider_calls=0，无paid receipt；Full intentionally not run，Fast/LeanAudit/network/provider未运行；Task 12 queued/next"
       ],
-      "next_action": "Task 10 已 accepted，accepted count=11/35。Task 11 trace-backed executor / dual provenance queued/next；无经 Task 26 校验的 paid receipt 不得运行真实 API。"
+      "next_action": "Task 11 已 accepted，accepted count=12/35。Task 12 queued/next；无经 Task 26 校验的 paid receipt 不得运行真实 API。"
     }
   ]
 }

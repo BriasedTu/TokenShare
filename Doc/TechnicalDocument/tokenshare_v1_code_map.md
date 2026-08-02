@@ -61,8 +61,8 @@ experiments ──> local_runtime ──> protocol_engine/core ──> storage
 
 | 文件 | 职责 |
 |---|---|
-| `contracts.py` | `ProtocolRunRequest`、execution scope、plugin hooks、worker/backend 等稳定接口；`ProtocolRunLedgerBinding` 把 run/task/root 绑定到 verified ledger snapshot；`RuntimeHookObservationV1` 是三 variant 的 closed typed envelope；Task 9 增加 typed logical schedule/checkpoint contract；Task 10 增加 `PreparedTraceDelivery`、`ParentCommitStores` 与 `TraceDeliveryAttempt`。 |
-| `coordinator.py` | 组装 scheduler/lease/executor/plugin/engine，推进完整本地协议生命周期；Task 9 由 frozen queue pop 统一推进 logical clock；Task 10 校验 delivery/lease/request/store binding 后由 parent 唯一 commit trace delivery。 |
+| `contracts.py` | `ProtocolRunRequest`、execution scope、plugin hooks、worker/backend 等稳定接口；`ProtocolRunLedgerBinding` 把 run/task/root 绑定到 verified ledger snapshot；`RuntimeHookObservationV1` 是三 variant 的 closed typed envelope；Task 9 增加 typed logical schedule/checkpoint contract；Task 10 增加 `PreparedTraceDelivery`、`ParentCommitStores` 与 `TraceDeliveryAttempt`；Task 11 增加 `ParentTraceDeliveryStageContext`、`ParentStagedTraceDelivery` 与 core-neutral `ParentTraceDeliveryStager`。 |
+| `coordinator.py` | 组装 scheduler/lease/executor/plugin/engine，推进完整本地协议生命周期；Task 9 由 frozen queue pop 统一推进 logical clock；Task 10 校验 delivery/lease/request/store binding 后由 parent 唯一 commit trace delivery；Task 11 注入 parent-only domain stager、验证 current artifact refs，并把 trace consumption 规范化为零 current provider spend 的普通 engine submission。 |
 | `logical_scheduler.py` | Task 9 deterministic logical source-latency event queue、stable tie-break、checkpoint/resume 与六类 completion 闭合。 |
 | `workers.py` | sequential/thread/process worker、liveness、真实 process death 与 capacity；Task 9 worker completion 返回 scheduled event；Task 10 worker 只返回 prepared delivery，不能写 parent stores。 |
 | `process_worker_child.py` | Windows 独立子解释器 worker 的原子文件 handshake/result sidecar；Task 9 透传 typed scheduled completion；Task 10 透传 typed prepared delivery。 |
@@ -106,9 +106,10 @@ AI 只能生成预注册 proof unit 的候选内容，不能决定协议级拆�
 | `ai_api_selector.py` | entry/capability 选择。 |
 | `ai_api_request_identity.py` | 唯一 prepared-request factory：冻结 canonical UTF-8 body bytes、normalized absolute endpoint、content type、admission profile 与稳定 inference request digest，并重算一致性后才允许 dispatch。 |
 | `ai_api_transport.py` | DeepSeek/OpenAI-compatible/SiliconFlow transport；只消费已校验的 exact endpoint/bytes ABI，不二次序列化。 |
-| `ai_api.py` | 执行请求、attempt/provenance/usage 收集；Task 8 acquisition 路径在 secret resolution/transport 前完成 receipt/mode/output-marker、prepared consistency、prompt admission、durable prepared artifact、inventory winner 与 budget reservation/dispatch-intent 门禁，同一 semantic-slot loser 不进入 transport。 |
+| `ai_api.py` | 执行请求、attempt/provenance/usage 收集；Task 8 acquisition 路径在 secret resolution/transport 前完成 receipt/mode/output-marker、prepared consistency、prompt admission、durable prepared artifact、inventory winner 与 budget reservation/dispatch-intent 门禁，同一 semantic-slot loser 不进入 transport；Task 11 的最小 plan-out 接点让 descriptor 同时声明 execution request v1/v2 compatibility。 |
 | `ai_api_artifacts.py` | raw/parsed/failure/provenance/usage/model record artifact。 |
 | `response_bank.py` | Task 5 immutable bank object/index/opaque external locator：规范化 manifest/inventory entry/current wrapper，校验 self-excluding entry identity、role 完整性、root marker 绑定，并在流式 hash 验证后解析 bank-internal object。 |
+| `trace_backed.py` | Task 11 零 provider trace executor 与 parent stager：冻结 planned unit/replacement 到 immutable bank entry 的 `TraceSourceBinding`，流式校验外部对象并准备 delivery；parent-only 阶段写 current provenance、source trace attribution 与领域 parser/checker/canonical refs，缺 slot、binding 冲突或非 current artifact 时 fail closed。 |
 | `ai_api_replay.py` | 从 artifact 或显式绑定的 external response bank 恢复结果，不重新调用 API；bank replay 要求相同 root binding。 |
 
 Secret 只能进入当前进程环境和脱敏后的 transport；event/artifact/SQLite/log/config digest 不得保存 secret。
@@ -121,7 +122,7 @@ Secret 只能进入当前进程环境和脱敏后的 transport；event/artifact/
 |---|---|
 | `models.py`、`runner.py`、`report.py`、`metrics.py`、`simulation.py` | 早期通用实验/regression API；不能直接当论文指标。 |
 | `factorization_adapter.py`、`lean_adapter.py` | 通用实验 adapter。 |
-| `factorization_paper_adapter.py`、`lean_paper_adapter.py` | 论文兼容薄壳：构造 `ProtocolRunRequest`、调用 coordinator、投影旧 shape。 |
+| `factorization_paper_adapter.py`、`lean_paper_adapter.py` | 论文兼容薄壳：构造 `ProtocolRunRequest`、调用 coordinator、投影旧 shape；Task 11 各自增加 trace runtime adapter/execution bridge 与 parent-owned domain stage，使 Factorization parser/verifier 和 Lean parser/checker/canonical 仍由领域层拥有。 |
 | `factorization_500_ai.py`、`lean_ai_benchmark.py`、`ai_profile.py` | 直接 benchmark/diagnostic；不是论文协议结果。 |
 
 ### 论文条件与身份
@@ -177,17 +178,17 @@ Secret 只能进入当前进程环境和脱敏后的 transport；event/artifact/
 
 ### EPD-027 实施进度与后续实验设施改造
 
-2026-08-01 已冻结 Experiment 2–4 两阶段真实回答库设计。当前 35 个实施 Task 中 Task 0–10 已 accepted：Task 10 attempt ordinal / parent-owned trace delivery commit ABI commit=`933ca71bd3aca9b62ad4f4b399f43a8f5d8092e1`，严格 16 文件（11 production + 5 tests）；canonical exit `0`、`106 passed in 48.71s`；11 production `py_compile` exit `0`；final reviewer PASS。验收后只压缩 2 个测试文件，删除 37 行 / 3 cases，最小验证 exit `0`、`35 passed in 10.61s`；provider_calls=`0`，无 paid receipt。这个 `11/35` 状态不代表整条 paper pipeline 已实现：Task 11 trace-backed executor / dual provenance 为 queued/next，`paper_formal_runner.py` 尚不能以回答库输入重新驱动完整状态机。本次未运行测试/Fast/Full/LeanAudit/network/provider，Full intentionally not run per user。
+2026-08-01 已冻结 Experiment 2–4 两阶段真实回答库设计。当前 35 个实施 Task 中 Task 0–11 已 accepted：Task 11 trace-backed executor / dual provenance commit=`1b5d098ebfdbf3a13ab1175a5708ddc057a1bddc`，严格 10 文件（6 production + 4 tests），含用户批准的 4 个最小 plan-out 接点；post-min trace final exit `0`、`10 passed in 3.58s`，parent commit 32、logical scheduler 5、Factorization + Lean targeted 2、recovery 39、descriptor 3 通过；6 production compile/diff/allowlist/secret-output 通过；final reviewer PASS；测试最小化删除 7 行 / 1 test。canonical 首次 tool timeout，cache 随后暴露 3 个 v2 descriptor 失败，修复后 3 nodeids pass；原 canonical 未取得完整成功退出，不能记录 canonical PASS。provider_calls=`0`，无 paid receipt。这个 `12/35` 状态不代表整条 paper pipeline 已实现：Task 12 queued/next，`paper_formal_runner.py` 尚不能以回答库输入完成后续正式 consumer/metrics/renderer/replay 接线。本次状态持久化未运行测试/Fast/Full/LeanAudit/network/provider，Full intentionally not run per user。
 
 后续完整实施计划必须同时覆盖：
 
-- trace-backed executor binding、当前 submission 到 source entry 的双 provenance（response-bank acquisition 与 deterministic logical scheduler 已分别由 Task 8/9 提供）；
+- Task 12 及后续 projector/registry/formal runner 接线，把已接受的 trace-backed executor 与双 provenance 消费纳入正式 Exp1–5 pipeline；
 - `online_real_provider` 与 `real_model_trace_protocol_run` 两类 paper eligibility，禁止把 trace consumption 冒充当前 provider call；
 - acquisition actual spend 与 per-condition trace attribution 两套资源账，以及 calls/tokens/CNY/in-flight 人民币 1,000 硬门；
 - Experiment 2 缩小题集六 worker 档在线并发检查、Experiment 3 小型在线恢复检查；
 - metrics/report/renderer/replay/audit 与 smoke/canary 身份迁移。
 
-这是一项跨 `tokenshare.executors`、`tokenshare.experiments`、两插件 runtime adapter 和输出 schema 的全面设施修改，不得在 `paper_formal_runner.py` 内临时塞入读取文件的旁路，也不得复制一套协议生命周期。已接受的 ledger/hook/direct-result、immutable bank、semantic inventory/preflight、deterministic logical scheduler 与 parent-owned trace delivery commit ABI 边界不改变 `ProtocolEngine` 状态机；trace-backed executor、projector registry 与 formal runner/metrics/renderer/replay 的正式 pipeline 接线属于后续 Task。后续继续先建 characterization/RED tests，并以唯一权威实验设计 EPD-027 为准。
+这是一项跨 `tokenshare.executors`、`tokenshare.experiments`、两插件 runtime adapter 和输出 schema 的全面设施修改，不得在 `paper_formal_runner.py` 内临时塞入读取文件的旁路，也不得复制一套协议生命周期。已接受的 ledger/hook/direct-result、immutable bank、semantic inventory/preflight、deterministic logical scheduler、parent-owned trace delivery commit ABI 与 Task 11 trace-backed executor / dual provenance 边界不改变 `ProtocolEngine` 状态机；projector registry 与 formal runner/metrics/renderer/replay 的正式 pipeline 接线属于后续 Task。后续继续先建 characterization/RED tests，并以唯一权威实验设计 EPD-027 为准。
 
 指标不得使用固定协议时间、自填成功字段或丢失失败/未开始分母；所有汇总必须能回到逐 task/attempt/event/artifact。
 
