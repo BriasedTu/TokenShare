@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sqlite3
 from dataclasses import fields, replace
+from types import SimpleNamespace
 
 import pytest
 
@@ -9,6 +10,7 @@ from tokenshare.core.models import Lease, LeaseState, ProtocolConfig
 from tokenshare.executors.contracts import ExecutionRequest
 from tokenshare.local_runtime.contracts import (
     ParentCommitStores,
+    ParentStagedTraceDelivery,
     PreparedTraceDelivery,
     TraceDeliveryAttempt,
     TraceConsumptionCore,
@@ -154,6 +156,56 @@ def _stores(tmp_path) -> ParentCommitStores:
         event_ledger=ledger,
         sqlite_index=index,
     )
+
+
+def test_parent_commit_accepts_core_neutral_typed_trace_delivery_stager(tmp_path) -> None:
+    stores = _stores(tmp_path)
+
+    class DomainStager:
+        def stage(self, context):
+            staged = context.artifact_store.save_json(
+                {"kind": "official-domain-candidate"},
+                artifact_id="typed_domain_candidate",
+                artifact_type="canonical_output",
+                artifact_schema_id="test.domain_candidate",
+                artifact_schema_version="v1",
+                source={"kind": "test_domain_stager"},
+                metadata={},
+                created_at=context.created_at,
+            )
+            evidence = context.artifact_store.save_json(
+                {"kind": "official-verifier"},
+                artifact_id="typed_domain_verifier",
+                artifact_type="VerificationEvidence",
+                artifact_schema_id="test.domain_verifier",
+                artifact_schema_version="v1",
+                source={"kind": "test_domain_stager"},
+                metadata={},
+                created_at=context.created_at,
+            )
+            return ParentStagedTraceDelivery(
+                parser_result_ref=staged,
+                current_provenance_ref=staged,
+                verifier_checker_refs=(evidence,),
+                canonical_ref=staged,
+                trace_attribution_refs=(evidence,),
+            )
+
+    record = commit_prepared_delivery(
+        delivery=_delivery(),
+        worker_completion=SimpleNamespace(
+            fact=_completion(), request=_request(), failure_kind=None
+        ),
+        killed_worker_ids=(),
+        active_lease=_lease(),
+        current_fencing_token="fence_trace",
+        current_stores=replace(stores, trace_delivery_stager=DomainStager()),
+    )
+
+    assert record.core.canonical_ref is not None
+    assert record.core.canonical_ref.artifact_type == "canonical_output"
+    assert len(record.core.verifier_checker_refs) == 1
+    assert len(stores.event_ledger.read_all()) == 1
 
 
 def _request() -> ExecutionRequest:

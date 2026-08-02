@@ -2816,3 +2816,138 @@ def test_fixed_identity_request_mismatch_is_fatal_without_provider_call(
         assert submission["result_kind"] == "fatal_executor_error"
         assert submission["candidate_output_refs"] == {}
         assert submission["provenance_ref"] is None
+
+
+def test_trace_success_and_provider_failure_stage_current_wrapper_with_complete_role_locators(
+    tmp_path,
+) -> None:
+    from types import SimpleNamespace
+
+    from tests.executors.test_trace_backed import _bank, _binding, _bound_request
+    from tests.local_runtime.test_trace_delivery_parent_commit import (
+        _completion,
+        _lease,
+        _stores,
+    )
+    from tokenshare.executors.trace_backed import (
+        TraceBackedExecutor,
+        TraceBackedParentStager,
+    )
+    from tokenshare.local_runtime.coordinator import commit_prepared_delivery
+    from tokenshare.plugins.factorization.validator import verify_range_result
+
+    success_stores = _stores(tmp_path / "success")
+    case = generate_factorization_paper_cases()[0]
+    runtime = FactorizationRuntimeAdapter(provider_family="siliconflow", seed=7)
+    units = runtime.plan_units(case, artifact_store=success_stores.artifact_store)
+    range_unit = next(unit for unit in units if runtime.planned_ai_unit_id(unit) is not None)
+    range_input = runtime.range_input_for_unit(range_unit.unit_id)
+    raw_result = factorization_paper_adapter_module._scripted_range_result(
+        range_input.to_dict(), force_false_negative=False
+    )
+    success_resolver = _bank(
+        tmp_path / "success-bank", contents=(json.dumps(raw_result, sort_keys=True),)
+    )
+    success_binding = _binding(success_resolver)
+    success_request = factorization_paper_adapter_module.bind_factorization_trace_request(
+        _bound_request(success_binding), success_binding
+    )
+    success_delivery = TraceBackedExecutor(
+        resolver=success_resolver,
+        bindings=(success_binding,),
+        current_run_id="run_trace",
+    ).execute(success_request, submission_id="ignored", submitted_at="ignored")
+    success_delivery = success_delivery.with_child_completion(
+        child_worker_id="worker-1", child_completion_sequence=1
+    )
+    lease = replace(
+        _lease(),
+        metadata={"binding_digest": success_binding.binding_digest, "attempt_ordinal": 0},
+    )
+    success_record = commit_prepared_delivery(
+        delivery=success_delivery,
+        worker_completion=SimpleNamespace(
+            fact=_completion(), request=success_request, failure_kind=None
+        ),
+        killed_worker_ids=(), active_lease=lease,
+        current_fencing_token="fence_trace",
+        current_stores=replace(
+            success_stores,
+            trace_delivery_stager=TraceBackedParentStager(
+                resolver=success_resolver,
+                bindings=(success_binding,),
+                domain_stage=factorization_paper_adapter_module.FactorizationTraceDomainStage(runtime),
+            ),
+        ),
+    )
+    wrapper = json.loads(
+        success_stores.artifact_store.read_bytes(
+            success_record.core.current_wrapper_ref
+        ).decode("utf-8")
+    )
+    assert {item["object_role"] for item in wrapper["source_bank_object_locators"]} == {
+        "request_body", "raw_output", "provenance", "usage", "latency",
+        "pricing", "acquisition_attempt", "model_record",
+    }
+    canonical = json.loads(
+        success_stores.artifact_store.read_bytes(
+            success_record.core.canonical_ref
+        ).decode("utf-8")
+    )
+    assert verify_range_result(canonical, child_input=range_input).status == "passed"
+
+    failure_stores = _stores(tmp_path / "failure")
+    failure_resolver = _bank(
+        tmp_path / "failure-bank",
+        terminal_kinds=("provider_failure",),
+        contents=("upstream unavailable",),
+    )
+    failure_binding = _binding(failure_resolver)
+    failure_request = factorization_paper_adapter_module.bind_factorization_trace_request(
+        _bound_request(failure_binding), failure_binding
+    )
+    failure_delivery = TraceBackedExecutor(
+        resolver=failure_resolver,
+        bindings=(failure_binding,),
+        current_run_id="run_trace",
+    ).execute(failure_request, submission_id="ignored", submitted_at="ignored")
+    failure_delivery = failure_delivery.with_child_completion(
+        child_worker_id="worker-1", child_completion_sequence=1
+    )
+    failure_record = commit_prepared_delivery(
+        delivery=failure_delivery,
+        worker_completion=SimpleNamespace(
+            fact=_completion(), request=failure_request, failure_kind=None
+        ),
+        killed_worker_ids=(),
+        active_lease=replace(
+            _lease(),
+            metadata={"binding_digest": failure_binding.binding_digest, "attempt_ordinal": 0},
+        ),
+        current_fencing_token="fence_trace",
+        current_stores=replace(
+            failure_stores,
+            trace_delivery_stager=TraceBackedParentStager(
+                resolver=failure_resolver,
+                bindings=(failure_binding,),
+                domain_stage=factorization_paper_adapter_module.FactorizationTraceDomainStage(runtime),
+            ),
+        ),
+    )
+    failure_body = json.loads(
+        failure_stores.artifact_store.read_bytes(
+            failure_record.core.parser_result_ref
+        ).decode("utf-8")
+    )
+    assert failure_record.core.canonical_ref is None
+    assert failure_body["failure_kind"] == "http_error"
+    assert failure_body["current_provider_call_count"] == 0
+    failure_wrapper = json.loads(
+        failure_stores.artifact_store.read_bytes(
+            failure_record.core.current_wrapper_ref
+        ).decode("utf-8")
+    )
+    assert {item["object_role"] for item in failure_wrapper["source_bank_object_locators"]} == {
+        "request_body", "provider_failure", "provenance", "usage", "latency",
+        "pricing", "acquisition_attempt", "model_record",
+    }

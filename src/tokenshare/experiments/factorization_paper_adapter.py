@@ -13,7 +13,7 @@ from dataclasses import dataclass, replace
 from math import isqrt
 from pathlib import Path
 from threading import Lock
-from typing import Any
+from typing import Any, Sequence
 
 from tokenshare.core.models import ArtifactRef, JsonObject, ProtocolConfig, TaskState, TaskUnit
 from tokenshare.executors.ai_api import AIAPIExecutor
@@ -27,6 +27,12 @@ from tokenshare.executors.contracts import (
     EnvironmentRef,
     ExecutionRequest,
     ExecutionSubmission,
+)
+from tokenshare.executors.trace_backed import (
+    TraceDomainStageContext,
+    TraceDomainStageResult,
+    TraceSourceBinding,
+    bind_trace_execution_request,
 )
 from tokenshare.experiments.paper_model_identity import (
     ValidatedModelEndpointBinding,
@@ -691,6 +697,180 @@ class _CapturedRangeCall:
     usage_ref: ArtifactRef
     model_execution_record: Any | None
     model_execution_record_ref: ArtifactRef | None
+
+
+class FactorizationTraceDomainStage:
+    """在 parent 内复用正式 Factorization parser 与 canonical normalizer。"""
+
+    def __init__(self, plugin_runtime: FactorizationRuntimeAdapter) -> None:
+        self._plugin_runtime = plugin_runtime
+
+    def stage(self, context: TraceDomainStageContext) -> TraceDomainStageResult:
+        parsed = parse_factorization_ai_output(
+            context.parser_input_text,
+            raw_output_ref_summary=context.current_wrapper_ref.to_dict(),
+            created_at=context.created_at,
+        )
+        digest_key = context.delivery.delivery_digest.removeprefix("sha256:")
+        source = {
+            "kind": "factorization_trace_parent_parser",
+            "delivery_digest": context.delivery.delivery_digest,
+        }
+        if not parsed.succeeded:
+            failure_ref = context.artifact_store.save_json(
+                dict(parsed.parse_failure_artifact_body or {}),
+                artifact_id=f"factorization_trace_parse_failure_{digest_key}",
+                artifact_type="FactorizationParseFailure",
+                artifact_schema_id="factorization.parse_failure",
+                artifact_schema_version="v1",
+                source=source,
+                metadata={"attempt_id": context.delivery.attempt_id},
+                created_at=context.created_at,
+            )
+            return TraceDomainStageResult(parser_result_ref=failure_ref)
+        candidate_body = dict(
+            parsed.candidate_output_artifact_bodies["range_result"]
+        )
+        candidate_ref = context.artifact_store.save_json(
+            candidate_body,
+            artifact_id=f"factorization_trace_candidate_{digest_key}",
+            artifact_type="RangeResult",
+            artifact_schema_id=parsed.parsed_artifact_schema_id,
+            artifact_schema_version=parsed.parsed_artifact_schema_version,
+            source=source,
+            metadata={"attempt_id": context.delivery.attempt_id},
+            created_at=context.created_at,
+        )
+        request = context.request
+        executor_id = str(request.executor["executor_id"])
+        executor_version = str(request.executor["executor_version"])
+        staged_submission = ExecutionSubmission(
+            submission_id=f"trace_parser_submission_{digest_key}",
+            request_id=request.request_id,
+            task_id=request.task_id,
+            unit_id=request.unit_id,
+            attempt_id=request.attempt_id,
+            lease_id=request.lease_id,
+            fencing_token=request.fencing_token,
+            executor_id=executor_id,
+            executor_version=executor_version,
+            result_kind="succeeded",
+            raw_output_ref=context.current_wrapper_ref,
+            parsed_output_ref=candidate_ref,
+            candidate_output_refs={"range_result": candidate_ref},
+            parse_failure_ref=None,
+            log_ref=None,
+            environment_ref=request.environment_ref,
+            environment_summary={"runtime": "trace_backed_parent_parser"},
+            provenance_ref=None,
+            usage_summary={
+                "provider_attempt_count": 0,
+                "current_provider_call_count": 0,
+                "source_usage_class": "trace_attribution",
+            },
+            error=None,
+            submitted_at=context.created_at,
+        )
+        normalized = self._plugin_runtime.normalize_range_submission(
+            staged_submission
+        )
+        canonical_ref = normalized.candidate_output_refs.get("range_result")
+        if canonical_ref is None:
+            raise ValueError("Factorization trace parser produced no range_result")
+        return TraceDomainStageResult(
+            parser_result_ref=candidate_ref,
+            canonical_ref=canonical_ref,
+        )
+
+
+def bind_factorization_trace_request(
+    request: ExecutionRequest,
+    binding: TraceSourceBinding,
+) -> ExecutionRequest:
+    """Factorization adapter 在 dispatch 前冻结 planned unit/source binding。"""
+
+    planned = dict(request.soft_hints or {}).get("planned_ai_unit_id")
+    if planned is not None and planned != binding.planned_ai_unit_id:
+        raise ValueError("Factorization planned AI unit does not match trace binding")
+    return bind_trace_execution_request(request, binding)
+
+
+class FactorizationTraceRuntimeAdapter:
+    """为正式 runtime 的 AI unit 注入预冻结 binding，其余领域行为透明委托。"""
+
+    def __init__(
+        self,
+        *,
+        plugin_runtime: FactorizationRuntimeAdapter,
+        bindings: Sequence[TraceSourceBinding],
+    ) -> None:
+        self._plugin_runtime = plugin_runtime
+        self._bindings = _trace_bindings_by_planned_unit(bindings)
+
+    def __getattr__(self, name: str):
+        return getattr(self._plugin_runtime, name)
+
+    def build_execution_request(self, unit, *, attempt, lease) -> ExecutionRequest:
+        request = self._plugin_runtime.build_execution_request(
+            unit,
+            attempt=attempt,
+            lease=lease,
+        )
+        planned_ai_unit_id = self._plugin_runtime.planned_ai_unit_id(unit)
+        if planned_ai_unit_id is None:
+            return request
+        try:
+            binding = self._bindings[planned_ai_unit_id]
+        except KeyError as exc:
+            raise ValueError(
+                f"no Factorization trace binding for {planned_ai_unit_id}"
+            ) from exc
+        return bind_factorization_trace_request(
+            replace(request, attempt_ordinal=attempt.attempt_ordinal),
+            binding,
+        )
+
+
+def _trace_bindings_by_planned_unit(
+    bindings: Sequence[TraceSourceBinding],
+) -> dict[str, TraceSourceBinding]:
+    result: dict[str, TraceSourceBinding] = {}
+    for binding in bindings:
+        if binding.planned_ai_unit_id in result:
+            raise ValueError("Factorization trace bindings must have unique planned units")
+        result[binding.planned_ai_unit_id] = binding
+    if not result:
+        raise ValueError("Factorization trace bindings must be non-empty")
+    return result
+
+
+class FactorizationTraceExecutionBridge:
+    """AI range unit 在 child 只 prepare；deterministic unit 仍走正式 bridge。"""
+
+    def __init__(
+        self,
+        *,
+        plugin_runtime: FactorizationRuntimeAdapter,
+        trace_executor,
+    ) -> None:
+        self._trace_executor = trace_executor
+        self._deterministic_bridge = FactorizationExecutionBridge(
+            plugin_runtime=plugin_runtime,
+            range_executor=trace_executor,
+        )
+
+    def execute(self, request, *, submission_id: str, submitted_at: str):
+        if str(request.task_unit_snapshot["unit_type"]) == FACTOR_SEARCH_RANGE_TASK_TYPE:
+            return self._trace_executor.execute(
+                request,
+                submission_id=submission_id,
+                submitted_at=submitted_at,
+            )
+        return self._deterministic_bridge.execute(
+            request,
+            submission_id=submission_id,
+            submitted_at=submitted_at,
+        )
 
 
 class _FixedIdentityRangeExecutor:

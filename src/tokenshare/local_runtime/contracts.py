@@ -42,6 +42,9 @@ from tokenshare.storage.artifacts import ArtifactStore
 from tokenshare.storage.events import LedgerEvent, VerifiedLedgerSnapshot
 
 
+LOGICAL_DISPATCH_START_MS_HINT = "logical_dispatch_start_ms"
+
+
 @dataclass(frozen=True, kw_only=True)
 class CanonicalUnitContext:
     """插件构造领域 action 所需的 canonical unit 事实。"""
@@ -1352,11 +1355,61 @@ class TraceConsumptionRecord:
 
 
 @dataclass(frozen=True, kw_only=True)
+class ParentTraceDeliveryStageContext:
+    """parent domain stager 可见的当前运行上下文；不携带外部 root path。"""
+
+    delivery: PreparedTraceDelivery
+    request: ExecutionRequest
+    artifact_store: ArtifactStore
+    current_wrapper_ref: ArtifactRef
+    parser_input_ref: ArtifactRef
+    created_at: str
+
+
+@dataclass(frozen=True, kw_only=True)
+class ParentStagedTraceDelivery:
+    """插件/adapter stage 后交回协议 parent 的 core-neutral artifact refs。"""
+
+    parser_result_ref: ArtifactRef
+    current_provenance_ref: ArtifactRef
+    verifier_checker_refs: tuple[ArtifactRef, ...]
+    canonical_ref: ArtifactRef | None
+    trace_attribution_refs: tuple[ArtifactRef, ...]
+
+    def __post_init__(self) -> None:
+        for field_name in ("parser_result_ref", "current_provenance_ref"):
+            if not isinstance(getattr(self, field_name), ArtifactRef):
+                raise TypeError(f"{field_name} must be an ArtifactRef")
+        if self.canonical_ref is not None and not isinstance(
+            self.canonical_ref, ArtifactRef
+        ):
+            raise TypeError("canonical_ref must be an ArtifactRef or None")
+        for field_name in ("verifier_checker_refs", "trace_attribution_refs"):
+            refs = getattr(self, field_name)
+            if not isinstance(refs, tuple) or any(
+                not isinstance(ref, ArtifactRef) for ref in refs
+            ):
+                raise TypeError(f"{field_name} must be a tuple of ArtifactRef")
+        if not self.trace_attribution_refs:
+            raise ValueError("trace_attribution_refs must be non-empty")
+
+
+class ParentTraceDeliveryStager(Protocol):
+    """由 adapter 注入的 parent-only parser/checker/canonical staging boundary。"""
+
+    def stage(
+        self,
+        context: ParentTraceDeliveryStageContext,
+    ) -> ParentStagedTraceDelivery: ...
+
+
+@dataclass(frozen=True, kw_only=True)
 class ParentCommitStores:
     artifact_store: ArtifactStore
     event_ledger: object
     sqlite_index: "SQLiteMaterializedIndex | None" = None
     commit_hook: Callable[[str], None] | None = None
+    trace_delivery_stager: ParentTraceDeliveryStager | None = None
 
 
 class WorkerBackend(Protocol):

@@ -16,7 +16,7 @@ import tempfile
 from dataclasses import dataclass, replace
 from pathlib import Path
 from threading import Lock
-from typing import Any
+from typing import Any, Sequence
 
 from tokenshare.core.models import (
     ArtifactRef,
@@ -49,6 +49,12 @@ from tokenshare.executors.contracts import (
     EnvironmentRef,
     ExecutionRequest,
     ExecutionSubmission,
+)
+from tokenshare.executors.trace_backed import (
+    TraceDomainStageContext,
+    TraceDomainStageResult,
+    TraceSourceBinding,
+    bind_trace_execution_request,
 )
 from tokenshare.experiments.paper_catalog import (
     default_lean_paper_environment_manifest,
@@ -131,6 +137,8 @@ from tokenshare.plugins.lean_proof.schemas import (
     CHECKER_VALIDATOR_POLICY_ID,
     DETERMINISTIC_TACTIC_SPLIT_STRATEGY_ID,
     LEAN_PROOF_CANDIDATE_SCHEMA_VERSION,
+    LEAN_PROOF_LEMMA_NODE_TASK_TYPE,
+    LEAN_PROOF_SUBGOAL_TASK_TYPE,
     PLUGIN_ID,
     PLUGIN_VERSION,
     PROOF_ARTIFACT_OUTPUT_NAME,
@@ -609,6 +617,192 @@ class _CapturedLeanCall:
     usage_ref: ArtifactRef
     model_execution_record: Any | None
     model_execution_record_ref: ArtifactRef | None
+
+
+class LeanTraceDomainStage:
+    """在 parent 内运行正式 Lean parser、checker 与 canonical promotion。"""
+
+    def __init__(self, plugin_runtime: LeanRuntimeAdapter) -> None:
+        self._plugin_runtime = plugin_runtime
+
+    def stage(self, context: TraceDomainStageContext) -> TraceDomainStageResult:
+        request = context.request
+        payload_ref = request.input_artifact_refs.get(
+            "lemma_theorem_payload",
+            request.input_artifact_refs.get("child_theorem_payload"),
+        )
+        if payload_ref is None:
+            raise ValueError("Lean trace proof request requires theorem payload input")
+        theorem_payload = LeanTheoremPayload.from_dict(
+            json.loads(context.artifact_store.read_bytes(payload_ref).decode("utf-8"))
+        )
+        parsed = parse_lean_proof_candidate_ai_output(
+            context.parser_input_text,
+            theorem_payload=theorem_payload,
+            raw_output_ref_summary=context.current_wrapper_ref.to_dict(),
+            created_at=context.created_at,
+        )
+        digest_key = context.delivery.delivery_digest.removeprefix("sha256:")
+        source = {
+            "kind": "lean_trace_parent_parser",
+            "delivery_digest": context.delivery.delivery_digest,
+        }
+        if not parsed.succeeded:
+            failure_ref = context.artifact_store.save_json(
+                dict(parsed.parse_failure_artifact_body or {}),
+                artifact_id=f"lean_trace_parse_failure_{digest_key}",
+                artifact_type="LeanProofParseFailure",
+                artifact_schema_id="lean_proof.parse_failure",
+                artifact_schema_version="v1",
+                source=source,
+                metadata={"attempt_id": context.delivery.attempt_id},
+                created_at=context.created_at,
+            )
+            return TraceDomainStageResult(parser_result_ref=failure_ref)
+        candidate_body = dict(
+            parsed.candidate_output_artifact_bodies[PROOF_CANDIDATE_OUTPUT_NAME]
+        )
+        candidate_ref = context.artifact_store.save_json(
+            candidate_body,
+            artifact_id=f"lean_trace_candidate_{digest_key}",
+            artifact_type="LeanProofCandidate",
+            artifact_schema_id=parsed.parsed_artifact_schema_id,
+            artifact_schema_version=parsed.parsed_artifact_schema_version,
+            source=source,
+            metadata={"attempt_id": context.delivery.attempt_id},
+            created_at=context.created_at,
+        )
+        staged_submission = ExecutionSubmission(
+            submission_id=f"trace_parser_submission_{digest_key}",
+            request_id=request.request_id,
+            task_id=request.task_id,
+            unit_id=request.unit_id,
+            attempt_id=request.attempt_id,
+            lease_id=request.lease_id,
+            fencing_token=request.fencing_token,
+            executor_id=str(request.executor["executor_id"]),
+            executor_version=str(request.executor["executor_version"]),
+            result_kind="succeeded",
+            raw_output_ref=context.current_wrapper_ref,
+            parsed_output_ref=candidate_ref,
+            candidate_output_refs={PROOF_CANDIDATE_OUTPUT_NAME: candidate_ref},
+            parse_failure_ref=None,
+            log_ref=None,
+            environment_ref=request.environment_ref,
+            environment_summary={"runtime": "trace_backed_parent_parser"},
+            provenance_ref=None,
+            usage_summary={
+                "provider_attempt_count": 0,
+                "current_provider_call_count": 0,
+                "source_usage_class": "trace_attribution",
+            },
+            error=None,
+            submitted_at=context.created_at,
+        )
+        normalized = self._plugin_runtime.normalize_proof_submission(
+            staged_submission,
+            request=request,
+        )
+        report = self._plugin_runtime.checker_report_for_request(request.request_id)
+        checker_refs = (
+            ()
+            if report is None or report.report_ref is None
+            else (report.report_ref,)
+        )
+        canonical_ref = normalized.candidate_output_refs.get(
+            PROOF_ARTIFACT_OUTPUT_NAME
+        )
+        return TraceDomainStageResult(
+            parser_result_ref=candidate_ref,
+            verifier_checker_refs=checker_refs,
+            canonical_ref=canonical_ref,
+        )
+
+
+def bind_lean_trace_request(
+    request: ExecutionRequest,
+    binding: TraceSourceBinding,
+) -> ExecutionRequest:
+    """Lean adapter 在 dispatch 前冻结 planned proof unit/source binding。"""
+
+    planned = dict(request.soft_hints or {}).get("planned_ai_unit_id")
+    if planned is not None and planned != binding.planned_ai_unit_id:
+        raise ValueError("Lean planned AI unit does not match trace binding")
+    return bind_trace_execution_request(request, binding)
+
+
+class LeanTraceRuntimeAdapter:
+    """为正式 Lean runtime 的 proof unit 注入预冻结 binding。"""
+
+    def __init__(
+        self,
+        *,
+        plugin_runtime: LeanRuntimeAdapter,
+        bindings: Sequence[TraceSourceBinding],
+    ) -> None:
+        self._plugin_runtime = plugin_runtime
+        self._bindings = _lean_trace_bindings_by_planned_unit(bindings)
+
+    def __getattr__(self, name: str):
+        return getattr(self._plugin_runtime, name)
+
+    def build_execution_request(self, unit, *, attempt, lease) -> ExecutionRequest:
+        request = self._plugin_runtime.build_execution_request(
+            unit,
+            attempt=attempt,
+            lease=lease,
+        )
+        planned_ai_unit_id = self._plugin_runtime.planned_ai_unit_id(unit)
+        if planned_ai_unit_id is None:
+            return request
+        try:
+            binding = self._bindings[planned_ai_unit_id]
+        except KeyError as exc:
+            raise ValueError(f"no Lean trace binding for {planned_ai_unit_id}") from exc
+        return bind_lean_trace_request(
+            replace(request, attempt_ordinal=attempt.attempt_ordinal),
+            binding,
+        )
+
+
+def _lean_trace_bindings_by_planned_unit(
+    bindings: Sequence[TraceSourceBinding],
+) -> dict[str, TraceSourceBinding]:
+    result: dict[str, TraceSourceBinding] = {}
+    for binding in bindings:
+        if binding.planned_ai_unit_id in result:
+            raise ValueError("Lean trace bindings must have unique planned units")
+        result[binding.planned_ai_unit_id] = binding
+    if not result:
+        raise ValueError("Lean trace bindings must be non-empty")
+    return result
+
+
+class LeanTraceExecutionBridge:
+    """Lean proof child 只 prepare trace；root/merge 仍走正式 deterministic bridge。"""
+
+    def __init__(self, *, plugin_runtime: LeanRuntimeAdapter, trace_executor) -> None:
+        self._trace_executor = trace_executor
+        self._deterministic_bridge = LeanExecutionBridge(
+            plugin_runtime=plugin_runtime,
+            proof_candidate_executor=trace_executor,
+        )
+
+    def execute(self, request, *, submission_id: str, submitted_at: str):
+        if str(request.task_unit_snapshot["unit_type"]) in {
+            LEAN_PROOF_SUBGOAL_TASK_TYPE,
+            LEAN_PROOF_LEMMA_NODE_TASK_TYPE,
+        }:
+            return self._trace_executor.execute(
+                request,
+                submission_id=submission_id,
+                submitted_at=submitted_at,
+            )
+        return self._deterministic_bridge.execute(
+            request,
+            submission_id=submission_id,
+            submitted_at=submitted_at,
+        )
 
 
 class _FixedIdentityLeanExecutor:

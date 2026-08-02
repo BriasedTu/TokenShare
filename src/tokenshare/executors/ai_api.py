@@ -189,7 +189,10 @@ def build_ai_api_executor_descriptor(
         executor_id=executor_id,
         executor_type="ai_api",
         executor_version=executor_version,
-        supported_request_schema_versions=["phase3.execution_request.v1"],
+        supported_request_schema_versions=[
+            "phase3.execution_request.v1",
+            "phase3.execution_request.v2",
+        ],
         capabilities={
             "executor": "ai_api",
             "provider_family": provider_family,

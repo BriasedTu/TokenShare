@@ -1843,3 +1843,141 @@ def _registry_provider_matches(request: dict) -> list[str]:
             request_schema_version=request["schema_version"],
         )
     ]
+
+
+def test_resume_restores_entry_ordinal_roles_and_delivery_timing(
+    tmp_path,
+    _use_recording_checker_for_adapter_regressions,
+) -> None:
+    from dataclasses import replace
+    from types import SimpleNamespace
+
+    from tests.executors.test_trace_backed import _bank, _binding, _bound_request
+    from tests.local_runtime.test_trace_delivery_parent_commit import (
+        _completion,
+        _lease,
+        _stores,
+    )
+    from tokenshare.executors.trace_backed import (
+        TraceBackedExecutor,
+        TraceBackedParentStager,
+        TraceSourceBinding,
+    )
+    from tokenshare.local_runtime.coordinator import commit_prepared_delivery
+    from tokenshare.plugins.lean_proof.models import LeanTheoremPayload
+    from tokenshare.plugins.lean_proof.prompt_builder import (
+        derive_lean_proof_candidate_id_v2,
+    )
+    from tokenshare.plugins.lean_proof.runtime_adapter import LeanRuntimeAdapter
+
+    resolver = _bank(
+        tmp_path / "lean-resume-bank",
+        terminal_kinds=("success", "success"),
+        contents=(
+            json.dumps({"proof_source": "by exact hP", "slot": 0}),
+            json.dumps({"proof_source": "by exact hP", "slot": 1}),
+        ),
+    )
+    original = _binding(resolver)
+    resumed = TraceSourceBinding.from_dict(original.to_dict())
+    request = _bound_request(resumed, ordinal=1, logical_start_ms=90)
+    delivery = TraceBackedExecutor(
+        resolver=resolver,
+        bindings=(resumed,),
+        current_run_id="lean-resumed-run",
+    ).execute(request, submission_id="ignored", submitted_at="ignored")
+
+    assert resumed == original
+    assert delivery.entry_id == "entry-1"
+    assert delivery.attempt_ordinal == 1
+    assert delivery.source_latency_ms == 11
+    assert delivery.logical_finish_ms == 101
+    assert {item["object_role"] for item in delivery.source_bank_object_locators} == {
+        "request_body", "raw_output", "provenance", "usage", "latency",
+        "pricing", "acquisition_attempt", "model_record",
+    }
+    assert hasattr(lean_paper_adapter, "LeanTraceDomainStage")
+
+    stores = _stores(tmp_path / "lean-formal-chain")
+    catalog = load_paper_catalogs(
+        factorization_path=FACTOR_CATALOG,
+        lean_path=LEAN_CATALOG,
+    )
+    case = catalog.cases_for(domain="lean_proof", difficulty="easy")[0]
+    runtime = LeanRuntimeAdapter(
+        provider_family="siliconflow",
+        environment_manifest=lean_paper_adapter.default_lean_paper_environment_manifest(),
+        checker=_use_recording_checker_for_adapter_regressions,
+        seed=7,
+    )
+    units = runtime.plan_units(case, artifact_store=stores.artifact_store)
+    proof_unit = next(unit for unit in units if runtime.planned_ai_unit_id(unit) is not None)
+    planned_ai_unit_id = runtime.planned_ai_unit_id(proof_unit)
+    payload_ref = proof_unit.input_refs.get(
+        "lemma_theorem_payload",
+        proof_unit.input_refs.get("child_theorem_payload"),
+    )
+    payload = LeanTheoremPayload.from_dict(
+        json.loads(stores.artifact_store.read_bytes(payload_ref).decode("utf-8"))
+    )
+    candidate = {
+        "schema_version": "lean_proof.proof_candidate.v1",
+        "proof_candidate_id": derive_lean_proof_candidate_id_v2(
+            theorem_payload_digest=payload.payload_digest,
+            planned_ai_unit_id=planned_ai_unit_id,
+        ),
+        "theorem_payload_digest": payload.payload_digest,
+        "proof_source": lean_paper_adapter._scripted_proof_source(
+            payload.statement_source
+        ),
+        "created_at": lean_paper_adapter.NOW,
+    }
+    formal_resolver = _bank(
+        tmp_path / "lean-formal-bank",
+        contents=(json.dumps(candidate, sort_keys=True),),
+        planned_ai_unit_id=planned_ai_unit_id,
+    )
+    formal_binding = _binding(formal_resolver)
+    formal_request = replace(
+        lean_paper_adapter.bind_lean_trace_request(
+            _bound_request(formal_binding), formal_binding
+        ),
+        input_artifact_refs=dict(proof_unit.input_refs),
+        task_unit_snapshot=proof_unit.to_dict(),
+        request_id="lean_trace_request",
+    )
+    formal_delivery = TraceBackedExecutor(
+        resolver=formal_resolver,
+        bindings=(formal_binding,),
+        current_run_id="run_trace",
+    ).execute(formal_request, submission_id="ignored", submitted_at="ignored")
+    formal_delivery = formal_delivery.with_child_completion(
+        child_worker_id="worker-1", child_completion_sequence=1
+    )
+    record = commit_prepared_delivery(
+        delivery=formal_delivery,
+        worker_completion=SimpleNamespace(
+            fact=_completion(), request=formal_request, failure_kind=None
+        ),
+        killed_worker_ids=(),
+        active_lease=replace(
+            _lease(),
+            metadata={"binding_digest": formal_binding.binding_digest, "attempt_ordinal": 0},
+        ),
+        current_fencing_token="fence_trace",
+        current_stores=replace(
+            stores,
+            trace_delivery_stager=TraceBackedParentStager(
+                resolver=formal_resolver,
+                bindings=(formal_binding,),
+                domain_stage=lean_paper_adapter.LeanTraceDomainStage(runtime),
+            ),
+        ),
+    )
+    assert _use_recording_checker_for_adapter_regressions.requests
+    assert _use_recording_checker_for_adapter_regressions.modes == [
+        LeanCheckerMode.CHILD_PROOF
+    ]
+    assert record.core.canonical_ref is not None
+    assert record.core.canonical_ref.artifact_type == "canonical_output"
+    assert len(record.core.verifier_checker_refs) == 1

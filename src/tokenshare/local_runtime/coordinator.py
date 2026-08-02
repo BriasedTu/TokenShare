@@ -27,6 +27,9 @@ from tokenshare.local_runtime.contracts import (
     MergeReadinessDecision,
     ParsedCandidateContext,
     ParentCommitStores,
+    ParentStagedTraceDelivery,
+    ParentTraceDeliveryStageContext,
+    ParentTraceDeliveryStager,
     ParserContext,
     PreparedTraceDelivery,
     ProtocolMechanismPolicy,
@@ -40,6 +43,7 @@ from tokenshare.local_runtime.contracts import (
     TraceConsumptionRecord,
     TraceDeliveryAttempt,
     VerificationContext,
+    LOGICAL_DISPATCH_START_MS_HINT,
     build_experiment_premature_merge_attempted_observation,
 )
 from tokenshare.local_runtime.projection import (
@@ -189,59 +193,97 @@ def commit_prepared_delivery(
         created_at=created_at,
     )
     _commit_hook(current_stores, "parser_input_staged")
-    parser_result_ref = current_stores.artifact_store.save_json(
-        {
-            "schema_version": "tokenshare.trace_parser_result.v1",
-            "parser_input_digest": delivery.parser_input_digest,
-            "source_terminal_kind": delivery.source_terminal_kind,
-            "status": "prepared",
-        },
-        artifact_id=f"trace_parser_result_{digest_key}",
-        artifact_type="TraceParserResult",
-        artifact_schema_id="tokenshare.trace_parser_result",
-        artifact_schema_version="v1",
-        source=staged_source,
-        metadata={"attempt_id": delivery.attempt_id},
-        created_at=created_at,
+    if current_stores.trace_delivery_stager is None:
+        parser_result_ref = current_stores.artifact_store.save_json(
+            {
+                "schema_version": "tokenshare.trace_parser_result.v1",
+                "parser_input_digest": delivery.parser_input_digest,
+                "source_terminal_kind": delivery.source_terminal_kind,
+                "status": "prepared",
+            },
+            artifact_id=f"trace_parser_result_{digest_key}",
+            artifact_type="TraceParserResult",
+            artifact_schema_id="tokenshare.trace_parser_result",
+            artifact_schema_version="v1",
+            source=staged_source,
+            metadata={"attempt_id": delivery.attempt_id},
+            created_at=created_at,
+        )
+        _commit_hook(current_stores, "parser_result_staged")
+        provenance_ref = current_stores.artifact_store.save_json(
+            {
+                "schema_version": "tokenshare.current_trace_provenance.v1",
+                "bank_root_id": delivery.bank_root_id,
+                "manifest_digest": delivery.manifest_digest,
+                "entry_id": delivery.entry_id,
+                "inference_request_digest": delivery.inference_request_digest,
+                "logical_start_ms": delivery.logical_start_ms,
+                "source_latency_ms": delivery.source_latency_ms,
+                "logical_finish_ms": delivery.logical_finish_ms,
+            },
+            artifact_id=f"trace_provenance_{digest_key}",
+            artifact_type="CurrentTraceProvenance",
+            artifact_schema_id="tokenshare.current_trace_provenance",
+            artifact_schema_version="v1",
+            source=staged_source,
+            metadata={"attempt_id": delivery.attempt_id},
+            created_at=created_at,
+        )
+        _commit_hook(current_stores, "provenance_staged")
+        attribution_ref = current_stores.artifact_store.save_json(
+            {
+                "schema_version": "tokenshare.trace_attribution.v1",
+                "delivery_digest": delivery.delivery_digest,
+                "source_bank_object_locators": [
+                    dict(item) for item in delivery.source_bank_object_locators
+                ],
+            },
+            artifact_id=f"trace_attribution_{digest_key}",
+            artifact_type="TraceAttribution",
+            artifact_schema_id="tokenshare.trace_attribution",
+            artifact_schema_version="v1",
+            source=staged_source,
+            metadata={"attempt_id": delivery.attempt_id},
+            created_at=created_at,
+        )
+        staged = ParentStagedTraceDelivery(
+            parser_result_ref=parser_result_ref,
+            current_provenance_ref=provenance_ref,
+            verifier_checker_refs=(),
+            canonical_ref=None,
+            trace_attribution_refs=(attribution_ref,),
+        )
+        _commit_hook(current_stores, "artifacts_staged")
+    else:
+        if not isinstance(request, ExecutionRequest):
+            raise ValueError("typed trace delivery stager requires dispatch request")
+        staged = current_stores.trace_delivery_stager.stage(
+            ParentTraceDeliveryStageContext(
+                delivery=delivery,
+                request=request,
+                artifact_store=current_stores.artifact_store,
+                current_wrapper_ref=wrapper_ref,
+                parser_input_ref=parser_input_ref,
+                created_at=created_at,
+            )
+        )
+        if not isinstance(staged, ParentStagedTraceDelivery):
+            raise TypeError("trace delivery stager must return ParentStagedTraceDelivery")
+        parser_result_ref = staged.parser_result_ref
+        provenance_ref = staged.current_provenance_ref
+        _commit_hook(current_stores, "parser_result_staged")
+        _commit_hook(current_stores, "provenance_staged")
+        _commit_hook(current_stores, "artifacts_staged")
+
+    staged_refs = (
+        parser_result_ref,
+        provenance_ref,
+        *staged.verifier_checker_refs,
+        *staged.trace_attribution_refs,
+        *((staged.canonical_ref,) if staged.canonical_ref is not None else ()),
     )
-    _commit_hook(current_stores, "parser_result_staged")
-    provenance_ref = current_stores.artifact_store.save_json(
-        {
-            "schema_version": "tokenshare.current_trace_provenance.v1",
-            "bank_root_id": delivery.bank_root_id,
-            "manifest_digest": delivery.manifest_digest,
-            "entry_id": delivery.entry_id,
-            "inference_request_digest": delivery.inference_request_digest,
-            "logical_start_ms": delivery.logical_start_ms,
-            "source_latency_ms": delivery.source_latency_ms,
-            "logical_finish_ms": delivery.logical_finish_ms,
-        },
-        artifact_id=f"trace_provenance_{digest_key}",
-        artifact_type="CurrentTraceProvenance",
-        artifact_schema_id="tokenshare.current_trace_provenance",
-        artifact_schema_version="v1",
-        source=staged_source,
-        metadata={"attempt_id": delivery.attempt_id},
-        created_at=created_at,
-    )
-    _commit_hook(current_stores, "provenance_staged")
-    attribution_ref = current_stores.artifact_store.save_json(
-        {
-            "schema_version": "tokenshare.trace_attribution.v1",
-            "delivery_digest": delivery.delivery_digest,
-            "source_bank_object_locators": [
-                dict(item) for item in delivery.source_bank_object_locators
-            ],
-        },
-        artifact_id=f"trace_attribution_{digest_key}",
-        artifact_type="TraceAttribution",
-        artifact_schema_id="tokenshare.trace_attribution",
-        artifact_schema_version="v1",
-        source=staged_source,
-        metadata={"attempt_id": delivery.attempt_id},
-        created_at=created_at,
-    )
-    _commit_hook(current_stores, "artifacts_staged")
+    if any(not current_stores.artifact_store.verify(ref) for ref in staged_refs):
+        raise ValueError("trace delivery stager returned a non-current artifact ref")
 
     core = TraceConsumptionCore(
         attempt_id=delivery.attempt_id,
@@ -252,9 +294,9 @@ def commit_prepared_delivery(
         parser_input_ref=parser_input_ref,
         parser_result_ref=parser_result_ref,
         current_provenance_ref=provenance_ref,
-        verifier_checker_refs=(),
-        canonical_ref=None,
-        trace_attribution_refs=(attribution_ref,),
+        verifier_checker_refs=staged.verifier_checker_refs,
+        canonical_ref=staged.canonical_ref,
+        trace_attribution_refs=staged.trace_attribution_refs,
     )
     event = current_stores.event_ledger.append(
         event_type=EventType.TRACE_DELIVERY_COMMITTED,
@@ -354,6 +396,7 @@ def _bind_execution_request(
     request: ExecutionRequest,
     *,
     attempt_ordinal: int,
+    logical_dispatch_start_ms: int | None = None,
 ) -> ExecutionRequest:
     """在dispatch前固定core-neutral ordinal/source binding。"""
 
@@ -385,6 +428,19 @@ def _bind_execution_request(
     soft_hints = dict(request.soft_hints or {})
     # replacement identity 只能来自协议已持久化 ordinal；插件 hint 不拥有该权威。
     soft_hints["replacement_slot"] = attempt_ordinal
+    if logical_dispatch_start_ms is None:
+        soft_hints.pop(LOGICAL_DISPATCH_START_MS_HINT, None)
+    else:
+        if (
+            isinstance(logical_dispatch_start_ms, bool)
+            or not isinstance(logical_dispatch_start_ms, int)
+            or logical_dispatch_start_ms < 0
+        ):
+            raise ValueError(
+                "logical dispatch start must be a non-negative integer"
+            )
+        # 当前 scheduler clock 由协议 parent 冻结，插件 hint 不拥有 timing 权威。
+        soft_hints[LOGICAL_DISPATCH_START_MS_HINT] = logical_dispatch_start_ms
     return replace(
         request,
         attempt_ordinal=attempt_ordinal,
@@ -423,6 +479,7 @@ def _trace_consumption_submission(
     delivery: PreparedTraceDelivery,
     consumption: TraceConsumptionRecord,
     submitted_at: str,
+    artifact_store: ArtifactStore,
 ) -> ExecutionSubmission:
     """把parent已公开的trace artifacts规范化为普通engine submission输入。"""
 
@@ -436,6 +493,23 @@ def _trace_consumption_submission(
         raise ValueError("trace execution request has no executor_version")
     succeeded = delivery.source_terminal_kind == "success"
     parser_result_ref = consumption.core.parser_result_ref
+    candidate_ref = consumption.core.canonical_ref or parser_result_ref
+    failure_error = None
+    if not succeeded:
+        failure_body = json.loads(
+            artifact_store.read_bytes(parser_result_ref).decode("utf-8")
+        )
+        if not isinstance(failure_body, dict):
+            raise ValueError("trace provider failure artifact must be an object")
+        failure_error = {
+            "kind": str(failure_body.get("failure_kind", "provider_failure")),
+            "message": str(
+                failure_body.get(
+                    "message", "prepared source trace ended in provider failure"
+                )
+            ),
+            "http_status": failure_body.get("http_status"),
+        }
     return ExecutionSubmission(
         submission_id=(
             "trace_submission_"
@@ -454,7 +528,7 @@ def _trace_consumption_submission(
         parsed_output_ref=parser_result_ref,
         candidate_output_refs=(
             {
-                output_name: parser_result_ref
+                output_name: candidate_ref
                 for output_name in request.output_contract.required_outputs
             }
             if succeeded
@@ -463,17 +537,18 @@ def _trace_consumption_submission(
         parse_failure_ref=None,
         log_ref=None,
         environment_ref=request.environment_ref,
-        environment_summary={"runtime": "prepared_trace_delivery"},
+        environment_summary={
+            "runtime": "prepared_trace_delivery",
+            "current_transport": "none",
+        },
         provenance_ref=consumption.core.current_provenance_ref,
-        usage_summary={},
-        error=(
-            None
-            if succeeded
-            else {
-                "kind": "provider_failure",
-                "message": "prepared source trace ended in provider failure",
-            }
-        ),
+        usage_summary={
+            "provider_attempt_count": 0,
+            "current_provider_call_count": 0,
+            "current_provider_spend": 0,
+            "source_usage_class": "trace_attribution",
+        },
+        error=failure_error,
         submitted_at=submitted_at,
     )
 
@@ -589,12 +664,14 @@ class ProtocolRunCoordinator:
         event_ledger: EventLedger,
         now: Callable[[], str] | None = None,
         observation_clock: Callable[[], str] | None = None,
+        trace_delivery_stager: ParentTraceDeliveryStager | None = None,
     ) -> None:
         self._engine = engine
         self._artifact_store = artifact_store
         self._event_ledger = event_ledger
         self._now = now or _utc_now
         self._observation_clock = observation_clock or _utc_now
+        self._trace_delivery_stager = trace_delivery_stager
         self._logical_scheduler: LogicalSourceLatencyScheduler | None = None
 
     @property
@@ -1756,6 +1833,11 @@ class ProtocolRunCoordinator:
         execution_request = _bind_execution_request(
             execution_request,
             attempt_ordinal=scheduled.attempt.attempt_ordinal,
+            logical_dispatch_start_ms=(
+                self._logical_scheduler.clock_ms
+                if self._logical_scheduler is not None
+                else None
+            ),
         )
         request_flow = self._engine.record_execution_request(
             request=execution_request,
@@ -1788,6 +1870,7 @@ class ProtocolRunCoordinator:
                 current_stores=ParentCommitStores(
                     artifact_store=self._artifact_store,
                     event_ledger=self._event_ledger,
+                    trace_delivery_stager=self._trace_delivery_stager,
                 ),
             )
             worker_outcome = replace(
@@ -1797,6 +1880,7 @@ class ProtocolRunCoordinator:
                     delivery=prepared_delivery,
                     consumption=consumption,
                     submitted_at=self._protocol_now(request),
+                    artifact_store=self._artifact_store,
                 ),
             )
         if worker_outcome.submission is None:
