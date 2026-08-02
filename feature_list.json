@@ -5,7 +5,7 @@
   "active_feature": "feat-011",
   "active_focus": {
     "id": "paper-metric-contract-trace-bank-and-traceability-plan",
-    "summary": "EPD-027 严格串行实施为 19/35 accepted：Task 0–18 已 accepted；Task 19 formal runner integration 已获四个计划外 production 接线授权并进入 in_progress。",
+    "summary": "EPD-027 严格串行实施为 20/35 accepted：Task 0–19 已 accepted；Task 20 metric lineage observations 因上游 typed lineage sidecar 待授权而 blocked/next。",
     "status": "in_progress",
     "scope": [
       "Experiment 1–5 论文指标、固定分母与 missingness 口径",
@@ -17,12 +17,12 @@
       "完整实施顺序、测试、离线重放与真实 smoke/正式矩阵门禁"
     ],
     "out_of_scope": [
-      "Task 19 accepted 前进入 Task 20 metric lineage observations",
+      "用户批准上游 typed lineage sidecar 接线前实施 Task 20 metric lineage observations",
       "重新运行真实付费 API 实验",
       "修改由其他工作调整中的 Experiment 3 正式规模",
       "人为注入攻击与安全工程"
     ],
-    "next_action": "启动单一 Task 19 实现 Agent，严格修改原计划四文件与用户批准的四个 trace/preflight 接线文件；不得进入 Task 20 或调用真实 API。"
+    "next_action": "完成 Task 20 计划外 typed lineage sidecar 精确预检并向用户报告；取得明确授权后才启动 Task 20，期间不得调用真实 API。"
   },
   "authorities": {
     "agent_start": "AGENTS.md",
@@ -163,7 +163,7 @@
         "2026-07-31 用户暂停点：checkpoint/evidence 142 项与 shared dispatch/fail-close/resume 3 项离线通过；收尾 Fast 458 passed/1 skipped；shared terminal-snapshot-only index、500-root live-outcome 压力证据和最新 formal runner 整体回归尚未闭合，正式全量维持 NO-GO",
         "EPD-027 已冻结 Experiment 2–4 两阶段真实回答库、Exp2 缩小题集全六 worker 档真实在线检查、Exp3 小型真实在线恢复检查，并明确其为跨 identity/executor/artifact/eligibility/budget/runner/metrics/replay 的全面设施改造；design_synced/未实现是实施前历史快照",
         "EPD-027 文档/harness 历史同步 Fast：458 passed/1 skipped；JSON/SQLite、harness、compileall 通过，未联网、未调用真实 API",
-        "EPD-027 实施进度 19/35：Task 0–2 accepted 原提交 ed0b056a、78fbddaa、d2b16f89 不变；通用 ledger-binding 860b7c48 focused 40 passed/review PASS，typed-hook 4ea293b1 final 69+286 passed/review PASS",
+        "EPD-027 实施进度 20/35：Task 0–2 accepted 原提交 ed0b056a、78fbddaa、d2b16f89 不变；通用 ledger-binding 860b7c48 focused 40 passed/review PASS，typed-hook 4ea293b1 final 69+286 passed/review PASS",
         "Task 3 accepted commit f9773944：canonical direct-results 四文件，focused 101 passed、独立 review PASS、provider calls=0；正式路径无影子 TokenShare，ProtocolEngine disabled 时不能铸造 paper-eligible success",
         "2026-08-01 Task 3 accepted 后 Fast：.\\init.ps1 exit 0，468 passed/1 skipped in 20.19s；JSON/SQLite、harness、compileall 通过，provider calls=0；Full intentionally not run per user instruction，LeanAudit/API 未运行",
         "状态同步时 verification/run_verification.py 被误判为无 pytest harness，实际重复执行 Fast：468 passed/1 skipped in 18.78s；不计新增覆盖，后续不得重复",
@@ -187,9 +187,11 @@
         "Task 17 accepted commit 8ded3681：严格4文件；初始RED 2 collection errors/0.33s（outer wrapper0但conda failed），初始GREEN 6 passed/0.42s；reviewer BLOCK 2 Critical/2 Important，3个缺失/旁路nodeid各先失败后1 passed/0.13s；最终canonical 6 passed/0.43s；contract row-kind/metric inventory、真实registry/contract identity与8-table write-before-publish门禁闭合；final reviewer PASS 0/0/0；子智能体test minimization CHANGED后6 passed/0.47s；provider/network0，无paid receipt；Fast/Full/LeanAudit未运行",
         "Task 18 accepted commit 18d2c12a：严格4文件；初始RED 183 passed/9 failed/27.64s，初始GREEN 193 passed/26.28s；首轮review BLOCK 3 Critical/1 Important，identity-chain RED 9 failed/1.04s后canonical 193 passed/25.40s；第二轮review BLOCK 2 Critical/1 Important，replacement/terminal targeted RED→2 passed/0.18s，canonical 193 passed/24.78s；逐unit/attempt与全部replacement/entry/manifest/receipt creator绑定、Factor/Lean success和provider-failure terminal truth table闭合；final reviewer PASS 0/0/0；子智能体test minimization CHANGED后193 passed/26.83s；provider/network0，无paid receipt；Fast/Full/LeanAudit未运行",
         "Task 19 只读预检 blocker：原计划4文件缺少正常 trace 接线；需用户批准计划外 production paper_response_bank.py（纯 completeness seam）、paper_dispatcher.py（typed trace context）及 factorization_paper_adapter.py/lean_paper_adapter.py（正式 runtime/bridge/stager/scheduler 注入），否则只能重复 preflight、继续旧 backend 或形成 shadow/private-ABI 路径",
-        "2026-08-02 用户明确批准 Task 19 修改上述四个计划外 production 文件；Task 19 allowlist 因此为原计划4文件加这4个production接线文件，共8文件，仍禁止其他计划外production与真实API"
+        "2026-08-02 用户明确批准 Task 19 修改上述四个计划外 production 文件；Task 19 allowlist 因此为原计划4文件加这4个production接线文件，共8文件，仍禁止其他计划外production与真实API",
+        "Task 19 accepted commit 20f58bdc：严格8文件（原计划4+用户批准4）；初始writer RED证据恢复失败并诚实记录，恢复canonical 136 passed/77.62s；reviewer首轮BLOCK 2 Critical/3 Important，六计划nodeids RED 6 failed/16.06s→6 passed/32.46s，调度回归5 failed+133 passed→5 passed/30.81s，canonical 138 passed/91.66s；第二轮BLOCK 1 Critical/2 Important，cross-case/replacement RED 2 failed/14.54s→2 passed/15.20s，canonical 138 passed/168.00s；terminal-only preflight/case digest、normal Factor+Lean lifecycle、真实source latency、Task18 evaluator、committed retry/replacement闭合；final reviewer PASS 0/0；子智能体test minimization CHANGED后138 passed/157.61s；provider/network0，无paid receipt；Fast/Full/LeanAudit未运行",
+        "Task 20 只读预检 blocker：计划四文件缺少权威 lineage producers；需用户批准计划外 production paper_metric_contract.py（捕获真实recompute bundle/row identity，不重写公式）与paper_formal_evidence.py（从已验证current/source facts导出typed LineageSourceIndex），否则只能由caller伪造sidecar或按名称重建lineage；paper_formal_runner.py不是当前阻塞文件"
       ],
-      "next_action": "Task 0–18 accepted count=19/35；Task 19 in_progress。仅实施批准的8文件allowlist，不得进入Task20或调用真实API。"
+      "next_action": "Task 0–19 accepted count=20/35；Task 20 blocked/next，须先取得上游typed lineage sidecar计划外接线明确授权；不得调用真实API。"
     }
   ]
 }

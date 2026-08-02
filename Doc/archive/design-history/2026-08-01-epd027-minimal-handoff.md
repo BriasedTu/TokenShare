@@ -5,9 +5,9 @@
 ## 当前状态
 
 - 工作树：`C:\Users\32133\.config\superpowers\worktrees\TokenShare\codex-feat-011-epd027-pipeline`。
-- 分支：`codex/feat-011-epd027-pipeline`；Task 18 代码 HEAD=`18d2c12a`；状态/交接提交在其后。
+- 分支：`codex/feat-011-epd027-pipeline`；Task 19 代码 HEAD=`20f58bdc`；状态/交接提交在其后。
 - Active feature：`feat-011`，仍为 `in-progress`；正式矩阵保持 **NO-GO**。
-- Task 0–18 已 accepted（`19/35`）；不得重做。Task 19 已获四个计划外 production 接线授权并为 `in_progress`；不得进入 Task 20。
+- Task 0–19 已 accepted（`20/35`）；不得重做。Task 20 因上游 typed lineage sidecar 待授权而 `blocked/next`。
 - 用户已授权每个后续 Task 持续执行“实现 → 独立综合 review → 集中修正 → follow-up”循环直至 reviewer PASS，再直接推进下一 Task。
 - 每个 Task 的 post-accept 测试最小化必须分派给子智能体；监督者不得亲自执行测试内容审计，只负责范围门禁、结构化证据验收与精确提交。
 - 当前没有活动写入者。provider/network 调用均为 `0`，无 paid receipt。
@@ -19,6 +19,7 @@
 - Task 16：Exp5 projector commit=`440c1ef9`，严格 2 个计划文件；canonical endpoint identity、actual first-attempt denominator、全预注册 roots、enclosing wall-clock、3 raw repeats、exact two payloads/caption 与 forbidden-output 边界闭合。
 - Task 17：registry/formal metrics commit=`8ded3681`，严格 4 个计划文件；8 张 contract tables 唯一映射 Tasks12–16 projectors，Exp3 trace/online 分别使用 Task14，central 只 delegate/validate/publish 且写盘前 fail closed。
 - Task 18：evidence eligibility commit=`18d2c12a`，严格 4 个计划文件；online 逐 unit 绑定 current real attempt，trace 逐 replacement/entry/manifest/source/receipt creator 闭合且 current calls=0，old/capability/historical/synthetic/regression 不得升级。
+- Task 19：normal formal lifecycle commit=`20f58bdc`，严格 8 文件（原计划4+用户批准4）；terminal-only bank preflight、case digest、typed trace context、Factor/Lean normal coordinator lifecycle、真实 source latency、worker-death replacement 与 Task18 evaluator 已闭合。
 - 禁止影子 TokenShare：metrics 只能投影 persisted event/artifact/attempt/provider facts；不得根据 condition/fault 名称模拟 state、retry、death 或 terminal。
 
 Task 14 contract digest=`sha256:b72307e727e28f5233de934df28e1701cf46ffb711b99aa845ea6f8580694b0e`。
@@ -41,11 +42,13 @@ Task 14 contract digest=`sha256:b72307e727e28f5233de934df28e1701cf46ffb711b99aa8
 - Task 17 子智能体 test minimization=`CHANGED`；最终 canonical=`6 passed in 0.47s`，provider/network=`0/0`。
 - Task 18 两轮 review-fix：初始 RED=`183 passed/9 failed in 27.64s`，targeted identity RED=`9 failed in 1.04s`，第二轮 replacement/terminal RED 后 `2 passed in 0.18s`；最终 canonical=`193 passed in 24.78s`，final reviewer `PASS`、`0/0/0`。
 - Task 18 子智能体 test minimization=`CHANGED`；最终 canonical=`193 passed in 26.83s`，provider/network=`0/0`。
+- Task 19 初始 writer RED 不可恢复并诚实记录；review-fix RED=`6 failed in 16.06s`、`5 failed+133 passed`、`2 failed in 14.54s` 均闭合；最终 canonical=`138 passed in 168.00s`，final reviewer `PASS`、`0/0`。
+- Task 19 子智能体 test minimization=`CHANGED`；最终 canonical=`138 passed in 157.61s`，provider/network=`0/0`。
 
 ## 精确下一动作
 
-1. Task 19 精确 allowlist：原计划 `paper_formal_runner.py`、`paper_formal_callbacks.py` 及对应两个 tests，加用户批准的 `paper_response_bank.py`、`paper_dispatcher.py`、`factorization_paper_adapter.py`、`lean_paper_adapter.py`，共 8 文件。
-2. 按 TDD 接入纯 preflight、typed trace context、正常 coordinator/runtime/bridge/stager/scheduler；不得复制 preflight/dispatcher、私改 coordinator 或形成影子 TokenShare。
+1. Task 20 需用户批准两个计划外 production：`paper_metric_contract.py` 捕获真实 evaluator bundle/row identity；`paper_formal_evidence.py` 从已验证 current/source facts 导出 typed `LineageSourceIndex` sidecar+digest。计划四文件负责 join/复算/observations 持久化；总预计 1–1.5 个工作日。
+2. 未获明确授权不得按 metric/table/condition 名重建 facts、把 role 名包装成 refs、重复调用 projector 验值或进入 Task 20。
 3. 当前 Task 进入 review 后才可做下一 Task 只读预检；同一时间只允许一个写入者。
 
 恢复期间继续遵守：无经 Task 26 校验的 paid receipt 不得调用真实 API；不 push、不 merge、不创建 PR。
