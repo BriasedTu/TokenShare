@@ -7,7 +7,7 @@
 ## 当前状态
 
 - Active feature：`feat-011`（Paper Real AI Experiments），状态仍为 `in-progress`。
-- EPD-027 Task 9 已 accepted；实施计划共 35 个 Task，Task 0–9 已 accepted（`10/35`）。Task 10 是下一项，保持 queued 且尚未开始。Task 0–2 的 accepted 原提交保持不变：`ed0b056a`、`78fbddaa`、`d2b16f89`。
+- EPD-027 Task 10 已 accepted；实施计划共 35 个 Task，Task 0–10 已 accepted（`11/35`）。Task 11 trace-backed executor / dual provenance 是 queued/next。Task 0–2 的 accepted 原提交保持不变：`ed0b056a`、`78fbddaa`、`d2b16f89`。
 - Task 3 的两项通用前置均已 accepted：ledger-binding `860b7c48` 最终 focused `40 passed`、review PASS；typed-hook `4ea293b1` 最终 `69 + 286 passed`、review PASS。Task 3 四文件提交=`f9773944`，最终 focused `101 passed`、独立 review PASS，provider calls=`0`。
 - Task 3 post-task 测试压缩已完成并提交为 `66643084`：仅修改 5 个测试文件，production 零修改；test defs / 估算 cases 从 `77/153` 降至 `66/118`。canonical scoped 结果 exit `0`，`118 passed in 5.55s`，provider calls=`0`；独立 review PASS，Critical/Important/Minor=`0/0/0`。本次提交与状态同步未重复运行 Fast、Full 或 LeanAudit。
 - Task 3 反影子结论：正式 direct-results 路径消费 canonical `ProtocolRunResult`、verified ledger binding 与 official typed-hook parser；没有复制 `ProtocolEngine`/状态机，禁用 `ProtocolEngine` 不能铸造 paper-eligible success。手工 typed fixture 仅用于组件测试。
@@ -20,10 +20,11 @@
 - Task 7 SQLite WAL atomic budget authority 已提交为 `aadbd483`，严格四文件。post-min final test exit `0`，`12 passed in 2.18s`，覆盖真实本地 two-process race；comprehensive review=`PASS`，Critical/Important/Minor=`0/0/0`。test compaction 仅删除 1 个冗余 assert；provider/network/secret=`0`；3 个 production 文件 `py_compile` exit `0`。本次接受状态持久化未运行任何测试、Fast、Full 或 LeanAudit，也未联网或调用 provider。
 - Task 8 durable response-bank acquisition/publish/resume/reconcile 已提交为 `6802918d`，严格六个实际变更文件；计划中的三个 executor 测试文件无变更且未 stage。最终 exact 5-file command exit `0`，`77 passed in 15.20s`；manifest 专项 `3 passed`、cross-check `4 passed`；fake-only，真实 provider/network/secret=`0`。4 个 production 文件 `py_compile`、diff-check、allowlist、secret scan 均 exit `0`；final review=`PASS`，Critical/Important/Minor=`0/0/0`，manifest 修复已闭合；post-task test minimization 3 分钟=`NO_CHANGE`，collect-only=`19`（行为用例 `18`）。没有 paid receipt；本次接受状态持久化未运行测试、Fast、Full 或 LeanAudit，也未联网或调用 provider。
 - Task 9 deterministic logical source-latency scheduler 已提交为 `1109e852`（`feat(runtime): add deterministic trace event scheduler`），严格 12 文件：计划 11 文件加用户授权的 `src/tokenshare/storage/artifacts.py`。final canonical exit `0`，`42 passed in 36.58s`；final review=`PASS`，Critical/Important/Minor=`0/0/0`；C1 typed in-process checkpoint/resume 与 C2 六类 queue 闭合均已确认；post-task test minimization=`NO_CHANGE`。7 个 production 文件 `py_compile` 与 diff-check exit `0`；provider/network calls=`0`。`artifacts.py` 仅把含冒号 logical artifact id 映射为 Windows 普通文件名，logical identity 不变且未扩展 security scope。本次接受状态持久化未运行测试、Fast、Full 或 LeanAudit，也未联网或调用 provider。
+- Task 10 attempt ordinal / parent-owned trace delivery commit ABI 已提交为 `933ca71bd3aca9b62ad4f4b399f43a8f5d8092e1`（`feat(runtime): add parent-owned trace delivery commits`），严格 16 文件（11 production + 5 tests）。canonical exit `0`，`106 passed in 48.71s`；11 个 production 文件 `py_compile` exit `0`；final reviewer=`PASS`。验收后仅修改 2 个测试文件并删除 37 行 / 3 cases，最小验证 exit `0`，`35 passed in 10.61s`。provider_calls=`0`，无 paid receipt；本次状态持久化未运行测试、Fast、Full、LeanAudit、network/provider，Full 按用户指令 intentionally not run。
 - EPD-027 已按用户确认写入权威设计：Experiment 1/5 继续真实在线；Experiment 2–4 改为不可变真实回答库驱动的完整协议运行。同一 repeat 的配对条件共享回答、不同 repeat 使用独立 sample slot，replacement 按冻结最大恢复深度准备。
 - Experiment 2 另在缩小且预注册的题集上，用真实 API 覆盖 `1,3,7,10,30,50` 全六个 worker 档位；Experiment 3 另保留 verifier/checker 拒绝后 replacement 与 worker death 后重新分派的小型真实在线恢复检查。完整实施计划已形成，相关题集、重复、阈值、预算与 profile 仍须由后续 Task 实现、复审并在付费门禁前验证。
-- EPD-027 是实验设施全面改造，涉及稳定 provider-body digest、response-bank schema/inventory、trace-backed executor、source/consumer 双 provenance、双 paper evidence class、预算分账与硬门、runner/metrics/report/renderer/replay/audit；不是现有 replay 的局部修补。Task 0–9 已 accepted，但其余 `25/35` 仍未实施，正式全量继续 **NO-GO**。
-- Experiment 5 指标继续遵守 EPD-025：维持零 retry，正文使用“首次输出质量/最终结果”和“调用量/资源”两张 model 汇总表，删除六组 pairwise、recovery 与重复旧正确率名。Task 2 metric contract、Task 3 direct projector、Task 4 stable request identity、Task 5 immutable bank primitives、Task 6 semantic inventory/preflight、Task 7 atomic budget authority、Task 8 durable acquisition 与 Task 9 logical scheduler 已 accepted；formal metrics/renderer/replay 的正式接线属于后续 Task，不能把 `10/35` 写成整条 pipeline implemented。
+- EPD-027 是实验设施全面改造，涉及稳定 provider-body digest、response-bank schema/inventory、trace-backed executor、source/consumer 双 provenance、双 paper evidence class、预算分账与硬门、runner/metrics/report/renderer/replay/audit；不是现有 replay 的局部修补。Task 0–10 已 accepted，但其余 `24/35` 仍未实施，正式全量继续 **NO-GO**。
+- Experiment 5 指标继续遵守 EPD-025：维持零 retry，正文使用“首次输出质量/最终结果”和“调用量/资源”两张 model 汇总表，删除六组 pairwise、recovery 与重复旧正确率名。Task 2 metric contract、Task 3 direct projector、Task 4 stable request identity、Task 5 immutable bank primitives、Task 6 semantic inventory/preflight、Task 7 atomic budget authority、Task 8 durable acquisition、Task 9 logical scheduler 与 Task 10 parent-owned commit ABI 已 accepted；trace-backed executor 和 formal metrics/renderer/replay 正式接线属于后续 Task，不能把 `11/35` 写成整条 pipeline implemented。
 - Experiment 3/4/5 的代码与离线 smoke/paper evidence 门禁已闭合；2026-07-31 用户启动的真实 Exp3/4 smoke 已完成运行，但其历史 canonical 论文证据审计不通过，修复后仍须使用全新 identity 重跑。正式 P0-full 仍为 **NO-GO**，还缺新的 Exp3/4 11-root 证据与 Exp5 8-root artifact-backed endpoint smoke bundle。
 - Experiment 1–4 继续固定官方 DeepSeek `deepseek-v4-pro` / `deepseek_v4_pro_exp1_baseline`，thinking enabled、high、`timeout_seconds=600`、`max_tokens=300000`。
 - Experiment 5 继续固定 SiliconFlow cohort v3 四模型与 `600/32768`；GLM/Qwen/MiniMax thinking budget 32768，DeepSeek-V3 nonthinking。
@@ -96,13 +97,13 @@
 
 ## 尚未执行与残留
 
-- EPD-025/027 的实施已不再是“只完成设计同步”：Task 2 machine-readable metric contract、Task 3 canonical direct-results projector、Task 4 stable request identity、Task 5 immutable bank primitives、Task 6 semantic inventory/preflight、Task 7 atomic budget authority、Task 8 durable acquisition 与 Task 9 logical scheduler 已 accepted；trace-backed executor、formal metrics/report/renderer、execute/replay 与论文管线正式接线仍须按后续 Task 完成。本轮没有启动真实 API。
+- EPD-025/027 的实施已不再是“只完成设计同步”：Task 2–10 的 metric contract、canonical direct results、stable request identity、immutable bank、inventory/preflight、budget、acquisition、logical scheduler 与 parent-owned commit ABI 已 accepted；trace-backed executor、formal metrics/report/renderer、execute/replay 与论文管线正式接线仍须按后续 Task 完成。本轮没有启动真实 API。
 - 按用户要求，本次审计/修复没有新运行 Full、LeanAudit、force-all、真实 API smoke 或正式矩阵；未检查人为注入攻击。上面的真实调用来自用户此前启动的历史 smoke。
-- 历史审计时当前进程的 `DEEPSEEK_API_KEY` 非空；这只证明当时环境曾配置，不构成当前付费授权，也不把 secret 写入仓库或输出。Task 9 已 accepted，Task 10 保持 queued 且尚未开始；旧 Exp3/4 与 Exp5 smoke 继续暂停。
+- 历史审计时当前进程的 `DEEPSEEK_API_KEY` 非空；这只证明当时环境曾配置，不构成当前付费授权，也不把 secret 写入仓库或输出。Task 10 已 accepted，Task 11 保持 queued/next；旧 Exp3/4 与 Exp5 smoke 继续暂停。
 - TTFT 当前没有持久化来源，保持缺失，不伪造为 0。
 - Exp5 bundle digest 仍包含 source suite 持久化路径字符串，属于跨机器可移植性 P2，不影响当前本机 lifecycle/artifact 绑定。
 - PowerShell 日志 helper 在“runner 已退出但其后代长期持有继承管道写端”的极端路径仍可能等待 EOF；正常 launcher 实时脱敏、受控退出与退出码传播测试通过。该 P2 未伪装成已修复，不影响本轮结果完整性结论。
 - 全量资源 A 支线暂停点：`build_shared_root_reference()` 尚未替换为 terminal snapshot-only 的 `ValidatedSharedRootReferenceIndex`；还需补 stale/duplicate source rejection、同一 suite 共享索引复用、500 synthetic roots 的 `max_live_full_outcomes <= 1` 证据，并在完成后重跑 formal runner 与 Fast。完成这些之前不得启动正式全量。
-- EPD-027 Task 0–9 已 accepted；immutable bank、semantic inventory/zero-engine preflight、atomic budget authority、durable acquisition 与 logical scheduler 已实现，但 trace-backed executor 与正式 pipeline 接线仍未实现，当前仍不能以回答库重新驱动完整状态机。旧 Exp3/4 11-root 与 Exp5 8-root smoke 仍暂停；未获单独付费授权不得运行在线并发/恢复检查。
-- Task 9 production/tests 已独立提交为 `1109e852`；Task 10 queued 且尚未开始。本轮不 push、不 merge、不创建 PR。
-- 本轮状态持久化未联网、未调用 provider，未引入外部资料；仅更新 minimal handoff、`progress.md`、`feature_list.json`、`session-handoff.md` 与 code map；未运行测试/Fast/Full/LeanAudit。
+- EPD-027 Task 0–10 已 accepted；parent-owned trace delivery commit ABI 已实现，但 Task 11 trace-backed executor 与正式 pipeline 接线仍未实现。旧 Exp3/4 11-root 与 Exp5 8-root smoke 仍暂停；未获单独付费授权不得运行在线并发/恢复检查。
+- Task 10 production/tests 已独立提交为 `933ca71bd3aca9b62ad4f4b399f43a8f5d8092e1`；Task 11 queued/next。本轮不 push、不 merge、不创建 PR。
+- 本轮状态持久化未联网、未调用 provider，未引入外部资料；仅更新 minimal handoff、`progress.md`、`feature_list.json`、`session-handoff.md` 与 code map；未运行测试/Fast/Full/LeanAudit，Full intentionally not run per user。

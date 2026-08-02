@@ -33,11 +33,11 @@ experiments ──> local_runtime ──> protocol_engine/core ──> storage
 
 | 文件 | 职责 |
 |---|---|
-| `models.py` | Task/Unit/Attempt/Lease/Artifact/Event 等协议数据对象与版本化序列化。 |
+| `models.py` | Task/Unit/Attempt/Lease/Artifact/Event 等协议数据对象与版本化序列化；Task 10 为 unit、lease、attempt 增加持久化 attempt ordinal。 |
 | `state_machines.py` | 对象状态转换规则。 |
 | `task_graph.py` | DAG、依赖和任务图不变量。 |
 | `scheduling.py` | Ready unit 选择与调度纯规则。 |
-| `leases.py` | lease/heartbeat/fencing 规则。 |
+| `leases.py` | lease/heartbeat/fencing 规则；Task 10 在每个 unit 上单调分配 attempt ordinal，并绑定 lease/attempt。 |
 | `recovery.py` | 失败、过期、重试和 requeue 决策。 |
 | `verification.py` | submission acceptance 与 verification 规则。 |
 | `expansion.py` | 验证后的递归展开规则。 |
@@ -51,9 +51,9 @@ experiments ──> local_runtime ──> protocol_engine/core ──> storage
 
 | 文件 | 职责 |
 |---|---|
-| `events.py` | append-only JSONL event ledger、读取和校验；`VerifiedLedgerSnapshot` 与 `EventLedger.read_verified_snapshot()` 从同一份持久化 bytes 校验 event/hash chain，并冻结 bytes/events digest、count 与 tip identity。 |
+| `events.py` | append-only JSONL event ledger、读取和校验；`VerifiedLedgerSnapshot` 与 `EventLedger.read_verified_snapshot()` 从同一份持久化 bytes 校验 event/hash chain，并冻结 bytes/events digest、count 与 tip identity；Task 10 增加 `TRACE_DELIVERY_COMMITTED.v1`。 |
 | `artifacts.py` | content-addressed artifact、manifest、hash/URI 验证；Task 8 提供 temp flush/fsync/rename 与 commit marker 顺序，使外部 bank object 可在 crash 后确定性 reconcile；Task 9 为 Windows normal path 将含冒号 logical artifact id 映射为普通文件名，logical identity 保持不变。 |
-| `sqlite_index.py` | 从 ledger 构建/重建 SQLite 查询索引；不是第二状态源。 |
+| `sqlite_index.py` | 从 ledger 构建/重建 SQLite 查询索引；不是第二状态源；Task 10 materialize unit/lease/attempt ordinal 与 trace-delivery commit。 |
 
 任何非确定性 executor 输出先落 artifact，再由 event 引用。Replay 读取持久化事实，不重新调用 executor/provider。
 
@@ -61,12 +61,12 @@ experiments ──> local_runtime ──> protocol_engine/core ──> storage
 
 | 文件 | 职责 |
 |---|---|
-| `contracts.py` | `ProtocolRunRequest`、execution scope、plugin hooks、worker/backend 等稳定接口；`ProtocolRunLedgerBinding` 把 run/task/root 绑定到 verified ledger snapshot；`RuntimeHookObservationV1` 是三 variant 的 closed typed envelope；Task 9 增加 typed logical schedule/checkpoint contract。 |
-| `coordinator.py` | 组装 scheduler/lease/executor/plugin/engine，推进完整本地协议生命周期；Task 9 由 frozen queue pop 统一推进 logical clock 与 completion commit。 |
+| `contracts.py` | `ProtocolRunRequest`、execution scope、plugin hooks、worker/backend 等稳定接口；`ProtocolRunLedgerBinding` 把 run/task/root 绑定到 verified ledger snapshot；`RuntimeHookObservationV1` 是三 variant 的 closed typed envelope；Task 9 增加 typed logical schedule/checkpoint contract；Task 10 增加 `PreparedTraceDelivery`、`ParentCommitStores` 与 `TraceDeliveryAttempt`。 |
+| `coordinator.py` | 组装 scheduler/lease/executor/plugin/engine，推进完整本地协议生命周期；Task 9 由 frozen queue pop 统一推进 logical clock；Task 10 校验 delivery/lease/request/store binding 后由 parent 唯一 commit trace delivery。 |
 | `logical_scheduler.py` | Task 9 deterministic logical source-latency event queue、stable tie-break、checkpoint/resume 与六类 completion 闭合。 |
-| `workers.py` | sequential/thread/process worker、liveness、真实 process death 与 capacity；Task 9 worker completion 返回 scheduled event，logical policy 下不直接 commit。 |
-| `process_worker_child.py` | Windows 独立子解释器 worker 的原子文件 handshake/result sidecar；Task 9 透传 typed scheduled completion。 |
-| `projection.py` | 从同一次 verified ledger snapshot 派生通用 run/unit/attempt 只读视图，并把 `ProtocolRunLedgerBinding` 放入正式 `ProtocolRunResult`。 |
+| `workers.py` | sequential/thread/process worker、liveness、真实 process death 与 capacity；Task 9 worker completion 返回 scheduled event；Task 10 worker 只返回 prepared delivery，不能写 parent stores。 |
+| `process_worker_child.py` | Windows 独立子解释器 worker 的原子文件 handshake/result sidecar；Task 9 透传 typed scheduled completion；Task 10 透传 typed prepared delivery。 |
+| `projection.py` | 从同一次 verified ledger snapshot 派生通用 run/unit/attempt 只读视图，并把 `ProtocolRunLedgerBinding` 放入正式 `ProtocolRunResult`；Task 10 投影 `TRACE_DELIVERY_COMMITTED.v1`。 |
 
 worker backend 只报告执行和死亡事实；是否 retry/requeue 由协议规则决定。不要把 Windows process 退回 multiprocessing spawn pipe/Event 路径。
 
@@ -177,18 +177,17 @@ Secret 只能进入当前进程环境和脱敏后的 transport；event/artifact/
 
 ### EPD-027 实施进度与后续实验设施改造
 
-2026-08-01 已冻结 Experiment 2–4 两阶段真实回答库设计。当前 35 个实施 Task 中 Task 0–9 已 accepted：Task 9 deterministic logical source-latency scheduler commit=`1109e852`，严格 12 文件（计划 11 文件加用户授权的 `src/tokenshare/storage/artifacts.py`）；final canonical exit `0`、`42 passed in 36.58s`；7 个 production 文件 `py_compile` 与 diff-check exit `0`；final review PASS、Critical/Important/Minor=`0/0/0`，C1 typed in-process checkpoint/resume 与 C2 六类 queue 闭合；test minimization=`NO_CHANGE`；artifact 变更仅为 Windows normal-path filename mapping 且 logical identity 不变；provider/network calls=`0`。这个 `10/35` 状态不代表整条 paper pipeline 已实现：Task 10 attempt ordinal / parent-side worker commit ABI 为 queued/next，`paper_formal_runner.py` 尚不能以回答库输入重新驱动完整状态机。本次未运行 Fast/Full/LeanAudit，未联网或调用 provider。
+2026-08-01 已冻结 Experiment 2–4 两阶段真实回答库设计。当前 35 个实施 Task 中 Task 0–10 已 accepted：Task 10 attempt ordinal / parent-owned trace delivery commit ABI commit=`933ca71bd3aca9b62ad4f4b399f43a8f5d8092e1`，严格 16 文件（11 production + 5 tests）；canonical exit `0`、`106 passed in 48.71s`；11 production `py_compile` exit `0`；final reviewer PASS。验收后只压缩 2 个测试文件，删除 37 行 / 3 cases，最小验证 exit `0`、`35 passed in 10.61s`；provider_calls=`0`，无 paid receipt。这个 `11/35` 状态不代表整条 paper pipeline 已实现：Task 11 trace-backed executor / dual provenance 为 queued/next，`paper_formal_runner.py` 尚不能以回答库输入重新驱动完整状态机。本次未运行测试/Fast/Full/LeanAudit/network/provider，Full intentionally not run per user。
 
 后续完整实施计划必须同时覆盖：
 
-- attempt ordinal / parent-side worker commit ABI；
 - trace-backed executor binding、当前 submission 到 source entry 的双 provenance（response-bank acquisition 与 deterministic logical scheduler 已分别由 Task 8/9 提供）；
 - `online_real_provider` 与 `real_model_trace_protocol_run` 两类 paper eligibility，禁止把 trace consumption 冒充当前 provider call；
 - acquisition actual spend 与 per-condition trace attribution 两套资源账，以及 calls/tokens/CNY/in-flight 人民币 1,000 硬门；
 - Experiment 2 缩小题集六 worker 档在线并发检查、Experiment 3 小型在线恢复检查；
 - metrics/report/renderer/replay/audit 与 smoke/canary 身份迁移。
 
-这是一项跨 `tokenshare.executors`、`tokenshare.experiments`、两插件 runtime adapter 和输出 schema 的全面设施修改，不得在 `paper_formal_runner.py` 内临时塞入读取文件的旁路，也不得复制一套协议生命周期。已接受的 ledger/hook/direct-result、immutable bank、semantic inventory/preflight 与 deterministic logical scheduler 边界不改变 `ProtocolEngine` 状态机；parent-side worker commit ABI、trace-backed executor、projector registry 与 formal runner/metrics/renderer/replay 的正式 pipeline 接线属于后续 Task。后续继续先建 characterization/RED tests，并以唯一权威实验设计 EPD-027 为准。
+这是一项跨 `tokenshare.executors`、`tokenshare.experiments`、两插件 runtime adapter 和输出 schema 的全面设施修改，不得在 `paper_formal_runner.py` 内临时塞入读取文件的旁路，也不得复制一套协议生命周期。已接受的 ledger/hook/direct-result、immutable bank、semantic inventory/preflight、deterministic logical scheduler 与 parent-owned trace delivery commit ABI 边界不改变 `ProtocolEngine` 状态机；trace-backed executor、projector registry 与 formal runner/metrics/renderer/replay 的正式 pipeline 接线属于后续 Task。后续继续先建 characterization/RED tests，并以唯一权威实验设计 EPD-027 为准。
 
 指标不得使用固定协议时间、自填成功字段或丢失失败/未开始分母；所有汇总必须能回到逐 task/attempt/event/artifact。
 
