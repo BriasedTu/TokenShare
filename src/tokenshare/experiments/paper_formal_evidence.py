@@ -24,6 +24,11 @@ from tokenshare.experiments.paper_formal_checkpoint import (
     validate_v3_delta_chain,
     validate_v3_generation_manifest,
 )
+from tokenshare.experiments.paper_models import (
+    PaperEvidenceEligibilityFacts,
+    VersionedPaperEvidenceEligibilityReport,
+    evaluate_versioned_paper_evidence as _evaluate_versioned_paper_evidence,
+)
 
 
 _ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
@@ -200,6 +205,14 @@ _LEDGER_EVENT_V2_KEYS = _LEDGER_EVENT_V1_KEYS | {
     "batch_index",
     "batch_size",
 }
+
+
+def evaluate_versioned_paper_evidence(
+    facts: PaperEvidenceEligibilityFacts | Mapping[str, Any],
+) -> VersionedPaperEvidenceEligibilityReport:
+    """公开的 formal evidence 只读 eligibility 边界。"""
+
+    return _evaluate_versioned_paper_evidence(facts)
 
 
 def _execution_classification(

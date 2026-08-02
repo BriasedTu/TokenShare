@@ -11,6 +11,18 @@ from hashlib import sha256
 from types import MappingProxyType
 from typing import Any
 
+from tokenshare.executors.response_bank import (
+    CurrentTraceWrapper,
+    ResponseBankEntry,
+    ResponseBankInventoryRow,
+    ResponseBankManifest,
+    ValidatedResponseBankIndex,
+)
+from tokenshare.executors.trace_backed import (
+    APPROVED_REAL_SOURCE_EVIDENCE_CLASS,
+    TraceSourceBinding,
+)
+
 
 JsonObject = dict[str, Any]
 PAPER_DOMAINS = ("factorization", "lean_proof")
@@ -31,6 +43,36 @@ PAPER_DIRECT_EVIDENCE_CLASSES = frozenset(
         "regression_only",
     }
 )
+VERSIONED_PAPER_EVIDENCE_CLASSES = frozenset(
+    {
+        "online_real_provider",
+        "real_model_trace_protocol_run",
+        "capability_only",
+        "historical",
+        "synthetic",
+        "regression_only",
+    }
+)
+VERSIONED_PAPER_SOURCE_CLASSIFICATIONS = frozenset(
+    {
+        "current_real_provider",
+        "approved_real_full_acquisition",
+        "capability_only",
+        "historical",
+        "synthetic",
+        "regression_only",
+    }
+)
+PAPER_EVIDENCE_ELIGIBILITY_FACTS_SCHEMA = (
+    "tokenshare.paper_evidence_eligibility_facts.v2"
+)
+PAPER_EVIDENCE_ELIGIBILITY_REPORT_SCHEMA = (
+    "tokenshare.paper_evidence_eligibility_report.v2"
+)
+PAID_EXECUTION_RECEIPT_CLAIM_SCHEMA = (
+    "tokenshare.paid_execution_receipt_claim.v1"
+)
+EPD027_FULL_BANK_ACQUISITION_SCOPE = "epd027_full_bank_acquisition"
 EXTERNAL_BANK_OBJECT_ROLES = frozenset(
     {
         "request_body",
@@ -127,6 +169,160 @@ class PaperFailureKind(str, Enum):
     MISSING_MODEL_ENTRY = "missing_model_entry"
     SECRET_LEAK = "secret_leak"
     INTERNAL_ERROR = "internal_error"
+
+
+@dataclass(frozen=True, kw_only=True)
+class PaperEvidenceEligibilityFacts:
+    """只读 eligibility 输入；只保存上游已持久化的事实与引用。"""
+
+    evidence_class: str
+    source_classification: str
+    executed_ai_unit_count: int
+    executed_unit_bindings: tuple[JsonObject, ...]
+    current_provider_call_count: int
+    source_provider_call_count: int
+    current_real_provider_attempt_refs: tuple[JsonObject, ...]
+    current_lifecycle_refs: tuple[JsonObject, ...]
+    trace_source_bindings: tuple[JsonObject, ...]
+    source_manifest: JsonObject | None
+    source_inventory_rows: tuple[JsonObject, ...]
+    source_entries: tuple[JsonObject, ...]
+    paid_receipt_claim: JsonObject | None
+    direct_evidence_complete: bool
+    identity_consistent: bool
+    regression_only: bool
+    schema_version: str = PAPER_EVIDENCE_ELIGIBILITY_FACTS_SCHEMA
+
+    @classmethod
+    def from_mapping(cls, value: Mapping[str, Any]) -> "PaperEvidenceEligibilityFacts":
+        if not isinstance(value, Mapping):
+            raise TypeError("paper evidence eligibility facts must be a mapping")
+        if value.get("schema_version") != PAPER_EVIDENCE_ELIGIBILITY_FACTS_SCHEMA:
+            raise ValueError("unsupported paper evidence eligibility facts schema")
+        expected = set(cls.__dataclass_fields__)
+        if set(value) != expected:
+            raise ValueError("paper evidence eligibility facts keys are invalid")
+        return cls(**dict(value))
+
+    def __post_init__(self) -> None:
+        if self.schema_version != PAPER_EVIDENCE_ELIGIBILITY_FACTS_SCHEMA:
+            raise ValueError("unsupported paper evidence eligibility facts schema")
+        if self.evidence_class not in VERSIONED_PAPER_EVIDENCE_CLASSES:
+            raise ValueError("unsupported versioned paper evidence class")
+        if self.source_classification not in VERSIONED_PAPER_SOURCE_CLASSIFICATIONS:
+            raise ValueError("unsupported versioned paper source classification")
+        _require_integer("executed_ai_unit_count", self.executed_ai_unit_count, min_value=1)
+        for field_name in (
+            "current_provider_call_count",
+            "source_provider_call_count",
+        ):
+            _require_integer(field_name, getattr(self, field_name), min_value=0)
+        for field_name in (
+            "direct_evidence_complete",
+            "identity_consistent",
+            "regression_only",
+        ):
+            if type(getattr(self, field_name)) is not bool:
+                raise ValueError(f"{field_name} must be a bool")
+        for field_name in (
+            "executed_unit_bindings",
+            "current_real_provider_attempt_refs",
+            "current_lifecycle_refs",
+            "trace_source_bindings",
+            "source_inventory_rows",
+            "source_entries",
+        ):
+            refs = getattr(self, field_name)
+            if not isinstance(refs, (list, tuple)) or any(
+                not isinstance(ref, Mapping) or not ref for ref in refs
+            ):
+                raise ValueError(f"{field_name} must contain persisted mappings")
+            object.__setattr__(self, field_name, tuple(_freeze_json(ref) for ref in refs))
+        for field_name in ("paid_receipt_claim", "source_manifest"):
+            claim = getattr(self, field_name)
+            if claim is not None and not isinstance(claim, Mapping):
+                raise TypeError(f"{field_name} must be a mapping or null")
+            if claim is not None:
+                object.__setattr__(self, field_name, _freeze_json(claim))
+
+    def to_dict(self) -> JsonObject:
+        return {
+            "schema_version": self.schema_version,
+            "evidence_class": self.evidence_class,
+            "source_classification": self.source_classification,
+            "executed_ai_unit_count": self.executed_ai_unit_count,
+            "executed_unit_bindings": _thaw_json(self.executed_unit_bindings),
+            "current_provider_call_count": self.current_provider_call_count,
+            "source_provider_call_count": self.source_provider_call_count,
+            "current_real_provider_attempt_refs": _thaw_json(
+                self.current_real_provider_attempt_refs
+            ),
+            "current_lifecycle_refs": _thaw_json(self.current_lifecycle_refs),
+            "trace_source_bindings": _thaw_json(self.trace_source_bindings),
+            "source_manifest": _thaw_json(self.source_manifest),
+            "source_inventory_rows": _thaw_json(self.source_inventory_rows),
+            "source_entries": _thaw_json(self.source_entries),
+            "paid_receipt_claim": _thaw_json(self.paid_receipt_claim),
+            "direct_evidence_complete": self.direct_evidence_complete,
+            "identity_consistent": self.identity_consistent,
+            "regression_only": self.regression_only,
+        }
+
+
+@dataclass(frozen=True, kw_only=True)
+class VersionedPaperEvidenceEligibilityReport:
+    paper_eligible: bool
+    ineligibility_reasons: tuple[str, ...]
+    evidence_class: str
+    source_classification: str
+    executed_ai_unit_count: int
+    current_provider_call_count: int
+    source_provider_call_count: int
+    direct_evidence_complete: bool
+    identity_consistent: bool
+    source_manifest_complete: bool
+    schema_version: str = PAPER_EVIDENCE_ELIGIBILITY_REPORT_SCHEMA
+
+    def __post_init__(self) -> None:
+        if self.schema_version != PAPER_EVIDENCE_ELIGIBILITY_REPORT_SCHEMA:
+            raise ValueError("unsupported paper evidence eligibility report schema")
+        for field_name in (
+            "paper_eligible",
+            "direct_evidence_complete",
+            "identity_consistent",
+            "source_manifest_complete",
+        ):
+            if type(getattr(self, field_name)) is not bool:
+                raise ValueError(f"{field_name} must be a bool")
+        for field_name in (
+            "executed_ai_unit_count",
+            "current_provider_call_count",
+            "source_provider_call_count",
+        ):
+            _require_integer(field_name, getattr(self, field_name), min_value=0)
+        if self.evidence_class not in VERSIONED_PAPER_EVIDENCE_CLASSES:
+            raise ValueError("unsupported versioned paper evidence class")
+        if self.source_classification not in VERSIONED_PAPER_SOURCE_CLASSIFICATIONS:
+            raise ValueError("unsupported versioned paper source classification")
+        reasons = tuple(self.ineligibility_reasons)
+        if any(not isinstance(reason, str) or not reason for reason in reasons):
+            raise ValueError("ineligibility reasons must be non-empty strings")
+        object.__setattr__(self, "ineligibility_reasons", reasons)
+
+    def to_dict(self) -> JsonObject:
+        return {
+            "schema_version": self.schema_version,
+            "paper_eligible": self.paper_eligible,
+            "ineligibility_reasons": list(self.ineligibility_reasons),
+            "evidence_class": self.evidence_class,
+            "source_classification": self.source_classification,
+            "executed_ai_unit_count": self.executed_ai_unit_count,
+            "current_provider_call_count": self.current_provider_call_count,
+            "source_provider_call_count": self.source_provider_call_count,
+            "direct_evidence_complete": self.direct_evidence_complete,
+            "identity_consistent": self.identity_consistent,
+            "source_manifest_complete": self.source_manifest_complete,
+        }
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -1454,6 +1650,490 @@ def digest_json(data: Any) -> str:
     return f"sha256:{sha256(encoded).hexdigest()}"
 
 
+def evaluate_versioned_paper_evidence(
+    facts: PaperEvidenceEligibilityFacts | Mapping[str, Any],
+) -> VersionedPaperEvidenceEligibilityReport:
+    """按版本化事实判定 eligibility；不推导或构造协议运行时状态。"""
+
+    decoded = (
+        facts
+        if isinstance(facts, PaperEvidenceEligibilityFacts)
+        else PaperEvidenceEligibilityFacts.from_mapping(facts)
+    )
+    reasons: list[str] = []
+    always_ineligible = {"capability_only", "historical", "synthetic"}
+    if decoded.evidence_class in always_ineligible:
+        reasons.append(
+            f"evidence_class_always_ineligible:{decoded.evidence_class}"
+        )
+    if decoded.evidence_class == "regression_only" or decoded.regression_only:
+        reasons.append("regression_only")
+
+    unit_identities = _validated_executed_unit_identities(decoded, reasons)
+    source_manifest_complete = False
+    if decoded.evidence_class in {
+        "online_real_provider",
+        "real_model_trace_protocol_run",
+    }:
+        if not decoded.direct_evidence_complete:
+            reasons.append("direct_evidence_incomplete")
+        if not decoded.identity_consistent:
+            reasons.append("current_identity_inconsistent")
+
+    if decoded.evidence_class == "online_real_provider":
+        if decoded.source_classification != "current_real_provider":
+            reasons.append("online_source_classification_invalid")
+        _extend_online_identity_reasons(decoded, unit_identities, reasons)
+
+    if decoded.evidence_class == "real_model_trace_protocol_run":
+        if decoded.current_provider_call_count != 0:
+            reasons.append("trace_current_provider_calls_must_be_zero")
+        if decoded.current_real_provider_attempt_refs:
+            reasons.append("trace_current_provider_attempt_refs_must_be_empty")
+        if decoded.source_classification != "approved_real_full_acquisition":
+            reasons.append("trace_source_not_approved_real_full_acquisition")
+        source_manifest_complete = _extend_trace_acquisition_reasons(
+            decoded,
+            unit_identities,
+            reasons,
+        )
+
+    unique_reasons = tuple(dict.fromkeys(reasons))
+    return VersionedPaperEvidenceEligibilityReport(
+        paper_eligible=not unique_reasons,
+        ineligibility_reasons=unique_reasons,
+        evidence_class=decoded.evidence_class,
+        source_classification=decoded.source_classification,
+        executed_ai_unit_count=decoded.executed_ai_unit_count,
+        current_provider_call_count=decoded.current_provider_call_count,
+        source_provider_call_count=decoded.source_provider_call_count,
+        direct_evidence_complete=decoded.direct_evidence_complete,
+        identity_consistent=decoded.identity_consistent,
+        source_manifest_complete=source_manifest_complete,
+    )
+
+
+def _validated_executed_unit_identities(
+    facts: PaperEvidenceEligibilityFacts,
+    reasons: list[str],
+) -> dict[str, tuple[str, str]]:
+    from tokenshare.experiments.paper_unit_commitments import (
+        validate_ai_unit_binding,
+    )
+
+    identities: dict[str, tuple[str, str]] = {}
+    planned_ids: set[str] = set()
+    valid = len(facts.executed_unit_bindings) == facts.executed_ai_unit_count
+    for frozen in facts.executed_unit_bindings:
+        binding = _thaw_json(frozen)
+        try:
+            validate_ai_unit_binding(binding)
+        except (TypeError, ValueError):
+            valid = False
+            continue
+        unit_id = binding["unit_id"]
+        planned_id = binding["planned_ai_unit_id"]
+        binding_digest = binding["binding_digest"]
+        if unit_id in identities or planned_id in planned_ids:
+            valid = False
+            continue
+        identities[unit_id] = (planned_id, binding_digest)
+        planned_ids.add(planned_id)
+    if not valid or len(identities) != facts.executed_ai_unit_count:
+        reasons.append("executed_unit_identity_invalid")
+    return identities
+
+
+def _extend_online_identity_reasons(
+    facts: PaperEvidenceEligibilityFacts,
+    unit_identities: Mapping[str, tuple[str, str]],
+    reasons: list[str],
+) -> None:
+    attempt_keys = {
+        "schema_version",
+        "planned_ai_unit_id",
+        "unit_id",
+        "unit_binding_digest",
+        "attempt_id",
+        "request_identity_digest",
+        "real_transport",
+        "identity_consistent",
+    }
+    lifecycle_keys = {
+        "schema_version",
+        "planned_ai_unit_id",
+        "unit_id",
+        "unit_binding_digest",
+        "attempt_ref",
+        "event_ref",
+        "artifact_ref",
+        "terminal_ref",
+    }
+    attempt_links: set[tuple[str, str, str, str]] = set()
+    lifecycle_links: set[tuple[str, str, str, str]] = set()
+    valid = (
+        facts.current_provider_call_count == facts.executed_ai_unit_count
+        and facts.source_provider_call_count == 0
+        and len(facts.current_real_provider_attempt_refs)
+        == facts.executed_ai_unit_count
+        and len(facts.current_lifecycle_refs) == facts.executed_ai_unit_count
+    )
+    for frozen in facts.current_real_provider_attempt_refs:
+        ref = _thaw_json(frozen)
+        identity = unit_identities.get(ref.get("unit_id"))
+        if (
+            set(ref) != attempt_keys
+            or ref.get("schema_version")
+            != "tokenshare.paper_current_online_attempt_ref.v1"
+            or identity
+            != (ref.get("planned_ai_unit_id"), ref.get("unit_binding_digest"))
+            or not _non_empty_strings(ref, ("attempt_id",))
+            or not _is_identity_digest(ref.get("request_identity_digest"))
+            or ref.get("real_transport") is not True
+            or ref.get("identity_consistent") is not True
+        ):
+            valid = False
+            continue
+        attempt_links.add(
+            (
+                ref["planned_ai_unit_id"],
+                ref["unit_id"],
+                ref["unit_binding_digest"],
+                ref["attempt_id"],
+            )
+        )
+    for frozen in facts.current_lifecycle_refs:
+        ref = _thaw_json(frozen)
+        identity = unit_identities.get(ref.get("unit_id"))
+        if (
+            set(ref) != lifecycle_keys
+            or ref.get("schema_version")
+            != "tokenshare.paper_current_online_lifecycle_ref.v1"
+            or identity
+            != (ref.get("planned_ai_unit_id"), ref.get("unit_binding_digest"))
+            or not _non_empty_strings(
+                ref,
+                ("attempt_ref", "event_ref", "artifact_ref", "terminal_ref"),
+            )
+        ):
+            valid = False
+            continue
+        lifecycle_links.add(
+            (
+                ref["planned_ai_unit_id"],
+                ref["unit_id"],
+                ref["unit_binding_digest"],
+                ref["attempt_ref"],
+            )
+        )
+    if (
+        len(attempt_links) != facts.executed_ai_unit_count
+        or len(lifecycle_links) != facts.executed_ai_unit_count
+        or attempt_links != lifecycle_links
+    ):
+        valid = False
+    if not valid:
+        reasons.extend(
+            (
+                "current_real_provider_attempt_per_executed_unit_required",
+                "online_unit_attempt_identity_mismatch",
+            )
+        )
+    if (
+        facts.trace_source_bindings
+        or facts.source_manifest is not None
+        or facts.source_inventory_rows
+        or facts.source_entries
+        or facts.paid_receipt_claim is not None
+    ):
+        reasons.append("online_trace_source_evidence_forbidden")
+
+
+def _extend_trace_acquisition_reasons(
+    facts: PaperEvidenceEligibilityFacts,
+    unit_identities: Mapping[str, tuple[str, str]],
+    reasons: list[str],
+) -> bool:
+    manifest: ResponseBankManifest | None = None
+    rows: tuple[ResponseBankInventoryRow, ...] = ()
+    entries: tuple[ResponseBankEntry, ...] = ()
+    source_valid = True
+    try:
+        if facts.source_manifest is None:
+            raise ValueError("source manifest missing")
+        manifest = ResponseBankManifest.from_dict(_thaw_json(facts.source_manifest))
+        rows = tuple(
+            ResponseBankInventoryRow.from_dict(_thaw_json(row))
+            for row in facts.source_inventory_rows
+        )
+        entries = tuple(
+            ResponseBankEntry.from_dict(_thaw_json(entry))
+            for entry in facts.source_entries
+        )
+        ValidatedResponseBankIndex.build(manifest, rows, entries)
+        _require_identity_digest(
+            "root_binding_marker_digest",
+            manifest.root_binding_marker_digest,
+        )
+        acquisition_attempt_ids = tuple(entry.acquisition_state_ref for entry in entries)
+        if (
+            any(not item for item in acquisition_attempt_ids)
+            or len(set(acquisition_attempt_ids)) != len(acquisition_attempt_ids)
+        ):
+            raise ValueError("acquisition attempt identity coverage invalid")
+    except (KeyError, TypeError, ValueError):
+        source_valid = False
+        reasons.append("canonical_source_manifest_invalid")
+
+    _extend_receipt_manifest_reasons(facts.paid_receipt_claim, manifest, reasons)
+    if manifest is not None and facts.source_provider_call_count != len(
+        manifest.entry_ids
+    ):
+        source_valid = False
+        reasons.append("source_provider_call_count_incomplete")
+    if source_valid and manifest is not None:
+        source_valid = _trace_identity_chain_complete(
+            facts,
+            unit_identities,
+            manifest,
+            rows,
+            entries,
+            reasons,
+        )
+    return source_valid
+
+
+def _extend_receipt_manifest_reasons(
+    receipt: Mapping[str, Any] | None,
+    manifest: ResponseBankManifest | None,
+    reasons: list[str],
+) -> None:
+    expected_keys = {
+        "schema_version",
+        "receipt_scope",
+        "receipt_digest",
+        "manifest_digest",
+    }
+    if receipt is None:
+        reasons.append("paid_full_acquisition_receipt_required")
+        return
+    if set(receipt) != expected_keys:
+        reasons.append("paid_receipt_claim_keys_invalid")
+    if receipt.get("schema_version") != PAID_EXECUTION_RECEIPT_CLAIM_SCHEMA:
+        reasons.append("paid_receipt_schema_invalid")
+    if receipt.get("receipt_scope") != EPD027_FULL_BANK_ACQUISITION_SCOPE:
+        reasons.append("paid_receipt_scope_invalid")
+    for field_name in ("receipt_digest", "manifest_digest"):
+        if not _is_identity_digest(receipt.get(field_name)):
+            reasons.append(f"paid_receipt_{field_name}_invalid")
+    if manifest is not None:
+        if receipt.get("manifest_digest") != manifest.manifest_digest:
+            reasons.append("paid_receipt_manifest_digest_mismatch")
+        if receipt.get("receipt_digest") != manifest.created_by_paid_receipt_digest:
+            reasons.append("paid_receipt_manifest_creator_mismatch")
+
+
+def _trace_identity_chain_complete(
+    facts: PaperEvidenceEligibilityFacts,
+    unit_identities: Mapping[str, tuple[str, str]],
+    manifest: ResponseBankManifest,
+    rows: tuple[ResponseBankInventoryRow, ...],
+    entries: tuple[ResponseBankEntry, ...],
+    reasons: list[str],
+) -> bool:
+    try:
+        bindings = tuple(
+            TraceSourceBinding.from_dict(_thaw_json(binding))
+            for binding in facts.trace_source_bindings
+        )
+        wrappers = tuple(
+            CurrentTraceWrapper.from_dict(_thaw_json(wrapper))
+            for wrapper in facts.current_lifecycle_refs
+        )
+    except (KeyError, TypeError, ValueError):
+        reasons.append("current_trace_identity_chain_invalid")
+        return False
+    valid = (
+        len(bindings) == facts.executed_ai_unit_count
+        and len(wrappers) == facts.executed_ai_unit_count
+    )
+    bindings_by_planned = {binding.planned_ai_unit_id: binding for binding in bindings}
+    wrappers_by_unit = {wrapper.current_unit_id: wrapper for wrapper in wrappers}
+    if (
+        len(bindings_by_planned) != len(bindings)
+        or len(wrappers_by_unit) != len(wrappers)
+        or set(bindings_by_planned)
+        != {identity[0] for identity in unit_identities.values()}
+        or set(wrappers_by_unit) != set(unit_identities)
+    ):
+        valid = False
+    entries_by_id = {entry.entry_id: entry for entry in entries}
+    rows_by_entry_id = {row.entry_id: row for row in rows}
+    domains_by_unit = _trace_domain_kinds_by_unit(facts)
+    if set(domains_by_unit) != set(unit_identities):
+        valid = False
+    covered_entries: list[str] = []
+    for binding in bindings:
+        if (
+            binding.source_evidence_class
+            != APPROVED_REAL_SOURCE_EVIDENCE_CLASS
+            or binding.bank_root_id != manifest.bank_root_id
+            or binding.manifest_digest != manifest.manifest_digest
+        ):
+            valid = False
+        for replacement in binding.replacements:
+            covered_entries.append(replacement.entry_id)
+            row = rows_by_entry_id.get(replacement.entry_id)
+            entry = entries_by_id.get(replacement.entry_id)
+            if (
+                row is None
+                or entry is None
+                or row.planned_ai_unit_id != binding.planned_ai_unit_id
+                or row.sample_slot_index != binding.sample_slot_index
+                or row.replacement_slot != replacement.replacement_slot
+                or row.entry_id != entry.entry_id
+                or row.inventory_entry_id != entry.inventory_entry_id
+                or row.semantic_slot_key != entry.semantic_slot_key
+                or row.inference_request_digest
+                != replacement.inference_request_digest
+                or row.inference_request_digest != entry.inference_request_digest
+                or row.sample_slot_index != entry.sample_slot_index
+                or row.replacement_slot != entry.replacement_slot
+            ):
+                valid = False
+    attempt_ids: set[str] = set()
+    for unit_id, (planned_id, _) in unit_identities.items():
+        binding = bindings_by_planned.get(planned_id)
+        wrapper = wrappers_by_unit.get(unit_id)
+        if binding is None or wrapper is None:
+            valid = False
+            continue
+        try:
+            replacement = binding.replacement(wrapper.attempt_ordinal)
+            entry = entries_by_id[wrapper.entry_id]
+        except (KeyError, TypeError, ValueError):
+            valid = False
+            continue
+        locator_digests = {
+            locator.object_role: locator.object_digest
+            for locator in entry.object_locators
+        }
+        if (
+            wrapper.bank_root_id != manifest.bank_root_id
+            or wrapper.manifest_digest != manifest.manifest_digest
+            or wrapper.root_binding_marker_digest
+            != manifest.root_binding_marker_digest
+            or replacement.entry_id != entry.entry_id
+            or replacement.inference_request_digest
+            != entry.inference_request_digest
+            or wrapper.inference_request_digest != entry.inference_request_digest
+            or wrapper.locator_digests != locator_digests
+            or binding.sample_slot_index != entry.sample_slot_index
+            or wrapper.attempt_ordinal != entry.replacement_slot
+            or type(wrapper.attempt_ordinal) is not int
+            or wrapper.attempt_ordinal < 0
+            or type(wrapper.source_latency_ms) is not int
+            or wrapper.source_latency_ms < 0
+            or not _trace_terminal_chain_valid(
+                wrapper,
+                entry,
+                domains_by_unit.get(unit_id),
+            )
+            or not _non_empty_strings(
+                wrapper.__dict__,
+                (
+                    "current_run_id",
+                    "current_task_id",
+                    "current_unit_id",
+                    "current_attempt_id",
+                    "logical_started_at",
+                    "logical_finished_at",
+                    "current_ledger_ref",
+                ),
+            )
+        ):
+            valid = False
+        attempt_ids.add(wrapper.current_attempt_id)
+    if (
+        len(attempt_ids) != len(wrappers)
+        or tuple(sorted(covered_entries)) != manifest.entry_ids
+        or len(set(covered_entries)) != len(covered_entries)
+    ):
+        valid = False
+    if not valid:
+        reasons.append("current_trace_identity_chain_invalid")
+    return valid
+
+
+def _trace_domain_kinds_by_unit(
+    facts: PaperEvidenceEligibilityFacts,
+) -> dict[str, str]:
+    kinds: dict[str, str] = {}
+    allowed_commitment_kinds = {
+        "factorization": {"factorization_range.v1"},
+        "lean_proof": {"lean_simple_child.v1", "lean_lemma_dag_node.v1"},
+    }
+    for frozen in facts.executed_unit_bindings:
+        binding = _thaw_json(frozen)
+        commitment = binding.get("domain_unit_commitment")
+        if not isinstance(commitment, Mapping):
+            continue
+        unit_id = binding.get("unit_id")
+        planned_id = binding.get("planned_ai_unit_id")
+        domain = commitment.get("domain")
+        if (
+            not isinstance(unit_id, str)
+            or commitment.get("schema_version")
+            != "tokenshare.paper_domain_unit_commitment.v1"
+            or commitment.get("planned_ai_unit_id") != planned_id
+            or commitment.get("unit_id") != unit_id
+            or domain not in allowed_commitment_kinds
+            or commitment.get("commitment_kind")
+            not in allowed_commitment_kinds[domain]
+        ):
+            continue
+        kinds[unit_id] = domain
+    return kinds
+
+
+def _trace_terminal_chain_valid(
+    wrapper: CurrentTraceWrapper,
+    entry: ResponseBankEntry,
+    domain: str | None,
+) -> bool:
+    stage_refs = (
+        wrapper.current_parse_ref,
+        wrapper.current_verifier_ref,
+        wrapper.current_checker_ref,
+        wrapper.current_canonical_ref,
+    )
+    if entry.terminal_kind == "provider_failure":
+        return all(ref is None for ref in stage_refs)
+    if entry.terminal_kind != "success":
+        return False
+    if domain == "factorization":
+        return (
+            _non_empty_strings(
+                wrapper.__dict__,
+                ("current_parse_ref", "current_verifier_ref", "current_canonical_ref"),
+            )
+            and wrapper.current_checker_ref is None
+        )
+    if domain == "lean_proof":
+        return (
+            _non_empty_strings(
+                wrapper.__dict__,
+                ("current_parse_ref", "current_checker_ref", "current_canonical_ref"),
+            )
+            and wrapper.current_verifier_ref is None
+        )
+    return False
+
+
+def _non_empty_strings(value: Mapping[str, Any], names: tuple[str, ...]) -> bool:
+    return all(isinstance(value.get(name), str) and bool(value.get(name)) for name in names)
+
+
 def evaluate_paper_eligibility(
     *,
     attempts: list[PaperAttemptResult | JsonObject] | tuple[PaperAttemptResult | JsonObject, ...],
@@ -2016,6 +2696,14 @@ def _require_identity_digest(field_name: str, value: str) -> None:
         or any(character not in "0123456789abcdef" for character in value[7:])
     ):
         raise ValueError(f"{field_name} must be a complete sha256 digest")
+
+
+def _is_identity_digest(value: Any) -> bool:
+    try:
+        _require_identity_digest("identity_digest", value)
+    except ValueError:
+        return False
+    return True
 
 
 def _freeze_json(value: Any) -> Any:

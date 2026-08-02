@@ -2,6 +2,24 @@ from dataclasses import replace
 
 import pytest
 
+import tokenshare.experiments.paper_models as paper_models
+from tokenshare.executors.response_bank import (
+    COMMON_ROLES,
+    OBJECT_ROLES,
+    CurrentTraceWrapper,
+    ExternalBankObjectLocator as CanonicalBankObjectLocator,
+    ResponseBankEntry,
+    ResponseBankInventoryRow,
+    ResponseBankManifest,
+    canonical_digest,
+    inventory_entry_id,
+    semantic_slot_key,
+)
+from tokenshare.executors.trace_backed import (
+    APPROVED_REAL_SOURCE_EVIDENCE_CLASS,
+    TraceReplacementBinding,
+    TraceSourceBinding,
+)
 from tokenshare.experiments.paper_models import (
     ExternalBankObjectLocator,
     PaperAttemptResult,
@@ -18,6 +36,498 @@ from tokenshare.experiments.paper_models import (
     PaperTaskStatus,
     digest_json,
 )
+from tokenshare.experiments.paper_unit_commitments import build_ai_unit_binding
+
+
+def _unit_binding(index: int, *, domain: str = "factorization") -> dict:
+    unit_id = f"unit-{index}"
+    commitment_kind = (
+        "factorization_range.v1"
+        if domain == "factorization"
+        else "lean_simple_child.v1"
+    )
+    return build_ai_unit_binding(
+        planned_ai_unit_id=f"planned-{index}",
+        unit_id=unit_id,
+        task_unit_snapshot={"unit_id": unit_id, "payload_digest": digest_json(index)},
+        domain_unit_commitment={
+            "schema_version": "tokenshare.paper_domain_unit_commitment.v1",
+            "domain": domain,
+            "commitment_kind": commitment_kind,
+            "planned_ai_unit_id": f"planned-{index}",
+            "unit_id": unit_id,
+        },
+    )
+
+
+def _online_evidence_facts(*, executed_ai_unit_count: int = 2) -> dict:
+    bindings = [_unit_binding(index) for index in range(executed_ai_unit_count)]
+    attempts = [
+        {
+            "schema_version": "tokenshare.paper_current_online_attempt_ref.v1",
+            "planned_ai_unit_id": binding["planned_ai_unit_id"],
+            "unit_id": binding["unit_id"],
+            "unit_binding_digest": binding["binding_digest"],
+            "attempt_id": f"attempt-{index}",
+            "request_identity_digest": digest_json({"request": index}),
+            "real_transport": True,
+            "identity_consistent": True,
+        }
+        for index, binding in enumerate(bindings)
+    ]
+    lifecycle = [
+        {
+            "schema_version": "tokenshare.paper_current_online_lifecycle_ref.v1",
+            "planned_ai_unit_id": binding["planned_ai_unit_id"],
+            "unit_id": binding["unit_id"],
+            "unit_binding_digest": binding["binding_digest"],
+            "attempt_ref": f"attempt-{index}",
+            "event_ref": f"event-{index}",
+            "artifact_ref": f"artifact-{index}",
+            "terminal_ref": f"terminal-{index}",
+        }
+        for index, binding in enumerate(bindings)
+    ]
+    return {
+        "schema_version": "tokenshare.paper_evidence_eligibility_facts.v2",
+        "evidence_class": "online_real_provider",
+        "source_classification": "current_real_provider",
+        "executed_ai_unit_count": executed_ai_unit_count,
+        "executed_unit_bindings": bindings,
+        "current_provider_call_count": executed_ai_unit_count,
+        "source_provider_call_count": 0,
+        "current_real_provider_attempt_refs": attempts,
+        "current_lifecycle_refs": lifecycle,
+        "trace_source_bindings": [],
+        "source_manifest": None,
+        "source_inventory_rows": [],
+        "source_entries": [],
+        "paid_receipt_claim": None,
+        "direct_evidence_complete": True,
+        "identity_consistent": True,
+        "regression_only": False,
+    }
+
+
+def _trace_evidence_facts(
+    *,
+    terminal_kind: str = "success",
+    domain: str = "factorization",
+    executed_ai_unit_count: int = 1,
+    replacement_count: int = 1,
+) -> dict:
+    bindings = [
+        _unit_binding(index, domain=domain)
+        for index in range(executed_ai_unit_count)
+    ]
+    receipt_digest = digest_json({"paid_receipt": "receipt-1"})
+    provider_digest = digest_json({"provider": 0})
+    prompt_digest = digest_json({"prompt": 0})
+    admission_digest = digest_json({"admission": 0})
+    rows = []
+    for unit_index, binding in enumerate(bindings):
+        case_digest = digest_json({"case": unit_index})
+        for replacement_slot in range(replacement_count):
+            entry_id = f"entry-{unit_index}-{replacement_slot}"
+            row = ResponseBankInventoryRow(
+                inventory_entry_id="",
+                semantic_slot_key=semantic_slot_key(
+                    case_record_digest=case_digest,
+                    planned_ai_unit_id=binding["planned_ai_unit_id"],
+                    sample_slot_index=unit_index,
+                    replacement_slot=replacement_slot,
+                    provider_config_digest=provider_digest,
+                    prompt_profile_digest=prompt_digest,
+                    prompt_admission_profile_digest=admission_digest,
+                    plugin_version="plugin-v1",
+                ),
+                case_record_digest=case_digest,
+                planned_ai_unit_id=binding["planned_ai_unit_id"],
+                sample_slot_index=unit_index,
+                replacement_slot=replacement_slot,
+                provider_config_digest=provider_digest,
+                prompt_profile_digest=prompt_digest,
+                prompt_admission_profile_digest=admission_digest,
+                plugin_version="plugin-v1",
+                entry_id=entry_id,
+                body_digest=digest_json(
+                    {"body": unit_index, "replacement": replacement_slot}
+                ),
+                inference_request_digest=digest_json(
+                    {"inference": unit_index, "replacement": replacement_slot}
+                ),
+            )
+            rows.append(replace(row, inventory_entry_id=inventory_entry_id(row)))
+    inventory_digest = canonical_digest(
+        [
+            row.to_dict()
+            for row in sorted(rows, key=lambda item: item.inventory_entry_id)
+        ]
+    )
+    manifest = ResponseBankManifest.create(
+        bank_root_id="bank-root-1",
+        profile_digest=digest_json({"profile": 0}),
+        budget_digest=digest_json({"budget": 0}),
+        inventory_digest=inventory_digest,
+        provider_config_digest=provider_digest,
+        entry_ids=tuple(sorted(row.entry_id for row in rows)),
+        object_role_schema=OBJECT_ROLES,
+        terminal_entry_count=len(rows),
+        created_by_paid_receipt_digest=receipt_digest,
+    )
+    manifest = replace(
+        manifest,
+        root_binding_marker_digest=digest_json({"root_marker": 0}),
+    )
+    entries = []
+    locators_by_entry = {}
+    terminal_role = (
+        "raw_output" if terminal_kind == "success" else "provider_failure"
+    )
+    for row in rows:
+        roles = COMMON_ROLES | {terminal_role}
+        locators = tuple(
+            CanonicalBankObjectLocator(
+                bank_root_id=manifest.bank_root_id,
+                manifest_digest=manifest.manifest_digest,
+                entry_id=row.entry_id,
+                object_role=role,
+                object_digest=(
+                    row.body_digest
+                    if role == "request_body"
+                    else digest_json({role: row.entry_id})
+                ),
+            )
+            for role in sorted(roles)
+        )
+        locators_by_entry[row.entry_id] = locators
+        entries.append(
+            ResponseBankEntry(
+                inventory_digest=inventory_digest,
+                inventory_entry_id=row.inventory_entry_id,
+                semantic_slot_key=row.semantic_slot_key,
+                inference_request_digest=row.inference_request_digest,
+                entry_id=row.entry_id,
+                sample_slot_index=row.sample_slot_index,
+                replacement_slot=row.replacement_slot,
+                terminal_kind=terminal_kind,
+                object_locators=locators,
+                acquisition_state_ref=f"acquisition-{row.entry_id}",
+            )
+        )
+    entries_by_slot = {
+        (row.planned_ai_unit_id, row.replacement_slot): entry
+        for row, entry in zip(rows, entries, strict=True)
+    }
+    source_bindings = []
+    wrappers = []
+    for unit_index, binding in enumerate(bindings):
+        replacements = tuple(
+            TraceReplacementBinding(
+                replacement_slot=replacement_slot,
+                entry_id=entries_by_slot[
+                    (binding["planned_ai_unit_id"], replacement_slot)
+                ].entry_id,
+                inference_request_digest=entries_by_slot[
+                    (binding["planned_ai_unit_id"], replacement_slot)
+                ].inference_request_digest,
+            )
+            for replacement_slot in range(replacement_count)
+        )
+        source_bindings.append(
+            TraceSourceBinding.create(
+                planned_ai_unit_id=binding["planned_ai_unit_id"],
+                sample_slot_index=unit_index,
+                bank_root_id=manifest.bank_root_id,
+                manifest_digest=manifest.manifest_digest,
+                replacements=replacements,
+                source_evidence_class=APPROVED_REAL_SOURCE_EVIDENCE_CLASS,
+            )
+        )
+        selected_entry = entries_by_slot[(binding["planned_ai_unit_id"], 0)]
+        selected_locators = locators_by_entry[selected_entry.entry_id]
+        wrappers.append(
+            CurrentTraceWrapper(
+                current_run_id="run-1",
+                current_task_id="task-1",
+                current_unit_id=binding["unit_id"],
+                current_attempt_id=f"attempt-{unit_index}",
+                attempt_ordinal=0,
+                bank_root_id=manifest.bank_root_id,
+                manifest_digest=manifest.manifest_digest,
+                root_binding_marker_digest=manifest.root_binding_marker_digest,
+                inference_request_digest=selected_entry.inference_request_digest,
+                entry_id=selected_entry.entry_id,
+                locator_digests={
+                    item.object_role: item.object_digest
+                    for item in selected_locators
+                },
+                logical_started_at="2026-08-02T00:00:00Z",
+                logical_finished_at="2026-08-02T00:00:01Z",
+                source_latency_ms=1,
+                current_parse_ref=(
+                    "parse-1" if terminal_kind == "success" else None
+                ),
+                current_verifier_ref=(
+                    "verifier-1"
+                    if terminal_kind == "success" and domain == "factorization"
+                    else None
+                ),
+                current_checker_ref=(
+                    "checker-1"
+                    if terminal_kind == "success" and domain == "lean_proof"
+                    else None
+                ),
+                current_canonical_ref=(
+                    "canonical-1" if terminal_kind == "success" else None
+                ),
+                current_ledger_ref="ledger-1",
+            )
+        )
+    return {
+        "schema_version": "tokenshare.paper_evidence_eligibility_facts.v2",
+        "evidence_class": "real_model_trace_protocol_run",
+        "source_classification": "approved_real_full_acquisition",
+        "executed_ai_unit_count": executed_ai_unit_count,
+        "executed_unit_bindings": bindings,
+        "current_provider_call_count": 0,
+        "source_provider_call_count": len(entries),
+        "current_real_provider_attempt_refs": [],
+        "current_lifecycle_refs": [wrapper.to_dict() for wrapper in wrappers],
+        "trace_source_bindings": [binding.to_dict() for binding in source_bindings],
+        "source_manifest": manifest.to_dict(),
+        "source_inventory_rows": [row.to_dict() for row in rows],
+        "source_entries": [entry.to_dict() for entry in entries],
+        "paid_receipt_claim": {
+            "schema_version": "tokenshare.paid_execution_receipt_claim.v1",
+            "receipt_scope": "epd027_full_bank_acquisition",
+            "receipt_digest": receipt_digest,
+            "manifest_digest": manifest.manifest_digest,
+        },
+        "direct_evidence_complete": True,
+        "identity_consistent": True,
+        "regression_only": False,
+    }
+
+
+def test_online_class_requires_current_real_provider_attempt_per_executed_unit() -> None:
+    facts = _online_evidence_facts()
+    attempts = facts["current_real_provider_attempt_refs"]
+    cross_ref = [dict(attempts[0]), {**attempts[1], "attempt_id": "attempt-cross"}]
+    duplicate = [dict(attempts[0]), dict(attempts[0])]
+    wrong_unit = [dict(attempts[0]), {**attempts[1], "unit_id": "unit-cross"}]
+
+    for invalid_attempts in (cross_ref, duplicate, wrong_unit):
+        report = paper_models.evaluate_versioned_paper_evidence(
+            {**facts, "current_real_provider_attempt_refs": invalid_attempts}
+        )
+        assert "online_unit_attempt_identity_mismatch" in report.ineligibility_reasons
+    assert paper_models.evaluate_versioned_paper_evidence(facts).paper_eligible is True
+
+
+def test_trace_class_requires_current_calls_zero_and_dual_provenance() -> None:
+    facts = _trace_evidence_facts()
+
+    current_call = paper_models.evaluate_versioned_paper_evidence(
+        {**facts, "current_provider_call_count": 1}
+    )
+    missing_current = paper_models.evaluate_versioned_paper_evidence(
+        {**facts, "current_lifecycle_refs": []}
+    )
+    entries = facts["source_entries"]
+    missing_source = paper_models.evaluate_versioned_paper_evidence(
+        {**facts, "source_entries": []}
+    )
+    duplicate_source = paper_models.evaluate_versioned_paper_evidence(
+        {**facts, "source_entries": [entries[0], entries[0]]}
+    )
+    cross_manifest_entry = dict(entries[0])
+    cross_manifest_entry["object_locators"] = [
+        {**locator, "manifest_digest": digest_json({"other": "manifest"})}
+        for locator in cross_manifest_entry["object_locators"]
+    ]
+    cross_manifest = paper_models.evaluate_versioned_paper_evidence(
+        {**facts, "source_entries": [cross_manifest_entry]}
+    )
+    wrappers = facts["current_lifecycle_refs"]
+    wrong_current_entry = paper_models.evaluate_versioned_paper_evidence(
+        {
+            **facts,
+            "current_lifecycle_refs": [{**wrappers[0], "entry_id": "entry-cross"}],
+        }
+    )
+    wrong_current_slot = paper_models.evaluate_versioned_paper_evidence(
+        {
+            **facts,
+            "current_lifecycle_refs": [{**wrappers[0], "attempt_ordinal": 1}],
+        }
+    )
+    success_missing_parse = paper_models.evaluate_versioned_paper_evidence(
+        {
+            **facts,
+            "current_lifecycle_refs": [
+                {**wrappers[0], "current_parse_ref": None}
+            ],
+        }
+    )
+    success_missing_verifier = paper_models.evaluate_versioned_paper_evidence(
+        {
+            **facts,
+            "current_lifecycle_refs": [
+                {**wrappers[0], "current_verifier_ref": None}
+            ],
+        }
+    )
+    success_missing_canonical = paper_models.evaluate_versioned_paper_evidence(
+        {
+            **facts,
+            "current_lifecycle_refs": [
+                {**wrappers[0], "current_canonical_ref": None}
+            ],
+        }
+    )
+    lean_facts = _trace_evidence_facts(domain="lean_proof")
+    lean_wrappers = lean_facts["current_lifecycle_refs"]
+    success_missing_checker = paper_models.evaluate_versioned_paper_evidence(
+        {
+            **lean_facts,
+            "current_lifecycle_refs": [
+                {**lean_wrappers[0], "current_checker_ref": None}
+            ],
+        }
+    )
+    multi_facts = _trace_evidence_facts(
+        executed_ai_unit_count=2,
+        replacement_count=2,
+    )
+    multi_bindings = [
+        TraceSourceBinding.from_dict(item)
+        for item in multi_facts["trace_source_bindings"]
+    ]
+    swapped_bindings = [
+        TraceSourceBinding.create(
+            planned_ai_unit_id=binding.planned_ai_unit_id,
+            sample_slot_index=binding.sample_slot_index,
+            bank_root_id=binding.bank_root_id,
+            manifest_digest=binding.manifest_digest,
+            replacements=(
+                binding.replacements[0],
+                multi_bindings[1 - index].replacements[1],
+            ),
+            source_evidence_class=binding.source_evidence_class,
+        ).to_dict()
+        for index, binding in enumerate(multi_bindings)
+    ]
+    swapped_unexecuted_replacements = (
+        paper_models.evaluate_versioned_paper_evidence(
+            {**multi_facts, "trace_source_bindings": swapped_bindings}
+        )
+    )
+
+    assert "trace_current_provider_calls_must_be_zero" in current_call.ineligibility_reasons
+    assert "current_trace_identity_chain_invalid" in missing_current.ineligibility_reasons
+    assert "canonical_source_manifest_invalid" in missing_source.ineligibility_reasons
+    assert "canonical_source_manifest_invalid" in duplicate_source.ineligibility_reasons
+    assert "canonical_source_manifest_invalid" in cross_manifest.ineligibility_reasons
+    assert "current_trace_identity_chain_invalid" in (
+        wrong_current_entry.ineligibility_reasons
+    )
+    assert "current_trace_identity_chain_invalid" in (
+        wrong_current_slot.ineligibility_reasons
+    )
+    for missing_terminal_stage in (
+        success_missing_parse,
+        success_missing_verifier,
+        success_missing_canonical,
+        success_missing_checker,
+    ):
+        assert "current_trace_identity_chain_invalid" in (
+            missing_terminal_stage.ineligibility_reasons
+        )
+    assert "current_trace_identity_chain_invalid" in (
+        swapped_unexecuted_replacements.ineligibility_reasons
+    )
+    assert paper_models.evaluate_versioned_paper_evidence(lean_facts).paper_eligible is True
+    assert paper_models.evaluate_versioned_paper_evidence(facts).paper_eligible is True
+
+
+@pytest.mark.parametrize(
+    "evidence_class",
+    ("capability_only", "historical", "synthetic", "regression_only"),
+)
+def test_capability_historical_and_synthetic_sources_are_always_ineligible(
+    evidence_class: str,
+) -> None:
+    facts = {
+        **_trace_evidence_facts(),
+        "evidence_class": evidence_class,
+        "source_classification": evidence_class,
+    }
+
+    report = paper_models.evaluate_versioned_paper_evidence(facts)
+
+    assert report.paper_eligible is False
+    expected_reason = (
+        "regression_only"
+        if evidence_class == "regression_only"
+        else f"evidence_class_always_ineligible:{evidence_class}"
+    )
+    assert expected_reason in report.ineligibility_reasons
+
+
+def test_provider_failure_entry_can_be_complete_source_evidence() -> None:
+    facts = _trace_evidence_facts(terminal_kind="provider_failure")
+    entries = facts["source_entries"]
+    roles = {item["object_role"] for item in entries[0]["object_locators"]}
+
+    report = paper_models.evaluate_versioned_paper_evidence(facts)
+    missing_provenance_entry = {
+        **entries[0],
+        "object_locators": [
+            item
+            for item in entries[0]["object_locators"]
+            if item["object_role"] != "provenance"
+        ],
+    }
+    missing_terminal_entry = {
+        **entries[0],
+        "object_locators": [
+            item
+            for item in entries[0]["object_locators"]
+            if item["object_role"] != "provider_failure"
+        ],
+    }
+    missing_provenance = paper_models.evaluate_versioned_paper_evidence(
+        {**facts, "source_entries": [missing_provenance_entry]}
+    )
+    missing_terminal = paper_models.evaluate_versioned_paper_evidence(
+        {**facts, "source_entries": [missing_terminal_entry]}
+    )
+    wrappers = facts["current_lifecycle_refs"]
+    forged_success_ref = paper_models.evaluate_versioned_paper_evidence(
+        {
+            **facts,
+            "current_lifecycle_refs": [
+                {**wrappers[0], "current_canonical_ref": "forged-canonical"}
+            ],
+        }
+    )
+    missing_ledger = paper_models.evaluate_versioned_paper_evidence(
+        {
+            **facts,
+            "current_lifecycle_refs": [
+                {**wrappers[0], "current_ledger_ref": None}
+            ],
+        }
+    )
+
+    assert report.paper_eligible is True
+    assert "provider_failure" in roles
+    assert "raw_output" not in roles
+    assert "canonical_source_manifest_invalid" in missing_provenance.ineligibility_reasons
+    assert "canonical_source_manifest_invalid" in missing_terminal.ineligibility_reasons
+    assert "current_trace_identity_chain_invalid" in forged_success_ref.ineligibility_reasons
+    assert "current_trace_identity_chain_invalid" in missing_ledger.ineligibility_reasons
 
 
 def _executor_error_attempt() -> PaperAttemptResult:

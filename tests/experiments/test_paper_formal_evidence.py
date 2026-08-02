@@ -3,18 +3,38 @@ import json
 import multiprocessing
 import shutil
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
-import tokenshare.experiments.paper_formal_metrics as formal_metrics
 import tokenshare.experiments.paper_formal_evidence as formal_evidence
+from tokenshare.executors.response_bank import (
+    COMMON_ROLES,
+    OBJECT_ROLES,
+    CurrentTraceWrapper,
+    ExternalBankObjectLocator as CanonicalBankObjectLocator,
+    ResponseBankEntry,
+    ResponseBankInventoryRow,
+    ResponseBankManifest,
+    canonical_digest,
+    inventory_entry_id,
+    semantic_slot_key,
+)
+from tokenshare.executors.trace_backed import (
+    APPROVED_REAL_SOURCE_EVIDENCE_CLASS,
+    TraceReplacementBinding,
+    TraceSourceBinding,
+)
 from tokenshare.experiments.paper_formal_checkpoint import (
     iter_v3_delta_chain,
     validate_v3_delta_chain,
     validate_v3_generation_manifest,
 )
 from tokenshare.experiments.paper_formal_evidence import FormalEvidenceStore
+from tokenshare.experiments.paper_models import digest_json
+from tokenshare.experiments.paper_response_bank import PaidAcquisitionContext
+from tokenshare.experiments.paper_unit_commitments import build_ai_unit_binding
 from tokenshare.storage.events import EventLedger
 
 
@@ -22,6 +42,211 @@ EXPERIMENT_A = "exp-a"
 EXPERIMENT_B = "exp-b"
 CONDITION_A = "condition-a"
 CONDITION_B = "condition-b"
+
+
+def _trace_classification_body() -> dict[str, object]:
+    binding = build_ai_unit_binding(
+        planned_ai_unit_id="planned-1",
+        unit_id="unit-1",
+        task_unit_snapshot={"unit_id": "unit-1", "payload_digest": digest_json(1)},
+        domain_unit_commitment={
+            "schema_version": "tokenshare.paper_domain_unit_commitment.v1",
+            "domain": "factorization",
+            "commitment_kind": "factorization_range.v1",
+            "planned_ai_unit_id": "planned-1",
+            "unit_id": "unit-1",
+        },
+    )
+    receipt_digest = digest_json({"paid_receipt": "receipt-1"})
+    case_digest = digest_json({"case": 1})
+    provider_digest = digest_json({"provider": 1})
+    prompt_digest = digest_json({"prompt": 1})
+    admission_digest = digest_json({"admission": 1})
+    row = ResponseBankInventoryRow(
+        inventory_entry_id="",
+        semantic_slot_key=semantic_slot_key(
+            case_record_digest=case_digest,
+            planned_ai_unit_id="planned-1",
+            sample_slot_index=0,
+            replacement_slot=0,
+            provider_config_digest=provider_digest,
+            prompt_profile_digest=prompt_digest,
+            prompt_admission_profile_digest=admission_digest,
+            plugin_version="plugin-v1",
+        ),
+        case_record_digest=case_digest,
+        planned_ai_unit_id="planned-1",
+        sample_slot_index=0,
+        replacement_slot=0,
+        provider_config_digest=provider_digest,
+        prompt_profile_digest=prompt_digest,
+        prompt_admission_profile_digest=admission_digest,
+        plugin_version="plugin-v1",
+        entry_id="entry-1",
+        body_digest=digest_json({"body": 1}),
+        inference_request_digest=digest_json({"inference": 1}),
+    )
+    row = replace(row, inventory_entry_id=inventory_entry_id(row))
+    inventory_digest = canonical_digest([row.to_dict()])
+    manifest = ResponseBankManifest.create(
+        bank_root_id="bank-root-1",
+        profile_digest=digest_json({"profile": 1}),
+        budget_digest=digest_json({"budget": 1}),
+        inventory_digest=inventory_digest,
+        provider_config_digest=provider_digest,
+        entry_ids=("entry-1",),
+        object_role_schema=OBJECT_ROLES,
+        terminal_entry_count=1,
+        created_by_paid_receipt_digest=receipt_digest,
+    )
+    manifest = replace(
+        manifest,
+        root_binding_marker_digest=digest_json({"root_marker": 1}),
+    )
+    locators = tuple(
+        CanonicalBankObjectLocator(
+            bank_root_id=manifest.bank_root_id,
+            manifest_digest=manifest.manifest_digest,
+            entry_id="entry-1",
+            object_role=role,
+            object_digest=(row.body_digest if role == "request_body" else digest_json({role: 1})),
+        )
+        for role in sorted(COMMON_ROLES | {"raw_output"})
+    )
+    entry = ResponseBankEntry(
+        inventory_digest=inventory_digest,
+        inventory_entry_id=row.inventory_entry_id,
+        semantic_slot_key=row.semantic_slot_key,
+        inference_request_digest=row.inference_request_digest,
+        entry_id="entry-1",
+        sample_slot_index=0,
+        replacement_slot=0,
+        terminal_kind="success",
+        object_locators=locators,
+        acquisition_state_ref="acquisition-attempt-1",
+    )
+    source_binding = TraceSourceBinding.create(
+        planned_ai_unit_id="planned-1",
+        sample_slot_index=0,
+        bank_root_id=manifest.bank_root_id,
+        manifest_digest=manifest.manifest_digest,
+        replacements=(
+            TraceReplacementBinding(
+                replacement_slot=0,
+                entry_id=entry.entry_id,
+                inference_request_digest=entry.inference_request_digest,
+            ),
+        ),
+        source_evidence_class=APPROVED_REAL_SOURCE_EVIDENCE_CLASS,
+    )
+    wrapper = CurrentTraceWrapper(
+        current_run_id="run-1",
+        current_task_id="task-1",
+        current_unit_id="unit-1",
+        current_attempt_id="attempt-1",
+        attempt_ordinal=0,
+        bank_root_id=manifest.bank_root_id,
+        manifest_digest=manifest.manifest_digest,
+        root_binding_marker_digest=manifest.root_binding_marker_digest,
+        inference_request_digest=entry.inference_request_digest,
+        entry_id=entry.entry_id,
+        locator_digests={item.object_role: item.object_digest for item in locators},
+        logical_started_at="2026-08-02T00:00:00Z",
+        logical_finished_at="2026-08-02T00:00:01Z",
+        source_latency_ms=1,
+        current_parse_ref="parse-1",
+        current_verifier_ref="verifier-1",
+        current_checker_ref=None,
+        current_canonical_ref="canonical-1",
+        current_ledger_ref="ledger-1",
+    )
+    return {
+        "schema_version": "tokenshare.paper_evidence_eligibility_facts.v2",
+        "evidence_class": "real_model_trace_protocol_run",
+        "source_classification": "approved_real_full_acquisition",
+        "executed_ai_unit_count": 1,
+        "executed_unit_bindings": [binding],
+        "current_provider_call_count": 0,
+        "source_provider_call_count": 1,
+        "current_real_provider_attempt_refs": [],
+        "current_lifecycle_refs": [wrapper.to_dict()],
+        "trace_source_bindings": [source_binding.to_dict()],
+        "source_manifest": manifest.to_dict(),
+        "source_inventory_rows": [row.to_dict()],
+        "source_entries": [entry.to_dict()],
+        "paid_receipt_claim": {
+            "schema_version": "tokenshare.paid_execution_receipt_claim.v1",
+            "receipt_scope": "epd027_full_bank_acquisition",
+            "receipt_digest": receipt_digest,
+            "manifest_digest": manifest.manifest_digest,
+        },
+        "direct_evidence_complete": True,
+        "identity_consistent": True,
+        "regression_only": False,
+    }
+
+
+def test_only_paid_full_acquisition_receipt_plus_complete_manifest_can_be_trace_paper_eligible() -> None:
+    facts = _trace_classification_body()
+    receipt = facts["paid_receipt_claim"]
+    manifest = facts["source_manifest"]
+
+    missing_receipt = formal_evidence.evaluate_versioned_paper_evidence(
+        {**facts, "paid_receipt_claim": None}
+    )
+    wrong_scope = {
+        **receipt,
+        "receipt_scope": "offline_approval",
+    }
+    scope_report = formal_evidence.evaluate_versioned_paper_evidence(
+        {**facts, "paid_receipt_claim": wrong_scope}
+    )
+    wrong_creator_claim = {
+        **receipt,
+        "receipt_digest": digest_json({"paid_receipt": "other"}),
+    }
+    creator_report = formal_evidence.evaluate_versioned_paper_evidence(
+        {**facts, "paid_receipt_claim": wrong_creator_claim}
+    )
+    incomplete_manifest = formal_evidence.evaluate_versioned_paper_evidence(
+        {
+            **facts,
+            "source_manifest": {
+                **manifest,
+                "terminal_entry_count": 0,
+            },
+        }
+    )
+
+    assert "paid_full_acquisition_receipt_required" in missing_receipt.ineligibility_reasons
+    assert "paid_receipt_scope_invalid" in scope_report.ineligibility_reasons
+    assert "paid_receipt_manifest_creator_mismatch" in creator_report.ineligibility_reasons
+    assert "canonical_source_manifest_invalid" in incomplete_manifest.ineligibility_reasons
+    assert formal_evidence.evaluate_versioned_paper_evidence(facts).paper_eligible is True
+
+
+def test_historical_schema_cannot_upgrade_classification() -> None:
+    facts = _trace_classification_body()
+    historical = {**facts, "schema_version": "tokenshare.paper_eligibility_report.v1"}
+    paid_context = PaidAcquisitionContext(
+        receipt_digest="sha256:" + "1" * 64,
+        authorized_plan_digest="sha256:" + "2" * 64,
+        profile_digest="sha256:" + "3" * 64,
+        budget_digest="sha256:" + "4" * 64,
+        inventory_digest="sha256:" + "5" * 64,
+        prompt_admission_profile_digest="sha256:" + "6" * 64,
+        output_root_path_digest="sha256:" + "7" * 64,
+        paid_scope_digest="sha256:" + "8" * 64,
+        expires_at_epoch=1,
+        reacquisition_limit=0,
+    )
+
+    with pytest.raises(ValueError, match="unsupported.*schema"):
+        formal_evidence.evaluate_versioned_paper_evidence(historical)
+    with pytest.raises(TypeError, match="paid_receipt_claim"):
+        formal_evidence.evaluate_versioned_paper_evidence(
+            {**facts, "paid_receipt_claim": paid_context}
+        )
 
 
 def test_initialize_writes_required_formal_capturing_manifests(
@@ -1519,7 +1744,6 @@ def test_two_root_protocol_ledgers_keep_independent_seq_one_chains(
         **bodies,
         capturing=False,
     )
-    source_events: dict[str, dict[str, object]] = {}
     for case_task_id in ("task-1", "task-2"):
         protocol_task_id = f"paper_factorization_{case_task_id}"
         source_ledger = EventLedger(
@@ -1538,7 +1762,6 @@ def test_two_root_protocol_ledgers_keep_independent_seq_one_chains(
                 else "2026-07-31T00:00:01Z"
             ),
         ).to_dict()
-        source_events[case_task_id] = source_event
         store.checkpoint_root(
             experiment_id=EXPERIMENT_A,
             condition=_condition(EXPERIMENT_A, CONDITION_A),
@@ -1588,12 +1811,6 @@ def test_two_root_protocol_ledgers_keep_independent_seq_one_chains(
         "event_000000000001",
     ]
     assert len({event["event_hash"] for event in events}) == 2
-    assert formal_metrics._records_for_task(events, tasks[0], tasks) == [
-        source_events["task-1"]
-    ]
-    assert formal_metrics._records_for_task(events, tasks[1], tasks) == [
-        source_events["task-2"]
-    ]
     loaded = FormalEvidenceStore.load(
         output_root=tmp_path,
         **_expected_bodies(bodies),
