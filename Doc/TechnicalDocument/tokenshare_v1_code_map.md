@@ -146,10 +146,10 @@ Secret 只能进入当前进程环境和脱敏后的 transport；event/artifact/
 | `paper_runner.py` | 展开 Exp1–5 condition/repeat/seed/selection 和 dispatcher plans。 |
 | `paper_dispatcher.py` | 把 paper case/scope 交给 system runtime；Task 19 增加可选 typed trace context 的原样透传，默认 online/历史路径不变，不访问 coordinator 私有 ABI。 |
 | `paper_runtime_clock.py` | Task 9 冻结 logical source-latency 1x 与 online real-clock policy；trace 路径拒绝 real sleep/noop sleeper。 |
-| `paper_formal_runner.py` | 正式/smoke suite orchestration、preflight、dispatch、checkpoint、resume/replay；Task 19 在任何 engine/event 前完成 terminal bank/case digest preflight，缺失时只写 `paper_preflight_blocked.v1.json`，完整时经正常 Factor/Lean lifecycle 运行并构造 Task18 versioned evidence facts/evaluator。 |
+| `paper_formal_runner.py` | 正式/smoke suite orchestration、preflight、dispatch、checkpoint、resume/replay；Task 19 在 engine/event 前完成 terminal bank/case digest preflight并走正常 Factor/Lean lifecycle；Task 22 以 external opaque locator 驱动 trace，按 condition/per-worker lane 聚合 logical runtime，保留 root-local source/current timing与真实并发。 |
 | `paper_formal_callbacks.py` | provider/executor callback 绑定。 |
-| `paper_formal_evidence.py` | 正式 evidence store、manifest、checkpoint 和完整性校验；Task 18 接入版本化 eligibility；Task 20 以 protected Task3 producer provenance 和指定 FormalEvidenceStore reachable closure 构造 `CanonicalLineageInput`/`LineageSourceIndex`，逐 event/artifact/wrapper/source binding identity fail closed，不扫描 private/global/raw mappings。 |
-| `paper_formal_checkpoint.py` | generation v3 root-delta checkpoint、resume 与 terminal streaming SQLite compaction；保持逐 root 释放，避免全 suite outcome 常驻。 |
+| `paper_formal_evidence.py` | 正式 evidence store、manifest、checkpoint 和完整性校验；Task 18 接入版本化 eligibility；Task 20 构造 protected `CanonicalLineageInput`/`LineageSourceIndex`；Task 22 保持 external source acquisition/current execution typed binding 分离并逐 root 流式写 evidence，不扫描或复制 private/global/raw source objects。 |
+| `paper_formal_checkpoint.py` | generation v3 root-delta checkpoint、resume 与 terminal streaming SQLite compaction；Task 22 逐 root 释放 full outcome，并从真实 terminal、Task20 source-index/observations/manifest/output refs 与 Task21 renderer manifest/artifacts 重算 resume digest closure，mutation fail closed。 |
 | `paper_faults.py`、`paper_workers.py` | 五类 rate-fault 与 worker-death 的预注册 hook/投影。 |
 | `paper_exp1.py`、`paper_exp2_scalability.py`、`paper_exp3_fault_recovery.py`、`paper_exp4_ablation_runner.py` | 各实验的独立行为/指标 helper。 |
 | `paper_ablation.py` | `FULL + 4` protocol mechanism policy。 |
@@ -186,17 +186,17 @@ Secret 只能进入当前进程环境和脱敏后的 transport；event/artifact/
 
 ### EPD-027 实施进度与后续实验设施改造
 
-2026-08-01 已冻结 Experiment 2–4 两阶段真实回答库设计。当前 35 个实施 Task 中 Task 0–21 已 accepted。Task 21 lineage-backed renderer/report commit=`dd5f5eac`；最终 canonical=`15 passed in 77.71s`，final reviewer PASS=`0/0/0`，子智能体 test minimization=`NO_CHANGE`，provider/network calls=`0`，无 paid receipt。这个 `22/35` 状态不代表整条 paper pipeline 已实现：Task 22 queued/next，external-bank pressure/replay 接线仍未完成；正式矩阵保持 **NO-GO**。Task 21 验收未运行 Fast/Full/LeanAudit/network/provider。
+2026-08-01 已冻结 Experiment 2–4 两阶段真实回答库设计。当前 35 个实施 Task 中 Task 0–22 已 accepted。Task 22 external-bank resource trace commit=`a161ea0c`；最终 canonical=`278 passed in 1927.45s`，final reviewer PASS=`0/0/0`，子智能体 test minimization=`CHANGED` 后最小验证 `19 passed in 32.80s`，provider/network/Lean calls=`0`，无 paid receipt。这个 `23/35` 状态不代表整条 paper pipeline 已实现：Task 23 queued/next，historical fixture/replay 接线仍未完成；正式矩阵保持 **NO-GO**。Task 22 验收未运行 Fast/Full/LeanAudit/network/provider。
 
 后续完整实施计划必须同时覆盖：
 
-- Task 22 及后续 external-bank pressure/replay 接线，保持 Task21 contract-only CSV/TEX/JSON 数据与表格的 observation ABI 和摘要稳定；
+- Task 23 及后续 historical fixture/replay 接线，保持 Task21 contract-only CSV/TEX/JSON 与 Task22 resume observation ABI/摘要稳定；
 - `online_real_provider` 与 `real_model_trace_protocol_run` 两类 paper eligibility，禁止把 trace consumption 冒充当前 provider call；
 - acquisition actual spend 与 per-condition trace attribution 两套资源账，以及 calls/tokens/CNY/in-flight 人民币 1,000 硬门；
 - Experiment 2 缩小题集六 worker 档在线并发检查、Experiment 3 小型在线恢复检查；
 - metrics/report/renderer/replay/audit 与 smoke/canary 身份迁移。
 
-这是一项跨 `tokenshare.executors`、`tokenshare.experiments`、两插件 runtime adapter 和输出 schema 的全面设施修改，不得在 `paper_formal_runner.py` 内临时塞入读取文件的旁路，也不得复制一套协议生命周期。已接受的 ledger/hook/direct-result、immutable bank、semantic inventory/preflight、deterministic logical scheduler、parent-owned trace delivery commit ABI、Task 11 trace-backed executor / dual provenance、Task 12–16 Exp1–5 projectors、Task 17 registry/formal metrics、Task 18 eligibility、Task 19 normal formal lifecycle、Task 20 cell lineage 与 Task 21 contract-only renderer 均不改变 `ProtocolEngine` 状态机；external-bank pressure/replay 的正式 pipeline 接线属于后续 Task。后续继续先建 characterization/RED tests，并以唯一权威实验设计 EPD-027 为准。
+这是一项跨 `tokenshare.executors`、`tokenshare.experiments`、两插件 runtime adapter 和输出 schema 的全面设施修改，不得在 `paper_formal_runner.py` 内临时塞入读取文件的旁路，也不得复制一套协议生命周期。已接受的 ledger/hook/direct-result、immutable bank、semantic inventory/preflight、deterministic logical scheduler、parent-owned trace delivery commit ABI、Task 11 trace-backed executor / dual provenance、Task 12–16 Exp1–5 projectors、Task 17 registry/formal metrics、Task 18 eligibility、Task 19 normal formal lifecycle、Task 20 cell lineage、Task 21 contract-only renderer 与 Task 22 external-bank streaming 均不改变 `ProtocolEngine` 状态机；historical fixture/replay 的正式 pipeline 接线属于后续 Task。后续继续先建 characterization/RED tests，并以唯一权威实验设计 EPD-027 为准。
 
 指标不得使用固定协议时间、自填成功字段或丢失失败/未开始分母；所有汇总必须能回到逐 task/attempt/event/artifact。
 

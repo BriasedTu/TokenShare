@@ -7,11 +7,12 @@
 ## 当前状态
 
 - Active feature：`feat-011`（Paper Real AI Experiments），状态仍为 `in-progress`。
-- EPD-027 实施计划共 35 个 Task，Task 0–21 已 accepted（`22/35`）。Task 21 lineage-backed renderer/report commit=`dd5f5eac`；Task 22 external response-bank pressure path 为 `queued/next`。
-- Task 21 初始 RED=`3 collection errors in 0.39s`，初始 GREEN=`8 passed in 14.56s`。两轮 reviewer BLOCK=`2 Critical/3 Important`、`1 Critical/2 Important`；最终真实性/rollback 精确 RED=`3 failed in 22.63s`→`3 passed in 24.95s`，canonical=`15 passed in 77.71s`。
-- Task 21 只消费持久化 Task20 lineage/source-index/observation/manifest/digest closure 和 Task2 contract；生成 exact 8 CSV 与同 stem TEX，并另存 renderer audit/manifest。null 保持空值，denominator/excluded/blocked/reason 可审计；Exp3/Exp5 caption 与 cost estimate 口径闭合，不写 Markdown/PDF/论文正文。
-- Task 21 真实 Task14 online projector→Task17 registry→Task20 materializer identity/digest 已贯通；整批 staged promotion 在中途失败时逐字节 rollback 并清理临时目录。final reviewer=`PASS`、Critical/Important/Minor=`0/0/0`；子智能体 post-accept test minimization=`NO_CHANGE`，provider/network=`0/0`。
-- Task 22 只读预检 READY：计划修改 `paper_formal_evidence.py`、`paper_formal_runner.py`、`paper_formal_checkpoint.py` 及对应三测试，新建 `test_paper_full_resource_trace.py`；现有 bank/index/resolver 足够，无严格必要的计划外 production。测试 external immutable object、500-root synthetic pressure、checkpoint/terminal/observation digest resume，provider/Lean/network=`0`。
+- EPD-027 实施计划共 35 个 Task，Task 0–22 已 accepted（`23/35`）。Task 22 external-bank resource trace commit=`a161ea0c`；Task 23 historical real fixture 为 `queued/next`。
+- Task 22 canonical RED=`1 collection error in 0.47s`，初始 GREEN=`267 passed in 106.43s`。reviewer 首轮 BLOCK=`2 Critical/1 Important`；真实 `5 conditions × 100 roots` normal formal pressure=`1 passed in 1789.24s`，Task20/21 persisted closure=`7 passed`，Exp3 provenance/missingness=`5 passed`。
+- Task 22 external bank consumer 只持 opaque locator，500 个 distinct Factor roots exact-once 进入正常 runner/adapter/resolver/evidence/checkpoint，max live outcome≤1、resident adapter payload<5MiB；逐 condition terminal closure 与 provider/network/Lean=`0/0/0`。
+- Task 22 实际 Task20/21 publication/renderer artifacts 在 resume 时重算 identity/content digest 并对六类 mutation fail closed；Exp3 source acquisition/current attempt 分离，缺 root/object/role/entry 保持 denominator 并阻断 fallback/后续 dispatch。双 worker trace clock RED=`wall 3ms`→per-worker lane GREEN=`2 passed in 7.37s`；最终 canonical=`278 passed in 1927.45s`，reviewer PASS=`0/0/0`。
+- Task 22 子智能体 post-accept test minimization=`CHANGED`，只删除一个 private-helper 重复测试；未重跑 500-root/canonical，最小验证=`19 passed in 32.80s`。
+- Task 23 只读预检 READY：计划新建 `paper_historical_fixture.py`、`historical_real_factorization_single_leaf.py`、一个测试及 7 个 tracked fixture JSON；既有 positive source 与 digest 匹配，无计划外 production。fixture 只保存最小脱敏对象，`regression_only`、`paper_eligible=false`，provider/network=`0`。
 - 用户持续授权：后续 Task 若独立预检证明“不增加该文件就无法得到权威数据或跑通正常实验”，监督者可批准最小计划外修改并继续；必须落盘文件/具体失败/最小改动/证据。便利、重构、美化、安全加固或可后置修改不符合批准标准。
 - 用户已授权每个后续 Task 持续执行实现/review/fix/follow-up 至 PASS 后直接推进；post-accept 测试最小化一律由子智能体执行。
 - 本轮 provider/network calls=`0`，无 paid receipt；Fast 未重复，Full/LeanAudit 未运行，正式矩阵继续 **NO-GO**。

@@ -5,7 +5,7 @@
   "active_feature": "feat-011",
   "active_focus": {
     "id": "paper-metric-contract-trace-bank-and-traceability-plan",
-    "summary": "EPD-027 严格串行实施为 22/35 accepted：Task 0–21 已 accepted；Task 22 external response-bank pressure path 为 queued/next。",
+    "summary": "EPD-027 严格串行实施为 23/35 accepted：Task 0–22 已 accepted；Task 23 historical real fixture 为 queued/next。",
     "status": "in_progress",
     "scope": [
       "Experiment 1–5 论文指标、固定分母与 missingness 口径",
@@ -17,12 +17,12 @@
       "完整实施顺序、测试、离线重放与真实 smoke/正式矩阵门禁"
     ],
     "out_of_scope": [
-      "Task 22 accepted 前进入 Task 23 replay path",
+      "Task 23 accepted 前进入 Task 24 deterministic replay path",
       "重新运行真实付费 API 实验",
       "修改由其他工作调整中的 Experiment 3 正式规模",
       "人为注入攻击与安全工程"
     ],
-    "next_action": "使用已完成的 Task 22 只读预检启动单一实现 Agent，严格修改计划七文件并验证 external bank/500-root/checkpoint-resume 压力路径；不得进入 Task 23 或调用真实 API。"
+    "next_action": "使用已完成的 Task 23 只读预检启动单一实现 Agent，严格创建2个production、1个test与7个tracked fixture文件；只导入/脱敏既有历史真实成功样本，不得进入Task24或调用真实API。"
   },
   "authorities": {
     "agent_start": "AGENTS.md",
@@ -194,9 +194,11 @@
         "Task 20 accepted commit fa12c06c：严格6文件（原计划4+用户批准2）；canonical RED 1 collection error/0.32s，初始GREEN 10 passed/0.71s；reviewer首轮BLOCK 0 Critical/4 Important，identity/roles RED 3 failed/0.58s与typed exporter collection error/0.23s，修复后canonical 10 passed/2.12s；第二轮BLOCK 0 Critical/2 Important，protected factory collection error/0.21s，真实persisted root closure修复后canonical 10 passed/4.03s；exact row/cell identity、逐execution/entry roles、Task3 provenance、persisted closure与非空8表/Exp3 online闭合；final reviewer PASS 0/0；子智能体test minimization CHANGED后10 passed/4.03s；原子输出lineage source index/metric observations/manifest；provider/network0，无paid receipt；Fast/Full/LeanAudit未运行",
         "用户持续授权：后续Task若独立预检证明不增加某计划外文件就无法得到权威数据或跑通正常实验，监督者可批准最小修改并继续；必须记录文件/具体失败/最小改动/证据。便利、重构、美化、安全加固或可后置修改不得据此批准",
         "Task 21 accepted commit dd5f5eac：严格5个计划文件；初始RED 3 collection errors/0.39s，初始GREEN 8 passed/14.56s；reviewer首轮BLOCK 2 Critical/3 Important，第二轮BLOCK 1 Critical/2 Important，最终真实性/rollback RED 3 failed/22.63s→3 passed/24.95s，canonical 15 passed/77.71s；persisted Task20 lineage/manifest/digest closure、exact 8 CSV+TEX、null/audit/caption、真实Task14→17→20 Exp3链与整批rollback闭合；final reviewer PASS 0/0/0；子智能体test minimization NO_CHANGE；provider/network0，无paid receipt；Fast/Full/LeanAudit未运行",
-        "Task 22 只读预检 READY：计划3个production+4个tests足够，无严格必要的计划外production；使用external immutable bank/index/resolver、500-root synthetic pressure、checkpoint/terminal/observation digest resume，provider/Lean/network=0"
+        "Task 22 只读预检 READY：计划3个production+4个tests足够，无严格必要的计划外production；使用external immutable bank/index/resolver、500-root synthetic pressure、checkpoint/terminal/observation digest resume，provider/Lean/network=0",
+        "Task 22 accepted commit a161ea0c：严格7个计划文件；canonical RED 1 collection error/0.47s，初始GREEN 267 passed/106.43s；reviewer首轮BLOCK 2 Critical/1 Important，真实5×100 distinct-root压力1 passed/1789.24s、Task20/21 closure 7 passed、Exp3 provenance/missingness 5 passed；follow-up残余clock Critical以双worker RED wall3ms→per-worker lane GREEN 2 passed/7.37s闭合；最终canonical 278 passed/1927.45s，reviewer PASS 0/0/0；子智能体test minimization CHANGED，仅删private-helper重复测试，19 selected passed/32.80s；provider/network/Lean0，无paid receipt；Fast/Full/LeanAudit未运行",
+        "Task 23 只读预检 READY：计划2个production+1个test+7个tracked fixture文件足够，无严格必要的计划外production；导入既有历史真实Factor single-leaf成功样本，冻结digest与最小脱敏对象，classification=regression_only且paper_eligible=false，provider/network0"
       ],
-      "next_action": "Task 0–21 accepted count=22/35；Task 22 queued/next。只实施external bank pressure/checkpoint七文件，不得进入Task23或调用真实API。"
+      "next_action": "Task 0–22 accepted count=23/35；Task 23 queued/next。只实施historical real fixture十文件，不得进入Task24或调用真实API。"
     }
   ]
 }
