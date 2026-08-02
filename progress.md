@@ -13,6 +13,7 @@
 - Task 22 实际 Task20/21 publication/renderer artifacts 在 resume 时重算 identity/content digest 并对六类 mutation fail closed；Exp3 source acquisition/current attempt 分离，缺 root/object/role/entry 保持 denominator 并阻断 fallback/后续 dispatch。双 worker trace clock RED=`wall 3ms`→per-worker lane GREEN=`2 passed in 7.37s`；最终 canonical=`278 passed in 1927.45s`，reviewer PASS=`0/0/0`。
 - Task 22 子智能体 post-accept test minimization=`CHANGED`，只删除一个 private-helper 重复测试；未重跑 500-root/canonical，最小验证=`19 passed in 32.80s`。
 - Task 23 只读预检 READY：计划新建 `paper_historical_fixture.py`、`historical_real_factorization_single_leaf.py`、一个测试及 7 个 tracked fixture JSON；既有 positive source 与 digest 匹配，无计划外 production。fixture 只保存最小脱敏对象，`regression_only`、`paper_eligible=false`，provider/network=`0`。
+- Task 23 实现后 reviewer 发现 central typed projector 只接受 root-unit canonical event 含 final ref，无法投影正常 expanded-root 的 merge-unit canonical + `MERGE_RECORDED` 最终答案；原 10 文件内只能预复用 final artifact 或复制私有 projector，均不具权威性。监督者依据用户持续授权批准计划外 `paper_direct_results.py` 与对应 test：仅增加严格 additive merge-result branch，校验 parent/root/merge-unit/ref 唯一性及 canonical < merge < terminal；无需修改 `ProtocolEngine`。Task 23 allowlist 因此为 12 文件。
 - 用户持续授权：后续 Task 若独立预检证明“不增加该文件就无法得到权威数据或跑通正常实验”，监督者可批准最小计划外修改并继续；必须落盘文件/具体失败/最小改动/证据。便利、重构、美化、安全加固或可后置修改不符合批准标准。
 - 用户已授权每个后续 Task 持续执行实现/review/fix/follow-up 至 PASS 后直接推进；post-accept 测试最小化一律由子智能体执行。
 - 本轮 provider/network calls=`0`，无 paid receipt；Fast 未重复，Full/LeanAudit 未运行，正式矩阵继续 **NO-GO**。

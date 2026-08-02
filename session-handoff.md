@@ -34,7 +34,7 @@
 - Task 21 renderer 仅接受持久化 Task20 lineage/source-index/observation/manifest/digest closure 与 Task2 contract，生成 exact 8 CSV、同 stem TEX 和 audit/manifest；真实 Task14→17→20 Exp3 identity/digest、null/denominator/reason、caption/cost 口径和整批 rollback 闭合，不写论文正文。
 - Task 22 严格 7 个计划文件，代码 commit=`a161ea0c`。初始 GREEN=`267 passed in 106.43s`；reviewer BLOCK=`2C/1I`，真实5×100压力=`1 passed in 1789.24s`，Task20/21 closure=`7 passed`，Exp3 provenance=`5 passed`；双worker clock RED wall=`3ms`→GREEN=`2 passed in 7.37s`，最终 canonical=`278 passed in 1927.45s`；final reviewer PASS=`0/0/0`。
 - Task 22 以 opaque locator 消费 external bank，500 distinct roots exact-once 经正常 runner/Factor adapter/resolver/evidence/checkpoint；resume 重算真实 Task20/21 artifacts，Exp3 四类依赖缺失 fail closed，per-worker lane 保留并发与 root-local timing。post-accept minimization=`CHANGED`，最小验证=`19 passed in 32.80s`；provider/network/Lean=`0/0/0`。
-- 用户已授权后续每个 Task 持续实施/review/fix/follow-up 至 PASS 后直接推进，且 post-accept 测试最小化必须由子智能体执行。Task 23 预检 READY，计划2 production+1 test+7 fixture 足够，无计划外 production。
+- 用户已授权后续每个 Task 持续实施/review/fix/follow-up 至 PASS 后直接推进，且 post-accept 测试最小化必须由子智能体执行。Task 23 原计划 10 文件；reviewer/implementer 证明正常 expanded-root merge final 无法由现有 central typed projector 权威投影，监督者按严格必要性批准计划外 `paper_direct_results.py` 与对应 test。最小修改只增加 exact merge-result additive branch，校验 parent/root/merge-unit/ref 与 canonical < merge < terminal；不修改 `ProtocolEngine`。当前 allowlist=12。
 - 用户持续授权监督者按严格必要性批准后续计划外文件：只有不增加就无法得到权威数据或跑通正常实验时才可批准；便利/重构/美化/安全加固/可后置修改不得批准，且每次必须落盘依据。
 
 ## 2026-07-31 用户暂停点（历史）

@@ -56,8 +56,9 @@ Task 14 contract digest=`sha256:b72307e727e28f5233de934df28e1701cf46ffb711b99aa8
 
 ## 精确下一动作
 
-1. Task 23 精确 10 文件：新建 `paper_historical_fixture.py`、`historical_real_factorization_single_leaf.py`、`test_paper_historical_real_fixture.py` 与 7 个 tracked fixture JSON。无需计划外 production。
-2. 从既有只读历史真实 Factor single-leaf positive source 冻结最小脱敏 fixture/digests，经正常 coordinator/parser/verifier/merge/ledger 路径离线回归；永远标记 `regression_only`、`paper_eligible=false`，不得修改 raw source 或调用 provider。
+1. Task 23 精确 12 文件：原计划新建 `paper_historical_fixture.py`、`historical_real_factorization_single_leaf.py`、`test_paper_historical_real_fixture.py` 与 7 个 tracked fixture JSON；另含监督者按用户严格必要性授权的 `paper_direct_results.py` 与对应 test。
+2. 授权依据：正常 expanded-root final ref 来自 merge-unit canonical event + 唯一 `MERGE_RECORDED`，现有 central typed projector 只接受 root-unit canonical 含 final ref；不修改只能预复用 final artifact 或复制私有 projector，无法得到权威 direct result/table。最小改动只增加 exact additive merge-result branch，校验 parent/root/merge-unit/ref 与 canonical < merge < terminal；不改 `ProtocolEngine`。
+3. 从既有只读历史真实 Factor single-leaf positive source 冻结最小脱敏 fixture/digests，经正常 coordinator/parser/verifier/merge/ledger 路径离线回归；永远标记 `regression_only`、`paper_eligible=false`，不得修改 raw source 或调用 provider。
 3. 后续若计划外文件确属“不增加就无法得到数据或跑通实验”，监督者可按用户持续授权批准最小修改并落盘依据。
 
 恢复期间继续遵守：无经 Task 26 校验的 paid receipt 不得调用真实 API；不 push、不 merge、不创建 PR。

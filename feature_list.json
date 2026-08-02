@@ -22,7 +22,7 @@
       "修改由其他工作调整中的 Experiment 3 正式规模",
       "人为注入攻击与安全工程"
     ],
-    "next_action": "使用已完成的 Task 23 只读预检启动单一实现 Agent，严格创建2个production、1个test与7个tracked fixture文件；只导入/脱敏既有历史真实成功样本，不得进入Task24或调用真实API。"
+    "next_action": "继续 Task 23 实现/review 修复：原计划10个新文件加监督者按严格必要性批准的 paper_direct_results.py 与对应 test，共12文件；不得进入Task24或调用真实API。"
   },
   "authorities": {
     "agent_start": "AGENTS.md",
@@ -196,9 +196,10 @@
         "Task 21 accepted commit dd5f5eac：严格5个计划文件；初始RED 3 collection errors/0.39s，初始GREEN 8 passed/14.56s；reviewer首轮BLOCK 2 Critical/3 Important，第二轮BLOCK 1 Critical/2 Important，最终真实性/rollback RED 3 failed/22.63s→3 passed/24.95s，canonical 15 passed/77.71s；persisted Task20 lineage/manifest/digest closure、exact 8 CSV+TEX、null/audit/caption、真实Task14→17→20 Exp3链与整批rollback闭合；final reviewer PASS 0/0/0；子智能体test minimization NO_CHANGE；provider/network0，无paid receipt；Fast/Full/LeanAudit未运行",
         "Task 22 只读预检 READY：计划3个production+4个tests足够，无严格必要的计划外production；使用external immutable bank/index/resolver、500-root synthetic pressure、checkpoint/terminal/observation digest resume，provider/Lean/network=0",
         "Task 22 accepted commit a161ea0c：严格7个计划文件；canonical RED 1 collection error/0.47s，初始GREEN 267 passed/106.43s；reviewer首轮BLOCK 2 Critical/1 Important，真实5×100 distinct-root压力1 passed/1789.24s、Task20/21 closure 7 passed、Exp3 provenance/missingness 5 passed；follow-up残余clock Critical以双worker RED wall3ms→per-worker lane GREEN 2 passed/7.37s闭合；最终canonical 278 passed/1927.45s，reviewer PASS 0/0/0；子智能体test minimization CHANGED，仅删private-helper重复测试，19 selected passed/32.80s；provider/network/Lean0，无paid receipt；Fast/Full/LeanAudit未运行",
-        "Task 23 只读预检 READY：计划2个production+1个test+7个tracked fixture文件足够，无严格必要的计划外production；导入既有历史真实Factor single-leaf成功样本，冻结digest与最小脱敏对象，classification=regression_only且paper_eligible=false，provider/network0"
+        "Task 23 只读预检 READY：原计划2个production+1个test+7个tracked fixture文件；导入既有历史真实Factor single-leaf成功样本，冻结digest与最小脱敏对象，classification=regression_only且paper_eligible=false，provider/network0",
+        "Task 23 reviewer/implementer联合证明严格plan-out必要：正常expanded-root最终ref来自merge-unit canonical event+唯一MERGE_RECORDED，而central paper_direct_results.py仅接受root-unit CANONICAL_OUTPUTS_BOUND含final ref；原10文件内只能预复用final artifact或复制私有projector，无法产生权威persisted direct result/table。监督者依据用户持续授权批准最小修改paper_direct_results.py及其test：只增加exact merge-result additive branch，校验parent/root/merge-unit/ref唯一性及canonical<merge<terminal顺序；不修改ProtocolEngine"
       ],
-      "next_action": "Task 0–22 accepted count=23/35；Task 23 queued/next。只实施historical real fixture十文件，不得进入Task24或调用真实API。"
+      "next_action": "Task 0–22 accepted count=23/35；Task 23 in_progress。严格12文件allowlist（原计划10+批准2），完成authoritative merge-result projection后复审；不得进入Task24或调用真实API。"
     }
   ]
 }
