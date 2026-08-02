@@ -5,7 +5,7 @@
   "active_feature": "feat-011",
   "active_focus": {
     "id": "paper-metric-contract-trace-bank-and-traceability-plan",
-    "summary": "EPD-027 严格串行实施为 20/35 accepted：Task 0–19 已 accepted；Task 20 metric lineage observations 已获两个计划外 lineage producer 授权并进入 in_progress。",
+    "summary": "EPD-027 严格串行实施为 21/35 accepted：Task 0–20 已 accepted；Task 21 contract observation renderer/report integration 为 queued/next。",
     "status": "in_progress",
     "scope": [
       "Experiment 1–5 论文指标、固定分母与 missingness 口径",
@@ -17,12 +17,12 @@
       "完整实施顺序、测试、离线重放与真实 smoke/正式矩阵门禁"
     ],
     "out_of_scope": [
-      "Task 20 accepted 前进入 Task 21 renderer/report integration",
+      "Task 21 accepted 前进入 Task 22 external bank pressure path",
       "重新运行真实付费 API 实验",
       "修改由其他工作调整中的 Experiment 3 正式规模",
       "人为注入攻击与安全工程"
     ],
-    "next_action": "启动单一 Task 20 实现 Agent，严格修改原计划四文件与用户批准的两个 lineage producer 文件；不得进入 Task 21 或调用真实 API。"
+    "next_action": "使用已完成的 Task 21 只读预检启动单一实现 Agent，严格修改计划五文件并只生成CSV/TEX/JSON数据与表格；不得进入 Task 22 或调用真实 API。"
   },
   "authorities": {
     "agent_start": "AGENTS.md",
@@ -163,7 +163,7 @@
         "2026-07-31 用户暂停点：checkpoint/evidence 142 项与 shared dispatch/fail-close/resume 3 项离线通过；收尾 Fast 458 passed/1 skipped；shared terminal-snapshot-only index、500-root live-outcome 压力证据和最新 formal runner 整体回归尚未闭合，正式全量维持 NO-GO",
         "EPD-027 已冻结 Experiment 2–4 两阶段真实回答库、Exp2 缩小题集全六 worker 档真实在线检查、Exp3 小型真实在线恢复检查，并明确其为跨 identity/executor/artifact/eligibility/budget/runner/metrics/replay 的全面设施改造；design_synced/未实现是实施前历史快照",
         "EPD-027 文档/harness 历史同步 Fast：458 passed/1 skipped；JSON/SQLite、harness、compileall 通过，未联网、未调用真实 API",
-        "EPD-027 实施进度 20/35：Task 0–2 accepted 原提交 ed0b056a、78fbddaa、d2b16f89 不变；通用 ledger-binding 860b7c48 focused 40 passed/review PASS，typed-hook 4ea293b1 final 69+286 passed/review PASS",
+        "EPD-027 实施进度 21/35：Task 0–2 accepted 原提交 ed0b056a、78fbddaa、d2b16f89 不变；通用 ledger-binding 860b7c48 focused 40 passed/review PASS，typed-hook 4ea293b1 final 69+286 passed/review PASS",
         "Task 3 accepted commit f9773944：canonical direct-results 四文件，focused 101 passed、独立 review PASS、provider calls=0；正式路径无影子 TokenShare，ProtocolEngine disabled 时不能铸造 paper-eligible success",
         "2026-08-01 Task 3 accepted 后 Fast：.\\init.ps1 exit 0，468 passed/1 skipped in 20.19s；JSON/SQLite、harness、compileall 通过，provider calls=0；Full intentionally not run per user instruction，LeanAudit/API 未运行",
         "状态同步时 verification/run_verification.py 被误判为无 pytest harness，实际重复执行 Fast：468 passed/1 skipped in 18.78s；不计新增覆盖，后续不得重复",
@@ -190,9 +190,11 @@
         "2026-08-02 用户明确批准 Task 19 修改上述四个计划外 production 文件；Task 19 allowlist 因此为原计划4文件加这4个production接线文件，共8文件，仍禁止其他计划外production与真实API",
         "Task 19 accepted commit 20f58bdc：严格8文件（原计划4+用户批准4）；初始writer RED证据恢复失败并诚实记录，恢复canonical 136 passed/77.62s；reviewer首轮BLOCK 2 Critical/3 Important，六计划nodeids RED 6 failed/16.06s→6 passed/32.46s，调度回归5 failed+133 passed→5 passed/30.81s，canonical 138 passed/91.66s；第二轮BLOCK 1 Critical/2 Important，cross-case/replacement RED 2 failed/14.54s→2 passed/15.20s，canonical 138 passed/168.00s；terminal-only preflight/case digest、normal Factor+Lean lifecycle、真实source latency、Task18 evaluator、committed retry/replacement闭合；final reviewer PASS 0/0；子智能体test minimization CHANGED后138 passed/157.61s；provider/network0，无paid receipt；Fast/Full/LeanAudit未运行",
         "Task 20 只读预检 blocker：计划四文件缺少权威 lineage producers；需用户批准计划外 production paper_metric_contract.py（捕获真实recompute bundle/row identity，不重写公式）与paper_formal_evidence.py（从已验证current/source facts导出typed LineageSourceIndex），否则只能由caller伪造sidecar或按名称重建lineage；paper_formal_runner.py不是当前阻塞文件",
-        "2026-08-02 用户明确批准 Task 20 修改上述两个计划外 production 文件；Task 20 allowlist 为原计划4文件加这2个producer文件，共6文件；实现必须复用现有bundle/logical records/direct refs/Task19 wrappers，不得新建第二套evidence系统"
+        "2026-08-02 用户明确批准 Task 20 修改上述两个计划外 production 文件；Task 20 allowlist 为原计划4文件加这2个producer文件，共6文件；实现必须复用现有bundle/logical records/direct refs/Task19 wrappers，不得新建第二套evidence系统",
+        "Task 20 accepted commit fa12c06c：严格6文件（原计划4+用户批准2）；canonical RED 1 collection error/0.32s，初始GREEN 10 passed/0.71s；reviewer首轮BLOCK 0 Critical/4 Important，identity/roles RED 3 failed/0.58s与typed exporter collection error/0.23s，修复后canonical 10 passed/2.12s；第二轮BLOCK 0 Critical/2 Important，protected factory collection error/0.21s，真实persisted root closure修复后canonical 10 passed/4.03s；exact row/cell identity、逐execution/entry roles、Task3 provenance、persisted closure与非空8表/Exp3 online闭合；final reviewer PASS 0/0；子智能体test minimization CHANGED后10 passed/4.03s；原子输出lineage source index/metric observations/manifest；provider/network0，无paid receipt；Fast/Full/LeanAudit未运行",
+        "用户持续授权：后续Task若独立预检证明不增加某计划外文件就无法得到权威数据或跑通正常实验，监督者可批准最小修改并继续；必须记录文件/具体失败/最小改动/证据。便利、重构、美化、安全加固或可后置修改不得据此批准"
       ],
-      "next_action": "Task 0–19 accepted count=20/35；Task 20 in_progress。仅实施批准的6文件allowlist，不得进入Task21或调用真实API。"
+      "next_action": "Task 0–20 accepted count=21/35；Task 21 queued/next。只实施observation renderer/report五文件，不得进入Task22或调用真实API。"
     }
   ]
 }

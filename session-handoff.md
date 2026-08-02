@@ -5,13 +5,13 @@
 ## 开工顺序
 
 1. 先完整阅读 `AGENTS.md` 与 `Doc/archive/design-history/2026-08-01-epd027-minimal-handoff.md`。
-2. 执行 `git status --short --branch` 与 `git log -3 --oneline`，确认 Task 19 代码提交和状态提交。
-3. Task 0–19 已 accepted；Task 20 的两个计划外 lineage producer 已获用户明确授权，按 6 文件 allowlist 实施，不得进入 Task 21。
+2. 执行 `git status --short --branch` 与 `git log -3 --oneline`，确认 Task 20 代码提交和状态提交。
+3. Task 0–20 已 accepted；使用 Task 21 只读预检按五文件 TDD/review 循环推进，不得进入 Task 22。
 
-## 2026-08-02 EPD-027 当前实施交接（Task 19 accepted）
+## 2026-08-02 EPD-027 当前实施交接（Task 20 accepted）
 
-- Active feature=`feat-011`，仍为 `in-progress`；active focus id 保持 `paper-metric-contract-trace-bank-and-traceability-plan`，status=`in_progress`。Task 0–19 已 accepted（`20/35`）；Task 20 为 `in_progress`；正式矩阵仍为 **NO-GO**。
-- 当前分支=`codex/feat-011-epd027-pipeline`；Task 19 normal formal lifecycle commit=`20f58bdc`，状态提交在其后。
+- Active feature=`feat-011`，仍为 `in-progress`；active focus id 保持 `paper-metric-contract-trace-bank-and-traceability-plan`，status=`in_progress`。Task 0–20 已 accepted（`21/35`）；Task 21 为 `queued/next`；正式矩阵仍为 **NO-GO**。
+- 当前分支=`codex/feat-011-epd027-pipeline`；Task 20 cell lineage commit=`fa12c06c`，状态提交在其后。
 - Task 0–2 accepted 原提交不变：Task 0=`ed0b056a`，Task 1=`78fbddaa`，Task 2=`d2b16f89`。
 - Task 3–9 已 accepted；提交依次包括 `f9773944`/`66643084`、`0cbda1df`、`58cda71f`、`5f97034c`、`aadbd483`、`6802918d`、`1109e852`，均有 scoped exit `0` 与最终 review PASS，provider/network calls=`0`。完整文件、测试和复审证据见 minimal handoff/progress。
 - Task 3 direct projector 不复制协议状态机；Task 4 用户授权的 `paper_formal_evidence.py` mapping conflict fail closed；Task 5–8 已提供 immutable bank、semantic inventory/preflight、SQLite budget authority 与 durable acquisition。当前没有 paid receipt/付费授权，不得调用 provider。
@@ -28,8 +28,10 @@
 - Task 14 final reviewer=`PASS`，Critical/Important=`0/0`；post-accept test minimization=`NO_CHANGE`。接管 Fast 仅运行一次：`497 passed, 1 skipped in 32.15s`；Full/LeanAudit 未运行，provider/network calls=`0`，无 paid receipt。
 - Task 19 初始 writer RED 证据不可恢复并诚实记录；恢复 canonical=`136 passed in 77.62s`。两轮 reviewer BLOCK=`2C/3I` 与 `1C/2I`；强化 RED=`6 failed in 16.06s`、调度回归=`5 failed,133 passed`、case/replacement RED=`2 failed in 14.54s` 均闭合，最终 canonical=`138 passed in 168.00s`。final reviewer PASS=`0/0`；子智能体 test minimization=`CHANGED` 后 canonical=`138 passed in 157.61s`；provider/network=`0/0`。
 - Task 19 严格 8 文件（原计划4+用户批准4），只消费 validated terminal bank/index/locator；Factor/Lean 走正常 coordinator/engine/runtime/bridge/stager/logical scheduler 与完整 parser/verifier/checker/canonical/merge/settlement，无 source materialization、provider call 或 shadow lifecycle。
-- 用户已授权后续每个 Task 持续实施/review/fix/follow-up 直至 PASS 后直接推进，且 post-accept 测试最小化必须由子智能体执行。下一动作是实施 Task 20；Task 21 仍保持 queued。
-- 用户已明确批准 Task 20 计划外 `paper_metric_contract.py`（捕获真实 evaluator bundle/row identity）与 `paper_formal_evidence.py`（导出 typed `LineageSourceIndex` sidecar+digest）。加原计划 observation/metrics 与两个 tests，共 6 文件；`paper_formal_runner.py` 不在范围内，禁止第二套 evidence/lineage 系统。
+- Task 20 RED=`1 collection error in 0.32s`；两轮 reviewer BLOCK=`0C/4I` 与 `0C/2I`，identity/roles RED=`3 failed in 0.58s`、typed exporter RED=`1 error in 0.23s`、protected factory RED=`1 error in 0.21s` 均闭合；最终 canonical=`10 passed in 4.03s`。final reviewer PASS=`0/0`；子智能体 test minimization=`CHANGED` 后仍 `10 passed in 4.03s`；provider/network=`0/0`。
+- Task 20 严格 6 文件（原计划4+用户批准2），复用 Task3 factory provenance、FormalEvidenceStore closure、Task19 wrappers 和真实 contract evaluator，生成 lineage source index、每 numeric cell observation 与 manifest；不写 CSV/TEX/正文。
+- 用户已授权后续每个 Task 持续实施/review/fix/follow-up 至 PASS 后直接推进，且 post-accept 测试最小化必须由子智能体执行。Task 21 预检 READY，无计划外 production。
+- 用户持续授权监督者按严格必要性批准后续计划外文件：只有不增加就无法得到权威数据或跑通正常实验时才可批准；便利/重构/美化/安全加固/可后置修改不得批准，且每次必须落盘依据。
 
 ## 2026-07-31 用户暂停点（历史）
 
@@ -47,14 +49,14 @@
 - 同一 repeat 内比较条件共享回答，不同 repeat 使用独立 sample slot；replacement 必须覆盖当前冻结最大深度。缺 bank entry 必须 blocked，不能临时在线补洞、scripted 回退或缩短 retry。
 - Experiment 2 在线检查：缩小且预注册的题集，真实 API 覆盖 worker=`1,3,7,10,30,50` 全六档。Experiment 3 在线检查：小型真实恢复链，至少覆盖验证拒绝后 replacement 与 worker death 后重新分派；必须证明 fault/death 后才发生新 provider call。
 - 用户明确要求把本方案记录为实验设施全面修改，而非简单修复。影响 request identity、executor/transport、artifact schema、paper eligibility、budget、runner、metrics/report/renderer、smoke/canary 和 replay/audit。
-- 在该历史节点只完成 `design_synced`，尚未实现或调用真实 API；此后完整实施计划已形成，当前 Task 0–19 已 accepted。不要再把本条历史快照当作当前状态。
+- 在该历史节点只完成 `design_synced`，尚未实现或调用真实 API；此后完整实施计划已形成，当前 Task 0–20 已 accepted。不要再把本条历史快照当作当前状态。
 - 旧 P0-core/P0-full 和“下一次 smoke”顺序暂停；EPD-027 设施与 profile 未实现前不得启动。EPD-026 的题量/fault/mode/repeat 不变，`76,280` 仅保留为旧全在线上界/trace-slot capacity；约 `6,904 + canary` 只是待 bank inventory 验证的 DeepSeek 量级。
 - Experiment 2–4 主矩阵资源指标改为 trace-replay/trace-attributed；Experiment 3 主矩阵使用 `discarded_trace_tokens`。`wasted_actual_tokens` 只用于 Exp3 在线恢复检查，不能把预取回答重复计成 actual spend。
 - 人民币 `1,000` 是 DeepSeek acquisition/在线检查目标硬停止线；当前每 attempt `0.05` 预留不可靠，后续必须同时约束 calls/tokens/CNY 和 in-flight 悲观预留。Experiment 5 SiliconFlow 预算单列。
 
 ## 当前业务状态
 
-- Active feature：`feat-011`。EPD-027 accepted 进度为 `20/35`：Task 0–19 已 accepted；Task 20 为 in_progress，Task 21 及以后保持 queued。immutable bank、inventory/preflight、budget、acquisition、logical scheduler、parent-owned commit ABI、trace-backed executor / dual provenance、standalone Exp1–5 projectors、registry/formal metrics、evidence eligibility 与 normal formal lifecycle 已 accepted；cell lineage/renderer/replay 接线仍未闭合。
+- Active feature：`feat-011`。EPD-027 accepted 进度为 `21/35`：Task 0–20 已 accepted；Task 21 为 queued/next，Task 22 及以后保持 queued。immutable bank、inventory/preflight、budget、acquisition、logical scheduler、parent-owned commit ABI、trace-backed executor / dual provenance、standalone Exp1–5 projectors、registry/formal metrics、evidence eligibility、normal formal lifecycle 与 cell lineage observations 已 accepted；renderer/replay 接线仍未闭合。
 - Active focus 已从“只写计划”进入严格串行实施。EPD-025 的 Experiment 5 `max_retries=0`、两张 model 汇总表、无六组 pairwise 继续冻结；Task 2–16 已提供 contract/direct facts/stable request identity/immutable bank/inventory/budget/acquisition/scheduler/parent commit ABI/trace-backed executor/Exp1–5 projectors，正式 consumer/renderer/replay 接线仍待后续 Task。
 - 真实 `exp34-smoke-20260731-041442` 已结束：11 roots、36 provider attempts、839,054 tokens、8 completed、3 evidence-complete experimental failures；配置口径 cost estimate CNY 4.6147626，actual billing unavailable。
 - 真实性审计 PASS：36 个 DeepSeek HTTP 200 response ID 与 36 个 canonical v2 model records，v3 模型/请求身份一致，TokenShare coordinator/engine/ledger/artifact 路径完整，secret scan 零命中。

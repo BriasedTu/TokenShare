@@ -148,7 +148,7 @@ Secret 只能进入当前进程环境和脱敏后的 transport；event/artifact/
 | `paper_runtime_clock.py` | Task 9 冻结 logical source-latency 1x 与 online real-clock policy；trace 路径拒绝 real sleep/noop sleeper。 |
 | `paper_formal_runner.py` | 正式/smoke suite orchestration、preflight、dispatch、checkpoint、resume/replay；Task 19 在任何 engine/event 前完成 terminal bank/case digest preflight，缺失时只写 `paper_preflight_blocked.v1.json`，完整时经正常 Factor/Lean lifecycle 运行并构造 Task18 versioned evidence facts/evaluator。 |
 | `paper_formal_callbacks.py` | provider/executor callback 绑定。 |
-| `paper_formal_evidence.py` | 正式 evidence store、manifest、checkpoint 和完整性校验；以 immutable protocol task id 到 case task-id closure 的显式映射闭合 canonical selection evidence，映射冲突 fail closed；Task 18 接入版本化 online/trace/regression eligibility，拒绝 historical schema 与 receipt 类型混淆。 |
+| `paper_formal_evidence.py` | 正式 evidence store、manifest、checkpoint 和完整性校验；Task 18 接入版本化 eligibility；Task 20 以 protected Task3 producer provenance 和指定 FormalEvidenceStore reachable closure 构造 `CanonicalLineageInput`/`LineageSourceIndex`，逐 event/artifact/wrapper/source binding identity fail closed，不扫描 private/global/raw mappings。 |
 | `paper_formal_checkpoint.py` | generation v3 root-delta checkpoint、resume 与 terminal streaming SQLite compaction；保持逐 root 释放，避免全 suite outcome 常驻。 |
 | `paper_faults.py`、`paper_workers.py` | 五类 rate-fault 与 worker-death 的预注册 hook/投影。 |
 | `paper_exp1.py`、`paper_exp2_scalability.py`、`paper_exp3_fault_recovery.py`、`paper_exp4_ablation_runner.py` | 各实验的独立行为/指标 helper。 |
@@ -165,7 +165,7 @@ Secret 只能进入当前进程环境和脱敏后的 transport；event/artifact/
 |---|---|
 | `paper_projection.py` | 从 system projection/events/artifacts 派生 task/attempt rows。 |
 | `paper_direct_results.py` | Task 3 已接受的 canonical facts projector：从正式 runtime result、verified ledger binding、artifact 与 official typed-hook parser 构造 deep-immutable direct rows；以 preregistered root inventory 固定分母并显式生成 `not_started`，不从 gate bool/summary 自填成功。输出供后续 metric observation/projector registry 接线，当前不是 formal metrics/renderer 的替代入口。 |
-| `paper_metric_contract.py` | Task 2 machine-readable metric contract loader/evaluator；Task 12 最小 plan-out 把 tracked contract 重新绑定 Task 6 后的 current pipeline profile digest；Task 14 把 Exp3 started/reassignment 修为完整实际启动 backlink identity，successful 才额外要求 qualified/completed，retry-exhausted 不伪造成功角色。 |
+| `paper_metric_contract.py` | Task 2 machine-readable metric contract loader/evaluator；Task 12 同步 current pipeline profile digest；Task 14 修正 Exp3 started/reassignment backlink；Task 20 以 scoped `MetricComputationTrace` 捕获真实 `MetricObservationBundle`、row/cell identity、membership 与 evaluation，不修改任何公式/null/invariant 语义。 |
 | `paper_exp1_metrics.py` | Task 12 standalone Experiment 1 pure observation projector：按 domain/difficulty/topic/repeat 消费 canonical direct rows 与已物化 timing/provider facts，保留全部预注册 roots 的固定分母，wrong final 只计 completion，infra invalid 与资源缺失显式 null/block；不 import formal runner/renderer，不修改 registry，draft 默认 `paper_eligible=false`。 |
 | `paper_exp2_metrics.py` | Task 13 standalone Experiment 2 pure trace/online observation projectors：按 digest-bound case ref、repeat/sample、worker 与 position stratum 投影固定分母、logical makespan、paired speedup/efficiency、committed trace slot/token/cost、调度利用率与 online first-attempt 429/timeout union；失败与 missingness 显式保留，完整 main trace 前 post-bank check 为 `not_evaluated_pre_bank`，不 import formal runner/renderer、不修改 registry，draft 默认 `paper_eligible=false`。 |
 | `paper_exp3_metrics.py` | Task 14 standalone Experiment 3 pure trace/online recovery projectors：投影 fixed controlled-candidate denominator、完整 replacement/reassignment backlink、same-sample paired trace absolute overhead、discarded trace tokens、worker-death completeness/kill error，以及 ordered current-provider identity/usage/cost/wasted actual tokens；缺 provider object/role 时六个 online resource cells 统一 null/block，不 import formal runner/renderer，不复制协议状态机。 |
@@ -173,7 +173,8 @@ Secret 只能进入当前进程环境和脱敏后的 transport；event/artifact/
 | `paper_exp5_metrics.py` | Task 16 standalone Experiment 5 pure quality/resources projector：直接使用 canonical `PaperModelEndpointIdentity` 官方 digest/fields，按 actual first attempts、checkable candidates 与全部 preregistered roots 投影冻结 denominator；以 enclosing protocol wall-clock、3 raw repeats 与 median/min/max/range 生成恰好两张 ordered payload/caption，禁止 pairwise/significance/ranking/retry/recovery/accepted-validity。 |
 | `paper_metric_registry.py` | Task 17 contract-bound projector registry：把 8 张正式 table 唯一映射到 Tasks12–16 accepted projectors；Exp3 trace/online 分别薄调用 Task14，Exp5 quality/resources 共用一次 Task16 projection；逐 row-kind 精确核对 metric inventory，禁止在 registry 重算公式。 |
 | `paper_metrics.py` | evidence-derived 通用统计与 integrity validation。 |
-| `paper_formal_metrics.py` | Task 17 正式 Exp1–5 metric draft 发布路径：只接受真实 `PaperMetricRegistry`，核对 contract/profile identity 与完整 8-table inventory，并在任何写盘前逐 draft 校验 fields、row kinds 与 output path；不保留旧公式、sensitivity/pairwise alias 或 renderer 派生。 |
+| `paper_formal_metrics.py` | Task 17 正式 Exp1–5 metric draft 发布路径；Task 20 内部构造 protected canonical lineage inputs、捕获真实 evaluator traces、join persisted source index，并原子发布 `paper_lineage_source_index.v1.jsonl`、`paper_metric_observations.v1.jsonl` 与 manifest；不保留旧公式或 renderer 派生。 |
+| `paper_metric_observations.py` | Task 20 每 numeric cell 唯一 lineage materializer：按 row/cell digest 精确 join，保存公式/value/numerator/fixed denominator membership/excluded-null-blocked reasons，并逐 current execution 或 source entry 校验 typed roles；non-null 由既有 evaluator独立复算，缺 role 时 cell null/table blocked。 |
 | `paper_report.py`、`paper_formal_report.py`、`paper_smoke_report.py` | 通用/正式/smoke 输出；smoke 永远 paper-ineligible。 |
 | `paper_exp5_artifacts.py`、`paper_exp5_model_comparison.py`、`paper_exp5_statistics.py` | Exp5 v3 artifact、比较与统计。 |
 | `paper_budget.py` | plan-only roots/units/attempt/token/cost/time/space 预算与门禁；Task 6 把完整 bank inventory 写入预算投影，Task 7 增加 provider-writing 硬预算 limits 与禁止 unlimited mode 的入口门禁。 |
@@ -185,17 +186,17 @@ Secret 只能进入当前进程环境和脱敏后的 transport；event/artifact/
 
 ### EPD-027 实施进度与后续实验设施改造
 
-2026-08-01 已冻结 Experiment 2–4 两阶段真实回答库设计。当前 35 个实施 Task 中 Task 0–19 已 accepted。Task 19 normal formal lifecycle commit=`20f58bdc`；最终 canonical=`138 passed in 168.00s`，final reviewer PASS=`0/0`，子智能体 test minimization=`CHANGED` 后 canonical=`138 passed in 157.61s`，provider/network calls=`0`，无 paid receipt。这个 `20/35` 状态不代表整条 paper pipeline 已实现：Task 20 因 `paper_metric_contract.py` evaluator-trace 与 `paper_formal_evidence.py` typed lineage sidecar 两个计划外 production 接线待授权而 blocked/next；cell lineage、renderer/replay 接线仍未完成；正式矩阵保持 **NO-GO**。Task 19 验收未运行 Fast/Full/LeanAudit/network/provider。
+2026-08-01 已冻结 Experiment 2–4 两阶段真实回答库设计。当前 35 个实施 Task 中 Task 0–20 已 accepted。Task 20 cell lineage commit=`fa12c06c`；最终 canonical=`10 passed in 4.03s`，final reviewer PASS=`0/0`，子智能体 test minimization=`CHANGED` 后仍 `10 passed in 4.03s`，provider/network calls=`0`，无 paid receipt。这个 `21/35` 状态不代表整条 paper pipeline 已实现：Task 21 queued/next，renderer/replay 接线仍未完成；正式矩阵保持 **NO-GO**。Task 20 验收未运行 Fast/Full/LeanAudit/network/provider。
 
 后续完整实施计划必须同时覆盖：
 
-- Task 20 及后续 cell-lineage/renderer 接线，把已接受的 normal formal lifecycle、双 provenance、Exp1–5 projectors、registry 与 evidence eligibility 转为可持久化、可复算论文数据；
+- Task 21 及后续 renderer 接线，把已接受的 per-cell lineage observations 转为 contract-only CSV/TEX/JSON 数据与表格；
 - `online_real_provider` 与 `real_model_trace_protocol_run` 两类 paper eligibility，禁止把 trace consumption 冒充当前 provider call；
 - acquisition actual spend 与 per-condition trace attribution 两套资源账，以及 calls/tokens/CNY/in-flight 人民币 1,000 硬门；
 - Experiment 2 缩小题集六 worker 档在线并发检查、Experiment 3 小型在线恢复检查；
 - metrics/report/renderer/replay/audit 与 smoke/canary 身份迁移。
 
-这是一项跨 `tokenshare.executors`、`tokenshare.experiments`、两插件 runtime adapter 和输出 schema 的全面设施修改，不得在 `paper_formal_runner.py` 内临时塞入读取文件的旁路，也不得复制一套协议生命周期。已接受的 ledger/hook/direct-result、immutable bank、semantic inventory/preflight、deterministic logical scheduler、parent-owned trace delivery commit ABI、Task 11 trace-backed executor / dual provenance、Task 12–16 Exp1–5 projectors、Task 17 registry/formal metrics、Task 18 eligibility 与 Task 19 normal formal lifecycle 均不改变 `ProtocolEngine` 状态机；cell lineage/renderer/replay 的正式 pipeline 接线属于后续 Task。后续继续先建 characterization/RED tests，并以唯一权威实验设计 EPD-027 为准。
+这是一项跨 `tokenshare.executors`、`tokenshare.experiments`、两插件 runtime adapter 和输出 schema 的全面设施修改，不得在 `paper_formal_runner.py` 内临时塞入读取文件的旁路，也不得复制一套协议生命周期。已接受的 ledger/hook/direct-result、immutable bank、semantic inventory/preflight、deterministic logical scheduler、parent-owned trace delivery commit ABI、Task 11 trace-backed executor / dual provenance、Task 12–16 Exp1–5 projectors、Task 17 registry/formal metrics、Task 18 eligibility、Task 19 normal formal lifecycle 与 Task 20 cell lineage 均不改变 `ProtocolEngine` 状态机；renderer/replay 的正式 pipeline 接线属于后续 Task。后续继续先建 characterization/RED tests，并以唯一权威实验设计 EPD-027 为准。
 
 指标不得使用固定协议时间、自填成功字段或丢失失败/未开始分母；所有汇总必须能回到逐 task/attempt/event/artifact。
 
