@@ -5,9 +5,9 @@
 ## 当前状态
 
 - 工作树：`C:\Users\32133\.config\superpowers\worktrees\TokenShare\codex-feat-011-epd027-pipeline`。
-- 分支：`codex/feat-011-epd027-pipeline`；Task 16 代码 HEAD=`440c1ef9`；状态/交接提交在其后。
+- 分支：`codex/feat-011-epd027-pipeline`；Task 17 代码 HEAD=`8ded3681`；状态/交接提交在其后。
 - Active feature：`feat-011`，仍为 `in-progress`；正式矩阵保持 **NO-GO**。
-- Task 0–16 已 accepted（`17/35`）；不得重做。Task 17 为 `queued/next`，尚未开始；不得进入 Task 18。
+- Task 0–17 已 accepted（`18/35`）；不得重做。Task 18 为 `queued/next`，尚未开始；不得进入 Task 19。
 - 用户已授权每个后续 Task 持续执行“实现 → 独立综合 review → 集中修正 → follow-up”循环直至 reviewer PASS，再直接推进下一 Task。
 - 每个 Task 的 post-accept 测试最小化必须分派给子智能体；监督者不得亲自执行测试内容审计，只负责范围门禁、结构化证据验收与精确提交。
 - 当前没有活动写入者。provider/network 调用均为 `0`，无 paid receipt。
@@ -17,6 +17,7 @@
 - Task 14：contract commit=`3dc92de5`，Exp3 projector commit=`77d79a65`。
 - Task 15：Exp4 projector commit=`194885f0`。
 - Task 16：Exp5 projector commit=`440c1ef9`，严格 2 个计划文件；canonical endpoint identity、actual first-attempt denominator、全预注册 roots、enclosing wall-clock、3 raw repeats、exact two payloads/caption 与 forbidden-output 边界闭合。
+- Task 17：registry/formal metrics commit=`8ded3681`，严格 4 个计划文件；8 张 contract tables 唯一映射 Tasks12–16 projectors，Exp3 trace/online 分别使用 Task14，central 只 delegate/validate/publish 且写盘前 fail closed。
 - 禁止影子 TokenShare：metrics 只能投影 persisted event/artifact/attempt/provider facts；不得根据 condition/fault 名称模拟 state、retry、death 或 terminal。
 
 Task 14 contract digest=`sha256:b72307e727e28f5233de934df28e1701cf46ffb711b99aa845ea6f8580694b0e`。
@@ -35,11 +36,13 @@ Task 14 contract digest=`sha256:b72307e727e28f5233de934df28e1701cf46ffb711b99aa8
 - Task 15 review-fix RED：`1 failed in 2.594s`；最终 canonical：`8 passed in 0.81s`；final reviewer `PASS`，Critical/Important=`0/0`；子智能体 test minimization=`NO_CHANGE`。
 - Task 16 review-fix RED：`5 failed in 0.36s` + `1 failed in 0.48s`；最终 review canonical：`9 passed in 1.20s`；final reviewer `PASS`，`0/0/0`。
 - Task 16 子智能体 test minimization=`CHANGED`；最终 canonical=`9 passed in 1.17s`，provider/network=`0/0`。
+- Task 17 初始 RED=`2 collection errors in 0.33s`、初始 GREEN=`6 passed in 0.42s`；reviewer BLOCK=`2 Critical/2 Important`，3 个 targeted nodeid 修复后各 `1 passed in 0.13s`；最终 canonical=`6 passed in 0.43s`，final reviewer `PASS`、`0/0/0`。
+- Task 17 子智能体 test minimization=`CHANGED`；最终 canonical=`6 passed in 0.47s`，provider/network=`0/0`。
 
 ## 精确下一动作
 
-1. 使用已完成的 Task 17 只读预检；严格创建 registry/test 并修改 formal metrics/test 共 4 文件。
-2. registry 为 Tasks12–16 contract table ids 提供唯一薄 wrapper；central formal metrics 只 load direct rows、delegate、validate fields、publish drafts，不重算公式。
+1. 使用已完成的 Task 18 只读预检；严格只修改 `paper_models.py`、`paper_formal_evidence.py` 及对应两个测试文件。
+2. 版本化 online/trace/historical/synthetic/capability evidence classes；trace paper eligibility 必须绑定 approved full-bank acquisition、paid receipt claim 与完整 manifest/terminal inventory，provider failure 可作为完整 source evidence。
 3. 当前 Task 进入 review 后才可做下一 Task 只读预检；同一时间只允许一个写入者。
 
 恢复期间继续遵守：无经 Task 26 校验的 paid receipt 不得调用真实 API；不 push、不 merge、不创建 PR。

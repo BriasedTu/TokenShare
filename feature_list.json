@@ -5,7 +5,7 @@
   "active_feature": "feat-011",
   "active_focus": {
     "id": "paper-metric-contract-trace-bank-and-traceability-plan",
-    "summary": "EPD-027 严格串行实施为 17/35 accepted：Task 0–16 已 accepted；Task 17 projector registry/formal metrics integration 为 queued/next。",
+    "summary": "EPD-027 严格串行实施为 18/35 accepted：Task 0–17 已 accepted；Task 18 evidence-class versioning/acquisition eligibility 为 queued/next。",
     "status": "in_progress",
     "scope": [
       "Experiment 1–5 论文指标、固定分母与 missingness 口径",
@@ -17,12 +17,12 @@
       "完整实施顺序、测试、离线重放与真实 smoke/正式矩阵门禁"
     ],
     "out_of_scope": [
-      "Task 17 accepted 前进入 Task 18 evidence-class versioning",
+      "Task 18 accepted 前进入 Task 19 formal runner consumer integration",
       "重新运行真实付费 API 实验",
       "修改由其他工作调整中的 Experiment 3 正式规模",
       "人为注入攻击与安全工程"
     ],
-    "next_action": "使用已完成的 Task 17 只读预检，启动单一实现 Agent，严格在计划四文件内接入 projector registry/formal metrics；不得进入 Task 18 或调用真实 API。"
+    "next_action": "使用已完成的 Task 18 只读预检，启动单一实现 Agent，严格在计划四文件内版本化 evidence classes 并强制 acquisition eligibility；不得进入 Task 19 或调用真实 API。"
   },
   "authorities": {
     "agent_start": "AGENTS.md",
@@ -163,7 +163,7 @@
         "2026-07-31 用户暂停点：checkpoint/evidence 142 项与 shared dispatch/fail-close/resume 3 项离线通过；收尾 Fast 458 passed/1 skipped；shared terminal-snapshot-only index、500-root live-outcome 压力证据和最新 formal runner 整体回归尚未闭合，正式全量维持 NO-GO",
         "EPD-027 已冻结 Experiment 2–4 两阶段真实回答库、Exp2 缩小题集全六 worker 档真实在线检查、Exp3 小型真实在线恢复检查，并明确其为跨 identity/executor/artifact/eligibility/budget/runner/metrics/replay 的全面设施改造；design_synced/未实现是实施前历史快照",
         "EPD-027 文档/harness 历史同步 Fast：458 passed/1 skipped；JSON/SQLite、harness、compileall 通过，未联网、未调用真实 API",
-        "EPD-027 实施进度 17/35：Task 0–2 accepted 原提交 ed0b056a、78fbddaa、d2b16f89 不变；通用 ledger-binding 860b7c48 focused 40 passed/review PASS，typed-hook 4ea293b1 final 69+286 passed/review PASS",
+        "EPD-027 实施进度 18/35：Task 0–2 accepted 原提交 ed0b056a、78fbddaa、d2b16f89 不变；通用 ledger-binding 860b7c48 focused 40 passed/review PASS，typed-hook 4ea293b1 final 69+286 passed/review PASS",
         "Task 3 accepted commit f9773944：canonical direct-results 四文件，focused 101 passed、独立 review PASS、provider calls=0；正式路径无影子 TokenShare，ProtocolEngine disabled 时不能铸造 paper-eligible success",
         "2026-08-01 Task 3 accepted 后 Fast：.\\init.ps1 exit 0，468 passed/1 skipped in 20.19s；JSON/SQLite、harness、compileall 通过，provider calls=0；Full intentionally not run per user instruction，LeanAudit/API 未运行",
         "状态同步时 verification/run_verification.py 被误判为无 pytest harness，实际重复执行 Fast：468 passed/1 skipped in 18.78s；不计新增覆盖，后续不得重复",
@@ -183,9 +183,10 @@
         "Task 13 accepted commit 3f8d4ec2284d472896b706a3d94112f81be7e7c2：严格2文件；review RED 3 failed→targeted 3 passed；canonical 16 passed in 13.85s；最小化后仍16 passed in 12.30s；production compile、diff-check、forbidden import/alias scan、allowlist通过；final reviewer PASS；provider/network calls=0，无paid receipt；Full intentionally not run，Fast/LeanAudit/network/provider未运行",
         "Task 14 accepted：contract commit 3dc92de5、projector commit 77d79a65，严格3+2文件；review-fix targeted RED 6 failed/2.52s与contract nodeid 1 failed/0.39s，contract full 197 passed/15.74s；第二轮online missingness RED 2 failed/0.70s，最终canonical 12 passed/1.79s；py_compile/diff-check通过；final reviewer PASS，Critical/Important=0/0；post-accept test minimization NO_CHANGE；provider/network calls=0，无paid receipt；Fast仅接管时运行一次，Full/LeanAudit未运行",
         "Task 15 accepted commit 194885f0：严格2文件；canonical RED exit2/1 collection error/2.641s，初始GREEN 8 passed/0.82s；reviewer发现duplicate ablation identity重复计权，targeted RED 1 failed/2.594s，最终canonical 8 passed/0.81s；py_compile/diff-check/8 test functions通过；final reviewer PASS，Critical/Important=0/0；子智能体post-accept test minimization NO_CHANGE；provider/network calls=0，无paid receipt；Fast/Full/LeanAudit未运行",
-        "Task 16 accepted commit 440c1ef9：严格2文件；module-absent RED 1 collection error/pytest0.28s（outer wrapper0但conda failed），初始GREEN 9 passed/0.81s；reviewer BLOCK 1 Critical/2 Important，targeted RED 5 failed/0.36s与identity-shadow RED 1 failed/0.48s，最终review GREEN 9 passed/1.20s；canonical PaperModelEndpointIdentity、planned-call与cross-root timing门禁闭合；final reviewer PASS 0/0/0；子智能体test minimization CHANGED后9 passed/1.17s；provider/network0，无paid receipt；Fast/Full/LeanAudit未运行"
+        "Task 16 accepted commit 440c1ef9：严格2文件；module-absent RED 1 collection error/pytest0.28s（outer wrapper0但conda failed），初始GREEN 9 passed/0.81s；reviewer BLOCK 1 Critical/2 Important，targeted RED 5 failed/0.36s与identity-shadow RED 1 failed/0.48s，最终review GREEN 9 passed/1.20s；canonical PaperModelEndpointIdentity、planned-call与cross-root timing门禁闭合；final reviewer PASS 0/0/0；子智能体test minimization CHANGED后9 passed/1.17s；provider/network0，无paid receipt；Fast/Full/LeanAudit未运行",
+        "Task 17 accepted commit 8ded3681：严格4文件；初始RED 2 collection errors/0.33s（outer wrapper0但conda failed），初始GREEN 6 passed/0.42s；reviewer BLOCK 2 Critical/2 Important，3个缺失/旁路nodeid各先失败后1 passed/0.13s；最终canonical 6 passed/0.43s；contract row-kind/metric inventory、真实registry/contract identity与8-table write-before-publish门禁闭合；final reviewer PASS 0/0/0；子智能体test minimization CHANGED后6 passed/0.47s；provider/network0，无paid receipt；Fast/Full/LeanAudit未运行"
       ],
-      "next_action": "Task 0–16 accepted count=17/35；Task 17 queued/next。只实施projector registry/formal metrics四文件，不得进入Task18或调用真实API。"
+      "next_action": "Task 0–17 accepted count=18/35；Task 18 queued/next。只实施evidence-class versioning/acquisition eligibility四文件，不得进入Task19或调用真实API。"
     }
   ]
 }
