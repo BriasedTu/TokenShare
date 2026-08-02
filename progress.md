@@ -7,13 +7,14 @@
 ## 当前状态
 
 - Active feature：`feat-011`（Paper Real AI Experiments），状态仍为 `in-progress`。
-- EPD-027 实施计划共 35 个 Task，Task 0–19 已 accepted（`20/35`）。Task 19 normal formal lifecycle integration commit=`20f58bdc`；Task 20 metric lineage observations 为 `blocked/next`，等待上游 typed lineage sidecar 精确授权。
+- EPD-027 实施计划共 35 个 Task，Task 0–19 已 accepted（`20/35`）。Task 19 normal formal lifecycle integration commit=`20f58bdc`；Task 20 metric lineage observations 已获两个计划外 production producer 授权并进入 `in_progress`。
 - Task 19 初始 writer 未留下可恢复 RED 证据，已诚实记录且未补造；恢复 canonical=`136 passed in 77.62s`，callback trace context 与 blocked finalizer ABI 各取得 `1 failed → 1 passed`，恢复后 canonical=`138 passed in 78.78s`。
 - Task 19 首轮 reviewer BLOCK=`2 Critical/3 Important`；六个强化计划 nodeids RED=`6 failed in 16.06s`→GREEN=`6 passed in 32.46s`，canonical 暴露 deterministic timing 回归=`5 failed, 133 passed`，修复后 5 nodeids=`5 passed in 30.81s`、canonical=`138 passed in 91.66s`。
 - Task 19 第二轮 reviewer BLOCK=`1 Critical/2 Important`；canonical case digest/cross-case 与 committed reject→replacement RED=`2 failed in 14.54s`→GREEN=`2 passed in 15.20s`，最终 canonical=`138 passed in 168.00s`，final reviewer=`PASS`、Critical/Important=`0/0`。
 - Task 19 只认 validated terminal bank entries，逐 condition/case digest/semantic slot/entry fail closed；Factor/Lean trace 走正常 coordinator/runtime/bridge/stager/scheduler 与 parser/verifier/checker/canonical/merge/settlement，保留真实 source latency、worker death ordinal replacement、Task18 evaluator 与 current provider calls=`0`；无 shadow lifecycle。
 - Task 19 子智能体 post-accept test minimization=`CHANGED`，只移除未使用 receipt fixture 参数/恒空分支；六个计划 tests 与全部真实缺陷回归保留，最终 canonical=`138 passed in 157.61s`。
-- Task 20 只读预检发现现有 metric drafts 丢失 member facts 与 typed lifecycle/provider/source refs；最小且非 shadow 的计划外 production 为 `paper_metric_contract.py`（2–3h，捕获真实 `recompute_metric` bundle/row identity，不改公式）与 `paper_formal_evidence.py`（4–6h，从已验证 current/source facts 导出 typed `LineageSourceIndex` sidecar+digest）。Task 20 计划四文件再 join、复算并发布 observations；总预计 1–1.5 个工作日。`paper_formal_runner.py` 自动调用可后置，不是当前 blocker。未获用户明确批准不得进入 Task 20 或调用真实 API。
+- Task 20 只读预检发现现有 metric drafts 丢失 member facts 与 typed lifecycle/provider/source refs；用户已明确批准计划外 production `paper_metric_contract.py`（捕获真实 `recompute_metric` bundle/row identity，不改公式）与 `paper_formal_evidence.py`（从已验证 current/source facts 导出 typed `LineageSourceIndex` sidecar+digest）。Task 20 精确 allowlist 为原计划四文件加上述两文件，共 6 文件；必须复用既有类型/loader，不得构造第二套 evidence/lineage 系统。`paper_formal_runner.py` 不在范围内。
+- 当前实施 Task 20；用户目标是持久化、可审计、可复算且可直接供论文制表的数据，不写论文正文。不得进入 Task 21 或调用真实 API。
 - 用户已授权每个后续 Task 持续执行实现/review/fix/follow-up 至 PASS 后直接推进；post-accept 测试最小化一律由子智能体执行。
 - 本轮 provider/network calls=`0`，无 paid receipt；Fast 未重复，Full/LeanAudit 未运行，正式矩阵继续 **NO-GO**。
 - Task 3 的两项通用前置均已 accepted：ledger-binding `860b7c48` 最终 focused `40 passed`、review PASS；typed-hook `4ea293b1` 最终 `69 + 286 passed`、review PASS。Task 3 四文件提交=`f9773944`，最终 focused `101 passed`、独立 review PASS，provider calls=`0`。
@@ -113,7 +114,7 @@
 
 - EPD-025/027 的实施已不再是“只完成设计同步”：Task 2–19 的 metric contract、canonical direct results、stable request identity、immutable bank、inventory/preflight、budget、acquisition、logical scheduler、parent-owned commit ABI、trace-backed executor / dual provenance、standalone Exp1–5 projectors、registry/formal metric drafts、versioned evidence eligibility 与 normal formal lifecycle 已 accepted；cell lineage/report/renderer、execute/replay 与论文管线正式接线仍须按后续 Task 完成。本轮没有启动真实 API。
 - 按用户要求，本次审计/修复没有新运行 Full、LeanAudit、force-all、真实 API smoke 或正式矩阵；未检查人为注入攻击。上面的真实调用来自用户此前启动的历史 smoke。
-- 历史审计时当前进程的 `DEEPSEEK_API_KEY` 非空；这只证明当时环境曾配置，不构成当前付费授权，也不把 secret 写入仓库或输出。Task 0–19 已 accepted，Task 20 因 typed lineage sidecar 待授权而 blocked/next；旧 Exp3/4 与 Exp5 smoke 继续暂停。
+- 历史审计时当前进程的 `DEEPSEEK_API_KEY` 非空；这只证明当时环境曾配置，不构成当前付费授权，也不把 secret 写入仓库或输出。Task 0–19 已 accepted，Task 20 已获 typed lineage producer 授权并为 in_progress；旧 Exp3/4 与 Exp5 smoke 继续暂停。
 - TTFT 当前没有持久化来源，保持缺失，不伪造为 0。
 - Exp5 bundle digest 仍包含 source suite 持久化路径字符串，属于跨机器可移植性 P2，不影响当前本机 lifecycle/artifact 绑定。
 - PowerShell 日志 helper 在“runner 已退出但其后代长期持有继承管道写端”的极端路径仍可能等待 EOF；正常 launcher 实时脱敏、受控退出与退出码传播测试通过。该 P2 未伪装成已修复，不影响本轮结果完整性结论。

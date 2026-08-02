@@ -5,7 +5,7 @@
   "active_feature": "feat-011",
   "active_focus": {
     "id": "paper-metric-contract-trace-bank-and-traceability-plan",
-    "summary": "EPD-027 严格串行实施为 20/35 accepted：Task 0–19 已 accepted；Task 20 metric lineage observations 因上游 typed lineage sidecar 待授权而 blocked/next。",
+    "summary": "EPD-027 严格串行实施为 20/35 accepted：Task 0–19 已 accepted；Task 20 metric lineage observations 已获两个计划外 lineage producer 授权并进入 in_progress。",
     "status": "in_progress",
     "scope": [
       "Experiment 1–5 论文指标、固定分母与 missingness 口径",
@@ -17,12 +17,12 @@
       "完整实施顺序、测试、离线重放与真实 smoke/正式矩阵门禁"
     ],
     "out_of_scope": [
-      "用户批准上游 typed lineage sidecar 接线前实施 Task 20 metric lineage observations",
+      "Task 20 accepted 前进入 Task 21 renderer/report integration",
       "重新运行真实付费 API 实验",
       "修改由其他工作调整中的 Experiment 3 正式规模",
       "人为注入攻击与安全工程"
     ],
-    "next_action": "完成 Task 20 计划外 typed lineage sidecar 精确预检并向用户报告；取得明确授权后才启动 Task 20，期间不得调用真实 API。"
+    "next_action": "启动单一 Task 20 实现 Agent，严格修改原计划四文件与用户批准的两个 lineage producer 文件；不得进入 Task 21 或调用真实 API。"
   },
   "authorities": {
     "agent_start": "AGENTS.md",
@@ -189,9 +189,10 @@
         "Task 19 只读预检 blocker：原计划4文件缺少正常 trace 接线；需用户批准计划外 production paper_response_bank.py（纯 completeness seam）、paper_dispatcher.py（typed trace context）及 factorization_paper_adapter.py/lean_paper_adapter.py（正式 runtime/bridge/stager/scheduler 注入），否则只能重复 preflight、继续旧 backend 或形成 shadow/private-ABI 路径",
         "2026-08-02 用户明确批准 Task 19 修改上述四个计划外 production 文件；Task 19 allowlist 因此为原计划4文件加这4个production接线文件，共8文件，仍禁止其他计划外production与真实API",
         "Task 19 accepted commit 20f58bdc：严格8文件（原计划4+用户批准4）；初始writer RED证据恢复失败并诚实记录，恢复canonical 136 passed/77.62s；reviewer首轮BLOCK 2 Critical/3 Important，六计划nodeids RED 6 failed/16.06s→6 passed/32.46s，调度回归5 failed+133 passed→5 passed/30.81s，canonical 138 passed/91.66s；第二轮BLOCK 1 Critical/2 Important，cross-case/replacement RED 2 failed/14.54s→2 passed/15.20s，canonical 138 passed/168.00s；terminal-only preflight/case digest、normal Factor+Lean lifecycle、真实source latency、Task18 evaluator、committed retry/replacement闭合；final reviewer PASS 0/0；子智能体test minimization CHANGED后138 passed/157.61s；provider/network0，无paid receipt；Fast/Full/LeanAudit未运行",
-        "Task 20 只读预检 blocker：计划四文件缺少权威 lineage producers；需用户批准计划外 production paper_metric_contract.py（捕获真实recompute bundle/row identity，不重写公式）与paper_formal_evidence.py（从已验证current/source facts导出typed LineageSourceIndex），否则只能由caller伪造sidecar或按名称重建lineage；paper_formal_runner.py不是当前阻塞文件"
+        "Task 20 只读预检 blocker：计划四文件缺少权威 lineage producers；需用户批准计划外 production paper_metric_contract.py（捕获真实recompute bundle/row identity，不重写公式）与paper_formal_evidence.py（从已验证current/source facts导出typed LineageSourceIndex），否则只能由caller伪造sidecar或按名称重建lineage；paper_formal_runner.py不是当前阻塞文件",
+        "2026-08-02 用户明确批准 Task 20 修改上述两个计划外 production 文件；Task 20 allowlist 为原计划4文件加这2个producer文件，共6文件；实现必须复用现有bundle/logical records/direct refs/Task19 wrappers，不得新建第二套evidence系统"
       ],
-      "next_action": "Task 0–19 accepted count=20/35；Task 20 blocked/next，须先取得上游typed lineage sidecar计划外接线明确授权；不得调用真实API。"
+      "next_action": "Task 0–19 accepted count=20/35；Task 20 in_progress。仅实施批准的6文件allowlist，不得进入Task21或调用真实API。"
     }
   ]
 }

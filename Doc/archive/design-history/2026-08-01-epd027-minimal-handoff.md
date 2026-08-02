@@ -7,7 +7,7 @@
 - 工作树：`C:\Users\32133\.config\superpowers\worktrees\TokenShare\codex-feat-011-epd027-pipeline`。
 - 分支：`codex/feat-011-epd027-pipeline`；Task 19 代码 HEAD=`20f58bdc`；状态/交接提交在其后。
 - Active feature：`feat-011`，仍为 `in-progress`；正式矩阵保持 **NO-GO**。
-- Task 0–19 已 accepted（`20/35`）；不得重做。Task 20 因上游 typed lineage sidecar 待授权而 `blocked/next`。
+- Task 0–19 已 accepted（`20/35`）；不得重做。Task 20 已获两个计划外 lineage producer 授权并为 `in_progress`；不得进入 Task 21。
 - 用户已授权每个后续 Task 持续执行“实现 → 独立综合 review → 集中修正 → follow-up”循环直至 reviewer PASS，再直接推进下一 Task。
 - 每个 Task 的 post-accept 测试最小化必须分派给子智能体；监督者不得亲自执行测试内容审计，只负责范围门禁、结构化证据验收与精确提交。
 - 当前没有活动写入者。provider/network 调用均为 `0`，无 paid receipt。
@@ -47,8 +47,8 @@ Task 14 contract digest=`sha256:b72307e727e28f5233de934df28e1701cf46ffb711b99aa8
 
 ## 精确下一动作
 
-1. Task 20 需用户批准两个计划外 production：`paper_metric_contract.py` 捕获真实 evaluator bundle/row identity；`paper_formal_evidence.py` 从已验证 current/source facts 导出 typed `LineageSourceIndex` sidecar+digest。计划四文件负责 join/复算/observations 持久化；总预计 1–1.5 个工作日。
-2. 未获明确授权不得按 metric/table/condition 名重建 facts、把 role 名包装成 refs、重复调用 projector 验值或进入 Task 20。
+1. Task 20 精确 allowlist：原计划 `paper_metric_observations.py`、`paper_formal_metrics.py` 及对应两个 tests，加用户批准的 `paper_metric_contract.py`、`paper_formal_evidence.py`，共 6 文件。
+2. 复用现有 bundle、logical records、direct refs 与 Task19 wrappers，落盘 typed source index/metric observations/manifest；不得按名称重建 facts、把 role 名包装成 refs、重复公式或形成第二套 evidence 系统。
 3. 当前 Task 进入 review 后才可做下一 Task 只读预检；同一时间只允许一个写入者。
 
 恢复期间继续遵守：无经 Task 26 校验的 paid receipt 不得调用真实 API；不 push、不 merge、不创建 PR。
