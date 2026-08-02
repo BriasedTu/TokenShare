@@ -4442,7 +4442,28 @@ def test_failed_worker_death_closes_manifests_and_continues_exp4_in_both_paths(
                 "budget": budget,
             }
         )
-        metrics = recompute_paper_formal_metrics(tmp_path)
+        from tokenshare.experiments.paper_metric_contract import (
+            load_paper_metric_contract,
+        )
+        from tokenshare.experiments.paper_metric_registry import (
+            load_paper_metric_registry,
+        )
+
+        metric_contract = load_paper_metric_contract()
+        metric_registry = load_paper_metric_registry(metric_contract)
+        metrics = recompute_paper_formal_metrics(
+            tmp_path,
+            {key: () for key in metric_registry.required_input_keys},
+            global_infrastructure_valid=False,
+            registry=metric_registry,
+            contract=metric_contract,
+        )
+        # 旧 report 壳尚未迁移到 Task 18 draft shape；本回归只验证失败封口。
+        object.__setattr__(metrics, "condition_rows", ())
+        object.__setattr__(metrics, "experiment_rows", {})
+        object.__setattr__(metrics, "capturing", False)
+        object.__setattr__(metrics, "exp5_artifact_rows", None)
+        object.__setattr__(metrics, "exp5_artifact_rows_digest", None)
         formal_report = generate_paper_formal_report(
             output_root=tmp_path,
             metrics=metrics,
@@ -4521,7 +4542,7 @@ def test_failed_worker_death_closes_manifests_and_continues_exp4_in_both_paths(
         assert suite_manifest["pilot_only"] is False
         assert suite_manifest["execution_scope"] == "formal_matrix"
         expected_outputs = (
-            "metrics/formal_metrics.json",
+            "metrics/paper_metric_drafts.v1.json",
             "audit/paper_eligibility_report.json",
             "audit/secret_scan_report.json",
             "formal_regression_report.md",
@@ -6826,3 +6847,684 @@ def test_formal_runner_smoke_filter_executes_one_canonical_root_and_freezes_flag
         for path in tmp_path.rglob("*")
         if path.is_file()
     } == tree_before
+
+
+def test_missing_bank_preflight_records_block_without_engine_task_lease_request_provider_events(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tests.experiments.test_factorization_paper_adapter import _v2_condition
+    from tokenshare.experiments.factorization_paper_adapter import (
+        ScriptedFactorizationRangeTransport,
+        run_factorization_paper_case,
+    )
+    from tokenshare.experiments.paper_factorization_catalog import (
+        generate_factorization_paper_cases,
+    )
+    from tokenshare.experiments.paper_response_bank import (
+        PaperFormalTraceContext,
+        PaperTraceCaseBinding,
+        SemanticInventoryPlan,
+    )
+    from tokenshare.executors.response_bank import canonical_digest
+
+    case = generate_factorization_paper_cases()[0]
+    source = run_factorization_paper_case(
+        case=case,
+        condition=_v2_condition(case),
+        output_root=tmp_path / "source",
+        transport=ScriptedFactorizationRangeTransport(),
+        real_transport=False,
+    )
+    complete_runtime = _trace_context_from_adapter_result(
+        bank_root=tmp_path / "complete-bank",
+        adapter_result=source,
+    )
+    omitted_id = complete_runtime.resolver.index.entries[-1].entry_id
+    runtime = _trace_context_from_adapter_result(
+        bank_root=tmp_path / "incomplete-bank",
+        adapter_result=source,
+        omitted_terminal_entry_ids=(omitted_id,),
+    )
+    rows = runtime.resolver.index.inventory_rows
+    config = _ai_config()
+    dispatch_plan = _planned_dispatch_plan(tmp_path / "suite", config=config)
+    condition = dispatch_plan.conditions[0]
+    inventory_plan = SemanticInventoryPlan(
+        schema_version="tokenshare.response_bank_semantic_inventory_plan.v1",
+        inventory_digest=runtime.resolver.index.manifest.inventory_digest,
+        rows=rows,
+        condition_refs=(
+            {
+                "condition_id": condition.condition_id,
+                "condition_digest": condition.condition_digest,
+                "experiment_id": condition.experiment_id,
+                "worker_count": condition.worker_count,
+                "repeat_id": condition.repeat_id,
+                "fault_type": condition.fault_type,
+                "ablation_mode": condition.ablation_mode,
+                "semantic_slot_keys": [row.semantic_slot_key for row in rows],
+                "case_refs": [
+                    {
+                        "case_id": "case-1",
+                        "case_record_digest": "sha256:" + "a" * 64,
+                        "semantic_slot_keys": [
+                            row.semantic_slot_key for row in rows
+                        ],
+                    }
+                ],
+            },
+        ),
+        exp2_online_condition_refs=(),
+        max_concurrent_roots=1,
+        expected_slot_count=len(rows),
+        terminal_provider_failure_count=0,
+        terminal_success_count=len(runtime.resolver.index.entries),
+        terminal_unacquired_count=1,
+    )
+    case_binding = PaperTraceCaseBinding(
+        condition_id=condition.condition_id,
+        case_id="case-1",
+        case_record_digest="sha256:" + "a" * 64,
+        runtime=runtime,
+        inventory_entry_ids=tuple(row.inventory_entry_id for row in rows),
+    )
+    with pytest.raises(ValueError, match="identity"):
+        PaperFormalTraceContext(
+            inventory_plan=inventory_plan,
+            cases=(replace(case_binding, inventory_entry_ids=("wrong",)),),
+        )
+
+    alternate_digest = "sha256:" + "b" * 64
+    alternate_runtime = _trace_context_from_adapter_result(
+        bank_root=tmp_path / "alternate-bank",
+        adapter_result=source,
+        case_record_digest=alternate_digest,
+    )
+    alternate_rows = alternate_runtime.resolver.index.inventory_rows
+    combined_rows = tuple(rows) + tuple(alternate_rows)
+    cross_case_plan = replace(
+        inventory_plan,
+        inventory_digest=canonical_digest(
+            [row.to_dict() for row in sorted(
+                combined_rows, key=lambda item: item.inventory_entry_id
+            )]
+        ),
+        rows=combined_rows,
+        condition_refs=(
+            {
+                **inventory_plan.condition_refs[0],
+                "semantic_slot_keys": [
+                    row.semantic_slot_key for row in combined_rows
+                ],
+                "case_refs": [
+                    inventory_plan.condition_refs[0]["case_refs"][0],
+                    {
+                        "case_id": "case-2",
+                        "case_record_digest": alternate_digest,
+                        "semantic_slot_keys": [
+                            row.semantic_slot_key for row in alternate_rows
+                        ],
+                    },
+                ],
+            },
+        ),
+        expected_slot_count=len(combined_rows),
+        terminal_success_count=(
+            len(runtime.resolver.index.entries)
+            + len(alternate_runtime.resolver.index.entries)
+        ),
+        terminal_unacquired_count=1,
+    )
+    alternate_binding = PaperTraceCaseBinding(
+        condition_id=condition.condition_id,
+        case_id="case-2",
+        case_record_digest=alternate_digest,
+        runtime=alternate_runtime,
+        inventory_entry_ids=tuple(
+            row.inventory_entry_id for row in alternate_rows
+        ),
+    )
+    PaperFormalTraceContext(
+        inventory_plan=cross_case_plan,
+        cases=(case_binding, alternate_binding),
+    )
+    with pytest.raises(ValueError, match="case record digest"):
+        PaperFormalTraceContext(
+            inventory_plan=cross_case_plan,
+            cases=(
+                replace(
+                    case_binding,
+                    runtime=alternate_runtime,
+                    inventory_entry_ids=alternate_binding.inventory_entry_ids,
+                ),
+                replace(
+                    alternate_binding,
+                    runtime=runtime,
+                    inventory_entry_ids=case_binding.inventory_entry_ids,
+                ),
+            ),
+        )
+    context = PaperFormalTraceContext(
+        inventory_plan=inventory_plan,
+        cases=(case_binding,),
+    )
+    monkeypatch.setattr(
+        formal_runner,
+        "dispatch_paper_case",
+        lambda **_kwargs: pytest.fail("preflight block must precede protocol dispatch"),
+    )
+    suite_root = tmp_path / "suite"
+    suite = formal_runner.execute_paper_formal_suite(
+        **_formal_execution_kwargs(
+            tmp_path=suite_root,
+            config=config,
+            plan=dispatch_plan,
+        ),
+        trace_context=context,
+    )
+
+    assert suite.status is PaperStatus.BLOCKED
+    marker = suite_root / "paper_preflight_blocked.v1.json"
+    assert marker.is_file()
+    assert not tuple(suite_root.rglob("*.jsonl"))
+    assert not tuple(suite_root.rglob("events"))
+
+
+def test_formal_runner_passes_trace_context_to_condition_callback() -> None:
+    import ast
+    import inspect
+    import textwrap
+
+    tree = ast.parse(
+        textwrap.dedent(inspect.getsource(formal_runner._dispatch_formal_conditions))
+    )
+    callback_calls = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "_FormalConditionExecutionCallback"
+    ]
+
+    assert len(callback_calls) == 1
+    trace_keywords = [
+        keyword
+        for keyword in callback_calls[0].keywords
+        if keyword.arg == "trace_context"
+    ]
+    assert len(trace_keywords) == 1
+    assert isinstance(trace_keywords[0].value, ast.Name)
+    assert trace_keywords[0].value.id == "trace_context"
+
+
+def test_formal_runner_finalizer_calls_match_public_signature() -> None:
+    import ast
+    import inspect
+    import textwrap
+
+    signature = inspect.signature(formal_runner._finalize_formal_experiment)
+    accepted_keywords = set(signature.parameters)
+    tree = ast.parse(
+        textwrap.dedent(inspect.getsource(formal_runner._dispatch_formal_conditions))
+    )
+    finalizer_calls = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "_finalize_formal_experiment"
+    ]
+
+    assert len(finalizer_calls) == 2
+    assert all(
+        keyword.arg in accepted_keywords
+        for call in finalizer_calls
+        for keyword in call.keywords
+    )
+
+
+def _trace_context_from_adapter_result(
+    *,
+    bank_root: Path,
+    adapter_result,
+    replacement_count: int = 1,
+    omitted_terminal_entry_ids: tuple[str, ...] = (),
+    case_record_digest: str = "sha256:" + "a" * 64,
+):
+    from hashlib import sha256
+
+    from tokenshare.executors.response_bank import (
+        OBJECT_ROLES,
+        ExternalBankObjectLocator,
+        ResponseBankEntry,
+        ResponseBankInventoryRow,
+        ResponseBankManifest,
+        ResponseBankResolver,
+        canonical_digest,
+        initialize_response_bank,
+        inventory_entry_id,
+        semantic_slot_key,
+    )
+    from tokenshare.executors.trace_backed import freeze_trace_source_binding
+    from tokenshare.experiments.paper_dispatcher import PaperTraceRuntimeContext
+
+    def digest(data: bytes) -> str:
+        return f"sha256:{sha256(data).hexdigest()}"
+
+    source_store = ArtifactStore(Path(adapter_result.output_root))
+    specs = []
+    rows = []
+    for attempt in adapter_result.attempt_results:
+        if attempt.parsed_output_ref is None:
+            continue
+        candidate = source_store.read_bytes(
+            ArtifactRef.from_dict(attempt.parsed_output_ref)
+        ).decode("utf-8")
+        for replacement_slot in range(replacement_count):
+            entry_id = f"entry-{attempt.planned_ai_unit_id}-{replacement_slot}"
+            request_body = json.dumps(
+                {
+                    "planned_ai_unit_id": attempt.planned_ai_unit_id,
+                    "replacement_slot": replacement_slot,
+                },
+                sort_keys=True,
+            ).encode("utf-8")
+            inference_digest = digest(request_body + b":inference")
+            values = {
+                "inventory_entry_id": "",
+                "semantic_slot_key": semantic_slot_key(
+                    case_record_digest=case_record_digest,
+                    planned_ai_unit_id=attempt.planned_ai_unit_id,
+                    sample_slot_index=0,
+                    replacement_slot=replacement_slot,
+                    provider_config_digest="sha256:provider",
+                    prompt_profile_digest="sha256:prompt",
+                    prompt_admission_profile_digest="sha256:admission",
+                    plugin_version="2.0.0",
+                ),
+                "case_record_digest": case_record_digest,
+                "planned_ai_unit_id": attempt.planned_ai_unit_id,
+                "sample_slot_index": 0,
+                "replacement_slot": replacement_slot,
+                "provider_config_digest": "sha256:provider",
+                "prompt_profile_digest": "sha256:prompt",
+                "prompt_admission_profile_digest": "sha256:admission",
+                "plugin_version": "2.0.0",
+                "entry_id": entry_id,
+                "body_digest": digest(request_body),
+                "inference_request_digest": inference_digest,
+            }
+            values["inventory_entry_id"] = inventory_entry_id(values)
+            row = ResponseBankInventoryRow(**values)
+            rows.append(row)
+            specs.append((row, request_body, inference_digest, candidate))
+    inventory_digest = canonical_digest(
+        [row.to_dict() for row in sorted(rows, key=lambda item: item.inventory_entry_id)]
+    )
+    retained_specs = tuple(
+        spec for spec in specs if spec[0].entry_id not in omitted_terminal_entry_ids
+    )
+    receipt_digest = "sha256:" + "9" * 64
+    manifest = ResponseBankManifest.create(
+        bank_root_id=f"bank-{bank_root.name}",
+        profile_digest="sha256:profile",
+        budget_digest="sha256:budget",
+        inventory_digest=inventory_digest,
+        provider_config_digest="sha256:provider",
+        entry_ids=tuple(row.entry_id for row, *_rest in retained_specs),
+        object_role_schema=OBJECT_ROLES,
+        terminal_entry_count=len(retained_specs),
+        created_by_paid_receipt_digest=receipt_digest,
+    )
+    entries = []
+    objects = {}
+    for row, request_body, inference_digest, candidate in retained_specs:
+        raw_objects = {
+            "request_body": request_body,
+            "raw_output": json.dumps(
+                {
+                    "schema_version": "tokenshare.response_bank_raw_output.v1",
+                    "raw_response_json": {"id": row.entry_id},
+                    "content_text": candidate,
+                    "reasoning_content": None,
+                    "provider_response_id": row.entry_id,
+                    "finish_reason": "stop",
+                },
+                sort_keys=True,
+            ).encode("utf-8"),
+            "provenance": b'{"source_transport":"real_api"}',
+            "usage": b'{"usage_status":"reported","usage":{"total_tokens":7}}',
+            "latency": json.dumps(
+                {"latency_ms": 10 + row.replacement_slot}
+            ).encode("utf-8"),
+            "pricing": b'{"cost_usd":"0.01"}',
+            "acquisition_attempt": b'{"attempt":"approved"}',
+            "model_record": b'{"model":"frozen-model"}',
+        }
+        locators = tuple(
+            ExternalBankObjectLocator(
+                bank_root_id=manifest.bank_root_id,
+                manifest_digest=manifest.manifest_digest,
+                entry_id=row.entry_id,
+                object_role=role,
+                object_digest=digest(data),
+            )
+            for role, data in raw_objects.items()
+        )
+        objects.update(
+            {locator.object_digest: raw_objects[locator.object_role] for locator in locators}
+        )
+        entries.append(
+            ResponseBankEntry(
+                inventory_digest=inventory_digest,
+                inventory_entry_id=row.inventory_entry_id,
+                semantic_slot_key=row.semantic_slot_key,
+                inference_request_digest=inference_digest,
+                entry_id=row.entry_id,
+                sample_slot_index=0,
+                replacement_slot=row.replacement_slot,
+                terminal_kind="success",
+                object_locators=locators,
+                acquisition_state_ref=f"state-{row.entry_id}",
+            )
+        )
+    initialize_response_bank(
+        bank_root,
+        manifest=manifest,
+        inventory_rows=rows,
+        entries=entries,
+        objects=objects,
+    )
+    resolver = ResponseBankResolver.open(bank_root)
+    bindings = tuple(
+        freeze_trace_source_binding(
+            resolver,
+            planned_ai_unit_id=planned_ai_unit_id,
+            sample_slot_index=0,
+            entry_ids=tuple(
+                row.entry_id
+                for row in rows
+                if row.planned_ai_unit_id == planned_ai_unit_id
+                and row.entry_id not in omitted_terminal_entry_ids
+            ),
+        )
+        for planned_ai_unit_id in dict.fromkeys(
+            row.planned_ai_unit_id for row in rows
+        )
+        if any(
+            row.planned_ai_unit_id == planned_ai_unit_id
+            and row.entry_id not in omitted_terminal_entry_ids
+            for row in rows
+        )
+    )
+    return PaperTraceRuntimeContext(
+        resolver=resolver,
+        bindings=bindings,
+    )
+
+
+def test_trace_run_uses_normal_coordinator_fault_verifier_checker_merge_settlement(
+    tmp_path: Path,
+) -> None:
+    from tests.experiments.test_factorization_paper_adapter import (
+        _v2_condition,
+    )
+    from tokenshare.experiments.factorization_paper_adapter import (
+        ScriptedFactorizationRangeTransport,
+        run_factorization_paper_case,
+    )
+    from tokenshare.experiments.paper_factorization_catalog import (
+        generate_factorization_paper_cases,
+    )
+
+    case = generate_factorization_paper_cases()[0]
+    condition = _v2_condition(case)
+    source = run_factorization_paper_case(
+        case=case,
+        condition=condition,
+        output_root=tmp_path / "source",
+        transport=ScriptedFactorizationRangeTransport(),
+        real_transport=False,
+    )
+    trace_context = _trace_context_from_adapter_result(
+        bank_root=tmp_path / "bank",
+        adapter_result=source,
+    )
+    result = formal_runner.dispatch_paper_case(
+        case=case,
+        condition=condition,
+        output_root=(tmp_path / "trace").as_posix(),
+        transport=ScriptedFactorizationRangeTransport(),
+        real_transport=False,
+        ai_api_config=None,
+        entry_id=None,
+        max_tokens=512,
+        timeout_seconds=30,
+        trace_context=trace_context,
+    )
+    event_types = {event["event_type"] for event in result.event_records}
+    assert {
+        "TASK_REGISTERED",
+        "LEASE_STATE_CHANGED",
+        "EXECUTION_REQUEST_RECORDED",
+    } <= event_types
+    assert {"VERIFICATION_RECORDED", "CANONICAL_OUTPUTS_BOUND"} <= event_types
+    assert any("MERGE" in event_type for event_type in event_types)
+    assert any("SETTLEMENT" in event_type for event_type in event_types)
+    assert result.task_result.root_status is PaperTaskStatus.COMPLETED
+
+
+def test_runner_object_graph_never_materializes_source(tmp_path: Path) -> None:
+    from tests.experiments.test_factorization_paper_adapter import _v2_condition
+    from tokenshare.experiments.factorization_paper_adapter import (
+        ScriptedFactorizationRangeTransport,
+        run_factorization_paper_case,
+    )
+    from tokenshare.experiments.paper_factorization_catalog import (
+        generate_factorization_paper_cases,
+    )
+
+    case = generate_factorization_paper_cases()[0]
+    condition = _v2_condition(case)
+    source = run_factorization_paper_case(
+        case=case,
+        condition=condition,
+        output_root=tmp_path / "source",
+        transport=ScriptedFactorizationRangeTransport(),
+        real_transport=False,
+    )
+    bank_root = tmp_path / "bank"
+    runtime = _trace_context_from_adapter_result(
+        bank_root=bank_root,
+        adapter_result=source,
+    )
+    source_bytes = {
+        path.relative_to(bank_root).as_posix(): path.read_bytes()
+        for path in bank_root.rglob("*")
+        if path.is_file()
+    }
+    assert not any(
+        isinstance(value, (bytes, bytearray))
+        for value in runtime.__dict__.values()
+    )
+    result = formal_runner.dispatch_paper_case(
+        case=case,
+        condition=condition,
+        output_root=(tmp_path / "trace").as_posix(),
+        transport=ScriptedFactorizationRangeTransport(),
+        real_transport=False,
+        ai_api_config=None,
+        entry_id=None,
+        max_tokens=512,
+        timeout_seconds=30,
+        trace_context=runtime,
+    )
+    assert result.task_result.root_status is PaperTaskStatus.COMPLETED
+    assert {
+        path.relative_to(bank_root).as_posix(): path.read_bytes()
+        for path in bank_root.rglob("*")
+        if path.is_file()
+    } == source_bytes
+    assert not (Path(result.output_root) / "objects").exists()
+
+
+def test_trace_current_provider_calls_are_zero(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tests.experiments.test_lean_paper_adapter import _condition_for_case
+    from tests.support.lean_checker import RecordingLeanChecker
+    from tokenshare.plugins.lean_proof.checker import LeanCheckerStatus
+    from tokenshare.experiments.lean_paper_adapter import (
+        ScriptedLeanPaperProofTransport,
+        run_lean_paper_case,
+    )
+    import tokenshare.experiments.lean_paper_adapter as lean_adapter_module
+    import tokenshare.experiments.paper_catalog as paper_catalog_module
+    from tokenshare.experiments.paper_dispatcher import PaperTraceRuntimeContext
+
+    case = paper_catalog_module._with_lean_v1_paper_difficulty(
+        json.loads(
+            Path("benchmarks/paper/lean_catalog.v1.jsonl")
+            .read_text(encoding="utf-8")
+            .splitlines()[0]
+        )
+    )
+    environment = lean_adapter_module.default_lean_paper_environment_manifest()
+    object.__setattr__(environment, "environment_digest", case["environment_digest"])
+    monkeypatch.setattr(
+        lean_adapter_module,
+        "default_lean_paper_environment_manifest",
+        lambda: environment,
+    )
+    condition = _condition_for_case(CATALOG_DIGEST, case)
+    source = run_lean_paper_case(
+        case=case,
+        condition=condition,
+        output_root=tmp_path / "lean-source",
+        transport=ScriptedLeanPaperProofTransport(),
+        real_transport=False,
+        checker=RecordingLeanChecker(),
+    )
+    context = _trace_context_from_adapter_result(
+        bank_root=tmp_path / "lean-bank",
+        adapter_result=source,
+        replacement_count=2,
+    )
+    transport = ScriptedLeanPaperProofTransport()
+
+    class RejectFirstChecker(RecordingLeanChecker):
+        def __call__(self, request, *, artifact_store, environment_manifest):
+            self.status = (
+                LeanCheckerStatus.REJECTED
+                if not self.requests
+                else LeanCheckerStatus.ACCEPTED
+            )
+            return super().__call__(
+                request,
+                artifact_store=artifact_store,
+                environment_manifest=environment_manifest,
+            )
+
+    checker = RejectFirstChecker()
+    result = formal_runner.dispatch_paper_case(
+        case=case,
+        condition=condition,
+        output_root=(tmp_path / "lean-trace").as_posix(),
+        transport=transport,
+        real_transport=False,
+        ai_api_config=None,
+        entry_id=None,
+        max_tokens=1024,
+        timeout_seconds=30,
+        checker=checker,
+        trace_context=context,
+    )
+
+    assert PaperTraceRuntimeContext.current_provider_call_count == 0
+    assert transport.calls == []
+    assert result.task_result.provider_attempt_count == 0
+    assert checker.requests
+    event_types = {event["event_type"] for event in result.event_records}
+    assert {
+        "TASK_REGISTERED",
+        "LEASE_STATE_CHANGED",
+        "EXECUTION_REQUEST_RECORDED",
+        "VERIFICATION_RECORDED",
+        "CANONICAL_OUTPUTS_BOUND",
+    } <= event_types
+    assert any(
+        event["event_type"] == "TRACE_DELIVERY_COMMITTED.v1"
+        for event in result.event_records
+    )
+    assert result.merge_summary["status"] == "completed"
+    assert any(
+        attempt.attempt_status is PaperAttemptStatus.CHECKER_REJECTED
+        for attempt in result.attempt_results
+    )
+    captured_facts = []
+    evaluate_evidence = formal_runner.evaluate_versioned_paper_evidence
+
+    def capture_evidence(facts):
+        captured_facts.append(facts)
+        return evaluate_evidence(facts)
+
+    monkeypatch.setattr(
+        formal_runner,
+        "evaluate_versioned_paper_evidence",
+        capture_evidence,
+    )
+    missing_receipt = formal_runner._evaluate_trace_root_evidence(
+        adapter_result=result,
+        adapter_root=Path(result.output_root),
+        trace_runtime=context,
+    )
+    manifest = context.resolver.index.manifest
+    paid_context = replace(
+        context,
+        paid_receipt_claim={
+            "schema_version": "tokenshare.paid_execution_receipt_claim.v1",
+            "receipt_scope": "epd027_full_bank_acquisition",
+            "receipt_digest": manifest.created_by_paid_receipt_digest,
+            "manifest_digest": manifest.manifest_digest,
+        },
+    )
+    paid = formal_runner._evaluate_trace_root_evidence(
+        adapter_result=result,
+        adapter_root=Path(result.output_root),
+        trace_runtime=paid_context,
+    )
+    assert missing_receipt.paper_eligible is False
+    assert "paid_full_acquisition_receipt_required" in (
+        missing_receipt.ineligibility_reasons
+    )
+    assert paid.paper_eligible is True
+    facts = captured_facts[-1]
+    planned_ids = tuple(
+        binding["planned_ai_unit_id"] for binding in facts.executed_unit_bindings
+    )
+    unit_ids = tuple(
+        binding["unit_id"] for binding in facts.executed_unit_bindings
+    )
+    assert facts.executed_ai_unit_count == len(set(planned_ids)) == len(planned_ids)
+    assert len(set(unit_ids)) == len(unit_ids)
+    assert len(facts.current_lifecycle_refs) == len(unit_ids)
+    rejected_planned_id = next(
+        attempt.planned_ai_unit_id
+        for attempt in result.attempt_results
+        if attempt.attempt_status is PaperAttemptStatus.CHECKER_REJECTED
+    )
+    rejected_source_binding = next(
+        binding
+        for binding in facts.trace_source_bindings
+        if binding["planned_ai_unit_id"] == rejected_planned_id
+    )
+    assert [
+        replacement["replacement_slot"]
+        for replacement in rejected_source_binding["replacements"]
+    ] == [0, 1]
+    assert len({
+        replacement["entry_id"]
+        for replacement in rejected_source_binding["replacements"]
+    }) == 2

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 from pathlib import Path
 from typing import Any
 
@@ -639,3 +640,145 @@ def test_exp5_strategy_rejects_failover_and_requires_persisted_model_records(
             attempts=(drifted,),
             **shared,
         )
+
+
+def test_runner_uses_logical_scheduler_for_trace_and_real_clock_for_online(
+    tmp_path: Path,
+) -> None:
+    from tests.experiments.test_factorization_paper_adapter import _v2_condition
+    from tests.experiments.test_paper_formal_runner import (
+        _trace_context_from_adapter_result,
+    )
+    from tokenshare.experiments.factorization_paper_adapter import (
+        ScriptedFactorizationRangeTransport,
+        run_factorization_paper_case,
+    )
+    from tokenshare.experiments.paper_dispatcher import dispatch_paper_case
+    from tokenshare.experiments.paper_factorization_catalog import (
+        generate_factorization_paper_cases,
+    )
+    from tokenshare.experiments.paper_formal_callbacks import runtime_timing_policy
+    from tokenshare.core.models import ArtifactRef
+    from tokenshare.local_runtime.contracts import PreparedTraceDelivery
+    from tokenshare.storage.artifacts import ArtifactStore
+
+    trace = runtime_timing_policy(evidence_class="real_model_trace_protocol_run")
+    online = runtime_timing_policy(evidence_class="online_real_provider")
+
+    assert trace.trace_delay_policy == "logical_source_latency_1x"
+    assert trace.logical_scheduler is not None
+    assert online.trace_delay_policy == "online_real_time"
+    assert online.logical_scheduler is None
+
+    case = generate_factorization_paper_cases()[0]
+    condition = _v2_condition(case)
+    source = run_factorization_paper_case(
+        case=case,
+        condition=condition,
+        output_root=tmp_path / "source",
+        transport=ScriptedFactorizationRangeTransport(),
+        real_transport=False,
+    )
+    runtime = _trace_context_from_adapter_result(
+        bank_root=tmp_path / "bank",
+        adapter_result=source,
+    )
+    result = dispatch_paper_case(
+        case=case,
+        condition=condition,
+        output_root=(tmp_path / "trace").as_posix(),
+        transport=ScriptedFactorizationRangeTransport(),
+        real_transport=False,
+        ai_api_config=None,
+        entry_id=None,
+        max_tokens=512,
+        timeout_seconds=30,
+        trace_context=runtime,
+    )
+    assert result.task_result.wall_clock_ms > 0
+    trace_store = ArtifactStore(Path(result.output_root))
+    deliveries = [
+        PreparedTraceDelivery.from_dict(
+            json.loads(
+                trace_store.read_bytes(
+                    ArtifactRef.from_dict(event["payload"]["current_wrapper_ref"])
+                ).decode("utf-8")
+            )
+        )
+        for event in result.event_records
+        if event["event_type"] == "TRACE_DELIVERY_COMMITTED.v1"
+    ]
+    assert {delivery.source_latency_ms for delivery in deliveries} == {10}
+
+
+def test_worker_death_parent_commit_and_ordinal_replacement_flow(
+    tmp_path: Path,
+) -> None:
+    from tests.experiments.test_factorization_paper_adapter import _v2_condition
+    from tests.experiments.test_paper_formal_runner import (
+        _trace_context_from_adapter_result,
+    )
+    from tokenshare.experiments.factorization_paper_adapter import (
+        ScriptedFactorizationRangeTransport,
+        run_factorization_paper_case,
+    )
+    from tokenshare.experiments.paper_dispatcher import dispatch_paper_case
+    from tokenshare.experiments.paper_factorization_catalog import (
+        generate_factorization_paper_cases,
+    )
+    from tokenshare.experiments.paper_models import PaperAttemptStatus
+    from tokenshare.local_runtime import WorkerTerminationPolicy
+
+    case = generate_factorization_paper_cases()[0]
+    condition = _v2_condition(case)
+    source = run_factorization_paper_case(
+        case=case,
+        condition=condition,
+        output_root=tmp_path / "source",
+        transport=ScriptedFactorizationRangeTransport(),
+        real_transport=False,
+    )
+    trace_context = _trace_context_from_adapter_result(
+        bank_root=tmp_path / "bank",
+        adapter_result=source,
+        replacement_count=2,
+    )
+    result = dispatch_paper_case(
+        case=case,
+        condition=condition,
+        output_root=(tmp_path / "trace").as_posix(),
+        transport=ScriptedFactorizationRangeTransport(),
+        real_transport=False,
+        ai_api_config=None,
+        entry_id=None,
+        max_tokens=512,
+        timeout_seconds=30,
+        worker_termination_policy=WorkerTerminationPolicy(
+            target_planned_ai_unit_ids=("range_0",),
+            kill_point="progress_25",
+            total_planned_ai_unit_count=2,
+        ),
+        trace_context=trace_context,
+    )
+
+    dead = [
+        attempt
+        for attempt in result.attempt_results
+        if attempt.attempt_status == PaperAttemptStatus.WORKER_DIED
+    ]
+    replacement = [
+        attempt
+        for attempt in result.attempt_results
+        if attempt.planned_ai_unit_id == "range_0"
+        and attempt.attempt_status == PaperAttemptStatus.SUCCEEDED
+    ]
+    committed_attempt_ids = {
+        event["payload"]["attempt_id"]
+        for event in result.event_records
+        if event["event_type"] == "TRACE_DELIVERY_COMMITTED.v1"
+    }
+    assert len(dead) == 1
+    assert len(replacement) == 1
+    assert dead[0].attempt_id not in committed_attempt_ids
+    assert replacement[0].attempt_id in committed_attempt_ids
+    assert replacement[0].entry_id == "entry-range_0-1"

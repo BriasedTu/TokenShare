@@ -42,6 +42,7 @@ from tokenshare.experiments.paper_models import (
     PaperConditionResult,
     PaperExperimentCondition,
 )
+from tokenshare.experiments.paper_response_bank import PaperTraceRuntimeContext
 from tokenshare.experiments.paper_catalog_execution_view import (
     freeze_catalog_execution_view,
 )
@@ -293,6 +294,7 @@ def dispatch_paper_case(
     ablation_mode: str | None = None,
     worker_termination_policy: Any | None = None,
     checker: Any | None = None,
+    trace_context: PaperTraceRuntimeContext | None = None,
 ) -> Any:
     """把一个冻结 paper case 路由到所属插件的 adapter。"""
 
@@ -311,6 +313,7 @@ def dispatch_paper_case(
         ablation_mode=ablation_mode,
         worker_termination_policy=worker_termination_policy,
         protocol_run_dispatcher=execute_protocol_request,
+        trace_context=trace_context,
     )
     if condition.domain == "factorization":
         if checker is not None:

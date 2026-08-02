@@ -6,7 +6,7 @@ import json
 from dataclasses import asdict, dataclass, field, is_dataclass, replace
 from decimal import Decimal
 from pathlib import Path
-from typing import Any, Callable, Mapping, Sequence
+from typing import Any, Callable, ClassVar, Mapping, Sequence
 
 from tokenshare.executors.ai_api import (
     PROVIDER_FAILURE_TAXONOMY,
@@ -26,6 +26,7 @@ from tokenshare.executors.response_bank import (
     inventory_entry_id,
     semantic_slot_key,
 )
+from tokenshare.executors.trace_backed import TraceSourceBinding
 from tokenshare.experiments.paper_budget_ledger import (
     BudgetExceededError,
     PaperBudgetLedger,
@@ -108,6 +109,262 @@ class InventoryPreflightResult:
     provider_call_count: int
     coordinator_constructed: bool
     coordinator: Any = None
+
+
+@dataclass(frozen=True, kw_only=True)
+class FormalTraceInventoryPreflightResult:
+    """formal runner 在任何协议对象之前消费的纯 completeness 结果。"""
+
+    status: str
+    blocked_records: tuple[ResponseBankPreflightBlockedRecord, ...]
+    required_inventory_entry_ids: tuple[str, ...]
+    available_inventory_entry_ids: tuple[str, ...]
+    protocol_engine_event_count: int = 0
+    provider_call_count: int = 0
+    schema_version: str = "tokenshare.formal_trace_inventory_preflight.v1"
+
+
+@dataclass(frozen=True, kw_only=True)
+class PaperTraceRuntimeContext:
+    """单个 root 的 opaque trace runtime 输入；不保存 source 对象正文。"""
+
+    resolver: "ResponseBankResolver"
+    bindings: tuple[TraceSourceBinding, ...]
+    paid_receipt_claim: Mapping[str, Any] | None = None
+    current_provider_call_count: ClassVar[int] = 0
+
+    def __post_init__(self) -> None:
+        from tokenshare.executors.response_bank import ResponseBankResolver
+
+        if not isinstance(self.resolver, ResponseBankResolver):
+            raise TypeError("trace runtime resolver must be ResponseBankResolver")
+        if not self.bindings or any(
+            not isinstance(binding, TraceSourceBinding) for binding in self.bindings
+        ):
+            raise TypeError("trace runtime bindings must be non-empty TraceSourceBinding values")
+        if self.paid_receipt_claim is not None:
+            if not isinstance(self.paid_receipt_claim, Mapping):
+                raise TypeError("trace paid receipt claim must be a mapping or null")
+            object.__setattr__(self, "paid_receipt_claim", dict(self.paid_receipt_claim))
+
+
+@dataclass(frozen=True, kw_only=True)
+class PaperTraceCaseBinding:
+    condition_id: str
+    case_id: str
+    case_record_digest: str
+    runtime: PaperTraceRuntimeContext
+    inventory_entry_ids: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        if not self.condition_id or not self.case_id:
+            raise ValueError("trace case binding requires condition_id and case_id")
+        if (
+            not isinstance(self.case_record_digest, str)
+            or not self.case_record_digest.startswith("sha256:")
+            or len(self.case_record_digest) != 71
+        ):
+            raise ValueError("trace case binding requires canonical case_record_digest")
+        if (
+            not self.inventory_entry_ids
+            or len(set(self.inventory_entry_ids)) != len(self.inventory_entry_ids)
+            or any(not item for item in self.inventory_entry_ids)
+        ):
+            raise ValueError("trace case inventory entry identities must be non-empty and unique")
+
+
+@dataclass(frozen=True, kw_only=True)
+class PaperFormalTraceContext:
+    inventory_plan: SemanticInventoryPlan
+    cases: tuple[PaperTraceCaseBinding, ...]
+
+    def __post_init__(self) -> None:
+        keys = tuple((item.condition_id, item.case_id) for item in self.cases)
+        if not keys or len(set(keys)) != len(keys):
+            raise ValueError("formal trace cases must be non-empty and unique")
+        if (
+            self.inventory_plan.schema_version
+            != "tokenshare.response_bank_semantic_inventory_plan.v1"
+            or self.inventory_plan.expected_slot_count
+            != len(self.inventory_plan.rows)
+            or (
+                self.inventory_plan.terminal_provider_failure_count
+                + self.inventory_plan.terminal_success_count
+                + self.inventory_plan.terminal_unacquired_count
+            )
+            != len(self.inventory_plan.rows)
+        ):
+            raise ValueError("formal trace inventory plan identity/count mismatch")
+        if canonical_digest(
+            [
+                row.to_dict()
+                for row in sorted(
+                    self.inventory_plan.rows,
+                    key=lambda item: item.inventory_entry_id,
+                )
+            ]
+        ) != self.inventory_plan.inventory_digest:
+            raise ValueError("formal trace inventory identity digest mismatch")
+        rows_by_id = {
+            row.inventory_entry_id: row for row in self.inventory_plan.rows
+        }
+        if len(rows_by_id) != len(self.inventory_plan.rows):
+            raise ValueError("formal trace inventory identities must be unique")
+        condition_slots: dict[str, set[str]] = {}
+        case_slots: dict[tuple[str, str, str], set[str]] = {}
+        for ref in self.inventory_plan.condition_refs:
+            condition_id = str(ref["condition_id"])
+            if condition_id in condition_slots:
+                raise ValueError("formal trace condition identities must be unique")
+            condition_slots[condition_id] = set(ref["semantic_slot_keys"])
+            refs_for_condition: set[str] = set()
+            case_refs = ref.get("case_refs")
+            if not isinstance(case_refs, list) or not case_refs:
+                raise ValueError("formal trace plan requires canonical case references")
+            for case_ref in case_refs:
+                case_id = str(case_ref["case_id"])
+                case_record_digest = str(case_ref["case_record_digest"])
+                identity = (condition_id, case_id, case_record_digest)
+                if identity in case_slots:
+                    raise ValueError("formal trace case references must be unique")
+                slots = set(case_ref["semantic_slot_keys"])
+                if not case_id or not slots:
+                    raise ValueError("formal trace case reference identity is incomplete")
+                case_slots[identity] = slots
+                refs_for_condition.update(slots)
+            if refs_for_condition != condition_slots[condition_id]:
+                raise ValueError("formal trace case references do not cover condition slots")
+        covered_by_condition: dict[str, set[str]] = {}
+        covered_cases: set[tuple[str, str, str]] = set()
+        for item in self.cases:
+            expected_slots = condition_slots.get(item.condition_id)
+            if expected_slots is None:
+                raise ValueError("formal trace condition identity is absent from plan")
+            case_identity = (
+                item.condition_id,
+                item.case_id,
+                item.case_record_digest,
+            )
+            expected_case_slots = case_slots.get(case_identity)
+            if expected_case_slots is None:
+                raise ValueError("formal trace case record digest identity mismatch")
+            covered_cases.add(case_identity)
+            resolver_rows = {
+                row.inventory_entry_id: row
+                for row in item.runtime.resolver.index.inventory_rows
+            }
+            declared_ids = set(item.inventory_entry_ids)
+            for entry_id in declared_ids:
+                planned = rows_by_id.get(entry_id)
+                canonical = resolver_rows.get(entry_id)
+                if (
+                    planned is not None
+                    and planned.case_record_digest != item.case_record_digest
+                ):
+                    raise ValueError("formal trace case record digest identity mismatch")
+                if (
+                    planned is None
+                    or canonical is None
+                    or planned.to_dict() != canonical.to_dict()
+                    or planned.semantic_slot_key not in expected_slots
+                    or planned.semantic_slot_key not in expected_case_slots
+                ):
+                    raise ValueError("formal trace case inventory identity mismatch")
+                covered_by_condition.setdefault(item.condition_id, set()).add(
+                    planned.semantic_slot_key
+                )
+            if {
+                rows_by_id[entry_id].semantic_slot_key for entry_id in declared_ids
+            } != expected_case_slots:
+                raise ValueError("formal trace case semantic identity coverage mismatch")
+            terminal_by_id = {
+                entry.inventory_entry_id: entry
+                for entry in item.runtime.resolver.index.entries
+            }
+            bound_terminal_ids: set[str] = set()
+            for binding in item.runtime.bindings:
+                if (
+                    binding.bank_root_id
+                    != item.runtime.resolver.index.manifest.bank_root_id
+                    or binding.manifest_digest
+                    != item.runtime.resolver.index.manifest.manifest_digest
+                ):
+                    raise ValueError("formal trace source binding identity mismatch")
+                for replacement in binding.replacements:
+                    entry = item.runtime.resolver.index.entry(replacement.entry_id)
+                    bound_terminal_ids.add(entry.inventory_entry_id)
+                    row = resolver_rows.get(entry.inventory_entry_id)
+                    if (
+                        entry.inventory_entry_id not in declared_ids
+                        or terminal_by_id.get(entry.inventory_entry_id) != entry
+                        or row is None
+                        or row.planned_ai_unit_id != binding.planned_ai_unit_id
+                        or row.sample_slot_index != binding.sample_slot_index
+                        or row.replacement_slot != replacement.replacement_slot
+                        or row.inference_request_digest
+                        != replacement.inference_request_digest
+                    ):
+                        raise ValueError("formal trace terminal identity mismatch")
+            if bound_terminal_ids != (set(terminal_by_id) & declared_ids):
+                raise ValueError("formal trace terminal binding coverage identity mismatch")
+        if any(
+            covered_by_condition.get(condition_id, set()) != slots
+            for condition_id, slots in condition_slots.items()
+        ):
+            raise ValueError("formal trace condition semantic identity coverage mismatch")
+        if covered_cases != set(case_slots):
+            raise ValueError("formal trace case reference coverage mismatch")
+
+    def runtime_for(self, *, condition_id: str, case_id: str) -> PaperTraceRuntimeContext:
+        matches = tuple(
+            item.runtime
+            for item in self.cases
+            if item.condition_id == condition_id and item.case_id == case_id
+        )
+        if len(matches) != 1:
+            raise KeyError("formal trace runtime is missing for condition/case")
+        return matches[0]
+
+    @property
+    def available_inventory_entry_ids(self) -> tuple[str, ...]:
+        return tuple(
+            dict.fromkeys(
+                entry.inventory_entry_id
+                for item in self.cases
+                for entry in item.runtime.resolver.index.entries
+                if entry.inventory_entry_id in set(item.inventory_entry_ids)
+            )
+        )
+
+
+def preflight_formal_trace_inventory(
+    *,
+    required_inventory_entry_ids: Sequence[str],
+    available_inventory_entry_ids: Sequence[str],
+) -> FormalTraceInventoryPreflightResult:
+    """只比较 frozen inventory identity；manifest/index/locator 由 resolver 验证。"""
+
+    required = tuple(dict.fromkeys(str(item) for item in required_inventory_entry_ids))
+    available = tuple(dict.fromkeys(str(item) for item in available_inventory_entry_ids))
+    if any(not item for item in (*required, *available)):
+        raise ValueError("inventory entry ids must be non-empty")
+    available_set = set(available)
+    missing = tuple(item for item in required if item not in available_set)
+    records = tuple(
+        ResponseBankPreflightBlockedRecord(
+            schema_version="tokenshare.response_bank_preflight_blocked.v1",
+            inventory_entry_id=entry_id,
+            semantic_slot_key="unavailable_before_protocol",
+            reason="required semantic slot is missing",
+        )
+        for entry_id in missing
+    )
+    return FormalTraceInventoryPreflightResult(
+        status="blocked" if records else "ready",
+        blocked_records=records,
+        required_inventory_entry_ids=required,
+        available_inventory_entry_ids=available,
+    )
 
 
 class AcquisitionAuthorizationError(RuntimeError):
@@ -1068,11 +1325,17 @@ def preflight_inventory_before_coordinator(
 ) -> InventoryPreflightResult:
     """在 coordinator 构造前逐 slot 检查 inventory 完整性。"""
 
-    available = set(available_inventory_entry_ids)
+    completeness = preflight_formal_trace_inventory(
+        required_inventory_entry_ids=tuple(
+            row.inventory_entry_id for row in plan.rows
+        ),
+        available_inventory_entry_ids=available_inventory_entry_ids,
+    )
+    available = set(completeness.available_inventory_entry_ids)
     missing_rows = tuple(
         row for row in plan.rows if row.inventory_entry_id not in available
     )
-    if missing_rows:
+    if completeness.status == "blocked":
         records = tuple(
             ResponseBankPreflightBlockedRecord(
                 schema_version="tokenshare.response_bank_preflight_blocked.v1",
@@ -1118,10 +1381,29 @@ def _append_condition_ref(
             "fault_type": candidate.fault_type,
             "ablation_mode": candidate.ablation_mode,
             "semantic_slot_keys": [],
+            "case_refs": [],
         },
     )
     if slot_key not in value["semantic_slot_keys"]:
         value["semantic_slot_keys"].append(slot_key)
+    matching_case_refs = [
+        case_ref
+        for case_ref in value["case_refs"]
+        if case_ref["case_id"] == candidate.case_id
+    ]
+    if matching_case_refs:
+        case_ref = matching_case_refs[0]
+        if case_ref["case_record_digest"] != candidate.case_record_digest:
+            raise ValueError("one formal case_id cannot map to multiple record digests")
+    else:
+        case_ref = {
+            "case_id": candidate.case_id,
+            "case_record_digest": candidate.case_record_digest,
+            "semantic_slot_keys": [],
+        }
+        value["case_refs"].append(case_ref)
+    if slot_key not in case_ref["semantic_slot_keys"]:
+        case_ref["semantic_slot_keys"].append(slot_key)
 
 
 def _validate_candidate_matches_prepared(
@@ -1256,6 +1538,10 @@ __all__ = [
     "AcquisitionRequest",
     "AcquisitionResult",
     "InventoryPreflightResult",
+    "FormalTraceInventoryPreflightResult",
+    "PaperTraceRuntimeContext",
+    "PaperTraceCaseBinding",
+    "PaperFormalTraceContext",
     "PaidAcquisitionContext",
     "ResponseBankPreflightBlockedRecord",
     "ResponseBankAcquisitionOrchestrator",
@@ -1264,5 +1550,6 @@ __all__ = [
     "build_semantic_inventory",
     "output_root_path_digest",
     "preflight_inventory_before_coordinator",
+    "preflight_formal_trace_inventory",
     "replacement_slots_for",
 ]

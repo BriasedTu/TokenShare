@@ -15,6 +15,8 @@ from threading import Lock
 from typing import Any
 import uuid
 
+from tokenshare.core.models import ArtifactRef
+from tokenshare.executors.response_bank import CurrentTraceWrapper
 from tokenshare.executors.ai_api_config import AIAPIExecutorConfig
 from tokenshare.experiments.paper_catalog import estimated_ai_units_for_case
 from tokenshare.experiments.paper_catalog import PaperInputCatalogManifest
@@ -51,12 +53,17 @@ from tokenshare.experiments.paper_model_policy import (
     exp5_provider_specific_reasoning_controls,
 )
 from tokenshare.experiments.paper_models import (
+    PaperEvidenceEligibilityFacts,
     PaperBudgetResult,
     PaperConditionResult,
     PaperExperimentCondition,
     PaperStatus,
     PaperSuiteResult,
     digest_json,
+    evaluate_versioned_paper_evidence,
+)
+from tokenshare.experiments.paper_unit_commitments import (
+    build_ai_unit_binding_from_request,
 )
 from tokenshare.experiments.paper_runner import validate_experiment_dependency_order
 from tokenshare.experiments.paper_terminal_outcomes import (
@@ -74,6 +81,12 @@ from tokenshare.local_runtime import (
     RuntimeHookObservationKind,
     RuntimeHookObservationV1,
     WorkerTerminationPolicy,
+)
+from tokenshare.local_runtime.contracts import PreparedTraceDelivery
+from tokenshare.experiments.paper_response_bank import (
+    FormalTraceInventoryPreflightResult,
+    PaperFormalTraceContext,
+    preflight_formal_trace_inventory,
 )
 from tokenshare.plugins.factorization.schemas import (
     PLUGIN_VERSION as FACTORIZATION_PLUGIN_VERSION,
@@ -497,6 +510,7 @@ def execute_paper_formal_suite(
     suite_id: str = "paper_formal_suite",
     pre_execution_documents: Mapping[str, Any] | None = None,
     recovery_documents: Mapping[str, Any] | None = None,
+    trace_context: PaperFormalTraceContext | None = None,
 ) -> PaperSuiteResult:
     """校验冻结计划并通过注册 dispatcher 顺序执行 planned conditions。"""
 
@@ -532,6 +546,45 @@ def execute_paper_formal_suite(
         replay_only=replay_only,
         root_case_filter=normalized_root_filter,
     )
+    if trace_context is not None:
+        if real_transport:
+            raise ValueError("formal trace runtime cannot use current real transport")
+        trace_preflight = preflight_formal_trace_inventory(
+            required_inventory_entry_ids=tuple(
+                row.inventory_entry_id for row in trace_context.inventory_plan.rows
+            ),
+            available_inventory_entry_ids=(
+                trace_context.available_inventory_entry_ids
+            ),
+        )
+        if trace_preflight.status == "blocked":
+            _persist_trace_preflight_block(
+                output_root=output_root,
+                result=trace_preflight,
+            )
+            ended_at = _utc_now()
+            return PaperSuiteResult(
+                suite_id=suite_id,
+                status=PaperStatus.BLOCKED,
+                output_root=Path(output_root).as_posix(),
+                started_at=ended_at,
+                ended_at=ended_at,
+                experiment_ids=tuple(plan.experiment_id for plan in plans),
+                condition_count=sum(len(items) for _plan, items in bound_plans),
+                run_count=0,
+                task_count=0,
+                provider_attempt_count=0,
+                total_tokens=0,
+                total_cost_estimate=0.0,
+                cost_estimate_by_currency=None,
+                total_cost_estimate_status="not_applicable",
+                paper_eligible=False,
+                eligibility_report_ref=None,
+                budget_ref={"preflight_status": "blocked"},
+                metrics_refs=(),
+                audit_refs=(),
+                error_summary=("response_bank_incomplete",),
+            )
     disk_preflight = _preflight_formal_disk_capacity(
         output_root=output_root,
         budget=budget,
@@ -624,6 +677,7 @@ def execute_paper_formal_suite(
             normalized_root_filter=normalized_root_filter,
             classification=classification,
             results=results,
+            trace_context=trace_context,
         )
     except Exception as error:
         blocked_error = (
@@ -684,6 +738,7 @@ def execute_paper_formal_suite(
             transport=transport,
             real_transport=real_transport,
             execution_classification=classification,
+            trace_evidence=trace_context is not None,
         ),
         eligibility_report_ref=None,
         budget_ref={
@@ -706,6 +761,32 @@ def execute_paper_formal_suite(
     return suite_result
 
 
+def _persist_trace_preflight_block(
+    *,
+    output_root: str | Path,
+    result: FormalTraceInventoryPreflightResult,
+) -> Path:
+    """在 FormalEvidenceStore/协议 ledger 外持久化 trace completeness 阻断。"""
+
+    if result.status != "blocked" or not result.blocked_records:
+        raise ValueError("trace preflight block marker requires a blocked result")
+    root = Path(output_root)
+    root.mkdir(parents=True, exist_ok=True)
+    marker = root / "paper_preflight_blocked.v1.json"
+    body = {
+        "schema_version": "tokenshare.paper_preflight_blocked.v1",
+        "status": "blocked",
+        "protocol_engine_event_count": result.protocol_engine_event_count,
+        "provider_call_count": result.provider_call_count,
+        "blocked_records": [asdict(item) for item in result.blocked_records],
+    }
+    marker.write_text(
+        json.dumps(body, ensure_ascii=False, sort_keys=True, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    return marker
+
+
 def _dispatch_formal_conditions(
     *,
     suite_root: Path,
@@ -723,6 +804,7 @@ def _dispatch_formal_conditions(
     normalized_root_filter: Mapping[str, tuple[str, ...]],
     classification: Mapping[str, Any] | None,
     results: list[PaperConditionResult],
+    trace_context: PaperFormalTraceContext | None,
 ) -> None:
     for plan, bound_items in bound_plans:
         if plan.status == "blocked":
@@ -763,6 +845,7 @@ def _dispatch_formal_conditions(
                     condition.condition_id
                 ),
                 execution_classification=classification,
+                trace_context=trace_context,
             )
             context = PaperExecutionContext(
                 context_id=(
@@ -2557,10 +2640,13 @@ def _suite_paper_eligible(
     transport: Any,
     real_transport: bool,
     execution_classification: Mapping[str, Any] | None = None,
+    trace_evidence: bool = False,
 ) -> bool:
     if execution_classification is not None:
         return False
-    if not real_transport or _is_offline_capturing_transport(transport):
+    if not trace_evidence and (
+        not real_transport or _is_offline_capturing_transport(transport)
+    ):
         return False
     if not results or any(not plan.paper_eligible_possible for plan in plans):
         return False
@@ -3046,6 +3132,207 @@ def _validate_exp5_binding(
             raise ValueError(f"Exp5 approved member {field_name} mismatch")
 
 
+def _artifact_identity(value: Any) -> str | None:
+    if not isinstance(value, Mapping):
+        return None
+    for field_name in ("artifact_id", "content_hash", "event_id"):
+        candidate = value.get(field_name)
+        if isinstance(candidate, str) and candidate:
+            return candidate
+    return None
+
+
+def _evaluate_trace_root_evidence(
+    *,
+    adapter_result: Any,
+    adapter_root: Path,
+    trace_runtime: Any,
+):
+    """从当前协议 ledger/artifact 与 canonical bank 构造 Task18 事实。"""
+
+    result_root = Path(_required_field(adapter_result, "output_root"))
+    store = ArtifactStore(result_root if result_root.is_dir() else adapter_root)
+    events = _sequence_field(adapter_result, "event_records")
+    request_events = {
+        str(_required_field(event, "payload")["attempt_id"]): event
+        for event in events
+        if _optional_field(event, "event_type") == "EXECUTION_REQUEST_RECORDED"
+    }
+    verification_events = {
+        str(_required_field(event, "payload")["attempt_id"]): event
+        for event in events
+        if _optional_field(event, "event_type") == "VERIFICATION_RECORDED"
+    }
+    commits = tuple(
+        event
+        for event in events
+        if _optional_field(event, "event_type") == "TRACE_DELIVERY_COMMITTED.v1"
+    )
+    canonical_attempt_ids = {
+        str(_required_field(event, "payload")["selected_attempt_id"])
+        for event in events
+        if _optional_field(event, "event_type") == "CANONICAL_OUTPUTS_BOUND"
+        and isinstance(
+            _required_field(event, "payload").get("selected_attempt_id"), str
+        )
+    }
+    attempt_values = _sequence_field(adapter_result, "attempt_results", "attempts")
+    current_provider_call_count = sum(
+        int(_optional_field(attempt, "provider_attempt_count") or 0)
+        for attempt in attempt_values
+    )
+    current_real_provider_attempt_refs = tuple(
+        {
+            "attempt_id": str(_required_field(attempt, "attempt_id")),
+            "provider_attempt_count": int(
+                _optional_field(attempt, "provider_attempt_count") or 0
+            ),
+        }
+        for attempt in attempt_values
+        if int(_optional_field(attempt, "provider_attempt_count") or 0) > 0
+    )
+    commit_candidates: list[dict[str, Any]] = []
+    for commit in commits:
+        payload = dict(_required_field(commit, "payload"))
+        attempt_id = str(payload["attempt_id"])
+        request_payload = dict(_required_field(request_events[attempt_id], "payload"))
+        request_ref = ArtifactRef.from_dict(request_payload["request_ref"])
+        request_body = json.loads(store.read_bytes(request_ref).decode("utf-8"))
+        planned_ai_unit_id = str(request_body["soft_hints"]["planned_ai_unit_id"])
+        delivery = PreparedTraceDelivery.from_dict(
+            json.loads(
+                store.read_bytes(
+                    ArtifactRef.from_dict(payload["current_wrapper_ref"])
+                ).decode("utf-8")
+            )
+        )
+        commit_candidates.append(
+            {
+                "commit": commit,
+                "payload": payload,
+                "attempt_id": attempt_id,
+                "request_body": request_body,
+                "planned_ai_unit_id": planned_ai_unit_id,
+                "delivery": delivery,
+            }
+        )
+
+    # 一个协议 unit 可能提交多个 replacement；Task18 的 executed/current 事实
+    # 只取 canonical attempt，若无 canonical 则取最大 attempt ordinal 的终态提交。
+    authoritative_by_unit: dict[tuple[str, str], dict[str, Any]] = {}
+    for candidate in commit_candidates:
+        delivery = candidate["delivery"]
+        key = (delivery.unit_id, candidate["planned_ai_unit_id"])
+        previous = authoritative_by_unit.get(key)
+        candidate_is_canonical = candidate["attempt_id"] in canonical_attempt_ids
+        previous_is_canonical = (
+            previous is not None
+            and previous["attempt_id"] in canonical_attempt_ids
+        )
+        if (
+            previous is None
+            or (candidate_is_canonical and not previous_is_canonical)
+            or (
+                candidate_is_canonical == previous_is_canonical
+                and delivery.attempt_ordinal
+                > previous["delivery"].attempt_ordinal
+            )
+        ):
+            authoritative_by_unit[key] = candidate
+
+    executed_bindings: list[dict[str, Any]] = []
+    wrappers: list[dict[str, Any]] = []
+    executed_planned_ids: list[str] = []
+    for candidate in sorted(
+        authoritative_by_unit.values(),
+        key=lambda item: (item["planned_ai_unit_id"], item["delivery"].unit_id),
+    ):
+        commit = candidate["commit"]
+        payload = candidate["payload"]
+        attempt_id = candidate["attempt_id"]
+        request_body = candidate["request_body"]
+        planned_ai_unit_id = candidate["planned_ai_unit_id"]
+        delivery = candidate["delivery"]
+        executed_planned_ids.append(planned_ai_unit_id)
+        executed_bindings.append(
+            build_ai_unit_binding_from_request(
+                planned_ai_unit_id=planned_ai_unit_id,
+                request_body=request_body,
+                store=store,
+                include_request_artifacts=False,
+            )
+        )
+        domain = executed_bindings[-1]["domain_unit_commitment"]["domain"]
+        checker_refs = tuple(payload.get("verifier_checker_refs", ()))
+        verification = verification_events.get(attempt_id)
+        wrappers.append(
+            CurrentTraceWrapper(
+                current_run_id=delivery.current_run_id,
+                current_task_id=delivery.task_id,
+                current_unit_id=delivery.unit_id,
+                current_attempt_id=delivery.attempt_id,
+                attempt_ordinal=delivery.attempt_ordinal,
+                bank_root_id=delivery.bank_root_id,
+                manifest_digest=delivery.manifest_digest,
+                root_binding_marker_digest=(
+                    trace_runtime.resolver.index.manifest.root_binding_marker_digest
+                ),
+                inference_request_digest=delivery.inference_request_digest,
+                entry_id=delivery.entry_id,
+                locator_digests={
+                    str(locator["object_role"]): str(locator["object_digest"])
+                    for locator in delivery.source_bank_object_locators
+                },
+                logical_started_at=f"logical:{delivery.logical_start_ms}",
+                logical_finished_at=f"logical:{delivery.logical_finish_ms}",
+                source_latency_ms=delivery.source_latency_ms,
+                current_parse_ref=_artifact_identity(payload.get("parser_result_ref")),
+                current_verifier_ref=(
+                    str(_required_field(verification, "event_id"))
+                    if domain == "factorization" and verification is not None
+                    else None
+                ),
+                current_checker_ref=(
+                    _artifact_identity(checker_refs[0])
+                    if domain == "lean_proof" and checker_refs
+                    else None
+                ),
+                current_canonical_ref=_artifact_identity(payload.get("canonical_ref")),
+                current_ledger_ref=str(_required_field(commit, "event_id")),
+            ).to_dict()
+        )
+    bindings_by_planned = {
+        binding.planned_ai_unit_id: binding for binding in trace_runtime.bindings
+    }
+    manifest = trace_runtime.resolver.index.manifest
+    facts = PaperEvidenceEligibilityFacts(
+        evidence_class="real_model_trace_protocol_run",
+        source_classification="approved_real_full_acquisition",
+        executed_ai_unit_count=len(executed_bindings),
+        executed_unit_bindings=tuple(executed_bindings),
+        current_provider_call_count=current_provider_call_count,
+        source_provider_call_count=len(trace_runtime.resolver.index.entries),
+        current_real_provider_attempt_refs=current_real_provider_attempt_refs,
+        current_lifecycle_refs=tuple(wrappers),
+        trace_source_bindings=tuple(
+            bindings_by_planned[planned_id].to_dict()
+            for planned_id in executed_planned_ids
+        ),
+        source_manifest=manifest.to_dict(),
+        source_inventory_rows=tuple(
+            row.to_dict() for row in trace_runtime.resolver.index.inventory_rows
+        ),
+        source_entries=tuple(
+            entry.to_dict() for entry in trace_runtime.resolver.index.entries
+        ),
+        paid_receipt_claim=trace_runtime.paid_receipt_claim,
+        direct_evidence_complete=True,
+        identity_consistent=True,
+        regression_only=False,
+    )
+    return evaluate_versioned_paper_evidence(facts)
+
+
 @dataclass(frozen=True, kw_only=True)
 class _RootExecutionOutcome:
     case_id: str
@@ -3127,6 +3414,7 @@ class _FormalConditionExecutionCallback:
     hard_limits: Mapping[str, Any]
     root_case_ids: tuple[str, ...] | None
     execution_classification: Mapping[str, Any] | None
+    trace_context: PaperFormalTraceContext | None = None
     usage_lock: Lock = field(default_factory=Lock, compare=False, repr=False)
     def __call__(self, **kwargs: Any) -> PaperConditionResult:
         condition = kwargs["condition"]
@@ -3403,6 +3691,14 @@ class _FormalConditionExecutionCallback:
             case_id=case_id,
             callback_kwargs=callback_kwargs,
         )
+        trace_runtime = (
+            self.trace_context.runtime_for(
+                condition_id=condition.condition_id,
+                case_id=case_id,
+            )
+            if self.trace_context is not None
+            else None
+        )
         try:
             adapter_result = dispatch_paper_case(
                 case=case,
@@ -3417,6 +3713,7 @@ class _FormalConditionExecutionCallback:
                 post_raw_output_hook=post_raw_output_hook,
                 ablation_mode=ablation_mode,
                 worker_termination_policy=worker_termination_policy,
+                trace_context=trace_runtime,
             )
         except (RuntimeError, OSError, TimeoutError) as error:
             with self.usage_lock:
@@ -3460,6 +3757,15 @@ class _FormalConditionExecutionCallback:
             )
         eligibility = _optional_field(adapter_result, "eligibility_report")
         attempts = _sequence_field(adapter_result, "attempt_results", "attempts")
+        if trace_runtime is not None:
+            eligibility = _evaluate_trace_root_evidence(
+                adapter_result=adapter_result,
+                adapter_root=adapter_root,
+                trace_runtime=trace_runtime,
+            )
+            task = _as_json(task)
+            task["paper_eligible"] = eligibility.paper_eligible
+            task["versioned_paper_evidence_report"] = eligibility.to_dict()
         (
             provider_latency_ms,
             provider_latency_evidence_status,
@@ -4504,7 +4810,19 @@ class _FormalConditionExecutionCallback:
                 ),
             ).to_dict()
         )
-        source_task_eligible = task_body.get("paper_eligible") is True
+        versioned_report = task_body.get("versioned_paper_evidence_report")
+        trace_evidence_reasons = (
+            list(versioned_report.get("ineligibility_reasons", ()))
+            if isinstance(versioned_report, Mapping)
+            and versioned_report.get("evidence_class")
+            == "real_model_trace_protocol_run"
+            else None
+        )
+        source_task_eligible = (
+            versioned_report.get("paper_eligible") is True
+            if trace_evidence_reasons is not None
+            else task_body.get("paper_eligible") is True
+        )
         task_body.update(self._evidence_flags(paper_eligible=False))
         task_body["source_projection_paper_eligible"] = source_task_eligible
         attempt_values = _sequence_field(adapter_result, "attempt_results", "attempts")
@@ -4530,12 +4848,16 @@ class _FormalConditionExecutionCallback:
         for attempt in attempts:
             attempt.setdefault("record_scope", task_body["record_scope"])
             source_attempt_eligible = attempt.get("paper_eligible") is True
-            attempt_reasons = _attempt_checkpoint_ineligibility_reasons(
-                attempt=attempt,
-                protocol_runtime=protocol_runtime,
-                real_transport=self.real_transport,
-                transport=self.transport,
-                source_attempt_eligible=source_attempt_eligible,
+            attempt_reasons = (
+                list(trace_evidence_reasons)
+                if trace_evidence_reasons is not None
+                else _attempt_checkpoint_ineligibility_reasons(
+                    attempt=attempt,
+                    protocol_runtime=protocol_runtime,
+                    real_transport=self.real_transport,
+                    transport=self.transport,
+                    source_attempt_eligible=source_attempt_eligible,
+                )
             )
             attempt.update(self._evidence_flags(paper_eligible=not attempt_reasons))
             attempt["source_projection_paper_eligible"] = source_attempt_eligible
@@ -4630,14 +4952,18 @@ class _FormalConditionExecutionCallback:
             artifact_refs.append(shared_reference_ref)
             task_body["shared_exp1_reference_ref"] = shared_reference_ref
         task_body["evidence_artifact_refs"] = list(artifact_refs)
-        task_reasons = _task_checkpoint_ineligibility_reasons(
-            task=task_body,
-            attempts=attempts,
-            events=events,
-            protocol_runtime=protocol_runtime,
-            real_transport=self.real_transport,
-            transport=self.transport,
-            source_task_eligible=source_task_eligible,
+        task_reasons = (
+            list(trace_evidence_reasons)
+            if trace_evidence_reasons is not None
+            else _task_checkpoint_ineligibility_reasons(
+                task=task_body,
+                attempts=attempts,
+                events=events,
+                protocol_runtime=protocol_runtime,
+                real_transport=self.real_transport,
+                transport=self.transport,
+                source_task_eligible=source_task_eligible,
+            )
         )
         task_body.update(self._evidence_flags(paper_eligible=not task_reasons))
         task_body["source_projection_paper_eligible"] = source_task_eligible

@@ -21,6 +21,11 @@ from tokenshare.experiments.paper_workers import (
     record_worker_death_observation,
 )
 from tokenshare.storage.artifacts import ArtifactStore
+from tokenshare.local_runtime.logical_scheduler import (
+    LOGICAL_SOURCE_LATENCY_1X,
+    ONLINE_REAL_TIME,
+    LogicalSourceLatencyScheduler,
+)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -34,6 +39,33 @@ class FormalStrategyResult:
     replacement_attempts: tuple[Any, ...] = ()
     model_execution_records: tuple[dict[str, Any], ...] = ()
     schema_version: str = "tokenshare.paper_formal_strategy.v1"
+
+
+@dataclass(frozen=True, kw_only=True)
+class RuntimeTimingPolicy:
+    trace_delay_policy: str
+    logical_scheduler: LogicalSourceLatencyScheduler | None
+    current_provider_call_count: int
+
+
+def runtime_timing_policy(*, evidence_class: str) -> RuntimeTimingPolicy:
+    """把 evidence class 显式绑定到 logical 或在线 real-time 时钟域。"""
+
+    if evidence_class == "real_model_trace_protocol_run":
+        scheduler = LogicalSourceLatencyScheduler(start_ms=0)
+        scheduler.bind_wall_clock_origin("2026-07-14T00:00:00Z")
+        return RuntimeTimingPolicy(
+            trace_delay_policy=LOGICAL_SOURCE_LATENCY_1X,
+            logical_scheduler=scheduler,
+            current_provider_call_count=0,
+        )
+    if evidence_class == "online_real_provider":
+        return RuntimeTimingPolicy(
+            trace_delay_policy=ONLINE_REAL_TIME,
+            logical_scheduler=None,
+            current_provider_call_count=1,
+        )
+    raise ValueError("unsupported paper runtime evidence class")
 
 
 @dataclass

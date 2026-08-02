@@ -13,7 +13,7 @@ from dataclasses import dataclass, replace
 from math import isqrt
 from pathlib import Path
 from threading import Lock
-from typing import Any, Sequence
+from typing import Any, Mapping, Sequence
 
 from tokenshare.core.models import ArtifactRef, JsonObject, ProtocolConfig, TaskState, TaskUnit
 from tokenshare.executors.ai_api import AIAPIExecutor
@@ -29,11 +29,14 @@ from tokenshare.executors.contracts import (
     ExecutionSubmission,
 )
 from tokenshare.executors.trace_backed import (
+    TraceBackedExecutor,
+    TraceBackedParentStager,
     TraceDomainStageContext,
     TraceDomainStageResult,
     TraceSourceBinding,
     bind_trace_execution_request,
 )
+from tokenshare.experiments.paper_response_bank import PaperTraceRuntimeContext
 from tokenshare.experiments.paper_model_identity import (
     ValidatedModelEndpointBinding,
     build_fixed_entry_executor_requirements,
@@ -77,6 +80,14 @@ from tokenshare.local_runtime import (
     SequentialWorkerBackend,
     ThreadWorkerBackend,
     WorkerTerminationPolicy,
+)
+from tokenshare.local_runtime.logical_scheduler import (
+    LOGICAL_SOURCE_LATENCY_1X,
+    LogicalSourceLatencyScheduler,
+)
+from tokenshare.local_runtime.contracts import (
+    PreparedTraceDelivery,
+    WorkerCompletionSchedule,
 )
 from tokenshare.plugins.contracts import OutputContract
 from tokenshare.plugins.factorization.descriptor import build_factorization_plugin_descriptor
@@ -265,6 +276,7 @@ def run_factorization_paper_case(
     ablation_mode: str | None = None,
     worker_termination_policy: WorkerTerminationPolicy | None = None,
     protocol_run_dispatcher: Any | None = None,
+    trace_context: PaperTraceRuntimeContext | None = None,
 ) -> FactorizationPaperRunResult:
     """Deprecated compatibility API for historical/selector regressions.
 
@@ -333,6 +345,7 @@ def run_factorization_paper_case(
         ablation_mode=normalized_ablation_mode,
         worker_termination_policy=worker_termination_policy,
         selected_ai_unit_id=selected_ai_unit_id,
+        trace_context=trace_context,
     )
 
     # 以下旧 selector lifecycle 已与当前入口隔离，仅保留历史输出 reader provenance。
@@ -699,13 +712,81 @@ class _CapturedRangeCall:
     model_execution_record_ref: ArtifactRef | None
 
 
+@dataclass(frozen=True, kw_only=True)
+class _CapturedTraceRangeDelivery:
+    request: ExecutionRequest
+    delivery: PreparedTraceDelivery
+
+
+class _TraceRangeExecutorRecorder:
+    """保留公开 request/delivery 以投影；provider 计数恒为零。"""
+
+    def __init__(self, executor: TraceBackedExecutor) -> None:
+        self._executor = executor
+        self.calls: list[_CapturedTraceRangeDelivery] = []
+        self._calls_lock = Lock()
+
+    @property
+    def provider_call_count(self) -> int:
+        return 0
+
+    def __getstate__(self):
+        state = dict(self.__dict__)
+        state.pop("_calls_lock", None)
+        return state
+
+    def __setstate__(self, state):
+        self.__dict__.update(state)
+        self._calls_lock = Lock()
+
+    def execute(
+        self,
+        request: ExecutionRequest,
+        *,
+        submission_id: str,
+        submitted_at: str,
+    ) -> PreparedTraceDelivery:
+        delivery = self._executor.execute(
+            request,
+            submission_id=submission_id,
+            submitted_at=submitted_at,
+        )
+        with self._calls_lock:
+            self.calls.append(_CapturedTraceRangeDelivery(request=request, delivery=delivery))
+        return delivery
+
+    def export_process_result(
+        self,
+        request: ExecutionRequest,
+        submission: PreparedTraceDelivery,
+    ) -> _CapturedTraceRangeDelivery:
+        del submission
+        return next(
+            item for item in reversed(self.calls)
+            if item.request.attempt_id == request.attempt_id
+        )
+
+    def ingest_process_result(self, captured: _CapturedTraceRangeDelivery) -> None:
+        with self._calls_lock:
+            if any(
+                item.request.attempt_id == captured.request.attempt_id
+                for item in self.calls
+            ):
+                return
+            self.calls.append(captured)
+
 class FactorizationTraceDomainStage:
     """在 parent 内复用正式 Factorization parser 与 canonical normalizer。"""
 
     def __init__(self, plugin_runtime: FactorizationRuntimeAdapter) -> None:
         self._plugin_runtime = plugin_runtime
+        self.requests_by_attempt: dict[str, ExecutionRequest] = {}
+        self.deliveries_by_attempt: dict[str, PreparedTraceDelivery] = {}
+        self.submissions_by_attempt: dict[str, ExecutionSubmission] = {}
 
     def stage(self, context: TraceDomainStageContext) -> TraceDomainStageResult:
+        self.requests_by_attempt[context.request.attempt_id] = context.request
+        self.deliveries_by_attempt[context.request.attempt_id] = context.delivery
         parsed = parse_factorization_ai_output(
             context.parser_input_text,
             raw_output_ref_summary=context.current_wrapper_ref.to_dict(),
@@ -774,6 +855,7 @@ class FactorizationTraceDomainStage:
         normalized = self._plugin_runtime.normalize_range_submission(
             staged_submission
         )
+        self.submissions_by_attempt[request.attempt_id] = normalized
         canonical_ref = normalized.candidate_output_refs.get("range_result")
         if canonical_ref is None:
             raise ValueError("Factorization trace parser produced no range_result")
@@ -871,6 +953,39 @@ class FactorizationTraceExecutionBridge:
             submission_id=submission_id,
             submitted_at=submitted_at,
         )
+
+    def worker_completion_schedule(
+        self,
+        request: ExecutionRequest,
+        submission: ExecutionSubmission | PreparedTraceDelivery | None,
+        failure_kind: str | None,
+    ) -> WorkerCompletionSchedule | None:
+        del failure_kind
+        if isinstance(submission, PreparedTraceDelivery):
+            return WorkerCompletionSchedule(
+                source_latency_ms=submission.source_latency_ms,
+                attempt_ordinal=submission.attempt_ordinal,
+            )
+        return WorkerCompletionSchedule(
+            source_latency_ms=0,
+            attempt_ordinal=request.attempt_ordinal,
+        )
+
+    def export_process_result(
+        self,
+        request: ExecutionRequest,
+        submission: ExecutionSubmission | PreparedTraceDelivery,
+    ) -> _CapturedTraceRangeDelivery | None:
+        if not isinstance(submission, PreparedTraceDelivery):
+            return None
+        return self._trace_executor.export_process_result(request, submission)
+
+    def ingest_process_result(
+        self,
+        captured: _CapturedTraceRangeDelivery | None,
+    ) -> None:
+        if captured is not None:
+            self._trace_executor.ingest_process_result(captured)
 
 
 class _FixedIdentityRangeExecutor:
@@ -1094,6 +1209,56 @@ def _paper_task_status_from_runtime(
     raise ValueError("paper projection requires a terminal runtime status")
 
 
+def _trace_range_calls_from_events(
+    *,
+    requests: Mapping[str, ExecutionRequest],
+    deliveries: Mapping[str, PreparedTraceDelivery],
+    staged_submissions: Mapping[str, ExecutionSubmission],
+    runtime_events: Sequence[Any],
+    request_refs_by_id: dict[str, ArtifactRef],
+    store: ArtifactStore,
+) -> list[_CapturedRangeCall]:
+    committed_attempt_ids = [
+        str(event.payload["attempt_id"])
+        for event in runtime_events
+        if event.event_type == "TRACE_DELIVERY_COMMITTED.v1"
+    ]
+    result: list[_CapturedRangeCall] = []
+    for attempt_id in committed_attempt_ids:
+        request = requests[attempt_id]
+        delivery = deliveries[attempt_id]
+        submission = staged_submissions[attempt_id]
+        submission = replace(
+            submission,
+            usage_summary={
+                **dict(submission.usage_summary or {}),
+                "entry_id": delivery.entry_id,
+                "current_provider_call_count": 0,
+            },
+        )
+        usage_ref = store.save_json(
+            dict(submission.usage_summary or {}),
+            artifact_id=f"trace_current_usage_{request.attempt_id}",
+            artifact_type="TraceCurrentUsage",
+            artifact_schema_id="tokenshare.trace_current_usage",
+            artifact_schema_version="v1",
+            source={"kind": "trace_protocol_projection"},
+            metadata={"attempt_id": request.attempt_id},
+            created_at=submission.submitted_at,
+        )
+        result.append(
+            _CapturedRangeCall(
+                request=request,
+                submission=submission,
+                request_ref=request_refs_by_id[request.request_id],
+                usage_ref=usage_ref,
+                model_execution_record=None,
+                model_execution_record_ref=None,
+            )
+        )
+    return result
+
+
 def _run_factorization_full_via_coordinator(
     *,
     case: JsonObject,
@@ -1112,6 +1277,7 @@ def _run_factorization_full_via_coordinator(
     ablation_mode: str,
     worker_termination_policy: WorkerTerminationPolicy | None,
     selected_ai_unit_id: str | None,
+    trace_context: PaperTraceRuntimeContext | None,
 ) -> FactorizationPaperRunResult:
     """FULL 兼容壳：只配置 runtime、调用 coordinator、投影旧 result shape。"""
 
@@ -1144,6 +1310,9 @@ def _run_factorization_full_via_coordinator(
         transport=active_transport,
         deterministic_now=NOW,
         provider_family=config.provider_family,
+        trace_delay_policy=(
+            LOGICAL_SOURCE_LATENCY_1X if trace_context is not None else None
+        ),
     )
     plugin_runtime = FactorizationRuntimeAdapter(
         provider_family=config.provider_family,
@@ -1160,27 +1329,60 @@ def _run_factorization_full_via_coordinator(
             else "utc_wall_clock"
         ),
     )
-    ai_executor = AIAPIExecutor(
-        executor_id=AI_EXECUTOR_ID,
-        executor_version=AI_EXECUTOR_VERSION,
-        artifact_store=store,
-        config=config,
-        transport=active_transport,
-        parser=parse_factorization_ai_output,
-        post_raw_output_hook=post_raw_output_hook,
-    )
-    capturing_executor = _FixedIdentityRangeExecutor(
-        ai_executor,
-        store=store,
-        condition=condition,
-        binding=validated_binding,
-        config=config,
-        executor_requirements=executor_requirements,
-        case_id=case_id,
-        paper_eligible_transport=not _is_offline_capturing_transport(
-            active_transport
-        ),
-    )
+    trace_scheduler = None
+    if trace_context is None:
+        ai_executor = AIAPIExecutor(
+            executor_id=AI_EXECUTOR_ID,
+            executor_version=AI_EXECUTOR_VERSION,
+            artifact_store=store,
+            config=config,
+            transport=active_transport,
+            parser=parse_factorization_ai_output,
+            post_raw_output_hook=post_raw_output_hook,
+        )
+        capturing_executor = _FixedIdentityRangeExecutor(
+            ai_executor,
+            store=store,
+            condition=condition,
+            binding=validated_binding,
+            config=config,
+            executor_requirements=executor_requirements,
+            case_id=case_id,
+            paper_eligible_transport=not _is_offline_capturing_transport(
+                active_transport
+            ),
+        )
+        runtime_adapter = plugin_runtime
+        execution_bridge = FactorizationExecutionBridge(
+            plugin_runtime=plugin_runtime,
+            range_executor=capturing_executor,
+        )
+        trace_delivery_stager = None
+    else:
+        trace_scheduler = LogicalSourceLatencyScheduler(start_ms=0)
+        trace_scheduler.bind_wall_clock_origin(NOW)
+        runtime_adapter = FactorizationTraceRuntimeAdapter(
+            plugin_runtime=plugin_runtime,
+            bindings=trace_context.bindings,
+        )
+        trace_executor = _TraceRangeExecutorRecorder(
+            TraceBackedExecutor(
+                resolver=trace_context.resolver,
+                bindings=trace_context.bindings,
+                current_run_id=f"{condition.condition_id}_{case_id}",
+            )
+        )
+        capturing_executor = trace_executor
+        execution_bridge = FactorizationTraceExecutionBridge(
+            plugin_runtime=plugin_runtime,
+            trace_executor=trace_executor,
+        )
+        trace_domain_stage = FactorizationTraceDomainStage(plugin_runtime)
+        trace_delivery_stager = TraceBackedParentStager(
+            resolver=trace_context.resolver,
+            bindings=trace_context.bindings,
+            domain_stage=trace_domain_stage,
+        )
     coordinator = ProtocolRunCoordinator(
         engine=ProtocolEngine(
             event_ledger=ledger,
@@ -1191,12 +1393,9 @@ def _run_factorization_full_via_coordinator(
         event_ledger=ledger,
         now=lifecycle_clock,
         observation_clock=lifecycle_clock,
+        trace_delivery_stager=trace_delivery_stager,
     )
     controls = runtime_controls_for_mode(ablation_mode)
-    execution_bridge = FactorizationExecutionBridge(
-        plugin_runtime=plugin_runtime,
-        range_executor=capturing_executor,
-    )
     worker_backend = (
         ProcessWorkerBackend(
             executor=execution_bridge,
@@ -1220,7 +1419,7 @@ def _run_factorization_full_via_coordinator(
     protocol_request = ProtocolRunRequest(
         run_id=f"{condition.condition_id}_{case_id}",
         root_input=case,
-        plugin_runtime=plugin_runtime,
+        plugin_runtime=runtime_adapter,
         worker_backend=worker_backend,
         mechanism_policy=controls.mechanism_policy,
         hooks=(
@@ -1243,6 +1442,10 @@ def _run_factorization_full_via_coordinator(
                 selected_ai_unit_ids=(selected_ai_unit_id,),
             )
         ),
+        trace_delay_policy=(
+            LOGICAL_SOURCE_LATENCY_1X if trace_context is not None else None
+        ),
+        logical_scheduler=trace_scheduler,
     )
     runtime_result = (
         coordinator.run_root(protocol_request)
@@ -1295,11 +1498,23 @@ def _run_factorization_full_via_coordinator(
         if event.event_type == "CANONICAL_OUTPUTS_BOUND"
         and isinstance(event.payload.get("selected_attempt_id"), str)
     }
+    captured_calls = (
+        _trace_range_calls_from_events(
+            requests=trace_domain_stage.requests_by_attempt,
+            deliveries=trace_domain_stage.deliveries_by_attempt,
+            staged_submissions=trace_domain_stage.submissions_by_attempt,
+            runtime_events=runtime_events,
+            request_refs_by_id=request_refs_by_id,
+            store=store,
+        )
+        if trace_context is not None
+        else list(capturing_executor.calls)
+    )
     attempts: list[PaperAttemptResult] = []
     independent_validity_by_attempt: dict[str, bool] = {}
     projection_metadata_by_unit: dict[str, JsonObject] = {}
     range_records: list[JsonObject] = []
-    for index, captured in enumerate(capturing_executor.calls):
+    for index, captured in enumerate(captured_calls):
         request = captured.request
         submission = captured.submission
         request_ref = captured.request_ref
@@ -1480,7 +1695,7 @@ def _run_factorization_full_via_coordinator(
         ai_units_by_id: dict[str, PaperAIUnit] = {}
         actual_unit_id_by_planned: dict[str, str] = {}
         provider_tokens_by_attempt_id: dict[str, int] = {}
-        for captured in capturing_executor.calls:
+        for captured in captured_calls:
             planned_ai_unit_id = captured.request.soft_hints.get(
                 "planned_ai_unit_id"
             )
@@ -1524,7 +1739,10 @@ def _run_factorization_full_via_coordinator(
                     for planned in worker_termination_policy.target_planned_ai_unit_ids
                 ),
                 kill_point=worker_termination_policy.kill_point,
-                worker_facts=worker_backend.execution_facts,
+                worker_facts=_worker_death_projection_facts(
+                    worker_backend.execution_facts,
+                    runtime_events,
+                ),
                 protocol_events=runtime_events,
                 coordinator_pid=os.getpid(),
                 created_at=NOW,
@@ -1532,7 +1750,7 @@ def _run_factorization_full_via_coordinator(
             )
         attempts = _enrich_worker_death_attempts(
             attempts=attempts,
-            captured_calls=capturing_executor.calls,
+            captured_calls=captured_calls,
             worker_facts=worker_backend.execution_facts,
             fault_records=fault_records,
             store=store,
@@ -1632,10 +1850,33 @@ def _run_factorization_full_via_coordinator(
         run_evidence=run_evidence,
         output_root=run_root.as_posix(),
         event_records=tuple(event.to_dict() for event in runtime_events),
-        fault_records=fault_records,
-    )
+            fault_records=fault_records,
+        )
     _write_case_outputs(run_root, result)
     return result
+
+
+def _worker_death_projection_facts(
+    worker_facts: Sequence[Any],
+    runtime_events: Sequence[Any],
+) -> tuple[JsonObject, ...]:
+    """把 parent 已提交的 prepared delivery 解释为 replacement 成功事实。"""
+
+    committed_attempt_ids = {
+        str(event.payload["attempt_id"])
+        for event in runtime_events
+        if event.event_type == "TRACE_DELIVERY_COMMITTED.v1"
+    }
+    result: list[JsonObject] = []
+    for fact in worker_facts:
+        body = dict(fact.to_dict())
+        if (
+            body.get("result_kind") == "prepared_trace_delivery"
+            and str(body.get("attempt_id")) in committed_attempt_ids
+        ):
+            body["result_kind"] = "succeeded"
+        result.append(body)
+    return tuple(result)
 
 
 def _enrich_worker_death_attempts(
@@ -1658,6 +1899,16 @@ def _enrich_worker_death_attempts(
     calls_by_attempt = {
         captured.request.attempt_id: captured for captured in captured_calls
     }
+    planned_by_unit = {
+        captured.request.unit_id: str(
+            captured.request.soft_hints["planned_ai_unit_id"]
+        )
+        for captured in captured_calls
+        if isinstance(
+            captured.request.soft_hints.get("planned_ai_unit_id"),
+            str,
+        )
+    }
     record_ref_by_attempt = {
         str(record["dead_attempt"]["attempt_id"]): dict(record["record_ref"])
         for record in fault_records
@@ -1666,8 +1917,35 @@ def _enrich_worker_death_attempts(
     for attempt in attempts:
         fact = killed_facts.get(attempt.attempt_id)
         captured = calls_by_attempt.get(attempt.attempt_id)
-        if fact is None or captured is None:
-            enriched.append(attempt)
+        if fact is None:
+            if captured is None:
+                enriched.append(attempt)
+            else:
+                usage = dict(captured.submission.usage_summary or {})
+                enriched.append(
+                    replace(
+                        attempt,
+                        entry_id=str(usage.get("entry_id") or "unknown"),
+                        planned_ai_unit_id=planned_by_unit.get(attempt.unit_id),
+                    )
+                )
+            continue
+        if captured is None:
+            enriched.append(
+                replace(
+                    attempt,
+                    worker_id=str(fact.worker_id or attempt.worker_id),
+                    attempt_status=PaperAttemptStatus.WORKER_DIED,
+                    started_at=str(fact.started_at or attempt.started_at),
+                    ended_at=str(fact.ended_at or attempt.ended_at),
+                    error_kind="worker_died",
+                    fault_injection_ref=record_ref_by_attempt.get(
+                        attempt.attempt_id
+                    ),
+                    paper_eligible=False,
+                    planned_ai_unit_id=planned_by_unit.get(attempt.unit_id),
+                )
+            )
             continue
         planned_ai_unit_id = str(
             captured.request.soft_hints["planned_ai_unit_id"]

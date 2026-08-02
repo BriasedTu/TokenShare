@@ -16,7 +16,7 @@ import tempfile
 from dataclasses import dataclass, replace
 from pathlib import Path
 from threading import Lock
-from typing import Any, Sequence
+from typing import Any, Mapping, Sequence
 
 from tokenshare.core.models import (
     ArtifactRef,
@@ -51,11 +51,14 @@ from tokenshare.executors.contracts import (
     ExecutionSubmission,
 )
 from tokenshare.executors.trace_backed import (
+    TraceBackedExecutor,
+    TraceBackedParentStager,
     TraceDomainStageContext,
     TraceDomainStageResult,
     TraceSourceBinding,
     bind_trace_execution_request,
 )
+from tokenshare.experiments.paper_response_bank import PaperTraceRuntimeContext
 from tokenshare.experiments.paper_catalog import (
     default_lean_paper_environment_manifest,
     lean_theorem_payload_from_case,
@@ -86,6 +89,14 @@ from tokenshare.experiments.paper_unit_commitments import (
     lean_simple_plugin_payload,
 )
 from tokenshare.experiments.paper_runtime_clock import runtime_lifecycle_clock
+from tokenshare.local_runtime.logical_scheduler import (
+    LOGICAL_SOURCE_LATENCY_1X,
+    LogicalSourceLatencyScheduler,
+)
+from tokenshare.local_runtime.contracts import (
+    PreparedTraceDelivery,
+    WorkerCompletionSchedule,
+)
 from tokenshare.experiments.paper_workers import (
     PaperAIUnit,
     project_worker_death_records,
@@ -303,6 +314,7 @@ def run_lean_paper_case(
     worker_termination_policy: WorkerTerminationPolicy | None = None,
     checker: LeanChecker | None = None,
     protocol_run_dispatcher: Any | None = None,
+    trace_context: PaperTraceRuntimeContext | None = None,
 ) -> LeanPaperRunResult:
     """Deprecated compatibility API for historical/selector regressions.
 
@@ -383,6 +395,7 @@ def run_lean_paper_case(
             ablation_mode=normalized_ablation_mode,
             worker_termination_policy=worker_termination_policy,
             selected_ai_unit_id=selected_ai_unit_id,
+            trace_context=trace_context,
         )
     # 仅无 selected scope 的历史 structured-blocked reader 保留旧投影；
     # 当前 CLI/dispatcher 的 selected-unit 路径始终在上方进入 coordinator。
@@ -619,13 +632,79 @@ class _CapturedLeanCall:
     model_execution_record_ref: ArtifactRef | None
 
 
+@dataclass(frozen=True, kw_only=True)
+class _CapturedLeanTraceDelivery:
+    request: ExecutionRequest
+    delivery: PreparedTraceDelivery
+
+
+class _TraceLeanExecutorRecorder:
+    def __init__(self, executor: TraceBackedExecutor) -> None:
+        self._executor = executor
+        self.calls: list[_CapturedLeanTraceDelivery] = []
+        self._calls_lock = Lock()
+
+    @property
+    def provider_call_count(self) -> int:
+        return 0
+
+    def __getstate__(self):
+        state = dict(self.__dict__)
+        state.pop("_calls_lock", None)
+        return state
+
+    def __setstate__(self, state):
+        self.__dict__.update(state)
+        self._calls_lock = Lock()
+
+    def execute(
+        self,
+        request: ExecutionRequest,
+        *,
+        submission_id: str,
+        submitted_at: str,
+    ) -> PreparedTraceDelivery:
+        delivery = self._executor.execute(
+            request,
+            submission_id=submission_id,
+            submitted_at=submitted_at,
+        )
+        with self._calls_lock:
+            self.calls.append(_CapturedLeanTraceDelivery(request=request, delivery=delivery))
+        return delivery
+
+    def export_process_result(
+        self,
+        request: ExecutionRequest,
+        submission: PreparedTraceDelivery,
+    ) -> _CapturedLeanTraceDelivery:
+        del submission
+        return next(
+            item for item in reversed(self.calls)
+            if item.request.attempt_id == request.attempt_id
+        )
+
+    def ingest_process_result(self, captured: _CapturedLeanTraceDelivery) -> None:
+        with self._calls_lock:
+            if any(
+                item.request.attempt_id == captured.request.attempt_id
+                for item in self.calls
+            ):
+                return
+            self.calls.append(captured)
+
 class LeanTraceDomainStage:
     """在 parent 内运行正式 Lean parser、checker 与 canonical promotion。"""
 
     def __init__(self, plugin_runtime: LeanRuntimeAdapter) -> None:
         self._plugin_runtime = plugin_runtime
+        self.requests_by_attempt: dict[str, ExecutionRequest] = {}
+        self.deliveries_by_attempt: dict[str, PreparedTraceDelivery] = {}
+        self.submissions_by_attempt: dict[str, ExecutionSubmission] = {}
 
     def stage(self, context: TraceDomainStageContext) -> TraceDomainStageResult:
+        self.requests_by_attempt[context.request.attempt_id] = context.request
+        self.deliveries_by_attempt[context.request.attempt_id] = context.delivery
         request = context.request
         payload_ref = request.input_artifact_refs.get(
             "lemma_theorem_payload",
@@ -703,6 +782,7 @@ class LeanTraceDomainStage:
             staged_submission,
             request=request,
         )
+        self.submissions_by_attempt[request.attempt_id] = normalized
         report = self._plugin_runtime.checker_report_for_request(request.request_id)
         checker_refs = (
             ()
@@ -803,6 +883,39 @@ class LeanTraceExecutionBridge:
             submission_id=submission_id,
             submitted_at=submitted_at,
         )
+
+    def worker_completion_schedule(
+        self,
+        request: ExecutionRequest,
+        submission: ExecutionSubmission | PreparedTraceDelivery | None,
+        failure_kind: str | None,
+    ) -> WorkerCompletionSchedule | None:
+        del failure_kind
+        if isinstance(submission, PreparedTraceDelivery):
+            return WorkerCompletionSchedule(
+                source_latency_ms=submission.source_latency_ms,
+                attempt_ordinal=submission.attempt_ordinal,
+            )
+        return WorkerCompletionSchedule(
+            source_latency_ms=0,
+            attempt_ordinal=request.attempt_ordinal,
+        )
+
+    def export_process_result(
+        self,
+        request: ExecutionRequest,
+        submission: ExecutionSubmission | PreparedTraceDelivery,
+    ) -> _CapturedLeanTraceDelivery | None:
+        if not isinstance(submission, PreparedTraceDelivery):
+            return None
+        return self._trace_executor.export_process_result(request, submission)
+
+    def ingest_process_result(
+        self,
+        captured: _CapturedLeanTraceDelivery | None,
+    ) -> None:
+        if captured is not None:
+            self._trace_executor.ingest_process_result(captured)
 
 
 class _FixedIdentityLeanExecutor:
@@ -1004,6 +1117,56 @@ class _FixedIdentityLeanExecutor:
         return submission
 
 
+def _trace_lean_calls_from_events(
+    *,
+    requests: Mapping[str, ExecutionRequest],
+    deliveries: Mapping[str, PreparedTraceDelivery],
+    staged_submissions: Mapping[str, ExecutionSubmission],
+    runtime_events: Sequence[Any],
+    request_refs_by_id: dict[str, ArtifactRef],
+    store: ArtifactStore,
+) -> list[_CapturedLeanCall]:
+    committed_attempt_ids = [
+        str(event.payload["attempt_id"])
+        for event in runtime_events
+        if event.event_type == "TRACE_DELIVERY_COMMITTED.v1"
+    ]
+    result: list[_CapturedLeanCall] = []
+    for attempt_id in committed_attempt_ids:
+        request = requests[attempt_id]
+        delivery = deliveries[attempt_id]
+        submission = staged_submissions[attempt_id]
+        submission = replace(
+            submission,
+            usage_summary={
+                **dict(submission.usage_summary or {}),
+                "entry_id": delivery.entry_id,
+                "current_provider_call_count": 0,
+            },
+        )
+        usage_ref = store.save_json(
+            dict(submission.usage_summary or {}),
+            artifact_id=f"trace_current_usage_{request.attempt_id}",
+            artifact_type="TraceCurrentUsage",
+            artifact_schema_id="tokenshare.trace_current_usage",
+            artifact_schema_version="v1",
+            source={"kind": "trace_protocol_projection"},
+            metadata={"attempt_id": request.attempt_id},
+            created_at=submission.submitted_at,
+        )
+        result.append(
+            _CapturedLeanCall(
+                request=request,
+                submission=submission,
+                request_ref=request_refs_by_id[request.request_id],
+                usage_ref=usage_ref,
+                model_execution_record=None,
+                model_execution_record_ref=None,
+            )
+        )
+    return result
+
+
 def _run_lean_full_via_coordinator(
     *,
     case: JsonObject,
@@ -1024,6 +1187,7 @@ def _run_lean_full_via_coordinator(
     ablation_mode: str,
     worker_termination_policy: WorkerTerminationPolicy | None,
     selected_ai_unit_id: str | None,
+    trace_context: PaperTraceRuntimeContext | None,
 ) -> LeanPaperRunResult:
     """FULL 兼容壳：配置 Lean runtime，调用 coordinator，再投影旧 result。"""
 
@@ -1040,6 +1204,11 @@ def _run_lean_full_via_coordinator(
         max_retries=(
             worker_termination_policy.termination_limit + 1
             if worker_termination_policy is not None
+            else max(
+                len(binding.replacements) - 1
+                for binding in trace_context.bindings
+            )
+            if trace_context is not None
             else 1
             if condition.experiment_id == "exp4_real_ai_protocol_ablation"
             else 2
@@ -1057,6 +1226,9 @@ def _run_lean_full_via_coordinator(
         transport=active_transport,
         deterministic_now=NOW,
         provider_family=config.provider_family,
+        trace_delay_policy=(
+            LOGICAL_SOURCE_LATENCY_1X if trace_context is not None else None
+        ),
     )
     plugin_runtime = LeanRuntimeAdapter(
         provider_family=config.provider_family,
@@ -1070,19 +1242,52 @@ def _run_lean_full_via_coordinator(
         created_at=lifecycle_clock(),
         lifecycle_clock=lifecycle_clock,
     )
-    capturing_executor = _FixedIdentityLeanExecutor(
-        store=store,
-        condition=condition,
-        binding=validated_binding,
-        config=config,
-        executor_requirements=executor_requirements,
-        case_id=case_id,
-        transport=active_transport,
-        paper_eligible_transport=not _is_offline_capturing_transport(
-            active_transport
-        ),
-        post_raw_output_hook=post_raw_output_hook,
-    )
+    trace_scheduler = None
+    if trace_context is None:
+        capturing_executor = _FixedIdentityLeanExecutor(
+            store=store,
+            condition=condition,
+            binding=validated_binding,
+            config=config,
+            executor_requirements=executor_requirements,
+            case_id=case_id,
+            transport=active_transport,
+            paper_eligible_transport=not _is_offline_capturing_transport(
+                active_transport
+            ),
+            post_raw_output_hook=post_raw_output_hook,
+        )
+        runtime_adapter = plugin_runtime
+        execution_bridge = LeanExecutionBridge(
+            plugin_runtime=plugin_runtime,
+            proof_candidate_executor=capturing_executor,
+        )
+        trace_delivery_stager = None
+    else:
+        trace_scheduler = LogicalSourceLatencyScheduler(start_ms=0)
+        trace_scheduler.bind_wall_clock_origin(NOW)
+        runtime_adapter = LeanTraceRuntimeAdapter(
+            plugin_runtime=plugin_runtime,
+            bindings=trace_context.bindings,
+        )
+        trace_executor = _TraceLeanExecutorRecorder(
+            TraceBackedExecutor(
+                resolver=trace_context.resolver,
+                bindings=trace_context.bindings,
+                current_run_id=f"{condition.condition_id}_{case_id}",
+            )
+        )
+        capturing_executor = trace_executor
+        execution_bridge = LeanTraceExecutionBridge(
+            plugin_runtime=plugin_runtime,
+            trace_executor=trace_executor,
+        )
+        trace_domain_stage = LeanTraceDomainStage(plugin_runtime)
+        trace_delivery_stager = TraceBackedParentStager(
+            resolver=trace_context.resolver,
+            bindings=trace_context.bindings,
+            domain_stage=trace_domain_stage,
+        )
     coordinator = ProtocolRunCoordinator(
         engine=ProtocolEngine(
             event_ledger=ledger,
@@ -1093,12 +1298,9 @@ def _run_lean_full_via_coordinator(
         event_ledger=ledger,
         now=lifecycle_clock,
         observation_clock=lifecycle_clock,
+        trace_delivery_stager=trace_delivery_stager,
     )
     controls = runtime_controls_for_mode(ablation_mode)
-    execution_bridge = LeanExecutionBridge(
-        plugin_runtime=plugin_runtime,
-        proof_candidate_executor=capturing_executor,
-    )
     worker_backend = (
         ProcessWorkerBackend(
             executor=execution_bridge,
@@ -1122,7 +1324,7 @@ def _run_lean_full_via_coordinator(
     protocol_request = ProtocolRunRequest(
         run_id=f"{condition.condition_id}_{case_id}",
         root_input=case,
-        plugin_runtime=plugin_runtime,
+        plugin_runtime=runtime_adapter,
         worker_backend=worker_backend,
         mechanism_policy=controls.mechanism_policy,
         hooks=(
@@ -1145,6 +1347,10 @@ def _run_lean_full_via_coordinator(
                 selected_ai_unit_ids=(selected_ai_unit_id,),
             )
         ),
+        trace_delay_policy=(
+            LOGICAL_SOURCE_LATENCY_1X if trace_context is not None else None
+        ),
+        logical_scheduler=trace_scheduler,
     )
     try:
         runtime_result = (
@@ -1174,6 +1380,13 @@ def _run_lean_full_via_coordinator(
         ]
     )
     runtime_events = ledger.read_all()
+    request_refs_by_id = {
+        str(event.payload["request_id"]): ArtifactRef.from_dict(
+            event.payload["request_ref"]
+        )
+        for event in runtime_events
+        if event.event_type == "EXECUTION_REQUEST_RECORDED"
+    }
     submitted_candidate_refs_by_attempt = {
         str(event.payload["attempt_id"]): {
             name: ArtifactRef.from_dict(ref)
@@ -1195,6 +1408,18 @@ def _run_lean_full_via_coordinator(
         if event.event_type == "CANONICAL_OUTPUTS_BOUND"
         and isinstance(event.payload.get("selected_attempt_id"), str)
     }
+    captured_calls = (
+        _trace_lean_calls_from_events(
+            requests=trace_domain_stage.requests_by_attempt,
+            deliveries=trace_domain_stage.deliveries_by_attempt,
+            staged_submissions=trace_domain_stage.submissions_by_attempt,
+            runtime_events=runtime_events,
+            request_refs_by_id=request_refs_by_id,
+            store=store,
+        )
+        if trace_context is not None
+        else list(capturing_executor.calls)
+    )
     attempts: list[PaperAttemptResult] = []
     independent_validity_by_attempt: dict[str, bool] = {}
     projection_metadata_by_unit: dict[str, JsonObject] = {}
@@ -1204,7 +1429,7 @@ def _run_lean_full_via_coordinator(
         if isinstance(certificate, LeanLemmaGraphCertificate)
         else {}
     )
-    for index, captured in enumerate(capturing_executor.calls):
+    for index, captured in enumerate(captured_calls):
         request = captured.request
         submission = captured.submission
         logical_key = str(
@@ -1374,7 +1599,7 @@ def _run_lean_full_via_coordinator(
             str(captured.request.soft_hints["planned_ai_unit_id"]): (
                 captured.request.unit_id
             )
-            for captured in capturing_executor.calls
+            for captured in captured_calls
         }
         dependency_sources_by_planned: dict[str, tuple[str, ...]] = {}
         if isinstance(certificate, LeanLemmaGraphCertificate):
@@ -1402,7 +1627,7 @@ def _run_lean_full_via_coordinator(
 
         ai_units_by_id: dict[str, PaperAIUnit] = {}
         provider_tokens_by_attempt_id: dict[str, int] = {}
-        for captured in capturing_executor.calls:
+        for captured in captured_calls:
             request = captured.request
             planned_ai_unit_id = str(
                 request.soft_hints["planned_ai_unit_id"]
@@ -1456,7 +1681,10 @@ def _run_lean_full_via_coordinator(
                 for planned in worker_termination_policy.target_planned_ai_unit_ids
             ),
             kill_point=worker_termination_policy.kill_point,
-            worker_facts=worker_backend.execution_facts,
+            worker_facts=_lean_worker_death_projection_facts(
+                worker_backend.execution_facts,
+                runtime_events,
+            ),
             protocol_events=runtime_events,
             coordinator_pid=os.getpid(),
             created_at=NOW,
@@ -1464,7 +1692,7 @@ def _run_lean_full_via_coordinator(
         )
         attempts = _enrich_lean_worker_death_attempts(
             attempts=attempts,
-            captured_calls=capturing_executor.calls,
+            captured_calls=captured_calls,
             worker_facts=worker_backend.execution_facts,
             fault_records=fault_records,
             store=store,
@@ -1563,6 +1791,29 @@ def _run_lean_full_via_coordinator(
     return result
 
 
+def _lean_worker_death_projection_facts(
+    worker_facts: Sequence[Any],
+    runtime_events: Sequence[Any],
+) -> tuple[JsonObject, ...]:
+    """只把 parent 已提交的 prepared delivery 投影为 replacement 成功。"""
+
+    committed_attempt_ids = {
+        str(event.payload["attempt_id"])
+        for event in runtime_events
+        if event.event_type == "TRACE_DELIVERY_COMMITTED.v1"
+    }
+    result: list[JsonObject] = []
+    for fact in worker_facts:
+        body = dict(fact.to_dict())
+        if (
+            body.get("result_kind") == "prepared_trace_delivery"
+            and str(body.get("attempt_id")) in committed_attempt_ids
+        ):
+            body["result_kind"] = "succeeded"
+        result.append(body)
+    return tuple(result)
+
+
 def _enrich_lean_worker_death_attempts(
     *,
     attempts: list[PaperAttemptResult],
@@ -1584,6 +1835,16 @@ def _enrich_lean_worker_death_attempts(
     calls_by_attempt = {
         captured.request.attempt_id: captured for captured in captured_calls
     }
+    planned_by_unit = {
+        captured.request.unit_id: str(
+            captured.request.soft_hints["planned_ai_unit_id"]
+        )
+        for captured in captured_calls
+        if isinstance(
+            captured.request.soft_hints.get("planned_ai_unit_id"),
+            str,
+        )
+    }
     record_ref_by_attempt = {
         str(record["dead_attempt"]["attempt_id"]): dict(record["record_ref"])
         for record in fault_records
@@ -1592,8 +1853,35 @@ def _enrich_lean_worker_death_attempts(
     for attempt in attempts:
         fact = killed_facts.get(attempt.attempt_id)
         captured = calls_by_attempt.get(attempt.attempt_id)
-        if fact is None or captured is None:
-            enriched.append(attempt)
+        if fact is None:
+            if captured is None:
+                enriched.append(attempt)
+            else:
+                usage = dict(captured.submission.usage_summary or {})
+                enriched.append(
+                    replace(
+                        attempt,
+                        entry_id=str(usage.get("entry_id") or "unknown"),
+                        planned_ai_unit_id=planned_by_unit.get(attempt.unit_id),
+                    )
+                )
+            continue
+        if captured is None:
+            enriched.append(
+                replace(
+                    attempt,
+                    worker_id=str(fact.worker_id or attempt.worker_id),
+                    attempt_status=PaperAttemptStatus.WORKER_DIED,
+                    started_at=str(fact.started_at or attempt.started_at),
+                    ended_at=str(fact.ended_at or attempt.ended_at),
+                    error_kind="worker_died",
+                    fault_injection_ref=record_ref_by_attempt.get(
+                        attempt.attempt_id
+                    ),
+                    paper_eligible=False,
+                    planned_ai_unit_id=planned_by_unit.get(attempt.unit_id),
+                )
+            )
             continue
         planned_ai_unit_id = str(
             captured.request.soft_hints["planned_ai_unit_id"]
