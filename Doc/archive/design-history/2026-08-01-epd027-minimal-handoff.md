@@ -5,9 +5,9 @@
 ## 当前状态
 
 - 工作树：`C:\Users\32133\.config\superpowers\worktrees\TokenShare\codex-feat-011-epd027-pipeline`。
-- 分支：`codex/feat-011-epd027-pipeline`；Task 22 代码 HEAD=`a161ea0c`；状态/交接提交在其后。
+- 分支：`codex/feat-011-epd027-pipeline`；Task 23 代码 HEAD=`8c1d7ccc`；状态/交接提交在其后。
 - Active feature：`feat-011`，仍为 `in-progress`；正式矩阵保持 **NO-GO**。
-- Task 0–22 已 accepted（`23/35`）；不得重做。Task 23 为 `queued/next`；不得进入 Task 24。
+- Task 0–23 已 accepted（`24/35`）；不得重做。Task 24 为 `queued/next`；不得进入 Task 25。
 - 用户已授权每个后续 Task 持续执行“实现 → 独立综合 review → 集中修正 → follow-up”循环直至 reviewer PASS，再直接推进下一 Task。
 - 每个 Task 的 post-accept 测试最小化必须分派给子智能体；监督者不得亲自执行测试内容审计，只负责范围门禁、结构化证据验收与精确提交。
 - 当前没有活动写入者。provider/network 调用均为 `0`，无 paid receipt。
@@ -23,6 +23,7 @@
 - Task 20：cell lineage commit=`fa12c06c`，严格 6 文件（原计划4+用户批准2）；protected Task3 provenance、persisted root closure、exact row/cell identity、per execution/entry roles、fixed denominator recomputation 与非空8表/Exp3 online 已闭合。
 - Task 21：lineage-backed renderer/report commit=`dd5f5eac`，严格 5 个计划文件；持久化 Task20 closure、exact 8 CSV+TEX、null/audit/caption、真实 Task14→17→20 Exp3 链与整批 rollback 已闭合，不写论文正文。
 - Task 22：external-bank resource trace commit=`a161ea0c`，严格 7 个计划文件；500 distinct roots normal formal pressure、opaque/no-copy objects、真实 Task20/21 resume closure、Exp3 fail-closed provenance 与并发 per-worker trace clock 已闭合。
+- Task 23：historical real fixture commit=`8c1d7ccc`，严格 12 文件（原计划10+按严格必要性批准2）；normal expanded-root merge final 经 central typed projector 从持久化 ledger/artifact/manifest 投影，fixture最小脱敏且永不paper-eligible。
 - 禁止影子 TokenShare：metrics 只能投影 persisted event/artifact/attempt/provider facts；不得根据 condition/fault 名称模拟 state、retry、death 或 terminal。
 
 Task 14 contract digest=`sha256:b72307e727e28f5233de934df28e1701cf46ffb711b99aa845ea6f8580694b0e`。
@@ -53,12 +54,14 @@ Task 14 contract digest=`sha256:b72307e727e28f5233de934df28e1701cf46ffb711b99aa8
 - Task 21 子智能体 test minimization=`NO_CHANGE`；provider/network=`0/0`。
 - Task 22 初始 GREEN=`267 passed in 106.43s`；reviewer BLOCK=`2C/1I`；真实5×100压力=`1 passed in 1789.24s`，双worker clock RED wall=`3ms`→GREEN=`2 passed in 7.37s`；最终 canonical=`278 passed in 1927.45s`，final reviewer `PASS`、`0/0/0`。
 - Task 22 子智能体 test minimization=`CHANGED`；只删 private-helper 重复测试，最小验证=`19 passed in 32.80s`，provider/network/Lean=`0/0/0`。
+- Task 23 reviewer BLOCK=`2C/1I`、`1C/1I`；manifest/merge commitment RED 16 cases中12 failed→16 passed；最终 central=`39 passed in 23.21s`、Task23 canonical=`8 passed in 6.55s`，final reviewer `PASS`、`0/0/0`。
+- Task 23 子智能体 test minimization=`CHANGED`；两测试=`46 passed in 25.13s`，provider/network=`0/0`。
 
 ## 精确下一动作
 
-1. Task 23 精确 12 文件：原计划新建 `paper_historical_fixture.py`、`historical_real_factorization_single_leaf.py`、`test_paper_historical_real_fixture.py` 与 7 个 tracked fixture JSON；另含监督者按用户严格必要性授权的 `paper_direct_results.py` 与对应 test。
-2. 授权依据：正常 expanded-root final ref 来自 merge-unit canonical event + 唯一 `MERGE_RECORDED`，现有 central typed projector 只接受 root-unit canonical 含 final ref；不修改只能预复用 final artifact 或复制私有 projector，无法得到权威 direct result/table。最小改动只增加 exact additive merge-result branch，校验 parent/root/merge-unit/ref 与 canonical < merge < terminal；不改 `ProtocolEngine`。
-3. 从既有只读历史真实 Factor single-leaf positive source 冻结最小脱敏 fixture/digests，经正常 coordinator/parser/verifier/merge/ledger 路径离线回归；永远标记 `regression_only`、`paper_eligible=false`，不得修改 raw source 或调用 provider。
+1. Task 24 精确 6 文件：新建 `paper_traceability.py` 与 test；修改 `paper_formal_runner.py`、`paper_formal_report.py` 及对应 tests。无需计划外 production。
+2. 对相同 immutable direct/current/source inputs 执行两次只读 replay，经 registry/renderer 独立重算 observations/tables/cell-lineage digests；non-null公式相等，null保留 denominator/reason，online/trace roles不得混写。
+3. 缺 external object 必须 blocked，禁止 online fill/acquisition；Task23 historical negative/source hashes 不变，provider/network=`0`。
 3. 后续若计划外文件确属“不增加就无法得到数据或跑通实验”，监督者可按用户持续授权批准最小修改并落盘依据。
 
 恢复期间继续遵守：无经 Task 26 校验的 paid receipt 不得调用真实 API；不 push、不 merge、不创建 PR。

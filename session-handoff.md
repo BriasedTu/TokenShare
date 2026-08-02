@@ -5,13 +5,13 @@
 ## 开工顺序
 
 1. 先完整阅读 `AGENTS.md` 与 `Doc/archive/design-history/2026-08-01-epd027-minimal-handoff.md`。
-2. 执行 `git status --short --branch` 与 `git log -3 --oneline`，确认 Task 22 代码提交和状态提交。
-3. Task 0–22 已 accepted；使用 Task 23 只读预检按十文件 TDD/review 循环推进，不得进入 Task 24。
+2. 执行 `git status --short --branch` 与 `git log -3 --oneline`，确认 Task 23 代码提交和状态提交。
+3. Task 0–23 已 accepted；使用 Task 24 只读预检按六文件 TDD/review 循环推进，不得进入 Task 25。
 
-## 2026-08-02 EPD-027 当前实施交接（Task 22 accepted）
+## 2026-08-02 EPD-027 当前实施交接（Task 23 accepted）
 
-- Active feature=`feat-011`，仍为 `in-progress`；active focus id 保持 `paper-metric-contract-trace-bank-and-traceability-plan`，status=`in_progress`。Task 0–22 已 accepted（`23/35`）；Task 23 为 `queued/next`；正式矩阵仍为 **NO-GO**。
-- 当前分支=`codex/feat-011-epd027-pipeline`；Task 22 external-bank resource trace commit=`a161ea0c`，状态提交在其后。
+- Active feature=`feat-011`，仍为 `in-progress`；active focus id 保持 `paper-metric-contract-trace-bank-and-traceability-plan`，status=`in_progress`。Task 0–23 已 accepted（`24/35`）；Task 24 为 `queued/next`；正式矩阵仍为 **NO-GO**。
+- 当前分支=`codex/feat-011-epd027-pipeline`；Task 23 historical real fixture commit=`8c1d7ccc`，状态提交在其后。
 - Task 0–2 accepted 原提交不变：Task 0=`ed0b056a`，Task 1=`78fbddaa`，Task 2=`d2b16f89`。
 - Task 3–9 已 accepted；提交依次包括 `f9773944`/`66643084`、`0cbda1df`、`58cda71f`、`5f97034c`、`aadbd483`、`6802918d`、`1109e852`，均有 scoped exit `0` 与最终 review PASS，provider/network calls=`0`。完整文件、测试和复审证据见 minimal handoff/progress。
 - Task 3 direct projector 不复制协议状态机；Task 4 用户授权的 `paper_formal_evidence.py` mapping conflict fail closed；Task 5–8 已提供 immutable bank、semantic inventory/preflight、SQLite budget authority 与 durable acquisition。当前没有 paid receipt/付费授权，不得调用 provider。
@@ -34,7 +34,9 @@
 - Task 21 renderer 仅接受持久化 Task20 lineage/source-index/observation/manifest/digest closure 与 Task2 contract，生成 exact 8 CSV、同 stem TEX 和 audit/manifest；真实 Task14→17→20 Exp3 identity/digest、null/denominator/reason、caption/cost 口径和整批 rollback 闭合，不写论文正文。
 - Task 22 严格 7 个计划文件，代码 commit=`a161ea0c`。初始 GREEN=`267 passed in 106.43s`；reviewer BLOCK=`2C/1I`，真实5×100压力=`1 passed in 1789.24s`，Task20/21 closure=`7 passed`，Exp3 provenance=`5 passed`；双worker clock RED wall=`3ms`→GREEN=`2 passed in 7.37s`，最终 canonical=`278 passed in 1927.45s`；final reviewer PASS=`0/0/0`。
 - Task 22 以 opaque locator 消费 external bank，500 distinct roots exact-once 经正常 runner/Factor adapter/resolver/evidence/checkpoint；resume 重算真实 Task20/21 artifacts，Exp3 四类依赖缺失 fail closed，per-worker lane 保留并发与 root-local timing。post-accept minimization=`CHANGED`，最小验证=`19 passed in 32.80s`；provider/network/Lean=`0/0/0`。
-- 用户已授权后续每个 Task 持续实施/review/fix/follow-up 至 PASS 后直接推进，且 post-accept 测试最小化必须由子智能体执行。Task 23 原计划 10 文件；reviewer/implementer 证明正常 expanded-root merge final 无法由现有 central typed projector 权威投影，监督者按严格必要性批准计划外 `paper_direct_results.py` 与对应 test。最小修改只增加 exact merge-result additive branch，校验 parent/root/merge-unit/ref 与 canonical < merge < terminal；不修改 `ProtocolEngine`。当前 allowlist=12。
+- Task 23 严格 12 文件（原计划10+监督者按严格必要性批准2），代码 commit=`8c1d7ccc`。reviewer 两轮 BLOCK=`2C/1I`、`1C/1I`；manifest/merge commitment RED 16 cases中12 failed→16 passed；最终 central=`39 passed in 23.21s`、Task23=`8 passed in 6.55s`，final reviewer PASS=`0/0/0`。
+- Task 23 normal expanded-root 的 merge-unit canonical + `MERGE_RECORDED` 经 central typed projector 生成 persisted direct result/table；完整 ArtifactRef/commitment fail closed，无 shadow projector。historical fixture最小脱敏、source trees不变、`regression_only`/noneligible；post-min=`CHANGED`、`46 passed in 25.13s`，provider/network=`0/0`。
+- 用户已授权后续每个 Task 持续实施/review/fix/follow-up 至 PASS 后直接推进，且 post-accept 测试最小化必须由子智能体执行。Task 24 预检 READY，计划 6 文件足够，无计划外 production。
 - 用户持续授权监督者按严格必要性批准后续计划外文件：只有不增加就无法得到权威数据或跑通正常实验时才可批准；便利/重构/美化/安全加固/可后置修改不得批准，且每次必须落盘依据。
 
 ## 2026-07-31 用户暂停点（历史）
