@@ -13,10 +13,14 @@ import time
 import uuid
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, is_dataclass
+from decimal import Decimal
 from enum import Enum
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
+from tokenshare.executors.response_bank import CurrentTraceWrapper
+from tokenshare.executors.trace_backed import TraceSourceBinding
+from tokenshare.experiments.paper_direct_results import PaperDirectRootResult
 from tokenshare.experiments.paper_formal_checkpoint import (
     V3_GENERATION_SCHEMA,
     V3GenerationDescriptor,
@@ -25,10 +29,17 @@ from tokenshare.experiments.paper_formal_checkpoint import (
     validate_v3_generation_manifest,
 )
 from tokenshare.experiments.paper_models import (
+    ArtifactIdentitySnapshot,
+    CanonicalDirectRootEvidence,
+    ExternalBankObjectLocator,
+    LedgerEventIdentitySnapshot,
     PaperEvidenceEligibilityFacts,
     VersionedPaperEvidenceEligibilityReport,
     evaluate_versioned_paper_evidence as _evaluate_versioned_paper_evidence,
 )
+
+
+_CANONICAL_LINEAGE_INPUT_FACTORY_TOKEN = object()
 
 
 _ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
@@ -215,6 +226,190 @@ def evaluate_versioned_paper_evidence(
     return _evaluate_versioned_paper_evidence(facts)
 
 
+@dataclass(frozen=True, init=False)
+class CanonicalLineageInput:
+    """调用方显式绑定的 Task3/Task19 typed lineage；禁止扫描 raw mapping。"""
+
+    direct_result: PaperDirectRootResult
+    canonical_evidence: CanonicalDirectRootEvidence
+    input_identity_digest: str
+    current_trace_wrappers: tuple[CurrentTraceWrapper, ...] = ()
+    trace_source_bindings: tuple[TraceSourceBinding, ...] = ()
+    eligibility_facts: PaperEvidenceEligibilityFacts | None = None
+    _producer_validated: bool = False
+
+    @classmethod
+    def _from_validated(
+        cls,
+        *,
+        _factory_token: object | None = None,
+        **values: Any,
+    ) -> "CanonicalLineageInput":
+        expected = set(cls.__dataclass_fields__) - {"_producer_validated"}
+        if set(values) != expected:
+            raise ValueError("canonical lineage factory field mismatch")
+        instance = object.__new__(cls)
+        for field_name, value in values.items():
+            object.__setattr__(instance, field_name, value)
+        object.__setattr__(
+            instance,
+            "_producer_validated",
+            _factory_token is _CANONICAL_LINEAGE_INPUT_FACTORY_TOKEN,
+        )
+        return instance
+
+    @property
+    def producer_validated(self) -> bool:
+        return self._producer_validated
+
+
+def build_canonical_lineage_inputs(
+    canonical_inputs: Mapping[str, object],
+    *,
+    canonical_runtime_evidence: Sequence[CanonicalDirectRootEvidence],
+    requested_root_ids: Sequence[str] | None = None,
+    current_trace_wrappers_by_root: Mapping[str, Sequence[CurrentTraceWrapper]] | None = None,
+    trace_source_bindings_by_root: Mapping[str, Sequence[TraceSourceBinding]] | None = None,
+    eligibility_facts_by_root: Mapping[str, PaperEvidenceEligibilityFacts] | None = None,
+) -> tuple[CanonicalLineageInput, ...]:
+    """从 Task3 protected evidence 与 publisher 的真实 typed rows 铸造 lineage input。"""
+
+    if not isinstance(canonical_inputs, Mapping):
+        raise TypeError("canonical inputs must be a mapping")
+    evidence_values = tuple(canonical_runtime_evidence)
+    if any(
+        not isinstance(value, CanonicalDirectRootEvidence)
+        or not value.producer_validated
+        for value in evidence_values
+    ):
+        raise ValueError("lineage provenance requires Task3 canonical factory evidence")
+    evidence_by_root = {
+        value.preregistered_root_run_id: value for value in evidence_values
+    }
+    if len(evidence_by_root) != len(evidence_values):
+        raise ValueError("duplicate canonical lineage evidence root")
+    requested = tuple(
+        evidence_by_root if requested_root_ids is None else requested_root_ids
+    )
+    if len(set(requested)) != len(requested):
+        raise ValueError("duplicate requested lineage root")
+    direct_by_root: dict[str, list[PaperDirectRootResult]] = {}
+    for direct in _typed_direct_results_in_inputs(canonical_inputs):
+        direct_by_root.setdefault(direct.preregistered_root_run_id, []).append(direct)
+    input_digest = lineage_input_identity_digest(canonical_inputs)
+    wrappers_by_root = current_trace_wrappers_by_root or {}
+    bindings_by_root = trace_source_bindings_by_root or {}
+    facts_by_root = eligibility_facts_by_root or {}
+    requested_set = set(requested)
+    for mapping in (wrappers_by_root, bindings_by_root, facts_by_root):
+        if not set(mapping) <= requested_set:
+            raise ValueError("Task19 typed input crosses requested lineage root")
+    results: list[CanonicalLineageInput] = []
+    for root_id in requested:
+        evidence = evidence_by_root.get(root_id)
+        if evidence is None:
+            raise ValueError("requested root lacks canonical factory provenance")
+        matches = direct_by_root.get(root_id, [])
+        if len(matches) != 1:
+            raise ValueError("executed direct result is not uniquely reachable from canonical inputs")
+        direct = matches[0]
+        if not direct._factory_validated or direct.execution_binding is None:
+            raise ValueError("executed lineage requires canonical factory direct result")
+        _validate_direct_result_provenance(direct, evidence)
+        wrappers = tuple(wrappers_by_root.get(root_id, ()))
+        bindings = tuple(bindings_by_root.get(root_id, ()))
+        facts = facts_by_root.get(root_id)
+        if any(not isinstance(value, CurrentTraceWrapper) for value in wrappers):
+            raise TypeError("current trace wrappers must be typed")
+        if any(not isinstance(value, TraceSourceBinding) for value in bindings):
+            raise TypeError("trace source bindings must be typed")
+        if facts is not None and not isinstance(facts, PaperEvidenceEligibilityFacts):
+            raise TypeError("eligibility facts must be typed")
+        if wrappers or bindings or facts is not None:
+            if facts is None:
+                raise ValueError("Task19 lineage requires typed eligibility facts")
+            _validate_task19_typed_inputs(direct, wrappers, bindings, facts)
+        results.append(
+            CanonicalLineageInput._from_validated(
+                _factory_token=_CANONICAL_LINEAGE_INPUT_FACTORY_TOKEN,
+                direct_result=direct,
+                canonical_evidence=evidence,
+                input_identity_digest=input_digest,
+                current_trace_wrappers=wrappers,
+                trace_source_bindings=bindings,
+                eligibility_facts=facts,
+            )
+        )
+    return tuple(results)
+
+
+def _typed_direct_results_in_inputs(value: Any):
+    if isinstance(value, PaperDirectRootResult):
+        yield value
+    elif isinstance(value, Mapping):
+        for item in value.values():
+            yield from _typed_direct_results_in_inputs(item)
+    elif isinstance(value, (tuple, list)):
+        for item in value:
+            yield from _typed_direct_results_in_inputs(item)
+    elif is_dataclass(value):
+        for field_name in value.__dataclass_fields__:
+            if not field_name.startswith("_"):
+                yield from _typed_direct_results_in_inputs(getattr(value, field_name))
+
+
+def _validate_direct_result_provenance(
+    direct: PaperDirectRootResult,
+    evidence: CanonicalDirectRootEvidence,
+) -> None:
+    shared_fields = (
+        "preregistered_root_run_id",
+        "evidence_class",
+        "execution_binding",
+        "final_result_ref",
+        "terminal_root_event_ref",
+        "canonical_acceptance_ref",
+        "merge_ref",
+        "independently_verified_correct",
+        "paper_evidence_complete",
+        "identity_consistent",
+        "infrastructure_valid",
+        "attempt_refs",
+        "event_refs",
+        "parser_refs",
+        "verifier_checker_refs",
+        "artifact_refs",
+        "current_provider_object_refs",
+        "source_bank_object_locators",
+        "actual_resource_book_ref",
+        "trace_resource_book_ref",
+        "ineligibility_reasons",
+    )
+    if any(getattr(direct, name) != getattr(evidence, name) for name in shared_fields):
+        raise ValueError("direct result does not match Task3 canonical provenance")
+
+
+def _validate_task19_typed_inputs(
+    direct: PaperDirectRootResult,
+    wrappers: Sequence[CurrentTraceWrapper],
+    bindings: Sequence[TraceSourceBinding],
+    facts: PaperEvidenceEligibilityFacts,
+) -> None:
+    if not _typed_mapping_sequence_matches(
+        tuple(_current_trace_wrapper_body(value) for value in wrappers),
+        facts.current_lifecycle_refs,
+    ):
+        raise ValueError("lineage wrappers do not match eligibility facts")
+    if not _typed_mapping_sequence_matches(
+        tuple(value.to_dict() for value in bindings),
+        facts.trace_source_bindings,
+    ):
+        raise ValueError("lineage bindings do not match eligibility facts")
+    report = evaluate_versioned_paper_evidence(facts)
+    if report.evidence_class != direct.evidence_class:
+        raise ValueError("lineage eligibility evidence class mismatch")
+
+
 def _execution_classification(
     suite_body: Any,
     *,
@@ -277,6 +472,222 @@ def _execution_classification(
     }:
         raise ValueError("execution_classification baseline_policy is invalid")
     return result
+
+
+@dataclass(frozen=True, kw_only=True)
+class LineageSourceRecord:
+    """一个 metric member 可引用的已验证、typed persisted evidence 集合。"""
+
+    member_id: str
+    evidence_class: str
+    direct_result_refs: tuple[Mapping[str, Any], ...]
+    current_task_attempt_event_refs: tuple[LedgerEventIdentitySnapshot, ...]
+    parser_verifier_checker_canonical_refs: tuple[
+        ArtifactIdentitySnapshot | LedgerEventIdentitySnapshot, ...
+    ]
+    ledger_refs: tuple[LedgerEventIdentitySnapshot, ...]
+    current_provider_object_refs: tuple[ArtifactIdentitySnapshot, ...]
+    source_bank_object_locators: tuple[ExternalBankObjectLocator, ...]
+    current_trace_wrappers: tuple[CurrentTraceWrapper, ...]
+    trace_source_bindings: tuple[TraceSourceBinding, ...]
+    record_digest: str
+    schema_version: str = "tokenshare.lineage_source_record.v1"
+
+    @classmethod
+    def create(
+        cls,
+        *,
+        member_id: str,
+        evidence_class: str,
+        direct_result_refs: Sequence[Mapping[str, Any]] = (),
+        current_task_attempt_event_refs: Sequence[LedgerEventIdentitySnapshot] = (),
+        parser_verifier_checker_canonical_refs: Sequence[
+            ArtifactIdentitySnapshot | LedgerEventIdentitySnapshot
+        ] = (),
+        ledger_refs: Sequence[LedgerEventIdentitySnapshot] = (),
+        current_provider_object_refs: Sequence[ArtifactIdentitySnapshot] = (),
+        source_bank_object_locators: Sequence[ExternalBankObjectLocator] = (),
+        current_trace_wrappers: Sequence[CurrentTraceWrapper] = (),
+        trace_source_bindings: Sequence[TraceSourceBinding] = (),
+    ) -> "LineageSourceRecord":
+        values = {
+            "member_id": member_id,
+            "evidence_class": evidence_class,
+            "direct_result_refs": tuple(direct_result_refs),
+            "current_task_attempt_event_refs": tuple(current_task_attempt_event_refs),
+            "parser_verifier_checker_canonical_refs": tuple(
+                parser_verifier_checker_canonical_refs
+            ),
+            "ledger_refs": tuple(ledger_refs),
+            "current_provider_object_refs": tuple(current_provider_object_refs),
+            "source_bank_object_locators": tuple(source_bank_object_locators),
+            "current_trace_wrappers": tuple(current_trace_wrappers),
+            "trace_source_bindings": tuple(trace_source_bindings),
+        }
+        return cls(
+            **values,
+            record_digest=_digest_json(_lineage_source_record_body(**values)),
+        )
+
+    def __post_init__(self) -> None:
+        if self.schema_version != "tokenshare.lineage_source_record.v1":
+            raise ValueError("unsupported lineage source record schema")
+        if not isinstance(self.member_id, str) or not self.member_id:
+            raise ValueError("lineage member id must be a non-empty string")
+        if self.evidence_class not in {
+            "online_real_provider",
+            "real_model_trace_protocol_run",
+            "regression_only",
+        }:
+            raise ValueError("unsupported lineage evidence class")
+        typed_fields = (
+            ("current_task_attempt_event_refs", LedgerEventIdentitySnapshot),
+            ("ledger_refs", LedgerEventIdentitySnapshot),
+            ("current_provider_object_refs", ArtifactIdentitySnapshot),
+            ("source_bank_object_locators", ExternalBankObjectLocator),
+            ("current_trace_wrappers", CurrentTraceWrapper),
+            ("trace_source_bindings", TraceSourceBinding),
+        )
+        for field_name, expected_type in typed_fields:
+            values = tuple(getattr(self, field_name))
+            if any(not isinstance(value, expected_type) for value in values):
+                raise TypeError(f"{field_name} must contain typed persisted facts")
+            object.__setattr__(self, field_name, values)
+        mixed = tuple(self.parser_verifier_checker_canonical_refs)
+        if any(
+            not isinstance(value, (ArtifactIdentitySnapshot, LedgerEventIdentitySnapshot))
+            for value in mixed
+        ):
+            raise TypeError(
+                "parser_verifier_checker_canonical_refs must contain typed snapshots"
+            )
+        object.__setattr__(self, "parser_verifier_checker_canonical_refs", mixed)
+        direct = tuple(self.direct_result_refs)
+        if any(not isinstance(value, Mapping) or not value for value in direct):
+            raise TypeError("direct_result_refs must contain persisted mappings")
+        object.__setattr__(self, "direct_result_refs", direct)
+        _require_digest({"record_digest": self.record_digest}, "record_digest", "lineage")
+        expected = _digest_json(
+            _lineage_source_record_body(
+                member_id=self.member_id,
+                evidence_class=self.evidence_class,
+                direct_result_refs=self.direct_result_refs,
+                current_task_attempt_event_refs=self.current_task_attempt_event_refs,
+                parser_verifier_checker_canonical_refs=(
+                    self.parser_verifier_checker_canonical_refs
+                ),
+                ledger_refs=self.ledger_refs,
+                current_provider_object_refs=self.current_provider_object_refs,
+                source_bank_object_locators=self.source_bank_object_locators,
+                current_trace_wrappers=self.current_trace_wrappers,
+                trace_source_bindings=self.trace_source_bindings,
+            )
+        )
+        if self.record_digest != expected:
+            raise ValueError("lineage source record digest mismatch")
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            **_lineage_source_record_body(
+                member_id=self.member_id,
+                evidence_class=self.evidence_class,
+                direct_result_refs=self.direct_result_refs,
+                current_task_attempt_event_refs=self.current_task_attempt_event_refs,
+                parser_verifier_checker_canonical_refs=(
+                    self.parser_verifier_checker_canonical_refs
+                ),
+                ledger_refs=self.ledger_refs,
+                current_provider_object_refs=self.current_provider_object_refs,
+                source_bank_object_locators=self.source_bank_object_locators,
+                current_trace_wrappers=self.current_trace_wrappers,
+                trace_source_bindings=self.trace_source_bindings,
+            ),
+            "record_digest": self.record_digest,
+        }
+
+
+@dataclass(frozen=True, kw_only=True)
+class LineageSourceIndex:
+    """由 persisted facts 导出的 canonical member-to-source sidecar。"""
+
+    index_id: str
+    input_identity_digest: str
+    records: tuple[LineageSourceRecord, ...]
+    index_digest: str
+    schema_version: str = "tokenshare.lineage_source_index.v1"
+
+    @classmethod
+    def create(
+        cls,
+        *,
+        records: Sequence[LineageSourceRecord],
+        input_identity_digest: str,
+    ) -> "LineageSourceIndex":
+        canonical = tuple(sorted(records, key=lambda value: value.member_id))
+        member_ids = tuple(value.member_id for value in canonical)
+        if len(set(member_ids)) != len(member_ids):
+            raise ValueError("lineage source index contains duplicate member ids")
+        identity = _digest_json(
+            {
+                "schema_version": "tokenshare.lineage_source_index_identity.v1",
+                "input_identity_digest": input_identity_digest,
+                "record_digests": [value.record_digest for value in canonical],
+            }
+        )
+        body = {
+            "schema_version": "tokenshare.lineage_source_index.v1",
+            "index_id": identity,
+            "input_identity_digest": input_identity_digest,
+            "records": [value.to_dict() for value in canonical],
+        }
+        return cls(
+            index_id=identity,
+            input_identity_digest=input_identity_digest,
+            records=canonical,
+            index_digest=_digest_json(body),
+        )
+
+    def __post_init__(self) -> None:
+        if self.schema_version != "tokenshare.lineage_source_index.v1":
+            raise ValueError("unsupported lineage source index schema")
+        for field_name in ("index_id", "input_identity_digest", "index_digest"):
+            _require_digest({field_name: getattr(self, field_name)}, field_name, "lineage")
+        canonical = tuple(sorted(self.records, key=lambda value: value.member_id))
+        if canonical != self.records or any(
+            not isinstance(value, LineageSourceRecord) for value in canonical
+        ):
+            raise ValueError("lineage source index records are not canonical typed facts")
+        expected_id = _digest_json(
+            {
+                "schema_version": "tokenshare.lineage_source_index_identity.v1",
+                "input_identity_digest": self.input_identity_digest,
+                "record_digests": [value.record_digest for value in canonical],
+            }
+        )
+        expected_digest = _digest_json(
+            {
+                "schema_version": self.schema_version,
+                "index_id": expected_id,
+                "input_identity_digest": self.input_identity_digest,
+                "records": [value.to_dict() for value in canonical],
+            }
+        )
+        if expected_id != self.index_id or expected_digest != self.index_digest:
+            raise ValueError("lineage source index identity mismatch")
+
+    def get(self, member_id: str) -> LineageSourceRecord | None:
+        matches = tuple(value for value in self.records if value.member_id == member_id)
+        return matches[0] if len(matches) == 1 else None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            "index_id": self.index_id,
+            "input_identity_digest": self.input_identity_digest,
+            "record_count": len(self.records),
+            "record_digests": [value.record_digest for value in self.records],
+            "index_digest": self.index_digest,
+        }
 
 
 @dataclass(frozen=True)
@@ -5153,6 +5564,491 @@ def _require_digest(
         or any(character not in "0123456789abcdef" for character in value[7:])
     ):
         raise ValueError(f"{label} {field_name} type is invalid")
+
+
+def lineage_input_identity_digest(canonical_inputs: Mapping[str, object]) -> str:
+    """对 projector 的 typed canonical inputs 计算稳定 sidecar 输入身份。"""
+
+    if not isinstance(canonical_inputs, Mapping):
+        raise TypeError("lineage canonical inputs must be a mapping")
+    return _digest_json(
+        {
+            "schema_version": "tokenshare.lineage_source_input_identity.v1",
+            "canonical_inputs": _lineage_json_value(canonical_inputs),
+        }
+    )
+
+
+def export_lineage_source_index(
+    store: FormalEvidenceStore,
+    canonical_inputs: Sequence[CanonicalLineageInput],
+    *,
+    input_identity_digest: str,
+) -> LineageSourceIndex:
+    """只从显式 Task3/Task19 typed inputs 与其指定 logical closure 导出。"""
+
+    if not isinstance(store, FormalEvidenceStore):
+        raise TypeError("lineage exporter requires FormalEvidenceStore")
+    inputs = tuple(canonical_inputs)
+    if any(not isinstance(value, CanonicalLineageInput) for value in inputs):
+        raise TypeError("lineage exporter inputs must contain CanonicalLineageInput")
+    if any(not value.producer_validated for value in inputs):
+        raise ValueError("lineage inputs must come from canonical lineage factory")
+    if any(value.input_identity_digest != input_identity_digest for value in inputs):
+        raise ValueError("lineage source input identity mismatch")
+    root_ids = tuple(
+        value.direct_result.preregistered_root_run_id for value in inputs
+    )
+    if len(set(root_ids)) != len(root_ids):
+        raise ValueError("lineage direct result identity is ambiguous")
+    records: list[LineageSourceRecord] = []
+    for lineage_input in inputs:
+        direct = lineage_input.direct_result
+        if direct.execution_binding is not None:
+            logical = store.load_logical_run_records(
+                experiment_id=direct.experiment_id,
+                condition_id=direct.condition_id,
+                repeat_id=direct.repeat_id,
+            )
+            _validate_persisted_lineage_closure(lineage_input, logical)
+        wrappers = lineage_input.current_trace_wrappers
+        bindings = lineage_input.trace_source_bindings
+        if direct.execution_binding is not None and any(
+            value.current_task_id != direct.execution_binding.task_id
+            for value in wrappers
+        ):
+            raise ValueError("current trace wrapper task identity mismatch")
+        source_locators = _unique_typed(direct.source_bank_object_locators)
+        provider_refs = _unique_typed(direct.current_provider_object_refs)
+        if direct.evidence_class == "online_real_provider" and source_locators:
+            raise ValueError("online lineage cannot contain source bank locators")
+        if direct.evidence_class == "real_model_trace_protocol_run" and provider_refs:
+            raise ValueError("trace lineage cannot contain current provider refs")
+
+        current_refs = _unique_typed((*direct.attempt_refs, *direct.event_refs))
+        parser_refs = _unique_typed(
+            (
+                *direct.parser_refs,
+                *direct.verifier_checker_refs,
+                *(() if direct.canonical_acceptance_ref is None else (direct.canonical_acceptance_ref,)),
+                *(() if direct.merge_ref is None else (direct.merge_ref,)),
+            )
+        )
+        ledger_refs = _unique_typed(
+            (
+                *direct.event_refs,
+                *(() if direct.terminal_root_event_ref is None else (direct.terminal_root_event_ref,)),
+                *(() if direct.canonical_acceptance_ref is None else (direct.canonical_acceptance_ref,)),
+                *(() if direct.merge_ref is None else (direct.merge_ref,)),
+            )
+        )
+        root_record = LineageSourceRecord.create(
+            member_id=direct.preregistered_root_run_id,
+            evidence_class=direct.evidence_class,
+            direct_result_refs=(direct.to_dict(),),
+            current_task_attempt_event_refs=current_refs,
+            parser_verifier_checker_canonical_refs=parser_refs,
+            ledger_refs=ledger_refs,
+            current_provider_object_refs=provider_refs,
+            source_bank_object_locators=source_locators,
+            current_trace_wrappers=wrappers,
+            trace_source_bindings=bindings,
+        )
+        records.append(root_record)
+        aliases = {
+            direct.preregistered_root_run_id,
+            *(value.object_id for value in current_refs),
+            *(value.source_execution_id for value in provider_refs),
+            *(value.entry_id for value in source_locators),
+            *(value.current_attempt_id for value in wrappers),
+            *(value.current_unit_id for value in wrappers),
+            *(value.entry_id for value in wrappers),
+            *(value.planned_ai_unit_id for value in bindings),
+            *(
+                replacement.entry_id
+                for binding in bindings
+                for replacement in binding.replacements
+            ),
+        }
+        for alias in sorted(aliases - {direct.preregistered_root_run_id}):
+            records.append(
+                LineageSourceRecord.create(
+                    member_id=alias,
+                    evidence_class=direct.evidence_class,
+                    direct_result_refs=(direct.to_dict(),),
+                    current_task_attempt_event_refs=current_refs,
+                    parser_verifier_checker_canonical_refs=parser_refs,
+                    ledger_refs=ledger_refs,
+                    current_provider_object_refs=tuple(
+                        value
+                        for value in provider_refs
+                        if value.source_execution_id == alias
+                    ),
+                    source_bank_object_locators=tuple(
+                        value for value in source_locators if value.entry_id == alias
+                    ),
+                    current_trace_wrappers=tuple(
+                        value
+                        for value in wrappers
+                        if alias
+                        in {
+                            value.current_attempt_id,
+                            value.current_unit_id,
+                            value.entry_id,
+                        }
+                    ),
+                    trace_source_bindings=tuple(
+                        value
+                        for value in bindings
+                        if alias == value.planned_ai_unit_id
+                        or alias in {item.entry_id for item in value.replacements}
+                    ),
+                )
+            )
+    merged = _merge_lineage_source_records(records)
+    return LineageSourceIndex.create(
+        records=merged,
+        input_identity_digest=input_identity_digest,
+    )
+
+
+def _validate_persisted_lineage_closure(
+    lineage_input: CanonicalLineageInput,
+    logical: Mapping[str, Any],
+) -> None:
+    direct = lineage_input.direct_result
+    binding = direct.execution_binding
+    if binding is None:
+        raise ValueError("executed lineage closure requires execution binding")
+    tasks = tuple(logical["tasks"])
+    task_matches = tuple(
+        task
+        for task in tasks
+        if task.get("task_id") == binding.task_id
+        and task.get("case_id") == direct.case_id
+        and task.get("preregistered_root_run_id") == direct.preregistered_root_run_id
+    )
+    if len(task_matches) != 1:
+        raise ValueError("persisted closure root/case identity mismatch")
+    task = task_matches[0]
+    runtime_identity = task.get("runtime_generation_identity")
+    if not isinstance(runtime_identity, Mapping) or any(
+        runtime_identity.get(name) != expected
+        for name, expected in (
+            ("run_id", binding.execution_id),
+            ("task_id", binding.task_id),
+            ("root_unit_id", binding.root_unit_id),
+            ("ledger_digest", binding.ledger_digest),
+        )
+    ):
+        raise ValueError("persisted closure execution binding mismatch")
+
+    persisted_events = {
+        (event.get("event_id"), event.get("event_hash")): event
+        for event in logical["events"]
+        if isinstance(event, Mapping) and event.get("task_id") == binding.task_id
+    }
+    for event_ref in binding.events:
+        event = persisted_events.get((event_ref.event_id, event_ref.event_hash))
+        if event is None or any(
+            event.get(name) != expected
+            for name, expected in (
+                ("event_seq", event_ref.event_seq),
+                ("event_type", event_ref.event_type),
+                ("prev_event_hash", event_ref.prev_event_hash),
+                ("task_id", event_ref.task_id),
+                ("object_type", event_ref.object_type),
+                ("object_id", event_ref.object_id),
+            )
+        ):
+            raise ValueError("persisted closure ledger event identity mismatch")
+
+    persisted_artifact_records = tuple(
+        artifact
+        for artifact in logical["artifacts"]
+        if isinstance(artifact, Mapping) and artifact.get("task_id") == binding.task_id
+    )
+    persisted_artifacts = tuple(
+        artifact.get("source_artifact_ref")
+        for artifact in persisted_artifact_records
+        if isinstance(artifact.get("source_artifact_ref"), Mapping)
+    )
+    for artifact_ref in direct.artifact_refs:
+        if not any(
+            _artifact_snapshot_matches_source_ref(artifact_ref, value)
+            for value in persisted_artifacts
+        ):
+            raise ValueError("persisted closure artifact identity mismatch")
+
+    attempt_records = tuple(
+        value
+        for value in logical["attempts"]
+        if isinstance(value, Mapping) and value.get("task_id") == binding.task_id
+    )
+    attempts = {value.get("attempt_id") for value in attempt_records}
+    event_ids = {value[0] for value in persisted_events}
+    artifact_ids = {
+        value.get("artifact_id")
+        for value in persisted_artifacts
+        if isinstance(value, Mapping)
+    }
+    wrappers = lineage_input.current_trace_wrappers
+    source_locators = direct.source_bank_object_locators
+    locators_by_entry: dict[str, dict[str, str]] = {}
+    bank_identity_by_entry: dict[str, tuple[str, str]] = {}
+    for locator in source_locators:
+        locators_by_entry.setdefault(locator.entry_id, {})[
+            locator.object_role
+        ] = locator.object_digest
+        bank_identity_by_entry[locator.entry_id] = (
+            locator.bank_root_id,
+            locator.manifest_digest,
+        )
+    for wrapper in wrappers:
+        if (
+            wrapper.current_task_id != binding.task_id
+            or wrapper.current_attempt_id not in attempts
+            or wrapper.entry_id not in locators_by_entry
+            or dict(wrapper.locator_digests) != locators_by_entry[wrapper.entry_id]
+            or (wrapper.bank_root_id, wrapper.manifest_digest)
+            != bank_identity_by_entry[wrapper.entry_id]
+        ):
+            raise ValueError("persisted closure current trace wrapper identity mismatch")
+        for reference in (
+            wrapper.current_parse_ref,
+            wrapper.current_verifier_ref,
+            wrapper.current_checker_ref,
+            wrapper.current_canonical_ref,
+            wrapper.current_ledger_ref,
+        ):
+            if reference is not None and reference not in event_ids | artifact_ids:
+                raise ValueError("persisted closure wrapper reference is unreachable")
+        wrapper_digest = _digest_json(_current_trace_wrapper_body(wrapper))
+        if not any(
+            isinstance((source_ref := record.get("source_artifact_ref")), Mapping)
+            and source_ref.get("artifact_type") == "CurrentTraceWrapper"
+            and source_ref.get("content_hash") == wrapper_digest
+            for record in persisted_artifact_records
+        ):
+            raise ValueError("persisted closure current trace wrapper is not persisted")
+    wrapper_entries = {value.entry_id for value in wrappers}
+    for source_binding in lineage_input.trace_source_bindings:
+        replacement_entries = {value.entry_id for value in source_binding.replacements}
+        if not replacement_entries or not replacement_entries <= wrapper_entries:
+            raise ValueError("persisted closure trace binding is unreachable")
+        for entry_id in replacement_entries:
+            if (
+                source_binding.bank_root_id,
+                source_binding.manifest_digest,
+            ) != bank_identity_by_entry.get(entry_id):
+                raise ValueError("persisted closure trace source identity mismatch")
+        if not any(
+            attempt.get("source_binding_digest") == source_binding.binding_digest
+            or attempt.get("trace_source_binding_digest") == source_binding.binding_digest
+            for attempt in attempt_records
+        ):
+            raise ValueError("persisted closure trace binding is not persisted")
+    facts = lineage_input.eligibility_facts
+    if facts is not None:
+        report = evaluate_versioned_paper_evidence(facts)
+        if task.get("versioned_paper_evidence_report") != report.to_dict():
+            raise ValueError("persisted closure eligibility report mismatch")
+
+
+def _artifact_snapshot_matches_source_ref(
+    snapshot: ArtifactIdentitySnapshot,
+    source_ref: Mapping[str, Any],
+) -> bool:
+    source = source_ref.get("source")
+    return isinstance(source, Mapping) and all(
+        actual == expected
+        for actual, expected in (
+            (source_ref.get("artifact_id"), snapshot.artifact_id),
+            (source_ref.get("artifact_type"), snapshot.artifact_type),
+            (source_ref.get("uri"), snapshot.uri),
+            (source_ref.get("content_hash"), snapshot.content_hash),
+            (source_ref.get("size_bytes"), snapshot.size_bytes),
+            (source_ref.get("media_type"), snapshot.media_type),
+            (source_ref.get("artifact_schema_id"), snapshot.artifact_schema_id),
+            (
+                source_ref.get("artifact_schema_version"),
+                snapshot.artifact_schema_version,
+            ),
+            (source.get("role"), snapshot.source_role),
+            (source.get("task_id"), snapshot.source_task_id),
+            (source.get("execution_id"), snapshot.source_execution_id),
+            (source_ref.get("created_at"), snapshot.created_at),
+        )
+    )
+
+
+def _current_trace_wrapper_body(value: CurrentTraceWrapper) -> dict[str, Any]:
+    return {
+        field_name: (
+            dict(field_value)
+            if isinstance(field_value, Mapping)
+            else field_value
+        )
+        for field_name in value.__dataclass_fields__
+        for field_value in (getattr(value, field_name),)
+    }
+
+
+def _typed_mapping_sequence_matches(
+    actual: Sequence[Mapping[str, Any]],
+    expected: Sequence[Mapping[str, Any]],
+) -> bool:
+    return len(actual) == len(expected) and all(
+        _canonical_bytes(left) == _canonical_bytes(right)
+        for left, right in zip(actual, expected, strict=True)
+    )
+
+
+def _lineage_source_record_body(
+    *,
+    member_id: str,
+    evidence_class: str,
+    direct_result_refs: Sequence[Mapping[str, Any]],
+    current_task_attempt_event_refs: Sequence[LedgerEventIdentitySnapshot],
+    parser_verifier_checker_canonical_refs: Sequence[
+        ArtifactIdentitySnapshot | LedgerEventIdentitySnapshot
+    ],
+    ledger_refs: Sequence[LedgerEventIdentitySnapshot],
+    current_provider_object_refs: Sequence[ArtifactIdentitySnapshot],
+    source_bank_object_locators: Sequence[ExternalBankObjectLocator],
+    current_trace_wrappers: Sequence[CurrentTraceWrapper],
+    trace_source_bindings: Sequence[TraceSourceBinding],
+) -> dict[str, Any]:
+    return {
+        "schema_version": "tokenshare.lineage_source_record.v1",
+        "member_id": member_id,
+        "evidence_class": evidence_class,
+        "direct_result_refs": [_lineage_json_value(value) for value in direct_result_refs],
+        "current_task_attempt_event_refs": [
+            value.to_dict() for value in current_task_attempt_event_refs
+        ],
+        "parser_verifier_checker_canonical_refs": [
+            value.to_dict() for value in parser_verifier_checker_canonical_refs
+        ],
+        "ledger_refs": [value.to_dict() for value in ledger_refs],
+        "current_provider_object_refs": [
+            value.to_dict() for value in current_provider_object_refs
+        ],
+        "source_bank_object_locators": [
+            value.to_dict() for value in source_bank_object_locators
+        ],
+        "current_trace_wrappers": [
+            _current_trace_wrapper_body(value) for value in current_trace_wrappers
+        ],
+        "trace_source_bindings": [value.to_dict() for value in trace_source_bindings],
+    }
+
+
+def _merge_lineage_source_records(
+    records: Sequence[LineageSourceRecord],
+) -> tuple[LineageSourceRecord, ...]:
+    grouped: dict[str, list[LineageSourceRecord]] = {}
+    for record in records:
+        grouped.setdefault(record.member_id, []).append(record)
+    merged: list[LineageSourceRecord] = []
+    for member_id in sorted(grouped):
+        values = grouped[member_id]
+        evidence_classes = {value.evidence_class for value in values}
+        if len(evidence_classes) != 1:
+            raise ValueError("lineage member evidence class identity conflict")
+        merged.append(
+            LineageSourceRecord.create(
+                member_id=member_id,
+                evidence_class=next(iter(evidence_classes)),
+                direct_result_refs=_unique_mappings(
+                    item for value in values for item in value.direct_result_refs
+                ),
+                current_task_attempt_event_refs=_unique_typed(
+                    item
+                    for value in values
+                    for item in value.current_task_attempt_event_refs
+                ),
+                parser_verifier_checker_canonical_refs=_unique_typed(
+                    item
+                    for value in values
+                    for item in value.parser_verifier_checker_canonical_refs
+                ),
+                ledger_refs=_unique_typed(
+                    item for value in values for item in value.ledger_refs
+                ),
+                current_provider_object_refs=_unique_typed(
+                    item
+                    for value in values
+                    for item in value.current_provider_object_refs
+                ),
+                source_bank_object_locators=_unique_typed(
+                    item
+                    for value in values
+                    for item in value.source_bank_object_locators
+                ),
+                current_trace_wrappers=_unique_typed(
+                    item
+                    for value in values
+                    for item in value.current_trace_wrappers
+                ),
+                trace_source_bindings=_unique_typed(
+                    item
+                    for value in values
+                    for item in value.trace_source_bindings
+                ),
+            )
+        )
+    return tuple(merged)
+
+
+def _unique_typed(values: Sequence[Any] | Any) -> tuple[Any, ...]:
+    by_digest: dict[str, Any] = {}
+    for value in values:
+        body = (
+            _current_trace_wrapper_body(value)
+            if isinstance(value, CurrentTraceWrapper)
+            else value.to_dict()
+        )
+        key = _digest_json(_lineage_json_value(body))
+        previous = by_digest.setdefault(key, value)
+        if previous != value:
+            raise ValueError("typed lineage identity conflict")
+    return tuple(by_digest[key] for key in sorted(by_digest))
+
+
+def _unique_mappings(values: Any) -> tuple[Mapping[str, Any], ...]:
+    by_digest: dict[str, Mapping[str, Any]] = {}
+    for value in values:
+        key = _digest_json(_lineage_json_value(value))
+        previous = by_digest.setdefault(key, value)
+        if _canonical_bytes(previous) != _canonical_bytes(value):
+            raise ValueError("direct lineage mapping identity conflict")
+    return tuple(by_digest[key] for key in sorted(by_digest))
+
+
+def _lineage_json_value(value: Any) -> Any:
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, Decimal):
+        return str(value)
+    if isinstance(value, Enum):
+        return value.value
+    if isinstance(value, Mapping):
+        return {
+            str(key): _lineage_json_value(item)
+            for key, item in sorted(value.items(), key=lambda pair: str(pair[0]))
+        }
+    if isinstance(value, (tuple, list)):
+        return [_lineage_json_value(item) for item in value]
+    if is_dataclass(value):
+        if hasattr(value, "to_dict"):
+            return _lineage_json_value(value.to_dict())
+        return {
+            field_name: _lineage_json_value(getattr(value, field_name))
+            for field_name in value.__dataclass_fields__
+            if not field_name.startswith("_")
+        }
+    raise TypeError(f"unsupported lineage identity value: {type(value).__name__}")
 
 
 def _is_noncurrent_generation_path(root: Path, relative_path: str) -> bool:

@@ -3,12 +3,14 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
-from dataclasses import dataclass
+from contextlib import contextmanager
+from contextvars import ContextVar
+from dataclasses import dataclass, replace
 from decimal import Decimal
 from enum import Enum
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any, Iterable, Mapping, Sequence
+from typing import Any, Iterable, Iterator, Mapping, Sequence
 
 from tokenshare.experiments.paper_pipeline_profile import load_paper_pipeline_profile
 
@@ -574,6 +576,101 @@ class MetricEvaluation:
     audit_denominator_member_ids: tuple[str, ...] = ()
     member_decisions: tuple[MemberDecision, ...] = ()
     paper_eligible: bool = False
+
+
+@dataclass(frozen=True, kw_only=True)
+class MetricComputationTrace:
+    """真实 contract evaluator 返回值与其不可变输入的 scoped 捕获。"""
+
+    trace_id: str
+    contract_id: str
+    contract_digest: str
+    pipeline_profile_id: str
+    pipeline_profile_digest: str
+    table_id: str
+    metric_id: str
+    formula_id: str
+    row_kind: str
+    row_identity_digest: str
+    cell_identity_digest: str
+    bundle: MetricObservationBundle
+    evaluation: MetricEvaluation
+    schema_version: str = "tokenshare.metric_computation_trace.v1"
+
+    def __post_init__(self) -> None:
+        if self.schema_version != "tokenshare.metric_computation_trace.v1":
+            raise ValueError("unsupported metric computation trace schema")
+        for value, field_name in (
+            (self.contract_id, "contract_id"),
+            (self.pipeline_profile_id, "pipeline_profile_id"),
+            (self.table_id, "table_id"),
+            (self.metric_id, "metric_id"),
+            (self.formula_id, "formula_id"),
+            (self.row_kind, "row_kind"),
+        ):
+            _non_empty_string(value, field_name)
+        for value, field_name in (
+            (self.trace_id, "trace_id"),
+            (self.contract_digest, "contract_digest"),
+            (self.pipeline_profile_digest, "pipeline_profile_digest"),
+            (self.row_identity_digest, "row_identity_digest"),
+            (self.cell_identity_digest, "cell_identity_digest"),
+        ):
+            _digest(value, field_name)
+        if not isinstance(self.bundle, MetricObservationBundle):
+            raise TypeError("metric trace bundle must be MetricObservationBundle")
+        if not isinstance(self.evaluation, MetricEvaluation):
+            raise TypeError("metric trace evaluation must be MetricEvaluation")
+        if self.row_identity_digest != self.bundle.row_identity_digest:
+            raise ValueError("metric trace row identity crosses captured bundle")
+        if self.trace_id != self.cell_identity_digest:
+            raise ValueError("metric trace cell identity digest mismatch")
+
+
+_METRIC_TRACE_CAPTURE: ContextVar[list[MetricComputationTrace] | None] = ContextVar(
+    "tokenshare_metric_trace_capture",
+    default=None,
+)
+
+
+class _IdentityBoundMemberDecisions(tuple):
+    """Projector 会原样复制 membership；此 marker 只在 capture scope 内存在。"""
+
+    def __new__(
+        cls,
+        values: Sequence["MemberDecision"],
+        *,
+        row_identity_digest: str,
+        cell_identity_digest: str,
+    ) -> "_IdentityBoundMemberDecisions":
+        instance = super().__new__(cls, values)
+        instance.row_identity_digest = row_identity_digest
+        instance.cell_identity_digest = cell_identity_digest
+        return instance
+
+
+def metric_cell_identity_from_membership(
+    membership: object,
+) -> tuple[str, str] | None:
+    """读取 capture scope 传给真实 projector cell 的 canonical identity。"""
+
+    if not isinstance(membership, _IdentityBoundMemberDecisions):
+        return None
+    return membership.row_identity_digest, membership.cell_identity_digest
+
+
+@contextmanager
+def capture_metric_computation_traces() -> Iterator[list[MetricComputationTrace]]:
+    """只在显式 scope 内收集真实 evaluator 返回，不改变计算语义。"""
+
+    if _METRIC_TRACE_CAPTURE.get() is not None:
+        raise RuntimeError("nested metric computation capture is not supported")
+    traces: list[MetricComputationTrace] = []
+    token = _METRIC_TRACE_CAPTURE.set(traces)
+    try:
+        yield traces
+    finally:
+        _METRIC_TRACE_CAPTURE.reset(token)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -1870,6 +1967,71 @@ def recompute_metric(
     row_kind: str,
     bundle: MetricObservationBundle,
 ) -> MetricEvaluation:
+    """重算一个合同指标，并在显式 scope 内捕获原始输入和返回值。"""
+
+    evaluation = _recompute_metric_uncaptured(
+        contract,
+        table_id,
+        metric_id,
+        row_kind=row_kind,
+        bundle=bundle,
+    )
+    collector = _METRIC_TRACE_CAPTURE.get()
+    if collector is not None:
+        metric = contract.require_metric(table_id, metric_id)
+        identity = {
+            "schema_version": "tokenshare.metric_computation_trace_identity.v1",
+            "contract_digest": contract.contract_digest,
+            "pipeline_profile_digest": contract.pipeline_profile_digest,
+            "table_id": table_id,
+            "metric_id": metric_id,
+            "formula_id": metric.formula_id,
+            "row_kind": row_kind,
+            "row_identity_digest": bundle.row_identity_digest,
+        }
+        encoded = json.dumps(
+            identity,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        cell_identity_digest = "sha256:" + hashlib.sha256(encoded).hexdigest()
+        evaluation = replace(
+            evaluation,
+            member_decisions=_IdentityBoundMemberDecisions(
+                evaluation.member_decisions,
+                row_identity_digest=bundle.row_identity_digest,
+                cell_identity_digest=cell_identity_digest,
+            ),
+        )
+        collector.append(
+            MetricComputationTrace(
+                trace_id=cell_identity_digest,
+                contract_id=contract.contract_id,
+                contract_digest=contract.contract_digest,
+                pipeline_profile_id=contract.pipeline_profile_id,
+                pipeline_profile_digest=contract.pipeline_profile_digest,
+                table_id=table_id,
+                metric_id=metric_id,
+                formula_id=metric.formula_id,
+                row_kind=row_kind,
+                row_identity_digest=bundle.row_identity_digest,
+                cell_identity_digest=cell_identity_digest,
+                bundle=bundle,
+                evaluation=evaluation,
+            )
+        )
+    return evaluation
+
+
+def _recompute_metric_uncaptured(
+    contract: PaperMetricContract,
+    table_id: str,
+    metric_id: str,
+    *,
+    row_kind: str,
+    bundle: MetricObservationBundle,
+) -> MetricEvaluation:
     """只从一个不可变 observation bundle 重算一个合同指标。"""
     if not isinstance(bundle, MetricObservationBundle):
         raise ValueError("recompute_metric requires one MetricObservationBundle")
@@ -2605,6 +2767,7 @@ __all__ = [
     "MembershipSpec",
     "MemberDecision",
     "MetricContractControls",
+    "MetricComputationTrace",
     "MetricDefinition",
     "MetricEvaluation",
     "MetricTableDefinition",
@@ -2621,6 +2784,7 @@ __all__ = [
     "ProducerBoundary",
     "VerifiedMetricObservation",
     "compute_metric_contract_digest",
+    "capture_metric_computation_traces",
     "evaluate_invariant",
     "evaluate_membership",
     "load_paper_metric_contract",
