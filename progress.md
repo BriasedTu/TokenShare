@@ -7,7 +7,12 @@
 ## 当前状态
 
 - Active feature：`feat-011`（Paper Real AI Experiments），状态仍为 `in-progress`。
-- EPD-027 Task 13 已 accepted；实施计划共 35 个 Task，Task 0–13 已 accepted（`14/35`）。Task 14 是 queued/next。Task 0–2 的 accepted 原提交保持不变：`ed0b056a`、`78fbddaa`、`d2b16f89`。
+- EPD-027 实施计划共 35 个 Task，Task 0–14 已 accepted（`15/35`）。Task 14 contract commit=`3dc92de5`、projector commit=`77d79a65`；Task 15 standalone Exp4 projector 为 `queued/next`。
+- Task 14 contract 使用完整 backlink identity：started/reassignment 只要求实际启动链，successful 才要求 qualified/completed；retry-exhausted 为 started=`1`/success=`0`/reassignment=`1`。digest=`sha256:b72307e727e28f5233de934df28e1701cf46ffb711b99aa845ea6f8580694b0e`。
+- 接管 Fast 仅运行一次：exit `0`，`497 passed, 1 skipped in 32.15s`。Task 14 review-fix targeted RED=`6 failed in 2.52s`，contract nodeid RED=`1 failed in 0.39s`；contract full=`197 passed in 15.74s`；第二轮 online missingness RED=`2 failed in 0.70s`，最终 canonical=`12 passed in 1.79s`；py_compile/diff-check 通过。
+- Task 14 final reviewer=`PASS`，Critical/Important=`0/0`；无影子 TokenShare、无 fault-name 推断。唯一 audit-only ratio coercion Minor 不阻塞；post-accept test minimization=`NO_CHANGE`。
+- 用户已授权每个后续 Task 持续执行实现/review/fix/follow-up 至 PASS 后直接推进。下一步只实施 Task 15 两个计划文件；不得进入 Task 16、formal runner/renderer 或真实 API。
+- 本轮 provider/network calls=`0`，无 paid receipt；Fast 未重复，Full/LeanAudit 未运行，正式矩阵继续 **NO-GO**。
 - Task 3 的两项通用前置均已 accepted：ledger-binding `860b7c48` 最终 focused `40 passed`、review PASS；typed-hook `4ea293b1` 最终 `69 + 286 passed`、review PASS。Task 3 四文件提交=`f9773944`，最终 focused `101 passed`、独立 review PASS，provider calls=`0`。
 - Task 3 post-task 测试压缩已完成并提交为 `66643084`：仅修改 5 个测试文件，production 零修改；test defs / 估算 cases 从 `77/153` 降至 `66/118`。canonical scoped 结果 exit `0`，`118 passed in 5.55s`，provider calls=`0`；独立 review PASS，Critical/Important/Minor=`0/0/0`。本次提交与状态同步未重复运行 Fast、Full 或 LeanAudit。
 - Task 3 反影子结论：正式 direct-results 路径消费 canonical `ProtocolRunResult`、verified ledger binding 与 official typed-hook parser；没有复制 `ProtocolEngine`/状态机，禁用 `ProtocolEngine` 不能铸造 paper-eligible success。手工 typed fixture 仅用于组件测试。
@@ -26,8 +31,8 @@
 - Task 13 standalone Experiment 2 trace/online metric observations 已提交为 `3f8d4ec2284d472896b706a3d94112f81be7e7c2`（`feat(experiments): add Experiment 2 metric observations`），严格 2 文件。review 补充 RED=`3 failed`，targeted 修复后 `3 passed`；canonical=`16 passed in 13.85s`；测试最小化后仍为 `16 passed in 12.30s`；production compile、diff-check、forbidden import/alias scan 与 allowlist 均通过；final reviewer=`PASS`。provider/network calls=`0`，无 paid receipt；本次状态持久化未运行测试、Fast、Full、LeanAudit、network/provider，Full intentionally not run。
 - EPD-027 已按用户确认写入权威设计：Experiment 1/5 继续真实在线；Experiment 2–4 改为不可变真实回答库驱动的完整协议运行。同一 repeat 的配对条件共享回答、不同 repeat 使用独立 sample slot，replacement 按冻结最大恢复深度准备。
 - Experiment 2 另在缩小且预注册的题集上，用真实 API 覆盖 `1,3,7,10,30,50` 全六个 worker 档位；Experiment 3 另保留 verifier/checker 拒绝后 replacement 与 worker death 后重新分派的小型真实在线恢复检查。完整实施计划已形成，相关题集、重复、阈值、预算与 profile 仍须由后续 Task 实现、复审并在付费门禁前验证。
-- EPD-027 是实验设施全面改造，涉及稳定 provider-body digest、response-bank schema/inventory、trace-backed executor、source/consumer 双 provenance、双 paper evidence class、预算分账与硬门、runner/metrics/report/renderer/replay/audit；不是现有 replay 的局部修补。Task 0–13 已 accepted，但其余 `21/35` 仍未实施，正式全量继续 **NO-GO**。
-- Experiment 5 指标继续遵守 EPD-025：维持零 retry，正文使用“首次输出质量/最终结果”和“调用量/资源”两张 model 汇总表，删除六组 pairwise、recovery 与重复旧正确率名。Task 2 metric contract、Task 3 direct projector、Task 4 stable request identity、Task 5 immutable bank primitives、Task 6 semantic inventory/preflight、Task 7 atomic budget authority、Task 8 durable acquisition、Task 9 logical scheduler、Task 10 parent-owned commit ABI、Task 11 trace-backed executor / dual provenance、Task 12 Exp1 projector 与 Task 13 Exp2 projector 已 accepted；Exp3–5 projector、formal runner/metrics/renderer/replay 正式接线属于后续 Task，不能把 `14/35` 写成整条 pipeline implemented。
+- EPD-027 是实验设施全面改造，涉及稳定 provider-body digest、response-bank schema/inventory、trace-backed executor、source/consumer 双 provenance、双 paper evidence class、预算分账与硬门、runner/metrics/report/renderer/replay/audit；不是现有 replay 的局部修补。Task 0–14 已 accepted，但其余 `20/35` 仍未实施，正式全量继续 **NO-GO**。
+- Experiment 5 指标继续遵守 EPD-025：维持零 retry，正文使用“首次输出质量/最终结果”和“调用量/资源”两张 model 汇总表，删除六组 pairwise、recovery 与重复旧正确率名。Task 2 metric contract、Task 3 direct projector、Task 4 stable request identity、Task 5 immutable bank primitives、Task 6 semantic inventory/preflight、Task 7 atomic budget authority、Task 8 durable acquisition、Task 9 logical scheduler、Task 10 parent-owned commit ABI、Task 11 trace-backed executor / dual provenance、Task 12 Exp1、Task 13 Exp2 与 Task 14 Exp3 projector 已 accepted；Exp4–5 projector、formal runner/metrics/renderer/replay 正式接线属于后续 Task，不能把 `15/35` 写成整条 pipeline implemented。
 - Experiment 3/4/5 的代码与离线 smoke/paper evidence 门禁已闭合；2026-07-31 用户启动的真实 Exp3/4 smoke 已完成运行，但其历史 canonical 论文证据审计不通过，修复后仍须使用全新 identity 重跑。正式 P0-full 仍为 **NO-GO**，还缺新的 Exp3/4 11-root 证据与 Exp5 8-root artifact-backed endpoint smoke bundle。
 - Experiment 1–4 继续固定官方 DeepSeek `deepseek-v4-pro` / `deepseek_v4_pro_exp1_baseline`，thinking enabled、high、`timeout_seconds=600`、`max_tokens=300000`。
 - Experiment 5 继续固定 SiliconFlow cohort v3 四模型与 `600/32768`；GLM/Qwen/MiniMax thinking budget 32768，DeepSeek-V3 nonthinking。
@@ -103,13 +108,13 @@
 
 ## 尚未执行与残留
 
-- EPD-025/027 的实施已不再是“只完成设计同步”：Task 2–13 的 metric contract、canonical direct results、stable request identity、immutable bank、inventory/preflight、budget、acquisition、logical scheduler、parent-owned commit ABI、trace-backed executor / dual provenance 与 standalone Exp1/Exp2 projectors 已 accepted；Exp3–5 projector、formal metrics/report/renderer、execute/replay 与论文管线正式接线仍须按后续 Task 完成。本轮没有启动真实 API。
+- EPD-025/027 的实施已不再是“只完成设计同步”：Task 2–14 的 metric contract、canonical direct results、stable request identity、immutable bank、inventory/preflight、budget、acquisition、logical scheduler、parent-owned commit ABI、trace-backed executor / dual provenance 与 standalone Exp1/Exp2/Exp3 projectors 已 accepted；Exp4–5 projector、formal metrics/report/renderer、execute/replay 与论文管线正式接线仍须按后续 Task 完成。本轮没有启动真实 API。
 - 按用户要求，本次审计/修复没有新运行 Full、LeanAudit、force-all、真实 API smoke 或正式矩阵；未检查人为注入攻击。上面的真实调用来自用户此前启动的历史 smoke。
-- 历史审计时当前进程的 `DEEPSEEK_API_KEY` 非空；这只证明当时环境曾配置，不构成当前付费授权，也不把 secret 写入仓库或输出。Task 13 已 accepted，Task 14 保持 queued/next；旧 Exp3/4 与 Exp5 smoke 继续暂停。
+- 历史审计时当前进程的 `DEEPSEEK_API_KEY` 非空；这只证明当时环境曾配置，不构成当前付费授权，也不把 secret 写入仓库或输出。Task 0–14 已 accepted，Task 15 为 queued/next；旧 Exp3/4 与 Exp5 smoke 继续暂停。
 - TTFT 当前没有持久化来源，保持缺失，不伪造为 0。
 - Exp5 bundle digest 仍包含 source suite 持久化路径字符串，属于跨机器可移植性 P2，不影响当前本机 lifecycle/artifact 绑定。
 - PowerShell 日志 helper 在“runner 已退出但其后代长期持有继承管道写端”的极端路径仍可能等待 EOF；正常 launcher 实时脱敏、受控退出与退出码传播测试通过。该 P2 未伪装成已修复，不影响本轮结果完整性结论。
 - 全量资源 A 支线暂停点：`build_shared_root_reference()` 尚未替换为 terminal snapshot-only 的 `ValidatedSharedRootReferenceIndex`；还需补 stale/duplicate source rejection、同一 suite 共享索引复用、500 synthetic roots 的 `max_live_full_outcomes <= 1` 证据，并在完成后重跑 formal runner 与 Fast。完成这些之前不得启动正式全量。
-- EPD-027 Task 0–13 已 accepted；standalone Exp1/Exp2 projector 已实现，但 Exp3–5 projector 与 formal runner/metrics/renderer/replay 的正式 pipeline 接线仍未实现。旧 Exp3/4 11-root 与 Exp5 8-root smoke 仍暂停；未获经 Task 26 校验的 paid receipt 不得运行在线并发/恢复检查。
-- Task 13 production/tests 已独立提交为 `3f8d4ec2284d472896b706a3d94112f81be7e7c2`；Task 14 queued/next。本轮不 push、不 merge、不创建 PR。
-- 本轮状态持久化未联网、未调用 provider，未引入外部资料；仅更新 minimal handoff、`progress.md`、`feature_list.json`、`session-handoff.md` 与 code map；未运行测试/Fast/Full/LeanAudit，Full intentionally not run per user；无 paid receipt，provider calls=`0`。
+- EPD-027 Task 0–14 已 accepted；standalone Exp1/Exp2/Exp3 projector 已实现，但 Exp4–5 projector 与 formal runner/metrics/renderer/replay 的正式 pipeline 接线仍未实现。旧 Exp3/4 11-root 与 Exp5 8-root smoke 仍暂停；未获经 Task 26 校验的 paid receipt 不得运行在线并发/恢复检查。
+- Task 13 production/tests 已独立提交为 `3f8d4ec2284d472896b706a3d94112f81be7e7c2`；Task 14 为未提交的暂停交接状态。本轮不 push、不 merge、不创建 PR。
+- 本轮暂停状态持久化未联网、未调用 provider，未引入外部资料；仅更新 minimal handoff、`progress.md`、`feature_list.json` 与 `session-handoff.md`，不改 code map；未运行测试/Fast/Full/LeanAudit，Full intentionally not run per user；无 paid receipt，provider/network calls=`0`，不 stage/commit。

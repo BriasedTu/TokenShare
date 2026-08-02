@@ -165,9 +165,10 @@ Secret 只能进入当前进程环境和脱敏后的 transport；event/artifact/
 |---|---|
 | `paper_projection.py` | 从 system projection/events/artifacts 派生 task/attempt rows。 |
 | `paper_direct_results.py` | Task 3 已接受的 canonical facts projector：从正式 runtime result、verified ledger binding、artifact 与 official typed-hook parser 构造 deep-immutable direct rows；以 preregistered root inventory 固定分母并显式生成 `not_started`，不从 gate bool/summary 自填成功。输出供后续 metric observation/projector registry 接线，当前不是 formal metrics/renderer 的替代入口。 |
-| `paper_metric_contract.py` | Task 2 machine-readable metric contract loader/evaluator；Task 12 最小 plan-out 把 tracked contract 重新绑定 Task 6 后的 current pipeline profile digest 并更新派生 contract digest，不改变指标字段、公式、分母、missingness 或 alias 禁令。 |
+| `paper_metric_contract.py` | Task 2 machine-readable metric contract loader/evaluator；Task 12 最小 plan-out 把 tracked contract 重新绑定 Task 6 后的 current pipeline profile digest；Task 14 把 Exp3 started/reassignment 修为完整实际启动 backlink identity，successful 才额外要求 qualified/completed，retry-exhausted 不伪造成功角色。 |
 | `paper_exp1_metrics.py` | Task 12 standalone Experiment 1 pure observation projector：按 domain/difficulty/topic/repeat 消费 canonical direct rows 与已物化 timing/provider facts，保留全部预注册 roots 的固定分母，wrong final 只计 completion，infra invalid 与资源缺失显式 null/block；不 import formal runner/renderer，不修改 registry，draft 默认 `paper_eligible=false`。 |
 | `paper_exp2_metrics.py` | Task 13 standalone Experiment 2 pure trace/online observation projectors：按 digest-bound case ref、repeat/sample、worker 与 position stratum 投影固定分母、logical makespan、paired speedup/efficiency、committed trace slot/token/cost、调度利用率与 online first-attempt 429/timeout union；失败与 missingness 显式保留，完整 main trace 前 post-bank check 为 `not_evaluated_pre_bank`，不 import formal runner/renderer、不修改 registry，draft 默认 `paper_eligible=false`。 |
+| `paper_exp3_metrics.py` | Task 14 standalone Experiment 3 pure trace/online recovery projectors：投影 fixed controlled-candidate denominator、完整 replacement/reassignment backlink、same-sample paired trace absolute overhead、discarded trace tokens、worker-death completeness/kill error，以及 ordered current-provider identity/usage/cost/wasted actual tokens；缺 provider object/role 时六个 online resource cells 统一 null/block，不 import formal runner/renderer，不复制协议状态机。 |
 | `paper_metrics.py` | evidence-derived 通用统计与 integrity validation。 |
 | `paper_formal_metrics.py` | 正式 Exp1–5 指标表生产路径。 |
 | `paper_report.py`、`paper_formal_report.py`、`paper_smoke_report.py` | 通用/正式/smoke 输出；smoke 永远 paper-ineligible。 |
@@ -181,17 +182,17 @@ Secret 只能进入当前进程环境和脱敏后的 transport；event/artifact/
 
 ### EPD-027 实施进度与后续实验设施改造
 
-2026-08-01 已冻结 Experiment 2–4 两阶段真实回答库设计。当前 35 个实施 Task 中 Task 0–13 已 accepted。Task 13 standalone Experiment 2 trace/online metric observations commit=`3f8d4ec2284d472896b706a3d94112f81be7e7c2`，严格 2 文件；review RED=`3 failed`→targeted=`3 passed`；canonical=`16 passed in 13.85s`；最小化后=`16 passed in 12.30s`；production compile、diff-check、forbidden import/alias scan、allowlist 均通过；final reviewer PASS；provider/network calls=`0`，无 paid receipt。这个 `14/35` 状态不代表整条 paper pipeline 已实现：Task 14 queued/next，Exp3–5 projector、registry、`paper_formal_runner.py` consumer、renderer/replay 接线仍未完成；正式矩阵保持 **NO-GO**。本次状态持久化未运行测试/Fast/Full/LeanAudit/network/provider，Full intentionally not run per user。
+2026-08-01 已冻结 Experiment 2–4 两阶段真实回答库设计。当前 35 个实施 Task 中 Task 0–14 已 accepted。Task 14 contract commit=`3dc92de5`、standalone Experiment 3 projector commit=`77d79a65`；最终 Task14 canonical=`12 passed in 1.79s`、contract full=`197 passed in 15.74s`，final reviewer PASS，Critical/Important=`0/0`，post-accept test minimization=`NO_CHANGE`，provider/network calls=`0`，无 paid receipt。这个 `15/35` 状态不代表整条 paper pipeline 已实现：Task 15 queued/next，Exp4–5 projector、registry、`paper_formal_runner.py` consumer、renderer/replay 接线仍未完成；正式矩阵保持 **NO-GO**。接管 Fast 仅运行一次；Task 14 验收未重复 Fast，Full/LeanAudit/network/provider 未运行。
 
 后续完整实施计划必须同时覆盖：
 
-- Task 14 及后续 Exp3–5 projector/registry/formal runner 接线，把已接受的 trace-backed executor、双 provenance 与 Exp1/Exp2 observation projector 纳入正式 Exp1–5 pipeline；
+- Task 15 及后续 Exp4–5 projector/registry/formal runner 接线，把已接受的 trace-backed executor、双 provenance 与 Exp1–3 observation projector 纳入正式 Exp1–5 pipeline；
 - `online_real_provider` 与 `real_model_trace_protocol_run` 两类 paper eligibility，禁止把 trace consumption 冒充当前 provider call；
 - acquisition actual spend 与 per-condition trace attribution 两套资源账，以及 calls/tokens/CNY/in-flight 人民币 1,000 硬门；
 - Experiment 2 缩小题集六 worker 档在线并发检查、Experiment 3 小型在线恢复检查；
 - metrics/report/renderer/replay/audit 与 smoke/canary 身份迁移。
 
-这是一项跨 `tokenshare.executors`、`tokenshare.experiments`、两插件 runtime adapter 和输出 schema 的全面设施修改，不得在 `paper_formal_runner.py` 内临时塞入读取文件的旁路，也不得复制一套协议生命周期。已接受的 ledger/hook/direct-result、immutable bank、semantic inventory/preflight、deterministic logical scheduler、parent-owned trace delivery commit ABI、Task 11 trace-backed executor / dual provenance、Task 12 Exp1 projector 与 Task 13 Exp2 projector 边界不改变 `ProtocolEngine` 状态机；Exp3–5 projector、registry 与 formal runner/metrics/renderer/replay 的正式 pipeline 接线属于后续 Task。后续继续先建 characterization/RED tests，并以唯一权威实验设计 EPD-027 为准。
+这是一项跨 `tokenshare.executors`、`tokenshare.experiments`、两插件 runtime adapter 和输出 schema 的全面设施修改，不得在 `paper_formal_runner.py` 内临时塞入读取文件的旁路，也不得复制一套协议生命周期。已接受的 ledger/hook/direct-result、immutable bank、semantic inventory/preflight、deterministic logical scheduler、parent-owned trace delivery commit ABI、Task 11 trace-backed executor / dual provenance、Task 12 Exp1 projector、Task 13 Exp2 projector 与 Task 14 Exp3 projector 边界不改变 `ProtocolEngine` 状态机；Exp4–5 projector、registry 与 formal runner/metrics/renderer/replay 的正式 pipeline 接线属于后续 Task。后续继续先建 characterization/RED tests，并以唯一权威实验设计 EPD-027 为准。
 
 指标不得使用固定协议时间、自填成功字段或丢失失败/未开始分母；所有汇总必须能回到逐 task/attempt/event/artifact。
 
