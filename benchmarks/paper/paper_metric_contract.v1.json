@@ -3,7 +3,7 @@
   "contract_id": "epd027_paper_metric_contract.v1",
   "contract_version": 1,
   "pipeline_profile_id": "epd027_response_bank_paper_pipeline.v1",
-  "pipeline_profile_digest": "sha256:1e7040219bef550d671db4d44d6632e2c7cd69a372e219a3b8401672c9600aae",
+  "pipeline_profile_digest": "sha256:e8e8c1f10b638607054c094f6fee409c62aade27ed01ca8645e9afdb79c14fb7",
   "controls": {
     "infra_invalid_denominator_policy": "retain_all_preregistered_root_inventory",
     "infra_invalid_publish_policy": "null_and_blocked",
@@ -15675,5 +15675,5 @@
     "composite_model_score"
   ],
   "renderer_only_derived_metrics_forbidden": true,
-  "contract_digest": "sha256:785d8dcea437751c32db3503faf9a0693b1791be8099f4c81fa56c6ffc29d8c5"
+  "contract_digest": "sha256:48882b8f97c54237654b6ebba9d22c290fa92b2b98b105ef567c57c674352929"
 }

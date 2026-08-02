@@ -17,7 +17,7 @@ PAPER_METRIC_CONTRACT_SCHEMA_VERSION = "tokenshare.paper_metric_contract.v1"
 PAPER_METRIC_CONTRACT_ID = "epd027_paper_metric_contract.v1"
 PAPER_METRIC_CONTRACT_VERSION = 1
 PAPER_METRIC_CONTRACT_DIGEST = (
-    "sha256:785d8dcea437751c32db3503faf9a0693b1791be8099f4c81fa56c6ffc29d8c5"
+    "sha256:48882b8f97c54237654b6ebba9d22c290fa92b2b98b105ef567c57c674352929"
 )
 
 _REPOSITORY_ROOT = Path(__file__).resolve().parents[3]

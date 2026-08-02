@@ -23,6 +23,7 @@ from tokenshare.experiments.paper_metric_contract import (
     load_paper_metric_contract,
     recompute_metric,
 )
+from tokenshare.experiments.paper_pipeline_profile import load_paper_pipeline_profile
 
 
 COUNT = "count_nonnegative_integer"
@@ -49,6 +50,13 @@ TRACE_ROLES = (
     "model_record",
 )
 ROW_IDENTITY_DIGEST = "sha256:" + "1" * 64
+
+
+def test_tracked_contract_loads_against_current_pipeline_profile() -> None:
+    contract = load_paper_metric_contract()
+    profile = load_paper_pipeline_profile()
+
+    assert contract.pipeline_profile_digest == profile.profile_digest
 
 
 EXPECTED_TABLE_FIELDS = {
