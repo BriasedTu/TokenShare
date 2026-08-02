@@ -5,9 +5,9 @@
 ## 当前状态
 
 - 工作树：`C:\Users\32133\.config\superpowers\worktrees\TokenShare\codex-feat-011-epd027-pipeline`。
-- 分支：`codex/feat-011-epd027-pipeline`；Task 20 代码 HEAD=`fa12c06c`；状态/交接提交在其后。
+- 分支：`codex/feat-011-epd027-pipeline`；Task 21 代码 HEAD=`dd5f5eac`；状态/交接提交在其后。
 - Active feature：`feat-011`，仍为 `in-progress`；正式矩阵保持 **NO-GO**。
-- Task 0–20 已 accepted（`21/35`）；不得重做。Task 21 为 `queued/next`；不得进入 Task 22。
+- Task 0–21 已 accepted（`22/35`）；不得重做。Task 22 为 `queued/next`；不得进入 Task 23。
 - 用户已授权每个后续 Task 持续执行“实现 → 独立综合 review → 集中修正 → follow-up”循环直至 reviewer PASS，再直接推进下一 Task。
 - 每个 Task 的 post-accept 测试最小化必须分派给子智能体；监督者不得亲自执行测试内容审计，只负责范围门禁、结构化证据验收与精确提交。
 - 当前没有活动写入者。provider/network 调用均为 `0`，无 paid receipt。
@@ -21,6 +21,7 @@
 - Task 18：evidence eligibility commit=`18d2c12a`，严格 4 个计划文件；online 逐 unit 绑定 current real attempt，trace 逐 replacement/entry/manifest/source/receipt creator 闭合且 current calls=0，old/capability/historical/synthetic/regression 不得升级。
 - Task 19：normal formal lifecycle commit=`20f58bdc`，严格 8 文件（原计划4+用户批准4）；terminal-only bank preflight、case digest、typed trace context、Factor/Lean normal coordinator lifecycle、真实 source latency、worker-death replacement 与 Task18 evaluator 已闭合。
 - Task 20：cell lineage commit=`fa12c06c`，严格 6 文件（原计划4+用户批准2）；protected Task3 provenance、persisted root closure、exact row/cell identity、per execution/entry roles、fixed denominator recomputation 与非空8表/Exp3 online 已闭合。
+- Task 21：lineage-backed renderer/report commit=`dd5f5eac`，严格 5 个计划文件；持久化 Task20 closure、exact 8 CSV+TEX、null/audit/caption、真实 Task14→17→20 Exp3 链与整批 rollback 已闭合，不写论文正文。
 - 禁止影子 TokenShare：metrics 只能投影 persisted event/artifact/attempt/provider facts；不得根据 condition/fault 名称模拟 state、retry、death 或 terminal。
 
 Task 14 contract digest=`sha256:b72307e727e28f5233de934df28e1701cf46ffb711b99aa845ea6f8580694b0e`。
@@ -47,11 +48,13 @@ Task 14 contract digest=`sha256:b72307e727e28f5233de934df28e1701cf46ffb711b99aa8
 - Task 19 子智能体 test minimization=`CHANGED`；最终 canonical=`138 passed in 157.61s`，provider/network=`0/0`。
 - Task 20 RED=`1 collection error in 0.32s`；review-fix RED=`3 failed in 0.58s`、`1 error in 0.23s`、`1 error in 0.21s`；最终 canonical=`10 passed in 4.03s`，final reviewer `PASS`、`0/0`。
 - Task 20 子智能体 test minimization=`CHANGED`；最终 canonical=`10 passed in 4.03s`，provider/network=`0/0`。
+- Task 21 初始 RED=`3 collection errors in 0.39s`；两轮 reviewer BLOCK=`2C/3I`、`1C/2I`；最终真实性/rollback RED=`3 failed in 22.63s`→`3 passed in 24.95s`，canonical=`15 passed in 77.71s`，final reviewer `PASS`、`0/0/0`。
+- Task 21 子智能体 test minimization=`NO_CHANGE`；provider/network=`0/0`。
 
 ## 精确下一动作
 
-1. Task 21 精确 5 文件：修改 `paper_exp5_artifacts.py`、`paper_formal_report.py` 及对应两个 tests；新建 `test_paper_metric_renderer_contract.py`。无需计划外 production。
-2. renderer 只消费 Task20 observations 与 Task2 contract，生成 exact 8 CSV、同 stem TEX 和 audit JSONL/manifest；不读 raw reasoning、不补零、不写论文正文。
+1. Task 22 精确 7 文件：修改 `paper_formal_evidence.py`、`paper_formal_runner.py`、`paper_formal_checkpoint.py` 及对应三个 tests；新建 `test_paper_full_resource_trace.py`。无需计划外 production。
+2. 验证 external immutable bank object、500-root synthetic pressure、checkpoint resume terminal/observation digest 一致；不得复制 source bytes/path/ArtifactRef，不得联网或调用 Lean/provider。
 3. 后续若计划外文件确属“不增加就无法得到数据或跑通实验”，监督者可按用户持续授权批准最小修改并落盘依据。
 
 恢复期间继续遵守：无经 Task 26 校验的 paid receipt 不得调用真实 API；不 push、不 merge、不创建 PR。

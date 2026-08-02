@@ -7,12 +7,11 @@
 ## 当前状态
 
 - Active feature：`feat-011`（Paper Real AI Experiments），状态仍为 `in-progress`。
-- EPD-027 实施计划共 35 个 Task，Task 0–20 已 accepted（`21/35`）。Task 20 metric lineage observations commit=`fa12c06c`；Task 21 observation renderer/report integration 为 `queued/next`。
-- Task 20 canonical RED=`1 collection error in 0.32s`，初始 GREEN=`10 passed in 0.71s`。首轮 reviewer BLOCK=`0 Critical/4 Important`；row identity/per-source roles RED=`3 failed in 0.58s`，typed exporter collection RED=`1 error in 0.23s`，修复后 canonical=`10 passed in 2.12s`。
-- Task 20 第二轮 reviewer BLOCK=`0 Critical/2 Important`；protected canonical factory collection RED=`1 error in 0.21s`，以 Task3 factory provenance 与真实 FormalEvidenceStore executed-root closure 修复后 canonical=`10 passed in 4.03s`，final reviewer=`PASS`、Critical/Important=`0/0`。
-- Task 20 每个 numeric cell 精确绑定 row/cell digest、真实 evaluator membership、逐 execution/entry typed roles 与 persisted root closure；non-null 可由 fixed denominator membership 独立复算，missing role 使 cell null/table blocked；无 shadow parser/公式/state machine。
-- Task 20 原子持久化 `metrics/paper_lineage_source_index.v1.jsonl`、`metrics/paper_metric_observations.v1.jsonl`、`metrics/paper_metric_observations_manifest.v1.json`。子智能体 post-accept test minimization=`CHANGED`，仅净删 8 行重复/fixture 细节，最终 canonical=`10 passed in 4.03s`。
-- Task 21 只读预检 READY：计划五文件足够，无计划外 production；只消费 Task20 typed observations 与 Task2 contract，生成 exact 8 CSV、同 stem TEX 与 audit JSONL/manifest，不写论文正文。
+- EPD-027 实施计划共 35 个 Task，Task 0–21 已 accepted（`22/35`）。Task 21 lineage-backed renderer/report commit=`dd5f5eac`；Task 22 external response-bank pressure path 为 `queued/next`。
+- Task 21 初始 RED=`3 collection errors in 0.39s`，初始 GREEN=`8 passed in 14.56s`。两轮 reviewer BLOCK=`2 Critical/3 Important`、`1 Critical/2 Important`；最终真实性/rollback 精确 RED=`3 failed in 22.63s`→`3 passed in 24.95s`，canonical=`15 passed in 77.71s`。
+- Task 21 只消费持久化 Task20 lineage/source-index/observation/manifest/digest closure 和 Task2 contract；生成 exact 8 CSV 与同 stem TEX，并另存 renderer audit/manifest。null 保持空值，denominator/excluded/blocked/reason 可审计；Exp3/Exp5 caption 与 cost estimate 口径闭合，不写 Markdown/PDF/论文正文。
+- Task 21 真实 Task14 online projector→Task17 registry→Task20 materializer identity/digest 已贯通；整批 staged promotion 在中途失败时逐字节 rollback 并清理临时目录。final reviewer=`PASS`、Critical/Important/Minor=`0/0/0`；子智能体 post-accept test minimization=`NO_CHANGE`，provider/network=`0/0`。
+- Task 22 只读预检 READY：计划修改 `paper_formal_evidence.py`、`paper_formal_runner.py`、`paper_formal_checkpoint.py` 及对应三测试，新建 `test_paper_full_resource_trace.py`；现有 bank/index/resolver 足够，无严格必要的计划外 production。测试 external immutable object、500-root synthetic pressure、checkpoint/terminal/observation digest resume，provider/Lean/network=`0`。
 - 用户持续授权：后续 Task 若独立预检证明“不增加该文件就无法得到权威数据或跑通正常实验”，监督者可批准最小计划外修改并继续；必须落盘文件/具体失败/最小改动/证据。便利、重构、美化、安全加固或可后置修改不符合批准标准。
 - 用户已授权每个后续 Task 持续执行实现/review/fix/follow-up 至 PASS 后直接推进；post-accept 测试最小化一律由子智能体执行。
 - 本轮 provider/network calls=`0`，无 paid receipt；Fast 未重复，Full/LeanAudit 未运行，正式矩阵继续 **NO-GO**。
