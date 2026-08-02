@@ -129,7 +129,7 @@ Secret 只能进入当前进程环境和脱敏后的 transport；event/artifact/
 
 | 文件 | 职责 |
 |---|---|
-| `paper_models.py` | paper condition/result/budget/fault/eligibility schema 和 digest。 |
+| `paper_models.py` | paper condition/result/budget/fault schema；Task 18 新增版本化 evidence classification/eligibility facts 与 evaluator：online 逐 executed unit 绑定 current real provider attempt/lifecycle，trace 逐 unit/replacement/entry 绑定 canonical manifest、source provenance、receipt creator且 current calls=0；Factor/Lean success 与 provider failure 按 canonical domain/terminal kind 使用不同 lifecycle truth table，旧 schema 不得升级。 |
 | `paper_catalog.py`、`paper_factorization_catalog.py` | catalog 加载、manifest、selection 与 oracle/preflight。 |
 | `paper_factorization_sampling.py` | Factorization 分层稳定评分、采样 profile 校验与 immutable catalog slice；不拥有全 suite 各实验题量。 |
 | `paper_catalog_execution_view.py` | 冻结规划时 catalog view，供 execute/resume/replay 使用同一 body/digest。 |
@@ -148,7 +148,7 @@ Secret 只能进入当前进程环境和脱敏后的 transport；event/artifact/
 | `paper_runtime_clock.py` | Task 9 冻结 logical source-latency 1x 与 online real-clock policy；trace 路径拒绝 real sleep/noop sleeper。 |
 | `paper_formal_runner.py` | 正式/smoke suite orchestration、preflight、dispatch、checkpoint、resume/replay。 |
 | `paper_formal_callbacks.py` | provider/executor callback 绑定。 |
-| `paper_formal_evidence.py` | 正式 evidence store、manifest、checkpoint 和完整性校验；以 immutable protocol task id 到 case task-id closure 的显式映射闭合 canonical selection evidence，映射冲突 fail closed。 |
+| `paper_formal_evidence.py` | 正式 evidence store、manifest、checkpoint 和完整性校验；以 immutable protocol task id 到 case task-id closure 的显式映射闭合 canonical selection evidence，映射冲突 fail closed；Task 18 接入版本化 online/trace/regression eligibility，拒绝 historical schema 与 receipt 类型混淆。 |
 | `paper_formal_checkpoint.py` | generation v3 root-delta checkpoint、resume 与 terminal streaming SQLite compaction；保持逐 root 释放，避免全 suite outcome 常驻。 |
 | `paper_faults.py`、`paper_workers.py` | 五类 rate-fault 与 worker-death 的预注册 hook/投影。 |
 | `paper_exp1.py`、`paper_exp2_scalability.py`、`paper_exp3_fault_recovery.py`、`paper_exp4_ablation_runner.py` | 各实验的独立行为/指标 helper。 |
@@ -185,11 +185,11 @@ Secret 只能进入当前进程环境和脱敏后的 transport；event/artifact/
 
 ### EPD-027 实施进度与后续实验设施改造
 
-2026-08-01 已冻结 Experiment 2–4 两阶段真实回答库设计。当前 35 个实施 Task 中 Task 0–17 已 accepted。Task 17 registry/formal metrics commit=`8ded3681`；最终 canonical=`6 passed in 0.43s`，final reviewer PASS=`0/0/0`，子智能体 test minimization=`CHANGED` 后 canonical=`6 passed in 0.47s`，provider/network calls=`0`，无 paid receipt。这个 `18/35` 状态不代表整条 paper pipeline 已实现：Task 18 queued/next，evidence-class versioning、`paper_formal_runner.py` consumer、renderer/replay 接线仍未完成；正式矩阵保持 **NO-GO**。Task 17 验收未运行 Fast/Full/LeanAudit/network/provider。
+2026-08-01 已冻结 Experiment 2–4 两阶段真实回答库设计。当前 35 个实施 Task 中 Task 0–18 已 accepted。Task 18 evidence eligibility commit=`18d2c12a`；最终 canonical=`193 passed in 24.78s`，final reviewer PASS=`0/0/0`，子智能体 test minimization=`CHANGED` 后 canonical=`193 passed in 26.83s`，provider/network calls=`0`，无 paid receipt。这个 `19/35` 状态不代表整条 paper pipeline 已实现：Task 19 因正常 trace 接线需计划外 production 文件而 blocked/next，formal runner、renderer/replay 接线仍未完成；正式矩阵保持 **NO-GO**。Task 18 验收未运行 Fast/Full/LeanAudit/network/provider。
 
 后续完整实施计划必须同时覆盖：
 
-- Task 18 及后续 evidence-class/formal runner 接线，把已接受的 trace-backed executor、双 provenance、Exp1–5 projectors 与 registry 纳入正式 pipeline；
+- Task 19 及后续 formal runner 接线，把已接受的 trace-backed executor、双 provenance、Exp1–5 projectors、registry 与 evidence eligibility 纳入正式 pipeline；
 - `online_real_provider` 与 `real_model_trace_protocol_run` 两类 paper eligibility，禁止把 trace consumption 冒充当前 provider call；
 - acquisition actual spend 与 per-condition trace attribution 两套资源账，以及 calls/tokens/CNY/in-flight 人民币 1,000 硬门；
 - Experiment 2 缩小题集六 worker 档在线并发检查、Experiment 3 小型在线恢复检查；
