@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import json
 from dataclasses import replace
 
 import pytest
 
-from tokenshare.core.models import ProtocolConfig
+from tokenshare.core.models import ArtifactRef, ProtocolConfig
 from tokenshare.core.verification import build_verification_report
+from tokenshare.executors.ai_api import _stable_slot_index
 from tokenshare.experiments.paper_ablation import (
     PaperAblationMode,
     runtime_controls_for_mode,
@@ -187,6 +189,32 @@ class _CapacityTwoBackend:
         return self._delegate.execute(request)
 
 
+class _PollutedReplacementSlotPlugin(_DirectCompletePluginRuntime):
+    def build_execution_request(self, unit, *, attempt, lease):
+        request = super().build_execution_request(
+            unit,
+            attempt=attempt,
+            lease=lease,
+        )
+        return replace(request, soft_hints={"replacement_slot": 99})
+
+
+class _ObserveReplacementSlotExecutor:
+    def __init__(self, delegate: _ArtifactExecutor) -> None:
+        self._delegate = delegate
+        self.observed_slots: list[int] = []
+
+    def execute(self, request, *, submission_id: str, submitted_at: str):
+        self.observed_slots.append(_stable_slot_index(request, "replacement_slot"))
+        if len(self.observed_slots) == 1:
+            raise RuntimeError("force replacement attempt")
+        return self._delegate.execute(
+            request,
+            submission_id=submission_id,
+            submitted_at=submitted_at,
+        )
+
+
 def _runtime(
     tmp_path,
     *,
@@ -312,8 +340,10 @@ def test_one_retry_budget_creates_exactly_one_replacement(tmp_path) -> None:
     store, ledger, plugin, clock, coordinator = _runtime(tmp_path, max_retries=1)
     scheduler = LogicalSourceLatencyScheduler(start_ms=0)
     attempt_counts: dict[str, int] = {}
+    dispatched_requests = []
 
     def completion_schedule(request, _submission, _failure_kind):
+        dispatched_requests.append(request)
         attempt_ordinal = attempt_counts.get(request.unit_id, 0)
         attempt_counts[request.unit_id] = attempt_ordinal + 1
         source_latency_ms = (
@@ -367,6 +397,16 @@ def test_one_retry_budget_creates_exactly_one_replacement(tmp_path) -> None:
     ]
     assert [event.attempt_ordinal for event in root_events] == [0, 0, 0, 1]
     assert [event.logical_time_ms for event in root_events] == [100, 100, 100, 300]
+    root_requests = [
+        item for item in dispatched_requests if item.unit_id == "unit_ready"
+    ]
+    assert [item.attempt_ordinal for item in root_requests] == [0, 1]
+    assert all(
+        isinstance(item.source_binding_digest, str)
+        and item.source_binding_digest.startswith("sha256:")
+        for item in root_requests
+    )
+    assert len({item.source_binding_digest for item in root_requests}) == 2
     first_recovery = next(
         event
         for event in ledger.read_all()
@@ -383,6 +423,50 @@ def test_one_retry_budget_creates_exactly_one_replacement(tmp_path) -> None:
     assert first_recovery.occurred_at == "2026-07-22T00:00:00.100000Z"
     assert replacement_lease.occurred_at == first_recovery.occurred_at
     assert result.summary["runtime_observation"]["runtime_wall_clock_ms"] == 300.0
+
+
+def test_actual_replacement_resolver_uses_persisted_ordinal_and_replays_same_slots(
+    tmp_path,
+) -> None:
+    store, ledger, plugin, clock, coordinator = _runtime(
+        tmp_path,
+        max_retries=1,
+        plugin_type=_PollutedReplacementSlotPlugin,
+    )
+    executor = _ObserveReplacementSlotExecutor(_ArtifactExecutor(store))
+
+    result = coordinator.run_root(
+        ProtocolRunRequest(
+            run_id="run_replacement_ordinal",
+            root_input={"prompt": "replace once"},
+            plugin_runtime=plugin,
+            worker_backend=SequentialWorkerBackend(
+                executor=executor,
+                submitted_at=clock,
+            ),
+        )
+    )
+
+    assert result.status == "completed"
+    assert executor.observed_slots == [0, 1]
+
+    def replayed_slots():
+        slots = []
+        for event in ledger.read_verified_snapshot().events:
+            if event.event_type != EventType.EXECUTION_REQUEST_RECORDED:
+                continue
+            request_ref = ArtifactRef.from_dict(event.payload["request_ref"])
+            persisted = json.loads(store.read_bytes(request_ref).decode("utf-8"))
+            slots.append(
+                (
+                    persisted["attempt_ordinal"],
+                    persisted["soft_hints"]["replacement_slot"],
+                )
+            )
+        return slots
+
+    assert replayed_slots() == [(0, 0), (1, 1)]
+    assert replayed_slots() == [(0, 0), (1, 1)]
 
 
 def test_lease_deadline_retry_and_requeue_share_coordinator_queue(tmp_path) -> None:

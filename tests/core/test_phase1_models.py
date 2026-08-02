@@ -54,7 +54,8 @@ def test_task_spec_and_root_unit_snapshots_use_phase1_json_keys() -> None:
     assert task_snapshot["schema_version"] == "TaskSpec.v1"
     assert task_snapshot["root_input_ref"]["artifact_id"] == "artifact_root_input"
     assert task_snapshot["protocol_config"]["canonical_output_policy"] == "first_verified_bundle"
-    assert unit_snapshot["schema_version"] == "TaskUnit.v1"
+    assert unit_snapshot["schema_version"] == "TaskUnit.v2"
+    assert unit_snapshot["last_attempt_ordinal"] == -1
     assert unit_snapshot["state"] == "Ready"
     assert unit_snapshot["input_refs"]["root_input"]["content_hash"] == "sha256:abc123"
     assert unit_snapshot["canonical_output_refs"] == {}

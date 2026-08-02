@@ -18,6 +18,7 @@ class LeaseClaim:
     lease: Lease
     created_attempt: Attempt
     running_attempt: Attempt
+    task_unit: TaskUnit | None = None
 
 
 @dataclass(frozen=True)
@@ -41,11 +42,29 @@ class LeaseManager:
         self,
         *,
         decision: SchedulingDecision,
+        task_unit: TaskUnit | None = None,
         lease_id: str,
         attempt_id: str,
         fencing_token: str,
+        binding_digest: str | None = None,
         now: str,
     ) -> LeaseClaim:
+        if task_unit is not None:
+            if (
+                task_unit.task_id != decision.task_id
+                or task_unit.unit_id != decision.unit_id
+            ):
+                raise ValueError("claim task_unit does not match scheduling decision")
+            attempt_ordinal = task_unit.last_attempt_ordinal + 1
+            claimed_task_unit = replace(
+                task_unit,
+                last_attempt_ordinal=attempt_ordinal,
+                schema_version="TaskUnit.v2",
+            )
+        else:
+            # 旧版直接调用方没有传入TaskUnit；该兼容路径只能表示首次attempt。
+            attempt_ordinal = 0
+            claimed_task_unit = None
         lease = Lease(
             lease_id=lease_id,
             task_id=decision.task_id,
@@ -62,6 +81,8 @@ class LeaseManager:
             terminated_at=None,
             terminated_reason=None,
             metadata={},
+            attempt_ordinal=attempt_ordinal,
+            binding_digest=binding_digest,
         )
         created_attempt = Attempt(
             attempt_id=attempt_id,
@@ -72,6 +93,7 @@ class LeaseManager:
             state=AttemptState.CREATED,
             attempt_kind=decision.lease_kind,
             created_at=now,
+            attempt_ordinal=attempt_ordinal,
         )
         running_attempt = transition_attempt(
             created_attempt,
@@ -83,6 +105,7 @@ class LeaseManager:
             lease=lease,
             created_attempt=created_attempt,
             running_attempt=running_attempt,
+            task_unit=claimed_task_unit,
         )
 
     def heartbeat(self, lease: Lease, *, now: str) -> Lease:

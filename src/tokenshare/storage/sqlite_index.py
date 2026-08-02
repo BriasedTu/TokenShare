@@ -103,6 +103,7 @@ class SQLiteMaterializedIndex:
             drop table if exists settlement_records;
             drop table if exists settlement_entries;
             drop table if exists subtree_prunes;
+            drop table if exists trace_consumptions;
 
             create table ledger_events (
                 event_seq integer primary key,
@@ -136,6 +137,7 @@ class SQLiteMaterializedIndex:
                 created_at text,
                 updated_at text,
                 last_state_reason text,
+                last_attempt_ordinal integer not null default -1,
                 payload_json text not null
             );
 
@@ -181,6 +183,8 @@ class SQLiteMaterializedIndex:
                 lease_kind text,
                 terminated_at text,
                 terminated_reason text,
+                attempt_ordinal integer not null default 0,
+                binding_digest text,
                 payload_json text not null
             );
 
@@ -199,6 +203,7 @@ class SQLiteMaterializedIndex:
                 failure_kind text,
                 failure_reason text,
                 superseded_by_attempt_id text,
+                attempt_ordinal integer not null default 0,
                 payload_json text not null
             );
 
@@ -582,6 +587,21 @@ class SQLiteMaterializedIndex:
                 batch_id text,
                 payload_json text not null
             );
+
+            create table trace_consumptions (
+                attempt_id text primary key,
+                binding_digest text not null,
+                current_fencing_token text not null,
+                status text not null,
+                current_wrapper_artifact_id text not null,
+                parser_input_artifact_id text not null,
+                parser_result_artifact_id text not null,
+                current_provenance_artifact_id text not null,
+                committed_event_seq integer not null unique,
+                committed_event_id text not null unique,
+                committed_event_hash text not null unique,
+                payload_json text not null
+            );
             """
         )
 
@@ -643,8 +663,8 @@ class SQLiteMaterializedIndex:
                 """
                 insert or replace into task_units (
                     unit_id, task_id, parent_unit_id, state, depth, created_at,
-                    updated_at, last_state_reason, payload_json
-                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    updated_at, last_state_reason, last_attempt_ordinal, payload_json
+                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     task_unit["unit_id"],
@@ -655,6 +675,7 @@ class SQLiteMaterializedIndex:
                     task_unit.get("created_at"),
                     task_unit.get("updated_at"),
                     None,
+                    task_unit.get("last_attempt_ordinal", -1),
                     _payload_json(task_unit),
                 ),
             )
@@ -666,8 +687,8 @@ class SQLiteMaterializedIndex:
                     """
                     insert or replace into task_units (
                         unit_id, task_id, parent_unit_id, state, depth, created_at,
-                        updated_at, last_state_reason, payload_json
-                    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        updated_at, last_state_reason, last_attempt_ordinal, payload_json
+                    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         task_unit["unit_id"],
@@ -678,6 +699,7 @@ class SQLiteMaterializedIndex:
                         task_unit.get("created_at"),
                         state_change.get("changed_at", task_unit.get("updated_at")),
                         state_change.get("reason"),
+                        task_unit.get("last_attempt_ordinal", -1),
                         _payload_json(task_unit),
                     ),
                 )
@@ -686,8 +708,8 @@ class SQLiteMaterializedIndex:
                     """
                     insert into task_units (
                         unit_id, task_id, parent_unit_id, state, depth, created_at,
-                        updated_at, last_state_reason, payload_json
-                    ) values (?, ?, null, ?, null, null, ?, ?, ?)
+                        updated_at, last_state_reason, last_attempt_ordinal, payload_json
+                    ) values (?, ?, null, ?, null, null, ?, ?, -1, ?)
                     on conflict(unit_id) do update set
                         state = excluded.state,
                         updated_at = excluded.updated_at,
@@ -800,8 +822,8 @@ class SQLiteMaterializedIndex:
                     lease_id, task_id, unit_id, attempt_id, client_id, state,
                     fencing_token, issued_at, expires_at, last_heartbeat_at,
                     heartbeat_count, lease_kind, terminated_at, terminated_reason,
-                    payload_json
-                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    attempt_ordinal, binding_digest, payload_json
+                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     lease["lease_id"],
@@ -818,6 +840,8 @@ class SQLiteMaterializedIndex:
                     lease.get("lease_kind"),
                     lease.get("terminated_at"),
                     lease.get("terminated_reason"),
+                    lease.get("attempt_ordinal", 0),
+                    lease.get("binding_digest"),
                     _payload_json(lease),
                 ),
             )
@@ -829,8 +853,8 @@ class SQLiteMaterializedIndex:
                     attempt_id, task_id, unit_id, lease_id, client_id, state,
                     attempt_kind, created_at, started_at, submitted_at, finished_at,
                     failure_kind, failure_reason, superseded_by_attempt_id,
-                    payload_json
-                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    attempt_ordinal, payload_json
+                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     attempt["attempt_id"],
@@ -847,6 +871,7 @@ class SQLiteMaterializedIndex:
                     attempt.get("failure_kind"),
                     attempt.get("failure_reason"),
                     attempt.get("superseded_by_attempt_id"),
+                    attempt.get("attempt_ordinal", 0),
                     _payload_json(attempt),
                 ),
             )
@@ -965,6 +990,33 @@ class SQLiteMaterializedIndex:
                     submission_record.get("acceptance_status"),
                     submission_record.get("rejection_reason"),
                     _payload_json(submission_record),
+                ),
+            )
+        elif event_type == EventType.TRACE_DELIVERY_COMMITTED.value:
+            core = event.payload
+            connection.execute(
+                """
+                insert into trace_consumptions (
+                    attempt_id, binding_digest, current_fencing_token, status,
+                    current_wrapper_artifact_id, parser_input_artifact_id,
+                    parser_result_artifact_id, current_provenance_artifact_id,
+                    committed_event_seq, committed_event_id, committed_event_hash,
+                    payload_json
+                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    core["attempt_id"],
+                    core["binding_digest"],
+                    core["current_fencing_token"],
+                    core["status"],
+                    core["current_wrapper_ref"]["artifact_id"],
+                    core["parser_input_ref"]["artifact_id"],
+                    core["parser_result_ref"]["artifact_id"],
+                    core["current_provenance_ref"]["artifact_id"],
+                    event.event_seq,
+                    event.event_id,
+                    event.event_hash,
+                    _payload_json(core),
                 ),
             )
         elif event_type == EventType.VERIFICATION_RECORDED.value:

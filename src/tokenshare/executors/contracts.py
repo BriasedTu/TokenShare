@@ -152,7 +152,9 @@ class ExecutionRequest:
     prompt_package_ref: ArtifactRef | None
     limits: JsonObject
     created_at: str
-    schema_version: str = "phase3.execution_request.v1"
+    attempt_ordinal: int = 0
+    source_binding_digest: str | None = None
+    schema_version: str = "phase3.execution_request.v2"
 
     def to_dict(self) -> JsonObject:
         return {
@@ -178,6 +180,8 @@ class ExecutionRequest:
             "prompt_package_ref": _json_value(self.prompt_package_ref),
             "limits": _json_value(self.limits),
             "created_at": self.created_at,
+            "attempt_ordinal": self.attempt_ordinal,
+            "source_binding_digest": self.source_binding_digest,
         }
 
 

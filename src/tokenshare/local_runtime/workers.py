@@ -19,6 +19,7 @@ from typing import Callable, Iterable
 
 from tokenshare.executors.contracts import ExecutionRequest, ExecutionSubmission
 from tokenshare.local_runtime.contracts import (
+    PreparedTraceDelivery,
     WorkerCompletionSchedule,
     WorkerTerminationPolicy,
 )
@@ -86,6 +87,7 @@ class WorkerBatchOutcome:
     failure_kind: str | None = None
     error_message: str | None = None
     logical_completion: WorkerCompletionSchedule | None = None
+    prepared_delivery: PreparedTraceDelivery | None = None
 
 
 class WorkerExecutionError(RuntimeError):
@@ -144,7 +146,7 @@ class SequentialWorkerBackend:
         submission_id = _submission_id(request, execution_index=execution_index)
         started_at = _utc_now()
         try:
-            submission = self._executor.execute(
+            worker_value = self._executor.execute(
                 request,
                 submission_id=submission_id,
                 submitted_at=self._submitted_at(),
@@ -162,26 +164,44 @@ class SequentialWorkerBackend:
             self._execution_facts.append(fact)
             return _attach_completion_schedule(
                 WorkerBatchOutcome(
-                request=request,
-                submission=None,
-                fact=fact,
-                failure_kind="executor_error",
-                error_message=f"{type(error).__name__}: {error}",
+                    request=request,
+                    submission=None,
+                    fact=fact,
+                    failure_kind="executor_error",
+                    error_message=f"{type(error).__name__}: {error}",
                 ),
                 self._completion_schedule,
             )
+        submission, prepared_delivery = _worker_value(
+            worker_value,
+            worker_id="sequential-worker-1",
+            execution_index=execution_index,
+        )
         fact = _fact(
             request=request,
             execution_index=execution_index,
-            submission_id=getattr(submission, "submission_id", submission_id),
-            result_kind=getattr(submission, "result_kind", "succeeded"),
+            submission_id=(
+                None
+                if prepared_delivery is not None
+                else getattr(submission, "submission_id", submission_id)
+            ),
+            result_kind=(
+                "prepared_trace_delivery"
+                if prepared_delivery is not None
+                else getattr(submission, "result_kind", "succeeded")
+            ),
             worker_id="sequential-worker-1",
             started_at=started_at,
             ended_at=_utc_now(),
         )
         self._execution_facts.append(fact)
         return _attach_completion_schedule(
-            WorkerBatchOutcome(request=request, submission=submission, fact=fact),
+            WorkerBatchOutcome(
+                request=request,
+                submission=submission,
+                fact=fact,
+                prepared_delivery=prepared_delivery,
+            ),
             self._completion_schedule,
         )
 
@@ -268,7 +288,7 @@ class ThreadWorkerBackend:
         worker_id = current_thread().name
         started_at = _utc_now()
         try:
-            submission = self._executor.execute(
+            worker_value = self._executor.execute(
                 request,
                 submission_id=submission_id,
                 submitted_at=self._submitted_at(),
@@ -286,26 +306,44 @@ class ThreadWorkerBackend:
             self._append_fact(fact)
             return _attach_completion_schedule(
                 WorkerBatchOutcome(
-                request=request,
-                submission=None,
-                fact=fact,
-                failure_kind="executor_error",
-                error_message=f"{type(error).__name__}: {error}",
+                    request=request,
+                    submission=None,
+                    fact=fact,
+                    failure_kind="executor_error",
+                    error_message=f"{type(error).__name__}: {error}",
                 ),
                 self._completion_schedule,
             )
+        submission, prepared_delivery = _worker_value(
+            worker_value,
+            worker_id=worker_id,
+            execution_index=execution_index,
+        )
         fact = _fact(
             request=request,
             execution_index=execution_index,
-            submission_id=getattr(submission, "submission_id", submission_id),
-            result_kind=getattr(submission, "result_kind", "succeeded"),
+            submission_id=(
+                None
+                if prepared_delivery is not None
+                else getattr(submission, "submission_id", submission_id)
+            ),
+            result_kind=(
+                "prepared_trace_delivery"
+                if prepared_delivery is not None
+                else getattr(submission, "result_kind", "succeeded")
+            ),
             worker_id=worker_id,
             started_at=started_at,
             ended_at=_utc_now(),
         )
         self._append_fact(fact)
         return _attach_completion_schedule(
-            WorkerBatchOutcome(request=request, submission=submission, fact=fact),
+            WorkerBatchOutcome(
+                request=request,
+                submission=submission,
+                fact=fact,
+                prepared_delivery=prepared_delivery,
+            ),
             self._completion_schedule,
         )
 
@@ -574,6 +612,11 @@ class ProcessWorkerBackend:
                     and self._termination_target_is_available(request)
                 )
                 if message_kind == "submission" and should_terminate:
+                    _, prepared_delivery = _worker_value(
+                        payload,
+                        worker_id=worker_id,
+                        execution_index=execution_index,
+                    )
                     self._termination_count += 1
                     planned_ai_unit_id = request.soft_hints.get(
                         "planned_ai_unit_id"
@@ -585,7 +628,8 @@ class ProcessWorkerBackend:
                         self._terminated_planned_ai_unit_ids.add(
                             planned_ai_unit_id
                         )
-                    _ingest_process_result(self._executor, process_result)
+                    if not isinstance(payload, PreparedTraceDelivery):
+                        _ingest_process_result(self._executor, process_result)
                     process.terminate()
                     try:
                         process.wait(timeout=5)
@@ -626,9 +670,16 @@ class ProcessWorkerBackend:
                         failure_kind="worker_terminated",
                         error_message="worker process terminated before submission",
                         logical_completion=process_completion,
+                        prepared_delivery=prepared_delivery,
                     )
                 elif message_kind == "submission":
-                    _ingest_process_result(self._executor, process_result)
+                    submission, prepared_delivery = _worker_value(
+                        payload,
+                        worker_id=worker_id,
+                        execution_index=execution_index,
+                    )
+                    if prepared_delivery is None:
+                        _ingest_process_result(self._executor, process_result)
                     _signal_process_path(release_path)
                     try:
                         process.wait(timeout=5)
@@ -638,8 +689,16 @@ class ProcessWorkerBackend:
                     fact = _fact(
                         request=request,
                         execution_index=execution_index,
-                        submission_id=getattr(payload, "submission_id", submission_id),
-                        result_kind=getattr(payload, "result_kind", "succeeded"),
+                        submission_id=(
+                            None
+                            if prepared_delivery is not None
+                            else getattr(payload, "submission_id", submission_id)
+                        ),
+                        result_kind=(
+                            "prepared_trace_delivery"
+                            if prepared_delivery is not None
+                            else getattr(payload, "result_kind", "succeeded")
+                        ),
                         worker_id=worker_id,
                         worker_pid=process.pid,
                         process_exitcode=process.returncode,
@@ -679,12 +738,14 @@ class ProcessWorkerBackend:
                             else None
                         ),
                     )
-                    self._record_completed_planned_ai_unit(request, payload)
+                    if prepared_delivery is None:
+                        self._record_completed_planned_ai_unit(request, payload)
                     outcome = WorkerBatchOutcome(
                         request=request,
-                        submission=payload,
+                        submission=submission,
                         fact=fact,
                         logical_completion=process_completion,
+                        prepared_delivery=prepared_delivery,
                     )
                 else:
                     _signal_process_path(release_path)
@@ -820,7 +881,7 @@ def execute_worker_batch(
     outcomes: list[WorkerBatchOutcome] = []
     for request in request_batch:
         try:
-            submission = backend.execute(request)
+            worker_value = backend.execute(request)
         except Exception as error:
             fact = _fact(
                 request=request,
@@ -841,17 +902,35 @@ def execute_worker_batch(
                 )
             )
         else:
+            submission, prepared_delivery = _worker_value(
+                worker_value,
+                worker_id="single-worker-compatible",
+                execution_index=len(outcomes) + 1,
+            )
             fact = _fact(
                 request=request,
                 execution_index=len(outcomes) + 1,
-                submission_id=getattr(submission, "submission_id", None),
-                result_kind=getattr(submission, "result_kind", "succeeded"),
+                submission_id=(
+                    None
+                    if prepared_delivery is not None
+                    else getattr(submission, "submission_id", None)
+                ),
+                result_kind=(
+                    "prepared_trace_delivery"
+                    if prepared_delivery is not None
+                    else getattr(submission, "result_kind", "succeeded")
+                ),
                 worker_id="single-worker-compatible",
                 started_at=None,
                 ended_at=None,
             )
             outcomes.append(
-                WorkerBatchOutcome(request=request, submission=submission, fact=fact)
+                WorkerBatchOutcome(
+                    request=request,
+                    submission=submission,
+                    fact=fact,
+                    prepared_delivery=prepared_delivery,
+                )
             )
     return tuple(outcomes)
 
@@ -865,10 +944,18 @@ def _attach_completion_schedule(
     | None,
 ) -> WorkerBatchOutcome:
     if resolver is None:
-        return outcome
+        if outcome.prepared_delivery is None:
+            return outcome
+        return replace(
+            outcome,
+            logical_completion=WorkerCompletionSchedule(
+                source_latency_ms=outcome.prepared_delivery.source_latency_ms,
+                attempt_ordinal=outcome.prepared_delivery.attempt_ordinal,
+            ),
+        )
     completion = resolver(
         outcome.request,
-        outcome.submission,
+        outcome.submission or outcome.prepared_delivery,
         outcome.failure_kind,
     )
     if completion is not None and not isinstance(
@@ -962,6 +1049,27 @@ def _ingest_process_result(executor: object, process_result: object) -> None:
     ingest_process_result = getattr(executor, "ingest_process_result", None)
     if callable(ingest_process_result):
         ingest_process_result(process_result)
+
+
+def _worker_value(
+    value: object,
+    *,
+    worker_id: str,
+    execution_index: int,
+) -> tuple[ExecutionSubmission | None, PreparedTraceDelivery | None]:
+    if isinstance(value, PreparedTraceDelivery):
+        return (
+            None,
+            value.with_child_completion(
+                child_worker_id=worker_id,
+                child_completion_sequence=execution_index,
+            ),
+        )
+    if not isinstance(value, ExecutionSubmission):
+        raise TypeError(
+            "worker executor must return ExecutionSubmission or PreparedTraceDelivery"
+        )
+    return value, None
 
 
 def _fact(

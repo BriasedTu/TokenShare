@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import Enum
@@ -46,6 +47,7 @@ class EventType(str, Enum):
     CONTRIBUTION_STATE_CHANGED = "CONTRIBUTION_STATE_CHANGED"
     SETTLEMENT_RECORDED = "SETTLEMENT_RECORDED"
     SUBTREE_PRUNED = "SUBTREE_PRUNED"
+    TRACE_DELIVERY_COMMITTED = "TRACE_DELIVERY_COMMITTED.v1"
 
 
 @dataclass(frozen=True)
@@ -228,6 +230,8 @@ class EventLedger:
         with self.path.open("a", encoding="utf-8", newline="\n") as handle:
             handle.write(_canonical_json(event.to_dict()))
             handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
 
         self._events.append(event)
         self._by_idempotency_key[idempotency_key] = event
@@ -286,6 +290,7 @@ class EventLedger:
                 handle.write(_canonical_json(event.to_dict()))
                 handle.write("\n")
             handle.flush()
+            os.fsync(handle.fileno())
 
         for event in new_events:
             self._events.append(event)

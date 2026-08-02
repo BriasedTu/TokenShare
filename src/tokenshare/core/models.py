@@ -280,7 +280,12 @@ class TaskUnit:
     metadata: JsonObject
     created_at: str
     updated_at: str
-    schema_version: str = "TaskUnit.v1"
+    last_attempt_ordinal: int = -1
+    schema_version: str = "TaskUnit.v2"
+
+    def __post_init__(self) -> None:
+        if type(self.last_attempt_ordinal) is not int or self.last_attempt_ordinal < -1:
+            raise ValueError("last_attempt_ordinal must be an integer >= -1")
 
     @classmethod
     def create_root(
@@ -336,6 +341,7 @@ class TaskUnit:
             "metadata": _json_value(self.metadata),
             "created_at": self.created_at,
             "updated_at": self.updated_at,
+            "last_attempt_ordinal": self.last_attempt_ordinal,
         }
 
 
@@ -425,7 +431,9 @@ class Lease:
     terminated_at: str | None
     terminated_reason: str | None
     metadata: JsonObject
-    schema_version: str = "phase2.lease.v1"
+    attempt_ordinal: int = 0
+    binding_digest: str | None = None
+    schema_version: str = "phase2.lease.v2"
 
     def to_dict(self) -> JsonObject:
         return {
@@ -445,6 +453,8 @@ class Lease:
             "terminated_at": self.terminated_at,
             "terminated_reason": self.terminated_reason,
             "metadata": _json_value(self.metadata),
+            "attempt_ordinal": self.attempt_ordinal,
+            "binding_digest": self.binding_digest,
         }
 
 
@@ -473,7 +483,8 @@ class Attempt:
     failure_reason: str | None = None
     superseded_by_attempt_id: str | None = None
     metadata: JsonObject | None = None
-    schema_version: str = "phase2.attempt.v1"
+    attempt_ordinal: int = 0
+    schema_version: str = "phase2.attempt.v2"
 
     def to_dict(self) -> JsonObject:
         return {
@@ -499,4 +510,5 @@ class Attempt:
             "failure_reason": self.failure_reason,
             "superseded_by_attempt_id": self.superseded_by_attempt_id,
             "metadata": _json_value(self.metadata or {}),
+            "attempt_ordinal": self.attempt_ordinal,
         }

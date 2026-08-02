@@ -15,6 +15,7 @@ if TYPE_CHECKING:
     from tokenshare.local_runtime.logical_scheduler import (
         LogicalSourceLatencyScheduler,
     )
+    from tokenshare.storage.sqlite_index import SQLiteMaterializedIndex
 
 from tokenshare.core.expansion import (
     DecompositionProposal,
@@ -1012,6 +1013,352 @@ class WorkerTerminationPolicy:
         return int(self.kill_point.removeprefix("progress_")) / 100.0
 
 
+@dataclass(frozen=True, kw_only=True)
+class PreparedTraceDelivery:
+    """Child形成、只能由parent提交的trace delivery值。"""
+
+    schema_version: str
+    current_run_id: str
+    task_id: str
+    unit_id: str
+    attempt_id: str
+    attempt_ordinal: int
+    binding_digest: str
+    inference_request_digest: str
+    bank_root_id: str
+    manifest_digest: str
+    entry_id: str
+    source_terminal_kind: Literal["success", "provider_failure"]
+    source_bank_object_locators: tuple[Mapping[str, object], ...]
+    logical_start_ms: int
+    source_latency_ms: int
+    logical_finish_ms: int
+    parser_input_media_type: str
+    parser_input_digest: str
+    child_worker_id: str
+    child_completion_sequence: int
+    delivery_digest: str
+
+    def __post_init__(self) -> None:
+        if self.schema_version != "PreparedTraceDelivery.v1":
+            raise ValueError("unsupported prepared trace delivery schema")
+        for field_name in (
+            "current_run_id",
+            "task_id",
+            "unit_id",
+            "attempt_id",
+            "bank_root_id",
+            "entry_id",
+            "parser_input_media_type",
+            "child_worker_id",
+        ):
+            _require_non_empty_string(field_name, getattr(self, field_name))
+        for field_name in (
+            "binding_digest",
+            "inference_request_digest",
+            "manifest_digest",
+            "parser_input_digest",
+        ):
+            _require_sha256_digest(field_name, getattr(self, field_name))
+        for field_name in (
+            "attempt_ordinal",
+            "logical_start_ms",
+            "source_latency_ms",
+            "logical_finish_ms",
+            "child_completion_sequence",
+        ):
+            _require_exact_int(field_name, getattr(self, field_name), minimum=0)
+        if self.source_terminal_kind not in {"success", "provider_failure"}:
+            raise ValueError("source_terminal_kind is unsupported")
+        if self.logical_finish_ms != self.logical_start_ms + self.source_latency_ms:
+            raise ValueError("logical_finish_ms must equal start plus latency")
+        locators = _freeze_trace_locators(
+            self.source_bank_object_locators,
+            bank_root_id=self.bank_root_id,
+            manifest_digest=self.manifest_digest,
+            entry_id=self.entry_id,
+        )
+        object.__setattr__(self, "source_bank_object_locators", locators)
+        expected = _json_digest(self._digest_body())
+        if self.delivery_digest != expected:
+            raise ValueError("prepared trace delivery_digest mismatch")
+
+    def __reduce__(self):
+        """跨process时通过规范JSON形态重建，避免序列化只读mapping view。"""
+
+        return (type(self).from_dict, (self.to_dict(),))
+
+    @classmethod
+    def create(
+        cls,
+        *,
+        current_run_id: str,
+        task_id: str,
+        unit_id: str,
+        attempt_id: str,
+        attempt_ordinal: int,
+        binding_digest: str,
+        inference_request_digest: str,
+        bank_root_id: str,
+        manifest_digest: str,
+        entry_id: str,
+        source_terminal_kind: Literal["success", "provider_failure"],
+        source_bank_object_locators: tuple[Mapping[str, object], ...],
+        logical_start_ms: int,
+        source_latency_ms: int,
+        parser_input_media_type: str,
+        parser_input_digest: str,
+        child_worker_id: str,
+        child_completion_sequence: int,
+    ) -> "PreparedTraceDelivery":
+        locators = _freeze_trace_locators(
+            source_bank_object_locators,
+            bank_root_id=bank_root_id,
+            manifest_digest=manifest_digest,
+            entry_id=entry_id,
+        )
+        body: JsonObject = {
+            "schema_version": "PreparedTraceDelivery.v1",
+            "current_run_id": current_run_id,
+            "task_id": task_id,
+            "unit_id": unit_id,
+            "attempt_id": attempt_id,
+            "attempt_ordinal": attempt_ordinal,
+            "binding_digest": binding_digest,
+            "inference_request_digest": inference_request_digest,
+            "bank_root_id": bank_root_id,
+            "manifest_digest": manifest_digest,
+            "entry_id": entry_id,
+            "source_terminal_kind": source_terminal_kind,
+            "source_bank_object_locators": [dict(item) for item in locators],
+            "logical_start_ms": logical_start_ms,
+            "source_latency_ms": source_latency_ms,
+            "logical_finish_ms": logical_start_ms + source_latency_ms,
+            "parser_input_media_type": parser_input_media_type,
+            "parser_input_digest": parser_input_digest,
+            "child_worker_id": child_worker_id,
+            "child_completion_sequence": child_completion_sequence,
+        }
+        constructor = dict(body)
+        constructor["source_bank_object_locators"] = locators
+        return cls(**constructor, delivery_digest=_json_digest(body))
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, object]) -> "PreparedTraceDelivery":
+        expected = {
+            "schema_version",
+            "current_run_id",
+            "task_id",
+            "unit_id",
+            "attempt_id",
+            "attempt_ordinal",
+            "binding_digest",
+            "inference_request_digest",
+            "bank_root_id",
+            "manifest_digest",
+            "entry_id",
+            "source_terminal_kind",
+            "source_bank_object_locators",
+            "logical_start_ms",
+            "source_latency_ms",
+            "logical_finish_ms",
+            "parser_input_media_type",
+            "parser_input_digest",
+            "child_worker_id",
+            "child_completion_sequence",
+            "delivery_digest",
+        }
+        _require_exact_keys(value, expected, "prepared trace delivery")
+        body = dict(value)
+        body["source_bank_object_locators"] = tuple(
+            body["source_bank_object_locators"]
+        )
+        return cls(**body)
+
+    def _digest_body(self) -> JsonObject:
+        body = self.to_dict()
+        body.pop("delivery_digest")
+        return body
+
+    def with_child_completion(
+        self,
+        *,
+        child_worker_id: str,
+        child_completion_sequence: int,
+    ) -> "PreparedTraceDelivery":
+        return self.create(
+            current_run_id=self.current_run_id,
+            task_id=self.task_id,
+            unit_id=self.unit_id,
+            attempt_id=self.attempt_id,
+            attempt_ordinal=self.attempt_ordinal,
+            binding_digest=self.binding_digest,
+            inference_request_digest=self.inference_request_digest,
+            bank_root_id=self.bank_root_id,
+            manifest_digest=self.manifest_digest,
+            entry_id=self.entry_id,
+            source_terminal_kind=self.source_terminal_kind,
+            source_bank_object_locators=self.source_bank_object_locators,
+            logical_start_ms=self.logical_start_ms,
+            source_latency_ms=self.source_latency_ms,
+            parser_input_media_type=self.parser_input_media_type,
+            parser_input_digest=self.parser_input_digest,
+            child_worker_id=child_worker_id,
+            child_completion_sequence=child_completion_sequence,
+        )
+
+    def to_dict(self) -> JsonObject:
+        return {
+            "schema_version": self.schema_version,
+            "current_run_id": self.current_run_id,
+            "task_id": self.task_id,
+            "unit_id": self.unit_id,
+            "attempt_id": self.attempt_id,
+            "attempt_ordinal": self.attempt_ordinal,
+            "binding_digest": self.binding_digest,
+            "inference_request_digest": self.inference_request_digest,
+            "bank_root_id": self.bank_root_id,
+            "manifest_digest": self.manifest_digest,
+            "entry_id": self.entry_id,
+            "source_terminal_kind": self.source_terminal_kind,
+            "source_bank_object_locators": [
+                dict(item) for item in self.source_bank_object_locators
+            ],
+            "logical_start_ms": self.logical_start_ms,
+            "source_latency_ms": self.source_latency_ms,
+            "logical_finish_ms": self.logical_finish_ms,
+            "parser_input_media_type": self.parser_input_media_type,
+            "parser_input_digest": self.parser_input_digest,
+            "child_worker_id": self.child_worker_id,
+            "child_completion_sequence": self.child_completion_sequence,
+            "delivery_digest": self.delivery_digest,
+        }
+
+
+@dataclass(frozen=True, kw_only=True)
+class TraceDeliveryAttempt:
+    attempt_id: str
+    binding_digest: str
+    status: Literal["started", "killed", "fenced"]
+    event_ref: JsonObject
+
+    def __post_init__(self) -> None:
+        _require_non_empty_string("attempt_id", self.attempt_id)
+        _require_sha256_digest("binding_digest", self.binding_digest)
+        if self.status not in {"started", "killed", "fenced"}:
+            raise ValueError("trace delivery attempt status is unsupported")
+        _require_exact_keys(
+            self.event_ref,
+            {"event_id", "event_seq", "event_type", "event_hash"},
+            "trace delivery attempt event_ref",
+        )
+        _require_non_empty_string("event_ref.event_id", self.event_ref["event_id"])
+        _require_exact_int("event_ref.event_seq", self.event_ref["event_seq"], minimum=1)
+        _require_non_empty_string(
+            "event_ref.event_type", self.event_ref["event_type"]
+        )
+        _require_sha256_digest("event_ref.event_hash", self.event_ref["event_hash"])
+
+    def to_dict(self) -> JsonObject:
+        return {
+            "attempt_id": self.attempt_id,
+            "binding_digest": self.binding_digest,
+            "status": self.status,
+            "event_ref": dict(self.event_ref),
+        }
+
+
+@dataclass(frozen=True, kw_only=True)
+class TraceConsumptionCore:
+    attempt_id: str
+    binding_digest: str
+    current_fencing_token: str
+    status: Literal["delivered"]
+    current_wrapper_ref: ArtifactRef
+    parser_input_ref: ArtifactRef
+    parser_result_ref: ArtifactRef
+    current_provenance_ref: ArtifactRef
+    verifier_checker_refs: tuple[ArtifactRef, ...]
+    canonical_ref: ArtifactRef | None
+    trace_attribution_refs: tuple[ArtifactRef, ...]
+
+    def to_dict(self) -> JsonObject:
+        return {
+            "attempt_id": self.attempt_id,
+            "binding_digest": self.binding_digest,
+            "current_fencing_token": self.current_fencing_token,
+            "status": self.status,
+            "current_wrapper_ref": self.current_wrapper_ref.to_dict(),
+            "parser_input_ref": self.parser_input_ref.to_dict(),
+            "parser_result_ref": self.parser_result_ref.to_dict(),
+            "current_provenance_ref": self.current_provenance_ref.to_dict(),
+            "verifier_checker_refs": [
+                ref.to_dict() for ref in self.verifier_checker_refs
+            ],
+            "canonical_ref": (
+                None if self.canonical_ref is None else self.canonical_ref.to_dict()
+            ),
+            "trace_attribution_refs": [
+                ref.to_dict() for ref in self.trace_attribution_refs
+            ],
+        }
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, object]) -> "TraceConsumptionCore":
+        expected = {
+            "attempt_id",
+            "binding_digest",
+            "current_fencing_token",
+            "status",
+            "current_wrapper_ref",
+            "parser_input_ref",
+            "parser_result_ref",
+            "current_provenance_ref",
+            "verifier_checker_refs",
+            "canonical_ref",
+            "trace_attribution_refs",
+        }
+        _require_exact_keys(value, expected, "trace consumption core")
+        canonical = value["canonical_ref"]
+        return cls(
+            attempt_id=value["attempt_id"],
+            binding_digest=value["binding_digest"],
+            current_fencing_token=value["current_fencing_token"],
+            status=value["status"],
+            current_wrapper_ref=ArtifactRef.from_dict(dict(value["current_wrapper_ref"])),
+            parser_input_ref=ArtifactRef.from_dict(dict(value["parser_input_ref"])),
+            parser_result_ref=ArtifactRef.from_dict(dict(value["parser_result_ref"])),
+            current_provenance_ref=ArtifactRef.from_dict(
+                dict(value["current_provenance_ref"])
+            ),
+            verifier_checker_refs=tuple(
+                ArtifactRef.from_dict(dict(item))
+                for item in value["verifier_checker_refs"]
+            ),
+            canonical_ref=(
+                None if canonical is None else ArtifactRef.from_dict(dict(canonical))
+            ),
+            trace_attribution_refs=tuple(
+                ArtifactRef.from_dict(dict(item))
+                for item in value["trace_attribution_refs"]
+            ),
+        )
+
+
+@dataclass(frozen=True, kw_only=True)
+class TraceConsumptionRecord:
+    core: TraceConsumptionCore
+    committed_event_ref: JsonObject
+
+
+@dataclass(frozen=True, kw_only=True)
+class ParentCommitStores:
+    artifact_store: ArtifactStore
+    event_ledger: object
+    sqlite_index: "SQLiteMaterializedIndex | None" = None
+    commit_hook: Callable[[str], None] | None = None
+
+
 class WorkerBackend(Protocol):
     """只冻结 worker 容量和同步执行边界，不规定并发实现。"""
 
@@ -1209,6 +1556,46 @@ class ProtocolRunResult:
 
 def _merge_readiness_digest(body: JsonObject) -> str:
     return _json_digest(body)
+
+
+def _freeze_trace_locators(
+    value: object,
+    *,
+    bank_root_id: str,
+    manifest_digest: str,
+    entry_id: str,
+) -> tuple[Mapping[str, object], ...]:
+    if not isinstance(value, (list, tuple)) or not value:
+        raise ValueError("source_bank_object_locators must be non-empty")
+    keys = {
+        "bank_root_id",
+        "manifest_digest",
+        "entry_id",
+        "object_role",
+        "object_digest",
+    }
+    normalized: list[Mapping[str, object]] = []
+    seen_roles: set[str] = set()
+    for index, item in enumerate(value):
+        _require_exact_keys(item, keys, f"source_bank_object_locators[{index}]")
+        body = dict(item)
+        role = body["object_role"]
+        _require_non_empty_string(f"source_bank_object_locators[{index}].object_role", role)
+        if role in seen_roles:
+            raise ValueError("source bank object locator roles must be unique")
+        seen_roles.add(role)
+        if (
+            body["bank_root_id"] != bank_root_id
+            or body["manifest_digest"] != manifest_digest
+            or body["entry_id"] != entry_id
+        ):
+            raise ValueError("source bank object locator identity mismatch")
+        _require_sha256_digest(
+            f"source_bank_object_locators[{index}].object_digest",
+            body["object_digest"],
+        )
+        normalized.append(MappingProxyType(body))
+    return tuple(sorted(normalized, key=lambda item: str(item["object_role"])))
 
 
 def _json_digest(body: JsonObject) -> str:

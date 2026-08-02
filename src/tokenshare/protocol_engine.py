@@ -1650,8 +1650,9 @@ class ProtocolEngine:
         active_leases_by_unit_id: dict[str, object] | None = None,
         allowed_unit_ids: Iterable[str] | None = None,
     ) -> SchedulingFlowResult:
+        current_events = self._event_ledger.read_all()
         active_leases = _merge_active_lease_maps(
-            _active_leases_by_unit_id_from_events(self._event_ledger.read_all()),
+            _active_leases_by_unit_id_from_events(current_events),
             active_leases_by_unit_id or {},
         )
         decision = self._scheduler.select_next(
@@ -1666,113 +1667,127 @@ class ProtocolEngine:
         if decision is None:
             raise ValueError("no schedulable ready unit")
 
+        unit = graph.units[decision.unit_id]
         claim = self._lease_manager.claim(
             decision=decision,
+            task_unit=unit,
             lease_id=lease_id,
             attempt_id=attempt_id,
             fencing_token=fencing_token,
             now=now,
         )
-        unit = graph.units[decision.unit_id]
+        if claim.task_unit is None:
+            raise RuntimeError("scheduled claim did not return its persisted task unit")
         processing_unit = transition_task_unit(
-            unit,
+            claim.task_unit,
             new_state=TaskState.PROCESSING,
             reason="scheduled",
             trigger="scheduler",
             changed_at=now,
         )
 
-        lease_event = self._event_ledger.append(
-            event_type=EventType.LEASE_STATE_CHANGED,
-            object_type="Lease",
-            object_id=claim.lease.lease_id,
-            task_id=claim.lease.task_id,
-            actor={"kind": "protocol_engine"},
-            correlation_id=correlation_id,
-            idempotency_key=f"lease:create:{claim.lease.lease_id}",
-            payload={
-                "old_state": None,
-                "new_state": LeaseState.ACTIVE.value,
-                "lease": claim.lease.to_dict(),
-                "scheduling_decision": decision.to_dict(),
-                "reason": "scheduled",
-                "correlation_id": correlation_id,
-            },
-            occurred_at=now,
-        )
-        attempt_created_event = self._event_ledger.append(
-            event_type=EventType.ATTEMPT_STATE_CHANGED,
-            object_type="Attempt",
-            object_id=claim.created_attempt.attempt_id,
-            task_id=claim.created_attempt.task_id,
-            actor={"kind": "protocol_engine"},
-            correlation_id=correlation_id,
-            causation_event_id=lease_event.event_id,
-            idempotency_key=(
-                f"attempt:state:{claim.created_attempt.attempt_id}:null:Created:{correlation_id}"
+        batch_id = f"schedule_batch:{claim.running_attempt.attempt_id}"
+        first_event_id = _first_event_id_for_batch(
+            events=current_events,
+            batch_id=batch_id,
+        ) or f"event_{len(current_events) + 1:012d}"
+        first_event_seq = int(first_event_id.removeprefix("event_"))
+        attempt_created_event_id = f"event_{first_event_seq + 1:012d}"
+        attempt_running_event_id = f"event_{first_event_seq + 2:012d}"
+        drafts = [
+            EventDraft(
+                event_type=EventType.LEASE_STATE_CHANGED,
+                object_type="Lease",
+                object_id=claim.lease.lease_id,
+                task_id=claim.lease.task_id,
+                actor={"kind": "protocol_engine"},
+                correlation_id=correlation_id,
+                idempotency_key=f"lease:create:{claim.lease.lease_id}",
+                payload={
+                    "old_state": None,
+                    "new_state": LeaseState.ACTIVE.value,
+                    "lease": claim.lease.to_dict(),
+                    "scheduling_decision": decision.to_dict(),
+                    "reason": "scheduled",
+                    "correlation_id": correlation_id,
+                },
+                occurred_at=now,
             ),
-            payload={
-                "old_state": None,
-                "new_state": AttemptState.CREATED.value,
-                "attempt": claim.created_attempt.to_dict(),
-                "reason": "scheduled",
-                "correlation_id": correlation_id,
-            },
-            occurred_at=now,
-        )
-        attempt_running_event = self._event_ledger.append(
-            event_type=EventType.ATTEMPT_STATE_CHANGED,
-            object_type="Attempt",
-            object_id=claim.running_attempt.attempt_id,
-            task_id=claim.running_attempt.task_id,
-            actor={"kind": "protocol_engine"},
-            correlation_id=correlation_id,
-            causation_event_id=attempt_created_event.event_id,
-            idempotency_key=(
-                f"attempt:state:{claim.running_attempt.attempt_id}:Created:Running:{correlation_id}"
-            ),
-            payload={
-                "old_state": AttemptState.CREATED.value,
-                "new_state": AttemptState.RUNNING.value,
-                "attempt": claim.running_attempt.to_dict(),
-                "reason": "executor_started",
-                "correlation_id": correlation_id,
-            },
-            occurred_at=now,
-        )
-        task_unit_event = self._event_ledger.append(
-            event_type=EventType.TASK_UNIT_STATE_CHANGED,
-            object_type="TaskUnit",
-            object_id=processing_unit.unit_id,
-            task_id=processing_unit.task_id,
-            actor={"kind": "protocol_engine"},
-            correlation_id=correlation_id,
-            causation_event_id=attempt_running_event.event_id,
-            idempotency_key=(
-                f"task_unit:state:{processing_unit.unit_id}:Ready:Processing:{correlation_id}"
-            ),
-            payload={
-                "task_unit_state_change": _task_unit_state_change(
-                    task_unit=processing_unit,
-                    old_state=TaskState.READY,
-                    new_state=TaskState.PROCESSING,
-                    reason="scheduled",
-                    trigger="scheduler",
-                    correlation_id=correlation_id,
-                    causation_event_id=attempt_running_event.event_id,
-                    changed_at=now,
+            EventDraft(
+                event_type=EventType.ATTEMPT_STATE_CHANGED,
+                object_type="Attempt",
+                object_id=claim.created_attempt.attempt_id,
+                task_id=claim.created_attempt.task_id,
+                actor={"kind": "protocol_engine"},
+                correlation_id=correlation_id,
+                causation_event_id=first_event_id,
+                idempotency_key=(
+                    f"attempt:state:{claim.created_attempt.attempt_id}:null:Created:{correlation_id}"
                 ),
-                "task_unit": processing_unit.to_dict(),
-            },
-            occurred_at=now,
-        )
+                payload={
+                    "old_state": None,
+                    "new_state": AttemptState.CREATED.value,
+                    "attempt": claim.created_attempt.to_dict(),
+                    "reason": "scheduled",
+                    "correlation_id": correlation_id,
+                },
+                occurred_at=now,
+            ),
+            EventDraft(
+                event_type=EventType.ATTEMPT_STATE_CHANGED,
+                object_type="Attempt",
+                object_id=claim.running_attempt.attempt_id,
+                task_id=claim.running_attempt.task_id,
+                actor={"kind": "protocol_engine"},
+                correlation_id=correlation_id,
+                causation_event_id=attempt_created_event_id,
+                idempotency_key=(
+                    f"attempt:state:{claim.running_attempt.attempt_id}:Created:Running:{correlation_id}"
+                ),
+                payload={
+                    "old_state": AttemptState.CREATED.value,
+                    "new_state": AttemptState.RUNNING.value,
+                    "attempt": claim.running_attempt.to_dict(),
+                    "reason": "executor_started",
+                    "correlation_id": correlation_id,
+                },
+                occurred_at=now,
+            ),
+            EventDraft(
+                event_type=EventType.TASK_UNIT_STATE_CHANGED,
+                object_type="TaskUnit",
+                object_id=processing_unit.unit_id,
+                task_id=processing_unit.task_id,
+                actor={"kind": "protocol_engine"},
+                correlation_id=correlation_id,
+                causation_event_id=attempt_running_event_id,
+                idempotency_key=(
+                    f"task_unit:state:{processing_unit.unit_id}:Ready:Processing:{correlation_id}"
+                ),
+                payload={
+                    "task_unit_state_change": _task_unit_state_change(
+                        task_unit=processing_unit,
+                        old_state=TaskState.READY,
+                        new_state=TaskState.PROCESSING,
+                        reason="scheduled",
+                        trigger="scheduler",
+                        correlation_id=correlation_id,
+                        causation_event_id=attempt_running_event_id,
+                        changed_at=now,
+                    ),
+                    "task_unit": processing_unit.to_dict(),
+                },
+                occurred_at=now,
+            ),
+        ]
+        schedule_events = self._event_ledger.append_batch(drafts, batch_id=batch_id)
 
         return SchedulingFlowResult(
             lease=claim.lease,
             attempt=claim.running_attempt,
             task_unit=processing_unit,
             scheduling_decision=decision,
-            events=(lease_event, attempt_created_event, attempt_running_event, task_unit_event),
+            events=schedule_events,
         )
 
     def record_lease_heartbeat(
@@ -2266,6 +2281,11 @@ def _attempt_from_snapshot(snapshot: JsonObject) -> Attempt:
             "superseded_by_attempt_id",
         ),
         metadata=_snapshot_json_object(snapshot, "metadata"),
+        attempt_ordinal=_snapshot_non_negative_int(
+            snapshot,
+            "attempt_ordinal",
+            legacy_default=0,
+        ),
         schema_version=_snapshot_required_string(snapshot, "schema_version"),
     )
 
@@ -2302,8 +2322,28 @@ def _lease_from_snapshot(snapshot: JsonObject) -> Lease:
             "terminated_reason",
         ),
         metadata=_snapshot_json_object(snapshot, "metadata"),
+        attempt_ordinal=_snapshot_non_negative_int(
+            snapshot,
+            "attempt_ordinal",
+            legacy_default=0,
+        ),
+        binding_digest=_snapshot_optional_string(snapshot, "binding_digest"),
         schema_version=_snapshot_required_string(snapshot, "schema_version"),
     )
+
+
+def _snapshot_non_negative_int(
+    snapshot: JsonObject,
+    field_name: str,
+    *,
+    legacy_default: int,
+) -> int:
+    value = snapshot.get(field_name, legacy_default)
+    if type(value) is not int or value < 0:
+        raise ValueError(
+            f"latest snapshot field must be a non-negative integer: {field_name}"
+        )
+    return value
 
 
 def _authoritative_attempt(

@@ -12,6 +12,8 @@ from tokenshare.core.models import ArtifactRef, JsonObject
 from tokenshare.local_runtime.contracts import (
     ProtocolRunLedgerBinding,
     ProtocolRunResult,
+    TraceConsumptionCore,
+    TraceConsumptionRecord,
 )
 from tokenshare.storage.artifacts import ArtifactStore
 from tokenshare.storage.events import EventLedger, EventType, VerifiedLedgerSnapshot
@@ -30,6 +32,44 @@ class RuntimeAttemptView:
     attempt_id: str
     unit_id: str
     state: str
+
+
+def project_trace_consumptions(
+    verified_snapshot: VerifiedLedgerSnapshot,
+) -> tuple[TraceConsumptionRecord, ...]:
+    """只从已finalize的commit event派生可见consumption。"""
+
+    if not isinstance(verified_snapshot, VerifiedLedgerSnapshot):
+        raise TypeError("verified_snapshot must be VerifiedLedgerSnapshot")
+    return _project_trace_consumption_events(verified_snapshot.events)
+
+
+def _project_trace_consumption_events(events) -> tuple[TraceConsumptionRecord, ...]:
+    """投影已经由调用方verified snapshot限定的event序列。"""
+
+    records: list[TraceConsumptionRecord] = []
+    seen_attempt_ids: set[str] = set()
+    for event in events:
+        if event.event_type != EventType.TRACE_DELIVERY_COMMITTED:
+            continue
+        core = TraceConsumptionCore.from_dict(event.payload)
+        if core.attempt_id != event.object_id:
+            raise ValueError("trace consumption commit attempt identity mismatch")
+        if core.attempt_id in seen_attempt_ids:
+            raise ValueError("duplicate trace consumption commit for attempt")
+        seen_attempt_ids.add(core.attempt_id)
+        records.append(
+            TraceConsumptionRecord(
+                core=core,
+                committed_event_ref={
+                    "event_id": event.event_id,
+                    "event_seq": event.event_seq,
+                    "event_type": EventType.TRACE_DELIVERY_COMMITTED.value,
+                    "event_hash": event.event_hash,
+                },
+            )
+        )
+    return tuple(records)
 
 
 def build_runtime_observation(
@@ -132,6 +172,7 @@ def _project_protocol_run_from_verified_snapshot(
     attempts_by_unit: dict[str, list[str]] = {}
     canonical_artifacts: dict[str, list[str]] = {}
     artifact_refs: dict[tuple[str, str], ArtifactRef] = {}
+    trace_consumptions: list[TraceConsumptionRecord] = []
 
     for event in events:
         unit = event.payload.get("task_unit")
@@ -161,6 +202,8 @@ def _project_protocol_run_from_verified_snapshot(
                 )
             artifact_refs[(ref.artifact_id, ref.content_hash)] = ref
 
+    trace_consumptions.extend(_project_trace_consumption_events(events))
+
     unit_views = tuple(
         RuntimeUnitView(
             unit_id=unit_id,
@@ -185,6 +228,15 @@ def _project_protocol_run_from_verified_snapshot(
         "artifact_count": len(artifact_refs),
         "unit_state_counts": dict(Counter(view.state for view in unit_views)),
         "attempt_state_counts": dict(Counter(view.state for view in attempt_views)),
+        "trace_consumption_count": len(trace_consumptions),
+        "trace_consumptions": [
+            {
+                "attempt_id": record.core.attempt_id,
+                "binding_digest": record.core.binding_digest,
+                "committed_event_ref": dict(record.committed_event_ref),
+            }
+            for record in trace_consumptions
+        ],
         "units": [
             {
                 "unit_id": view.unit_id,

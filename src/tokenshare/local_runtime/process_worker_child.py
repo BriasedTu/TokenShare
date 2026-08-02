@@ -9,6 +9,8 @@ import pickle
 import sys
 from time import monotonic, sleep
 
+from tokenshare.local_runtime.contracts import PreparedTraceDelivery
+
 
 def main(argv: list[str] | None = None) -> int:
     arguments = list(sys.argv[1:] if argv is None else argv)
@@ -43,30 +45,38 @@ def main(argv: list[str] | None = None) -> int:
         )
         if callable(prepare_process_execution):
             prepare_process_execution(request, execution_index)
-        submission = executor.execute(
+        worker_value = executor.execute(
             request,
             submission_id=submission_id,
             submitted_at=submitted_at,
         )
-        export_process_result = getattr(executor, "export_process_result", None)
-        process_result = (
-            export_process_result(request, submission)
-            if callable(export_process_result)
-            else None
-        )
-        completion_schedule_builder = getattr(
-            executor,
-            "worker_completion_schedule",
-            None,
-        )
-        completion_schedule = (
-            completion_schedule_builder(request, submission, None)
-            if callable(completion_schedule_builder)
-            else None
-        )
+        if isinstance(worker_value, PreparedTraceDelivery):
+            worker_value = worker_value.with_child_completion(
+                child_worker_id=f"process-worker-{execution_index}",
+                child_completion_sequence=execution_index,
+            )
+            process_result = None
+            completion_schedule = None
+        else:
+            export_process_result = getattr(executor, "export_process_result", None)
+            process_result = (
+                export_process_result(request, worker_value)
+                if callable(export_process_result)
+                else None
+            )
+            completion_schedule_builder = getattr(
+                executor,
+                "worker_completion_schedule",
+                None,
+            )
+            completion_schedule = (
+                completion_schedule_builder(request, worker_value, None)
+                if callable(completion_schedule_builder)
+                else None
+            )
         message = (
             "submission",
-            submission,
+            worker_value,
             process_result,
             completion_schedule,
         )

@@ -60,6 +60,14 @@ def test_phase3_request_and_submission_flow_uses_artifacts_and_advances_attempt_
         attempt_id="attempt_1",
         fencing_token="token_1",
     )
+    assert {event.batch_id for event in scheduled.events} == {
+        "schedule_batch:attempt_1"
+    }
+    assert [event.batch_index for event in scheduled.events] == [1, 2, 3, 4]
+    assert {event.batch_size for event in scheduled.events} == {4}
+    assert scheduled.task_unit.last_attempt_ordinal == 0
+    assert scheduled.attempt.attempt_ordinal == 0
+    assert scheduled.lease.attempt_ordinal == 0
     request = ExecutionRequest(
         request_id="request_1",
         task_id="task_demo",

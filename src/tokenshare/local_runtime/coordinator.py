@@ -5,15 +5,17 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
+import json
 from typing import Callable
 
 from tokenshare.core.contribution import ContributionCoordinator
 from tokenshare.core.merge_coordinator import BatchView, MergeCoordinator
-from tokenshare.core.models import TaskState
+from tokenshare.core.models import Lease, LeaseState, TaskState
 from tokenshare.core.recovery import ACCEPTED, evaluate_retry
 from tokenshare.core.registration import RootTaskRegistrationResult, RootTaskRegistrar
 from tokenshare.core.task_graph import TaskGraph
 from tokenshare.core.verification import build_verification_report
+from tokenshare.executors.contracts import ExecutionRequest, ExecutionSubmission
 from tokenshare.local_runtime.contracts import (
     CanonicalUnitContext,
     CompleteAction,
@@ -24,7 +26,9 @@ from tokenshare.local_runtime.contracts import (
     MergeReadinessContext,
     MergeReadinessDecision,
     ParsedCandidateContext,
+    ParentCommitStores,
     ParserContext,
+    PreparedTraceDelivery,
     ProtocolMechanismPolicy,
     ProtocolRunRequest,
     ProtocolRunResult,
@@ -32,6 +36,9 @@ from tokenshare.local_runtime.contracts import (
     RootProtocolPlan,
     RuntimeHookObservationV1,
     UnitProgressContext,
+    TraceConsumptionCore,
+    TraceConsumptionRecord,
+    TraceDeliveryAttempt,
     VerificationContext,
     build_experiment_premature_merge_attempted_observation,
 )
@@ -52,7 +59,7 @@ from tokenshare.protocol_engine import (
     SchedulingFlowResult,
 )
 from tokenshare.storage.artifacts import ArtifactStore
-from tokenshare.storage.events import EventLedger, EventType
+from tokenshare.storage.events import EventLedger, EventType, LedgerEvent
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -75,6 +82,400 @@ class LogicalPendingExecution:
             or self.event.unit_id != self.scheduled.task_unit.unit_id
         ):
             raise ValueError("pending logical event identity mismatch")
+
+
+def commit_prepared_delivery(
+    *,
+    delivery: PreparedTraceDelivery,
+    worker_completion: object,
+    killed_worker_ids,
+    active_lease: Lease,
+    current_fencing_token: str,
+    current_stores: ParentCommitStores,
+) -> TraceConsumptionRecord:
+    """在parent验证worker/lease后，以单event公开durable staged artifacts。"""
+
+    if not isinstance(delivery, PreparedTraceDelivery):
+        raise TypeError("delivery must be PreparedTraceDelivery")
+    if not isinstance(current_stores, ParentCommitStores):
+        raise TypeError("current_stores must be ParentCommitStores")
+    fact = getattr(worker_completion, "fact", worker_completion)
+    sequence = getattr(fact, "execution_index", None)
+    worker_id = getattr(fact, "worker_id", None)
+    if sequence != delivery.child_completion_sequence:
+        raise ValueError("worker completion sequence mismatch")
+    if worker_id != delivery.child_worker_id:
+        raise ValueError("worker completion identity mismatch")
+    if delivery.child_worker_id in frozenset(killed_worker_ids):
+        raise ValueError("killed worker cannot commit a delivery")
+    if getattr(fact, "result_kind", None) in {
+        "worker_terminated",
+        "fenced",
+        "stale_fencing",
+    } or getattr(worker_completion, "failure_kind", None) in {
+        "worker_terminated",
+        "fenced",
+        "stale_fencing",
+    }:
+        raise ValueError("killed or fenced worker cannot commit a delivery")
+    if not isinstance(active_lease, Lease) or active_lease.state != LeaseState.ACTIVE:
+        raise ValueError("active lease is required")
+    if type(current_fencing_token) is not str or not current_fencing_token:
+        raise ValueError("current fencing token must be a non-empty string")
+    if active_lease.fencing_token != current_fencing_token:
+        raise ValueError("current fencing token does not match active lease")
+    if (
+        active_lease.task_id != delivery.task_id
+        or active_lease.unit_id != delivery.unit_id
+        or active_lease.attempt_id != delivery.attempt_id
+    ):
+        raise ValueError("active lease attempt identity mismatch")
+    if active_lease.attempt_ordinal != delivery.attempt_ordinal:
+        raise ValueError("active lease attempt ordinal mismatch")
+    lease_binding = active_lease.binding_digest or active_lease.metadata.get(
+        "binding_digest"
+    )
+    request = getattr(worker_completion, "request", None)
+    request_binding = getattr(request, "source_binding_digest", None)
+    if (
+        (request_binding is None and lease_binding is None)
+        or (
+            request_binding is not None
+            and request_binding != delivery.binding_digest
+        )
+        or (lease_binding is not None and lease_binding != delivery.binding_digest)
+    ):
+        raise ValueError("active lease binding digest mismatch")
+    if request is not None and (
+        getattr(request, "task_id", None) != delivery.task_id
+        or getattr(request, "unit_id", None) != delivery.unit_id
+        or getattr(request, "lease_id", None) != active_lease.lease_id
+        or getattr(request, "attempt_ordinal", None) != delivery.attempt_ordinal
+        or getattr(request, "attempt_id", None) != delivery.attempt_id
+        or getattr(request, "fencing_token", None) != current_fencing_token
+    ):
+        raise ValueError("dispatch request does not match prepared delivery")
+
+    # 在任何stage前先验证既有ledger，损坏或partial tail必须fail closed。
+    current_stores.event_ledger.read_verified_snapshot()
+    digest_key = delivery.delivery_digest.removeprefix("sha256:")
+    created_at = "1970-01-01T00:00:00Z"
+    staged_source = {
+        "kind": "prepared_trace_delivery",
+        "delivery_digest": delivery.delivery_digest,
+    }
+
+    wrapper_ref = current_stores.artifact_store.save_external_trace_wrapper(
+        delivery.to_dict(),
+        artifact_id=f"trace_wrapper_{digest_key}",
+        created_at=created_at,
+    )
+    _commit_hook(current_stores, "wrapper_staged")
+    parser_input_ref = current_stores.artifact_store.save_json(
+        {
+            "schema_version": "tokenshare.trace_parser_input.v1",
+            "media_type": delivery.parser_input_media_type,
+            "content_digest": delivery.parser_input_digest,
+            "source_bank_object_locators": [
+                dict(item) for item in delivery.source_bank_object_locators
+            ],
+        },
+        artifact_id=f"trace_parser_input_{digest_key}",
+        artifact_type="TraceParserInput",
+        artifact_schema_id="tokenshare.trace_parser_input",
+        artifact_schema_version="v1",
+        source=staged_source,
+        metadata={"attempt_id": delivery.attempt_id},
+        created_at=created_at,
+    )
+    _commit_hook(current_stores, "parser_input_staged")
+    parser_result_ref = current_stores.artifact_store.save_json(
+        {
+            "schema_version": "tokenshare.trace_parser_result.v1",
+            "parser_input_digest": delivery.parser_input_digest,
+            "source_terminal_kind": delivery.source_terminal_kind,
+            "status": "prepared",
+        },
+        artifact_id=f"trace_parser_result_{digest_key}",
+        artifact_type="TraceParserResult",
+        artifact_schema_id="tokenshare.trace_parser_result",
+        artifact_schema_version="v1",
+        source=staged_source,
+        metadata={"attempt_id": delivery.attempt_id},
+        created_at=created_at,
+    )
+    _commit_hook(current_stores, "parser_result_staged")
+    provenance_ref = current_stores.artifact_store.save_json(
+        {
+            "schema_version": "tokenshare.current_trace_provenance.v1",
+            "bank_root_id": delivery.bank_root_id,
+            "manifest_digest": delivery.manifest_digest,
+            "entry_id": delivery.entry_id,
+            "inference_request_digest": delivery.inference_request_digest,
+            "logical_start_ms": delivery.logical_start_ms,
+            "source_latency_ms": delivery.source_latency_ms,
+            "logical_finish_ms": delivery.logical_finish_ms,
+        },
+        artifact_id=f"trace_provenance_{digest_key}",
+        artifact_type="CurrentTraceProvenance",
+        artifact_schema_id="tokenshare.current_trace_provenance",
+        artifact_schema_version="v1",
+        source=staged_source,
+        metadata={"attempt_id": delivery.attempt_id},
+        created_at=created_at,
+    )
+    _commit_hook(current_stores, "provenance_staged")
+    attribution_ref = current_stores.artifact_store.save_json(
+        {
+            "schema_version": "tokenshare.trace_attribution.v1",
+            "delivery_digest": delivery.delivery_digest,
+            "source_bank_object_locators": [
+                dict(item) for item in delivery.source_bank_object_locators
+            ],
+        },
+        artifact_id=f"trace_attribution_{digest_key}",
+        artifact_type="TraceAttribution",
+        artifact_schema_id="tokenshare.trace_attribution",
+        artifact_schema_version="v1",
+        source=staged_source,
+        metadata={"attempt_id": delivery.attempt_id},
+        created_at=created_at,
+    )
+    _commit_hook(current_stores, "artifacts_staged")
+
+    core = TraceConsumptionCore(
+        attempt_id=delivery.attempt_id,
+        binding_digest=delivery.binding_digest,
+        current_fencing_token=current_fencing_token,
+        status="delivered",
+        current_wrapper_ref=wrapper_ref,
+        parser_input_ref=parser_input_ref,
+        parser_result_ref=parser_result_ref,
+        current_provenance_ref=provenance_ref,
+        verifier_checker_refs=(),
+        canonical_ref=None,
+        trace_attribution_refs=(attribution_ref,),
+    )
+    event = current_stores.event_ledger.append(
+        event_type=EventType.TRACE_DELIVERY_COMMITTED,
+        object_type="TraceConsumption",
+        object_id=delivery.attempt_id,
+        task_id=delivery.task_id,
+        actor={"kind": "protocol_parent"},
+        correlation_id=delivery.current_run_id,
+        idempotency_key=f"trace_delivery_committed:{delivery.attempt_id}",
+        payload=core.to_dict(),
+    )
+    _commit_hook(current_stores, "commit_event_appended")
+    if current_stores.sqlite_index is not None:
+        snapshot = current_stores.event_ledger.read_verified_snapshot()
+        current_stores.sqlite_index.rebuild_from_events(list(snapshot.events))
+    _commit_hook(current_stores, "projection_applied")
+    return TraceConsumptionRecord(
+        core=core,
+        committed_event_ref={
+            "event_id": event.event_id,
+            "event_seq": event.event_seq,
+            "event_type": EventType.TRACE_DELIVERY_COMMITTED.value,
+            "event_hash": event.event_hash,
+        },
+    )
+
+
+def commit_worker_outcome(
+    *,
+    outcome: WorkerBatchOutcome,
+    killed_worker_ids,
+    active_lease: Lease,
+    current_fencing_token: str,
+    current_stores: ParentCommitStores,
+) -> TraceConsumptionRecord:
+    """让所有worker backend统一经过parent-owned delivery commit边界。"""
+
+    if not isinstance(outcome, WorkerBatchOutcome):
+        raise TypeError("outcome must be WorkerBatchOutcome")
+    if outcome.prepared_delivery is None:
+        raise ValueError("worker outcome has no prepared trace delivery")
+    if outcome.submission is not None:
+        raise ValueError("prepared trace delivery cannot include a submission")
+    return commit_prepared_delivery(
+        delivery=outcome.prepared_delivery,
+        worker_completion=outcome,
+        killed_worker_ids=killed_worker_ids,
+        active_lease=active_lease,
+        current_fencing_token=current_fencing_token,
+        current_stores=current_stores,
+    )
+
+
+def build_trace_delivery_attempt(
+    *,
+    outcome: WorkerBatchOutcome,
+    status: str,
+    event: LedgerEvent,
+) -> TraceDeliveryAttempt:
+    """从既有attempt状态event派生killed/fenced delivery审计记录。"""
+
+    if not isinstance(outcome, WorkerBatchOutcome):
+        raise TypeError("outcome must be WorkerBatchOutcome")
+    delivery = outcome.prepared_delivery
+    if delivery is None:
+        raise ValueError("worker outcome has no prepared trace delivery")
+    if status not in {"killed", "fenced"}:
+        raise ValueError("terminal trace delivery status must be killed or fenced")
+    fact_kind = outcome.fact.result_kind
+    if status == "killed" and fact_kind != "worker_terminated":
+        raise ValueError("killed delivery requires worker termination fact")
+    if status == "fenced" and fact_kind not in {"fenced", "stale_fencing"}:
+        raise ValueError("fenced delivery requires fencing fact")
+    if not isinstance(event, LedgerEvent):
+        raise TypeError("event must be a LedgerEvent")
+    if (
+        event.event_type != EventType.ATTEMPT_STATE_CHANGED
+        or event.object_id != delivery.attempt_id
+    ):
+        raise ValueError("trace delivery attempt requires matching attempt state event")
+    if event.payload.get("new_state") not in {"Failed", "Rejected", "Superseded"}:
+        raise ValueError("terminal trace delivery requires a terminal attempt event")
+    return TraceDeliveryAttempt(
+        attempt_id=delivery.attempt_id,
+        binding_digest=delivery.binding_digest,
+        status=status,
+        event_ref=_event_ref(event),
+    )
+
+
+def _commit_hook(stores: ParentCommitStores, stage: str) -> None:
+    if stores.commit_hook is not None:
+        stores.commit_hook(stage)
+
+
+def _bind_execution_request(
+    request: ExecutionRequest,
+    *,
+    attempt_ordinal: int,
+) -> ExecutionRequest:
+    """在dispatch前固定core-neutral ordinal/source binding。"""
+
+    if not isinstance(request, ExecutionRequest):
+        raise TypeError("plugin runtime must build an ExecutionRequest")
+    if type(attempt_ordinal) is not int or attempt_ordinal < 0:
+        raise ValueError("persisted attempt ordinal must be a non-negative integer")
+    binding_digest = request.source_binding_digest
+    if binding_digest is None:
+        body = {
+            "schema_version": "tokenshare.source_binding.v1",
+            "request_id": request.request_id,
+            "task_id": request.task_id,
+            "unit_id": request.unit_id,
+            "attempt_id": request.attempt_id,
+            "attempt_ordinal": attempt_ordinal,
+            "lease_id": request.lease_id,
+            "fencing_token": request.fencing_token,
+        }
+        encoded = json.dumps(
+            body,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        binding_digest = f"sha256:{sha256(encoded).hexdigest()}"
+    elif not _is_sha256_digest(binding_digest):
+        raise ValueError("source binding digest must be a sha256 digest")
+    soft_hints = dict(request.soft_hints or {})
+    # replacement identity 只能来自协议已持久化 ordinal；插件 hint 不拥有该权威。
+    soft_hints["replacement_slot"] = attempt_ordinal
+    return replace(
+        request,
+        attempt_ordinal=attempt_ordinal,
+        source_binding_digest=binding_digest,
+        soft_hints=soft_hints,
+    )
+
+
+def _is_sha256_digest(value: object) -> bool:
+    return (
+        isinstance(value, str)
+        and value.startswith("sha256:")
+        and len(value) == 71
+        and all(character in "0123456789abcdef" for character in value[7:])
+    )
+
+
+def _trace_delivery_terminal_status(
+    outcome: WorkerBatchOutcome,
+) -> str | None:
+    """只把带prepared delivery的明确worker终止/fence事实归为终态。"""
+
+    if outcome.prepared_delivery is None:
+        return None
+    kinds = {outcome.failure_kind, outcome.fact.result_kind}
+    if "worker_terminated" in kinds:
+        return "killed"
+    if kinds & {"fenced", "stale_fencing"}:
+        return "fenced"
+    return None
+
+
+def _trace_consumption_submission(
+    *,
+    request: ExecutionRequest,
+    delivery: PreparedTraceDelivery,
+    consumption: TraceConsumptionRecord,
+    submitted_at: str,
+) -> ExecutionSubmission:
+    """把parent已公开的trace artifacts规范化为普通engine submission输入。"""
+
+    if consumption.core.attempt_id != request.attempt_id:
+        raise ValueError("trace consumption does not match execution request")
+    executor_id = request.executor.get("executor_id")
+    executor_version = request.executor.get("executor_version")
+    if not isinstance(executor_id, str) or not executor_id:
+        raise ValueError("trace execution request has no executor_id")
+    if not isinstance(executor_version, str) or not executor_version:
+        raise ValueError("trace execution request has no executor_version")
+    succeeded = delivery.source_terminal_kind == "success"
+    parser_result_ref = consumption.core.parser_result_ref
+    return ExecutionSubmission(
+        submission_id=(
+            "trace_submission_"
+            f"{delivery.delivery_digest.removeprefix('sha256:')}"
+        ),
+        request_id=request.request_id,
+        task_id=request.task_id,
+        unit_id=request.unit_id,
+        attempt_id=request.attempt_id,
+        lease_id=request.lease_id,
+        fencing_token=request.fencing_token,
+        executor_id=executor_id,
+        executor_version=executor_version,
+        result_kind="succeeded" if succeeded else "failed",
+        raw_output_ref=consumption.core.current_wrapper_ref,
+        parsed_output_ref=parser_result_ref,
+        candidate_output_refs=(
+            {
+                output_name: parser_result_ref
+                for output_name in request.output_contract.required_outputs
+            }
+            if succeeded
+            else {}
+        ),
+        parse_failure_ref=None,
+        log_ref=None,
+        environment_ref=request.environment_ref,
+        environment_summary={"runtime": "prepared_trace_delivery"},
+        provenance_ref=consumption.core.current_provenance_ref,
+        usage_summary={},
+        error=(
+            None
+            if succeeded
+            else {
+                "kind": "provider_failure",
+                "message": "prepared source trace ended in provider failure",
+            }
+        ),
+        submitted_at=submitted_at,
+    )
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -102,6 +503,7 @@ class LogicalRunCheckpoint:
     terminal_child_failure: object | None
     pending_executions: tuple[LogicalPendingExecution, ...]
     runtime_observations: tuple[RuntimeHookObservationV1, ...]
+    trace_delivery_attempts: tuple[TraceDeliveryAttempt, ...]
     worker_execution_facts: tuple[dict[str, object], ...]
     partial_observation: bool
     witness_observed_at: str | None
@@ -131,6 +533,8 @@ class _DeferredRecovery:
     attempt_for_recovery: object | None
     recovery_now: str | None
     halt_run: bool
+    trace_delivery_outcome: WorkerBatchOutcome | None = None
+    trace_delivery_status: str | None = None
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -142,6 +546,7 @@ class _AppliedRecovery:
     recovery: object
     recovery_event_refs: tuple[dict[str, object], ...]
     halt_run: bool
+    trace_delivery_attempt: TraceDeliveryAttempt | None = None
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -301,6 +706,7 @@ class ProtocolRunCoordinator:
                 | _LogicalPendingEarlyStop
             ] = []
             runtime_observations: list[RuntimeHookObservationV1] = []
+            trace_delivery_attempts: list[TraceDeliveryAttempt] = []
             worker_execution_facts: list[dict[str, object]] = []
             partial_observation = False
             witness_observed_at: str | None = None
@@ -324,6 +730,9 @@ class ProtocolRunCoordinator:
             terminal_child_failure = resume_checkpoint.terminal_child_failure
             pending_executions = list(resume_checkpoint.pending_executions)
             runtime_observations = list(resume_checkpoint.runtime_observations)
+            trace_delivery_attempts = list(
+                resume_checkpoint.trace_delivery_attempts
+            )
             worker_execution_facts = [
                 dict(item) for item in resume_checkpoint.worker_execution_facts
             ]
@@ -513,6 +922,13 @@ class ProtocolRunCoordinator:
                                 raise ValueError(
                                     "logical_source_latency_1x requires worker completion timing"
                                 )
+                            if (
+                                completion.attempt_ordinal
+                                != execution_request.attempt_ordinal
+                            ):
+                                raise ValueError(
+                                    "worker completion attempt ordinal does not match persisted request"
+                                )
                             event_kind = _completion_event_kind(
                                 worker_outcome, completion.event_kind
                             )
@@ -528,7 +944,7 @@ class ProtocolRunCoordinator:
                                         task_id=execution_request.task_id,
                                         unit_id=execution_request.unit_id,
                                         attempt_ordinal=(
-                                            completion.attempt_ordinal
+                                            execution_request.attempt_ordinal
                                         ),
                                         source_latency_ms=(
                                             completion.source_latency_ms
@@ -558,7 +974,7 @@ class ProtocolRunCoordinator:
                                         task_id=execution_request.task_id,
                                         unit_id=execution_request.unit_id,
                                         attempt_ordinal=(
-                                            completion.attempt_ordinal
+                                            execution_request.attempt_ordinal
                                         ),
                                     )
                                 )
@@ -594,6 +1010,7 @@ class ProtocolRunCoordinator:
                             terminal_child_failure=terminal_child_failure,
                             pending_executions=tuple(pending_executions),
                             runtime_observations=tuple(runtime_observations),
+                            trace_delivery_attempts=tuple(trace_delivery_attempts),
                             worker_execution_facts=tuple(
                                 dict(item) for item in worker_execution_facts
                             ),
@@ -766,6 +1183,11 @@ class ProtocolRunCoordinator:
                     else:
                         raise TypeError("unsupported logical pending event")
                 unit_id = scheduled.task_unit.unit_id
+                trace_delivery_attempt = execution.get("trace_delivery_attempt")
+                if trace_delivery_attempt is not None:
+                    if not isinstance(trace_delivery_attempt, TraceDeliveryAttempt):
+                        raise TypeError("invalid trace delivery attempt record")
+                    trace_delivery_attempts.append(trace_delivery_attempt)
                 graph = execution["graph"]
                 if execution["canonical"] is None:
                     if execution.get("requeue_blocked"):
@@ -1270,6 +1692,16 @@ class ProtocolRunCoordinator:
             artifact_store=self._artifact_store,
             runtime_observation=runtime_observation,
         )
+        if trace_delivery_attempts:
+            projected = replace(
+                projected,
+                summary={
+                    **projected.summary,
+                    "trace_delivery_attempts": [
+                        record.to_dict() for record in trace_delivery_attempts
+                    ],
+                },
+            )
         if partial_observation:
             projected = replace(
                 projected,
@@ -1321,6 +1753,10 @@ class ProtocolRunCoordinator:
             attempt=scheduled.attempt,
             lease=scheduled.lease,
         )
+        execution_request = _bind_execution_request(
+            execution_request,
+            attempt_ordinal=scheduled.attempt.attempt_ordinal,
+        )
         request_flow = self._engine.record_execution_request(
             request=execution_request,
             correlation_id=f"{request.run_id}:request:{scheduled.attempt.attempt_id}",
@@ -1341,6 +1777,28 @@ class ProtocolRunCoordinator:
         runtime_observations,
     ) -> dict[str, object]:
         unit_id = scheduled.task_unit.unit_id
+        prepared_delivery = worker_outcome.prepared_delivery
+        trace_terminal_status = _trace_delivery_terminal_status(worker_outcome)
+        if prepared_delivery is not None and trace_terminal_status is None:
+            consumption = commit_worker_outcome(
+                outcome=worker_outcome,
+                killed_worker_ids=(),
+                active_lease=scheduled.lease,
+                current_fencing_token=scheduled.lease.fencing_token,
+                current_stores=ParentCommitStores(
+                    artifact_store=self._artifact_store,
+                    event_ledger=self._event_ledger,
+                ),
+            )
+            worker_outcome = replace(
+                worker_outcome,
+                submission=_trace_consumption_submission(
+                    request=request_flow.request,
+                    delivery=prepared_delivery,
+                    consumption=consumption,
+                    submitted_at=self._protocol_now(request),
+                ),
+            )
         if worker_outcome.submission is None:
             worker_terminated = worker_outcome.failure_kind == "worker_terminated"
             return self._recover(
@@ -1359,6 +1817,10 @@ class ProtocolRunCoordinator:
                     else None
                 ),
                 runtime_observations=runtime_observations,
+                trace_delivery_outcome=(
+                    worker_outcome if trace_terminal_status is not None else None
+                ),
+                trace_delivery_status=trace_terminal_status,
             )
         submission = worker_outcome.submission
         if request.logical_scheduler is not None:
@@ -1585,6 +2047,8 @@ class ProtocolRunCoordinator:
         recovery_now=None,
         halt_run=False,
         runtime_observations=None,
+        trace_delivery_outcome=None,
+        trace_delivery_status=None,
     ) -> dict[str, object]:
         deferred = _DeferredRecovery(
             scheduled=scheduled,
@@ -1593,6 +2057,8 @@ class ProtocolRunCoordinator:
             attempt_for_recovery=attempt_for_recovery,
             recovery_now=recovery_now,
             halt_run=bool(halt_run),
+            trace_delivery_outcome=trace_delivery_outcome,
+            trace_delivery_status=trace_delivery_status,
         )
         if request.logical_scheduler is not None:
             return {
@@ -1671,6 +2137,26 @@ class ProtocolRunCoordinator:
             }
             for event in recovery.events
         )
+        trace_delivery_attempt = None
+        if deferred.trace_delivery_outcome is not None:
+            attempt_event = next(
+                (
+                    event
+                    for event in recovery.events
+                    if event.event_type == EventType.ATTEMPT_STATE_CHANGED
+                    and event.object_id == scheduled.attempt.attempt_id
+                ),
+                None,
+            )
+            if attempt_event is None:
+                raise RuntimeError(
+                    "terminal trace delivery recovery produced no attempt state event"
+                )
+            trace_delivery_attempt = build_trace_delivery_attempt(
+                outcome=deferred.trace_delivery_outcome,
+                status=deferred.trace_delivery_status,
+                event=attempt_event,
+            )
         return _AppliedRecovery(
             scheduled=scheduled,
             graph=graph,
@@ -1679,6 +2165,7 @@ class ProtocolRunCoordinator:
             recovery=recovery,
             recovery_event_refs=recovery_event_refs,
             halt_run=deferred.halt_run,
+            trace_delivery_attempt=trace_delivery_attempt,
         )
 
     def _finish_requeue(
@@ -1805,6 +2292,7 @@ def _recovery_result(
         "failed": not decision.retry_allowed,
         "halt_run": applied.halt_run,
         "requeue_blocked": requeue_blocked,
+        "trace_delivery_attempt": applied.trace_delivery_attempt,
         "failure_event": (
             recovery.events[-1] if not decision.retry_allowed else None
         ),
