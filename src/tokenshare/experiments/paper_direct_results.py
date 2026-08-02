@@ -662,6 +662,12 @@ def build_canonical_direct_evidence(
         final_snapshot,
     )
     merge_event = _select_merge_event(events, root_unit_id, final_snapshot)
+    if canonical_event is None and merge_event is not None:
+        canonical_event, merge_event = _select_merge_unit_final_provenance(
+            events,
+            root_unit_id=root_unit_id,
+            final_ref=final_snapshot,
+        )
     terminal_event = _select_terminal_event(
         events,
         root_unit_id,
@@ -1353,10 +1359,8 @@ def _artifact_manifest_matches(
     ref: ArtifactRef,
     artifact_store: ArtifactStore,
 ) -> bool:
-    manifest_path = artifact_store.artifact_dir / f"{ref.artifact_id}.manifest.json"
     try:
-        body = json.loads(manifest_path.read_text(encoding="utf-8"))
-        manifest_ref = ArtifactRef.from_dict(body)
+        manifest_ref = artifact_store.load_artifact_ref(ref.artifact_id)
     except (FileNotFoundError, KeyError, TypeError, ValueError, json.JSONDecodeError):
         return False
     return manifest_ref.to_dict() == ref.to_dict()
@@ -1498,6 +1502,95 @@ def _select_terminal_event(
             continue
         matches.append(event)
     return matches[-1] if matches else None
+
+
+def _select_merge_unit_final_provenance(
+    events: Sequence[LedgerEvent],
+    *,
+    root_unit_id: str,
+    final_ref: ArtifactIdentitySnapshot,
+) -> tuple[LedgerEvent, LedgerEvent]:
+    """严格接受 expanded-root 的唯一 merge-unit canonical final。"""
+
+    merge_matches = [
+        event
+        for event in events
+        if _event_type(event) == EventType.MERGE_RECORDED.value
+        and event.payload.get("parent_unit_id") == root_unit_id
+        and isinstance(event.payload.get("merge_output_refs"), Mapping)
+        and any(
+            _ref_triple(value) == _snapshot_triple(final_ref)
+            for value in event.payload["merge_output_refs"].values()
+        )
+    ]
+    if len(merge_matches) != 1:
+        raise ValueError("merge-unit final requires one unique MERGE_RECORDED event")
+    merge_event = merge_matches[0]
+    record = merge_event.payload.get("merge_record")
+    if not isinstance(record, Mapping):
+        raise ValueError("merge-unit final merge record is missing")
+    if (
+        record.get("task_id") != merge_event.task_id
+        or record.get("parent_unit_id") != root_unit_id
+        or merge_event.payload.get("task_id") != merge_event.task_id
+    ):
+        raise ValueError("merge-unit final parent root binding mismatch")
+    merge_unit_id = record.get("merge_unit_id")
+    selection_id = record.get("canonical_selection_id")
+    if not isinstance(merge_unit_id, str) or not merge_unit_id:
+        raise ValueError("merge-unit final merge unit binding is missing")
+    if not isinstance(selection_id, str) or not selection_id:
+        raise ValueError("merge-unit final canonical selection binding is missing")
+    if merge_event.payload.get("merge_unit_id") != merge_unit_id:
+        raise ValueError("merge-unit final top-level merge unit binding mismatch")
+    if merge_event.payload.get("canonical_selection_id") != selection_id:
+        raise ValueError("merge-unit final top-level canonical selection mismatch")
+    canonical_event_seq = record.get("canonical_event_seq")
+    if type(canonical_event_seq) is not int:
+        raise ValueError("merge-unit final canonical event sequence is missing")
+    if merge_event.payload.get("canonical_event_seq") != canonical_event_seq:
+        raise ValueError("merge-unit final top-level canonical event sequence mismatch")
+    record_refs = record.get("merge_output_refs")
+    if (
+        not isinstance(record_refs, Mapping)
+        or dict(record_refs) != dict(merge_event.payload["merge_output_refs"])
+    ):
+        raise ValueError("merge-unit final output binding mismatch")
+
+    canonical_matches: list[LedgerEvent] = []
+    for event in events:
+        if _event_type(event) != EventType.CANONICAL_OUTPUTS_BOUND.value:
+            continue
+        selection = event.payload.get("canonical_selection")
+        if not isinstance(selection, Mapping):
+            continue
+        output_refs = selection.get("canonical_output_refs")
+        if (
+            selection.get("unit_id") == merge_unit_id
+            and isinstance(output_refs, Mapping)
+            and any(
+                _ref_triple(value) == _snapshot_triple(final_ref)
+                for value in output_refs.values()
+            )
+        ):
+            canonical_matches.append(event)
+    if len(canonical_matches) != 1:
+        raise ValueError("merge-unit final canonical event is ambiguous or missing")
+    canonical_event = canonical_matches[0]
+    selection = canonical_event.payload["canonical_selection"]
+    if selection.get("canonical_selection_id") != selection_id:
+        raise ValueError("merge-unit final canonical selection identity mismatch")
+    if canonical_event.event_seq != canonical_event_seq:
+        raise ValueError("merge-unit final canonical event sequence mismatch")
+    selection_refs = selection.get("canonical_output_refs")
+    if (
+        not isinstance(selection_refs, Mapping)
+        or dict(selection_refs) != dict(record_refs)
+    ):
+        raise ValueError("merge-unit final canonical output mapping mismatch")
+    if canonical_event.event_seq >= merge_event.event_seq:
+        raise ValueError("merge-unit final canonical event must precede merge event")
+    return canonical_event, merge_event
 
 
 def _select_verdict_ref(

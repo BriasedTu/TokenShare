@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import fields, replace
+from hashlib import sha256
 from pathlib import Path
 from typing import Any
 
@@ -237,6 +238,26 @@ def _append_event(
     )
 
 
+def _rewrite_durable_manifest(path: Path, body: dict[str, Any]) -> None:
+    encoded = json.dumps(
+        body,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    path.write_bytes(encoded)
+    marker = {
+        "schema_version": "tokenshare.durable_file_commit.v1",
+        "target_name": path.name,
+        "content_hash": f"sha256:{sha256(encoded).hexdigest()}",
+        "size_bytes": len(encoded),
+    }
+    path.with_name(f"{path.name}.commit.json").write_text(
+        json.dumps(marker, ensure_ascii=False, sort_keys=True, separators=(",", ":")),
+        encoding="utf-8",
+    )
+
+
 def _replay_ledger_with_payload_change(
     ledger: EventLedger,
     *,
@@ -300,6 +321,10 @@ def _canonical_fixture(
     include_merge: bool = True,
     terminal_event_type: EventType = EventType.TASK_UNIT_STATE_CHANGED,
     terminal_state: str | None = None,
+    merge_unit_canonical_final: bool = False,
+    merge_selection_id: str = "canonical:merge-unit",
+    duplicate_merge_canonical: bool = False,
+    merge_commitment_tamper: str | None = None,
 ):
     root_id = row.preregistered_root_run_id
     execution_id = f"execution:{root_id}"
@@ -378,6 +403,7 @@ def _canonical_fixture(
         "state": "Ready",
     }
     attempt_id = f"attempt:{root_id}"
+    merge_unit_id = f"merge:{unit_id}"
     _append_event(
         ledger,
         task_id=task_id,
@@ -403,6 +429,22 @@ def _canonical_fixture(
                 "state": state,
             },
         )
+    root_canonical_ref = final_ref
+    if merge_unit_canonical_final:
+        root_canonical_ref = _save_role_artifact(
+            store,
+            label=f"root_marker_{root_id.replace(':', '_')}",
+            role="root_marker",
+            execution_id=execution_id,
+            task_id=task_id,
+        )
+        _append_event(
+            ledger,
+            task_id=task_id,
+            event_type=EventType.TASK_UNIT_CREATED,
+            suffix="merge-unit-created",
+            payload={"task_unit": {"unit_id": merge_unit_id, "task_id": task_id, "state": "Ready"}},
+        )
     _append_event(
         ledger,
         task_id=task_id,
@@ -411,11 +453,64 @@ def _canonical_fixture(
         payload={
             "canonical_selection": {
                 "unit_id": unit_id,
-                "canonical_output_refs": {"answer": final_ref.to_dict()},
+                "canonical_output_refs": {"answer": root_canonical_ref.to_dict()},
             }
         },
     )
+    merge_canonical_event_seq: int | None = None
+    if merge_unit_canonical_final:
+        merge_canonical_refs = {"answer": final_ref.to_dict()}
+        if merge_commitment_tamper == "canonical_refs_extra":
+            merge_canonical_refs["extra"] = final_ref.to_dict()
+        for index in range(2 if duplicate_merge_canonical else 1):
+            selection_id = merge_selection_id if index == 0 else f"{merge_selection_id}:duplicate"
+            _append_event(
+                ledger,
+                task_id=task_id,
+                event_type=EventType.CANONICAL_OUTPUTS_BOUND,
+                suffix=f"merge-unit-canonical-{index}",
+                payload={
+                    "canonical_selection": {
+                        "canonical_selection_id": selection_id,
+                        "unit_id": merge_unit_id,
+                        "canonical_output_refs": merge_canonical_refs,
+                    }
+                },
+            )
+            if index == 0:
+                merge_canonical_event_seq = ledger.read_all()[-1].event_seq
     if include_merge:
+        top_refs = {"answer": final_ref.to_dict()}
+        record_refs = {"answer": final_ref.to_dict()}
+        canonical_seq = merge_canonical_event_seq
+        top_merge_unit = merge_unit_id
+        record_merge_unit = merge_unit_id
+        top_selection = merge_selection_id
+        record_selection = merge_selection_id
+        if merge_commitment_tamper == "top_merge_unit":
+            top_merge_unit = f"{merge_unit_id}:tampered"
+        elif merge_commitment_tamper == "record_merge_unit_missing":
+            record_merge_unit = None
+        elif merge_commitment_tamper == "top_selection":
+            top_selection = "canonical:tampered-top"
+        elif merge_commitment_tamper == "record_selection_missing":
+            record_selection = None
+        elif merge_commitment_tamper == "canonical_event_seq":
+            canonical_seq = (canonical_seq or 0) + 1
+        elif merge_commitment_tamper == "top_refs_extra":
+            top_refs["extra"] = final_ref.to_dict()
+        elif merge_commitment_tamper == "record_refs_renamed":
+            record_refs = {"renamed": final_ref.to_dict()}
+        merge_record = {
+            "task_id": task_id,
+            "parent_unit_id": unit_id,
+            "merge_unit_id": record_merge_unit,
+            "canonical_selection_id": record_selection,
+            "canonical_event_seq": merge_canonical_event_seq,
+            "merge_output_refs": record_refs,
+        }
+        if merge_commitment_tamper == "record_event_seq_missing":
+            merge_record.pop("canonical_event_seq")
         _append_event(
             ledger,
             task_id=task_id,
@@ -425,12 +520,11 @@ def _canonical_fixture(
                 "schema_version": "phase5.merge_recorded.v1",
                 "task_id": task_id,
                 "parent_unit_id": unit_id,
-                "merge_output_refs": {"answer": final_ref.to_dict()},
-                "merge_record": {
-                    "task_id": task_id,
-                    "parent_unit_id": unit_id,
-                    "merge_output_refs": {"answer": final_ref.to_dict()},
-                },
+                "merge_unit_id": top_merge_unit,
+                "canonical_selection_id": top_selection,
+                "canonical_event_seq": canonical_seq,
+                "merge_output_refs": top_refs,
+                "merge_record": merge_record,
             },
         )
     _append_event(
@@ -496,6 +590,123 @@ def _canonical_fixture(
             trace_resource_book_ref=resource_ref,
         )
     return kwargs, ledger, store, runtime_result, final_ref
+
+
+def test_merge_unit_canonical_final_projects_through_unique_bound_merge(
+    tmp_path: Path,
+) -> None:
+    row, _, _ = _inventory_row(evidence_class="regression_only")
+    kwargs, *_ = _canonical_fixture(
+        tmp_path,
+        row,
+        merge_unit_canonical_final=True,
+    )
+
+    evidence = build_canonical_direct_evidence(**kwargs)
+
+    assert evidence.canonical_acceptance_ref.event_seq < evidence.merge_ref.event_seq
+    assert evidence.merge_ref.event_seq < evidence.terminal_root_event_ref.event_seq
+
+
+def test_merge_unit_canonical_final_rejects_ambiguous_canonical_event(
+    tmp_path: Path,
+) -> None:
+    row, _, _ = _inventory_row(
+        root_id="inventory:merge-reject:ambiguous",
+        evidence_class="regression_only",
+    )
+    kwargs, *_ = _canonical_fixture(
+        tmp_path,
+        row,
+        merge_unit_canonical_final=True,
+        duplicate_merge_canonical=True,
+    )
+
+    with pytest.raises(ValueError, match="ambiguous|multiple|unique"):
+        build_canonical_direct_evidence(**kwargs)
+
+
+@pytest.mark.parametrize(
+    "field_name",
+    (
+        "artifact_type",
+        "artifact_schema",
+        "source",
+        "source_role",
+        "metadata",
+        "uri",
+        "created_at",
+    ),
+)
+def test_merge_unit_runtime_artifact_rejects_same_bytes_manifest_tamper(
+    tmp_path: Path,
+    field_name: str,
+) -> None:
+    row, _, _ = _inventory_row(
+        root_id=f"inventory:manifest:{field_name}",
+        evidence_class="regression_only",
+    )
+    kwargs, _, store, runtime_result, _ = _canonical_fixture(
+        tmp_path,
+        row,
+        merge_unit_canonical_final=True,
+    )
+    runtime_ref = next(
+        ref for ref in runtime_result.artifact_refs if ref.source.get("role") == "root_marker"
+    )
+    path = store.artifact_dir / f"{runtime_ref.artifact_id}.manifest.json"
+    body = json.loads(path.read_text(encoding="utf-8"))
+    if field_name == "artifact_type":
+        body["artifact_type"] = "TamperedType"
+    elif field_name == "artifact_schema":
+        body["artifact_schema_id"] = "tampered.schema"
+    elif field_name == "source":
+        body["source"]["kind"] = "tampered"
+    elif field_name == "source_role":
+        body["source"]["role"] = "tampered_role"
+    elif field_name == "metadata":
+        body["metadata"] = {"tampered": True}
+    elif field_name == "uri":
+        body["uri"] = f"./{body['uri']}"
+    else:
+        body["created_at"] = "2026-08-03T00:00:00Z"
+    _rewrite_durable_manifest(path, body)
+
+    with pytest.raises(ValueError, match="artifact reference verification"):
+        build_canonical_direct_evidence(**kwargs)
+
+
+@pytest.mark.parametrize(
+    "tamper",
+    (
+        "top_merge_unit",
+        "record_merge_unit_missing",
+        "top_selection",
+        "record_selection_missing",
+        "canonical_event_seq",
+        "record_event_seq_missing",
+        "top_refs_extra",
+        "record_refs_renamed",
+        "canonical_refs_extra",
+    ),
+)
+def test_merge_unit_final_rejects_incomplete_official_merge_commitment(
+    tmp_path: Path,
+    tamper: str,
+) -> None:
+    row, _, _ = _inventory_row(
+        root_id=f"inventory:commitment:{tamper}",
+        evidence_class="regression_only",
+    )
+    kwargs, *_ = _canonical_fixture(
+        tmp_path,
+        row,
+        merge_unit_canonical_final=True,
+        merge_commitment_tamper=tamper,
+    )
+
+    with pytest.raises(ValueError, match="merge-unit final"):
+        build_canonical_direct_evidence(**kwargs)
 
 
 def _official_runtime_hook_observations(

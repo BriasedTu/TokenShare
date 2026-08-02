@@ -1,0 +1,30 @@
+{
+  "final_correctness": true,
+  "normalized_prime_factors": [
+    {
+      "exponent": 1,
+      "prime": "1013"
+    },
+    {
+      "exponent": 1,
+      "prime": "4673"
+    }
+  ],
+  "oracle_match": true,
+  "oracle_prime_factors": [
+    {
+      "exponent": 1,
+      "prime": "1013"
+    },
+    {
+      "exponent": 1,
+      "prime": "4673"
+    }
+  ],
+  "primality_check_passed": true,
+  "product_check_passed": true,
+  "schema_version": "phase8.factorization_500_ai_case_report.v1",
+  "source_object_digest": "sha256:e5a64df6b3a006a89a9f100823cf35473574ba90a86b4832f05422899386ec27",
+  "status": "passed",
+  "target_n": "4733749"
+}
