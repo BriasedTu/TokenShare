@@ -22,6 +22,11 @@ from tokenshare.local_runtime import (
     SequentialWorkerBackend,
     project_protocol_run,
 )
+from tokenshare.local_runtime.contracts import WorkerCompletionSchedule
+from tokenshare.local_runtime.logical_scheduler import (
+    LOGICAL_SOURCE_LATENCY_1X,
+    LogicalSourceLatencyScheduler,
+)
 from tokenshare.core.expansion import ExpansionDecision, SplitStrategyInvocation
 from tokenshare.core.merge import ExpectedOutputResolution, MergeRecord
 from tokenshare.core.merge_coordinator import MergeCoordinator
@@ -602,9 +607,16 @@ def test_coordinator_runs_expand_children_merge_completion_and_settlement_throug
 
     plugin = _ExpandedPluginRuntime(config)
     clock = _Clock()
+    logical_scheduler = LogicalSourceLatencyScheduler(start_ms=0)
     backend = SequentialWorkerBackend(
         executor=_ArtifactExecutor(store),
-        submitted_at=clock,
+        submitted_at=logical_scheduler.now_timestamp,
+        completion_schedule=lambda _request, _submission, _failure: (
+            WorkerCompletionSchedule(
+                source_latency_ms=10,
+                attempt_ordinal=0,
+            )
+        ),
     )
     coordinator = ProtocolRunCoordinator(
         engine=engine,
@@ -622,6 +634,8 @@ def test_coordinator_runs_expand_children_merge_completion_and_settlement_throug
             mechanism_policy=ProtocolMechanismPolicy(
                 slot_integrity_enabled=slot_integrity_enabled
             ),
+            trace_delay_policy=LOGICAL_SOURCE_LATENCY_1X,
+            logical_scheduler=logical_scheduler,
         )
     )
 
@@ -641,6 +655,13 @@ def test_coordinator_runs_expand_children_merge_completion_and_settlement_throug
     assert plugin.merge_calls == 1
     assert plugin.merge_slot_integrity_policies == [slot_integrity_enabled]
     assert len(plugin.verify_calls) == 4
+    assert result.summary["runtime_observation"]["runtime_wall_clock_ms"] == 40.0
+    assert [event.logical_time_ms for event in logical_scheduler.pop_history] == [
+        10,
+        20,
+        30,
+        40,
+    ]
 
     event_types = [event.event_type for event in ledger.read_all()]
     assert EventType.TASK_EXPANDED in event_types

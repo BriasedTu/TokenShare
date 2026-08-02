@@ -9,7 +9,12 @@ from enum import Enum
 from hashlib import sha256
 from math import isfinite
 from types import MappingProxyType
-from typing import Any, Callable, Protocol
+from typing import TYPE_CHECKING, Any, Callable, Literal, Protocol
+
+if TYPE_CHECKING:
+    from tokenshare.local_runtime.logical_scheduler import (
+        LogicalSourceLatencyScheduler,
+    )
 
 from tokenshare.core.expansion import (
     DecompositionProposal,
@@ -1017,6 +1022,30 @@ class WorkerBackend(Protocol):
 
 
 @dataclass(frozen=True, kw_only=True)
+class WorkerCompletionSchedule:
+    """worker 返回给 parent scheduler 的纯 timing 输入。"""
+
+    source_latency_ms: int
+    attempt_ordinal: int
+    event_priority: int = 10
+    event_kind: Literal["worker_completion"] = "worker_completion"
+
+    def __post_init__(self) -> None:
+        for field_name in (
+            "source_latency_ms",
+            "attempt_ordinal",
+            "event_priority",
+        ):
+            value = getattr(self, field_name)
+            if isinstance(value, bool) or not isinstance(value, int):
+                raise TypeError(f"{field_name} must be an integer")
+            if value < 0:
+                raise ValueError(f"{field_name} must be non-negative")
+        if self.event_kind != "worker_completion":
+            raise ValueError("worker completion schedule kind must be worker_completion")
+
+
+@dataclass(frozen=True, kw_only=True)
 class ProtocolRunRequest:
     """启动一个本地协议 root run 所需的领域无关输入。"""
 
@@ -1032,6 +1061,27 @@ class ProtocolRunRequest:
     execution_scope: ProtocolExecutionScope = field(
         default_factory=ProtocolExecutionScope
     )
+    trace_delay_policy: str | None = None
+    logical_scheduler: "LogicalSourceLatencyScheduler | None" = None
+
+    def __post_init__(self) -> None:
+        if self.trace_delay_policy is None:
+            if self.logical_scheduler is not None:
+                raise ValueError(
+                    "logical_scheduler requires logical_source_latency_1x policy"
+                )
+            return
+        if self.trace_delay_policy == "logical_source_latency_1x":
+            if self.logical_scheduler is None:
+                raise ValueError(
+                    "logical_source_latency_1x requires a logical scheduler"
+                )
+            return
+        if self.trace_delay_policy == "online_real_time":
+            if self.logical_scheduler is not None:
+                raise ValueError("online_real_time cannot use a logical scheduler")
+            return
+        raise ValueError("unsupported protocol run timing policy")
 
 
 @dataclass(frozen=True, kw_only=True)

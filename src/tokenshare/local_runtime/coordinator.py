@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from typing import Callable
@@ -11,7 +11,7 @@ from tokenshare.core.contribution import ContributionCoordinator
 from tokenshare.core.merge_coordinator import BatchView, MergeCoordinator
 from tokenshare.core.models import TaskState
 from tokenshare.core.recovery import ACCEPTED, evaluate_retry
-from tokenshare.core.registration import RootTaskRegistrar
+from tokenshare.core.registration import RootTaskRegistrationResult, RootTaskRegistrar
 from tokenshare.core.task_graph import TaskGraph
 from tokenshare.core.verification import build_verification_report
 from tokenshare.local_runtime.contracts import (
@@ -39,10 +39,138 @@ from tokenshare.local_runtime.projection import (
     build_runtime_observation,
     project_protocol_run,
 )
+from tokenshare.local_runtime.logical_scheduler import (
+    EVENT_PRIORITY_BY_KIND,
+    LogicalScheduledEvent,
+    LogicalSchedulerCheckpoint,
+    LogicalSourceLatencyScheduler,
+)
 from tokenshare.local_runtime.workers import WorkerBatchOutcome, execute_worker_batch
-from tokenshare.protocol_engine import ProtocolEngine
+from tokenshare.protocol_engine import (
+    ExecutionRequestFlowResult,
+    ProtocolEngine,
+    SchedulingFlowResult,
+)
 from tokenshare.storage.artifacts import ArtifactStore
 from tokenshare.storage.events import EventLedger, EventType
+
+
+@dataclass(frozen=True, kw_only=True)
+class LogicalPendingExecution:
+    """把 queue event 绑定回 parent 已准备但尚未提交的 worker 结果。"""
+
+    event: LogicalScheduledEvent | None
+    execution_request: object
+    scheduled: SchedulingFlowResult
+    request_flow: ExecutionRequestFlowResult
+    worker_outcome: WorkerBatchOutcome
+
+    def __post_init__(self) -> None:
+        if self.request_flow.request != self.execution_request:
+            raise ValueError("pending execution request flow identity mismatch")
+        if self.worker_outcome.request != self.execution_request:
+            raise ValueError("pending worker outcome request identity mismatch")
+        if self.event is not None and (
+            self.event.task_id != self.scheduled.task_unit.task_id
+            or self.event.unit_id != self.scheduled.task_unit.unit_id
+        ):
+            raise ValueError("pending logical event identity mismatch")
+
+
+@dataclass(frozen=True, kw_only=True)
+class LogicalRunCheckpoint:
+    """Task9 的进程内 coordinator/scheduler 一致快照。"""
+
+    run_id: str
+    request_context: ProtocolRunRequest
+    scheduler_checkpoint: LogicalSchedulerCheckpoint
+    runtime_started_at: str
+    run_key: str
+    plan: RootProtocolPlan
+    registration: RootTaskRegistrationResult
+    graph: TaskGraph
+    retry_counts: tuple[tuple[str, int], ...]
+    completion_batches: tuple[BatchView, ...]
+    expansion_batch: BatchView | None
+    expand_result: object | None
+    merge_plan: object | None
+    merge_action: object | None
+    merge_children: tuple[object, ...]
+    merge_creation: object | None
+    merge_resolution_batch: BatchView | None
+    schedule_ordinal: int
+    terminal_child_failure: object | None
+    pending_executions: tuple[LogicalPendingExecution, ...]
+    runtime_observations: tuple[RuntimeHookObservationV1, ...]
+    worker_execution_facts: tuple[dict[str, object], ...]
+    partial_observation: bool
+    witness_observed_at: str | None
+    in_flight_ai_unit_ids_at_witness: tuple[str, ...]
+    schema_version: str = "tokenshare.logical_run_checkpoint.v1"
+
+    def __post_init__(self) -> None:
+        if self.schema_version != "tokenshare.logical_run_checkpoint.v1":
+            raise ValueError("unsupported logical run checkpoint schema")
+        if self.run_id != self.request_context.run_id:
+            raise ValueError("logical run checkpoint request identity mismatch")
+        queued = set(self.scheduler_checkpoint.pending_events)
+        pending = {
+            item.event for item in self.pending_executions if item.event is not None
+        }
+        if any(item.event is None for item in self.pending_executions):
+            raise ValueError("logical run checkpoint contains a non-logical pending entry")
+        if queued != pending:
+            raise ValueError("logical run checkpoint queue/context mismatch")
+
+
+@dataclass(frozen=True, kw_only=True)
+class _DeferredRecovery:
+    scheduled: SchedulingFlowResult
+    trigger: str
+    causation_event_id: str
+    attempt_for_recovery: object | None
+    recovery_now: str | None
+    halt_run: bool
+
+
+@dataclass(frozen=True, kw_only=True)
+class _AppliedRecovery:
+    scheduled: SchedulingFlowResult
+    graph: TaskGraph
+    trigger: str
+    decision: object
+    recovery: object
+    recovery_event_refs: tuple[dict[str, object], ...]
+    halt_run: bool
+
+
+@dataclass(frozen=True, kw_only=True)
+class _LogicalPendingRetry:
+    event: LogicalScheduledEvent
+    recovery: _DeferredRecovery
+
+
+@dataclass(frozen=True, kw_only=True)
+class _LogicalPendingRequeue:
+    event: LogicalScheduledEvent
+    recovery: _AppliedRecovery
+
+
+@dataclass(frozen=True, kw_only=True)
+class _EarlyStopFinalization:
+    parent_unit_id: str
+    parent_completed_event_seq: int
+    candidate_descendant_units: tuple[object, ...]
+    pruning_policy_ref: dict[str, object]
+    causation_event_id: str
+    settlement_completion_event_seq: int
+    settlement_contributions: tuple[object, ...]
+
+
+@dataclass(frozen=True, kw_only=True)
+class _LogicalPendingEarlyStop:
+    event: LogicalScheduledEvent
+    finalization: _EarlyStopFinalization
 
 
 class ProtocolRunCoordinator:
@@ -62,8 +190,53 @@ class ProtocolRunCoordinator:
         self._event_ledger = event_ledger
         self._now = now or _utc_now
         self._observation_clock = observation_clock or _utc_now
+        self._logical_scheduler: LogicalSourceLatencyScheduler | None = None
+
+    @property
+    def logical_scheduler(self) -> LogicalSourceLatencyScheduler | None:
+        return self._logical_scheduler
 
     def run_root(self, request: ProtocolRunRequest) -> ProtocolRunResult:
+        result = self._run_root(request)
+        if not isinstance(result, ProtocolRunResult):
+            raise RuntimeError("run_root stopped at an unexpected checkpoint")
+        return result
+
+    def checkpoint_root(self, request: ProtocolRunRequest) -> LogicalRunCheckpoint:
+        if request.logical_scheduler is None:
+            raise ValueError("checkpoint_root requires a logical scheduler")
+        result = self._run_root(request, checkpoint_after_dispatch=True)
+        if not isinstance(result, LogicalRunCheckpoint):
+            raise RuntimeError("logical run completed before a checkpoint was available")
+        return result
+
+    def resume_root(
+        self,
+        request: ProtocolRunRequest,
+        checkpoint: LogicalRunCheckpoint,
+    ) -> ProtocolRunResult:
+        if not isinstance(checkpoint, LogicalRunCheckpoint):
+            raise TypeError("checkpoint must be LogicalRunCheckpoint")
+        _validate_resume_request(request, checkpoint.request_context)
+        restored_scheduler = LogicalSourceLatencyScheduler.from_checkpoint(
+            checkpoint.scheduler_checkpoint
+        )
+        resumed_request = replace(request, logical_scheduler=restored_scheduler)
+        result = self._run_root(
+            resumed_request,
+            resume_checkpoint=checkpoint,
+        )
+        if not isinstance(result, ProtocolRunResult):
+            raise RuntimeError("resumed run stopped at an unexpected checkpoint")
+        return result
+
+    def _run_root(
+        self,
+        request: ProtocolRunRequest,
+        *,
+        checkpoint_after_dispatch: bool = False,
+        resume_checkpoint: LogicalRunCheckpoint | None = None,
+    ) -> ProtocolRunResult | LogicalRunCheckpoint:
         if request.worker_backend.capacity < 1:
             raise ValueError("runtime worker capacity must be positive")
         if request.worker_backend.capacity != 1 and not callable(
@@ -72,52 +245,108 @@ class ProtocolRunCoordinator:
             raise ValueError(
                 "multi-worker backend requires execute_batch; use a single-worker-compatible backend"
             )
-        runtime_started_at = self._observation_clock()
-        run_key = _safe_id(request.run_id)
-        plan = request.plugin_runtime.plan_root(
-            request.root_input,
-            artifact_store=self._artifact_store,
-        )
-        if not isinstance(plan, RootProtocolPlan):
-            raise TypeError("plan_root must return RootProtocolPlan")
-        registration = RootTaskRegistrar(
-            artifact_store=self._artifact_store,
-            event_ledger=self._event_ledger,
-        ).register_root_task(plan.registration_request)
-        self._engine.record_registry_snapshot(
-            task_id=registration.task_spec.task_id,
-            registry_snapshot_id=plan.registry_snapshot_id,
-            plugin_registry=plan.plugin_registry,
-            executor_registry=plan.executor_registry,
-            now=self._now(),
-            correlation_id=f"{request.run_id}:registry",
-        )
-        graph = TaskGraph(
-            task_id=registration.task_spec.task_id,
-            units={registration.root_unit.unit_id: registration.root_unit},
-            relations=(),
-            protocol_config=plan.registration_request.protocol_config,
-        )
-        retry_counts: dict[str, int] = {}
-        completion_batches: list[BatchView] = []
-        expansion_batch: BatchView | None = None
-        expand_result = None
-        merge_plan = None
-        merge_action = None
-        merge_children: tuple[object, ...] = ()
-        merge_creation = None
-        merge_resolution_batch: BatchView | None = None
-        schedule_ordinal = 0
-        terminal_child_failure = None
-        pending_executions: list[tuple[object, object, WorkerBatchOutcome]] = []
-        runtime_observations: list[RuntimeHookObservationV1] = []
-        worker_execution_facts: list[dict[str, object]] = []
-        partial_observation = False
-        witness_observed_at: str | None = None
-        in_flight_ai_unit_ids_at_witness: tuple[str, ...] = ()
+        logical_scheduler = request.logical_scheduler
+        if logical_scheduler is not None and not isinstance(
+            logical_scheduler, LogicalSourceLatencyScheduler
+        ):
+            raise TypeError("logical_scheduler must be LogicalSourceLatencyScheduler")
+        self._logical_scheduler = logical_scheduler
+        if (
+            logical_scheduler is not None
+            and not logical_scheduler.has_wall_clock_origin
+        ):
+            logical_scheduler.bind_wall_clock_origin(self._now())
+        if resume_checkpoint is None:
+            runtime_started_at = self._observation_now(request)
+            run_key = _safe_id(request.run_id)
+            plan = request.plugin_runtime.plan_root(
+                request.root_input,
+                artifact_store=self._artifact_store,
+            )
+            if not isinstance(plan, RootProtocolPlan):
+                raise TypeError("plan_root must return RootProtocolPlan")
+            registration = RootTaskRegistrar(
+                artifact_store=self._artifact_store,
+                event_ledger=self._event_ledger,
+            ).register_root_task(plan.registration_request)
+            self._engine.record_registry_snapshot(
+                task_id=registration.task_spec.task_id,
+                registry_snapshot_id=plan.registry_snapshot_id,
+                plugin_registry=plan.plugin_registry,
+                executor_registry=plan.executor_registry,
+                now=self._protocol_now(request),
+                correlation_id=f"{request.run_id}:registry",
+            )
+            graph = TaskGraph(
+                task_id=registration.task_spec.task_id,
+                units={registration.root_unit.unit_id: registration.root_unit},
+                relations=(),
+                protocol_config=plan.registration_request.protocol_config,
+            )
+            retry_counts: dict[str, int] = {}
+            completion_batches: list[BatchView] = []
+            expansion_batch: BatchView | None = None
+            expand_result = None
+            merge_plan = None
+            merge_action = None
+            merge_children: tuple[object, ...] = ()
+            merge_creation = None
+            merge_resolution_batch: BatchView | None = None
+            schedule_ordinal = 0
+            terminal_child_failure = None
+            pending_executions: list[
+                LogicalPendingExecution
+                | _LogicalPendingRetry
+                | _LogicalPendingRequeue
+                | _LogicalPendingEarlyStop
+            ] = []
+            runtime_observations: list[RuntimeHookObservationV1] = []
+            worker_execution_facts: list[dict[str, object]] = []
+            partial_observation = False
+            witness_observed_at: str | None = None
+            in_flight_ai_unit_ids_at_witness: tuple[str, ...] = ()
+        else:
+            runtime_started_at = resume_checkpoint.runtime_started_at
+            run_key = resume_checkpoint.run_key
+            plan = resume_checkpoint.plan
+            registration = resume_checkpoint.registration
+            graph = resume_checkpoint.graph
+            retry_counts = dict(resume_checkpoint.retry_counts)
+            completion_batches = list(resume_checkpoint.completion_batches)
+            expansion_batch = resume_checkpoint.expansion_batch
+            expand_result = resume_checkpoint.expand_result
+            merge_plan = resume_checkpoint.merge_plan
+            merge_action = resume_checkpoint.merge_action
+            merge_children = resume_checkpoint.merge_children
+            merge_creation = resume_checkpoint.merge_creation
+            merge_resolution_batch = resume_checkpoint.merge_resolution_batch
+            schedule_ordinal = resume_checkpoint.schedule_ordinal
+            terminal_child_failure = resume_checkpoint.terminal_child_failure
+            pending_executions = list(resume_checkpoint.pending_executions)
+            runtime_observations = list(resume_checkpoint.runtime_observations)
+            worker_execution_facts = [
+                dict(item) for item in resume_checkpoint.worker_execution_facts
+            ]
+            partial_observation = resume_checkpoint.partial_observation
+            witness_observed_at = resume_checkpoint.witness_observed_at
+            in_flight_ai_unit_ids_at_witness = (
+                resume_checkpoint.in_flight_ai_unit_ids_at_witness
+            )
 
         while True:
-            activatable = () if pending_executions else graph.activatable_unit_ids()
+            pending_control = any(
+                not isinstance(item, LogicalPendingExecution)
+                for item in pending_executions
+            )
+            activatable = (
+                graph.activatable_unit_ids()
+                if (
+                    logical_scheduler is not None
+                    and not pending_control
+                )
+                or not pending_executions
+                else ()
+            )
             activatable = _scoped_unit_ids(
                 request=request,
                 graph=graph,
@@ -135,7 +364,7 @@ class ProtocolRunCoordinator:
                 activated = self._engine.record_dependency_ready(
                     unit=graph.units[unit_id],
                     graph=graph,
-                    now=self._now(),
+                    now=self._protocol_now(request),
                     correlation_id=f"{run_key}_dependency_ready_{unit_id}",
                 )
                 graph = _replace_graph_unit(graph, activated.task_unit)
@@ -156,7 +385,8 @@ class ProtocolRunCoordinator:
             if (
                 expand_result is not None
                 and merge_creation is None
-                and not pending_executions
+                and (logical_scheduler is not None or not pending_executions)
+                and not pending_control
                 and _plugin_owns_merge_readiness(request)
             ):
                 readiness_before_dispatch, _, _, _ = (
@@ -173,7 +403,7 @@ class ProtocolRunCoordinator:
                     readiness_before_dispatch.status == "ready"
                     and witness_observed_at is None
                 ):
-                    witness_observed_at = self._observation_clock()
+                    witness_observed_at = self._observation_now(request)
                     in_flight_ai_unit_ids_at_witness = (
                         _observed_in_flight_ai_unit_ids(
                             request=request,
@@ -186,10 +416,27 @@ class ProtocolRunCoordinator:
                 readiness_before_dispatch is not None
                 and readiness_before_dispatch.status == "ready"
             )
-            if pending_executions or (ready and not merge_ready_before_dispatch):
-                if not pending_executions:
+            dispatch_slots = (
+                request.worker_backend.capacity
+                - sum(
+                    isinstance(item, LogicalPendingExecution)
+                    for item in pending_executions
+                )
+                if logical_scheduler is not None
+                else request.worker_backend.capacity
+                if not pending_executions
+                else 0
+            )
+            should_dispatch = bool(
+                dispatch_slots > 0
+                and ready
+                and not merge_ready_before_dispatch
+                and not pending_control
+            )
+            if pending_executions or should_dispatch:
+                if should_dispatch:
                     prepared: list[tuple[object, object, object]] = []
-                    for _slot in range(request.worker_backend.capacity):
+                    for _slot in range(dispatch_slots):
                         scoped_ready = _scoped_unit_ids(
                             request=request,
                             graph=graph,
@@ -210,7 +457,7 @@ class ProtocolRunCoordinator:
                         scheduled = self._engine.schedule_ready_unit(
                             graph=graph,
                             clients=plan.clients,
-                            now=self._now(),
+                            now=self._protocol_now(request),
                             correlation_id=f"{run_key}_schedule_{ordinal}",
                             decision_id=f"{run_key}_decision_{ordinal}",
                             lease_id=f"{run_key}_lease_{ordinal}",
@@ -242,33 +489,283 @@ class ProtocolRunCoordinator:
                         request.worker_backend,
                         tuple(item[0] for item in prepared),
                     )
-                    worker_execution_facts.extend(
-                        outcome.fact.to_dict() for outcome in worker_outcomes
+                    matched_outcomes = _match_worker_outcomes(
+                        prepared=prepared,
+                        worker_outcomes=worker_outcomes,
                     )
-                    pending_executions.extend(
-                        (scheduled, request_flow, worker_outcome)
-                        for (
-                            _execution_request,
-                            request_flow,
-                            scheduled,
-                        ), worker_outcome in zip(
-                            prepared,
-                            worker_outcomes,
-                            strict=True,
+                    if logical_scheduler is None:
+                        worker_execution_facts.extend(
+                            outcome.fact.to_dict()
+                            for outcome in sorted(
+                                worker_outcomes,
+                                key=lambda item: item.fact.execution_index,
+                            )
                         )
+                    for (
+                        execution_request,
+                        request_flow,
+                        scheduled,
+                    ), worker_outcome in matched_outcomes:
+                        scheduled_event = None
+                        if logical_scheduler is not None:
+                            completion = worker_outcome.logical_completion
+                            if completion is None:
+                                raise ValueError(
+                                    "logical_source_latency_1x requires worker completion timing"
+                                )
+                            event_kind = _completion_event_kind(
+                                worker_outcome, completion.event_kind
+                            )
+                            if completion.event_priority != EVENT_PRIORITY_BY_KIND[
+                                "worker_completion"
+                            ]:
+                                raise ValueError(
+                                    "worker completion priority must match the frozen profile"
+                                )
+                            if event_kind == "worker_completion":
+                                scheduled_event = (
+                                    logical_scheduler.schedule_delivery(
+                                        task_id=execution_request.task_id,
+                                        unit_id=execution_request.unit_id,
+                                        attempt_ordinal=(
+                                            completion.attempt_ordinal
+                                        ),
+                                        source_latency_ms=(
+                                            completion.source_latency_ms
+                                        ),
+                                        event_priority=EVENT_PRIORITY_BY_KIND[
+                                            event_kind
+                                        ],
+                                    )
+                                )
+                            else:
+                                delay_ms = _lifecycle_delay_ms(
+                                    scheduled=scheduled,
+                                    worker_outcome=worker_outcome,
+                                    source_latency_ms=(
+                                        completion.source_latency_ms
+                                    ),
+                                )
+                                scheduled_event = (
+                                    logical_scheduler.schedule_event(
+                                        event_kind=event_kind,
+                                        logical_time_ms=(
+                                            logical_scheduler.clock_ms + delay_ms
+                                        ),
+                                        event_priority=EVENT_PRIORITY_BY_KIND[
+                                            event_kind
+                                        ],
+                                        task_id=execution_request.task_id,
+                                        unit_id=execution_request.unit_id,
+                                        attempt_ordinal=(
+                                            completion.attempt_ordinal
+                                        ),
+                                    )
+                                )
+                        pending_executions.append(
+                            LogicalPendingExecution(
+                                event=scheduled_event,
+                                execution_request=execution_request,
+                                scheduled=scheduled,
+                                request_flow=request_flow,
+                                worker_outcome=worker_outcome,
+                            )
+                        )
+                    if checkpoint_after_dispatch:
+                        return LogicalRunCheckpoint(
+                            run_id=request.run_id,
+                            request_context=request,
+                            scheduler_checkpoint=logical_scheduler.checkpoint(),
+                            runtime_started_at=runtime_started_at,
+                            run_key=run_key,
+                            plan=plan,
+                            registration=registration,
+                            graph=graph,
+                            retry_counts=tuple(sorted(retry_counts.items())),
+                            completion_batches=tuple(completion_batches),
+                            expansion_batch=expansion_batch,
+                            expand_result=expand_result,
+                            merge_plan=merge_plan,
+                            merge_action=merge_action,
+                            merge_children=merge_children,
+                            merge_creation=merge_creation,
+                            merge_resolution_batch=merge_resolution_batch,
+                            schedule_ordinal=schedule_ordinal,
+                            terminal_child_failure=terminal_child_failure,
+                            pending_executions=tuple(pending_executions),
+                            runtime_observations=tuple(runtime_observations),
+                            worker_execution_facts=tuple(
+                                dict(item) for item in worker_execution_facts
+                            ),
+                            partial_observation=partial_observation,
+                            witness_observed_at=witness_observed_at,
+                            in_flight_ai_unit_ids_at_witness=(
+                                in_flight_ai_unit_ids_at_witness
+                            ),
+                        )
+                if not pending_executions:
+                    raise RuntimeError("worker dispatch produced no pending completion")
+                if logical_scheduler is None:
+                    pending_execution = pending_executions.pop(0)
+                    if not isinstance(pending_execution, LogicalPendingExecution):
+                        raise RuntimeError("non-logical run received a control event")
+                    scheduled = pending_execution.scheduled
+                    request_flow = pending_execution.request_flow
+                    worker_outcome = pending_execution.worker_outcome
+                    execution = self._execute_unit(
+                        request=request,
+                        plan=plan,
+                        graph=graph,
+                        scheduled=scheduled,
+                        request_flow=request_flow,
+                        worker_outcome=worker_outcome,
+                        retry_counts=retry_counts,
+                        runtime_observations=runtime_observations,
                     )
-                scheduled, request_flow, worker_outcome = pending_executions.pop(0)
+                else:
+                    popped_event = logical_scheduler.pop_next()
+                    matching_indexes = [
+                        index
+                        for index, item in enumerate(pending_executions)
+                        if item.event == popped_event
+                    ]
+                    if len(matching_indexes) != 1:
+                        raise RuntimeError(
+                            "logical scheduler popped an unknown or duplicate completion"
+                        )
+                    pending_execution = pending_executions.pop(
+                        matching_indexes[0]
+                    )
+                    if isinstance(pending_execution, LogicalPendingExecution):
+                        scheduled = pending_execution.scheduled
+                        request_flow = pending_execution.request_flow
+                        worker_outcome = pending_execution.worker_outcome
+                        logical_now = self._protocol_now(request)
+                        normalized_fact = replace(
+                            worker_outcome.fact,
+                            started_at=(
+                                scheduled.attempt.started_at
+                                or scheduled.attempt.created_at
+                            ),
+                            ended_at=logical_now,
+                            kill_progress_observed_at=(
+                                logical_now
+                                if worker_outcome.fact.kill_progress_observed_at
+                                is not None
+                                else None
+                            ),
+                        )
+                        worker_outcome = replace(
+                            worker_outcome,
+                            fact=normalized_fact,
+                        )
+                        worker_execution_facts.append(normalized_fact.to_dict())
+                        execution = self._execute_unit(
+                            request=request,
+                            plan=plan,
+                            graph=graph,
+                            scheduled=scheduled,
+                            request_flow=request_flow,
+                            worker_outcome=worker_outcome,
+                            retry_counts=retry_counts,
+                            runtime_observations=runtime_observations,
+                        )
+                        deferred = execution.get("deferred_recovery")
+                        if deferred is not None:
+                            if not isinstance(deferred, _DeferredRecovery):
+                                raise TypeError("invalid deferred recovery context")
+                            retry_event = logical_scheduler.schedule_event(
+                                event_kind="retry",
+                                logical_time_ms=logical_scheduler.clock_ms,
+                                event_priority=EVENT_PRIORITY_BY_KIND["retry"],
+                                task_id=scheduled.task_unit.task_id,
+                                unit_id=scheduled.task_unit.unit_id,
+                                attempt_ordinal=popped_event.attempt_ordinal,
+                            )
+                            pending_executions.append(
+                                _LogicalPendingRetry(
+                                    event=retry_event,
+                                    recovery=deferred,
+                                )
+                            )
+                            continue
+                    elif isinstance(pending_execution, _LogicalPendingRetry):
+                        scheduled = pending_execution.recovery.scheduled
+                        applied = self._record_recovery(
+                            request=request,
+                            plan=plan,
+                            graph=graph,
+                            retry_counts=retry_counts,
+                            deferred=pending_execution.recovery,
+                        )
+                        graph = applied.graph
+                        if applied.decision.retry_allowed:
+                            requeue_event = logical_scheduler.schedule_event(
+                                event_kind="requeue",
+                                logical_time_ms=logical_scheduler.clock_ms,
+                                event_priority=EVENT_PRIORITY_BY_KIND["requeue"],
+                                task_id=scheduled.task_unit.task_id,
+                                unit_id=scheduled.task_unit.unit_id,
+                                attempt_ordinal=popped_event.attempt_ordinal,
+                            )
+                            pending_executions.append(
+                                _LogicalPendingRequeue(
+                                    event=requeue_event,
+                                    recovery=applied,
+                                )
+                            )
+                            continue
+                        execution = _recovery_result(
+                            applied,
+                            requeue_blocked=False,
+                        )
+                    elif isinstance(pending_execution, _LogicalPendingRequeue):
+                        scheduled = pending_execution.recovery.scheduled
+                        execution = self._finish_requeue(
+                            request=request,
+                            applied=pending_execution.recovery,
+                            runtime_observations=runtime_observations,
+                        )
+                    elif isinstance(pending_execution, _LogicalPendingEarlyStop):
+                        finalization = pending_execution.finalization
+                        pruning = self._engine.record_subtree_pruning(
+                            parent_unit_id=finalization.parent_unit_id,
+                            parent_completed_event_seq=(
+                                finalization.parent_completed_event_seq
+                            ),
+                            candidate_descendant_units=list(
+                                finalization.candidate_descendant_units
+                            ),
+                            pruning_policy_ref=finalization.pruning_policy_ref,
+                            now=self._protocol_now(request),
+                            correlation_id=(
+                                f"{request.run_id}:early_stop:"
+                                f"{finalization.parent_unit_id}"
+                            ),
+                            causation_event_id=finalization.causation_event_id,
+                        )
+                        for cancelled_unit_id in pruning.cancelled_units:
+                            cancelled_unit = replace(
+                                graph.units[cancelled_unit_id],
+                                state=TaskState.CANCELLED,
+                                updated_at=self._protocol_now(request),
+                            )
+                            graph = _replace_graph_unit(graph, cancelled_unit)
+                        self._settle(
+                            request=request,
+                            plan=plan,
+                            root_unit_id=finalization.parent_unit_id,
+                            completion_event_seq=(
+                                finalization.settlement_completion_event_seq
+                            ),
+                            contributions=list(
+                                finalization.settlement_contributions
+                            ),
+                        )
+                        break
+                    else:
+                        raise TypeError("unsupported logical pending event")
                 unit_id = scheduled.task_unit.unit_id
-                execution = self._execute_unit(
-                    request=request,
-                    plan=plan,
-                    graph=graph,
-                    scheduled=scheduled,
-                    request_flow=request_flow,
-                    worker_outcome=worker_outcome,
-                    retry_counts=retry_counts,
-                    runtime_observations=runtime_observations,
-                )
                 graph = execution["graph"]
                 if execution["canonical"] is None:
                     if execution.get("requeue_blocked"):
@@ -329,7 +826,7 @@ class ProtocolRunCoordinator:
                         )
                     )
                     if readiness_after_canonical.status == "ready":
-                        witness_observed_at = self._observation_clock()
+                        witness_observed_at = self._observation_now(request)
                         in_flight_ai_unit_ids_at_witness = (
                             _observed_in_flight_ai_unit_ids(
                                 request=request,
@@ -369,7 +866,7 @@ class ProtocolRunCoordinator:
                         completion_batches=completion_batches,
                         expansion_batches=[expansion_batch],
                         merge_resolution_batches=[merge_resolution_batch],
-                        now=self._now(),
+                        now=self._protocol_now(request),
                         correlation_id=f"{request.run_id}:contributions",
                     )
                     expand_contributions = [
@@ -384,7 +881,7 @@ class ProtocolRunCoordinator:
                             resolved.expected_output_resolutions
                         ),
                         expand_contributions=expand_contributions,
-                        now=self._now(),
+                        now=self._protocol_now(request),
                         correlation_id=f"{request.run_id}:parent_completion",
                         causation_event_id=merge_resolution.events[-1].event_id,
                     )
@@ -394,14 +891,59 @@ class ProtocolRunCoordinator:
                         for item in contributions
                         if item.contribution.kind != "expand_canonical"
                     ] + list(parent_completion.expand_contributions)
+                    parent_completion_event_seq = _completion_event_seq(
+                        parent_completion.events,
+                        registration.root_unit.unit_id,
+                    )
+                    early_stop_candidates = _unscheduled_descendants(
+                        graph=graph,
+                        parent_unit_id=registration.root_unit.unit_id,
+                        pending_events=pending_executions,
+                    )
+                    if logical_scheduler is not None and early_stop_candidates:
+                        early_stop_event = logical_scheduler.schedule_event(
+                            event_kind="early_stop",
+                            logical_time_ms=logical_scheduler.clock_ms,
+                            event_priority=EVENT_PRIORITY_BY_KIND["early_stop"],
+                            task_id=graph.task_id,
+                            unit_id=registration.root_unit.unit_id,
+                            attempt_ordinal=0,
+                        )
+                        pending_executions.append(
+                            _LogicalPendingEarlyStop(
+                                event=early_stop_event,
+                                finalization=_EarlyStopFinalization(
+                                    parent_unit_id=(
+                                        registration.root_unit.unit_id
+                                    ),
+                                    parent_completed_event_seq=(
+                                        parent_completion_event_seq
+                                    ),
+                                    candidate_descendant_units=(
+                                        early_stop_candidates
+                                    ),
+                                    pruning_policy_ref=_pruning_policy_ref(
+                                        merge_plan=merge_plan,
+                                        expansion_events=expand_result.events,
+                                    ),
+                                    causation_event_id=(
+                                        parent_completion.events[-1].event_id
+                                    ),
+                                    settlement_completion_event_seq=(
+                                        parent_completion_event_seq
+                                    ),
+                                    settlement_contributions=tuple(
+                                        settlement_contributions
+                                    ),
+                                ),
+                            )
+                        )
+                        continue
                     self._settle(
                         request=request,
                         plan=plan,
                         root_unit_id=registration.root_unit.unit_id,
-                        completion_event_seq=_completion_event_seq(
-                            parent_completion.events,
-                            registration.root_unit.unit_id,
-                        ),
+                        completion_event_seq=parent_completion_event_seq,
                         contributions=settlement_contributions,
                     )
                     break
@@ -434,7 +976,7 @@ class ProtocolRunCoordinator:
                             completion_batches=[completion_batches[-1]],
                             expansion_batches=[],
                             merge_resolution_batches=[],
-                            now=self._now(),
+                            now=self._protocol_now(request),
                             correlation_id=f"{request.run_id}:contributions",
                         )
                         self._settle(
@@ -492,7 +1034,7 @@ class ProtocolRunCoordinator:
                     )
                 )
                 if readiness.status == "ready" and witness_observed_at is None:
-                    witness_observed_at = self._observation_clock()
+                    witness_observed_at = self._observation_now(request)
                     in_flight_ai_unit_ids_at_witness = (
                         _observed_in_flight_ai_unit_ids(
                             request=request,
@@ -595,7 +1137,7 @@ class ProtocolRunCoordinator:
                                 "ablation_mode": "NO_MERGE_GATE",
                                 "root_check_passed": False,
                             },
-                            created_at=self._now(),
+                            created_at=self._protocol_now(request),
                         )
                         runtime_observations.append(
                             build_experiment_premature_merge_attempted_observation(
@@ -653,7 +1195,7 @@ class ProtocolRunCoordinator:
                         ],
                         expansion_batches=[expansion_batch],
                         canonical_events=canonical_events,
-                        now=self._now(),
+                        now=self._protocol_now(request),
                         coordinator_id="protocol_run_coordinator",
                         correlation_id=f"{request.run_id}:merge_create",
                         readiness_decision=readiness.to_dict(),
@@ -692,7 +1234,7 @@ class ProtocolRunCoordinator:
                 )
             break
 
-        runtime_ended_at = self._observation_clock()
+        runtime_ended_at = self._observation_now(request)
         planned_by_unit_id = _planned_ai_units_by_protocol_unit(
             request=request,
             graph=graph,
@@ -768,7 +1310,7 @@ class ProtocolRunCoordinator:
             failed_child=failed_child,
             graph=graph,
             child_failure_event=child_failure_event,
-            now=self._now(),
+            now=self._protocol_now(request),
             correlation_id=f"{request.run_id}:parent_failure:{parent_unit_id}",
         )
         return _replace_graph_unit(graph, failure.task_unit)
@@ -809,10 +1351,21 @@ class ProtocolRunCoordinator:
                 retry_counts=retry_counts,
                 trigger="lease_expired" if worker_terminated else "executor_error",
                 causation_event_id=request_flow.event.event_id,
-                recovery_now=(scheduled.lease.expires_at if worker_terminated else None),
+                recovery_now=(
+                    self._protocol_now(request)
+                    if worker_terminated and request.logical_scheduler is not None
+                    else scheduled.lease.expires_at
+                    if worker_terminated
+                    else None
+                ),
                 runtime_observations=runtime_observations,
             )
         submission = worker_outcome.submission
+        if request.logical_scheduler is not None:
+            submission = replace(
+                submission,
+                submitted_at=self._protocol_now(request),
+            )
         if submission.result_kind == "no_return":
             return self._recover(
                 request=request,
@@ -822,7 +1375,11 @@ class ProtocolRunCoordinator:
                 retry_counts=retry_counts,
                 trigger="lease_expired",
                 causation_event_id=request_flow.event.event_id,
-                recovery_now=scheduled.lease.expires_at,
+                recovery_now=(
+                    self._protocol_now(request)
+                    if request.logical_scheduler is not None
+                    else scheduled.lease.expires_at
+                ),
                 runtime_observations=runtime_observations,
             )
         if submission.result_kind == "late_submission":
@@ -976,7 +1533,7 @@ class ProtocolRunCoordinator:
                 execution_request=request_flow.request,
                 submission=submission,
                 submitted_attempt=submission_flow.attempt,
-                now=self._now(),
+                now=self._protocol_now(request),
             )
         report = replace(report, submission_event_seq=submission_flow.event.event_seq)
         verification = self._engine.record_verification(
@@ -1009,7 +1566,7 @@ class ProtocolRunCoordinator:
             verification_events=[verification.event],
             attempts_by_id={verification.attempt.attempt_id: verification.attempt},
             policy=plan.registration_request.protocol_config.canonical_output_policy,
-            now=self._now(),
+            now=self._protocol_now(request),
             correlation_id=f"{request.run_id}:canonical:{scheduled.attempt.attempt_id}",
         )
         return {"graph": graph, "canonical": canonical, "failed": False}
@@ -1029,6 +1586,46 @@ class ProtocolRunCoordinator:
         halt_run=False,
         runtime_observations=None,
     ) -> dict[str, object]:
+        deferred = _DeferredRecovery(
+            scheduled=scheduled,
+            trigger=trigger,
+            causation_event_id=causation_event_id,
+            attempt_for_recovery=attempt_for_recovery,
+            recovery_now=recovery_now,
+            halt_run=bool(halt_run),
+        )
+        if request.logical_scheduler is not None:
+            return {
+                "graph": graph,
+                "canonical": None,
+                "failed": False,
+                "requeue_blocked": False,
+                "deferred_recovery": deferred,
+            }
+        applied = self._record_recovery(
+            request=request,
+            plan=plan,
+            graph=graph,
+            retry_counts=retry_counts,
+            deferred=deferred,
+        )
+        return self._finish_requeue(
+            request=request,
+            applied=applied,
+            runtime_observations=runtime_observations,
+        )
+
+    def _record_recovery(
+        self,
+        *,
+        request,
+        plan,
+        graph,
+        retry_counts,
+        deferred: _DeferredRecovery,
+    ) -> _AppliedRecovery:
+        scheduled = deferred.scheduled
+        trigger = deferred.trigger
         unit_id = scheduled.task_unit.unit_id
         retry_count = retry_counts.get(unit_id, 0) + 1
         retry_counts[unit_id] = retry_count
@@ -1042,24 +1639,24 @@ class ProtocolRunCoordinator:
         if trigger == "lease_expired":
             recovery = self._engine.record_lease_expiry(
                 lease=scheduled.lease,
-                attempt=attempt_for_recovery or scheduled.attempt,
+                attempt=deferred.attempt_for_recovery or scheduled.attempt,
                 task_unit=scheduled.task_unit,
-                now=recovery_now or self._now(),
+                now=deferred.recovery_now or self._protocol_now(request),
                 correlation_id=correlation_id,
                 recovery_action_id=recovery_action_id,
                 retry_count=retry_count,
-                causation_event_id=causation_event_id,
+                causation_event_id=deferred.causation_event_id,
             )
         else:
             recovery = self._engine.record_recovery_decision(
                 decision=decision,
-                attempt=attempt_for_recovery or scheduled.attempt,
+                attempt=deferred.attempt_for_recovery or scheduled.attempt,
                 lease=scheduled.lease,
                 task_unit=scheduled.task_unit,
                 recovery_action_id=recovery_action_id,
-                now=recovery_now or self._now(),
+                now=deferred.recovery_now or self._protocol_now(request),
                 correlation_id=correlation_id,
-                causation_event_id=causation_event_id,
+                causation_event_id=deferred.causation_event_id,
             )
         graph = _replace_graph_unit(graph, recovery.task_unit)
         recovery_event_refs = tuple(
@@ -1074,13 +1671,32 @@ class ProtocolRunCoordinator:
             }
             for event in recovery.events
         )
+        return _AppliedRecovery(
+            scheduled=scheduled,
+            graph=graph,
+            trigger=trigger,
+            decision=decision,
+            recovery=recovery,
+            recovery_event_refs=recovery_event_refs,
+            halt_run=deferred.halt_run,
+        )
+
+    def _finish_requeue(
+        self,
+        *,
+        request,
+        applied: _AppliedRecovery,
+        runtime_observations,
+    ) -> dict[str, object]:
+        decision = applied.decision
+        recovery = applied.recovery
         requeue_directive = _observe(
             request.hooks.before_requeue,
             RecoveryContext(
                 unit=recovery.task_unit,
                 attempt=recovery.attempt,
                 lease=recovery.lease,
-                trigger=trigger,
+                trigger=applied.trigger,
                 decision={
                     "trigger": decision.trigger,
                     "retry_allowed": decision.retry_allowed,
@@ -1091,7 +1707,7 @@ class ProtocolRunCoordinator:
                     "retry_count": decision.retry_count,
                     "reason": decision.reason,
                 },
-                recovery_event_refs=recovery_event_refs,
+                recovery_event_refs=applied.recovery_event_refs,
             ),
         )
         if runtime_observations is not None:
@@ -1106,16 +1722,7 @@ class ProtocolRunCoordinator:
                 )
             )
         )
-        return {
-            "graph": graph,
-            "canonical": None,
-            "failed": not decision.retry_allowed,
-            "halt_run": bool(halt_run),
-            "requeue_blocked": requeue_blocked,
-            "failure_event": (
-                recovery.events[-1] if not decision.retry_allowed else None
-            ),
-        }
+        return _recovery_result(applied, requeue_blocked=requeue_blocked)
 
     def _settle(
         self,
@@ -1136,8 +1743,20 @@ class ProtocolRunCoordinator:
             eligible_contributions=contributions,
             root_budget=int(root_budget),
             settlement_policy_id=plan.settlement_policy_id,
-            now=self._now(),
+            now=self._protocol_now(request),
             correlation_id=f"{request.run_id}:settlement",
+        )
+
+    def _protocol_now(self, request: ProtocolRunRequest) -> str:
+        scheduler = request.logical_scheduler
+        return scheduler.now_timestamp() if scheduler is not None else self._now()
+
+    def _observation_now(self, request: ProtocolRunRequest) -> str:
+        scheduler = request.logical_scheduler
+        return (
+            scheduler.now_timestamp()
+            if scheduler is not None
+            else self._observation_clock()
         )
 
 
@@ -1151,6 +1770,164 @@ def _scoped_unit_ids(*, request, graph, unit_ids, expansion_started):
         for unit_id in candidates
         if request.plugin_runtime.planned_ai_unit_id(graph.units[unit_id])
         in selected
+    )
+
+
+def _validate_resume_request(
+    request: ProtocolRunRequest,
+    checkpoint_request: ProtocolRunRequest,
+) -> None:
+    if (
+        request.run_id != checkpoint_request.run_id
+        or request.root_input != checkpoint_request.root_input
+        or request.trace_delay_policy != checkpoint_request.trace_delay_policy
+        or request.mechanism_policy != checkpoint_request.mechanism_policy
+        or request.continue_after_terminal_child_failure
+        != checkpoint_request.continue_after_terminal_child_failure
+        or request.execution_scope != checkpoint_request.execution_scope
+        or request.plugin_runtime is not checkpoint_request.plugin_runtime
+        or request.worker_backend is not checkpoint_request.worker_backend
+        or request.hooks is not checkpoint_request.hooks
+    ):
+        raise ValueError("resume request does not match logical run checkpoint")
+
+
+def _recovery_result(
+    applied: _AppliedRecovery,
+    *,
+    requeue_blocked: bool,
+) -> dict[str, object]:
+    decision = applied.decision
+    recovery = applied.recovery
+    return {
+        "graph": applied.graph,
+        "canonical": None,
+        "failed": not decision.retry_allowed,
+        "halt_run": applied.halt_run,
+        "requeue_blocked": requeue_blocked,
+        "failure_event": (
+            recovery.events[-1] if not decision.retry_allowed else None
+        ),
+    }
+
+
+def _unscheduled_descendants(*, graph, parent_unit_id, pending_events):
+    in_flight_unit_ids = {
+        item.scheduled.task_unit.unit_id
+        for item in pending_events
+        if isinstance(item, LogicalPendingExecution)
+    }
+    return tuple(
+        unit
+        for unit in graph.units.values()
+        if unit.unit_id != parent_unit_id
+        and unit.unit_id not in in_flight_unit_ids
+        and unit.state in {TaskState.READY, TaskState.BLOCKED}
+    )
+
+
+def _pruning_policy_ref(*, merge_plan, expansion_events) -> dict[str, object]:
+    if merge_plan is None:
+        raise RuntimeError("early stop requires a merge plan")
+    merge_policy = merge_plan.merge_policy_ref
+    merge_plan_event = next(
+        (
+            event
+            for event in expansion_events
+            if event.event_type == EventType.MERGE_PLAN_RECORDED
+        ),
+        None,
+    )
+    if merge_plan_event is None:
+        raise RuntimeError("early stop requires merge plan event evidence")
+    return {
+        "pruning_policy_id": merge_policy["merge_policy_id"],
+        "pruning_policy_version": merge_policy["merge_policy_version"],
+        "pruning_policy_plugin_id": merge_policy["plugin_id"],
+        "pruning_policy_plugin_version": merge_policy["plugin_version"],
+        "pruning_policy_descriptor_digest": merge_policy[
+            "merge_policy_descriptor_digest"
+        ],
+        "policy_source_type": "merge_plan",
+        "policy_source_id": merge_plan.merge_plan_header["merge_plan_id"],
+        "policy_source_event_seq": merge_plan_event.event_seq,
+    }
+
+
+def _match_worker_outcomes(*, prepared, worker_outcomes):
+    """按 request identity 关联结果，禁止 backend 返回顺序影响 parent。"""
+
+    prepared_by_key = {}
+    for item in prepared:
+        key = _execution_request_identity(item[0])
+        if key in prepared_by_key:
+            raise ValueError("prepared worker batch contains duplicate request identity")
+        prepared_by_key[key] = item
+    outcomes_by_key = {}
+    for outcome in worker_outcomes:
+        key = _execution_request_identity(outcome.request)
+        if key in outcomes_by_key:
+            raise ValueError("worker batch contains duplicate request identity")
+        if key not in prepared_by_key:
+            raise ValueError("worker batch returned an unknown request identity")
+        outcomes_by_key[key] = outcome
+    if set(outcomes_by_key) != set(prepared_by_key):
+        raise ValueError("worker backend returned an incomplete request batch")
+    return tuple(
+        (item, outcomes_by_key[_execution_request_identity(item[0])])
+        for item in prepared
+    )
+
+
+def _completion_event_kind(
+    outcome: WorkerBatchOutcome,
+    declared_kind: str,
+) -> str:
+    if outcome.failure_kind == "worker_terminated":
+        return "worker_death"
+    result_kind = getattr(outcome.submission, "result_kind", None)
+    if result_kind in {"no_return", "late_submission"}:
+        return "lease_deadline"
+    return declared_kind
+
+
+def _lifecycle_delay_ms(
+    *,
+    scheduled,
+    worker_outcome: WorkerBatchOutcome,
+    source_latency_ms: int,
+) -> int:
+    lease_ms = _elapsed_utc_ms(
+        scheduled.lease.issued_at,
+        scheduled.lease.expires_at,
+    )
+    result_kind = getattr(worker_outcome.submission, "result_kind", None)
+    if result_kind == "no_return":
+        return lease_ms
+    if result_kind == "late_submission":
+        return max(source_latency_ms, lease_ms + 1000)
+    if worker_outcome.failure_kind == "worker_terminated":
+        return max(source_latency_ms, lease_ms)
+    return source_latency_ms
+
+
+def _elapsed_utc_ms(start: str, end: str) -> int:
+    start_value = datetime.fromisoformat(start.replace("Z", "+00:00"))
+    end_value = datetime.fromisoformat(end.replace("Z", "+00:00"))
+    elapsed_ms = int((end_value - start_value).total_seconds() * 1000)
+    if elapsed_ms < 0:
+        raise ValueError("lease deadline precedes lease issue time")
+    return elapsed_ms
+
+
+def _execution_request_identity(request) -> tuple[object, ...]:
+    return (
+        getattr(request, "request_id", None),
+        getattr(request, "task_id", None),
+        getattr(request, "unit_id", None),
+        getattr(request, "attempt_id", None),
+        getattr(request, "lease_id", None),
+        getattr(request, "fencing_token", None),
     )
 
 

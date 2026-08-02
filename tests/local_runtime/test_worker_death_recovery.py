@@ -17,6 +17,11 @@ from tokenshare.local_runtime import (
     ThreadWorkerBackend,
     WorkerTerminationPolicy,
 )
+from tokenshare.local_runtime.contracts import WorkerCompletionSchedule
+from tokenshare.local_runtime.logical_scheduler import (
+    LOGICAL_SOURCE_LATENCY_1X,
+    LogicalSourceLatencyScheduler,
+)
 from tokenshare.executors.contracts import ExecutionRequest
 from tokenshare.protocol_engine import ProtocolEngine
 from tokenshare.storage.artifacts import ArtifactStore
@@ -131,10 +136,30 @@ def _runtime(tmp_path, *, max_retries: int = 2):
 def test_thread_capacity_is_applied_to_units_of_one_runtime_root(tmp_path) -> None:
     store, ledger, plugin, clock, coordinator = _runtime(tmp_path)
     executor = _ConcurrentArtifactExecutor(_ArtifactExecutor(store))
+    scheduler = LogicalSourceLatencyScheduler(start_ms=0)
+    logical_key_by_unit_id: dict[str, str] = {}
+
+    def completion_schedule(request, _submission, _failure_kind):
+        metadata = request.task_unit_snapshot.get("metadata", {})
+        logical_key = metadata.get("child_logical_key")
+        if isinstance(logical_key, str):
+            logical_key_by_unit_id[request.unit_id] = logical_key
+        return WorkerCompletionSchedule(
+            source_latency_ms=(
+                300
+                if logical_key == "intro"
+                else 200
+                if logical_key == "summary"
+                else 0
+            ),
+            attempt_ordinal=0,
+        )
+
     backend = ThreadWorkerBackend(
         executor=executor,
         capacity=2,
-        submitted_at=clock,
+        submitted_at=scheduler.now_timestamp,
+        completion_schedule=completion_schedule,
     )
 
     result = coordinator.run_root(
@@ -144,6 +169,8 @@ def test_thread_capacity_is_applied_to_units_of_one_runtime_root(tmp_path) -> No
             plugin_runtime=plugin,
             worker_backend=backend,
             continue_after_terminal_child_failure=True,
+            trace_delay_policy=LOGICAL_SOURCE_LATENCY_1X,
+            logical_scheduler=scheduler,
         )
     )
 
@@ -162,24 +189,53 @@ def test_thread_capacity_is_applied_to_units_of_one_runtime_root(tmp_path) -> No
         for unit_id in set(child_units)
     )
     observation = result.summary["runtime_observation"]
-    assert observation["worker_execution_facts"] == [
-        fact.to_dict() for fact in backend.execution_facts
-    ]
+    projected_fact_ids = {
+        (fact["unit_id"], fact["attempt_id"])
+        for fact in observation["worker_execution_facts"]
+    }
+    assert projected_fact_ids == {
+        (fact.unit_id, fact.attempt_id) for fact in backend.execution_facts
+    }
+    assert all(
+        fact["started_at"].startswith("2026-07-22T00:00:00")
+        and fact["ended_at"].startswith("2026-07-22T00:00:00")
+        for fact in observation["worker_execution_facts"]
+    )
     assert observation["observed_peak_concurrency"] == 2
+    assert observation["runtime_wall_clock_ms"] == 300.0
+    child_pop_order = [
+        logical_key_by_unit_id[event.unit_id]
+        for event in scheduler.pop_history
+        if event.unit_id in logical_key_by_unit_id
+    ]
+    assert child_pop_order == ["summary", "intro"]
 
 
 def test_process_worker_death_uses_engine_lease_expiry_and_replacement(tmp_path) -> None:
     store, ledger, plugin, clock, coordinator = _runtime(tmp_path)
     coordinator_pid = os.getpid()
+    scheduler = LogicalSourceLatencyScheduler(start_ms=0)
+    attempts_by_unit_id: dict[str, int] = {}
+
+    def completion_schedule(request, _submission, _failure_kind):
+        attempt_ordinal = attempts_by_unit_id.get(request.unit_id, 0)
+        attempts_by_unit_id[request.unit_id] = attempt_ordinal + 1
+        is_child = request.task_unit_snapshot.get("parent_unit_id") == "unit_ready"
+        return WorkerCompletionSchedule(
+            source_latency_ms=100 if is_child else 0,
+            attempt_ordinal=attempt_ordinal,
+        )
+
     backend = ProcessWorkerBackend(
         executor=_ArtifactExecutor(store),
         capacity=2,
-        submitted_at=clock,
+        submitted_at=scheduler.now_timestamp,
         terminate_once=lambda request: (
             request.unit_id != "unit_ready"
             and request.task_unit_snapshot.get("parent_unit_id") == "unit_ready"
         ),
         kill_point="progress_25",
+        completion_schedule=completion_schedule,
     )
 
     result = coordinator.run_root(
@@ -189,6 +245,8 @@ def test_process_worker_death_uses_engine_lease_expiry_and_replacement(tmp_path)
             plugin_runtime=plugin,
             worker_backend=backend,
             continue_after_terminal_child_failure=True,
+            trace_delay_policy=LOGICAL_SOURCE_LATENCY_1X,
+            logical_scheduler=scheduler,
         )
     )
 
@@ -230,6 +288,36 @@ def test_process_worker_death_uses_engine_lease_expiry_and_replacement(tmp_path)
     assert "Ready" in unit_states
     assert len(replacement_leases) == 2
     assert replacement_leases[0]["lease_id"] != replacement_leases[1]["lease_id"]
+    death_event = next(
+        event
+        for event in scheduler.pop_history
+        if event.event_kind == "worker_death"
+    )
+    replacement_event = next(
+        event
+        for event in scheduler.pop_history
+        if event.unit_id == dead_unit_id and event.attempt_ordinal == 1
+    )
+    assert death_event.unit_id == dead_unit_id
+    assert death_event.logical_time_ms == 2000
+    assert replacement_event.logical_time_ms == 2100
+    dead_unit_events = [
+        event for event in scheduler.pop_history if event.unit_id == dead_unit_id
+    ]
+    assert [event.event_kind for event in dead_unit_events] == [
+        "worker_death",
+        "retry",
+        "requeue",
+        "worker_completion",
+    ]
+    assert [event.logical_time_ms for event in dead_unit_events] == [
+        2000,
+        2000,
+        2000,
+        2100,
+    ]
+    assert recovery.occurred_at == "2026-07-22T00:00:02Z"
+    assert replacement_leases[1]["issued_at"] == recovery.occurred_at
 
 
 def test_process_worker_death_does_not_depend_on_multiprocessing_spawn_pipe(

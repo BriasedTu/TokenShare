@@ -48,7 +48,8 @@ class ArtifactStore:
         we fail instead of silently overwriting historical evidence.
         """
 
-        target = self.artifact_dir / artifact_id
+        artifact_filename = _artifact_filename(artifact_id)
+        target = self.artifact_dir / artifact_filename
         content_hash = _sha256_hash(data)
         if target.exists() and _sha256_hash(target.read_bytes()) != content_hash:
             raise ValueError(f"artifact_id already exists with different content: {artifact_id}")
@@ -56,13 +57,13 @@ class ArtifactStore:
         self._commit_bytes(
             target,
             data,
-            marker_path=self.artifact_dir / f"{artifact_id}.commit.json",
+            marker_path=self.artifact_dir / f"{artifact_filename}.commit.json",
             durability_hook=durability_hook,
         )
         artifact_ref = ArtifactRef(
             artifact_id=artifact_id,
             artifact_type=artifact_type,
-            uri=f"{self.artifact_dir_name}/{artifact_id}",
+            uri=f"{self.artifact_dir_name}/{artifact_filename}",
             content_hash=content_hash,
             size_bytes=len(data),
             media_type=media_type,
@@ -177,7 +178,8 @@ class ArtifactStore:
         return len(data) == artifact_ref.size_bytes and _sha256_hash(data) == artifact_ref.content_hash
 
     def _write_manifest(self, artifact_ref: ArtifactRef) -> None:
-        manifest_path = self.artifact_dir / f"{artifact_ref.artifact_id}.manifest.json"
+        artifact_filename = _artifact_filename(artifact_ref.artifact_id)
+        manifest_path = self.artifact_dir / f"{artifact_filename}.manifest.json"
         manifest_bytes = json.dumps(
             artifact_ref.to_dict(),
             ensure_ascii=False,
@@ -192,7 +194,8 @@ class ArtifactStore:
         )
 
     def load_artifact_ref(self, artifact_id: str) -> ArtifactRef:
-        manifest_path = self.artifact_dir / f"{artifact_id}.manifest.json"
+        artifact_filename = _artifact_filename(artifact_id)
+        manifest_path = self.artifact_dir / f"{artifact_filename}.manifest.json"
         manifest_bytes = self._validate_commit_marker(
             manifest_path,
             manifest_path.with_name(f"{manifest_path.name}.commit.json"),
@@ -202,8 +205,8 @@ class ArtifactStore:
         if ref.artifact_id != artifact_id or not self.verify(ref):
             raise ValueError(f"artifact commit is not valid: {artifact_id}")
         self._validate_commit_marker(
-            self.artifact_dir / artifact_id,
-            self.artifact_dir / f"{artifact_id}.commit.json",
+            self.artifact_dir / artifact_filename,
+            self.artifact_dir / f"{artifact_filename}.commit.json",
         )
         return ref
 
@@ -321,6 +324,16 @@ class ArtifactStore:
 
 def _sha256_hash(data: bytes) -> str:
     return f"sha256:{sha256(data).hexdigest()}"
+
+
+def _artifact_filename(artifact_id: str) -> str:
+    """把含冒号的逻辑 ID 映射为跨平台一致的普通文件名。"""
+
+    if ":" not in artifact_id:
+        return artifact_id
+    readable = artifact_id.replace(":", "_")
+    identity_suffix = sha256(artifact_id.encode("utf-8")).hexdigest()[:16]
+    return f"{readable}--{identity_suffix}"
 
 
 def _notify_durability(

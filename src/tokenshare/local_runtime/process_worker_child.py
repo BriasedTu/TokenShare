@@ -54,7 +54,22 @@ def main(argv: list[str] | None = None) -> int:
             if callable(export_process_result)
             else None
         )
-        message = ("submission", submission, process_result)
+        completion_schedule_builder = getattr(
+            executor,
+            "worker_completion_schedule",
+            None,
+        )
+        completion_schedule = (
+            completion_schedule_builder(request, submission, None)
+            if callable(completion_schedule_builder)
+            else None
+        )
+        message = (
+            "submission",
+            submission,
+            process_result,
+            completion_schedule,
+        )
     except BaseException as error:
         message = ("error", f"{type(error).__name__}: {error}")
     try:

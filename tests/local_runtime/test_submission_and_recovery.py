@@ -16,6 +16,11 @@ from tokenshare.local_runtime import (
     ProtocolRunRequest,
     SequentialWorkerBackend,
 )
+from tokenshare.local_runtime.contracts import WorkerCompletionSchedule
+from tokenshare.local_runtime.logical_scheduler import (
+    LOGICAL_SOURCE_LATENCY_1X,
+    LogicalSourceLatencyScheduler,
+)
 from tokenshare.protocol_engine import ProtocolEngine
 from tokenshare.storage.artifacts import ArtifactStore
 from tokenshare.storage.events import EventLedger, EventType
@@ -23,6 +28,7 @@ from tokenshare.storage.events import EventLedger, EventType
 from tests.local_runtime.test_coordinator_full_lifecycle import (
     _ArtifactExecutor,
     _Clock,
+    _DirectCompletePluginRuntime,
     _ExpandedPluginRuntime,
 )
 
@@ -61,6 +67,29 @@ class _ReturnFailureFirstExecutor:
             submission,
             result_kind="failed",
             error={"kind": "executor_error", "message": "executor returned failure"},
+        )
+
+
+class _NoReturnFirstExecutor:
+    def __init__(self, delegate: _ArtifactExecutor) -> None:
+        self.delegate = delegate
+        self.calls = 0
+
+    def execute(self, request, *, submission_id: str, submitted_at: str):
+        self.calls += 1
+        submission = self.delegate.execute(
+            request,
+            submission_id=submission_id,
+            submitted_at=submitted_at,
+        )
+        if self.calls != 1:
+            return submission
+        return replace(
+            submission,
+            result_kind="no_return",
+            raw_output_ref=None,
+            parsed_output_ref=None,
+            candidate_output_refs={},
         )
 
 
@@ -158,7 +187,13 @@ class _CapacityTwoBackend:
         return self._delegate.execute(request)
 
 
-def _runtime(tmp_path, *, max_retries: int, plugin_type=_ExpandedPluginRuntime):
+def _runtime(
+    tmp_path,
+    *,
+    max_retries: int,
+    plugin_type=_ExpandedPluginRuntime,
+    lease_ttl_seconds: int = 300,
+):
     store = ArtifactStore(tmp_path)
     ledger = EventLedger(tmp_path / "events" / "task_demo.jsonl")
     config = replace(
@@ -168,6 +203,7 @@ def _runtime(tmp_path, *, max_retries: int, plugin_type=_ExpandedPluginRuntime):
             event_log_uri="file://events/task_demo.jsonl",
         ),
         max_retries=max_retries,
+        lease_ttl_seconds=lease_ttl_seconds,
     )
     engine = ProtocolEngine(
         event_ledger=ledger,
@@ -274,9 +310,28 @@ def test_failure_is_recorded_by_engine_then_replacement_is_scheduled(
 
 def test_one_retry_budget_creates_exactly_one_replacement(tmp_path) -> None:
     store, ledger, plugin, clock, coordinator = _runtime(tmp_path, max_retries=1)
+    scheduler = LogicalSourceLatencyScheduler(start_ms=0)
+    attempt_counts: dict[str, int] = {}
+
+    def completion_schedule(request, _submission, _failure_kind):
+        attempt_ordinal = attempt_counts.get(request.unit_id, 0)
+        attempt_counts[request.unit_id] = attempt_ordinal + 1
+        source_latency_ms = (
+            100
+            if request.unit_id == "unit_ready" and attempt_ordinal == 0
+            else 200
+            if request.unit_id == "unit_ready"
+            else 0
+        )
+        return WorkerCompletionSchedule(
+            source_latency_ms=source_latency_ms,
+            attempt_ordinal=attempt_ordinal,
+        )
+
     backend = SequentialWorkerBackend(
         executor=_FailFirstExecutor(_ArtifactExecutor(store)),
-        submitted_at=clock,
+        submitted_at=scheduler.now_timestamp,
+        completion_schedule=completion_schedule,
     )
 
     result = coordinator.run_root(
@@ -285,6 +340,8 @@ def test_one_retry_budget_creates_exactly_one_replacement(tmp_path) -> None:
             root_input={"failure": "executor_error"},
             plugin_runtime=plugin,
             worker_backend=backend,
+            trace_delay_policy=LOGICAL_SOURCE_LATENCY_1X,
+            logical_scheduler=scheduler,
         )
     )
 
@@ -299,6 +356,85 @@ def test_one_retry_budget_creates_exactly_one_replacement(tmp_path) -> None:
         "run_retry_limit_attempt_1",
         "run_retry_limit_attempt_2",
     ]
+    root_events = [
+        event for event in scheduler.pop_history if event.unit_id == "unit_ready"
+    ]
+    assert [event.event_kind for event in root_events] == [
+        "worker_completion",
+        "retry",
+        "requeue",
+        "worker_completion",
+    ]
+    assert [event.attempt_ordinal for event in root_events] == [0, 0, 0, 1]
+    assert [event.logical_time_ms for event in root_events] == [100, 100, 100, 300]
+    first_recovery = next(
+        event
+        for event in ledger.read_all()
+        if event.event_type == EventType.RECOVERY_ACTION_RECORDED
+    )
+    replacement_lease = next(
+        event
+        for event in ledger.read_all()
+        if event.event_type == EventType.LEASE_STATE_CHANGED
+        and event.payload.get("new_state") == "Active"
+        and event.payload.get("lease", {}).get("attempt_id")
+        == "run_retry_limit_attempt_2"
+    )
+    assert first_recovery.occurred_at == "2026-07-22T00:00:00.100000Z"
+    assert replacement_lease.occurred_at == first_recovery.occurred_at
+    assert result.summary["runtime_observation"]["runtime_wall_clock_ms"] == 300.0
+
+
+def test_lease_deadline_retry_and_requeue_share_coordinator_queue(tmp_path) -> None:
+    store, ledger, plugin, _, coordinator = _runtime(
+        tmp_path,
+        max_retries=1,
+        plugin_type=_DirectCompletePluginRuntime,
+        lease_ttl_seconds=1,
+    )
+    scheduler = LogicalSourceLatencyScheduler(start_ms=0)
+    attempts = 0
+
+    def completion_schedule(_request, _submission, _failure_kind):
+        nonlocal attempts
+        ordinal = attempts
+        attempts += 1
+        return WorkerCompletionSchedule(
+            source_latency_ms=0 if ordinal == 0 else 1,
+            attempt_ordinal=ordinal,
+        )
+
+    backend = SequentialWorkerBackend(
+        executor=_NoReturnFirstExecutor(_ArtifactExecutor(store)),
+        submitted_at=scheduler.now_timestamp,
+        completion_schedule=completion_schedule,
+    )
+
+    result = coordinator.run_root(
+        ProtocolRunRequest(
+            run_id="run_logical_deadline",
+            root_input={"failure": "no_return"},
+            plugin_runtime=plugin,
+            worker_backend=backend,
+            trace_delay_policy=LOGICAL_SOURCE_LATENCY_1X,
+            logical_scheduler=scheduler,
+        )
+    )
+
+    assert result.status == "completed"
+    assert [event.event_kind for event in scheduler.pop_history] == [
+        "lease_deadline",
+        "retry",
+        "requeue",
+        "worker_completion",
+    ]
+    assert [event.logical_time_ms for event in scheduler.pop_history] == [
+        1000,
+        1000,
+        1000,
+        1001,
+    ]
+    assert _recovery_actions(ledger)[0]["trigger"] == "lease_expired"
 
 
 def test_returned_failure_submission_recovers_from_submitted_attempt(tmp_path) -> None:

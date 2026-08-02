@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from hashlib import sha256
 import json
@@ -18,7 +18,10 @@ from time import monotonic, sleep
 from typing import Callable, Iterable
 
 from tokenshare.executors.contracts import ExecutionRequest, ExecutionSubmission
-from tokenshare.local_runtime.contracts import WorkerTerminationPolicy
+from tokenshare.local_runtime.contracts import (
+    WorkerCompletionSchedule,
+    WorkerTerminationPolicy,
+)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -82,6 +85,7 @@ class WorkerBatchOutcome:
     fact: WorkerExecutionFact
     failure_kind: str | None = None
     error_message: str | None = None
+    logical_completion: WorkerCompletionSchedule | None = None
 
 
 class WorkerExecutionError(RuntimeError):
@@ -95,9 +99,22 @@ class WorkerProcessBootstrapError(RuntimeError):
 class SequentialWorkerBackend:
     """在调用线程内依次执行请求的单 worker backend。"""
 
-    def __init__(self, *, executor: object, submitted_at: Callable[[], str]) -> None:
+    def __init__(
+        self,
+        *,
+        executor: object,
+        submitted_at: Callable[[], str],
+        completion_schedule: Callable[
+            [ExecutionRequest, ExecutionSubmission | None, str | None],
+            WorkerCompletionSchedule | None,
+        ]
+        | None = None,
+    ) -> None:
         self._executor = executor
         self._submitted_at = submitted_at
+        self._completion_schedule = _completion_schedule_resolver(
+            executor, completion_schedule
+        )
         self._execution_facts: list[WorkerExecutionFact] = []
         self._next_execution_index = 1
 
@@ -143,12 +160,15 @@ class SequentialWorkerBackend:
                 ended_at=_utc_now(),
             )
             self._execution_facts.append(fact)
-            return WorkerBatchOutcome(
+            return _attach_completion_schedule(
+                WorkerBatchOutcome(
                 request=request,
                 submission=None,
                 fact=fact,
                 failure_kind="executor_error",
                 error_message=f"{type(error).__name__}: {error}",
+                ),
+                self._completion_schedule,
             )
         fact = _fact(
             request=request,
@@ -160,7 +180,10 @@ class SequentialWorkerBackend:
             ended_at=_utc_now(),
         )
         self._execution_facts.append(fact)
-        return WorkerBatchOutcome(request=request, submission=submission, fact=fact)
+        return _attach_completion_schedule(
+            WorkerBatchOutcome(request=request, submission=submission, fact=fact),
+            self._completion_schedule,
+        )
 
 
 class ThreadWorkerBackend:
@@ -172,12 +195,20 @@ class ThreadWorkerBackend:
         executor: object,
         capacity: int,
         submitted_at: Callable[[], str],
+        completion_schedule: Callable[
+            [ExecutionRequest, ExecutionSubmission | None, str | None],
+            WorkerCompletionSchedule | None,
+        ]
+        | None = None,
     ) -> None:
         if capacity < 1:
             raise ValueError("worker capacity must be positive")
         self._executor = executor
         self._capacity = capacity
         self._submitted_at = submitted_at
+        self._completion_schedule = _completion_schedule_resolver(
+            executor, completion_schedule
+        )
         self._lock = Lock()
         self._next_execution_index = 1
         self._execution_facts: list[WorkerExecutionFact] = []
@@ -253,12 +284,15 @@ class ThreadWorkerBackend:
                 ended_at=_utc_now(),
             )
             self._append_fact(fact)
-            return WorkerBatchOutcome(
+            return _attach_completion_schedule(
+                WorkerBatchOutcome(
                 request=request,
                 submission=None,
                 fact=fact,
                 failure_kind="executor_error",
                 error_message=f"{type(error).__name__}: {error}",
+                ),
+                self._completion_schedule,
             )
         fact = _fact(
             request=request,
@@ -270,7 +304,10 @@ class ThreadWorkerBackend:
             ended_at=_utc_now(),
         )
         self._append_fact(fact)
-        return WorkerBatchOutcome(request=request, submission=submission, fact=fact)
+        return _attach_completion_schedule(
+            WorkerBatchOutcome(request=request, submission=submission, fact=fact),
+            self._completion_schedule,
+        )
 
     def _append_fact(self, fact: WorkerExecutionFact) -> None:
         with self._lock:
@@ -291,6 +328,11 @@ class ProcessWorkerBackend:
         termination_policy: WorkerTerminationPolicy | None = None,
         kill_point: str | None = None,
         process_timeout_seconds: float = 30.0,
+        completion_schedule: Callable[
+            [ExecutionRequest, ExecutionSubmission | None, str | None],
+            WorkerCompletionSchedule | None,
+        ]
+        | None = None,
     ) -> None:
         if termination_policy is not None:
             if terminate_once is not None:
@@ -317,6 +359,7 @@ class ProcessWorkerBackend:
         self._kill_point = kill_point
         self._termination_policy = termination_policy
         self._process_timeout_seconds = process_timeout_seconds
+        self._completion_schedule = completion_schedule
         self._termination_count = 0
         self._terminated_planned_ai_unit_ids: set[str] = set()
         self._completed_planned_ai_unit_ids: set[str] = set()
@@ -513,6 +556,13 @@ class ProcessWorkerBackend:
                     message = pickle.load(result_handle)
                 message_kind, payload = message[:2]
                 process_result = message[2] if len(message) > 2 else None
+                process_completion = message[3] if len(message) > 3 else None
+                if process_completion is not None and not isinstance(
+                    process_completion, WorkerCompletionSchedule
+                ):
+                    raise TypeError(
+                        "process worker returned an invalid completion schedule"
+                    )
                 progress_observation = self._termination_progress_observation(
                     matches_termination_target=matches_termination_target,
                     request=request,
@@ -575,6 +625,7 @@ class ProcessWorkerBackend:
                         fact=fact,
                         failure_kind="worker_terminated",
                         error_message="worker process terminated before submission",
+                        logical_completion=process_completion,
                     )
                 elif message_kind == "submission":
                     _ingest_process_result(self._executor, process_result)
@@ -633,6 +684,7 @@ class ProcessWorkerBackend:
                         request=request,
                         submission=payload,
                         fact=fact,
+                        logical_completion=process_completion,
                     )
                 else:
                     _signal_process_path(release_path)
@@ -663,6 +715,7 @@ class ProcessWorkerBackend:
             if process.poll() is None:
                 process.kill()
                 process.wait(timeout=5)
+        outcome = _attach_completion_schedule(outcome, self._completion_schedule)
         self._execution_facts.append(outcome.fact)
         return outcome
 
@@ -801,6 +854,53 @@ def execute_worker_batch(
                 WorkerBatchOutcome(request=request, submission=submission, fact=fact)
             )
     return tuple(outcomes)
+
+
+def _attach_completion_schedule(
+    outcome: WorkerBatchOutcome,
+    resolver: Callable[
+        [ExecutionRequest, ExecutionSubmission | None, str | None],
+        WorkerCompletionSchedule | None,
+    ]
+    | None,
+) -> WorkerBatchOutcome:
+    if resolver is None:
+        return outcome
+    completion = resolver(
+        outcome.request,
+        outcome.submission,
+        outcome.failure_kind,
+    )
+    if completion is not None and not isinstance(
+        completion, WorkerCompletionSchedule
+    ):
+        raise TypeError(
+            "completion_schedule must return WorkerCompletionSchedule or None"
+        )
+    if (
+        outcome.logical_completion is not None
+        and completion is not None
+        and outcome.logical_completion != completion
+    ):
+        raise ValueError("child and parent completion schedules disagree")
+    return replace(
+        outcome,
+        logical_completion=completion or outcome.logical_completion,
+    )
+
+
+def _completion_schedule_resolver(
+    executor: object,
+    explicit: Callable[
+        [ExecutionRequest, ExecutionSubmission | None, str | None],
+        WorkerCompletionSchedule | None,
+    ]
+    | None,
+):
+    if explicit is not None:
+        return explicit
+    candidate = getattr(executor, "worker_completion_schedule", None)
+    return candidate if callable(candidate) else None
 
 
 def _signal_process_path(path: Path) -> None:
