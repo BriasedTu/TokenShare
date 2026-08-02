@@ -10,6 +10,7 @@ import pytest
 
 from tokenshare.experiments.paper_formal_checkpoint import (
     V3_GENERATION_SCHEMA,
+    checkpoint_payload_digest_inventory,
     compact_v3_delta_chain_to_snapshot,
     iter_v3_delta_chain,
     validate_v3_delta_chain,
@@ -749,6 +750,164 @@ def test_v3_chain_scopes_artifact_identity_by_task(
     head = validate_v3_generation_manifest(second_root, second)
     with pytest.raises(ValueError, match="duplicate artifact identity"):
         validate_v3_delta_chain(run_root, head, expected_root_count=2)
+
+
+def test_checkpoint_resume_terminal_and_observation_digests_match(
+    tmp_path: Path,
+) -> None:
+    run_root = tmp_path / "run"
+    root_generation, root_manifest = _write_generation(
+        run_root,
+        generation_id="root",
+        generation_kind="delta",
+        delta_role="root_outcome",
+        selection_ordinal=0,
+        anchor_task_id="case-0",
+    )
+    metrics, report = _publish_real_task20_task21(tmp_path / "publication")
+    tail_root, tail_manifest = _write_generation(
+        run_root,
+        generation_id="tail",
+        generation_kind="delta",
+        delta_role="condition_tail_events",
+        selection_ordinal=None,
+        anchor_task_id="case-0",
+        parent=root_manifest,
+    )
+    head = validate_v3_generation_manifest(tail_root, tail_manifest)
+    before_resume = checkpoint_payload_digest_inventory(
+        run_root,
+        head,
+        expected_root_count=1,
+        publication_root=tmp_path / "publication",
+        task20_output_refs=metrics.output_refs,
+        task21_renderer_manifest_ref=report.renderer_manifest_ref,
+    )
+
+    compacted = compact_v3_delta_chain_to_snapshot(
+        run_root,
+        head,
+        target_root=run_root / ".generations" / "snapshot",
+        generation_id="snapshot",
+        expected_root_count=1,
+        temp_parent=tmp_path,
+    )
+    snapshot_root = run_root / ".generations" / "snapshot"
+    resumed_head = validate_v3_generation_manifest(
+        snapshot_root,
+        compacted["manifest"],
+    )
+    after_resume = checkpoint_payload_digest_inventory(
+        run_root,
+        resumed_head,
+        expected_root_count=1,
+        publication_root=tmp_path / "publication",
+        task20_output_refs=metrics.output_refs,
+        task21_renderer_manifest_ref=report.renderer_manifest_ref,
+    )
+
+    assert after_resume == before_resume
+    assert len(after_resume["task"]) == 1
+    assert after_resume["task20"]
+    assert after_resume["task21"]
+
+
+@pytest.mark.parametrize(
+    "mutation_kind",
+    (
+        "terminal_record",
+        "task20_source_index",
+        "task20_manifest",
+        "task20_output_ref",
+        "task21_artifact",
+        "task21_manifest_ref",
+    ),
+)
+def test_checkpoint_publication_closure_mutations_fail_closed(
+    tmp_path: Path,
+    mutation_kind: str,
+) -> None:
+    run_root = tmp_path / "run"
+    generation, manifest = _write_generation(
+        run_root,
+        generation_id="root",
+        generation_kind="delta",
+        delta_role="root_outcome",
+        selection_ordinal=0,
+        anchor_task_id="case-0",
+    )
+    head = validate_v3_generation_manifest(generation, manifest)
+    publication_root = tmp_path / "publication"
+    metrics, report = _publish_real_task20_task21(publication_root)
+    output_refs = [dict(value) for value in metrics.output_refs]
+    renderer_ref = dict(report.renderer_manifest_ref)
+
+    if mutation_kind == "terminal_record":
+        task_path = generation / "per_task_results.jsonl"
+        task = _read_jsonl(task_path)[0]
+        task["root_status"] = "tampered"
+        _write_jsonl(task_path, [task])
+    elif mutation_kind == "task20_source_index":
+        (publication_root / "metrics/paper_lineage_source_index.v1.jsonl").write_text(
+            '{"forged":true}\n', encoding="utf-8"
+        )
+    elif mutation_kind == "task20_manifest":
+        path = publication_root / "metrics/paper_metric_observations_manifest.v1.json"
+        body = json.loads(path.read_text(encoding="utf-8"))
+        body["observations_digest"] = "sha256:" + "f" * 64
+        _write_json(path, body)
+    elif mutation_kind == "task20_output_ref":
+        output_refs[0]["content_digest"] = "sha256:" + "f" * 64
+    elif mutation_kind == "task21_artifact":
+        renderer_manifest = json.loads(
+            (publication_root / renderer_ref["path"]).read_text(encoding="utf-8")
+        )
+        table_path = renderer_manifest["tables"][0]["csv_ref"]["path"]
+        (publication_root / table_path).write_text("forged\n", encoding="utf-8")
+    else:
+        renderer_ref["content_hash"] = "sha256:" + "f" * 64
+
+    with pytest.raises(ValueError, match="checkpoint|generation|Task20|Task21"):
+        checkpoint_payload_digest_inventory(
+            run_root,
+            head,
+            expected_root_count=1,
+            publication_root=publication_root,
+            task20_output_refs=output_refs,
+            task21_renderer_manifest_ref=renderer_ref,
+        )
+
+
+def _publish_real_task20_task21(root: Path):
+    from tests.experiments.test_paper_formal_metrics import _real_canonical_rows
+    from tokenshare.experiments.paper_formal_metrics import (
+        publish_paper_formal_metric_drafts,
+    )
+    from tokenshare.experiments.paper_formal_report import (
+        generate_paper_formal_report,
+    )
+    from tokenshare.experiments.paper_metric_contract import (
+        load_paper_metric_contract,
+    )
+
+    contract = load_paper_metric_contract()
+    metrics = publish_paper_formal_metric_drafts(
+        root,
+        _real_canonical_rows(root / "canonical-inputs"),
+        contract=contract,
+    )
+    report = generate_paper_formal_report(
+        output_root=root,
+        metrics=metrics,
+        secret_values=(),
+        contract=contract,
+    )
+    if not report.renderer_manifest_ref:
+        eligibility = json.loads(
+            (root / "audit/paper_eligibility_report.json").read_text(encoding="utf-8")
+        )
+        raise AssertionError(json.dumps(eligibility, sort_keys=True))
+    return metrics, report
 
 
 def _read_jsonl(path: Path) -> list[dict[str, Any]]:

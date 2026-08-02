@@ -1040,7 +1040,7 @@ class FormalEvidenceStore:
                     ),
                 )
 
-    def build_shared_root_reference(
+    def decode_historical_shared_root_reference(
         self,
         *,
         source_experiment_id: str,
@@ -1049,7 +1049,7 @@ class FormalEvidenceStore:
         expected_condition_identity: Mapping[str, Any],
         expected_source_versions: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
-        """校验并冻结一个已持久化 root，供后续实验零调用引用。"""
+        """只读解码 EPD-027 之前的 shared-root evidence，当前 runner 不调用。"""
 
         source_experiment_id = _safe_id(
             source_experiment_id,

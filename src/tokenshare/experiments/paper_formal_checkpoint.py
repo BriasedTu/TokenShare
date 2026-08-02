@@ -344,6 +344,258 @@ def validate_v3_delta_chain(
     return chain
 
 
+def checkpoint_payload_digest_inventory(
+    run_root: Path,
+    head: V3GenerationDescriptor,
+    *,
+    expected_root_count: int,
+    publication_root: Path | None = None,
+    task20_output_refs: Sequence[Mapping[str, Any]] = (),
+    task21_renderer_manifest_ref: Mapping[str, Any] | None = None,
+) -> dict[str, tuple[tuple[str, str], ...]]:
+    """流式返回 checkpoint 业务记录摘要，用于证明 compact/resume 不改正文。"""
+
+    refreshed_head = validate_v3_generation_manifest(
+        head.generation_root,
+        expected_experiment_id=head.experiment_id,
+        expected_condition_id=head.condition_id,
+        expected_repeat_id=head.repeat_id,
+    )
+    if refreshed_head.manifest_digest != head.manifest_digest:
+        raise ValueError("checkpoint head manifest changed after load")
+    head = refreshed_head
+    if head.generation_kind == "delta":
+        generations = validate_v3_delta_chain(
+            run_root,
+            head,
+            expected_root_count=expected_root_count,
+        )
+    elif head.generation_kind == "snapshot":
+        expected_root_count = _require_nonnegative_int(
+            expected_root_count,
+            "expected_root_count",
+        )
+        generations = (head,)
+    else:
+        raise ValueError("checkpoint payload inventory requires delta or snapshot")
+
+    paths = {
+        "task": "per_task_results.jsonl",
+        "attempt": "per_attempt_results.jsonl",
+        "fault": "fault_injections.jsonl",
+        "event": "events/event_log.jsonl",
+        "artifact": "artifacts/artifact_index.jsonl",
+    }
+    inventory: dict[str, list[tuple[str, str]]] = {
+        label: [] for label in paths
+    }
+    for generation in generations:
+        for label, relative_path in paths.items():
+            for record in _iter_jsonl_records(
+                generation.generation_root / relative_path
+            ):
+                identity = (
+                    record.get("task_id")
+                    if label == "task"
+                    else _stable_record_identity(label, record)
+                )
+                if not isinstance(identity, (str, tuple)) or not identity:
+                    raise ValueError(f"checkpoint {label} stable identity is missing")
+                inventory[label].append(
+                    (
+                        _canonical_bytes(identity).decode("utf-8"),
+                        _digest_json(record),
+                    )
+                )
+    result = {
+        label: tuple(sorted(records))
+        for label, records in inventory.items()
+    }
+    if head.generation_kind == "snapshot" and len(result["task"]) != expected_root_count:
+        raise ValueError("checkpoint snapshot root count does not match frozen roots")
+    publication_requested = any(
+        (
+            publication_root is not None,
+            bool(task20_output_refs),
+            task21_renderer_manifest_ref is not None,
+        )
+    )
+    if publication_requested:
+        if (
+            publication_root is None
+            or not task20_output_refs
+            or task21_renderer_manifest_ref is None
+        ):
+            raise ValueError("checkpoint publication closure is incomplete")
+        task20_inventory, observations_digest = _task20_publication_inventory(
+            publication_root,
+            task20_output_refs,
+        )
+        task21_inventory = _task21_publication_inventory(
+            publication_root,
+            task21_renderer_manifest_ref,
+            expected_observations_digest=observations_digest,
+        )
+        result["task20"] = task20_inventory
+        result["task21"] = task21_inventory
+    return result
+
+
+def _task20_publication_inventory(
+    root: Path,
+    output_refs: Sequence[Mapping[str, Any]],
+) -> tuple[tuple[tuple[str, str], ...], str]:
+    root = Path(root).resolve(strict=False)
+    refs_by_path: dict[str, Mapping[str, Any]] = {}
+    payloads: dict[str, Any] = {}
+    inventory: list[tuple[str, str]] = []
+    for ref in output_refs:
+        if not isinstance(ref, Mapping):
+            raise ValueError("Task20 output ref must be a mapping")
+        relative_path = ref.get("path")
+        if not isinstance(relative_path, str) or not relative_path:
+            raise ValueError("Task20 output ref path is invalid")
+        if relative_path in refs_by_path:
+            raise ValueError("Task20 output ref path is duplicated")
+        path = (root / relative_path).resolve(strict=False)
+        if root != path and root not in path.parents:
+            raise ValueError("Task20 output ref escapes publication root")
+        if not path.is_file():
+            raise ValueError(f"Task20 persisted output is missing: {relative_path}")
+        if relative_path.endswith(".jsonl"):
+            records = list(_iter_jsonl_records(path))
+            payload: Any = {"records": records}
+        else:
+            payload = _read_json(path)
+        content_digest = _digest_json(payload)
+        if ref.get("content_digest") != content_digest:
+            raise ValueError(f"Task20 output ref digest mismatch: {relative_path}")
+        refs_by_path[relative_path] = ref
+        payloads[relative_path] = payload
+        inventory.append((relative_path, content_digest))
+
+    required = {
+        "metrics/paper_metric_drafts.v1.json",
+        "metrics/paper_lineage_source_index.v1.jsonl",
+        "metrics/paper_metric_observations.v1.jsonl",
+        "metrics/paper_metric_observations_manifest.v1.json",
+    }
+    if not required <= set(refs_by_path):
+        raise ValueError("Task20 output ref inventory is incomplete")
+    source_records = payloads[
+        "metrics/paper_lineage_source_index.v1.jsonl"
+    ]["records"]
+    observations = payloads[
+        "metrics/paper_metric_observations.v1.jsonl"
+    ]["records"]
+    observation_manifest = payloads[
+        "metrics/paper_metric_observations_manifest.v1.json"
+    ]
+    if not isinstance(observation_manifest, Mapping):
+        raise ValueError("Task20 observation manifest must be a mapping")
+    source_index = observation_manifest.get("lineage_source_index")
+    if not isinstance(source_index, Mapping):
+        raise ValueError("Task20 source index manifest is missing")
+    record_digests = [record.get("record_digest") for record in source_records]
+    if (
+        source_index.get("record_count") != len(source_records)
+        or source_index.get("record_digests") != record_digests
+    ):
+        raise ValueError("Task20 source index record closure mismatch")
+    index_id = _digest_json(
+        {
+            "schema_version": "tokenshare.lineage_source_index_identity.v1",
+            "input_identity_digest": source_index.get("input_identity_digest"),
+            "record_digests": record_digests,
+        }
+    )
+    index_digest = _digest_json(
+        {
+            "schema_version": "tokenshare.lineage_source_index.v1",
+            "index_id": index_id,
+            "input_identity_digest": source_index.get("input_identity_digest"),
+            "records": source_records,
+        }
+    )
+    if (
+        source_index.get("index_id") != index_id
+        or source_index.get("index_digest") != index_digest
+    ):
+        raise ValueError("Task20 source index digest closure mismatch")
+    observations_digest = _digest_json(observations)
+    if (
+        observation_manifest.get("observations_digest") != observations_digest
+        or observation_manifest.get("observation_count") != len(observations)
+        or any(
+            observation.get("source_index_id") != index_id
+            or observation.get("source_index_digest") != index_digest
+            for observation in observations
+        )
+    ):
+        raise ValueError("Task20 observation collection closure mismatch")
+    return tuple(sorted(inventory)), observations_digest
+
+
+def _task21_publication_inventory(
+    root: Path,
+    manifest_ref: Mapping[str, Any],
+    *,
+    expected_observations_digest: str,
+) -> tuple[tuple[str, str], ...]:
+    root = Path(root).resolve(strict=False)
+    manifest_path = _publication_ref_path(root, manifest_ref, "Task21")
+    manifest_bytes = manifest_path.read_bytes()
+    manifest_hash = "sha256:" + hashlib.sha256(manifest_bytes).hexdigest()
+    if manifest_ref.get("content_hash") != manifest_hash:
+        raise ValueError("Task21 renderer manifest ref digest mismatch")
+    manifest = json.loads(manifest_bytes.decode("utf-8"))
+    if (
+        manifest.get("schema_version")
+        != "tokenshare.paper_metric_renderer_manifest.v1"
+        or manifest.get("source_observations_digest")
+        != expected_observations_digest
+    ):
+        raise ValueError("Task21 renderer manifest closure mismatch")
+    refs: list[Mapping[str, Any]] = [manifest_ref]
+    audit_ref = manifest.get("audit_ref")
+    tables = manifest.get("tables")
+    if not isinstance(audit_ref, Mapping) or not isinstance(tables, list):
+        raise ValueError("Task21 renderer artifact inventory is invalid")
+    refs.append(audit_ref)
+    for table in tables:
+        if not isinstance(table, Mapping):
+            raise ValueError("Task21 renderer table manifest is invalid")
+        for field_name in ("csv_ref", "tex_ref"):
+            ref = table.get(field_name)
+            if not isinstance(ref, Mapping):
+                raise ValueError("Task21 renderer table ref is missing")
+            refs.append(ref)
+    inventory: list[tuple[str, str]] = []
+    for ref in refs:
+        path = _publication_ref_path(root, ref, "Task21")
+        content_hash = "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
+        if ref.get("content_hash") != content_hash:
+            raise ValueError(f"Task21 artifact digest mismatch: {ref.get('path')}")
+        inventory.append((str(ref["path"]), content_hash))
+    if len({path for path, _digest in inventory}) != len(inventory):
+        raise ValueError("Task21 renderer artifact path is duplicated")
+    return tuple(sorted(inventory))
+
+
+def _publication_ref_path(
+    root: Path,
+    ref: Mapping[str, Any],
+    label: str,
+) -> Path:
+    relative_path = ref.get("path")
+    if not isinstance(relative_path, str) or not relative_path:
+        raise ValueError(f"{label} artifact ref path is invalid")
+    path = (root / relative_path).resolve(strict=False)
+    if (root != path and root not in path.parents) or not path.is_file():
+        raise ValueError(f"{label} persisted artifact is missing or out of scope")
+    return path
+
+
 def compact_v3_delta_chain_to_snapshot(
     run_root: Path,
     head: V3GenerationDescriptor,

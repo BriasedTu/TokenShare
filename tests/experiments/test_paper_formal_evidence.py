@@ -1866,7 +1866,7 @@ def test_checkpoint_rejects_conflicting_experiment_event_in_same_context(
         )
 
 
-def test_shared_root_reference_freezes_current_generation_and_zero_usage(
+def test_historical_shared_root_decoder_freezes_generation_and_zero_usage(
     tmp_path: Path,
 ) -> None:
     store = FormalEvidenceStore.initialize(
@@ -1876,13 +1876,13 @@ def test_shared_root_reference_freezes_current_generation_and_zero_usage(
     )
     _checkpoint_task(store, tmp_path, task_id="task-1")
 
-    reference = store.build_shared_root_reference(
+    reference = store.decode_historical_shared_root_reference(
         source_experiment_id=EXPERIMENT_A,
         case_id="task-1",
         source_repeat_id=0,
         expected_condition_identity={"repeat_id": 0},
     )
-    repeated = store.build_shared_root_reference(
+    repeated = store.decode_historical_shared_root_reference(
         source_experiment_id=EXPERIMENT_A,
         case_id="task-1",
         source_repeat_id=0,
@@ -1917,7 +1917,7 @@ def test_shared_root_reference_freezes_current_generation_and_zero_usage(
     assert reference["cost_estimate"] == 0.0
 
 
-def test_shared_root_reference_rejects_version_drift_and_does_not_zero_missing_usage(
+def test_historical_shared_root_decoder_rejects_version_drift_and_missing_usage(
     tmp_path: Path,
 ) -> None:
     store = FormalEvidenceStore.initialize(
@@ -1972,7 +1972,7 @@ def test_shared_root_reference_rejects_version_drift_and_does_not_zero_missing_u
     )
 
     with pytest.raises(ValueError, match="version identity mismatch"):
-        store.build_shared_root_reference(
+        store.decode_historical_shared_root_reference(
             source_experiment_id=EXPERIMENT_A,
             case_id="task-1",
             source_repeat_id=0,
@@ -1983,7 +1983,7 @@ def test_shared_root_reference_rejects_version_drift_and_does_not_zero_missing_u
             },
         )
 
-    reference = store.build_shared_root_reference(
+    reference = store.decode_historical_shared_root_reference(
         source_experiment_id=EXPERIMENT_A,
         case_id="task-1",
         source_repeat_id=0,
@@ -1998,7 +1998,7 @@ def test_shared_root_reference_rejects_version_drift_and_does_not_zero_missing_u
     assert reference["baseline_unavailable_reason"] == "source_exp1_usage_incomplete"
 
 
-def test_shared_root_reference_accepts_complete_experimental_failure(
+def test_historical_shared_root_decoder_accepts_complete_experimental_failure(
     tmp_path: Path,
 ) -> None:
     store = FormalEvidenceStore.initialize(
@@ -2042,7 +2042,7 @@ def test_shared_root_reference_accepts_complete_experimental_failure(
         ],
     )
 
-    reference = store.build_shared_root_reference(
+    reference = store.decode_historical_shared_root_reference(
         source_experiment_id=EXPERIMENT_A,
         case_id="task-1",
         source_repeat_id=0,
@@ -2069,7 +2069,7 @@ def test_shared_root_reference_accepts_complete_experimental_failure(
     }
 
 
-def test_shared_root_reference_fails_closed_on_identity_or_generation_corruption(
+def test_historical_shared_root_decoder_fails_closed_on_identity_or_corruption(
     tmp_path: Path,
 ) -> None:
     store = FormalEvidenceStore.initialize(
@@ -2080,7 +2080,7 @@ def test_shared_root_reference_fails_closed_on_identity_or_generation_corruption
     _checkpoint_task(store, tmp_path, task_id="task-1")
 
     with pytest.raises(ValueError, match="identity"):
-        store.build_shared_root_reference(
+        store.decode_historical_shared_root_reference(
             source_experiment_id=EXPERIMENT_A,
             case_id="task-1",
             source_repeat_id=0,
@@ -2095,7 +2095,7 @@ def test_shared_root_reference_fails_closed_on_identity_or_generation_corruption
         encoding="utf-8",
     )
     with pytest.raises(ValueError, match="integrity"):
-        store.build_shared_root_reference(
+        store.decode_historical_shared_root_reference(
             source_experiment_id=EXPERIMENT_A,
             case_id="task-1",
             source_repeat_id=0,

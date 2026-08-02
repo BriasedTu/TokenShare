@@ -61,7 +61,12 @@ def _smoke_execution_classification() -> dict[str, object]:
         "regression_only": True,
         "paper_eligible": False,
         "execution_scope": "smoke_suite",
-        "ineligibility_reasons": ["smoke_suite", "pilot_only"],
+        "baseline_policy": "omitted_for_smoke_regression",
+        "ineligibility_reasons": [
+            "smoke_suite",
+            "pilot_only",
+            "smoke_baseline_not_requested",
+        ],
     }
 
 
@@ -179,6 +184,7 @@ def test_smoke_classification_does_not_make_technical_attempt_evidence_incomplet
     assert classified_flags["ineligibility_reasons"] == [
         "smoke_suite",
         "pilot_only",
+        "smoke_baseline_not_requested",
     ]
 
 
@@ -262,23 +268,10 @@ def _shared_exp1_manifest(
     worker_death_manifest: dict[str, object] | None,
 ) -> dict[str, object]:
     return {
-        "baseline_policy": "shared_exp1_reference",
+        "baseline_policy": "omitted_for_smoke_regression",
         "fault_target_manifest": fault_target_manifest,
         "worker_death_manifest": worker_death_manifest,
-        "matched_baseline": {
-            "source_kind": "shared_exp1_reference",
-            "comparison_kind": "shared_reference",
-            "additional_execution_required": False,
-            "source_experiment_id": "exp1_real_ai_feasibility",
-            "source_repeat_id": 0,
-            "source_seed": 1,
-            "source_worker_count": 10,
-            "source_reference_ids_by_case": {
-                "case-1": "planned-exp1-reference-case-1"
-            },
-            "reference_policy_id": "shared-exp1-policy-test",
-            "request_limits": request_limits,
-        },
+        "request_limits": request_limits,
     }
 
 
@@ -305,119 +298,25 @@ def _complete_shared_exp1_reference(*_args, **_kwargs) -> dict[str, object]:
     return {**core, "source_hash": formal_runner.digest_json(core)}
 
 
-def test_exp3_shared_reference_is_resolved_before_provider_dispatch() -> None:
-    request_limits = {
-        "max_tokens": 300_000,
-        "timeout_seconds": 600,
-        "max_provider_attempts": 1,
-        "stream": False,
-        "thinking": {"type": "enabled"},
-        "reasoning_effort": "high",
-    }
-    calls: list[dict[str, object]] = []
-
-    class EvidenceStore:
-        def build_shared_root_reference(self, **kwargs):
-            calls.append(kwargs)
-            core = {
-                "schema_version": "tokenshare.paper_exp1_shared_reference.v1",
-                "source_condition_id": "exp1_factorization_easy_w10_r0",
-                "source_root_status": "completed",
-                "evidence_integrity": "complete",
-                "baseline_comparison_eligible": True,
-                "baseline_unavailable_reason": None,
-                "source_versions": {
-                    **dict(kwargs["expected_source_versions"]),
-                    "runtime_generation_identity_digest": "sha256:" + "5" * 64,
-                },
-            }
-            return {**core, "source_hash": formal_runner.digest_json(core)}
-
+def test_exp3_missing_trace_runtime_blocks_before_provider_dispatch() -> None:
     callback = object.__new__(formal_runner._FormalConditionExecutionCallback)
-    object.__setattr__(callback, "evidence_store", EvidenceStore())
-    object.__setattr__(callback, "request_limits", request_limits)
     object.__setattr__(callback, "execution_classification", None)
-    case = {
-        "case_id": "case-1",
-        "split_params": {"strategy_id": "factorization.test.v1"},
-    }
+    object.__setattr__(callback, "trace_context", None)
     condition = SimpleNamespace(
         experiment_id="exp3_real_ai_fault_recovery",
         condition_id="exp3-factor-easy-w10-r0",
-        domain="factorization",
-        difficulty="easy",
-        paper_difficulty="easy",
-        topic_family=None,
-        catalog_digest=CATALOG_DIGEST,
-        provider_config_id="exp1_baseline_deepseek",
-        model_entry_id="deepseek_v4_pro_exp1_baseline",
-        provider_family="deepseek",
-        provider_model_id="deepseek-v4-pro",
-        reasoning_profile_id="high",
-        source_provider_config_digest="sha256:" + "8" * 64,
-        model_endpoint_identity_digest="sha256:" + "9" * 64,
-    )
-    manifest = {
-        "baseline_policy": "shared_exp1_reference",
-        "matched_baseline": {
-            "source_kind": "shared_exp1_reference",
-            "comparison_kind": "shared_reference",
-            "additional_execution_required": False,
-            "source_experiment_id": "exp1_real_ai_feasibility",
-            "source_repeat_id": 0,
-            "source_seed": 1,
-            "source_worker_count": 10,
-            "source_reference_ids_by_case": {"case-1": "planned-ref-1"},
-            "reference_policy_id": "policy-1",
-            "request_limits": request_limits,
-        },
-    }
-
-    reference = callback._ensure_exp3_shared_exp1_reference(
-        condition=condition,
-        case_id="case-1",
-        case=case,
-        callback_kwargs={"execution_manifest": manifest},
     )
 
-    assert reference["planned_source_reference_id"] == "planned-ref-1"
-    assert reference["reference_policy_id"] == "policy-1"
-    assert calls == [
-        {
-            "source_experiment_id": "exp1_real_ai_feasibility",
-            "case_id": "case-1",
-            "source_repeat_id": 0,
-            "expected_condition_identity": {
-                "domain": "factorization",
-                "difficulty": "easy",
-                "paper_difficulty": "easy",
-                "topic_family": None,
-                "worker_count": 10,
-                "repeat_id": 0,
-                "seed": 1,
-                "catalog_digest": CATALOG_DIGEST,
-                "provider_config_id": "exp1_baseline_deepseek",
-                "model_entry_id": "deepseek_v4_pro_exp1_baseline",
-                "provider_family": "deepseek",
-                "provider_model_id": "deepseek-v4-pro",
-                "reasoning_profile_id": "high",
-                "source_provider_config_digest": "sha256:" + "8" * 64,
-                "model_endpoint_identity_digest": "sha256:" + "9" * 64,
-                "request_limits": request_limits,
-            },
-            "expected_source_versions": formal_runner._execution_version_identity(
-                domain="factorization",
-                split_profile_digest=formal_runner.digest_json(case["split_params"]),
-                runtime_generation_identity=None,
-            ),
-        }
-    ]
-    source = inspect.getsource(
-        formal_runner._FormalConditionExecutionCallback._dispatch_root_case
-    )
-    assert source.index("_ensure_exp3_shared_exp1_reference") < source.index(
-        "dispatch_paper_case"
-    )
+    with pytest.raises(
+        formal_runner.PaperInfrastructureBlockedError,
+        match="paired trace bank runtime is missing",
+    ) as captured:
+        callback._prepare_exp3_trace_reference(
+            condition=condition,
+            case_id="case-1",
+            callback_kwargs={"execution_manifest": {}},
+        )
+    assert captured.value.terminal_outcome.failure_stage == "paired_trace_reference"
 
 
 def test_formal_exp3_rejects_smoke_baseline_omission_before_dispatch() -> None:
@@ -426,10 +325,9 @@ def test_formal_exp3_rejects_smoke_baseline_omission_before_dispatch() -> None:
     condition = SimpleNamespace(experiment_id="exp3_real_ai_fault_recovery")
 
     with pytest.raises(ValueError, match="formal Exp3 scope"):
-        callback._ensure_exp3_shared_exp1_reference(
+        callback._prepare_exp3_trace_reference(
             condition=condition,
             case_id="case-1",
-            case={"case_id": "case-1", "split_params": {}},
             callback_kwargs={
                 "execution_manifest": {
                     "baseline_policy": "omitted_for_smoke_regression",
@@ -494,7 +392,7 @@ def test_dependency_integrity_classification_is_typed_not_message_based() -> Non
     ) is formal_runner.PaperEvidenceIntegrity.CORRUPT
 
 
-def test_missing_shared_exp1_evidence_closes_suite_and_stops_new_dispatch(
+def test_missing_trace_bank_closes_suite_and_stops_new_dispatch(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -615,8 +513,8 @@ def test_missing_shared_exp1_evidence_closes_suite_and_stops_new_dispatch(
         {
             "outcome_status": "blocked_dependency",
             "evidence_integrity": "missing",
-            "failure_stage": "shared_exp1_reference",
-            "failure_kind": "source_evidence_unavailable",
+                "failure_stage": "paired_trace_reference",
+                "failure_kind": "source_bank_runtime_unavailable",
             "condition_id": "condition-exp3-shared-source-missing",
             "task_id": "case-1",
         },
@@ -3727,14 +3625,10 @@ def test_formal_runner_exp3_maps_planned_target_to_protocol_unit_and_recovery(
         ((experiment_id, Exp3CallbackModule()),),
     )
     monkeypatch.setattr(formal_runner, "dispatch_paper_case", fake_case_dispatch)
-    monkeypatch.setattr(
-        formal_runner.FormalEvidenceStore,
-        "build_shared_root_reference",
-        _complete_shared_exp1_reference,
-    )
     suite = formal_runner.execute_paper_formal_suite(
         **{
             **_formal_execution_kwargs(tmp_path=tmp_path, config=config, plan=plan),
+            "execution_classification": _smoke_execution_classification(),
             "budget": _budget(
                 planned_experiments=(experiment_id,),
                 planned_conditions=1,
@@ -3850,14 +3744,10 @@ def test_formal_runner_exp3_worker_death_does_not_fabricate_process_recovery(
         "dispatch_paper_case",
         complete_without_runtime_death,
     )
-    monkeypatch.setattr(
-        formal_runner.FormalEvidenceStore,
-        "build_shared_root_reference",
-        _complete_shared_exp1_reference,
-    )
     suite = formal_runner.execute_paper_formal_suite(
         **{
             **_formal_execution_kwargs(tmp_path=tmp_path, config=config, plan=plan),
+            "execution_classification": _smoke_execution_classification(),
             "budget": _budget(
                 planned_experiments=(experiment_id,),
                 planned_conditions=1,
@@ -3894,17 +3784,13 @@ def test_formal_runner_exp3_worker_death_does_not_fabricate_process_recovery(
     assert task["worker_death_count"] == 0
     assert task["worker_replacement_count"] == 0
     assert task["worker_death_evidence_complete"] is False
-    assert task["matched_baseline_condition_id"] == (
-        "exp1_factorization_easy_w10_r0"
-    )
-    assert task["matched_baseline_evidence_ref"]["reference_id"] == (
-        "shared-exp1-reference-case-1"
-    )
-    assert task["baseline_comparison_eligible"] is True
+    assert task["baseline"] is None
+    assert task["baseline_comparison_eligible"] is False
+    assert task["baseline_unavailable_reason"] == "smoke_baseline_not_requested"
     assert "matched_baseline_total_tokens" not in task
 
 
-def test_failed_exp1_shared_baseline_keeps_exp3_dispatch_and_nulls_comparison(
+def test_trace_regression_omits_baseline_and_keeps_exp3_dispatch(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -3985,15 +3871,10 @@ def test_failed_exp1_shared_baseline_keeps_exp3_dispatch_and_nulls_comparison(
         ((experiment_id, Exp3Module()),),
     )
     monkeypatch.setattr(formal_runner, "dispatch_paper_case", dispatch)
-    monkeypatch.setattr(
-        formal_runner.FormalEvidenceStore,
-        "build_shared_root_reference",
-        failed_reference_builder,
-    )
-
     suite = formal_runner.execute_paper_formal_suite(
         **{
             **_formal_execution_kwargs(tmp_path=tmp_path, config=config, plan=plan),
+            "execution_classification": _smoke_execution_classification(),
             "budget": _budget(
                 planned_experiments=(experiment_id,),
                 planned_conditions=1,
@@ -4013,11 +3894,9 @@ def test_failed_exp1_shared_baseline_keeps_exp3_dispatch_and_nulls_comparison(
         "exp3_worker_death_factorization__failed_shared__dead1__p50__rep0",
         "per_task_results.jsonl",
     )[0]
-    assert task["baseline"]["source_root_status"] == "failed"
+    assert task["baseline"] is None
     assert task["baseline_comparison_eligible"] is False
-    assert task["baseline_unavailable_reason"] == (
-        "source_exp1_failed_experimental"
-    )
+    assert task["baseline_unavailable_reason"] == "smoke_baseline_not_requested"
 
 
 def test_formal_runner_worker_death_baseline_identity_mismatch_fails_closed_before_dispatch(
@@ -4311,11 +4190,6 @@ def test_failed_worker_death_closes_manifests_and_continues_exp4_in_both_paths(
         return base
 
     monkeypatch.setattr(formal_runner, "dispatch_paper_case", dispatch)
-    monkeypatch.setattr(
-        formal_runner.FormalEvidenceStore,
-        "build_shared_root_reference",
-        _complete_shared_exp1_reference,
-    )
     smoke_items = []
     for plan in (exp3_plan, exp4_plan):
         condition, selection = plan.bound_items()[0]
@@ -4440,6 +4314,7 @@ def test_failed_worker_death_closes_manifests_and_continues_exp4_in_both_paths(
                 ),
                 "dispatch_plans": (exp3_plan, exp4_plan),
                 "budget": budget,
+                "execution_classification": _smoke_execution_classification(),
             }
         )
         from tokenshare.experiments.paper_metric_contract import (
@@ -4538,14 +4413,13 @@ def test_failed_worker_death_closes_manifests_and_continues_exp4_in_both_paths(
         suite_manifest = json.loads(
             (tmp_path / "suite_manifest.json").read_text(encoding="utf-8")
         )
-        assert suite_manifest["formal"] is True
-        assert suite_manifest["pilot_only"] is False
-        assert suite_manifest["execution_scope"] == "formal_matrix"
+        assert suite_manifest["formal"] is False
+        assert suite_manifest["pilot_only"] is True
+        assert suite_manifest["execution_scope"] == "smoke_suite"
         expected_outputs = (
             "metrics/paper_metric_drafts.v1.json",
             "audit/paper_eligibility_report.json",
             "audit/secret_scan_report.json",
-            "formal_regression_report.md",
             "formal_report_result.json",
         )
     for relative in expected_outputs:
@@ -7528,3 +7402,247 @@ def test_trace_current_provider_calls_are_zero(
         replacement["entry_id"]
         for replacement in rejected_source_binding["replacements"]
     }) == 2
+
+
+def _run_normal_exp3_trace_condition(
+    *,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mutation_kind: str | None,
+):
+    from tests.experiments.test_paper_full_resource_trace import (
+        _pressure_factor_cases,
+        _pressure_trace_context,
+    )
+    from tokenshare.experiments.paper_response_bank import (
+        PaperTraceRuntimeContext,
+    )
+
+    experiment_id = "exp3_real_ai_fault_recovery"
+    suite_root = tmp_path / "suite"
+    bank_root = tmp_path / "external-bank"
+    cases = _pressure_factor_cases(2 if mutation_kind else 1)
+    case_ids = tuple(str(case["case_id"]) for case in cases)
+    config = _ai_config()
+    plan = _planned_dispatch_plan(suite_root, config=config)
+    base_condition, base_selection = plan.bound_items()[0]
+    condition = replace(
+        base_condition,
+        experiment_id=experiment_id,
+        condition_id="condition-exp3-current-trace",
+        fault_type="false_positive",
+    )
+    selection = replace(
+        base_selection,
+        experiment_id=experiment_id,
+        ordered_case_ids=case_ids,
+        expected_ai_unit_count=len(case_ids),
+    )
+    plan = replace(
+        plan,
+        experiment_id=experiment_id,
+        output_root=(suite_root / experiment_id).as_posix(),
+        conditions=(condition,),
+        condition_selection_bindings=(
+            FrozenConditionSelectionBinding.from_condition(condition, selection),
+        ),
+    )
+    trace_context = _pressure_trace_context(
+        bank_root=bank_root,
+        condition_id=condition.condition_id,
+        cases=cases,
+    )
+    first_runtime = trace_context.runtime_for(
+        condition_id=condition.condition_id,
+        case_id=case_ids[0],
+    )
+    first_entry_id = first_runtime.bindings[0].replacements[0].entry_id
+    first_entry = first_runtime.resolver.entry(first_entry_id)
+    if mutation_kind == "root":
+        bank_root.rename(tmp_path / "external-bank-missing")
+    elif mutation_kind in {"object", "role"}:
+        role = "raw_output" if mutation_kind == "object" else "usage"
+        locator = next(
+            item for item in first_entry.object_locators if item.object_role == role
+        )
+        object_path = bank_root / "objects" / locator.object_digest.removeprefix(
+            "sha256:"
+        )
+        if mutation_kind == "object":
+            object_path.write_bytes(b"corrupted immutable source object")
+        else:
+            object_path.unlink()
+    elif mutation_kind == "entry":
+        first_runtime.resolver.index._entries_by_id.pop(first_entry_id)
+
+    dispatched: list[str] = []
+    original_dispatch = formal_runner._FormalConditionExecutionCallback._dispatch_root_case
+
+    def tracked_dispatch(self, **kwargs):
+        dispatched.append(str(kwargs["case_id"]))
+        return original_dispatch(self, **kwargs)
+
+    monkeypatch.setattr(
+        formal_runner._FormalConditionExecutionCallback,
+        "_dispatch_root_case",
+        tracked_dispatch,
+    )
+
+    class Exp3TraceConditionModule:
+        def expand_conditions(self, context):
+            raise AssertionError("Exp3 trace run consumes the frozen formal plan")
+
+        def freeze_case_selections(self, context, conditions):
+            return FrozenCaseSelectionBatch(())
+
+        def run_condition(self, context, condition, selection):
+            return context.execution_callback(
+                context=context,
+                condition=condition,
+                selection=selection,
+                execution_manifest={
+                    "baseline_policy": "required_by_formal_plan",
+                    "fault_target_manifest": {
+                        "fault_type": condition.fault_type,
+                        "selected_target_ai_unit_ids": [],
+                        "reserve_target_ai_unit_ids": [],
+                    },
+                    "worker_death_manifest": None,
+                },
+            )
+
+        def summarize(self, evidence):
+            return ExperimentSummaryRows(experiment_id=experiment_id, rows=())
+
+    monkeypatch.setitem(
+        formal_runner.dispatch_paper_condition.__globals__,
+        "_MODULES",
+        ((experiment_id, Exp3TraceConditionModule()),),
+    )
+
+    class ForbiddenProviderTransport:
+        def post_chat_completion(self, **_kwargs):
+            raise AssertionError("Exp3 current provider dispatch is forbidden")
+
+    kwargs = _formal_execution_kwargs(
+        tmp_path=suite_root,
+        config=config,
+        plan=plan,
+    )
+    kwargs.update(
+        {
+            "catalog_manifest": {
+                "catalog_digest": condition.catalog_digest,
+                "factorization_cases": cases,
+                "lean_cases": (),
+                "lean_lemma_graph_cases": (),
+            },
+            "budget": _budget(
+                planned_experiments=(experiment_id,),
+                planned_conditions=1,
+                planned_root_runs=len(cases),
+                planned_ai_units=len(cases),
+            ),
+            "transport": ForbiddenProviderTransport(),
+            "trace_context": trace_context,
+        }
+    )
+    suite = formal_runner.execute_paper_formal_suite(**kwargs)
+    tasks = _generation_records(
+        suite_root,
+        experiment_id,
+        condition.condition_id,
+        "per_task_results.jsonl",
+    )
+    attempts = _generation_records(
+        suite_root,
+        experiment_id,
+        condition.condition_id,
+        "per_attempt_results.jsonl",
+    )
+    assert PaperTraceRuntimeContext.current_provider_call_count == 0
+    return suite, tasks, attempts, dispatched, first_entry, suite_root
+
+
+def test_normal_exp3_trace_persists_exact_source_binding_separate_from_current_attempt(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    (
+        suite,
+        tasks,
+        attempts,
+        dispatched,
+        source_entry,
+        suite_root,
+    ) = _run_normal_exp3_trace_condition(
+        tmp_path=tmp_path,
+        monkeypatch=monkeypatch,
+        mutation_kind=None,
+    )
+
+    assert suite.status is PaperStatus.COMPLETED
+    assert dispatched == ["factor_pressure_000"]
+    assert len(tasks) == len(attempts) == 1
+    reference = tasks[0]["paired_trace_reference"]
+    assert reference["source_entry_ids"] == [source_entry.entry_id]
+    assert reference["source_acquisition_state_refs"] == [
+        source_entry.acquisition_state_ref
+    ]
+    assert attempts[0]["attempt_id"] not in {
+        source_entry.entry_id,
+        source_entry.acquisition_state_ref,
+    }
+    assert attempts[0]["provider_attempt_count"] == 0
+    assert attempts[0]["raw_output_ref"]["source"] == {
+        "kind": "external_response_bank_locator"
+    }
+    wrapper_hash = attempts[0]["raw_output_ref"]["content_hash"].removeprefix(
+        "sha256:"
+    )
+    wrapper_path = next(
+        path
+        for path in suite_root.rglob(f"{wrapper_hash}-*")
+        if path.is_file()
+    )
+    wrapper = json.loads(wrapper_path.read_text(encoding="utf-8"))
+    assert wrapper["attempt_id"] == attempts[0]["attempt_id"]
+    assert wrapper["entry_id"] == source_entry.entry_id
+    assert wrapper["binding_digest"] == reference["source_binding_digests"][0]
+    assert {item["entry_id"] for item in wrapper["source_bank_object_locators"]} == {
+        source_entry.entry_id
+    }
+    assert wrapper["logical_start_ms"] == 0
+    assert wrapper["logical_finish_ms"] == 1
+
+
+@pytest.mark.parametrize("mutation_kind", ("root", "object", "role", "entry"))
+def test_normal_exp3_missing_trace_dependency_blocks_without_fallback_or_later_dispatch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mutation_kind: str,
+) -> None:
+    (
+        suite,
+        tasks,
+        attempts,
+        dispatched,
+        _source_entry,
+        _suite_root,
+    ) = _run_normal_exp3_trace_condition(
+        tmp_path=tmp_path,
+        monkeypatch=monkeypatch,
+        mutation_kind=mutation_kind,
+    )
+
+    assert suite.status is PaperStatus.BLOCKED
+    assert suite.task_count == 2
+    assert dispatched == ["factor_pressure_000"]
+    assert [task["task_id"] for task in tasks] == [
+        "factor_pressure_000",
+        "factor_pressure_001",
+    ]
+    assert tasks[0]["root_status"] == "blocked"
+    assert tasks[1]["root_status"] == "not_started"
+    assert attempts[0]["provider_attempt_index"] == 0
+    assert attempts[1]["provider_attempt_index"] == 0

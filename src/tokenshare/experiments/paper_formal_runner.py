@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections import deque
 from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass, field, is_dataclass, replace
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from enum import Enum
 import hashlib
 import json
@@ -1619,42 +1619,6 @@ def _budget_split_profile_digest(
     if len(matches) != 1 or not isinstance(matches[0], str):
         return None
     return matches[0]
-
-
-def _shared_reference_hash_matches(reference: Mapping[str, Any]) -> bool:
-    source_hash = reference.get("source_hash")
-    core = {
-        key: value
-        for key, value in reference.items()
-        if key
-        not in {
-            "source_hash",
-            "source_reference_id",
-            "planned_source_reference_id",
-            "reference_policy_id",
-        }
-    }
-    return isinstance(source_hash, str) and source_hash == digest_json(core)
-
-
-def _shared_reference_versions_match(
-    reference: Mapping[str, Any],
-    expected: Mapping[str, Any],
-) -> bool:
-    actual = reference.get("source_versions")
-    if not isinstance(actual, Mapping):
-        return False
-    if any(
-        actual.get(field_name) != expected_value
-        for field_name, expected_value in expected.items()
-    ):
-        return False
-    runtime_digest = actual.get("runtime_generation_identity_digest")
-    return (
-        isinstance(runtime_digest, str)
-        and runtime_digest.startswith("sha256:")
-        and len(runtime_digest) == 71
-    )
 
 
 def _execution_catalog_for_plan(
@@ -3333,6 +3297,58 @@ def _evaluate_trace_root_evidence(
     return evaluate_versioned_paper_evidence(facts)
 
 
+def _paired_trace_reference_from_runtime(
+    *,
+    trace_runtime: Any,
+    case_id: str,
+) -> dict[str, Any]:
+    """从 validated bank index 构造 Exp3 同 sample 的 opaque reference。"""
+
+    bindings = tuple(trace_runtime.bindings)
+    sample_slots = {binding.sample_slot_index for binding in bindings}
+    if len(sample_slots) != 1:
+        raise ValueError("Exp3 paired trace reference must use the same sample slot")
+    manifest = trace_runtime.resolver.index.manifest
+    entries: list[Any] = []
+    for binding in bindings:
+        if (
+            binding.bank_root_id != manifest.bank_root_id
+            or binding.manifest_digest != manifest.manifest_digest
+        ):
+            raise ValueError("Exp3 paired trace reference root binding mismatch")
+        for replacement in binding.replacements:
+            entry = trace_runtime.resolver.entry(replacement.entry_id)
+            if (
+                entry.sample_slot_index != binding.sample_slot_index
+                or entry.replacement_slot != replacement.replacement_slot
+                or entry.inference_request_digest
+                != replacement.inference_request_digest
+            ):
+                raise ValueError("Exp3 paired trace reference entry identity mismatch")
+            entries.append(entry)
+    entries.sort(key=lambda item: (item.entry_id, item.replacement_slot))
+    return {
+        "schema_version": "tokenshare.paper_exp3_paired_trace_reference.v1",
+        "comparison_kind": "paired_trace_reference",
+        "case_id": case_id,
+        "sample_slot_index": next(iter(sample_slots)),
+        "bank_root_id": manifest.bank_root_id,
+        "manifest_digest": manifest.manifest_digest,
+        "source_entry_ids": [entry.entry_id for entry in entries],
+        "source_acquisition_state_refs": [
+            entry.acquisition_state_ref for entry in entries
+        ],
+        "source_binding_digests": [
+            binding.binding_digest for binding in bindings
+        ],
+        "source_bank_object_locators": [
+            locator.to_dict()
+            for entry in entries
+            for locator in entry.object_locators
+        ],
+    }
+
+
 @dataclass(frozen=True, kw_only=True)
 class _RootExecutionOutcome:
     case_id: str
@@ -3355,6 +3371,115 @@ class _RootExecutionOutcome:
     runtime_records: tuple[dict[str, Any], ...] = ()
     experiment_records: tuple[dict[str, Any], ...] = ()
     matched_baseline_evidence_ref: dict[str, Any] | None = None
+
+
+@dataclass
+class _ConditionTraceClock:
+    """为一个 condition 按 worker lane 原子分配 trace 逻辑区间。"""
+
+    origin: datetime | None = None
+    lane_elapsed: dict[str, timedelta] = field(default_factory=dict)
+    lock: Lock = field(default_factory=Lock, repr=False)
+
+    def reserve(
+        self,
+        *,
+        worker_id: object,
+        root_origin: datetime,
+        root_duration: timedelta,
+    ) -> tuple[datetime, timedelta]:
+        lane_id = str(worker_id)
+        if not lane_id:
+            raise ValueError("trace condition worker lane id is required")
+        with self.lock:
+            if self.origin is None:
+                self.origin = root_origin
+            elif self.origin != root_origin:
+                raise ValueError("trace roots must share one logical clock origin")
+            lane_start = self.lane_elapsed.get(lane_id, timedelta(0))
+            self.lane_elapsed[lane_id] = lane_start + root_duration
+            return self.origin, lane_start
+
+
+def _condition_scoped_trace_runtime(
+    outcome: _RootExecutionOutcome,
+    *,
+    condition_clock: _ConditionTraceClock,
+    worker_id: object,
+) -> _RootExecutionOutcome:
+    """把独立 root 的 trace clock 投影到 condition 内的顺序逻辑时钟。"""
+
+    if outcome.error is not None or outcome.task is None:
+        return outcome
+    task = _as_json(outcome.task)
+    observation = task.get("runtime_observation")
+    if not isinstance(observation, Mapping) and outcome.adapter_result is not None:
+        run_evidence = _optional_field(outcome.adapter_result, "run_evidence")
+        protocol_runtime = (
+            run_evidence.get("protocol_runtime")
+            if isinstance(run_evidence, Mapping)
+            else None
+        )
+        observation = (
+            protocol_runtime.get("runtime_observation")
+            if isinstance(protocol_runtime, Mapping)
+            else None
+        )
+    if not isinstance(observation, Mapping):
+        return outcome
+    started_at = observation.get("runtime_started_at")
+    ended_at = observation.get("runtime_ended_at")
+    facts = observation.get("worker_execution_facts")
+    if (
+        not isinstance(started_at, str)
+        or not isinstance(ended_at, str)
+        or not isinstance(facts, Sequence)
+        or isinstance(facts, (str, bytes))
+    ):
+        return outcome
+
+    root_started = datetime.fromisoformat(started_at.replace("Z", "+00:00"))
+    root_ended = datetime.fromisoformat(ended_at.replace("Z", "+00:00"))
+    if root_ended < root_started:
+        raise ValueError("trace runtime observation ended before it started")
+    root_duration = root_ended - root_started
+    shared_origin, lane_start = condition_clock.reserve(
+        worker_id=worker_id,
+        root_origin=root_started,
+        root_duration=root_duration,
+    )
+    rebased_start = shared_origin + lane_start
+
+    def rebase_timestamp(value: object) -> object:
+        if not isinstance(value, str):
+            return value
+        timestamp = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        return (rebased_start + (timestamp - root_started)).isoformat().replace(
+            "+00:00", "Z"
+        )
+
+    rebased_facts: list[dict[str, Any]] = []
+    for raw_fact in facts:
+        if not isinstance(raw_fact, Mapping):
+            raise ValueError("trace runtime worker fact must be a mapping")
+        fact = dict(raw_fact)
+        fact["started_at"] = rebase_timestamp(fact.get("started_at"))
+        fact["ended_at"] = rebase_timestamp(fact.get("ended_at"))
+        if fact.get("kill_progress_observed_at") is not None:
+            fact["kill_progress_observed_at"] = rebase_timestamp(
+                fact["kill_progress_observed_at"]
+            )
+        rebased_facts.append(fact)
+    rebased_observation = dict(observation)
+    rebased_observation["runtime_started_at"] = rebase_timestamp(started_at)
+    rebased_observation["runtime_ended_at"] = rebase_timestamp(ended_at)
+    if observation.get("witness_observed_at") is not None:
+        rebased_observation["witness_observed_at"] = rebase_timestamp(
+            observation["witness_observed_at"]
+        )
+    rebased_observation["worker_execution_facts"] = rebased_facts
+    task["runtime_observation"] = rebased_observation
+    return replace(outcome, task=task, runtime_records=tuple(rebased_facts))
 
 
 def _provider_latency_observation(
@@ -3460,6 +3585,7 @@ class _FormalConditionExecutionCallback:
         # root case 仍由 runner 顺序观察；指标容量必须采用 runtime 的冻结 worker_count。
         worker_count = int(condition.worker_count)
         budget_exhausted_during_exp5 = False
+        condition_trace_clock = _ConditionTraceClock()
 
         def execute_case(case_id: str, worker_id: int) -> _RootExecutionOutcome:
             case = cases_by_id.get(case_id)
@@ -3489,13 +3615,20 @@ class _FormalConditionExecutionCallback:
                         rolling_reservation["root_reservation_bytes"]
                     )
                 )
-            return self._apply_experiment_runtime(
+            outcome = self._apply_experiment_runtime(
                 condition=condition,
                 case_id=case_id,
                 case=cases_by_id[case_id],
                 outcome=outcome,
                 callback_kwargs=kwargs,
             )
+            if self.trace_context is not None:
+                outcome = _condition_scoped_trace_runtime(
+                    outcome,
+                    condition_clock=condition_trace_clock,
+                    worker_id=worker_id,
+                )
+            return outcome
 
         def checkpoint_case(
             case_id: str,
@@ -3631,24 +3764,11 @@ class _FormalConditionExecutionCallback:
             condition=condition,
             case=case,
         )
-        try:
-            matched_baseline_evidence_ref = (
-                self._ensure_exp3_shared_exp1_reference(
-                    condition=condition,
-                    case_id=case_id,
-                    case=case,
-                    callback_kwargs=callback_kwargs,
-                )
-            )
-        except (RuntimeError, OSError, TimeoutError) as error:
-            raise PaperInfrastructureBlockedError(
-                str(error),
-                evidence_integrity=PaperEvidenceIntegrity.INVALID,
-                failure_stage="shared_exp1_reference",
-                failure_kind=type(error).__name__,
-                condition_id=condition.condition_id,
-                task_id=case_id,
-            ) from error
+        matched_baseline_evidence_ref = self._prepare_exp3_trace_reference(
+            condition=condition,
+            case_id=case_id,
+            callback_kwargs=callback_kwargs,
+        )
         reservation = (
             _root_budget_reservation(
                 case=case,
@@ -3812,12 +3932,11 @@ class _FormalConditionExecutionCallback:
             matched_baseline_evidence_ref=matched_baseline_evidence_ref,
         )
 
-    def _ensure_exp3_shared_exp1_reference(
+    def _prepare_exp3_trace_reference(
         self,
         *,
         condition: Any,
         case_id: str,
-        case: Mapping[str, Any],
         callback_kwargs: Mapping[str, Any],
     ) -> dict[str, Any] | None:
         if condition.experiment_id != "exp3_real_ai_fault_recovery":
@@ -3826,125 +3945,47 @@ class _FormalConditionExecutionCallback:
             callback_kwargs.get("execution_manifest"),
             "Exp3 execution_manifest",
         )
-        baseline_policy = (
+        reference_policy = (
             self.execution_classification.get("baseline_policy")
             if isinstance(self.execution_classification, Mapping)
             else None
         ) or execution_manifest.get(
             "baseline_policy",
-            "shared_exp1_reference",
+            "required_by_formal_plan",
         )
-        if baseline_policy == "omitted_for_smoke_regression":
+        if reference_policy == "omitted_for_smoke_regression":
             if self.execution_classification is None:
                 raise ValueError(
-                    "formal Exp3 scope cannot omit shared Exp1 evidence"
+                    "formal Exp3 scope cannot omit paired trace evidence"
                 )
             return None
-        if baseline_policy != "shared_exp1_reference":
-            raise ValueError("unsupported Exp3 baseline policy")
-        reference_policy = _required_mapping(
-            execution_manifest.get("matched_baseline"),
-            "Exp3 shared Exp1 reference policy",
-        )
-        if (
-            reference_policy.get("source_kind") != "shared_exp1_reference"
-            or reference_policy.get("comparison_kind") != "shared_reference"
-            or reference_policy.get("additional_execution_required") is not False
-            or reference_policy.get("source_experiment_id")
-            != "exp1_real_ai_feasibility"
-            or reference_policy.get("source_repeat_id") != 0
-            or reference_policy.get("source_seed") != 1
-            or reference_policy.get("source_worker_count") != 10
-        ):
-            raise ValueError("Exp3 shared Exp1 reference policy identity mismatch")
-        planned_ids = _required_mapping(
-            reference_policy.get("source_reference_ids_by_case"),
-            "Exp3 source_reference_ids_by_case",
-        )
-        planned_reference_id = planned_ids.get(case_id)
-        if not isinstance(planned_reference_id, str) or not planned_reference_id:
-            raise ValueError("Exp3 shared Exp1 case reference is missing")
-        request_limits = _required_mapping(
-            reference_policy.get("request_limits"),
-            "Exp3 shared reference request limits",
-        )
-        if dict(request_limits) != dict(self.request_limits):
-            raise ValueError("Exp3 shared reference request limits mismatch")
-        expected_identity = {
-            "domain": condition.domain,
-            "difficulty": condition.difficulty,
-            "paper_difficulty": condition.paper_difficulty,
-            "topic_family": condition.topic_family,
-            "worker_count": 10,
-            "repeat_id": 0,
-            "seed": 1,
-            "catalog_digest": condition.catalog_digest,
-            "provider_config_id": condition.provider_config_id,
-            "model_entry_id": condition.model_entry_id,
-            "provider_family": condition.provider_family,
-            "provider_model_id": condition.provider_model_id,
-            "reasoning_profile_id": condition.reasoning_profile_id,
-            "source_provider_config_digest": (
-                condition.source_provider_config_digest
-            ),
-            "model_endpoint_identity_digest": (
-                condition.model_endpoint_identity_digest
-            ),
-            "request_limits": dict(self.request_limits),
-        }
-        split_profile_digest = _budget_split_profile_digest(
-            budget=getattr(self, "budget", None),
-            condition_id=condition.condition_id,
-            case_id=case_id,
-        ) or digest_json(case.get("split_params", {}))
-        expected_source_versions = _execution_version_identity(
-            domain=condition.domain,
-            split_profile_digest=split_profile_digest,
-            runtime_generation_identity=None,
-        )
-        try:
-            reference = self.evidence_store.build_shared_root_reference(
-                source_experiment_id="exp1_real_ai_feasibility",
-                case_id=case_id,
-                source_repeat_id=0,
-                expected_condition_identity=expected_identity,
-                expected_source_versions=expected_source_versions,
+        if self.trace_context is None:
+            raise PaperInfrastructureBlockedError(
+                "Exp3 paired trace bank runtime is missing",
+                evidence_integrity=PaperEvidenceIntegrity.MISSING,
+                failure_stage="paired_trace_reference",
+                failure_kind="source_bank_runtime_unavailable",
+                condition_id=condition.condition_id,
+                task_id=case_id,
             )
-        except (OSError, TypeError, ValueError, json.JSONDecodeError) as error:
+        try:
+            trace_runtime = self.trace_context.runtime_for(
+                condition_id=condition.condition_id,
+                case_id=case_id,
+            )
+            return _paired_trace_reference_from_runtime(
+                trace_runtime=trace_runtime,
+                case_id=case_id,
+            )
+        except (KeyError, TypeError, ValueError) as error:
             raise PaperInfrastructureBlockedError(
                 str(error),
                 evidence_integrity=_dependency_integrity_for_error(error),
-                failure_stage="shared_exp1_reference",
-                failure_kind="source_evidence_unavailable",
+                failure_stage="paired_trace_reference",
+                failure_kind="source_bank_reference_unavailable",
                 condition_id=condition.condition_id,
                 task_id=case_id,
             ) from error
-        if not _shared_reference_versions_match(
-            reference,
-            expected_source_versions,
-        ):
-            raise PaperInfrastructureBlockedError(
-                "shared Exp1 reference version identity mismatch",
-                evidence_integrity=PaperEvidenceIntegrity.INVALID,
-                failure_stage="shared_exp1_reference",
-                failure_kind="source_version_identity_mismatch",
-                condition_id=condition.condition_id,
-                task_id=case_id,
-            )
-        if not _shared_reference_hash_matches(reference):
-            raise PaperInfrastructureBlockedError(
-                "shared Exp1 reference hash mismatch",
-                evidence_integrity=PaperEvidenceIntegrity.CORRUPT,
-                failure_stage="shared_exp1_reference",
-                failure_kind="source_reference_hash_mismatch",
-                condition_id=condition.condition_id,
-                task_id=case_id,
-            )
-        return {
-            **reference,
-            "planned_source_reference_id": planned_reference_id,
-            "reference_policy_id": reference_policy.get("reference_policy_id"),
-        }
 
     def _apply_experiment_runtime(
         self,
@@ -4257,7 +4298,7 @@ class _FormalConditionExecutionCallback:
             self.execution_classification.get("baseline_policy")
             if isinstance(self.execution_classification, Mapping)
             else None
-        ) or manifest.get("baseline_policy", "shared_exp1_reference")
+        ) or manifest.get("baseline_policy", "required_by_formal_plan")
         if policy == "omitted_for_smoke_regression":
             task.update(
                 {
@@ -4271,21 +4312,14 @@ class _FormalConditionExecutionCallback:
             return task
         reference = outcome.matched_baseline_evidence_ref
         if reference is None:
-            raise ValueError("Exp3 result is missing shared Exp1 evidence")
+            raise ValueError("Exp3 result is missing paired trace evidence")
         task.update(
             {
                 "baseline": dict(reference),
-                "matched_baseline_condition_id": str(
-                    reference["source_condition_id"]
-                ),
                 "matched_baseline_evidence_ref": dict(reference),
-                "shared_exp1_reference": dict(reference),
-                "baseline_comparison_eligible": bool(
-                    reference.get("baseline_comparison_eligible")
-                ),
-                "baseline_unavailable_reason": reference.get(
-                    "baseline_unavailable_reason"
-                ),
+                "paired_trace_reference": dict(reference),
+                "baseline_comparison_eligible": True,
+                "baseline_unavailable_reason": None,
             }
         )
         if isinstance(manifest.get("matched_baseline"), Mapping):
@@ -4940,17 +4974,6 @@ class _FormalConditionExecutionCallback:
                 artifact_name="task-record.json",
                 body=task_body,
             )]
-        shared_reference = task_body.get("shared_exp1_reference")
-        if isinstance(shared_reference, Mapping):
-            shared_reference_ref = _write_runner_artifact(
-                suite_root=self.evidence_store.output_root,
-                condition=condition,
-                task_id=task_id,
-                artifact_name="shared-exp1-reference.json",
-                body=shared_reference,
-            )
-            artifact_refs.append(shared_reference_ref)
-            task_body["shared_exp1_reference_ref"] = shared_reference_ref
         task_body["evidence_artifact_refs"] = list(artifact_refs)
         task_reasons = (
             list(trace_evidence_reasons)
