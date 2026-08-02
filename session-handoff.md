@@ -8,16 +8,18 @@
 2. 阅读 `Doc/agent-navigation.md` 与唯一实验权威 `Doc/TechnicalDocument/tokenshare_latest_real_plugin_experiment_design.md`。
 3. 运行 `.\init.ps1`；除非用户改变要求，不要运行 Full。
 
-## 2026-08-02 EPD-027 当前实施交接（Task 11 accepted）
+## 2026-08-02 EPD-027 当前实施交接（Task 12 accepted）
 
-- Active feature=`feat-011`，仍为 `in-progress`；active focus id 保持 `paper-metric-contract-trace-bank-and-traceability-plan`，active focus status=`queued`。Task 0–11 已 accepted（`12/35`）；Task 12 queued/next。
+- Active feature=`feat-011`，仍为 `in-progress`；active focus id 保持 `paper-metric-contract-trace-bank-and-traceability-plan`，active focus status=`queued`。Task 0–12 已 accepted（`13/35`）；Task 13 queued/next；正式矩阵仍为 **NO-GO**。
 - Task 0–2 accepted 原提交不变：Task 0=`ed0b056a`，Task 1=`78fbddaa`，Task 2=`d2b16f89`。
 - Task 3–9 已 accepted；提交依次包括 `f9773944`/`66643084`、`0cbda1df`、`58cda71f`、`5f97034c`、`aadbd483`、`6802918d`、`1109e852`，均有 scoped exit `0` 与最终 review PASS，provider/network calls=`0`。完整文件、测试和复审证据见 minimal handoff/progress。
 - Task 3 direct projector 不复制协议状态机；Task 4 用户授权的 `paper_formal_evidence.py` mapping conflict fail closed；Task 5–8 已提供 immutable bank、semantic inventory/preflight、SQLite budget authority 与 durable acquisition。当前没有 paid receipt/付费授权，不得调用 provider。
 - Task 10 attempt ordinal / parent-owned trace delivery commit ABI 已 accepted，代码 commit=`933ca71bd3aca9b62ad4f4b399f43a8f5d8092e1`，严格 16 文件（11 production + 5 tests）。canonical exit `0`，`106 passed in 48.71s`；11 production `py_compile` exit `0`；final reviewer=`PASS`。
 - Task 10 验收后测试最小化仅改 2 个测试文件，删除 37 行 / 3 cases；最小验证 exit `0`，`35 passed in 10.61s`。provider_calls=`0`，无 paid receipt；该时点状态持久化未运行测试、Fast、Full、LeanAudit、network/provider，Full intentionally not run per user。
 - Task 11 trace-backed response-bank executor / dual provenance 已 accepted，代码 commit=`1b5d098ebfdbf3a13ab1175a5708ddc057a1bddc`，严格 10 文件（6 production + 4 tests）。post-min trace final exit `0`，`10 passed in 3.58s`；parent commit 32、logical scheduler 5、Factorization + Lean targeted 2、recovery 39、descriptor 3 通过；6 production compile/diff-check/allowlist/secret-output 通过；final reviewer=`PASS`。
-- Task 11 canonical 首次 tool timeout，cache 暴露 3 个 v2 descriptor 失败，修复后对应 3 nodeids pass；原 canonical 未完整成功，禁止记录 canonical PASS。测试最小化删除 7 行 / 1 test；provider_calls=`0`，无 paid receipt。四个用户批准的最小 plan-out 接点为 `ai_api.py`、`local_runtime/contracts.py`、`local_runtime/coordinator.py` 与 parent commit test。本次状态持久化不运行测试、Fast、Full、LeanAudit、network/provider，Full intentionally not run。下一动作仅为 Task 12。
+- Task 11 canonical 首次 tool timeout，cache 暴露 3 个 v2 descriptor 失败，修复后对应 3 nodeids pass；原 canonical 未完整成功，禁止记录 canonical PASS。测试最小化删除 7 行 / 1 test；provider_calls=`0`，无 paid receipt。四个用户批准的最小 plan-out 接点为 `ai_api.py`、`local_runtime/contracts.py`、`local_runtime/coordinator.py` 与 parent commit test。
+- Task 12 standalone Experiment 1 metric observations 已 accepted，代码 commit=`a1183c6645d067409b2cfbce54c909aaf4b569c1`，严格 5 文件。真实 loader RED=`1 failed`；Task 2 contract suite=`196 passed`；Task 12 suite=`5 passed`；最小化后 combined=`201 passed in 18.17s`；final reviewer=`PASS`。
+- Task 6 profile digest 更新导致 Task 2 tracked contract 正式 loader drift；用户批准的最小 plan-out 只同步 profile binding=`sha256:e8e8c1f10b638607054c094f6fee409c62aade27ed01ca8645e9afdb79c14fb7` 与派生 contract digest=`sha256:48882b8f97c54237654b6ebba9d22c290fa92b2b98b105ef567c57c674352929`，无指标语义变化。provider/network calls=`0`，无 paid receipt。本次状态持久化不运行测试、Fast、Full、LeanAudit、network/provider，Full intentionally not run。下一动作仅为 Task 13。
 
 ## 2026-07-31 用户暂停点（历史）
 
@@ -42,8 +44,8 @@
 
 ## 当前业务状态
 
-- Active feature：`feat-011`。EPD-027 accepted 进度为 `12/35`：Task 0–11 已 accepted；Task 12 及以后保持 queued。immutable bank、inventory/preflight、budget、acquisition、logical scheduler、parent-owned commit ABI 与 trace-backed executor / dual provenance 已存在，formal runner/metrics/renderer/replay 接线仍属后续 Task，因此整体 paper readiness 未闭合。
-- Active focus 已从“只写计划”进入严格串行实施。EPD-025 的 Experiment 5 `max_retries=0`、两张 model 汇总表、无六组 pairwise 继续冻结；Task 2–11 已提供 contract/direct facts/stable request identity/immutable bank/inventory/budget/acquisition/scheduler/parent commit ABI/trace-backed executor，正式 consumer/renderer/replay 接线仍待后续 Task。
+- Active feature：`feat-011`。EPD-027 accepted 进度为 `13/35`：Task 0–12 已 accepted；Task 13 及以后保持 queued。immutable bank、inventory/preflight、budget、acquisition、logical scheduler、parent-owned commit ABI、trace-backed executor / dual provenance 与 standalone Exp1 projector 已存在，Exp2–5 projector、formal runner/metrics/renderer/replay 接线仍属后续 Task，因此整体 paper readiness 未闭合。
+- Active focus 已从“只写计划”进入严格串行实施。EPD-025 的 Experiment 5 `max_retries=0`、两张 model 汇总表、无六组 pairwise 继续冻结；Task 2–12 已提供 contract/direct facts/stable request identity/immutable bank/inventory/budget/acquisition/scheduler/parent commit ABI/trace-backed executor/Exp1 projector，正式 consumer/renderer/replay 接线仍待后续 Task。
 - 真实 `exp34-smoke-20260731-041442` 已结束：11 roots、36 provider attempts、839,054 tokens、8 completed、3 evidence-complete experimental failures；配置口径 cost estimate CNY 4.6147626，actual billing unavailable。
 - 真实性审计 PASS：36 个 DeepSeek HTTP 200 response ID 与 36 个 canonical v2 model records，v3 模型/请求身份一致，TokenShare coordinator/engine/ledger/artifact 路径完整，secret scan 零命中。
 - 历史 canonical 论文证据审计 FAIL：两个 no-return provenance 未进入 canonical index、906/906 canonical ledger bodies 被改写但旧 hash 保留、timing 被补零/缺失、fault refs/model inventory/replay 不满足权威。历史 output 只读且不得用于论文。
@@ -83,6 +85,7 @@
 
 ## 当前验证与残留
 
+- Task 12 accepted：commit=`a1183c6645d067409b2cfbce54c909aaf4b569c1`；真实 loader RED=`1 failed`；Task2 suite=`196 passed`；Task12 suite=`5 passed`；post-min combined=`201 passed in 18.17s`；final reviewer PASS；严格5文件，Task2 contract最小plan-out只同步Task6后的profile binding与派生digest，无指标语义变化。provider/network calls=`0`，无paid receipt；未运行Fast/Full/LeanAudit，Full intentionally not run。
 - Task 11 accepted：commit=`1b5d098ebfdbf3a13ab1175a5708ddc057a1bddc`；final reviewer PASS；post-min trace final `10 passed in 3.58s`；parent32/logical5/Factor+Lean2/recovery39/descriptor3通过；6 production compile/diff/allowlist/secret-output通过；测试最小化删7行/1 test。canonical 首次 tool timeout，cache 暴露3个v2失败，修后3 nodeids pass，不能记录canonical PASS。provider/network calls=`0`，无paid receipt；未运行Fast/Full/LeanAudit，Full intentionally not run。
 - Task 9 accepted：commit=`1109e852`；final canonical exit `0`，`42 passed in 36.58s`；final review PASS，Critical/Important/Minor=`0/0/0`；C1 typed in-process checkpoint/resume、C2 六类 queue 闭合；test minimization=`NO_CHANGE`；7 个 production 文件 `py_compile` 与 diff-check exit `0`；严格 12 文件包含用户授权的 `src/tokenshare/storage/artifacts.py` Windows normal-path 映射且 logical identity 不变；provider/network calls=`0`；未运行 Fast/Full/LeanAudit。
 - Task 8 accepted：commit=`6802918d`；最终 exact 5-file command exit `0`，`77 passed in 15.20s`；manifest 专项 `3 passed`、cross-check `4 passed`；fake-only，真实 provider/network/secret=`0`；4 个 production 文件 `py_compile`、diff-check、allowlist、secret scan exit `0`；final review PASS，Critical/Important/Minor=`0/0/0`；test minimization 3 分钟=`NO_CHANGE`，collect-only=`19`（行为 `18`）。没有 paid receipt；未运行 Fast/Full/LeanAudit。
@@ -102,7 +105,7 @@
 - 当前工作树暂停收尾 Fast：`458 passed, 1 skipped in 21.06s`；JSON/SQLite、harness、compileall 通过。
 - EPD-027 文档/harness 同步后 Fast：`458 passed, 1 skipped in 17.96s`；未联网、未调用真实 API、未运行 Full。
 - Exp5 identity-only v4：8/60/60，suite=`paper_smoke_exp5_v4`；launcher fail-closed profile/selection identity 已同步 v4。
-- 本次 state/docs 同步未运行测试/Fast/Full/LeanAudit/force-all/真实 API/攻击测试；只持久化 Task 11 accepted、Task 12 queued 与已有验证事实，Full intentionally not run per user；provider calls=`0`，无 paid receipt；不 push、不 merge、不创建 PR。
+- 本次 state/docs 同步未运行测试/Fast/Full/LeanAudit/force-all/真实 API/攻击测试；只持久化 Task 12 accepted、Task 13 queued 与已有验证事实，Full intentionally not run per user；provider calls=`0`，无 paid receipt；正式矩阵 **NO-GO**；不 push、不 merge、不创建 PR。
 - TTFT 无持久化来源，保持缺失；bundle source path 参与 digest 是本机可移植性 P2。
 - Exp5 identity fail-stop 的 raw checkpoint placeholder 使用 `attempt_status=not_started`；当前 metrics/replay 直接消费并有回归覆盖，未来若引入严格 `PaperAttemptStatus` 反序列化需先版本化该状态。
 - PowerShell helper 在 runner 已退出但后代长期持有继承管道写端时仍可能等待 EOF；正常实时日志脱敏、受控退出和精确退出码路径已通过。该项为 P2，不得写成已修复。
