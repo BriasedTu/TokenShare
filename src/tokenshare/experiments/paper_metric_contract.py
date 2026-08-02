@@ -17,7 +17,7 @@ PAPER_METRIC_CONTRACT_SCHEMA_VERSION = "tokenshare.paper_metric_contract.v1"
 PAPER_METRIC_CONTRACT_ID = "epd027_paper_metric_contract.v1"
 PAPER_METRIC_CONTRACT_VERSION = 1
 PAPER_METRIC_CONTRACT_DIGEST = (
-    "sha256:48882b8f97c54237654b6ebba9d22c290fa92b2b98b105ef567c57c674352929"
+    "sha256:b72307e727e28f5233de934df28e1701cf46ffb711b99aa845ea6f8580694b0e"
 )
 
 _REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
@@ -1159,7 +1159,12 @@ def _validate_predicate_shape(predicate: PredicateSpec, field_name: str) -> None
             and predicate.value is None
             and not predicate.values
         )
-    elif op in {"field_true", "field_false", "number_positive"}:
+    elif op in {
+        "field_true",
+        "field_false",
+        "field_nonempty_string",
+        "number_positive",
+    }:
         valid = (
             predicate.field is not None
             and not predicate.args

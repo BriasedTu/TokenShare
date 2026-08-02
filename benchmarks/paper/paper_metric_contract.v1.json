@@ -987,6 +987,33 @@
             "failure_reason": "not_replacement_attempt"
           },
           {
+            "op": "field_nonempty_string",
+            "args": [],
+            "field": "fault_or_death_id",
+            "other_field": null,
+            "value": null,
+            "values": [],
+            "failure_reason": "missing_fault_or_death_identity"
+          },
+          {
+            "op": "fields_equal",
+            "args": [],
+            "field": "fault_or_death_task_unit_id",
+            "other_field": "original_task_unit_id",
+            "value": null,
+            "values": [],
+            "failure_reason": "fault_or_death_task_unit_backlink_mismatch"
+          },
+          {
+            "op": "fields_equal",
+            "args": [],
+            "field": "fault_or_death_attempt_id",
+            "other_field": "original_attempt_id",
+            "value": null,
+            "values": [],
+            "failure_reason": "fault_or_death_attempt_backlink_mismatch"
+          },
+          {
             "op": "fields_equal",
             "args": [],
             "field": "replacement_task_unit_id",
@@ -1011,10 +1038,46 @@
             "other_field": "original_attempt_ordinal",
             "value": null,
             "values": [],
-            "failure_reason": "replacement_not_next_ordinal"
+           "failure_reason": "replacement_not_next_ordinal"
+         },
+          {
+            "op": "fields_equal",
+            "args": [],
+            "field": "new_attempt_fault_or_death_id",
+            "other_field": "fault_or_death_id",
+            "value": null,
+            "values": [],
+            "failure_reason": "new_attempt_trigger_backlink_mismatch"
           },
           {
-            "op": "ordered_roles_exact",
+            "op": "fields_equal",
+            "args": [],
+            "field": "new_attempt_task_unit_id",
+            "other_field": "replacement_task_unit_id",
+            "value": null,
+            "values": [],
+            "failure_reason": "new_attempt_task_unit_backlink_mismatch"
+          },
+          {
+            "op": "fields_equal",
+            "args": [],
+            "field": "new_attempt_id",
+            "other_field": "replacement_attempt_id",
+            "value": null,
+            "values": [],
+            "failure_reason": "new_attempt_identity_backlink_mismatch"
+          },
+          {
+            "op": "fields_equal",
+            "args": [],
+            "field": "new_attempt_ordinal",
+            "other_field": "replacement_attempt_ordinal",
+            "value": null,
+            "values": [],
+            "failure_reason": "new_attempt_ordinal_backlink_mismatch"
+          },
+         {
+           "op": "ordered_roles_exact",
             "args": [],
             "field": "ordered_evidence_roles",
             "other_field": null,
@@ -1026,9 +1089,7 @@
               "raw_or_failure",
               "provenance",
               "usage",
-              "model_record",
-              "qualified_result",
-              "original_task_unit_completed"
+              "model_record"
             ],
             "failure_reason": "trace_replacement_evidence_chain_incomplete_or_out_of_order"
           }
@@ -1060,6 +1121,33 @@
                 "failure_reason": "not_replacement_attempt"
               },
               {
+                "op": "field_nonempty_string",
+                "args": [],
+                "field": "fault_or_death_id",
+                "other_field": null,
+                "value": null,
+                "values": [],
+                "failure_reason": "missing_fault_or_death_identity"
+              },
+              {
+                "op": "fields_equal",
+                "args": [],
+                "field": "fault_or_death_task_unit_id",
+                "other_field": "original_task_unit_id",
+                "value": null,
+                "values": [],
+                "failure_reason": "fault_or_death_task_unit_backlink_mismatch"
+              },
+              {
+                "op": "fields_equal",
+                "args": [],
+                "field": "fault_or_death_attempt_id",
+                "other_field": "original_attempt_id",
+                "value": null,
+                "values": [],
+                "failure_reason": "fault_or_death_attempt_backlink_mismatch"
+              },
+              {
                 "op": "fields_equal",
                 "args": [],
                 "field": "replacement_task_unit_id",
@@ -1084,10 +1172,46 @@
                 "other_field": "original_attempt_ordinal",
                 "value": null,
                 "values": [],
-                "failure_reason": "replacement_not_next_ordinal"
+               "failure_reason": "replacement_not_next_ordinal"
+             },
+              {
+                "op": "fields_equal",
+                "args": [],
+                "field": "new_attempt_fault_or_death_id",
+                "other_field": "fault_or_death_id",
+                "value": null,
+                "values": [],
+                "failure_reason": "new_attempt_trigger_backlink_mismatch"
               },
               {
-                "op": "ordered_roles_exact",
+                "op": "fields_equal",
+                "args": [],
+                "field": "new_attempt_task_unit_id",
+                "other_field": "replacement_task_unit_id",
+                "value": null,
+                "values": [],
+                "failure_reason": "new_attempt_task_unit_backlink_mismatch"
+              },
+              {
+                "op": "fields_equal",
+                "args": [],
+                "field": "new_attempt_id",
+                "other_field": "replacement_attempt_id",
+                "value": null,
+                "values": [],
+                "failure_reason": "new_attempt_identity_backlink_mismatch"
+              },
+              {
+                "op": "fields_equal",
+                "args": [],
+                "field": "new_attempt_ordinal",
+                "other_field": "replacement_attempt_ordinal",
+                "value": null,
+                "values": [],
+                "failure_reason": "new_attempt_ordinal_backlink_mismatch"
+              },
+             {
+               "op": "ordered_roles_exact",
                 "args": [],
                 "field": "ordered_evidence_roles",
                 "other_field": null,
@@ -1176,6 +1300,33 @@
                 "failure_reason": "not_replacement_attempt"
               },
               {
+                "op": "field_nonempty_string",
+                "args": [],
+                "field": "fault_or_death_id",
+                "other_field": null,
+                "value": null,
+                "values": [],
+                "failure_reason": "missing_fault_or_death_identity"
+              },
+              {
+                "op": "fields_equal",
+                "args": [],
+                "field": "fault_or_death_task_unit_id",
+                "other_field": "original_task_unit_id",
+                "value": null,
+                "values": [],
+                "failure_reason": "fault_or_death_task_unit_backlink_mismatch"
+              },
+              {
+                "op": "fields_equal",
+                "args": [],
+                "field": "fault_or_death_attempt_id",
+                "other_field": "original_attempt_id",
+                "value": null,
+                "values": [],
+                "failure_reason": "fault_or_death_attempt_backlink_mismatch"
+              },
+              {
                 "op": "fields_equal",
                 "args": [],
                 "field": "replacement_task_unit_id",
@@ -1200,10 +1351,46 @@
                 "other_field": "original_attempt_ordinal",
                 "value": null,
                 "values": [],
-                "failure_reason": "replacement_not_next_ordinal"
+               "failure_reason": "replacement_not_next_ordinal"
+             },
+              {
+                "op": "fields_equal",
+                "args": [],
+                "field": "new_attempt_fault_or_death_id",
+                "other_field": "fault_or_death_id",
+                "value": null,
+                "values": [],
+                "failure_reason": "new_attempt_trigger_backlink_mismatch"
               },
               {
-                "op": "ordered_roles_exact",
+                "op": "fields_equal",
+                "args": [],
+                "field": "new_attempt_task_unit_id",
+                "other_field": "replacement_task_unit_id",
+                "value": null,
+                "values": [],
+                "failure_reason": "new_attempt_task_unit_backlink_mismatch"
+              },
+              {
+                "op": "fields_equal",
+                "args": [],
+                "field": "new_attempt_id",
+                "other_field": "replacement_attempt_id",
+                "value": null,
+                "values": [],
+                "failure_reason": "new_attempt_identity_backlink_mismatch"
+              },
+              {
+                "op": "fields_equal",
+                "args": [],
+                "field": "new_attempt_ordinal",
+                "other_field": "replacement_attempt_ordinal",
+                "value": null,
+                "values": [],
+                "failure_reason": "new_attempt_ordinal_backlink_mismatch"
+              },
+             {
+               "op": "ordered_roles_exact",
                 "args": [],
                 "field": "ordered_evidence_roles",
                 "other_field": null,
@@ -1215,9 +1402,7 @@
                   "raw_or_failure",
                   "provenance",
                   "usage",
-                  "model_record",
-                  "qualified_result",
-                  "original_task_unit_completed"
+                  "model_record"
                 ],
                 "failure_reason": "trace_replacement_evidence_chain_incomplete_or_out_of_order"
               }
@@ -15675,5 +15860,5 @@
     "composite_model_score"
   ],
   "renderer_only_derived_metrics_forbidden": true,
-  "contract_digest": "sha256:48882b8f97c54237654b6ebba9d22c290fa92b2b98b105ef567c57c674352929"
+  "contract_digest": "sha256:b72307e727e28f5233de934df28e1701cf46ffb711b99aa845ea6f8580694b0e"
 }

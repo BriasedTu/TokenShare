@@ -573,6 +573,8 @@ def _merge_predicate_facts(
         _assign_fact(facts, field, truth)
     elif op == "field_false":
         _assign_fact(facts, field, not truth)
+    elif op == "field_nonempty_string":
+        _assign_fact(facts, field, "identity" if truth else "")
     elif op in {"fields_equal", "fields_not_equal"}:
         should_equal = truth if op == "fields_equal" else not truth
         left = facts.get(field)
@@ -1355,12 +1357,19 @@ def test_exp3_replacement_success_and_recovery_source_are_identity_bound() -> No
     common = {
         "member_kind": "replacement_attempt",
         "recovery_source_kind": "validation_replacement",
+        "fault_or_death_id": "fault-1",
+        "fault_or_death_task_unit_id": "unit-1",
+        "fault_or_death_attempt_id": "attempt-1",
         "original_task_unit_id": "unit-1",
         "replacement_task_unit_id": "unit-1",
         "original_attempt_id": "attempt-1",
         "replacement_attempt_id": "attempt-2",
         "original_attempt_ordinal": 0,
         "replacement_attempt_ordinal": 1,
+        "new_attempt_fault_or_death_id": "fault-1",
+        "new_attempt_task_unit_id": "unit-1",
+        "new_attempt_id": "attempt-2",
+        "new_attempt_ordinal": 1,
         "replacement_result_qualified": True,
         "original_task_unit_completed": True,
         "replacement_result_task_unit_id": "unit-1",
@@ -2391,6 +2400,83 @@ def test_exp3_applicability_missing_evidence_blocks_and_worker_metrics_are_death
         ),
     )
     assert death.value == 1
+
+
+def test_exp3_retry_exhausted_replacement_counts_as_started_and_reassigned() -> None:
+    contract = load_paper_metric_contract()
+    retry_exhausted = {
+        "member_kind": "replacement_attempt",
+        "fault_or_death_id": "fault-1",
+        "fault_or_death_task_unit_id": "unit-1",
+        "fault_or_death_attempt_id": "attempt-1",
+        "original_task_unit_id": "unit-1",
+        "replacement_task_unit_id": "unit-1",
+        "original_attempt_id": "attempt-1",
+        "replacement_attempt_id": "attempt-2",
+        "original_attempt_ordinal": 0,
+        "replacement_attempt_ordinal": 1,
+        "new_attempt_fault_or_death_id": "fault-1",
+        "new_attempt_task_unit_id": "unit-1",
+        "new_attempt_id": "attempt-2",
+        "new_attempt_ordinal": 1,
+        "original_worker_id": "worker-1",
+        "replacement_worker_id": "worker-2",
+        "ordered_evidence_roles": (
+            "fault_or_death_event",
+            "new_attempt",
+            "provider_dispatch",
+            "raw_or_failure",
+            "provenance",
+            "usage",
+            "model_record",
+        ),
+        "replacement_result_qualified": False,
+        "original_task_unit_completed": False,
+    }
+    bundle = _bundle(member_facts={"retry-exhausted": retry_exhausted})
+
+    started = recompute_metric(
+        contract,
+        "exp3_trace_robustness",
+        "started_replacement_attempt_count",
+        row_kind="condition_observation",
+        bundle=bundle,
+    )
+    successful = recompute_metric(
+        contract,
+        "exp3_trace_robustness",
+        "successful_replacement_attempt_count",
+        row_kind="condition_observation",
+        bundle=bundle,
+    )
+    reassigned = recompute_metric(
+        contract,
+        "exp3_trace_robustness",
+        "reassignment_count",
+        row_kind="condition_observation",
+        bundle=bundle,
+    )
+
+    assert started.value == 1
+    assert successful.value == 0
+    assert reassigned.value == 1
+
+    mismatched = dict(retry_exhausted)
+    mismatched["new_attempt_fault_or_death_id"] = "fault-unrelated"
+    mismatched_bundle = _bundle(member_facts={"mismatched": mismatched})
+    for metric_id in (
+        "started_replacement_attempt_count",
+        "reassignment_count",
+    ):
+        result = recompute_metric(
+            contract,
+            "exp3_trace_robustness",
+            metric_id,
+            row_kind="condition_observation",
+            bundle=mismatched_bundle,
+        )
+        assert result.value == 0
+        assert result.excluded_member_ids == ("mismatched",)
 
 
 @pytest.mark.parametrize(
