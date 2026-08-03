@@ -4,19 +4,21 @@
 
 本文件只保存当前事实与最近验证。历史过程由 git history、`Doc/archive/` 和仓库外 `TokenShareData` 保留。
 
-## 2026-08-03 Task 27 accepted（当前权威状态）
+## 2026-08-04 Task 28 accepted（当前权威状态）
 
-- Task 27 bounded paper pipeline 已 accepted，代码提交=`b5f340f5`；Task 0–27 共 `28/35` accepted。分支仍为 `codex/feat-011-epd027-pipeline`，唯一工作树保持不变；正式矩阵仍为 **NO-GO**。
+- Task 28 execution/publication gate 已 accepted，严格四文件实现提交=`7338f177`（`feat(experiments): split execution and publication gates`）；Task 0–28 共 `29/35` accepted。分支仍为 `codex/feat-011-epd027-pipeline`，唯一工作树保持不变；正式矩阵仍为 **NO-GO**。
 - 实际提交边界为 27 个经 plan-out 批准的 code/test 文件并同步 `tokenshare_v1_code_map.md`。14 个命令统一委托既有正式服务；offline/provider、receipt/mode/admission/budget/secret 顺序 fail closed，external bank root 只作为进程内 resolver，两个 gate 命令在 Task 27 仅接 parser/service seam。
 - native Factor/Lean runner、canonical direct/protected replay、authoritative/metric-view identity、multi-entry/failed/resume/zero-dispatch fixed denominator、response-bank acquisition、primary `496` + ambiguous reacquisition `20`（hard `516`）ledger、online callback/provider failure/crash-reconcile 与 transient secret 生命周期已闭合；没有复制 `ProtocolEngine` 生命周期。
 - 最终 fresh canonical + network tripwire=`358 passed in 470.24s`；pipeline focused=`67 passed`；`py_compile` 与 `git diff --check` 通过。综合 reviewer 首轮仅余 `0C/1I`（正式磁盘预检的 `PaperInfrastructureBlockedError` 穿透统一 CLI），修复为单行 blocked JSON/exit `3` 后 follow-up=`PASS 0C/0I/0M`。
 - post-accept test minimization 由子智能体完成：不删除/合并测试，仅移除 `test_paper_online_checks.py` 两个未引用旧 transport 脚手架；最小验证=`6 passed in 35.97s`。provider/network calls=`0/0`，无经 Task 26 校验的真实 paid receipt；Fast/Full/LeanAudit 未运行。
-- 下一动作：直接进入 Task 28，只读预检计划 4 文件（新增 `paper_formal_gate.py`/test，修改 pipeline/test），再按 RED→GREEN 实施 execution gate 与 publication gate 的无循环两阶段 truth table；不得提前进入 Task 29 或调用真实 API。
+- Task 28 两次独立只读预检均为 READY/APPROVE：计划 4 文件 sufficient/minimal，无当前 PLAN_OUT。已在该边界内完成 receipt selected-experiment mapping 修正与 typed authority gate；execution 不依赖未来 L4/tables/post-bank，publication 调用公开 Exp2 projector，避免 legacy CLI import cycle；缺正式 receipt/L1–L4/bank/terminal 时稳定 BLOCKED，capability/facility 不升级 formal publication PASS。
+- Task 28 fresh canonical=`87 passed, 0 failed/error in 0.71s`；`py_compile`、import-cycle、`git diff --check`、trailing-whitespace、allowlist 均 exit `0`（合计 `4.97s`）。综合 follow-up review=`PASS`，Critical/Important=`0/0`，I1/I2/I3 全部关闭；post-accept test minimization=`0删除/0合并/0 unused helper`，零修改且无需复跑。
+- Task 28 现为 `accepted`，active writer=`0`；provider/network=`0/0`，无经 Task 26 校验的真实 paid receipt，正式矩阵保持 **NO-GO**。既有 Minor deferred 保留：facility execution predicate 细节；`run_paper_pipeline` gate stage 仍标 `offline_gate_parser_only`。下一动作仅由监督者只读 Task 29 段落并冻结，尚未进入 Task 29。
 
 ## 当前状态
 
 - Active feature：`feat-011`（Paper Real AI Experiments），状态仍为 `in-progress`。
-- EPD-027 实施计划共 35 个 Task，Task 0–27 已 accepted（`28/35`）。Task 27 bounded paper pipeline commit=`b5f340f5`；Task 28 execution/publication gate 为 `queued/next`。
+- EPD-027 实施计划共 35 个 Task，Task 0–28 已 accepted（`29/35`）。Task 28 execution/publication gate commit=`7338f177`；active writer=`0`，Task 29 尚未进入。
 - Task 22 canonical RED=`1 collection error in 0.47s`，初始 GREEN=`267 passed in 106.43s`。reviewer 首轮 BLOCK=`2 Critical/1 Important`；真实 `5 conditions × 100 roots` normal formal pressure=`1 passed in 1789.24s`，Task20/21 persisted closure=`7 passed`，Exp3 provenance/missingness=`5 passed`。
 - Task 22 external bank consumer 只持 opaque locator，500 个 distinct Factor roots exact-once 进入正常 runner/adapter/resolver/evidence/checkpoint，max live outcome≤1、resident adapter payload<5MiB；逐 condition terminal closure 与 provider/network/Lean=`0/0/0`。
 - Task 22 实际 Task20/21 publication/renderer artifacts 在 resume 时重算 identity/content digest 并对六类 mutation fail closed；Exp3 source acquisition/current attempt 分离，缺 root/object/role/entry 保持 denominator 并阻断 fallback/后续 dispatch。双 worker trace clock RED=`wall 3ms`→per-worker lane GREEN=`2 passed in 7.37s`；最终 canonical=`278 passed in 1927.45s`，reviewer PASS=`0/0/0`。

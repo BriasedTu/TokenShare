@@ -6,16 +6,18 @@
 
 1. 先完整阅读 `AGENTS.md` 与 `Doc/archive/design-history/2026-08-01-epd027-minimal-handoff.md`。
 2. 执行 `git status --short --branch` 与 `git log -3 --oneline`，确认 Task 27 代码提交=`b5f340f5`、正确分支和唯一工作树；只读复核状态，不得清理或覆盖。
-3. Task 0–27 已 accepted（`28/35`）；Task 28=`queued/next`。先预检计划 4 文件，再实施 formal execution/publication gate 两阶段 policy；不得进入 Task 29。
+3. Task 0–28 已 accepted（`29/35`）；Task 28=`accepted`，active writer=`0`。下一动作仅由监督者只读 Task 29 段落并冻结；尚未进入 Task 29。
 
-## 2026-08-03 Task 27 accepted / Task 28 next（当前权威交接）
+## 2026-08-04 Task 28 accepted（当前权威交接）
 
-- Task 27 已 accepted，代码提交=`b5f340f5`，提交边界为 27 个批准 code/test 文件 + code map。正式矩阵仍为 **NO-GO**；provider/network calls=`0/0`，没有用户提供且经 Task 26 校验的真实 paid receipt。
+- Task 28 已 accepted，严格四文件代码提交=`7338f177`（`feat(experiments): split execution and publication gates`）；Task 0–28 共 `29/35` accepted。正式矩阵仍为 **NO-GO**；provider/network calls=`0/0`，没有用户提供且经 Task 26 校验的真实 paid receipt。
 - 最终 fresh canonical + network tripwire=`358 passed in 470.24s`；pipeline focused=`67 passed`；`py_compile`/`diff-check` 通过。综合 reviewer 初轮=`0C/1I`，精确修复 `PaperInfrastructureBlockedError` 顶层映射后 follow-up=`PASS 0C/0I/0M`。
 - Task 27 已闭合 14 命令正式委托、双域 native runner/protected replay、multi-entry/failure fixed denominator、full-bank acquisition、`496+20<=516` ledger policy、online callback/provider failure/crash-reconcile、transient secret 顺序和 legacy v1/artifact layout 兼容；gate parser 已接线但 policy 明确属于 Task 28。
 - post-accept test minimization=`CHANGED`：没有删除/合并测试，仅删除 2 个未引用旧 transport helper；`test_paper_online_checks.py`=`6 passed in 35.97s`，provider/network=`0/0`。
-- Task 28 权威计划文件：新增 `src/tokenshare/experiments/paper_formal_gate.py`、`tests/experiments/test_paper_formal_gate.py`；修改 `src/tokenshare/experiments/run_paper_pipeline.py`、`tests/experiments/test_run_paper_pipeline.py`。execution gate 只消费运行前 L1/L2/authority/selected receipt-budget-inventory-output binding；publication gate 只在 terminal 后检查 eligibility、formal cell audit/determinism 与 Exp2 intersection/severe。
-- 下一任 Agent 第一个动作：只读预检 Task 28 四文件是否足以形成无循环两阶段 truth table；然后委派 writer 做计划内 RED tests。不得提前修改 Task 29 launchers，不得调用真实 provider/network。
+- Task 28 权威计划文件仅 4 个：新增 `src/tokenshare/experiments/paper_formal_gate.py`、`tests/experiments/test_paper_formal_gate.py`；修改 `src/tokenshare/experiments/run_paper_pipeline.py`、`tests/experiments/test_run_paper_pipeline.py`。两位只读子智能体均判定 sufficient/minimal，无 PLAN_OUT，实际提交严格符合该边界。
+- Task 28 fresh canonical=`87 passed, 0 failed/error in 0.71s`；`py_compile`、import-cycle、`git diff --check`、trailing-whitespace、allowlist 均 exit `0`（`4.97s`）。综合 follow-up review=`PASS`，Critical/Important=`0/0`，I1/I2/I3 均关闭；post-accept 测试最小化=`0删除/0合并/0 unused helper`，零修改、无需复跑。
+- 冻结约束已保持：只消费 typed authority，不铸造 marker、不读 secret；execution 不依赖未来 L4/tables/post-bank；publication 从 protected replay inputs 调用公开 Exp2 projector；缺正式 receipt/L1–L4/bank/terminal 时稳定 BLOCKED；capability/facility 不成为 formal publication PASS。既有 Minor deferred：facility execution predicate 细节；`run_paper_pipeline` gate stage 仍为 `offline_gate_parser_only`。
+- 下一动作仅由监督者只读 Task 29 段落并冻结；active writer=`0`，尚未进入 Task 29。不得调用 provider/network。
 - Task 27 普通任务验证按用户规则未运行 Fast/Full/LeanAudit；feature 完成/合并前仍须按 DoD 运行 Full，Lean 相关共享输入变化时追加分层 LeanAudit。
 
 ## 2026-08-02 EPD-027 实施交接（Task 26 accepted，历史快照）

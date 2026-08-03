@@ -1,4 +1,4 @@
-# EPD-027 最小交接摘要（2026-08-03）
+# EPD-027 最小交接摘要（2026-08-04）
 
 > 本文件是覆盖式、可恢复的当前状态。历史 accepted 过程由 git history 保留；不要重新读取旧监督任务、session JSONL、子智能体对话或完整测试日志。
 
@@ -6,13 +6,13 @@
 
 - 唯一工作树：`C:\Users\32133\.config\superpowers\worktrees\TokenShare\codex-feat-011-epd027-pipeline`。
 - 分支：`codex/feat-011-epd027-pipeline`。
-- Task 27 代码提交：`b5f340f5`（状态同步提交位于其后）。
+- Task 28 代码提交：`7338f177`（`feat(experiments): split execution and publication gates`；状态同步提交位于其后）。
 - Active feature：`feat-011`，仍为 `in-progress`。
-- Task 0–27 已 accepted（`28/35`）；Task 28 为 `queued/next`。
+- Task 0–28 已 accepted（`29/35`）；Task 28 为 `accepted`，active writer=`0`。
 - 不得重做 Task 0–27；不得提前进入 Task 29。
 - 正式实验矩阵保持 **NO-GO**。
 - Task 26 只完成 paid-receipt validator；当前没有用户提供且经校验的真实 paid receipt。
-- Task 27 provider/network calls=`0/0`；fresh canonical + network tripwire=`358 passed in 470.24s`，final reviewer=`PASS 0C/0I/0M`，post-min=`CHANGED`（只删 2 个未引用测试脚手架，`6 passed in 35.97s`）。Fast/Full/LeanAudit 未运行。
+- Task 28 provider/network calls=`0/0`；fresh canonical=`87 passed, 0 failed/error in 0.71s`，`py_compile`/import-cycle/diff/trailing-whitespace/allowlist 均 exit `0`（`4.97s`），follow-up reviewer=`PASS 0C/0I`（I1/I2/I3 closed），post-min=`0删除/0合并/0 unused helper`且零修改、无需复跑。Fast/Full/LeanAudit 未运行。
 
 ## Task 27 已接受边界
 
@@ -20,6 +20,13 @@
 - 已闭合 14 command production binding、native Factor/Lean runner/protected replay、authoritative/metric-view identity、multi-entry/failed/resume/zero-dispatch fixed denominator、response-bank acquisition、`496+20<=516` ledger、online callback/provider failure/crash-reconcile 与 transient secret 生命周期。
 - 最终综合 reviewer 初轮仅余 `0C/1I`：正式磁盘预检的 `PaperInfrastructureBlockedError` 会穿透统一 CLI。精确捕获后输出单行 blocked JSON/exit `3`，follow-up PASS；非领域异常未被吞掉。
 - Task 27 两个 gate subcommand 仅完成 parser/service wiring；execution/publication policy 严格留给 Task 28。
+
+## Task 28 accepted
+
+- 硬边界只有 4 文件：新增 `src/tokenshare/experiments/paper_formal_gate.py`、`tests/experiments/test_paper_formal_gate.py`；修改 `src/tokenshare/experiments/run_paper_pipeline.py`、`tests/experiments/test_run_paper_pipeline.py`。两次独立只读预检均判定 sufficient/minimal，无 PLAN_OUT，实际提交严格符合该边界。
+- Task 28 已完成 receipt selected-experiment scope mapping 修复与 typed gate policy/pipeline 接线。fresh canonical=`87 passed, 0 failed/error in 0.71s`；非测试检查（`py_compile`、import-cycle、diff、trailing-whitespace、allowlist）全部 exit `0`（`4.97s`）；follow-up review=`PASS 0C/0I`，I1/I2/I3 closed。
+- 冻结约束保持：gate 只消费 typed authority，不铸造 marker、不读 secret；execution gate 不依赖未来 L4/tables/post-bank；publication gate 从 protected replay inputs 调用公开 Exp2 projector；缺正式 receipt/L1–L4/bank/terminal 时稳定 BLOCKED；capability/facility 不升级 formal publication PASS。既有 Minor deferred 为 facility execution predicate 细节，以及 `run_paper_pipeline` gate stage 仍标 `offline_gate_parser_only`。
+- post-accept test minimization=`0删除/0合并/0 unused helper`，零修改且无需复跑。remaining active writers=`0`；provider/network calls=`0/0`；无经 Task 26 校验的真实 paid receipt，正式矩阵维持 **NO-GO**。下一动作仅由监督者只读 Task 29 段落并冻结，尚未进入 Task 29。
 
 ### Task 27 第七文件计划外批准（PLAN_OUT_APPROVAL，2026-08-03）
 
@@ -163,7 +170,7 @@
 - Task 27 已完成并提交为 `b5f340f5`。最终修改后 fresh canonical + network tripwire=`358 passed in 470.24s`；pipeline focused=`67 passed`；`py_compile`、`git diff --check` 通过。
 - final reviewer=`PASS 0C/0I/0M`；原始 `2C/4I`、后续兼容/online callback 问题与最后 CLI blocked-domain I1 均关闭。
 - post-accept test minimization 由子智能体完成：0 测试删除、0 合并，只删除 2 个未引用旧 transport helper；最小测试=`6 passed in 35.97s`。
-- Task 28 尚未实施：计划新增 `paper_formal_gate.py`/test并修改 pipeline/test，分离 pre-run formal execution gate 与 post-terminal paper publication gate。
+- Task 28 已完成并提交为 `7338f177`；fresh canonical=`87 passed, 0 failed/error in 0.71s`，follow-up reviewer=`PASS 0C/0I`，post-min 无修改；当前状态为 accepted。
 
 ## 不可破坏边界
 
@@ -175,4 +182,4 @@
 
 ## 下一任 Agent 的第一个精确动作
 
-只读确认工作树/分支和 Task 27 提交 `b5f340f5`，然后预检 Task 28 计划 4 文件是否足以实现无循环两阶段 truth table。预检通过后委派 writer 先写 10 个计划 RED tests；若严格必要性要求计划外文件，必须先记录精确 plan-out。禁止重做 Task 0–27、提前进入 Task 29 或调用真实 provider/network。
+只读确认工作树/分支与 Task 28 两个提交；active writer=`0`。下一动作仅由监督者只读 Task 29 段落并冻结，尚未进入 Task 29。禁止重做 Task 0–28 或调用真实 provider/network。
