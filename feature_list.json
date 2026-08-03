@@ -5,7 +5,7 @@
   "active_feature": "feat-011",
   "active_focus": {
     "id": "paper-metric-contract-trace-bank-and-traceability-plan",
-    "summary": "EPD-027 严格串行实施为 25/35 accepted：Task 0–24 已 accepted；Task 25 online-check planning/evidence contract 为 queued/next。",
+    "summary": "EPD-027 严格串行实施为 26/35 accepted：Task 0–25 已 accepted；Task 26 paid-receipt validator 为 queued/next（仅离线 synthetic tests，无真实授权）。",
     "status": "in_progress",
     "scope": [
       "Experiment 1–5 论文指标、固定分母与 missingness 口径",
@@ -17,12 +17,12 @@
       "完整实施顺序、测试、离线重放与真实 smoke/正式矩阵门禁"
     ],
     "out_of_scope": [
-      "Task 25 accepted 前进入 Task 26 paid-receipt validation",
+      "Task 26 accepted 前进入 Task 27 real-dispatch CLI wiring",
       "重新运行真实付费 API 实验",
       "修改由其他工作调整中的 Experiment 3 正式规模",
       "人为注入攻击与安全工程"
     ],
-    "next_action": "使用已完成的 Task 25 只读预检启动单一实现 Agent，严格修改/创建计划四文件，只实现capability/Exp2/Exp3 online-check纯计划与evidence producer contract；不得进入Task26或调用真实API。"
+    "next_action": "使用已完成的 Task 26 只读预检启动单一实现 Agent，严格创建计划两个文件，只实现离线receipt/marker/scope validator及14个synthetic tests；不得mint receipt、进入Task27或调用真实API。"
   },
   "authorities": {
     "agent_start": "AGENTS.md",
@@ -201,9 +201,11 @@
         "Task 23 accepted commit 8c1d7ccc：严格12文件（原计划10+监督者按严格必要性批准2）；canonical RED exit2/1 collection error/0.27s，初始GREEN 8 passed/4.37s；reviewer BLOCK 2 Critical/1 Important，批准central merge projection后direct suite 23 passed，follow-up BLOCK 1 Critical/1 Important，manifest/commitment RED 16 cases中12 failed→16 passed；最终central 39 passed/23.21s、Task23 8 passed/6.55s，reviewer PASS 0/0/0；子智能体test minimization CHANGED后两文件46 passed/25.13s；24-file positive与2484-file negative source trees不变，fixture最小脱敏，regression_only/paper_eligible=false，provider/network0；Fast/Full/LeanAudit未运行",
         "Task 24 只读预检 READY：计划新建paper_traceability.py/test并修改paper_formal_runner.py、paper_formal_report.py及其tests，共6文件，无严格必要的计划外production；两次deterministic replay必须得到相同observations/tables/cell-lineage digests，provider/network0",
         "Task 24 accepted commit 8863e8b3：严格6个计划文件；canonical RED 1 collection error/0.67s，初始GREEN 137 passed/126.11s；reviewer首轮BLOCK 1 Critical/2 Important，persisted-root RED 9 failed/14.04s→17 passed/36.67s，canonical 146 passed/140.19s；follow-up BLOCK 0 Critical/2 Important，atomic/contamination RED 2 failed+1 passed→3 passed，最终canonical 149 passed/151.15s；protected fresh L4、三digest独立重算、canonical order、atomic renderer+lineage/report generation与exact formal-evidence closure闭合；reviewer PASS 0/0/0；子智能体test minimization CHANGED后traceability 17 passed/34.04s；provider/network/source-writes/online-fill0；Fast/Full/LeanAudit未运行",
-        "Task 25 只读预检 READY：计划新建paper_online_checks.py/test并修改paper_formal_callbacks.py及其test，共4文件，无严格必要的计划外production；仅pure plan+evidence producer，capability4 calls、Exp2 24 refs/480 upper、Exp3 2 roots/12 upper，synthetic tests且provider/network0"
+        "Task 25 只读预检 READY：计划新建paper_online_checks.py/test并修改paper_formal_callbacks.py及其test，共4文件，无严格必要的计划外production；仅pure plan+evidence producer，capability4 calls、Exp2 24 refs/480 upper、Exp3 2 roots/12 upper，synthetic tests且provider/network0",
+        "Task 25 accepted commit c7db1948：严格4个计划文件；RED semantic exit2/2 collection errors/0.38s，初始GREEN 28 passed/12.65s；reviewer首轮BLOCK 1 Critical/2 Important，官方callback/typed objects/authority绑定修复后28 passed/28.34s；follow-up BLOCK 1 Critical/1 Important，Factor verifier/Lean checker rejection+requeue/new attempt与Exp3 fault/death identity闭合，最终canonical 29 passed/37.64s；reviewer PASS 0/0/0；子智能体test minimization CHANGED后29 passed/36.34s；capability4、Exp2 24/480、Exp3 2/12与max concurrent roots1冻结；provider/network0，无receipt；Fast/Full/LeanAudit未运行",
+        "Task 26 只读预检 READY：计划新建paper_paid_authorization.py及test，共2文件，无计划外production；14个synthetic receipt-shaped tests可完全离线完成，validator无mint命令，receipt与allow-provider-calls缺一不可；真实用户receipt仅供后续Task27/33精确scope解锁"
       ],
-      "next_action": "Task 0–24 accepted count=25/35；Task 25 queued/next。只实施online-check plan/evidence四文件，不得进入Task26或调用真实API。"
+      "next_action": "Task 0–25 accepted count=26/35；Task 26 queued/next。只实施离线paid-authorization validator两文件，不得进入Task27、mint receipt或调用真实API。"
     }
   ]
 }
