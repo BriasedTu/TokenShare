@@ -5,7 +5,7 @@
   "active_feature": "feat-011",
   "active_focus": {
     "id": "paper-metric-contract-trace-bank-and-traceability-plan",
-    "summary": "EPD-027 为 29/35 accepted：Task 0–28 已 accepted；Task 28 execution/publication gate policy 已按严格四文件边界完成并验收；仍无经校验的真实 paid receipt。",
+    "summary": "EPD-027 为 30/35 accepted：Task 0–29 已 accepted；Task 29 legacy smoke launcher supersession 已按 21 文件与 10 项批准 plan-out 完成并验收；仍无经校验的真实 paid receipt。",
     "status": "accepted_handoff",
     "scope": [
       "Experiment 1–5 论文指标、固定分母与 missingness 口径",
@@ -17,12 +17,12 @@
       "完整实施顺序、测试、离线重放与真实 smoke/正式矩阵门禁"
     ],
     "out_of_scope": [
-      "未经监督者只读冻结 Task 29 段落即进入 Task 29 launcher supersession",
+      "未经监督者只读冻结 Task 30 单段即进入 Task 30",
       "重新运行真实付费 API 实验",
       "修改由其他工作调整中的 Experiment 3 正式规模",
       "人为注入攻击与安全工程"
     ],
-    "next_action": "Task 28 已 accepted，active writer=0；下一动作仅由监督者只读 Task 29 段落并冻结，尚未进入 Task 29；不得调用真实 API。"
+    "next_action": "Task 29 已 accepted（implementation `555d9f3d0cb808b419ecbecfc59e37b2d1ace62d`）；active writer=0。下一动作仅由监督者只读 Task 30 单段并冻结，尚未进入 Task 30；不得调用真实 API。90 分钟 checkpoint 仅保留为历史。"
   },
   "authorities": {
     "agent_start": "AGENTS.md",

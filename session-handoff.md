@@ -148,3 +148,11 @@
 - Exp5 identity fail-stop 的 raw checkpoint placeholder 使用 `attempt_status=not_started`；当前 metrics/replay 直接消费并有回归覆盖，未来若引入严格 `PaperAttemptStatus` 反序列化需先版本化该状态。
 - PowerShell helper 在 runner 已退出但后代长期持有继承管道写端时仍可能等待 EOF；正常实时日志脱敏、受控退出和精确退出码路径已通过。该项为 P2，不得写成已修复。
 - 审计输出保存在仓库外 `E:\TokenEcnomic\TokenShareData` 的 `_identity_probe_*`、`_exp5_formal_preflight_no_bundle_20260731*` 与 `_audit_exp34_p0core_plan_20260731_a`；均不是论文 evidence。
+## 2026-08-04 EPD-027 Task 29 accepted handoff
+
+- 当前：Task 0–29 accepted（`30/35`），active writer=`0` / accepted；90 分钟 checkpoint 为历史，不是当前 writer 授权。
+- Task 29 implementation commit：`555d9f3d0cb808b419ecbecfc59e37b2d1ace62d`，信息为 `feat(experiments): replace legacy smoke launchers`。实现严格限定为 21 个批准文件及 10 个已批准 plan-out。
+- 已审定而未在本交接复跑的 GREEN：canonical `49 passed`；pipeline affected `9`；CLI affected `3`；core runner/observation/gate `204`；official closure `3`（complete CNY ready；USD/missing usage blocked）；observation `17`；complete-CNY `1`；runner `158`；PS parse `9/9`、false/secret/unlimited、imports、pycompile、diff、allowlist 通过。review 为 `0C/0I`；历史 `3C/2I`、false-switch、Exp5 zero-role 已关闭；post-accept minimization `0` 修改/删除/合并。
+- provider/network=`0/0`。正式 paper matrix 仍 `NO-GO`：没有 Task26 verified paid receipt，不得发起真实 API。
+- deferred Minor（不在 Task29 范围内）：Task28 facility predicate、`offline_gate_parser_only`、Task29 trace 顶层 result/wrapper 未暴露两份 receipt digest。code map 未改，登记为 milestone follow-up（Task 硬边界）。
+- 下一任只允许监督者只读并冻结 Task30 单段；不要阅读或实施 Task30，更不得把它与 Task29 混合。

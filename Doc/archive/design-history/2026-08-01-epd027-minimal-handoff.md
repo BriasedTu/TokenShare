@@ -183,3 +183,12 @@
 ## 下一任 Agent 的第一个精确动作
 
 只读确认工作树/分支与 Task 28 两个提交；active writer=`0`。下一动作仅由监督者只读 Task 29 段落并冻结，尚未进入 Task 29。禁止重做 Task 0–28 或调用真实 provider/network。
+## 2026-08-04 Task 29 acceptance addendum
+
+EPD-027 的 Task 0–29 已 accepted（`30/35`）。Task 29 实现提交为 `555d9f3d0cb808b419ecbecfc59e37b2d1ace62d`（`feat(experiments): replace legacy smoke launchers`），严格使用 21 个批准文件和 10 项批准 plan-out。
+
+已审定的离线 GREEN 证据为：canonical `49 passed`、pipeline affected `9`、CLI affected `3`、core runner+observation+gate `204`、official closure `3`（complete CNY ready，USD/missing usage blocked）、observation `17`、complete-CNY 正例 `1`、runner `158`；PS parse `9/9`、false/secret/unlimited、imports、pycompile、diff、allowlist 均通过。最终 review 为 `0 Critical/0 Important`，历史 `3C/2I`、false-switch 与 Exp5 zero-role 均已关闭。post-accept minimization 没有修改、删除或合并，验收时未重跑测试。
+
+provider/network=`0/0`。没有 Task26 verified paid receipt，formal paper matrix 继续 `NO-GO`，不得真实 API。三个 deferred Minor 是 Task28 facility predicate、`offline_gate_parser_only`、以及 Task29 trace 顶层 result/wrapper 未暴露两份 receipt digest。
+
+90 分钟 checkpoint 仅为历史；当前 active writer=`0` / accepted。下一动作仅为监督者只读 Task30 单段并冻结，尚未进入或实施 Task30。code map 依 Task 硬边界未修改，并登记为 milestone follow-up。

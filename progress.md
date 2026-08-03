@@ -4,6 +4,15 @@
 
 本文件只保存当前事实与最近验证。历史过程由 git history、`Doc/archive/` 和仓库外 `TokenShareData` 保留。
 
+## 2026-08-04 Task 29 监督检查点（90 分钟）
+
+- Task 28 维持 accepted，EPD-027 Task 0–28 共 `29/35` accepted；Task 29 为 `in_progress` / **NO-GO**，尚未 accepted。当前 active writer=`0`。
+- 已完成 11 文件 launcher/测试实现；第 4 次明确 `PLAN_OUT` 已批准新增 `paper_formal_runner.py`、`paper_metric_observations.py` 及对应两个测试文件。四次 `PLAN_OUT` 累计增加 10 个批准文件，当前实现 allowlist/diff 严格为 21 个文件，未发现未经批准文件。provider/network calls=`0/0`，无经验证的 paid receipt，正式矩阵仍为 **NO-GO**。
+- 现有多组 GREEN 仅作为局部验证，尚不足以关闭复审：gate=`18`、trace=`3`、pipeline formal=`7`、producer=`4`、Task29 canonical=`49 passed`。
+- 审查仍有 `3 Critical / 2 Important`：trace/online eligibility 被错误聚合为单一 source class；official online eligibility facts 缺失且 online evaluator 的 `source_manifest_complete=false`；subset official report 仍无法生成 8 张表却 gate 要求相关全局字段；per-scope self-declared authority 未回绑 selection authority；缺少 selected-table `publish_blocked` audit。此前 false-switch Important 已关闭；receipt plumbing 的结构性部分已关闭。
+- 最新根因已定位：runner typed view 漏投影 persisted terminal/CNY；observation validator 错用 attempt ID 校验 run-scoped 8-role snapshot。本轮明确不修改 model/metric contract、Lean adapter 或 renderer。
+- 下一步必须由 fresh ultra 进行只读架构调查，禁止继续局部 patch；预计还需约 110 分钟。不得把上述测试计数或已有 GREEN 解释为 review closed、Task 29 accepted 或 formal matrix GO。
+
 ## 2026-08-04 Task 28 accepted（当前权威状态）
 
 - Task 28 execution/publication gate 已 accepted，严格四文件实现提交=`7338f177`（`feat(experiments): split execution and publication gates`）；Task 0–28 共 `29/35` accepted。分支仍为 `codex/feat-011-epd027-pipeline`，唯一工作树保持不变；正式矩阵仍为 **NO-GO**。
@@ -146,3 +155,12 @@
 - EPD-027 Task 0–20 已 accepted；standalone Exp1–5 projectors、contract-bound registry/formal metric drafts、versioned evidence classification、normal formal runner lifecycle 与 per-cell lineage observations 已实现，但 renderer/replay 的正式 pipeline 接线仍未实现。旧 Exp3/4 11-root 与 Exp5 8-root smoke 仍暂停；未获经 Task 26 校验的 paid receipt 不得运行在线并发/恢复检查。
 - Task 13 production/tests 已独立提交为 `3f8d4ec2284d472896b706a3d94112f81be7e7c2`；Task 14 为未提交的暂停交接状态。本轮不 push、不 merge、不创建 PR。
 - 本轮暂停状态持久化未联网、未调用 provider，未引入外部资料；仅更新 minimal handoff、`progress.md`、`feature_list.json` 与 `session-handoff.md`，不改 code map；未运行测试/Fast/Full/LeanAudit，Full intentionally not run per user；无 paid receipt，provider/network calls=`0`，不 stage/commit。
+## 2026-08-04 EPD-027 Task 29 验收与交接
+
+- EPD-027 现为 Task 0–29 accepted，共 `30/35`；Task 29 已 accepted。实现提交：`555d9f3d0cb808b419ecbecfc59e37b2d1ace62d`（`feat(experiments): replace legacy smoke launchers`）；验收状态提交另行记录。
+- Task 29 实现严格为 21 个批准文件，并落实 10 项批准的 plan-out；范围为替换 legacy smoke launchers，不含 production/test/launcher 之外的未批准改动。
+- 已审定 GREEN 证据（本验收未复跑）：Task29 canonical `49 passed`；pipeline affected `9`；CLI affected `3`；core runner+observation+gate `204`；official closure `3`（complete CNY ready，USD/missing usage blocked）；observation `17`；complete-CNY 正例 `1`；runner `158`。PowerShell parse `9/9`、false/secret/unlimited、imports、pycompile、diff、allowlist 均通过。
+- 最终 reviewer 为 `0 Critical / 0 Important`；此前 `3C/2I`、false-switch 与 Exp5 zero-role 均已关闭。post-accept minimization 为 `0` 修改、`0` 删除、`0` 合并；本验收未运行测试。
+- provider/network 调用为 `0/0`；无 verified paid receipt，正式论文矩阵仍为 `NO-GO`，不得调用真实 API。
+- deferred Minor：Task28 facility predicate、`offline_gate_parser_only`、Task29 trace 顶层 result/wrapper 不暴露两份 receipt digest。
+- 90 分钟 checkpoint 仅保留历史记录；当前 active writer=`0` / accepted。下一动作只允许监督者只读 Task30 单段并冻结，尚未进入 Task30。code map 因 Task 硬边界未改，作为 milestone follow-up 登记。
