@@ -176,6 +176,7 @@ Secret 只能进入当前进程环境和脱敏后的 transport；event/artifact/
 | `paper_metrics.py` | evidence-derived 通用统计与 integrity validation。 |
 | `paper_formal_metrics.py` | Task 17 正式 Exp1–5 metric draft 发布路径；Task 20 内部构造 protected canonical lineage inputs、捕获真实 evaluator traces、join persisted source index，并原子发布 `paper_lineage_source_index.v1.jsonl`、`paper_metric_observations.v1.jsonl` 与 manifest；不保留旧公式或 renderer 派生。 |
 | `paper_metric_observations.py` | Task 20 每 numeric cell 唯一 lineage materializer：按 row/cell digest 精确 join，保存公式/value/numerator/fixed denominator membership/excluded-null-blocked reasons，并逐 current execution 或 source entry 校验 typed roles；non-null 由既有 evaluator独立复算，缺 role 时 cell null/table blocked。 |
+| `paper_traceability.py` | Task 24 deterministic traceability replay：仅接受 runner 生成的 protected persisted L4 descriptor，按 v2 manifest/CURRENT/generation/typed artifact-index exact closure fresh reload direct/current/source，复用 registry→materializer→renderer 独立重算 observations/tables/cell-lineage digests；derived inputs fail closed，输出与 report 共用 atomic generation，provider/source writes=0。 |
 | `paper_report.py`、`paper_formal_report.py`、`paper_smoke_report.py` | 通用/正式/smoke 输出；Task 21 正式 report 只接受持久化 Task20 lineage/source-index/observation/manifest/digest 闭包，验证 exact 8 table completeness 后发布 renderer/result/eligibility/secret-audit refs；smoke 永远 paper-ineligible。 |
 | `paper_exp5_artifacts.py`、`paper_exp5_model_comparison.py`、`paper_exp5_statistics.py` | Task 21 contract-only CSV/TEX renderer 位于 `paper_exp5_artifacts.py`：从 typed observations 生成 exact 8 CSV 与同 stem TEX、audit JSONL/manifest，保留 null/denominator/reason，整批 stage/promote/rollback；旧 pairwise/ranking/recovery/Markdown/PDF 输出已退役。其余为历史 Exp5 比较/统计 helper。 |
 | `paper_budget.py` | plan-only roots/units/attempt/token/cost/time/space 预算与门禁；Task 6 把完整 bank inventory 写入预算投影，Task 7 增加 provider-writing 硬预算 limits 与禁止 unlimited mode 的入口门禁。 |
@@ -187,17 +188,17 @@ Secret 只能进入当前进程环境和脱敏后的 transport；event/artifact/
 
 ### EPD-027 实施进度与后续实验设施改造
 
-2026-08-01 已冻结 Experiment 2–4 两阶段真实回答库设计。当前 35 个实施 Task 中 Task 0–23 已 accepted。Task 23 historical real fixture commit=`8c1d7ccc`；最终 central=`39 passed in 23.21s`、Task23 canonical=`8 passed in 6.55s`，final reviewer PASS=`0/0/0`，子智能体 test minimization=`CHANGED` 后两测试 `46 passed in 25.13s`，provider/network calls=`0`，无 paid receipt。这个 `24/35` 状态不代表整条 paper pipeline 已实现：Task 24 queued/next，deterministic traceability replay 尚未完成；正式矩阵保持 **NO-GO**。Task 23 验收未运行 Fast/Full/LeanAudit/network/provider。
+2026-08-01 已冻结 Experiment 2–4 两阶段真实回答库设计。当前 35 个实施 Task 中 Task 0–24 已 accepted。Task 24 deterministic traceability replay commit=`8863e8b3`；最终 canonical=`149 passed in 151.15s`，final reviewer PASS=`0/0/0`，子智能体 test minimization=`CHANGED` 后 traceability `17 passed in 34.04s`，provider/network/source-write/fill=`0`，无 paid receipt。这个 `25/35` 状态不代表整条 paper pipeline 已实现：Task 25 queued/next，online-check plan/evidence 尚未完成；正式矩阵保持 **NO-GO**。Task 24 验收未运行 Fast/Full/LeanAudit/network/provider。
 
 后续完整实施计划必须同时覆盖：
 
-- Task 24 及后续 deterministic traceability replay，保持 Task21 contract-only CSV/TEX/JSON、Task22 resume observation ABI 与 Task23 source hashes稳定；
+- Task 25 及后续 online-check/paid-readiness，保持 Task21 outputs、Task22 resume ABI、Task23 source hashes 与 Task24 deterministic replay digests稳定；
 - `online_real_provider` 与 `real_model_trace_protocol_run` 两类 paper eligibility，禁止把 trace consumption 冒充当前 provider call；
 - acquisition actual spend 与 per-condition trace attribution 两套资源账，以及 calls/tokens/CNY/in-flight 人民币 1,000 硬门；
 - Experiment 2 缩小题集六 worker 档在线并发检查、Experiment 3 小型在线恢复检查；
 - metrics/report/renderer/replay/audit 与 smoke/canary 身份迁移。
 
-这是一项跨 `tokenshare.executors`、`tokenshare.experiments`、两插件 runtime adapter 和输出 schema 的全面设施修改，不得在 `paper_formal_runner.py` 内临时塞入读取文件的旁路，也不得复制一套协议生命周期。已接受的 ledger/hook/direct-result、immutable bank、semantic inventory/preflight、deterministic logical scheduler、parent-owned trace delivery commit ABI、Task 11 trace-backed executor / dual provenance、Task 12–16 Exp1–5 projectors、Task 17 registry/formal metrics、Task 18 eligibility、Task 19 normal formal lifecycle、Task 20 cell lineage、Task 21 contract-only renderer、Task 22 external-bank streaming 与 Task 23 historical regression 均不改变 `ProtocolEngine` 状态机；deterministic traceability replay 属于后续 Task。后续继续先建 characterization/RED tests，并以唯一权威实验设计 EPD-027 为准。
+这是一项跨 `tokenshare.executors`、`tokenshare.experiments`、两插件 runtime adapter 和输出 schema 的全面设施修改，不得在 `paper_formal_runner.py` 内临时塞入读取文件的旁路，也不得复制一套协议生命周期。已接受的 ledger/hook/direct-result、immutable bank、semantic inventory/preflight、deterministic logical scheduler、parent-owned trace delivery commit ABI、Task 11 trace-backed executor / dual provenance、Task 12–16 Exp1–5 projectors、Task 17 registry/formal metrics、Task 18 eligibility、Task 19 normal formal lifecycle、Task 20 cell lineage、Task 21 contract-only renderer、Task 22 external-bank streaming、Task 23 historical regression 与 Task 24 traceability replay 均不改变 `ProtocolEngine` 状态机；online-check/paid-readiness 属于后续 Task。后续继续先建 characterization/RED tests，并以唯一权威实验设计 EPD-027 为准。
 
 指标不得使用固定协议时间、自填成功字段或丢失失败/未开始分母；所有汇总必须能回到逐 task/attempt/event/artifact。
 
