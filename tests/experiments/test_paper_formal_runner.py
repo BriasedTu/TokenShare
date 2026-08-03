@@ -2957,6 +2957,171 @@ def test_formal_runner_hard_limit_blocks_second_root_and_resume_keeps_first_root
     assert adapter_calls == ["case-1"]
 
 
+def _two_not_started_direct_rows(tmp_path: Path):
+    config = _ai_config()
+    plan = _two_case_dispatch_plan(tmp_path, config=config)
+    catalog = {
+        "catalog_digest": CATALOG_DIGEST,
+        "factorization_cases": (
+            {"case_id": "case-1", "expected_ai_unit_count": 1},
+            {"case_id": "case-2", "expected_ai_unit_count": 1},
+        ),
+        "lean_cases": (),
+        "lean_lemma_graph_cases": (),
+    }
+    collector = formal_runner._build_canonical_direct_collector(
+        bound_plans=((plan, plan.bound_items()),),
+        catalog_manifest=catalog,
+        normalized_root_filter={},
+        evidence_class="online_real_provider",
+    )
+    return formal_runner.project_paper_direct_results(
+        root_inventory_manifest=collector.inventory,
+        condition_manifests=collector.condition_manifests,
+        catalog_manifests=collector.catalog_manifests,
+        canonical_runtime_evidence=(),
+    ).rows
+
+
+@pytest.mark.parametrize("invalid_kind", ("empty", "duck", "subclass", "failed", "mixed"))
+def test_empty_runtime_requires_exact_all_not_started_direct_rows(
+    tmp_path: Path,
+    invalid_kind: str,
+) -> None:
+    import copy
+
+    from tokenshare.experiments.paper_direct_results import PaperDirectRootResult
+    from tokenshare.experiments.paper_traceability import TraceabilityBlockedError
+
+    first, second = _two_not_started_direct_rows(tmp_path / "inventory")
+    if invalid_kind == "empty":
+        direct = {"probe": ()}
+    elif invalid_kind == "duck":
+        duck = SimpleNamespace(**second.to_dict())
+        direct = {"probe": (first, duck)}
+    elif invalid_kind == "subclass":
+        class DirectSubclass(PaperDirectRootResult):
+            pass
+
+        subclass = object.__new__(DirectSubclass)
+        subclass.__dict__.update(first.__dict__)
+        direct = {"probe": (subclass,)}
+    elif invalid_kind == "failed":
+        failed = copy.copy(first)
+        object.__setattr__(failed, "root_status", "failed")
+        direct = {"probe": (failed,)}
+    else:
+        failed = copy.copy(second)
+        object.__setattr__(failed, "root_status", "failed")
+        direct = {"probe": (first, failed)}
+
+    replay_root = tmp_path / f"invalid-{invalid_kind}"
+    with pytest.raises(
+        TraceabilityBlockedError,
+        match="requires persisted canonical runtime evidence",
+    ):
+        formal_runner.persist_paper_traceability_replay_input_root(
+            replay_input_root=replay_root,
+            canonical_direct_rows=direct,
+            canonical_runtime_evidence=(),
+        )
+    assert not replay_root.exists()
+
+
+def test_empty_runtime_all_not_started_rows_reaches_later_closure_validation(
+    tmp_path: Path,
+) -> None:
+    from tokenshare.experiments.paper_traceability import TraceabilityBlockedError
+
+    rows = _two_not_started_direct_rows(tmp_path / "inventory")
+
+    with pytest.raises(
+        TraceabilityBlockedError,
+        match="requires persisted current formal evidence",
+    ):
+        formal_runner.persist_paper_traceability_replay_input_root(
+            replay_input_root=tmp_path / "missing-formal-evidence",
+            canonical_direct_rows={"probe": rows},
+            canonical_runtime_evidence=(),
+        )
+
+
+def test_zero_dispatch_hard_limit_closes_full_not_started_direct_inventory(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = _ai_config()
+    plan = _two_case_dispatch_plan(tmp_path, config=config)
+    adapter_calls: list[str] = []
+
+    class CallbackModule:
+        def expand_conditions(self, context):
+            raise AssertionError("formal execution consumes the frozen plan")
+
+        def freeze_case_selections(self, context, conditions):
+            return FrozenCaseSelectionBatch(())
+
+        def run_condition(self, context, condition, selection):
+            return context.execution_callback(
+                context=context,
+                condition=condition,
+                selection=selection,
+            )
+
+        def summarize(self, evidence):
+            return ExperimentSummaryRows(experiment_id=EXPERIMENT_ID, rows=())
+
+    def unexpected_case_dispatch(**kwargs):
+        adapter_calls.append(kwargs["case"]["case_id"])
+        raise AssertionError("zero hard limit must block before adapter dispatch")
+
+    monkeypatch.setitem(
+        formal_runner.dispatch_paper_condition.__globals__,
+        "_MODULES",
+        ((EXPERIMENT_ID, CallbackModule()),),
+    )
+    monkeypatch.setattr(
+        formal_runner,
+        "dispatch_paper_case",
+        unexpected_case_dispatch,
+    )
+    kwargs = {
+        **_formal_execution_kwargs(tmp_path=tmp_path, config=config, plan=plan),
+        "catalog_manifest": {
+            "catalog_digest": CATALOG_DIGEST,
+            "factorization_cases": (
+                {"case_id": "case-1", "expected_ai_unit_count": 1},
+                {"case_id": "case-2", "expected_ai_unit_count": 1},
+            ),
+            "lean_cases": (),
+            "lean_lemma_graph_cases": (),
+        },
+        "budget": _budget(
+            planned_conditions=1,
+            planned_root_runs=2,
+            planned_ai_units=2,
+        ),
+        "real_transport": True,
+        "hard_limits": {"max_total_provider_attempts": 0},
+    }
+
+    suite = formal_runner.execute_paper_formal_suite(**kwargs)
+
+    assert suite.status is PaperStatus.BUDGET_EXHAUSTED
+    assert suite.provider_attempt_count == 0
+    assert adapter_calls == []
+    loaded = formal_runner.load_paper_traceability_replay_inputs(tmp_path)
+    direct = loaded.direct["exp1_feasibility"]
+    assert [row.direct_result.case_id for row in direct] == ["case-1", "case-2"]
+    assert [row.direct_result.root_status for row in direct] == [
+        "not_started",
+        "not_started",
+    ]
+    assert loaded.current["canonical_runtime_evidence"] == ()
+    metrics = formal_runner.recompute_paper_formal_metrics_from_runner_inputs(tmp_path)
+    assert metrics.observations_digest.startswith("sha256:")
+
+
 def test_resume_hard_limit_rebuilds_missing_closure_without_provider_retry(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -5280,6 +5445,144 @@ def _formal_execution_kwargs(
     }
 
 
+def test_offline_capturing_is_regression_only_and_direct_capture_is_native_only() -> None:
+    import inspect
+
+    capturing = SimpleNamespace(tokenshare_offline_capturing_transport=True)
+
+    assert formal_runner._direct_evidence_class(
+        real_transport=True,
+        transport=capturing,
+        trace_context=None,
+    ) == "regression_only"
+    assert formal_runner._direct_evidence_class(
+        real_transport=False,
+        transport=capturing,
+        trace_context=object(),
+    ) == "regression_only"
+    capture_source = inspect.getsource(
+        formal_runner._capture_canonical_direct_evidence
+    )
+    assert "_save_direct_role_artifact" not in capture_source
+    assert "accepted_validity" not in capture_source
+
+
+def test_formal_runner_offline_capturing_cannot_persist_online_direct_closure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tests.experiments.test_factorization_paper_adapter import _v2_condition
+    from tokenshare.experiments.factorization_paper_adapter import (
+        ScriptedFactorizationRangeTransport,
+    )
+    from tokenshare.experiments.paper_factorization_catalog import (
+        generate_factorization_paper_cases,
+    )
+    config = _ai_config()
+    monkeypatch.setenv("TOKENSHARE_FORMAL_RUNNER_TEST_KEY", "offline-capture-key")
+    case = generate_factorization_paper_cases()[0]
+    expected_ai_unit_count = int(case["split_params"]["requested_child_count"])
+    condition = replace(
+        _v2_condition(case),
+        condition_id="condition-canonical-direct-closure",
+        worker_count=1,
+        catalog_digest=CATALOG_DIGEST,
+        provider_config_id=PROVIDER_CONFIG_ID,
+        model_entry_id=MODEL_ENTRY_ID,
+        provider_family="siliconflow",
+        provider_model_id=PROVIDER_MODEL_ID,
+        reasoning_profile_id="default",
+        source_provider_config_digest=config.config_digest,
+        model_endpoint_identity_digest=ENDPOINT_DIGEST,
+    )
+    selection = FrozenCaseSelection(
+        selection_id="selection-canonical-direct-closure",
+        experiment_id=EXPERIMENT_ID,
+        suite_version="paper_v1",
+        catalog_version="catalog-v1",
+        domain="factorization",
+        paper_difficulty=str(case["difficulty"]),
+        topic_family=None,
+        ordered_case_ids=(str(case["case_id"]),),
+        catalog_digest=CATALOG_DIGEST,
+        expected_ai_unit_count=expected_ai_unit_count,
+        paper_eligible_required=True,
+    )
+    plan = _dispatch_plan_type()(
+        experiment_id=EXPERIMENT_ID,
+        output_root=(tmp_path / EXPERIMENT_ID).as_posix(),
+        conditions=(condition,),
+        condition_selection_bindings=(
+            FrozenConditionSelectionBinding.from_condition(condition, selection),
+        ),
+    )
+    class DirectClosureModule:
+        def expand_conditions(self, context):
+            raise AssertionError("direct closure consumes the frozen plan")
+
+        def freeze_case_selections(self, context, conditions):
+            return FrozenCaseSelectionBatch(())
+
+        def run_condition(self, context, condition, selection):
+            return context.execution_callback(
+                context=context,
+                condition=condition,
+                selection=selection,
+            )
+
+        def summarize(self, evidence):
+            return ExperimentSummaryRows(experiment_id=EXPERIMENT_ID, rows=())
+
+    monkeypatch.setitem(
+        formal_runner.dispatch_paper_condition.__globals__,
+        "_MODULES",
+        ((EXPERIMENT_ID, DirectClosureModule()),),
+    )
+    class CapturingTransport:
+        tokenshare_offline_capturing_transport = True
+
+        def __init__(self) -> None:
+            self.delegate = ScriptedFactorizationRangeTransport()
+
+        def post_chat_completion(self, **call_kwargs):
+            response = self.delegate.post_chat_completion(**call_kwargs)
+            response.body["model"] = json.loads(
+                call_kwargs["body_bytes"].decode("utf-8")
+            )["model"]
+            response.text = json.dumps(response.body, ensure_ascii=False)
+            return response
+
+    kwargs = _formal_execution_kwargs(tmp_path=tmp_path, config=config, plan=plan)
+    kwargs.update(
+        {
+            "catalog_manifest": {
+                "catalog_digest": CATALOG_DIGEST,
+                "factorization_cases": (case,),
+                "lean_cases": (),
+                "lean_lemma_graph_cases": (),
+            },
+            "budget": _budget(
+                planned_conditions=1,
+                planned_root_runs=1,
+                planned_ai_units=expected_ai_unit_count,
+            ),
+            "transport": CapturingTransport(),
+        }
+    )
+
+    suite = formal_runner.execute_paper_formal_suite(**kwargs)
+    suite_manifest = json.loads(
+        (tmp_path / "suite_manifest.json").read_text(encoding="utf-8")
+    )
+    assert suite.status is PaperStatus.COMPLETED
+    assert "traceability_replay_input_root_ref" not in suite_manifest
+    with pytest.raises(ValueError, match="no traceability replay input root"):
+        formal_runner.load_paper_traceability_replay_input_root(tmp_path)
+    assert not tmp_path.with_name(
+        tmp_path.name + ".canonical_direct_evidence"
+    ).exists()
+
+
 def _disk_test_budget() -> PaperBudgetResult:
     return _budget(
         planned_conditions=1,
@@ -6372,6 +6675,129 @@ def _complete_adapter_result(
     )
 
 
+def test_formal_runner_builds_online_callback_once_for_dispatched_pending_root(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = _ai_config()
+    plan = _plan_for_experiment(
+        tmp_path=tmp_path,
+        config=config,
+        experiment_id=EXPERIMENT_ID,
+        condition_id="condition-online-callback",
+    )
+    factory_calls: list[tuple[str, str]] = []
+    hook_events: list[str] = []
+
+    class OnlineHook:
+        def after_prepared_dispatch(self, **_context):
+            hook_events.append("prepared")
+
+        def __call__(self, **_context):
+            hook_events.append("raw")
+
+    def factory(**context):
+        factory_calls.append((context["condition"].condition_id, context["case_id"]))
+        return OnlineHook()
+
+    def dispatch(**kwargs):
+        hook = kwargs["post_raw_output_hook"]
+        hook.after_prepared_dispatch(submission_id="submission-1")
+        assert hook(submission_id="submission-1") is None
+        return _complete_adapter_result(
+            output_root=Path(kwargs["output_root"]),
+            condition=kwargs["condition"],
+            case_id=kwargs["case"]["case_id"],
+        )
+
+    monkeypatch.setattr(formal_runner, "dispatch_paper_case", dispatch)
+    condition, selection = plan.bound_items()[0]
+    budget = _budget(
+        planned_conditions=1,
+        planned_root_runs=1,
+        planned_ai_units=1,
+    )
+    callback = formal_runner._FormalConditionExecutionCallback(
+        catalog_manifest={},
+        config=config,
+        transport=object(),
+        real_transport=False,
+        output_root=Path(plan.output_root),
+        request_limits=config.defaults,
+        evidence_store=SimpleNamespace(output_root=tmp_path),
+        completed_task_keys=set(),
+        usage=formal_runner._UsageTotals(),
+        budget=budget,
+        rolling_disk_forecast=_rolling_tracker(budget),
+        hard_limits={},
+        root_case_ids=None,
+        execution_classification=None,
+        online_root_callback_factory=factory,
+    )
+    outcome = callback._dispatch_root_case(
+        condition=condition,
+        selection=selection,
+        case_id="case-1",
+        case={"case_id": "case-1", "expected_ai_unit_count": 1},
+        worker_id="worker-1",
+        callback_kwargs={},
+    )
+    assert outcome.case_id == "case-1"
+    assert factory_calls == [("condition-online-callback", "case-1")]
+    assert hook_events == ["prepared", "raw"]
+
+
+def test_online_callback_factory_forces_single_root_scheduler_worker() -> None:
+    assert (
+        formal_runner._root_scheduler_worker_count(
+            protocol_worker_count=50,
+            online_root_callback_factory=object(),
+        )
+        == 1
+    )
+    assert (
+        formal_runner._root_scheduler_worker_count(
+            protocol_worker_count=50,
+            online_root_callback_factory=None,
+        )
+        == 50
+    )
+
+
+def test_formal_runner_composite_observes_online_before_existing_exp3_hook() -> None:
+    events: list[str] = []
+
+    class OnlineHook:
+        def __call__(self, **_context):
+            events.append("online_raw")
+
+        def after_parsed_candidate_persisted(self, _context):
+            events.append("online_parsed")
+
+    class ExistingExp3Hook:
+        def __call__(self, **_context):
+            events.append("exp3_raw")
+            return {"result_kind": "verification_rejected"}
+
+        def after_parsed_candidate_persisted(self, _context):
+            events.append("exp3_parsed")
+            return "exp3-directive"
+
+    composite = formal_runner._compose_official_runtime_hooks(
+        OnlineHook(), ExistingExp3Hook()
+    )
+    assert composite(submission_id="submission-1") == {
+        "result_kind": "verification_rejected"
+    }
+    assert composite.after_parsed_candidate_persisted(object()) == "exp3-directive"
+    assert events == [
+        "online_raw",
+        "exp3_raw",
+        "online_parsed",
+        "exp3_parsed",
+    ]
+
+
 def _faultable_adapter_result(
     *,
     output_root: Path,
@@ -7410,6 +7836,7 @@ def _run_normal_exp3_trace_condition(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     mutation_kind: str | None,
+    return_context: bool = False,
 ):
     from tests.experiments.test_paper_full_resource_trace import (
         _pressure_factor_cases,
@@ -7530,14 +7957,15 @@ def _run_normal_exp3_trace_condition(
         config=config,
         plan=plan,
     )
-    kwargs.update(
-        {
-            "catalog_manifest": {
+    runner_catalog = {
                 "catalog_digest": condition.catalog_digest,
                 "factorization_cases": cases,
                 "lean_cases": (),
                 "lean_lemma_graph_cases": (),
-            },
+    }
+    kwargs.update(
+        {
+            "catalog_manifest": runner_catalog,
             "budget": _budget(
                 planned_experiments=(experiment_id,),
                 planned_conditions=1,
@@ -7562,7 +7990,10 @@ def _run_normal_exp3_trace_condition(
         "per_attempt_results.jsonl",
     )
     assert PaperTraceRuntimeContext.current_provider_call_count == 0
-    return suite, tasks, attempts, dispatched, first_entry, suite_root
+    result = (suite, tasks, attempts, dispatched, first_entry, suite_root)
+    if return_context:
+        return (*result, plan, runner_catalog, trace_context)
+    return result
 
 
 def test_normal_exp3_trace_persists_exact_source_binding_separate_from_current_attempt(
@@ -7615,6 +8046,1012 @@ def test_normal_exp3_trace_persists_exact_source_binding_separate_from_current_a
     }
     assert wrapper["logical_start_ms"] == 0
     assert wrapper["logical_finish_ms"] == 1
+
+
+@pytest.mark.parametrize(
+    ("experiment_id", "evidence_class", "expected"),
+    (
+        ("exp1_real_ai_feasibility", "online_real_provider", "exp1_feasibility"),
+        ("exp2_real_ai_scalability", "real_model_trace_protocol_run", "exp2_trace_scalability"),
+        ("exp2_real_ai_scalability", "online_real_provider", "exp2_online_concurrency"),
+        ("exp3_real_ai_fault_recovery", "real_model_trace_protocol_run", "exp3_trace_robustness"),
+        ("exp3_real_ai_fault_recovery", "online_real_provider", "exp3_online_recovery"),
+        ("exp4_real_ai_protocol_ablation", "real_model_trace_protocol_run", "exp4_ablation"),
+        ("exp5_real_ai_model_endpoint_comparison", "online_real_provider", "experiment_5"),
+    ),
+)
+def test_direct_metric_route_uses_frozen_experiment_and_evidence_class(
+    experiment_id: str,
+    evidence_class: str,
+    expected: str,
+) -> None:
+    assert formal_runner._direct_metric_input_key(
+        experiment_id=experiment_id,
+        evidence_class=evidence_class,
+    ) == expected
+
+
+def test_direct_metric_projection_fails_closed_without_persisted_producer_facts() -> None:
+    executed = SimpleNamespace(
+        experiment_id="exp2_real_ai_scalability",
+        evidence_class="real_model_trace_protocol_run",
+        preregistered_root_run_id="inventory:missing-producer",
+        root_status="completed",
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="persisted metric producer facts are missing",
+    ):
+        formal_runner._canonical_metric_inputs(
+            (executed,),
+            producer_facts_by_root={},
+        )
+
+
+def test_exp1_metric_identity_view_preserves_authoritative_frozen_row(
+    tmp_path: Path,
+) -> None:
+    from tests.experiments.test_paper_direct_results import (
+        _canonical_fixture,
+        _inventory_manifest,
+        _inventory_row,
+        _project,
+        _replace_inventory_row,
+    )
+    from tokenshare.experiments.paper_direct_results import (
+        build_canonical_direct_evidence,
+    )
+    from tokenshare.experiments.paper_formal_metrics import (
+        derive_paper_metric_projection_rows,
+    )
+
+    base, condition_manifest, catalog = _inventory_row(
+        evidence_class="online_real_provider",
+    )
+    row = _replace_inventory_row(
+        base,
+        experiment_id="exp1_real_ai_feasibility",
+    )
+    kwargs, *_ = _canonical_fixture(tmp_path, row)
+    evidence = build_canonical_direct_evidence(**kwargs)
+    authoritative = _project(
+        _inventory_manifest(row),
+        (condition_manifest,),
+        (catalog,),
+        {row.preregistered_root_run_id: evidence},
+    ).rows[0]
+
+    projected = derive_paper_metric_projection_rows(
+        {"exp1_feasibility": (authoritative,)}
+    )["exp1_feasibility"][0]
+
+    assert authoritative.experiment_id == "exp1_real_ai_feasibility"
+    assert projected.experiment_id == "experiment_1"
+    authoritative_body = authoritative.to_dict()
+    authoritative_body["experiment_id"] = "experiment_1"
+    assert projected.to_dict() == authoritative_body
+
+
+@pytest.mark.parametrize(
+    ("evidence_class", "input_key", "metric_experiment_id"),
+    (
+        (
+            "real_model_trace_protocol_run",
+            "exp2_trace_scalability",
+            "experiment_2_trace",
+        ),
+        (
+            "online_real_provider",
+            "exp2_online_concurrency",
+            "experiment_2_online",
+        ),
+    ),
+)
+def test_exp2_metric_identity_view_preserves_authoritative_frozen_row(
+    tmp_path: Path,
+    evidence_class: str,
+    input_key: str,
+    metric_experiment_id: str,
+) -> None:
+    from copy import copy
+
+    from tests.experiments.test_paper_direct_results import (
+        _canonical_fixture,
+        _inventory_manifest,
+        _inventory_row,
+        _project,
+        _replace_inventory_row,
+    )
+    from tokenshare.experiments.paper_direct_results import (
+        build_canonical_direct_evidence,
+    )
+    from tokenshare.experiments.paper_formal_metrics import (
+        derive_paper_metric_projection_rows,
+        _resolve_metric_projection_rows,
+    )
+
+    base, condition_manifest, catalog = _inventory_row(
+        evidence_class=evidence_class,
+    )
+    row = _replace_inventory_row(
+        base,
+        experiment_id="exp2_real_ai_scalability",
+    )
+    kwargs, *_ = _canonical_fixture(
+        tmp_path,
+        row,
+        evidence_class=evidence_class,
+    )
+    evidence = build_canonical_direct_evidence(**kwargs)
+    direct = _project(
+        _inventory_manifest(row),
+        (condition_manifest,),
+        (catalog,),
+        {row.preregistered_root_run_id: evidence},
+    ).rows[0]
+    producer_facts = {
+        direct.preregistered_root_run_id: {
+            "task": {"member_kind": "preregistered_root"},
+            "attempts": [],
+            "faults": [],
+            "events": [],
+            "run_evidence": {
+                "protocol_runtime": {
+                    "runtime_observation": {
+                        "runtime_wall_clock_ms": 1,
+                        "planned_ai_unit_ids": [],
+                        "dispatched_ai_unit_ids": [],
+                        "completed_ai_unit_ids": [],
+                        "in_flight_ai_unit_ids_at_witness": [],
+                        "observed_peak_concurrency": 0,
+                    }
+                }
+            },
+        }
+    }
+
+    canonical = formal_runner._canonical_metric_inputs(
+        (direct,),
+        producer_facts_by_root=producer_facts,
+    )
+    projected = derive_paper_metric_projection_rows(canonical)
+    authoritative = canonical[input_key][0].direct_result
+    metric_view = projected[input_key][0].direct_result
+
+    assert authoritative.experiment_id == "exp2_real_ai_scalability"
+    assert metric_view.experiment_id == metric_experiment_id
+    authoritative_body = authoritative.to_dict()
+    metric_body = metric_view.to_dict()
+    authoritative_body["experiment_id"] = metric_experiment_id
+    assert metric_body == authoritative_body
+    canonical_view = {input_key: canonical[input_key]}
+    projected_view = {input_key: projected[input_key]}
+    assert (
+        _resolve_metric_projection_rows(canonical_view, projected_view)
+        is projected_view
+    )
+
+    wrong_root_direct = copy(metric_view)
+    object.__setattr__(
+        wrong_root_direct,
+        "preregistered_root_run_id",
+        "inventory:wrong-root",
+    )
+    wrong_root_row = replace(
+        projected[input_key][0],
+        direct_result=wrong_root_direct,
+    )
+    with pytest.raises(ValueError, match="root/order mismatch"):
+        _resolve_metric_projection_rows(
+            canonical_view,
+            {input_key: (wrong_root_row,)},
+        )
+
+    wrong_field_direct = copy(metric_view)
+    object.__setattr__(wrong_field_direct, "case_id", "wrong-case")
+    wrong_field_row = replace(
+        projected[input_key][0],
+        direct_result=wrong_field_direct,
+    )
+    with pytest.raises(ValueError, match="differs beyond allowed identity view"):
+        _resolve_metric_projection_rows(
+            canonical_view,
+            {input_key: (wrong_field_row,)},
+        )
+    with pytest.raises(ValueError, match="keys must match"):
+        _resolve_metric_projection_rows(canonical_view, {})
+    with pytest.raises(ValueError, match="row count mismatch"):
+        _resolve_metric_projection_rows(canonical_view, {input_key: ()})
+
+    second_direct = copy(authoritative)
+    object.__setattr__(
+        second_direct,
+        "preregistered_root_run_id",
+        "inventory:second-root",
+    )
+    second_row = copy(canonical[input_key][0])
+    object.__setattr__(second_row, "direct_result", second_direct)
+    canonical_pair = {input_key: (canonical[input_key][0], second_row)}
+    projected_pair = derive_paper_metric_projection_rows(canonical_pair)
+    with pytest.raises(ValueError, match="root/order mismatch"):
+        _resolve_metric_projection_rows(
+            canonical_pair,
+            {input_key: tuple(reversed(projected_pair[input_key]))},
+        )
+
+    other_key = (
+        "exp2_online_concurrency"
+        if input_key == "exp2_trace_scalability"
+        else "exp2_trace_scalability"
+    )
+    with pytest.raises(TypeError, match="row type mismatch"):
+        derive_paper_metric_projection_rows({other_key: canonical[input_key]})
+
+    cross_evidence = (
+        "online_real_provider"
+        if evidence_class == "real_model_trace_protocol_run"
+        else "real_model_trace_protocol_run"
+    )
+    corrupted_row = copy(canonical[input_key][0])
+    corrupted_direct = copy(authoritative)
+    object.__setattr__(corrupted_direct, "evidence_class", cross_evidence)
+    object.__setattr__(
+        corrupted_row,
+        "direct_result",
+        corrupted_direct,
+    )
+    with pytest.raises(ValueError, match="identity route mismatch"):
+        derive_paper_metric_projection_rows({input_key: (corrupted_row,)})
+
+    wrong_id_row = copy(canonical[input_key][0])
+    wrong_id_direct = copy(authoritative)
+    object.__setattr__(wrong_id_direct, "experiment_id", "wrong-experiment")
+    object.__setattr__(wrong_id_row, "direct_result", wrong_id_direct)
+    with pytest.raises(ValueError, match="identity route mismatch"):
+        derive_paper_metric_projection_rows({input_key: (wrong_id_row,)})
+
+
+def test_exp2_metric_identity_view_rejects_key_or_evidence_cross_route(
+    tmp_path: Path,
+) -> None:
+    from tokenshare.experiments.paper_formal_metrics import (
+        derive_paper_metric_projection_rows,
+    )
+
+    marker = object()
+    with pytest.raises(TypeError, match="row type mismatch"):
+        derive_paper_metric_projection_rows(
+            {
+                "exp2_trace_scalability": (marker,),
+                "exp2_online_concurrency": (),
+            }
+        )
+
+
+def test_exp3_to_exp5_metric_inputs_are_not_identity_projected() -> None:
+    from tokenshare.experiments.paper_formal_metrics import (
+        derive_paper_metric_projection_rows,
+    )
+
+    values = {
+        "exp3_trace_robustness": (object(),),
+        "exp3_online_recovery": (object(),),
+        "exp4_ablation": (object(),),
+        "experiment_5": (object(),),
+    }
+    assert derive_paper_metric_projection_rows(values) is values
+
+
+def test_factorization_online_adapter_persists_native_direct_artifacts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tests.experiments.test_factorization_paper_adapter import (
+        _real_transport_config,
+        _v2_condition,
+    )
+    from tokenshare.experiments import factorization_paper_adapter as adapter
+    from tokenshare.experiments.paper_factorization_catalog import (
+        generate_factorization_paper_cases,
+    )
+    from tokenshare.storage.artifacts import ArtifactStore
+    from tokenshare.executors.ai_api_config import AIAPIProviderEntry
+
+    events: list[str] = []
+    original_resolve = AIAPIProviderEntry.resolve_api_key
+
+    def tracked_resolve(entry):
+        events.append("resolve")
+        return original_resolve(entry)
+
+    class LifecycleHook:
+        def __call__(self, **_context):
+            return None
+
+        def after_prepared_dispatch(self, **_context):
+            events.append("reserved")
+
+        def before_provider_dispatch(self, **_context):
+            events.append("intent")
+
+    class OrderedTransport(adapter.ScriptedFactorizationRangeTransport):
+        def post_chat_completion(self, **kwargs):
+            events.append("transport")
+            return super().post_chat_completion(**kwargs)
+
+    case = generate_factorization_paper_cases()[0]
+    monkeypatch.setenv("TOKENSHARE_REAL_TRANSPORT_GUARD_KEY", "test-only")
+    monkeypatch.setattr(AIAPIProviderEntry, "resolve_api_key", tracked_resolve)
+    monkeypatch.setattr(adapter, "_validate_real_transport_mode", lambda **_kwargs: None)
+    result = adapter.run_factorization_paper_case(
+        case=case,
+        condition=_v2_condition(case),
+        output_root=tmp_path / "factor-online",
+        transport=OrderedTransport(),
+        real_transport=True,
+        ai_api_config=_real_transport_config(),
+        entry_id="real_transport_guard",
+        post_raw_output_hook=LifecycleHook(),
+    )
+
+    assert events[:4] == ["reserved", "resolve", "intent", "transport"]
+    assert result.run_evidence["secret_scan_report"]["status"] == "passed"
+    assert result.run_evidence["secret_scan_report"]["secret_checked_count"] == 1
+
+    native = result.run_evidence["paper_direct_native_artifacts"]
+    store = ArtifactStore(result.output_root)
+    resource_ref = ArtifactRef.from_dict(native["actual_resource_book_ref"])
+    verdict_ref = ArtifactRef.from_dict(native["independent_verdict_ref"])
+    assert store.load_artifact_ref(resource_ref.artifact_id) == resource_ref
+    assert store.load_artifact_ref(verdict_ref.artifact_id) == verdict_ref
+    assert resource_ref.source["role"] == "actual_resource_book"
+    assert verdict_ref.source["role"] == "independent_verdict"
+    assert verdict_ref.source["oracle_fact"] == {
+        "case_id": case["case_id"],
+        "root_validity_audit_passed": True,
+    }
+    runtime = result.run_evidence["protocol_runtime"]
+    parser_refs, verifier_refs, provider_refs, copied_resource_ref = (
+        formal_runner._native_direct_role_refs(
+            native_store=store,
+            target_store=ArtifactStore(tmp_path / "factor-direct-copy"),
+            root_id="inventory:factor-online",
+            execution_id=runtime["run_id"],
+            task_id=runtime["task_id"],
+            task=result.task_result,
+            adapter_result=result,
+        )
+    )
+    assert {ref.source["role"] for ref in parser_refs} == {"parser_result"}
+    assert {ref.source["role"] for ref in verifier_refs} == {"independent_verdict"}
+    assert {ref.source["role"] for ref in provider_refs} == {
+        "request_body",
+        "raw_output_or_provider_failure",
+        "provenance",
+        "usage_status",
+        "latency",
+        "pricing",
+        "provider_attempt",
+        "model_record",
+    }
+    assert copied_resource_ref.source["role"] == "actual_resource_book"
+
+
+def test_failed_online_adapter_preserves_missing_final_and_verdict(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tests.experiments.test_factorization_paper_adapter import (
+        _ProviderErrorTransport,
+        _real_transport_config,
+        _v2_condition,
+    )
+    from tokenshare.experiments import factorization_paper_adapter as adapter
+    from tokenshare.experiments.paper_factorization_catalog import (
+        generate_factorization_paper_cases,
+    )
+
+    case = generate_factorization_paper_cases()[0]
+    monkeypatch.setenv("TOKENSHARE_REAL_TRANSPORT_GUARD_KEY", "test-only")
+    monkeypatch.setattr(adapter, "_validate_real_transport_mode", lambda **_kwargs: None)
+    result = adapter.run_factorization_paper_case(
+        case=case,
+        condition=_v2_condition(case),
+        output_root=tmp_path / "factor-online-failed",
+        transport=_ProviderErrorTransport(),
+        real_transport=True,
+        ai_api_config=_real_transport_config(),
+        entry_id="real_transport_guard",
+    )
+
+    native = result.run_evidence["paper_direct_native_artifacts"]
+    assert result.task_result.root_status is PaperTaskStatus.FAILED
+    assert "independent_verdict_ref" not in native
+    runtime = result.run_evidence["protocol_runtime"]
+    parser_refs, verifier_refs, provider_refs, resource_ref = (
+        formal_runner._native_direct_role_refs(
+            native_store=ArtifactStore(result.output_root),
+            target_store=ArtifactStore(tmp_path / "failed-direct-copy"),
+            root_id="inventory:failed-online",
+            execution_id=runtime["run_id"],
+            task_id=runtime["task_id"],
+            task=result.task_result,
+            adapter_result=result,
+        )
+    )
+    assert parser_refs == ()
+    assert verifier_refs == ()
+    assert len(provider_refs) == 8
+    assert resource_ref is not None
+
+
+def test_lean_online_adapter_persists_native_direct_artifacts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tests.experiments.test_lean_paper_adapter import (
+        _condition_for_case,
+        _real_transport_config,
+    )
+    from tests.support.lean_checker import RecordingLeanChecker
+    from tokenshare.experiments import lean_paper_adapter as adapter
+    import tokenshare.experiments.paper_catalog as paper_catalog_module
+    from tokenshare.storage.artifacts import ArtifactStore
+    from tokenshare.executors.ai_api_config import AIAPIProviderEntry
+
+    events: list[str] = []
+    original_resolve = AIAPIProviderEntry.resolve_api_key
+
+    def tracked_resolve(entry):
+        events.append("resolve")
+        return original_resolve(entry)
+
+    class LifecycleHook:
+        def __call__(self, **_context):
+            return None
+
+        def after_prepared_dispatch(self, **_context):
+            events.append("reserved")
+
+        def before_provider_dispatch(self, **_context):
+            events.append("intent")
+
+    class OrderedTransport(adapter.ScriptedLeanPaperProofTransport):
+        def post_chat_completion(self, **kwargs):
+            events.append("transport")
+            return super().post_chat_completion(**kwargs)
+
+    case = paper_catalog_module._with_lean_v1_paper_difficulty(
+        json.loads(
+            Path("benchmarks/paper/lean_catalog.v1.jsonl")
+            .read_text(encoding="utf-8")
+            .splitlines()[0]
+        )
+    )
+    environment = adapter.default_lean_paper_environment_manifest()
+    object.__setattr__(environment, "environment_digest", case["environment_digest"])
+    monkeypatch.setattr(adapter, "default_lean_paper_environment_manifest", lambda: environment)
+    monkeypatch.setattr(adapter, "_validate_real_transport_mode", lambda **_kwargs: None)
+    monkeypatch.setenv("TOKENSHARE_REAL_TRANSPORT_GUARD_KEY", "test-only")
+    monkeypatch.setattr(AIAPIProviderEntry, "resolve_api_key", tracked_resolve)
+    result = adapter.run_lean_paper_case(
+        case=case,
+        condition=_condition_for_case(CATALOG_DIGEST, case),
+        output_root=tmp_path / "lean-online",
+        transport=OrderedTransport(
+            model="Qwen/Qwen2.5-7B-Instruct"
+        ),
+        real_transport=True,
+        ai_api_config=_real_transport_config(),
+        entry_id="real_transport_guard",
+        post_raw_output_hook=LifecycleHook(),
+        checker=RecordingLeanChecker(),
+    )
+
+    assert events[:4] == ["reserved", "resolve", "intent", "transport"]
+    assert result.run_evidence["secret_scan_report"]["status"] == "passed"
+    assert result.run_evidence["secret_scan_report"]["secret_checked_count"] == 1
+
+    native = result.run_evidence["paper_direct_native_artifacts"]
+    store = ArtifactStore(result.output_root)
+    resource_ref = ArtifactRef.from_dict(native["actual_resource_book_ref"])
+    verdict_ref = ArtifactRef.from_dict(native["independent_verdict_ref"])
+    assert store.load_artifact_ref(resource_ref.artifact_id) == resource_ref
+    assert store.load_artifact_ref(verdict_ref.artifact_id) == verdict_ref
+    assert resource_ref.source["role"] == "actual_resource_book"
+    assert verdict_ref.source["role"] == "independent_verdict"
+    assert verdict_ref.source["oracle_verdict_ref"] == result.merge_summary[
+        "root_checker_report_ref"
+    ]
+
+
+def test_lean_v2_online_adapter_threads_transient_secret_and_lifecycle_hook(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tests.experiments.test_lean_paper_adapter import (
+        _catalog_with_lemma_graph,
+        _condition_for_case,
+        _oracle_sources_by_statement,
+        _real_transport_config,
+    )
+    from tests.support.lean_checker import RecordingLeanChecker
+    from tokenshare.executors.ai_api_config import AIAPIProviderEntry
+    from tokenshare.experiments import lean_paper_adapter as adapter
+    import tokenshare.experiments.paper_catalog as paper_catalog_module
+
+    events: list[str] = []
+    original_resolve = AIAPIProviderEntry.resolve_api_key
+
+    def tracked_resolve(entry):
+        events.append("resolve")
+        return original_resolve(entry)
+
+    class LifecycleHook:
+        def __call__(self, **_context):
+            return None
+
+        def after_prepared_dispatch(self, **_context):
+            events.append("reserved")
+
+        def before_provider_dispatch(self, **_context):
+            events.append("intent")
+
+    class OrderedTransport(adapter.ScriptedLeanPaperProofTransport):
+        def post_chat_completion(self, **kwargs):
+            events.append("transport")
+            return super().post_chat_completion(**kwargs)
+
+    tracked = json.loads(
+        Path("benchmarks/paper/lean_checker_preflight.v1.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    manifest = paper_catalog_module._current_lean_environment_manifest_without_preflight()
+    object.__setattr__(manifest, "environment_digest", tracked["environment_digest"])
+    original_digest = paper_catalog_module._file_digest
+    oracle_source = Path(
+        "fixtures/lean_proof_project/TokenShare/LemmaGraphOracle.lean"
+    ).resolve()
+
+    def tracked_file_digest(path: Path) -> str:
+        resolved = Path(path).resolve()
+        if resolved != oracle_source:
+            return original_digest(resolved)
+        source = resolved.read_text(encoding="utf-8").replace("\r\n", "\n").replace("\r", "\n")
+        return f"sha256:{hashlib.sha256(source.encode('utf-8')).hexdigest()}"
+
+    monkeypatch.setattr(
+        paper_catalog_module,
+        "_current_lean_environment_manifest_without_preflight",
+        lambda: manifest,
+    )
+    monkeypatch.setattr(
+        paper_catalog_module,
+        "lean_checker_implementation_digest",
+        lambda: tracked["checker_implementation_digest"],
+    )
+    monkeypatch.setattr(paper_catalog_module, "_file_digest", tracked_file_digest)
+    catalog = _catalog_with_lemma_graph()
+    case = catalog.lean_lemma_graph_cases[0]
+    selected_node_id = case["lemma_graph"]["nodes"][0]["node_id"]
+    environment = adapter.default_lean_paper_environment_manifest()
+    object.__setattr__(environment, "environment_digest", case["environment_digest"])
+    monkeypatch.setattr(adapter, "default_lean_paper_environment_manifest", lambda: environment)
+    monkeypatch.setattr(adapter, "_validate_real_transport_mode", lambda **_kwargs: None)
+    monkeypatch.setenv("TOKENSHARE_REAL_TRANSPORT_GUARD_KEY", "test-only")
+    monkeypatch.setattr(AIAPIProviderEntry, "resolve_api_key", tracked_resolve)
+
+    result = adapter.run_lean_paper_case(
+        case=case,
+        condition=_condition_for_case(catalog.catalog_digest, case),
+        output_root=tmp_path / "lean-v2-online",
+        transport=OrderedTransport(
+            proof_sources_by_statement=_oracle_sources_by_statement(case),
+            model="Qwen/Qwen2.5-7B-Instruct",
+        ),
+        real_transport=True,
+        ai_api_config=_real_transport_config(),
+        entry_id="real_transport_guard",
+        selected_ai_unit_id=selected_node_id,
+        post_raw_output_hook=LifecycleHook(),
+        checker=RecordingLeanChecker(),
+    )
+
+    assert events[:4] == ["reserved", "resolve", "intent", "transport"]
+    assert result.run_evidence["secret_scan_report"]["status"] == "passed"
+    assert result.run_evidence["secret_scan_report"]["secret_checked_count"] == 1
+
+
+def test_pure_exp3_trace_closes_loads_and_replays_without_current_provider_objects(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tokenshare.experiments.paper_exp3_metrics import Exp3TraceConditionInput
+    from tokenshare.experiments.paper_formal_metrics import (
+        recompute_paper_formal_metrics,
+    )
+    from tokenshare.experiments.paper_response_bank import PaperTraceRuntimeContext
+
+    suite, _tasks, _attempts, _dispatched, _source_entry, suite_root = (
+        _run_normal_exp3_trace_condition(
+            tmp_path=tmp_path,
+            monkeypatch=monkeypatch,
+            mutation_kind=None,
+        )
+    )
+
+    protected = formal_runner.load_paper_traceability_replay_input_root(suite_root)
+    loaded = formal_runner.load_paper_traceability_replay_inputs(suite_root)
+    expected_keys = {
+        "exp1_feasibility",
+        "exp2_trace_scalability",
+        "exp2_online_concurrency",
+        "exp3_trace_robustness",
+        "exp3_online_recovery",
+        "exp4_ablation",
+        "experiment_5",
+    }
+    assert suite.status is PaperStatus.COMPLETED
+    assert set(loaded.direct) == expected_keys
+    assert len(loaded.direct["exp3_trace_robustness"]) == 1
+    assert isinstance(
+        loaded.direct["exp3_trace_robustness"][0],
+        Exp3TraceConditionInput,
+    )
+    evidence = loaded.current["canonical_runtime_evidence"]
+    assert len(evidence) == 1
+    root_id = evidence[0].preregistered_root_run_id
+    assert evidence[0].current_provider_object_refs == ()
+    assert evidence[0].source_bank_object_locators
+    assert loaded.current["current_trace_wrappers_by_root"][root_id]
+    assert loaded.current["eligibility_facts_by_root"][root_id]
+    assert loaded.source["trace_source_bindings_by_root"][root_id]
+    assert loaded.source["source_resolvers"]
+    descriptor = json.loads(protected.descriptor_path.read_text(encoding="utf-8"))
+    assert descriptor["current_provider_object_refs"] == []
+    assert descriptor["external_source_object_refs"]
+
+    metrics = formal_runner.recompute_paper_formal_metrics_from_runner_inputs(
+        suite_root
+    )
+    replay_root = tmp_path / "traceability-replay"
+    for relative_name, content in loaded.current_evidence_files:
+        target = replay_root / relative_name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(content)
+    replay = recompute_paper_formal_metrics(
+        replay_root,
+        loaded.direct,
+        global_infrastructure_valid=loaded.current[
+            "global_infrastructure_valid"
+        ],
+        canonical_runtime_evidence=evidence,
+        requested_lineage_root_ids=loaded.current["requested_lineage_root_ids"],
+        current_trace_wrappers_by_root=loaded.current[
+            "current_trace_wrappers_by_root"
+        ],
+        trace_source_bindings_by_root=loaded.source[
+            "trace_source_bindings_by_root"
+        ],
+        eligibility_facts_by_root=loaded.current["eligibility_facts_by_root"],
+    )
+    assert replay.observations_digest == metrics.observations_digest
+    assert formal_runner.digest_json(
+        [draft.to_dict() for draft in replay.table_drafts]
+    ) == formal_runner.digest_json([draft.to_dict() for draft in metrics.table_drafts])
+    assert (
+        replay.lineage_source_index.index_digest
+        == metrics.lineage_source_index.index_digest
+    )
+    assert PaperTraceRuntimeContext.current_provider_call_count == 0
+
+
+def test_resume_restores_direct_evidence_from_validated_canonical_store(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    (
+        _suite,
+        _tasks,
+        _attempts,
+        _dispatched,
+        _entry,
+        suite_root,
+        plan,
+        catalog,
+        _trace_context,
+    ) = _run_normal_exp3_trace_condition(
+        tmp_path=tmp_path,
+        monkeypatch=monkeypatch,
+        mutation_kind=None,
+        return_context=True,
+    )
+    loaded = formal_runner.load_paper_traceability_replay_inputs(suite_root)
+    collector = formal_runner._build_canonical_direct_collector(
+        bound_plans=((plan, plan.bound_items()),),
+        catalog_manifest=catalog,
+        normalized_root_filter={},
+        evidence_class="real_model_trace_protocol_run",
+    )
+
+    formal_runner._restore_canonical_direct_checkpoints(
+        suite_root=suite_root,
+        collector=collector,
+    )
+
+    assert len(collector.evidence) == 1
+    assert formal_runner._canonical_direct_evidence_digest(
+        collector.evidence[0]
+    ) == formal_runner._canonical_direct_evidence_digest(
+        loaded.current["canonical_runtime_evidence"][0]
+    )
+    root_id = collector.evidence[0].preregistered_root_run_id
+    assert collector.current_trace_wrappers_by_root[root_id]
+    assert collector.trace_source_bindings_by_root[root_id]
+    assert collector.source_resolvers
+
+
+def test_trace_lineage_locator_alias_boundary_is_exact_and_fail_closed() -> None:
+    from tokenshare.experiments import paper_formal_evidence
+
+    canonicalize = paper_formal_evidence._canonical_trace_locator_digest_view
+    native = {
+        "request_body": "sha256:" + "1" * 64,
+        "raw_output": "sha256:" + "2" * 64,
+        "usage": "sha256:" + "3" * 64,
+    }
+    paper = {
+        "request_body": "sha256:" + "1" * 64,
+        "raw_output_or_provider_failure": "sha256:" + "2" * 64,
+        "usage_status": "sha256:" + "3" * 64,
+    }
+
+    assert canonicalize(native) == canonicalize(paper)
+    assert canonicalize({**native, "unknown_role": "sha256:" + "4" * 64}) != (
+        canonicalize(paper)
+    )
+    assert canonicalize({key: value for key, value in native.items() if key != "usage"}) != (
+        canonicalize(paper)
+    )
+    assert canonicalize({**native, "usage": "sha256:" + "5" * 64}) != (
+        canonicalize(paper)
+    )
+    with pytest.raises(ValueError, match="trace locator role alias collision"):
+        canonicalize(
+            {
+                **native,
+                "raw_output_or_provider_failure": "sha256:" + "2" * 64,
+            }
+        )
+
+
+def test_trace_resource_book_preserves_single_v1_and_reaches_all_multi_entries(
+    tmp_path: Path,
+) -> None:
+    from tokenshare.experiments.paper_models import ExternalBankObjectLocator
+
+    native_store = ArtifactStore(tmp_path / "native-trace-books")
+    canonical_store = ArtifactStore(tmp_path / "canonical-trace-books")
+    bodies = (
+        {"schema_version": "tokenshare.current_trace_wrapper.v1", "entry_id": "entry-1"},
+        {"schema_version": "tokenshare.current_trace_wrapper.v1", "entry_id": "entry-2"},
+    )
+    native_refs = tuple(
+        native_store.save_json(
+            body,
+            artifact_id=f"wrapper-{index}",
+            artifact_type="CurrentTraceWrapper",
+            artifact_schema_id="tokenshare.current_trace_wrapper.v1",
+            artifact_schema_version="v1",
+            source={"kind": "trace", "entry_id": body["entry_id"]},
+            metadata={},
+            created_at=f"2026-08-03T00:00:0{index}Z",
+        )
+        for index, body in enumerate(bodies, start=1)
+    )
+    wrappers = tuple(SimpleNamespace(to_dict=lambda body=body: dict(body)) for body in bodies)
+    locators = tuple(
+        ExternalBankObjectLocator(
+            bank_root_id="approved-bank",
+            manifest_digest="sha256:" + "1" * 64,
+            entry_id=body["entry_id"],
+            object_role=role,
+            object_digest="sha256:" + str(index) * 64,
+        )
+        for index, body in enumerate(bodies, start=1)
+        for role in (
+            "request_body",
+            "raw_output_or_provider_failure",
+            "provenance",
+            "usage_status",
+            "latency",
+            "pricing",
+            "acquisition_attempt",
+            "model_record",
+        )
+    )
+
+    single_ref = formal_runner._persist_trace_resource_book(
+        native_store=native_store,
+        canonical_store=canonical_store,
+        root_id="inventory:single",
+        execution_id="run:single",
+        task_id="task:single",
+        current_wrappers=wrappers[:1],
+        native_wrapper_refs=native_refs[:1],
+        canonical_wrapper_refs=native_refs[:1],
+        source_locators=locators[:8],
+    )
+    multi_ref = formal_runner._persist_trace_resource_book(
+        native_store=native_store,
+        canonical_store=canonical_store,
+        root_id="inventory:multi",
+        execution_id="run:multi",
+        task_id="task:multi",
+        current_wrappers=wrappers,
+        native_wrapper_refs=native_refs,
+        canonical_wrapper_refs=native_refs,
+        source_locators=locators,
+    )
+
+    assert canonical_store.read_bytes(single_ref) == native_store.read_bytes(native_refs[0])
+    assert single_ref.content_hash == native_refs[0].content_hash
+    multi = json.loads(canonical_store.read_bytes(multi_ref))
+    assert multi["schema_version"] == "tokenshare.paper_trace_resource_book.v2"
+    assert {value["entry_id"] for value in multi["current_wrappers"]} == {
+        "entry-1",
+        "entry-2",
+    }
+    assert {value["entry_id"] for value in multi["source_bank_object_locators"]} == {
+        "entry-1",
+        "entry-2",
+    }
+    assert multi_ref.source["role"] == "trace_resource_book"
+
+
+def test_protected_formal_staging_preserves_not_started_inventory_rows_without_execution_binding(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import shutil
+
+    _suite, tasks, _attempts, _dispatched, _entry, suite_root = (
+        _run_normal_exp3_trace_condition(
+            tmp_path=tmp_path,
+            monkeypatch=monkeypatch,
+            mutation_kind="root",
+        )
+    )
+    staged = tmp_path / "staged-formal-evidence"
+    shutil.copytree(suite_root, staged)
+    for derived_name in ("condition_results.jsonl", "formal_runner_result.json"):
+        derived = staged / derived_name
+        if derived.is_file():
+            derived.unlink()
+    direct_rows = tuple(
+        SimpleNamespace(
+            experiment_id="exp3_real_ai_fault_recovery",
+            condition_id="condition-exp3-current-trace",
+            repeat_id=0,
+            case_id=task["task_id"],
+            preregistered_root_run_id=f"missing-root:{task['task_id']}",
+            execution_binding=None,
+            artifact_refs=(),
+        )
+        for task in tasks
+    )
+
+    formal_runner._prepare_protected_formal_evidence_closure(
+        staged,
+        suite_root=suite_root,
+        canonical_direct_rows=direct_rows,
+    )
+
+    projected = _generation_records(
+        staged,
+        "exp3_real_ai_fault_recovery",
+        "condition-exp3-current-trace",
+        "per_task_results.jsonl",
+    )
+    assert [row["case_id"] for row in projected] == [row["task_id"] for row in tasks]
+    assert [row["preregistered_root_run_id"] for row in projected] == [
+        f"missing-root:{row['task_id']}" for row in tasks
+    ]
+    assert all(row["root_status"] in {"blocked", "not_started"} for row in projected)
+
+
+@pytest.mark.parametrize("file_set", ("exact", "missing", "extra"))
+def test_online_current_provider_object_closure_requires_exact_file_set(
+    tmp_path: Path,
+    file_set: str,
+) -> None:
+    from tests.experiments.test_paper_traceability import _genuine_l4_inputs
+    from tokenshare.experiments.paper_traceability import (
+        TraceabilityBlockedError,
+        _load_protected_replay_inputs,
+    )
+
+    descriptor, _rows = _genuine_l4_inputs(tmp_path / "online-source")
+    loaded = _load_protected_replay_inputs(descriptor)
+    evidence_root = tmp_path / "online-current-evidence"
+    for relative_name, content in loaded.current_evidence_files:
+        target = evidence_root / relative_name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(content)
+    body = json.loads(descriptor.descriptor_path.read_text(encoding="utf-8"))
+    current_files = {
+        ref["artifact_id"]: descriptor.root_path / ref["path"]
+        for ref in body["current_provider_object_refs"]
+    }
+    if file_set == "missing":
+        current_files.pop(next(iter(current_files)))
+    elif file_set == "extra":
+        extra = tmp_path / "extra-provider-object.bin"
+        extra.write_bytes(b"not a referenced provider object")
+        current_files["extra-provider-object"] = extra
+    kwargs = {
+        "replay_input_root": tmp_path / f"online-{file_set}-replay-input",
+        "canonical_direct_rows": loaded.direct,
+        "global_infrastructure_valid": loaded.current[
+            "global_infrastructure_valid"
+        ],
+        "canonical_runtime_evidence": loaded.current[
+            "canonical_runtime_evidence"
+        ],
+        "requested_lineage_root_ids": loaded.current[
+            "requested_lineage_root_ids"
+        ],
+        "current_trace_wrappers_by_root": loaded.current[
+            "current_trace_wrappers_by_root"
+        ],
+        "trace_source_bindings_by_root": loaded.source[
+            "trace_source_bindings_by_root"
+        ],
+        "eligibility_facts_by_root": loaded.current["eligibility_facts_by_root"],
+        "source_resolvers": loaded.source["source_resolvers"],
+        "current_provider_object_files": current_files,
+        "current_evidence_root": evidence_root,
+    }
+    if file_set == "exact":
+        persisted = formal_runner.persist_paper_traceability_replay_input_root(
+            **kwargs
+        )
+        assert persisted.descriptor_path.is_file()
+    else:
+        with pytest.raises(TraceabilityBlockedError, match="closure is incomplete"):
+            formal_runner.persist_paper_traceability_replay_input_root(**kwargs)
+
+
+def test_empty_current_provider_snapshot_set_rejects_nonempty_file_map(
+    tmp_path: Path,
+) -> None:
+    from tests.experiments.test_paper_traceability import _genuine_l4_inputs
+    from tokenshare.experiments.paper_traceability import (
+        TraceabilityBlockedError,
+        _load_protected_replay_inputs,
+    )
+
+    descriptor, _rows = _genuine_l4_inputs(tmp_path / "online-source")
+    loaded = _load_protected_replay_inputs(descriptor)
+    evidence_root = tmp_path / "current-evidence"
+    for relative_name, content in loaded.current_evidence_files:
+        target = evidence_root / relative_name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(content)
+    runtime_evidence = (SimpleNamespace(kind="trace-runtime-without-provider"),)
+    extra = tmp_path / "unexpected-provider-object.bin"
+    extra.write_bytes(b"unexpected")
+
+    with pytest.raises(TraceabilityBlockedError, match="must be empty"):
+        formal_runner.persist_paper_traceability_replay_input_root(
+            replay_input_root=tmp_path / "empty-provider-replay-input",
+            canonical_direct_rows={key: () for key in loaded.direct},
+            canonical_runtime_evidence=runtime_evidence,
+            current_provider_object_files={"unexpected": extra},
+            current_evidence_root=evidence_root,
+        )
 
 
 @pytest.mark.parametrize("mutation_kind", ("root", "object", "role", "entry"))

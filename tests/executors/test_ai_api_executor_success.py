@@ -47,6 +47,107 @@ def _sent_body(call: dict) -> dict:
     return json.loads(call["body_bytes"].decode("utf-8"))
 
 
+def test_pure_prepare_matches_executor_wire_and_has_no_side_effects(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    store = ArtifactStore(tmp_path)
+    request = make_ai_request(store, request_id="request_pure_prepare")
+    config_body = make_config_dict()
+    config_body["defaults"]["max_provider_attempts"] = 1
+    config_body["entries"] = [config_body["entries"][0]]
+    config = load_ai_api_config(config_body)
+    entry = config.entries[0]
+    prompt = json.loads(
+        store.read_bytes(request.prompt_package_ref).decode("utf-8")
+    )
+    monkeypatch.delenv(entry.api_key_env, raising=False)
+    files_before = tuple(
+        sorted(path.relative_to(tmp_path).as_posix() for path in tmp_path.rglob("*") if path.is_file())
+    )
+
+    planned = ai_api_module.prepare_ai_api_outbound_request(
+        config=config,
+        request=request,
+        prompt=prompt,
+        entry=entry,
+    )
+
+    assert tuple(
+        sorted(path.relative_to(tmp_path).as_posix() for path in tmp_path.rglob("*") if path.is_file())
+    ) == files_before
+    assert planned.prepared_request.entry_id == entry.entry_id
+    assert planned.prepared_request.body_digest == (
+        f"sha256:{sha256(planned.prepared_request.body_bytes).hexdigest()}"
+    )
+    prepare_calls = []
+    original_prepare = ai_api_module.prepare_ai_api_outbound_request
+
+    def recording_prepare(**kwargs):
+        result = original_prepare(**kwargs)
+        prepare_calls.append(result)
+        return result
+
+    monkeypatch.setattr(
+        ai_api_module,
+        "prepare_ai_api_outbound_request",
+        recording_prepare,
+    )
+    monkeypatch.setenv(entry.api_key_env, "pure-prepare-test-secret")
+    transport = FakeSiliconFlowTransport(
+        [
+            FakeProviderResponse(
+                status_code=200,
+                body={
+                    "id": "pure-prepare-response",
+                    "model": entry.model,
+                    "choices": [
+                        {
+                            "message": {"content": '{"answer":"ok"}'},
+                            "finish_reason": "stop",
+                        }
+                    ],
+                    "usage": {
+                        "prompt_tokens": 1,
+                        "completion_tokens": 1,
+                        "total_tokens": 2,
+                    },
+                },
+            )
+        ]
+    )
+
+    submission = AIAPIExecutor(
+        executor_id="executor_ai_api",
+        executor_version="0.1.0",
+        artifact_store=store,
+        config=config,
+        transport=transport,
+        parser=parse_answer,
+    ).execute(
+        request,
+        submission_id="submission_pure_prepare",
+        submitted_at="2026-08-03T00:00:00Z",
+    )
+
+    assert submission.result_kind == "succeeded"
+    assert prepare_calls == [planned]
+    assert transport.calls[0]["body_bytes"] == planned.prepared_request.body_bytes
+    assert transport.calls[0]["normalized_absolute_endpoint"] == (
+        planned.prepared_request.normalized_absolute_endpoint
+    )
+    provenance = json.loads(
+        store.read_bytes(submission.provenance_ref).decode("utf-8")
+    )
+    assert provenance["attempts"][0]["provider_request_identity"] == {
+        **planned.provider_request_identity,
+        "prepared_request": planned.prepared_request.provenance_dict(),
+    }
+    assert b"pure-prepare-test-secret" not in store.read_bytes(
+        submission.provenance_ref
+    )
+
+
 def _openai_config_dict():
     body = make_config_dict()
     body["provider_family"] = "openai"

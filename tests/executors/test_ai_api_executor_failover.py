@@ -1,5 +1,6 @@
 import json
 from dataclasses import replace
+from typing import Any
 
 import pytest
 
@@ -13,6 +14,41 @@ from tests.phase7_fixtures import (
 from tokenshare.executors.ai_api import AIAPIExecutor
 from tokenshare.executors.ai_api_config import load_ai_api_config
 from tokenshare.storage.artifacts import ArtifactStore
+
+
+class _OnlineLifecycleRecorder:
+    def __init__(self, *, events: list[str]) -> None:
+        self.events = events
+        self.failure_context: dict[str, Any] | None = None
+
+    def __call__(self, **_context: Any) -> None:
+        self.events.append("post_raw")
+
+    def after_prepared_dispatch(self, **context: Any) -> None:
+        store = context["artifact_store"]
+        prepared_ref = context["prepared_request_ref"]
+        assert isinstance(store, ArtifactStore)
+        assert store.verify(prepared_ref)
+        self.events.append("reserved")
+
+    def before_provider_dispatch(self, **_context: Any) -> None:
+        self.events.append("intent")
+
+    def after_pre_transport_abort(self, **context: Any) -> None:
+        assert context["abort_kind"] == "secret_missing"
+        assert context["provider_call_count"] == 0
+        self.events.append("released")
+
+    def after_provider_failure_persisted(self, **context: Any) -> None:
+        self.failure_context = dict(context)
+        self.events.append("failure")
+
+
+def _single_entry_config_dict() -> dict[str, Any]:
+    body = make_config_dict()
+    body["entries"] = [body["entries"][0]]
+    body["defaults"]["max_provider_attempts"] = 1
+    return body
 
 
 def test_ai_api_executor_failover_after_rate_limit(tmp_path, monkeypatch) -> None:
@@ -74,6 +110,179 @@ def test_ai_api_executor_failover_after_rate_limit(tmp_path, monkeypatch) -> Non
         assert "messages" not in provider_request_identity
     assert b"secret-a" not in provenance_bytes
     assert b"secret-b" not in provenance_bytes
+
+
+def test_online_lifecycle_orders_reserve_secret_intent_and_transport(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("SILICONFLOW_API_KEY_A", "secret-a")
+    events: list[str] = []
+
+    class OrderedTransport(FakeSiliconFlowTransport):
+        def post_chat_completion(self, **kwargs):
+            events.append("transport")
+            return super().post_chat_completion(**kwargs)
+
+    store = ArtifactStore(tmp_path)
+    request = make_ai_request(store, request_id="request_online_order")
+    hook = _OnlineLifecycleRecorder(events=events)
+    executor = AIAPIExecutor(
+        executor_id="executor_ai_api",
+        executor_version="0.1.0",
+        artifact_store=store,
+        config=load_ai_api_config(_single_entry_config_dict()),
+        transport=OrderedTransport(
+            [
+                FakeProviderResponse(
+                    status_code=200,
+                    body={
+                        "id": "ordered-success",
+                        "model": "Qwen/Qwen2.5-7B-Instruct",
+                        "choices": [{"message": {"content": "ok"}}],
+                        "usage": {
+                            "prompt_tokens": 2,
+                            "completion_tokens": 1,
+                            "total_tokens": 3,
+                        },
+                    },
+                )
+            ]
+        ),
+        post_raw_output_hook=hook,
+        resolved_secret_observer=lambda secret: events.append(
+            "observed" if secret == "secret-a" else "wrong-secret"
+        ),
+    )
+
+    submission = executor.execute(
+        request,
+        submission_id="submission_online_order",
+        submitted_at="2026-08-03T00:00:00Z",
+    )
+
+    assert submission.result_kind == "succeeded"
+    assert events == ["reserved", "observed", "intent", "transport", "post_raw"]
+
+
+def test_missing_secret_releases_reserved_slot_without_provider_attempt(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.delenv("SILICONFLOW_API_KEY_A", raising=False)
+    events: list[str] = []
+    store = ArtifactStore(tmp_path)
+    transport = FakeSiliconFlowTransport([])
+    hook = _OnlineLifecycleRecorder(events=events)
+    submission = AIAPIExecutor(
+        executor_id="executor_ai_api",
+        executor_version="0.1.0",
+        artifact_store=store,
+        config=load_ai_api_config(_single_entry_config_dict()),
+        transport=transport,
+        post_raw_output_hook=hook,
+        resolved_secret_observer=lambda _secret: events.append("observed"),
+    ).execute(
+        make_ai_request(store, request_id="request_missing_secret_release"),
+        submission_id="submission_missing_secret_release",
+        submitted_at="2026-08-03T00:00:00Z",
+    )
+
+    assert submission.result_kind == "executor_error"
+    assert submission.usage_summary["provider_attempt_count"] == 0
+    assert transport.calls == []
+    assert hook.failure_context is None
+    assert events == ["reserved", "released"]
+
+
+def test_terminal_provider_failure_persists_explicit_failure_and_usage_schemas(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("SILICONFLOW_API_KEY_A", "secret-a")
+    events: list[str] = []
+
+    class FailingTransport(FakeSiliconFlowTransport):
+        def post_chat_completion(self, **kwargs):
+            events.append("transport")
+            return super().post_chat_completion(**kwargs)
+
+    store = ArtifactStore(tmp_path)
+    hook = _OnlineLifecycleRecorder(events=events)
+    submission = AIAPIExecutor(
+        executor_id="executor_ai_api",
+        executor_version="0.1.0",
+        artifact_store=store,
+        config=load_ai_api_config(_single_entry_config_dict()),
+        transport=FailingTransport(
+            [FakeProviderResponse(status_code=503, body={"message": "overloaded"})]
+        ),
+        post_raw_output_hook=hook,
+        resolved_secret_observer=lambda secret: events.append(
+            "observed" if secret == "secret-a" else "wrong-secret"
+        ),
+    ).execute(
+        make_ai_request(store, request_id="request_terminal_failure"),
+        submission_id="submission_terminal_failure",
+        submitted_at="2026-08-03T00:00:00Z",
+    )
+
+    assert submission.result_kind == "provider_error"
+    assert submission.raw_output_ref is None
+    assert events == ["reserved", "observed", "intent", "transport", "failure"]
+    assert hook.failure_context is not None
+    failure_ref = hook.failure_context["provider_failure_ref"]
+    usage_ref = hook.failure_context["usage_ref"]
+    provenance_ref = hook.failure_context["provenance_ref"]
+    assert json.loads(store.read_bytes(failure_ref))["schema_version"] == (
+        "phase7.ai_provider_failure.v1"
+    )
+    usage_body = json.loads(store.read_bytes(usage_ref))
+    assert usage_body["schema_version"] == "phase7.ai_provider_terminal_usage.v1"
+    assert usage_body["usage_summary"]["prompt_tokens"] is None
+    assert usage_body["usage_summary"]["cost_estimate"] is None
+    assert json.loads(store.read_bytes(provenance_ref))["schema_version"] == (
+        "phase7.ai_provider_call_provenance.v2"
+    )
+    assert submission.error["provider_failure_ref"] == failure_ref.to_dict()
+    assert submission.error["provider_terminal_usage_ref"] == usage_ref.to_dict()
+
+
+def test_terminal_failure_redaction_uses_transient_resolved_secret_not_env_backfill(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("SILICONFLOW_API_KEY_A", "secret-a")
+
+    class SecretEchoTransport(FakeSiliconFlowTransport):
+        def post_chat_completion(self, **kwargs):
+            self.calls.append({"body_bytes": kwargs["body_bytes"]})
+            monkeypatch.delenv("SILICONFLOW_API_KEY_A", raising=False)
+            raise OSError("transport failed with secret-a")
+
+    store = ArtifactStore(tmp_path)
+    hook = _OnlineLifecycleRecorder(events=[])
+    submission = AIAPIExecutor(
+        executor_id="executor_ai_api",
+        executor_version="0.1.0",
+        artifact_store=store,
+        config=load_ai_api_config(_single_entry_config_dict()),
+        transport=SecretEchoTransport([]),
+        post_raw_output_hook=hook,
+        resolved_secret_observer=lambda _secret: None,
+    ).execute(
+        make_ai_request(store, request_id="request_transient_redaction"),
+        submission_id="submission_transient_redaction",
+        submitted_at="2026-08-03T00:00:00Z",
+    )
+
+    assert submission.result_kind == "connection_error"
+    assert hook.failure_context is not None
+    failure_body = store.read_bytes(hook.failure_context["provider_failure_ref"])
+    provenance_body = store.read_bytes(submission.provenance_ref)
+    assert b"secret-a" not in failure_body
+    assert b"secret-a" not in provenance_body
+    assert b"[REDACTED_API_KEY]" in failure_body
 
 
 def test_ai_api_executor_rejects_provider_hard_requirement_mismatch_before_call(

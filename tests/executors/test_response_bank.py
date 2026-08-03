@@ -20,10 +20,13 @@ from tokenshare.executors.response_bank import (
     ResponseBankManifest,
     ResponseBankResolver,
     ValidatedResponseBankIndex,
+    canonical_inventory_rows,
     canonical_digest,
     initialize_response_bank,
     inventory_entry_id,
+    response_bank_inventory_digest,
     semantic_slot_key,
+    terminal_bank_entry_id,
 )
 from tokenshare.storage.artifacts import ArtifactStore
 
@@ -245,6 +248,89 @@ def test_inventory_entry_id_is_stable_across_load_and_replay(tmp_path) -> None:
     first = ResponseBankResolver.open(root).index.inventory_rows[0]
     second = ResponseBankResolver.open(root).index.inventory_rows[0]
     assert first.inventory_entry_id == row.inventory_entry_id == second.inventory_entry_id
+
+
+def test_terminal_bank_entry_id_is_versioned_unique_and_separate_from_provider_entry() -> None:
+    prepared = _prepared()
+    first_slot = semantic_slot_key(
+        case_record_digest="sha256:case-1",
+        planned_ai_unit_id="unit-1",
+        sample_slot_index=0,
+        replacement_slot=0,
+        provider_config_digest=prepared.provider_config_digest,
+        prompt_profile_digest="sha256:prompt",
+        prompt_admission_profile_digest=prepared.prompt_admission_profile_digest,
+        plugin_version=prepared.plugin_version,
+    )
+    second_slot = semantic_slot_key(
+        case_record_digest="sha256:case-2",
+        planned_ai_unit_id="unit-2",
+        sample_slot_index=0,
+        replacement_slot=0,
+        provider_config_digest=prepared.provider_config_digest,
+        prompt_profile_digest="sha256:prompt",
+        prompt_admission_profile_digest=prepared.prompt_admission_profile_digest,
+        plugin_version=prepared.plugin_version,
+    )
+
+    first = terminal_bank_entry_id(
+        semantic_slot_key=first_slot,
+        inference_request_digest=prepared.inference_request_digest,
+    )
+    second = terminal_bank_entry_id(
+        semantic_slot_key=second_slot,
+        inference_request_digest=prepared.inference_request_digest,
+    )
+
+    assert first == canonical_digest(
+        {
+            "schema_version": "tokenshare.response_bank_terminal_entry_identity.v1",
+            "semantic_slot_key": first_slot,
+            "inference_request_digest": prepared.inference_request_digest,
+        }
+    )
+    assert first != second
+    assert prepared.entry_id == "provider-entry"
+    assert prepared.entry_id not in {first, second}
+    assert ResponseBankInventoryRow.from_dict(_row().to_dict()).entry_id == (
+        "bank-entry-1"
+    )
+
+
+def test_inventory_digest_uses_one_inventory_entry_id_canonical_sort() -> None:
+    first = _row()
+    second_values = first.to_dict()
+    second_values["case_record_digest"] = "sha256:case-2"
+    second_values["planned_ai_unit_id"] = "unit-22"
+    second_values["semantic_slot_key"] = semantic_slot_key(
+        case_record_digest=second_values["case_record_digest"],
+        planned_ai_unit_id=second_values["planned_ai_unit_id"],
+        sample_slot_index=second_values["sample_slot_index"],
+        replacement_slot=second_values["replacement_slot"],
+        provider_config_digest=second_values["provider_config_digest"],
+        prompt_profile_digest=second_values["prompt_profile_digest"],
+        prompt_admission_profile_digest=second_values[
+            "prompt_admission_profile_digest"
+        ],
+        plugin_version=second_values["plugin_version"],
+    )
+    second_values["entry_id"] = terminal_bank_entry_id(
+        semantic_slot_key=second_values["semantic_slot_key"],
+        inference_request_digest=second_values["inference_request_digest"],
+    )
+    second_values["inventory_entry_id"] = inventory_entry_id(second_values)
+    second = ResponseBankInventoryRow.from_dict(second_values)
+    canonical = tuple(
+        sorted((first, second), key=lambda row: row.inventory_entry_id)
+    )
+
+    assert canonical_inventory_rows((second, first)) == canonical
+    assert response_bank_inventory_digest((second, first)) == canonical_digest(
+        [row.to_dict() for row in canonical]
+    )
+    assert response_bank_inventory_digest((first, second)) == (
+        response_bank_inventory_digest((second, first))
+    )
 
 
 def test_inventory_row_tamper_changes_recomputed_id_and_fails_closed(tmp_path) -> None:

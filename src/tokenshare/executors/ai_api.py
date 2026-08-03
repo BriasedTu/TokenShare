@@ -3,9 +3,8 @@
 from __future__ import annotations
 
 import json
-import os
 import random
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from hashlib import sha256
 from inspect import Parameter, signature
@@ -17,7 +16,7 @@ from tokenshare.executors.ai_api_artifacts import (
     RAW_MODEL_OUTPUT_SCHEMA_V2,
     build_raw_model_identity_fields,
 )
-from tokenshare.executors.ai_api_config import AIAPIExecutorConfig
+from tokenshare.executors.ai_api_config import AIAPIExecutorConfig, AIAPIProviderEntry
 from tokenshare.executors.ai_api_request_identity import (
     PreparedOutboundRequest,
     PreparedOutboundRequestFactory,
@@ -72,6 +71,78 @@ class PreparedDispatchEvidence:
     resolved_model: str | None
     response_model_status: str
     error_message: str | None
+
+
+@dataclass(frozen=True, kw_only=True)
+class PreparedAIAPIOutboundRequest:
+    """规划期与 executor 共用的纯 wire request 结果。"""
+
+    prepared_request: PreparedOutboundRequest
+    provider_request_identity: JsonObject
+
+
+def prepare_ai_api_outbound_request(
+    *,
+    config: AIAPIExecutorConfig,
+    request: ExecutionRequest,
+    prompt: Mapping[str, Any],
+    entry: AIAPIProviderEntry,
+) -> PreparedAIAPIOutboundRequest:
+    """只从冻结输入构造 exact wire bytes；不读 secret、不持久化、不发送。"""
+
+    if not isinstance(config, AIAPIExecutorConfig):
+        raise TypeError("config must be AIAPIExecutorConfig")
+    if not isinstance(request, ExecutionRequest):
+        raise TypeError("request must be ExecutionRequest")
+    if not isinstance(entry, AIAPIProviderEntry) or entry not in config.entries:
+        raise ValueError("entry must belong to the prepared provider config")
+    prompt_body = dict(prompt)
+    require_json_mode = _require_json_mode_constraint(prompt_body)
+    build_chat_body, _parse_provider_response = _provider_adapter(
+        config.provider_family
+    )
+    body = build_chat_body(
+        entry=entry,
+        prompt_text=_provider_prompt_text(prompt_body),
+        defaults=config.defaults,
+        request_limits=request.limits,
+        soft_hints=request.soft_hints or {},
+        require_json_mode=require_json_mode,
+    )
+    request_identity = _provider_request_identity(
+        provider_family=config.provider_family,
+        entry=entry,
+        body=body,
+    )
+    prepared_request = PreparedOutboundRequestFactory.prepare(
+        body_obj=body,
+        base_url=entry.base_url,
+        endpoint=entry.endpoint,
+        provider_config_digest=config.config_digest,
+        entry_id=entry.entry_id,
+        configured_model=entry.model,
+        effective_controls_digest=str(
+            request_identity["effective_request_controls_digest"]
+        ),
+        plugin_id=str(request.plugin.get("plugin_id", "unknown")),
+        plugin_version=str(request.plugin.get("plugin_version", "unknown")),
+        prompt_profile_id=str(prompt_body.get("fixture_profile", "unknown")),
+        prompt_serialization_schema=str(
+            prompt_body.get("schema_version", "phase3.prompt_package.v1")
+        ),
+        body_serialization_schema=(
+            f"{config.provider_family}.chat_completions.v1"
+        ),
+        case_id=_stable_case_id(request),
+        planned_ai_unit_id=_stable_planned_ai_unit_id(request),
+        sample_slot_index=_stable_slot_index(request, "sample_slot_index"),
+        replacement_slot=_stable_slot_index(request, "replacement_slot"),
+    )
+    validate_prepared_request(prepared_request)
+    return PreparedAIAPIOutboundRequest(
+        prepared_request=prepared_request,
+        provider_request_identity=request_identity,
+    )
 
 
 def dispatch_prepared_request_once(
@@ -224,6 +295,7 @@ class AIAPIExecutor:
         transport,
         parser: Callable[..., object] | None = None,
         post_raw_output_hook: Callable[..., Mapping[str, Any] | None] | None = None,
+        resolved_secret_observer: Callable[[str], None] | None = None,
     ) -> None:
         self.executor_id = executor_id
         self.executor_version = executor_version
@@ -232,6 +304,7 @@ class AIAPIExecutor:
         self._transport = transport
         self._parser = parser
         self._post_raw_output_hook = post_raw_output_hook
+        self._resolved_secret_observer = resolved_secret_observer
 
     def execute(
         self,
@@ -360,56 +433,30 @@ class AIAPIExecutor:
         last_attempted_entry = None
         last_request_identity: JsonObject | None = None
         provider_call_count = 0
+        resolved_secret_values: list[str] = []
         terminal_error: (
             SiliconFlowProviderError | OpenAIProviderError | DeepSeekProviderError | None
         ) = None
-        build_chat_body, parse_provider_response = _provider_adapter(self._config.provider_family)
+        _build_chat_body, parse_provider_response = _provider_adapter(
+            self._config.provider_family
+        )
         for entry in entries_by_attempt_order(config=self._config, selection=selection):
             last_attempted_entry = entry
             started = perf_counter()
             request_identity: JsonObject | None = None
+            prepared_request_ref: ArtifactRef | None = None
+            prepared_hook_completed = False
+            dispatch_intent_recorded = False
             try:
-                body = build_chat_body(
+                planned_request = prepare_ai_api_outbound_request(
+                    config=self._config,
+                    request=request,
+                    prompt=prompt,
                     entry=entry,
-                    prompt_text=_provider_prompt_text(prompt),
-                    defaults=self._config.defaults,
-                    request_limits=request.limits,
-                    soft_hints=request.soft_hints or {},
-                    require_json_mode=require_json_mode,
                 )
-                request_identity = _provider_request_identity(
-                    provider_family=self._config.provider_family,
-                    entry=entry,
-                    body=body,
-                )
-                prepared_request = PreparedOutboundRequestFactory.prepare(
-                    body_obj=body,
-                    base_url=entry.base_url,
-                    endpoint=entry.endpoint,
-                    provider_config_digest=self._config.config_digest,
-                    entry_id=entry.entry_id,
-                    configured_model=entry.model,
-                    effective_controls_digest=str(
-                        request_identity["effective_request_controls_digest"]
-                    ),
-                    plugin_id=str(request.plugin.get("plugin_id", "unknown")),
-                    plugin_version=str(request.plugin.get("plugin_version", "unknown")),
-                    prompt_profile_id=str(prompt.get("fixture_profile", "unknown")),
-                    prompt_serialization_schema=str(
-                        prompt.get("schema_version", "phase3.prompt_package.v1")
-                    ),
-                    body_serialization_schema=(
-                        f"{self._config.provider_family}.chat_completions.v1"
-                    ),
-                    case_id=_stable_case_id(request),
-                    planned_ai_unit_id=_stable_planned_ai_unit_id(request),
-                    sample_slot_index=_stable_slot_index(
-                        request, "sample_slot_index"
-                    ),
-                    replacement_slot=_stable_slot_index(request, "replacement_slot"),
-                )
-                validate_prepared_request(prepared_request)
-                self._artifact_store.save_bytes(
+                prepared_request = planned_request.prepared_request
+                request_identity = dict(planned_request.provider_request_identity)
+                prepared_request_ref = self._artifact_store.save_bytes(
                     prepared_request.body_bytes,
                     artifact_id=(
                         f"prepared_outbound_{_safe_artifact_part(request.request_id)}_"
@@ -429,12 +476,45 @@ class AIAPIExecutor:
                     "prepared_request": prepared_request.provenance_dict(),
                 }
                 last_request_identity = request_identity
+                self._invoke_lifecycle_method(
+                    "after_prepared_dispatch",
+                    artifact_store=self._artifact_store,
+                    request=request,
+                    submission_id=submission_id,
+                    prepared_request_ref=prepared_request_ref,
+                    prepared_request=prepared_request,
+                    provider_request_identity=request_identity,
+                    provider_family=self._config.provider_family,
+                    model=entry.model,
+                    entry_id=entry.entry_id,
+                    submitted_at=submitted_at,
+                )
+                prepared_hook_completed = True
                 api_key = entry.resolve_api_key()
-                provider_call_count += 1
-                validate_prepared_request(prepared_request)
                 transport = _exact_transport_for_provider(
                     self._transport, self._config.provider_family
                 )
+                if api_key not in resolved_secret_values:
+                    resolved_secret_values.append(api_key)
+                if self._resolved_secret_observer is not None:
+                    self._resolved_secret_observer(api_key)
+                validate_prepared_request(prepared_request)
+                self._invoke_lifecycle_method(
+                    "before_provider_dispatch",
+                    artifact_store=self._artifact_store,
+                    request=request,
+                    submission_id=submission_id,
+                    prepared_request_ref=prepared_request_ref,
+                    prepared_request=prepared_request,
+                    provider_request_identity=request_identity,
+                    provider_family=self._config.provider_family,
+                    model=entry.model,
+                    entry_id=entry.entry_id,
+                    provider_call_count=provider_call_count,
+                    submitted_at=submitted_at,
+                )
+                dispatch_intent_recorded = True
+                provider_call_count += 1
                 response = transport.post_chat_completion(
                     api_key=api_key,
                     body_bytes=prepared_request.body_bytes,
@@ -460,6 +540,25 @@ class AIAPIExecutor:
                 break
             except ValueError as exc:
                 error_kind = "secret_missing" if "missing API key env var" in str(exc) else "config_error"
+                if (
+                    prepared_hook_completed
+                    and not dispatch_intent_recorded
+                    and prepared_request_ref is not None
+                ):
+                    self._invoke_lifecycle_method(
+                        "after_pre_transport_abort",
+                        artifact_store=self._artifact_store,
+                        request=request,
+                        submission_id=submission_id,
+                        prepared_request_ref=prepared_request_ref,
+                        provider_request_identity=request_identity,
+                        provider_family=self._config.provider_family,
+                        model=entry.model,
+                        entry_id=entry.entry_id,
+                        abort_kind=error_kind,
+                        provider_call_count=provider_call_count,
+                        submitted_at=submitted_at,
+                    )
                 attempts.append(
                     _attempt_record(
                         self._config.provider_family,
@@ -467,7 +566,7 @@ class AIAPIExecutor:
                         error_kind,
                         perf_counter() - started,
                         None,
-                        message=_redact_text(str(exc), self._config),
+                        message=_redact_text(str(exc), resolved_secret_values),
                         extra={"api_key_env": entry.api_key_env} if error_kind == "secret_missing" else None,
                         provider_request_identity=request_identity,
                     )
@@ -491,7 +590,7 @@ class AIAPIExecutor:
                         "connection_error",
                         perf_counter() - started,
                         None,
-                        message=_redact_text(str(exc), self._config),
+                        message=_redact_text(str(exc), resolved_secret_values),
                         provider_request_identity=request_identity,
                     )
                 )
@@ -503,7 +602,7 @@ class AIAPIExecutor:
                         exc.error_kind,
                         perf_counter() - started,
                         exc.http_status,
-                        message=_redact_text(exc.message, self._config),
+                        message=_redact_text(exc.message, resolved_secret_values),
                         provider_request_identity=request_identity,
                     )
                 )
@@ -537,8 +636,18 @@ class AIAPIExecutor:
                     reason="provider_response_invalid",
                     message=_redact_text(
                         terminal_error.message if terminal_error is not None else result_kind,
-                        self._config,
+                        resolved_secret_values,
                     ),
+                    submitted_at=submitted_at,
+                )
+            provider_failure_ref = None
+            if provider_call_count > 0 and result_kind in PROVIDER_FAILURE_TAXONOMY:
+                provider_failure_ref = self._save_provider_failure(
+                    submission_id=submission_id,
+                    request=request,
+                    entry=last_attempted_entry,
+                    result_kind=result_kind,
+                    terminal_attempt=(attempts[-1] if attempts else {}),
                     submitted_at=submitted_at,
                 )
             provenance_ref = self._save_provenance(
@@ -573,6 +682,42 @@ class AIAPIExecutor:
                         last_request_identity
                     ),
                 )
+            provider_terminal_usage_ref = None
+            if provider_failure_ref is not None:
+                provider_terminal_usage_ref = self._save_provider_terminal_usage(
+                    submission_id=submission_id,
+                    request=request,
+                    provider_failure_ref=provider_failure_ref,
+                    provenance_ref=provenance_ref,
+                    usage_summary=failure_usage_summary,
+                    submitted_at=submitted_at,
+                )
+                self._invoke_lifecycle_method(
+                    "after_provider_failure_persisted",
+                    artifact_store=self._artifact_store,
+                    request=request,
+                    submission_id=submission_id,
+                    provider_failure_ref=provider_failure_ref,
+                    provenance_ref=provenance_ref,
+                    usage_ref=provider_terminal_usage_ref,
+                    provider_family=self._config.provider_family,
+                    model=last_attempted_entry.model,
+                    entry_id=last_attempted_entry.entry_id,
+                    failure_kind=result_kind,
+                    http_status=(attempts[-1].get("http_status") if attempts else None),
+                    usage_summary=failure_usage_summary,
+                    submitted_at=submitted_at,
+                )
+            error: JsonObject = {"kind": result_kind, "attempts": attempts}
+            if provider_failure_ref is not None and provider_terminal_usage_ref is not None:
+                error.update(
+                    {
+                        "provider_failure_ref": provider_failure_ref.to_dict(),
+                        "provider_terminal_usage_ref": (
+                            provider_terminal_usage_ref.to_dict()
+                        ),
+                    }
+                )
             return self._submission(
                 request=request,
                 submission_id=submission_id,
@@ -584,7 +729,7 @@ class AIAPIExecutor:
                 parse_failure_ref=parse_failure_ref,
                 provenance_ref=provenance_ref,
                 usage_summary=failure_usage_summary,
-                error={"kind": result_kind, "attempts": attempts},
+                error=error,
             )
 
         raw_ref = self._artifact_store.save_json(
@@ -760,7 +905,7 @@ class AIAPIExecutor:
                     request=request,
                     raw_output_ref=raw_ref,
                     reason="plugin_parser_rejected_output",
-                    message=_redact_text(str(exc), self._config),
+                    message=_redact_text(str(exc), resolved_secret_values),
                     submitted_at=submitted_at,
                 )
                 provenance_ref = self._save_provenance(
@@ -964,6 +1109,80 @@ class AIAPIExecutor:
             metadata={"executor_id": self.executor_id},
             created_at=submitted_at,
         )
+
+    def _save_provider_failure(
+        self,
+        *,
+        submission_id: str,
+        request: ExecutionRequest,
+        entry: AIAPIProviderEntry,
+        result_kind: str,
+        terminal_attempt: Mapping[str, Any],
+        submitted_at: str,
+    ) -> ArtifactRef:
+        """保存真实 transport 的 terminal failure；不伪造 raw response。"""
+
+        return self._artifact_store.save_json(
+            {
+                "schema_version": "phase7.ai_provider_failure.v1",
+                "submission_id": submission_id,
+                "request_id": request.request_id,
+                "provider_family": self._config.provider_family,
+                "entry_id": entry.entry_id,
+                "configured_model": entry.model,
+                "failure_kind": result_kind,
+                "http_status": terminal_attempt.get("http_status"),
+                "message": terminal_attempt.get("message"),
+                "provider_request_identity": terminal_attempt.get(
+                    "provider_request_identity"
+                ),
+                "raw_output_ref": None,
+                "lifecycle_stage": "provider_transport_terminal_failure",
+            },
+            artifact_id=f"ai_provider_failure_{submission_id}",
+            artifact_type="AIProviderFailure",
+            artifact_schema_id="phase7.ai_provider_failure",
+            artifact_schema_version="v1",
+            source={"kind": "ai_api_executor", "request_id": request.request_id},
+            metadata={"executor_id": self.executor_id, "entry_id": entry.entry_id},
+            created_at=submitted_at,
+        )
+
+    def _save_provider_terminal_usage(
+        self,
+        *,
+        submission_id: str,
+        request: ExecutionRequest,
+        provider_failure_ref: ArtifactRef,
+        provenance_ref: ArtifactRef,
+        usage_summary: JsonObject,
+        submitted_at: str,
+    ) -> ArtifactRef:
+        """保存 failure 专用 nullable usage；不扩宽 response usage v1。"""
+
+        return self._artifact_store.save_json(
+            {
+                "schema_version": "phase7.ai_provider_terminal_usage.v1",
+                "submission_id": submission_id,
+                "request_id": request.request_id,
+                "provider_failure_ref": provider_failure_ref.to_dict(),
+                "provenance_ref": provenance_ref.to_dict(),
+                "usage_summary": dict(usage_summary),
+                "lifecycle_stage": "provider_failure_persisted_before_callback",
+            },
+            artifact_id=f"ai_provider_terminal_usage_{submission_id}",
+            artifact_type="AIProviderTerminalUsage",
+            artifact_schema_id="phase7.ai_provider_terminal_usage",
+            artifact_schema_version="v1",
+            source={"kind": "ai_api_executor", "request_id": request.request_id},
+            metadata={"executor_id": self.executor_id},
+            created_at=submitted_at,
+        )
+
+    def _invoke_lifecycle_method(self, method_name: str, **context: Any) -> Any:
+        hook = self._post_raw_output_hook
+        method = getattr(hook, method_name, None)
+        return method(**context) if callable(method) else None
 
     def _save_response_provenance(
         self,
@@ -1476,9 +1695,6 @@ def _selection_failure_records(
             result_kind = "disabled"
         elif require_json_mode and not entry.supports_json_mode:
             result_kind = "json_mode_unsupported"
-        elif not os.environ.get(entry.api_key_env, ""):
-            result_kind = "secret_missing"
-            extra["api_key_env"] = entry.api_key_env
         else:
             result_kind = "not_selected"
         records.append(
@@ -1487,10 +1703,9 @@ def _selection_failure_records(
     return records
 
 
-def _redact_text(text: str, config: AIAPIExecutorConfig) -> str:
+def _redact_text(text: str, secret_values: Sequence[str]) -> str:
     redacted = text
-    for entry in config.entries:
-        secret = os.environ.get(entry.api_key_env, "")
+    for secret in secret_values:
         if secret:
             redacted = redacted.replace(secret, "[REDACTED_API_KEY]")
     return redacted

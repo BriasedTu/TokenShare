@@ -5809,7 +5809,10 @@ def _validate_persisted_lineage_closure(
             wrapper.current_task_id != binding.task_id
             or wrapper.current_attempt_id not in attempts
             or wrapper.entry_id not in locators_by_entry
-            or dict(wrapper.locator_digests) != locators_by_entry[wrapper.entry_id]
+            or _canonical_trace_locator_digest_view(wrapper.locator_digests)
+            != _canonical_trace_locator_digest_view(
+                locators_by_entry[wrapper.entry_id]
+            )
             or (wrapper.bank_root_id, wrapper.manifest_digest)
             != bank_identity_by_entry[wrapper.entry_id]
         ):
@@ -5892,6 +5895,36 @@ def _current_trace_wrapper_body(value: CurrentTraceWrapper) -> dict[str, Any]:
         for field_name in value.__dataclass_fields__
         for field_value in (getattr(value, field_name),)
     }
+
+
+_TRACE_LOCATOR_ROLE_ALIASES = frozenset(
+    {
+        ("raw_output", "raw_output_or_provider_failure"),
+        ("provider_failure", "raw_output_or_provider_failure"),
+        ("usage", "usage_status"),
+    }
+)
+
+
+def _canonical_trace_locator_digest_view(
+    locator_digests: Mapping[str, str],
+) -> dict[str, str]:
+    """仅在 lineage 比较边界统一 response-bank 与 paper role 名称。"""
+
+    if not isinstance(locator_digests, Mapping):
+        raise TypeError("trace locator digests must be a mapping")
+    aliases = dict(_TRACE_LOCATOR_ROLE_ALIASES)
+    canonical: dict[str, str] = {}
+    for role, object_digest in locator_digests.items():
+        if not isinstance(role, str) or not role:
+            raise ValueError("trace locator role must be a non-empty string")
+        if not isinstance(object_digest, str) or not object_digest:
+            raise ValueError("trace locator digest must be a non-empty string")
+        canonical_role = aliases.get(role, role)
+        if canonical_role in canonical:
+            raise ValueError("trace locator role alias collision")
+        canonical[canonical_role] = object_digest
+    return canonical
 
 
 def _typed_mapping_sequence_matches(

@@ -82,6 +82,9 @@ from tokenshare.experiments.paper_models import (
     evaluate_paper_eligibility,
 )
 from tokenshare.experiments.paper_report import scan_artifact_store_for_secrets
+from tokenshare.experiments.paper_direct_results import (
+    persist_native_online_direct_artifacts,
+)
 from tokenshare.experiments.paper_projection import project_paper_protocol_run
 from tokenshare.experiments.paper_ablation import runtime_controls_for_mode
 from tokenshare.experiments.paper_unit_commitments import (
@@ -361,7 +364,7 @@ def run_lean_paper_case(
         max_tokens=max_tokens,
         timeout_seconds=timeout_seconds,
     )
-    secret_values = _real_secret_values(config) if real_transport else ()
+    secret_collector = _TransientSecretCollector()
     if selected_ai_unit_id is not None or not (
             is_lemma_graph_case
             and case.get("preflight_status") == "structured_blocked"
@@ -385,7 +388,7 @@ def run_lean_paper_case(
             real_transport=real_transport,
             config=config,
             validated_binding=validated_binding,
-            secret_values=secret_values,
+            secret_collector=secret_collector,
             max_tokens=max_tokens,
             timeout_seconds=timeout_seconds,
             post_raw_output_hook=post_raw_output_hook,
@@ -407,7 +410,7 @@ def run_lean_paper_case(
             transport=transport,
             real_transport=real_transport,
             config=config,
-            secret_values=secret_values,
+            secret_collector=secret_collector,
             validated_binding=validated_binding,
             max_tokens=max_tokens,
             timeout_seconds=timeout_seconds,
@@ -454,7 +457,7 @@ def run_lean_paper_case(
             store=store,
             split_summary=split_summary,
             real_transport=real_transport,
-            secret_values=secret_values,
+            secret_values=secret_collector.snapshot(),
         )
 
     split_plan = build_lean_split_plan(
@@ -518,6 +521,7 @@ def run_lean_paper_case(
             max_tokens=max_tokens,
             environment_manifest=environment_manifest,
             post_raw_output_hook=post_raw_output_hook,
+            secret_collector=secret_collector,
             ablation_mode=normalized_ablation_mode,
             checker=active_checker,
         )
@@ -566,7 +570,7 @@ def run_lean_paper_case(
         store=store,
         real_transport=real_transport,
         transport_kind="ai_api" if real_transport else "scripted",
-        secret_values=secret_values,
+        secret_values=secret_collector.snapshot(),
         transport=active_transport,
     )
     run_evidence["ablation_runtime"] = _lean_ablation_runtime_evidence(
@@ -630,6 +634,36 @@ class _CapturedLeanCall:
     usage_ref: ArtifactRef
     model_execution_record: Any | None
     model_execution_record_ref: ArtifactRef | None
+    resolved_secret_values: tuple[str, ...] = ()
+
+
+class _TransientSecretCollector:
+    """仅在当前 root 内存中收集实际 resolve 的 key；绝不持久化。"""
+
+    def __init__(self) -> None:
+        self._values: list[str] = []
+        self._lock = Lock()
+
+    def __repr__(self) -> str:
+        return "<_TransientSecretCollector redacted>"
+
+    def __getstate__(self):
+        return {"_values": list(self._values)}
+
+    def __setstate__(self, state):
+        self._values = list(state.get("_values", ()))
+        self._lock = Lock()
+
+    def observe(self, value: str) -> None:
+        if not isinstance(value, str) or not value:
+            raise ValueError("resolved secret must be non-empty")
+        with self._lock:
+            if value not in self._values:
+                self._values.append(value)
+
+    def snapshot(self) -> tuple[str, ...]:
+        with self._lock:
+            return tuple(self._values)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -933,6 +967,7 @@ class _FixedIdentityLeanExecutor:
         transport: Any,
         paper_eligible_transport: bool,
         post_raw_output_hook: Any | None,
+        secret_collector: _TransientSecretCollector,
     ) -> None:
         self.store = store
         self.condition = condition
@@ -943,6 +978,7 @@ class _FixedIdentityLeanExecutor:
         self.transport = transport
         self.paper_eligible_transport = paper_eligible_transport
         self.post_raw_output_hook = post_raw_output_hook
+        self.secret_collector = secret_collector
         self.calls: list[_CapturedLeanCall] = []
         self._calls_lock = Lock()
         self._next_call_index = 0
@@ -977,6 +1013,8 @@ class _FixedIdentityLeanExecutor:
         )
 
     def ingest_process_result(self, captured: _CapturedLeanCall) -> None:
+        for secret in captured.resolved_secret_values:
+            self.secret_collector.observe(secret)
         with self._calls_lock:
             if any(
                 call.request.attempt_id == captured.request.attempt_id
@@ -1062,6 +1100,7 @@ class _FixedIdentityLeanExecutor:
                     created_at=created_at,
                 ),
                 post_raw_output_hook=self.post_raw_output_hook,
+                resolved_secret_observer=self.secret_collector.observe,
             )
             submission = executor.execute(
                 request,
@@ -1112,6 +1151,7 @@ class _FixedIdentityLeanExecutor:
                     usage_ref=usage_ref,
                     model_execution_record=model_record,
                     model_execution_record_ref=model_record_ref,
+                    resolved_secret_values=self.secret_collector.snapshot(),
                 )
             )
         return submission
@@ -1177,7 +1217,7 @@ def _run_lean_full_via_coordinator(
     real_transport: bool,
     config: AIAPIExecutorConfig,
     validated_binding: ValidatedModelEndpointBinding,
-    secret_values: tuple[str, ...],
+    secret_collector: _TransientSecretCollector,
     max_tokens: int,
     timeout_seconds: int,
     post_raw_output_hook: Any | None,
@@ -1256,6 +1296,7 @@ def _run_lean_full_via_coordinator(
                 active_transport
             ),
             post_raw_output_hook=post_raw_output_hook,
+            secret_collector=secret_collector,
         )
         runtime_adapter = plugin_runtime
         execution_bridge = LeanExecutionBridge(
@@ -1369,7 +1410,7 @@ def _run_lean_full_via_coordinator(
             store=store,
             split_summary=_split_summary(exc.split_report),
             real_transport=real_transport,
-            secret_values=secret_values,
+            secret_values=secret_collector.snapshot(),
         )
 
     split_plan = plugin_runtime.planned_split_plan
@@ -1704,7 +1745,7 @@ def _run_lean_full_via_coordinator(
         store=store,
         real_transport=real_transport,
         transport_kind="ai_api" if real_transport else "scripted",
-        secret_values=secret_values,
+        secret_values=secret_collector.snapshot(),
         transport=active_transport,
     )
     run_evidence["protocol_runtime"] = {
@@ -1740,6 +1781,43 @@ def _run_lean_full_via_coordinator(
             runtime_result.summary.get("runtime_hook_observations", ())
         ),
     )
+    final_value = merge_summary.get("merge_result_ref")
+    checker_value = merge_summary.get("root_checker_report_ref")
+    if attempts:
+        completed_direct = (
+            isinstance(final_value, Mapping)
+            and isinstance(checker_value, Mapping)
+            and accepted_validity is not None
+        )
+        direct_bundle = persist_native_online_direct_artifacts(
+            artifact_store=store,
+            execution_id=runtime_result.run_id,
+            task_id=runtime_result.task_id,
+            root_unit_id=runtime_result.root_unit_id,
+            final_result_ref=(
+                ArtifactRef.from_dict(final_value) if completed_direct else None
+            ),
+            oracle_verdict_ref=(
+                ArtifactRef.from_dict(checker_value) if completed_direct else None
+            ),
+            oracle_kind="lean_checker" if completed_direct else None,
+            oracle_correct=accepted_validity if completed_direct else None,
+            oracle_fact=(
+                {
+                    "case_id": case_id,
+                    "root_checker_accepted": accepted_validity,
+                }
+                if completed_direct
+                else None
+            ),
+            current_provider_object_refs=(
+                _native_online_provider_sources(attempts)
+                if real_transport
+                else None
+            ),
+            parser_object_refs=_native_parser_sources(attempts),
+        )
+        run_evidence["paper_direct_native_artifacts"] = direct_bundle.to_dict()
     eligibility = _evaluate_lean_paper_eligibility(
         attempts=attempts,
         run_evidence=run_evidence,
@@ -1789,6 +1867,75 @@ def _run_lean_full_via_coordinator(
     )
     _write_case_outputs(run_root, result)
     return result
+
+
+def _native_online_provider_sources(
+    attempts: Sequence[PaperAttemptResult],
+) -> dict[str, tuple[ArtifactRef, ...]]:
+    """把 native executor refs 分组交给唯一 direct builder。"""
+
+    grouped: dict[str, list[ArtifactRef]] = {
+        role: []
+        for role in (
+            "request_body",
+            "raw_output_or_provider_failure",
+            "provenance",
+            "usage_status",
+            "latency",
+            "pricing",
+            "provider_attempt",
+            "model_record",
+        )
+    }
+    for attempt in attempts:
+        request_ref = ArtifactRef.from_dict(attempt.request_ref)
+        provenance_ref = ArtifactRef.from_dict(attempt.provenance_ref)
+        usage_ref = ArtifactRef.from_dict(attempt.usage_ref)
+        raw_value = (
+            attempt.raw_output_ref
+            or attempt.parse_failure_ref
+            or attempt.provenance_ref
+        )
+        values = {
+            "request_body": request_ref,
+            "raw_output_or_provider_failure": ArtifactRef.from_dict(raw_value),
+            "provenance": provenance_ref,
+            "usage_status": usage_ref,
+            "latency": provenance_ref,
+            "pricing": usage_ref,
+            "provider_attempt": provenance_ref,
+            "model_record": ArtifactRef.from_dict(
+                attempt.model_execution_record_ref or attempt.usage_ref
+            ),
+        }
+        for role, ref in values.items():
+            grouped[role].append(ref)
+    if any(not values for values in grouped.values()):
+        raise ValueError("native online provider evidence is incomplete")
+    return {role: tuple(values) for role, values in grouped.items()}
+
+
+def _native_parser_sources(
+    attempts: Sequence[PaperAttemptResult],
+) -> dict[str, tuple[ArtifactRef, ...]]:
+    """把 parser 既有事实按 direct ABI 角色投影，不重新解析。"""
+
+    grouped: dict[str, list[ArtifactRef]] = {
+        "parser_result": [],
+        "parse_failure": [],
+    }
+    for attempt in attempts:
+        for role, value in (
+            ("parser_result", attempt.parsed_output_ref),
+            ("parse_failure", attempt.parse_failure_ref),
+        ):
+            if value is not None:
+                grouped[role].append(ArtifactRef.from_dict(value))
+    return {
+        role: tuple(values)
+        for role, values in grouped.items()
+        if values
+    }
 
 
 def _lean_worker_death_projection_facts(
@@ -2306,7 +2453,7 @@ def _run_lean_lemma_graph_paper_case(
     transport: Any | None,
     real_transport: bool,
     config: AIAPIExecutorConfig,
-    secret_values: tuple[str, ...],
+    secret_collector: _TransientSecretCollector,
     validated_binding: ValidatedModelEndpointBinding | None,
     max_tokens: int,
     timeout_seconds: int,
@@ -2342,7 +2489,7 @@ def _run_lean_lemma_graph_paper_case(
             run_root=run_root,
             store=store,
             real_transport=real_transport,
-            secret_values=secret_values,
+            secret_values=secret_collector.snapshot(),
         )
 
     root_node_id = str(case["merge_plan_shape"]["root_node_id"])
@@ -2449,6 +2596,7 @@ def _run_lean_lemma_graph_paper_case(
             max_tokens=max_tokens,
             environment_manifest=environment_manifest,
             post_raw_output_hook=post_raw_output_hook,
+            secret_collector=secret_collector,
             ablation_mode=ablation_mode,
             checker=checker,
         )
@@ -2493,7 +2641,7 @@ def _run_lean_lemma_graph_paper_case(
         store=store,
         real_transport=real_transport,
         transport_kind="ai_api" if real_transport else "scripted",
-        secret_values=secret_values,
+        secret_values=secret_collector.snapshot(),
         transport=active_transport,
     )
     run_evidence["lean_lemma_graph"] = _lemma_graph_run_metadata(
@@ -2700,6 +2848,7 @@ def _run_child_attempt(
     max_tokens: int,
     environment_manifest: LeanEnvironmentManifest,
     post_raw_output_hook: Any | None,
+    secret_collector: _TransientSecretCollector,
     ablation_mode: str,
     checker: LeanChecker,
 ) -> JsonObject:
@@ -2747,6 +2896,7 @@ def _run_child_attempt(
             )
         ),
         post_raw_output_hook=post_raw_output_hook,
+        resolved_secret_observer=secret_collector.observe,
     )
     submission = executor.execute(
         request,
@@ -2870,6 +3020,7 @@ def _run_lemma_graph_node_attempt(
     max_tokens: int,
     environment_manifest: LeanEnvironmentManifest,
     post_raw_output_hook: Any | None,
+    secret_collector: _TransientSecretCollector,
     ablation_mode: str,
     checker: LeanChecker,
 ) -> JsonObject:
@@ -2935,6 +3086,7 @@ def _run_lemma_graph_node_attempt(
             )
         ),
         post_raw_output_hook=post_raw_output_hook,
+        resolved_secret_observer=secret_collector.observe,
     )
     submission = executor.execute(
         request,
@@ -4529,14 +4681,6 @@ def _is_offline_capturing_transport(transport: Any | None) -> bool:
         transport is not None
         and getattr(transport, "tokenshare_offline_capturing_transport", False)
         is True
-    )
-
-
-def _real_secret_values(config: AIAPIExecutorConfig) -> tuple[str, ...]:
-    return tuple(
-        dict.fromkeys(
-            entry.resolve_api_key() for entry in config.entries if entry.enabled
-        )
     )
 
 

@@ -106,9 +106,9 @@ AI 只能生成预注册 proof unit 的候选内容，不能决定协议级拆�
 | `ai_api_selector.py` | entry/capability 选择。 |
 | `ai_api_request_identity.py` | 唯一 prepared-request factory：冻结 canonical UTF-8 body bytes、normalized absolute endpoint、content type、admission profile 与稳定 inference request digest，并重算一致性后才允许 dispatch。 |
 | `ai_api_transport.py` | DeepSeek/OpenAI-compatible/SiliconFlow transport；只消费已校验的 exact endpoint/bytes ABI，不二次序列化。 |
-| `ai_api.py` | 执行请求、attempt/provenance/usage 收集；Task 8 acquisition 路径在 secret resolution/transport 前完成 receipt/mode/output-marker、prepared consistency、prompt admission、durable prepared artifact、inventory winner 与 budget reservation/dispatch-intent 门禁，同一 semantic-slot loser 不进入 transport；Task 11 的最小 plan-out 接点让 descriptor 同时声明 execution request v1/v2 compatibility。 |
+| `ai_api.py` | 执行请求、attempt/provenance/usage 收集；Task 8 acquisition 路径在 secret resolution/transport 前完成 receipt/mode/output-marker、prepared consistency、prompt admission、durable prepared artifact、inventory winner 与 budget reservation/dispatch-intent 门禁，同一 semantic-slot loser 不进入 transport；Task 11 的最小 plan-out 接点让 descriptor 同时声明 execution request v1/v2 compatibility；Task 27 统一 prepared commit→reserve→resolve/observe→dispatch intent→actual count→transport 生命周期，显式发布 provider failure/terminal usage，并只用进程内 transient collector 做 secret 脱敏。 |
 | `ai_api_artifacts.py` | raw/parsed/failure/provenance/usage/model record artifact。 |
-| `response_bank.py` | Task 5 immutable bank object/index/opaque external locator：规范化 manifest/inventory entry/current wrapper，校验 self-excluding entry identity、role 完整性、root marker 绑定，并在流式 hash 验证后解析 bank-internal object。 |
+| `response_bank.py` | Task 5 immutable bank object/index/opaque external locator：规范化 manifest/inventory entry/current wrapper，校验 self-excluding entry identity、role 完整性、root marker 绑定，并在流式 hash 验证后解析 bank-internal object；Task 27 继续保持 v1 bytes/digest 兼容，同时为多 semantic-slot acquisition 提供权威 canonical inventory 排序/摘要。 |
 | `trace_backed.py` | Task 11 零 provider trace executor 与 parent stager：冻结 planned unit/replacement 到 immutable bank entry 的 `TraceSourceBinding`，流式校验外部对象并准备 delivery；parent-only 阶段写 current provenance、source trace attribution 与领域 parser/checker/canonical refs，缺 slot、binding 冲突或非 current artifact 时 fail closed。 |
 | `ai_api_replay.py` | 从 artifact 或显式绑定的 external response bank 恢复结果，不重新调用 API；bank replay 要求相同 root binding。 |
 
@@ -122,7 +122,7 @@ Secret 只能进入当前进程环境和脱敏后的 transport；event/artifact/
 |---|---|
 | `models.py`、`runner.py`、`report.py`、`metrics.py`、`simulation.py` | 早期通用实验/regression API；不能直接当论文指标。 |
 | `factorization_adapter.py`、`lean_adapter.py` | 通用实验 adapter。 |
-| `factorization_paper_adapter.py`、`lean_paper_adapter.py` | 论文兼容薄壳：构造 `ProtocolRunRequest`、调用 coordinator、投影旧 shape；Task 11 增加 trace runtime adapter/execution bridge 与 parent-owned domain stage；Task 19 正式接入 typed trace context、`TraceBackedParentStager`、logical scheduler 和公开 coordinator，使 Factorization parser/verifier 与 Lean parser/checker/canonical/merge/settlement 走正常生命周期，保留 source latency、ordinal replacement 且 current provider calls=0。 |
+| `factorization_paper_adapter.py`、`lean_paper_adapter.py` | 论文兼容薄壳：构造 `ProtocolRunRequest`、调用 coordinator、投影旧 shape；Task 11 增加 trace runtime adapter/execution bridge 与 parent-owned domain stage；Task 19 正式接入 typed trace context、`TraceBackedParentStager`、logical scheduler 和公开 coordinator，使 Factorization parser/verifier 与 Lean parser/checker/canonical/merge/settlement 走正常生命周期；Task 27 删除 eager API-key snapshot，仅透传每 root transient collector/callback，Factor/Lean split/check/merge/requeue 仍由原生命周期拥有。 |
 | `factorization_500_ai.py`、`lean_ai_benchmark.py`、`ai_profile.py` | 直接 benchmark/diagnostic；不是论文协议结果。 |
 
 ### 论文条件与身份
@@ -146,15 +146,15 @@ Secret 只能进入当前进程环境和脱敏后的 transport；event/artifact/
 | `paper_runner.py` | 展开 Exp1–5 condition/repeat/seed/selection 和 dispatcher plans。 |
 | `paper_dispatcher.py` | 把 paper case/scope 交给 system runtime；Task 19 增加可选 typed trace context 的原样透传，默认 online/历史路径不变，不访问 coordinator 私有 ABI。 |
 | `paper_runtime_clock.py` | Task 9 冻结 logical source-latency 1x 与 online real-clock policy；trace 路径拒绝 real sleep/noop sleeper。 |
-| `paper_formal_runner.py` | 正式/smoke suite orchestration、preflight、dispatch、checkpoint、resume/replay；Task 19 在 engine/event 前完成 terminal bank/case digest preflight并走正常 Factor/Lean lifecycle；Task 22 以 external opaque locator 驱动 trace，按 condition/per-worker lane 聚合 logical runtime，保留 root-local source/current timing与真实并发。 |
-| `paper_formal_callbacks.py` | provider/executor callback 绑定。 |
-| `paper_formal_evidence.py` | 正式 evidence store、manifest、checkpoint 和完整性校验；Task 18 接入版本化 eligibility；Task 20 构造 protected `CanonicalLineageInput`/`LineageSourceIndex`；Task 22 保持 external source acquisition/current execution typed binding 分离并逐 root 流式写 evidence，不扫描或复制 private/global/raw source objects。 |
+| `paper_formal_runner.py` | 正式/smoke suite orchestration、preflight、dispatch、checkpoint、resume/replay；Task 19 在 engine/event 前完成 terminal bank/case digest preflight并走正常 Factor/Lean lifecycle；Task 22 以 external opaque locator 驱动 trace，按 condition/per-worker lane 聚合 logical runtime；Task 27 增加 per-root callback factory、原生双域 online/trace 执行和 canonical direct/protected replay closure，online root 全局单并发但不改 condition 的协议 `worker_count`。 |
+| `paper_formal_callbacks.py` | provider/executor 与协议 lifecycle callback 绑定；Task 27 composite 只观察/组合 official hooks，发布 success/failure/current refs，支持 pre-intent release、terminal settle 与 crash/reconcile，不复制 Exp3 fault/death/requeue 状态机。 |
+| `paper_formal_evidence.py` | 正式 evidence store、manifest、checkpoint 和完整性校验；Task 18 接入版本化 eligibility；Task 20 构造 protected `CanonicalLineageInput`/`LineageSourceIndex`；Task 22 保持 external source acquisition/current execution typed binding 分离；Task 27 把 authoritative lineage rows 与 metric projection rows 分离，并在 comparison boundary 严格处理冻结 alias/identity。 |
 | `paper_formal_checkpoint.py` | generation v3 root-delta checkpoint、resume 与 terminal streaming SQLite compaction；Task 22 逐 root 释放 full outcome，并从真实 terminal、Task20 source-index/observations/manifest/output refs 与 Task21 renderer manifest/artifacts 重算 resume digest closure，mutation fail closed。 |
 | `paper_faults.py`、`paper_workers.py` | 五类 rate-fault 与 worker-death 的预注册 hook/投影。 |
 | `paper_exp1.py`、`paper_exp2_scalability.py`、`paper_exp3_fault_recovery.py`、`paper_exp4_ablation_runner.py` | 各实验的独立行为/指标 helper。 |
 | `paper_ablation.py` | `FULL + 4` protocol mechanism policy。 |
 | `paper_terminal_outcomes.py` | succeeded/failed/blocked/incomplete 终态语义。 |
-| `paper_smoke.py` | smoke profile、identity 与非论文执行。 |
+| `paper_smoke.py` | smoke profile、identity 与非论文执行；Task 27 抽出无副作用 Exp5 capability authority builder，legacy CLI 与统一 pipeline 共用同一权威身份，仍保持 smoke/pilot/regression-only。 |
 | `paper_exp5_smoke_evidence.py` | Exp5 v4 8-root smoke 的 artifact/event/hash-chain/identity evidence validator；raw LedgerEvent 保持原 envelope/hash，实验分类通过 task binding 关联。 |
 
 `paper_formal_runner.py` 是当前最大风险热点。未来拆分优先提取纯 preflight、dispatch、evidence finalization 边界；任何拆分先锁 characterization tests，禁止复制一套生命周期。
@@ -164,7 +164,7 @@ Secret 只能进入当前进程环境和脱敏后的 transport；event/artifact/
 | 文件 | 职责 |
 |---|---|
 | `paper_projection.py` | 从 system projection/events/artifacts 派生 task/attempt rows。 |
-| `paper_direct_results.py` | Task 3 canonical facts projector：从正式 runtime result、verified ledger/artifact/parser facts 构造 deep-immutable direct rows；Task 23 增加严格 additive expanded-root merge 分支，仅在唯一 merge-unit canonical + `MERGE_RECORDED` + root terminal 的 full ArtifactRef/parent/ref/order commitment 完全匹配时接受 final；direct-root行为不变。 |
+| `paper_direct_results.py` | Task 3 canonical facts projector：从正式 runtime result、verified ledger/artifact/parser facts 构造 deep-immutable direct rows；Task 23 增加严格 additive expanded-root merge 分支；Task 27 的 resource-book artifact v2 支持同 root 多 entry 和可选 failed final，同时保持单 entry v1 bytes/digest 不变，并让 zero-success/failed/resume 保留固定分母。 |
 | `paper_historical_fixture.py`、`historical_real_factorization_single_leaf.py` | Task 23 历史真实 Factor single-leaf 离线回归：冻结最小脱敏 fixture/source digests，经正常 coordinator/parser/verifier/canonical/merge/ledger 与 central direct projector 运行；只标记 `regression_only`、`paper_eligible=false`，拒绝 range/trace-paper 语义且 provider=0。 |
 | `paper_metric_contract.py` | Task 2 machine-readable metric contract loader/evaluator；Task 12 同步 current pipeline profile digest；Task 14 修正 Exp3 started/reassignment backlink；Task 20 以 scoped `MetricComputationTrace` 捕获真实 `MetricObservationBundle`、row/cell identity、membership 与 evaluation，不修改任何公式/null/invariant 语义。 |
 | `paper_exp1_metrics.py` | Task 12 standalone Experiment 1 pure observation projector：按 domain/difficulty/topic/repeat 消费 canonical direct rows 与已物化 timing/provider facts，保留全部预注册 roots 的固定分母，wrong final 只计 completion，infra invalid 与资源缺失显式 null/block；不 import formal runner/renderer，不修改 registry，draft 默认 `paper_eligible=false`。 |
@@ -174,16 +174,16 @@ Secret 只能进入当前进程环境和脱敏后的 transport；event/artifact/
 | `paper_exp5_metrics.py` | Task 16 standalone Experiment 5 pure quality/resources projector：直接使用 canonical `PaperModelEndpointIdentity` 官方 digest/fields，按 actual first attempts、checkable candidates 与全部 preregistered roots 投影冻结 denominator；以 enclosing protocol wall-clock、3 raw repeats 与 median/min/max/range 生成恰好两张 ordered payload/caption，禁止 pairwise/significance/ranking/retry/recovery/accepted-validity。 |
 | `paper_metric_registry.py` | Task 17 contract-bound projector registry：把 8 张正式 table 唯一映射到 Tasks12–16 accepted projectors；Exp3 trace/online 分别薄调用 Task14，Exp5 quality/resources 共用一次 Task16 projection；逐 row-kind 精确核对 metric inventory，禁止在 registry 重算公式。 |
 | `paper_metrics.py` | evidence-derived 通用统计与 integrity validation。 |
-| `paper_formal_metrics.py` | Task 17 正式 Exp1–5 metric draft 发布路径；Task 20 内部构造 protected canonical lineage inputs、捕获真实 evaluator traces、join persisted source index，并原子发布 `paper_lineage_source_index.v1.jsonl`、`paper_metric_observations.v1.jsonl` 与 manifest；不保留旧公式或 renderer 派生。 |
+| `paper_formal_metrics.py` | Task 17 正式 Exp1–5 metric draft 发布路径；Task 20 内部构造 protected canonical lineage inputs、捕获真实 evaluator traces、join persisted source index，并原子发布 lineage/observations/manifest；Task 27 只在 Exp1 alias 与 Exp2 trace/online metric view 做严格 identity bridge，authoritative rows/source index 保持原 ID，Exp3–5 对象和值不变。 |
 | `paper_metric_observations.py` | Task 20 每 numeric cell 唯一 lineage materializer：按 row/cell digest 精确 join，保存公式/value/numerator/fixed denominator membership/excluded-null-blocked reasons，并逐 current execution 或 source entry 校验 typed roles；non-null 由既有 evaluator独立复算，缺 role 时 cell null/table blocked。 |
-| `paper_traceability.py` | Task 24 deterministic traceability replay：仅接受 runner 生成的 protected persisted L4 descriptor，按 v2 manifest/CURRENT/generation/typed artifact-index exact closure fresh reload direct/current/source，复用 registry→materializer→renderer 独立重算 observations/tables/cell-lineage digests；derived inputs fail closed，输出与 report 共用 atomic generation，provider/source writes=0。 |
+| `paper_traceability.py` | Task 24 deterministic traceability replay：仅接受 runner 生成的 protected persisted L4 descriptor，fresh reload并独立重算三类 digest；Task 27 闭合历史 `artifacts/<file>.bin` 与当前 `artifacts/<task>/<content-name>` 两种权威 generation，hash 必验且存在的 size 严格校验；zero-dispatch 只接受至少一个 exact `PaperDirectRootResult` 且全部 `not_started`。 |
 | `paper_online_checks.py` | Task 25 capability/Exp2/Exp3 online-check pure plan 与 typed evidence producer：冻结4/24-480/2-12 scope，消费官方 verifier/checker/requeue 与 callback persisted objects，资源输入仅来自 current provider payload；缺 role blocked/null，不计算指标公式、不创建receipt、不dispatch。 |
 | `paper_paid_authorization.py` | Task 26 纯离线 external receipt validator：验证 canonical digest 与scope/plan/profile/budget/inventory/admission/selection/path/expiry/approval binding，派生new-run/resume marker并要求独立allow flag；无mint/approve/secret/reserve/dispatch API，synthetic tests不构成真实授权。 |
 | `paper_report.py`、`paper_formal_report.py`、`paper_smoke_report.py` | 通用/正式/smoke 输出；Task 21 正式 report 只接受持久化 Task20 lineage/source-index/observation/manifest/digest 闭包，验证 exact 8 table completeness 后发布 renderer/result/eligibility/secret-audit refs；smoke 永远 paper-ineligible。 |
 | `paper_exp5_artifacts.py`、`paper_exp5_model_comparison.py`、`paper_exp5_statistics.py` | Task 21 contract-only CSV/TEX renderer 位于 `paper_exp5_artifacts.py`：从 typed observations 生成 exact 8 CSV 与同 stem TEX、audit JSONL/manifest，保留 null/denominator/reason，整批 stage/promote/rollback；旧 pairwise/ranking/recovery/Markdown/PDF 输出已退役。其余为历史 Exp5 比较/统计 helper。 |
 | `paper_budget.py` | plan-only roots/units/attempt/token/cost/time/space 预算与门禁；Task 6 把完整 bank inventory 写入预算投影，Task 7 增加 provider-writing 硬预算 limits 与禁止 unlimited mode 的入口门禁。 |
-| `paper_response_bank.py` | Task 6 complete semantic-slot inventory/zero-engine preflight；Task 8 acquisition orchestrator 按 paid receipt→prepare/admit→durable object→atomic reserve→dispatch intent→single send→terminal publish→settle；Task 19 增加由旧 preflight 复用的纯 terminal completeness API 与 `case_id + case_record_digest + semantic slots` typed binding，planned row 无 terminal entry或跨 case source交换均 fail closed。 |
-| `paper_budget_ledger.py` | Task 7 SQLite WAL atomic budget authority；Task 8 把 inventory winner、reservation、dispatch intent、ambiguous/terminal published 与 exactly-once settle 接入 acquisition/reconcile。expired receipt 只能闭合已发布状态，不能 reserve/dispatch；JSONL 仅为 committed rows 的审计导出。 |
+| `paper_response_bank.py` | Task 6 complete semantic-slot inventory/zero-engine preflight；Task 8 acquisition orchestrator；Task 19 terminal completeness/case binding；Task 27 增加 pure prepared-request acquisition plan、versioned terminal bank identity、全 inventory cross-binding 与 `acquire_all/reconcile`，fresh child 只初始化一次、resume 只重开验证，并保留历史 `PaidAcquisitionContext` API 兼容。 |
+| `paper_budget_ledger.py` | Task 7 SQLite WAL atomic budget authority；Task 8 接入 acquisition/reconcile；Task 27 委托 shared canonical inventory digest，并增加 opt-in 持久 category policy：primary reservations≤496、ambiguous reacquisitions≤20、合计≤516，reopen drift fail closed，所有检查/写入在 `BEGIN IMMEDIATE` 内完成；无 policy 的 full-bank 行为兼容。 |
 | `paper_resource_accounting.py` | Task 7 按 frozen pricing 核算 terminal provider usage；usage 缺失时保留完整 token/CNY reservation upper，避免少计实际 acquisition spend。 |
 
 正式规模和资源边界由 `paper_suite_scale.py`、`paper_budget.py`、`paper_formal_checkpoint.py` 与 `paper_formal_metrics.py` 共同约束：当前 Exp1–5 精确总量为 `6,384 roots / 40,520 units / 81,272 attempt upper`，最大单 condition 为 `100/1,000/1,000`；generation 逐 root delta、terminal SQLite streaming compaction、metrics lazy bundle mapping 和 JSONL/chunked scan 使内存按最大单 outcome/当前 bundle 定界，而不是把全 suite 同时载入。磁盘 forecast/compaction/safety reserve 必须写入 `run_budget.json` 并在 provider dispatch 前检查目标卷。
@@ -200,7 +200,7 @@ Secret 只能进入当前进程环境和脱敏后的 transport；event/artifact/
 - Experiment 2 缩小题集六 worker 档在线并发检查、Experiment 3 小型在线恢复检查；
 - metrics/report/renderer/replay/audit 与 smoke/canary 身份迁移。
 
-这是一项跨 `tokenshare.executors`、`tokenshare.experiments`、两插件 runtime adapter 和输出 schema 的全面设施修改，不得在 `paper_formal_runner.py` 内临时塞入读取文件的旁路，也不得复制一套协议生命周期。已接受的 ledger/hook/direct-result、immutable bank、semantic inventory/preflight、deterministic logical scheduler、parent-owned trace delivery commit ABI、Task 11 trace-backed executor / dual provenance、Task 12–16 Exp1–5 projectors、Task 17 registry/formal metrics、Task 18 eligibility、Task 19 normal formal lifecycle、Task 20 cell lineage、Task 21 contract-only renderer、Task 22 external-bank streaming、Task 23 historical regression、Task 24 traceability replay 与 Task 25 online-check evidence 均不改变 `ProtocolEngine` 状态机；paid-readiness/CLI 属于后续 Task。后续继续先建 characterization/RED tests，并以唯一权威实验设计 EPD-027 为准。
+这是一项跨 `tokenshare.executors`、`tokenshare.experiments`、两插件 runtime adapter 和输出 schema 的全面设施修改，不得在 `paper_formal_runner.py` 内临时塞入读取文件的旁路，也不得复制一套协议生命周期。Task 0–27 已接受；Task 27 的 paid-readiness/统一 CLI、bank acquisition、online checks 与 protected replay 接线仍不改变 `ProtocolEngine` 状态机。Task 28 起继续先建 characterization/RED tests，并以唯一权威实验设计 EPD-027 为准；没有经 Task 26 校验且 scope-matched 的真实 paid receipt 时，任何 provider-writing 命令仍 fail closed。
 
 指标不得使用固定协议时间、自填成功字段或丢失失败/未开始分母；所有汇总必须能回到逐 task/attempt/event/artifact。
 
@@ -208,7 +208,8 @@ Secret 只能进入当前进程环境和脱敏后的 transport；event/artifact/
 
 | 文件 | 默认输出类别 |
 |---|---|
-| `run_paper_experiments.py` | 必须显式指定全新 `--output-root`；`<data-root>/outputs/experiments/paper_v1` 仅作为 smoke 隔离边界与历史容器 |
+| `run_paper_pipeline.py` | Task 27 统一 14 个正式命令的 parser/delegation/门禁入口；unknown/missing 为 exit 2，正式资源阻塞为单行 JSON/exit 3；offline/provider、receipt/mode/secret/budget 顺序 fail closed |
+| `run_paper_experiments.py` | legacy CLI 委托 Task 27 同一 authority/service map；必须显式指定全新 `--output-root`，历史默认目录只作 smoke 隔离边界与容器 |
 | `run_all.py` | `<data-root>/outputs/experiments/` |
 | `run_ai_profile.py` | `<data-root>/outputs/experiments/ai_profile` |
 | `run_factorization_500_ai.py` | `<data-root>/outputs/experiments/factorization_500_ai` |

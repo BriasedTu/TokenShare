@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import multiprocessing
 from dataclasses import replace
+from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
@@ -10,25 +11,37 @@ from typing import Any
 import pytest
 
 from tests.phase7_fixtures import FakeProviderResponse
+from tokenshare.experiments import paper_response_bank as response_bank_module
 from tokenshare.executors.ai_api_request_identity import PreparedOutboundRequestFactory
 from tokenshare.executors.response_bank import (
     COMMON_ROLES,
+    ResponseBankResolver,
     ResponseBankInventoryRow,
-    canonical_digest,
     inventory_entry_id,
+    response_bank_inventory_digest,
     semantic_slot_key,
+    terminal_bank_entry_id,
 )
 from tokenshare.experiments.paper_budget import PaperBudgetLimits
 from tokenshare.experiments.paper_budget_ledger import PaperBudgetLedger
 from tokenshare.experiments.paper_resource_accounting import FrozenPricing
+from tokenshare.experiments.paper_paid_authorization import (
+    PaidAuthorizationError,
+    compute_receipt_digest,
+    output_root_path_digest,
+    validate_paid_execution_receipt,
+)
 from tokenshare.experiments.paper_response_bank import (
     PROVIDER_FAILURE_TAXONOMY,
     AcquisitionAuthorizationError,
     AcquisitionIdentityError,
     AcquisitionRequest,
-    PaidAcquisitionContext,
     ResponseBankAcquisitionOrchestrator,
-    output_root_path_digest,
+    SemanticInventoryPlan,
+    build_paper_formal_trace_context,
+    create_acquisition_plan_bundle,
+    finalize_acquisition_child_bank,
+    response_bank_manifest_for_bundle,
 )
 from tokenshare.storage.artifacts import ArtifactStore
 
@@ -108,7 +121,7 @@ def _prepared(*, unit: str = "unit-0", marker: str = "same"):
         base_url="https://api.deepseek.com",
         endpoint="/chat/completions",
         provider_config_digest="sha256:" + "1" * 64,
-        entry_id=f"bank-entry-{unit}",
+        entry_id="deepseek_v4_pro_exp1_baseline",
         configured_model="deepseek-v4-pro",
         effective_controls_digest="sha256:" + "2" * 64,
         plugin_id="factorization",
@@ -145,7 +158,10 @@ def _row(prepared: Any, *, slot_override: str | None = None):
         prompt_profile_digest="sha256:" + "4" * 64,
         prompt_admission_profile_digest=prepared.prompt_admission_profile_digest,
         plugin_version=prepared.plugin_version,
-        entry_id=prepared.entry_id,
+        entry_id=terminal_bank_entry_id(
+            semantic_slot_key=slot,
+            inference_request_digest=prepared.inference_request_digest,
+        ),
         body_digest=prepared.body_digest,
         inference_request_digest=prepared.inference_request_digest,
     )
@@ -155,17 +171,42 @@ def _row(prepared: Any, *, slot_override: str | None = None):
 
 
 def _inventory_digest(rows: tuple[ResponseBankInventoryRow, ...]) -> str:
-    return canonical_digest(
-        [
-            row.to_dict()
-            for row in sorted(
-                rows,
-                key=lambda value: (
-                    value.semantic_slot_key,
-                    value.inventory_entry_id,
-                ),
-            )
-        ]
+    return response_bank_inventory_digest(rows)
+
+
+def _semantic_plan(rows: tuple[ResponseBankInventoryRow, ...]) -> SemanticInventoryPlan:
+    slot_keys = [row.semantic_slot_key for row in rows]
+    case_refs = [
+        {
+            "case_id": "case-0",
+            "case_record_digest": row.case_record_digest,
+            "semantic_slot_keys": [row.semantic_slot_key],
+        }
+        for row in rows
+    ]
+    return SemanticInventoryPlan(
+        schema_version="tokenshare.response_bank_semantic_inventory_plan.v1",
+        inventory_digest=_inventory_digest(rows),
+        rows=rows,
+        condition_refs=(
+            {
+                "condition_id": "condition-0",
+                "condition_digest": "sha256:" + "5" * 64,
+                "experiment_id": "exp1_real_ai_feasibility",
+                "worker_count": 1,
+                "repeat_id": 0,
+                "fault_type": "none",
+                "ablation_mode": "FULL",
+                "semantic_slot_keys": slot_keys,
+                "case_refs": case_refs,
+            },
+        ),
+        exp2_online_condition_refs=(),
+        max_concurrent_roots=1,
+        expected_slot_count=len(rows),
+        terminal_provider_failure_count=0,
+        terminal_success_count=0,
+        terminal_unacquired_count=len(rows),
     )
 
 
@@ -178,20 +219,52 @@ def _limits(*, calls: int = 20) -> PaperBudgetLimits:
     )
 
 
-def _context(root: Path, inventory_digest: str, *, expired: bool = False):
-    return PaidAcquisitionContext(
-        receipt_digest="sha256:" + "5" * 64,
-        authorized_plan_digest="sha256:" + "6" * 64,
-        profile_digest="sha256:" + "7" * 64,
-        budget_digest="sha256:" + "8" * 64,
-        inventory_digest=inventory_digest,
-        prompt_admission_profile_digest=(
+def _authorization(
+    root: Path,
+    inventory_digest: str,
+    *,
+    mode: str,
+    expired: bool = False,
+    authorized_plan_digest: str = "sha256:" + "6" * 64,
+    profile_digest: str = "sha256:" + "7" * 64,
+    budget_digest: str = "sha256:" + "8" * 64,
+):
+    receipt = {
+        "schema_version": "tokenshare.paid_execution_receipt.v1",
+        "receipt_digest": "",
+        "scope": "epd027_full_bank_acquisition",
+        "authorized_plan_digest": authorized_plan_digest,
+        "profile_digest": profile_digest,
+        "budget_digest": budget_digest,
+        "inventory_digest": inventory_digest,
+        "prompt_admission_profile_digest": (
             "sha256:e693ef1c9dbf50aff36aaae1b14f7029c5954c6708a6570182e69a7051685d49"
         ),
-        output_root_path_digest=output_root_path_digest(root),
-        paid_scope_digest="sha256:" + "9" * 64,
-        expires_at_epoch=0 if expired else 9_999_999_999,
-        reacquisition_limit=1,
+        "selected_experiments": ["epd027_full_bank_acquisition"],
+        "output_root_path_digest": output_root_path_digest(root),
+        "not_before": "2026-08-01T00:00:00Z",
+        "expires_at": "2026-08-04T00:00:00Z",
+        "user_approval_reference": "test-user-approval",
+    }
+    receipt["receipt_digest"] = compute_receipt_digest(receipt)
+    return validate_paid_execution_receipt(
+        receipt=receipt,
+        requested_scope="epd027_full_bank_acquisition",
+        authorized_plan_digest=str(receipt["authorized_plan_digest"]),
+        profile_digest=str(receipt["profile_digest"]),
+        budget_digest=str(receipt["budget_digest"]),
+        inventory_digest=inventory_digest,
+        prompt_admission_profile_digest=str(
+            receipt["prompt_admission_profile_digest"]
+        ),
+        selected_experiments=("epd027_full_bank_acquisition",),
+        output_root=root,
+        output_mode=mode,
+        action="reconcile_close" if expired else "dispatch",
+        allow_provider_calls=not expired,
+        now=datetime(
+            2026, 8, 5 if expired else 2, tzinfo=timezone.utc
+        ),
     )
 
 
@@ -223,7 +296,7 @@ def _orchestrator(
     transport: ScriptedExactTransport,
     *,
     mode: str = "new_run",
-    context: PaidAcquisitionContext | None = None,
+    context: Any = None,
     ledger: PaperBudgetLedger | None = None,
     limits: PaperBudgetLimits | None = None,
     secret_resolver: Any = _secret,
@@ -242,7 +315,8 @@ def _orchestrator(
         inventory_digest=digest,
         inventory_rows=rows,
         budget_ledger=budget,
-        paid_context=context or _context(root, digest),
+        paid_authorization=context
+        or _authorization(root, digest, mode=mode),
         invocation_mode=mode,
         transport=transport,
         secret_resolver=secret_resolver,
@@ -300,6 +374,9 @@ def test_acquisition_orders_prepare_admit_persist_reserve_dispatch_terminal_publ
         transport.calls[0]["normalized_absolute_endpoint"]
         == prepared.normalized_absolute_endpoint
     )
+    assert [path.name for path in root.glob("*paid_output_binding*")] == [
+        "paid_output_binding.v1.json"
+    ]
     for path in root.rglob("*"):
         if path.is_file():
             assert b"fake-secret" not in path.read_bytes()
@@ -330,6 +407,114 @@ def test_success_and_each_provider_failure_taxonomy_are_terminal_entries(
         latency = orchestrator.read_role_json(result.entry, "latency")
         assert usage["usage_status"] in {"reported", "usage_missing"}
         assert latency["latency_ms"] >= 0
+
+
+def test_complete_batch_initializes_child_once_and_resume_only_reopens(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    prepared = _prepared()
+    row = _row(prepared)
+    request = _request(row, prepared)
+    bundle = create_acquisition_plan_bundle(
+        tmp_path / "plan-bundle",
+        authorized_plan_digest="sha256:" + "6" * 64,
+        profile_digest="sha256:" + "7" * 64,
+        semantic_inventory_plan=_semantic_plan((row,)),
+        acquisition_requests=(request,),
+    )
+    output_root = tmp_path / "acquisition"
+    authorization = _authorization(
+        output_root,
+        bundle.inventory_digest,
+        mode="new_run",
+        budget_digest=bundle.full_budget.budget_digest,
+    )
+    manifest = response_bank_manifest_for_bundle(bundle, authorization)
+    ledger = PaperBudgetLedger(
+        tmp_path / "budget.sqlite3",
+        limits=bundle.full_budget.to_limits(),
+    )
+    ledger.preregister_inventory(
+        inventory_digest=bundle.inventory_digest,
+        rows=bundle.inventory_rows,
+    )
+    transport = ScriptedExactTransport([_success_response()])
+    first = ResponseBankAcquisitionOrchestrator(
+        output_root=output_root,
+        bank_root_id=manifest.bank_root_id,
+        manifest_digest=manifest.manifest_digest,
+        inventory_digest=bundle.inventory_digest,
+        inventory_rows=bundle.inventory_rows,
+        budget_ledger=ledger,
+        paid_authorization=authorization,
+        invocation_mode="new_run",
+        transport=transport,
+        secret_resolver=_secret,
+        now_epoch=100,
+    )
+    initialize_calls: list[Path] = []
+    real_initialize = response_bank_module.initialize_response_bank
+
+    def count_initialize(root_path, **kwargs):
+        initialize_calls.append(Path(root_path))
+        return real_initialize(root_path, **kwargs)
+
+    monkeypatch.setattr(
+        response_bank_module,
+        "initialize_response_bank",
+        count_initialize,
+    )
+    first_batch = first.acquire_all(bundle.acquisition_requests)
+    first_resolver = finalize_acquisition_child_bank(
+        orchestrator=first,
+        bundle=bundle,
+        manifest=manifest,
+        batch_result=first_batch,
+    )
+
+    resumed_authorization = _authorization(
+        output_root,
+        bundle.inventory_digest,
+        mode="resume",
+        budget_digest=bundle.full_budget.budget_digest,
+    )
+    resumed = ResponseBankAcquisitionOrchestrator(
+        output_root=output_root,
+        bank_root_id=manifest.bank_root_id,
+        manifest_digest=manifest.manifest_digest,
+        inventory_digest=bundle.inventory_digest,
+        inventory_rows=bundle.inventory_rows,
+        budget_ledger=ledger,
+        paid_authorization=resumed_authorization,
+        invocation_mode="resume",
+        transport=ScriptedExactTransport([]),
+        secret_resolver=_secret,
+        now_epoch=100,
+    )
+    resumed_batch = resumed.acquire_all(bundle.acquisition_requests)
+    resumed_resolver = finalize_acquisition_child_bank(
+        orchestrator=resumed,
+        bundle=bundle,
+        manifest=manifest,
+        batch_result=resumed_batch,
+    )
+
+    assert first_resolver is not None
+    assert resumed_resolver is not None
+    assert first_resolver.index.manifest.manifest_digest == manifest.manifest_digest
+    assert resumed_resolver.index.manifest.manifest_digest == manifest.manifest_digest
+    assert initialize_calls == [output_root / "immutable_response_bank"]
+    assert len(transport.calls) == 1
+    trace_context = build_paper_formal_trace_context(
+        inventory_plan=bundle.semantic_inventory_plan,
+        resolver=resumed_resolver,
+    )
+    assert trace_context.available_inventory_entry_ids == (row.inventory_entry_id,)
+    assert trace_context.runtime_for(
+        condition_id="condition-0",
+        case_id="case-0",
+    ).current_provider_call_count == 0
 
 
 def _race_acquire_worker(
@@ -445,6 +630,7 @@ def test_crash_after_reserve_before_dispatch_intent_reconciles(tmp_path: Path) -
     )
     report = resumed.acquire_all((_request(row, prepared),))
     assert transport.calls == []
+    assert report.status == "incomplete"
     assert report.missing_inventory_entry_ids == (row.inventory_entry_id,)
     assert ledger.list_reservations() == ()
 
@@ -466,6 +652,7 @@ def test_crash_after_dispatch_intent_before_or_after_send_becomes_ambiguous(
         )
         report = resumed.acquire_all((_request(row, prepared),))
         assert len(transport.calls) == expected_calls
+        assert report.status == "incomplete"
         assert report.ambiguous_inventory_entry_ids == (row.inventory_entry_id,)
 
 
@@ -598,14 +785,14 @@ def test_ambiguous_dispatch_needs_paid_scope_and_one_reserved_reacquisition(
         resumed.reacquire(_request(row, prepared), paid_scope_digest="wrong")
     result = resumed.reacquire(
         _request(row, prepared),
-        paid_scope_digest=_context(tmp_path / "bank", _inventory_digest((row,))).paid_scope_digest,
+        paid_scope_digest=resumed.paid_scope_digest,
     )
     assert result.linked_ambiguous_attempt_id is not None
     assert len(ledger.list_reacquisitions()) == 1
     assert len(transport.calls) == 2
     assert resumed.reacquire(
         _request(row, prepared),
-        paid_scope_digest=_context(tmp_path / "bank", _inventory_digest((row,))).paid_scope_digest,
+        paid_scope_digest=resumed.paid_scope_digest,
     ).status == "already_terminal"
     assert len(ledger.list_reacquisitions()) == 1
 
@@ -625,7 +812,12 @@ def test_expired_receipt_can_reconcile_existing_terminal_but_never_reserve_or_di
     )
     with pytest.raises(RuntimeError):
         crashed.acquire(_request(rows[0], first))
-    expired = _context(tmp_path / "bank", _inventory_digest(rows), expired=True)
+    expired = _authorization(
+        tmp_path / "bank",
+        _inventory_digest(rows),
+        mode="resume",
+        expired=True,
+    )
     resumed, _ = _orchestrator(
         tmp_path / "bank",
         rows,
@@ -640,14 +832,12 @@ def test_expired_receipt_can_reconcile_existing_terminal_but_never_reserve_or_di
     assert len(transport.calls) == 1
 
     expired_new_root = tmp_path / "expired-new-run"
-    with pytest.raises(AcquisitionAuthorizationError, match="expired"):
-        _orchestrator(
+    with pytest.raises(PaidAuthorizationError, match="expired"):
+        _authorization(
             expired_new_root,
-            rows,
-            ScriptedExactTransport([]),
-            context=_context(
-                expired_new_root, _inventory_digest(rows), expired=True
-            ),
+            _inventory_digest(rows),
+            mode="new_run",
+            expired=True,
         )
     assert not expired_new_root.exists()
 

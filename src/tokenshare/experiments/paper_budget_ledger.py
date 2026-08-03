@@ -7,12 +7,14 @@ import sqlite3
 import time
 from dataclasses import asdict, dataclass
 from decimal import Decimal
+from hashlib import sha256
 from pathlib import Path
 from typing import Any, Callable, Literal, Sequence, TypeVar
 
 from tokenshare.executors.response_bank import (
     ResponseBankInventoryRow,
-    canonical_digest,
+    canonical_inventory_rows,
+    response_bank_inventory_digest,
 )
 from tokenshare.experiments.paper_budget import (
     L3_SMALL_PAID_BUDGET_LIMITS,
@@ -54,6 +56,64 @@ class InvalidBudgetStateTransition(PaperBudgetLedgerError):
 
 class PaperBudgetLedgerBusyError(PaperBudgetLedgerError):
     pass
+
+
+class BudgetCategoryPolicyIdentityError(PaperBudgetLedgerError):
+    pass
+
+
+@dataclass(frozen=True, kw_only=True)
+class PaperBudgetCategoryPolicy:
+    """可选的 call 分类硬门；默认 full-bank ledger 不启用。"""
+
+    policy_id: str
+    planned_reservation_limit: int
+    ambiguous_reacquisition_limit: int
+    combined_call_limit: int
+    schema_version: str = "tokenshare.paper_budget_category_policy.v1"
+
+    def __post_init__(self) -> None:
+        values = (
+            self.planned_reservation_limit,
+            self.ambiguous_reacquisition_limit,
+            self.combined_call_limit,
+        )
+        if not self.policy_id or any(
+            isinstance(value, bool) or not isinstance(value, int) or value < 0
+            for value in values
+        ):
+            raise ValueError("budget category policy identity and limits are invalid")
+        if self.combined_call_limit != (
+            self.planned_reservation_limit + self.ambiguous_reacquisition_limit
+        ):
+            raise ValueError("combined call limit must equal both category limits")
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            "policy_id": self.policy_id,
+            "planned_reservation_limit": self.planned_reservation_limit,
+            "ambiguous_reacquisition_limit": self.ambiguous_reacquisition_limit,
+            "combined_call_limit": self.combined_call_limit,
+        }
+
+    @property
+    def policy_digest(self) -> str:
+        encoded = json.dumps(
+            self.to_dict(),
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        return f"sha256:{sha256(encoded).hexdigest()}"
+
+
+L3_ONLINE_CHECK_CATEGORY_POLICY = PaperBudgetCategoryPolicy(
+    policy_id="paper_online_checks_l3",
+    planned_reservation_limit=496,
+    ambiguous_reacquisition_limit=20,
+    combined_call_limit=516,
+)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -122,6 +182,7 @@ class PaperBudgetLedger:
         path: str | Path,
         *,
         limits: PaperBudgetLimits = L3_SMALL_PAID_BUDGET_LIMITS,
+        category_policy: PaperBudgetCategoryPolicy | None = None,
         busy_timeout_ms: int = 100,
         lock_retries: int = 3,
         lock_retry_backoff_seconds: float = 0.01,
@@ -130,6 +191,7 @@ class PaperBudgetLedger:
             raise ValueError("lock retry configuration must be bounded and non-negative")
         self.path = Path(path)
         self.limits = limits
+        self.category_policy = category_policy
         self.busy_timeout_ms = busy_timeout_ms
         self.lock_retries = lock_retries
         self.lock_retry_backoff_seconds = lock_retry_backoff_seconds
@@ -222,10 +284,71 @@ class PaperBudgetLedger:
                     FOREIGN KEY (inventory_digest, inventory_entry_id)
                         REFERENCES inventory_rows(inventory_digest, inventory_entry_id)
                 );
+                CREATE TABLE IF NOT EXISTS budget_category_policy (
+                    singleton_key INTEGER PRIMARY KEY CHECK (singleton_key = 1),
+                    schema_version TEXT NOT NULL,
+                    policy_id TEXT NOT NULL,
+                    policy_digest TEXT NOT NULL,
+                    policy_json TEXT NOT NULL
+                );
                 """
             )
+            self._bind_category_policy(connection)
 
         self._write(create)
+
+    def _bind_category_policy(self, connection: sqlite3.Connection) -> None:
+        stored = connection.execute(
+            "SELECT * FROM budget_category_policy WHERE singleton_key = 1"
+        ).fetchone()
+        policy = self.category_policy
+        if policy is None:
+            if stored is not None:
+                raise BudgetCategoryPolicyIdentityError(
+                    "budget category policy presence mismatch"
+                )
+            return
+        body = policy.to_dict()
+        canonical_json = json.dumps(
+            body,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        if stored is None:
+            existing_calls = sum(
+                int(
+                    connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+                )
+                for table in ("reservations", "reacquisitions")
+            )
+            if existing_calls:
+                raise BudgetCategoryPolicyIdentityError(
+                    "budget category policy presence mismatch"
+                )
+            connection.execute(
+                """
+                INSERT INTO budget_category_policy(
+                    singleton_key, schema_version, policy_id, policy_digest, policy_json
+                ) VALUES (1, ?, ?, ?, ?)
+                """,
+                (
+                    policy.schema_version,
+                    policy.policy_id,
+                    policy.policy_digest,
+                    canonical_json,
+                ),
+            )
+            return
+        if (
+            stored["schema_version"] != policy.schema_version
+            or stored["policy_id"] != policy.policy_id
+            or stored["policy_digest"] != policy.policy_digest
+            or stored["policy_json"] != canonical_json
+        ):
+            raise BudgetCategoryPolicyIdentityError(
+                "budget category policy drift detected"
+            )
 
     def _write(self, operation: Callable[[sqlite3.Connection], _T]) -> _T:
         last_busy: sqlite3.OperationalError | None = None
@@ -263,16 +386,14 @@ class PaperBudgetLedger:
         inventory_digest: str,
         rows: Sequence[ResponseBankInventoryRow],
     ) -> None:
-        canonical_rows = tuple(
-            sorted(rows, key=lambda row: (row.semantic_slot_key, row.inventory_entry_id))
-        )
+        canonical_rows = canonical_inventory_rows(rows)
         normalized: list[ResponseBankInventoryRow] = []
         for row in canonical_rows:
             try:
                 normalized.append(ResponseBankInventoryRow.from_dict(row.to_dict()))
             except ValueError as exc:
                 raise InventoryIdentityError(str(exc)) from exc
-        expected_digest = canonical_digest([row.to_dict() for row in normalized])
+        expected_digest = response_bank_inventory_digest(normalized)
         if inventory_digest != expected_digest:
             raise InventoryIdentityError("inventory_digest does not match canonical rows")
 
@@ -351,9 +472,10 @@ class PaperBudgetLedger:
                         f"preregistered {field_name} column does not match canonical row"
                     )
             rows.append(row)
-        if canonical_digest([row.to_dict() for row in rows]) != inventory_digest:
+        canonical_rows = canonical_inventory_rows(rows)
+        if response_bank_inventory_digest(canonical_rows) != inventory_digest:
             raise InventoryIdentityError("inventory_digest does not match committed rows")
-        return tuple(rows)
+        return canonical_rows
 
     def reserve(self, request: ReservationRequest) -> ReservationDecision:
         def reserve_once(connection: sqlite3.Connection) -> ReservationDecision:
@@ -401,6 +523,7 @@ class PaperBudgetLedger:
                     granted=False, reservation=_record_from_row(winner)
                 )
 
+            self._assert_category_capacity(connection, category="primary")
             calls, tokens, cost_total = self._budget_totals(connection)
             next_calls = calls + 1
             next_tokens = tokens + request.token_upper_bound
@@ -540,6 +663,7 @@ class PaperBudgetLedger:
                 ):
                     raise InventoryIdentityError("conflicting reacquisition identity")
                 return _reacquisition_record_from_row(existing)
+            self._assert_category_capacity(connection, category="reacquisition")
             calls, tokens, cost_total = self._budget_totals(connection)
             next_calls = calls + 1
             next_tokens = tokens + request.token_upper_bound
@@ -741,6 +865,34 @@ class PaperBudgetLedger:
             for row in rows
         )
         return calls, tokens, cost
+
+    def _assert_category_capacity(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        category: Literal["primary", "reacquisition"],
+    ) -> None:
+        policy = self.category_policy
+        if policy is None:
+            return
+        primary_count = int(
+            connection.execute("SELECT COUNT(*) FROM reservations").fetchone()[0]
+        )
+        reacquisition_count = int(
+            connection.execute("SELECT COUNT(*) FROM reacquisitions").fetchone()[0]
+        )
+        next_primary = primary_count + int(category == "primary")
+        next_reacquisition = reacquisition_count + int(category == "reacquisition")
+        if next_primary > policy.planned_reservation_limit:
+            raise BudgetExceededError(
+                "planned reservation category hard limit exceeded"
+            )
+        if next_reacquisition > policy.ambiguous_reacquisition_limit:
+            raise BudgetExceededError(
+                "ambiguous reacquisition category hard limit exceeded"
+            )
+        if next_primary + next_reacquisition > policy.combined_call_limit:
+            raise BudgetExceededError("combined category call hard limit exceeded")
 
     def mark_dispatch_intent(
         self, inventory_digest: str, inventory_entry_id: str

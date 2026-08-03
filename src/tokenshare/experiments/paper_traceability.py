@@ -326,9 +326,20 @@ def _persist_protected_replay_input_root(
 
     runtime_evidence = tuple(canonical_runtime_evidence)
     if not runtime_evidence:
-        raise TraceabilityBlockedError(
-            "protected L4 replay requires persisted canonical runtime evidence"
+        from tokenshare.experiments.paper_direct_results import PaperDirectRootResult
+
+        direct_root_rows = _walk_direct_root_candidates(
+            canonical_direct_rows,
+            PaperDirectRootResult,
         )
+        if not direct_root_rows or any(
+            type(row) is not PaperDirectRootResult
+            or row.root_status != "not_started"
+            for row in direct_root_rows
+        ):
+            raise TraceabilityBlockedError(
+                "protected L4 replay requires persisted canonical runtime evidence"
+            )
     root = Path(replay_input_root).resolve(strict=False)
     if root.exists():
         raise FileExistsError(f"replay input root already exists: {root}")
@@ -385,9 +396,13 @@ def _persist_protected_replay_input_root(
         if value.source_role in _CURRENT_PROVIDER_ROLES
     }
     provided_files = dict(current_provider_object_files or {})
-    if not snapshots or set(provided_files) != set(snapshots):
+    if snapshots and set(provided_files) != set(snapshots):
         raise TraceabilityBlockedError(
             "protected L4 replay current-provider object closure is incomplete"
+        )
+    if not snapshots and provided_files:
+        raise TraceabilityBlockedError(
+            "protected L4 replay current-provider object closure must be empty"
         )
     current_object_refs = []
     for artifact_id, snapshot in sorted(snapshots.items()):
@@ -745,6 +760,46 @@ def _walk_instances(value: Any, expected_type: type[Any]) -> tuple[Any, ...]:
     return tuple(found)
 
 
+def _walk_direct_root_candidates(
+    value: Any,
+    direct_root_type: type[Any],
+) -> tuple[Any, ...]:
+    """收集 exact direct row 以及试图冒充该 ABI 的 duck/subclass。"""
+
+    found: list[Any] = []
+    seen: set[int] = set()
+    stack = [value]
+    identity_fields = (
+        "preregistered_root_run_id",
+        "experiment_id",
+        "condition_id",
+        "case_id",
+        "evidence_class",
+        "root_status",
+    )
+    while stack:
+        item = stack.pop()
+        identity = id(item)
+        if identity in seen:
+            continue
+        seen.add(identity)
+        if isinstance(item, direct_root_type) or (
+            not isinstance(item, Mapping)
+            and all(hasattr(item, field_name) for field_name in identity_fields)
+        ):
+            found.append(item)
+            continue
+        if isinstance(item, Mapping):
+            stack.extend(item.values())
+        elif isinstance(item, (tuple, list)):
+            stack.extend(item)
+        elif is_dataclass(item):
+            stack.extend(
+                getattr(item, field.name) for field in fields(item) if field.repr
+            )
+    return tuple(found)
+
+
 def _external_locator_type() -> type[Any]:
     from tokenshare.experiments.paper_models import ExternalBankObjectLocator
 
@@ -961,20 +1016,33 @@ def _collect_formal_evidence_closure(
             for line in artifact_index_content.decode("utf-8").splitlines():
                 record = json.loads(line)
                 payload_relative = Path(str(record.get("path", "")))
-                if not (
+                legacy_artifact_path = (
                     len(payload_relative.parts) == 7
                     and payload_relative.parts[:5] == run_root.parts
                     and payload_relative.parts[5] == "artifacts"
                     and payload_relative.suffix == ".bin"
-                ):
+                )
+                current_artifact_path = (
+                    len(payload_relative.parts) == 8
+                    and payload_relative.parts[:5] == run_root.parts
+                    and payload_relative.parts[5] == "artifacts"
+                )
+                if not (legacy_artifact_path or current_artifact_path):
                     raise TraceabilityBlockedError(
                         "protected L4 formal evidence artifact path is forbidden"
                     )
                 payload = add_path(payload_relative.as_posix())
-                if (
-                    record.get("content_hash")
-                    != "sha256:" + sha256(payload).hexdigest()
-                    or record.get("size_bytes") != len(payload)
+                if record.get("content_hash") != (
+                    "sha256:" + sha256(payload).hexdigest()
+                ):
+                    raise TraceabilityBlockedError(
+                        "protected L4 formal evidence artifact digest mismatch"
+                    )
+                expected_size = record.get("size_bytes")
+                if expected_size is not None and (
+                    isinstance(expected_size, bool)
+                    or not isinstance(expected_size, int)
+                    or expected_size != len(payload)
                 ):
                     raise TraceabilityBlockedError(
                         "protected L4 formal evidence artifact digest mismatch"

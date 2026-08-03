@@ -1,4 +1,7 @@
 from dataclasses import replace
+from decimal import Decimal
+import json
+from pathlib import Path
 
 import pytest
 
@@ -7,17 +10,28 @@ from tokenshare.executors.ai_api_request_identity import (
 )
 from tokenshare.executors.response_bank import (
     ResponseBankInventoryRow,
+    canonical_digest,
     inventory_entry_id,
+    response_bank_inventory_digest,
     semantic_slot_key,
+    terminal_bank_entry_id,
 )
-from tokenshare.experiments.paper_budget import build_response_bank_budget_report
+from tokenshare.experiments.paper_budget import (
+    L3_SMALL_PAID_BUDGET_LIMITS,
+    build_response_bank_budget_report,
+)
 from tokenshare.experiments.paper_models import PaperBudgetResult, PaperStatus, digest_json
 from tokenshare.experiments.paper_response_bank import (
+    AcquisitionRequest,
+    FullAcquisitionBudget,
     SemanticSlotCandidate,
     build_semantic_inventory,
+    create_acquisition_plan_bundle,
+    load_acquisition_plan_bundle,
     preflight_inventory_before_coordinator,
     replacement_slots_for,
 )
+from tokenshare.experiments.paper_resource_accounting import FrozenPricing
 
 
 def _prepared(
@@ -135,12 +149,203 @@ def test_every_inventory_row_has_unique_inventory_entry_id_and_semantic_slot_key
     assert len({row.semantic_slot_key for row in plan.rows}) == len(plan.rows)
 
 
+def test_planner_separates_provider_entry_from_unique_terminal_bank_entry() -> None:
+    candidates = (
+        _candidate(unit_id="unit-0", body_marker="unit-0"),
+        _candidate(unit_id="unit-1", body_marker="unit-1"),
+    )
+    plan = build_semantic_inventory(candidates)
+
+    assert {candidate.prepared_request.entry_id for candidate in candidates} == {
+        "deepseek_v4_pro_exp1_baseline"
+    }
+    assert len({row.entry_id for row in plan.rows}) == 2
+    assert all(
+        row.entry_id
+        == terminal_bank_entry_id(
+            semantic_slot_key=row.semantic_slot_key,
+            inference_request_digest=row.inference_request_digest,
+        )
+        for row in plan.rows
+    )
+    assert all(row.entry_id != candidates[0].prepared_request.entry_id for row in plan.rows)
+    assert plan.rows == tuple(
+        sorted(plan.rows, key=lambda row: row.inventory_entry_id)
+    )
+    assert plan.inventory_digest == response_bank_inventory_digest(plan.rows)
+
+
 def test_planner_computes_inventory_entry_id_from_canonical_row_excluding_id() -> None:
     row = build_semantic_inventory((_candidate(),)).rows[0]
     assert row.inventory_entry_id == inventory_entry_id(row)
     body = row.to_dict()
     body["inventory_entry_id"] = "ignored-by-preimage"
     assert inventory_entry_id(body) == row.inventory_entry_id
+
+
+def test_create_only_bundle_round_trips_exact_prepared_bytes_and_full_budget(
+    tmp_path: Path,
+) -> None:
+    candidates = (
+        _candidate(
+            experiment_id="exp4_real_ai_protocol_ablation",
+            unit_id="unit-0",
+            replacement_slot=0,
+            body_marker="initial",
+        ),
+        _candidate(
+            experiment_id="exp4_real_ai_protocol_ablation",
+            unit_id="unit-0",
+            replacement_slot=1,
+            body_marker="replacement",
+        ),
+    )
+    plan = build_semantic_inventory(candidates)
+    candidates_by_digest = {
+        item.prepared_request.inference_request_digest: item for item in candidates
+    }
+    requests = tuple(
+        AcquisitionRequest(
+            inventory_row=row,
+            prepared_request=candidates_by_digest[
+                row.inference_request_digest
+            ].prepared_request,
+            provider_family="deepseek",
+            api_key_env="DEEPSEEK_API_KEY",
+            timeout_seconds=600,
+            token_upper_bound=300_000,
+            cost_upper_bound=Decimal("1.25"),
+            frozen_pricing=FrozenPricing(
+                currency="CNY",
+                input_per_million_tokens=Decimal("0.5"),
+                output_per_million_tokens=Decimal("1.5"),
+            ),
+            requested_at="2026-08-03T00:00:00Z",
+        )
+        for row in reversed(plan.rows)
+    )
+    root = tmp_path / "bundle"
+
+    created = create_acquisition_plan_bundle(
+        root,
+        authorized_plan_digest="sha256:" + "a" * 64,
+        profile_digest="sha256:" + "b" * 64,
+        semantic_inventory_plan=plan,
+        acquisition_requests=requests,
+    )
+    reopened = load_acquisition_plan_bundle(root)
+
+    assert reopened == created
+    assert reopened.semantic_inventory_plan == plan
+    assert reopened.inventory_rows == plan.rows
+    assert tuple(
+        item.prepared_request.body_bytes for item in reopened.acquisition_requests
+    ) == tuple(
+        candidates_by_digest[row.inference_request_digest].prepared_request.body_bytes
+        for row in plan.rows
+    )
+    assert reopened.full_budget.calls == 2
+    assert reopened.full_budget.tokens == 600_000
+    assert reopened.full_budget.cny == Decimal("2.50")
+    assert reopened.full_budget.budget_digest != "sha256:" + "0" * 64
+    with pytest.raises(FileExistsError):
+        create_acquisition_plan_bundle(
+            root,
+            authorized_plan_digest="sha256:" + "a" * 64,
+            profile_digest="sha256:" + "b" * 64,
+            semantic_inventory_plan=plan,
+            acquisition_requests=reopened.acquisition_requests,
+        )
+    path = root / "acquisition_plan_bundle.v1.json"
+    body = json.loads(path.read_text(encoding="utf-8"))
+    body["acquisition_requests"][0]["prepared_request"][
+        "body_bytes_base64"
+    ] = "dGFtcGVyZWQ="
+    path.write_text(json.dumps(body), encoding="utf-8")
+    with pytest.raises(ValueError, match="prepared request body bytes mismatch"):
+        load_acquisition_plan_bundle(root)
+
+
+def test_acquisition_bundle_rejects_semantic_plan_row_cross_binding_tamper(
+    tmp_path: Path,
+) -> None:
+    candidates = (
+        _candidate(
+            experiment_id="exp4_real_ai_protocol_ablation",
+            unit_id="unit-0",
+            replacement_slot=0,
+            body_marker="initial",
+        ),
+        _candidate(
+            experiment_id="exp4_real_ai_protocol_ablation",
+            unit_id="unit-0",
+            replacement_slot=1,
+            body_marker="replacement",
+        ),
+    )
+    plan = build_semantic_inventory(candidates)
+    by_digest = {
+        item.prepared_request.inference_request_digest: item for item in candidates
+    }
+    requests = tuple(
+        AcquisitionRequest(
+            inventory_row=row,
+            prepared_request=by_digest[row.inference_request_digest].prepared_request,
+            provider_family="deepseek",
+            api_key_env="DEEPSEEK_API_KEY",
+            timeout_seconds=600,
+            token_upper_bound=300_000,
+            cost_upper_bound=Decimal("1.25"),
+            frozen_pricing=FrozenPricing(
+                currency="CNY",
+                input_per_million_tokens=Decimal("0.5"),
+                output_per_million_tokens=Decimal("1.5"),
+            ),
+            requested_at="2026-08-03T00:00:00Z",
+        )
+        for row in plan.rows
+    )
+    root = tmp_path / "bundle"
+    create_acquisition_plan_bundle(
+        root,
+        authorized_plan_digest="sha256:" + "a" * 64,
+        profile_digest="sha256:" + "b" * 64,
+        semantic_inventory_plan=plan,
+        acquisition_requests=requests,
+    )
+    path = root / "acquisition_plan_bundle.v1.json"
+    body = json.loads(path.read_text(encoding="utf-8"))
+    body["semantic_inventory_plan"]["condition_refs"][0][
+        "semantic_slot_keys"
+    ].pop()
+    body["bundle_digest"] = canonical_digest(
+        {key: value for key, value in body.items() if key != "bundle_digest"}
+    )
+    path.write_text(json.dumps(body), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="do not cover"):
+        load_acquisition_plan_bundle(root)
+
+
+def test_full_acquisition_budget_rejects_l3_516_budget_identity() -> None:
+    limits = L3_SMALL_PAID_BUDGET_LIMITS
+    preimage = {
+        "schema_version": "tokenshare.paper_full_acquisition_budget.v1",
+        "calls": limits.calls,
+        "tokens": limits.tokens,
+        "cny": str(limits.cny),
+        "deepseek_cumulative_cny": str(limits.deepseek_cumulative_cny),
+    }
+    budget = FullAcquisitionBudget(
+        schema_version=str(preimage["schema_version"]),
+        calls=limits.calls,
+        tokens=limits.tokens,
+        cny=limits.cny,
+        deepseek_cumulative_cny=limits.deepseek_cumulative_cny,
+        budget_digest=canonical_digest(preimage),
+    )
+    with pytest.raises(ValueError, match="L3 516-call budget"):
+        budget.validate()
 
 
 def test_planner_is_stable_for_identical_rows_and_rejects_tampered_precomputed_id() -> None:

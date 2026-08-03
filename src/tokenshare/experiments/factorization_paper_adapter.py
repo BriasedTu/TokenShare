@@ -56,6 +56,9 @@ from tokenshare.experiments.paper_models import (
     evaluate_paper_eligibility,
 )
 from tokenshare.experiments.paper_report import scan_artifact_store_for_secrets
+from tokenshare.experiments.paper_direct_results import (
+    persist_native_online_direct_artifacts,
+)
 from tokenshare.experiments.paper_runtime_clock import (
     FixedLifecycleClock,
     runtime_lifecycle_clock,
@@ -314,7 +317,7 @@ def run_factorization_paper_case(
         max_tokens=max_tokens,
         timeout_seconds=timeout_seconds,
     )
-    secret_values = _real_secret_values(config) if real_transport else ()
+    secret_collector = _TransientSecretCollector()
 
     case_id = str(case["case_id"])
     root = Path(output_root)
@@ -337,7 +340,7 @@ def run_factorization_paper_case(
         real_transport=real_transport,
         config=config,
         validated_binding=validated_binding,
-        secret_values=secret_values,
+        secret_collector=secret_collector,
         max_tokens=max_tokens,
         timeout_seconds=timeout_seconds,
         post_raw_output_hook=post_raw_output_hook,
@@ -364,6 +367,7 @@ def run_factorization_paper_case(
             else parse_factorization_ai_output
         ),
         post_raw_output_hook=post_raw_output_hook,
+        resolved_secret_observer=secret_collector.observe,
     )
 
     indexed_ranges = list(enumerate(split_plan.partition.ranges))
@@ -640,7 +644,7 @@ def run_factorization_paper_case(
         store=store,
         real_transport=real_transport,
         transport_kind="ai_api" if real_transport else "scripted",
-        secret_values=secret_values,
+        secret_values=secret_collector.snapshot(),
         transport=active_transport,
     )
     run_evidence["ablation_runtime"] = _ablation_runtime_evidence(
@@ -710,6 +714,36 @@ class _CapturedRangeCall:
     usage_ref: ArtifactRef
     model_execution_record: Any | None
     model_execution_record_ref: ArtifactRef | None
+    resolved_secret_values: tuple[str, ...] = ()
+
+
+class _TransientSecretCollector:
+    """仅在当前 root 内存中收集实际 resolve 的 key；绝不持久化。"""
+
+    def __init__(self) -> None:
+        self._values: list[str] = []
+        self._lock = Lock()
+
+    def __repr__(self) -> str:
+        return "<_TransientSecretCollector redacted>"
+
+    def __getstate__(self):
+        return {"_values": list(self._values)}
+
+    def __setstate__(self, state):
+        self._values = list(state.get("_values", ()))
+        self._lock = Lock()
+
+    def observe(self, value: str) -> None:
+        if not isinstance(value, str) or not value:
+            raise ValueError("resolved secret must be non-empty")
+        with self._lock:
+            if value not in self._values:
+                self._values.append(value)
+
+    def snapshot(self) -> tuple[str, ...]:
+        with self._lock:
+            return tuple(self._values)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -1002,6 +1036,7 @@ class _FixedIdentityRangeExecutor:
         executor_requirements: JsonObject,
         case_id: str,
         paper_eligible_transport: bool,
+        secret_collector: _TransientSecretCollector,
     ) -> None:
         self.executor = executor
         self.store = store
@@ -1011,6 +1046,7 @@ class _FixedIdentityRangeExecutor:
         self.executor_requirements = dict(executor_requirements)
         self.case_id = case_id
         self.paper_eligible_transport = paper_eligible_transport
+        self.secret_collector = secret_collector
         self.calls: list[_CapturedRangeCall] = []
         self._calls_lock = Lock()
         self._next_call_index = 0
@@ -1045,6 +1081,8 @@ class _FixedIdentityRangeExecutor:
         )
 
     def ingest_process_result(self, captured: _CapturedRangeCall) -> None:
+        for secret in captured.resolved_secret_values:
+            self.secret_collector.observe(secret)
         with self._calls_lock:
             if any(
                 call.request.attempt_id == captured.request.attempt_id
@@ -1154,6 +1192,7 @@ class _FixedIdentityRangeExecutor:
                     usage_ref=usage_ref,
                     model_execution_record=model_record,
                     model_execution_record_ref=record_ref,
+                    resolved_secret_values=self.secret_collector.snapshot(),
                 )
             )
         return submission
@@ -1269,7 +1308,7 @@ def _run_factorization_full_via_coordinator(
     real_transport: bool,
     config: AIAPIExecutorConfig,
     validated_binding: ValidatedModelEndpointBinding,
-    secret_values: tuple[str, ...],
+    secret_collector: _TransientSecretCollector,
     max_tokens: int,
     timeout_seconds: int,
     post_raw_output_hook: Any | None,
@@ -1339,6 +1378,7 @@ def _run_factorization_full_via_coordinator(
             transport=active_transport,
             parser=parse_factorization_ai_output,
             post_raw_output_hook=post_raw_output_hook,
+            resolved_secret_observer=secret_collector.observe,
         )
         capturing_executor = _FixedIdentityRangeExecutor(
             ai_executor,
@@ -1348,9 +1388,10 @@ def _run_factorization_full_via_coordinator(
             config=config,
             executor_requirements=executor_requirements,
             case_id=case_id,
-            paper_eligible_transport=not _is_offline_capturing_transport(
-                active_transport
-            ),
+        paper_eligible_transport=not _is_offline_capturing_transport(
+            active_transport
+        ),
+        secret_collector=secret_collector,
         )
         runtime_adapter = plugin_runtime
         execution_bridge = FactorizationExecutionBridge(
@@ -1773,7 +1814,7 @@ def _run_factorization_full_via_coordinator(
         store=store,
         real_transport=real_transport,
         transport_kind="ai_api" if real_transport else "scripted",
-        secret_values=secret_values,
+        secret_values=secret_collector.snapshot(),
         transport=active_transport,
     )
     run_evidence["protocol_runtime"] = {
@@ -1805,6 +1846,33 @@ def _run_factorization_full_via_coordinator(
             runtime_result.summary.get("runtime_hook_observations", ())
         ),
     )
+    if attempts:
+        completed_direct = prime_ref is not None and accepted_validity is not None
+        direct_bundle = persist_native_online_direct_artifacts(
+            artifact_store=store,
+            execution_id=runtime_result.run_id,
+            task_id=runtime_result.task_id,
+            root_unit_id=runtime_result.root_unit_id,
+            final_result_ref=prime_ref if completed_direct else None,
+            oracle_verdict_ref=prime_ref if completed_direct else None,
+            oracle_kind="independent_verifier" if completed_direct else None,
+            oracle_correct=accepted_validity if completed_direct else None,
+            oracle_fact=(
+                {
+                    "case_id": case_id,
+                    "root_validity_audit_passed": accepted_validity,
+                }
+                if completed_direct
+                else None
+            ),
+            current_provider_object_refs=(
+                _native_online_provider_sources(attempts)
+                if real_transport
+                else None
+            ),
+            parser_object_refs=_native_parser_sources(attempts),
+        )
+        run_evidence["paper_direct_native_artifacts"] = direct_bundle.to_dict()
     eligibility = evaluate_paper_eligibility(
         attempts=attempts,
         run_evidence=run_evidence,
@@ -1854,6 +1922,75 @@ def _run_factorization_full_via_coordinator(
         )
     _write_case_outputs(run_root, result)
     return result
+
+
+def _native_online_provider_sources(
+    attempts: Sequence[PaperAttemptResult],
+) -> dict[str, tuple[ArtifactRef, ...]]:
+    """把 native executor refs 分组交给唯一 direct builder。"""
+
+    grouped: dict[str, list[ArtifactRef]] = {
+        role: []
+        for role in (
+            "request_body",
+            "raw_output_or_provider_failure",
+            "provenance",
+            "usage_status",
+            "latency",
+            "pricing",
+            "provider_attempt",
+            "model_record",
+        )
+    }
+    for attempt in attempts:
+        request_ref = ArtifactRef.from_dict(attempt.request_ref)
+        provenance_ref = ArtifactRef.from_dict(attempt.provenance_ref)
+        usage_ref = ArtifactRef.from_dict(attempt.usage_ref)
+        raw_value = (
+            attempt.raw_output_ref
+            or attempt.parse_failure_ref
+            or attempt.provenance_ref
+        )
+        values = {
+            "request_body": request_ref,
+            "raw_output_or_provider_failure": ArtifactRef.from_dict(raw_value),
+            "provenance": provenance_ref,
+            "usage_status": usage_ref,
+            "latency": provenance_ref,
+            "pricing": usage_ref,
+            "provider_attempt": provenance_ref,
+            "model_record": ArtifactRef.from_dict(
+                attempt.model_execution_record_ref or attempt.usage_ref
+            ),
+        }
+        for role, ref in values.items():
+            grouped[role].append(ref)
+    if any(not values for values in grouped.values()):
+        raise ValueError("native online provider evidence is incomplete")
+    return {role: tuple(values) for role, values in grouped.items()}
+
+
+def _native_parser_sources(
+    attempts: Sequence[PaperAttemptResult],
+) -> dict[str, tuple[ArtifactRef, ...]]:
+    """把 parser 既有事实按 direct ABI 角色投影，不重新解析。"""
+
+    grouped: dict[str, list[ArtifactRef]] = {
+        "parser_result": [],
+        "parse_failure": [],
+    }
+    for attempt in attempts:
+        for role, value in (
+            ("parser_result", attempt.parsed_output_ref),
+            ("parse_failure", attempt.parse_failure_ref),
+        ):
+            if value is not None:
+                grouped[role].append(ArtifactRef.from_dict(value))
+    return {
+        role: tuple(values)
+        for role, values in grouped.items()
+        if values
+    }
 
 
 def _worker_death_projection_facts(
@@ -3067,14 +3204,6 @@ def _combined_cost_estimate_status(attempts: list[PaperAttemptResult]) -> str | 
     if statuses:
         return "estimated"
     return None
-
-
-def _real_secret_values(config: AIAPIExecutorConfig) -> tuple[str, ...]:
-    return tuple(
-        dict.fromkeys(
-            entry.resolve_api_key() for entry in config.entries if entry.enabled
-        )
-    )
 
 
 def _artifact_manifests(store: ArtifactStore) -> list[JsonObject]:

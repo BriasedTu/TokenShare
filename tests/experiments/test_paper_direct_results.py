@@ -17,6 +17,7 @@ from tokenshare.experiments.paper_direct_results import (
     PaperDirectRootResult,
     build_canonical_direct_evidence,
     build_direct_boolean_aggregate,
+    persist_native_online_direct_artifacts,
     project_paper_direct_results,
 )
 from tokenshare.experiments.paper_models import (
@@ -1482,7 +1483,7 @@ def test_regression_only_cannot_be_upgraded_to_paper_evidence(tmp_path: Path) ->
         )
 
 
-def test_four_root_hand_calculation_keeps_denominator_four_and_blocks(
+def test_four_root_hand_calculation_keeps_denominator_and_counts_failed_false(
     tmp_path: Path,
 ) -> None:
     _, condition_manifest, catalog = _inventory_row()
@@ -1537,5 +1538,207 @@ def test_four_root_hand_calculation_keeps_denominator_four_and_blocks(
     assert sum(row.final_result_reference_complete for row in projection.rows) == 2
     assert sum(row.end_to_end_verified_success for row in projection.rows) == 1
     assert aggregate.audit_denominator_count == 4
-    assert aggregate.status == "blocked"
-    assert aggregate.value is None
+    assert aggregate.status == "computed"
+    assert aggregate.value == pytest.approx(0.25)
+
+
+def test_native_online_direct_builder_persists_exact_identity_bound_artifacts(
+    tmp_path: Path,
+) -> None:
+    store = ArtifactStore(tmp_path / "native-online")
+    execution_id = "execution:native-online"
+    task_id = "task:native-online"
+    root_unit_id = "unit:native-online"
+    final_ref = _save_role_artifact(
+        store,
+        label="native-final",
+        role="final_result",
+        execution_id=execution_id,
+        task_id=task_id,
+    )
+    oracle_ref = _save_role_artifact(
+        store,
+        label="native-oracle",
+        role="verification_report",
+        execution_id=execution_id,
+        task_id=task_id,
+        body={"accepted": True},
+    )
+    provider_refs = tuple(
+        _save_role_artifact(
+            store,
+            label=f"native-provider-{role}",
+            role=role,
+            execution_id=execution_id,
+            task_id=task_id,
+        )
+        for role in (
+            "request_body",
+            "raw_output_or_provider_failure",
+            "provenance",
+            "usage_status",
+            "latency",
+            "pricing",
+            "provider_attempt",
+            "model_record",
+        )
+    )
+
+    resource_ref, verdict_ref = persist_native_online_direct_artifacts(
+        artifact_store=store,
+        execution_id=execution_id,
+        task_id=task_id,
+        root_unit_id=root_unit_id,
+        final_result_ref=final_ref,
+        oracle_verdict_ref=oracle_ref,
+        oracle_kind="independent_verifier",
+        oracle_correct=True,
+        current_provider_object_refs=provider_refs,
+    )
+
+    resource = json.loads(store.read_bytes(resource_ref))
+    verdict = json.loads(store.read_bytes(verdict_ref))
+    assert resource["schema_version"] == "tokenshare.paper_actual_resource_book.v1"
+    assert resource["current_provider_object_refs"] == [
+        ref.to_dict() for ref in provider_refs
+    ]
+    assert resource_ref.source["role"] == "actual_resource_book"
+    assert verdict == {
+        "schema_version": "tokenshare.paper_direct_correctness_verdict.v1",
+        "execution_id": execution_id,
+        "task_id": task_id,
+        "root_unit_id": root_unit_id,
+        "final_artifact_id": final_ref.artifact_id,
+        "final_content_hash": final_ref.content_hash,
+        "final_size_bytes": final_ref.size_bytes,
+        "verdict_kind": "independent_verifier",
+        "correct": True,
+    }
+    assert verdict_ref.source["role"] == "independent_verdict"
+    assert verdict_ref.source["oracle_verdict_ref"] == oracle_ref.to_dict()
+
+
+def test_native_online_direct_builder_projects_role_books_from_native_sources(
+    tmp_path: Path,
+) -> None:
+    store = ArtifactStore(tmp_path / "native-role-books")
+    execution_id = "execution:native-role-books"
+    task_id = "task:native-role-books"
+    final_ref = _save_role_artifact(
+        store,
+        label="role-book-final",
+        role="final_result",
+        execution_id=execution_id,
+        task_id=task_id,
+    )
+    oracle_ref = _save_role_artifact(
+        store,
+        label="role-book-oracle",
+        role="verification_report",
+        execution_id=execution_id,
+        task_id=task_id,
+    )
+    native_ref = _save_role_artifact(
+        store,
+        label="native-provider-envelope",
+        role="native_executor_envelope",
+        execution_id=execution_id,
+        task_id=task_id,
+    )
+    roles = (
+        "request_body",
+        "raw_output_or_provider_failure",
+        "provenance",
+        "usage_status",
+        "latency",
+        "pricing",
+        "provider_attempt",
+        "model_record",
+    )
+
+    resource_ref, _ = persist_native_online_direct_artifacts(
+        artifact_store=store,
+        execution_id=execution_id,
+        task_id=task_id,
+        root_unit_id="unit:native-role-books",
+        final_result_ref=final_ref,
+        oracle_verdict_ref=oracle_ref,
+        oracle_kind="independent_verifier",
+        oracle_correct=True,
+        current_provider_object_refs={role: (native_ref,) for role in roles},
+    )
+
+    resource = json.loads(store.read_bytes(resource_ref))
+    projected = tuple(
+        ArtifactRef.from_dict(value)
+        for value in resource["current_provider_object_refs"]
+    )
+    assert {value.source["role"] for value in projected} == set(roles)
+    assert all(value.source["source_artifact_refs"] == [native_ref.to_dict()] for value in projected)
+
+
+def test_trace_direct_evidence_accepts_complete_roles_for_multiple_entries(
+    tmp_path: Path,
+) -> None:
+    row, _, _ = _inventory_row(
+        root_id="inventory:trace:multi-entry",
+        evidence_class="real_model_trace_protocol_run",
+    )
+    kwargs, *_ = _canonical_fixture(tmp_path, row)
+    first_entry = tuple(kwargs["source_bank_object_locators"])
+    second_entry = tuple(
+        ExternalBankObjectLocator(
+            bank_root_id=value.bank_root_id,
+            manifest_digest=value.manifest_digest,
+            entry_id="entry-2",
+            object_role=value.object_role,
+            object_digest=_digest(f"entry-2:{value.object_role}"),
+        )
+        for value in first_entry
+    )
+    kwargs["source_bank_object_locators"] = (*first_entry, *second_entry)
+
+    evidence = build_canonical_direct_evidence(**kwargs)
+
+    assert {value.entry_id for value in evidence.source_bank_object_locators} == {
+        "entry-1",
+        "entry-2",
+    }
+    assert len(evidence.source_bank_object_locators) == 2 * len(first_entry)
+
+
+def test_failed_direct_evidence_preserves_missing_final_result(
+    tmp_path: Path,
+) -> None:
+    row, _, _ = _inventory_row(
+        root_id="inventory:failed:no-final",
+        evidence_class="online_real_provider",
+    )
+    kwargs, *_ = _canonical_fixture(
+        tmp_path,
+        row,
+        completed=False,
+        include_merge=False,
+        include_verdict=False,
+    )
+    kwargs["final_result_ref"] = None
+
+    evidence = build_canonical_direct_evidence(**kwargs)
+
+    assert evidence.canonical_runtime_status == "failed"
+    assert evidence.final_result_ref is None
+    projection = project_paper_direct_results(
+        root_inventory_manifest=_inventory_manifest(row),
+        condition_manifests=(_inventory_row(root_id=row.preregistered_root_run_id)[1],),
+        catalog_manifests=(_inventory_row(root_id=row.preregistered_root_run_id)[2],),
+        canonical_runtime_evidence=(evidence,),
+    )
+    assert projection.rows[0].root_status == "failed"
+    assert projection.rows[0].final_result_ref is None
+    aggregate = build_direct_boolean_aggregate(
+        projection,
+        outcome_field="end_to_end_verified_success",
+    )
+    assert aggregate.status == "computed"
+    assert aggregate.value == 0.0
+    assert aggregate.audit_denominator_count == 1

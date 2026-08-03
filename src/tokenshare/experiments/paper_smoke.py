@@ -306,6 +306,93 @@ class PaperSmokeExecutionPlan:
         return commitments
 
 
+@dataclass(frozen=True, kw_only=True)
+class PaperSmokeServiceAuthority:
+    """smoke adapter 的无 secret authority；保持 formal evidence 不可冒充。"""
+
+    scope: str
+    plan_digest: str
+    inventory_digest: str
+    budget_digest: str
+    keyword_arguments: Mapping[str, object]
+
+
+def build_paper_smoke_service_authority(
+    *,
+    scope: str,
+    authorized_plan_digest: str,
+    profile: PaperSmokeProfile,
+    execution_plan: PaperSmokeExecutionPlan,
+    catalog_manifest: object,
+    budget: object,
+    ai_api_configs: Mapping[str, object],
+    transport: object,
+    hard_limits: Mapping[str, object],
+    resume: bool,
+    launch_manifest: Mapping[str, object],
+    recovery_manifest: Mapping[str, object] | None = None,
+    authorization_budget_digest: str | None = None,
+) -> PaperSmokeServiceAuthority:
+    """冻结 capability-smoke service kwargs；不读取环境变量或调用 provider。"""
+
+    if scope != "exp5_capability_smoke":
+        raise ValueError("full Exp5 scope cannot use capability smoke authority")
+    if profile.experiment_ids != ("exp5_real_ai_model_endpoint_comparison",):
+        raise ValueError("capability smoke profile must contain only Experiment 5")
+    if (
+        profile.formal
+        or not profile.pilot_only
+        or not profile.regression_only
+        or profile.paper_eligible
+        or tuple(profile.ineligibility_reasons) != SMOKE_INELIGIBILITY_REASONS
+    ):
+        raise ValueError("capability smoke must remain not-paper-eligible")
+    if (
+        execution_plan.profile_digest != profile.profile_digest
+        or execution_plan.experiment_ids != profile.experiment_ids
+        or execution_plan.baseline_policy != profile.baseline_policy
+    ):
+        raise ValueError("capability smoke execution plan authority mismatch")
+    if not isinstance(authorized_plan_digest, str) or not authorized_plan_digest.startswith(
+        "sha256:"
+    ):
+        raise ValueError("capability smoke authorized plan digest is missing")
+    runner_budget_digest = getattr(budget, "budget_digest", None)
+    if not isinstance(runner_budget_digest, str) or not runner_budget_digest.startswith(
+        "sha256:"
+    ):
+        raise ValueError("capability smoke budget digest is missing")
+    budget_digest = authorization_budget_digest or runner_budget_digest
+    if not isinstance(budget_digest, str) or not budget_digest.startswith("sha256:"):
+        raise ValueError("capability smoke authorization budget digest is missing")
+    if not isinstance(ai_api_configs, Mapping) or not ai_api_configs:
+        raise ValueError("capability smoke AI API configs are missing")
+    if not isinstance(hard_limits, Mapping) or not isinstance(launch_manifest, Mapping):
+        raise ValueError("capability smoke launch authority is invalid")
+    return PaperSmokeServiceAuthority(
+        scope=scope,
+        plan_digest=authorized_plan_digest,
+        inventory_digest=execution_plan.execution_plan_digest,
+        budget_digest=budget_digest,
+        keyword_arguments={
+            "profile": profile,
+            "execution_plan": execution_plan,
+            "catalog_manifest": catalog_manifest,
+            "budget": budget,
+            "ai_api_configs": dict(ai_api_configs),
+            "transport": transport,
+            "real_transport": True,
+            "hard_limits": dict(hard_limits),
+            "resume": bool(resume),
+            "secret_values": (),
+            "launch_manifest": dict(launch_manifest),
+            "recovery_manifest": (
+                None if recovery_manifest is None else dict(recovery_manifest)
+            ),
+        },
+    )
+
+
 def load_paper_smoke_profile(path: str | Path) -> PaperSmokeProfile:
     body = json.loads(Path(path).read_text(encoding="utf-8"))
     if not isinstance(body, dict):

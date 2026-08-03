@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from dataclasses import dataclass
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, replace
 import hashlib
 import json
 import os
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any
 import uuid
 
 from tokenshare.executors.response_bank import CurrentTraceWrapper
@@ -19,6 +19,15 @@ from tokenshare.experiments.paper_formal_evidence import (
     build_canonical_lineage_inputs,
     export_lineage_source_index,
     lineage_input_identity_digest,
+)
+from tokenshare.experiments.paper_direct_results import (
+    PaperDirectRootResult,
+    _DIRECT_RESULT_FACTORY_TOKEN,
+)
+from tokenshare.experiments.paper_exp1_metrics import Exp1HydratedDirectRow
+from tokenshare.experiments.paper_exp2_metrics import (
+    Exp2OnlineHydratedRoot,
+    Exp2TraceHydratedRoot,
 )
 from tokenshare.experiments.paper_models import (
     CanonicalDirectRootEvidence,
@@ -85,6 +94,7 @@ def publish_paper_formal_metric_drafts(
     current_trace_wrappers_by_root: Mapping[str, Sequence[CurrentTraceWrapper]] | None = None,
     trace_source_bindings_by_root: Mapping[str, Sequence[TraceSourceBinding]] | None = None,
     eligibility_facts_by_root: Mapping[str, PaperEvidenceEligibilityFacts] | None = None,
+    metric_projection_rows: Mapping[str, object] | None = None,
 ) -> FormalMetricsResult:
     """Delegate canonical persisted inputs and publish only intermediate drafts."""
 
@@ -97,6 +107,10 @@ def publish_paper_formal_metric_drafts(
         raise TypeError("registry must be PaperMetricRegistry")
     current_registry = registry or load_paper_metric_registry(current_contract)
     _validate_registry_contract(current_registry, current_contract)
+    projected_rows = _resolve_metric_projection_rows(
+        canonical_direct_rows,
+        metric_projection_rows,
+    )
     input_identity_digest = lineage_input_identity_digest(canonical_direct_rows)
     canonical_lineage_inputs = build_canonical_lineage_inputs(
         canonical_direct_rows,
@@ -114,7 +128,7 @@ def publish_paper_formal_metric_drafts(
     with capture_metric_computation_traces() as computation_traces:
         drafts = tuple(
             current_registry.project_all(
-                canonical_direct_rows,
+                projected_rows,
                 global_infra_invalid=not global_infrastructure_valid,
             )
         )
@@ -181,6 +195,7 @@ def recompute_paper_formal_metrics(
     current_trace_wrappers_by_root: Mapping[str, Sequence[CurrentTraceWrapper]] | None = None,
     trace_source_bindings_by_root: Mapping[str, Sequence[TraceSourceBinding]] | None = None,
     eligibility_facts_by_root: Mapping[str, PaperEvidenceEligibilityFacts] | None = None,
+    metric_projection_rows: Mapping[str, object] | None = None,
 ) -> FormalMetricsResult:
     """Package-compatible name for the canonical-row delegation boundary."""
 
@@ -195,7 +210,159 @@ def recompute_paper_formal_metrics(
         current_trace_wrappers_by_root=current_trace_wrappers_by_root,
         trace_source_bindings_by_root=trace_source_bindings_by_root,
         eligibility_facts_by_root=eligibility_facts_by_root,
+        metric_projection_rows=metric_projection_rows,
     )
+
+
+def derive_paper_metric_projection_rows(
+    canonical_direct_rows: Mapping[str, object],
+) -> Mapping[str, object]:
+    """确定性生成 metric identity 投影；不改变 authoritative lineage rows。"""
+
+    if not isinstance(canonical_direct_rows, Mapping):
+        raise TypeError("canonical direct rows must be a mapping")
+    changed = False
+    projected: dict[str, object] = {}
+    for input_key, value in canonical_direct_rows.items():
+        rows = _projection_sequence(value, label=f"canonical {input_key}")
+        if input_key not in {
+            "exp1_feasibility",
+            "exp2_trace_scalability",
+            "exp2_online_concurrency",
+        }:
+            projected[input_key] = value
+            continue
+        metric_rows = []
+        for row in rows:
+            direct = _metric_direct_result(row, input_key=input_key)
+            target_id = _metric_experiment_id(
+                input_key=input_key,
+                direct=direct,
+            )
+            if target_id == direct.experiment_id:
+                metric_rows.append(row)
+                continue
+            metric_direct = replace(
+                direct,
+                experiment_id=target_id,
+                _factory_token=_DIRECT_RESULT_FACTORY_TOKEN,
+            )
+            if isinstance(row, PaperDirectRootResult):
+                metric_rows.append(metric_direct)
+            else:
+                metric_rows.append(
+                    replace(row, direct_result=metric_direct)
+                )
+            changed = True
+        projected[input_key] = tuple(metric_rows)
+    return projected if changed else canonical_direct_rows
+
+
+def _resolve_metric_projection_rows(
+    canonical_direct_rows: Mapping[str, object],
+    metric_projection_rows: Mapping[str, object] | None,
+) -> Mapping[str, object]:
+    expected = derive_paper_metric_projection_rows(canonical_direct_rows)
+    if metric_projection_rows is None:
+        return expected
+    if not isinstance(metric_projection_rows, Mapping):
+        raise TypeError("metric projection rows must be a mapping")
+    if set(metric_projection_rows) != set(canonical_direct_rows):
+        raise ValueError("metric projection keys must match canonical rows")
+    for input_key in canonical_direct_rows:
+        authoritative = _projection_sequence(
+            canonical_direct_rows[input_key],
+            label=f"canonical {input_key}",
+        )
+        projected = _projection_sequence(
+            metric_projection_rows[input_key],
+            label=f"metric projection {input_key}",
+        )
+        expected_rows = _projection_sequence(
+            expected[input_key],
+            label=f"expected metric projection {input_key}",
+        )
+        if len(projected) != len(authoritative):
+            raise ValueError("metric projection row count mismatch")
+        for ordinal, (source_row, projected_row, expected_row) in enumerate(
+            zip(authoritative, projected, expected_rows, strict=True)
+        ):
+            source_root_id = _metric_projection_root_id(source_row)
+            projected_root_id = _metric_projection_root_id(projected_row)
+            if source_root_id != projected_root_id:
+                raise ValueError(
+                    f"metric projection root/order mismatch at {input_key}[{ordinal}]"
+                )
+            if projected_row != expected_row:
+                raise ValueError(
+                    "metric projection differs beyond allowed identity view"
+                )
+    return metric_projection_rows
+
+
+def _metric_projection_root_id(row: object) -> object:
+    direct = getattr(row, "direct_result", row)
+    return getattr(direct, "preregistered_root_run_id", None)
+
+
+def _metric_direct_result(row: object, *, input_key: str) -> PaperDirectRootResult:
+    expected_types = {
+        "exp1_feasibility": (PaperDirectRootResult, Exp1HydratedDirectRow),
+        "exp2_trace_scalability": (Exp2TraceHydratedRoot,),
+        "exp2_online_concurrency": (Exp2OnlineHydratedRoot,),
+    }
+    if not isinstance(row, expected_types[input_key]):
+        raise TypeError(f"{input_key} metric projection row type mismatch")
+    direct = row if isinstance(row, PaperDirectRootResult) else row.direct_result
+    if not isinstance(direct, PaperDirectRootResult):
+        raise TypeError(f"{input_key} metric projection requires a direct result")
+    return direct
+
+
+def _metric_experiment_id(
+    *,
+    input_key: str,
+    direct: PaperDirectRootResult,
+) -> str:
+    if input_key == "exp1_feasibility":
+        if direct.experiment_id == "experiment_1":
+            return direct.experiment_id
+        if (
+            direct.experiment_id != "exp1_real_ai_feasibility"
+            or direct.evidence_class != "online_real_provider"
+        ):
+            raise ValueError("Exp1 metric identity route mismatch")
+        return "experiment_1"
+    expected = {
+        "exp2_trace_scalability": (
+            "real_model_trace_protocol_run",
+            "experiment_2_trace",
+        ),
+        "exp2_online_concurrency": (
+            "online_real_provider",
+            "experiment_2_online",
+        ),
+    }[input_key]
+    if (
+        direct.experiment_id == expected[1]
+        and direct.evidence_class == expected[0]
+    ):
+        return direct.experiment_id
+    if (
+        direct.experiment_id != "exp2_real_ai_scalability"
+        or direct.evidence_class != expected[0]
+    ):
+        raise ValueError("Exp2 metric identity route mismatch")
+    return expected[1]
+
+
+def _projection_sequence(value: object, *, label: str) -> Sequence[Any]:
+    if not isinstance(value, Sequence) or isinstance(
+        value,
+        (str, bytes, bytearray),
+    ):
+        raise TypeError(f"{label} rows must be a sequence")
+    return value
 
 
 def _validate_registry_contract(

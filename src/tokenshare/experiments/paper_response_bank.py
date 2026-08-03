@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import base64
 import json
 from dataclasses import asdict, dataclass, field, is_dataclass, replace
+from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, Callable, ClassVar, Mapping, Sequence
@@ -19,18 +21,37 @@ from tokenshare.executors.ai_api_request_identity import (
     validate_prepared_request,
 )
 from tokenshare.executors.response_bank import (
+    OBJECT_ROLES,
     ExternalBankObjectLocator,
     ResponseBankEntry,
     ResponseBankInventoryRow,
+    ResponseBankManifest,
+    ResponseBankResolver,
+    canonical_inventory_rows,
     canonical_digest,
+    initialize_response_bank,
     inventory_entry_id,
+    response_bank_inventory_digest,
     semantic_slot_key,
+    terminal_bank_entry_id,
 )
-from tokenshare.executors.trace_backed import TraceSourceBinding
+from tokenshare.executors.trace_backed import (
+    TraceSourceBinding,
+    freeze_trace_source_binding,
+)
 from tokenshare.experiments.paper_budget_ledger import (
     BudgetExceededError,
     PaperBudgetLedger,
     ReservationRequest,
+)
+from tokenshare.experiments.paper_budget import (
+    L3_SMALL_PAID_BUDGET_LIMITS,
+    PaperBudgetLimits,
+)
+from tokenshare.experiments.paper_paid_authorization import (
+    PAID_OUTPUT_BINDING_FILENAME,
+    PaidAuthorizationValidation,
+    output_root_path_digest as task26_output_root_path_digest,
 )
 from tokenshare.experiments.paper_resource_accounting import (
     FrozenPricing,
@@ -53,6 +74,15 @@ _EXP4_MODES = {
     "NO_REQUEUE",
     "NO_MERGE_GATE",
 }
+
+ACQUISITION_PLAN_BUNDLE_SCHEMA_VERSION = (
+    "tokenshare.paper_acquisition_plan_bundle.v1"
+)
+FULL_ACQUISITION_BUDGET_SCHEMA_VERSION = (
+    "tokenshare.paper_full_acquisition_budget.v1"
+)
+ACQUISITION_PLAN_BUNDLE_FILENAME = "acquisition_plan_bundle.v1.json"
+IMMUTABLE_CHILD_BANK_DIRNAME = "immutable_response_bank"
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -337,6 +367,74 @@ class PaperFormalTraceContext:
         )
 
 
+def build_paper_formal_trace_context(
+    *,
+    inventory_plan: SemanticInventoryPlan,
+    resolver: ResponseBankResolver,
+) -> PaperFormalTraceContext:
+    """从完整 plan 与已验证 external resolver 构造纯进程内 trace authority。"""
+
+    _validate_semantic_inventory_plan(inventory_plan)
+    if type(resolver) is not ResponseBankResolver:
+        raise TypeError("trace context resolver must be an exact ResponseBankResolver")
+    preflight = preflight_formal_trace_inventory(
+        required_inventory_entry_ids=tuple(
+            row.inventory_entry_id for row in inventory_plan.rows
+        ),
+        available_inventory_entry_ids=tuple(
+            entry.inventory_entry_id for entry in resolver.index.entries
+        ),
+    )
+    if preflight.status != "ready":
+        raise ValueError("response bank is incomplete before trace context construction")
+
+    rows_by_slot = {row.semantic_slot_key: row for row in inventory_plan.rows}
+    cases: list[PaperTraceCaseBinding] = []
+    for condition_ref in inventory_plan.condition_refs:
+        condition_id = str(condition_ref["condition_id"])
+        for case_ref in condition_ref["case_refs"]:
+            rows = tuple(
+                rows_by_slot[str(slot_key)]
+                for slot_key in case_ref["semantic_slot_keys"]
+            )
+            grouped: dict[tuple[str, int], list[ResponseBankInventoryRow]] = {}
+            for row in rows:
+                grouped.setdefault(
+                    (row.planned_ai_unit_id, row.sample_slot_index), []
+                ).append(row)
+            bindings = tuple(
+                freeze_trace_source_binding(
+                    resolver,
+                    planned_ai_unit_id=planned_ai_unit_id,
+                    sample_slot_index=sample_slot_index,
+                    entry_ids=tuple(
+                        row.entry_id
+                        for row in sorted(
+                            grouped_rows,
+                            key=lambda item: item.replacement_slot,
+                        )
+                    ),
+                )
+                for (planned_ai_unit_id, sample_slot_index), grouped_rows in grouped.items()
+            )
+            runtime = PaperTraceRuntimeContext(resolver=resolver, bindings=bindings)
+            cases.append(
+                PaperTraceCaseBinding(
+                    condition_id=condition_id,
+                    case_id=str(case_ref["case_id"]),
+                    case_record_digest=str(case_ref["case_record_digest"]),
+                    runtime=runtime,
+                    inventory_entry_ids=tuple(
+                        row.inventory_entry_id for row in rows
+                    ),
+                )
+            )
+    return PaperFormalTraceContext(
+        inventory_plan=inventory_plan,
+        cases=tuple(cases),
+    )
+
+
 def preflight_formal_trace_inventory(
     *,
     required_inventory_entry_ids: Sequence[str],
@@ -377,7 +475,7 @@ class AcquisitionIdentityError(RuntimeError):
 
 @dataclass(frozen=True, kw_only=True)
 class PaidAcquisitionContext:
-    """Task 26 receipt 之前由调用方提供的已验证 paid context。"""
+    """历史 evidence fixture 使用的 Task 26 paid context 值对象。"""
 
     receipt_digest: str
     authorized_plan_digest: str
@@ -389,6 +487,212 @@ class PaidAcquisitionContext:
     paid_scope_digest: str
     expires_at_epoch: int
     reacquisition_limit: int
+
+
+@dataclass(frozen=True, kw_only=True)
+class FullAcquisitionBudget:
+    """由 bundle 内全部 request ceiling 独立推导的 acquisition 硬预算。"""
+
+    schema_version: str
+    calls: int
+    tokens: int
+    cny: Decimal
+    deepseek_cumulative_cny: Decimal
+    budget_digest: str
+
+    @classmethod
+    def create(
+        cls, requests: Sequence["AcquisitionRequest"]
+    ) -> "FullAcquisitionBudget":
+        values = tuple(requests)
+        if not values:
+            raise ValueError("full acquisition budget requires non-empty requests")
+        calls = len(values)
+        tokens = sum(item.token_upper_bound for item in values)
+        cny = sum((item.cost_upper_bound for item in values), Decimal("0"))
+        deepseek_cny = sum(
+            (
+                item.cost_upper_bound
+                for item in values
+                if item.provider_family == "deepseek"
+            ),
+            Decimal("0"),
+        )
+        provisional = cls(
+            schema_version=FULL_ACQUISITION_BUDGET_SCHEMA_VERSION,
+            calls=calls,
+            tokens=tokens,
+            cny=cny,
+            deepseek_cumulative_cny=max(deepseek_cny, Decimal("0.000001")),
+            budget_digest="",
+        )
+        result = replace(
+            provisional,
+            budget_digest=canonical_digest(provisional.digest_preimage()),
+        )
+        result.validate()
+        return result
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> "FullAcquisitionBudget":
+        expected = {
+            "schema_version",
+            "calls",
+            "tokens",
+            "cny",
+            "deepseek_cumulative_cny",
+            "budget_digest",
+        }
+        if set(value) != expected:
+            raise ValueError("full acquisition budget fields do not match v1 schema")
+        result = cls(
+            schema_version=str(value["schema_version"]),
+            calls=int(value["calls"]),
+            tokens=int(value["tokens"]),
+            cny=Decimal(str(value["cny"])),
+            deepseek_cumulative_cny=Decimal(
+                str(value["deepseek_cumulative_cny"])
+            ),
+            budget_digest=str(value["budget_digest"]),
+        )
+        result.validate()
+        return result
+
+    def digest_preimage(self) -> dict[str, object]:
+        return {
+            "schema_version": self.schema_version,
+            "calls": self.calls,
+            "tokens": self.tokens,
+            "cny": str(self.cny),
+            "deepseek_cumulative_cny": str(self.deepseek_cumulative_cny),
+        }
+
+    def to_dict(self) -> dict[str, object]:
+        return {**self.digest_preimage(), "budget_digest": self.budget_digest}
+
+    def to_limits(self) -> PaperBudgetLimits:
+        self.validate()
+        return PaperBudgetLimits(
+            calls=self.calls,
+            tokens=self.tokens,
+            cny=self.cny,
+            deepseek_cumulative_cny=self.deepseek_cumulative_cny,
+        )
+
+    def validate(self) -> None:
+        if self.schema_version != FULL_ACQUISITION_BUDGET_SCHEMA_VERSION:
+            raise ValueError("full acquisition budget schema version drift")
+        if self.calls < 1 or self.tokens < 1 or self.cny <= 0:
+            raise ValueError("full acquisition budget limits must be positive")
+        if self.deepseek_cumulative_cny <= 0:
+            raise ValueError("full acquisition DeepSeek cumulative limit must be positive")
+        expected = canonical_digest(self.digest_preimage())
+        if self.budget_digest != expected:
+            raise ValueError("full acquisition budget digest mismatch")
+        l3 = L3_SMALL_PAID_BUDGET_LIMITS
+        if (
+            self.calls == l3.calls
+            and self.tokens == l3.tokens
+            and self.cny == l3.cny
+        ):
+            raise ValueError("L3 516-call budget cannot authorize full bank acquisition")
+
+
+@dataclass(frozen=True, kw_only=True)
+class AcquisitionPlanBundle:
+    """create-only 持久化的 exact prepared requests 与 canonical inventory。"""
+
+    schema_version: str
+    bundle_digest: str
+    authorized_plan_digest: str
+    profile_digest: str
+    inventory_digest: str
+    prompt_admission_profile_digest: str
+    provider_config_digest: str
+    semantic_inventory_plan: SemanticInventoryPlan
+    inventory_rows: tuple[ResponseBankInventoryRow, ...]
+    acquisition_requests: tuple["AcquisitionRequest", ...]
+    full_budget: FullAcquisitionBudget
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            **self.digest_preimage(),
+            "bundle_digest": self.bundle_digest,
+        }
+
+    def digest_preimage(self) -> dict[str, object]:
+        return {
+            "schema_version": self.schema_version,
+            "authorized_plan_digest": self.authorized_plan_digest,
+            "profile_digest": self.profile_digest,
+            "inventory_digest": self.inventory_digest,
+            "prompt_admission_profile_digest": self.prompt_admission_profile_digest,
+            "provider_config_digest": self.provider_config_digest,
+            "semantic_inventory_plan": _semantic_inventory_plan_to_dict(
+                self.semantic_inventory_plan
+            ),
+            "inventory_rows": [row.to_dict() for row in self.inventory_rows],
+            "acquisition_requests": [
+                _acquisition_request_to_dict(item)
+                for item in self.acquisition_requests
+            ],
+            "full_budget": self.full_budget.to_dict(),
+        }
+
+    def validate(self) -> None:
+        if self.schema_version != ACQUISITION_PLAN_BUNDLE_SCHEMA_VERSION:
+            raise ValueError("acquisition plan bundle schema version drift")
+        if self.bundle_digest != canonical_digest(self.digest_preimage()):
+            raise ValueError("acquisition plan bundle digest mismatch")
+        rows = canonical_inventory_rows(self.inventory_rows)
+        if rows != self.inventory_rows:
+            raise ValueError("acquisition plan bundle inventory is not canonical")
+        if response_bank_inventory_digest(rows) != self.inventory_digest:
+            raise ValueError("acquisition plan bundle inventory digest mismatch")
+        _validate_semantic_inventory_plan(self.semantic_inventory_plan)
+        if self.semantic_inventory_plan.rows != rows:
+            raise ValueError("semantic plan rows do not match acquisition inventory")
+        if self.semantic_inventory_plan.inventory_digest != self.inventory_digest:
+            raise ValueError("semantic plan digest does not match acquisition inventory")
+        if len(rows) != len(self.acquisition_requests):
+            raise ValueError("acquisition plan bundle request cardinality mismatch")
+        by_id = {
+            item.inventory_row.inventory_entry_id: item
+            for item in self.acquisition_requests
+        }
+        if len(by_id) != len(self.acquisition_requests):
+            raise ValueError("acquisition plan bundle has duplicate requests")
+        if tuple(item.inventory_row for item in self.acquisition_requests) != rows:
+            raise ValueError("acquisition requests are not in canonical inventory order")
+        for row, request in zip(rows, self.acquisition_requests, strict=True):
+            prepared = validate_prepared_request(request.prepared_request)
+            if request.inventory_row != row:
+                raise ValueError("acquisition request inventory row mismatch")
+            if (
+                prepared.inference_request_digest != row.inference_request_digest
+                or prepared.body_digest != row.body_digest
+                or prepared.provider_config_digest != row.provider_config_digest
+            ):
+                raise ValueError("acquisition request prepared identity mismatch")
+            if prepared.prompt_admission_profile_digest != (
+                self.prompt_admission_profile_digest
+            ):
+                raise ValueError("acquisition request admission digest mismatch")
+        provider_digests = tuple(
+            sorted({row.provider_config_digest for row in rows})
+        )
+        expected_provider_digest = (
+            provider_digests[0]
+            if len(provider_digests) == 1
+            else canonical_digest(provider_digests)
+        )
+        if self.provider_config_digest != expected_provider_digest:
+            raise ValueError("acquisition plan provider config digest mismatch")
+        self.full_budget.validate()
+        if self.full_budget != FullAcquisitionBudget.create(
+            self.acquisition_requests
+        ):
+            raise ValueError("full acquisition budget does not match request ceilings")
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -410,6 +714,133 @@ class AcquisitionRequest:
             raise ValueError("acquisition transport controls are invalid")
         if self.token_upper_bound < 1 or self.cost_upper_bound <= 0:
             raise ValueError("acquisition reservation bounds must be positive")
+
+
+def create_acquisition_plan_bundle(
+    bundle_root: str | Path,
+    *,
+    authorized_plan_digest: str,
+    profile_digest: str,
+    semantic_inventory_plan: SemanticInventoryPlan,
+    acquisition_requests: Sequence[AcquisitionRequest],
+) -> AcquisitionPlanBundle:
+    """以 create-new 方式持久化完整 acquisition authority。"""
+
+    _validate_semantic_inventory_plan(semantic_inventory_plan)
+    rows = canonical_inventory_rows(semantic_inventory_plan.rows)
+    requests_by_id = {
+        item.inventory_row.inventory_entry_id: item
+        for item in acquisition_requests
+    }
+    if len(requests_by_id) != len(tuple(acquisition_requests)):
+        raise ValueError("acquisition plan bundle has duplicate requests")
+    try:
+        requests = tuple(requests_by_id[row.inventory_entry_id] for row in rows)
+    except KeyError as exc:
+        raise ValueError("acquisition plan bundle is missing an inventory request") from exc
+    if len(requests) != len(requests_by_id):
+        raise ValueError("acquisition plan bundle has an extra inventory request")
+    admission_digests = {
+        item.prepared_request.prompt_admission_profile_digest for item in requests
+    }
+    if len(admission_digests) != 1:
+        raise ValueError("acquisition plan bundle admission profile must be unique")
+    provider_digests = tuple(sorted({row.provider_config_digest for row in rows}))
+    provider_config_digest = (
+        provider_digests[0]
+        if len(provider_digests) == 1
+        else canonical_digest(provider_digests)
+    )
+    budget = FullAcquisitionBudget.create(requests)
+    provisional = AcquisitionPlanBundle(
+        schema_version=ACQUISITION_PLAN_BUNDLE_SCHEMA_VERSION,
+        bundle_digest="",
+        authorized_plan_digest=authorized_plan_digest,
+        profile_digest=profile_digest,
+        inventory_digest=response_bank_inventory_digest(rows),
+        prompt_admission_profile_digest=next(iter(admission_digests)),
+        provider_config_digest=provider_config_digest,
+        semantic_inventory_plan=semantic_inventory_plan,
+        inventory_rows=rows,
+        acquisition_requests=requests,
+        full_budget=budget,
+    )
+    bundle = replace(
+        provisional,
+        bundle_digest=canonical_digest(provisional.digest_preimage()),
+    )
+    bundle.validate()
+    root = Path(bundle_root).resolve()
+    root.mkdir(parents=True, exist_ok=False)
+    path = root / ACQUISITION_PLAN_BUNDLE_FILENAME
+    try:
+        with path.open("x", encoding="utf-8", newline="\n") as handle:
+            json.dump(
+                bundle.to_dict(),
+                handle,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            handle.write("\n")
+    except BaseException:
+        if path.exists():
+            path.unlink()
+        root.rmdir()
+        raise
+    return load_acquisition_plan_bundle(root)
+
+
+def load_acquisition_plan_bundle(
+    bundle_root: str | Path,
+) -> AcquisitionPlanBundle:
+    path = Path(bundle_root).resolve() / ACQUISITION_PLAN_BUNDLE_FILENAME
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise ValueError("acquisition plan bundle is unreadable") from exc
+    if not isinstance(value, Mapping):
+        raise ValueError("acquisition plan bundle must be a JSON object")
+    expected = {
+        "schema_version",
+        "bundle_digest",
+        "authorized_plan_digest",
+        "profile_digest",
+        "inventory_digest",
+        "prompt_admission_profile_digest",
+        "provider_config_digest",
+        "semantic_inventory_plan",
+        "inventory_rows",
+        "acquisition_requests",
+        "full_budget",
+    }
+    if set(value) != expected:
+        raise ValueError("acquisition plan bundle fields do not match v1 schema")
+    raw_rows = value["inventory_rows"]
+    raw_requests = value["acquisition_requests"]
+    if not isinstance(raw_rows, list) or not isinstance(raw_requests, list):
+        raise ValueError("acquisition plan bundle rows and requests must be lists")
+    bundle = AcquisitionPlanBundle(
+        schema_version=str(value["schema_version"]),
+        bundle_digest=str(value["bundle_digest"]),
+        authorized_plan_digest=str(value["authorized_plan_digest"]),
+        profile_digest=str(value["profile_digest"]),
+        inventory_digest=str(value["inventory_digest"]),
+        prompt_admission_profile_digest=str(
+            value["prompt_admission_profile_digest"]
+        ),
+        provider_config_digest=str(value["provider_config_digest"]),
+        semantic_inventory_plan=_semantic_inventory_plan_from_dict(
+            value["semantic_inventory_plan"]
+        ),
+        inventory_rows=tuple(ResponseBankInventoryRow.from_dict(item) for item in raw_rows),
+        acquisition_requests=tuple(
+            _acquisition_request_from_dict(item) for item in raw_requests
+        ),
+        full_budget=FullAcquisitionBudget.from_dict(value["full_budget"]),
+    )
+    bundle.validate()
+    return bundle
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -440,8 +871,104 @@ class AcquisitionReconcileReport:
     missing_inventory_entry_ids: tuple[str, ...]
 
 
+def response_bank_manifest_for_bundle(
+    bundle: AcquisitionPlanBundle,
+    authorization: PaidAuthorizationValidation,
+) -> ResponseBankManifest:
+    """在 dispatch 前把 plan/budget/inventory 与 Task26 receipt 绑定为 manifest。"""
+
+    bundle.validate()
+    if type(authorization) is not PaidAuthorizationValidation:
+        raise AcquisitionAuthorizationError(
+            "manifest requires Task26 PaidAuthorizationValidation"
+        )
+    receipt = authorization.receipt
+    expected = {
+        "authorized_plan_digest": bundle.authorized_plan_digest,
+        "profile_digest": bundle.profile_digest,
+        "budget_digest": bundle.full_budget.budget_digest,
+        "inventory_digest": bundle.inventory_digest,
+        "prompt_admission_profile_digest": (
+            bundle.prompt_admission_profile_digest
+        ),
+    }
+    for name, value in expected.items():
+        if getattr(receipt, name) != value:
+            raise AcquisitionAuthorizationError(
+                f"paid receipt {name} does not match acquisition bundle"
+            )
+    bank_root_id = canonical_digest(
+        {
+            "schema_version": "tokenshare.paper_response_bank_root_identity.v1",
+            "bundle_digest": bundle.bundle_digest,
+            "receipt_digest": receipt.receipt_digest,
+        }
+    )
+    return ResponseBankManifest.create(
+        bank_root_id=bank_root_id,
+        profile_digest=bundle.profile_digest,
+        budget_digest=bundle.full_budget.budget_digest,
+        inventory_digest=bundle.inventory_digest,
+        provider_config_digest=bundle.provider_config_digest,
+        entry_ids=tuple(row.entry_id for row in bundle.inventory_rows),
+        object_role_schema=OBJECT_ROLES,
+        terminal_entry_count=len(bundle.inventory_rows),
+        created_by_paid_receipt_digest=receipt.receipt_digest,
+    )
+
+
+def finalize_acquisition_child_bank(
+    *,
+    orchestrator: "ResponseBankAcquisitionOrchestrator",
+    bundle: AcquisitionPlanBundle,
+    manifest: ResponseBankManifest,
+    batch_result: AcquisitionBatchResult,
+) -> ResponseBankResolver | None:
+    """complete batch 仅初始化一次 child bank；resume 只重开并复验。"""
+
+    bundle.validate()
+    if (
+        batch_result.status != "complete"
+        or batch_result.missing_inventory_entry_ids
+        or batch_result.ambiguous_inventory_entry_ids
+    ):
+        return None
+    if (
+        manifest.manifest_digest != orchestrator.manifest_digest
+        or manifest.bank_root_id != orchestrator.bank_root_id
+        or manifest.inventory_digest != bundle.inventory_digest
+    ):
+        raise AcquisitionIdentityError("child bank manifest does not match orchestrator")
+    child_root = orchestrator.output_root / IMMUTABLE_CHILD_BANK_DIRNAME
+    if child_root.exists():
+        resolver = ResponseBankResolver.open(child_root)
+        if resolver.index.manifest.manifest_digest != manifest.manifest_digest:
+            raise AcquisitionIdentityError("resume child bank manifest mismatch")
+        return resolver
+    entries = orchestrator.terminal_entries()
+    if len(entries) != len(bundle.inventory_rows):
+        raise AcquisitionIdentityError("complete acquisition is missing terminal entries")
+    objects: dict[str, bytes] = {}
+    for entry in entries:
+        for locator in entry.object_locators:
+            payload = orchestrator.read_role_bytes(entry, locator.object_role)
+            existing = objects.setdefault(locator.object_digest, payload)
+            if existing != payload:
+                raise AcquisitionIdentityError("terminal object digest collision")
+    initialize_response_bank(
+        child_root,
+        manifest=manifest,
+        inventory_rows=bundle.inventory_rows,
+        entries=entries,
+        objects=objects,
+    )
+    return ResponseBankResolver.open(child_root)
+
+
 def output_root_path_digest(path: str | Path) -> str:
-    return canonical_digest(str(Path(path).resolve()))
+    """兼容导出；实际 identity 只委托 Task26 的 canonical path contract。"""
+
+    return task26_output_root_path_digest(path)
 
 
 class ResponseBankAcquisitionOrchestrator:
@@ -456,7 +983,7 @@ class ResponseBankAcquisitionOrchestrator:
         inventory_digest: str,
         inventory_rows: Sequence[ResponseBankInventoryRow],
         budget_ledger: PaperBudgetLedger,
-        paid_context: PaidAcquisitionContext,
+        paid_authorization: PaidAuthorizationValidation,
         invocation_mode: str,
         transport: Any,
         secret_resolver: Callable[[str], str],
@@ -475,19 +1002,24 @@ class ResponseBankAcquisitionOrchestrator:
         }
         if len(self._rows_by_id) != len(self.inventory_rows):
             raise AcquisitionIdentityError("duplicate inventory_entry_id")
-        expected_inventory_digest = canonical_digest(
-            [
-                row.to_dict()
-                for row in sorted(
-                    self.inventory_rows,
-                    key=lambda item: (item.semantic_slot_key, item.inventory_entry_id),
-                )
-            ]
+        expected_inventory_digest = response_bank_inventory_digest(
+            self.inventory_rows
         )
         if expected_inventory_digest != inventory_digest:
             raise AcquisitionIdentityError("inventory digest does not match rows")
         self.budget_ledger = budget_ledger
-        self.paid_context = paid_context
+        self.paid_authorization = paid_authorization
+        if type(paid_authorization) is not PaidAuthorizationValidation:
+            raise AcquisitionAuthorizationError(
+                "acquisition requires Task26 PaidAuthorizationValidation"
+            )
+        self.paid_scope_digest = canonical_digest(
+            {
+                "schema_version": "tokenshare.paid_acquisition_scope.v1",
+                "scope": paid_authorization.receipt.scope,
+                "receipt_digest": paid_authorization.receipt.receipt_digest,
+            }
+        )
         self.invocation_mode = invocation_mode
         self.transport = transport
         self.secret_resolver = secret_resolver
@@ -514,75 +1046,45 @@ class ResponseBankAcquisitionOrchestrator:
         )
 
     def _validate_paid_context(self) -> None:
-        context = self.paid_context
+        context = self.paid_authorization
+        if type(context) is not PaidAuthorizationValidation:
+            raise AcquisitionAuthorizationError(
+                "acquisition requires Task26 PaidAuthorizationValidation"
+            )
+        receipt = context.receipt
         required = (
-            context.receipt_digest,
-            context.authorized_plan_digest,
-            context.profile_digest,
-            context.budget_digest,
-            context.inventory_digest,
-            context.prompt_admission_profile_digest,
-            context.output_root_path_digest,
-            context.paid_scope_digest,
+            receipt.receipt_digest,
+            receipt.authorized_plan_digest,
+            receipt.profile_digest,
+            receipt.budget_digest,
+            receipt.inventory_digest,
+            receipt.prompt_admission_profile_digest,
+            receipt.output_root_path_digest,
+            context.marker.marker_digest,
         )
         if any(not isinstance(value, str) or not value for value in required):
             raise AcquisitionAuthorizationError("paid acquisition context is incomplete")
-        if context.inventory_digest != self.inventory_digest:
+        if receipt.inventory_digest != self.inventory_digest:
             raise AcquisitionAuthorizationError("paid inventory digest mismatch")
-        if context.prompt_admission_profile_digest != PROMPT_ADMISSION_PROFILE_DIGEST:
+        if receipt.prompt_admission_profile_digest != PROMPT_ADMISSION_PROFILE_DIGEST:
             raise AcquisitionAuthorizationError("paid prompt admission digest mismatch")
-        if context.output_root_path_digest != output_root_path_digest(self.output_root):
+        if receipt.output_root_path_digest != output_root_path_digest(self.output_root):
             raise AcquisitionAuthorizationError("paid output root digest mismatch")
-        if context.reacquisition_limit not in {0, 1}:
-            raise AcquisitionAuthorizationError("paid reacquisition scope drift")
-
-    def _binding_body(self) -> dict[str, str]:
-        preimage = {
-            "receipt_digest": self.paid_context.receipt_digest,
-            "authorized_plan_digest": self.paid_context.authorized_plan_digest,
-            "profile_digest": self.paid_context.profile_digest,
-            "budget_digest": self.paid_context.budget_digest,
-            "inventory_digest": self.paid_context.inventory_digest,
-            "prompt_admission_profile_digest": (
-                self.paid_context.prompt_admission_profile_digest
-            ),
-            "output_root_path_digest": self.paid_context.output_root_path_digest,
-        }
-        return {**preimage, "marker_digest": canonical_digest(preimage)}
+        if context.output_mode != self.invocation_mode:
+            raise AcquisitionAuthorizationError("paid authorization output mode mismatch")
 
     def _open_output_binding(self) -> None:
-        marker_name = "paid_output_binding.v1.json"
-        if self.invocation_mode == "new_run":
-            try:
-                self.output_root.mkdir(parents=True, exist_ok=False)
-            except FileExistsError as exc:
-                raise AcquisitionAuthorizationError(
-                    "new_run requires a nonexistent canonical output root"
-                ) from exc
-            store = ArtifactStore(self.output_root, artifact_dir_name=".")
-            store.save_json(
-                self._binding_body(),
-                artifact_id=marker_name,
-                artifact_type="PaidOutputBinding",
-                artifact_schema_id="tokenshare.paid_output_binding",
-                artifact_schema_version="v1",
-                source={"kind": "validated_paid_acquisition_context"},
-                metadata={},
-                created_at="paid-context",
-            )
-            return
         if not self.output_root.is_dir():
-            raise AcquisitionAuthorizationError("resume output root is missing")
-        store = ArtifactStore(self.output_root, artifact_dir_name=".")
+            raise AcquisitionAuthorizationError("Task26 paid output root is missing")
+        marker_path = self.output_root / PAID_OUTPUT_BINDING_FILENAME
         try:
-            marker_ref = store.load_artifact_ref(marker_name)
-            marker = json.loads(store.read_bytes(marker_ref).decode("utf-8"))
-        except (FileNotFoundError, ValueError, json.JSONDecodeError) as exc:
+            marker = json.loads(marker_path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError) as exc:
             raise AcquisitionAuthorizationError(
-                "resume output binding marker is missing or partial"
+                "Task26 output binding marker is missing or partial"
             ) from exc
-        if marker != self._binding_body():
-            raise AcquisitionAuthorizationError("resume output binding marker mismatch")
+        if marker != self.paid_authorization.marker.to_dict():
+            raise AcquisitionAuthorizationError("Task26 output binding marker mismatch")
 
     def acquire(self, request: AcquisitionRequest) -> AcquisitionResult:
         existing = self._load_entry(request.inventory_row.inventory_entry_id)
@@ -696,8 +1198,9 @@ class ResponseBankAcquisitionOrchestrator:
             )
         self._require_unexpired()
         if (
-            self.paid_context.reacquisition_limit != 1
-            or paid_scope_digest != self.paid_context.paid_scope_digest
+            self.paid_authorization.receipt.scope
+            != "epd027_full_bank_acquisition"
+            or paid_scope_digest != self.paid_scope_digest
         ):
             raise AcquisitionAuthorizationError(
                 "reacquisition is outside the validated paid scope"
@@ -820,7 +1323,9 @@ class ResponseBankAcquisitionOrchestrator:
                 "normalized_absolute_endpoint": prepared.normalized_absolute_endpoint,
                 "transport_call_count": 1,
                 "secret_persisted": False,
-                "receipt_digest": self.paid_context.receipt_digest,
+                "receipt_digest": (
+                    self.paid_authorization.receipt.receipt_digest
+                ),
             },
             "usage": {
                 "schema_version": "tokenshare.response_bank_usage.v1",
@@ -952,8 +1457,16 @@ class ResponseBankAcquisitionOrchestrator:
                 blocked_reason = str(exc)
                 break
         report = self.reconcile()
+        status = "complete"
+        if blocked_reason is not None:
+            status = "blocked"
+        elif (
+            report.missing_inventory_entry_ids
+            or report.ambiguous_inventory_entry_ids
+        ):
+            status = "incomplete"
         return AcquisitionBatchResult(
-            status="blocked" if blocked_reason is not None else "complete",
+            status=status,
             results=tuple(results),
             missing_inventory_entry_ids=report.missing_inventory_entry_ids,
             ambiguous_inventory_entry_ids=report.ambiguous_inventory_entry_ids,
@@ -1080,7 +1593,6 @@ class ResponseBankAcquisitionOrchestrator:
             "planned_ai_unit_id": prepared.planned_ai_unit_id,
             "sample_slot_index": prepared.sample_slot_index,
             "replacement_slot": prepared.replacement_slot,
-            "entry_id": prepared.entry_id,
             "plugin_version": prepared.plugin_version,
         }
         for field_name, value in expected.items():
@@ -1088,6 +1600,13 @@ class ResponseBankAcquisitionOrchestrator:
                 raise AcquisitionIdentityError(
                     f"prepared request {field_name} does not match inventory row"
                 )
+        if row.entry_id != terminal_bank_entry_id(
+            semantic_slot_key=row.semantic_slot_key,
+            inference_request_digest=prepared.inference_request_digest,
+        ):
+            raise AcquisitionIdentityError(
+                "terminal bank entry identity does not match inventory row"
+            )
         return row, prepared
 
     def _reservation_request(self, request: AcquisitionRequest) -> ReservationRequest:
@@ -1136,6 +1655,9 @@ class ResponseBankAcquisitionOrchestrator:
         return f"{inventory_entry_id.removeprefix('sha256:')}.v1.json"
 
     def read_role_json(self, entry: ResponseBankEntry, role: str) -> dict[str, Any]:
+        return json.loads(self.read_role_bytes(entry, role).decode("utf-8"))
+
+    def read_role_bytes(self, entry: ResponseBankEntry, role: str) -> bytes:
         locator = next(
             (item for item in entry.object_locators if item.object_role == role),
             None,
@@ -1147,7 +1669,15 @@ class ResponseBankAcquisitionOrchestrator:
         )
         if ref.content_hash != locator.object_digest:
             raise AcquisitionIdentityError("entry locator digest mismatch")
-        return json.loads(self._object_store.read_bytes(ref).decode("utf-8"))
+        return self._object_store.read_bytes(ref)
+
+    def terminal_entries(self) -> tuple[ResponseBankEntry, ...]:
+        entries = tuple(
+            self._load_entry(row.inventory_entry_id) for row in self.inventory_rows
+        )
+        if any(entry is None for entry in entries):
+            raise AcquisitionIdentityError("terminal entries are incomplete")
+        return tuple(entry for entry in entries if entry is not None)
 
     def _primary_attempt_id(self, row: ResponseBankInventoryRow) -> str:
         return canonical_digest(
@@ -1159,13 +1689,19 @@ class ResponseBankAcquisitionOrchestrator:
         )
 
     def _require_unexpired(self) -> None:
-        if self._is_expired():
+        if (
+            self._is_expired()
+            or not self.paid_authorization.provider_dispatch_allowed
+        ):
             raise AcquisitionAuthorizationError(
                 "expired paid context cannot reserve or dispatch"
             )
 
     def _is_expired(self) -> bool:
-        return self.now_epoch >= self.paid_context.expires_at_epoch
+        expires_at = datetime.fromisoformat(
+            self.paid_authorization.receipt.expires_at.replace("Z", "+00:00")
+        )
+        return self.now_epoch >= int(expires_at.timestamp())
 
     def _crash(self, stage: str) -> None:
         if self.crash_hook is not None:
@@ -1275,7 +1811,10 @@ def build_semantic_inventory(
                 prepared.prompt_admission_profile_digest
             ),
             plugin_version=prepared.plugin_version,
-            entry_id=prepared.entry_id,
+            entry_id=terminal_bank_entry_id(
+                semantic_slot_key=slot_key,
+                inference_request_digest=prepared.inference_request_digest,
+            ),
             body_digest=prepared.body_digest,
             inference_request_digest=prepared.inference_request_digest,
         )
@@ -1299,11 +1838,11 @@ def build_semantic_inventory(
         terminal_kind_by_slot[slot_key] = candidate.terminal_kind
         _append_condition_ref(condition_refs, candidate, slot_key)
 
-    rows = tuple(sorted(rows_by_slot.values(), key=lambda item: item.semantic_slot_key))
+    rows = canonical_inventory_rows(tuple(rows_by_slot.values()))
     terminal_values = tuple(terminal_kind_by_slot[row.semantic_slot_key] for row in rows)
     return SemanticInventoryPlan(
         schema_version="tokenshare.response_bank_semantic_inventory_plan.v1",
-        inventory_digest=canonical_digest([row.to_dict() for row in rows]),
+        inventory_digest=response_bank_inventory_digest(rows),
         rows=rows,
         condition_refs=tuple(condition_refs.values()),
         exp2_online_condition_refs=online_refs,
@@ -1521,6 +2060,267 @@ def _exp2_online_refs(
     return refs
 
 
+def _semantic_inventory_plan_to_dict(
+    plan: SemanticInventoryPlan,
+) -> dict[str, object]:
+    return {
+        "schema_version": plan.schema_version,
+        "inventory_digest": plan.inventory_digest,
+        "rows": [row.to_dict() for row in plan.rows],
+        "condition_refs": [dict(item) for item in plan.condition_refs],
+        "exp2_online_condition_refs": [
+            dict(item) for item in plan.exp2_online_condition_refs
+        ],
+        "max_concurrent_roots": plan.max_concurrent_roots,
+        "expected_slot_count": plan.expected_slot_count,
+        "terminal_provider_failure_count": plan.terminal_provider_failure_count,
+        "terminal_success_count": plan.terminal_success_count,
+        "terminal_unacquired_count": plan.terminal_unacquired_count,
+        "observed_early_stop_slot_keys": list(plan.observed_early_stop_slot_keys),
+    }
+
+
+def _semantic_inventory_plan_from_dict(value: Any) -> SemanticInventoryPlan:
+    if not isinstance(value, Mapping):
+        raise ValueError("semantic inventory plan must be a JSON object")
+    expected = {
+        "schema_version",
+        "inventory_digest",
+        "rows",
+        "condition_refs",
+        "exp2_online_condition_refs",
+        "max_concurrent_roots",
+        "expected_slot_count",
+        "terminal_provider_failure_count",
+        "terminal_success_count",
+        "terminal_unacquired_count",
+        "observed_early_stop_slot_keys",
+    }
+    if set(value) != expected:
+        raise ValueError("semantic inventory plan fields do not match v1 schema")
+    raw_rows = value["rows"]
+    raw_refs = value["condition_refs"]
+    raw_online_refs = value["exp2_online_condition_refs"]
+    raw_early_stop = value["observed_early_stop_slot_keys"]
+    if not all(
+        isinstance(item, list)
+        for item in (raw_rows, raw_refs, raw_online_refs, raw_early_stop)
+    ):
+        raise ValueError("semantic inventory plan collections must be lists")
+    if any(not isinstance(item, Mapping) for item in (*raw_refs, *raw_online_refs)):
+        raise ValueError("semantic inventory plan refs must be JSON objects")
+    plan = SemanticInventoryPlan(
+        schema_version=str(value["schema_version"]),
+        inventory_digest=str(value["inventory_digest"]),
+        rows=tuple(ResponseBankInventoryRow.from_dict(item) for item in raw_rows),
+        condition_refs=tuple(dict(item) for item in raw_refs),
+        exp2_online_condition_refs=tuple(dict(item) for item in raw_online_refs),
+        max_concurrent_roots=int(value["max_concurrent_roots"]),
+        expected_slot_count=int(value["expected_slot_count"]),
+        terminal_provider_failure_count=int(value["terminal_provider_failure_count"]),
+        terminal_success_count=int(value["terminal_success_count"]),
+        terminal_unacquired_count=int(value["terminal_unacquired_count"]),
+        observed_early_stop_slot_keys=tuple(str(item) for item in raw_early_stop),
+    )
+    _validate_semantic_inventory_plan(plan)
+    return plan
+
+
+def _validate_semantic_inventory_plan(plan: SemanticInventoryPlan) -> None:
+    if type(plan) is not SemanticInventoryPlan:
+        raise TypeError("semantic_inventory_plan must be an exact SemanticInventoryPlan")
+    if plan.schema_version != "tokenshare.response_bank_semantic_inventory_plan.v1":
+        raise ValueError("semantic inventory plan schema version drift")
+    rows = canonical_inventory_rows(plan.rows)
+    if rows != plan.rows:
+        raise ValueError("semantic inventory plan rows are not canonical")
+    if response_bank_inventory_digest(rows) != plan.inventory_digest:
+        raise ValueError("semantic inventory plan digest mismatch")
+    if plan.max_concurrent_roots != 1:
+        raise ValueError("semantic inventory plan max_concurrent_roots must remain 1")
+    if plan.expected_slot_count != len(rows):
+        raise ValueError("semantic inventory plan slot count mismatch")
+    terminal_counts = (
+        plan.terminal_provider_failure_count,
+        plan.terminal_success_count,
+        plan.terminal_unacquired_count,
+    )
+    if any(type(item) is not int or item < 0 for item in terminal_counts):
+        raise ValueError("semantic inventory plan terminal counts are invalid")
+    if sum(terminal_counts) != len(rows):
+        raise ValueError("semantic inventory plan terminal counts do not cover inventory")
+
+    rows_by_slot = {row.semantic_slot_key: row for row in rows}
+    if len(rows_by_slot) != len(rows):
+        raise ValueError("semantic inventory plan has duplicate semantic slots")
+    observed = set(plan.observed_early_stop_slot_keys)
+    if len(observed) != len(plan.observed_early_stop_slot_keys):
+        raise ValueError("semantic inventory plan early-stop slots are duplicated")
+    if not observed <= set(rows_by_slot):
+        raise ValueError("semantic inventory plan early-stop slot is not registered")
+
+    condition_ids: set[str] = set()
+    covered_slots: set[str] = set()
+    expected_ref_fields = {
+        "condition_id",
+        "condition_digest",
+        "experiment_id",
+        "worker_count",
+        "repeat_id",
+        "fault_type",
+        "ablation_mode",
+        "semantic_slot_keys",
+        "case_refs",
+    }
+    for raw_ref in plan.condition_refs:
+        if not isinstance(raw_ref, Mapping) or set(raw_ref) != expected_ref_fields:
+            raise ValueError("semantic inventory condition ref schema drift")
+        condition_id = raw_ref["condition_id"]
+        if not isinstance(condition_id, str) or not condition_id:
+            raise ValueError("semantic inventory condition id is invalid")
+        if condition_id in condition_ids:
+            raise ValueError("semantic inventory condition ids are duplicated")
+        condition_ids.add(condition_id)
+        slot_keys = raw_ref["semantic_slot_keys"]
+        case_refs = raw_ref["case_refs"]
+        if not isinstance(slot_keys, list) or not slot_keys:
+            raise ValueError("semantic inventory condition slots are invalid")
+        if len(set(slot_keys)) != len(slot_keys) or not set(slot_keys) <= set(rows_by_slot):
+            raise ValueError("semantic inventory condition slots are invalid")
+        if not isinstance(case_refs, list) or not case_refs:
+            raise ValueError("semantic inventory case refs are invalid")
+        case_slots: set[str] = set()
+        unit_slots: dict[tuple[str, str, int], set[int]] = {}
+        for case_ref in case_refs:
+            if not isinstance(case_ref, Mapping) or set(case_ref) != {
+                "case_id",
+                "case_record_digest",
+                "semantic_slot_keys",
+            }:
+                raise ValueError("semantic inventory case ref schema drift")
+            ref_slots = case_ref["semantic_slot_keys"]
+            if not isinstance(ref_slots, list) or not ref_slots:
+                raise ValueError("semantic inventory case slots are invalid")
+            for slot_key in ref_slots:
+                row = rows_by_slot.get(slot_key)
+                if row is None or row.case_record_digest != case_ref["case_record_digest"]:
+                    raise ValueError("semantic inventory case row binding mismatch")
+                case_slots.add(slot_key)
+                unit_slots.setdefault(
+                    (
+                        row.case_record_digest,
+                        row.planned_ai_unit_id,
+                        row.sample_slot_index,
+                    ),
+                    set(),
+                ).add(row.replacement_slot)
+        if case_slots != set(slot_keys):
+            raise ValueError("semantic inventory case refs do not cover condition")
+        expected_replacements = set(
+            replacement_slots_for(
+                experiment_id=str(raw_ref["experiment_id"]),
+                fault_type=str(raw_ref["fault_type"]),
+                ablation_mode=str(raw_ref["ablation_mode"]),
+            )
+        )
+        if any(actual != expected_replacements for actual in unit_slots.values()):
+            raise ValueError("semantic inventory replacement policy is incomplete")
+        covered_slots.update(slot_keys)
+    if covered_slots != set(rows_by_slot):
+        raise ValueError("semantic inventory condition refs do not cover inventory")
+    _exp2_online_refs(plan.exp2_online_condition_refs)
+
+
+def _acquisition_request_to_dict(
+    request: AcquisitionRequest,
+) -> dict[str, object]:
+    prepared = validate_prepared_request(request.prepared_request)
+    prepared_body = asdict(prepared)
+    prepared_body["body_bytes_base64"] = base64.b64encode(
+        prepared_body.pop("body_bytes")
+    ).decode("ascii")
+    return {
+        "inventory_row": request.inventory_row.to_dict(),
+        "prepared_request": prepared_body,
+        "provider_family": request.provider_family,
+        "api_key_env": request.api_key_env,
+        "timeout_seconds": request.timeout_seconds,
+        "token_upper_bound": request.token_upper_bound,
+        "cost_upper_bound": str(request.cost_upper_bound),
+        "frozen_pricing": {
+            "currency": request.frozen_pricing.currency,
+            "input_per_million_tokens": str(
+                request.frozen_pricing.input_per_million_tokens
+            ),
+            "output_per_million_tokens": str(
+                request.frozen_pricing.output_per_million_tokens
+            ),
+        },
+        "requested_at": request.requested_at,
+    }
+
+
+def _acquisition_request_from_dict(value: Any) -> AcquisitionRequest:
+    if not isinstance(value, Mapping):
+        raise ValueError("acquisition request must be a JSON object")
+    expected = {
+        "inventory_row",
+        "prepared_request",
+        "provider_family",
+        "api_key_env",
+        "timeout_seconds",
+        "token_upper_bound",
+        "cost_upper_bound",
+        "frozen_pricing",
+        "requested_at",
+    }
+    if set(value) != expected:
+        raise ValueError("acquisition request fields do not match v1 schema")
+    raw_prepared = value["prepared_request"]
+    if not isinstance(raw_prepared, Mapping):
+        raise ValueError("prepared request must be a JSON object")
+    prepared_fields = set(PreparedOutboundRequest.__dataclass_fields__)
+    if set(raw_prepared) != (prepared_fields - {"body_bytes"}) | {
+        "body_bytes_base64"
+    }:
+        raise ValueError("prepared request fields do not match v1 schema")
+    prepared_body = dict(raw_prepared)
+    try:
+        encoded = prepared_body.pop("body_bytes_base64")
+        if not isinstance(encoded, str):
+            raise ValueError("prepared request body bytes must be base64 text")
+        prepared_body["body_bytes"] = base64.b64decode(encoded, validate=True)
+    except (ValueError, TypeError) as exc:
+        raise ValueError("prepared request body bytes are invalid") from exc
+    prepared = validate_prepared_request(PreparedOutboundRequest(**prepared_body))
+    raw_pricing = value["frozen_pricing"]
+    if not isinstance(raw_pricing, Mapping) or set(raw_pricing) != {
+        "currency",
+        "input_per_million_tokens",
+        "output_per_million_tokens",
+    }:
+        raise ValueError("frozen pricing fields do not match v1 schema")
+    return AcquisitionRequest(
+        inventory_row=ResponseBankInventoryRow.from_dict(value["inventory_row"]),
+        prepared_request=prepared,
+        provider_family=str(value["provider_family"]),
+        api_key_env=str(value["api_key_env"]),
+        timeout_seconds=int(value["timeout_seconds"]),
+        token_upper_bound=int(value["token_upper_bound"]),
+        cost_upper_bound=Decimal(str(value["cost_upper_bound"])),
+        frozen_pricing=FrozenPricing(
+            currency=str(raw_pricing["currency"]),
+            input_per_million_tokens=Decimal(
+                str(raw_pricing["input_per_million_tokens"])
+            ),
+            output_per_million_tokens=Decimal(
+                str(raw_pricing["output_per_million_tokens"])
+            ),
+        ),
+        requested_at=str(value["requested_at"]),
+    )
+
+
 def _object_dict(value: Mapping[str, Any] | Any) -> dict[str, Any]:
     if isinstance(value, Mapping):
         return dict(value)
@@ -1530,13 +2330,19 @@ def _object_dict(value: Mapping[str, Any] | Any) -> dict[str, Any]:
 
 
 __all__ = [
+    "ACQUISITION_PLAN_BUNDLE_FILENAME",
+    "ACQUISITION_PLAN_BUNDLE_SCHEMA_VERSION",
+    "FULL_ACQUISITION_BUDGET_SCHEMA_VERSION",
+    "IMMUTABLE_CHILD_BANK_DIRNAME",
     "PROVIDER_FAILURE_TAXONOMY",
+    "AcquisitionPlanBundle",
     "AcquisitionAuthorizationError",
     "AcquisitionBatchResult",
     "AcquisitionIdentityError",
     "AcquisitionReconcileReport",
     "AcquisitionRequest",
     "AcquisitionResult",
+    "FullAcquisitionBudget",
     "InventoryPreflightResult",
     "FormalTraceInventoryPreflightResult",
     "PaperTraceRuntimeContext",
@@ -1548,8 +2354,12 @@ __all__ = [
     "SemanticInventoryPlan",
     "SemanticSlotCandidate",
     "build_semantic_inventory",
+    "create_acquisition_plan_bundle",
+    "finalize_acquisition_child_bank",
+    "load_acquisition_plan_bundle",
     "output_root_path_digest",
     "preflight_inventory_before_coordinator",
     "preflight_formal_trace_inventory",
     "replacement_slots_for",
+    "response_bank_manifest_for_bundle",
 ]

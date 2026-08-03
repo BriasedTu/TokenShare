@@ -14,6 +14,7 @@ from tokenshare.executors.response_bank import (
     ResponseBankInventoryRow,
     canonical_digest,
     inventory_entry_id,
+    response_bank_inventory_digest,
     semantic_slot_key,
 )
 from tokenshare.experiments.paper_budget import (
@@ -22,9 +23,12 @@ from tokenshare.experiments.paper_budget import (
     validate_provider_budget_mode,
 )
 from tokenshare.experiments.paper_budget_ledger import (
+    BudgetCategoryPolicyIdentityError,
     BudgetExceededError,
     InventoryIdentityError,
     InvalidBudgetStateTransition,
+    L3_ONLINE_CHECK_CATEGORY_POLICY,
+    PaperBudgetCategoryPolicy,
     PaperBudgetLedger,
     PaperBudgetLedgerBusyError,
     ReservationRequest,
@@ -67,15 +71,7 @@ def _inventory_row(
 
 
 def _inventory_digest(rows: list[ResponseBankInventoryRow]) -> str:
-    return canonical_digest(
-        [
-            row.to_dict()
-            for row in sorted(
-                rows,
-                key=lambda item: (item.semantic_slot_key, item.inventory_entry_id),
-            )
-        ]
-    )
+    return response_bank_inventory_digest(rows)
 
 
 def _request(
@@ -160,6 +156,38 @@ def _race_worker(
         )
     except BaseException as exc:  # pragma: no cover - 仅传回子进程诊断
         results.put({"error": f"{type(exc).__name__}: {exc}"})
+
+
+def _reacquisition_race_worker(
+    db_path: str,
+    inventory_digest: str,
+    row_dict: dict[str, Any],
+    ordinal: int,
+    start: Any,
+    results: Any,
+) -> None:
+    row = ResponseBankInventoryRow.from_dict(row_dict)
+    ledger = PaperBudgetLedger(
+        db_path,
+        limits=L3_SMALL_PAID_BUDGET_LIMITS,
+        category_policy=L3_ONLINE_CHECK_CATEGORY_POLICY,
+        busy_timeout_ms=100,
+        lock_retries=5,
+        lock_retry_backoff_seconds=0.01,
+    )
+    start.wait(timeout=5)
+    try:
+        record = ledger.reserve_reacquisition(
+            _request(row, inventory_digest),
+            reacquisition_id=f"race-reacquisition-{ordinal}",
+            linked_ambiguous_attempt_id=f"ambiguous-attempt-{ordinal}",
+            paid_scope_digest=f"paid-scope-{ordinal}",
+        )
+        results.put({"granted": True, "reacquisition_id": record.reacquisition_id})
+    except BudgetExceededError as exc:
+        results.put({"granted": False, "error": str(exc)})
+    except BaseException as exc:  # pragma: no cover - 仅传回子进程诊断
+        results.put({"fatal": f"{type(exc).__name__}: {exc}"})
 
 
 def test_unique_key_is_inventory_digest_and_inventory_entry_id(tmp_path: Path) -> None:
@@ -296,6 +324,159 @@ def test_begin_immediate_atomically_checks_and_reserves_calls_tokens_cny(
     ledger.reserve(_request(first, digest, cost="999"))
     with pytest.raises(BudgetExceededError, match="DeepSeek"):
         ledger.reserve(_request(second, digest, cost="2"))
+
+
+def test_online_category_policy_enforces_496_primary_20_reacquisition_516_total(
+    tmp_path: Path,
+) -> None:
+    rows = [
+        _inventory_row(
+            request_digest=f"online-request-{index}",
+            planned_ai_unit_id=f"online-unit-{index}",
+        )
+        for index in range(497)
+    ]
+    digest = _inventory_digest(rows)
+    ledger = PaperBudgetLedger(
+        tmp_path / "online-category.sqlite3",
+        limits=L3_SMALL_PAID_BUDGET_LIMITS,
+        category_policy=L3_ONLINE_CHECK_CATEGORY_POLICY,
+    )
+    ledger.preregister_inventory(inventory_digest=digest, rows=rows)
+
+    for row in rows[:496]:
+        assert ledger.reserve(_request(row, digest)).granted is True
+    with pytest.raises(BudgetExceededError, match="planned reservation category"):
+        ledger.reserve(_request(rows[496], digest))
+
+    for index, row in enumerate(rows[:20]):
+        ledger.mark_dispatch_intent(digest, row.inventory_entry_id)
+        ledger.mark_ambiguous(digest, row.inventory_entry_id)
+        ledger.reserve_reacquisition(
+            _request(row, digest),
+            reacquisition_id=f"reacquisition-{index}",
+            linked_ambiguous_attempt_id=f"ambiguous-attempt-{index}",
+            paid_scope_digest=f"paid-scope-{index}",
+        )
+    assert len(ledger.list_reservations()) == 496
+    assert len(ledger.list_reacquisitions()) == 20
+    with pytest.raises(BudgetExceededError, match="ambiguous reacquisition category"):
+        row = rows[20]
+        ledger.mark_dispatch_intent(digest, row.inventory_entry_id)
+        ledger.mark_ambiguous(digest, row.inventory_entry_id)
+        ledger.reserve_reacquisition(
+            _request(row, digest),
+            reacquisition_id="reacquisition-20",
+            linked_ambiguous_attempt_id="ambiguous-attempt-20",
+            paid_scope_digest="paid-scope-20",
+        )
+
+
+def test_online_category_policy_is_persisted_and_reopen_drift_fails_closed(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "online-policy.sqlite3"
+    first = PaperBudgetLedger(
+        path,
+        limits=L3_SMALL_PAID_BUDGET_LIMITS,
+        category_policy=L3_ONLINE_CHECK_CATEGORY_POLICY,
+    )
+    same = PaperBudgetLedger(
+        path,
+        limits=L3_SMALL_PAID_BUDGET_LIMITS,
+        category_policy=L3_ONLINE_CHECK_CATEGORY_POLICY,
+    )
+    assert first.path == same.path
+
+    with pytest.raises(BudgetCategoryPolicyIdentityError, match="policy presence"):
+        PaperBudgetLedger(path, limits=L3_SMALL_PAID_BUDGET_LIMITS)
+    with pytest.raises(BudgetCategoryPolicyIdentityError, match="policy drift"):
+        PaperBudgetLedger(
+            path,
+            limits=L3_SMALL_PAID_BUDGET_LIMITS,
+            category_policy=PaperBudgetCategoryPolicy(
+                policy_id="paper_online_checks_l3",
+                planned_reservation_limit=497,
+                ambiguous_reacquisition_limit=20,
+                combined_call_limit=517,
+            ),
+        )
+
+
+def test_online_20th_and_21st_reacquisition_race_is_atomic(tmp_path: Path) -> None:
+    rows = [
+        _inventory_row(
+            request_digest=f"race-request-{index}",
+            planned_ai_unit_id=f"race-unit-{index}",
+        )
+        for index in range(21)
+    ]
+    digest = _inventory_digest(rows)
+    ledger = PaperBudgetLedger(
+        tmp_path / "online-race.sqlite3",
+        limits=L3_SMALL_PAID_BUDGET_LIMITS,
+        category_policy=L3_ONLINE_CHECK_CATEGORY_POLICY,
+        busy_timeout_ms=100,
+        lock_retries=5,
+        lock_retry_backoff_seconds=0.01,
+    )
+    ledger.preregister_inventory(inventory_digest=digest, rows=rows)
+    for index, row in enumerate(rows):
+        ledger.reserve(_request(row, digest))
+        ledger.mark_dispatch_intent(digest, row.inventory_entry_id)
+        ledger.mark_ambiguous(digest, row.inventory_entry_id)
+        if index < 19:
+            ledger.reserve_reacquisition(
+                _request(row, digest),
+                reacquisition_id=f"existing-reacquisition-{index}",
+                linked_ambiguous_attempt_id=f"existing-ambiguous-{index}",
+                paid_scope_digest=f"existing-paid-scope-{index}",
+            )
+
+    context = multiprocessing.get_context("spawn")
+    start = context.Event()
+    results = context.Queue()
+    processes = [
+        context.Process(
+            target=_reacquisition_race_worker,
+            args=(
+                str(ledger.path),
+                digest,
+                rows[index].to_dict(),
+                index,
+                start,
+                results,
+            ),
+        )
+        for index in (19, 20)
+    ]
+    for process in processes:
+        process.start()
+    start.set()
+    payloads = [results.get(timeout=15) for _ in processes]
+    for process in processes:
+        process.join(timeout=15)
+        assert process.exitcode == 0
+
+    assert not [payload for payload in payloads if "fatal" in payload]
+    assert sorted(payload["granted"] for payload in payloads) == [False, True]
+    assert len(ledger.list_reacquisitions()) == 20
+
+
+def test_default_ledger_keeps_full_bank_behavior_without_category_policy(
+    tmp_path: Path,
+) -> None:
+    rows = [
+        _inventory_row(
+            request_digest=f"default-{index}",
+            planned_ai_unit_id=f"default-unit-{index}",
+        )
+        for index in range(3)
+    ]
+    ledger, digest = _ledger_with_rows(tmp_path, rows)
+    for row in rows:
+        assert ledger.reserve(_request(row, digest)).granted is True
+    assert len(ledger.list_reservations()) == 3
 
 
 def test_busy_timeout_and_bounded_lock_retry_fail_closed(tmp_path: Path) -> None:

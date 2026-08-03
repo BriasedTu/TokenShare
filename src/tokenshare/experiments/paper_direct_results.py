@@ -62,6 +62,8 @@ _CATALOG_MANIFEST_SCHEMA = "tokenshare.preregistered_case_catalog_manifest.v1"
 _CASE_RECORD_SCHEMA = "tokenshare.preregistered_case_record.v1"
 _CASE_REF_SCHEMA = "tokenshare.preregistered_case_ref.v1"
 _VERDICT_SCHEMA = "tokenshare.paper_direct_correctness_verdict.v1"
+_ACTUAL_RESOURCE_BOOK_SCHEMA = "tokenshare.paper_actual_resource_book.v1"
+_PARSER_ROLES = frozenset({"parser_result", "parse_failure"})
 
 _ATTEMPT_EVENT_TYPES = frozenset(
     {
@@ -452,6 +454,295 @@ class PaperDirectBooleanAggregate:
         }
 
 
+@dataclass(frozen=True)
+class NativeDirectArtifactBundle:
+    """adapter 原生 direct ABI；兼容旧的二元解包调用。"""
+
+    actual_resource_book_ref: ArtifactRef | None
+    independent_verdict_ref: ArtifactRef | None
+    parser_refs: tuple[ArtifactRef, ...]
+
+    def __iter__(self):
+        yield self.actual_resource_book_ref
+        yield self.independent_verdict_ref
+
+    def to_dict(self) -> JsonObject:
+        body: JsonObject = {
+            "schema_version": "tokenshare.paper_direct_native_artifacts.v1",
+            "parser_refs": [ref.to_dict() for ref in self.parser_refs],
+        }
+        if self.actual_resource_book_ref is not None:
+            body["actual_resource_book_ref"] = (
+                self.actual_resource_book_ref.to_dict()
+            )
+        if self.independent_verdict_ref is not None:
+            body["independent_verdict_ref"] = self.independent_verdict_ref.to_dict()
+        return body
+
+
+def persist_native_online_direct_artifacts(
+    *,
+    artifact_store: ArtifactStore,
+    execution_id: str,
+    task_id: str,
+    root_unit_id: str,
+    final_result_ref: ArtifactRef | None,
+    oracle_verdict_ref: ArtifactRef | None,
+    oracle_kind: str | None,
+    oracle_correct: bool | None,
+    oracle_fact: Mapping[str, Any] | None = None,
+    current_provider_object_refs: (
+        Mapping[str, Sequence[ArtifactRef]] | Sequence[ArtifactRef] | None
+    ) = None,
+    parser_object_refs: Mapping[str, Sequence[ArtifactRef]] | None = None,
+) -> NativeDirectArtifactBundle:
+    """在 adapter 原生 store 内投影 direct ABI，不重新判断 correctness。"""
+
+    if not isinstance(artifact_store, ArtifactStore):
+        raise TypeError("artifact_store must be ArtifactStore")
+    for name, value in (
+        ("execution_id", execution_id),
+        ("task_id", task_id),
+        ("root_unit_id", root_unit_id),
+    ):
+        _non_empty(name, value)
+    if oracle_fact is not None and not isinstance(oracle_fact, Mapping):
+        raise TypeError("oracle_fact must be a mapping")
+    if final_result_ref is None:
+        if any(
+            value is not None
+            for value in (oracle_verdict_ref, oracle_kind, oracle_correct, oracle_fact)
+        ):
+            raise ValueError("missing final result cannot carry native oracle verdict")
+    else:
+        if not isinstance(final_result_ref, ArtifactRef) or not isinstance(
+            oracle_verdict_ref,
+            ArtifactRef,
+        ):
+            raise TypeError("native final and oracle refs must be ArtifactRef")
+        if oracle_kind not in {"independent_verifier", "lean_checker"}:
+            raise ValueError("unsupported native oracle kind")
+        if type(oracle_correct) is not bool:
+            raise ValueError("oracle_correct must be a bool")
+    source_refs: tuple[ArtifactRef, ...]
+    if current_provider_object_refs is None:
+        source_refs = ()
+        provider_refs = ()
+    elif isinstance(current_provider_object_refs, Mapping):
+        if set(current_provider_object_refs) != set(_ONLINE_PROVIDER_ROLES):
+            raise ValueError("native online provider role inventory is incomplete")
+        normalized_by_role: dict[str, tuple[ArtifactRef, ...]] = {}
+        for role in sorted(current_provider_object_refs):
+            values = tuple(current_provider_object_refs[role])
+            if not values or any(not isinstance(ref, ArtifactRef) for ref in values):
+                raise TypeError("native provider role sources must contain ArtifactRef")
+            normalized_by_role[role] = values
+        source_refs = tuple(
+            ref for role in sorted(normalized_by_role) for ref in normalized_by_role[role]
+        )
+        provider_refs = ()
+    else:
+        provider_refs = tuple(current_provider_object_refs)
+        if any(not isinstance(ref, ArtifactRef) for ref in provider_refs):
+            raise TypeError("current provider refs must contain ArtifactRef")
+        source_refs = provider_refs
+    normalized_parser_by_role: dict[str, tuple[ArtifactRef, ...]] = {}
+    if parser_object_refs is not None:
+        if not set(parser_object_refs).issubset(_PARSER_ROLES):
+            raise ValueError("unsupported native parser role")
+        for role in sorted(parser_object_refs):
+            values = tuple(parser_object_refs[role])
+            if not values or any(not isinstance(ref, ArtifactRef) for ref in values):
+                raise TypeError("native parser role sources must contain ArtifactRef")
+            normalized_parser_by_role[role] = values
+    parser_source_refs = tuple(
+        ref
+        for role in sorted(normalized_parser_by_role)
+        for ref in normalized_parser_by_role[role]
+    )
+    identity_refs = tuple(
+        ref
+        for ref in (final_result_ref, oracle_verdict_ref)
+        if isinstance(ref, ArtifactRef)
+    )
+    authoritative = tuple(
+        artifact_store.load_artifact_ref(ref.artifact_id)
+        for ref in (
+            *identity_refs,
+            *source_refs,
+            *parser_source_refs,
+        )
+    )
+    supplied = (
+        *identity_refs,
+        *source_refs,
+        *parser_source_refs,
+    )
+    if any(left.to_dict() != right.to_dict() for left, right in zip(authoritative, supplied)):
+        raise ValueError("native direct source artifact identity mismatch")
+    if isinstance(current_provider_object_refs, Mapping):
+        projected_refs: list[ArtifactRef] = []
+        for role in sorted(normalized_by_role):
+            values = normalized_by_role[role]
+            role_suffix = digest_json(
+                {
+                    "execution_id": execution_id,
+                    "task_id": task_id,
+                    "root_unit_id": root_unit_id,
+                    "role": role,
+                    "source_artifact_refs": [ref.to_dict() for ref in values],
+                }
+            ).removeprefix("sha256:")[:24]
+            projected_refs.append(
+                artifact_store.save_json(
+                    {
+                        "schema_version": "tokenshare.paper_current_provider_role_book.v1",
+                        "role": role,
+                        "source_artifact_refs": [ref.to_dict() for ref in values],
+                    },
+                    artifact_id=f"paper_current_provider_{role}_{role_suffix}",
+                    artifact_type="PaperCurrentProviderRoleBook",
+                    artifact_schema_id="tokenshare.paper_current_provider_role_book.v1",
+                    artifact_schema_version="v1",
+                    source={
+                        "kind": "native_online_provider_role_projection",
+                        "role": role,
+                        "execution_id": execution_id,
+                        "task_id": task_id,
+                        "source_artifact_refs": [ref.to_dict() for ref in values],
+                    },
+                    metadata={"source_artifact_count": len(values)},
+                    created_at=values[0].created_at,
+                )
+            )
+        provider_refs = tuple(projected_refs)
+    parser_refs: tuple[ArtifactRef, ...] = ()
+    if normalized_parser_by_role:
+        projected_parser_refs: list[ArtifactRef] = []
+        for role in sorted(normalized_parser_by_role):
+            values = normalized_parser_by_role[role]
+            role_suffix = digest_json(
+                {
+                    "execution_id": execution_id,
+                    "task_id": task_id,
+                    "root_unit_id": root_unit_id,
+                    "role": role,
+                    "source_artifact_refs": [ref.to_dict() for ref in values],
+                }
+            ).removeprefix("sha256:")[:24]
+            projected_parser_refs.append(
+                artifact_store.save_json(
+                    {
+                        "schema_version": "tokenshare.paper_parser_role_book.v1",
+                        "role": role,
+                        "source_artifact_refs": [ref.to_dict() for ref in values],
+                    },
+                    artifact_id=f"paper_parser_{role}_{role_suffix}",
+                    artifact_type="PaperParserRoleBook",
+                    artifact_schema_id="tokenshare.paper_parser_role_book.v1",
+                    artifact_schema_version="v1",
+                    source={
+                        "kind": "native_parser_role_projection",
+                        "role": role,
+                        "execution_id": execution_id,
+                        "task_id": task_id,
+                        "source_artifact_refs": [ref.to_dict() for ref in values],
+                    },
+                    metadata={"source_artifact_count": len(values)},
+                    created_at=values[0].created_at,
+                )
+            )
+        parser_refs = tuple(projected_parser_refs)
+    if current_provider_object_refs is not None:
+        provider_roles = tuple(
+            str(ref.source.get("role", "")) for ref in provider_refs
+        )
+        if frozenset(provider_roles) != _ONLINE_PROVIDER_ROLES or len(
+            provider_roles
+        ) != len(_ONLINE_PROVIDER_ROLES):
+            raise ValueError("native online provider role inventory is incomplete")
+
+    identity_suffix = digest_json(
+        {
+            "execution_id": execution_id,
+            "task_id": task_id,
+            "root_unit_id": root_unit_id,
+            "final": (
+                final_result_ref.to_dict()
+                if isinstance(final_result_ref, ArtifactRef)
+                else None
+            ),
+        }
+    ).removeprefix("sha256:")[:24]
+    resource_ref: ArtifactRef | None = None
+    if current_provider_object_refs is not None:
+        resource_body: JsonObject = {
+            "schema_version": _ACTUAL_RESOURCE_BOOK_SCHEMA,
+            "execution_id": execution_id,
+            "task_id": task_id,
+            "root_unit_id": root_unit_id,
+            "current_provider_object_refs": [ref.to_dict() for ref in provider_refs],
+        }
+        if parser_refs:
+            resource_body["parser_refs"] = [ref.to_dict() for ref in parser_refs]
+        created_at_ref = final_result_ref or source_refs[0]
+        resource_ref = artifact_store.save_json(
+            resource_body,
+            artifact_id=f"paper_actual_resource_book_{identity_suffix}",
+            artifact_type="PaperActualResourceBook",
+            artifact_schema_id=_ACTUAL_RESOURCE_BOOK_SCHEMA,
+            artifact_schema_version="v1",
+            source={
+                "kind": "native_online_direct_projection",
+                "role": "actual_resource_book",
+                "execution_id": execution_id,
+                "task_id": task_id,
+            },
+            metadata={
+                "provider_object_count": len(provider_refs),
+                "parser_object_count": len(parser_refs),
+            },
+            created_at=created_at_ref.created_at,
+        )
+    verdict_ref: ArtifactRef | None = None
+    if isinstance(final_result_ref, ArtifactRef) and isinstance(
+        oracle_verdict_ref,
+        ArtifactRef,
+    ):
+        verdict_ref = artifact_store.save_json(
+        {
+            "schema_version": _VERDICT_SCHEMA,
+            "execution_id": execution_id,
+            "task_id": task_id,
+            "root_unit_id": root_unit_id,
+            "final_artifact_id": final_result_ref.artifact_id,
+            "final_content_hash": final_result_ref.content_hash,
+            "final_size_bytes": final_result_ref.size_bytes,
+            "verdict_kind": oracle_kind,
+            "correct": oracle_correct,
+        },
+        artifact_id=f"paper_direct_verdict_{identity_suffix}",
+        artifact_type="PaperDirectCorrectnessVerdict",
+        artifact_schema_id=_VERDICT_SCHEMA,
+        artifact_schema_version="v1",
+        source={
+            "kind": "native_oracle_direct_projection",
+            "role": "independent_verdict",
+            "execution_id": execution_id,
+            "task_id": task_id,
+            "oracle_verdict_ref": oracle_verdict_ref.to_dict(),
+            **({"oracle_fact": dict(oracle_fact)} if oracle_fact is not None else {}),
+        },
+        metadata={"oracle_kind": oracle_kind},
+        created_at=oracle_verdict_ref.created_at,
+        )
+    return NativeDirectArtifactBundle(
+        actual_resource_book_ref=resource_ref,
+        independent_verdict_ref=verdict_ref,
+        parser_refs=parser_refs,
+    )
+
+
 def build_canonical_direct_evidence(
     *,
     inventory_row: PaperDirectRootInventoryRow,
@@ -459,7 +750,7 @@ def build_canonical_direct_evidence(
     event_ledger: EventLedger,
     artifact_store: ArtifactStore,
     runtime_result: ProtocolRunResult,
-    final_result_ref: ArtifactRef,
+    final_result_ref: ArtifactRef | None,
     parser_refs: Sequence[ArtifactRef],
     verifier_checker_refs: Sequence[ArtifactRef],
     current_provider_object_refs: Sequence[ArtifactRef] = (),
@@ -529,14 +820,17 @@ def build_canonical_direct_evidence(
         raise ValueError("runtime result does not match canonical ledger projection")
     _validate_runtime_summary(runtime_result, canonical_result.summary)
 
-    final_snapshot = _snapshot_artifact(
+    completed_runtime = canonical_result.status == "completed"
+    if completed_runtime and final_result_ref is None:
+        raise ValueError("completed runtime requires final result artifact")
+    final_snapshot = _optional_snapshot_artifact(
         final_result_ref,
         artifact_store=artifact_store,
         task_id=task_id,
         execution_id=execution_id,
         allowed_roles={"final_result"},
     )
-    if _snapshot_triple(final_snapshot) not in set(
+    if final_snapshot is not None and _snapshot_triple(final_snapshot) not in set(
         _artifact_triples(canonical_result.artifact_refs)
     ):
         raise ValueError("final artifact is not bound by canonical runtime result")
@@ -600,8 +894,8 @@ def build_canonical_direct_evidence(
     elif evidence_class == "real_model_trace_protocol_run":
         if current_snapshots:
             raise ValueError("trace evidence cannot contain current provider refs")
-        _append_role_completeness_reasons(
-            frozenset(locator.object_role for locator in locators),
+        _append_locator_role_completeness_reasons(
+            locators,
             allowed=_TRACE_SOURCE_ROLES,
             reasons=reasons,
             prefix="source_bank",
@@ -611,9 +905,12 @@ def build_canonical_direct_evidence(
     else:
         if current_snapshots:
             raise ValueError("regression_only evidence cannot contain current refs")
-        locator_roles = frozenset(locator.object_role for locator in locators)
-        if locator_roles != _REGRESSION_SOURCE_ROLES:
-            raise ValueError("regression_only source roles are frozen")
+        _append_locator_role_completeness_reasons(
+            locators,
+            allowed=_REGRESSION_SOURCE_ROLES,
+            reasons=reasons,
+            prefix="regression_source",
+        )
         if trace_snapshot is None or actual_snapshot is not None:
             reasons.append("invalid_regression_resource_book")
         reasons.append("regression_only")
@@ -643,9 +940,9 @@ def build_canonical_direct_evidence(
 
     verdict_ref = _select_verdict_ref(verifier_snapshots)
     independently_correct = False
-    if verdict_ref is None:
+    if completed_runtime and verdict_ref is None:
         reasons.append("missing_independent_verdict")
-    else:
+    elif completed_runtime and verdict_ref is not None and final_snapshot is not None:
         independently_correct = _read_bound_verdict(
             verdict_ref,
             verifier_checker_refs,
@@ -656,13 +953,17 @@ def build_canonical_direct_evidence(
             final_result_ref=final_snapshot,
         )
 
-    canonical_event = _select_canonical_event(
-        events,
-        root_unit_id,
-        final_snapshot,
+    canonical_event = (
+        _select_canonical_event(events, root_unit_id, final_snapshot)
+        if final_snapshot is not None
+        else None
     )
-    merge_event = _select_merge_event(events, root_unit_id, final_snapshot)
-    if canonical_event is None and merge_event is not None:
+    merge_event = (
+        _select_merge_event(events, root_unit_id, final_snapshot)
+        if final_snapshot is not None
+        else None
+    )
+    if final_snapshot is not None and canonical_event is None and merge_event is not None:
         canonical_event, merge_event = _select_merge_unit_final_provenance(
             events,
             root_unit_id=root_unit_id,
@@ -680,9 +981,9 @@ def build_canonical_direct_evidence(
     terminal_snapshot = (
         _snapshot_event(terminal_event) if terminal_event is not None else None
     )
-    if canonical_event is None:
+    if completed_runtime and canonical_event is None:
         reasons.append("missing_canonical_provenance")
-    if merge_event is None:
+    if completed_runtime and merge_event is None:
         reasons.append("missing_merge_provenance")
     if terminal_event is None:
         reasons.append("missing_terminal_root_provenance")
@@ -703,7 +1004,7 @@ def build_canonical_direct_evidence(
 
     all_snapshots = _unique_artifact_snapshots(
         (
-            final_snapshot,
+            *((final_snapshot,) if final_snapshot is not None else ()),
             *parser_snapshots,
             *verifier_snapshots,
             *current_snapshots,
@@ -1675,28 +1976,60 @@ def _canonical_locators(
     locators = tuple(values)
     if any(not isinstance(value, ExternalBankObjectLocator) for value in locators):
         raise TypeError("source locators must be ExternalBankObjectLocator")
-    roles = [value.object_role for value in locators]
+    roles = [(value.entry_id, value.object_role) for value in locators]
     if len(set(roles)) != len(roles):
-        raise ValueError("duplicate source locator role")
+        raise ValueError("duplicate source locator role within entry")
     identities = [
-        (value.entry_id, value.object_role, value.object_digest)
+        (
+            value.bank_root_id,
+            value.manifest_digest,
+            value.entry_id,
+            value.object_role,
+            value.object_digest,
+        )
         for value in locators
     ]
     if len(set(identities)) != len(identities):
         raise ValueError("duplicate source locator")
     if locators:
         bank_bindings = {
-            (value.bank_root_id, value.manifest_digest, value.entry_id)
-            for value in locators
+            (value.bank_root_id, value.manifest_digest) for value in locators
         }
         if len(bank_bindings) != 1:
-            raise ValueError("source locator bank/entry binding mismatch")
+            raise ValueError("source locator bank binding mismatch")
     return tuple(
         sorted(
             locators,
             key=lambda value: (value.entry_id, value.object_role, value.object_digest),
         )
     )
+
+
+def _append_locator_role_completeness_reasons(
+    locators: Sequence[ExternalBankObjectLocator],
+    *,
+    allowed: frozenset[str],
+    reasons: list[str],
+    prefix: str,
+) -> None:
+    by_entry: dict[str, set[str]] = {}
+    for locator in locators:
+        by_entry.setdefault(locator.entry_id, set()).add(locator.object_role)
+    if not by_entry:
+        _append_role_completeness_reasons(
+            frozenset(),
+            allowed=allowed,
+            reasons=reasons,
+            prefix=prefix,
+        )
+        return
+    for entry_id in sorted(by_entry):
+        _append_role_completeness_reasons(
+            frozenset(by_entry[entry_id]),
+            allowed=allowed,
+            reasons=reasons,
+            prefix=f"{prefix}[{entry_id}]",
+        )
 
 
 def _append_role_completeness_reasons(

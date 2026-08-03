@@ -112,27 +112,34 @@ def _run_callback_attempt(
     return callback.require_capture(submission_id)
 
 
-class _RejectThenAcceptFactorTransport(ScriptedFactorizationRangeTransport):
-    def post_chat_completion(self, **kwargs):
-        response = super().post_chat_completion(**kwargs)
-        if len(self.calls) == 1:
-            result = dict(self.calls[-1]["range_result"])
-            result["child_index"] = int(result["child_index"]) + 1
-            self.calls[-1]["range_result"] = result
-            response.body["choices"][0]["message"]["content"] = json.dumps(result)
-            response.text = json.dumps(response.body)
-        return response
-
-
-class _RejectThenAcceptLeanTransport(ScriptedLeanPaperProofTransport):
-    def post_chat_completion(self, **kwargs):
-        response = super().post_chat_completion(**kwargs)
-        if len(self.calls) == 1:
-            content = json.loads(response.body["choices"][0]["message"]["content"])
-            content["proof_source"] = "by\n  exact True.intro"
-            response.body["choices"][0]["message"]["content"] = json.dumps(content)
-            response.text = json.dumps(response.body)
-        return response
+def _run_callback_failure(
+    store: ArtifactStore,
+    *,
+    callback: PaperOnlineProviderEvidenceCallback,
+    request_id: str,
+    submission_id: str,
+) -> object:
+    request = replace(
+        make_ai_request(store, request_id=request_id),
+        attempt_id=submission_id,
+        unit_id=f"unit-{submission_id}",
+    )
+    submission = AIAPIExecutor(
+        executor_id="task27-official-failure-callback",
+        executor_version="0.1.0",
+        artifact_store=store,
+        config=load_ai_api_config(_single_entry_config()),
+        transport=FakeSiliconFlowTransport(
+            [FakeProviderResponse(status_code=503, body={"error": "unavailable"})]
+        ),
+        post_raw_output_hook=callback,
+    ).execute(
+        request,
+        submission_id=submission_id,
+        submitted_at="2026-08-03T00:00:00Z",
+    )
+    assert submission.raw_output_ref is None
+    return callback.require_capture(submission_id)
 
 
 def test_capability_plan_is_exact_factor_and_lean_initial_replacement_four_calls(
@@ -188,7 +195,7 @@ def test_capability_official_verifier_checker_requeue_seams_are_required_and_dom
     factor_callback = PaperOnlineProviderEvidenceCallback.for_capability_domain(
         "factorization"
     )
-    factor_transport = _RejectThenAcceptFactorTransport()
+    factor_transport = ScriptedFactorizationRangeTransport()
     run_factorization_paper_case(
         case=factor_case,
         condition=_v2_condition(factor_case),
@@ -246,7 +253,7 @@ def test_capability_official_verifier_checker_requeue_seams_are_required_and_dom
         for node in lean_case["lemma_graph"]["nodes"]
         if node["node_id"] == plan.capability_calls[2].planned_ai_unit_id
     )
-    lean_transport = _RejectThenAcceptLeanTransport(
+    lean_transport = ScriptedLeanPaperProofTransport(
         proof_sources_by_statement={
             lean_node["theorem_payload"]["statement_source"]: lean_case[
                 "oracle_proof_package_ref"
@@ -422,6 +429,29 @@ def test_exp2_plan_emits_digest_bound_condition_refs_and_compliant_online_direct
     assert all(row.current_provider_roles == CURRENT_PROVIDER_ROLES for row in evidence)
     assert all(row.eligibility_input.value is True for row in evidence)
     assert all(row.provider_inputs[0].total_tokens.value == 24 for row in evidence)
+
+    failure_attempts = dict(attempts)
+    failure_attempts[plan.exp2_condition_refs[0].condition_id] = (
+        _run_callback_failure(
+            store,
+            callback=PaperOnlineProviderEvidenceCallback.for_exp2_condition(
+                plan.exp2_condition_refs[0]
+            ),
+            request_id="exp2-provider-failure",
+            submission_id="exp2-provider-failure",
+        ),
+    )
+    with_failure = produce_exp2_online_direct_evidence(
+        artifact_store=store,
+        plan=plan,
+        direct_rows=rows,
+        current_provider_attempts_by_condition=failure_attempts,
+    )
+    assert len(with_failure) == 24
+    assert with_failure[0].eligibility_input.blocked is True
+    assert with_failure[0].provider_inputs[0].actual_provider_call.value == 1
+    assert with_failure[0].provider_inputs[0].total_tokens.blocked is True
+    assert all(item.eligibility_input.value is True for item in with_failure[1:])
 
     with pytest.raises(ValueError, match="authoritative online-check plan"):
         produce_exp2_online_direct_evidence(

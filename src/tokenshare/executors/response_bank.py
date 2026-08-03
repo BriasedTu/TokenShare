@@ -86,6 +86,41 @@ def inventory_entry_id(row: Mapping[str, Any] | "ResponseBankInventoryRow") -> s
     )
 
 
+def terminal_bank_entry_id(
+    *,
+    semantic_slot_key: str,
+    inference_request_digest: str,
+) -> str:
+    """派生与 provider-config entry identity 分离的稳定 terminal bank ID。"""
+
+    return canonical_digest(
+        {
+            "schema_version": "tokenshare.response_bank_terminal_entry_identity.v1",
+            "semantic_slot_key": semantic_slot_key,
+            "inference_request_digest": inference_request_digest,
+        }
+    )
+
+
+def canonical_inventory_rows(
+    rows: Sequence["ResponseBankInventoryRow"],
+) -> tuple["ResponseBankInventoryRow", ...]:
+    """所有 producer/validator 共用的 inventory_entry_id 排序。"""
+
+    values = tuple(rows)
+    if any(not isinstance(row, ResponseBankInventoryRow) for row in values):
+        raise TypeError("inventory rows must contain ResponseBankInventoryRow values")
+    return tuple(sorted(values, key=lambda row: row.inventory_entry_id))
+
+
+def response_bank_inventory_digest(
+    rows: Sequence["ResponseBankInventoryRow"],
+) -> str:
+    return canonical_digest(
+        [row.to_dict() for row in canonical_inventory_rows(rows)]
+    )
+
+
 @dataclass(frozen=True, kw_only=True)
 class ExternalBankObjectLocator:
     bank_root_id: str
@@ -298,8 +333,8 @@ class ValidatedResponseBankIndex:
         if manifest.terminal_entry_count != len(bank_entries):
             raise ValueError("manifest terminal entry count mismatch")
 
-        canonical_rows = tuple(sorted(rows, key=lambda item: item.inventory_entry_id))
-        if canonical_digest([item.to_dict() for item in canonical_rows]) != manifest.inventory_digest:
+        canonical_rows = canonical_inventory_rows(rows)
+        if response_bank_inventory_digest(canonical_rows) != manifest.inventory_digest:
             raise ValueError("inventory digest mismatch")
         row_by_id: dict[str, ResponseBankInventoryRow] = {}
         slot_requests: dict[str, tuple[str, str]] = {}
@@ -428,7 +463,7 @@ def initialize_response_bank(
     _write_json(root / "manifest.v1.json", bound_manifest.to_dict())
     _write_json(
         root / "inventory.v1.json",
-        [row.to_dict() for row in sorted(inventory_rows, key=lambda item: item.inventory_entry_id)],
+        [row.to_dict() for row in canonical_inventory_rows(inventory_rows)],
     )
     _write_json(
         root / "entries.v1.json",

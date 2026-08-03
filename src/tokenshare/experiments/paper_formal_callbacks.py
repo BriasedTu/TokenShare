@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import asdict, dataclass, is_dataclass
+from dataclasses import asdict, dataclass, is_dataclass, replace
 from datetime import UTC, datetime
+from decimal import Decimal
 import json
 from pathlib import Path
+from threading import Lock
 from typing import Any
 
 from tokenshare.core.models import ArtifactRef
@@ -14,6 +16,19 @@ from tokenshare.experiments.paper_exp5_model_comparison import (
     build_exp5_model_execution_rows,
 )
 from tokenshare.experiments.paper_models import digest_json
+from tokenshare.experiments.paper_budget_ledger import (
+    InventoryIdentityError,
+    PaperBudgetLedger,
+    ReservationRequest,
+)
+from tokenshare.experiments.paper_resource_accounting import ProviderUsage
+from tokenshare.experiments.paper_resource_accounting import FrozenPricing
+from tokenshare.executors.response_bank import (
+    ResponseBankInventoryRow,
+    inventory_entry_id,
+    response_bank_inventory_digest,
+    semantic_slot_key,
+)
 from tokenshare.experiments.paper_online_checks import (
     CapabilityCallPlan,
     CapabilityLifecycleEvidence,
@@ -64,7 +79,17 @@ class RuntimeTimingPolicy:
 class PaperOnlineProviderEvidenceCallback:
     """在 AI executor 已持久化 raw/provenance/usage 后保存 typed projection objects。"""
 
-    def __init__(self, *, attempt_ordinal: int | None, scope_identity: Mapping[str, Any]):
+    def __init__(
+        self,
+        *,
+        attempt_ordinal: int | None,
+        scope_identity: Mapping[str, Any],
+        budget_ledger: PaperBudgetLedger | None = None,
+        reservation_request_resolver: Callable[
+            [Mapping[str, Any]], ReservationRequest
+        ]
+        | None = None,
+    ):
         if attempt_ordinal is not None and (
             isinstance(attempt_ordinal, bool)
             or not isinstance(attempt_ordinal, int)
@@ -73,6 +98,13 @@ class PaperOnlineProviderEvidenceCallback:
             raise ValueError("attempt_ordinal must be a nonnegative integer")
         self._attempt_ordinal = attempt_ordinal
         self._scope_identity = dict(scope_identity)
+        if (budget_ledger is None) != (reservation_request_resolver is None):
+            raise ValueError(
+                "budget ledger and reservation request resolver must be configured together"
+            )
+        self._budget_ledger = budget_ledger
+        self._reservation_request_resolver = reservation_request_resolver
+        self._reservation_by_submission: dict[str, ReservationRequest] = {}
         self._captures: dict[str, CurrentProviderAttemptEvidence] = {}
         self._store: ArtifactStore | None = None
         self._candidate_refs_by_attempt: dict[str, dict[str, ArtifactRef]] = {}
@@ -84,7 +116,14 @@ class PaperOnlineProviderEvidenceCallback:
 
     @classmethod
     def for_capability_call(
-        cls, call: CapabilityCallPlan
+        cls,
+        call: CapabilityCallPlan,
+        *,
+        budget_ledger: PaperBudgetLedger | None = None,
+        reservation_request_resolver: Callable[
+            [Mapping[str, Any]], ReservationRequest
+        ]
+        | None = None,
     ) -> "PaperOnlineProviderEvidenceCallback":
         plan = freeze_paper_online_checks_plan()
         try:
@@ -105,11 +144,20 @@ class PaperOnlineProviderEvidenceCallback:
                 "planned_ai_unit_id": call.planned_ai_unit_id,
                 "controlled_rejection": call.controlled_rejection,
             },
+            budget_ledger=budget_ledger,
+            reservation_request_resolver=reservation_request_resolver,
         )
 
     @classmethod
     def for_capability_domain(
-        cls, domain: str
+        cls,
+        domain: str,
+        *,
+        budget_ledger: PaperBudgetLedger | None = None,
+        reservation_request_resolver: Callable[
+            [Mapping[str, Any]], ReservationRequest
+        ]
+        | None = None,
     ) -> "PaperOnlineProviderEvidenceCallback":
         plan = freeze_paper_online_checks_plan()
         matching = tuple(call for call in plan.capability_calls if call.domain == domain)
@@ -124,11 +172,20 @@ class PaperOnlineProviderEvidenceCallback:
                 "profile_digest": plan.profile_digest,
                 "budget_digest": plan.budget_digest,
             },
+            budget_ledger=budget_ledger,
+            reservation_request_resolver=reservation_request_resolver,
         )
 
     @classmethod
     def for_exp2_condition(
-        cls, condition_ref: Exp2OnlineConditionRef
+        cls,
+        condition_ref: Exp2OnlineConditionRef,
+        *,
+        budget_ledger: PaperBudgetLedger | None = None,
+        reservation_request_resolver: Callable[
+            [Mapping[str, Any]], ReservationRequest
+        ]
+        | None = None,
     ) -> "PaperOnlineProviderEvidenceCallback":
         plan = freeze_paper_online_checks_plan()
         if condition_ref not in plan.exp2_condition_refs:
@@ -143,11 +200,21 @@ class PaperOnlineProviderEvidenceCallback:
                 "profile_digest": plan.profile_digest,
                 "budget_digest": plan.budget_digest,
             },
+            budget_ledger=budget_ledger,
+            reservation_request_resolver=reservation_request_resolver,
         )
 
     @classmethod
     def for_exp3_attempt(
-        cls, condition_ref: Exp3OnlineRootRef, *, attempt_ordinal: int
+        cls,
+        condition_ref: Exp3OnlineRootRef,
+        *,
+        attempt_ordinal: int,
+        budget_ledger: PaperBudgetLedger | None = None,
+        reservation_request_resolver: Callable[
+            [Mapping[str, Any]], ReservationRequest
+        ]
+        | None = None,
     ) -> "PaperOnlineProviderEvidenceCallback":
         plan = freeze_paper_online_checks_plan()
         if condition_ref not in plan.exp3_root_refs:
@@ -162,9 +229,159 @@ class PaperOnlineProviderEvidenceCallback:
                 "profile_digest": plan.profile_digest,
                 "budget_digest": plan.budget_digest,
             },
+            budget_ledger=budget_ledger,
+            reservation_request_resolver=reservation_request_resolver,
         )
 
-    def __call__(self, **context: Any) -> None:
+    @classmethod
+    def for_exp3_root(
+        cls,
+        condition_ref: Exp3OnlineRootRef,
+        *,
+        budget_ledger: PaperBudgetLedger | None = None,
+        reservation_request_resolver: Callable[
+            [Mapping[str, Any]], ReservationRequest
+        ]
+        | None = None,
+    ) -> "PaperOnlineProviderEvidenceCallback":
+        plan = freeze_paper_online_checks_plan()
+        if condition_ref not in plan.exp3_root_refs:
+            raise ValueError("Exp3 condition ref is not authoritative")
+        return cls(
+            attempt_ordinal=None,
+            scope_identity={
+                "scope_kind": "exp3_online_root",
+                "condition_id": condition_ref.condition_id,
+                "condition_digest": condition_ref.condition_digest,
+                "plan_digest": plan.plan_digest,
+                "profile_digest": plan.profile_digest,
+                "budget_digest": plan.budget_digest,
+            },
+            budget_ledger=budget_ledger,
+            reservation_request_resolver=reservation_request_resolver,
+        )
+
+    def after_prepared_dispatch(self, **context: Any) -> None:
+        """prepared request 提交后原子预留预算，尚不记录 dispatch intent。"""
+
+        if self._budget_ledger is None:
+            return
+        resolver = self._reservation_request_resolver
+        if resolver is None:
+            raise ValueError("official callback budget resolver is unavailable")
+        submission_id = str(context.get("submission_id") or "")
+        if not submission_id or submission_id in self._reservation_by_submission:
+            raise ValueError("official callback prepared submission identity is invalid")
+        reservation = resolver(dict(context))
+        if not isinstance(reservation, ReservationRequest):
+            raise TypeError("official callback budget resolver must return ReservationRequest")
+        decision = self._budget_ledger.reserve(reservation)
+        if not decision.granted:
+            store = context.get("artifact_store")
+            if not isinstance(store, ArtifactStore):
+                raise TypeError("official callback resume requires ArtifactStore")
+            state = self.reconcile_budget_resume(
+                reservation=reservation,
+                artifact_store=store,
+            )
+            raise RuntimeError(
+                f"official callback reconciled {state}; current invocation must not resend"
+            )
+        self._reservation_by_submission[submission_id] = reservation
+
+    def before_provider_dispatch(self, **context: Any) -> None:
+        """secret 与 transport resolver 完成后、真实 transport 前提交 intent。"""
+
+        if self._budget_ledger is None:
+            return
+        reservation = self._require_submission_reservation(context)
+        self._budget_ledger.mark_dispatch_intent(
+            reservation.inventory_digest,
+            reservation.inventory_entry_id,
+        )
+
+    def after_pre_transport_abort(self, **context: Any) -> None:
+        """secret/local resolver 失败仅释放 pre-intent reservation。"""
+
+        if self._budget_ledger is None:
+            return
+        reservation = self._require_submission_reservation(context)
+        released = self._budget_ledger.release_reserved(
+            reservation.inventory_digest,
+            reservation.inventory_entry_id,
+        )
+        if not released:
+            raise ValueError("official callback cannot release a post-intent reservation")
+
+    def after_provider_failure_persisted(self, **context: Any) -> None:
+        """真实 transport terminal failure 使用显式 failure/nullable usage capture。"""
+
+        self._capture_provider_terminal(
+            context,
+            terminal_kind="provider_failure",
+            raw_or_failure_name="provider_failure_ref",
+        )
+
+    def __call__(self, **context: Any) -> Mapping[str, Any] | None:
+        self._capture_provider_terminal(
+            context,
+            terminal_kind="success",
+            raw_or_failure_name="raw_output_ref",
+        )
+        return self._capability_controlled_rejection(context)
+
+    def _capability_controlled_rejection(
+        self, context: Mapping[str, Any]
+    ) -> Mapping[str, Any] | None:
+        scope_kind = self._scope_identity.get("scope_kind")
+        request = context.get("request")
+        ordinal = getattr(request, "attempt_ordinal", self._attempt_ordinal)
+        controlled = scope_kind == "capability_domain" and ordinal == 0
+        if not controlled:
+            return None
+        content_text = context.get("content_text")
+        if not isinstance(content_text, str):
+            raise ValueError("capability controlled rejection requires model content")
+        try:
+            body = json.loads(content_text)
+        except json.JSONDecodeError as exc:
+            raise ValueError(
+                "capability controlled rejection requires JSON model content"
+            ) from exc
+        if not isinstance(body, dict):
+            raise ValueError("capability controlled rejection requires JSON object")
+        domain = str(self._scope_identity.get("domain") or "")
+        if domain == "factorization":
+            child_index = body.get("child_index")
+            if isinstance(child_index, bool) or not isinstance(child_index, int):
+                raise ValueError(
+                    "factor capability controlled rejection requires child_index"
+                )
+            body["child_index"] = child_index + 1
+        elif domain == "lean_proof":
+            if not isinstance(body.get("proof_source"), str):
+                raise ValueError(
+                    "Lean capability controlled rejection requires proof_source"
+                )
+            body["proof_source"] = "by\n  exact True.intro"
+        else:
+            raise ValueError("unsupported capability controlled rejection domain")
+        return {
+            "content_text": json.dumps(
+                body,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+        }
+
+    def _capture_provider_terminal(
+        self,
+        context: Mapping[str, Any],
+        *,
+        terminal_kind: str,
+        raw_or_failure_name: str,
+    ) -> None:
         store = context.get("artifact_store")
         request = context.get("request")
         submission_id = str(context.get("submission_id") or "")
@@ -172,7 +389,7 @@ class PaperOnlineProviderEvidenceCallback:
         if not isinstance(store, ArtifactStore):
             raise TypeError("official callback requires ArtifactStore")
         self._store = store
-        for name in ("raw_output_ref", "provenance_ref", "usage_ref"):
+        for name in (raw_or_failure_name, "provenance_ref", "usage_ref"):
             if not isinstance(context.get(name), ArtifactRef) or not store.verify(context[name]):
                 raise ValueError(f"official callback requires verified {name}")
         if not submission_id or not submitted_at:
@@ -187,11 +404,15 @@ class PaperOnlineProviderEvidenceCallback:
         )
         attempt_ordinal = self._attempt_ordinal
         scope_identity = dict(self._scope_identity)
-        if scope_identity.get("scope_kind") == "capability_domain":
+        if scope_identity.get("scope_kind") in {
+            "capability_domain",
+            "exp3_online_root",
+        }:
             ordinal_value = getattr(request, "attempt_ordinal", None)
             if isinstance(ordinal_value, bool) or not isinstance(ordinal_value, int):
-                raise ValueError("official capability callback requires persisted ordinal")
+                raise ValueError("official callback requires persisted ordinal")
             attempt_ordinal = ordinal_value
+        if scope_identity.get("scope_kind") == "capability_domain":
             plan = freeze_paper_online_checks_plan()
             matches = tuple(
                 (index, call)
@@ -214,6 +435,8 @@ class PaperOnlineProviderEvidenceCallback:
                 "planned_ai_unit_id": call.planned_ai_unit_id,
                 "controlled_rejection": call.controlled_rejection,
             }
+        elif scope_identity.get("scope_kind") == "exp3_online_root":
+            scope_identity["scope_kind"] = "exp3_online"
         if attempt_ordinal is None:
             raise ValueError("official callback attempt ordinal is unresolved")
         provenance_body = _read_callback_json(store, context["provenance_ref"])
@@ -278,7 +501,7 @@ class PaperOnlineProviderEvidenceCallback:
         )
         refs.update(
             {
-                "raw_or_failure": context["raw_output_ref"],
+                "raw_or_failure": context[raw_or_failure_name],
                 "provenance": context["provenance_ref"],
                 "usage": context["usage_ref"],
             }
@@ -310,6 +533,107 @@ class PaperOnlineProviderEvidenceCallback:
             model_record_ref=TypedEvidenceRef(role="model_record", artifact_ref=refs["model_record"]),
             callback_record_ref=TypedEvidenceRef(role="callback_record", artifact_ref=callback_ref),
         )
+        self._publish_and_settle_budget_terminal(
+            submission_id=submission_id,
+            callback_ref=callback_ref,
+            terminal_kind=terminal_kind,
+            usage_summary=usage_summary,
+        )
+
+    def _require_submission_reservation(
+        self, context: Mapping[str, Any]
+    ) -> ReservationRequest:
+        submission_id = str(context.get("submission_id") or "")
+        try:
+            return self._reservation_by_submission[submission_id]
+        except KeyError as exc:
+            raise ValueError(
+                "official callback submission has no current reservation"
+            ) from exc
+
+    def _publish_and_settle_budget_terminal(
+        self,
+        *,
+        submission_id: str,
+        callback_ref: ArtifactRef,
+        terminal_kind: str,
+        usage_summary: Mapping[str, Any],
+    ) -> None:
+        if self._budget_ledger is None:
+            return
+        reservation = self._require_submission_reservation(
+            {"submission_id": submission_id}
+        )
+        self._budget_ledger.publish_terminal(
+            reservation.inventory_digest,
+            reservation.inventory_entry_id,
+            terminal_ref=callback_ref.artifact_id,
+            terminal_kind=terminal_kind,
+        )
+        self._budget_ledger.reconcile_terminal(
+            reservation.inventory_digest,
+            reservation.inventory_entry_id,
+            usage=_provider_usage_from_summary(usage_summary),
+        )
+
+    def reconcile_budget_resume(
+        self,
+        *,
+        reservation: ReservationRequest,
+        artifact_store: ArtifactStore,
+    ) -> str:
+        """恢复单个 slot；本次只 reconcile，绝不隐式重发 provider。"""
+
+        if self._budget_ledger is None:
+            raise ValueError("official callback budget ledger is unavailable")
+        try:
+            record = self._budget_ledger.get_reservation(
+                reservation.inventory_digest,
+                reservation.inventory_entry_id,
+            )
+        except InventoryIdentityError:
+            return "ready"
+        if record.state == "reserved":
+            if not self._budget_ledger.release_reserved(
+                reservation.inventory_digest,
+                reservation.inventory_entry_id,
+            ):
+                raise ValueError("official callback reserved recovery lost ownership")
+            return "released"
+        if record.state == "dispatch_intent":
+            self._budget_ledger.mark_ambiguous(
+                reservation.inventory_digest,
+                reservation.inventory_entry_id,
+            )
+            return "ambiguous"
+        if record.state == "ambiguous":
+            return "ambiguous"
+        if record.state == "terminal_published":
+            if not record.terminal_ref:
+                raise ValueError("official callback terminal publication has no ref")
+            callback_ref = artifact_store.load_artifact_ref(record.terminal_ref)
+            callback_body = _read_callback_json(artifact_store, callback_ref)
+            object_refs = callback_body.get("object_refs")
+            if not isinstance(object_refs, Mapping):
+                raise ValueError("official callback terminal record has no object refs")
+            usage_body = object_refs.get("usage")
+            if not isinstance(usage_body, Mapping):
+                raise ValueError("official callback terminal record has no usage ref")
+            usage_ref = ArtifactRef.from_dict(dict(usage_body))
+            usage_artifact = _read_callback_json(artifact_store, usage_ref)
+            usage_summary = usage_artifact.get("usage_summary")
+            if not isinstance(usage_summary, Mapping):
+                raise ValueError("official callback terminal usage is invalid")
+            self._budget_ledger.reconcile_terminal(
+                reservation.inventory_digest,
+                reservation.inventory_entry_id,
+                usage=_provider_usage_from_summary(usage_summary),
+            )
+            return "settled"
+        if record.state == "settled":
+            return "settled"
+        raise ValueError(f"unsupported official callback budget state: {record.state}")
+
 
     def require_capture(self, submission_id: str) -> CurrentProviderAttemptEvidence:
         try:
@@ -522,6 +846,176 @@ class PaperOnlineProviderEvidenceCallback:
 
     def on_unit_progress(self, context: Any) -> None:
         return None
+
+
+class PaperOnlineRootCallbackFactory:
+    """把 authoritative online root 映射到 callback 与 exact prepared slot 预算。"""
+
+    def __init__(
+        self,
+        *,
+        budget_ledger: PaperBudgetLedger,
+        token_upper_bound: int,
+        cost_upper_bound: Decimal,
+        prompt_admission_profile_digest: str,
+    ) -> None:
+        self._budget_ledger = budget_ledger
+        self._token_upper_bound = token_upper_bound
+        self._cost_upper_bound = cost_upper_bound
+        self._prompt_admission_profile_digest = prompt_admission_profile_digest
+        self._callbacks: list[PaperOnlineProviderEvidenceCallback] = []
+        self._lock = Lock()
+
+    def __call__(self, **root_context: Any) -> PaperOnlineProviderEvidenceCallback:
+        condition = root_context.get("condition")
+        case_id = str(root_context.get("case_id") or "")
+        plan = freeze_paper_online_checks_plan()
+        resolver = lambda context: self._reservation_request(
+            context=context,
+            ai_api_config=root_context.get("ai_api_config"),
+        )
+        exp3_refs = tuple(
+            ref
+            for ref in plan.exp3_root_refs
+            if ref.case_id == case_id
+            and ref.check_kind == getattr(condition, "fault_type", None)
+            and ref.repeat_id == getattr(condition, "repeat_id", None)
+        )
+        exp2_refs = tuple(
+            ref
+            for ref in plan.exp2_condition_refs
+            if ref.case_id == case_id
+            and ref.worker_count == getattr(condition, "worker_count", None)
+            and ref.repeat_id == getattr(condition, "repeat_id", None)
+        )
+        capability_factor = plan.capability_calls[0].case_id
+        capability_lean = plan.capability_calls[2].case_id
+        if len(exp3_refs) == 1:
+            callback = PaperOnlineProviderEvidenceCallback.for_exp3_root(
+                exp3_refs[0],
+                budget_ledger=self._budget_ledger,
+                reservation_request_resolver=resolver,
+            )
+        elif len(exp2_refs) == 1:
+            callback = PaperOnlineProviderEvidenceCallback.for_exp2_condition(
+                exp2_refs[0],
+                budget_ledger=self._budget_ledger,
+                reservation_request_resolver=resolver,
+            )
+        elif case_id == capability_factor:
+            callback = PaperOnlineProviderEvidenceCallback.for_capability_domain(
+                "factorization",
+                budget_ledger=self._budget_ledger,
+                reservation_request_resolver=resolver,
+            )
+        elif case_id == capability_lean:
+            callback = PaperOnlineProviderEvidenceCallback.for_capability_domain(
+                "lean_proof",
+                budget_ledger=self._budget_ledger,
+                reservation_request_resolver=resolver,
+            )
+        else:
+            raise ValueError("online root is not present in authoritative checks plan")
+        with self._lock:
+            self._callbacks.append(callback)
+        return callback
+
+    @property
+    def callbacks(self) -> tuple[PaperOnlineProviderEvidenceCallback, ...]:
+        with self._lock:
+            return tuple(self._callbacks)
+
+    def _reservation_request(
+        self,
+        *,
+        context: Mapping[str, Any],
+        ai_api_config: Any,
+    ) -> ReservationRequest:
+        prepared = context.get("prepared_request")
+        if prepared is None:
+            raise ValueError("online budget resolver requires prepared request")
+        case_record_digest = digest_json(
+            {
+                "schema_version": "tokenshare.paper_online_case_identity.v1",
+                "case_id": prepared.case_id,
+            }
+        )
+        prompt_profile_digest = digest_json(
+            {
+                "prompt_profile_id": prepared.prompt_profile_id,
+                "prompt_serialization_schema": prepared.prompt_serialization_schema,
+            }
+        )
+        slot = semantic_slot_key(
+            case_record_digest=case_record_digest,
+            planned_ai_unit_id=prepared.planned_ai_unit_id,
+            sample_slot_index=prepared.sample_slot_index,
+            replacement_slot=prepared.replacement_slot,
+            provider_config_digest=prepared.provider_config_digest,
+            prompt_profile_digest=prompt_profile_digest,
+            prompt_admission_profile_digest=self._prompt_admission_profile_digest,
+            plugin_version=prepared.plugin_version,
+        )
+        provisional = ResponseBankInventoryRow(
+            inventory_entry_id="",
+            semantic_slot_key=slot,
+            case_record_digest=case_record_digest,
+            planned_ai_unit_id=prepared.planned_ai_unit_id,
+            sample_slot_index=prepared.sample_slot_index,
+            replacement_slot=prepared.replacement_slot,
+            provider_config_digest=prepared.provider_config_digest,
+            prompt_profile_digest=prompt_profile_digest,
+            prompt_admission_profile_digest=self._prompt_admission_profile_digest,
+            plugin_version=prepared.plugin_version,
+            entry_id=prepared.entry_id,
+            body_digest=prepared.body_digest,
+            inference_request_digest=prepared.inference_request_digest,
+        )
+        row = replace(
+            provisional,
+            inventory_entry_id=inventory_entry_id(provisional),
+        )
+        inventory_digest = response_bank_inventory_digest((row,))
+        self._budget_ledger.preregister_inventory(
+            inventory_digest=inventory_digest,
+            rows=(row,),
+        )
+        entries = tuple(getattr(ai_api_config, "entries", ()))
+        entry = next(
+            (value for value in entries if value.entry_id == prepared.entry_id),
+            None,
+        )
+        if entry is None:
+            raise ValueError("online prepared entry is absent from AI config")
+        pricing = dict(entry.pricing)
+        input_rates = tuple(
+            Decimal(str(pricing[name]))
+            for name in (
+                "input_per_million_tokens",
+                "cached_input_per_million_tokens",
+                "uncached_input_per_million_tokens",
+            )
+            if name in pricing
+        )
+        if not input_rates or "output_per_million_tokens" not in pricing:
+            raise ValueError("online provider pricing snapshot is incomplete")
+        return ReservationRequest(
+            inventory_digest=inventory_digest,
+            inventory_entry_id=row.inventory_entry_id,
+            semantic_slot_key=row.semantic_slot_key,
+            inference_request_digest=row.inference_request_digest,
+            prompt_admission_profile_digest=row.prompt_admission_profile_digest,
+            token_upper_bound=self._token_upper_bound,
+            cost_upper_bound=self._cost_upper_bound,
+            provider_family=str(context.get("provider_family") or ""),
+            frozen_pricing=FrozenPricing(
+                currency=str(pricing["currency"]),
+                input_per_million_tokens=max(input_rates),
+                output_per_million_tokens=Decimal(
+                    str(pricing["output_per_million_tokens"])
+                ),
+            ),
+        )
 
 
 def produce_capability_online_evidence(**kwargs: Any) -> Any:
@@ -1875,6 +2369,22 @@ def _read_callback_json(store: ArtifactStore, ref: ArtifactRef) -> dict[str, Any
     if not isinstance(body, dict):
         raise ValueError("official callback artifact must be a JSON object")
     return body
+
+
+def _provider_usage_from_summary(
+    usage_summary: Mapping[str, Any],
+) -> ProviderUsage | None:
+    prompt_tokens = usage_summary.get("prompt_tokens")
+    completion_tokens = usage_summary.get("completion_tokens")
+    if any(
+        isinstance(value, bool) or not isinstance(value, int) or value < 0
+        for value in (prompt_tokens, completion_tokens)
+    ):
+        return None
+    return ProviderUsage(
+        input_tokens=prompt_tokens,
+        output_tokens=completion_tokens,
+    )
 
 
 def _save_online_callback_object(

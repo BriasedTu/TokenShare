@@ -4,6 +4,7 @@ from dataclasses import dataclass, replace as dataclass_replace
 from decimal import Decimal
 import json
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -18,6 +19,7 @@ from tokenshare.executors.ai_api import AIAPIExecutor
 from tokenshare.executors.ai_api_config import load_ai_api_config
 
 from tokenshare.experiments.paper_formal_callbacks import (
+    PaperOnlineRootCallbackFactory,
     PaperOnlineProviderEvidenceCallback,
     produce_exp3_online_recovery_evidence,
     run_exp1_normal_strategy,
@@ -30,6 +32,18 @@ from tokenshare.experiments.paper_formal_callbacks import (
 from tokenshare.experiments.paper_online_checks import (
     EXP3_RECOVERY_CHAIN_ROLES,
     freeze_paper_online_checks_plan,
+)
+from tokenshare.experiments.paper_budget import PaperBudgetLimits
+from tokenshare.experiments.paper_budget_ledger import (
+    PaperBudgetLedger,
+    ReservationRequest,
+)
+from tokenshare.experiments.paper_resource_accounting import FrozenPricing
+from tokenshare.executors.response_bank import (
+    ResponseBankInventoryRow,
+    inventory_entry_id,
+    response_bank_inventory_digest,
+    semantic_slot_key,
 )
 from tokenshare.experiments.paper_workers import WorkerDeathKillPoint
 from tokenshare.storage.artifacts import ArtifactStore
@@ -122,6 +136,285 @@ def _run_persisted_online_attempt(
     )
     assert submission.raw_output_ref is not None
     return callback.require_capture(submission_id)
+
+
+def _callback_budget(
+    tmp_path: Path,
+) -> tuple[PaperBudgetLedger, ReservationRequest]:
+    slot = semantic_slot_key(
+        case_record_digest="case-digest",
+        planned_ai_unit_id="unit-1",
+        sample_slot_index=0,
+        replacement_slot=0,
+        provider_config_digest="provider-config-digest",
+        prompt_profile_digest="prompt-profile-digest",
+        prompt_admission_profile_digest="admission-digest",
+        plugin_version="plugin.v1",
+    )
+    provisional = ResponseBankInventoryRow(
+        inventory_entry_id="",
+        semantic_slot_key=slot,
+        case_record_digest="case-digest",
+        planned_ai_unit_id="unit-1",
+        sample_slot_index=0,
+        replacement_slot=0,
+        provider_config_digest="provider-config-digest",
+        prompt_profile_digest="prompt-profile-digest",
+        prompt_admission_profile_digest="admission-digest",
+        plugin_version="plugin.v1",
+        entry_id="sf_qwen",
+        body_digest="body-digest",
+        inference_request_digest="request-digest",
+    )
+    row = dataclass_replace(
+        provisional,
+        inventory_entry_id=inventory_entry_id(provisional),
+    )
+    digest = response_bank_inventory_digest((row,))
+    ledger = PaperBudgetLedger(
+        tmp_path / "online-budget.sqlite3",
+        limits=PaperBudgetLimits(
+            calls=10,
+            tokens=10_000,
+            cny=Decimal("100"),
+            deepseek_cumulative_cny=Decimal("100"),
+        ),
+    )
+    ledger.preregister_inventory(inventory_digest=digest, rows=(row,))
+    return ledger, ReservationRequest(
+        inventory_digest=digest,
+        inventory_entry_id=row.inventory_entry_id,
+        semantic_slot_key=row.semantic_slot_key,
+        inference_request_digest=row.inference_request_digest,
+        prompt_admission_profile_digest=row.prompt_admission_profile_digest,
+        token_upper_bound=100,
+        cost_upper_bound=Decimal("1"),
+        provider_family="siliconflow",
+        frozen_pricing=FrozenPricing(
+            currency="CNY",
+            input_per_million_tokens=Decimal("0"),
+            output_per_million_tokens=Decimal("0"),
+        ),
+    )
+
+
+def test_online_callback_settles_success_and_provider_failure_from_persisted_refs(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("SILICONFLOW_API_KEY_A", "synthetic-key")
+    plan = freeze_paper_online_checks_plan()
+
+    success_ledger, success_request = _callback_budget(tmp_path / "success")
+    success_callback = PaperOnlineProviderEvidenceCallback.for_exp3_attempt(
+        plan.exp3_root_refs[0],
+        attempt_ordinal=0,
+        budget_ledger=success_ledger,
+        reservation_request_resolver=lambda _context: success_request,
+    )
+    success = _run_persisted_online_attempt(
+        ArtifactStore(tmp_path / "success" / "artifacts"),
+        callback=success_callback,
+        submission_id="attempt-success",
+        submitted_at="2026-08-03T00:00:00Z",
+    )
+    success_row = success_ledger.get_reservation(
+        success_request.inventory_digest,
+        success_request.inventory_entry_id,
+    )
+    assert success_row.state == "settled"
+    assert success_row.terminal_kind == "success"
+    assert success_row.charged_tokens == 24
+    assert success.raw_or_failure_ref.artifact_ref.artifact_type == "RawModelOutput"
+
+    failure_ledger, failure_request = _callback_budget(tmp_path / "failure")
+    failure_store = ArtifactStore(tmp_path / "failure" / "artifacts")
+    failure_callback = PaperOnlineProviderEvidenceCallback.for_exp3_attempt(
+        plan.exp3_root_refs[0],
+        attempt_ordinal=0,
+        budget_ledger=failure_ledger,
+        reservation_request_resolver=lambda _context: failure_request,
+    )
+    request = dataclass_replace(
+        make_ai_request(failure_store, request_id="request-attempt-failure"),
+        attempt_id="attempt-failure",
+        unit_id="unit-1",
+    )
+    submission = AIAPIExecutor(
+        executor_id="task27-official-failure-callback",
+        executor_version="0.1.0",
+        artifact_store=failure_store,
+        config=load_ai_api_config(_single_entry_config()),
+        transport=FakeSiliconFlowTransport(
+            [FakeProviderResponse(status_code=503, body={"error": "unavailable"})]
+        ),
+        post_raw_output_hook=failure_callback,
+    ).execute(
+        request,
+        submission_id="attempt-failure",
+        submitted_at="2026-08-03T00:00:01Z",
+    )
+    failure = failure_callback.require_capture("attempt-failure")
+    failure_row = failure_ledger.get_reservation(
+        failure_request.inventory_digest,
+        failure_request.inventory_entry_id,
+    )
+    assert submission.raw_output_ref is None
+    assert failure_row.state == "settled"
+    assert failure_row.terminal_kind == "provider_failure"
+    assert failure_row.usage_missing is True
+    assert failure.raw_or_failure_ref.artifact_ref.artifact_type == "AIProviderFailure"
+    assert failure.usage_ref.artifact_ref.artifact_type == "AIProviderTerminalUsage"
+
+
+def test_online_callback_releases_pre_intent_abort_and_reconciles_crash_states(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plan = freeze_paper_online_checks_plan()
+    ledger, reservation = _callback_budget(tmp_path)
+    callback = PaperOnlineProviderEvidenceCallback.for_exp3_attempt(
+        plan.exp3_root_refs[0],
+        attempt_ordinal=0,
+        budget_ledger=ledger,
+        reservation_request_resolver=lambda _context: reservation,
+    )
+    store = ArtifactStore(tmp_path / "artifacts")
+    monkeypatch.delenv("SILICONFLOW_API_KEY_A", raising=False)
+    request = dataclass_replace(
+        make_ai_request(store, request_id="request-missing-secret"),
+        attempt_id="attempt-missing-secret",
+        unit_id="unit-1",
+    )
+    submission = AIAPIExecutor(
+        executor_id="task27-official-pre-intent-abort",
+        executor_version="0.1.0",
+        artifact_store=store,
+        config=load_ai_api_config(_single_entry_config()),
+        transport=FakeSiliconFlowTransport([]),
+        post_raw_output_hook=callback,
+    ).execute(
+        request,
+        submission_id="attempt-missing-secret",
+        submitted_at="2026-08-03T00:00:00Z",
+    )
+    assert submission.error is not None
+    assert ledger.list_reservations() == ()
+
+    ledger.reserve(reservation)
+    assert callback.reconcile_budget_resume(
+        reservation=reservation,
+        artifact_store=store,
+    ) == "released"
+    assert ledger.list_reservations() == ()
+
+    ledger.reserve(reservation)
+    ledger.mark_dispatch_intent(
+        reservation.inventory_digest,
+        reservation.inventory_entry_id,
+    )
+    assert callback.reconcile_budget_resume(
+        reservation=reservation,
+        artifact_store=store,
+    ) == "ambiguous"
+    assert ledger.get_reservation(
+        reservation.inventory_digest,
+        reservation.inventory_entry_id,
+    ).state == "ambiguous"
+
+    terminal_ledger, terminal_reservation = _callback_budget(tmp_path / "terminal")
+    terminal_store = ArtifactStore(tmp_path / "terminal" / "artifacts")
+    terminal_callback = PaperOnlineProviderEvidenceCallback.for_exp3_attempt(
+        plan.exp3_root_refs[0],
+        attempt_ordinal=0,
+        budget_ledger=terminal_ledger,
+        reservation_request_resolver=lambda _context: terminal_reservation,
+    )
+    usage_ref = terminal_store.save_json(
+        {
+            "schema_version": "phase7.ai_provider_response_usage.v1",
+            "usage_summary": {"prompt_tokens": 3, "completion_tokens": 4},
+        },
+        artifact_id="resume-usage",
+        artifact_type="AIProviderResponseUsage",
+        artifact_schema_id="phase7.ai_provider_response_usage",
+        artifact_schema_version="v1",
+        source={"test": "callback-resume"},
+        metadata={},
+        created_at="2026-08-03T00:00:01Z",
+    )
+    callback_ref = terminal_store.save_json(
+        {
+            "schema_version": "tokenshare.paper_online_callback_record.v1",
+            "object_refs": {"usage": usage_ref.to_dict()},
+        },
+        artifact_id="resume-callback",
+        artifact_type="PaperOnlineCallbackRecord",
+        artifact_schema_id="tokenshare.paper_online_callback_record",
+        artifact_schema_version="v1",
+        source={"test": "callback-resume"},
+        metadata={},
+        created_at="2026-08-03T00:00:01Z",
+    )
+    terminal_ledger.reserve(terminal_reservation)
+    terminal_ledger.mark_dispatch_intent(
+        terminal_reservation.inventory_digest,
+        terminal_reservation.inventory_entry_id,
+    )
+    terminal_ledger.publish_terminal(
+        terminal_reservation.inventory_digest,
+        terminal_reservation.inventory_entry_id,
+        terminal_ref=callback_ref.artifact_id,
+        terminal_kind="success",
+    )
+    assert terminal_callback.reconcile_budget_resume(
+        reservation=terminal_reservation,
+        artifact_store=terminal_store,
+    ) == "settled"
+
+
+def test_online_root_factory_maps_canonical_runner_roots_to_authoritative_refs(
+    tmp_path: Path,
+) -> None:
+    plan = freeze_paper_online_checks_plan()
+    ledger, _reservation = _callback_budget(tmp_path)
+    factory = PaperOnlineRootCallbackFactory(
+        budget_ledger=ledger,
+        token_upper_bound=332_768,
+        cost_upper_bound=Decimal("1.898304"),
+        prompt_admission_profile_digest="sha256:" + "a" * 64,
+    )
+
+    factor = factory(
+        condition=SimpleNamespace(worker_count=10, repeat_id=0, fault_type="none"),
+        case_id=plan.capability_calls[0].case_id,
+        ai_api_config=object(),
+    )
+    exp2_ref = plan.exp2_condition_refs[0]
+    exp2 = factory(
+        condition=SimpleNamespace(
+            worker_count=exp2_ref.worker_count,
+            repeat_id=exp2_ref.repeat_id,
+            fault_type="none",
+        ),
+        case_id=exp2_ref.case_id,
+        ai_api_config=object(),
+    )
+    exp3_ref = plan.exp3_root_refs[0]
+    exp3 = factory(
+        condition=SimpleNamespace(
+            worker_count=10,
+            repeat_id=exp3_ref.repeat_id,
+            fault_type=exp3_ref.check_kind,
+        ),
+        case_id=exp3_ref.case_id,
+        ai_api_config=object(),
+    )
+
+    assert factor._scope_identity["scope_kind"] == "capability_domain"
+    assert exp2._scope_identity["condition_id"] == exp2_ref.condition_id
+    assert exp3._scope_identity["scope_kind"] == "exp3_online_root"
+    assert factory.callbacks == (factor, exp2, exp3)
 
 
 def test_exp1_strategy_consumes_complete_frozen_order() -> None:

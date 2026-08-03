@@ -3,14 +3,16 @@
 from __future__ import annotations
 
 from collections import deque
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass, field, is_dataclass, replace
 from datetime import datetime, timedelta, timezone
 from enum import Enum
 import hashlib
 import json
+import pickle
 from pathlib import Path
 import shutil
+import tempfile
 from threading import Lock
 from typing import Any
 import uuid
@@ -47,20 +49,56 @@ from tokenshare.experiments.paper_formal_callbacks import (
 )
 from tokenshare.experiments.paper_faults import PaperFaultRuntimeHooks
 from tokenshare.experiments.paper_exp2_scalability import EXP2_EXPERIMENT_ID
+from tokenshare.experiments.paper_exp3_metrics import (
+    Exp3PersistedObservation,
+    Exp3OnlineRecoveryInput,
+    Exp3TraceConditionInput,
+)
+from tokenshare.experiments.paper_exp1_metrics import (
+    Exp1ActualProviderAttemptFacts,
+    Exp1HydratedDirectRow,
+)
+from tokenshare.experiments.paper_exp2_metrics import (
+    Exp2AIUnitFacts,
+    Exp2OnlineFirstAttemptFacts,
+    Exp2OnlineHydratedRoot,
+    Exp2TraceConsumptionFacts,
+    Exp2TraceHydratedRoot,
+)
+from tokenshare.experiments.paper_exp4_metrics import (
+    Exp4DirectRootFacts,
+    Exp4ModeInput,
+    Exp4PersistedObservation,
+)
+from tokenshare.experiments.paper_exp5_metrics import (
+    Exp5FirstProviderAttemptFacts,
+    Exp5ModelRepeatFacts,
+    Exp5PlannedAIUnitFacts,
+    Exp5PreregisteredRootFacts,
+)
 from tokenshare.experiments.paper_model_policy import (
     EXP5_COMPARABLE_REQUEST_CONTROL_FIELDS,
     EXP5_DOMAIN_EXECUTION_CONTRACTS,
     exp5_provider_specific_reasoning_controls,
 )
 from tokenshare.experiments.paper_models import (
+    ExternalBankObjectLocator,
     PaperEvidenceEligibilityFacts,
     PaperBudgetResult,
     PaperConditionResult,
     PaperExperimentCondition,
     PaperStatus,
     PaperSuiteResult,
+    PaperDirectRootInventoryRow,
+    PreregisteredRootInventoryManifest,
     digest_json,
     evaluate_versioned_paper_evidence,
+)
+from tokenshare.experiments.paper_direct_results import (
+    CanonicalDirectRootEvidence,
+    _DIRECT_RESULT_FACTORY_TOKEN,
+    build_canonical_direct_evidence,
+    project_paper_direct_results,
 )
 from tokenshare.experiments.paper_unit_commitments import (
     build_ai_unit_binding_from_request,
@@ -72,6 +110,8 @@ from tokenshare.experiments.paper_terminal_outcomes import (
     PaperTerminalOutcome,
 )
 from tokenshare.storage.artifacts import ArtifactStore
+from tokenshare.storage.events import EventLedger
+from tokenshare.local_runtime.projection import project_protocol_run
 from tokenshare.local_runtime import (
     ExperimentAblationGateAppliedPayloadV1,
     NoOpRuntimeHooks,
@@ -262,6 +302,73 @@ class _RollingDiskForecast:
                 0,
                 self.in_flight_forecast_bytes - root_reservation_bytes,
             )
+
+
+def _compose_official_runtime_hooks(
+    online_hook: Any | None,
+    existing_hook: Any | None,
+) -> Any | None:
+    if online_hook is None:
+        return existing_hook
+    if existing_hook is None:
+        return online_hook
+    return _CompositeOfficialRuntimeHooks(online_hook, existing_hook)
+
+
+class _CompositeOfficialRuntimeHooks:
+    """先保存 online official evidence，再让既有 runtime hook 决定 mutation。"""
+
+    def __init__(self, online_hook: Any, existing_hook: Any) -> None:
+        self._online_hook = online_hook
+        self._existing_hook = existing_hook
+
+    def __call__(self, **context: Any) -> Any:
+        return self._delegate("__call__", **context)
+
+    def after_prepared_dispatch(self, **context: Any) -> Any:
+        return self._delegate("after_prepared_dispatch", **context)
+
+    def before_provider_dispatch(self, **context: Any) -> Any:
+        return self._delegate("before_provider_dispatch", **context)
+
+    def after_pre_transport_abort(self, **context: Any) -> Any:
+        return self._delegate("after_pre_transport_abort", **context)
+
+    def after_provider_failure_persisted(self, **context: Any) -> Any:
+        return self._delegate("after_provider_failure_persisted", **context)
+
+    def after_raw_output_persisted(self, context: Any) -> Any:
+        return self._delegate("after_raw_output_persisted", context)
+
+    def after_parsed_candidate_persisted(self, context: Any) -> Any:
+        return self._delegate("after_parsed_candidate_persisted", context)
+
+    def before_parser(self, context: Any) -> Any:
+        return self._delegate("before_parser", context)
+
+    def before_verification(self, context: Any) -> Any:
+        return self._delegate("before_verification", context)
+
+    def before_requeue(self, context: Any) -> Any:
+        return self._delegate("before_requeue", context)
+
+    def before_merge(self, context: Any) -> Any:
+        return self._delegate("before_merge", context)
+
+    def on_unit_progress(self, context: Any) -> Any:
+        return self._delegate("on_unit_progress", context)
+
+    def _delegate(self, method_name: str, *args: Any, **kwargs: Any) -> Any:
+        values: list[Any] = []
+        for hook in (self._online_hook, self._existing_hook):
+            method = hook if method_name == "__call__" else getattr(hook, method_name, None)
+            values.append(
+                method(*args, **kwargs) if callable(method) else None
+            )
+        non_null = tuple(value for value in values if value is not None)
+        if len(non_null) > 1 and non_null[0] != non_null[1]:
+            raise ValueError(f"conflicting composite runtime hook result: {method_name}")
+        return non_null[-1] if non_null else None
 
 
 class _Exp3RuntimeHookBridge(NoOpRuntimeHooks):
@@ -542,6 +649,248 @@ def persist_paper_traceability_replay_input_root(
     )
 
 
+def _paper_trace_object_role(role: str) -> str:
+    return {
+        "raw_output": "raw_output_or_provider_failure",
+        "provider_failure": "raw_output_or_provider_failure",
+        "usage": "usage_status",
+    }.get(role, role)
+
+
+@dataclass(frozen=True)
+class _PaperTraceSourceResolver:
+    """把 response-bank 原生 role 适配到 paper locator ABI。"""
+
+    resolver: Any
+
+    @property
+    def root_path(self) -> Path:
+        return self.resolver.root_path
+
+    @property
+    def index(self) -> Any:
+        return self.resolver.index
+
+    def entry(self, entry_id: str) -> Any:
+        return self.resolver.entry(entry_id)
+
+    def read_verified(self, locator: ExternalBankObjectLocator) -> bytes:
+        entry = self.resolver.entry(locator.entry_id)
+        matches = tuple(
+            value
+            for value in entry.object_locators
+            if value.object_digest == locator.object_digest
+            and _paper_trace_object_role(value.object_role) == locator.object_role
+        )
+        if len(matches) != 1:
+            raise ValueError("paper trace source locator is ambiguous")
+        return self.resolver.read_verified(matches[0])
+
+
+@dataclass(frozen=True, kw_only=True)
+class _RunnerExp3TraceMetricInput(Exp3TraceConditionInput):
+    """保留 projector typed ABI，同时让 direct rows 对 lineage 可达。"""
+
+    direct_results: tuple[Any, ...]
+
+
+@dataclass(frozen=True, kw_only=True)
+class _RunnerExp3OnlineMetricInput(Exp3OnlineRecoveryInput):
+    direct_results: tuple[Any, ...]
+
+
+@dataclass(frozen=True, kw_only=True)
+class _RunnerExp2TraceMetricInput(Exp2TraceHydratedRoot):
+    """Authoritative direct id 在持久化层保持 frozen；metric view 另行生成。"""
+
+    def __post_init__(self) -> None:
+        direct = self.direct_result
+        if (
+            direct.experiment_id == "exp2_real_ai_scalability"
+            and direct.evidence_class == "real_model_trace_protocol_run"
+        ):
+            validated = Exp2TraceHydratedRoot(
+                direct_result=replace(
+                    direct,
+                    experiment_id="experiment_2_trace",
+                    _factory_token=_DIRECT_RESULT_FACTORY_TOKEN,
+                ),
+                persisted_logical_makespan_ms=self.persisted_logical_makespan_ms,
+                trace_consumptions=self.trace_consumptions,
+                ai_units=self.ai_units,
+                in_flight_at_witness=self.in_flight_at_witness,
+                observed_peak_concurrency=self.observed_peak_concurrency,
+            )
+            del validated
+            return
+        Exp2TraceHydratedRoot.__post_init__(self)
+
+
+@dataclass(frozen=True, kw_only=True)
+class _RunnerExp2OnlineMetricInput(Exp2OnlineHydratedRoot):
+    def __post_init__(self) -> None:
+        direct = self.direct_result
+        if (
+            direct.experiment_id == "exp2_real_ai_scalability"
+            and direct.evidence_class == "online_real_provider"
+        ):
+            validated = Exp2OnlineHydratedRoot(
+                direct_result=replace(
+                    direct,
+                    experiment_id="experiment_2_online",
+                    _factory_token=_DIRECT_RESULT_FACTORY_TOKEN,
+                ),
+                protocol_first_dispatch_at_ms=self.protocol_first_dispatch_at_ms,
+                root_terminal_at_ms=self.root_terminal_at_ms,
+                first_provider_attempts=self.first_provider_attempts,
+            )
+            del validated
+            return
+        Exp2OnlineHydratedRoot.__post_init__(self)
+
+
+@dataclass
+class _CanonicalDirectCollector:
+    """保存由 adapter 原生 ledger/store 验证过的 direct evidence。"""
+
+    inventory: PreregisteredRootInventoryManifest
+    condition_manifests: tuple[Mapping[str, Any], ...]
+    catalog_manifests: tuple[Mapping[str, Any], ...]
+    rows_by_key: Mapping[tuple[str, str], PaperDirectRootInventoryRow]
+    evidence: list[CanonicalDirectRootEvidence] = field(default_factory=list)
+    current_provider_object_files: dict[str, Path] = field(default_factory=dict)
+    current_trace_wrappers_by_root: dict[str, tuple[CurrentTraceWrapper, ...]] = field(
+        default_factory=dict
+    )
+    trace_source_bindings_by_root: dict[str, tuple[Any, ...]] = field(
+        default_factory=dict
+    )
+    eligibility_facts_by_root: dict[str, PaperEvidenceEligibilityFacts] = field(
+        default_factory=dict
+    )
+    source_resolvers: dict[str, Any] = field(default_factory=dict)
+    producer_facts_by_root: dict[str, Mapping[str, Any]] = field(
+        default_factory=dict
+    )
+    lock: Lock = field(default_factory=Lock, compare=False, repr=False)
+
+
+def load_paper_traceability_replay_input_root(
+    output_root: str | Path,
+) -> Any:
+    """加载 runner factory 生成的 handle，并用官方 loader 完整验证 closure。"""
+
+    from tokenshare.experiments.paper_traceability import (
+        ProtectedReplayInputRoot,
+        _load_protected_replay_inputs,
+    )
+
+    suite_root = Path(output_root)
+    manifest = _required_json_object(
+        suite_root / "suite_manifest.json",
+        label="suite manifest",
+    )
+    ref = manifest.get("traceability_replay_input_root_ref")
+    if not isinstance(ref, Mapping):
+        raise ValueError("suite manifest has no traceability replay input root")
+    handle_path = suite_root / str(ref.get("handle_path", ""))
+    if not handle_path.is_file():
+        raise ValueError("traceability replay input handle is missing")
+    content = handle_path.read_bytes()
+    if _sha256_bytes(content) != ref.get("handle_digest"):
+        raise ValueError("traceability replay input handle digest mismatch")
+    value = pickle.loads(content)
+    if not isinstance(value, ProtectedReplayInputRoot):
+        raise ValueError("traceability replay input handle type mismatch")
+    if value.descriptor_digest != ref.get("descriptor_digest"):
+        raise ValueError("traceability replay input descriptor digest mismatch")
+    _load_protected_replay_inputs(value)
+    return value
+
+
+def load_paper_traceability_replay_inputs(output_root: str | Path) -> Any:
+    """返回已由官方 protected-root loader 验证的 typed replay inputs。"""
+
+    from tokenshare.experiments.paper_traceability import (
+        _load_protected_replay_inputs,
+    )
+
+    return _load_protected_replay_inputs(
+        load_paper_traceability_replay_input_root(output_root)
+    )
+
+
+def recompute_paper_formal_metrics_from_runner_inputs(
+    output_root: str | Path,
+) -> Any:
+    """从 runner 的 protected closure 重算，并只发布 derived metric files。"""
+
+    from tokenshare.experiments.paper_formal_metrics import (
+        derive_paper_metric_projection_rows,
+        recompute_paper_formal_metrics,
+    )
+
+    publication_root = Path(output_root)
+    loaded = load_paper_traceability_replay_inputs(publication_root)
+    with tempfile.TemporaryDirectory(
+        prefix="tokenshare-formal-metrics-",
+        dir=publication_root.parent,
+    ) as staging_directory:
+        staging_root = Path(staging_directory)
+        resolved_staging_root = staging_root.resolve(strict=False)
+        for relative_name, content in loaded.current_evidence_files:
+            relative = Path(relative_name)
+            target = (staging_root / relative).resolve(strict=False)
+            if (
+                relative.is_absolute()
+                or ".." in relative.parts
+                or (
+                    target != resolved_staging_root
+                    and resolved_staging_root not in target.parents
+                )
+            ):
+                raise ValueError("runner metric evidence path escapes staging root")
+            _atomic_write_bytes(target, content)
+        current = loaded.current
+        source = loaded.source
+        metrics = recompute_paper_formal_metrics(
+            staging_root,
+            loaded.direct,
+            global_infrastructure_valid=bool(
+                current["global_infrastructure_valid"]
+            ),
+            canonical_runtime_evidence=current["canonical_runtime_evidence"],
+            requested_lineage_root_ids=current["requested_lineage_root_ids"],
+            current_trace_wrappers_by_root=current[
+                "current_trace_wrappers_by_root"
+            ],
+            trace_source_bindings_by_root=source[
+                "trace_source_bindings_by_root"
+            ],
+            eligibility_facts_by_root=current["eligibility_facts_by_root"],
+            metric_projection_rows=derive_paper_metric_projection_rows(
+                loaded.direct
+            ),
+        )
+        for ref in metrics.output_refs:
+            relative = Path(str(ref.get("path", "")))
+            source_path = (staging_root / relative).resolve(strict=False)
+            target = (publication_root / relative).resolve(strict=False)
+            resolved_publication_root = publication_root.resolve(strict=False)
+            if (
+                relative.is_absolute()
+                or ".." in relative.parts
+                or not source_path.is_file()
+                or (
+                    target != resolved_publication_root
+                    and resolved_publication_root not in target.parents
+                )
+            ):
+                raise ValueError("runner metric output path is invalid")
+            _atomic_write_bytes(target, source_path.read_bytes())
+        return metrics
+
+
 def _suite_file_ref(suite_root: Path, relative_path: str) -> dict[str, Any]:
     path = suite_root / relative_path
     if not path.is_file():
@@ -550,6 +899,208 @@ def _suite_file_ref(suite_root: Path, relative_path: str) -> dict[str, Any]:
         "path": relative_path,
         "content_hash": _sha256_bytes(path.read_bytes()),
     }
+
+
+def _direct_evidence_class(
+    *,
+    real_transport: bool,
+    transport: Any,
+    trace_context: PaperFormalTraceContext | None,
+) -> str:
+    if _is_offline_capturing_transport(transport):
+        return "regression_only"
+    if trace_context is not None:
+        return "real_model_trace_protocol_run"
+    if real_transport:
+        return "online_real_provider"
+    return "regression_only"
+
+
+def _build_canonical_direct_collector(
+    *,
+    bound_plans: Sequence[
+        tuple[PaperExperimentDispatchPlan, Sequence[tuple[Any, Any]]]
+    ],
+    catalog_manifest: Any,
+    normalized_root_filter: Mapping[str, tuple[str, ...]],
+    evidence_class: str,
+) -> _CanonicalDirectCollector:
+    cases = _catalog_cases_by_id(catalog_manifest)
+    inventory_id = "paper-formal-direct:" + digest_json(
+        [
+            {
+                "experiment_id": plan.experiment_id,
+                "conditions": [condition.condition_id for condition, _ in items],
+            }
+            for plan, items in bound_plans
+        ]
+    )
+    condition_records: list[dict[str, Any]] = []
+    condition_refs: dict[str, dict[str, Any]] = {}
+    case_records: dict[str, dict[str, Any]] = {}
+    rows: list[PaperDirectRootInventoryRow] = []
+    row_inputs: list[tuple[Any, str, dict[str, Any], dict[str, Any]]] = []
+    for plan, items in bound_plans:
+        for condition, selection in items:
+            fault_type = str(condition.fault_type)
+            axes = {
+                "domain": str(condition.domain),
+                "difficulty": str(condition.paper_difficulty or condition.difficulty),
+                "topic_family": condition.topic_family,
+                "worker_count": int(condition.worker_count),
+                "sample_slot_index": int(condition.repeat_id),
+                "fault_condition": (
+                    fault_type
+                    if fault_type in {
+                        "false_positive",
+                        "false_negative",
+                        "no_return",
+                        "late_submission",
+                        "executor_error",
+                    }
+                    else None
+                ),
+                "death_condition": (
+                    "worker_death" if fault_type == "worker_death" else None
+                ),
+                "ablation_mode": (
+                    "FULL"
+                    if str(condition.ablation_mode) in {"FULL", "full_protocol"}
+                    else str(condition.ablation_mode)
+                    if str(condition.ablation_mode).startswith("NO_")
+                    else None
+                ),
+                "model_endpoint_id": (
+                    condition.model_entry_id or condition.provider_model_id
+                ),
+            }
+            record_body = {
+                "schema_version": "tokenshare.preregistered_condition_record.v1",
+                "condition_id": condition.condition_id,
+                "condition_axes": axes,
+                "condition_axes_digest": digest_json(axes),
+            }
+            record = {
+                **record_body,
+                "condition_record_digest": digest_json(record_body),
+            }
+            condition_records.append(record)
+            selected_case_ids = normalized_root_filter.get(
+                condition.condition_id,
+                tuple(selection.ordered_case_ids),
+            )
+            for case_id in selected_case_ids:
+                case = cases.get(case_id)
+                if not isinstance(case, Mapping):
+                    raise ValueError("direct inventory case is absent from catalog")
+                quantile = case.get("factor_position_quantile", "not_applicable")
+                stratum = case.get("position_stratum") or str(quantile)
+                case_axes = {
+                    "factor_position_quantile": quantile,
+                    "position_stratum": stratum,
+                }
+                case_body = {
+                    "schema_version": "tokenshare.preregistered_case_record.v1",
+                    "case_id": case_id,
+                    "domain": str(condition.domain),
+                    "difficulty": str(
+                        condition.paper_difficulty or condition.difficulty
+                    ),
+                    "case_axes_digest": digest_json(case_axes),
+                    **case_axes,
+                }
+                case_record = {
+                    **case_body,
+                    "case_record_digest": digest_json(case_body),
+                }
+                prior = case_records.setdefault(case_id, case_record)
+                if prior != case_record:
+                    raise ValueError("direct inventory case axes are inconsistent")
+                row_inputs.append((condition, case_id, axes, case_record))
+    condition_manifest_body = {
+        "schema_version": "tokenshare.preregistered_condition_manifest.v1",
+        "records": condition_records,
+    }
+    condition_manifest = {
+        **condition_manifest_body,
+        "condition_manifest_digest": digest_json(condition_manifest_body),
+    }
+    for record in condition_records:
+        condition_refs[str(record["condition_id"])] = {
+            "schema_version": "tokenshare.preregistered_condition_ref.v1",
+            "condition_manifest_digest": condition_manifest[
+                "condition_manifest_digest"
+            ],
+            "condition_record_digest": record["condition_record_digest"],
+            "condition_axes_digest": record["condition_axes_digest"],
+        }
+    catalog_body = {
+        "schema_version": "tokenshare.preregistered_case_catalog_manifest.v1",
+        "records": list(case_records.values()),
+    }
+    canonical_catalog = {
+        **catalog_body,
+        "catalog_digest": digest_json(catalog_body),
+    }
+    for condition, case_id, axes, case_record in row_inputs:
+        root_body = {
+            "experiment_id": condition.experiment_id,
+            "condition_id": condition.condition_id,
+            "case_id": case_id,
+            "repeat_id": int(condition.repeat_id),
+        }
+        root_id = "paper-direct-root:" + digest_json(root_body)
+        values = {
+            "inventory_id": inventory_id,
+            "preregistered_root_run_id": root_id,
+            **root_body,
+            "preregistered_condition_ref": condition_refs[
+                condition.condition_id
+            ],
+            "condition_axes": axes,
+            "preregistered_case_ref": {
+                "schema_version": "tokenshare.preregistered_case_ref.v1",
+                "catalog_digest": canonical_catalog["catalog_digest"],
+                "case_record_digest": case_record["case_record_digest"],
+                "case_axes_digest": case_record["case_axes_digest"],
+                "factor_position_quantile": case_record[
+                    "factor_position_quantile"
+                ],
+                "position_stratum": case_record["position_stratum"],
+            },
+            "evidence_class": evidence_class,
+        }
+        rows.append(
+            PaperDirectRootInventoryRow(
+                **values,
+                inventory_row_digest=digest_json(
+                    {
+                        "schema_version": (
+                            "tokenshare.paper_direct_root_inventory_row.v2"
+                        ),
+                        **values,
+                    }
+                ),
+            )
+        )
+    inventory_body = {
+        "schema_version": "tokenshare.preregistered_root_inventory_manifest.v1",
+        "inventory_id": inventory_id,
+        "root_count": len(rows),
+        "rows": [row.to_dict() for row in rows],
+    }
+    inventory = PreregisteredRootInventoryManifest(
+        inventory_id=inventory_id,
+        rows=tuple(rows),
+        root_count=len(rows),
+        inventory_digest=digest_json(inventory_body),
+    )
+    return _CanonicalDirectCollector(
+        inventory=inventory,
+        condition_manifests=(condition_manifest,),
+        catalog_manifests=(canonical_catalog,),
+        rows_by_key={(row.condition_id, row.case_id): row for row in rows},
+    )
 
 
 def execute_paper_formal_suite(
@@ -571,6 +1122,7 @@ def execute_paper_formal_suite(
     pre_execution_documents: Mapping[str, Any] | None = None,
     recovery_documents: Mapping[str, Any] | None = None,
     trace_context: PaperFormalTraceContext | None = None,
+    online_root_callback_factory: Callable[..., Any] | None = None,
 ) -> PaperSuiteResult:
     """校验冻结计划并通过注册 dispatcher 顺序执行 planned conditions。"""
 
@@ -719,6 +1271,27 @@ def execute_paper_formal_suite(
             disk_preflight["condition_compaction_bytes"]
         ),
     )
+    direct_evidence_class = _direct_evidence_class(
+        real_transport=real_transport,
+        transport=transport,
+        trace_context=trace_context,
+    )
+    direct_collector = (
+        _build_canonical_direct_collector(
+            bound_plans=bound_plans,
+            catalog_manifest=catalog_manifest,
+            normalized_root_filter=normalized_root_filter,
+            evidence_class=direct_evidence_class,
+        )
+        if direct_evidence_class != "regression_only"
+        and any(bound_items for _plan, bound_items in bound_plans)
+        else None
+    )
+    if resume and direct_collector is not None:
+        _restore_canonical_direct_checkpoints(
+            suite_root=suite_root,
+            collector=direct_collector,
+        )
     results: list[PaperConditionResult] = []
     try:
         _dispatch_formal_conditions(
@@ -738,6 +1311,8 @@ def execute_paper_formal_suite(
             classification=classification,
             results=results,
             trace_context=trace_context,
+            direct_collector=direct_collector,
+            online_root_callback_factory=online_root_callback_factory,
         )
     except Exception as error:
         blocked_error = (
@@ -748,6 +1323,7 @@ def execute_paper_formal_suite(
                 evidence_integrity=PaperEvidenceIntegrity.INVALID,
                 failure_stage="runner_internal",
                 failure_kind=type(error).__name__,
+                diagnostics={"message": str(error)},
             )
         )
         return _close_blocked_formal_suite(
@@ -809,6 +1385,11 @@ def execute_paper_formal_suite(
         audit_refs=(),
         error_summary=(),
     )
+    if direct_collector is not None:
+        _finalize_canonical_direct_closure(
+            suite_root=suite_root,
+            collector=direct_collector,
+        )
     _finalize_formal_manifests(
         suite_root=suite_root,
         suite_result=suite_result,
@@ -865,6 +1446,8 @@ def _dispatch_formal_conditions(
     classification: Mapping[str, Any] | None,
     results: list[PaperConditionResult],
     trace_context: PaperFormalTraceContext | None,
+    direct_collector: _CanonicalDirectCollector | None,
+    online_root_callback_factory: Callable[..., Any] | None,
 ) -> None:
     for plan, bound_items in bound_plans:
         if plan.status == "blocked":
@@ -905,7 +1488,9 @@ def _dispatch_formal_conditions(
                     condition.condition_id
                 ),
                 execution_classification=classification,
+                direct_collector=direct_collector,
                 trace_context=trace_context,
+                online_root_callback_factory=online_root_callback_factory,
             )
             context = PaperExecutionContext(
                 context_id=(
@@ -3171,6 +3756,9 @@ def _evaluate_trace_root_evidence(
     adapter_result: Any,
     adapter_root: Path,
     trace_runtime: Any,
+    direct_collector: _CanonicalDirectCollector | None = None,
+    condition: Any = None,
+    case_id: str | None = None,
 ):
     """从当前协议 ledger/artifact 与 canonical bank 构造 Task18 事实。"""
 
@@ -3266,6 +3854,7 @@ def _evaluate_trace_root_evidence(
 
     executed_bindings: list[dict[str, Any]] = []
     wrappers: list[dict[str, Any]] = []
+    typed_wrappers: list[CurrentTraceWrapper] = []
     executed_planned_ids: list[str] = []
     for candidate in sorted(
         authoritative_by_unit.values(),
@@ -3289,8 +3878,7 @@ def _evaluate_trace_root_evidence(
         domain = executed_bindings[-1]["domain_unit_commitment"]["domain"]
         checker_refs = tuple(payload.get("verifier_checker_refs", ()))
         verification = verification_events.get(attempt_id)
-        wrappers.append(
-            CurrentTraceWrapper(
+        typed_wrapper = CurrentTraceWrapper(
                 current_run_id=delivery.current_run_id,
                 current_task_id=delivery.task_id,
                 current_unit_id=delivery.unit_id,
@@ -3323,8 +3911,9 @@ def _evaluate_trace_root_evidence(
                 ),
                 current_canonical_ref=_artifact_identity(payload.get("canonical_ref")),
                 current_ledger_ref=str(_required_field(commit, "event_id")),
-            ).to_dict()
-        )
+            )
+        typed_wrappers.append(typed_wrapper)
+        wrappers.append(typed_wrapper.to_dict())
     bindings_by_planned = {
         binding.planned_ai_unit_id: binding for binding in trace_runtime.bindings
     }
@@ -3354,6 +3943,29 @@ def _evaluate_trace_root_evidence(
         identity_consistent=True,
         regression_only=False,
     )
+    if direct_collector is not None:
+        if condition is None or not isinstance(case_id, str) or not case_id:
+            raise ValueError("trace direct evidence identity is missing")
+        inventory_row = direct_collector.rows_by_key.get(
+            (str(condition.condition_id), case_id)
+        )
+        if inventory_row is None:
+            raise ValueError("trace direct evidence inventory row is missing")
+        selected_bindings = tuple(
+            bindings_by_planned[planned_id] for planned_id in executed_planned_ids
+        )
+        with direct_collector.lock:
+            root_id = inventory_row.preregistered_root_run_id
+            direct_collector.current_trace_wrappers_by_root[root_id] = tuple(
+                typed_wrappers
+            )
+            direct_collector.trace_source_bindings_by_root[root_id] = (
+                selected_bindings
+            )
+            direct_collector.eligibility_facts_by_root[root_id] = facts
+            direct_collector.source_resolvers[manifest.bank_root_id] = (
+                _PaperTraceSourceResolver(trace_runtime.resolver)
+            )
     return evaluate_versioned_paper_evidence(facts)
 
 
@@ -3583,6 +4195,814 @@ def _provider_latency_observation(
     return latency_sum_ms, "complete", None
 
 
+def _runtime_final_artifact_ref(
+    *,
+    events: Sequence[Any],
+    root_unit_id: str,
+) -> ArtifactRef:
+    matches: list[ArtifactRef] = []
+    for event in events:
+        if _status_value(event.event_type) != "MERGE_RECORDED":
+            continue
+        payload = event.payload
+        if payload.get("parent_unit_id") != root_unit_id:
+            continue
+        refs = payload.get("merge_output_refs")
+        if isinstance(refs, Mapping):
+            preferred = refs.get("prime_factorization_result")
+            if not isinstance(preferred, Mapping):
+                preferred = refs.get("proof")
+            if isinstance(preferred, Mapping):
+                matches.append(ArtifactRef.from_dict(preferred))
+            elif len(refs) == 1:
+                value = next(iter(refs.values()))
+                if isinstance(value, Mapping):
+                    matches.append(ArtifactRef.from_dict(value))
+    if len(matches) != 1:
+        raise ValueError("canonical direct evidence requires one merged final artifact")
+    return matches[0]
+
+
+def _copy_runtime_artifact_store(
+    *,
+    native_store: ArtifactStore,
+    target_store: ArtifactStore,
+    execution_id: str,
+    task_id: str,
+    final_artifact_id: str | None,
+) -> dict[str, ArtifactRef]:
+    copied: dict[str, ArtifactRef] = {}
+    for manifest_path in sorted(native_store.artifact_dir.glob("*.manifest.json")):
+        raw = json.loads(manifest_path.read_text(encoding="utf-8"))
+        ref = ArtifactRef.from_dict(raw)
+        role = (
+            "final_result"
+            if ref.artifact_id == final_artifact_id
+            else "protocol_runtime_artifact"
+        )
+        copied[ref.artifact_id] = target_store.save_bytes(
+            native_store.read_bytes(ref),
+            artifact_id=ref.artifact_id,
+            artifact_type=ref.artifact_type,
+            media_type=ref.media_type,
+            artifact_schema_id=ref.artifact_schema_id,
+            artifact_schema_version=ref.artifact_schema_version,
+            source={
+                "kind": "canonical_direct_runtime_projection",
+                "role": role,
+                "task_id": task_id,
+                "execution_id": execution_id,
+                "source_artifact_ref": ref.to_dict(),
+            },
+            metadata=dict(ref.metadata),
+            created_at=ref.created_at,
+        )
+    return copied
+
+
+def _copy_native_direct_role_artifact(
+    *,
+    native_store: ArtifactStore,
+    target_store: ArtifactStore,
+    native_ref: ArtifactRef,
+    root_id: str,
+    role: str,
+    execution_id: str,
+    task_id: str,
+    ordinal: int,
+) -> ArtifactRef:
+    authoritative = native_store.load_artifact_ref(native_ref.artifact_id)
+    if authoritative.to_dict() != native_ref.to_dict():
+        raise ValueError("canonical direct native artifact identity mismatch")
+    return target_store.save_bytes(
+        native_store.read_bytes(authoritative),
+        artifact_id=(
+            "direct_"
+            + role
+            + "_"
+            + hashlib.sha256(
+                (
+                    root_id
+                    + "\0"
+                    + str(ordinal)
+                    + "\0"
+                    + authoritative.artifact_id
+                    + "\0"
+                    + authoritative.content_hash
+                ).encode("utf-8")
+            ).hexdigest()[:24]
+        ),
+        artifact_type=authoritative.artifact_type,
+        media_type=authoritative.media_type,
+        artifact_schema_id=authoritative.artifact_schema_id,
+        artifact_schema_version=authoritative.artifact_schema_version,
+        source={
+            "kind": "canonical_direct_native_artifact_projection",
+            "role": role,
+            "task_id": task_id,
+            "execution_id": execution_id,
+            "source_artifact_ref": authoritative.to_dict(),
+        },
+        metadata=dict(authoritative.metadata),
+        created_at=authoritative.created_at,
+    )
+
+
+def _native_direct_role_refs(
+    *,
+    native_store: ArtifactStore,
+    target_store: ArtifactStore,
+    root_id: str,
+    execution_id: str,
+    task_id: str,
+    task: Any,
+    adapter_result: Any,
+) -> tuple[
+    tuple[ArtifactRef, ...],
+    tuple[ArtifactRef, ...],
+    tuple[ArtifactRef, ...],
+    ArtifactRef | None,
+]:
+    del task
+    run_evidence = _optional_field(adapter_result, "run_evidence")
+    bundle = (
+        run_evidence.get("paper_direct_native_artifacts")
+        if isinstance(run_evidence, Mapping)
+        else None
+    )
+    if not isinstance(bundle, Mapping):
+        raise ValueError("native paper direct artifact bundle is missing")
+    if bundle.get("schema_version") != "tokenshare.paper_direct_native_artifacts.v1":
+        raise ValueError("unsupported native paper direct artifact bundle")
+
+    def copy_bound_ref(
+        value: Any,
+        *,
+        allowed_roles: frozenset[str],
+        ordinal: int,
+    ) -> ArtifactRef:
+        if not isinstance(value, Mapping):
+            raise ValueError("native paper direct artifact ref is missing")
+        native_ref = ArtifactRef.from_dict(value)
+        role = str(native_ref.source.get("role", ""))
+        if role not in allowed_roles:
+            raise ValueError("native paper direct artifact role mismatch")
+        if native_ref.source.get("execution_id") != execution_id:
+            raise ValueError("native paper direct execution binding mismatch")
+        if native_ref.source.get("task_id") != task_id:
+            raise ValueError("native paper direct task binding mismatch")
+        return _copy_native_direct_role_artifact(
+            native_store=native_store,
+            target_store=target_store,
+            native_ref=native_ref,
+            root_id=root_id,
+            role=role,
+            execution_id=execution_id,
+            task_id=task_id,
+            ordinal=ordinal,
+        )
+
+    resource_value = bundle.get("actual_resource_book_ref")
+    resource_body: Mapping[str, Any] | None = None
+    if resource_value is not None:
+        if not isinstance(resource_value, Mapping):
+            raise ValueError("native actual resource book ref is invalid")
+        native_resource_ref = ArtifactRef.from_dict(resource_value)
+        if native_resource_ref.source.get("role") != "actual_resource_book":
+            raise ValueError("native actual resource book role mismatch")
+        loaded_resource = json.loads(native_store.read_bytes(native_resource_ref))
+        if not isinstance(loaded_resource, Mapping) or loaded_resource.get(
+            "schema_version"
+        ) != "tokenshare.paper_actual_resource_book.v1":
+            raise ValueError("unsupported native actual resource book")
+        if loaded_resource.get("execution_id") != execution_id:
+            raise ValueError("native actual resource execution binding mismatch")
+        if loaded_resource.get("task_id") != task_id:
+            raise ValueError("native actual resource task binding mismatch")
+        resource_body = loaded_resource
+    provider_values = (
+        resource_body.get("current_provider_object_refs", [])
+        if resource_body is not None
+        else []
+    )
+    if not isinstance(provider_values, list):
+        raise ValueError("native provider object inventory is invalid")
+    expected_provider_roles = frozenset(
+        {
+            "request_body",
+            "raw_output_or_provider_failure",
+            "provenance",
+            "usage_status",
+            "latency",
+            "pricing",
+            "provider_attempt",
+            "model_record",
+        }
+    )
+    provider_refs = tuple(
+        copy_bound_ref(
+            value,
+            allowed_roles=expected_provider_roles,
+            ordinal=ordinal,
+        )
+        for ordinal, value in enumerate(provider_values)
+    )
+    if provider_refs and (
+        frozenset(str(ref.source.get("role", "")) for ref in provider_refs)
+        != expected_provider_roles
+        or len(provider_refs) != len(expected_provider_roles)
+    ):
+        raise ValueError("native provider object role inventory is incomplete")
+    parser_values = bundle.get("parser_refs", [])
+    if not isinstance(parser_values, list):
+        raise ValueError("native parser object inventory is invalid")
+    parser_roles = frozenset({"parser_result", "parse_failure"})
+    parser_refs = tuple(
+        copy_bound_ref(
+            value,
+            allowed_roles=parser_roles,
+            ordinal=ordinal,
+        )
+        for ordinal, value in enumerate(parser_values)
+    )
+    verdict_value = bundle.get("independent_verdict_ref")
+    verifier_refs = (
+        (
+            copy_bound_ref(
+                verdict_value,
+                allowed_roles=frozenset({"independent_verdict"}),
+                ordinal=0,
+            ),
+        )
+        if verdict_value is not None
+        else ()
+    )
+    copied_resource_ref = (
+        copy_bound_ref(
+            resource_value,
+            allowed_roles=frozenset({"actual_resource_book"}),
+            ordinal=0,
+        )
+        if resource_value is not None
+        else None
+    )
+    return parser_refs, verifier_refs, provider_refs, copied_resource_ref
+
+
+def _persist_trace_resource_book(
+    *,
+    native_store: ArtifactStore,
+    canonical_store: ArtifactStore,
+    root_id: str,
+    execution_id: str,
+    task_id: str,
+    current_wrappers: Sequence[Any],
+    native_wrapper_refs: Sequence[ArtifactRef],
+    canonical_wrapper_refs: Sequence[ArtifactRef],
+    source_locators: Sequence[ExternalBankObjectLocator],
+) -> ArtifactRef:
+    """单 entry 保留 v1 内容；多 entry 用 v2 root book 串起所有 replacement。"""
+
+    wrappers = tuple(current_wrappers)
+    native_refs = tuple(native_wrapper_refs)
+    canonical_refs = tuple(canonical_wrapper_refs)
+    locators = tuple(source_locators)
+    if not wrappers or len(wrappers) != len(native_refs) or len(wrappers) != len(
+        canonical_refs
+    ):
+        raise ValueError("canonical trace wrapper projection is incomplete")
+    for native_ref in native_refs:
+        authoritative = native_store.load_artifact_ref(native_ref.artifact_id)
+        if authoritative.to_dict() != native_ref.to_dict():
+            raise ValueError("native trace wrapper identity mismatch")
+    entry_ids = tuple(sorted({locator.entry_id for locator in locators}))
+    if not entry_ids:
+        raise ValueError("canonical trace resource book has no source entries")
+    native_last = native_refs[-1]
+    artifact_id = (
+        "direct_trace_resource_book_"
+        + hashlib.sha256(root_id.encode("utf-8")).hexdigest()[:24]
+    )
+    if len(wrappers) == 1 and len(entry_ids) == 1:
+        return canonical_store.save_json(
+            wrappers[0].to_dict(),
+            artifact_id=artifact_id,
+            artifact_type=native_last.artifact_type,
+            artifact_schema_id=native_last.artifact_schema_id,
+            artifact_schema_version=native_last.artifact_schema_version,
+            source={
+                "kind": "canonical_trace_wrapper_role_projection",
+                "role": "trace_resource_book",
+                "task_id": task_id,
+                "execution_id": execution_id,
+                "source_artifact_ref": native_last.to_dict(),
+            },
+            metadata=dict(native_last.metadata),
+            created_at=native_last.created_at,
+        )
+    return canonical_store.save_json(
+        {
+            "schema_version": "tokenshare.paper_trace_resource_book.v2",
+            "execution_id": execution_id,
+            "task_id": task_id,
+            "preregistered_root_run_id": root_id,
+            "replacement_entry_ids": list(entry_ids),
+            "current_wrappers": [wrapper.to_dict() for wrapper in wrappers],
+            "current_wrapper_refs": [ref.to_dict() for ref in canonical_refs],
+            "source_bank_object_locators": [
+                locator.to_dict() for locator in locators
+            ],
+        },
+        artifact_id=artifact_id,
+        artifact_type="PaperTraceResourceBook",
+        artifact_schema_id="tokenshare.paper_trace_resource_book.v2",
+        artifact_schema_version="v2",
+        source={
+            "kind": "canonical_trace_root_resource_book_projection",
+            "role": "trace_resource_book",
+            "task_id": task_id,
+            "execution_id": execution_id,
+            "source_artifact_refs": [ref.to_dict() for ref in native_refs],
+        },
+        metadata={
+            "replacement_entry_count": len(entry_ids),
+            "current_wrapper_count": len(wrappers),
+        },
+        created_at=native_last.created_at,
+    )
+
+
+def _canonical_direct_evidence_digest(
+    evidence: CanonicalDirectRootEvidence,
+) -> str:
+    def optional(value: Any) -> Any:
+        return value.to_dict() if value is not None else None
+
+    return digest_json(
+        {
+            "root_id": evidence.preregistered_root_run_id,
+            "evidence_class": evidence.evidence_class,
+            "execution_binding": evidence.execution_binding.to_dict(),
+            "runtime_status": evidence.canonical_runtime_status,
+            "final": optional(evidence.final_result_ref),
+            "terminal": optional(evidence.terminal_root_event_ref),
+            "canonical": optional(evidence.canonical_acceptance_ref),
+            "merge": optional(evidence.merge_ref),
+            "correct": evidence.independently_verified_correct,
+            "complete": evidence.paper_evidence_complete,
+            "identity_consistent": evidence.identity_consistent,
+            "infrastructure_valid": evidence.infrastructure_valid,
+            "parser": [value.to_dict() for value in evidence.parser_refs],
+            "verifier": [
+                value.to_dict() for value in evidence.verifier_checker_refs
+            ],
+            "provider": [
+                value.to_dict()
+                for value in evidence.current_provider_object_refs
+            ],
+            "locators": [
+                value.to_dict() for value in evidence.source_bank_object_locators
+            ],
+            "actual_resource": optional(evidence.actual_resource_book_ref),
+            "trace_resource": optional(evidence.trace_resource_book_ref),
+            "reasons": list(evidence.ineligibility_reasons),
+        }
+    )
+
+
+def _persist_canonical_direct_checkpoint(
+    *,
+    projection_root: Path,
+    row: PaperDirectRootInventoryRow,
+    evidence: CanonicalDirectRootEvidence,
+    native_ledger: EventLedger,
+    collector: _CanonicalDirectCollector,
+) -> None:
+    ledger_relative = Path("events") / native_ledger.path.name
+    _atomic_write_bytes(
+        projection_root / ledger_relative,
+        native_ledger.path.read_bytes(),
+    )
+    root_id = row.preregistered_root_run_id
+    adjunct = {
+        "current_trace_wrappers": collector.current_trace_wrappers_by_root.get(
+            root_id,
+            (),
+        ),
+        "trace_source_bindings": collector.trace_source_bindings_by_root.get(
+            root_id,
+            (),
+        ),
+        "eligibility_facts": collector.eligibility_facts_by_root.get(root_id),
+        "source_resolvers": dict(collector.source_resolvers),
+        "producer_facts": collector.producer_facts_by_root.get(root_id),
+    }
+    adjunct_content = pickle.dumps(adjunct, protocol=5)
+    adjunct_name = "canonical_direct_adjunct.pickle"
+    _atomic_write_bytes(projection_root / adjunct_name, adjunct_content)
+    _atomic_write_json(
+        projection_root / "canonical_direct_checkpoint.json",
+        {
+            "schema_version": "tokenshare.canonical_direct_checkpoint.v1",
+            "preregistered_root_run_id": root_id,
+            "inventory_row_digest": row.inventory_row_digest,
+            "execution_id": evidence.execution_binding.execution_id,
+            "task_id": evidence.execution_binding.task_id,
+            "root_unit_id": evidence.execution_binding.root_unit_id,
+            "ledger_path": ledger_relative.as_posix(),
+            "final_artifact_id": (
+                evidence.final_result_ref.artifact_id
+                if evidence.final_result_ref is not None
+                else None
+            ),
+            "parser_artifact_ids": [
+                value.artifact_id for value in evidence.parser_refs
+            ],
+            "verifier_artifact_ids": [
+                value.artifact_id for value in evidence.verifier_checker_refs
+            ],
+            "provider_artifact_ids": [
+                value.artifact_id
+                for value in evidence.current_provider_object_refs
+            ],
+            "source_bank_object_locators": [
+                value.to_dict() for value in evidence.source_bank_object_locators
+            ],
+            "actual_resource_artifact_id": (
+                evidence.actual_resource_book_ref.artifact_id
+                if evidence.actual_resource_book_ref is not None
+                else None
+            ),
+            "trace_resource_artifact_id": (
+                evidence.trace_resource_book_ref.artifact_id
+                if evidence.trace_resource_book_ref is not None
+                else None
+            ),
+            "evidence_digest": _canonical_direct_evidence_digest(evidence),
+            "adjunct_path": adjunct_name,
+            "adjunct_digest": _sha256_bytes(adjunct_content),
+        },
+    )
+
+
+def _restore_canonical_direct_checkpoints(
+    *,
+    suite_root: Path,
+    collector: _CanonicalDirectCollector,
+) -> None:
+    projection_base = suite_root.with_name(
+        suite_root.name + ".canonical_direct_evidence"
+    )
+    if not projection_base.is_dir():
+        return
+    rows_by_id = {
+        row.preregistered_root_run_id: row for row in collector.inventory.rows
+    }
+    for checkpoint_path in sorted(
+        projection_base.glob("*/canonical_direct_checkpoint.json")
+    ):
+        checkpoint = _required_json_object(
+            checkpoint_path,
+            label="canonical direct checkpoint",
+        )
+        if checkpoint.get("schema_version") != (
+            "tokenshare.canonical_direct_checkpoint.v1"
+        ):
+            raise ValueError("unsupported canonical direct checkpoint")
+        root_id = str(checkpoint["preregistered_root_run_id"])
+        row = rows_by_id.get(root_id)
+        if row is None or checkpoint.get("inventory_row_digest") != (
+            row.inventory_row_digest
+        ):
+            raise ValueError("canonical direct checkpoint inventory mismatch")
+        projection_root = checkpoint_path.parent
+        store = ArtifactStore(projection_root)
+
+        def load_optional(artifact_id: Any) -> ArtifactRef | None:
+            return (
+                store.load_artifact_ref(str(artifact_id))
+                if artifact_id is not None
+                else None
+            )
+
+        ledger = EventLedger(projection_root / str(checkpoint["ledger_path"]))
+        runtime = project_protocol_run(
+            run_id=str(checkpoint["execution_id"]),
+            task_id=str(checkpoint["task_id"]),
+            root_unit_id=str(checkpoint["root_unit_id"]),
+            event_ledger=ledger,
+            artifact_store=store,
+        )
+        runtime = replace(
+            runtime,
+            artifact_refs=tuple(
+                store.load_artifact_ref(ref.artifact_id)
+                for ref in runtime.artifact_refs
+            ),
+        )
+        locators = tuple(
+            ExternalBankObjectLocator(**value)
+            for value in checkpoint.get("source_bank_object_locators", [])
+        )
+        evidence = build_canonical_direct_evidence(
+            inventory_row=row,
+            execution_id=str(checkpoint["execution_id"]),
+            event_ledger=ledger,
+            artifact_store=store,
+            runtime_result=runtime,
+            final_result_ref=load_optional(checkpoint.get("final_artifact_id")),
+            parser_refs=tuple(
+                store.load_artifact_ref(str(value))
+                for value in checkpoint.get("parser_artifact_ids", [])
+            ),
+            verifier_checker_refs=tuple(
+                store.load_artifact_ref(str(value))
+                for value in checkpoint.get("verifier_artifact_ids", [])
+            ),
+            current_provider_object_refs=tuple(
+                store.load_artifact_ref(str(value))
+                for value in checkpoint.get("provider_artifact_ids", [])
+            ),
+            source_bank_object_locators=locators,
+            actual_resource_book_ref=load_optional(
+                checkpoint.get("actual_resource_artifact_id")
+            ),
+            trace_resource_book_ref=load_optional(
+                checkpoint.get("trace_resource_artifact_id")
+            ),
+        )
+        if _canonical_direct_evidence_digest(evidence) != checkpoint.get(
+            "evidence_digest"
+        ):
+            raise ValueError("canonical direct checkpoint evidence mismatch")
+        adjunct_path = projection_root / str(checkpoint["adjunct_path"])
+        adjunct_content = adjunct_path.read_bytes()
+        if _sha256_bytes(adjunct_content) != checkpoint.get("adjunct_digest"):
+            raise ValueError("canonical direct checkpoint adjunct mismatch")
+        adjunct = pickle.loads(adjunct_content)
+        if not isinstance(adjunct, Mapping):
+            raise ValueError("canonical direct checkpoint adjunct is invalid")
+        collector.evidence.append(evidence)
+        collector.current_provider_object_files.update(
+            {
+                ref.artifact_id: projection_root / ref.uri
+                for ref in tuple(
+                    store.load_artifact_ref(str(value))
+                    for value in checkpoint.get("provider_artifact_ids", [])
+                )
+            }
+        )
+        wrappers = tuple(adjunct.get("current_trace_wrappers", ()))
+        bindings = tuple(adjunct.get("trace_source_bindings", ()))
+        facts = adjunct.get("eligibility_facts")
+        if wrappers:
+            collector.current_trace_wrappers_by_root[root_id] = wrappers
+        if bindings:
+            collector.trace_source_bindings_by_root[root_id] = bindings
+        if facts is not None:
+            collector.eligibility_facts_by_root[root_id] = facts
+        resolvers = adjunct.get("source_resolvers", {})
+        if not isinstance(resolvers, Mapping):
+            raise ValueError("canonical direct checkpoint resolvers are invalid")
+        collector.source_resolvers.update(resolvers)
+        producer_facts = adjunct.get("producer_facts")
+        if producer_facts is not None:
+            if not isinstance(producer_facts, Mapping):
+                raise ValueError("canonical direct producer facts are invalid")
+            collector.producer_facts_by_root[root_id] = producer_facts
+
+
+def _capture_canonical_direct_evidence(
+    *,
+    collector: _CanonicalDirectCollector,
+    suite_root: Path,
+    condition: Any,
+    case_id: str,
+    task: Any,
+    adapter_result: Any,
+) -> None:
+    row = collector.rows_by_key.get((condition.condition_id, case_id))
+    if row is None or row.evidence_class not in {
+        "online_real_provider",
+        "real_model_trace_protocol_run",
+    }:
+        return
+    protocol_runtime = _optional_field(adapter_result, "run_evidence")
+    protocol_runtime = (
+        protocol_runtime.get("protocol_runtime")
+        if isinstance(protocol_runtime, Mapping)
+        else None
+    )
+    if not isinstance(protocol_runtime, Mapping):
+        return
+    execution_id = str(protocol_runtime["run_id"])
+    protocol_task_id = str(protocol_runtime["task_id"])
+    root_unit_id = str(protocol_runtime["root_unit_id"])
+    native_root = Path(str(_required_field(adapter_result, "output_root")))
+    native_store = ArtifactStore(native_root)
+    native_ledger = EventLedger(
+        native_root / "events" / f"{protocol_task_id}.jsonl"
+    )
+    events = tuple(native_ledger.read_all())
+    if not events or not native_ledger.verify_hash_chain():
+        raise ValueError("canonical direct evidence native ledger is invalid")
+    native_runtime = project_protocol_run(
+        run_id=execution_id,
+        task_id=protocol_task_id,
+        root_unit_id=root_unit_id,
+        event_ledger=native_ledger,
+        artifact_store=native_store,
+    )
+    final_native: ArtifactRef | None
+    if _status_value(native_runtime.status) == "completed":
+        final_native = _runtime_final_artifact_ref(
+            events=events,
+            root_unit_id=root_unit_id,
+        )
+    else:
+        final_native = None
+    projection_root = (
+        suite_root.with_name(suite_root.name + ".canonical_direct_evidence")
+        / hashlib.sha256(row.preregistered_root_run_id.encode("utf-8")).hexdigest()
+    )
+    canonical_store = ArtifactStore(projection_root)
+    copied = _copy_runtime_artifact_store(
+        native_store=native_store,
+        target_store=canonical_store,
+        execution_id=execution_id,
+        task_id=protocol_task_id,
+        final_artifact_id=(
+            final_native.artifact_id if final_native is not None else None
+        ),
+    )
+    final_ref = (
+        copied[final_native.artifact_id] if final_native is not None else None
+    )
+    runtime_result = replace(
+        native_runtime,
+        artifact_refs=tuple(
+            copied[ref.artifact_id] for ref in native_runtime.artifact_refs
+        ),
+    )
+    (
+        parser_refs,
+        verifier_refs,
+        provider_refs,
+        actual_resource_book_ref,
+    ) = _native_direct_role_refs(
+        native_store=native_store,
+        target_store=canonical_store,
+        root_id=row.preregistered_root_run_id,
+        execution_id=execution_id,
+        task_id=protocol_task_id,
+        task=task,
+        adapter_result=adapter_result,
+    )
+    source_locators: tuple[ExternalBankObjectLocator, ...] = ()
+    trace_resource_book_ref: ArtifactRef | None = None
+    if row.evidence_class == "real_model_trace_protocol_run":
+        with collector.lock:
+            trace_bindings = collector.trace_source_bindings_by_root.get(
+                row.preregistered_root_run_id,
+                (),
+            )
+            resolvers = dict(collector.source_resolvers)
+        expected_sample_slot = row.condition_axes.get("sample_slot_index")
+        if any(
+            binding.sample_slot_index != expected_sample_slot
+            for binding in trace_bindings
+        ):
+            raise ValueError("canonical trace repeat/sample binding mismatch")
+        locator_values: dict[tuple[str, str, str, str], ExternalBankObjectLocator] = {}
+        for binding in trace_bindings:
+            resolver = resolvers.get(binding.bank_root_id)
+            if resolver is None:
+                raise ValueError("canonical trace source resolver is missing")
+            for replacement in binding.replacements:
+                entry = resolver.entry(replacement.entry_id)
+                for locator in entry.object_locators:
+                    paper_role = _paper_trace_object_role(locator.object_role)
+                    converted = ExternalBankObjectLocator(
+                        bank_root_id=locator.bank_root_id,
+                        manifest_digest=locator.manifest_digest,
+                        entry_id=locator.entry_id,
+                        object_role=paper_role,
+                        object_digest=locator.object_digest,
+                    )
+                    locator_values[
+                        (
+                            converted.bank_root_id,
+                            converted.entry_id,
+                            converted.object_role,
+                            converted.object_digest,
+                        )
+                    ] = converted
+        source_locators = tuple(locator_values[key] for key in sorted(locator_values))
+        wrapper_values = tuple(
+            _required_field(event, "payload").get("current_wrapper_ref")
+            for event in events
+            if _optional_field(event, "event_type") == "TRACE_DELIVERY_COMMITTED.v1"
+        )
+        wrapper_refs = tuple(
+            ArtifactRef.from_dict(value)
+            for value in wrapper_values
+            if isinstance(value, Mapping)
+        )
+        if not wrapper_refs:
+            raise ValueError("canonical trace resource book is missing")
+        with collector.lock:
+            current_wrappers = collector.current_trace_wrappers_by_root.get(
+                row.preregistered_root_run_id,
+                (),
+            )
+        if len(current_wrappers) != len(wrapper_refs):
+            raise ValueError("canonical trace wrapper projection is incomplete")
+        trace_resource_book_ref = _persist_trace_resource_book(
+            native_store=native_store,
+            canonical_store=canonical_store,
+            root_id=row.preregistered_root_run_id,
+            execution_id=execution_id,
+            task_id=protocol_task_id,
+            current_wrappers=current_wrappers,
+            native_wrapper_refs=wrapper_refs,
+            canonical_wrapper_refs=tuple(
+                copied[ref.artifact_id] for ref in wrapper_refs
+            ),
+            source_locators=source_locators,
+        )
+        provider_refs = ()
+    evidence = build_canonical_direct_evidence(
+        inventory_row=row,
+        execution_id=execution_id,
+        event_ledger=native_ledger,
+        artifact_store=canonical_store,
+        runtime_result=runtime_result,
+        final_result_ref=final_ref,
+        parser_refs=parser_refs,
+        verifier_checker_refs=verifier_refs,
+        current_provider_object_refs=provider_refs,
+        source_bank_object_locators=source_locators,
+        actual_resource_book_ref=actual_resource_book_ref,
+        trace_resource_book_ref=trace_resource_book_ref,
+    )
+    producer_facts = {
+        "task": _as_json(task),
+        "attempts": [
+            _as_json(value)
+            for value in _sequence_field(
+                adapter_result,
+                "attempt_results",
+                "attempts",
+            )
+        ],
+        "faults": [
+            _as_json(value)
+            for value in _sequence_field(adapter_result, "fault_records", "faults")
+        ],
+        "events": [
+            _as_json(value)
+            for value in _sequence_field(adapter_result, "event_records", "events")
+        ],
+        "run_evidence": _as_json(
+            _optional_field(adapter_result, "run_evidence") or {}
+        ),
+    }
+    with collector.lock:
+        collector.producer_facts_by_root[row.preregistered_root_run_id] = (
+            producer_facts
+        )
+    _persist_canonical_direct_checkpoint(
+        projection_root=projection_root,
+        row=row,
+        evidence=evidence,
+        native_ledger=native_ledger,
+        collector=collector,
+    )
+    provider_files = {
+        ref.artifact_id: projection_root / ref.uri for ref in provider_refs
+    }
+    with collector.lock:
+        if any(
+            prior.preregistered_root_run_id == row.preregistered_root_run_id
+            for prior in collector.evidence
+        ):
+            raise ValueError("duplicate canonical direct root evidence")
+        collector.evidence.append(evidence)
+        collector.current_provider_object_files.update(provider_files)
+
+
+def _root_scheduler_worker_count(
+    *,
+    protocol_worker_count: int,
+    online_root_callback_factory: Callable[..., Any] | None,
+) -> int:
+    """在线检查按权威计划逐 root 调度，协议 worker_count 仍保留在 condition 中。"""
+
+    if online_root_callback_factory is not None:
+        return 1
+    return int(protocol_worker_count)
+
+
 @dataclass(frozen=True)
 class _FormalConditionExecutionCallback:
     catalog_manifest: Any
@@ -3599,7 +5019,9 @@ class _FormalConditionExecutionCallback:
     hard_limits: Mapping[str, Any]
     root_case_ids: tuple[str, ...] | None
     execution_classification: Mapping[str, Any] | None
+    direct_collector: _CanonicalDirectCollector | None = None
     trace_context: PaperFormalTraceContext | None = None
+    online_root_callback_factory: Callable[..., Any] | None = None
     usage_lock: Lock = field(default_factory=Lock, compare=False, repr=False)
     def __call__(self, **kwargs: Any) -> PaperConditionResult:
         condition = kwargs["condition"]
@@ -3642,8 +5064,12 @@ class _FormalConditionExecutionCallback:
             pending_case_ids = ()
         if self.hard_limits.get("stop_after_current_task") is True:
             pending_case_ids = pending_case_ids[:1]
-        # root case 仍由 runner 顺序观察；指标容量必须采用 runtime 的冻结 worker_count。
+        # 协议容量采用冻结 worker_count；在线检查的 root 调度必须保持全局单并发。
         worker_count = int(condition.worker_count)
+        root_scheduler_worker_count = _root_scheduler_worker_count(
+            protocol_worker_count=worker_count,
+            online_root_callback_factory=self.online_root_callback_factory,
+        )
         budget_exhausted_during_exp5 = False
         condition_trace_clock = _ConditionTraceClock()
 
@@ -3728,7 +5154,7 @@ class _FormalConditionExecutionCallback:
 
         strategy = run_scheduled_cases(
             ordered_case_ids=pending_case_ids,
-            worker_count=worker_count,
+            worker_count=root_scheduler_worker_count,
             execute_case=execute_case,
             should_continue_after_case=(
                 continue_after_exp5_case if exp5_identity_fail_stop else None
@@ -3829,6 +5255,21 @@ class _FormalConditionExecutionCallback:
             case_id=case_id,
             callback_kwargs=callback_kwargs,
         )
+        adapter_root = self.output_root / "runs" / condition.condition_id / case_id
+        online_hook = None
+        if self.online_root_callback_factory is not None:
+            online_hook = self.online_root_callback_factory(
+                condition=condition,
+                selection=selection,
+                case_id=case_id,
+                case=case,
+                worker_id=worker_id,
+                output_root=adapter_root,
+                ai_api_config=self.config,
+                request_limits=dict(self.request_limits),
+            )
+            if online_hook is not None and not callable(online_hook):
+                raise TypeError("online root callback factory must return a callable hook")
         reservation = (
             _root_budget_reservation(
                 case=case,
@@ -3851,13 +5292,15 @@ class _FormalConditionExecutionCallback:
                     adapter_root=self.output_root,
                     worker_id=worker_id,
                 )
-        adapter_root = self.output_root / "runs" / condition.condition_id / case_id
         experiment_records: list[dict[str, Any]] = []
-        post_raw_output_hook = self._exp3_post_raw_output_hook(
-            condition=condition,
-            case_id=case_id,
-            callback_kwargs=callback_kwargs,
-            runtime_records=experiment_records,
+        post_raw_output_hook = _compose_official_runtime_hooks(
+            online_hook,
+            self._exp3_post_raw_output_hook(
+                condition=condition,
+                case_id=case_id,
+                callback_kwargs=callback_kwargs,
+                runtime_records=experiment_records,
+            ),
         )
         ablation_mode = None
         if condition.experiment_id == "exp4_real_ai_protocol_ablation":
@@ -3942,6 +5385,9 @@ class _FormalConditionExecutionCallback:
                 adapter_result=adapter_result,
                 adapter_root=adapter_root,
                 trace_runtime=trace_runtime,
+                direct_collector=self.direct_collector,
+                condition=condition,
+                case_id=case_id,
             )
             task = _as_json(task)
             task["paper_eligible"] = eligibility.paper_eligible
@@ -5014,6 +6460,15 @@ class _FormalConditionExecutionCallback:
         ]
         for fault in faults:
             fault.update(self._evidence_flags(paper_eligible=False))
+        if self.direct_collector is not None:
+            _capture_canonical_direct_evidence(
+                collector=self.direct_collector,
+                suite_root=self.evidence_store.output_root,
+                condition=condition,
+                case_id=task_id,
+                task=task,
+                adapter_result=adapter_result,
+            )
         artifact_refs = _materialize_artifacts(
             suite_root=self.evidence_store.output_root,
             condition=condition,
@@ -7212,11 +8667,15 @@ def _write_json(path: Path, body: Any) -> None:
 
 
 def _atomic_write_text(path: Path, content: str) -> None:
+    _atomic_write_bytes(path, content.encode("utf-8"))
+
+
+def _atomic_write_bytes(path: Path, content: bytes) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
     try:
-        # 使用 bytes 固定 LF；Windows text mode 的 CRLF 转换会破坏 intent digest。
-        temporary.write_bytes(content.encode("utf-8"))
+        # bytes 写入既支持固定 LF 的 JSON，也支持 protected typed handle。
+        temporary.write_bytes(content)
         temporary.replace(path)
     finally:
         if temporary.exists():
@@ -7415,6 +8874,1069 @@ def _last_complete_event_ref(suite_root: Path) -> dict[str, Any] | None:
         "event_id": event.get("event_id"),
         "task_id": event.get("task_id"),
         "record_hash": digest_json(event),
+    }
+
+
+_DIRECT_METRIC_INPUT_KEYS = (
+    "exp1_feasibility",
+    "exp2_trace_scalability",
+    "exp2_online_concurrency",
+    "exp3_trace_robustness",
+    "exp3_online_recovery",
+    "exp4_ablation",
+    "experiment_5",
+)
+_CURRENT_PROVIDER_METRIC_ROLE_ORDER = (
+    "request_body",
+    "raw_output_or_provider_failure",
+    "provenance",
+    "usage_status",
+    "latency",
+    "pricing",
+    "provider_attempt",
+    "model_record",
+)
+_SOURCE_BANK_METRIC_ROLE_ORDER = (
+    "request_body",
+    "raw_output_or_provider_failure",
+    "provenance",
+    "usage_status",
+    "latency",
+    "pricing",
+    "acquisition_attempt",
+    "model_record",
+)
+
+
+def _direct_metric_input_key(*, experiment_id: str, evidence_class: str) -> str:
+    routes = {
+        ("exp1_real_ai_feasibility", "online_real_provider"): "exp1_feasibility",
+        ("exp2_real_ai_scalability", "real_model_trace_protocol_run"): (
+            "exp2_trace_scalability"
+        ),
+        ("exp2_real_ai_scalability", "online_real_provider"): (
+            "exp2_online_concurrency"
+        ),
+        ("exp3_real_ai_fault_recovery", "real_model_trace_protocol_run"): (
+            "exp3_trace_robustness"
+        ),
+        ("exp3_real_ai_fault_recovery", "online_real_provider"): (
+            "exp3_online_recovery"
+        ),
+        ("exp4_real_ai_protocol_ablation", "real_model_trace_protocol_run"): (
+            "exp4_ablation"
+        ),
+        ("exp5_real_ai_model_endpoint_comparison", "online_real_provider"): (
+            "experiment_5"
+        ),
+    }
+    try:
+        return routes[(experiment_id, evidence_class)]
+    except KeyError as exc:
+        raise ValueError(
+            "no official metric input route for frozen experiment/evidence class"
+        ) from exc
+
+
+def _canonical_metric_inputs(
+    projection_rows: Sequence[Any],
+    *,
+    producer_facts_by_root: Mapping[str, Mapping[str, Any]],
+) -> dict[str, object]:
+    routed: dict[str, list[Any]] = {key: [] for key in _DIRECT_METRIC_INPUT_KEYS}
+    facts_by_root: dict[str, Mapping[str, Any]] = {}
+    for row in projection_rows:
+        facts = producer_facts_by_root.get(row.preregistered_root_run_id)
+        if facts is None:
+            if row.root_status != "not_started":
+                raise ValueError("persisted metric producer facts are missing")
+            facts = {}
+        if not isinstance(facts, Mapping):
+            raise ValueError("persisted metric producer facts are invalid")
+        facts_by_root[row.preregistered_root_run_id] = facts
+        sample_slot = row.condition_axes.get("sample_slot_index")
+        if sample_slot != row.repeat_id:
+            raise ValueError("metric repeat/sample-slot binding mismatch")
+        key = _direct_metric_input_key(
+            experiment_id=row.experiment_id,
+            evidence_class=row.evidence_class,
+        )
+        routed[key].append(row)
+
+    result: dict[str, object] = {key: () for key in _DIRECT_METRIC_INPUT_KEYS}
+    result["exp1_feasibility"] = tuple(
+        _hydrate_exp1_metric_row(row, facts_by_root[row.preregistered_root_run_id])
+        for row in routed["exp1_feasibility"]
+    )
+    result["exp2_trace_scalability"] = tuple(
+        _hydrate_exp2_trace_metric_row(
+            row,
+            facts_by_root[row.preregistered_root_run_id],
+        )
+        for row in routed["exp2_trace_scalability"]
+    )
+    result["exp2_online_concurrency"] = tuple(
+        _hydrate_exp2_online_metric_row(
+            row,
+            facts_by_root[row.preregistered_root_run_id],
+        )
+        for row in routed["exp2_online_concurrency"]
+    )
+    trace_groups: dict[tuple[str, str, int, str], list[Any]] = {}
+    for row in routed["exp3_trace_robustness"]:
+        fault_type = (
+            row.condition_axes.get("fault_condition")
+            or row.condition_axes.get("death_condition")
+        )
+        sample_slot = row.condition_axes.get("sample_slot_index")
+        if (
+            not isinstance(fault_type, str)
+            or not fault_type
+            or isinstance(sample_slot, bool)
+            or not isinstance(sample_slot, int)
+            or sample_slot < 0
+        ):
+            raise ValueError("Exp3 trace metric identity is not legally typed")
+        trace_groups.setdefault(
+            (row.condition_id, fault_type, row.repeat_id, str(sample_slot)),
+            [],
+        ).append(row)
+    result["exp3_trace_robustness"] = tuple(
+        _RunnerExp3TraceMetricInput(
+            condition_id=condition_id,
+            fault_type=fault_type,
+            repeat_id=repeat_id,
+            sample_slot_id=sample_slot_id,
+            observations=tuple(
+                observation
+                for row in trace_groups[
+                    (condition_id, fault_type, repeat_id, sample_slot_id)
+                ]
+                for observation in _persisted_metric_observations(
+                    row,
+                    facts_by_root[row.preregistered_root_run_id],
+                    observation_type=Exp3PersistedObservation,
+                )
+            ),
+            direct_results=tuple(trace_groups[
+                (condition_id, fault_type, repeat_id, sample_slot_id)
+            ]),
+        )
+        for condition_id, fault_type, repeat_id, sample_slot_id in sorted(trace_groups)
+    )
+    result["exp3_online_recovery"] = tuple(
+        _RunnerExp3OnlineMetricInput(
+            recovery_source=row.condition_id,
+            case_id=row.case_id,
+            repeat_id=row.repeat_id,
+            observations=_persisted_metric_observations(
+                row,
+                facts_by_root[row.preregistered_root_run_id],
+                observation_type=Exp3PersistedObservation,
+            ),
+            direct_results=(row,),
+        )
+        for row in routed["exp3_online_recovery"]
+    )
+    exp4_groups: dict[tuple[str, str, int, str], list[Any]] = {}
+    for row in routed["exp4_ablation"]:
+        mode = row.condition_axes.get("ablation_mode")
+        domain = row.condition_axes.get("domain")
+        if not isinstance(mode, str) or not isinstance(domain, str):
+            raise ValueError("Exp4 metric identity is not legally typed")
+        exp4_groups.setdefault(
+            (row.condition_id, domain, row.repeat_id, mode), []
+        ).append(row)
+    result["exp4_ablation"] = tuple(
+        Exp4ModeInput(
+            condition_id=condition_id,
+            domain=domain,
+            repeat_id=repeat_id,
+            ablation_mode=mode,
+            roots=tuple(
+                _hydrate_exp4_root(
+                    row,
+                    facts_by_root[row.preregistered_root_run_id],
+                )
+                for row in exp4_groups[(condition_id, domain, repeat_id, mode)]
+            ),
+            observations=tuple(
+                observation
+                for row in exp4_groups[(condition_id, domain, repeat_id, mode)]
+                for observation in _persisted_metric_observations(
+                    row,
+                    facts_by_root[row.preregistered_root_run_id],
+                    observation_type=Exp4PersistedObservation,
+                )
+            ),
+            identity_consistent=all(
+                row.identity_consistent
+                for row in exp4_groups[(condition_id, domain, repeat_id, mode)]
+            ),
+            paper_evidence_complete=all(
+                row.paper_evidence_complete
+                for row in exp4_groups[(condition_id, domain, repeat_id, mode)]
+            ),
+            infrastructure_valid=all(
+                row.infrastructure_valid
+                for row in exp4_groups[(condition_id, domain, repeat_id, mode)]
+            ),
+        )
+        for condition_id, domain, repeat_id, mode in sorted(exp4_groups)
+    )
+    result["experiment_5"] = _hydrate_exp5_metric_rows(
+        routed["experiment_5"],
+        facts_by_root,
+    )
+    return result
+
+
+def _producer_parts(
+    facts: Mapping[str, Any],
+) -> tuple[Mapping[str, Any], tuple[Mapping[str, Any], ...], Mapping[str, Any]]:
+    task = facts.get("task", {})
+    attempts = facts.get("attempts", ())
+    run_evidence = facts.get("run_evidence", {})
+    if not isinstance(task, Mapping) or not isinstance(run_evidence, Mapping):
+        raise ValueError("persisted metric producer facts are malformed")
+    if not isinstance(attempts, Sequence) or isinstance(
+        attempts, (str, bytes, bytearray)
+    ):
+        raise ValueError("persisted metric attempts are malformed")
+    normalized_attempts = tuple(attempts)
+    if any(not isinstance(value, Mapping) for value in normalized_attempts):
+        raise ValueError("persisted metric attempts must be mappings")
+    return task, normalized_attempts, run_evidence
+
+
+def _runtime_observation(run_evidence: Mapping[str, Any]) -> Mapping[str, Any]:
+    runtime = run_evidence.get("protocol_runtime", {})
+    if not isinstance(runtime, Mapping):
+        raise ValueError("persisted protocol runtime facts are malformed")
+    observation = runtime.get("runtime_observation", {})
+    if observation is None:
+        return {}
+    if not isinstance(observation, Mapping):
+        raise ValueError("persisted runtime observation is malformed")
+    return observation
+
+
+def _current_roles(row: Any) -> tuple[str, ...] | None:
+    available = {ref.source_role for ref in row.current_provider_object_refs}
+    roles = tuple(
+        role for role in _CURRENT_PROVIDER_METRIC_ROLE_ORDER if role in available
+    )
+    roles += tuple(sorted(available.difference(roles)))
+    return roles or None
+
+
+def _source_roles(row: Any) -> tuple[str, ...] | None:
+    available = {locator.object_role for locator in row.source_bank_object_locators}
+    roles = tuple(role for role in _SOURCE_BANK_METRIC_ROLE_ORDER if role in available)
+    roles += tuple(sorted(available.difference(roles)))
+    return roles or None
+
+
+def _hydrate_exp1_metric_row(
+    row: Any,
+    facts: Mapping[str, Any],
+) -> Exp1HydratedDirectRow:
+    _task, attempts, run_evidence = _producer_parts(facts)
+    observation = _runtime_observation(run_evidence)
+    wall_clock = observation.get("runtime_wall_clock_ms")
+    return Exp1HydratedDirectRow(
+        direct_result=row,
+        root_start_at_ms=0 if wall_clock is not None else None,
+        root_terminal_at_ms=wall_clock,
+        actual_provider_attempts=(
+            tuple(
+                Exp1ActualProviderAttemptFacts(
+                    attempt_id=str(attempt.get("attempt_id") or ""),
+                    provider_latency_ms=attempt.get("latency_ms"),
+                    total_tokens=attempt.get("total_tokens"),
+                    cost_estimate_cny=attempt.get("cost_estimate"),
+                    current_provider_roles=_current_roles(row),
+                )
+                for attempt in attempts
+            )
+            if facts
+            else None
+        ),
+    )
+
+
+def _hydrate_exp2_trace_metric_row(
+    row: Any,
+    facts: Mapping[str, Any],
+) -> _RunnerExp2TraceMetricInput:
+    _task, attempts, run_evidence = _producer_parts(facts)
+    observation = _runtime_observation(run_evidence)
+    planned = tuple(str(value) for value in observation.get("planned_ai_unit_ids", ()))
+    dispatched = set(str(value) for value in observation.get("dispatched_ai_unit_ids", ()))
+    completed = set(str(value) for value in observation.get("completed_ai_unit_ids", ()))
+    latency_by_unit = {
+        str(attempt.get("unit_id") or attempt.get("planned_ai_unit_id") or ""): (
+            attempt.get("latency_ms")
+        )
+        for attempt in attempts
+    }
+    source_roles = _source_roles(row)
+    entry_ids = tuple(
+        sorted({locator.entry_id for locator in row.source_bank_object_locators})
+    )
+    return _RunnerExp2TraceMetricInput(
+        direct_result=row,
+        persisted_logical_makespan_ms=observation.get("runtime_wall_clock_ms"),
+        trace_consumptions=(
+            tuple(
+                Exp2TraceConsumptionFacts(
+                    consumption_id=entry_id,
+                    committed=True,
+                    source_total_tokens=None,
+                    source_cost_estimate_cny=None,
+                    source_bank_roles=source_roles,
+                )
+                for entry_id in entry_ids
+            )
+            if facts
+            else None
+        ),
+        ai_units=(
+            tuple(
+                Exp2AIUnitFacts(
+                    unit_id=unit_id,
+                    planned=True,
+                    scheduled=unit_id in dispatched,
+                    executed=unit_id in completed,
+                    busy_worker_time_ms=(
+                        latency_by_unit.get(unit_id, 0)
+                        if unit_id in completed
+                        else None
+                    ),
+                )
+                for unit_id in planned
+            )
+            if facts
+            else None
+        ),
+        in_flight_at_witness=(
+            len(tuple(observation.get("in_flight_ai_unit_ids_at_witness", ())))
+            if observation
+            else None
+        ),
+        observed_peak_concurrency=observation.get("observed_peak_concurrency"),
+    )
+
+
+def _hydrate_exp2_online_metric_row(
+    row: Any,
+    facts: Mapping[str, Any],
+) -> _RunnerExp2OnlineMetricInput:
+    _task, attempts, run_evidence = _producer_parts(facts)
+    observation = _runtime_observation(run_evidence)
+    first_by_unit: dict[str, Mapping[str, Any]] = {}
+    for attempt in attempts:
+        unit_id = str(
+            attempt.get("unit_id") or attempt.get("planned_ai_unit_id") or ""
+        )
+        if not unit_id:
+            raise ValueError("persisted online attempt has no unit identity")
+        first_by_unit.setdefault(unit_id, attempt)
+    return _RunnerExp2OnlineMetricInput(
+        direct_result=row,
+        protocol_first_dispatch_at_ms=0 if observation else None,
+        root_terminal_at_ms=observation.get("runtime_wall_clock_ms"),
+        first_provider_attempts=(
+            tuple(
+                Exp2OnlineFirstAttemptFacts(
+                    attempt_identity=str(attempt.get("attempt_id") or ""),
+                    actual_call=bool(attempt.get("provider")),
+                    provider_429=str(attempt.get("error_kind") or "") == "provider_429",
+                    provider_timeout=str(attempt.get("error_kind") or "")
+                    in {"provider_timeout", "timeout"},
+                    total_tokens=attempt.get("total_tokens"),
+                    cost_estimate_cny=attempt.get("cost_estimate"),
+                    provider_latency_ms=attempt.get("latency_ms"),
+                    current_provider_roles=_current_roles(row),
+                )
+                for attempt in first_by_unit.values()
+            )
+            if facts
+            else None
+        ),
+    )
+
+
+def _persisted_metric_observations(
+    row: Any,
+    facts: Mapping[str, Any],
+    *,
+    observation_type: type,
+) -> tuple[Any, ...]:
+    records: list[tuple[str, Mapping[str, Any]]] = []
+    for category in ("attempts", "faults", "events"):
+        values = facts.get(category, ())
+        if not isinstance(values, Sequence) or isinstance(
+            values, (str, bytes, bytearray)
+        ):
+            raise ValueError(f"persisted metric {category} are malformed")
+        for index, value in enumerate(values):
+            if not isinstance(value, Mapping):
+                raise ValueError(f"persisted metric {category} must be mappings")
+            records.append((f"{category}:{index}", value))
+    task = facts.get("task")
+    if isinstance(task, Mapping):
+        records.append(("task", task))
+    if not records:
+        records.append(
+            (
+                "inventory",
+                {
+                    "member_kind": "preregistered_root",
+                    "root_status": row.root_status,
+                    "case_id": row.case_id,
+                },
+            )
+        )
+    return tuple(
+        observation_type(
+            observation_id=(
+                f"{row.preregistered_root_run_id}:{suffix}"
+            ),
+            facts=dict(value),
+        )
+        for suffix, value in records
+    )
+
+
+def _hydrate_exp4_root(row: Any, facts: Mapping[str, Any]) -> Exp4DirectRootFacts:
+    _task, attempts, run_evidence = _producer_parts(facts)
+    observation = _runtime_observation(run_evidence)
+    replacements = tuple(
+        str(
+            attempt.get("replacement_slot")
+            if attempt.get("replacement_slot") is not None
+            else attempt.get("attempt_id")
+        )
+        for attempt in attempts
+        if int(attempt.get("provider_attempt_index") or 1) > 1
+    )
+    return Exp4DirectRootFacts(
+        preregistered_root_run_id=row.preregistered_root_run_id,
+        case_id=row.case_id,
+        case_record_digest=str(row.preregistered_case_ref["case_record_digest"]),
+        sample_slot_index=row.repeat_id,
+        replacement_slot_ids=replacements,
+        final_result_reference_complete=row.final_result_reference_complete,
+        end_to_end_verified_success=row.end_to_end_verified_success,
+        trace_replay_wall_clock_ms=observation.get("runtime_wall_clock_ms"),
+        trace_attributed_tokens=(
+            sum(int(attempt.get("total_tokens") or 0) for attempt in attempts)
+            if facts
+            else None
+        ),
+        trace_attributed_cost=(
+            sum(float(attempt.get("cost_estimate") or 0) for attempt in attempts)
+            if facts
+            else None
+        ),
+        identity_consistent=row.identity_consistent,
+        paper_evidence_complete=row.paper_evidence_complete,
+        infrastructure_valid=row.infrastructure_valid,
+        source_bank_roles=_source_roles(row),
+    )
+
+
+def _hydrate_exp5_metric_rows(
+    rows: Sequence[Any],
+    facts_by_root: Mapping[str, Mapping[str, Any]],
+) -> tuple[Exp5ModelRepeatFacts, ...]:
+    groups: dict[tuple[str, int], list[Any]] = {}
+    for row in rows:
+        model_arm = row.condition_axes.get("model_endpoint_id")
+        if not isinstance(model_arm, str) or not model_arm:
+            raise ValueError("Exp5 model endpoint identity is missing")
+        groups.setdefault((model_arm, row.repeat_id), []).append(row)
+    hydrated: list[Exp5ModelRepeatFacts] = []
+    for (model_arm, repeat_id), grouped_rows in sorted(groups.items()):
+        roots: list[Exp5PreregisteredRootFacts] = []
+        units: dict[str, Exp5PlannedAIUnitFacts] = {}
+        first_attempts: dict[str, Exp5FirstProviderAttemptFacts] = {}
+        first_dispatch: int | float | None = None
+        for row in grouped_rows:
+            facts = facts_by_root[row.preregistered_root_run_id]
+            _task, attempts, run_evidence = _producer_parts(facts)
+            observation = _runtime_observation(run_evidence)
+            wall_clock = observation.get("runtime_wall_clock_ms")
+            if observation and first_dispatch is None:
+                first_dispatch = 0
+            roots.append(
+                Exp5PreregisteredRootFacts(
+                    preregistered_root_run_id=row.preregistered_root_run_id,
+                    root_dispatched_at_ms=0 if observation else None,
+                    root_terminal_at_ms=wall_clock,
+                    final_result_reference_complete=(
+                        row.final_result_reference_complete
+                    ),
+                    end_to_end_verified_success=row.end_to_end_verified_success,
+                )
+            )
+            planned = tuple(
+                str(value) for value in observation.get("planned_ai_unit_ids", ())
+            )
+            for unit_id in planned:
+                units.setdefault(
+                    unit_id,
+                    Exp5PlannedAIUnitFacts(unit_id=unit_id, planned_call=True),
+                )
+            for attempt in attempts:
+                unit_id = str(
+                    attempt.get("unit_id")
+                    or attempt.get("planned_ai_unit_id")
+                    or ""
+                )
+                if not unit_id:
+                    raise ValueError("Exp5 attempt has no planned AI-unit identity")
+                units.setdefault(
+                    unit_id,
+                    Exp5PlannedAIUnitFacts(unit_id=unit_id, planned_call=True),
+                )
+                if unit_id in first_attempts:
+                    continue
+                error = str(attempt.get("error_kind") or "")
+                accepted = (
+                    str(attempt.get("attempt_status") or "").lower()
+                    in {"succeeded", "completed"}
+                    and not error
+                )
+                first_attempts[unit_id] = Exp5FirstProviderAttemptFacts(
+                    attempt_id=str(attempt.get("attempt_id") or ""),
+                    planned_ai_unit_id=unit_id,
+                    actual_call=bool(attempt.get("provider")),
+                    provider_transport_failure=error.startswith("provider_")
+                    or error in {"timeout", "executor_error"},
+                    parse_schema_unusable=error in {"parse_error", "schema_error"},
+                    verification_checker_rejected=(
+                        not accepted
+                        and error
+                        not in {
+                            "parse_error",
+                            "schema_error",
+                            "timeout",
+                            "executor_error",
+                        }
+                        and not error.startswith("provider_")
+                    ),
+                    verifier_accepted_candidate=accepted,
+                    actual_total_tokens=attempt.get("total_tokens"),
+                    actual_cost_estimate_cny=attempt.get("cost_estimate"),
+                    current_provider_roles=_current_roles(row),
+                )
+        hydrated.append(
+            Exp5ModelRepeatFacts(
+                model_arm_id=model_arm,
+                repeat_id=repeat_id,
+                frozen_identity=None,
+                observed_identity=None,
+                persisted_model_endpoint_identity_digest=None,
+                protocol_first_dispatch_at_ms=first_dispatch,
+                preregistered_roots=tuple(roots),
+                planned_ai_units=tuple(units.values()),
+                first_provider_attempts=tuple(first_attempts.values()),
+                max_retries=0,
+                replacement_attempts_allowed=False,
+                infrastructure_valid=all(
+                    row.infrastructure_valid for row in grouped_rows
+                ),
+            )
+        )
+    return tuple(hydrated)
+
+
+def _finalize_canonical_direct_closure(
+    *,
+    suite_root: Path,
+    collector: _CanonicalDirectCollector,
+) -> None:
+    with collector.lock:
+        evidence = tuple(collector.evidence)
+        provider_files = dict(collector.current_provider_object_files)
+        producer_facts = dict(collector.producer_facts_by_root)
+    projection = project_paper_direct_results(
+        root_inventory_manifest=collector.inventory,
+        condition_manifests=collector.condition_manifests,
+        catalog_manifests=collector.catalog_manifests,
+        canonical_runtime_evidence=evidence,
+    )
+    direct_rows = _canonical_metric_inputs(
+        projection.rows,
+        producer_facts_by_root=producer_facts,
+    )
+    if not any(direct_rows.values()):
+        raise ValueError("canonical direct projection produced no metric rows")
+    with tempfile.TemporaryDirectory(
+        prefix="tokenshare-direct-evidence-",
+        dir=suite_root.parent,
+    ) as staging_directory:
+        staged_evidence_root = Path(staging_directory) / "formal_evidence"
+        shutil.copytree(suite_root, staged_evidence_root)
+        for derived_name in (
+            "condition_results.jsonl",
+            "formal_runner_result.json",
+        ):
+            derived_path = staged_evidence_root / derived_name
+            if derived_path.is_file():
+                derived_path.unlink()
+        _prepare_protected_formal_evidence_closure(
+            staged_evidence_root,
+            suite_root=suite_root,
+            canonical_direct_rows=projection.rows,
+            trace_source_bindings_by_root=(
+                collector.trace_source_bindings_by_root
+            ),
+        )
+        protected = persist_paper_traceability_replay_input_root(
+            replay_input_root=suite_root.with_name(
+                suite_root.name + ".traceability_replay_inputs"
+            ),
+            canonical_direct_rows=direct_rows,
+            canonical_runtime_evidence=evidence,
+            current_trace_wrappers_by_root=(
+                collector.current_trace_wrappers_by_root
+            ),
+            trace_source_bindings_by_root=(
+                collector.trace_source_bindings_by_root
+            ),
+            eligibility_facts_by_root=collector.eligibility_facts_by_root,
+            source_resolvers=collector.source_resolvers,
+            current_provider_object_files=provider_files,
+            current_evidence_root=staged_evidence_root,
+        )
+    handle_relative = "traceability_replay_input_root.handle.pickle"
+    handle_path = suite_root / handle_relative
+    handle_content = pickle.dumps(protected, protocol=5)
+    _atomic_write_bytes(handle_path, handle_content)
+    suite_path = suite_root / "suite_manifest.json"
+    suite_manifest = _required_json_object(suite_path, label="suite manifest")
+    suite_manifest["traceability_replay_input_root_ref"] = {
+        "schema_version": "tokenshare.paper_traceability_replay_input_ref.v1",
+        "handle_path": handle_relative,
+        "handle_digest": _sha256_bytes(handle_content),
+        "descriptor_path": protected.descriptor_path.as_posix(),
+        "descriptor_digest": protected.descriptor_digest,
+    }
+    _atomic_write_json(suite_path, suite_manifest)
+    FormalEvidenceStore(suite_root)._refresh_evidence_manifest()
+
+
+def _prepare_protected_formal_evidence_closure(
+    evidence_root: Path,
+    *,
+    suite_root: Path,
+    canonical_direct_rows: Sequence[Any],
+    trace_source_bindings_by_root: Mapping[str, Sequence[Any]] | None = None,
+) -> None:
+    """在隔离副本中把权威 case evidence 投影为 L4 canonical closure。"""
+
+    store = FormalEvidenceStore(evidence_root)
+    store._refresh_evidence_manifest()
+    store._validate_evidence_manifest()
+    manifest = _required_json_object(
+        evidence_root / "evidence_manifest.json",
+        label="formal evidence manifest",
+    )
+    condition_entries = manifest.get("conditions")
+    if not isinstance(condition_entries, list) or not condition_entries:
+        raise ValueError("protected formal evidence requires condition closure")
+    for entry in condition_entries:
+        if not isinstance(entry, Mapping):
+            raise ValueError("protected formal evidence condition entry is invalid")
+        condition_ref = entry.get("condition_manifest_ref")
+        if not isinstance(condition_ref, Mapping):
+            raise ValueError("protected formal evidence condition ref is missing")
+        condition_path = evidence_root / str(condition_ref.get("path", ""))
+        condition = _required_json_object(
+            condition_path,
+            label="formal condition manifest",
+        )
+        generation_ref = condition.get("generation_manifest_ref")
+        current_ref = condition.get("current_ref")
+        if not isinstance(generation_ref, Mapping) or not isinstance(
+            current_ref,
+            Mapping,
+        ):
+            raise ValueError("protected formal evidence condition closure is incomplete")
+        generation_path = evidence_root / str(generation_ref.get("path", ""))
+        current_path = evidence_root / str(current_ref.get("path", ""))
+        generation = _required_json_object(
+            generation_path,
+            label="formal generation manifest",
+        )
+        if (
+            generation.get("generation_kind") != "snapshot"
+            or generation.get("parent_generation_id") is not None
+        ):
+            raise ValueError("protected formal evidence requires terminal snapshot")
+        run_root = condition_path.parent
+        generation_root = generation_path.parent
+        experiment_id = str(condition.get("experiment_id", ""))
+        condition_id = str(condition.get("condition_id", ""))
+        repeat_id = condition.get("repeat_id")
+        projected_by_case = {
+            row.case_id: row
+            for row in canonical_direct_rows
+            if row.experiment_id == experiment_id
+            and row.condition_id == condition_id
+            and row.repeat_id == repeat_id
+        }
+        task_path = generation_root / "per_task_results.jsonl"
+        task_rows = _read_jsonl_records(task_path)
+        task_id_projection: dict[str, str] = {}
+        for row in task_rows:
+            case_id = str(row.get("task_id", ""))
+            direct = projected_by_case.get(case_id)
+            if direct is None:
+                raise ValueError(
+                    "protected formal evidence canonical task binding is missing"
+                )
+            binding = direct.execution_binding
+            row["case_id"] = direct.case_id
+            row["preregistered_root_run_id"] = direct.preregistered_root_run_id
+            if binding is None:
+                task_id_projection[case_id] = case_id
+                continue
+            runtime_identity = row.get("runtime_generation_identity")
+            if not isinstance(runtime_identity, Mapping) or any(
+                runtime_identity.get(name) != expected
+                for name, expected in (
+                    ("run_id", binding.execution_id),
+                    ("task_id", binding.task_id),
+                    ("root_unit_id", binding.root_unit_id),
+                )
+            ):
+                raise ValueError(
+                    "protected formal evidence runtime task binding mismatch"
+                )
+            canonical_runtime_identity = {
+                "schema_version": "tokenshare.paper_runtime_generation_identity.v1",
+                "run_id": binding.execution_id,
+                "task_id": binding.task_id,
+                "root_unit_id": binding.root_unit_id,
+                "ledger_digest": binding.ledger_digest,
+            }
+            execution_version_identity = row.get("execution_version_identity")
+            if execution_version_identity is not None and not isinstance(
+                execution_version_identity,
+                Mapping,
+            ):
+                raise ValueError(
+                    "protected formal evidence execution version identity is invalid"
+                )
+            row["runtime_generation_identity"] = canonical_runtime_identity
+            if execution_version_identity is not None:
+                row["execution_version_identity"] = {
+                    **execution_version_identity,
+                    "runtime_generation_schema_version": canonical_runtime_identity[
+                        "schema_version"
+                    ],
+                    "runtime_generation_identity_digest": digest_json(
+                        canonical_runtime_identity
+                    ),
+                }
+            task_id_projection[case_id] = binding.task_id
+            row["task_id"] = binding.task_id
+            ledger_mapping = row.get("protocol_event_ledger")
+            if isinstance(ledger_mapping, Mapping):
+                row["protocol_event_ledger"] = {
+                    **ledger_mapping,
+                    "case_task_id": binding.task_id,
+                }
+        if len(task_id_projection) != len(task_rows):
+            raise ValueError("protected formal evidence task projection is ambiguous")
+        _atomic_write_jsonl(task_path, task_rows)
+
+        projected_jsonl: dict[str, list[dict[str, Any]]] = {
+            "per_task_results.jsonl": task_rows,
+        }
+        for relative_name in (
+            "per_attempt_results.jsonl",
+            "fault_injections.jsonl",
+            "events/event_log.jsonl",
+        ):
+            path = generation_root / relative_name
+            rows = _read_jsonl_records(path)
+            for row in rows:
+                if (
+                    relative_name == "events/event_log.jsonl"
+                    and _is_protocol_ledger_event(row)
+                ):
+                    continue
+                original_task_id = str(row.get("task_id", ""))
+                projected_task_id = task_id_projection.get(original_task_id)
+                if projected_task_id is None:
+                    raise ValueError(
+                        "protected formal evidence contextual task binding is missing"
+                    )
+                row["task_id"] = projected_task_id
+                if relative_name == "per_attempt_results.jsonl":
+                    direct = projected_by_case.get(original_task_id)
+                    bindings = (
+                        ()
+                        if direct is None or trace_source_bindings_by_root is None
+                        else trace_source_bindings_by_root.get(
+                            direct.preregistered_root_run_id,
+                            (),
+                        )
+                    )
+                    planned_ai_unit_id = row.get("planned_ai_unit_id")
+                    matching_bindings = tuple(
+                        value
+                        for value in bindings
+                        if value.planned_ai_unit_id == planned_ai_unit_id
+                    )
+                    if len(matching_bindings) > 1:
+                        raise ValueError(
+                            "protected formal evidence trace binding is ambiguous"
+                        )
+                    if matching_bindings:
+                        row["trace_source_binding_digest"] = (
+                            matching_bindings[0].binding_digest
+                        )
+            _atomic_write_jsonl(path, rows)
+            projected_jsonl[relative_name] = rows
+
+        run_manifest_path = generation_root / "run_manifest.json"
+        run_manifest = _required_json_object(
+            run_manifest_path,
+            label="formal run manifest",
+        )
+        run_manifest["task_ids"] = [str(row["task_id"]) for row in task_rows]
+        completed_case_ids = {
+            str(value) for value in run_manifest.get("completed_task_ids", ())
+        }
+        run_manifest["completed_task_ids"] = [
+            task_id_projection[case_id]
+            for case_id in task_id_projection
+            if case_id in completed_case_ids
+        ]
+        _atomic_write_json(run_manifest_path, run_manifest)
+
+        artifact_index_path = (
+            generation_root / "artifacts" / "artifact_index.jsonl"
+        )
+        artifact_rows = _read_jsonl_records(artifact_index_path)
+        flat_artifact_root = run_root / "artifacts"
+        flat_artifact_root.mkdir(parents=True, exist_ok=True)
+        for row in artifact_rows:
+            original_task_id = str(row.get("task_id", ""))
+            projected_task_id = task_id_projection.get(original_task_id)
+            if projected_task_id is None:
+                raise ValueError(
+                    "protected formal evidence artifact task binding is missing"
+                )
+            row["task_id"] = projected_task_id
+            relative = Path(str(row.get("path", "")))
+            source = (evidence_root / relative).resolve(strict=False)
+            authoritative_root = flat_artifact_root.resolve(strict=False)
+            if (
+                not source.is_file()
+                or authoritative_root not in source.parents
+                or source.parent == authoritative_root
+            ):
+                raise ValueError(
+                    "protected formal evidence requires task-scoped artifact source"
+                )
+            content = source.read_bytes()
+            if (
+                row.get("content_hash") != _sha256_bytes(content)
+                or (
+                    row.get("size_bytes") is not None
+                    and row.get("size_bytes") != len(content)
+                )
+            ):
+                raise ValueError("protected formal evidence artifact identity mismatch")
+            target = flat_artifact_root / (
+                hashlib.sha256(relative.as_posix().encode("utf-8")).hexdigest()
+                + ".bin"
+            )
+            if target.is_file() and target.read_bytes() != content:
+                raise ValueError("protected formal evidence flat artifact collision")
+            if not target.is_file():
+                shutil.copyfile(source, target)
+            row["path"] = target.relative_to(evidence_root).as_posix()
+        for direct in projected_by_case.values():
+            binding = direct.execution_binding
+            if binding is None:
+                continue
+            canonical_store = ArtifactStore(
+                suite_root.with_name(
+                    suite_root.name + ".canonical_direct_evidence"
+                )
+                / hashlib.sha256(
+                    direct.preregistered_root_run_id.encode("utf-8")
+                ).hexdigest()
+            )
+            for snapshot in direct.artifact_refs:
+                canonical_ref = canonical_store.load_artifact_ref(
+                    snapshot.artifact_id
+                )
+                if any(
+                    actual != expected
+                    for actual, expected in (
+                        (canonical_ref.artifact_type, snapshot.artifact_type),
+                        (canonical_ref.uri, snapshot.uri),
+                        (canonical_ref.content_hash, snapshot.content_hash),
+                        (canonical_ref.size_bytes, snapshot.size_bytes),
+                        (canonical_ref.media_type, snapshot.media_type),
+                        (
+                            canonical_ref.artifact_schema_id,
+                            snapshot.artifact_schema_id,
+                        ),
+                        (
+                            canonical_ref.artifact_schema_version,
+                            snapshot.artifact_schema_version,
+                        ),
+                        (canonical_ref.created_at, snapshot.created_at),
+                    )
+                ):
+                    raise ValueError(
+                        "protected formal evidence direct artifact identity mismatch"
+                    )
+                canonical_content = canonical_store.read_bytes(canonical_ref)
+                target = flat_artifact_root / (
+                    hashlib.sha256(
+                        (
+                            direct.preregistered_root_run_id
+                            + "\0"
+                            + snapshot.artifact_id
+                            + "\0"
+                            + snapshot.uri
+                        ).encode("utf-8")
+                    ).hexdigest()
+                    + ".bin"
+                )
+                _atomic_write_bytes(target, canonical_content)
+                matches = [
+                    row
+                    for row in artifact_rows
+                    if isinstance(row.get("source_artifact_ref"), Mapping)
+                    and row["source_artifact_ref"].get("artifact_id")
+                    == snapshot.artifact_id
+                    and row["source_artifact_ref"].get("content_hash")
+                    == snapshot.content_hash
+                ]
+                if len(matches) > 1:
+                    raise ValueError(
+                        "protected formal evidence direct artifact is ambiguous"
+                    )
+                record = matches[0] if matches else {}
+                record.update(
+                    {
+                        "artifact_id": snapshot.artifact_id,
+                        "experiment_id": direct.experiment_id,
+                        "condition_id": direct.condition_id,
+                        "repeat_id": direct.repeat_id,
+                        "task_id": binding.task_id,
+                        "path": target.relative_to(evidence_root).as_posix(),
+                        "content_hash": snapshot.content_hash,
+                        "size_bytes": snapshot.size_bytes,
+                        "source_artifact_ref": canonical_ref.to_dict(),
+                    }
+                )
+                if not matches:
+                    artifact_rows.append(record)
+        _atomic_write_jsonl(artifact_index_path, artifact_rows)
+        projected_jsonl["artifacts/artifact_index.jsonl"] = artifact_rows
+
+        files = generation.get("files")
+        if not isinstance(files, list):
+            raise ValueError("protected formal evidence generation files are invalid")
+        file_refs = {
+            str(value.get("path")): value
+            for value in files
+            if isinstance(value, Mapping)
+        }
+        expected_paths = {"run_manifest.json", *projected_jsonl}
+        if not expected_paths <= set(file_refs):
+            raise ValueError("protected formal evidence generation refs are incomplete")
+        file_refs["run_manifest.json"].update(
+            _formal_file_evidence(generation_root, run_manifest_path, [run_manifest])
+        )
+        for relative_name, rows in projected_jsonl.items():
+            file_refs[relative_name].update(
+                _formal_file_evidence(
+                    generation_root,
+                    generation_root / relative_name,
+                    rows,
+                )
+            )
+        _atomic_write_json(generation_path, generation)
+
+        current = _required_json_object(current_path, label="formal CURRENT")
+        current["generation_manifest_digest"] = digest_json(generation)
+        _atomic_write_json(current_path, current)
+        condition["current_ref"] = _formal_json_file_evidence(
+            evidence_root,
+            current_path,
+        )
+        condition["generation_manifest_ref"] = _formal_json_file_evidence(
+            evidence_root,
+            generation_path,
+        )
+        condition["run_manifest_ref"] = _formal_json_file_evidence(
+            evidence_root,
+            run_manifest_path,
+        )
+        condition["logical_records_digest"] = digest_json(
+            [
+                {
+                    "path": value["path"],
+                    "record_count": value["record_count"],
+                    "records_digest": value["records_digest"],
+                }
+                for value in files
+                if isinstance(value, Mapping)
+            ]
+        )
+        payload_paths = {
+            (evidence_root / str(row["path"])).resolve(strict=False)
+            for row in artifact_rows
+        }
+        condition["reachable_size_bytes"] = (
+            generation_path.stat().st_size
+            + sum(int(value["size"]) for value in files if isinstance(value, Mapping))
+            + sum(path.stat().st_size for path in payload_paths)
+        )
+        _atomic_write_json(condition_path, condition)
+        store._refresh_evidence_manifest(run_root=run_root)
+    store = FormalEvidenceStore(evidence_root)
+    store._validate_evidence_manifest()
+
+
+def _formal_json_file_evidence(root: Path, path: Path) -> dict[str, Any]:
+    content = path.read_bytes()
+    body = json.loads(content.decode("utf-8"))
+    return {
+        "path": path.relative_to(root).as_posix(),
+        "size": len(content),
+        "content_sha256": _sha256_bytes(content),
+        "record_count": 1,
+        "records_digest": digest_json([body]),
+    }
+
+
+def _formal_file_evidence(
+    root: Path,
+    path: Path,
+    rows: Sequence[Mapping[str, Any]],
+) -> dict[str, Any]:
+    content = path.read_bytes()
+    return {
+        "path": path.relative_to(root).as_posix(),
+        "size": len(content),
+        "content_sha256": _sha256_bytes(content),
+        "record_count": len(rows),
+        "records_digest": digest_json(rows),
     }
 
 

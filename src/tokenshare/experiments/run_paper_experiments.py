@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import argparse
 from collections.abc import Mapping, Sequence
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from hashlib import sha256
 import json
 import os
@@ -63,14 +63,12 @@ from tokenshare.experiments.paper_formal_runner import (
     APPROVED_ENDPOINT_BINDINGS_KEY,
     PaperInfrastructureBlockedError,
     execute_paper_formal_suite,
+    recompute_paper_formal_metrics_from_runner_inputs as recompute_paper_formal_metrics,
     replay_paper_formal_suite,
     write_paper_formal_replay_report,
 )
 from tokenshare.experiments.paper_exp1 import EXP1_FORMAL_REQUEST_CONTROLS
 from tokenshare.experiments.paper_formal_evidence import FormalEvidenceStore
-from tokenshare.experiments.paper_formal_metrics import (
-    recompute_paper_formal_metrics,
-)
 from tokenshare.experiments.paper_formal_report import (
     generate_paper_formal_report,
 )
@@ -86,6 +84,7 @@ from tokenshare.experiments.paper_runner import (
     validate_exp1_selector_output_root,
 )
 from tokenshare.experiments.paper_smoke import (
+    build_paper_smoke_service_authority,
     execute_paper_smoke_suite,
     load_paper_smoke_profile,
     replay_paper_smoke_suite,
@@ -95,6 +94,10 @@ from tokenshare.experiments.paper_suite_scale import (
     load_paper_suite_scale_profile,
 )
 from tokenshare.runtime_paths import default_data_root, resolve_experiment_output_root
+from tokenshare.experiments.run_paper_pipeline import (
+    PAPER_PIPELINE_COMMANDS,
+    main as run_paper_pipeline_main,
+)
 
 
 DEFAULT_FACTOR_CATALOG = Path("benchmarks/paper/factorization_catalog.v2.jsonl")
@@ -134,6 +137,574 @@ FORMAL_COST_UPPER_BOUND_PER_PROVIDER_ATTEMPT = 0.05
 EXP5_V3_EXECUTION_SCHEDULE_PATH = Path(
     "audit/exp5_v3_execution_schedule.json"
 )
+DEFAULT_EXP5_MODEL_COHORT = Path(
+    "benchmarks/paper/model_comparison_cohort.v3.json"
+)
+DEFAULT_EXP5_MODEL_ENTRY_MAP = Path(
+    "benchmarks/paper/model_comparison_entry_map.v3.json"
+)
+DEFAULT_EXP5_PROVIDER_CONFIG = Path(
+    "benchmarks/paper/exp5_siliconflow_provider_config.v3.json"
+)
+
+
+@dataclass(frozen=True, kw_only=True)
+class EPD027FormalServiceAuthority:
+    """pipeline 与 legacy 可共同消费的无 secret、无 provider side effect authority。"""
+
+    command: str
+    plan_digest: str
+    inventory_digest: str
+    budget_digest: str
+    keyword_arguments: Mapping[str, object]
+
+
+def _select_online_checks_dispatch(
+    *,
+    dispatch_plans: Sequence[object],
+    profile: object,
+) -> tuple[tuple[object, ...], dict[str, tuple[str, ...]]]:
+    """从 canonical Exp1/2/3 plans 选择 2+24+2 个 authoritative online roots。"""
+
+    from tokenshare.experiments.paper_dispatcher import PaperExperimentDispatchPlan
+
+    by_experiment = {plan.experiment_id: plan for plan in dispatch_plans}
+    selected_plans: list[object] = []
+    root_filter: dict[str, tuple[str, ...]] = {}
+
+    exp1 = by_experiment["exp1_real_ai_feasibility"]
+    capability_cases = (
+        profile.capability.factor.case_id,
+        profile.capability.lean.case_id,
+    )
+    exp1_items = []
+    for case_id in capability_cases:
+        matches = tuple(
+            (condition, selection)
+            for condition, selection in exp1.bound_items()
+            if case_id in selection.ordered_case_ids
+        )
+        if len(matches) != 1:
+            raise ValueError("online capability case is not uniquely bound")
+        condition, selection = matches[0]
+        exp1_items.append((condition, selection))
+        root_filter[condition.condition_id] = (case_id,)
+    selected_plans.append(
+        PaperExperimentDispatchPlan(
+            experiment_id=exp1.experiment_id,
+            output_root=exp1.output_root,
+            conditions=tuple(condition for condition, _selection in exp1_items),
+            condition_selection_bindings=tuple(
+                binding
+                for binding in exp1.condition_selection_bindings
+                if binding.condition_id
+                in {condition.condition_id for condition, _selection in exp1_items}
+            ),
+            catalog_execution_view=exp1.catalog_execution_view,
+        )
+    )
+
+    exp2 = by_experiment["exp2_real_ai_scalability"]
+    exp2_items = tuple(
+        (condition, selection)
+        for condition, selection in exp2.bound_items()
+        if condition.repeat_id == profile.exp2.repeat_id
+        and condition.worker_count in profile.exp2.workers
+    )
+    if len(exp2_items) != len(profile.exp2.workers):
+        raise ValueError("online Exp2 worker conditions are not uniquely bound")
+    for condition, _selection in exp2_items:
+        cases = tuple(
+            item.case_id
+            for item in profile.exp2_conditions
+            if item.worker_count == condition.worker_count
+            and item.repeat_id == condition.repeat_id
+        )
+        if len(cases) != 4 or len(set(cases)) != 4:
+            raise ValueError("online Exp2 condition must bind four fixed cases")
+        root_filter[condition.condition_id] = cases
+    selected_plans.append(
+        PaperExperimentDispatchPlan(
+            experiment_id=exp2.experiment_id,
+            output_root=exp2.output_root,
+            conditions=tuple(condition for condition, _selection in exp2_items),
+            condition_selection_bindings=tuple(
+                binding
+                for binding in exp2.condition_selection_bindings
+                if binding.condition_id
+                in {condition.condition_id for condition, _selection in exp2_items}
+            ),
+            catalog_execution_view=exp2.catalog_execution_view,
+        )
+    )
+
+    exp3 = by_experiment["exp3_real_ai_fault_recovery"]
+    exp3_items = []
+    for planned in profile.exp3_cases:
+        matches = tuple(
+            (condition, selection)
+            for condition, selection in exp3.bound_items()
+            if condition.repeat_id == planned.repeat_id
+            and condition.fault_type == planned.check_kind
+            and planned.case_id in selection.ordered_case_ids
+            and (
+                planned.check_kind != "false_positive"
+                or condition.fault_rate == 1.0
+            )
+            and (
+                planned.check_kind != "worker_death"
+                or "__dead1__p50__" in condition.condition_id
+            )
+        )
+        if len(matches) != 1:
+            raise ValueError("online Exp3 condition is not uniquely bound")
+        condition, selection = matches[0]
+        exp3_items.append((condition, selection))
+        root_filter[condition.condition_id] = (planned.case_id,)
+    selected_plans.append(
+        PaperExperimentDispatchPlan(
+            experiment_id=exp3.experiment_id,
+            output_root=exp3.output_root,
+            conditions=tuple(condition for condition, _selection in exp3_items),
+            condition_selection_bindings=tuple(
+                binding
+                for binding in exp3.condition_selection_bindings
+                if binding.condition_id
+                in {condition.condition_id for condition, _selection in exp3_items}
+            ),
+            catalog_execution_view=exp3.catalog_execution_view,
+        )
+    )
+    return tuple(selected_plans), root_filter
+
+
+def build_epd027_formal_service_authority(
+    *,
+    command: str,
+    profile: object,
+    output_root: str | Path,
+    resume: bool = False,
+    plan_bundle_root: str | Path | None = None,
+    external_bank_resolver: object | None = None,
+) -> EPD027FormalServiceAuthority:
+    """复算 tracked catalog/scale/config authority；绝不读取 provider secret。"""
+
+    if command not in {
+        "run-trace",
+        "run-online-checks",
+        "run-exp1-online",
+        "run-exp5-online",
+    }:
+        raise ValueError("unsupported EPD-027 formal authority command")
+    root = Path(output_root).resolve(strict=False)
+    authorities = getattr(profile, "authorities", None)
+    offline_approval = getattr(profile, "offline_approval", None)
+    profile_digest = getattr(profile, "profile_digest", None)
+    if authorities is None or offline_approval is None or not isinstance(
+        profile_digest, str
+    ):
+        raise ValueError("EPD-027 pipeline profile authority is incomplete")
+    plan_digest = getattr(offline_approval, "approved_plan_digest", None)
+    if not isinstance(plan_digest, str) or not plan_digest.startswith("sha256:"):
+        raise ValueError("EPD-027 approved plan digest is missing")
+
+    catalog_manifest = load_paper_catalogs(
+        factorization_path=Path(authorities.factorization_catalog_path),
+        lean_path=DEFAULT_LEAN_CATALOG,
+        lean_lemma_graph_path=Path(authorities.lean_catalog_path),
+    )
+    planning_profile = load_exp1_pilot_profile(DEFAULT_EXP1_PILOT_PROFILE)
+    _validate_exp1_exp4_v3_execution_config(planning_profile.source_provider_config)
+    suite_scale_profile = load_paper_suite_scale_profile(
+        Path(authorities.paper_suite_scale_profile_path)
+    )
+
+    if command == "run-online-checks":
+        experiment_ids = EXP1_EXP4_ONLY_EXPERIMENT_IDS[:3]
+    elif command == "run-exp1-online":
+        experiment_ids = ("exp1_real_ai_feasibility",)
+    elif command == "run-exp5-online":
+        experiment_ids = ("exp5_real_ai_model_endpoint_comparison",)
+    else:
+        experiment_ids = EXP1_EXP4_ONLY_EXPERIMENT_IDS[1:]
+
+    model_endpoint_cohort_preflight = None
+    execution_configs: dict[str, object] = {}
+    if command == "run-exp5-online":
+        cohort = load_model_endpoint_cohort(DEFAULT_EXP5_MODEL_COHORT)
+        entry_map = load_model_entry_map(DEFAULT_EXP5_MODEL_ENTRY_MAP)
+        provider_configs = load_provider_config_map(
+            {"siliconflow": DEFAULT_EXP5_PROVIDER_CONFIG}
+        )
+        if {
+            entry.api_key_env
+            for config in provider_configs.values()
+            for entry in config.entries
+            if entry.enabled
+        } != {"SILICONFLOW_API_KEY"}:
+            raise ValueError("Exp5 v3 API key env authority drift")
+        shadow_configs = {
+            config_id: replace(
+                config,
+                entries=tuple(
+                    replace(
+                        entry,
+                        api_key_env="TOKENSHARE_PRESECRET_AUTHORITY_UNSET",
+                    )
+                    for entry in config.entries
+                ),
+            )
+            for config_id, config in provider_configs.items()
+        }
+        model_endpoint_cohort_preflight = build_model_endpoint_cohort_preflight(
+            cohort=cohort,
+            entry_map=entry_map,
+            provider_configs=shadow_configs,
+            require_smoke_evidence=False,
+            smoke_evidence_bundle=None,
+        )
+        member_plans = model_endpoint_cohort_preflight.get("member_plans")
+        ineligible = model_endpoint_cohort_preflight.get("ineligible_members")
+        expected_presecret_reasons = {
+            "api_key_env_mismatch",
+            "missing_api_key_env",
+        }
+        if not isinstance(member_plans, Mapping) or not isinstance(ineligible, list):
+            raise ValueError("Exp5 v3 structural preflight is malformed")
+        if any(
+            set(item.get("blocked_reasons", ())) != expected_presecret_reasons
+            for item in ineligible
+            if isinstance(item, Mapping)
+        ) or len(ineligible) != len(member_plans):
+            raise ValueError("Exp5 v3 structural preflight has non-secret failures")
+        for member_plan in member_plans.values():
+            if not isinstance(member_plan, dict) or set(
+                member_plan.get("blocked_reasons", ())
+            ) != expected_presecret_reasons:
+                raise ValueError("Exp5 v3 member structural preflight failed")
+            member_plan["api_key_env"] = "SILICONFLOW_API_KEY"
+            member_plan["status"] = "planned"
+            member_plan["blocked_reasons"] = []
+        model_endpoint_cohort_preflight.update(
+            {
+                "status": "planned",
+                "paper_eligible_possible": True,
+                "blocked_reason": None,
+                "ineligibility_reasons": [],
+                "ineligible_members": [],
+            }
+        )
+        if model_endpoint_cohort_preflight.get("status") != "planned":
+            raise ValueError("Exp5 v3 model endpoint cohort preflight is not planned")
+        execution_configs.update(provider_configs)
+        execution_configs[APPROVED_ENDPOINT_BINDINGS_KEY] = {
+            "exp5_real_ai_model_endpoint_comparison": model_endpoint_cohort_preflight
+        }
+        transport: object = _ProviderFamilyTransportRouter(
+            provider_family_by_entry_id=(
+                _provider_family_bindings_from_execution_configs(execution_configs)
+            )
+        )
+    else:
+        execution_configs[
+            planning_profile.model_endpoint_identity.provider_config_id
+        ] = planning_profile.source_provider_config
+        transport = UrlLibDeepSeekTransport()
+
+    lean_3x3_matrix = build_lean_3x3_matrix_plan(
+        catalog_manifest=catalog_manifest
+    )
+    dispatch_plans = build_gate_c_dispatch_plans(
+        catalog_manifest=catalog_manifest,
+        lean_3x3_matrix=lean_3x3_matrix,
+        experiment_ids=experiment_ids,
+        baseline_endpoint_binding=_baseline_endpoint_binding(planning_profile),
+        model_endpoint_cohort_preflight=model_endpoint_cohort_preflight,
+        paper_suite_scale_profile=suite_scale_profile,
+        output_root=root,
+    )
+    online_root_filter: dict[str, tuple[str, ...]] | None = None
+    if command == "run-online-checks":
+        dispatch_plans, online_root_filter = _select_online_checks_dispatch(
+            dispatch_plans=dispatch_plans,
+            profile=profile,
+        )
+    conditions = tuple(
+        condition
+        for dispatch_plan in dispatch_plans
+        for condition in dispatch_plan.conditions
+    )
+    frozen_selection_commitments = [
+        {
+            **selection.to_dict(),
+            "condition_id": condition.condition_id,
+            "condition_digest": condition.condition_digest,
+        }
+        for dispatch_plan in dispatch_plans
+        for condition, selection in dispatch_plan.bound_items()
+    ]
+    endpoint_token_ceilings = build_exp5_v3_token_ceiling_mapping(
+        model_endpoint_cohort_preflight
+    )
+    budget = plan_paper_suite(
+        catalog_manifest=catalog_manifest,
+        conditions=conditions,
+        max_provider_attempts_per_ai_unit=1,
+        token_upper_bound_per_provider_attempt=(
+            FORMAL_TOKEN_UPPER_BOUND_PER_PROVIDER_ATTEMPT
+        ),
+        token_upper_bound_by_endpoint_identity_digest=endpoint_token_ceilings,
+        cost_upper_bound_per_provider_attempt=(
+            FORMAL_COST_UPPER_BOUND_PER_PROVIDER_ATTEMPT
+        ),
+        plan_only=True,
+        lean_3x3_matrix=lean_3x3_matrix,
+        model_endpoint_cohort_preflight=model_endpoint_cohort_preflight,
+        frozen_selections=frozen_selection_commitments,
+        endpoint_identity={
+            "baseline": _baseline_endpoint_binding(planning_profile),
+            "model_endpoint_cohort_preflight": model_endpoint_cohort_preflight,
+        },
+        request_limits=dict(EXP1_FORMAL_REQUEST_CONTROLS),
+        suite_identity={
+            "suite_version": "paper_v1",
+            "execution_scope": "formal_matrix",
+            "experiment_ids": list(experiment_ids),
+            "paper_suite_scale_profile_source_path": suite_scale_profile.source_path,
+            "paper_suite_scale_profile_digest": suite_scale_profile.profile_digest,
+            "exp5_selection_path": suite_scale_profile.exp5_source_selection_path,
+            "exp5_selection_digest": suite_scale_profile.exp5_source_selection_digest,
+        },
+        output_identity={
+            "output_root": root.as_posix(),
+            "per_experiment_roots": [
+                (root / experiment_id).as_posix()
+                for experiment_id in experiment_ids
+            ],
+            **_shared_exp1_reference_output_identity(experiment_ids),
+        },
+        budget_approval_required=True,
+    )
+    dispatch_inventory_digest = digest_json(
+        {
+            "schema_version": "tokenshare.paper_dispatch_inventory.v1",
+            "dispatch_plans": [item.to_dict() for item in dispatch_plans],
+        }
+    )
+    trace_context = None
+    inventory_digest = dispatch_inventory_digest
+    if command == "run-trace":
+        if plan_bundle_root is None or external_bank_resolver is None:
+            raise ValueError(
+                "run-trace requires plan bundle and process-local external resolver"
+            )
+        from tokenshare.experiments.paper_response_bank import (
+            build_paper_formal_trace_context,
+            load_acquisition_plan_bundle,
+        )
+
+        bundle = load_acquisition_plan_bundle(plan_bundle_root)
+        if bundle.authorized_plan_digest != plan_digest:
+            raise ValueError("trace acquisition bundle plan digest mismatch")
+        if bundle.profile_digest != profile_digest:
+            raise ValueError("trace acquisition bundle profile digest mismatch")
+        resolver = external_bank_resolver.open()
+        trace_context = build_paper_formal_trace_context(
+            inventory_plan=bundle.semantic_inventory_plan,
+            resolver=resolver,
+        )
+        inventory_digest = bundle.inventory_digest
+    elif command == "run-online-checks":
+        from tokenshare.experiments.paper_online_checks import (
+            freeze_paper_online_checks_plan,
+        )
+
+        inventory_digest = freeze_paper_online_checks_plan().plan_digest
+
+    hard_limits = {
+        "max_total_provider_attempts": budget.max_provider_attempts,
+        "max_total_tokens": budget.token_upper_bound,
+        "max_cost_estimate": budget.cost_upper_bound,
+    }
+    keyword_arguments: dict[str, object] = {
+        "dispatch_plans": dispatch_plans,
+        "catalog_manifest": catalog_manifest,
+        "budget": budget,
+        "budget_approval": {
+            "approval_mode": (
+                "immutable_response_bank" if command == "run-trace" else "paid_receipt"
+            ),
+            "budget_digest": budget.budget_digest,
+        },
+        "output_root": root,
+        "ai_api_configs": execution_configs,
+        "transport": transport,
+        "real_transport": command != "run-trace",
+        "hard_limits": hard_limits,
+        "resume": bool(resume),
+        "replay_only": False,
+        "suite_id": f"epd027_{command.removeprefix('run-').replace('-', '_')}",
+    }
+    if trace_context is not None:
+        keyword_arguments["trace_context"] = trace_context
+    if online_root_filter is not None:
+        keyword_arguments["root_case_filter"] = online_root_filter
+        keyword_arguments["hard_limits"] = {
+            "max_total_provider_attempts": profile.calls_hard_limit,
+            "max_total_tokens": profile.tokens_hard_limit,
+            "max_cost_estimate": float(profile.budget.cny_reservation_hard_limit),
+        }
+    return EPD027FormalServiceAuthority(
+        command=command,
+        plan_digest=plan_digest,
+        inventory_digest=inventory_digest,
+        budget_digest=(
+            profile.budget_digest
+            if command == "run-online-checks"
+            else budget.budget_digest
+        ),
+        keyword_arguments=keyword_arguments,
+    )
+
+
+def build_epd027_capability_smoke_service_authority(
+    *,
+    profile: object,
+    output_root: str | Path,
+    resume: bool = False,
+    paid_authorization: object | None = None,
+):
+    """从同一 canonical Exp5 plan 派生 capability smoke authority。"""
+
+    formal = build_epd027_formal_service_authority(
+        command="run-exp5-online",
+        profile=profile,
+        output_root=output_root,
+        resume=resume,
+    )
+    formal_kwargs = dict(formal.keyword_arguments)
+    catalog_manifest = formal_kwargs["catalog_manifest"]
+    canonical_plans = tuple(formal_kwargs["dispatch_plans"])
+    execution_configs = dict(formal_kwargs["ai_api_configs"])
+    model_preflight = execution_configs[APPROVED_ENDPOINT_BINDINGS_KEY][
+        "exp5_real_ai_model_endpoint_comparison"
+    ]
+    smoke_profile = load_paper_smoke_profile(
+        Path("benchmarks/paper/paper_smoke_exp5_profile.v3.json")
+    )
+    execution_plan = resolve_paper_smoke_execution_plan(
+        profile=smoke_profile,
+        dispatch_plans=canonical_plans,
+        catalog_id=catalog_manifest.catalog_id,
+        catalog_version=catalog_manifest.catalog_version,
+        catalog_digest=catalog_manifest.catalog_digest,
+        output_root=output_root,
+    )
+    cases_by_id = {
+        str(case["case_id"]): case
+        for case in (
+            catalog_manifest.factorization_cases
+            + catalog_manifest.lean_cases
+            + catalog_manifest.lean_lemma_graph_cases
+        )
+    }
+    frozen_selections = execution_plan.budget_selection_commitments(
+        expected_ai_units_by_case={
+            item.case_id: estimated_ai_units_for_case(cases_by_id[item.case_id])
+            for item in execution_plan.items
+        }
+    )
+    planning_profile = load_exp1_pilot_profile(DEFAULT_EXP1_PILOT_PROFILE)
+    suite_scale_profile = load_paper_suite_scale_profile(
+        Path(profile.authorities.paper_suite_scale_profile_path)
+    )
+    lean_3x3_matrix = build_lean_3x3_matrix_plan(
+        catalog_manifest=catalog_manifest
+    )
+    budget = plan_paper_suite(
+        catalog_manifest=catalog_manifest,
+        conditions=tuple(
+            condition
+            for dispatch_plan in execution_plan.dispatch_plans
+            for condition in dispatch_plan.conditions
+        ),
+        max_provider_attempts_per_ai_unit=1,
+        token_upper_bound_per_provider_attempt=(
+            FORMAL_TOKEN_UPPER_BOUND_PER_PROVIDER_ATTEMPT
+        ),
+        token_upper_bound_by_endpoint_identity_digest=(
+            build_exp5_v3_token_ceiling_mapping(model_preflight)
+        ),
+        cost_upper_bound_per_provider_attempt=(
+            FORMAL_COST_UPPER_BOUND_PER_PROVIDER_ATTEMPT
+        ),
+        plan_only=True,
+        lean_3x3_matrix=lean_3x3_matrix,
+        model_endpoint_cohort_preflight=model_preflight,
+        frozen_selections=frozen_selections,
+        endpoint_identity={
+            "baseline": _baseline_endpoint_binding(planning_profile),
+            "model_endpoint_cohort_preflight": model_preflight,
+        },
+        request_limits=dict(EXP1_FORMAL_REQUEST_CONTROLS),
+        hard_limits={},
+        suite_identity={
+            "suite_version": "paper_smoke_v1",
+            "execution_scope": "smoke_suite",
+            "profile_digest": smoke_profile.profile_digest,
+            "execution_plan_digest": execution_plan.execution_plan_digest,
+            "experiment_ids": list(smoke_profile.experiment_ids),
+            "paper_suite_scale_profile_source_path": suite_scale_profile.source_path,
+            "paper_suite_scale_profile_digest": suite_scale_profile.profile_digest,
+            "exp5_selection_path": suite_scale_profile.exp5_source_selection_path,
+            "exp5_selection_digest": suite_scale_profile.exp5_source_selection_digest,
+        },
+        output_identity={
+            "output_root": Path(output_root).resolve(strict=False).as_posix(),
+            "formal_output_root_allowed": False,
+            **_shared_exp1_reference_output_identity(
+                smoke_profile.experiment_ids,
+                baseline_policy=smoke_profile.baseline_policy,
+            ),
+        },
+        budget_approval_required=True,
+    )
+    execution_transport, _limiter = _exp5_v3_smoke_execution_transport(
+        profile=smoke_profile,
+        execution_plan=execution_plan,
+        model_endpoint_cohort_preflight=model_preflight,
+        transport=formal_kwargs["transport"],
+        ai_api_configs=execution_configs,
+    )
+    receipt = getattr(paid_authorization, "receipt", None)
+    marker = getattr(paid_authorization, "marker", None)
+    launch_manifest = {
+        "schema_version": "tokenshare.paper_smoke_launch_manifest.v1",
+        "authorization_scope": "exp5_capability_smoke",
+        "profile_digest": smoke_profile.profile_digest,
+        "execution_plan_digest": execution_plan.execution_plan_digest,
+        "budget_digest": budget.budget_digest,
+        "receipt_digest": getattr(receipt, "receipt_digest", None),
+        "output_marker_digest": getattr(marker, "marker_digest", None),
+    }
+    return build_paper_smoke_service_authority(
+        scope="exp5_capability_smoke",
+        authorized_plan_digest=profile.offline_approval.approved_plan_digest,
+        profile=smoke_profile,
+        execution_plan=execution_plan,
+        catalog_manifest=catalog_manifest,
+        budget=budget,
+        ai_api_configs=execution_configs,
+        transport=execution_transport,
+        hard_limits={
+            "max_total_provider_attempts": budget.max_provider_attempts,
+            "max_total_tokens": budget.token_upper_bound,
+            "max_cost_estimate": budget.cost_upper_bound,
+        },
+        resume=resume,
+        launch_manifest=launch_manifest,
+        authorization_budget_digest=profile.budget_digest,
+    )
 
 
 class _ProviderFamilyTransportRouter:
@@ -698,8 +1269,10 @@ def main(
     gate_c_transport=None,
     gate_c_ai_api_configs: dict | None = None,
 ) -> int:
-    parser = _build_argument_parser()
     command_argv = tuple(sys.argv[1:] if argv is None else argv)
+    if command_argv and command_argv[0] in PAPER_PIPELINE_COMMANDS:
+        return run_paper_pipeline_main(command_argv)
+    parser = _build_argument_parser()
     args = parser.parse_args(command_argv)
     args._command_argv = command_argv
 
@@ -1382,7 +1955,13 @@ def main(
             suite_manifest = json.loads(
                 suite_manifest_path.read_text(encoding="utf-8")
             )
-            if suite_manifest.get("formal") is True:
+            if (
+                suite_manifest.get("formal") is True
+                and isinstance(
+                    suite_manifest.get("traceability_replay_input_root_ref"),
+                    Mapping,
+                )
+            ):
                 write_paper_formal_replay_report(output_root=output_root)
                 metrics = recompute_paper_formal_metrics(output_root)
                 report_result = generate_paper_formal_report(
@@ -2217,20 +2796,44 @@ def _run_smoke_cli(
         )
         exp5_v3_execution_evidence = None
         try:
-            result = execute_paper_smoke_suite(
-                profile=profile,
-                execution_plan=execution_plan,
-                catalog_manifest=catalog_manifest,
-                budget=budget,
-                ai_api_configs=execution_configs,
-                transport=execution_transport,
-                real_transport=args.real_transport,
-                hard_limits=hard_limits,
-                resume=args.resume,
-                secret_values=_configured_secret_values(execution_configs),
-                launch_manifest=launch_manifest,
-                recovery_manifest=recovery_manifest,
-            )
+            if profile.experiment_ids == (
+                "exp5_real_ai_model_endpoint_comparison",
+            ):
+                smoke_authority = build_paper_smoke_service_authority(
+                    scope="exp5_capability_smoke",
+                    authorized_plan_digest=execution_plan.execution_plan_digest,
+                    profile=profile,
+                    execution_plan=execution_plan,
+                    catalog_manifest=catalog_manifest,
+                    budget=budget,
+                    ai_api_configs=execution_configs,
+                    transport=execution_transport,
+                    hard_limits=hard_limits,
+                    resume=args.resume,
+                    launch_manifest=launch_manifest,
+                    recovery_manifest=recovery_manifest,
+                )
+                smoke_kwargs = dict(smoke_authority.keyword_arguments)
+                smoke_kwargs["real_transport"] = args.real_transport
+                smoke_kwargs["secret_values"] = _configured_secret_values(
+                    execution_configs
+                )
+                result = execute_paper_smoke_suite(**smoke_kwargs)
+            else:
+                result = execute_paper_smoke_suite(
+                    profile=profile,
+                    execution_plan=execution_plan,
+                    catalog_manifest=catalog_manifest,
+                    budget=budget,
+                    ai_api_configs=execution_configs,
+                    transport=execution_transport,
+                    real_transport=args.real_transport,
+                    hard_limits=hard_limits,
+                    resume=args.resume,
+                    secret_values=_configured_secret_values(execution_configs),
+                    launch_manifest=launch_manifest,
+                    recovery_manifest=recovery_manifest,
+                )
         finally:
             if exp5_v3_limiter is not None:
                 if exp5_v3_limiter.new_provider_calls_made:

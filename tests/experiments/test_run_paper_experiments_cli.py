@@ -39,6 +39,18 @@ from tokenshare.experiments.run_paper_experiments import main
 from tests.phase7_fixtures import prepared_wire_kwargs
 
 
+def test_legacy_cli_routes_pipeline_subcommands_without_parsing_them(monkeypatch) -> None:
+    observed: list[tuple[str, ...]] = []
+    monkeypatch.setattr(
+        paper_cli,
+        "run_paper_pipeline_main",
+        lambda argv: observed.append(tuple(argv)) or 17,
+    )
+
+    assert main(["validate-profile", "--profile", "tracked.json"]) == 17
+    assert observed == [("validate-profile", "--profile", "tracked.json")]
+
+
 APPROVED_EXP1_PILOT_DIGEST = (
     # Current schema digest for mock-approved CLI routing tests. The historical
     # real pilot approval digest remains immutable in existing evidence.
@@ -249,10 +261,10 @@ def test_paper_cli_plan_only_writes_budget_and_suite_manifest(tmp_path: Path) ->
     assert suite["paper_eligible"] is False
     assert budget["planned_experiments"] == ["exp1_real_ai_feasibility"]
     assert budget["quota_preflight"]["provider_calls_made"] == 0
-    assert budget["planned_root_runs"] == 300
-    assert budget["planned_ai_units"] == 1_400
-    assert budget["token_upper_bound"] == 425_734_400
-    assert budget["cost_upper_bound"] == pytest.approx(70.0)
+    assert budget["planned_root_runs"] == 435
+    assert budget["planned_ai_units"] == 1_970
+    assert budget["token_upper_bound"] == 599_069_120
+    assert budget["cost_upper_bound"] == pytest.approx(98.5)
     assert budget["quota_preflight"]["budget_commitments"]["request_limits"][
         "timeout_seconds"
     ] == 600
@@ -2994,7 +3006,7 @@ def test_paper_cli_reports_disk_block_as_structured_json_without_creating_run_ro
     assert not run_root.exists()
 
 
-def test_paper_cli_formal_capturing_e2e_writes_all_tables_without_real_usage(
+def test_paper_cli_offline_capturing_e2e_is_regression_only_without_tables(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -3107,23 +3119,10 @@ def test_paper_cli_formal_capturing_e2e_writes_all_tables_without_real_usage(
     budget = json.loads(
         (tmp_path / "run_budget.json").read_text(encoding="utf-8")
     )
-    report = json.loads(
-        (tmp_path / "formal_report_result.json").read_text(encoding="utf-8")
-    )
-    metrics = json.loads(
-        (tmp_path / "metrics" / "formal_metrics.json").read_text(
-            encoding="utf-8"
-        )
-    )
     assert suite["formal"] is True
     assert suite["paper_eligible"] is False
-    assert all(row["total_tokens"] == 0 for row in metrics["condition_rows"])
-    assert all(
-        row["total_cost_estimate"] == 0.0
-        for row in metrics["condition_rows"]
-    )
+    assert "traceability_replay_input_root_ref" not in suite
     assert budget["quota_preflight"]["provider_calls_made"] == 0
-    assert report["paper_eligible"] is False
 
     run_root = (
         tmp_path
@@ -3214,21 +3213,24 @@ def test_paper_cli_formal_capturing_e2e_writes_all_tables_without_real_usage(
     assert len(raw_payload) == raw_ref["size_bytes"]
     assert f"sha256:{sha256(raw_payload).hexdigest()}" == raw_ref["content_hash"]
     for relative_path in (
-        "metrics/per_condition_summary.csv",
-        "metrics/paper_table_feasibility.csv",
-        "metrics/paper_plot_scalability.csv",
-        "metrics/paper_plot_robustness.csv",
-        "metrics/paper_table_ablation.csv",
-        "metrics/paper_table_model_comparison.csv",
-        "metrics/paper_table_model_endpoint_comparison.csv",
-        "model_execution_records.jsonl",
-        "metrics/model_execution_records.jsonl",
-        "metrics/failure_examples.json",
-        "metrics/formal_metrics.json",
+        "metrics/paper_metric_drafts.v1.json",
+        "metrics/paper_lineage_source_index.v1.jsonl",
+        "metrics/paper_metric_observations.v1.jsonl",
+        "metrics/paper_metric_observations_manifest.v1.json",
+        "metrics/paper_table_feasibility.csv.draft.json",
+        "metrics/paper_table_scalability_online.csv.draft.json",
+        "metrics/paper_plot_scalability.csv.draft.json",
+        "metrics/paper_table_recovery_online.csv.draft.json",
+        "metrics/paper_plot_robustness.csv.draft.json",
+        "metrics/paper_table_ablation.csv.draft.json",
+        "metrics/paper_table_model_endpoint_quality.csv.draft.json",
+        "metrics/paper_table_model_endpoint_resources.csv.draft.json",
         "audit/replay_report.json",
-        "formal_regression_report.md",
+        "audit/paper_formal_report_manifest.v2.json",
+        "audit/paper_eligibility_report.json",
+        "formal_report_result.json",
     ):
-        assert (tmp_path / relative_path).is_file(), relative_path
+        assert not (tmp_path / relative_path).exists(), relative_path
 
 
 def test_paper_cli_formal_replay_skips_catalog_and_provider_config_loading(
@@ -4377,3 +4379,172 @@ def _exp5_v3_cli_preflight() -> dict:
         "request_controls_snapshot": comparable_controls,
         "request_controls_snapshot_digest": digest_json(comparable_controls),
     }
+
+
+def test_smoke_authority_rejects_full_scope_and_preserves_ineligibility(
+    tmp_path: Path,
+) -> None:
+    profile = paper_smoke.load_paper_smoke_profile(
+        Path("benchmarks/paper/paper_smoke_exp5_profile.v3.json")
+    )
+    execution_plan = paper_smoke.PaperSmokeExecutionPlan(
+        suite_id=profile.suite_id,
+        profile_digest=profile.profile_digest,
+        catalog_id=profile.catalog_id,
+        catalog_version=profile.catalog_version,
+        catalog_digest=profile.catalog_digest,
+        output_root=tmp_path.resolve(strict=False).as_posix(),
+        experiment_ids=profile.experiment_ids,
+        items=(),
+        dispatch_plans=(),
+        root_case_filter={},
+        baseline_policy=profile.baseline_policy,
+    )
+    kwargs = {
+        "authorized_plan_digest": "sha256:" + "a" * 64,
+        "profile": profile,
+        "execution_plan": execution_plan,
+        "catalog_manifest": object(),
+        "budget": SimpleNamespace(budget_digest="sha256:" + "b" * 64),
+        "ai_api_configs": {"siliconflow": object()},
+        "transport": object(),
+        "hard_limits": {},
+        "resume": False,
+        "launch_manifest": {"scope": "exp5_capability_smoke"},
+    }
+
+    authority = paper_smoke.build_paper_smoke_service_authority(
+        scope="exp5_capability_smoke",
+        **kwargs,
+    )
+
+    assert authority.inventory_digest == execution_plan.execution_plan_digest
+    assert authority.keyword_arguments["profile"].paper_eligible is False
+    assert paper_smoke.smoke_execution_classification()["paper_eligible"] is False
+    with pytest.raises(ValueError, match="full Exp5 scope"):
+        paper_smoke.build_paper_smoke_service_authority(
+            scope="exp5_full_online",
+            **kwargs,
+        )
+    with pytest.raises(ValueError, match="not-paper-eligible"):
+        paper_smoke.build_paper_smoke_service_authority(
+            scope="exp5_capability_smoke",
+            **{**kwargs, "profile": replace(profile, paper_eligible=True)},
+        )
+
+
+@pytest.mark.parametrize(
+    ("command", "experiment_id", "provider_config_id"),
+    (
+        (
+            "run-exp1-online",
+            "exp1_real_ai_feasibility",
+            "exp1_baseline_deepseek",
+        ),
+        (
+            "run-exp5-online",
+            "exp5_real_ai_model_endpoint_comparison",
+            "siliconflow",
+        ),
+    ),
+)
+def test_pipeline_formal_authority_recomputes_actual_plan_budget_and_configs(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    command: str,
+    experiment_id: str,
+    provider_config_id: str,
+) -> None:
+    from tokenshare.experiments.paper_pipeline_profile import (
+        load_paper_pipeline_profile,
+    )
+
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    monkeypatch.delenv("SILICONFLOW_API_KEY", raising=False)
+    profile = load_paper_pipeline_profile()
+
+    authority = paper_cli.build_epd027_formal_service_authority(
+        command=command,
+        profile=profile,
+        output_root=tmp_path / command,
+    )
+    kwargs = authority.keyword_arguments
+    assert authority.plan_digest == profile.offline_approval.approved_plan_digest
+    assert authority.budget_digest == kwargs["budget"].budget_digest
+    assert authority.inventory_digest.startswith("sha256:")
+    assert [plan.experiment_id for plan in kwargs["dispatch_plans"]] == [
+        experiment_id
+    ]
+    assert provider_config_id in kwargs["ai_api_configs"]
+    assert kwargs["real_transport"] is True
+    assert kwargs["budget_approval"] == {
+        "approval_mode": "paid_receipt",
+        "budget_digest": authority.budget_digest,
+    }
+
+
+def test_pipeline_online_checks_authority_binds_496_plan_and_l3_budget(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tokenshare.experiments.paper_online_checks import (
+        freeze_paper_online_checks_plan,
+    )
+    from tokenshare.experiments.paper_pipeline_profile import (
+        load_paper_pipeline_profile,
+    )
+
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    profile = load_paper_pipeline_profile()
+    plan = freeze_paper_online_checks_plan()
+
+    authority = paper_cli.build_epd027_formal_service_authority(
+        command="run-online-checks",
+        profile=profile,
+        output_root=tmp_path / "online-checks",
+    )
+    assert authority.inventory_digest == plan.plan_digest
+    assert authority.budget_digest == profile.budget_digest
+    assert plan.capability_calls_exact + plan.exp2_calls_upper + plan.exp3_calls_upper == 496
+    assert [item.experiment_id for item in authority.keyword_arguments["dispatch_plans"]] == [
+        "exp1_real_ai_feasibility",
+        "exp2_real_ai_scalability",
+        "exp3_real_ai_fault_recovery",
+    ]
+    assert [
+        len(item.conditions)
+        for item in authority.keyword_arguments["dispatch_plans"]
+    ] == [2, 6, 2]
+    root_filter = authority.keyword_arguments["root_case_filter"]
+    assert sum(len(case_ids) for case_ids in root_filter.values()) == 28
+    assert authority.keyword_arguments["hard_limits"][
+        "max_total_provider_attempts"
+    ] == 516
+    assert "online_root_callback_factory" not in authority.keyword_arguments
+    assert authority.keyword_arguments["real_transport"] is True
+
+
+def test_pipeline_capability_smoke_authority_uses_canonical_exp5_subset(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tokenshare.experiments.paper_pipeline_profile import (
+        load_paper_pipeline_profile,
+    )
+
+    monkeypatch.delenv("SILICONFLOW_API_KEY", raising=False)
+    profile = load_paper_pipeline_profile()
+
+    authority = paper_cli.build_epd027_capability_smoke_service_authority(
+        profile=profile,
+        output_root=tmp_path / "capability-smoke",
+    )
+
+    execution_plan = authority.keyword_arguments["execution_plan"]
+    assert authority.scope == "exp5_capability_smoke"
+    assert authority.plan_digest == profile.offline_approval.approved_plan_digest
+    assert authority.inventory_digest == execution_plan.execution_plan_digest
+    assert authority.budget_digest == profile.budget_digest
+    assert authority.keyword_arguments["budget"].budget_digest.startswith("sha256:")
+    assert authority.keyword_arguments["profile"].paper_eligible is False
+    assert authority.keyword_arguments["real_transport"] is True
