@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace as dataclass_replace
+from decimal import Decimal
 import json
 from pathlib import Path
 from typing import Any
@@ -17,12 +18,18 @@ from tokenshare.executors.ai_api import AIAPIExecutor
 from tokenshare.executors.ai_api_config import load_ai_api_config
 
 from tokenshare.experiments.paper_formal_callbacks import (
+    PaperOnlineProviderEvidenceCallback,
+    produce_exp3_online_recovery_evidence,
     run_exp1_normal_strategy,
     run_exp3_post_ai_strategy,
     run_exp3_worker_death_strategy,
     run_exp4_ablation_strategy,
     run_exp5_identity_strategy,
     run_scheduled_cases,
+)
+from tokenshare.experiments.paper_online_checks import (
+    EXP3_RECOVERY_CHAIN_ROLES,
+    freeze_paper_online_checks_plan,
 )
 from tokenshare.experiments.paper_workers import WorkerDeathKillPoint
 from tokenshare.storage.artifacts import ArtifactStore
@@ -51,6 +58,70 @@ def _replace_unit_id(value: Any, unit_id: str) -> Any:
     if isinstance(value, list):
         return [_replace_unit_id(item, unit_id) for item in value]
     return unit_id if value == "unit_lemma_join" else value
+
+
+def _replace_protocol_identity(value: Any, replacements: dict[str, str]) -> Any:
+    if isinstance(value, dict):
+        return {
+            key: _replace_protocol_identity(item, replacements)
+            for key, item in value.items()
+        }
+    if isinstance(value, tuple):
+        return tuple(_replace_protocol_identity(item, replacements) for item in value)
+    if isinstance(value, list):
+        return [_replace_protocol_identity(item, replacements) for item in value]
+    return replacements.get(value, value) if isinstance(value, str) else value
+
+
+def _single_entry_config() -> dict:
+    body = make_config_dict()
+    body["entries"] = [body["entries"][0]]
+    return body
+
+
+def _run_persisted_online_attempt(
+    store: ArtifactStore,
+    *,
+    callback: PaperOnlineProviderEvidenceCallback,
+    submission_id: str,
+    submitted_at: str,
+) -> object:
+    request = dataclass_replace(
+        make_ai_request(store, request_id=f"request-{submission_id}"),
+        attempt_id=submission_id,
+        unit_id="unit-1",
+    )
+    executor = AIAPIExecutor(
+        executor_id="task25-official-exp3-callback",
+        executor_version="0.1.0",
+        artifact_store=store,
+        config=load_ai_api_config(_single_entry_config()),
+        transport=FakeSiliconFlowTransport(
+            [
+                FakeProviderResponse(
+                    status_code=200,
+                    body={
+                        "id": f"response-{submission_id}",
+                        "model": "Qwen/Qwen2.5-7B-Instruct",
+                        "choices": [{"message": {"content": "candidate"}}],
+                        "usage": {
+                            "prompt_tokens": 11,
+                            "completion_tokens": 13,
+                            "total_tokens": 24,
+                        },
+                    },
+                )
+            ]
+        ),
+        post_raw_output_hook=callback,
+    )
+    submission = executor.execute(
+        request,
+        submission_id=submission_id,
+        submitted_at=submitted_at,
+    )
+    assert submission.raw_output_ref is not None
+    return callback.require_capture(submission_id)
 
 
 def test_exp1_strategy_consumes_complete_frozen_order() -> None:
@@ -782,3 +853,247 @@ def test_worker_death_parent_commit_and_ordinal_replacement_flow(
     assert dead[0].attempt_id not in committed_attempt_ids
     assert replacement[0].attempt_id in committed_attempt_ids
     assert replacement[0].entry_id == "entry-range_0-1"
+
+
+def test_exp3_producer_emits_fault_death_before_distinct_new_attempt_provider_raw_provenance_usage_model_refs(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("SILICONFLOW_API_KEY_A", "synthetic-key")
+    plan = freeze_paper_online_checks_plan()
+    condition_ref = plan.exp3_root_refs[0]
+    store = ArtifactStore(tmp_path)
+    original = _run_persisted_online_attempt(
+        store,
+        callback=PaperOnlineProviderEvidenceCallback.for_exp3_attempt(
+            condition_ref, attempt_ordinal=0
+        ),
+        submission_id="attempt-initial",
+        submitted_at="2026-08-03T00:00:00Z",
+    )
+    replacement = _run_persisted_online_attempt(
+        store,
+        callback=PaperOnlineProviderEvidenceCallback.for_exp3_attempt(
+            condition_ref, attempt_ordinal=1
+        ),
+        submission_id="attempt-replacement",
+        submitted_at="2026-08-03T00:00:03Z",
+    )
+    strategy = run_exp3_post_ai_strategy(
+        artifact_root=tmp_path,
+        condition_ref=condition_ref,
+        attempts=(original,),
+        selected_target_ai_unit_ids=("unit-1",),
+        fault_type="false_positive",
+        inject_fault=lambda attempt, fault_type: {
+            "fault_type": fault_type,
+            "original_output_ref": attempt.raw_output_ref,
+            "mutated_output_ref": attempt.raw_output_ref,
+            "requires_replacement": True,
+        },
+        execute_replacement=lambda attempt: replacement,
+        approved_identity={
+            "provider": "siliconflow",
+            "model": "Qwen/Qwen2.5-7B-Instruct",
+            "entry_id": "sf_qwen",
+        },
+    )
+
+    evidence = produce_exp3_online_recovery_evidence(
+        artifact_store=store,
+        condition_ref=condition_ref,
+        strategy_result=strategy,
+        original_attempt=original,
+        replacement_attempt=replacement,
+    )
+
+    assert evidence.recovery_source == "persisted_fault_event"
+    assert evidence.initial_source_raw_ref == original.raw_or_failure_ref
+    assert evidence.original_attempt_id != evidence.replacement_attempt_id
+    assert evidence.replacement_attempt_ordinal == evidence.original_attempt_ordinal + 1
+    assert tuple(item.role for item in evidence.ordered_replacement_evidence) == (
+        EXP3_RECOVERY_CHAIN_ROLES
+    )
+    refs = [item.ref.artifact_ref for item in evidence.ordered_replacement_evidence]
+    assert all(store.verify(ref) for ref in refs)
+    assert len({ref.artifact_id for ref in refs}) == len(refs)
+    assert evidence.eligibility_input.value is True
+
+    wrong_kind = run_exp3_post_ai_strategy(
+        artifact_root=tmp_path / "wrong-kind",
+        condition_ref=condition_ref,
+        attempts=(original,),
+        selected_target_ai_unit_ids=("unit-1",),
+        fault_type="worker_death",
+        inject_fault=lambda attempt, fault_type: {
+            "fault_type": fault_type,
+            "requires_replacement": True,
+        },
+        execute_replacement=lambda attempt: replacement,
+        approved_identity={
+            "provider": "siliconflow",
+            "model": "Qwen/Qwen2.5-7B-Instruct",
+            "entry_id": "sf_qwen",
+        },
+    )
+    crossed = produce_exp3_online_recovery_evidence(
+        artifact_store=ArtifactStore(tmp_path / "wrong-kind"),
+        condition_ref=condition_ref,
+        strategy_result=wrong_kind,
+        original_attempt=original,
+        replacement_attempt=replacement,
+    )
+    assert crossed.eligibility_input.blocked is True
+
+
+def test_exp3_producer_records_actual_usage_cost_and_wasted_inputs_without_computing_metrics(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("SILICONFLOW_API_KEY_A", "synthetic-key")
+    plan = freeze_paper_online_checks_plan()
+    condition_ref = plan.exp3_root_refs[1]
+    store = ArtifactStore(tmp_path)
+    original = _run_persisted_online_attempt(
+        store,
+        callback=PaperOnlineProviderEvidenceCallback.for_exp3_attempt(
+            condition_ref, attempt_ordinal=0
+        ),
+        submission_id="attempt-dead",
+        submitted_at="2026-08-03T00:00:00Z",
+    )
+    replacement = _run_persisted_online_attempt(
+        store,
+        callback=PaperOnlineProviderEvidenceCallback.for_exp3_attempt(
+            condition_ref, attempt_ordinal=1
+        ),
+        submission_id="attempt-reassigned",
+        submitted_at="2026-08-03T00:00:03Z",
+    )
+    strategy = run_exp3_worker_death_strategy(
+        artifact_root=tmp_path,
+        condition_id=condition_ref.condition_id,
+        repeat_id=0,
+        task_id=condition_ref.case_id,
+        ai_unit_ids=("unit-1", "unit-2"),
+        dead_worker_count=1,
+        kill_point=WorkerDeathKillPoint.PROGRESS_50,
+        started_at="2026-08-03T00:00:01Z",
+        runtime_observations=(
+            {
+                "worker_fact": {
+                    "unit_id": "unit-1",
+                    "attempt_id": original.attempt_id,
+                    "lease_id": "lease-dead",
+                    "worker_id": "process-worker-1",
+                    "worker_pid": 1001,
+                    "process_exitcode": -15,
+                    "result_kind": "worker_terminated",
+                    "kill_point": "progress_50",
+                    "kill_progress_target_ratio": 0.5,
+                    "kill_progress_completed_ai_unit_count": 1,
+                    "kill_progress_total_ai_unit_count": 2,
+                    "kill_progress_actual_ratio": 0.5,
+                    "kill_progress_observed_at": "2026-08-03T00:00:01Z",
+                    "kill_progress_error": None,
+                    "started_at": "2026-08-03T00:00:00Z",
+                    "ended_at": "2026-08-03T00:00:01Z",
+                },
+                "replacement_fact": {
+                    "unit_id": "unit-1",
+                    "attempt_id": replacement.attempt_id,
+                    "attempt_ordinal": 1,
+                    "lease_id": "lease-replacement",
+                    "worker_id": "process-worker-2",
+                    "worker_pid": 1002,
+                    "process_exitcode": 0,
+                    "result_kind": "succeeded",
+                    "started_at": "2026-08-03T00:00:02Z",
+                    "ended_at": "2026-08-03T00:00:04Z",
+                },
+                "protocol_events": _replace_protocol_identity(
+                    _replace_unit_id(_protocol_events(), "unit-1"),
+                    {
+                        "attempt_initial": original.attempt_id,
+                        "lease_initial": "lease-dead",
+                        "attempt_replacement": replacement.attempt_id,
+                        "lease_replacement": "lease-replacement",
+                    },
+                ),
+                "coordinator_pid": 999,
+                "created_at": "2026-08-03T00:00:04Z",
+            },
+        ),
+    )
+
+    evidence = produce_exp3_online_recovery_evidence(
+        artifact_store=store,
+        condition_ref=condition_ref,
+        strategy_result=strategy,
+        original_attempt=original,
+        replacement_attempt=replacement,
+    )
+
+    assert [item.actual_provider_call.value for item in evidence.provider_inputs] == [
+        1,
+        1,
+    ]
+    assert [item.total_tokens.value for item in evidence.provider_inputs] == [24, 24]
+    assert [item.cost_estimate_cny.value for item in evidence.provider_inputs] == [
+        Decimal("0.0"),
+        Decimal("0.0"),
+    ]
+    assert len(evidence.discarded_current_inputs) == 1
+    assert evidence.discarded_current_inputs[0].attempt_id == original.attempt_id
+    assert evidence.discarded_current_inputs[0].total_tokens.value == 24
+
+    incomplete = produce_exp3_online_recovery_evidence(
+        artifact_store=store,
+        condition_ref=condition_ref,
+        strategy_result=strategy,
+        original_attempt=original,
+        replacement_attempt=dataclass_replace(
+            replacement, pricing_ref=original.pricing_ref
+        ),
+    )
+    assert incomplete.eligibility_input.value is None
+    assert incomplete.eligibility_input.blocked is True
+    assert incomplete.provider_inputs[-1].cost_estimate_cny.value is None
+    assert incomplete.provider_inputs[-1].cost_estimate_cny.blocked is True
+
+    wrong_ordinal = produce_exp3_online_recovery_evidence(
+        artifact_store=store,
+        condition_ref=condition_ref,
+        strategy_result=strategy,
+        original_attempt=original,
+        replacement_attempt=dataclass_replace(
+            replacement, attempt_ordinal=2
+        ),
+    )
+    assert wrong_ordinal.eligibility_input.blocked is True
+
+    false_positive_condition = plan.exp3_root_refs[0]
+    false_original = _run_persisted_online_attempt(
+        store,
+        callback=PaperOnlineProviderEvidenceCallback.for_exp3_attempt(
+            false_positive_condition, attempt_ordinal=0
+        ),
+        submission_id="attempt-false-cross-initial",
+        submitted_at="2026-08-03T00:00:05Z",
+    )
+    false_replacement = _run_persisted_online_attempt(
+        store,
+        callback=PaperOnlineProviderEvidenceCallback.for_exp3_attempt(
+            false_positive_condition, attempt_ordinal=1
+        ),
+        submission_id="attempt-false-cross-replacement",
+        submitted_at="2026-08-03T00:00:08Z",
+    )
+    crossed_death = produce_exp3_online_recovery_evidence(
+        artifact_store=store,
+        condition_ref=false_positive_condition,
+        strategy_result=strategy,
+        original_attempt=false_original,
+        replacement_attempt=false_replacement,
+    )
+    assert crossed_death.eligibility_input.blocked is True

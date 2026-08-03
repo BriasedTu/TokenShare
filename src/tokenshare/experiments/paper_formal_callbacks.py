@@ -14,6 +14,17 @@ from tokenshare.experiments.paper_exp5_model_comparison import (
     build_exp5_model_execution_rows,
 )
 from tokenshare.experiments.paper_models import digest_json
+from tokenshare.experiments.paper_online_checks import (
+    CapabilityCallPlan,
+    CapabilityLifecycleEvidence,
+    CurrentProviderAttemptEvidence,
+    Exp2OnlineConditionRef,
+    Exp3OnlineRootRef,
+    TypedEvidenceRef,
+    freeze_paper_online_checks_plan,
+    produce_capability_online_evidence as _produce_capability_online_evidence,
+    produce_exp3_online_recovery_evidence as _produce_exp3_online_recovery_evidence,
+)
 from tokenshare.experiments.paper_workers import (
     PaperAIUnit,
     WorkerDeathKillPoint,
@@ -26,6 +37,7 @@ from tokenshare.local_runtime.logical_scheduler import (
     ONLINE_REAL_TIME,
     LogicalSourceLatencyScheduler,
 )
+from tokenshare.local_runtime.contracts import GateDirective
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -38,6 +50,7 @@ class FormalStrategyResult:
     fault_records: tuple[dict[str, Any], ...] = ()
     replacement_attempts: tuple[Any, ...] = ()
     model_execution_records: tuple[dict[str, Any], ...] = ()
+    persisted_event_refs: tuple[ArtifactRef, ...] = ()
     schema_version: str = "tokenshare.paper_formal_strategy.v1"
 
 
@@ -46,6 +59,481 @@ class RuntimeTimingPolicy:
     trace_delay_policy: str
     logical_scheduler: LogicalSourceLatencyScheduler | None
     current_provider_call_count: int
+
+
+class PaperOnlineProviderEvidenceCallback:
+    """在 AI executor 已持久化 raw/provenance/usage 后保存 typed projection objects。"""
+
+    def __init__(self, *, attempt_ordinal: int | None, scope_identity: Mapping[str, Any]):
+        if attempt_ordinal is not None and (
+            isinstance(attempt_ordinal, bool)
+            or not isinstance(attempt_ordinal, int)
+            or attempt_ordinal < 0
+        ):
+            raise ValueError("attempt_ordinal must be a nonnegative integer")
+        self._attempt_ordinal = attempt_ordinal
+        self._scope_identity = dict(scope_identity)
+        self._captures: dict[str, CurrentProviderAttemptEvidence] = {}
+        self._store: ArtifactStore | None = None
+        self._candidate_refs_by_attempt: dict[str, dict[str, ArtifactRef]] = {}
+        self._submission_by_protocol_attempt: dict[str, str] = {}
+        self._request_id_by_protocol_attempt: dict[str, str] = {}
+        self._rejection_ref: TypedEvidenceRef | None = None
+        self._requeue_ref: TypedEvidenceRef | None = None
+        self._replacement_attempt_ref: TypedEvidenceRef | None = None
+
+    @classmethod
+    def for_capability_call(
+        cls, call: CapabilityCallPlan
+    ) -> "PaperOnlineProviderEvidenceCallback":
+        plan = freeze_paper_online_checks_plan()
+        try:
+            index = plan.capability_calls.index(call)
+        except ValueError as exc:
+            raise ValueError("capability call is not in authoritative plan") from exc
+        return cls(
+            attempt_ordinal=call.attempt_ordinal,
+            scope_identity={
+                "scope_kind": "capability",
+                "plan_digest": plan.plan_digest,
+                "profile_digest": plan.profile_digest,
+                "budget_digest": plan.budget_digest,
+                "call_index": index,
+                "domain": call.domain,
+                "phase": call.phase,
+                "case_id": call.case_id,
+                "planned_ai_unit_id": call.planned_ai_unit_id,
+                "controlled_rejection": call.controlled_rejection,
+            },
+        )
+
+    @classmethod
+    def for_capability_domain(
+        cls, domain: str
+    ) -> "PaperOnlineProviderEvidenceCallback":
+        plan = freeze_paper_online_checks_plan()
+        matching = tuple(call for call in plan.capability_calls if call.domain == domain)
+        if len(matching) != 2:
+            raise ValueError("capability domain is not authoritative")
+        return cls(
+            attempt_ordinal=None,
+            scope_identity={
+                "scope_kind": "capability_domain",
+                "domain": domain,
+                "plan_digest": plan.plan_digest,
+                "profile_digest": plan.profile_digest,
+                "budget_digest": plan.budget_digest,
+            },
+        )
+
+    @classmethod
+    def for_exp2_condition(
+        cls, condition_ref: Exp2OnlineConditionRef
+    ) -> "PaperOnlineProviderEvidenceCallback":
+        plan = freeze_paper_online_checks_plan()
+        if condition_ref not in plan.exp2_condition_refs:
+            raise ValueError("Exp2 condition ref is not authoritative")
+        return cls(
+            attempt_ordinal=0,
+            scope_identity={
+                "scope_kind": "exp2_online",
+                "condition_id": condition_ref.condition_id,
+                "condition_digest": condition_ref.condition_digest,
+                "plan_digest": plan.plan_digest,
+                "profile_digest": plan.profile_digest,
+                "budget_digest": plan.budget_digest,
+            },
+        )
+
+    @classmethod
+    def for_exp3_attempt(
+        cls, condition_ref: Exp3OnlineRootRef, *, attempt_ordinal: int
+    ) -> "PaperOnlineProviderEvidenceCallback":
+        plan = freeze_paper_online_checks_plan()
+        if condition_ref not in plan.exp3_root_refs:
+            raise ValueError("Exp3 condition ref is not authoritative")
+        return cls(
+            attempt_ordinal=attempt_ordinal,
+            scope_identity={
+                "scope_kind": "exp3_online",
+                "condition_id": condition_ref.condition_id,
+                "condition_digest": condition_ref.condition_digest,
+                "plan_digest": plan.plan_digest,
+                "profile_digest": plan.profile_digest,
+                "budget_digest": plan.budget_digest,
+            },
+        )
+
+    def __call__(self, **context: Any) -> None:
+        store = context.get("artifact_store")
+        request = context.get("request")
+        submission_id = str(context.get("submission_id") or "")
+        submitted_at = str(context.get("submitted_at") or "")
+        if not isinstance(store, ArtifactStore):
+            raise TypeError("official callback requires ArtifactStore")
+        self._store = store
+        for name in ("raw_output_ref", "provenance_ref", "usage_ref"):
+            if not isinstance(context.get(name), ArtifactRef) or not store.verify(context[name]):
+                raise ValueError(f"official callback requires verified {name}")
+        if not submission_id or not submitted_at:
+            raise ValueError("official callback requires submission identity and time")
+        protocol_attempt_id = str(getattr(request, "attempt_id", "") or "")
+        unit_id = str(getattr(request, "unit_id", "") or "")
+        if not protocol_attempt_id or not unit_id:
+            raise ValueError("official callback request/attempt identity mismatch")
+        self._submission_by_protocol_attempt[protocol_attempt_id] = submission_id
+        self._request_id_by_protocol_attempt[protocol_attempt_id] = str(
+            getattr(request, "request_id", "") or ""
+        )
+        attempt_ordinal = self._attempt_ordinal
+        scope_identity = dict(self._scope_identity)
+        if scope_identity.get("scope_kind") == "capability_domain":
+            ordinal_value = getattr(request, "attempt_ordinal", None)
+            if isinstance(ordinal_value, bool) or not isinstance(ordinal_value, int):
+                raise ValueError("official capability callback requires persisted ordinal")
+            attempt_ordinal = ordinal_value
+            plan = freeze_paper_online_checks_plan()
+            matches = tuple(
+                (index, call)
+                for index, call in enumerate(plan.capability_calls)
+                if call.domain == scope_identity["domain"]
+                and call.attempt_ordinal == attempt_ordinal
+            )
+            if len(matches) != 1:
+                raise ValueError("official capability attempt ordinal is not planned")
+            call_index, call = matches[0]
+            scope_identity = {
+                "scope_kind": "capability",
+                "plan_digest": plan.plan_digest,
+                "profile_digest": plan.profile_digest,
+                "budget_digest": plan.budget_digest,
+                "call_index": call_index,
+                "domain": call.domain,
+                "phase": call.phase,
+                "case_id": call.case_id,
+                "planned_ai_unit_id": call.planned_ai_unit_id,
+                "controlled_rejection": call.controlled_rejection,
+            }
+        if attempt_ordinal is None:
+            raise ValueError("official callback attempt ordinal is unresolved")
+        provenance_body = _read_callback_json(store, context["provenance_ref"])
+        usage_body = _read_callback_json(store, context["usage_ref"])
+        attempts = provenance_body.get("attempts")
+        if not isinstance(attempts, list) or not attempts or not isinstance(attempts[-1], Mapping):
+            raise ValueError("official callback provenance has no provider attempt")
+        provider_attempt = dict(attempts[-1])
+        request_identity = provider_attempt.get("provider_request_identity")
+        if not isinstance(request_identity, Mapping):
+            raise ValueError("official callback provenance has no request identity")
+        usage_summary = usage_body.get("usage_summary")
+        if not isinstance(usage_summary, Mapping):
+            raise ValueError("official callback usage snapshot is invalid")
+        prompt_ref = getattr(request, "prompt_package_ref", None)
+        if not isinstance(prompt_ref, ArtifactRef) or not store.verify(prompt_ref):
+            raise ValueError("official callback requires verified prompt package")
+
+        common = {
+            "submission_id": submission_id,
+            "attempt_id": submission_id,
+            "attempt_ordinal": attempt_ordinal,
+            "unit_id": unit_id,
+            "protocol_attempt_id": protocol_attempt_id,
+            "occurred_at": submitted_at,
+        }
+        refs: dict[str, ArtifactRef] = {}
+        refs["attempt"] = _save_online_callback_object(store, "attempt", submission_id, common, submitted_at)
+        refs["request_body"] = _save_online_callback_object(
+            store,
+            "request_body",
+            submission_id,
+            {**common, "prompt_package_ref": prompt_ref.to_dict(), "provider_request_identity": dict(request_identity)},
+            submitted_at,
+        )
+        refs["provider_dispatch"] = _save_online_callback_object(
+            store, "provider_dispatch", submission_id, {**common, "provider_request_identity": dict(request_identity)}, submitted_at
+        )
+        refs["provider_attempt"] = _save_online_callback_object(
+            store,
+            "provider_attempt",
+            submission_id,
+            {**common, "actual_call": True, "provider_attempt_count": usage_summary.get("provider_attempt_count"), "provider_attempt": provider_attempt},
+            submitted_at,
+        )
+        refs["latency"] = _save_online_callback_object(
+            store, "latency", submission_id, {**common, "provider_latency_ms": provider_attempt.get("latency_ms")}, submitted_at
+        )
+        refs["pricing"] = _save_online_callback_object(
+            store,
+            "pricing",
+            submission_id,
+            {**common, "pricing_snapshot": usage_summary.get("pricing_snapshot"), "cost_estimate": usage_summary.get("cost_estimate")},
+            submitted_at,
+        )
+        refs["model_record"] = _save_online_callback_object(
+            store,
+            "model_record",
+            submission_id,
+            {**common, "provider": context.get("provider_family"), "model": context.get("model"), "entry_id": context.get("entry_id")},
+            submitted_at,
+        )
+        refs.update(
+            {
+                "raw_or_failure": context["raw_output_ref"],
+                "provenance": context["provenance_ref"],
+                "usage": context["usage_ref"],
+            }
+        )
+        callback_ref = _save_online_callback_object(
+            store,
+            "callback_record",
+            submission_id,
+            {**common, "scope_identity": scope_identity, "object_refs": {role: ref.to_dict() for role, ref in refs.items()}},
+            submitted_at,
+        )
+        self._captures[submission_id] = CurrentProviderAttemptEvidence(
+            attempt_id=submission_id,
+            attempt_ordinal=attempt_ordinal,
+            unit_id=unit_id,
+            provider=str(context.get("provider_family") or ""),
+            model=str(context.get("model") or ""),
+            entry_id=str(context.get("entry_id") or ""),
+            submitted_at=submitted_at,
+            attempt_ref=TypedEvidenceRef(role="attempt", artifact_ref=refs["attempt"]),
+            request_body_ref=TypedEvidenceRef(role="request_body", artifact_ref=refs["request_body"]),
+            dispatch_ref=TypedEvidenceRef(role="provider_dispatch", artifact_ref=refs["provider_dispatch"]),
+            provider_attempt_ref=TypedEvidenceRef(role="provider_attempt", artifact_ref=refs["provider_attempt"]),
+            raw_or_failure_ref=TypedEvidenceRef(role="raw_or_failure", artifact_ref=refs["raw_or_failure"]),
+            provenance_ref=TypedEvidenceRef(role="provenance", artifact_ref=refs["provenance"]),
+            usage_ref=TypedEvidenceRef(role="usage", artifact_ref=refs["usage"]),
+            latency_ref=TypedEvidenceRef(role="latency", artifact_ref=refs["latency"]),
+            pricing_ref=TypedEvidenceRef(role="pricing", artifact_ref=refs["pricing"]),
+            model_record_ref=TypedEvidenceRef(role="model_record", artifact_ref=refs["model_record"]),
+            callback_record_ref=TypedEvidenceRef(role="callback_record", artifact_ref=callback_ref),
+        )
+
+    def require_capture(self, submission_id: str) -> CurrentProviderAttemptEvidence:
+        try:
+            return self._captures[submission_id]
+        except KeyError as exc:
+            raise ValueError("official callback capture is not persisted") from exc
+
+    def require_capability_captures(self) -> tuple[CurrentProviderAttemptEvidence, ...]:
+        values = tuple(sorted(self._captures.values(), key=lambda item: item.attempt_ordinal))
+        if tuple(item.attempt_ordinal for item in values) != (0, 1):
+            raise ValueError("official capability lifecycle requires ordinals 0 and 1")
+        return values
+
+    def require_capability_lifecycle(self) -> CapabilityLifecycleEvidence:
+        captures = self.require_capability_captures()
+        if (
+            self._rejection_ref is None
+            or self._requeue_ref is None
+            or self._replacement_attempt_ref is None
+        ):
+            raise ValueError("official capability verifier/checker/requeue lifecycle is incomplete")
+        domain = str(self._scope_identity.get("domain") or "")
+        return CapabilityLifecycleEvidence(
+            domain=domain,
+            rejection_kind=(
+                "verification_rejected"
+                if domain == "factorization"
+                else "checker_rejected"
+            ),
+            initial_attempt_id=captures[0].attempt_id,
+            initial_raw_ref=TypedEvidenceRef(
+                role="initial_source_raw",
+                artifact_ref=captures[0].raw_or_failure_ref.artifact_ref,
+            ),
+            rejection_ref=self._rejection_ref,
+            requeue_ref=self._requeue_ref,
+            replacement_attempt_id=captures[1].attempt_id,
+            replacement_attempt_ordinal=captures[1].attempt_ordinal,
+            replacement_attempt_ref=self._replacement_attempt_ref,
+        )
+
+    def after_raw_output_persisted(self, context: Any) -> None:
+        return None
+
+    def after_parsed_candidate_persisted(self, context: Any) -> None:
+        refs = getattr(context, "candidate_output_refs", None)
+        attempt_id = str(getattr(context, "attempt_id", "") or "")
+        if attempt_id and isinstance(refs, Mapping) and all(
+            isinstance(ref, ArtifactRef) for ref in refs.values()
+        ):
+            self._candidate_refs_by_attempt[attempt_id] = dict(refs)
+        return None
+
+    def before_parser(self, context: Any) -> None:
+        return None
+
+    def before_verification(self, context: Any) -> None:
+        attempt = getattr(context, "attempt", None)
+        protocol_attempt_id = str(getattr(attempt, "attempt_id", "") or "")
+        ordinal = getattr(attempt, "attempt_ordinal", None)
+        if ordinal == 1 and self._requeue_ref is not None:
+            capture = self._captures.get(
+                self._submission_by_protocol_attempt.get(protocol_attempt_id, "")
+            )
+            if capture is not None and capture.attempt_ref is not None:
+                self._replacement_attempt_ref = TypedEvidenceRef(
+                    role="new_attempt", artifact_ref=capture.attempt_ref.artifact_ref
+                )
+        return None
+
+    def before_requeue(self, context: Any) -> GateDirective | None:
+        if self._scope_identity.get("scope_kind") != "capability_domain":
+            return None
+        if getattr(context, "trigger", None) != "verification_rejected":
+            return None
+        store = self._store
+        attempt = getattr(context, "attempt", None)
+        protocol_attempt_id = str(getattr(attempt, "attempt_id", "") or "")
+        submission_id = self._submission_by_protocol_attempt.get(protocol_attempt_id, "")
+        if not isinstance(store, ArtifactStore) or not submission_id:
+            raise ValueError("official capability rejection has no persisted provider attempt")
+        capture = self._captures.get(submission_id)
+        candidates = self._candidate_refs_by_attempt.get(protocol_attempt_id, {})
+        decision = getattr(context, "decision", None)
+        if capture is not None and capture.attempt_ordinal == 1:
+            return GateDirective(stop=True)
+        if (
+            capture is None
+            or capture.attempt_ordinal != 0
+            or capture.raw_or_failure_ref is None
+            or not candidates
+            or not isinstance(decision, Mapping)
+            or decision.get("retry_allowed") is not True
+            or decision.get("retry_count") != 1
+        ):
+            raise ValueError("official capability rejection/requeue identity mismatch")
+        domain = str(self._scope_identity["domain"])
+        rejection_kind = (
+            "verification_rejected" if domain == "factorization" else "checker_rejected"
+        )
+        occurred_at = str(
+            getattr(attempt, "finished_at", None)
+            or getattr(attempt, "submitted_at", None)
+            or capture.submitted_at
+        )
+        checker_request_id = None
+        if domain == "lean_proof":
+            request_id = self._request_id_by_protocol_attempt.get(protocol_attempt_id, "")
+            checker_request_id = f"checker_{_safe_online_artifact_part(request_id)}"
+            checker_artifact_id = (
+                "".join(
+                    character if character.isalnum() or character == "_" else "_"
+                    for character in checker_request_id
+                )
+                + "_checker_report_json"
+            )
+            domain_rejection_ref = store.load_artifact_ref(checker_artifact_id)
+            checker_report = json.loads(
+                store.read_bytes(domain_rejection_ref).decode("utf-8")
+            )
+            if (
+                domain_rejection_ref.artifact_type != "LeanCheckerReport"
+                or checker_report.get("status") != "rejected"
+                or checker_report.get("request_id") != checker_request_id
+            ):
+                raise ValueError("official Lean checker rejection artifact mismatch")
+        else:
+            domain_rejection_ref = store.save_json(
+                {
+                    "schema_version": "tokenshare.factor_verifier_rejection.v1",
+                    "domain": domain,
+                    "rejection_kind": rejection_kind,
+                    "submission_id": submission_id,
+                    "protocol_attempt_id": protocol_attempt_id,
+                    "attempt_ordinal": 0,
+                    "raw_output_ref": capture.raw_or_failure_ref.artifact_ref.to_dict(),
+                    "candidate_output_refs": {
+                        name: ref.to_dict() for name, ref in candidates.items()
+                    },
+                    "attempt_snapshot": attempt.to_dict(),
+                    "occurred_at": occurred_at,
+                },
+                artifact_id=(
+                    "factor_verifier_rejection_"
+                    f"{_safe_online_artifact_part(submission_id)}"
+                ),
+                artifact_type="FactorVerifierRejection",
+                artifact_schema_id="tokenshare.factor_verifier_rejection",
+                artifact_schema_version="v1",
+                source={
+                    "kind": "factorization_runtime_official_verifier",
+                    "protocol_attempt_id": protocol_attempt_id,
+                },
+                metadata={"status": "rejected", "attempt_ordinal": 0},
+                created_at=occurred_at,
+            )
+        rejection = _save_online_callback_object(
+            store,
+            "controlled_rejection",
+            submission_id,
+            {
+                "submission_id": submission_id,
+                "attempt_id": submission_id,
+                "protocol_attempt_id": protocol_attempt_id,
+                "attempt_ordinal": 0,
+                "unit_id": capture.unit_id,
+                "occurred_at": occurred_at,
+                "domain": domain,
+                "rejection_kind": rejection_kind,
+                "raw_output_ref": capture.raw_or_failure_ref.artifact_ref.to_dict(),
+                "candidate_output_refs": {
+                    name: ref.to_dict() for name, ref in candidates.items()
+                },
+                "domain_rejection_ref": domain_rejection_ref.to_dict(),
+                "checker_request_id": checker_request_id,
+                "attempt_snapshot": attempt.to_dict(),
+                "recovery_event_refs": list(getattr(context, "recovery_event_refs", ())),
+            },
+            occurred_at,
+        )
+        self._rejection_ref = TypedEvidenceRef(
+            role="controlled_rejection", artifact_ref=rejection
+        )
+        requeue = _save_online_callback_object(
+            store,
+            "requeue_decision",
+            submission_id,
+            {
+                "submission_id": submission_id,
+                "attempt_id": submission_id,
+                "protocol_attempt_id": protocol_attempt_id,
+                "attempt_ordinal": 0,
+                "unit_id": capture.unit_id,
+                "occurred_at": occurred_at,
+                "domain": domain,
+                "initial_attempt_id": submission_id,
+                "expected_replacement_ordinal": 1,
+                "decision": dict(decision),
+                "rejection_ref": rejection.to_dict(),
+            },
+            occurred_at,
+        )
+        self._requeue_ref = TypedEvidenceRef(
+            role="requeue_decision", artifact_ref=requeue
+        )
+        return None
+
+    def before_merge(self, context: Any) -> None:
+        return None
+
+    def on_unit_progress(self, context: Any) -> None:
+        return None
+
+
+def produce_capability_online_evidence(**kwargs: Any) -> Any:
+    """从本模块的 official callback capture 投影 capability online evidence。"""
+
+    return _produce_capability_online_evidence(**kwargs)
+
+
+def produce_exp3_online_recovery_evidence(**kwargs: Any) -> Any:
+    """从 official callback 与 strategy persisted events 投影 Exp3 evidence。"""
+
+    return _produce_exp3_online_recovery_evidence(**kwargs)
 
 
 def runtime_timing_policy(*, evidence_class: str) -> RuntimeTimingPolicy:
@@ -576,6 +1064,8 @@ def run_scheduled_cases(
 
 def run_exp3_post_ai_strategy(
     *,
+    artifact_root: str | Path | None = None,
+    condition_ref: Exp3OnlineRootRef | None = None,
     attempts: Sequence[Any],
     selected_target_ai_unit_ids: Sequence[str],
     fault_type: str,
@@ -593,10 +1083,9 @@ def run_exp3_post_ai_strategy(
         unit_id = str(_required_field(attempt, "unit_id"))
         if unit_id not in selected:
             continue
-        raw_ref = _required_field(attempt, "raw_output_ref")
-        provenance_ref = _required_field(attempt, "provenance_ref")
-        if not isinstance(raw_ref, Mapping) or not isinstance(provenance_ref, Mapping):
-            raise ValueError("fault injection requires persisted raw and provenance refs")
+        raw_ref = _artifact_ref_body(_required_field(attempt, "raw_output_ref"))
+        provenance_ref = _artifact_ref_body(_required_field(attempt, "provenance_ref"))
+        attempt_time = str(_field(attempt, "submitted_at") or _utc_now())
         events.append(
             {
                 "event_type": "EXPERIMENT_PROVIDER_RAW_OBSERVED",
@@ -604,6 +1093,8 @@ def run_exp3_post_ai_strategy(
                 "unit_id": unit_id,
                 "raw_output_ref": dict(raw_ref),
                 "provenance_ref": dict(provenance_ref),
+                "occurred_at": attempt_time,
+                **_exp3_condition_event_identity(condition_ref),
             }
         )
         fault = dict(inject_fault(attempt, fault_type))
@@ -617,6 +1108,8 @@ def run_exp3_post_ai_strategy(
                 "attempt_id": _required_field(attempt, "attempt_id"),
                 "unit_id": unit_id,
                 "fault_type": fault_type,
+                "occurred_at": attempt_time,
+                **_exp3_condition_event_identity(condition_ref),
             }
         )
         if fault.get("requires_replacement") is not True:
@@ -627,26 +1120,42 @@ def run_exp3_post_ai_strategy(
                     "event_type": "EXPERIMENT_REPLACEMENT_REQUIRED",
                     "attempt_id": _required_field(attempt, "attempt_id"),
                     "unit_id": unit_id,
+                    "occurred_at": attempt_time,
+                    **_exp3_condition_event_identity(condition_ref),
                 }
             )
             continue
         replacement = execute_replacement(attempt)
         _validate_fixed_identity(replacement, approved_identity)
         replacements.append(replacement)
+        replacement_time = str(
+            _field(replacement, "submitted_at") or attempt_time
+        )
         events.extend(
             (
                 {
                     "event_type": "EXPERIMENT_REPLACEMENT_ATTEMPT_STARTED",
                     "attempt_id": _required_field(replacement, "attempt_id"),
                     "unit_id": unit_id,
+                    "attempt_ordinal": _field(replacement, "attempt_ordinal"),
+                    "occurred_at": replacement_time,
+                    **_exp3_condition_event_identity(condition_ref),
                 },
                 {
                     "event_type": "EXPERIMENT_REPLACEMENT_ACCEPTED",
                     "attempt_id": _required_field(replacement, "attempt_id"),
                     "unit_id": unit_id,
+                    "attempt_ordinal": _field(replacement, "attempt_ordinal"),
+                    "occurred_at": replacement_time,
+                    **_exp3_condition_event_identity(condition_ref),
                 },
             )
         )
+    persisted_event_refs = (
+        _persist_formal_strategy_events(ArtifactStore(Path(artifact_root)), events)
+        if artifact_root is not None
+        else ()
+    )
     return FormalStrategyResult(
         ordered_case_ids=(),
         outcomes=tuple(attempts),
@@ -658,6 +1167,7 @@ def run_exp3_post_ai_strategy(
         },
         fault_records=tuple(faults),
         replacement_attempts=tuple(replacements),
+        persisted_event_refs=persisted_event_refs,
     )
 
 
@@ -704,6 +1214,7 @@ def run_exp3_worker_death_strategy(
         "condition_id": condition_id,
         "task_id": task_id,
         "plan_digest": digest_json(plan_body),
+        "plan": plan_body,
         "selected_target_unit_ids": list(plan.selected_target_unit_ids),
         "occurred_at": started_at,
     }
@@ -753,11 +1264,28 @@ def run_exp3_worker_death_strategy(
                 "condition_id": condition_id,
                 "task_id": task_id,
                 "unit_id": target_unit_id,
+                "attempt_id": record["dead_attempt"]["attempt_id"],
                 "record_ref": outcome.record_ref.to_dict(),
                 "protocol_event_refs": list(record["protocol_event_refs"]),
-                "occurred_at": record["created_at"],
+                "occurred_at": record["killed_at"],
             }
         )
+        replacement = record["replacement_attempt"]
+        original_replacement = _required_field(observation, "replacement_fact")
+        replacement_ordinal = _field(original_replacement, "attempt_ordinal")
+        if replacement_ordinal is not None:
+            events.append(
+                {
+                    "event_type": "EXPERIMENT_REPLACEMENT_ATTEMPT_STARTED",
+                    "condition_id": condition_id,
+                    "task_id": task_id,
+                    "unit_id": target_unit_id,
+                    "attempt_id": replacement["attempt_id"],
+                    "attempt_ordinal": replacement_ordinal,
+                    "occurred_at": replacement["started_at"],
+                }
+            )
+    persisted_event_refs = _persist_formal_strategy_events(store, events)
     return FormalStrategyResult(
         ordered_case_ids=(task_id,),
         outcomes=(),
@@ -772,6 +1300,7 @@ def run_exp3_worker_death_strategy(
         },
         fault_records=tuple(records),
         replacement_attempts=tuple(replacements),
+        persisted_event_refs=persisted_event_refs,
     )
 
 
@@ -1334,6 +1863,105 @@ def _read_json_artifact(
     if not isinstance(body, dict):
         raise ValueError("formal Experiment 5 artifact body must be an object")
     return body
+
+
+def _read_callback_json(store: ArtifactStore, ref: ArtifactRef) -> dict[str, Any]:
+    if not store.verify(ref):
+        raise ValueError("official callback artifact verification failed")
+    try:
+        body = json.loads(store.read_bytes(ref).decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError("official callback artifact must be JSON") from exc
+    if not isinstance(body, dict):
+        raise ValueError("official callback artifact must be a JSON object")
+    return body
+
+
+def _save_online_callback_object(
+    store: ArtifactStore,
+    role: str,
+    submission_id: str,
+    body: Mapping[str, Any],
+    created_at: str,
+) -> ArtifactRef:
+    payload = {
+        "schema_version": f"tokenshare.paper_online_{role}.v1",
+        "evidence_role": role,
+        **dict(body),
+    }
+    safe_role = _safe_online_artifact_part(role)
+    safe_submission = _safe_online_artifact_part(submission_id)
+    return store.save_json(
+        payload,
+        artifact_id=f"paper_online_{safe_role}_{safe_submission}",
+        artifact_type="PaperOnlineEvidenceObject",
+        artifact_schema_id=f"tokenshare.paper_online_{role}",
+        artifact_schema_version="v1",
+        source={"kind": "paper_online_provider_callback", "submission_id": submission_id},
+        metadata={"evidence_role": role},
+        created_at=created_at,
+    )
+
+
+def _persist_formal_strategy_events(
+    store: ArtifactStore,
+    events: Sequence[Mapping[str, Any]],
+) -> tuple[ArtifactRef, ...]:
+    refs: list[ArtifactRef] = []
+    for index, event in enumerate(events):
+        body = dict(event)
+        occurred_at = str(body.get("occurred_at") or _utc_now())
+        body["occurred_at"] = occurred_at
+        event_digest = digest_json(body).removeprefix("sha256:")[:20]
+        refs.append(
+            store.save_json(
+                {
+                    "schema_version": "tokenshare.paper_formal_strategy_event.v1",
+                    **body,
+                },
+                artifact_id=f"paper_formal_strategy_event_{index}_{event_digest}",
+                artifact_type="PaperFormalStrategyEvent",
+                artifact_schema_id="tokenshare.paper_formal_strategy_event",
+                artifact_schema_version="v1",
+                source={"kind": "paper_formal_strategy"},
+                metadata={"event_type": str(body.get("event_type") or "")},
+                created_at=occurred_at,
+            )
+        )
+    return tuple(refs)
+
+
+def _artifact_ref_body(value: Any) -> dict[str, Any]:
+    if isinstance(value, TypedEvidenceRef):
+        return value.artifact_ref.to_dict()
+    if isinstance(value, ArtifactRef):
+        return value.to_dict()
+    if isinstance(value, Mapping):
+        return dict(value)
+    raise ValueError("fault injection requires persisted raw and provenance refs")
+
+
+def _exp3_condition_event_identity(
+    condition_ref: Exp3OnlineRootRef | None,
+) -> dict[str, Any]:
+    if condition_ref is None:
+        return {}
+    return {
+        "condition_id": condition_ref.condition_id,
+        "condition_digest": condition_ref.condition_digest,
+        "profile_digest": condition_ref.profile_digest,
+        "budget_digest": condition_ref.budget_digest,
+        "online_plan_digest": condition_ref.plan_digest,
+        "case_id": condition_ref.case_id,
+    }
+
+
+def _safe_online_artifact_part(value: str) -> str:
+    normalized = "".join(
+        character if character.isalnum() or character in {"-", "_"} else "_"
+        for character in value
+    ).strip("_")
+    return normalized or "object"
 
 
 def _provider_latency_aggregate(
