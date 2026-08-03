@@ -5,13 +5,13 @@
 ## 开工顺序
 
 1. 先完整阅读 `AGENTS.md` 与 `Doc/archive/design-history/2026-08-01-epd027-minimal-handoff.md`。
-2. 执行 `git status --short --branch` 与 `git log -3 --oneline`，确认 Task 25 代码提交和状态提交。
-3. Task 0–25 已 accepted；使用 Task 26 只读预检按两文件 TDD/review 循环推进，不得进入 Task 27。
+2. 执行 `git status --short --branch` 与 `git log -3 --oneline`，确认 Task 26 代码提交和状态提交。
+3. Task 0–26 已 accepted；使用 Task 27 只读预检按四文件 TDD/review 循环推进，不得进入 Task 28。
 
-## 2026-08-02 EPD-027 当前实施交接（Task 25 accepted）
+## 2026-08-02 EPD-027 当前实施交接（Task 26 accepted）
 
-- Active feature=`feat-011`，仍为 `in-progress`；active focus id 保持 `paper-metric-contract-trace-bank-and-traceability-plan`，status=`in_progress`。Task 0–25 已 accepted（`26/35`）；Task 26 为 `queued/next`；正式矩阵仍为 **NO-GO**。
-- 当前分支=`codex/feat-011-epd027-pipeline`；Task 25 online-check evidence commit=`c7db1948`，状态提交在其后。
+- Active feature=`feat-011`，仍为 `in-progress`；active focus id 保持 `paper-metric-contract-trace-bank-and-traceability-plan`，status=`in_progress`。Task 0–26 已 accepted（`27/35`）；Task 27 为 `queued/next`；正式矩阵仍为 **NO-GO**。
+- 当前分支=`codex/feat-011-epd027-pipeline`；Task 26 paid-receipt validator commit=`e9ab3d9c`，状态提交在其后。
 - Task 0–2 accepted 原提交不变：Task 0=`ed0b056a`，Task 1=`78fbddaa`，Task 2=`d2b16f89`。
 - Task 3–9 已 accepted；提交依次包括 `f9773944`/`66643084`、`0cbda1df`、`58cda71f`、`5f97034c`、`aadbd483`、`6802918d`、`1109e852`，均有 scoped exit `0` 与最终 review PASS，provider/network calls=`0`。完整文件、测试和复审证据见 minimal handoff/progress。
 - Task 3 direct projector 不复制协议状态机；Task 4 用户授权的 `paper_formal_evidence.py` mapping conflict fail closed；Task 5–8 已提供 immutable bank、semantic inventory/preflight、SQLite budget authority 与 durable acquisition。当前没有 paid receipt/付费授权，不得调用 provider。
@@ -40,7 +40,9 @@
 - Task 24 protected L4 fresh reload、三 digest 独立重算、canonical ordering、numeric/null/roles、exact formal-evidence closure 与 renderer+lineage+report atomic generation闭合；post-min=`CHANGED`、traceability=`17 passed in 34.04s`，provider/network/source-write/fill=`0/0/0/0`。
 - Task 25 严格 4 个计划文件，代码 commit=`c7db1948`。reviewer 两轮 BLOCK=`1C/2I`、`1C/1I`；官方 verifier/checker/requeue 与 Exp3 fault/death identity 闭合，最终 canonical=`29 passed in 37.64s`，reviewer PASS=`0/0/0`。
 - Task 25 capability4、Exp2 24/480、Exp3 2/12计划冻结；typed callback/resource/authority binding闭合且无公式/receipt/dispatch。post-min=`CHANGED`、`29 passed in 36.34s`；provider/network=`0/0`。
-- 用户已授权后续每个 Task 持续实施/review/fix/follow-up 至 PASS 后直接推进，且 post-accept 测试最小化必须由子智能体执行。Task 26 预检 READY，计划 2 文件足够，无计划外 production；仅 synthetic receipt-shaped fixtures，当前仍无真实 user receipt/授权。
+- Task 26 严格 2 个计划文件，代码 commit=`e9ab3d9c`；RED 1 collection error，GREEN=`14 passed`，reviewer PASS=`0/0/0`。receipt/marker/scope/expiry/no-mint/allow-flag门禁闭合；post-min=`CHANGED`、`14 passed in 0.31s`。
+- Task 26 仅使用 synthetic non-authorizing fixtures；真实 receipt persistence/provider/network=`0/0/0`。当前仍无 user-provided valid receipt，API key/env不构成授权，provider未解锁。
+- 用户已授权后续每个 Task 持续实施/review/fix/follow-up 至 PASS 后直接推进，且 post-accept 测试最小化必须由子智能体执行。Task 27 预检 READY，计划 4 文件足够，无计划外 production。
 - 用户持续授权监督者按严格必要性批准后续计划外文件：只有不增加就无法得到权威数据或跑通正常实验时才可批准；便利/重构/美化/安全加固/可后置修改不得批准，且每次必须落盘依据。
 
 ## 2026-07-31 用户暂停点（历史）

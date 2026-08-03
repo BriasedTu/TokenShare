@@ -5,9 +5,9 @@
 ## 当前状态
 
 - 工作树：`C:\Users\32133\.config\superpowers\worktrees\TokenShare\codex-feat-011-epd027-pipeline`。
-- 分支：`codex/feat-011-epd027-pipeline`；Task 25 代码 HEAD=`c7db1948`；状态/交接提交在其后。
+- 分支：`codex/feat-011-epd027-pipeline`；Task 26 代码 HEAD=`e9ab3d9c`；状态/交接提交在其后。
 - Active feature：`feat-011`，仍为 `in-progress`；正式矩阵保持 **NO-GO**。
-- Task 0–25 已 accepted（`26/35`）；不得重做。Task 26 为 `queued/next`；不得进入 Task 27。
+- Task 0–26 已 accepted（`27/35`）；不得重做。Task 27 为 `queued/next`；不得进入 Task 28。
 - 用户已授权每个后续 Task 持续执行“实现 → 独立综合 review → 集中修正 → follow-up”循环直至 reviewer PASS，再直接推进下一 Task。
 - 每个 Task 的 post-accept 测试最小化必须分派给子智能体；监督者不得亲自执行测试内容审计，只负责范围门禁、结构化证据验收与精确提交。
 - 当前没有活动写入者。provider/network 调用均为 `0`，无 paid receipt。
@@ -26,6 +26,7 @@
 - Task 23：historical real fixture commit=`8c1d7ccc`，严格 12 文件（原计划10+按严格必要性批准2）；normal expanded-root merge final 经 central typed projector 从持久化 ledger/artifact/manifest 投影，fixture最小脱敏且永不paper-eligible。
 - Task 24：deterministic traceability replay commit=`8863e8b3`，严格 6 个计划文件；protected persisted L4、fresh replay、三digest重算、canonical ordering、exact evidence closure 与 atomic renderer/lineage/report generation 已闭合。
 - Task 25：online-check evidence commit=`c7db1948`，严格 4 个计划文件；capability4、Exp2 24/480、Exp3 2/12计划与官方 verifier/checker/requeue、typed provider objects、fault/death identity已闭合，未创建receipt或调用provider。
+- Task 26：paid-receipt validator commit=`e9ab3d9c`，严格 2 个计划文件；receipt/marker/scope/expiry/reconcile/no-mint/allow-flag门禁闭合，仅synthetic non-authorizing fixtures，仍无真实receipt/授权。
 - 禁止影子 TokenShare：metrics 只能投影 persisted event/artifact/attempt/provider facts；不得根据 condition/fault 名称模拟 state、retry、death 或 terminal。
 
 Task 14 contract digest=`sha256:b72307e727e28f5233de934df28e1701cf46ffb711b99aa845ea6f8580694b0e`。
@@ -62,12 +63,14 @@ Task 14 contract digest=`sha256:b72307e727e28f5233de934df28e1701cf46ffb711b99aa8
 - Task 24 子智能体 test minimization=`CHANGED`；traceability=`17 passed in 34.04s`，provider/network/source-write/fill=`0/0/0/0`。
 - Task 25 reviewer BLOCK=`1C/2I`、`1C/1I`；最终 canonical=`29 passed in 37.64s`，final reviewer `PASS`、`0/0/0`。
 - Task 25 子智能体 test minimization=`CHANGED`；最终=`29 passed in 36.34s`，provider/network=`0/0`。
+- Task 26 RED=`1 collection error in 0.29s`，GREEN=`14 passed in 0.29s`，final reviewer `PASS`、`0/0/0`。
+- Task 26 子智能体 test minimization=`CHANGED`；最终=`14 passed in 0.31s`，真实receipt/provider/network=`0/0/0`。
 
 ## 精确下一动作
 
-1. Task 26 精确 2 文件：新建 `paper_paid_authorization.py` 与 test。无需计划外 production。
-2. 以 synthetic receipt-shaped fixtures 离线验证 canonical receipt digest、精确scope/plan/profile/budget/inventory/admission/path binding、new-run/resume marker、expiry/reconcile 与 allow-provider-calls双门；fixtures不构成真实授权。
-3. validator 不得 mint/create/approve receipt；API key/env不构成授权。真实 user-provided valid receipt 仅供后续 Task27/33 精确scope dispatch，当前 provider/network仍为0。
+1. Task 27 精确 4 文件：新建 `run_paper_pipeline.py` 与 test；仅为 supersession routing 修改 `run_paper_experiments.py` 及其 CLI test。无需计划外 production。
+2. 离线完成14个subcommand parser/delegation、versioned JSON、exit2/no-mutation与provider-option门禁；`external-bank-root`仅进程内resolver binding，不持久化路径。
+3. provider子命令没有真实user receipt+secret+allow flag+new-run/resume mode时必须fail closed；本Task不得真实dispatch。Task28再实现两类gate policy。
 3. 后续若计划外文件确属“不增加就无法得到数据或跑通实验”，监督者可按用户持续授权批准最小修改并落盘依据。
 
 恢复期间继续遵守：无经 Task 26 校验的 paid receipt 不得调用真实 API；不 push、不 merge、不创建 PR。

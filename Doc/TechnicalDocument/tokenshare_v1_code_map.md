@@ -178,6 +178,7 @@ Secret 只能进入当前进程环境和脱敏后的 transport；event/artifact/
 | `paper_metric_observations.py` | Task 20 每 numeric cell 唯一 lineage materializer：按 row/cell digest 精确 join，保存公式/value/numerator/fixed denominator membership/excluded-null-blocked reasons，并逐 current execution 或 source entry 校验 typed roles；non-null 由既有 evaluator独立复算，缺 role 时 cell null/table blocked。 |
 | `paper_traceability.py` | Task 24 deterministic traceability replay：仅接受 runner 生成的 protected persisted L4 descriptor，按 v2 manifest/CURRENT/generation/typed artifact-index exact closure fresh reload direct/current/source，复用 registry→materializer→renderer 独立重算 observations/tables/cell-lineage digests；derived inputs fail closed，输出与 report 共用 atomic generation，provider/source writes=0。 |
 | `paper_online_checks.py` | Task 25 capability/Exp2/Exp3 online-check pure plan 与 typed evidence producer：冻结4/24-480/2-12 scope，消费官方 verifier/checker/requeue 与 callback persisted objects，资源输入仅来自 current provider payload；缺 role blocked/null，不计算指标公式、不创建receipt、不dispatch。 |
+| `paper_paid_authorization.py` | Task 26 纯离线 external receipt validator：验证 canonical digest 与scope/plan/profile/budget/inventory/admission/selection/path/expiry/approval binding，派生new-run/resume marker并要求独立allow flag；无mint/approve/secret/reserve/dispatch API，synthetic tests不构成真实授权。 |
 | `paper_report.py`、`paper_formal_report.py`、`paper_smoke_report.py` | 通用/正式/smoke 输出；Task 21 正式 report 只接受持久化 Task20 lineage/source-index/observation/manifest/digest 闭包，验证 exact 8 table completeness 后发布 renderer/result/eligibility/secret-audit refs；smoke 永远 paper-ineligible。 |
 | `paper_exp5_artifacts.py`、`paper_exp5_model_comparison.py`、`paper_exp5_statistics.py` | Task 21 contract-only CSV/TEX renderer 位于 `paper_exp5_artifacts.py`：从 typed observations 生成 exact 8 CSV 与同 stem TEX、audit JSONL/manifest，保留 null/denominator/reason，整批 stage/promote/rollback；旧 pairwise/ranking/recovery/Markdown/PDF 输出已退役。其余为历史 Exp5 比较/统计 helper。 |
 | `paper_budget.py` | plan-only roots/units/attempt/token/cost/time/space 预算与门禁；Task 6 把完整 bank inventory 写入预算投影，Task 7 增加 provider-writing 硬预算 limits 与禁止 unlimited mode 的入口门禁。 |
@@ -189,11 +190,11 @@ Secret 只能进入当前进程环境和脱敏后的 transport；event/artifact/
 
 ### EPD-027 实施进度与后续实验设施改造
 
-2026-08-01 已冻结 Experiment 2–4 两阶段真实回答库设计。当前 35 个实施 Task 中 Task 0–25 已 accepted。Task 25 online-check evidence commit=`c7db1948`；最终 canonical=`29 passed in 37.64s`，final reviewer PASS=`0/0/0`，子智能体 test minimization=`CHANGED` 后 `29 passed in 36.34s`，provider/network calls=`0`，无 paid receipt。这个 `26/35` 状态不代表整条 paper pipeline 已实现：Task 26 queued/next，仅离线 receipt validator 未完成，真实授权/dispatch仍不存在；正式矩阵保持 **NO-GO**。Task 25 验收未运行 Fast/Full/LeanAudit/network/provider。
+2026-08-01 已冻结 Experiment 2–4 两阶段真实回答库设计。当前 35 个实施 Task 中 Task 0–26 已 accepted。Task 26 paid-receipt validator commit=`e9ab3d9c`；最终 `14 passed in 0.31s`，final reviewer PASS=`0/0/0`，provider/network calls=`0`。这个 `27/35` 状态不代表获得真实授权：Task 27 queued/next，当前仍无 user-provided/validated paid receipt，真实 dispatch 不存在；正式矩阵保持 **NO-GO**。Task 26 验收未运行 Fast/Full/LeanAudit/network/provider。
 
 后续完整实施计划必须同时覆盖：
 
-- Task 26 及后续 paid-readiness/CLI，保持 Task21 outputs、Task22 resume ABI、Task23 source hashes、Task24 replay digests 与 Task25 online plan稳定；
+- Task 27 及后续 unified CLI/gates，保持 Task21 outputs、Task22 resume ABI、Task23 source hashes、Task24 replay digests、Task25 plan与Task26 receipt schema稳定；
 - `online_real_provider` 与 `real_model_trace_protocol_run` 两类 paper eligibility，禁止把 trace consumption 冒充当前 provider call；
 - acquisition actual spend 与 per-condition trace attribution 两套资源账，以及 calls/tokens/CNY/in-flight 人民币 1,000 硬门；
 - Experiment 2 缩小题集六 worker 档在线并发检查、Experiment 3 小型在线恢复检查；
