@@ -133,6 +133,22 @@ class CellLineageAuditServiceInput:
     observations: Sequence[object]
 
 
+@dataclass(frozen=True, kw_only=True)
+class FormalExecutionGateServiceInput:
+    """execution gate 的进程内 typed authority；不从 CLI JSON 伪造。"""
+
+    selection: object
+    prerequisites: object
+
+
+@dataclass(frozen=True, kw_only=True)
+class PaperPublicationGateServiceInput:
+    """publication gate 的进程内 terminal evidence；不触发 replay/provider。"""
+
+    selection: object
+    terminal_evidence: object
+
+
 Delegate = Callable[[PipelineCommandRequest], Mapping[str, object] | Any]
 ServiceInputFactory = Callable[[PipelineCommandRequest], object | None]
 
@@ -482,15 +498,29 @@ def _audit_cell_lineage_adapter(
 def _validate_formal_execution_gate_adapter(
     request: PipelineCommandRequest,
 ) -> Mapping[str, object]:
-    # Task 27 只确认 parser/routing；policy 由 Task 28 提供。
-    return _service_result(request)
+    from tokenshare.experiments.paper_formal_gate import formal_execution_gate
+
+    value = request._service_input
+    if not isinstance(value, FormalExecutionGateServiceInput):
+        raise ValueError(
+            "validate-formal-execution-gate requires typed prerequisite authority"
+        )
+    return formal_execution_gate(value.selection, value.prerequisites).to_dict()
 
 
 def _validate_paper_publication_gate_adapter(
     request: PipelineCommandRequest,
 ) -> Mapping[str, object]:
-    # Task 27 只确认 parser/routing；policy 由 Task 28 提供。
-    return _service_result(request)
+    from tokenshare.experiments.paper_formal_gate import paper_publication_gate
+
+    value = request._service_input
+    if not isinstance(value, PaperPublicationGateServiceInput):
+        raise ValueError(
+            "validate-paper-publication-gate requires typed terminal evidence"
+        )
+    return paper_publication_gate(
+        value.selection, value.terminal_evidence
+    ).to_dict()
 
 
 _AUTHORITATIVE_SERVICE_ADAPTERS: dict[str, Delegate] = {
@@ -513,6 +543,12 @@ _AUTHORITATIVE_SERVICE_ADAPTERS: dict[str, Delegate] = {
 
 def _no_service_input(_request: PipelineCommandRequest) -> None:
     return None
+
+
+def _provided_gate_service_input(request: PipelineCommandRequest) -> object:
+    if request._service_input is None:
+        raise ValueError("paper gate typed service input is missing")
+    return request._service_input
 
 
 def _acquisition_service_input_from_persisted_authorities(
@@ -767,8 +803,8 @@ _PRODUCTION_SERVICE_INPUT_FACTORIES: Mapping[str, ServiceInputFactory] = Mapping
         "render": _render_service_input_from_persisted_authorities,
         "replay": _no_service_input,
         "audit-cell-lineage": _lineage_service_input_from_persisted_authorities,
-        "validate-formal-execution-gate": _no_service_input,
-        "validate-paper-publication-gate": _no_service_input,
+        "validate-formal-execution-gate": _provided_gate_service_input,
+        "validate-paper-publication-gate": _provided_gate_service_input,
     }
 )
 
@@ -827,7 +863,7 @@ def _json_result(
         and delegated_inventory_digest != request.inventory_digest
     ):
         raise ValueError("pipeline service inventory digest mismatch")
-    return {
+    result = {
         "schema_version": RESULT_SCHEMA_VERSION,
         "status": str(body.get("status", "completed")),
         "scope": request.scope,
@@ -848,6 +884,55 @@ def _json_result(
         "evidence_class": str(body.get("evidence_class", request.evidence_class)),
         "provider_calls": int(body.get("provider_calls", 0)),
     }
+    for name in (
+        "stage",
+        "classification",
+        "blocked_reasons",
+        "facility_gate_verified",
+        "paper_eligible",
+    ):
+        if name in body:
+            result[name] = body[name]
+    return result
+
+
+def execute_typed_gate_command(
+    *,
+    command: str,
+    profile: PaperPipelineProfile | Any,
+    output_root: str | Path,
+    service_input: FormalExecutionGateServiceInput
+    | PaperPublicationGateServiceInput,
+) -> dict[str, object]:
+    """从正式 producer 的 typed authority 执行 gate，不经过 argv/JSON 造证据。"""
+
+    expected_type = {
+        "validate-formal-execution-gate": FormalExecutionGateServiceInput,
+        "validate-paper-publication-gate": PaperPublicationGateServiceInput,
+    }.get(command)
+    if expected_type is None:
+        raise ValueError("typed gate command is unsupported")
+    if not isinstance(service_input, expected_type):
+        raise TypeError("typed gate command service input mismatch")
+    request = PipelineCommandRequest(
+        command=command,
+        scope=command,
+        evidence_class=_EVIDENCE_CLASSES[command],
+        profile=profile,
+        provider_authorization=None,
+        output_root=Path(output_root),
+        replay_input_root=None,
+        external_bank_resolver=None,
+        plan_digest=None,
+        inventory_digest=None,
+        budget_mode="bounded",
+        serialized_arguments={
+            "command": command,
+            "profile_digest": profile.profile_digest,
+        },
+        _service_input=service_input,
+    )
+    return _json_result(request=request, delegated=_default_delegate(request))
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -903,6 +988,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                     raise ValueError("formal authority inventory digest mismatch")
                 authorization_budget_digest = formal_authority.budget_digest
             receipt = _RECEIPT_LOADER(args.receipt)
+            from tokenshare.experiments.paper_formal_gate import (
+                selected_experiments_for_provider_scope,
+            )
+
             authorization = _RECEIPT_VALIDATOR(
                 receipt=receipt,
                 requested_scope=_PROVIDER_SCOPES[args.command],
@@ -913,7 +1002,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                 prompt_admission_profile_digest=(
                     profile.prompt_admission_profile_digest
                 ),
-                selected_experiments=(_PROVIDER_SCOPES[args.command],),
+                selected_experiments=selected_experiments_for_provider_scope(
+                    _PROVIDER_SCOPES[args.command]
+                ),
                 output_root=args.output_root,
                 output_mode=output_mode,
                 action="dispatch",
@@ -1025,7 +1116,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     print(json.dumps(result, sort_keys=True))
     return (
         0
-        if result["status"] in {"completed", "completed_with_failures"}
+        if result["status"] in {"completed", "completed_with_failures", "ready"}
         else 3
     )
 
@@ -1038,9 +1129,12 @@ __all__ = [
     "AcquisitionServiceInput",
     "CellLineageAuditServiceInput",
     "ExternalBankResolverBinding",
+    "FormalExecutionGateServiceInput",
     "FormalSuiteServiceInput",
     "PAPER_PIPELINE_COMMANDS",
     "PipelineCommandRequest",
+    "PaperPublicationGateServiceInput",
     "ReportRenderServiceInput",
+    "execute_typed_gate_command",
     "main",
 ]

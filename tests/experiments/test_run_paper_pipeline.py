@@ -830,7 +830,7 @@ def test_production_acquisition_factory_loads_exact_bundle_and_task26_marker(
         "prompt_admission_profile_digest": (
             prepared.prompt_admission_profile_digest
         ),
-        "selected_experiments": ["epd027_full_bank_acquisition"],
+        "selected_experiments": ["exp2", "exp3", "exp4"],
         "output_root_path_digest": output_root_path_digest(output_root),
         "not_before": "2026-08-01T00:00:00Z",
         "expires_at": "2026-08-04T00:00:00Z",
@@ -845,7 +845,7 @@ def test_production_acquisition_factory_loads_exact_bundle_and_task26_marker(
         budget_digest=bundle.full_budget.budget_digest,
         inventory_digest=bundle.inventory_digest,
         prompt_admission_profile_digest=prepared.prompt_admission_profile_digest,
-        selected_experiments=("epd027_full_bank_acquisition",),
+        selected_experiments=("exp2", "exp3", "exp4"),
         output_root=output_root,
         output_mode="new_run",
         action="dispatch",
@@ -970,14 +970,6 @@ def test_default_replay_loads_official_typed_handle_before_recompute(
     (
         ("validate-profile", ()),
         ("audit-bank", ("--external-bank-root", "bank")),
-        (
-            "validate-formal-execution-gate",
-            ("--output-root", "formal-gate"),
-        ),
-        (
-            "validate-paper-publication-gate",
-            ("--output-root", "publication-gate"),
-        ),
     ),
 )
 def test_remaining_commands_use_default_named_adapters_without_delegates(
@@ -1010,12 +1002,155 @@ def test_audit_cell_lineage_delegates_exact_service(tmp_path: Path, capsys) -> N
     _assert_offline_command(tmp_path, capsys, *OFFLINE_COMMANDS[6])
 
 
-def test_validate_formal_execution_gate_is_parser_only(tmp_path: Path, capsys) -> None:
-    _assert_offline_command(tmp_path, capsys, *OFFLINE_COMMANDS[7])
+def test_validate_formal_execution_gate_consumes_typed_policy_input(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from tokenshare.experiments import paper_formal_gate
+
+    selection = object()
+    prerequisites = object()
+    monkeypatch.setattr(
+        paper_formal_gate,
+        "formal_execution_gate",
+        lambda selected, evidence: SimpleNamespace(
+            to_dict=lambda: {
+                "status": "ready",
+                "stage": "formal_execution_gate",
+                "classification": "formal",
+                "blocked_reasons": [],
+                "provider_calls": 0,
+            }
+        )
+        if (selected, evidence) == (selection, prerequisites)
+        else pytest.fail("execution gate received different typed authority"),
+    )
+    request = pipeline.PipelineCommandRequest(
+        command="validate-formal-execution-gate",
+        scope="validate-formal-execution-gate",
+        evidence_class="offline_gate_parser_only",
+        profile=PROFILE,
+        provider_authorization=None,
+        output_root=tmp_path,
+        replay_input_root=None,
+        external_bank_resolver=None,
+        plan_digest=None,
+        inventory_digest=None,
+        budget_mode="bounded",
+        serialized_arguments={},
+        _service_input=pipeline.FormalExecutionGateServiceInput(
+            selection=selection,
+            prerequisites=prerequisites,
+        ),
+    )
+
+    assert pipeline._default_delegate(request)["status"] == "ready"
 
 
-def test_validate_paper_publication_gate_is_parser_only(tmp_path: Path, capsys) -> None:
-    _assert_offline_command(tmp_path, capsys, *OFFLINE_COMMANDS[8])
+def test_public_typed_gate_entry_injects_authority_without_private_delegate(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    assert hasattr(pipeline, "execute_typed_gate_command"), (
+        "pipeline must expose a normal typed gate execution entry"
+    )
+    from tokenshare.experiments import paper_formal_gate
+
+    selection = object()
+    prerequisites = object()
+    monkeypatch.setattr(
+        paper_formal_gate,
+        "formal_execution_gate",
+        lambda selected, evidence: paper_formal_gate.PaperGateDecision(
+            stage="formal_execution_gate",
+            status="ready",
+            classification="formal",
+            blocked_reasons=(),
+        )
+        if (selected, evidence) == (selection, prerequisites)
+        else pytest.fail("public gate entry lost typed authority"),
+    )
+
+    result = pipeline.execute_typed_gate_command(
+        command="validate-formal-execution-gate",
+        profile=PROFILE,
+        output_root=tmp_path,
+        service_input=pipeline.FormalExecutionGateServiceInput(
+            selection=selection,
+            prerequisites=prerequisites,
+        ),
+    )
+
+    assert result["status"] == "ready"
+    assert result["stage"] == "formal_execution_gate"
+    assert result["provider_calls"] == 0
+
+
+def test_validate_paper_publication_gate_consumes_typed_policy_input(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from tokenshare.experiments import paper_formal_gate
+
+    selection = object()
+    terminal = object()
+    monkeypatch.setattr(
+        paper_formal_gate,
+        "paper_publication_gate",
+        lambda selected, evidence: SimpleNamespace(
+            to_dict=lambda: {
+                "status": "blocked",
+                "stage": "paper_publication_gate",
+                "classification": "formal",
+                "blocked_reasons": ["selected_terminal_evidence_missing:exp1"],
+                "provider_calls": 0,
+            }
+        )
+        if (selected, evidence) == (selection, terminal)
+        else pytest.fail("publication gate received different typed authority"),
+    )
+    request = pipeline.PipelineCommandRequest(
+        command="validate-paper-publication-gate",
+        scope="validate-paper-publication-gate",
+        evidence_class="offline_gate_parser_only",
+        profile=PROFILE,
+        provider_authorization=None,
+        output_root=tmp_path,
+        replay_input_root=None,
+        external_bank_resolver=None,
+        plan_digest=None,
+        inventory_digest=None,
+        budget_mode="bounded",
+        serialized_arguments={},
+        _service_input=pipeline.PaperPublicationGateServiceInput(
+            selection=selection,
+            terminal_evidence=terminal,
+        ),
+    )
+
+    assert pipeline._default_delegate(request)["status"] == "blocked"
+
+
+@pytest.mark.parametrize(
+    "command", (
+        "validate-formal-execution-gate",
+        "validate-paper-publication-gate",
+    )
+)
+def test_gate_cli_without_typed_authority_fails_closed(
+    tmp_path: Path,
+    capsys,
+    monkeypatch: pytest.MonkeyPatch,
+    command: str,
+) -> None:
+    monkeypatch.setattr(pipeline, "_PROFILE_LOADER", lambda _path: PROFILE)
+    extra = (
+        "--output-root",
+        str(tmp_path / ("formal-gate" if "execution" in command else "publication-gate")),
+    )
+    assert pipeline.main(_offline_args(tmp_path, command, extra)) == 3
+    body = json.loads(capsys.readouterr().out)
+    assert body["status"] == "blocked"
+    assert body["provider_calls"] == 0
+    assert body["message"] == "paper gate typed service input is missing"
 
 
 @pytest.mark.parametrize("command", tuple(PROVIDER_COMMANDS))
@@ -1060,6 +1195,36 @@ def test_exp5_capability_and_full_scopes_are_not_interchangeable(
         receipt_validator=reject_wrong_scope,
     ) == 3
     assert observed == ["exp5_full_online"]
+
+
+@pytest.mark.parametrize(
+    ("command", "expected_selected"),
+    (
+        ("acquire-bank", ("exp2", "exp3", "exp4")),
+        ("run-online-checks", ("exp2", "exp3")),
+        ("run-exp1-online", ("exp1",)),
+        ("run-exp5-capability-smoke", ("exp5_capability",)),
+        ("run-exp5-online", ("exp5",)),
+    ),
+)
+def test_provider_receipt_validation_uses_selected_experiment_identity(
+    tmp_path: Path,
+    command: str,
+    expected_selected: tuple[str, ...],
+) -> None:
+    observed: list[tuple[str, ...]] = []
+
+    def reject_after_capture(**kwargs):
+        observed.append(tuple(kwargs["selected_experiments"]))
+        raise ValueError("captured selected experiments")
+
+    assert _main(
+        _provider_args(tmp_path, command),
+        command=command,
+        seen=[],
+        receipt_validator=reject_after_capture,
+    ) == 3
+    assert observed == [expected_selected]
 
 
 def test_external_bank_root_is_process_local_resolver_binding(
