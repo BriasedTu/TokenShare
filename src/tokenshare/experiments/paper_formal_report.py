@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from hashlib import sha256
 import json
 from pathlib import Path
+import shutil
+import tempfile
 from types import MappingProxyType
 from typing import Any, Callable
 
@@ -19,6 +21,12 @@ from tokenshare.experiments.paper_formal_metrics import FormalMetricsResult
 from tokenshare.experiments.paper_metric_contract import (
     PaperMetricContract,
     load_paper_metric_contract,
+)
+from tokenshare.experiments.paper_traceability import (
+    canonicalize_metric_observations,
+    digest_table_refs,
+    promote_completed_report_generation,
+    write_cell_lineage_audit,
 )
 
 
@@ -38,6 +46,10 @@ class FormalReportResult:
     artifact_refs: tuple[dict[str, str], ...]
     captions: Mapping[str, str]
     renderer_manifest_ref: dict[str, str]
+    cell_lineage_ref: dict[str, str]
+    tables_digest: str | None
+    cell_lineage_digest: str | None
+    observations_digest: str | None
     schema_version: str = "tokenshare.paper_formal_report.v2"
 
     def __post_init__(self) -> None:
@@ -61,6 +73,10 @@ class FormalReportResult:
             "artifact_refs": [dict(ref) for ref in self.artifact_refs],
             "captions": dict(self.captions),
             "renderer_manifest_ref": dict(self.renderer_manifest_ref),
+            "cell_lineage_ref": dict(self.cell_lineage_ref),
+            "tables_digest": self.tables_digest,
+            "cell_lineage_digest": self.cell_lineage_digest,
+            "observations_digest": self.observations_digest,
         }
 
 
@@ -87,41 +103,65 @@ def generate_paper_formal_report(
     rendered: PaperMetricArtifactResult | None = None
     publication_error: str | None = None
     renderer_error: str | None = None
+    cell_lineage = None
+    cell_lineage_ref: dict[str, str] = {}
+    canonical_observations = ()
+    canonical_observations_digest: str | None = None
+    stage_root: Path | None = None
     try:
         _validate_task20_publication(root, metrics, current)
     except (TypeError, ValueError) as exc:
         publication_error = str(exc)
     if publication_error is None:
+        stage_root = Path(tempfile.mkdtemp(prefix=".paper-formal-report-stage-", dir=root))
         try:
+            canonical_observations, canonical_observations_digest = (
+                canonicalize_metric_observations(metrics.metric_observations)
+            )
             rendered = render_paper_metric_artifacts(
-                output_root=root,
+                output_root=stage_root,
                 contract=current,
-                observations=metrics.metric_observations,
-                observations_digest=metrics.observations_digest,
+                observations=canonical_observations,
+                observations_digest=canonical_observations_digest,
+            )
+            cell_lineage, cell_lineage_ref = write_cell_lineage_audit(
+                output_root=stage_root,
+                contract=current,
+                observations=canonical_observations,
             )
         except (TypeError, ValueError) as exc:
             renderer_error = str(exc)
+            rendered = None
+            cell_lineage = None
+            cell_lineage_ref = {}
+            canonical_observations_digest = None
+            shutil.rmtree(stage_root, ignore_errors=True)
+            stage_root = None
 
     renderer_refs = () if rendered is None else rendered.artifact_refs
+    report_owned_refs = renderer_refs + (
+        () if not cell_lineage_ref else (cell_lineage_ref,)
+    )
+    artifact_root = root if stage_root is None else stage_root
     secret_hits = tuple(
         sorted(
             ref["path"]
-            for ref in renderer_refs
-            if _artifact_contains_secret(root / ref["path"], secrets)
+            for ref in report_owned_refs
+            if _artifact_contains_secret(artifact_root / ref["path"], secrets)
         )
     )
     secret_scan = {
         "schema_version": "tokenshare.paper_output_secret_scan.v1",
         "passed": not secret_hits,
         "secret_value_count": len(secrets),
-        "scanned_artifact_count": len(renderer_refs),
-        "scanned_artifact_refs": [dict(ref) for ref in renderer_refs],
+        "scanned_artifact_count": len(report_owned_refs),
+        "scanned_artifact_refs": [dict(ref) for ref in report_owned_refs],
         "hit_paths": list(secret_hits),
         "scope": "renderer_owned_paper_outputs_only",
     }
-    secret_path = root / PAPER_SECRET_SCAN_REPORT
+    secret_path = artifact_root / PAPER_SECRET_SCAN_REPORT
     _write_json(secret_path, secret_scan)
-    secret_ref = _artifact_ref(root, secret_path)
+    secret_ref = _artifact_ref(artifact_root, secret_path)
 
     reasons: list[str] = []
     if publication_error is not None:
@@ -148,14 +188,14 @@ def generate_paper_formal_report(
         ),
         "secret_scan_report_ref": secret_ref,
     }
-    eligibility_path = root / PAPER_ELIGIBILITY_REPORT
+    eligibility_path = artifact_root / PAPER_ELIGIBILITY_REPORT
     _write_json(eligibility_path, eligibility)
-    eligibility_ref = _artifact_ref(root, eligibility_path)
+    eligibility_ref = _artifact_ref(artifact_root, eligibility_path)
 
     report_manifest = {
         "schema_version": "tokenshare.paper_formal_report_manifest.v2",
         "metrics_digest": metrics.metrics_digest,
-        "observations_digest": metrics.observations_digest,
+        "observations_digest": canonical_observations_digest,
         "paper_eligible": paper_eligible,
         "regression_only": not paper_eligible,
         "formal_paper_table_generated": rendered is not None,
@@ -170,6 +210,13 @@ def generate_paper_formal_report(
         "renderer_audit_ref": (
             {} if rendered is None else dict(rendered.audit_ref)
         ),
+        "cell_lineage_ref": dict(cell_lineage_ref),
+        "tables_digest": (
+            None if rendered is None else digest_table_refs(rendered.table_refs)
+        ),
+        "cell_lineage_digest": (
+            None if cell_lineage is None else cell_lineage.cell_lineage_digest
+        ),
         "table_refs": (
             [] if rendered is None else [dict(ref) for ref in rendered.table_refs]
         ),
@@ -177,10 +224,10 @@ def generate_paper_formal_report(
         "provider_calls": 0,
         "output_kind": "data_tables_audit_manifest_only",
     }
-    report_path = root / PAPER_FORMAL_REPORT_MANIFEST
+    report_path = artifact_root / PAPER_FORMAL_REPORT_MANIFEST
     _write_json(report_path, report_manifest)
-    report_ref = _artifact_ref(root, report_path)
-    artifact_refs = renderer_refs + (secret_ref, eligibility_ref, report_ref)
+    report_ref = _artifact_ref(artifact_root, report_path)
+    artifact_refs = report_owned_refs + (secret_ref, eligibility_ref, report_ref)
     result = FormalReportResult(
         paper_eligible=paper_eligible,
         regression_only=not paper_eligible,
@@ -191,8 +238,29 @@ def generate_paper_formal_report(
         artifact_refs=artifact_refs,
         captions={} if rendered is None else rendered.captions,
         renderer_manifest_ref={} if rendered is None else rendered.manifest_ref,
+        cell_lineage_ref=cell_lineage_ref,
+        tables_digest=(
+            None if rendered is None else digest_table_refs(rendered.table_refs)
+        ),
+        cell_lineage_digest=(
+            None if cell_lineage is None else cell_lineage.cell_lineage_digest
+        ),
+        observations_digest=canonical_observations_digest,
     )
-    _write_json(root / "formal_report_result.json", result.to_dict())
+    result_path = artifact_root / "formal_report_result.json"
+    _write_json(result_path, result.to_dict())
+    result_ref = _artifact_ref(artifact_root, result_path)
+    if stage_root is not None:
+        try:
+            promote_completed_report_generation(
+                staging_root=stage_root,
+                output_root=root,
+                renderer_refs=rendered.artifact_refs,
+                cell_lineage_ref=cell_lineage_ref,
+                report_refs=(secret_ref, eligibility_ref, report_ref, result_ref),
+            )
+        finally:
+            shutil.rmtree(stage_root, ignore_errors=True)
     return result
 
 

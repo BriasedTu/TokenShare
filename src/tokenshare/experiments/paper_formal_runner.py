@@ -459,6 +459,7 @@ def write_paper_formal_replay_report(
         "status": "replay_verified",
         "replay_mode": "stored_evidence_only",
         "provider_calls_made": 0,
+        "cell_traceability_replay": "separate_l4_entrypoint",
         "source_refs": source_refs,
         "persisted_result_ref": dict(source_refs["formal_runner_result"]),
         "independently_recomputed_summary": recomputed,
@@ -480,6 +481,65 @@ def write_paper_formal_replay_report(
     # 因此可在写后刷新索引而不形成自引用 digest 循环。
     FormalEvidenceStore(suite_root)._refresh_evidence_manifest()
     return report_ref
+
+
+def recompute_paper_traceability_replay(
+    *,
+    output_root: str | Path,
+    replay_input_root: Any,
+    registry: Any = None,
+    contract: Any = None,
+) -> Any:
+    """Task24 L4 入口；与 suite summary replay 分离且不触发 dispatch。"""
+
+    from tokenshare.experiments.paper_traceability import (
+        recompute_paper_traceability,
+    )
+
+    result = recompute_paper_traceability(
+        output_root=output_root,
+        replay_input_root=replay_input_root,
+        registry=registry,
+        contract=contract,
+    )
+    if result.provider_calls != 0 or result.source_write_count != 0:
+        raise RuntimeError("traceability replay violated read-only boundary")
+    return result
+
+
+def persist_paper_traceability_replay_input_root(
+    *,
+    replay_input_root: str | Path,
+    canonical_direct_rows: Mapping[str, object],
+    global_infrastructure_valid: bool = True,
+    canonical_runtime_evidence: Sequence[Any] = (),
+    requested_lineage_root_ids: Sequence[str] | None = None,
+    current_trace_wrappers_by_root: Mapping[str, Sequence[Any]] | None = None,
+    trace_source_bindings_by_root: Mapping[str, Sequence[Any]] | None = None,
+    eligibility_facts_by_root: Mapping[str, Any] | None = None,
+    source_resolvers: Mapping[str, Any] | None = None,
+    current_provider_object_files: Mapping[str, str | Path] | None = None,
+    current_evidence_root: str | Path | None = None,
+) -> Any:
+    """由 runner 冻结完整 L4 replay input closure。"""
+
+    from tokenshare.experiments.paper_traceability import (
+        _persist_protected_replay_input_root,
+    )
+
+    return _persist_protected_replay_input_root(
+        replay_input_root=replay_input_root,
+        canonical_direct_rows=canonical_direct_rows,
+        global_infrastructure_valid=global_infrastructure_valid,
+        canonical_runtime_evidence=canonical_runtime_evidence,
+        requested_lineage_root_ids=requested_lineage_root_ids,
+        current_trace_wrappers_by_root=current_trace_wrappers_by_root,
+        trace_source_bindings_by_root=trace_source_bindings_by_root,
+        eligibility_facts_by_root=eligibility_facts_by_root,
+        source_resolvers=source_resolvers,
+        current_provider_object_files=current_provider_object_files,
+        current_evidence_root=current_evidence_root,
+    )
 
 
 def _suite_file_ref(suite_root: Path, relative_path: str) -> dict[str, Any]:

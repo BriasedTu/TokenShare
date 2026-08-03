@@ -929,6 +929,7 @@ def test_formal_runner_checkpoints_required_evidence_and_reuses_it(
     assert replay_report["source_refs"]["evidence_manifest"]["path"] == (
         "evidence_manifest.json"
     )
+    assert replay_report["cell_traceability_replay"] == "separate_l4_entrypoint"
     formal_runner.FormalEvidenceStore(tmp_path)._validate_evidence_manifest()
     first_report_bytes = replay_report_path.read_bytes()
     formal_runner.FormalEvidenceStore(tmp_path)._refresh_evidence_manifest()
