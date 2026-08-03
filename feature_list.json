@@ -5,7 +5,7 @@
   "active_feature": "feat-011",
   "active_focus": {
     "id": "paper-metric-contract-trace-bank-and-traceability-plan",
-    "summary": "EPD-027 严格串行实施为 27/35 accepted：Task 0–26 已 accepted；Task 27 unified pipeline CLI routing 为 queued/next；仍无经校验的真实 paid receipt。",
+    "summary": "EPD-027 为 28/35 accepted：Task 0–27 已 accepted；Task 27 bounded pipeline CLI、bank/online callback、protected replay 与门禁 parser 接线已提交；Task 28 execution/publication gate policy 为 queued/next，仍无经校验的真实 paid receipt。",
     "status": "in_progress",
     "scope": [
       "Experiment 1–5 论文指标、固定分母与 missingness 口径",
@@ -17,12 +17,12 @@
       "完整实施顺序、测试、离线重放与真实 smoke/正式矩阵门禁"
     ],
     "out_of_scope": [
-      "Task 27 accepted 前进入 Task 28 gate policy",
+      "Task 28 accepted 前进入 Task 29 launcher supersession",
       "重新运行真实付费 API 实验",
       "修改由其他工作调整中的 Experiment 3 正式规模",
       "人为注入攻击与安全工程"
     ],
-    "next_action": "使用已完成的 Task 27 只读预检启动单一实现 Agent，严格修改/创建计划四文件，离线实现14个subcommand parser/delegation及fail-closed routing；不得进入Task28或调用真实API。"
+    "next_action": "直接进入 Task 28：先对计划4文件做只读预检与严格必要性审计，再以 RED tests 实施 formal execution gate / paper publication gate 两阶段 truth table；不得调用真实API或提前进入Task29。"
   },
   "authorities": {
     "agent_start": "AGENTS.md",
@@ -205,9 +205,10 @@
         "Task 25 accepted commit c7db1948：严格4个计划文件；RED semantic exit2/2 collection errors/0.38s，初始GREEN 28 passed/12.65s；reviewer首轮BLOCK 1 Critical/2 Important，官方callback/typed objects/authority绑定修复后28 passed/28.34s；follow-up BLOCK 1 Critical/1 Important，Factor verifier/Lean checker rejection+requeue/new attempt与Exp3 fault/death identity闭合，最终canonical 29 passed/37.64s；reviewer PASS 0/0/0；子智能体test minimization CHANGED后29 passed/36.34s；capability4、Exp2 24/480、Exp3 2/12与max concurrent roots1冻结；provider/network0，无receipt；Fast/Full/LeanAudit未运行",
         "Task 26 只读预检 READY：计划新建paper_paid_authorization.py及test，共2文件，无计划外production；14个synthetic receipt-shaped tests可完全离线完成，validator无mint命令，receipt与allow-provider-calls缺一不可；真实用户receipt仅供后续Task27/33精确scope解锁",
         "Task 26 accepted commit e9ab3d9c：严格2个计划文件；RED exit2/1 collection error/0.29s，初始GREEN 14 passed/0.29s；独立reviewer PASS 0/0/0并复核14 passed/0.26s；子智能体test minimization CHANGED后14 passed/0.31s；receipt digest/scope/plan/profile/budget/inventory/admission/selection/path、marker new-run/resume、expiry/reconcile、offline/L3/Exp5/allow-flag/no-mint门禁闭合；仅synthetic non-authorizing fixtures，真实receipt persistence/provider/network0，Fast/Full/LeanAudit未运行",
-        "Task 27 只读预检 READY：计划新建run_paper_pipeline.py/test并仅路由修改run_paper_experiments.py及其CLI test，共4文件，无计划外production；14个subcommand parser/delegation与4门禁可离线fake/synthetic测试，真实provider命令仍需用户receipt+secret+allow flag+mode"
+        "Task 27 只读预检 READY：计划新建run_paper_pipeline.py/test并仅路由修改run_paper_experiments.py及其CLI test，共4文件，无计划外production；14个subcommand parser/delegation与4门禁可离线fake/synthetic测试，真实provider命令仍需用户receipt+secret+allow flag+mode",
+        "Task 27 accepted commit b5f340f5：27个批准code/test文件+同步code map；最终fresh canonical+network tripwire 358 passed/470.24s，pipeline focused 67 passed，reviewer先CHANGES_REQUIRED 0C/1I（PaperInfrastructureBlockedError CLI边界）后follow-up PASS 0/0/0；14命令正式service binding、native双域runner/protected replay、multi-entry/failure固定分母、response-bank acquisition、496+20<=516 ledger、online callback/crash-reconcile、secret lifecycle与provider failure refs闭合；post-accept子智能体未删测试，仅移除2个未引用脚手架，online-checks 6 passed/35.97s；provider/network0，无paid receipt，Fast/Full/LeanAudit未运行"
       ],
-      "next_action": "Task 0–26 accepted count=27/35；Task 27 queued/next。只实施unified CLI routing四文件，不得进入Task28或调用真实API。"
+      "next_action": "Task 0–27 accepted count=28/35；Task 28 queued/next。只实施formal execution/publication gate计划4文件的两阶段policy，不得进入Task29或调用真实API。"
     }
   ]
 }

@@ -1,13 +1,22 @@
 # TokenShare 当前进度
 
-更新时间：2026-08-02
+更新时间：2026-08-03
 
 本文件只保存当前事实与最近验证。历史过程由 git history、`Doc/archive/` 和仓库外 `TokenShareData` 保留。
+
+## 2026-08-03 Task 27 accepted（当前权威状态）
+
+- Task 27 bounded paper pipeline 已 accepted，代码提交=`b5f340f5`；Task 0–27 共 `28/35` accepted。分支仍为 `codex/feat-011-epd027-pipeline`，唯一工作树保持不变；正式矩阵仍为 **NO-GO**。
+- 实际提交边界为 27 个经 plan-out 批准的 code/test 文件并同步 `tokenshare_v1_code_map.md`。14 个命令统一委托既有正式服务；offline/provider、receipt/mode/admission/budget/secret 顺序 fail closed，external bank root 只作为进程内 resolver，两个 gate 命令在 Task 27 仅接 parser/service seam。
+- native Factor/Lean runner、canonical direct/protected replay、authoritative/metric-view identity、multi-entry/failed/resume/zero-dispatch fixed denominator、response-bank acquisition、primary `496` + ambiguous reacquisition `20`（hard `516`）ledger、online callback/provider failure/crash-reconcile 与 transient secret 生命周期已闭合；没有复制 `ProtocolEngine` 生命周期。
+- 最终 fresh canonical + network tripwire=`358 passed in 470.24s`；pipeline focused=`67 passed`；`py_compile` 与 `git diff --check` 通过。综合 reviewer 首轮仅余 `0C/1I`（正式磁盘预检的 `PaperInfrastructureBlockedError` 穿透统一 CLI），修复为单行 blocked JSON/exit `3` 后 follow-up=`PASS 0C/0I/0M`。
+- post-accept test minimization 由子智能体完成：不删除/合并测试，仅移除 `test_paper_online_checks.py` 两个未引用旧 transport 脚手架；最小验证=`6 passed in 35.97s`。provider/network calls=`0/0`，无经 Task 26 校验的真实 paid receipt；Fast/Full/LeanAudit 未运行。
+- 下一动作：直接进入 Task 28，只读预检计划 4 文件（新增 `paper_formal_gate.py`/test，修改 pipeline/test），再按 RED→GREEN 实施 execution gate 与 publication gate 的无循环两阶段 truth table；不得提前进入 Task 29 或调用真实 API。
 
 ## 当前状态
 
 - Active feature：`feat-011`（Paper Real AI Experiments），状态仍为 `in-progress`。
-- EPD-027 实施计划共 35 个 Task，Task 0–22 已 accepted（`23/35`）。Task 22 external-bank resource trace commit=`a161ea0c`；Task 23 historical real fixture 为 `queued/next`。
+- EPD-027 实施计划共 35 个 Task，Task 0–27 已 accepted（`28/35`）。Task 27 bounded paper pipeline commit=`b5f340f5`；Task 28 execution/publication gate 为 `queued/next`。
 - Task 22 canonical RED=`1 collection error in 0.47s`，初始 GREEN=`267 passed in 106.43s`。reviewer 首轮 BLOCK=`2 Critical/1 Important`；真实 `5 conditions × 100 roots` normal formal pressure=`1 passed in 1789.24s`，Task20/21 persisted closure=`7 passed`，Exp3 provenance/missingness=`5 passed`。
 - Task 22 external bank consumer 只持 opaque locator，500 个 distinct Factor roots exact-once 进入正常 runner/adapter/resolver/evidence/checkpoint，max live outcome≤1、resident adapter payload<5MiB；逐 condition terminal closure 与 provider/network/Lean=`0/0/0`。
 - Task 22 实际 Task20/21 publication/renderer artifacts 在 resume 时重算 identity/content digest 并对六类 mutation fail closed；Exp3 source acquisition/current attempt 分离，缺 root/object/role/entry 保持 denominator 并阻断 fallback/后续 dispatch。双 worker trace clock RED=`wall 3ms`→per-worker lane GREEN=`2 passed in 7.37s`；最终 canonical=`278 passed in 1927.45s`，reviewer PASS=`0/0/0`。
@@ -26,7 +35,7 @@
 - Task 26 paid-receipt validator accepted，commit=`e9ab3d9c`，严格 2 个计划文件。RED=`1 collection error in 0.29s`，GREEN=`14 passed in 0.29s`；独立 reviewer PASS=`0/0/0` 并复核 `14 passed in 0.26s`。
 - Task 26 receipt digest/scope/plan/profile/budget/inventory/admission/selection/path、new-run/resume marker、drift/partial/conflict、expiry/reconcile、offline/L3/Exp5/allow flag/no-mint 门禁闭合；API key/env不构成授权，失败先于 secret/reserve/dispatch。synthetic receipts 明确 non-authorizing/tmp-only。
 - Task 26 子智能体 post-accept test minimization=`CHANGED`，删除 3 个重复断言，14 个计划测试保留；最终=`14 passed in 0.31s`。真实 receipt persistence/provider/network=`0/0/0`；当前仍无 user-provided valid receipt，provider 未解锁。
-- Task 27 只读预检 READY：计划新建 `run_paper_pipeline.py`/test，仅路由修改 `run_paper_experiments.py` 及其 CLI test，共 4 文件；无计划外 production。14 个 subcommand parser/delegation 与 4 个附加门禁可全部离线 fake/synthetic 测试；真实 provider 子命令仍需 scope-matched receipt、secret、显式 allow flag 与 new-run/resume mode。
+- Task 27 accepted commit=`b5f340f5`：最终 fresh canonical+network tripwire=`358 passed in 470.24s`，reviewer follow-up=`PASS 0/0/0`，post-min=`CHANGED`（只删 2 个未引用 test helper，`6 passed in 35.97s`）；provider/network=`0/0`，无 paid receipt，Fast/Full/LeanAudit 未运行。
 - 用户持续授权：后续 Task 若独立预检证明“不增加该文件就无法得到权威数据或跑通正常实验”，监督者可批准最小计划外修改并继续；必须落盘文件/具体失败/最小改动/证据。便利、重构、美化、安全加固或可后置修改不符合批准标准。
 - 用户已授权每个后续 Task 持续执行实现/review/fix/follow-up 至 PASS 后直接推进；post-accept 测试最小化一律由子智能体执行。
 - 本轮 provider/network calls=`0`，无 paid receipt；Fast 未重复，Full/LeanAudit 未运行，正式矩阵继续 **NO-GO**。

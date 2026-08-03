@@ -1,14 +1,24 @@
 # Session Handoff
 
-更新时间：2026-08-02
+更新时间：2026-08-03
 
 ## 开工顺序
 
 1. 先完整阅读 `AGENTS.md` 与 `Doc/archive/design-history/2026-08-01-epd027-minimal-handoff.md`。
-2. 执行 `git status --short --branch` 与 `git log -3 --oneline`，确认 Task 26 代码提交和状态提交。
-3. Task 0–26 已 accepted；使用 Task 27 只读预检按四文件 TDD/review 循环推进，不得进入 Task 28。
+2. 执行 `git status --short --branch` 与 `git log -3 --oneline`，确认 Task 27 代码提交=`b5f340f5`、正确分支和唯一工作树；只读复核状态，不得清理或覆盖。
+3. Task 0–27 已 accepted（`28/35`）；Task 28=`queued/next`。先预检计划 4 文件，再实施 formal execution/publication gate 两阶段 policy；不得进入 Task 29。
 
-## 2026-08-02 EPD-027 当前实施交接（Task 26 accepted）
+## 2026-08-03 Task 27 accepted / Task 28 next（当前权威交接）
+
+- Task 27 已 accepted，代码提交=`b5f340f5`，提交边界为 27 个批准 code/test 文件 + code map。正式矩阵仍为 **NO-GO**；provider/network calls=`0/0`，没有用户提供且经 Task 26 校验的真实 paid receipt。
+- 最终 fresh canonical + network tripwire=`358 passed in 470.24s`；pipeline focused=`67 passed`；`py_compile`/`diff-check` 通过。综合 reviewer 初轮=`0C/1I`，精确修复 `PaperInfrastructureBlockedError` 顶层映射后 follow-up=`PASS 0C/0I/0M`。
+- Task 27 已闭合 14 命令正式委托、双域 native runner/protected replay、multi-entry/failure fixed denominator、full-bank acquisition、`496+20<=516` ledger policy、online callback/provider failure/crash-reconcile、transient secret 顺序和 legacy v1/artifact layout 兼容；gate parser 已接线但 policy 明确属于 Task 28。
+- post-accept test minimization=`CHANGED`：没有删除/合并测试，仅删除 2 个未引用旧 transport helper；`test_paper_online_checks.py`=`6 passed in 35.97s`，provider/network=`0/0`。
+- Task 28 权威计划文件：新增 `src/tokenshare/experiments/paper_formal_gate.py`、`tests/experiments/test_paper_formal_gate.py`；修改 `src/tokenshare/experiments/run_paper_pipeline.py`、`tests/experiments/test_run_paper_pipeline.py`。execution gate 只消费运行前 L1/L2/authority/selected receipt-budget-inventory-output binding；publication gate 只在 terminal 后检查 eligibility、formal cell audit/determinism 与 Exp2 intersection/severe。
+- 下一任 Agent 第一个动作：只读预检 Task 28 四文件是否足以形成无循环两阶段 truth table；然后委派 writer 做计划内 RED tests。不得提前修改 Task 29 launchers，不得调用真实 provider/network。
+- Task 27 普通任务验证按用户规则未运行 Fast/Full/LeanAudit；feature 完成/合并前仍须按 DoD 运行 Full，Lean 相关共享输入变化时追加分层 LeanAudit。
+
+## 2026-08-02 EPD-027 实施交接（Task 26 accepted，历史快照）
 
 - Active feature=`feat-011`，仍为 `in-progress`；active focus id 保持 `paper-metric-contract-trace-bank-and-traceability-plan`，status=`in_progress`。Task 0–26 已 accepted（`27/35`）；Task 27 为 `queued/next`；正式矩阵仍为 **NO-GO**。
 - 当前分支=`codex/feat-011-epd027-pipeline`；Task 26 paid-receipt validator commit=`e9ab3d9c`，状态提交在其后。
