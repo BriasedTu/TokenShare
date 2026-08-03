@@ -10,6 +10,7 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 from datetime import datetime, timezone
 from functools import lru_cache
 from pathlib import Path
@@ -57,6 +58,7 @@ from tokenshare.experiments.paper_models import (
     PaperBudgetResult,
     PaperStatus,
     PaperSuiteResult,
+    VersionedPaperEvidenceEligibilityReport,
     digest_json,
 )
 from tokenshare.experiments.paper_formal_runner import (
@@ -69,6 +71,26 @@ from tokenshare.experiments.paper_formal_runner import (
 )
 from tokenshare.experiments.paper_exp1 import EXP1_FORMAL_REQUEST_CONTROLS
 from tokenshare.experiments.paper_formal_evidence import FormalEvidenceStore
+from tokenshare.experiments.paper_formal_gate import (
+    CompleteFullBankPrerequisite,
+    PaperGateAuthorityDigests,
+    PaperGateLevelAttestation,
+    PaperGatePrerequisiteEnvelope,
+    PaperGateSelectionEnvelope,
+    PaperGateTerminalEnvelope,
+    PaidAuthorizationAuthorityCommitment,
+    SelectedPaidAuthorizationBinding,
+    SelectedEvidenceRoute,
+    SelectedFormalMetricsAudit,
+    SelectedTerminalEvidence,
+    build_paid_authorization_authority_commitment,
+    load_exp2_post_bank_publication_inputs,
+    selected_formal_metrics_audit_digest,
+)
+from tokenshare.experiments.paper_metric_contract import (
+    PaperMetricContract,
+    load_paper_metric_contract,
+)
 from tokenshare.experiments.paper_formal_report import (
     generate_paper_formal_report,
 )
@@ -157,6 +179,806 @@ class EPD027FormalServiceAuthority:
     inventory_digest: str
     budget_digest: str
     keyword_arguments: Mapping[str, object]
+    gate_selection: PaperGateSelectionEnvelope | None = None
+    gate_prerequisites: PaperGatePrerequisiteEnvelope | None = None
+    publication_gate_factory: object | None = None
+
+
+@dataclass(frozen=True, kw_only=True)
+class EPD027FormalPublicationGateFactory:
+    """把 official runner terminal 绑定回同一 gate authority；缺 closure 时 fail closed。"""
+
+    selection: PaperGateSelectionEnvelope
+    prerequisites: PaperGatePrerequisiteEnvelope
+    output_root: Path
+    contract: PaperMetricContract
+    l3_online_check_root: Path | None = None
+
+    def __call__(self, terminal_result: object) -> PaperGateTerminalEnvelope:
+        if not isinstance(terminal_result, PaperSuiteResult):
+            raise TypeError("formal publication factory requires PaperSuiteResult")
+        if Path(terminal_result.output_root).resolve(strict=False) != self.output_root:
+            raise ValueError("formal publication terminal output root mismatch")
+        try:
+            return self._from_official_closure(terminal_result)
+        except (
+            FileExistsError,
+            FileNotFoundError,
+            KeyError,
+            OSError,
+            RuntimeError,
+            TypeError,
+            ValueError,
+        ):
+            # 缺任何正式 closure 都保留为 typed 空 terminal，由 publication gate 给出原因。
+            return self._blocked_terminal()
+
+    def _blocked_terminal(self) -> PaperGateTerminalEnvelope:
+        return PaperGateTerminalEnvelope(
+            experiment_evidence=(),
+            l1_attestation=self.prerequisites.l1_attestation,
+            l2_attestation=self.prerequisites.l2_attestation,
+            l3_attestation=None,
+            l4_attestation=None,
+            replay_results=(),
+            paid_authorizations=self.prerequisites.paid_authorizations,
+            full_bank=self.prerequisites.full_bank,
+        )
+
+    def _from_official_closure(
+        self,
+        terminal_result: PaperSuiteResult,
+    ) -> PaperGateTerminalEnvelope:
+        from tokenshare.experiments import paper_formal_evidence
+        from tokenshare.experiments.paper_formal_metrics import (
+            recompute_paper_formal_metrics as recompute_selected_metrics,
+        )
+        from tokenshare.experiments.paper_formal_runner import (
+            load_paper_traceability_replay_input_root,
+            load_paper_traceability_replay_inputs,
+            recompute_paper_traceability_replay,
+        )
+        from tokenshare.experiments.paper_formal_report import FormalReportResult
+
+        terminal_status = getattr(
+            terminal_result.status, "value", terminal_result.status
+        )
+        if terminal_status not in {"completed", "completed_with_failures"}:
+            return self._blocked_terminal()
+        expected_long_ids = {
+            "exp1": "exp1_real_ai_feasibility",
+            "exp2": "exp2_real_ai_scalability",
+            "exp3": "exp3_real_ai_fault_recovery",
+            "exp4": "exp4_real_ai_protocol_ablation",
+            "exp5": "exp5_real_ai_model_endpoint_comparison",
+        }
+        if set(terminal_result.experiment_ids) != {
+            expected_long_ids[value] for value in self.selection.selected_experiments
+        }:
+            return self._blocked_terminal()
+        route_specs = {
+            "exp1": (
+                ("online", "primary", "online_real_provider", "exp1_feasibility", ("exp1_feasibility",)),
+            ),
+            "exp2": (
+                ("trace-main", "primary", "real_model_trace_protocol_run", "exp2_trace_scalability", ("exp2_trace_scalability",)),
+                ("online-support", "support", "online_real_provider", "exp2_online_concurrency", ("exp2_online_concurrency",)),
+            ),
+            "exp3": (
+                ("trace-main", "primary", "real_model_trace_protocol_run", "exp3_trace_robustness", ("exp3_trace_robustness",)),
+                ("online-support", "support", "online_real_provider", "exp3_online_recovery", ("exp3_online_recovery",)),
+            ),
+            "exp4": (
+                ("trace", "primary", "real_model_trace_protocol_run", "exp4_ablation", ("exp4_ablation",)),
+            ),
+            "exp5": (
+                ("online", "primary", "online_real_provider", "experiment_5", ("exp5_quality", "exp5_resources")),
+            ),
+        }
+        needs_support = any(
+            source == "support"
+            for experiment in self.selection.selected_experiments
+            for _route, source, _evidence, _key, _tables in route_specs[experiment]
+        )
+        if needs_support and self.l3_online_check_root is None:
+            return self._blocked_terminal()
+        roots_by_source = {"primary": self.output_root}
+        if needs_support:
+            assert self.l3_online_check_root is not None
+            roots_by_source["support"] = self.l3_online_check_root
+
+        closures: dict[str, dict[str, object]] = {}
+        for source, root in roots_by_source.items():
+            protected = load_paper_traceability_replay_input_root(root)
+            loaded = load_paper_traceability_replay_inputs(root)
+            direct = getattr(loaded, "direct", None)
+            current = getattr(loaded, "current", None)
+            source_inputs = getattr(loaded, "source", None)
+            current_files = getattr(loaded, "current_evidence_files", None)
+            if (
+                not isinstance(direct, Mapping)
+                or not isinstance(current, Mapping)
+                or not isinstance(source_inputs, Mapping)
+                or not isinstance(current_files, Sequence)
+            ):
+                return self._blocked_terminal()
+            metrics = []
+            for ordinal in (1, 2):
+                metrics_root = (
+                    self.output_root
+                    / "publication_gate"
+                    / source
+                    / f"selected_metrics_{ordinal}"
+                )
+                if metrics_root.exists() and any(metrics_root.iterdir()):
+                    raise FileExistsError(
+                        f"selected metrics root is not fresh: {metrics_root}"
+                    )
+                for relative_path, content in current_files:
+                    target = metrics_root / relative_path
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    target.write_bytes(content)
+                metrics.append(
+                    recompute_selected_metrics(
+                        metrics_root,
+                        direct,
+                        global_infrastructure_valid=bool(
+                            current["global_infrastructure_valid"]
+                        ),
+                        contract=self.contract,
+                        canonical_runtime_evidence=current[
+                            "canonical_runtime_evidence"
+                        ],
+                        requested_lineage_root_ids=current[
+                            "requested_lineage_root_ids"
+                        ],
+                        current_trace_wrappers_by_root=current[
+                            "current_trace_wrappers_by_root"
+                        ],
+                        trace_source_bindings_by_root=source_inputs[
+                            "trace_source_bindings_by_root"
+                        ],
+                        eligibility_facts_by_root=current[
+                            "eligibility_facts_by_root"
+                        ],
+                    )
+                )
+            closures[source] = {
+                "protected": protected,
+                "loaded": loaded,
+                "direct": direct,
+                "current": current,
+                "metrics": tuple(metrics),
+                "metrics_root": (
+                    self.output_root / "publication_gate" / source
+                ),
+            }
+
+        p0_full = set(self.selection.selected_experiments) == {
+            "exp1",
+            "exp2",
+            "exp3",
+            "exp4",
+            "exp5",
+        }
+        replay_results = (
+            tuple(
+                recompute_paper_traceability_replay(
+                    output_root=(
+                        self.output_root
+                        / "publication_gate"
+                        / f"l4_replay_{ordinal}"
+                    ),
+                    replay_input_root=closures["primary"]["protected"],
+                    contract=self.contract,
+                )
+                for ordinal in (1, 2)
+            )
+            if p0_full
+            else ()
+        )
+        if p0_full and (
+            len(replay_results) != 2
+            or any(
+                replay.provider_calls != 0
+                or replay.source_write_count != 0
+                or replay.online_fill_count != 0
+                or not isinstance(replay.report, FormalReportResult)
+                for replay in replay_results
+            )
+        ):
+            return self._blocked_terminal()
+        report = replay_results[0].report if replay_results else None
+        experiment_evidence = []
+        for experiment in self.selection.selected_experiments:
+            routes = []
+            for route_id, source, evidence_class, direct_key, table_ids in route_specs[
+                experiment
+            ]:
+                closure = closures[source]
+                direct = closure["direct"]
+                current = closure["current"]
+                route_rows = direct.get(direct_key, ())
+                root_ids = tuple(dict.fromkeys(_epd027_direct_root_ids(route_rows)))
+                if not root_ids:
+                    return self._blocked_terminal()
+                if evidence_class == "real_model_trace_protocol_run":
+                    facts_by_root = current.get("eligibility_facts_by_root")
+                    if not isinstance(facts_by_root, Mapping):
+                        return self._blocked_terminal()
+                else:
+                    loaded = closure["loaded"]
+                    facts_by_root = project_epd027_online_eligibility_facts(
+                        route_rows=route_rows,
+                        canonical_runtime_evidence=current[
+                            "canonical_runtime_evidence"
+                        ],
+                        evidence_store=FormalEvidenceStore(
+                            self.output_root
+                            / "publication_gate"
+                            / source
+                            / "selected_metrics_1"
+                        ),
+                    )
+                reports = tuple(
+                    paper_formal_evidence.evaluate_versioned_paper_evidence(
+                        facts_by_root[root_id]
+                    )
+                    for root_id in root_ids
+                    if root_id in facts_by_root
+                )
+                if len(reports) != len(root_ids) or not reports:
+                    return self._blocked_terminal()
+                protected = closure["protected"]
+                audits = tuple(
+                    build_selected_formal_metrics_audit(
+                        protected_descriptor_digest=protected.descriptor_digest,
+                        metrics=metrics,
+                        selected_table_ids=table_ids,
+                        expected_evidence_class=evidence_class,
+                        eligibility_reports=reports,
+                    )
+                    for metrics in closure["metrics"]
+                )
+                routes.append(
+                    SelectedEvidenceRoute(
+                        route_id=route_id,
+                        evidence_class=evidence_class,
+                        table_ids=table_ids,
+                        eligibility_reports=reports,
+                        selected_audits=audits,
+                    )
+                )
+            route_values = tuple(routes)
+            experiment_evidence.append(
+                SelectedTerminalEvidence(
+                    experiment_id=experiment,
+                    terminal_status=str(terminal_status),
+                    eligibility=route_values[0].eligibility_reports[0],
+                    formal_report=report,
+                    routes=route_values,
+                )
+            )
+        experiment_evidence = tuple(experiment_evidence)
+        l3_passed = all(
+            eligibility.paper_eligible
+            for item in experiment_evidence
+            for route in item.routes
+            for eligibility in route.eligibility_reports
+        ) and all(
+            audit.non_regression and not audit.publish_blocked_observation_ids
+            for item in experiment_evidence
+            for route in item.routes
+            for audit in route.selected_audits
+        )
+        l4_passed = l3_passed and (
+            not p0_full
+            or all(
+                replay.audit_level == "L4_artifact_root"
+                and replay.provider_calls == 0
+                and replay.source_write_count == 0
+                and replay.online_fill_count == 0
+                for replay in replay_results
+            )
+        )
+        exp2_inputs = (
+            load_exp2_post_bank_publication_inputs(
+                trace_replay_input_root=self.output_root,
+                online_replay_input_root=self.l3_online_check_root,
+                contract=self.contract,
+                authority=self.selection.authority,
+            )
+            if "exp2" in self.selection.selected_experiments
+            and self.l3_online_check_root is not None
+            else None
+        )
+        return PaperGateTerminalEnvelope(
+            experiment_evidence=experiment_evidence,
+            l1_attestation=self.prerequisites.l1_attestation,
+            l2_attestation=self.prerequisites.l2_attestation,
+            l3_attestation=PaperGateLevelAttestation(
+                level="L3",
+                status="passed" if l3_passed else "blocked",
+                classification="formal",
+                authority_digest=self.selection.authority.authority_digest,
+            ),
+            l4_attestation=PaperGateLevelAttestation(
+                level="L4",
+                status="passed" if l4_passed else "blocked",
+                classification="formal",
+                authority_digest=self.selection.authority.authority_digest,
+            ),
+            replay_results=replay_results,
+            exp2_post_bank_inputs=exp2_inputs,
+            paid_authorizations=self.prerequisites.paid_authorizations,
+            full_bank=self.prerequisites.full_bank,
+        )
+
+
+def _epd027_direct_root_ids(value: object) -> tuple[str, ...]:
+    root_id = getattr(value, "preregistered_root_run_id", None)
+    if isinstance(root_id, str) and root_id:
+        return (root_id,)
+    for attribute in ("direct_result", "direct_results", "roots"):
+        nested = getattr(value, attribute, None)
+        if nested is not None:
+            return _epd027_direct_root_ids(nested)
+    if isinstance(value, Mapping):
+        return tuple(
+            root_id
+            for nested in value.values()
+            for root_id in _epd027_direct_root_ids(nested)
+        )
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
+        return tuple(
+            root_id
+            for nested in value
+            for root_id in _epd027_direct_root_ids(nested)
+        )
+    return ()
+
+
+def build_selected_formal_metrics_audit(
+    *,
+    protected_descriptor_digest: str,
+    metrics: object,
+    selected_table_ids: Sequence[str],
+    expected_evidence_class: str,
+    eligibility_reports: Sequence[object],
+) -> SelectedFormalMetricsAudit:
+    """只从 official FormalMetricsResult 构造 selected subset typed audit。"""
+
+    from tokenshare.experiments.paper_formal_metrics import FormalMetricsResult
+
+    if not isinstance(metrics, FormalMetricsResult):
+        raise TypeError("selected audit requires FormalMetricsResult")
+    table_ids = tuple(selected_table_ids)
+    selected = tuple(
+        sorted(
+            (
+                observation
+                for observation in metrics.metric_observations
+                if observation.table_id in table_ids
+            ),
+            key=lambda observation: observation.observation_id,
+        )
+    )
+    if not selected or set(value.table_id for value in selected) != set(table_ids):
+        raise ValueError("selected audit table observation closure is incomplete")
+    provenance = []
+    for observation in selected:
+        provenance.append(
+            {
+                "observation_id": observation.observation_id,
+                "direct_result_refs": list(observation.direct_result_refs),
+                "current_task_attempt_event_refs": [
+                    value.to_dict()
+                    for value in observation.current_task_attempt_event_refs
+                ],
+                "parser_verifier_checker_canonical_refs": [
+                    value.to_dict()
+                    for value in observation.parser_verifier_checker_canonical_refs
+                ],
+                "ledger_refs": [value.to_dict() for value in observation.ledger_refs],
+                "current_provider_object_refs": [
+                    value.to_dict() for value in observation.current_provider_object_refs
+                ],
+                "source_bank_object_locators": [
+                    value.to_dict() for value in observation.source_bank_object_locators
+                ],
+                "current_trace_wrappers": [
+                    value.to_dict() for value in observation.current_trace_wrappers
+                ],
+                "trace_source_bindings": [
+                    value.to_dict() for value in observation.trace_source_bindings
+                ],
+            }
+        )
+    output_refs = tuple(
+        sorted(
+            (
+                {
+                    "path": str(ref["path"]),
+                    "content_hash": str(
+                        ref.get("content_hash") or ref["content_digest"]
+                    ),
+                }
+                for ref in metrics.output_refs
+            ),
+            key=lambda ref: ref["path"],
+        )
+    )
+    direct_complete = all(
+        observation.direct_result_refs
+        and observation.current_task_attempt_event_refs
+        and observation.ledger_refs
+        and (
+            observation.current_provider_object_refs
+            if expected_evidence_class == "online_real_provider"
+            else observation.source_bank_object_locators
+            and observation.current_trace_wrappers
+            and observation.trace_source_bindings
+        )
+        for observation in selected
+    )
+    selected_drafts = tuple(
+        draft for draft in metrics.table_drafts if draft.table_id in table_ids
+    )
+    draft_values_complete = (
+        len(selected_drafts) == len(table_ids)
+        and {draft.table_id for draft in selected_drafts} == set(table_ids)
+        and all(
+            draft.rows
+            and all(
+                row.cells
+                and all(
+                    getattr(cell, "value", None) is not None
+                    and getattr(cell, "publish_blocked", True) is False
+                    for cell in row.cells
+                )
+                for row in draft.rows
+            )
+            for draft in selected_drafts
+        )
+    )
+    report_values = tuple(eligibility_reports)
+    route_eligibility_complete = bool(report_values) and all(
+        getattr(report, "paper_eligible", False) is True
+        and getattr(report, "evidence_class", None) == expected_evidence_class
+        and (
+            getattr(report, "source_manifest_complete", False) is True
+            if expected_evidence_class == "real_model_trace_protocol_run"
+            else getattr(report, "source_manifest_complete", True) is False
+        )
+        for report in report_values
+    )
+    verified_observations_complete = all(
+        all(
+            value.evidence_verified and value.value is not None
+            for value in observation.verified_observations
+        )
+        and not observation.publish_blocked
+        for observation in selected
+    )
+    selected_values_complete = bool(
+        direct_complete
+        and draft_values_complete
+        and route_eligibility_complete
+        and verified_observations_complete
+    )
+    body: dict[str, object] = {
+        "descriptor_digest": protected_descriptor_digest,
+        "metrics_digest": metrics.metrics_digest,
+        "source_index_digest": metrics.lineage_source_index.index_digest,
+        "selected_table_ids": table_ids,
+        "observation_ids": tuple(value.observation_id for value in selected),
+        "observation_digests": tuple(value.observation_digest for value in selected),
+        "observation_table_ids": tuple(value.table_id for value in selected),
+        "evidence_classes": tuple(value.evidence_class for value in selected),
+        "publish_blocked_observation_ids": tuple(
+            value.observation_id
+            for value in selected
+            if value.publish_blocked
+        ),
+        "direct_provenance_refs_digest": digest_json(provenance),
+        "output_refs_digest": digest_json({"output_refs": list(output_refs)}),
+        "output_refs": output_refs,
+        "non_regression": selected_values_complete
+        and all(value.evidence_class == expected_evidence_class for value in selected),
+    }
+    return SelectedFormalMetricsAudit(
+        **body,
+        selected_audit_digest=selected_formal_metrics_audit_digest(body),
+    )
+
+
+def _contains_identity(value: object, expected: str) -> bool:
+    if value == expected:
+        return True
+    if isinstance(value, Mapping):
+        return any(_contains_identity(item, expected) for item in value.values())
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
+        return any(_contains_identity(item, expected) for item in value)
+    return False
+
+
+def _epd027_direct_results(value: object) -> tuple[object, ...]:
+    direct = getattr(value, "direct_result", None)
+    if direct is not None:
+        return _epd027_direct_results(direct)
+    root_id = getattr(value, "preregistered_root_run_id", None)
+    if isinstance(root_id, str) and root_id:
+        return (value,)
+    if isinstance(value, Mapping):
+        return tuple(
+            direct
+            for nested in value.values()
+            for direct in _epd027_direct_results(nested)
+        )
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
+        return tuple(
+            direct for nested in value for direct in _epd027_direct_results(nested)
+        )
+    return ()
+
+
+def project_epd027_online_eligibility_facts(
+    *,
+    route_rows: object,
+    canonical_runtime_evidence: Sequence[object],
+    evidence_store: FormalEvidenceStore,
+) -> Mapping[str, object]:
+    """从 verified formal closure 纯投影 online facts；不信任预塞 facts。"""
+
+    from tokenshare.core.models import ArtifactRef
+    from tokenshare.experiments.paper_models import PaperEvidenceEligibilityFacts
+    from tokenshare.experiments.paper_unit_commitments import (
+        build_ai_unit_binding_from_request,
+    )
+    from tokenshare.storage.artifacts import ArtifactStore
+
+    if not isinstance(evidence_store, FormalEvidenceStore):
+        raise TypeError("online eligibility projector requires FormalEvidenceStore")
+    direct_rows = _epd027_direct_results(route_rows)
+    evidence_by_root = {
+        value.preregistered_root_run_id: value
+        for value in canonical_runtime_evidence
+        if getattr(value, "preregistered_root_run_id", None)
+    }
+    if not direct_rows or len(evidence_by_root) != len(canonical_runtime_evidence):
+        raise ValueError("online eligibility canonical closure is incomplete")
+    results: dict[str, object] = {}
+    expected_roles = {
+        "request_body",
+        "raw_output_or_provider_failure",
+        "provenance",
+        "usage_status",
+        "latency",
+        "pricing",
+        "provider_attempt",
+        "model_record",
+    }
+    for direct in direct_rows:
+        root_id = direct.preregistered_root_run_id
+        evidence = evidence_by_root.get(root_id)
+        binding = getattr(direct, "execution_binding", None)
+        if evidence is None or binding is None or direct.evidence_class != (
+            "online_real_provider"
+        ):
+            raise ValueError("online eligibility direct/evidence binding is incomplete")
+        roles = {
+            value.source_role for value in evidence.current_provider_object_refs
+        }
+        if roles != expected_roles or len(evidence.current_provider_object_refs) != 8:
+            raise ValueError("online eligibility current-provider roles are incomplete")
+        records = evidence_store.load_logical_run_records(
+            experiment_id=direct.experiment_id,
+            condition_id=direct.condition_id,
+            repeat_id=direct.repeat_id,
+        )
+        attempts = tuple(
+            attempt
+            for attempt in records["attempts"]
+            if attempt.get("task_id") == binding.task_id
+            and int(attempt.get("provider_attempt_count", 0)) == 1
+        )
+        if not attempts:
+            raise ValueError("online eligibility provider attempts are missing")
+        artifact_records = {
+            str(record["artifact_id"]): record for record in records["artifacts"]
+        }
+        events = tuple(records["events"])
+        event_ids = {str(event.get("event_id", "")) for event in events}
+        terminal = evidence.terminal_root_event_ref
+        if terminal is None or terminal.event_id not in event_ids:
+            raise ValueError("online eligibility terminal lifecycle is missing")
+        with tempfile.TemporaryDirectory(prefix="tokenshare-online-facts-") as staging:
+            store = ArtifactStore(staging)
+            for record in artifact_records.values():
+                source_ref = ArtifactRef.from_dict(record["source_artifact_ref"])
+                content = (
+                    evidence_store.output_root / str(record["path"])
+                ).read_bytes()
+                restored = store.save_bytes(
+                    content,
+                    artifact_id=source_ref.artifact_id,
+                    artifact_type=source_ref.artifact_type,
+                    media_type=source_ref.media_type,
+                    artifact_schema_id=source_ref.artifact_schema_id,
+                    artifact_schema_version=source_ref.artifact_schema_version,
+                    source=source_ref.source,
+                    metadata=source_ref.metadata,
+                    created_at=source_ref.created_at,
+                )
+                if restored.to_dict() != source_ref.to_dict():
+                    raise ValueError("online eligibility artifact identity mismatch")
+            executed_bindings = []
+            attempt_refs = []
+            lifecycle_refs = []
+            for attempt in sorted(attempts, key=lambda value: str(value["attempt_id"])):
+                request_ref = ArtifactRef.from_dict(attempt["request_ref"])
+                request_record = artifact_records.get(request_ref.artifact_id)
+                if request_record is None:
+                    raise ValueError("online eligibility request artifact is missing")
+                request_body = json.loads(store.read_bytes(request_ref))
+                planned_id = str(attempt.get("planned_ai_unit_id") or "")
+                unit_id = str(attempt.get("unit_id") or "")
+                attempt_id = str(attempt.get("attempt_id") or "")
+                if not planned_id or not unit_id or not attempt_id:
+                    raise ValueError("online eligibility attempt identity is incomplete")
+                unit_binding = build_ai_unit_binding_from_request(
+                    planned_ai_unit_id=planned_id,
+                    request_body=request_body,
+                    store=store,
+                    include_request_artifacts=False,
+                )
+                if unit_binding["unit_id"] != unit_id:
+                    raise ValueError("online eligibility request/unit identity mismatch")
+                matching_events = tuple(
+                    event
+                    for event in events
+                    if _contains_identity(event.get("payload", {}), attempt_id)
+                )
+                if not matching_events:
+                    raise ValueError("online eligibility attempt event is missing")
+                artifact_ref = attempt.get("provenance_ref") or attempt.get(
+                    "raw_output_ref"
+                )
+                if not isinstance(artifact_ref, Mapping) or str(
+                    artifact_ref.get("artifact_id", "")
+                ) not in artifact_records:
+                    raise ValueError("online eligibility attempt artifact is missing")
+                request_digest = digest_json(request_body)
+                executed_bindings.append(unit_binding)
+                attempt_refs.append(
+                    {
+                        "schema_version": "tokenshare.paper_current_online_attempt_ref.v1",
+                        "planned_ai_unit_id": planned_id,
+                        "unit_id": unit_id,
+                        "unit_binding_digest": unit_binding["binding_digest"],
+                        "attempt_id": attempt_id,
+                        "request_identity_digest": request_digest,
+                        "real_transport": True,
+                        "identity_consistent": True,
+                    }
+                )
+                lifecycle_refs.append(
+                    {
+                        "schema_version": "tokenshare.paper_current_online_lifecycle_ref.v1",
+                        "planned_ai_unit_id": planned_id,
+                        "unit_id": unit_id,
+                        "unit_binding_digest": unit_binding["binding_digest"],
+                        "attempt_ref": attempt_id,
+                        "event_ref": str(matching_events[0]["event_id"]),
+                        "artifact_ref": str(artifact_ref["artifact_id"]),
+                        "terminal_ref": terminal.event_id,
+                    }
+                )
+        facts = PaperEvidenceEligibilityFacts(
+            evidence_class="online_real_provider",
+            source_classification="current_real_provider",
+            executed_ai_unit_count=len(executed_bindings),
+            executed_unit_bindings=tuple(executed_bindings),
+            current_provider_call_count=len(attempt_refs),
+            source_provider_call_count=0,
+            current_real_provider_attempt_refs=tuple(attempt_refs),
+            current_lifecycle_refs=tuple(lifecycle_refs),
+            trace_source_bindings=(),
+            source_manifest=None,
+            source_inventory_rows=(),
+            source_entries=(),
+            paid_receipt_claim=None,
+            direct_evidence_complete=bool(evidence.paper_evidence_complete),
+            identity_consistent=bool(
+                evidence.identity_consistent and evidence.infrastructure_valid
+            ),
+            regression_only=False,
+        )
+        results[root_id] = facts
+    return results
+
+
+def _epd027_formal_gate_components(
+    *,
+    command: str,
+    profile: object,
+    plan_digest: str,
+    inventory_digest: str,
+    output_root: Path,
+    paid_authorization_bindings: Sequence[SelectedPaidAuthorizationBinding],
+    full_bank: CompleteFullBankPrerequisite | None,
+    l3_online_check_root: Path | None,
+) -> tuple[
+    PaperGateSelectionEnvelope | None,
+    PaperGatePrerequisiteEnvelope | None,
+    EPD027FormalPublicationGateFactory | None,
+]:
+    selected_by_command = {
+        "run-trace": ("exp2", "exp3", "exp4"),
+        "run-exp1-online": ("exp1",),
+        "run-exp5-online": ("exp5",),
+    }
+    selected = selected_by_command.get(command)
+    if selected is None:
+        return None, None, None
+    contract = load_paper_metric_contract()
+    profile_digest = getattr(profile, "profile_digest", None)
+    if contract.pipeline_profile_digest != profile_digest:
+        raise ValueError("formal gate metric contract/profile binding mismatch")
+    authority = PaperGateAuthorityDigests(
+        profile_digest=profile_digest,
+        contract_digest=contract.contract_digest,
+        plan_digest=plan_digest,
+        inventory_digest=inventory_digest,
+    )
+    bindings = tuple(paid_authorization_bindings)
+    if any(not isinstance(value, SelectedPaidAuthorizationBinding) for value in bindings):
+        raise TypeError("formal gate requires typed paid authorization bindings")
+    commitment = (
+        build_paid_authorization_authority_commitment(bindings)
+        if bindings
+        else None
+    )
+    committed_bindings = tuple(
+        replace(
+            binding,
+            authority_commitment_digest=commitment.commitment_digest,
+        )
+        for binding in bindings
+    )
+    selection = PaperGateSelectionEnvelope(
+        selected_experiments=selected,
+        classification="formal",
+        authority=authority,
+        authorization_commitment=commitment,
+    )
+    prerequisites = PaperGatePrerequisiteEnvelope(
+        l1_attestation=PaperGateLevelAttestation(
+            level="L1",
+            status="passed",
+            classification="formal",
+            authority_digest=authority.authority_digest,
+        ),
+        l2_attestation=PaperGateLevelAttestation(
+            level="L2",
+            status="passed",
+            classification="formal",
+            authority_digest=authority.authority_digest,
+        ),
+        paid_authorizations=committed_bindings,
+        full_bank=full_bank,
+    )
+    return (
+        selection,
+        prerequisites,
+        EPD027FormalPublicationGateFactory(
+            selection=selection,
+            prerequisites=prerequisites,
+            output_root=output_root,
+            contract=contract,
+            l3_online_check_root=l3_online_check_root,
+        ),
+    )
 
 
 def _select_online_checks_dispatch(
@@ -286,6 +1108,8 @@ def build_epd027_formal_service_authority(
     resume: bool = False,
     plan_bundle_root: str | Path | None = None,
     external_bank_resolver: object | None = None,
+    paid_authorization_bindings: Sequence[SelectedPaidAuthorizationBinding] = (),
+    l3_online_check_root: str | Path | None = None,
 ) -> EPD027FormalServiceAuthority:
     """复算 tracked catalog/scale/config authority；绝不读取 provider secret。"""
 
@@ -492,6 +1316,7 @@ def build_epd027_formal_service_authority(
         }
     )
     trace_context = None
+    full_bank_prerequisite = None
     inventory_digest = dispatch_inventory_digest
     if command == "run-trace":
         if plan_bundle_root is None or external_bank_resolver is None:
@@ -501,6 +1326,7 @@ def build_epd027_formal_service_authority(
         from tokenshare.experiments.paper_response_bank import (
             build_paper_formal_trace_context,
             load_acquisition_plan_bundle,
+            preflight_formal_trace_inventory,
         )
 
         bundle = load_acquisition_plan_bundle(plan_bundle_root)
@@ -512,6 +1338,20 @@ def build_epd027_formal_service_authority(
         trace_context = build_paper_formal_trace_context(
             inventory_plan=bundle.semantic_inventory_plan,
             resolver=resolver,
+        )
+        trace_preflight = preflight_formal_trace_inventory(
+            required_inventory_entry_ids=tuple(
+                row.inventory_entry_id for row in bundle.semantic_inventory_plan.rows
+            ),
+            available_inventory_entry_ids=tuple(
+                entry.inventory_entry_id for entry in resolver.index.entries
+            ),
+        )
+        full_bank_prerequisite = CompleteFullBankPrerequisite(
+            plan_digest=plan_digest,
+            inventory_digest=bundle.inventory_digest,
+            manifest=resolver.index.manifest,
+            preflight=trace_preflight,
         )
         inventory_digest = bundle.inventory_digest
     elif command == "run-online-checks":
@@ -554,6 +1394,22 @@ def build_epd027_formal_service_authority(
             "max_total_tokens": profile.tokens_hard_limit,
             "max_cost_estimate": float(profile.budget.cny_reservation_hard_limit),
         }
+    gate_selection, gate_prerequisites, publication_gate_factory = (
+        _epd027_formal_gate_components(
+            command=command,
+            profile=profile,
+            plan_digest=plan_digest,
+            inventory_digest=inventory_digest,
+            output_root=root,
+            paid_authorization_bindings=paid_authorization_bindings,
+            full_bank=full_bank_prerequisite,
+            l3_online_check_root=(
+                None
+                if l3_online_check_root is None
+                else Path(l3_online_check_root).resolve(strict=False)
+            ),
+        )
+    )
     return EPD027FormalServiceAuthority(
         command=command,
         plan_digest=plan_digest,
@@ -564,6 +1420,9 @@ def build_epd027_formal_service_authority(
             else budget.budget_digest
         ),
         keyword_arguments=keyword_arguments,
+        gate_selection=gate_selection,
+        gate_prerequisites=gate_prerequisites,
+        publication_gate_factory=publication_gate_factory,
     )
 
 

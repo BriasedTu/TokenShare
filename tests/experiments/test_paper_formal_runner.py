@@ -8089,6 +8089,178 @@ def test_direct_metric_projection_fails_closed_without_persisted_producer_facts(
         )
 
 
+def _exp1_direct_metric_fixture(tmp_path: Path):
+    from tests.experiments.test_paper_direct_results import (
+        _canonical_fixture,
+        _inventory_manifest,
+        _inventory_row,
+        _project,
+        _replace_inventory_row,
+    )
+    from tokenshare.experiments.paper_direct_results import (
+        build_canonical_direct_evidence,
+    )
+
+    base, condition_manifest, catalog = _inventory_row(
+        evidence_class="online_real_provider",
+    )
+    row = _replace_inventory_row(base, experiment_id="exp1_real_ai_feasibility")
+    kwargs, *_ = _canonical_fixture(tmp_path, row)
+    evidence = build_canonical_direct_evidence(**kwargs)
+    return _project(
+        _inventory_manifest(row),
+        (condition_manifest,),
+        (catalog,),
+        {row.preregistered_root_run_id: evidence},
+    ).rows[0]
+
+
+def test_exp1_metric_hydration_uses_persisted_ledger_clock_without_runtime_observation(
+    tmp_path: Path,
+) -> None:
+    row = _exp1_direct_metric_fixture(tmp_path)
+    binding = row.execution_binding
+    facts = {
+        "task": {"provider_attempt_count": 1},
+        "attempts": [
+            {
+                "attempt_id": "attempt-1",
+                "provider_attempt_count": 1,
+                "prompt_tokens": 2,
+                "completion_tokens": 3,
+                "total_tokens": 5,
+                "cost_estimate": 0.25,
+                "cost_estimate_currency": "CNY",
+                "cost_estimate_status": "estimated",
+                "usage_ref": {"artifact_id": "usage-1"},
+            }
+        ],
+        "run_evidence": {"protocol_runtime": {"runtime_observation": None}},
+        "ledger_root_clock": {
+            "schema_version": "tokenshare.paper_ledger_root_clock.v1",
+            "run_id": binding.execution_id,
+            "task_id": binding.task_id,
+            "root_unit_id": binding.root_unit_id,
+            "root_started_at": "1970-01-01T00:00:01Z",
+            "root_terminal_at": "1970-01-01T00:00:02.500000Z",
+        },
+    }
+
+    hydrated = formal_runner._hydrate_exp1_metric_row(row, facts)
+
+    assert hydrated.root_start_at_ms == 1000
+    assert hydrated.root_terminal_at_ms == 2500
+    assert hydrated.actual_provider_attempts[0].cost_estimate_cny == 0.25
+
+
+def test_lean_root_clock_view_uses_verified_ledger_without_runtime_observation() -> None:
+    events = (
+        SimpleNamespace(
+            task_id="lean-task-1",
+            object_id="lean-root-unit-1",
+            occurred_at="1970-01-01T00:00:01.000123Z",
+            payload={
+                "task_unit": {"unit_id": "lean-root-unit-1", "state": "ready"}
+            },
+        ),
+        SimpleNamespace(
+            task_id="lean-task-1",
+            object_id="lean-root-unit-1",
+            occurred_at="1970-01-01T00:00:02.500987Z",
+            payload={
+                "task_unit": {
+                    "unit_id": "lean-root-unit-1",
+                    "state": "completed",
+                }
+            },
+        ),
+    )
+    clock = formal_runner._root_clock_from_verified_ledger(
+        events=events,
+        run_id="lean-run-1",
+        task_id="lean-task-1",
+        root_unit_id="lean-root-unit-1",
+    )
+
+    started, terminal = formal_runner._persisted_ledger_root_clock_ms(
+        {"ledger_root_clock": clock, "run_evidence": {"runtime_observation": None}},
+        SimpleNamespace(
+            execution_binding=SimpleNamespace(
+                execution_id="lean-run-1",
+                task_id="lean-task-1",
+                root_unit_id="lean-root-unit-1",
+            )
+        ),
+    )
+
+    assert str(started) == "1000.123"
+    assert str(terminal) == "2500.987"
+
+
+def test_ledger_root_clock_rejects_timezone_free_timestamps() -> None:
+    with pytest.raises(ValueError, match="must include timezone"):
+        formal_runner._root_clock_from_verified_ledger(
+            events=(
+                SimpleNamespace(
+                    task_id="task-1",
+                    object_id="root-1",
+                    occurred_at="1970-01-01T00:00:01",
+                    payload={"task_unit": {"unit_id": "root-1", "state": "ready"}},
+                ),
+                SimpleNamespace(
+                    task_id="task-1",
+                    object_id="root-1",
+                    occurred_at="1970-01-01T00:00:02",
+                    payload={
+                        "task_unit": {"unit_id": "root-1", "state": "completed"}
+                    },
+                ),
+            ),
+            run_id="run-1",
+            task_id="task-1",
+            root_unit_id="root-1",
+        )
+
+
+@pytest.mark.parametrize(
+    ("override",),
+    [
+        ({"cost_estimate_currency": "USD"},),
+        ({"cost_estimate_status": None},),
+        ({"cost_estimate_status": "usage_missing"},),
+        ({"usage_ref": None},),
+        ({"total_tokens": None},),
+    ],
+)
+def test_exp1_metric_hydration_keeps_non_cny_or_incomplete_usage_blocked(
+    tmp_path: Path,
+    override: dict[str, object],
+) -> None:
+    attempt = {
+        "attempt_id": "attempt-1",
+        "provider_attempt_count": 1,
+        "prompt_tokens": 2,
+        "completion_tokens": 3,
+        "total_tokens": 5,
+        "cost_estimate": 0.25,
+        "cost_estimate_currency": "CNY",
+        "cost_estimate_status": "estimated",
+        "usage_ref": {"artifact_id": "usage-1"},
+        **override,
+    }
+
+    hydrated = formal_runner._hydrate_exp1_metric_row(
+        _exp1_direct_metric_fixture(tmp_path),
+        {
+            "task": {"provider_attempt_count": 1},
+            "attempts": [attempt],
+            "run_evidence": {"protocol_runtime": {}},
+        },
+    )
+
+    assert hydrated.actual_provider_attempts[0].cost_estimate_cny is None
+
+
 def test_exp1_metric_identity_view_preserves_authoritative_frozen_row(
     tmp_path: Path,
 ) -> None:

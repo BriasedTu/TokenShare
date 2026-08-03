@@ -1,7 +1,10 @@
 from __future__ import annotations
 
-import json
+import ast
+from dataclasses import replace
+from hashlib import sha256
 import inspect
+import json
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -9,7 +12,15 @@ from types import SimpleNamespace
 import pytest
 
 from tokenshare.experiments import run_paper_pipeline as pipeline
+from tokenshare.experiments.paper_formal_gate import (
+    PaperGateAuthorityDigests,
+    PaperGateLevelAttestation,
+    PaperGatePrerequisiteEnvelope,
+    PaperGateSelectionEnvelope,
+)
+from tokenshare.experiments.paper_models import PaperSuiteResult
 from tokenshare.experiments.paper_paid_authorization import PaidAuthorizationValidation
+from tokenshare.experiments.run_paper_experiments import EPD027FormalServiceAuthority
 
 
 DIGESTS = {
@@ -95,24 +106,124 @@ DEFAULT_ADAPTER_NAMES = {
 def _delegate(command: str, seen: list[object]):
     def invoke(request):
         seen.append(request)
-        return {
+        public_result = {
             "status": "completed",
             "inventory_digest": DIGESTS["inventory"],
             "evidence_class": request.evidence_class,
             "provider_calls": 0,
             "service": command,
         }
+        if command in pipeline._FORMAL_GATED_COMMANDS:
+            return pipeline.FormalSuiteServiceResult(
+                public_result=public_result,
+                terminal_result=_paper_suite_result(request.output_root),
+            )
+        return public_result
 
     return invoke
 
 
 def _authorization(**kwargs):
-    return SimpleNamespace(
-        receipt=SimpleNamespace(receipt_digest=DIGESTS["receipt"]),
+    return PaidAuthorizationValidation(
+        receipt=SimpleNamespace(
+            receipt_digest=DIGESTS["receipt"],
+            scope=kwargs.get("requested_scope", "exp1_full_online"),
+            budget_digest=kwargs.get("budget_digest", DIGESTS["budget"]),
+        ),
         marker=SimpleNamespace(marker_digest=DIGESTS["marker"]),
         output_mode=kwargs["output_mode"],
+        authorization_state="dispatch_authorized",
         provider_dispatch_allowed=True,
     )
+
+
+def _paper_suite_result(
+    output_root: Path | None,
+    *,
+    status: str = "completed",
+) -> PaperSuiteResult:
+    return PaperSuiteResult(
+        suite_id="test-paper-suite",
+        status=status,
+        output_root=Path(output_root or ".").as_posix(),
+        started_at="2026-08-03T00:00:00Z",
+        ended_at="2026-08-03T00:00:01Z",
+        experiment_ids=("exp1",),
+        condition_count=1,
+        run_count=1,
+        task_count=1,
+        provider_attempt_count=0,
+        total_tokens=0,
+        total_cost_estimate=0.0,
+        paper_eligible=False,
+        eligibility_report_ref=None,
+        budget_ref=None,
+        metrics_refs=(),
+        audit_refs=(),
+        error_summary=(),
+    )
+
+
+def _ready_formal_authority(
+    command: str,
+    *,
+    budget_digest: str = DIGESTS["budget"],
+) -> EPD027FormalServiceAuthority:
+    selected = {
+        "run-trace": ("exp2", "exp3", "exp4"),
+        "run-exp1-online": ("exp1",),
+        "run-exp5-online": ("exp5",),
+    }.get(command)
+    selection = None
+    prerequisites = None
+    publication_factory = None
+    if selected is not None:
+        authority = PaperGateAuthorityDigests(
+            profile_digest=DIGESTS["profile"],
+            contract_digest="sha256:" + "9" * 64,
+            plan_digest=DIGESTS["plan"],
+            inventory_digest=DIGESTS["inventory"],
+        )
+        selection = PaperGateSelectionEnvelope(
+            selected_experiments=selected,
+            classification="formal",
+            authority=authority,
+        )
+        prerequisites = PaperGatePrerequisiteEnvelope(
+            l1_attestation=PaperGateLevelAttestation(
+                level="L1",
+                status="passed",
+                classification="formal",
+                authority_digest=authority.authority_digest,
+            ),
+            l2_attestation=PaperGateLevelAttestation(
+                level="L2",
+                status="passed",
+                classification="formal",
+                authority_digest=authority.authority_digest,
+            ),
+        )
+        publication_factory = lambda _terminal: object()
+    return EPD027FormalServiceAuthority(
+        command=command,
+        plan_digest=DIGESTS["plan"],
+        inventory_digest=DIGESTS["inventory"],
+        budget_digest=budget_digest,
+        keyword_arguments={},
+        gate_selection=selection,
+        gate_prerequisites=prerequisites,
+        publication_gate_factory=publication_factory,
+    )
+
+
+def _ready_gate(stage: str) -> dict[str, object]:
+    return {
+        "status": "ready",
+        "stage": stage,
+        "classification": "formal",
+        "blocked_reasons": [],
+        "provider_calls": 0,
+    }
 
 
 def _main(argv: list[str], *, command: str, seen: list[object], **overrides) -> int:
@@ -122,11 +233,14 @@ def _main(argv: list[str], *, command: str, seen: list[object], **overrides) -> 
         "_RECEIPT_VALIDATOR": _authorization,
         "_BUDGET_VALIDATOR": lambda **_kwargs: None,
         "_UTC_NOW": lambda: datetime(2026, 8, 3, tzinfo=timezone.utc),
-        "_FORMAL_AUTHORITY_BUILDER": lambda **_kwargs: SimpleNamespace(
-            plan_digest=DIGESTS["plan"],
-            inventory_digest=DIGESTS["inventory"],
-            budget_digest=DIGESTS["budget"],
-            keyword_arguments={},
+        "_FORMAL_AUTHORITY_BUILDER": lambda **kwargs: _ready_formal_authority(
+            kwargs["command"]
+        ),
+        "_validate_formal_execution_gate_adapter": (
+            lambda _request: _ready_gate("formal_execution_gate")
+        ),
+        "_validate_paper_publication_gate_adapter": (
+            lambda _request: _ready_gate("paper_publication_gate")
         ),
     }
     aliases = {
@@ -287,7 +401,6 @@ def test_production_service_input_factory_map_is_fixed_and_complete() -> None:
     "command",
     (
         "acquire-bank",
-        "run-trace",
         "run-online-checks",
         "run-exp1-online",
         "run-exp5-capability-smoke",
@@ -359,7 +472,7 @@ def test_previously_unbound_commands_reach_named_official_service_by_default(
             paper_formal_runner,
             "execute_paper_formal_suite",
             lambda **kwargs: calls.append(("execute_paper_formal_suite", kwargs))
-            or SimpleNamespace(status="completed", provider_attempt_count=0),
+            or _paper_suite_result(Path(kwargs["output_root"])),
         )
         scope = PROVIDER_COMMANDS.get(command, command)
         service_input = pipeline.FormalSuiteServiceInput(
@@ -464,13 +577,19 @@ def test_previously_unbound_commands_reach_named_official_service_by_default(
     monkeypatch.setattr(
         pipeline,
         "_FORMAL_AUTHORITY_BUILDER",
-        lambda **_kwargs: SimpleNamespace(
-            plan_digest=DIGESTS["plan"],
-            inventory_digest=DIGESTS["inventory"],
-            budget_digest=DIGESTS["budget"],
-            keyword_arguments={},
-        ),
+        lambda **kwargs: _ready_formal_authority(kwargs["command"]),
     )
+    if command in pipeline._FORMAL_GATED_COMMANDS:
+        monkeypatch.setattr(
+            pipeline,
+            "_validate_formal_execution_gate_adapter",
+            lambda _request: _ready_gate("formal_execution_gate"),
+        )
+        monkeypatch.setattr(
+            pipeline,
+            "_validate_paper_publication_gate_adapter",
+            lambda _request: _ready_gate("paper_publication_gate"),
+        )
     factories = dict(pipeline._PRODUCTION_SERVICE_INPUT_FACTORIES)
     factories[command] = lambda _request: service_input
     monkeypatch.setattr(pipeline, "_PRODUCTION_SERVICE_INPUT_FACTORIES", factories)
@@ -513,12 +632,7 @@ def test_default_formal_proof_adapter_serializes_infrastructure_block_without_tr
     monkeypatch.setattr(
         pipeline,
         "_FORMAL_AUTHORITY_BUILDER",
-        lambda **_kwargs: SimpleNamespace(
-            plan_digest=DIGESTS["plan"],
-            inventory_digest=DIGESTS["inventory"],
-            budget_digest=DIGESTS["budget"],
-            keyword_arguments={},
-        ),
+        lambda **kwargs: _ready_formal_authority(kwargs["command"]),
     )
     monkeypatch.setattr(
         pipeline,
@@ -889,8 +1003,119 @@ def test_audit_bank_delegates_exact_service(tmp_path: Path, capsys) -> None:
     _assert_offline_command(tmp_path, capsys, *OFFLINE_COMMANDS[2])
 
 
-def test_run_trace_delegates_exact_service(tmp_path: Path, capsys) -> None:
-    _assert_offline_command(tmp_path, capsys, *OFFLINE_COMMANDS[3])
+@pytest.mark.parametrize(
+    ("receipt_mode", "expected_exit", "expected_dispatches"),
+    (("none", 3, 0), ("bank", 3, 1), ("bank_and_l3", 0, 1)),
+)
+def test_trace_gate_phases_require_bank_before_dispatch_and_l3_only_for_publication(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    receipt_mode: str,
+    expected_exit: int,
+    expected_dispatches: int,
+) -> None:
+    bank_inventory = DIGESTS["inventory"]
+    l3_inventory = "sha256:" + "a" * 64
+    l3_budget = "sha256:" + "b" * 64
+    bundle = SimpleNamespace(
+        authorized_plan_digest=DIGESTS["plan"],
+        profile_digest=DIGESTS["profile"],
+        inventory_digest=bank_inventory,
+        prompt_admission_profile_digest=DIGESTS["admission"],
+        full_budget=SimpleNamespace(budget_digest=DIGESTS["budget"]),
+    )
+    built_bindings = ()
+
+    def build_authority(**kwargs):
+        nonlocal built_bindings
+        if kwargs["command"] == "run-online-checks":
+            return SimpleNamespace(
+                plan_digest=DIGESTS["plan"],
+                inventory_digest=l3_inventory,
+                budget_digest=l3_budget,
+            )
+        built_bindings = tuple(kwargs.get("paid_authorization_bindings", ()))
+        base = _ready_formal_authority("run-trace")
+        prerequisites = replace(
+            base.gate_prerequisites,
+            paid_authorizations=built_bindings,
+        )
+        scopes = frozenset(binding.authority.scope for binding in built_bindings)
+        return replace(
+            base,
+            gate_prerequisites=prerequisites,
+            publication_gate_factory=lambda _terminal: scopes,
+        )
+
+    def pre_gate(request):
+        scopes = {
+            binding.authority.scope
+            for binding in request._service_input.prerequisites.paid_authorizations
+        }
+        ready = "epd027_full_bank_acquisition" in scopes
+        return {
+            **_ready_gate("formal_execution_gate"),
+            "status": "ready" if ready else "blocked",
+            "blocked_reasons": [] if ready else ["missing_paid_authorization:epd027_full_bank_acquisition"],
+        }
+
+    def post_gate(request):
+        scopes = request._service_input.terminal_evidence
+        ready = "epd027_l3_capability_and_online_checks" in scopes
+        return {
+            **_ready_gate("paper_publication_gate"),
+            "status": "ready" if ready else "blocked",
+            "blocked_reasons": [] if ready else ["missing_paid_authorization:epd027_l3_capability_and_online_checks"],
+        }
+
+    args = _offline_args(tmp_path, "run-trace", OFFLINE_COMMANDS[3][2])
+    args.extend(
+        ["--full-bank-acquisition-receipt", "bank-receipt.json"]
+        if receipt_mode in {"bank", "bank_and_l3"}
+        else []
+    )
+    if receipt_mode == "bank_and_l3":
+        args.extend(
+            [
+                "--l3-online-check-receipt",
+                "l3-receipt.json",
+                "--l3-online-check-root",
+                str(tmp_path / "l3"),
+            ]
+        )
+    seen: list[object] = []
+    validations: list[dict[str, object]] = []
+
+    def validate(**kwargs):
+        validations.append(kwargs)
+        return _authorization(**kwargs)
+
+    exit_code = _main(
+        args,
+        command="run-trace",
+        seen=seen,
+        receipt_validator=validate,
+        _ACQUISITION_BUNDLE_LOADER=lambda _root: bundle,
+        _FORMAL_AUTHORITY_BUILDER=build_authority,
+        _validate_formal_execution_gate_adapter=pre_gate,
+        _validate_paper_publication_gate_adapter=post_gate,
+    )
+
+    assert exit_code == expected_exit
+    assert len(seen) == expected_dispatches
+    assert all(
+        call["output_mode"] == "resume"
+        and call["action"] == "reconcile_close"
+        and call["allow_provider_calls"] is False
+        for call in validations
+    )
+    if receipt_mode == "bank_and_l3":
+        assert [binding.authority.inventory_digest for binding in built_bindings] == [
+            bank_inventory,
+            l3_inventory,
+        ]
+    body = json.loads(capsys.readouterr().out)
+    assert body["status"] == ("completed" if expected_exit == 0 else "blocked")
 
 
 def test_run_online_checks_delegates_exact_service(tmp_path: Path, capsys) -> None:
@@ -1272,13 +1497,11 @@ def test_online_formal_authority_precedes_receipt_marker_and_binds_actual_budget
     events: list[tuple[str, object]] = []
     actual_budget_digest = "sha256:" + "8" * 64
 
-    def build_authority(**_kwargs):
+    def build_authority(**kwargs):
         events.append(("authority", None))
-        return SimpleNamespace(
-            plan_digest=DIGESTS["plan"],
-            inventory_digest=DIGESTS["inventory"],
+        return _ready_formal_authority(
+            kwargs["command"],
             budget_digest=actual_budget_digest,
-            keyword_arguments={},
         )
 
     def validate_receipt(**kwargs):
@@ -1292,10 +1515,18 @@ def test_online_formal_authority_precedes_receipt_marker_and_binds_actual_budget
         _FORMAL_AUTHORITY_BUILDER=build_authority,
         receipt_validator=validate_receipt,
     ) == 0
-    assert events == [
-        ("authority", None),
-        ("receipt_marker", actual_budget_digest),
-    ]
+    assert events == (
+        [
+            ("authority", None),
+            ("receipt_marker", actual_budget_digest),
+            ("authority", None),
+        ]
+        if command in pipeline._FORMAL_GATED_COMMANDS
+        else [
+            ("authority", None),
+            ("receipt_marker", actual_budget_digest),
+        ]
+    )
 
 
 def test_online_checks_factory_consumes_same_authority_and_paid_receipt(
@@ -1379,3 +1610,339 @@ def test_capability_smoke_factory_rejects_full_exp5_command() -> None:
 
     with pytest.raises(ValueError, match="full Exp5 scope"):
         pipeline._smoke_service_input_from_persisted_authorities(request)
+
+
+def test_pipeline_owned_formal_orchestration_orders_typed_gates_and_propagates_blocked(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tokenshare.experiments import paper_formal_gate
+
+    assert hasattr(pipeline, "FormalRunGateServiceInput")
+    module_tree = ast.parse(inspect.getsource(pipeline))
+    top_level_imports = {
+        node.module
+        for node in module_tree.body
+        if isinstance(node, ast.ImportFrom)
+    }
+    assert "tokenshare.experiments.run_paper_experiments" not in top_level_imports
+
+    authority = _ready_formal_authority("run-exp1-online")
+    selection = authority.gate_selection
+    prerequisites = authority.gate_prerequisites
+    terminal = object()
+    service_input = pipeline.FormalSuiteServiceInput(
+        scope="exp1_full_online",
+        keyword_arguments={},
+    )
+    scenarios = (
+        ("blocked", "completed", "ready", ["pre"], "blocked"),
+        ("ready", "blocked", "ready", ["pre", "child"], "blocked"),
+        ("ready", "completed", "blocked", ["pre", "child", "post"], "blocked"),
+        ("ready", "completed", "ready", ["pre", "child", "post"], "completed"),
+    )
+    for (
+        pre_status,
+        child_status,
+        post_status,
+        expected_events,
+        expected_status,
+    ) in scenarios:
+        events: list[str] = []
+
+        def pre_gate(selected, evidence):
+            assert (selected, evidence) == (selection, prerequisites)
+            events.append("pre")
+            return paper_formal_gate.PaperGateDecision(
+                stage="formal_execution_gate",
+                status=pre_status,
+                classification="formal",
+                blocked_reasons=("pre-blocked",) if pre_status == "blocked" else (),
+            )
+
+        def child(_request):
+            events.append("child")
+            return pipeline.FormalSuiteServiceResult(
+                public_result={
+                    "status": child_status,
+                    "provider_calls": 2,
+                    "evidence_class": "online_real_provider",
+                },
+                terminal_result=_paper_suite_result(
+                    tmp_path,
+                    status=child_status,
+                ),
+            )
+
+        def post_gate(selected, evidence):
+            assert (selected, evidence) == (selection, terminal)
+            events.append("post")
+            return paper_formal_gate.PaperGateDecision(
+                stage="paper_publication_gate",
+                status=post_status,
+                classification="formal",
+                blocked_reasons=("post-blocked",) if post_status == "blocked" else (),
+            )
+
+        monkeypatch.setattr(paper_formal_gate, "formal_execution_gate", pre_gate)
+        monkeypatch.setattr(paper_formal_gate, "paper_publication_gate", post_gate)
+        monkeypatch.setitem(
+            pipeline._AUTHORITATIVE_SERVICE_ADAPTERS,
+            "run-exp1-online",
+            child,
+        )
+        factories = dict(pipeline._PRODUCTION_SERVICE_INPUT_FACTORIES)
+        factories["run-exp1-online"] = lambda _request: service_input
+        monkeypatch.setattr(pipeline, "_PRODUCTION_SERVICE_INPUT_FACTORIES", factories)
+        request = pipeline.PipelineCommandRequest(
+            command="run-exp1-online",
+            scope="exp1_full_online",
+            evidence_class="online_real_provider",
+            profile=PROFILE,
+            provider_authorization=SimpleNamespace(),
+            output_root=tmp_path,
+            replay_input_root=None,
+            external_bank_resolver=None,
+            plan_digest=DIGESTS["plan"],
+            inventory_digest=DIGESTS["inventory"],
+            budget_mode="bounded",
+            serialized_arguments={},
+            _formal_authority=EPD027FormalServiceAuthority(
+                command=authority.command,
+                plan_digest=authority.plan_digest,
+                inventory_digest=authority.inventory_digest,
+                budget_digest=authority.budget_digest,
+                keyword_arguments=authority.keyword_arguments,
+                gate_selection=selection,
+                gate_prerequisites=prerequisites,
+                publication_gate_factory=lambda _child: terminal,
+            ),
+        )
+
+        result = pipeline._default_delegate(request)
+
+        assert events == expected_events
+        assert result["status"] == expected_status
+        if expected_status == "blocked":
+            assert result.get("blocked_reasons") or child_status == "blocked"
+
+
+def test_pipeline_formal_orchestration_requires_process_local_typed_authority(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    child_called = False
+
+    def child(_request):
+        nonlocal child_called
+        child_called = True
+        return {"status": "completed", "provider_calls": 0}
+
+    factories = dict(pipeline._PRODUCTION_SERVICE_INPUT_FACTORIES)
+    factories["run-exp1-online"] = lambda _request: pipeline.FormalSuiteServiceInput(
+        scope="exp1_full_online",
+        keyword_arguments={},
+    )
+    monkeypatch.setattr(pipeline, "_PRODUCTION_SERVICE_INPUT_FACTORIES", factories)
+    monkeypatch.setitem(
+        pipeline._AUTHORITATIVE_SERVICE_ADAPTERS,
+        "run-exp1-online",
+        child,
+    )
+    request = pipeline.PipelineCommandRequest(
+        command="run-exp1-online",
+        scope="exp1_full_online",
+        evidence_class="online_real_provider",
+        profile=PROFILE,
+        provider_authorization=SimpleNamespace(),
+        output_root=tmp_path,
+        replay_input_root=None,
+        external_bank_resolver=None,
+        plan_digest=DIGESTS["plan"],
+        inventory_digest=DIGESTS["inventory"],
+        budget_mode="bounded",
+        serialized_arguments={},
+        _formal_authority=SimpleNamespace(keyword_arguments={}),
+    )
+
+    with pytest.raises(ValueError, match="process-local typed gate authority"):
+        pipeline._default_delegate(request)
+    assert child_called is False
+
+
+@pytest.mark.parametrize(
+    ("command", "scope", "selected_experiments"),
+    (
+        ("run-exp1-online", "exp1_full_online", ("exp1",)),
+        ("run-exp5-online", "exp5_full_online", ("exp5",)),
+    ),
+)
+def test_default_builder_normal_path_binds_validated_receipt_before_formal_service(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    command: str,
+    scope: str,
+    selected_experiments: tuple[str, ...],
+) -> None:
+    from copy import deepcopy
+
+    from tokenshare.experiments import paper_formal_runner
+    from tokenshare.experiments import paper_catalog as paper_catalog_module
+    from tokenshare.experiments import paper_runner
+    from tokenshare.experiments import run_paper_experiments as paper_cli
+    from tokenshare.experiments.paper_models import PaperSuiteResult, digest_json
+    from tokenshare.experiments.paper_paid_authorization import (
+        compute_receipt_digest,
+        output_root_path_digest,
+    )
+    from tokenshare.experiments.paper_pipeline_profile import (
+        load_paper_pipeline_profile,
+    )
+
+    assert pipeline._FORMAL_AUTHORITY_BUILDER is pipeline._build_formal_authority
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    monkeypatch.delenv("SILICONFLOW_API_KEY", raising=False)
+    repo_root = Path(__file__).resolve().parents[2]
+    tracked = json.loads(
+        (repo_root / "benchmarks/paper/lean_checker_preflight.v1.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    environment = (
+        paper_catalog_module._current_lean_environment_manifest_without_preflight()
+    )
+    object.__setattr__(environment, "environment_digest", tracked["environment_digest"])
+    oracle_source = (
+        repo_root / "fixtures/lean_proof_project/TokenShare/LemmaGraphOracle.lean"
+    ).resolve()
+    original_file_digest = paper_catalog_module._file_digest
+
+    def worktree_file_digest(path: Path) -> str:
+        resolved = Path(path).resolve()
+        if resolved != oracle_source:
+            return original_file_digest(resolved)
+        source = resolved.read_text(encoding="utf-8").replace("\r\n", "\n").replace("\r", "\n")
+        return f"sha256:{sha256(source.encode('utf-8')).hexdigest()}"
+
+    monkeypatch.setattr(
+        paper_catalog_module,
+        "_current_lean_environment_manifest_without_preflight",
+        lambda: environment,
+    )
+    monkeypatch.setattr(
+        paper_catalog_module,
+        "lean_checker_implementation_digest",
+        lambda: tracked["checker_implementation_digest"],
+    )
+    monkeypatch.setattr(paper_catalog_module, "_file_digest", worktree_file_digest)
+    monkeypatch.setattr(
+        paper_catalog_module,
+        "default_lean_paper_environment_manifest",
+        lambda: environment,
+    )
+    tracked_readiness = json.loads(
+        (repo_root / "benchmarks/paper/lean_task14_3x3_readiness.v1.json").read_text(
+            encoding="utf-8"
+        )
+    )
+
+    def tracked_matrix_plan(*, catalog_manifest, **_kwargs):
+        matrix = paper_runner._bind_lean_matrix_to_catalog(
+            deepcopy(tracked_readiness),
+            catalog_manifest=catalog_manifest,
+        )
+        matrix["schema_version"] = "tokenshare.lean_3x3_matrix_plan.v1"
+        matrix_digest = digest_json(paper_runner._lean_matrix_digest_body(matrix))
+        matrix["matrix_digest"] = matrix_digest
+        matrix["task15_budget_input"]["matrix_digest"] = matrix_digest
+        return matrix
+
+    monkeypatch.setattr(paper_cli, "build_lean_3x3_matrix_plan", tracked_matrix_plan)
+    profile = load_paper_pipeline_profile()
+    output_root = tmp_path / command
+    authority = pipeline._FORMAL_AUTHORITY_BUILDER(
+        command=command,
+        profile=profile,
+        output_root=output_root,
+        resume=False,
+        plan_bundle_root=None,
+        external_bank_resolver=None,
+    )
+    receipt = {
+        "schema_version": "tokenshare.paid_execution_receipt.v1",
+        "receipt_digest": "pending",
+        "scope": scope,
+        "authorized_plan_digest": authority.plan_digest,
+        "profile_digest": profile.profile_digest,
+        "budget_digest": authority.budget_digest,
+        "inventory_digest": authority.inventory_digest,
+        "prompt_admission_profile_digest": profile.prompt_admission_profile_digest,
+        "selected_experiments": list(selected_experiments),
+        "output_root_path_digest": output_root_path_digest(output_root),
+        "not_before": "2026-01-01T00:00:00Z",
+        "expires_at": "2027-01-01T00:00:00Z",
+        "user_approval_reference": "test-user-supplied-receipt",
+    }
+    receipt["receipt_digest"] = compute_receipt_digest(receipt)
+    receipt_path = tmp_path / f"{command}-receipt.json"
+    receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+    terminal_calls: list[dict[str, object]] = []
+
+    def execute_terminal(**kwargs):
+        terminal_calls.append(kwargs)
+        return PaperSuiteResult(
+            suite_id=str(kwargs["suite_id"]),
+            status="completed",
+            output_root=Path(kwargs["output_root"]).as_posix(),
+            started_at="2026-08-04T00:00:00Z",
+            ended_at="2026-08-04T00:00:01Z",
+            experiment_ids=tuple(
+                plan.experiment_id for plan in kwargs["dispatch_plans"]
+            ),
+            condition_count=1,
+            run_count=1,
+            task_count=1,
+            provider_attempt_count=1,
+            total_tokens=1,
+            total_cost_estimate=0.0,
+            paper_eligible=True,
+            eligibility_report_ref=None,
+            budget_ref=None,
+            metrics_refs=(),
+            audit_refs=(),
+            error_summary=(),
+        )
+
+    monkeypatch.setattr(
+        paper_formal_runner,
+        "execute_paper_formal_suite",
+        execute_terminal,
+    )
+
+    exit_code = pipeline.main(
+        [
+            command,
+            "--profile",
+            "benchmarks/paper/epd027_pipeline_profile.v1.json",
+            "--receipt",
+            str(receipt_path),
+            "--allow-provider-calls",
+            "--new-run",
+            "--output-root",
+            str(output_root),
+            "--plan-digest",
+            authority.plan_digest,
+            "--inventory-digest",
+            authority.inventory_digest,
+            "--budget-mode",
+            "bounded",
+        ]
+    )
+
+    body = json.loads(capsys.readouterr().out)
+    assert terminal_calls, "default authority must pass pre-gate and reach official service"
+    assert body["receipt_digest"] == receipt["receipt_digest"]
+    assert body["stage"] == "paper_publication_gate"
+    assert body["status"] == "blocked"
+    assert exit_code == 3

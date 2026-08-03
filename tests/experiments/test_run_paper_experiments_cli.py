@@ -4548,3 +4548,420 @@ def test_pipeline_capability_smoke_authority_uses_canonical_exp5_subset(
     assert authority.keyword_arguments["budget"].budget_digest.startswith("sha256:")
     assert authority.keyword_arguments["profile"].paper_eligible is False
     assert authority.keyword_arguments["real_transport"] is True
+
+
+@pytest.mark.parametrize(
+    ("command", "selected_experiments"),
+    (
+        ("run-exp1-online", ("exp1",)),
+        ("run-exp5-online", ("exp5",)),
+    ),
+)
+def test_default_formal_authority_producer_exposes_typed_gate_components(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    command: str,
+    selected_experiments: tuple[str, ...],
+) -> None:
+    from tokenshare.experiments.paper_formal_gate import (
+        PaperGatePrerequisiteEnvelope,
+        PaperGateSelectionEnvelope,
+    )
+    from tokenshare.experiments.paper_pipeline_profile import (
+        load_paper_pipeline_profile,
+    )
+
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    monkeypatch.delenv("SILICONFLOW_API_KEY", raising=False)
+    authority = paper_cli.build_epd027_formal_service_authority(
+        command=command,
+        profile=load_paper_pipeline_profile(),
+        output_root=tmp_path / command,
+    )
+
+    assert isinstance(authority.gate_selection, PaperGateSelectionEnvelope)
+    assert authority.gate_selection.selected_experiments == selected_experiments
+    assert isinstance(authority.gate_prerequisites, PaperGatePrerequisiteEnvelope)
+    assert authority.gate_prerequisites.l1_attestation.level == "L1"
+    assert authority.gate_prerequisites.l2_attestation.level == "L2"
+    assert callable(authority.publication_gate_factory)
+
+
+def test_default_trace_authority_binds_validated_full_bank_prerequisite(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tokenshare.executors.response_bank import OBJECT_ROLES, ResponseBankManifest
+    from tokenshare.experiments import paper_response_bank
+    from tokenshare.experiments.paper_formal_gate import (
+        CompleteFullBankPrerequisite,
+        PaidAuthorizationScopeAuthority,
+        SelectedPaidAuthorizationBinding,
+        formal_execution_gate,
+    )
+    from tokenshare.experiments.paper_paid_authorization import (
+        PaidAuthorizationValidation,
+        PaidExecutionReceipt,
+        PaidOutputBindingMarker,
+    )
+    from tokenshare.experiments.paper_pipeline_profile import (
+        load_paper_pipeline_profile,
+    )
+
+    profile = load_paper_pipeline_profile()
+    inventory_digest = "sha256:" + "b" * 64
+    entry_ids = ("inventory-entry-a", "inventory-entry-b")
+    manifest = ResponseBankManifest.create(
+        bank_root_id="test-bank-root",
+        profile_digest=profile.profile_digest,
+        budget_digest="sha256:" + "c" * 64,
+        inventory_digest=inventory_digest,
+        provider_config_digest="sha256:" + "d" * 64,
+        entry_ids=entry_ids,
+        object_role_schema=OBJECT_ROLES,
+        terminal_entry_count=len(entry_ids),
+        created_by_paid_receipt_digest="sha256:" + "e" * 64,
+    )
+    semantic_inventory = SimpleNamespace(
+        rows=tuple(
+            SimpleNamespace(inventory_entry_id=entry_id) for entry_id in entry_ids
+        )
+    )
+    bundle = SimpleNamespace(
+        authorized_plan_digest=profile.offline_approval.approved_plan_digest,
+        profile_digest=profile.profile_digest,
+        inventory_digest=inventory_digest,
+        semantic_inventory_plan=semantic_inventory,
+    )
+    resolver = SimpleNamespace(
+        index=SimpleNamespace(
+            manifest=manifest,
+            entries=tuple(
+                SimpleNamespace(inventory_entry_id=entry_id)
+                for entry_id in entry_ids
+            ),
+        )
+    )
+    monkeypatch.setattr(
+        paper_response_bank,
+        "load_acquisition_plan_bundle",
+        lambda _root: bundle,
+    )
+    monkeypatch.setattr(
+        paper_response_bank,
+        "build_paper_formal_trace_context",
+        lambda **_kwargs: SimpleNamespace(inventory_plan=semantic_inventory),
+    )
+
+    authority = paper_cli.build_epd027_formal_service_authority(
+        command="run-trace",
+        profile=profile,
+        output_root=tmp_path / "trace",
+        plan_bundle_root=tmp_path / "plan-bundle",
+        external_bank_resolver=SimpleNamespace(open=lambda: resolver),
+    )
+
+    full_bank = authority.gate_prerequisites.full_bank
+    assert isinstance(full_bank, CompleteFullBankPrerequisite)
+    assert full_bank.manifest is manifest
+    assert full_bank.preflight.status == "ready"
+    assert authority.gate_selection.selected_experiments == ("exp2", "exp3", "exp4")
+    assert formal_execution_gate(
+        authority.gate_selection,
+        authority.gate_prerequisites,
+    ).blocked_reasons == (
+        "missing_paid_authority_commitment",
+        "missing_paid_authorization:epd027_full_bank_acquisition",
+    )
+
+    receipt = PaidExecutionReceipt(
+        schema_version="tokenshare.paid_execution_receipt.v1",
+        receipt_digest=manifest.created_by_paid_receipt_digest,
+        scope="epd027_full_bank_acquisition",
+        authorized_plan_digest=profile.offline_approval.approved_plan_digest,
+        profile_digest=profile.profile_digest,
+        budget_digest=manifest.budget_digest,
+        inventory_digest=inventory_digest,
+        prompt_admission_profile_digest=profile.prompt_admission_profile_digest,
+        selected_experiments=("exp2", "exp3", "exp4"),
+        output_root_path_digest="sha256:" + "f" * 64,
+        not_before="2026-08-01T00:00:00Z",
+        expires_at="2026-08-04T00:00:00Z",
+        user_approval_reference="validated-bank-receipt",
+    )
+    marker = PaidOutputBindingMarker(
+        schema_version="tokenshare.paid_output_binding.v1",
+        marker_digest="sha256:" + "a" * 64,
+        receipt_digest=receipt.receipt_digest,
+        authorized_plan_digest=receipt.authorized_plan_digest,
+        profile_digest=receipt.profile_digest,
+        budget_digest=receipt.budget_digest,
+        inventory_digest=receipt.inventory_digest,
+        prompt_admission_profile_digest=receipt.prompt_admission_profile_digest,
+        output_root_path_digest=receipt.output_root_path_digest,
+    )
+    binding = SelectedPaidAuthorizationBinding(
+        authority=PaidAuthorizationScopeAuthority(
+            scope=receipt.scope,
+            authorized_plan_digest=receipt.authorized_plan_digest,
+            profile_digest=receipt.profile_digest,
+            budget_digest=receipt.budget_digest,
+            inventory_digest=receipt.inventory_digest,
+            prompt_admission_profile_digest=receipt.prompt_admission_profile_digest,
+            selected_experiments=receipt.selected_experiments,
+            output_root_path_digest=receipt.output_root_path_digest,
+        ),
+        validation=PaidAuthorizationValidation(
+            receipt=receipt,
+            marker=marker,
+            output_mode="resume",
+            authorization_state="reconcile_close_only",
+            provider_dispatch_allowed=False,
+        ),
+    )
+    ready_authority = paper_cli.build_epd027_formal_service_authority(
+        command="run-trace",
+        profile=profile,
+        output_root=tmp_path / "trace-ready",
+        plan_bundle_root=tmp_path / "plan-bundle",
+        external_bank_resolver=SimpleNamespace(open=lambda: resolver),
+        paid_authorization_bindings=(binding,),
+    )
+    assert formal_execution_gate(
+        ready_authority.gate_selection,
+        ready_authority.gate_prerequisites,
+    ).status == "ready"
+
+
+@pytest.mark.parametrize(
+    ("pricing_currency", "drop_usage", "expected_l4_status"),
+    (
+        pytest.param("CNY", False, "passed", id="complete-cny"),
+        pytest.param("USD", False, "blocked", id="wrong-currency"),
+        pytest.param("CNY", True, "blocked", id="missing-usage"),
+    ),
+)
+def test_publication_factory_uses_typed_terminal_and_official_evidence_closure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    pricing_currency: str,
+    drop_usage: bool,
+    expected_l4_status: str,
+) -> None:
+    from tests.experiments.test_factorization_paper_adapter import _v2_condition
+    from tests.experiments.test_paper_formal_runner import (
+        BUDGET_DIGEST,
+        CATALOG_DIGEST,
+        ENDPOINT_DIGEST,
+        EXPERIMENT_ID,
+        MODEL_ENTRY_ID,
+        PROVIDER_CONFIG_ID,
+        PROVIDER_MODEL_ID,
+        _ai_config,
+        _budget,
+        _dispatch_plan_type,
+        _formal_execution_kwargs,
+    )
+    from tokenshare.experiments import factorization_paper_adapter
+    from tokenshare.experiments.factorization_paper_adapter import (
+        ScriptedFactorizationRangeTransport,
+    )
+    from tokenshare.experiments.paper_experiment_contracts import (
+        ExperimentSummaryRows,
+        FrozenCaseSelection,
+        FrozenCaseSelectionBatch,
+        FrozenConditionSelectionBinding,
+    )
+    from tokenshare.experiments.paper_factorization_catalog import (
+        generate_factorization_paper_cases,
+    )
+    from tokenshare.experiments.paper_formal_gate import SelectedFormalMetricsAudit
+    from tokenshare.experiments.paper_pipeline_profile import (
+        load_paper_pipeline_profile,
+    )
+
+    output_root = tmp_path / "official-online-suite"
+    config = _ai_config()
+    config = replace(
+        config,
+        entries=[
+            replace(
+                config.entries[0],
+                pricing={
+                    **config.entries[0].pricing,
+                    "currency": pricing_currency,
+                },
+            )
+        ],
+    )
+    case = generate_factorization_paper_cases()[0]
+    expected_ai_unit_count = int(case["split_params"]["requested_child_count"])
+    condition = replace(
+        _v2_condition(case),
+        condition_id="condition-epd027-online-projector",
+        worker_count=1,
+        catalog_digest=CATALOG_DIGEST,
+        provider_config_id=PROVIDER_CONFIG_ID,
+        model_entry_id=MODEL_ENTRY_ID,
+        provider_family="siliconflow",
+        provider_model_id=PROVIDER_MODEL_ID,
+        reasoning_profile_id="default",
+        source_provider_config_digest=config.config_digest,
+        model_endpoint_identity_digest=ENDPOINT_DIGEST,
+    )
+    selection = FrozenCaseSelection(
+        selection_id="selection-epd027-online-projector",
+        experiment_id=EXPERIMENT_ID,
+        suite_version="paper_v1",
+        catalog_version="catalog-v1",
+        domain="factorization",
+        paper_difficulty=str(case["difficulty"]),
+        topic_family=None,
+        ordered_case_ids=(str(case["case_id"]),),
+        catalog_digest=CATALOG_DIGEST,
+        expected_ai_unit_count=expected_ai_unit_count,
+        paper_eligible_required=True,
+    )
+    plan = _dispatch_plan_type()(
+        experiment_id=EXPERIMENT_ID,
+        output_root=(output_root / EXPERIMENT_ID).as_posix(),
+        conditions=(condition,),
+        condition_selection_bindings=(
+            FrozenConditionSelectionBinding.from_condition(condition, selection),
+        ),
+    )
+
+    class Exp1OnlineModule:
+        def expand_conditions(self, context):
+            raise AssertionError("online closure consumes the frozen plan")
+
+        def freeze_case_selections(self, context, conditions):
+            return FrozenCaseSelectionBatch(())
+
+        def run_condition(self, context, condition, selection):
+            return context.execution_callback(
+                context=context,
+                condition=condition,
+                selection=selection,
+            )
+
+        def summarize(self, evidence):
+            return ExperimentSummaryRows(experiment_id=EXPERIMENT_ID, rows=())
+
+    class ScriptedRealTransport:
+        def __init__(self) -> None:
+            self.delegate = ScriptedFactorizationRangeTransport()
+
+        def post_chat_completion(self, **call_kwargs):
+            response = self.delegate.post_chat_completion(**call_kwargs)
+            response.body["model"] = json.loads(
+                call_kwargs["body_bytes"].decode("utf-8")
+            )["model"]
+            if drop_usage:
+                response.body.pop("usage", None)
+            response.text = json.dumps(response.body, ensure_ascii=False)
+            return response
+
+    module_globals = formal_runner.dispatch_paper_condition.__globals__
+    original_modules = module_globals["_MODULES"]
+    monkeypatch.setitem(
+        module_globals,
+        "_MODULES",
+        ((EXPERIMENT_ID, Exp1OnlineModule()),),
+    )
+    monkeypatch.setattr(
+        factorization_paper_adapter,
+        "_validate_real_transport_mode",
+        lambda **_kwargs: None,
+    )
+    monkeypatch.setenv("TOKENSHARE_FORMAL_RUNNER_TEST_KEY", "test-only")
+    kwargs = _formal_execution_kwargs(
+        tmp_path=output_root,
+        config=config,
+        plan=plan,
+    )
+    kwargs.update(
+        {
+            "catalog_manifest": {
+                "catalog_digest": CATALOG_DIGEST,
+                "factorization_cases": (case,),
+                "lean_cases": (),
+                "lean_lemma_graph_cases": (),
+            },
+            "budget": _budget(
+                planned_conditions=1,
+                planned_root_runs=1,
+                planned_ai_units=expected_ai_unit_count,
+            ),
+            "budget_approval": {
+                "approval_mode": "user_bypassed",
+                "budget_digest": BUDGET_DIGEST,
+            },
+            "transport": ScriptedRealTransport(),
+            "real_transport": True,
+        }
+    )
+    terminal = formal_runner.execute_paper_formal_suite(**kwargs)
+    terminal = replace(terminal, status=PaperStatus.COMPLETED_WITH_FAILURES)
+    monkeypatch.setitem(module_globals, "_MODULES", original_modules)
+    loaded = formal_runner.load_paper_traceability_replay_inputs(output_root)
+    assert len(loaded.current["canonical_runtime_evidence"]) == 1
+    assert len(
+        loaded.current["canonical_runtime_evidence"][0].current_provider_object_refs
+    ) == 8
+    profile = load_paper_pipeline_profile()
+    authority = paper_cli.build_epd027_formal_service_authority(
+        command="run-exp1-online",
+        profile=profile,
+        output_root=output_root,
+    )
+
+    publication = authority.publication_gate_factory(terminal)
+
+    assert publication.experiment_evidence[0].experiment_id == "exp1"
+    route = publication.experiment_evidence[0].routes[0]
+    assert route.route_id == "online"
+    assert route.evidence_class == "online_real_provider"
+    assert route.eligibility_reports[0].paper_eligible is True
+    assert route.eligibility_reports[0].source_manifest_complete is False
+    assert len(route.selected_audits) == 2
+    assert all(
+        isinstance(value, SelectedFormalMetricsAudit)
+        for value in route.selected_audits
+    )
+    assert route.selected_audits[0] == route.selected_audits[1]
+    if expected_l4_status == "passed":
+        assert route.selected_audits[0].publish_blocked_observation_ids == ()
+        assert route.selected_audits[0].non_regression is True
+        observations_path = (
+            output_root
+            / "publication_gate"
+            / "primary"
+            / "selected_metrics_1"
+            / "metrics"
+            / "paper_metric_observations.v1.jsonl"
+        )
+        selected_observations = tuple(
+            payload
+            for line in observations_path.read_text(encoding="utf-8").splitlines()
+            if (payload := json.loads(line))["table_id"] == "exp1_feasibility"
+        )
+        assert len(selected_observations) == 13
+        assert all(
+            observation["numeric_value"] is not None
+            and observation["publish_blocked"] is False
+            and observation["direct_result_refs"]
+            and observation["current_provider_object_refs"]
+            and observation["observation_id"].startswith("sha256:")
+            and observation["observation_digest"].startswith("sha256:")
+            for observation in selected_observations
+        )
+        assert publication.l3_attestation.status == "passed"
+    else:
+        assert route.selected_audits[0].publish_blocked_observation_ids
+        assert route.selected_audits[0].non_regression is False
+    assert terminal.status == PaperStatus.COMPLETED_WITH_FAILURES
+    assert publication.l4_attestation.status == expected_l4_status
+    assert publication.replay_results == ()
+    with pytest.raises(TypeError, match="PaperSuiteResult"):
+        authority.publication_gate_factory({"status": "completed"})

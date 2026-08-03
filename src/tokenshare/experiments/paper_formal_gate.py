@@ -45,6 +45,21 @@ _DIGEST_PATTERN = re.compile(r"sha256:[0-9a-f]{64}\Z")
 _FORMAL_EXPERIMENTS = frozenset({"exp1", "exp2", "exp3", "exp4", "exp5"})
 _FACILITY_EXPERIMENTS = frozenset({"exp5_capability"})
 _BANK_EXPERIMENTS = frozenset({"exp2", "exp3", "exp4"})
+_SELECTED_ROUTE_SPECS = {
+    "exp1": (("online", "online_real_provider", ("exp1_feasibility",)),),
+    "exp2": (
+        ("trace-main", "real_model_trace_protocol_run", ("exp2_trace_scalability",)),
+        ("online-support", "online_real_provider", ("exp2_online_concurrency",)),
+    ),
+    "exp3": (
+        ("trace-main", "real_model_trace_protocol_run", ("exp3_trace_robustness",)),
+        ("online-support", "online_real_provider", ("exp3_online_recovery",)),
+    ),
+    "exp4": (("trace", "real_model_trace_protocol_run", ("exp4_ablation",)),),
+    "exp5": (
+        ("online", "online_real_provider", ("exp5_quality", "exp5_resources")),
+    ),
+}
 _AUTHORIZATION_SCOPE_ORDER = (
     "exp1_full_online",
     "epd027_full_bank_acquisition",
@@ -63,7 +78,7 @@ _MARKER_BINDING_FIELDS = (
 )
 
 
-def _canonical_digest(value: Mapping[str, str]) -> str:
+def _canonical_digest(value: Mapping[str, object]) -> str:
     payload = json.dumps(
         dict(value), ensure_ascii=False, sort_keys=True, separators=(",", ":")
     ).encode("utf-8")
@@ -125,6 +140,7 @@ class PaperGateSelectionEnvelope:
     selected_experiments: tuple[str, ...]
     classification: str
     authority: PaperGateAuthorityDigests
+    authorization_commitment: PaidAuthorizationAuthorityCommitment | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.authority, PaperGateAuthorityDigests):
@@ -141,12 +157,115 @@ class PaperGateSelectionEnvelope:
             raise ValueError("paper gate selection classification is unsupported")
         if any(value not in allowed for value in self.selected_experiments):
             raise ValueError("paper gate selection/classification mismatch")
+        if self.authorization_commitment is not None and not isinstance(
+            self.authorization_commitment, PaidAuthorizationAuthorityCommitment
+        ):
+            raise TypeError("paper gate selection authority commitment must be typed")
+
+
+@dataclass(frozen=True, kw_only=True)
+class PaidAuthorizationScopeAuthority:
+    """Task26 validator 使用的每个 paid scope 独立实际 authority。"""
+
+    scope: str
+    authorized_plan_digest: str
+    profile_digest: str
+    budget_digest: str
+    inventory_digest: str
+    prompt_admission_profile_digest: str
+    selected_experiments: tuple[str, ...]
+    output_root_path_digest: str
+
+    def __post_init__(self) -> None:
+        if self.scope not in _AUTHORIZATION_SCOPE_ORDER:
+            raise ValueError("paid authorization scope authority is unsupported")
+        if not self.selected_experiments:
+            raise ValueError("paid authorization scope selection cannot be empty")
+        for name in (
+            "authorized_plan_digest",
+            "profile_digest",
+            "budget_digest",
+            "inventory_digest",
+            "prompt_admission_profile_digest",
+            "output_root_path_digest",
+        ):
+            _require_digest(getattr(self, name), name)
+
+    @property
+    def authority_digest(self) -> str:
+        return _canonical_digest(
+            {
+                "scope": self.scope,
+                "authorized_plan_digest": self.authorized_plan_digest,
+                "profile_digest": self.profile_digest,
+                "budget_digest": self.budget_digest,
+                "inventory_digest": self.inventory_digest,
+                "prompt_admission_profile_digest": (
+                    self.prompt_admission_profile_digest
+                ),
+                "selected_experiments": list(self.selected_experiments),
+                "output_root_path_digest": self.output_root_path_digest,
+            }
+        )
+
+
+@dataclass(frozen=True, kw_only=True)
+class PaidAuthorizationAuthorityCommitment:
+    """Selection 对全部 paid scope authority 的共享、排序 commitment。"""
+
+    scope_authority_digests: tuple[tuple[str, str], ...]
+
+    def __post_init__(self) -> None:
+        values = tuple(self.scope_authority_digests)
+        if not values or values != tuple(sorted(values)):
+            raise ValueError("paid authority commitment must be non-empty and sorted")
+        scopes = tuple(scope for scope, _digest in values)
+        if len(set(scopes)) != len(scopes) or any(
+            scope not in _AUTHORIZATION_SCOPE_ORDER for scope in scopes
+        ):
+            raise ValueError("paid authority commitment scope inventory is invalid")
+        for _scope, authority_digest in values:
+            _require_digest(authority_digest, "scope_authority_digest")
+
+    @property
+    def commitment_digest(self) -> str:
+        return _canonical_digest(
+            {scope: authority_digest for scope, authority_digest in self.scope_authority_digests}
+        )
+
+
+def build_paid_authorization_authority_commitment(
+    bindings: Sequence[SelectedPaidAuthorizationBinding],
+) -> PaidAuthorizationAuthorityCommitment:
+    values = tuple(bindings)
+    if not values or any(
+        not isinstance(value, SelectedPaidAuthorizationBinding) for value in values
+    ):
+        raise TypeError("paid authority commitment requires typed bindings")
+    by_scope = {value.authority.scope: value.authority.authority_digest for value in values}
+    if len(by_scope) != len(values):
+        raise ValueError("paid authority commitment contains duplicate scopes")
+    return PaidAuthorizationAuthorityCommitment(
+        scope_authority_digests=tuple(sorted(by_scope.items()))
+    )
 
 
 @dataclass(frozen=True, kw_only=True)
 class SelectedPaidAuthorizationBinding:
-    selected_experiments: tuple[str, ...]
+    authority: PaidAuthorizationScopeAuthority
     validation: PaidAuthorizationValidation
+    authority_commitment_digest: str | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.authority, PaidAuthorizationScopeAuthority):
+            raise TypeError("paid authorization binding requires typed scope authority")
+        if not isinstance(self.validation, PaidAuthorizationValidation):
+            raise TypeError("paid authorization binding requires Task26 validation")
+        if self.authority_commitment_digest is not None:
+            _require_digest(
+                self.authority_commitment_digest,
+                "authority_commitment_digest",
+            )
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -170,7 +289,69 @@ class SelectedTerminalEvidence:
     experiment_id: str
     terminal_status: str
     eligibility: VersionedPaperEvidenceEligibilityReport
-    formal_report: FormalReportResult
+    formal_report: FormalReportResult | None
+    routes: tuple[SelectedEvidenceRoute, ...] = ()
+
+
+def selected_formal_metrics_audit_digest(value: Mapping[str, object]) -> str:
+    return _canonical_digest(value)
+
+
+@dataclass(frozen=True, kw_only=True)
+class SelectedFormalMetricsAudit:
+    descriptor_digest: str
+    metrics_digest: str
+    source_index_digest: str
+    selected_table_ids: tuple[str, ...]
+    observation_ids: tuple[str, ...]
+    observation_digests: tuple[str, ...]
+    observation_table_ids: tuple[str, ...]
+    evidence_classes: tuple[str, ...]
+    publish_blocked_observation_ids: tuple[str, ...]
+    direct_provenance_refs_digest: str
+    output_refs_digest: str
+    output_refs: tuple[Mapping[str, str], ...]
+    non_regression: bool
+    selected_audit_digest: str
+
+    def __post_init__(self) -> None:
+        for name in (
+            "descriptor_digest",
+            "metrics_digest",
+            "source_index_digest",
+            "direct_provenance_refs_digest",
+            "output_refs_digest",
+            "selected_audit_digest",
+        ):
+            _require_digest(getattr(self, name), name)
+        if type(self.non_regression) is not bool:
+            raise ValueError("selected formal audit non_regression must be bool")
+
+    def digest_body(self) -> dict[str, object]:
+        return {
+            "descriptor_digest": self.descriptor_digest,
+            "metrics_digest": self.metrics_digest,
+            "source_index_digest": self.source_index_digest,
+            "selected_table_ids": self.selected_table_ids,
+            "observation_ids": self.observation_ids,
+            "observation_digests": self.observation_digests,
+            "observation_table_ids": self.observation_table_ids,
+            "evidence_classes": self.evidence_classes,
+            "publish_blocked_observation_ids": self.publish_blocked_observation_ids,
+            "direct_provenance_refs_digest": self.direct_provenance_refs_digest,
+            "output_refs_digest": self.output_refs_digest,
+            "output_refs": self.output_refs,
+            "non_regression": self.non_regression,
+        }
+
+
+@dataclass(frozen=True, kw_only=True)
+class SelectedEvidenceRoute:
+    route_id: str
+    evidence_class: str
+    table_ids: tuple[str, ...]
+    eligibility_reports: tuple[VersionedPaperEvidenceEligibilityReport, ...]
+    selected_audits: tuple[SelectedFormalMetricsAudit, ...]
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -183,7 +364,8 @@ class Exp2PostBankPublicationInputs:
     contract_digest: str
     profile_digest: str
     authority_digest: str
-    protected_replay_descriptor_digest: str
+    trace_replay_descriptor_digest: str
+    online_replay_descriptor_digest: str
     worker_levels_complete: bool
     _producer_validated: bool = False
 
@@ -206,7 +388,8 @@ class Exp2PostBankPublicationInputs:
             "contract_digest",
             "profile_digest",
             "authority_digest",
-            "protected_replay_descriptor_digest",
+            "trace_replay_descriptor_digest",
+            "online_replay_descriptor_digest",
         ):
             _require_digest(getattr(self, name), name)
         if self.worker_levels_complete is not True:
@@ -225,11 +408,12 @@ def _exp2_worker_levels(roots: Sequence[object]) -> frozenset[int]:
 
 def load_exp2_post_bank_publication_inputs(
     *,
-    replay_input_root: str | Path,
+    trace_replay_input_root: str | Path,
+    online_replay_input_root: str | Path,
     contract: PaperMetricContract,
     authority: PaperGateAuthorityDigests,
 ) -> Exp2PostBankPublicationInputs:
-    """通过 runner 的公开 loader 恢复并绑定完整 Exp2 protected closure。"""
+    """从 trace 与 L3 两份 official protected closure 恢复 Exp2 projector。"""
 
     if not isinstance(contract, PaperMetricContract):
         raise TypeError("Exp2 publication contract must be PaperMetricContract")
@@ -246,15 +430,26 @@ def load_exp2_post_bank_publication_inputs(
         load_paper_traceability_replay_inputs,
     )
 
-    protected = load_paper_traceability_replay_input_root(replay_input_root)
-    if not isinstance(protected, ProtectedReplayInputRoot):
+    trace_protected = load_paper_traceability_replay_input_root(
+        trace_replay_input_root
+    )
+    online_protected = load_paper_traceability_replay_input_root(
+        online_replay_input_root
+    )
+    if not isinstance(trace_protected, ProtectedReplayInputRoot) or not isinstance(
+        online_protected, ProtectedReplayInputRoot
+    ):
         raise TypeError("Exp2 publication requires ProtectedReplayInputRoot")
-    loaded = load_paper_traceability_replay_inputs(replay_input_root)
-    direct = getattr(loaded, "direct", None)
-    if not isinstance(direct, Mapping):
+    trace_loaded = load_paper_traceability_replay_inputs(trace_replay_input_root)
+    online_loaded = load_paper_traceability_replay_inputs(online_replay_input_root)
+    trace_direct = getattr(trace_loaded, "direct", None)
+    online_direct = getattr(online_loaded, "direct", None)
+    if not isinstance(trace_direct, Mapping) or not isinstance(
+        online_direct, Mapping
+    ):
         raise ValueError("protected replay direct closure is missing")
-    trace_roots = tuple(direct.get("exp2_trace_scalability", ()))
-    online_roots = tuple(direct.get("exp2_online_concurrency", ()))
+    trace_roots = tuple(trace_direct.get("exp2_trace_scalability", ()))
+    online_roots = tuple(online_direct.get("exp2_online_concurrency", ()))
     if any(
         not isinstance(value, Exp2TraceHydratedRoot) for value in trace_roots
     ) or any(
@@ -277,7 +472,8 @@ def load_exp2_post_bank_publication_inputs(
         contract_digest=contract.contract_digest,
         profile_digest=contract.pipeline_profile_digest,
         authority_digest=authority.authority_digest,
-        protected_replay_descriptor_digest=protected.descriptor_digest,
+        trace_replay_descriptor_digest=trace_protected.descriptor_digest,
+        online_replay_descriptor_digest=online_protected.descriptor_digest,
         worker_levels_complete=True,
         _producer_validated=True,
     )
@@ -411,14 +607,20 @@ def _authorization_reasons(
     )
     by_scope: dict[str, list[SelectedPaidAuthorizationBinding]] = {}
     for binding in bindings:
-        if not isinstance(binding, SelectedPaidAuthorizationBinding) or not isinstance(
-            binding.validation, PaidAuthorizationValidation
-        ):
+        if not isinstance(binding, SelectedPaidAuthorizationBinding):
             continue
-        by_scope.setdefault(binding.validation.receipt.scope, []).append(binding)
+        by_scope.setdefault(binding.authority.scope, []).append(binding)
 
     reasons: list[str] = []
     accepted: dict[str, PaidAuthorizationValidation] = {}
+    commitment = selection.authorization_commitment
+    committed_by_scope: dict[str, str] = {}
+    if not isinstance(commitment, PaidAuthorizationAuthorityCommitment):
+        reasons.append("missing_paid_authority_commitment")
+    else:
+        committed_by_scope = dict(commitment.scope_authority_digests)
+        if not set(required) <= set(committed_by_scope):
+            reasons.append("paid_authority_commitment_scope_mismatch")
     for scope, expected_selection in required.items():
         candidates = by_scope.get(scope, [])
         if not candidates:
@@ -428,10 +630,39 @@ def _authorization_reasons(
             reasons.append(f"duplicate_paid_authorization:{scope}")
             continue
         binding = candidates[0]
+        authority = binding.authority
         validation = binding.validation
         receipt = validation.receipt
         marker = validation.marker
         scope_reasons: list[str] = []
+        if isinstance(commitment, PaidAuthorizationAuthorityCommitment):
+            if binding.authority_commitment_digest != commitment.commitment_digest:
+                scope_reasons.append(
+                    f"paid_authority_shared_commitment_mismatch:{scope}"
+                )
+            receipt_authority_digest = _canonical_digest(
+                {
+                    "scope": receipt.scope,
+                    "authorized_plan_digest": receipt.authorized_plan_digest,
+                    "profile_digest": receipt.profile_digest,
+                    "budget_digest": receipt.budget_digest,
+                    "inventory_digest": receipt.inventory_digest,
+                    "prompt_admission_profile_digest": (
+                        receipt.prompt_admission_profile_digest
+                    ),
+                    "selected_experiments": list(receipt.selected_experiments),
+                    "output_root_path_digest": receipt.output_root_path_digest,
+                }
+            )
+            if (
+                committed_by_scope.get(scope) != authority.authority_digest
+                or committed_by_scope.get(scope) != receipt_authority_digest
+            ):
+                scope_reasons.append(
+                    f"paid_authority_commitment_receipt_mismatch:{scope}"
+                )
+        if receipt.scope != scope:
+            scope_reasons.append(f"paid_authorization_scope_mismatch:{scope}")
         if receipt.schema_version != RECEIPT_SCHEMA_VERSION:
             scope_reasons.append(f"paid_receipt_schema_mismatch:{scope}")
         if marker.schema_version != MARKER_SCHEMA_VERSION:
@@ -448,14 +679,28 @@ def _authorization_reasons(
             not in {"authorized", "dispatch_authorized"}
         ):
             scope_reasons.append(f"paid_authorization_not_dispatchable:{scope}")
-        if receipt.profile_digest != selection.authority.profile_digest:
-            scope_reasons.append(f"paid_authorization_profile_digest_mismatch:{scope}")
-        if receipt.authorized_plan_digest != selection.authority.plan_digest:
-            scope_reasons.append(f"paid_authorization_plan_digest_mismatch:{scope}")
-        if receipt.inventory_digest != selection.authority.inventory_digest:
-            scope_reasons.append(f"paid_authorization_inventory_digest_mismatch:{scope}")
+        for receipt_name, authority_name, reason_name in (
+            ("profile_digest", "profile_digest", "profile_digest"),
+            ("authorized_plan_digest", "authorized_plan_digest", "plan_digest"),
+            ("budget_digest", "budget_digest", "budget_digest"),
+            ("inventory_digest", "inventory_digest", "inventory_digest"),
+            (
+                "prompt_admission_profile_digest",
+                "prompt_admission_profile_digest",
+                "prompt_admission_profile_digest",
+            ),
+            (
+                "output_root_path_digest",
+                "output_root_path_digest",
+                "output_root_path_digest",
+            ),
+        ):
+            if getattr(receipt, receipt_name) != getattr(authority, authority_name):
+                scope_reasons.append(
+                    f"paid_authorization_{reason_name}_mismatch:{scope}"
+                )
         if (
-            tuple(binding.selected_experiments) != expected_selection
+            tuple(authority.selected_experiments) != expected_selection
             or tuple(receipt.selected_experiments) != expected_selection
         ):
             scope_reasons.append(f"paid_authorization_selection_mismatch:{scope}")
@@ -603,52 +848,157 @@ def _terminal_evidence_reasons(
             reasons.append(f"selected_terminal_evidence_duplicate:{experiment}")
             continue
         item = candidates[0]
-        if item.terminal_status != "completed":
+        if item.terminal_status not in {"completed", "completed_with_failures"}:
             reasons.append(f"selected_terminal_evidence_not_completed:{experiment}")
-        eligibility = item.eligibility
-        expected_class = (
-            "online_real_provider"
-            if experiment in {"exp1", "exp5"}
-            else "real_model_trace_protocol_run"
+        route_candidates: dict[str, list[SelectedEvidenceRoute]] = {}
+        for route in item.routes:
+            if isinstance(route, SelectedEvidenceRoute):
+                route_candidates.setdefault(route.route_id, []).append(route)
+        for route_id, expected_class, table_ids in _SELECTED_ROUTE_SPECS[experiment]:
+            routes = route_candidates.get(route_id, [])
+            if not routes:
+                reasons.append(f"selected_route_missing:{experiment}:{route_id}")
+                continue
+            if len(routes) != 1:
+                reasons.append(f"selected_route_duplicate:{experiment}:{route_id}")
+                continue
+            route = routes[0]
+            if route.evidence_class != expected_class or route.table_ids != table_ids:
+                reasons.append(f"selected_route_identity_mismatch:{experiment}:{route_id}")
+                continue
+            expected_source = (
+                "current_real_provider"
+                if expected_class == "online_real_provider"
+                else "approved_real_full_acquisition"
+            )
+            reports = tuple(route.eligibility_reports)
+            if not reports:
+                reasons.append(f"selected_route_eligibility_missing:{experiment}:{route_id}")
+            for report in reports:
+                if not isinstance(report, VersionedPaperEvidenceEligibilityReport):
+                    reasons.append(f"selected_route_ineligible:{experiment}:{route_id}")
+                    break
+                manifest_valid = (
+                    report.source_manifest_complete
+                    if expected_class == "real_model_trace_protocol_run"
+                    else report.source_manifest_complete is False
+                )
+                if (
+                    not report.paper_eligible
+                    or report.ineligibility_reasons
+                    or report.evidence_class != expected_class
+                    or report.source_classification != expected_source
+                    or not report.direct_evidence_complete
+                    or not report.identity_consistent
+                    or not manifest_valid
+                ):
+                    reasons.append(f"selected_route_ineligible:{experiment}:{route_id}")
+                    break
+            reasons.extend(
+                _selected_audit_reasons(
+                    experiment=experiment,
+                    route_id=route_id,
+                    expected_class=expected_class,
+                    expected_table_ids=table_ids,
+                    audits=route.selected_audits,
+                )
+            )
+        if set(selection.selected_experiments) == _FORMAL_EXPERIMENTS:
+            report = item.formal_report
+            if not isinstance(report, FormalReportResult):
+                reasons.append(f"formal_report_missing:{experiment}")
+            elif (
+                not report.formal_paper_table_generated
+                or not report.report_ref
+                or not report.renderer_manifest_ref
+                or not report.cell_lineage_ref
+                or not report.tables_digest
+                or not report.cell_lineage_digest
+                or not report.observations_digest
+            ):
+                reasons.append(f"formal_report_artifact_incomplete:{experiment}")
+    if set(selection.selected_experiments) == _FORMAL_EXPERIMENTS:
+        selected_reports = tuple(
+            item.formal_report
+            for experiment in selection.selected_experiments
+            for item in by_experiment.get(experiment, ())
+            if isinstance(item, SelectedTerminalEvidence)
+            and isinstance(item.formal_report, FormalReportResult)
         )
-        expected_source = (
-            "current_real_provider"
-            if expected_class == "online_real_provider"
-            else "approved_real_full_acquisition"
-        )
-        if not isinstance(eligibility, VersionedPaperEvidenceEligibilityReport):
-            reasons.append(f"selected_evidence_eligibility_missing:{experiment}")
-        elif (
-            not eligibility.paper_eligible
-            or eligibility.ineligibility_reasons
-            or eligibility.evidence_class != expected_class
-            or eligibility.source_classification != expected_source
-            or not eligibility.direct_evidence_complete
-            or not eligibility.identity_consistent
-            or not eligibility.source_manifest_complete
-        ):
-            reasons.append(f"selected_evidence_ineligible:{experiment}")
-        report = item.formal_report
-        if not isinstance(report, FormalReportResult):
-            reasons.append(f"formal_report_missing:{experiment}")
-        elif (
+        if len(selected_reports) != len(_FORMAL_EXPERIMENTS) or any(
             not report.paper_eligible
             or report.regression_only
             or not report.formal_paper_table_generated
-            or not report.report_ref
-            or not report.renderer_manifest_ref
-            or not report.cell_lineage_ref
-            or not report.tables_digest
-            or not report.cell_lineage_digest
-            or not report.observations_digest
+            for report in selected_reports
         ):
-            reasons.append(f"formal_report_ineligible:{experiment}")
+            reasons.append("formal_aggregate_report_ineligible")
+    return reasons
+
+
+def _selected_audit_reasons(
+    *,
+    experiment: str,
+    route_id: str,
+    expected_class: str,
+    expected_table_ids: tuple[str, ...],
+    audits: Sequence[SelectedFormalMetricsAudit],
+) -> list[str]:
+    prefix = f"{experiment}:{route_id}"
+    values = tuple(audits)
+    if len(values) != 2 or any(
+        not isinstance(value, SelectedFormalMetricsAudit) for value in values
+    ):
+        return [f"selected_audit_pair_missing:{prefix}"]
+    reasons: list[str] = []
+    for audit in values:
+        observation_count = len(audit.observation_ids)
+        normalized_refs = tuple(
+            sorted(
+                (
+                    {
+                        "path": str(ref.get("path", "")),
+                        "content_hash": str(ref.get("content_hash", "")),
+                    }
+                    for ref in audit.output_refs
+                ),
+                key=lambda ref: ref["path"],
+            )
+        )
+        if (
+            audit.selected_table_ids != expected_table_ids
+            or observation_count == 0
+            or audit.observation_ids != tuple(sorted(audit.observation_ids))
+            or len(set(audit.observation_ids)) != observation_count
+            or len(audit.observation_digests) != observation_count
+            or len(audit.observation_table_ids) != observation_count
+            or len(audit.evidence_classes) != observation_count
+            or set(audit.observation_table_ids) != set(expected_table_ids)
+            or any(value != expected_class for value in audit.evidence_classes)
+            or audit.publish_blocked_observation_ids
+            or not audit.non_regression
+            or not audit.output_refs
+            or any(
+                not ref["path"]
+                or _DIGEST_PATTERN.fullmatch(ref["content_hash"]) is None
+                for ref in normalized_refs
+            )
+            or audit.output_refs_digest
+            != _canonical_digest({"output_refs": list(normalized_refs)})
+            or audit.selected_audit_digest
+            != selected_formal_metrics_audit_digest(audit.digest_body())
+        ):
+            reasons.append(f"selected_audit_invalid:{prefix}")
+    if values[0] != values[1]:
+        reasons.append(f"selected_audit_determinism_mismatch:{prefix}")
     return reasons
 
 
 def _formal_cell_audit_reasons(
+    selection: PaperGateSelectionEnvelope,
     terminal: PaperGateTerminalEnvelope,
 ) -> list[str]:
+    if set(selection.selected_experiments) != _FORMAL_EXPERIMENTS:
+        return []
     replays = tuple(terminal.replay_results)
     if len(replays) < 2:
         return ["missing_formal_cell_audit"]
@@ -662,14 +1012,14 @@ def _formal_cell_audit_reasons(
             continue
         if replay.audit_level != L4_ARTIFACT_ROOT:
             reasons.append("formal_cell_audit_requires_l4")
-        if replay.regression_only or not isinstance(replay.report, FormalReportResult):
+        if not isinstance(replay.report, FormalReportResult):
             reasons.append("formal_cell_audit_regression_only")
-        elif (
-            not replay.report.paper_eligible
-            or replay.report.regression_only
-            or not replay.report.formal_paper_table_generated
+        elif not replay.report.formal_paper_table_generated:
+            reasons.append("formal_cell_audit_report_incomplete")
+        elif set(selection.selected_experiments) == _FORMAL_EXPERIMENTS and (
+            not replay.report.paper_eligible or replay.report.regression_only
         ):
-            reasons.append("formal_cell_audit_report_ineligible")
+            reasons.append("formal_aggregate_report_ineligible")
         if replay.provider_calls != 0:
             reasons.append("formal_cell_audit_provider_calls_nonzero")
         if replay.source_write_count != 0 or replay.online_fill_count != 0:
@@ -686,8 +1036,10 @@ def _formal_cell_audit_reasons(
     if digests:
         expected = digests[0]
         for item in terminal.experiment_evidence:
-            if isinstance(item, SelectedTerminalEvidence) and isinstance(
-                item.formal_report, FormalReportResult
+            if (
+                isinstance(item, SelectedTerminalEvidence)
+                and item.experiment_id in selection.selected_experiments
+                and isinstance(item.formal_report, FormalReportResult)
             ):
                 report = item.formal_report
                 if (
@@ -784,7 +1136,7 @@ def paper_publication_gate(
             selected_experiments, terminal_evidence.full_bank, accepted
         )
     )
-    reasons.extend(_formal_cell_audit_reasons(terminal_evidence))
+    reasons.extend(_formal_cell_audit_reasons(selected_experiments, terminal_evidence))
     reasons.extend(
         _exp2_post_bank_reasons(
             selected_experiments, terminal_evidence.exp2_post_bank_inputs
@@ -804,13 +1156,19 @@ __all__ = [
     "PaperGateAuthorityDigests",
     "PaperGateDecision",
     "PaperGateLevelAttestation",
+    "PaidAuthorizationAuthorityCommitment",
+    "PaidAuthorizationScopeAuthority",
     "PaperGatePrerequisiteEnvelope",
     "PaperGateSelectionEnvelope",
     "PaperGateTerminalEnvelope",
+    "SelectedEvidenceRoute",
+    "SelectedFormalMetricsAudit",
     "SelectedPaidAuthorizationBinding",
     "SelectedTerminalEvidence",
+    "build_paid_authorization_authority_commitment",
     "formal_execution_gate",
     "load_exp2_post_bank_publication_inputs",
     "paper_publication_gate",
+    "selected_formal_metrics_audit_digest",
     "selected_experiments_for_provider_scope",
 ]

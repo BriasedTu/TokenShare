@@ -6,6 +6,7 @@ from collections import deque
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass, field, is_dataclass, replace
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 from enum import Enum
 import hashlib
 import json
@@ -4966,6 +4967,12 @@ def _capture_canonical_direct_evidence(
         "run_evidence": _as_json(
             _optional_field(adapter_result, "run_evidence") or {}
         ),
+        "ledger_root_clock": _root_clock_from_verified_ledger(
+            events=events,
+            run_id=execution_id,
+            task_id=protocol_task_id,
+            root_unit_id=root_unit_id,
+        ),
     }
     with collector.lock:
         collector.producer_facts_by_root[row.preregistered_root_run_id] = (
@@ -9121,6 +9128,154 @@ def _runtime_observation(run_evidence: Mapping[str, Any]) -> Mapping[str, Any]:
     return observation
 
 
+def _root_clock_from_verified_ledger(
+    *,
+    events: Sequence[object],
+    run_id: str,
+    task_id: str,
+    root_unit_id: str,
+) -> dict[str, str]:
+    """从已通过 hash-chain 校验的 native ledger 提取 root 生命周期时钟。"""
+
+    root_events = []
+    terminal_events = []
+    terminal_states = {"completed", "failed", "cancelled", "canceled"}
+    for event in events:
+        if _optional_field(event, "task_id") != task_id:
+            continue
+        payload = _optional_field(event, "payload")
+        unit = payload.get("task_unit") if isinstance(payload, Mapping) else None
+        event_targets_root = _optional_field(event, "object_id") == root_unit_id
+        if isinstance(unit, Mapping):
+            event_targets_root = event_targets_root or unit.get("unit_id") == root_unit_id
+        if not event_targets_root:
+            continue
+        occurred_at = _optional_field(event, "occurred_at")
+        if not isinstance(occurred_at, str) or not occurred_at:
+            raise ValueError("verified root ledger event has no occurred_at")
+        root_events.append(event)
+        if (
+            isinstance(unit, Mapping)
+            and str(unit.get("state") or "").lower() in terminal_states
+        ):
+            terminal_events.append(event)
+    if not root_events or not terminal_events:
+        raise ValueError("verified ledger root lifecycle clock is incomplete")
+    started_at = str(_required_field(root_events[0], "occurred_at"))
+    terminal_at = str(_required_field(terminal_events[-1], "occurred_at"))
+    started = datetime.fromisoformat(started_at.replace("Z", "+00:00"))
+    terminal = datetime.fromisoformat(terminal_at.replace("Z", "+00:00"))
+    if started.utcoffset() is None or terminal.utcoffset() is None:
+        raise ValueError("verified ledger root clock must include timezone")
+    if terminal < started:
+        raise ValueError("verified ledger root terminal clock precedes start")
+    return {
+        "schema_version": "tokenshare.paper_ledger_root_clock.v1",
+        "run_id": run_id,
+        "task_id": task_id,
+        "root_unit_id": root_unit_id,
+        "root_started_at": started_at,
+        "root_terminal_at": terminal_at,
+    }
+
+
+def _persisted_ledger_root_clock_ms(
+    facts: Mapping[str, Any],
+    row: Any,
+) -> tuple[Decimal | None, Decimal | None]:
+    clock = facts.get("ledger_root_clock")
+    if clock is None:
+        return None, None
+    if not isinstance(clock, Mapping) or set(clock) != {
+        "schema_version",
+        "run_id",
+        "task_id",
+        "root_unit_id",
+        "root_started_at",
+        "root_terminal_at",
+    }:
+        raise ValueError("persisted ledger root clock is malformed")
+    binding = getattr(row, "execution_binding", None)
+    if (
+        clock.get("schema_version") != "tokenshare.paper_ledger_root_clock.v1"
+        or binding is None
+        or clock.get("run_id") != binding.execution_id
+        or clock.get("task_id") != binding.task_id
+        or clock.get("root_unit_id") != binding.root_unit_id
+    ):
+        raise ValueError("persisted ledger root clock identity mismatch")
+    try:
+        started = datetime.fromisoformat(
+            str(clock["root_started_at"]).replace("Z", "+00:00")
+        )
+        terminal = datetime.fromisoformat(
+            str(clock["root_terminal_at"]).replace("Z", "+00:00")
+        )
+    except (TypeError, ValueError) as exc:
+        raise ValueError("persisted ledger root clock timestamp is invalid") from exc
+    if started.utcoffset() is None or terminal.utcoffset() is None:
+        raise ValueError("persisted ledger root clock must include timezone")
+    if terminal < started:
+        raise ValueError("persisted ledger root terminal clock precedes start")
+    return _datetime_epoch_ms(started), _datetime_epoch_ms(terminal)
+
+
+def _datetime_epoch_ms(value: datetime) -> Decimal:
+    normalized = value.astimezone(timezone.utc)
+    delta = normalized - datetime(1970, 1, 1, tzinfo=timezone.utc)
+    return Decimal(delta.days * 86_400_000 + delta.seconds * 1000) + (
+        Decimal(delta.microseconds) / Decimal(1000)
+    )
+
+
+def _complete_cny_costs(
+    task: Mapping[str, Any],
+    attempts: Sequence[Mapping[str, Any]],
+) -> dict[str, Decimal | int | None]:
+    provider_attempts = tuple(
+        attempt
+        for attempt in attempts
+        if isinstance(attempt.get("provider_attempt_count"), int)
+        and not isinstance(attempt.get("provider_attempt_count"), bool)
+        and int(attempt["provider_attempt_count"]) > 0
+    )
+    expected_count = task.get("provider_attempt_count")
+    count_complete = (
+        isinstance(expected_count, int)
+        and not isinstance(expected_count, bool)
+        and expected_count > 0
+        and expected_count == len(provider_attempts)
+    )
+    values: dict[str, Decimal | int | None] = {
+        str(attempt.get("attempt_id") or ""): None for attempt in attempts
+    }
+    if not count_complete:
+        return values
+    for attempt in provider_attempts:
+        prompt = attempt.get("prompt_tokens")
+        completion = attempt.get("completion_tokens")
+        total = attempt.get("total_tokens")
+        cost = attempt.get("cost_estimate")
+        usage_ref = attempt.get("usage_ref")
+        if (
+            any(type(value) is not int or value < 0 for value in (prompt, completion, total))
+            or total != prompt + completion
+            or isinstance(cost, bool)
+            or not isinstance(cost, (int, float))
+            or cost < 0
+            or attempt.get("cost_estimate_currency") != "CNY"
+            or attempt.get("cost_estimate_status") != "estimated"
+            or not isinstance(usage_ref, Mapping)
+            or not usage_ref
+        ):
+            return values
+    for attempt in provider_attempts:
+        values[str(attempt.get("attempt_id") or "")] = Decimal(
+            str(attempt["cost_estimate"])
+        )
+    return values
+
+
 def _current_roles(row: Any) -> tuple[str, ...] | None:
     available = {ref.source_role for ref in row.current_provider_object_refs}
     roles = tuple(
@@ -9141,20 +9296,25 @@ def _hydrate_exp1_metric_row(
     row: Any,
     facts: Mapping[str, Any],
 ) -> Exp1HydratedDirectRow:
-    _task, attempts, run_evidence = _producer_parts(facts)
-    observation = _runtime_observation(run_evidence)
-    wall_clock = observation.get("runtime_wall_clock_ms")
+    task, attempts, run_evidence = _producer_parts(facts)
+    _runtime_observation(run_evidence)
+    root_started_at_ms, root_terminal_at_ms = _persisted_ledger_root_clock_ms(
+        facts, row
+    )
+    cny_costs = _complete_cny_costs(task, attempts)
     return Exp1HydratedDirectRow(
         direct_result=row,
-        root_start_at_ms=0 if wall_clock is not None else None,
-        root_terminal_at_ms=wall_clock,
+        root_start_at_ms=root_started_at_ms,
+        root_terminal_at_ms=root_terminal_at_ms,
         actual_provider_attempts=(
             tuple(
                 Exp1ActualProviderAttemptFacts(
                     attempt_id=str(attempt.get("attempt_id") or ""),
                     provider_latency_ms=attempt.get("latency_ms"),
                     total_tokens=attempt.get("total_tokens"),
-                    cost_estimate_cny=attempt.get("cost_estimate"),
+                    cost_estimate_cny=cny_costs.get(
+                        str(attempt.get("attempt_id") or "")
+                    ),
                     current_provider_roles=_current_roles(row),
                 )
                 for attempt in attempts
@@ -9232,8 +9392,12 @@ def _hydrate_exp2_online_metric_row(
     row: Any,
     facts: Mapping[str, Any],
 ) -> _RunnerExp2OnlineMetricInput:
-    _task, attempts, run_evidence = _producer_parts(facts)
-    observation = _runtime_observation(run_evidence)
+    task, attempts, run_evidence = _producer_parts(facts)
+    _runtime_observation(run_evidence)
+    root_started_at_ms, root_terminal_at_ms = _persisted_ledger_root_clock_ms(
+        facts, row
+    )
+    cny_costs = _complete_cny_costs(task, attempts)
     first_by_unit: dict[str, Mapping[str, Any]] = {}
     for attempt in attempts:
         unit_id = str(
@@ -9244,8 +9408,8 @@ def _hydrate_exp2_online_metric_row(
         first_by_unit.setdefault(unit_id, attempt)
     return _RunnerExp2OnlineMetricInput(
         direct_result=row,
-        protocol_first_dispatch_at_ms=0 if observation else None,
-        root_terminal_at_ms=observation.get("runtime_wall_clock_ms"),
+        protocol_first_dispatch_at_ms=root_started_at_ms,
+        root_terminal_at_ms=root_terminal_at_ms,
         first_provider_attempts=(
             tuple(
                 Exp2OnlineFirstAttemptFacts(
@@ -9255,7 +9419,9 @@ def _hydrate_exp2_online_metric_row(
                     provider_timeout=str(attempt.get("error_kind") or "")
                     in {"provider_timeout", "timeout"},
                     total_tokens=attempt.get("total_tokens"),
-                    cost_estimate_cny=attempt.get("cost_estimate"),
+                    cost_estimate_cny=cny_costs.get(
+                        str(attempt.get("attempt_id") or "")
+                    ),
                     provider_latency_ms=attempt.get("latency_ms"),
                     current_provider_roles=_current_roles(row),
                 )
@@ -9365,16 +9531,21 @@ def _hydrate_exp5_metric_rows(
         first_dispatch: int | float | None = None
         for row in grouped_rows:
             facts = facts_by_root[row.preregistered_root_run_id]
-            _task, attempts, run_evidence = _producer_parts(facts)
+            task, attempts, run_evidence = _producer_parts(facts)
             observation = _runtime_observation(run_evidence)
-            wall_clock = observation.get("runtime_wall_clock_ms")
-            if observation and first_dispatch is None:
-                first_dispatch = 0
+            root_started_at_ms, root_terminal_at_ms = _persisted_ledger_root_clock_ms(
+                facts, row
+            )
+            cny_costs = _complete_cny_costs(task, attempts)
+            if root_started_at_ms is not None and (
+                first_dispatch is None or root_started_at_ms < first_dispatch
+            ):
+                first_dispatch = root_started_at_ms
             roots.append(
                 Exp5PreregisteredRootFacts(
                     preregistered_root_run_id=row.preregistered_root_run_id,
-                    root_dispatched_at_ms=0 if observation else None,
-                    root_terminal_at_ms=wall_clock,
+                    root_dispatched_at_ms=root_started_at_ms,
+                    root_terminal_at_ms=root_terminal_at_ms,
                     final_result_reference_complete=(
                         row.final_result_reference_complete
                     ),
@@ -9429,7 +9600,9 @@ def _hydrate_exp5_metric_rows(
                     ),
                     verifier_accepted_candidate=accepted,
                     actual_total_tokens=attempt.get("total_tokens"),
-                    actual_cost_estimate_cny=attempt.get("cost_estimate"),
+                    actual_cost_estimate_cny=cny_costs.get(
+                        str(attempt.get("attempt_id") or "")
+                    ),
                     current_provider_roles=_current_roles(row),
                 )
         hydrated.append(

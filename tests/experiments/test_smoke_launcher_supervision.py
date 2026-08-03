@@ -4,8 +4,24 @@ import subprocess
 import time
 from pathlib import Path
 
+import pytest
+
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+
+OLD_LAUNCHERS = (
+    "run_exp1_exp4_v3_smoke.ps1",
+    "run_exp3_exp4_v3_smoke.ps1",
+    "run_exp5_v3_smoke.ps1",
+)
+NEW_LAUNCHERS = (
+    "run_epd027_l3_checks.ps1",
+    "run_epd027_bank_acquisition.ps1",
+    "run_epd027_trace_matrix.ps1",
+    "run_epd027_exp1_online.ps1",
+    "run_epd027_exp5_capability.ps1",
+    "run_epd027_exp5_online.ps1",
+)
 
 
 def _read_native_log(path: Path) -> str:
@@ -40,11 +56,7 @@ def test_runtime_path_helper_preserves_absolute_and_resolves_relative(
 
     assert Path(body["absolute"]) == absolute
     assert Path(body["relative"]) == (REPO_ROOT / relative).resolve()
-    for launcher_name in (
-        "run_exp1_exp4_v3_smoke.ps1",
-        "run_exp3_exp4_v3_smoke.ps1",
-        "run_exp5_v3_smoke.ps1",
-    ):
+    for launcher_name in NEW_LAUNCHERS:
         source = (REPO_ROOT / "local" / launcher_name).read_text(encoding="utf-8-sig")
         assert "$OutputRoot = Resolve-TokenShareRuntimePath -Path $OutputRoot" in source
         assert "$SupervisorRoot = Resolve-TokenShareRuntimePath -Path $SupervisorRoot" in source
@@ -55,7 +67,7 @@ def test_native_process_helper_captures_both_streams_and_preserves_exit_code(
     tmp_path: Path,
 ) -> None:
     helper = REPO_ROOT / "local" / "invoke_native_process_with_logs.ps1"
-    launcher = REPO_ROOT / "local" / "run_exp1_exp4_v3_smoke.ps1"
+    launcher = REPO_ROOT / "local" / "run_epd027_exp1_online.ps1"
     stdout_path = tmp_path / "runner.stdout.log"
     stderr_path = tmp_path / "runner.stderr.log"
     wrapper_path = tmp_path / "wrapper_terminal.json"
@@ -105,78 +117,186 @@ def test_native_process_helper_captures_both_streams_and_preserves_exit_code(
         assert all(fragment not in content for fragment in fragments)
     launcher_text = launcher.read_text(encoding="utf-8-sig")
     assert "Invoke-TokenShareNativeProcessWithLogs" in launcher_text
-    assert "-SecretValues @($userSecret)" in launcher_text
+    assert "-SecretValues @()" in launcher_text
     assert 'Join-Path $SupervisorRoot "wrapper_terminal.json"' in launcher_text
 
 
-def test_smoke_launchers_propagate_runner_exit_code() -> None:
-    for launcher_name in (
-        "run_exp1_exp4_v3_smoke.ps1",
-        "run_exp3_exp4_v3_smoke.ps1",
-        "run_exp5_v3_smoke.ps1",
-    ):
+def test_new_launchers_propagate_runner_exit_code() -> None:
+    for launcher_name in NEW_LAUNCHERS:
         source = (REPO_ROOT / "local" / launcher_name).read_text(encoding="utf-8-sig")
 
         assert "runner_exit_code = $runnerExitCode" in source
         assert source.rstrip().endswith("exit $runnerExitCode")
 
 
-def test_exp1_exp4_launcher_freezes_run_instance_identity_before_secret() -> None:
-    launcher = REPO_ROOT / "local" / "run_exp1_exp4_v3_smoke.ps1"
-    launcher_text = launcher.read_text(encoding="utf-8-sig")
+def test_trace_launcher_forwards_bank_and_l3_reconcile_close_authorities() -> None:
+    source = (
+        REPO_ROOT / "local" / "run_epd027_trace_matrix.ps1"
+    ).read_text(encoding="utf-8-sig")
 
-    assert "--smoke-identity-only" in launcher_text
-    assert "preregistered_semantics" in launcher_text
-    assert "run_instance_identity" in launcher_text
-    assert "same_output_root_identity_drift" in launcher_text
-    assert "$semantics.provider_retry_limit -ne 0" in launcher_text
-    assert "--expect-smoke-execution-plan-digest" in launcher_text
-    assert "--expect-smoke-budget-digest" in launcher_text
-    assert launcher_text.index("--smoke-identity-only") < launcher_text.index(
-        "GetEnvironmentVariable"
+    for parameter, argument in (
+        ("$FullBankAcquisitionReceipt", '"--full-bank-acquisition-receipt"'),
+        ("$L3OnlineCheckReceipt", '"--l3-online-check-receipt"'),
+        ("$L3OnlineCheckRoot", '"--l3-online-check-root"'),
+    ):
+        assert parameter in source
+        assert argument in source
+    assert "AllowProviderCalls" not in source
+    assert "GetEnvironmentVariable" not in source
+
+
+def test_old_launchers_exit_two_before_secret_read(tmp_path: Path) -> None:
+    for launcher_name in OLD_LAUNCHERS:
+        launcher = REPO_ROOT / "local" / launcher_name
+        source = launcher.read_text(encoding="utf-8-sig")
+        assert "EPD-027" in source
+        assert "superseded" in source.lower()
+        assert source.index("exit 2") < min(
+            source.find(token) if token in source else len(source)
+            for token in (
+                "GetEnvironmentVariable",
+                "ai_api_smoke.local.json",
+                "Invoke-TokenShareNativeProcessWithLogs",
+                "--real-transport",
+            )
+        )
+
+        output_root = tmp_path / f"{launcher.stem}-output"
+        supervisor_root = tmp_path / f"{launcher.stem}-supervision"
+        result = subprocess.run(
+            [
+                "powershell.exe",
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                str(launcher),
+                "-RunId",
+                "supersession-test",
+                "-OutputRoot",
+                str(output_root),
+                "-SupervisorRoot",
+                str(supervisor_root),
+            ],
+            cwd=REPO_ROOT,
+            text=True,
+            capture_output=True,
+        )
+        assert result.returncode == 2
+        assert "EPD-027" in result.stdout + result.stderr
+        assert not output_root.exists()
+        assert not supervisor_root.exists()
+
+
+def test_l3_launcher_requires_exact_paid_receipt_and_allow_switch(
+    tmp_path: Path,
+) -> None:
+    launcher = REPO_ROOT / "local" / "run_epd027_l3_checks.ps1"
+    source = launcher.read_text(encoding="utf-8-sig")
+
+    assert "[switch]$AllowProviderCalls" in source
+    assert '"--allow-provider-calls"' in source
+    assert '"epd027_l3_capability_and_online_checks"' in source
+    assert "$receipt.scope -ne $ExpectedProviderScope" in source
+    assert source.index("$receipt.scope -ne $ExpectedProviderScope") < source.index(
+        "Invoke-TokenShareNativeProcessWithLogs"
     )
-    assert (
-        "7c8fcd1cec22432e104639c619b97a756ab0c8a865f5049786eca5db44ec11c1"
-        not in launcher_text
+
+    receipt = tmp_path / "wrong-receipt.json"
+    receipt.write_text(json.dumps({"scope": "exp1_full_online"}), encoding="utf-8")
+    supervisor_root = tmp_path / "supervision"
+    result = subprocess.run(
+        [
+            "powershell.exe",
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(launcher),
+            "-PaidReceipt",
+            str(receipt),
+            "-OutputMode",
+            "NewRun",
+            "-AllowProviderCalls",
+            "-OutputRoot",
+            str(tmp_path / "output"),
+            "-SupervisorRoot",
+            str(supervisor_root),
+            "-PlanDigest",
+            "sha256:" + "1" * 64,
+            "-InventoryDigest",
+            "sha256:" + "2" * 64,
+        ],
+        cwd=REPO_ROOT,
+        text=True,
+        capture_output=True,
     )
-    assert (
-        "8b206868d2072fded8f0c87e748c418ebd5b3e4a3442e949859460abaab5e978"
-        not in launcher_text
+    assert result.returncode == 3
+    assert "scope mismatch" in result.stdout + result.stderr
+    assert not supervisor_root.exists()
+
+
+@pytest.mark.parametrize(
+    "launcher_name",
+    (
+        "run_epd027_l3_checks.ps1",
+        "run_epd027_bank_acquisition.ps1",
+        "run_epd027_exp1_online.ps1",
+        "run_epd027_exp5_capability.ps1",
+        "run_epd027_exp5_online.ps1",
+    ),
+)
+def test_provider_launchers_reject_explicit_false_allow_before_receipt_or_child(
+    tmp_path: Path,
+    launcher_name: str,
+) -> None:
+    launcher = REPO_ROOT / "local" / launcher_name
+    output_root = tmp_path / "output"
+    supervisor_root = tmp_path / "supervision"
+
+    def ps_quote(value: object) -> str:
+        return "'" + str(value).replace("'", "''") + "'"
+
+    invocation = " ".join(
+        (
+            "&",
+            ps_quote(launcher),
+            "-PaidReceipt",
+            ps_quote(tmp_path / "receipt-must-not-be-read.json"),
+            "-OutputMode NewRun",
+            "-AllowProviderCalls:$false",
+            "-OutputRoot",
+            ps_quote(output_root),
+            "-SupervisorRoot",
+            ps_quote(supervisor_root),
+            "-PlanDigest",
+            ps_quote("sha256:" + "1" * 64),
+            "-InventoryDigest",
+            ps_quote("sha256:" + "2" * 64),
+        )
+    )
+    if launcher_name == "run_epd027_bank_acquisition.ps1":
+        invocation += " -PlanBundleRoot " + ps_quote(tmp_path / "plan")
+    invocation += "; exit $LASTEXITCODE"
+
+    result = subprocess.run(
+        [
+            "powershell.exe",
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            invocation,
+        ],
+        cwd=REPO_ROOT,
+        text=True,
+        capture_output=True,
     )
 
-
-def test_exp5_v3_launcher_freezes_endpoint_identity_and_bundle_contract() -> None:
-    launcher = REPO_ROOT / "local" / "run_exp5_v3_smoke.ps1"
-    launcher_text = launcher.read_text(encoding="utf-8-sig")
-
-    assert "--smoke-identity-only" in launcher_text
-    assert "paper_smoke_exp5_profile.v4.json" in launcher_text
-    assert "model_comparison_cohort.v3.json" in launcher_text
-    assert "model_comparison_entry_map.v3.json" in launcher_text
-    assert "exp5_siliconflow_provider_config.v3.json" in launcher_text
-    assert "--local-ai-api-config" in launcher_text
-    assert "--expect-smoke-execution-plan-digest" in launcher_text
-    assert "--expect-smoke-budget-digest" in launcher_text
-    assert "paper_smoke_exp5_v4" in launcher_text
-    assert "sha256:ef3b46948dee69ff640d4e21a25c3d84979045e2a8be93d0429fd9474e6b0dd6" in launcher_text
-    assert "sha256:eb1a7c33103fe4ef514627c8bf905de5d179e5547d98328fd17b00b62591e9b1" in launcher_text
-    assert "$semantics.direct_root_runs -ne 8" in launcher_text
-    assert "$semantics.actual_scheduled_root_runs -ne 8" in launcher_text
-    assert "$semantics.planned_first_attempt_ai_units -ne 60" in launcher_text
-    assert "$semantics.budget_provider_attempt_upper_bound -ne 60" in launcher_text
-    assert "$semantics.provider_retry_limit -ne 0" in launcher_text
-    assert "$semantics.worker_counts -join \",\"" in launcher_text
-    assert '"3"' in launcher_text
-    assert "max_in_flight_global = 3" in launcher_text
-    assert "zai-org/GLM-5.2" in launcher_text
-    assert "Qwen/Qwen3-14B" in launcher_text
-    assert "MiniMaxAI/MiniMax-M2.5" in launcher_text
-    assert "Pro/deepseek-ai/DeepSeek-V3" in launcher_text
-    assert "thinking_budget -ne 32768" in launcher_text
-    assert "max_tokens -ne 32768" in launcher_text
-    assert "timeout_seconds -ne 600" in launcher_text
-    assert "audit/exp5_endpoint_smoke_evidence.json" in launcher_text
-    assert "-SecretValues $localSecrets" in launcher_text
+    assert result.returncode == 3
+    assert "AllowProviderCalls" in result.stdout + result.stderr
+    assert not output_root.exists()
+    assert not supervisor_root.exists()
 
 
 def test_exp5_v4_selection_and_smoke_digest_layers_are_distinct_and_bound() -> None:
@@ -229,15 +349,10 @@ def test_exp5_v4_selection_and_smoke_digest_layers_are_distinct_and_bound() -> N
         "sha256:8378ce5c5a3c76339344088a36f995eda5c862059b9c9eecf5e34347985de5df"
     )
 
-    # launcher 的 eb1a... 是 identity-only 输出对 8-item selection_inventory 的 digest。
-    launcher_text = (
-        REPO_ROOT / "local" / "run_exp5_v3_smoke.ps1"
-    ).read_text(encoding="utf-8-sig")
-    assert "selection_bundle_digest" in launcher_text
-    assert "sha256:eb1a7c33103fe4ef514627c8bf905de5d179e5547d98328fd17b00b62591e9b1" in (
-        launcher_text
+    # eb1a... 是 identity-only 输出对 8-item inventory 的 digest，不属于 v4 selection。
+    assert semantic_selection_digest != (
+        "sha256:eb1a7c33103fe4ef514627c8bf905de5d179e5547d98328fd17b00b62591e9b1"
     )
-    assert "selection bundle identity drift" in launcher_text
 
 
 def test_native_process_helper_redacts_both_streams_before_live_disk_append(

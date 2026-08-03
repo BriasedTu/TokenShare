@@ -19,6 +19,7 @@ from typing import Any
 from tokenshare.experiments.paper_budget import validate_provider_budget_mode
 from tokenshare.experiments.paper_paid_authorization import (
     PaidAuthorizationValidation,
+    output_root_path_digest,
     validate_paid_execution_receipt,
 )
 from tokenshare.experiments.paper_pipeline_profile import (
@@ -65,6 +66,9 @@ _EVIDENCE_CLASSES = {
     "validate-formal-execution-gate": "offline_gate_parser_only",
     "validate-paper-publication-gate": "offline_gate_parser_only",
 }
+_FORMAL_GATED_COMMANDS = frozenset(
+    {"run-trace", "run-exp1-online", "run-exp5-online"}
+)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -118,6 +122,17 @@ class FormalSuiteServiceInput:
 
 
 @dataclass(frozen=True, kw_only=True)
+class FormalSuiteServiceResult:
+    """保留 official runner typed terminal，同时只序列化公开摘要。"""
+
+    public_result: Mapping[str, object]
+    terminal_result: object
+
+    def to_dict(self) -> dict[str, object]:
+        return dict(self.public_result)
+
+
+@dataclass(frozen=True, kw_only=True)
 class ReportRenderServiceInput:
     """Task 21 renderer 所需的已验证 metrics 与 contract。"""
 
@@ -147,6 +162,14 @@ class PaperPublicationGateServiceInput:
 
     selection: object
     terminal_evidence: object
+
+
+@dataclass(frozen=True, kw_only=True)
+class FormalRunGateServiceInput:
+    """正式 run 的同进程两阶段 gate authority；不能从 argv/JSON 构造。"""
+
+    execution_gate: FormalExecutionGateServiceInput
+    publication_gate_factory: Callable[[object], object]
 
 
 Delegate = Callable[[PipelineCommandRequest], Mapping[str, object] | Any]
@@ -203,6 +226,9 @@ def _build_argument_parser() -> argparse.ArgumentParser:
     trace.add_argument("--plan-bundle-root", required=True)
     trace.add_argument("--plan-digest", required=True)
     trace.add_argument("--inventory-digest", required=True)
+    trace.add_argument("--full-bank-acquisition-receipt")
+    trace.add_argument("--l3-online-check-receipt")
+    trace.add_argument("--l3-online-check-root")
 
     render = common("render")
     render.add_argument("--output-root", required=True)
@@ -256,6 +282,41 @@ def _build_formal_authority(**kwargs: object):
 
 
 _FORMAL_AUTHORITY_BUILDER = _build_formal_authority
+
+
+def _paid_scope_binding(
+    *,
+    validation: PaidAuthorizationValidation,
+    scope: str,
+    authorized_plan_digest: str,
+    profile_digest: str,
+    budget_digest: str,
+    inventory_digest: str,
+    prompt_admission_profile_digest: str,
+    output_root: str | Path,
+):
+    """把Task26已验证结果绑定到validator实际使用的scope authority。"""
+
+    from tokenshare.experiments.paper_formal_gate import (
+        PaidAuthorizationScopeAuthority,
+        SelectedPaidAuthorizationBinding,
+        selected_experiments_for_provider_scope,
+    )
+
+    selected = selected_experiments_for_provider_scope(scope)
+    return SelectedPaidAuthorizationBinding(
+        authority=PaidAuthorizationScopeAuthority(
+            scope=scope,
+            authorized_plan_digest=authorized_plan_digest,
+            profile_digest=profile_digest,
+            budget_digest=budget_digest,
+            inventory_digest=inventory_digest,
+            prompt_admission_profile_digest=prompt_admission_profile_digest,
+            selected_experiments=selected,
+            output_root_path_digest=output_root_path_digest(output_root),
+        ),
+        validation=validation,
+    )
 
 
 def _build_smoke_authority(**kwargs: object):
@@ -353,7 +414,7 @@ def _formal_suite_adapter(
     request: PipelineCommandRequest,
     *,
     trace_required: bool,
-) -> Mapping[str, object]:
+) -> FormalSuiteServiceResult:
     from tokenshare.experiments.paper_formal_runner import (
         execute_paper_formal_suite,
     )
@@ -373,10 +434,17 @@ def _formal_suite_adapter(
     elif real_transport is not True or request.provider_authorization is None:
         raise ValueError("online service requires authorized real transport")
     result = execute_paper_formal_suite(**arguments)
-    return _service_result(
-        request,
-        status=getattr(result, "status", "completed"),
-        provider_calls=int(getattr(result, "provider_attempt_count", 0)),
+    from tokenshare.experiments.paper_models import PaperSuiteResult
+
+    if not isinstance(result, PaperSuiteResult):
+        raise TypeError("official formal service returned invalid terminal result")
+    return FormalSuiteServiceResult(
+        public_result=_service_result(
+            request,
+            status=result.status,
+            provider_calls=int(result.provider_attempt_count),
+        ),
+        terminal_result=result,
     )
 
 
@@ -647,6 +715,23 @@ def _formal_service_input_from_persisted_authorities(
         raise ValueError(f"{request.command} requires Task26 paid authorization")
     authority = request._formal_authority
     if authority is None:
+        bindings = ()
+        if request.provider_authorization is not None:
+            receipt = request.provider_authorization.receipt
+            bindings = (
+                _paid_scope_binding(
+                    validation=request.provider_authorization,
+                    scope=request.scope,
+                    authorized_plan_digest=str(request.plan_digest),
+                    profile_digest=request.profile.profile_digest,
+                    budget_digest=receipt.budget_digest,
+                    inventory_digest=str(request.inventory_digest),
+                    prompt_admission_profile_digest=(
+                        request.profile.prompt_admission_profile_digest
+                    ),
+                    output_root=request.output_root,
+                ),
+            )
         authority = _FORMAL_AUTHORITY_BUILDER(
             command=request.command,
             profile=request.profile,
@@ -654,6 +739,7 @@ def _formal_service_input_from_persisted_authorities(
             resume=bool(request.serialized_arguments.get("resume", False)),
             plan_bundle_root=request.plan_bundle_root,
             external_bank_resolver=request.external_bank_resolver,
+            paid_authorization_bindings=bindings,
         )
     if getattr(authority, "plan_digest", None) != request.plan_digest:
         raise ValueError("formal authority plan digest mismatch")
@@ -809,10 +895,113 @@ _PRODUCTION_SERVICE_INPUT_FACTORIES: Mapping[str, ServiceInputFactory] = Mapping
 )
 
 
+def _formal_run_gate_input(request: PipelineCommandRequest) -> FormalRunGateServiceInput:
+    from tokenshare.experiments.paper_formal_gate import (
+        PaperGatePrerequisiteEnvelope,
+        PaperGateSelectionEnvelope,
+    )
+
+    authority = request._formal_authority
+    selection = getattr(authority, "gate_selection", None)
+    prerequisites = getattr(authority, "gate_prerequisites", None)
+    publication_factory = getattr(authority, "publication_gate_factory", None)
+    if not isinstance(selection, PaperGateSelectionEnvelope) or not isinstance(
+        prerequisites, PaperGatePrerequisiteEnvelope
+    ):
+        raise ValueError("formal run requires process-local typed gate authority")
+    if not callable(publication_factory):
+        raise TypeError("formal run typed gate authority is invalid")
+    return FormalRunGateServiceInput(
+        execution_gate=FormalExecutionGateServiceInput(
+            selection=selection,
+            prerequisites=prerequisites,
+        ),
+        publication_gate_factory=publication_factory,
+    )
+
+
+def _gate_blocked_service_result(
+    request: PipelineCommandRequest,
+    decision: Mapping[str, object],
+    *,
+    child: Mapping[str, object] | None = None,
+) -> dict[str, object]:
+    result = dict(child or _service_result(request))
+    result.update(
+        {
+            "status": "blocked",
+            "stage": decision.get("stage"),
+            "classification": decision.get("classification"),
+            "blocked_reasons": list(decision.get("blocked_reasons", ())),
+        }
+    )
+    return result
+
+
+def _execute_gated_formal_service(
+    request: PipelineCommandRequest,
+    *,
+    service_input: object,
+    gate_input: FormalRunGateServiceInput,
+) -> Mapping[str, object]:
+    """在同一进程以 pre gate → official service → post gate 顺序执行。"""
+
+    execution_request = replace(
+        request,
+        command="validate-formal-execution-gate",
+        scope="validate-formal-execution-gate",
+        evidence_class=_EVIDENCE_CLASSES["validate-formal-execution-gate"],
+        provider_authorization=None,
+        _service_input=gate_input.execution_gate,
+    )
+    execution = _validate_formal_execution_gate_adapter(execution_request)
+    if execution.get("status") != "ready":
+        return _gate_blocked_service_result(request, execution)
+
+    child_request = replace(request, _service_input=service_input)
+    child_value = _AUTHORITATIVE_SERVICE_ADAPTERS[request.command](child_request)
+    if not isinstance(child_value, FormalSuiteServiceResult):
+        raise TypeError("gated formal service must preserve typed terminal result")
+    child = child_value.to_dict()
+    if child.get("status") not in {"completed", "completed_with_failures", "ready"}:
+        return child
+
+    terminal_evidence = gate_input.publication_gate_factory(
+        child_value.terminal_result
+    )
+    publication_input = PaperPublicationGateServiceInput(
+        selection=gate_input.execution_gate.selection,
+        terminal_evidence=terminal_evidence,
+    )
+    publication_request = replace(
+        request,
+        command="validate-paper-publication-gate",
+        scope="validate-paper-publication-gate",
+        evidence_class=_EVIDENCE_CLASSES["validate-paper-publication-gate"],
+        provider_authorization=None,
+        _service_input=publication_input,
+    )
+    publication = _validate_paper_publication_gate_adapter(publication_request)
+    if publication.get("status") != "ready":
+        return _gate_blocked_service_result(request, publication, child=child)
+    return {
+        **child,
+        "execution_gate_status": "ready",
+        "publication_gate_status": "ready",
+    }
+
+
 def _default_delegate(request: PipelineCommandRequest) -> Mapping[str, object]:
     """通过固定生产映射调用命令唯一的 official service adapter。"""
 
     factory = _PRODUCTION_SERVICE_INPUT_FACTORIES[request.command]
+    if request.command in _FORMAL_GATED_COMMANDS:
+        gate_input = _formal_run_gate_input(request)
+        return _execute_gated_formal_service(
+            request,
+            service_input=factory(request),
+            gate_input=gate_input,
+        )
     resolved = replace(request, _service_input=factory(request))
     return _AUTHORITATIVE_SERVICE_ADAPTERS[request.command](resolved)
 
@@ -1011,6 +1200,34 @@ def main(argv: Sequence[str] | None = None) -> int:
                 allow_provider_calls=args.allow_provider_calls,
                 now=_UTC_NOW(),
             )
+            if args.command in _FORMAL_GATED_COMMANDS:
+                binding = _paid_scope_binding(
+                    validation=authorization,
+                    scope=_PROVIDER_SCOPES[args.command],
+                    authorized_plan_digest=args.plan_digest,
+                    profile_digest=profile.profile_digest,
+                    budget_digest=authorization_budget_digest,
+                    inventory_digest=args.inventory_digest,
+                    prompt_admission_profile_digest=(
+                        profile.prompt_admission_profile_digest
+                    ),
+                    output_root=args.output_root,
+                )
+                formal_authority = _FORMAL_AUTHORITY_BUILDER(
+                    command=args.command,
+                    profile=profile,
+                    output_root=Path(args.output_root),
+                    resume=bool(args.resume),
+                    plan_bundle_root=None,
+                    external_bank_resolver=None,
+                    paid_authorization_bindings=(binding,),
+                )
+                if formal_authority.plan_digest != args.plan_digest:
+                    raise ValueError("formal authority plan digest mismatch")
+                if formal_authority.inventory_digest != args.inventory_digest:
+                    raise ValueError("formal authority inventory digest mismatch")
+                if formal_authority.budget_digest != authorization_budget_digest:
+                    raise ValueError("formal authority budget digest changed after receipt")
             _validate_prompt_admission(profile)
             _BUDGET_VALIDATOR(provider_writing=True, budget_mode=args.budget_mode)
 
@@ -1022,6 +1239,114 @@ def main(argv: Sequence[str] | None = None) -> int:
                 root=Path(external_root).resolve(strict=False)
             )
         )
+        if args.command == "run-trace":
+            trace_bindings = []
+            acquisition_bundle = _ACQUISITION_BUNDLE_LOADER(args.plan_bundle_root)
+            if acquisition_bundle.authorized_plan_digest != args.plan_digest:
+                raise ValueError("trace acquisition bundle plan digest mismatch")
+            if acquisition_bundle.inventory_digest != args.inventory_digest:
+                raise ValueError("trace acquisition bundle inventory digest mismatch")
+            if acquisition_bundle.profile_digest != profile.profile_digest:
+                raise ValueError("trace acquisition bundle profile digest mismatch")
+            if acquisition_bundle.prompt_admission_profile_digest != (
+                profile.prompt_admission_profile_digest
+            ):
+                raise ValueError("trace acquisition bundle admission digest mismatch")
+
+            bank_receipt_path = args.full_bank_acquisition_receipt
+            if bank_receipt_path is not None:
+                bank_validation = _RECEIPT_VALIDATOR(
+                    receipt=_RECEIPT_LOADER(bank_receipt_path),
+                    requested_scope="epd027_full_bank_acquisition",
+                    authorized_plan_digest=acquisition_bundle.authorized_plan_digest,
+                    profile_digest=acquisition_bundle.profile_digest,
+                    budget_digest=acquisition_bundle.full_budget.budget_digest,
+                    inventory_digest=acquisition_bundle.inventory_digest,
+                    prompt_admission_profile_digest=(
+                        acquisition_bundle.prompt_admission_profile_digest
+                    ),
+                    selected_experiments=("exp2", "exp3", "exp4"),
+                    output_root=args.external_bank_root,
+                    output_mode="resume",
+                    action="reconcile_close",
+                    allow_provider_calls=False,
+                    now=_UTC_NOW(),
+                )
+                trace_bindings.append(
+                    _paid_scope_binding(
+                        validation=bank_validation,
+                        scope="epd027_full_bank_acquisition",
+                        authorized_plan_digest=(
+                            acquisition_bundle.authorized_plan_digest
+                        ),
+                        profile_digest=acquisition_bundle.profile_digest,
+                        budget_digest=acquisition_bundle.full_budget.budget_digest,
+                        inventory_digest=acquisition_bundle.inventory_digest,
+                        prompt_admission_profile_digest=(
+                            acquisition_bundle.prompt_admission_profile_digest
+                        ),
+                        output_root=args.external_bank_root,
+                    )
+                )
+
+            l3_root = args.l3_online_check_root
+            l3_receipt_path = args.l3_online_check_receipt
+            if l3_receipt_path is not None and l3_root is None:
+                raise ValueError("L3 online-check receipt requires its evidence root")
+            if l3_receipt_path is not None:
+                l3_authority = _FORMAL_AUTHORITY_BUILDER(
+                    command="run-online-checks",
+                    profile=profile,
+                    output_root=Path(l3_root),
+                    resume=True,
+                    plan_bundle_root=None,
+                    external_bank_resolver=None,
+                )
+                l3_validation = _RECEIPT_VALIDATOR(
+                    receipt=_RECEIPT_LOADER(l3_receipt_path),
+                    requested_scope="epd027_l3_capability_and_online_checks",
+                    authorized_plan_digest=l3_authority.plan_digest,
+                    profile_digest=profile.profile_digest,
+                    budget_digest=l3_authority.budget_digest,
+                    inventory_digest=l3_authority.inventory_digest,
+                    prompt_admission_profile_digest=(
+                        profile.prompt_admission_profile_digest
+                    ),
+                    selected_experiments=("exp2", "exp3"),
+                    output_root=l3_root,
+                    output_mode="resume",
+                    action="reconcile_close",
+                    allow_provider_calls=False,
+                    now=_UTC_NOW(),
+                )
+                trace_bindings.append(
+                    _paid_scope_binding(
+                        validation=l3_validation,
+                        scope="epd027_l3_capability_and_online_checks",
+                        authorized_plan_digest=l3_authority.plan_digest,
+                        profile_digest=profile.profile_digest,
+                        budget_digest=l3_authority.budget_digest,
+                        inventory_digest=l3_authority.inventory_digest,
+                        prompt_admission_profile_digest=(
+                            profile.prompt_admission_profile_digest
+                        ),
+                        output_root=l3_root,
+                    )
+                )
+            formal_authority = _FORMAL_AUTHORITY_BUILDER(
+                command=args.command,
+                profile=profile,
+                output_root=Path(args.output_root),
+                resume=False,
+                plan_bundle_root=Path(args.plan_bundle_root),
+                external_bank_resolver=resolver,
+                paid_authorization_bindings=tuple(trace_bindings),
+                l3_online_check_root=(None if l3_root is None else Path(l3_root)),
+            )
+            if formal_authority.plan_digest != args.plan_digest:
+                raise ValueError("formal authority plan digest mismatch")
+            if formal_authority.inventory_digest != args.inventory_digest:
+                raise ValueError("formal authority inventory digest mismatch")
         evidence_class = (
             "online_real_provider"
             if provider
@@ -1130,7 +1455,9 @@ __all__ = [
     "CellLineageAuditServiceInput",
     "ExternalBankResolverBinding",
     "FormalExecutionGateServiceInput",
+    "FormalRunGateServiceInput",
     "FormalSuiteServiceInput",
+    "FormalSuiteServiceResult",
     "PAPER_PIPELINE_COMMANDS",
     "PipelineCommandRequest",
     "PaperPublicationGateServiceInput",

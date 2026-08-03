@@ -26,6 +26,7 @@ from tokenshare.experiments.paper_metric_registry import (
 from tokenshare.experiments.paper_models import (
     ArtifactIdentitySnapshot,
     ExternalBankObjectLocator,
+    LedgerEventIdentitySnapshot,
     digest_json,
 )
 
@@ -142,17 +143,53 @@ def _trace_bundle() -> MetricObservationBundle:
 
 
 def _online_sources(*, roles: tuple[str, ...] = ONLINE_ROLES) -> LineageSourceIndex:
+    return _run_scoped_online_sources(roles=roles)
+
+
+def _attempt_event(attempt_id: str = "attempt-1") -> LedgerEventIdentitySnapshot:
+    return LedgerEventIdentitySnapshot(
+        event_seq=1,
+        event_id=f"event-{attempt_id}",
+        event_type="ATTEMPT_STATE_CHANGED",
+        event_hash=digest_json({"event": attempt_id}),
+        prev_event_hash=None,
+        task_id="task-1",
+        object_type="Attempt",
+        object_id=attempt_id,
+    )
+
+
+def _run_scoped_online_sources(
+    *,
+    run_id: str = "run-1",
+    roles: tuple[str, ...] = ONLINE_ROLES,
+) -> LineageSourceIndex:
+    direct_ref = {
+        "preregistered_root_run_id": "root-1",
+        "execution_binding": {
+            "execution_id": "run-1",
+            "task_id": "task-1",
+            "root_unit_id": "root-unit-1",
+        },
+        "attempt_refs": [_attempt_event().to_dict()],
+    }
+    attempt_event = _attempt_event()
     return LineageSourceIndex.create(
         records=(
             LineageSourceRecord.create(
                 member_id="root-1",
                 evidence_class="online_real_provider",
-                direct_result_refs=({"preregistered_root_run_id": "root-1"},),
+                direct_result_refs=(direct_ref,),
+                current_task_attempt_event_refs=(attempt_event,),
+                current_provider_object_refs=tuple(
+                    _artifact(role, attempt_id=run_id) for role in roles
+                ),
             ),
             LineageSourceRecord.create(
                 member_id="attempt-1",
                 evidence_class="online_real_provider",
-                current_provider_object_refs=tuple(_artifact(role) for role in roles),
+                direct_result_refs=(direct_ref,),
+                current_task_attempt_event_refs=(attempt_event,),
             ),
         ),
         input_identity_digest=INPUT_DIGEST,
@@ -366,6 +403,155 @@ def test_online_observation_requires_current_provider_roles_and_marks_source_loc
         "exp1_feasibility", "condition_summary", ("preregistered_root_count",), split_bundle, split_sources
     )
     assert split.observations[0].numeric_value is None
+
+
+def test_exp5_planned_only_observation_does_not_require_attempt_lineage() -> None:
+    member_id = "unit:0:planned-1"
+    bundle = MetricObservationBundle(
+        row_facts={
+            "infra_invalid": False,
+            "max_retries": 0,
+            "replacement_attempts_allowed": False,
+        },
+        member_ids=(member_id,),
+        member_facts_by_id={
+            member_id: {
+                "member_kind": "exp5_planned_ai_unit",
+                "planned_call": True,
+            },
+        },
+        row_identity_digest=digest_json({"row": "exp5-planned-only"}),
+    )
+    sources = LineageSourceIndex.create(
+        records=(
+            LineageSourceRecord.create(
+                member_id=member_id,
+                evidence_class="online_real_provider",
+            ),
+        ),
+        input_identity_digest=INPUT_DIGEST,
+    )
+
+    _, publication = _materialize(
+        "exp5_resources",
+        "model_summary",
+        ("planned_first_attempt_ai_unit_count",),
+        bundle,
+        sources,
+    )
+
+    observation = publication.observations[0]
+    assert observation.null_reason is None
+    assert observation.numeric_value == 1
+    assert observation.publish_blocked is False
+    assert observation.required_current_provider_roles == ()
+    assert observation.covered_current_provider_roles == ()
+    assert observation.current_provider_object_refs == ()
+    assert observation.current_task_attempt_event_refs == ()
+
+
+def test_online_observation_binds_attempt_lineage_to_run_scoped_provider_roles() -> None:
+    _, publication = _materialize(
+        "exp1_feasibility",
+        "condition_summary",
+        ("preregistered_root_count",),
+        _online_bundle(),
+        _run_scoped_online_sources(),
+    )
+
+    observation = publication.observations[0]
+    assert observation.publish_blocked is False
+    assert observation.numeric_value == 1
+    assert observation.covered_current_provider_roles == ONLINE_ROLES
+    assert {
+        ref.source_execution_id for ref in observation.current_provider_object_refs
+    } == {"run-1"}
+
+
+@pytest.mark.parametrize(
+    ("mutation", "expected_reason"),
+    (
+        ("missing_run", "invalid_lineage_ref:execution_binding"),
+        ("wrong_run", "invalid_lineage_identity:wrong-run"),
+        (
+            "wrong_attempt",
+            "invalid_lineage_ref:attempt-2",
+        ),
+        ("wrong_task", "invalid_lineage_task:run-1"),
+        ("wrong_role", "missing_required_lineage:model_record"),
+        ("wrong_digest", "invalid_lineage_ref:attempt-1"),
+        ("wrong_ref", "invalid_lineage_ref:attempt-1"),
+    ),
+)
+def test_online_observation_blocks_mutated_attempt_to_run_lineage(
+    mutation: str,
+    expected_reason: str,
+) -> None:
+    attempt_event = _attempt_event()
+    direct_ref = {
+        "preregistered_root_run_id": "root-1",
+        "execution_binding": {
+            "execution_id": "run-1",
+            "task_id": "task-1",
+            "root_unit_id": "root-unit-1",
+        },
+        "attempt_refs": [attempt_event.to_dict()],
+    }
+    provider_refs = tuple(_artifact(role, attempt_id="run-1") for role in ONLINE_ROLES)
+    if mutation == "missing_run":
+        direct_ref["execution_binding"].pop("execution_id")
+    elif mutation == "wrong_run":
+        provider_refs = tuple(
+            _artifact(role, attempt_id="wrong-run") for role in ONLINE_ROLES
+        )
+    elif mutation == "wrong_attempt":
+        direct_ref["attempt_refs"][0]["object_id"] = "attempt-2"
+    elif mutation == "wrong_task":
+        provider_refs = tuple(
+            replace(value, source_task_id="wrong-task") for value in provider_refs
+        )
+    elif mutation == "wrong_role":
+        provider_refs = tuple(
+            replace(value, source_role="unexpected_role")
+            if value.source_role == "model_record"
+            else value
+            for value in provider_refs
+        )
+    elif mutation == "wrong_digest":
+        direct_ref["attempt_refs"][0]["event_hash"] = "sha256:not-a-digest"
+    elif mutation == "wrong_ref":
+        direct_ref["attempt_refs"][0]["event_id"] = "event-other"
+    sources = LineageSourceIndex.create(
+        records=(
+            LineageSourceRecord.create(
+                member_id="root-1",
+                evidence_class="online_real_provider",
+                direct_result_refs=(direct_ref,),
+                current_task_attempt_event_refs=(attempt_event,),
+                current_provider_object_refs=provider_refs,
+            ),
+            LineageSourceRecord.create(
+                member_id="attempt-1",
+                evidence_class="online_real_provider",
+                direct_result_refs=(direct_ref,),
+                current_task_attempt_event_refs=(attempt_event,),
+            ),
+        ),
+        input_identity_digest=INPUT_DIGEST,
+    )
+
+    _, publication = _materialize(
+        "exp1_feasibility",
+        "condition_summary",
+        ("preregistered_root_count",),
+        _online_bundle(),
+        sources,
+    )
+
+    observation = publication.observations[0]
+    assert observation.publish_blocked is True
+    assert observation.numeric_value is None
+    assert observation.null_reason == expected_reason
 
 
 def test_trace_observation_requires_source_locator_roles_and_marks_current_provider_na() -> None:

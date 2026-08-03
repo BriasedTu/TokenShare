@@ -355,6 +355,8 @@ def _materialize_one(
         metric.required_current_provider_roles,
         trace.bundle,
         provider_refs,
+        direct_refs=direct_refs,
+        current_refs=current_refs,
     )
     source_roles, source_role_issue = _validate_source_roles_per_identity(
         metric.required_source_bank_roles,
@@ -495,6 +497,14 @@ def _records_for_bundle(
             record = index.get(alias)
             if record is not None and record not in values:
                 values.append(record)
+    # attempt alias record 保留 attempt-scoped event；run-scoped provider artifacts
+    # 由同一 direct snapshot 指向的 root record 提供。
+    for record in tuple(values):
+        for direct_ref in record.direct_result_refs:
+            root_id = direct_ref.get("preregistered_root_run_id")
+            root_record = index.get(root_id) if isinstance(root_id, str) else None
+            if root_record is not None and root_record not in values:
+                values.append(root_record)
     return tuple(values)
 
 
@@ -608,13 +618,161 @@ def _validate_provider_roles_per_identity(
     required_roles: Sequence[str],
     bundle: MetricObservationBundle,
     values: Sequence[ArtifactIdentitySnapshot],
+    *,
+    direct_refs: Sequence[Mapping[str, Any]],
+    current_refs: Sequence[LedgerEventIdentitySnapshot],
 ) -> tuple[tuple[str, ...], str | None]:
+    if not required_roles:
+        return (), None
+    run_tasks, issue = _provider_run_tasks(
+        bundle,
+        direct_refs=direct_refs,
+        current_refs=current_refs,
+    )
+    if issue is not None:
+        return (), issue
+    for value in values:
+        task_id = run_tasks.get(value.source_execution_id)
+        if task_id is None:
+            return (), f"invalid_lineage_identity:{value.source_execution_id}"
+        if value.source_task_id != task_id:
+            return (), f"invalid_lineage_task:{value.source_execution_id}"
     return _validate_roles_per_identity(
         required_roles,
-        _required_provider_identities(bundle),
+        tuple(run_tasks),
         values,
         identity_attribute="source_execution_id",
         role_attribute="source_role",
+    )
+
+
+def _provider_run_tasks(
+    bundle: MetricObservationBundle,
+    *,
+    direct_refs: Sequence[Mapping[str, Any]],
+    current_refs: Sequence[LedgerEventIdentitySnapshot],
+) -> tuple[dict[str, str], str | None]:
+    """用 direct execution binding 把 attempt-scoped 事实绑定到 run-scoped artifact。"""
+
+    required_attempts = _required_provider_identities(bundle)
+    if not required_attempts:
+        return {}, "missing_required_lineage:provider_attempt"
+    required = set(required_attempts)
+    current_by_attempt: dict[str, list[LedgerEventIdentitySnapshot]] = {}
+    current_payloads = tuple(ref.to_dict() for ref in current_refs)
+    for ref in current_refs:
+        if ref.object_id not in required:
+            continue
+        if ref.object_type != "Attempt":
+            return {}, f"invalid_lineage_attempt:{ref.object_id}"
+        current_by_attempt.setdefault(ref.object_id, []).append(ref)
+
+    candidates: dict[str, set[tuple[str, str]]] = {
+        attempt_id: set() for attempt_id in required_attempts
+    }
+    for direct_ref in direct_refs:
+        binding = direct_ref.get("execution_binding")
+        attempt_refs = direct_ref.get("attempt_refs")
+        if not isinstance(binding, Mapping) or not isinstance(attempt_refs, Sequence):
+            continue
+        if isinstance(attempt_refs, (str, bytes, bytearray)):
+            return {}, "invalid_lineage_ref:attempt_refs"
+        run_id = binding.get("execution_id")
+        task_id = binding.get("task_id")
+        root_unit_id = binding.get("root_unit_id")
+        if any(not isinstance(value, str) or not value for value in (run_id, task_id, root_unit_id)):
+            return {}, "invalid_lineage_ref:execution_binding"
+        binding_issue = _validate_persisted_execution_binding(direct_ref, binding)
+        if binding_issue is not None:
+            return {}, binding_issue
+        binding_events = binding.get("events")
+        for raw_ref in attempt_refs:
+            if not isinstance(raw_ref, Mapping):
+                return {}, "invalid_lineage_ref:attempt"
+            attempt_id = raw_ref.get("object_id")
+            if (
+                raw_ref.get("schema_version")
+                != "tokenshare.ledger_event_identity_snapshot.v1"
+                or raw_ref.get("task_id") != task_id
+                or not _is_identity_digest(raw_ref.get("event_hash"))
+            ):
+                return {}, f"invalid_lineage_ref:{attempt_id}"
+            if dict(raw_ref) not in current_payloads:
+                return {}, f"invalid_lineage_ref:{attempt_id}"
+            if binding_events is not None and dict(raw_ref) not in binding_events:
+                return {}, f"invalid_lineage_ref:{attempt_id}:binding_events"
+            if raw_ref.get("object_type") == "Attempt" and attempt_id in required:
+                candidates[str(attempt_id)].add((str(run_id), str(task_id)))
+        if binding_events is not None:
+            for attempt_id in required_attempts:
+                if any(
+                    value.to_dict() in binding_events
+                    for value in current_by_attempt.get(attempt_id, ())
+                ):
+                    candidates[attempt_id].add((str(run_id), str(task_id)))
+
+    run_tasks: dict[str, str] = {}
+    for attempt_id in required_attempts:
+        aliases = candidates[attempt_id]
+        if len(aliases) != 1:
+            return {}, f"missing_required_lineage:{attempt_id}:execution_binding"
+        run_id, task_id = next(iter(aliases))
+        previous = run_tasks.setdefault(run_id, task_id)
+        if previous != task_id:
+            return {}, f"invalid_lineage_task:{run_id}"
+    return run_tasks, None
+
+
+def _validate_persisted_execution_binding(
+    direct_ref: Mapping[str, Any],
+    binding: Mapping[str, Any],
+) -> str | None:
+    """完整 canonical binding 出现时复核其 identity digest；最小 alias 仍由 event ref 锁定。"""
+
+    canonical_fields = {
+        "schema_version",
+        "preregistered_root_run_id",
+        "execution_id",
+        "task_id",
+        "root_unit_id",
+        "ledger_digest",
+        "events",
+        "binding_digest",
+    }
+    if not {
+        "schema_version",
+        "preregistered_root_run_id",
+        "ledger_digest",
+        "events",
+        "binding_digest",
+    }.intersection(binding):
+        return None
+    if set(binding) != canonical_fields:
+        return "invalid_lineage_ref:execution_binding"
+    root_id = direct_ref.get("preregistered_root_run_id")
+    if (
+        binding.get("schema_version")
+        != "tokenshare.direct_root_execution_binding.v1"
+        or binding.get("preregistered_root_run_id") != root_id
+        or not _is_identity_digest(binding.get("ledger_digest"))
+        or not isinstance(binding.get("events"), Sequence)
+        or isinstance(binding.get("events"), (str, bytes, bytearray))
+    ):
+        return "invalid_lineage_ref:execution_binding"
+    body = {name: binding[name] for name in canonical_fields - {"binding_digest"}}
+    if binding.get("ledger_digest") != _digest_json(binding["events"]):
+        return "invalid_lineage_digest:ledger"
+    if binding.get("binding_digest") != _digest_json(body):
+        return "invalid_lineage_digest:execution_binding"
+    return None
+
+
+def _is_identity_digest(value: object) -> bool:
+    return (
+        isinstance(value, str)
+        and value.startswith("sha256:")
+        and len(value) == 71
+        and all(character in "0123456789abcdef" for character in value[7:])
     )
 
 

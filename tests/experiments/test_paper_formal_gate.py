@@ -28,6 +28,66 @@ def _digest(char: str) -> str:
     return "sha256:" + char * 64
 
 
+def _selected_audit(*table_ids: str, evidence_class: str):
+    observation_ids = tuple(f"observation:{table_id}" for table_id in table_ids)
+    observation_digests = tuple(_digest(chr(ord("a") + index)) for index, _ in enumerate(table_ids))
+    output_refs = ({"path": "metrics/selected.json", "content_hash": _digest("6")},)
+    body = {
+        "descriptor_digest": _digest("1"),
+        "metrics_digest": _digest("2"),
+        "source_index_digest": _digest("3"),
+        "selected_table_ids": tuple(table_ids),
+        "observation_ids": observation_ids,
+        "observation_digests": observation_digests,
+        "observation_table_ids": tuple(table_ids),
+        "evidence_classes": (evidence_class,) * len(observation_ids),
+        "publish_blocked_observation_ids": (),
+        "direct_provenance_refs_digest": _digest("4"),
+        "output_refs_digest": gate.selected_formal_metrics_audit_digest(
+            {"output_refs": list(output_refs)}
+        ),
+        "output_refs": output_refs,
+        "non_regression": True,
+    }
+    return gate.SelectedFormalMetricsAudit(
+        **body,
+        selected_audit_digest=gate.selected_formal_metrics_audit_digest(body),
+    )
+
+
+def _route(
+    route_id: str,
+    evidence_class: str,
+    table_ids: tuple[str, ...],
+    *,
+    source_manifest_complete: bool,
+):
+    report = VersionedPaperEvidenceEligibilityReport(
+        paper_eligible=True,
+        ineligibility_reasons=(),
+        evidence_class=evidence_class,
+        source_classification=(
+            "current_real_provider"
+            if evidence_class == "online_real_provider"
+            else "approved_real_full_acquisition"
+        ),
+        executed_ai_unit_count=1,
+        current_provider_call_count=1 if evidence_class == "online_real_provider" else 0,
+        source_provider_call_count=0 if evidence_class == "online_real_provider" else 1,
+        direct_evidence_complete=True,
+        identity_consistent=True,
+        source_manifest_complete=source_manifest_complete,
+    )
+    first = _selected_audit(*table_ids, evidence_class=evidence_class)
+    return gate.SelectedEvidenceRoute(
+        route_id=route_id,
+        evidence_class=evidence_class,
+        table_ids=table_ids,
+        eligibility_reports=(report,),
+        selected_audits=(first, replace(first)),
+    )
+
+
 CONTRACT = load_paper_metric_contract()
 AUTHORITY = gate.PaperGateAuthorityDigests(
     profile_digest=CONTRACT.pipeline_profile_digest,
@@ -82,10 +142,122 @@ def _authorization(scope: str, selected: tuple[str, ...]) -> PaidAuthorizationVa
     )
 
 
-def _binding(scope: str, selected: tuple[str, ...]) -> gate.SelectedPaidAuthorizationBinding:
-    return gate.SelectedPaidAuthorizationBinding(
+def _default_authority(
+    scope: str, selected: tuple[str, ...]
+) -> gate.PaidAuthorizationScopeAuthority:
+    return gate.PaidAuthorizationScopeAuthority(
+        scope=scope,
+        authorized_plan_digest=AUTHORITY.plan_digest,
+        profile_digest=AUTHORITY.profile_digest,
+        budget_digest=_digest("5"),
+        inventory_digest=AUTHORITY.inventory_digest,
+        prompt_admission_profile_digest=_digest("6"),
         selected_experiments=selected,
-        validation=_authorization(scope, selected),
+        output_root_path_digest=_digest("7"),
+    )
+
+
+def _default_commitment(*experiments: str):
+    scopes = []
+    selected = set(experiments)
+    if "exp1" in selected:
+        scopes.append(_default_authority("exp1_full_online", ("exp1",)))
+    if selected & {"exp2", "exp3", "exp4"}:
+        scopes.append(
+            _default_authority(
+                "epd027_full_bank_acquisition", ("exp2", "exp3", "exp4")
+            )
+        )
+    if selected & {"exp2", "exp3"}:
+        scopes.append(
+            _default_authority(
+                "epd027_l3_capability_and_online_checks", ("exp2", "exp3")
+            )
+        )
+    if "exp5_capability" in selected:
+        scopes.append(
+            _default_authority("exp5_capability_smoke", ("exp5_capability",))
+        )
+    if "exp5" in selected:
+        scopes.append(_default_authority("exp5_full_online", ("exp5",)))
+    return gate.PaidAuthorizationAuthorityCommitment(
+        scope_authority_digests=tuple(
+            sorted((authority.scope, authority.authority_digest) for authority in scopes)
+        )
+    )
+
+
+def _binding(scope: str, selected: tuple[str, ...]) -> gate.SelectedPaidAuthorizationBinding:
+    validation = _authorization(scope, selected)
+    authority = _default_authority(scope, selected)
+    family = (
+        ("exp2", "exp3", "exp4")
+        if scope == "epd027_full_bank_acquisition"
+        else ("exp2", "exp3")
+        if scope == "epd027_l3_capability_and_online_checks"
+        else selected
+    )
+    commitment = _default_commitment(*family)
+    return gate.SelectedPaidAuthorizationBinding(
+        authority=authority,
+        validation=validation,
+        authority_commitment_digest=commitment.commitment_digest,
+    )
+
+
+def _scope_binding(
+    scope: str,
+    selected: tuple[str, ...],
+    *,
+    inventory_digest: str,
+    budget_digest: str,
+    output_root_path_digest: str,
+) -> gate.SelectedPaidAuthorizationBinding:
+    authority = gate.PaidAuthorizationScopeAuthority(
+        scope=scope,
+        authorized_plan_digest=AUTHORITY.plan_digest,
+        profile_digest=AUTHORITY.profile_digest,
+        budget_digest=budget_digest,
+        inventory_digest=inventory_digest,
+        prompt_admission_profile_digest=_digest("6"),
+        selected_experiments=selected,
+        output_root_path_digest=output_root_path_digest,
+    )
+    receipt = PaidExecutionReceipt(
+        schema_version="tokenshare.paid_execution_receipt.v1",
+        receipt_digest=_digest(scope[0]),
+        scope=scope,
+        authorized_plan_digest=authority.authorized_plan_digest,
+        profile_digest=authority.profile_digest,
+        budget_digest=authority.budget_digest,
+        inventory_digest=authority.inventory_digest,
+        prompt_admission_profile_digest=authority.prompt_admission_profile_digest,
+        selected_experiments=authority.selected_experiments,
+        output_root_path_digest=authority.output_root_path_digest,
+        not_before="2026-08-01T00:00:00Z",
+        expires_at="2026-08-04T00:00:00Z",
+        user_approval_reference="typed-test-authority",
+    )
+    marker = PaidOutputBindingMarker(
+        schema_version="tokenshare.paid_output_binding.v1",
+        marker_digest=_digest("8"),
+        receipt_digest=receipt.receipt_digest,
+        authorized_plan_digest=receipt.authorized_plan_digest,
+        profile_digest=receipt.profile_digest,
+        budget_digest=receipt.budget_digest,
+        inventory_digest=receipt.inventory_digest,
+        prompt_admission_profile_digest=receipt.prompt_admission_profile_digest,
+        output_root_path_digest=receipt.output_root_path_digest,
+    )
+    return gate.SelectedPaidAuthorizationBinding(
+        authority=authority,
+        validation=PaidAuthorizationValidation(
+            receipt=receipt,
+            marker=marker,
+            output_mode="resume",
+            authorization_state="reconcile_close_only",
+            provider_dispatch_allowed=False,
+        ),
     )
 
 
@@ -120,6 +292,7 @@ def _selection(*experiments: str, classification: str = "formal"):
         selected_experiments=experiments,
         classification=classification,
         authority=AUTHORITY,
+        authorization_commitment=_default_commitment(*experiments),
     )
 
 
@@ -145,6 +318,65 @@ def _eligibility(experiment: str):
         direct_evidence_complete=True,
         identity_consistent=True,
         source_manifest_complete=True,
+    )
+
+
+def _routes_for_experiment(experiment: str):
+    if experiment == "exp1":
+        return (
+            _route(
+                "online",
+                "online_real_provider",
+                ("exp1_feasibility",),
+                source_manifest_complete=False,
+            ),
+        )
+    if experiment == "exp2":
+        return (
+            _route(
+                "trace-main",
+                "real_model_trace_protocol_run",
+                ("exp2_trace_scalability",),
+                source_manifest_complete=True,
+            ),
+            _route(
+                "online-support",
+                "online_real_provider",
+                ("exp2_online_concurrency",),
+                source_manifest_complete=False,
+            ),
+        )
+    if experiment == "exp3":
+        return (
+            _route(
+                "trace-main",
+                "real_model_trace_protocol_run",
+                ("exp3_trace_robustness",),
+                source_manifest_complete=True,
+            ),
+            _route(
+                "online-support",
+                "online_real_provider",
+                ("exp3_online_recovery",),
+                source_manifest_complete=False,
+            ),
+        )
+    if experiment == "exp4":
+        return (
+            _route(
+                "trace",
+                "real_model_trace_protocol_run",
+                ("exp4_ablation",),
+                source_manifest_complete=True,
+            ),
+        )
+    return (
+        _route(
+            "online",
+            "online_real_provider",
+            ("exp5_quality", "exp5_resources"),
+            source_manifest_complete=False,
+        ),
     )
 
 
@@ -211,6 +443,14 @@ def _terminal(
         )
     if "exp5" in selected:
         bindings.append(_binding("exp5_full_online", ("exp5",)))
+    commitment = _default_commitment(*selected)
+    bindings = [
+        replace(
+            binding,
+            authority_commitment_digest=commitment.commitment_digest,
+        )
+        for binding in bindings
+    ]
     return gate.PaperGateTerminalEnvelope(
         experiment_evidence=tuple(
             gate.SelectedTerminalEvidence(
@@ -218,6 +458,7 @@ def _terminal(
                 terminal_status="completed",
                 eligibility=_eligibility(experiment),
                 formal_report=_report(),
+                routes=_routes_for_experiment(experiment),
             )
             for experiment in experiments
         ),
@@ -254,35 +495,45 @@ def _protected_exp2_inputs(
 
     trace_roots = tuple(root(Exp2TraceHydratedRoot, worker) for worker in EXP2_WORKER_COUNTS)
     online_roots = tuple(root(Exp2OnlineHydratedRoot, worker) for worker in EXP2_WORKER_COUNTS)
-    protected = ProtectedReplayInputRoot(
-        root_path=tmp_path / "protected",
-        descriptor_path=tmp_path / "protected" / "descriptor.json",
-        descriptor_digest=_digest("f"),
-        classification="normal_formal_artifact_root",
-        _producer_validated=True,
-    )
-    loaded = SimpleNamespace(
-        direct={
-            "exp2_trace_scalability": trace_roots,
-            "exp2_online_concurrency": online_roots,
-        }
-    )
+    trace_input_root = tmp_path / "trace"
+    online_input_root = tmp_path / "online"
+    protected_by_root = {
+        trace_input_root: ProtectedReplayInputRoot(
+            root_path=trace_input_root / "protected",
+            descriptor_path=trace_input_root / "protected" / "descriptor.json",
+            descriptor_digest=_digest("e"),
+            classification="normal_formal_artifact_root",
+            _producer_validated=True,
+        ),
+        online_input_root: ProtectedReplayInputRoot(
+            root_path=online_input_root / "protected",
+            descriptor_path=online_input_root / "protected" / "descriptor.json",
+            descriptor_digest=_digest("f"),
+            classification="normal_formal_artifact_root",
+            _producer_validated=True,
+        ),
+    }
+    loaded_by_root = {
+        trace_input_root: SimpleNamespace(
+            direct={"exp2_trace_scalability": trace_roots}
+        ),
+        online_input_root: SimpleNamespace(
+            direct={"exp2_online_concurrency": online_roots}
+        ),
+    }
     monkeypatch.setattr(
         paper_formal_runner,
         "load_paper_traceability_replay_input_root",
-        lambda root_path: protected
-        if Path(root_path) == tmp_path
-        else pytest.fail("protected root loader received a different root"),
+        lambda root_path: protected_by_root[Path(root_path)],
     )
     monkeypatch.setattr(
         paper_formal_runner,
         "load_paper_traceability_replay_inputs",
-        lambda root_path: loaded
-        if Path(root_path) == tmp_path
-        else pytest.fail("protected closure loader received a different root"),
+        lambda root_path: loaded_by_root[Path(root_path)],
     )
     return gate.load_exp2_post_bank_publication_inputs(
-        replay_input_root=tmp_path,
+        trace_replay_input_root=trace_input_root,
+        online_replay_input_root=online_input_root,
         contract=CONTRACT,
         authority=AUTHORITY,
     )
@@ -297,6 +548,49 @@ def test_execution_gate_checks_only_prerequisites_available_before_selected_run(
     assert decision.status == "ready"
     assert decision.blocked_reasons == ()
     assert decision.provider_calls == 0
+
+
+def test_route_aware_terminal_accepts_online_manifest_na_and_requires_support_route(
+    tmp_path: Path,
+) -> None:
+    online = _route(
+        "online",
+        "online_real_provider",
+        ("exp1_feasibility",),
+        source_manifest_complete=False,
+    )
+    exp1 = gate.SelectedTerminalEvidence(
+        experiment_id="exp1",
+        terminal_status="completed_with_failures",
+        eligibility=_eligibility("exp1"),
+        formal_report=_report(),
+        routes=(online,),
+    )
+    terminal = _terminal(tmp_path, "exp1")
+    terminal = replace(terminal, experiment_evidence=(exp1,))
+
+    assert gate.paper_publication_gate(_selection("exp1"), terminal).status == "ready"
+
+    trace_only = gate.SelectedTerminalEvidence(
+        experiment_id="exp2",
+        terminal_status="completed",
+        eligibility=_eligibility("exp2"),
+        formal_report=_report(),
+        routes=(
+            _route(
+                "trace-main",
+                "real_model_trace_protocol_run",
+                ("exp2_trace_scalability",),
+                source_manifest_complete=True,
+            ),
+        ),
+    )
+    missing_support = replace(
+        _terminal(tmp_path, "exp2"), experiment_evidence=(trace_only,)
+    )
+    assert "selected_route_missing:exp2:online-support" in gate.paper_publication_gate(
+        _selection("exp2"), missing_support
+    ).blocked_reasons
 
 
 def test_execution_gate_never_requires_l4_outputs_or_post_bank_severe() -> None:
@@ -400,7 +694,8 @@ def test_exp2_publication_inputs_require_official_protected_replay_factory(
     inputs = _protected_exp2_inputs(tmp_path, monkeypatch)
     assert inputs.contract_digest == AUTHORITY.contract_digest
     assert inputs.profile_digest == AUTHORITY.profile_digest
-    assert inputs.protected_replay_descriptor_digest == _digest("f")
+    assert inputs.trace_replay_descriptor_digest == _digest("e")
+    assert inputs.online_replay_descriptor_digest == _digest("f")
     with pytest.raises(ValueError, match="official protected replay factory"):
         gate.Exp2PostBankPublicationInputs(
             contract=CONTRACT,
@@ -409,7 +704,8 @@ def test_exp2_publication_inputs_require_official_protected_replay_factory(
             contract_digest=AUTHORITY.contract_digest,
             profile_digest=AUTHORITY.profile_digest,
             authority_digest=AUTHORITY.authority_digest,
-            protected_replay_descriptor_digest=_digest("f"),
+            trace_replay_descriptor_digest=_digest("e"),
+            online_replay_descriptor_digest=_digest("f"),
             worker_levels_complete=True,
         )
     monkeypatch.setattr(
@@ -455,6 +751,184 @@ def test_exp3_publication_requires_online_check_receipt_scope(tmp_path: Path) ->
     )
 
 
+def test_exp4_publication_does_not_require_l3_online_check_receipt(
+    tmp_path: Path,
+) -> None:
+    terminal = _terminal(tmp_path, "exp4")
+    assert {
+        binding.authority.scope for binding in terminal.paid_authorizations
+    } == {"epd027_full_bank_acquisition"}
+    assert gate.paper_publication_gate(_selection("exp4"), terminal).status == "ready"
+
+
+def test_bank_and_l3_receipts_accept_distinct_scope_authorities_and_reject_cross_binding(
+    tmp_path: Path,
+) -> None:
+    bank = _scope_binding(
+        "epd027_full_bank_acquisition",
+        ("exp2", "exp3", "exp4"),
+        inventory_digest=AUTHORITY.inventory_digest,
+        budget_digest=_digest("5"),
+        output_root_path_digest=_digest("7"),
+    )
+    l3 = _scope_binding(
+        "epd027_l3_capability_and_online_checks",
+        ("exp2", "exp3"),
+        inventory_digest=_digest("a"),
+        budget_digest=_digest("b"),
+        output_root_path_digest=_digest("c"),
+    )
+    commitment = gate.build_paid_authorization_authority_commitment((bank, l3))
+    bank = replace(
+        bank, authority_commitment_digest=commitment.commitment_digest
+    )
+    l3 = replace(l3, authority_commitment_digest=commitment.commitment_digest)
+    selection = replace(
+        _selection("exp3"), authorization_commitment=commitment
+    )
+    terminal = replace(
+        _terminal(tmp_path, "exp3"),
+        paid_authorizations=(bank, l3),
+    )
+
+    assert gate.paper_publication_gate(selection, terminal).status == "ready"
+
+    wrong_inventory = replace(
+        l3,
+        authority=replace(l3.authority, inventory_digest=_digest("d")),
+    )
+    wrong_digest = gate.paper_publication_gate(
+        selection,
+        replace(terminal, paid_authorizations=(bank, wrong_inventory)),
+    )
+    assert wrong_digest.status == "blocked"
+    assert (
+        "paid_authorization_inventory_digest_mismatch:epd027_l3_capability_and_online_checks"
+        in wrong_digest.blocked_reasons
+    )
+
+    for changed_authority, expected_reason in (
+        (
+            replace(l3.authority, selected_experiments=("exp2",)),
+            "paid_authorization_selection_mismatch:epd027_l3_capability_and_online_checks",
+        ),
+        (
+            replace(l3.authority, output_root_path_digest=_digest("d")),
+            "paid_authorization_output_root_path_digest_mismatch:epd027_l3_capability_and_online_checks",
+        ),
+    ):
+        decision = gate.paper_publication_gate(
+            selection,
+            replace(
+                terminal,
+                paid_authorizations=(bank, replace(l3, authority=changed_authority)),
+            ),
+        )
+        assert decision.status == "blocked"
+        assert expected_reason in decision.blocked_reasons
+
+    crossed_scope = replace(
+        l3,
+        authority=replace(l3.authority, scope="epd027_full_bank_acquisition"),
+    )
+    wrong_scope = gate.paper_publication_gate(
+        selection,
+        replace(terminal, paid_authorizations=(bank, crossed_scope)),
+    )
+    assert wrong_scope.status == "blocked"
+    assert any(
+        reason.endswith(":epd027_l3_capability_and_online_checks")
+        for reason in wrong_scope.blocked_reasons
+    )
+
+
+def test_synchronized_selection_and_binding_authority_forge_still_hits_receipt(
+    tmp_path: Path,
+) -> None:
+    terminal = _terminal(tmp_path, "exp3")
+    bank, l3 = terminal.paid_authorizations
+    forged_l3 = replace(
+        l3,
+        authority=replace(
+            l3.authority,
+            output_root_path_digest=_digest("d"),
+        ),
+    )
+    forged_commitment = gate.build_paid_authorization_authority_commitment(
+        (bank, forged_l3)
+    )
+    forged_bindings = tuple(
+        replace(
+            binding,
+            authority_commitment_digest=forged_commitment.commitment_digest,
+        )
+        for binding in (bank, forged_l3)
+    )
+    forged_selection = replace(
+        _selection("exp3"),
+        authorization_commitment=forged_commitment,
+    )
+
+    decision = gate.paper_publication_gate(
+        forged_selection,
+        replace(terminal, paid_authorizations=forged_bindings),
+    )
+
+    assert decision.status == "blocked"
+    assert (
+        "paid_authority_commitment_receipt_mismatch:"
+        "epd027_l3_capability_and_online_checks"
+    ) in decision.blocked_reasons
+
+
+@pytest.mark.parametrize("selected", ("exp1", "exp5"))
+def test_selected_subset_does_not_require_global_eight_table_report(
+    tmp_path: Path,
+    selected: str,
+) -> None:
+    globally_blocked_report = replace(
+        _report(),
+        paper_eligible=False,
+        regression_only=True,
+    )
+    unselected_report = replace(
+        globally_blocked_report,
+        tables_digest=_digest("9"),
+        cell_lineage_digest=_digest("8"),
+        observations_digest=_digest("7"),
+    )
+    terminal = _terminal(tmp_path, selected)
+    terminal = replace(
+        terminal,
+        experiment_evidence=(
+            replace(
+                terminal.experiment_evidence[0],
+                formal_report=globally_blocked_report,
+            ),
+            gate.SelectedTerminalEvidence(
+                experiment_id="exp4",
+                terminal_status="completed_with_failures",
+                eligibility=_eligibility("exp4"),
+                formal_report=unselected_report,
+                routes=(),
+            ),
+        ),
+        replay_results=tuple(
+            replace(replay, report=globally_blocked_report)
+            for replay in terminal.replay_results
+        ),
+    )
+
+    subset = gate.paper_publication_gate(_selection(selected), terminal)
+    assert subset.status == "ready"
+
+    p0_full = gate.paper_publication_gate(
+        _selection("exp1", "exp2", "exp3", "exp4", "exp5"), terminal
+    )
+    assert p0_full.status == "blocked"
+    assert "formal_aggregate_report_ineligible" in p0_full.blocked_reasons
+
+
 def test_unselected_experiment_approval_is_not_required() -> None:
     decision = gate.formal_execution_gate(
         _selection("exp1"), _prerequisites(_binding("exp1_full_online", ("exp1",)))
@@ -465,12 +939,21 @@ def test_unselected_experiment_approval_is_not_required() -> None:
 
 def test_p0_full_is_the_only_formal_selection_that_aggregates_all_scopes() -> None:
     selected = ("exp1", "exp2", "exp3", "exp4", "exp5")
+    bindings = (
+        _binding("exp1_full_online", ("exp1",)),
+        _binding("epd027_full_bank_acquisition", ("exp2", "exp3", "exp4")),
+        _binding("epd027_l3_capability_and_online_checks", ("exp2", "exp3")),
+        _binding("exp5_full_online", ("exp5",)),
+    )
+    commitment = _default_commitment(*selected)
+    bindings = tuple(
+        replace(binding, authority_commitment_digest=commitment.commitment_digest)
+        for binding in bindings
+    )
     decision = gate.formal_execution_gate(
         _selection(*selected),
         _prerequisites(
-            _binding("exp1_full_online", ("exp1",)),
-            _binding("epd027_full_bank_acquisition", ("exp2", "exp3", "exp4")),
-            _binding("exp5_full_online", ("exp5",)),
+            *bindings,
             full_bank=_full_bank(),
         ),
     )
