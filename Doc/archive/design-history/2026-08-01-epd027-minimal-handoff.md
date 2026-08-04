@@ -192,3 +192,13 @@ EPD-027 的 Task 0–29 已 accepted（`30/35`）。Task 29 实现提交为 `555
 provider/network=`0/0`。没有 Task26 verified paid receipt，formal paper matrix 继续 `NO-GO`，不得真实 API。三个 deferred Minor 是 Task28 facility predicate、`offline_gate_parser_only`、以及 Task29 trace 顶层 result/wrapper 未暴露两份 receipt digest。
 
 90 分钟 checkpoint 仅为历史；当前 active writer=`0` / accepted。下一动作仅为监督者只读 Task30 单段并冻结，尚未进入或实施 Task30。code map 依 Task 硬边界未修改，并登记为 milestone follow-up。
+
+## Task 30 accepted
+
+EPD-027 的 Task 0–30 已 accepted（`31/35`）。prestart commits=`2d7240f4`/`012fcc32`，90 分钟 checkpoint=`23a21146`，implementation commit=`9ec806b4f261a3c1b27968891eaa07cf274a2466`。范围严格为原 8 文件加唯一批准的第 9 文件 `tests/experiments/test_paper_full_resource_trace.py`，无第 10 文件或 production 扩张。
+
+GREEN 精要：RED=`10/15`，canonical 最终=`25 passed`；profiles L1/L2/L3/L4=`441/8/2/2`，总计 `453 selectors/892 items`；L1 首次32、expanded855 passed、final composite full-run877 passed+2 precise repaired passed；Task19/23/24新增=`2/6/1`；L2 relative-root=`2 passed`；L3 missing-root blocked exit3、outside-root exit1、PowerShell/Bash exit3；overlap=`1 passed in 9.08s`；500-root=`1 passed in 1846.39s`。final review=`0C/0I`；minimizer `<3m`、零修改。
+
+provider/network=`0/0`，无 verified paid receipt/secret，formal matrix 继续 **NO-GO**。deferred Minor 共4项：既有 Task28 facility predicate、`offline_gate_parser_only`、Task29 receipt digest 暴露，加 Task30 artifact audit 先于 pytest tripwire 激活但当前 stored replay 无 provider。code-map milestone follow-up 保留。
+
+当前/下一步仅为 Task31 freeze-only，尚未实施 Task31；不得读取其计划正文或调用真实 API。

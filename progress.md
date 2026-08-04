@@ -7,20 +7,20 @@
 ## 当前权威状态（EPD-027）
 
 - Active feature：`feat-011`（Paper Real AI Experiments），仍为 `in-progress`。
-- EPD-027 共 35 个 Task；Task 0–29 已 accepted，计 `30/35`。Task 29 实现 commit=`555d9f3d0cb808b419ecbecfc59e37b2d1ace62d`（`feat(experiments): replace legacy smoke launchers`）；验收状态 commit=`ae865dc0`。
+- EPD-027 共 35 个 Task；Task 0–30 已 accepted，计 `31/35`。Task 30 implementation commit=`9ec806b4f261a3c1b27968891eaa07cf274a2466`。
 - Task 29 实现范围严格为 `21` 个 approved implementation 文件，另有 `10` 个已批准 `PLAN_OUT` 文件；无未批准文件。未扩大到协议核心、模型/指标 contract、Lean adapter 或 renderer。
 - Task 29 已审定证据（验收时未复跑）：review=`0 Critical / 0 Important`；canonical=`49 passed`；pipeline affected=`9`；CLI affected=`3`；core=`204`；official closure=`3`（CNY complete ready，USD/missing usage blocked）；runner=`158`；observation=`17`；complete-CNY 正例=`1`；PowerShell parse=`9/9`。post-accept minimization=`0` 修改、`0` 删除、`0` 合并。
 - provider/network calls=`0/0`，无经 Task 26 验证的 paid receipt；正式论文矩阵始终为 **NO-GO**，不得调用真实 API 或把离线/trace 结果描述为当次 `real_transport`。
 - 正式矩阵 NO-GO 原因未变：没有 `Task 26 verified paid receipt`，且 provider/network=`0/0`。receipt、offline、mode、admission、budget、secret 等门禁仍须 fail closed。
-- 恰有 3 项 deferred Minor：Task28 facility execution predicate 细节；`run_paper_pipeline` 的 `offline_gate_parser_only` stage；Task29 trace 顶层 result/wrapper 不暴露两份 receipt digest。
+- 恰有 4 项 deferred Minor：Task28 facility execution predicate 细节；`run_paper_pipeline` 的 `offline_gate_parser_only` stage；Task29 trace 顶层 result/wrapper 不暴露两份 receipt digest；Task30 artifact audit 先于 pytest tripwire 激活，但当前 stored replay 无 provider。code-map 仍保留 milestone follow-up。
 
-## Task 30 冻结交接
+## Task 30 accepted / Task 31 freeze-only
 
-- 90 分钟 checkpoint：Task30 初始 `8` 文件实现已完成，canonical=`25 passed`；I2 path Important 已关闭，L1 扩至 `438` selectors / 四档 `883` cases。
-- 最新 L1 实测 exit=`1`：`877 passed / 2 failed in 3479.84s`。blocker 是 Task22 两个有效 resource 节点仍使用旧的非法 Exp1+trace fixture，authority 已正确拒绝。
-- scope expansion：implementer 已正式提出 PLAN_OUT_REQUEST、同一 reviewer 已确认；监督仅批准第 `9` 文件 `tests/experiments/test_paper_full_resource_trace.py`，production 零扩张；planned_out_files=该 `1` 文件。
-- Task30 尚未 accepted，现保留未提交 `9` 文件 implementation diff；预计 `90–150` 分钟（500-root 定向可能约 `58` 分钟）。provider/network=`0/0`，formal matrix 仍 **NO-GO**、无 verified paid receipt。
-- 最新 handoff anchor：2026-08-04 Task30 90-min checkpoint；本文件是当前短摘要，完整命令输出、review 轮次与交接风险以 handoff/history 为准。
+- prestart commits=`2d7240f4`/`012fcc32`，90-minute checkpoint=`23a21146`；Task30 implementation=`9ec806b4`。范围严格为原 `8` 文件加唯一批准的第 `9` 文件 `tests/experiments/test_paper_full_resource_trace.py`，无第 `10` 文件或 production 扩张。
+- RED=`10/15`，canonical 最终=`25 passed`。profiles final：L1=`441`、L2=`8`、L3=`2`、L4=`2`，总计 `453 selectors / 892 items`；L1 首次=`32`，expanded=`855 passed`，final composite full-run=`877 passed` + `2` precise repaired passes。
+- 新增 GREEN：Task19=`2`、Task23=`6`、Task24=`1`；L2 relative root=`2 passed`；L3 missing root blocked exit=`3`、outside root exit=`1`、PowerShell/Bash exit=`3`；overlap=`1 passed in 9.08s`；500-root=`1 passed in 1846.39s`。
+- final review=`0 Critical / 0 Important`；minimizer `<3m` 且零修改。provider/network=`0/0`，无 receipt/secret；formal matrix 仍 **NO-GO**。
+- Task31 当前仅 freeze-only、尚未实施；下一动作仅由监督者只读冻结 Task31。最新 handoff anchor：2026-08-04 Task30 accepted / Task31 freeze-only。
 
 ## 已接受历史摘要（Task 0–28）
 
