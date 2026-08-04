@@ -16,9 +16,11 @@
 
 ## Task 30 冻结交接
 
-- Task 30 当前仅为“刚冻结、未实现”。Tier 1 两文件已压缩至约 `7.6KB/8.2KB`；Task29 遗留旧 launcher supervision 已由 commit=`2d7240f4` 同步。
-- 当前默认 baseline=`515 passed, 1 skipped`，provider/network=`0/0`；Task30 八文件 writer 现可恢复。不得把本次文档压缩或 baseline 解释为 Task30 实现、验收或 formal matrix GO。
-- 最新 handoff anchor：2026-08-04 Task29 accepted / Task30 prestart；active writer=`0`。本文件是当前短摘要，完整命令输出、review 轮次与交接风险以 handoff/history 为准。
+- 90 分钟 checkpoint：Task30 初始 `8` 文件实现已完成，canonical=`25 passed`；I2 path Important 已关闭，L1 扩至 `438` selectors / 四档 `883` cases。
+- 最新 L1 实测 exit=`1`：`877 passed / 2 failed in 3479.84s`。blocker 是 Task22 两个有效 resource 节点仍使用旧的非法 Exp1+trace fixture，authority 已正确拒绝。
+- scope expansion：implementer 已正式提出 PLAN_OUT_REQUEST、同一 reviewer 已确认；监督仅批准第 `9` 文件 `tests/experiments/test_paper_full_resource_trace.py`，production 零扩张；planned_out_files=该 `1` 文件。
+- Task30 尚未 accepted，现保留未提交 `9` 文件 implementation diff；预计 `90–150` 分钟（500-root 定向可能约 `58` 分钟）。provider/network=`0/0`，formal matrix 仍 **NO-GO**、无 verified paid receipt。
+- 最新 handoff anchor：2026-08-04 Task30 90-min checkpoint；本文件是当前短摘要，完整命令输出、review 轮次与交接风险以 handoff/history 为准。
 
 ## 已接受历史摘要（Task 0–28）
 
