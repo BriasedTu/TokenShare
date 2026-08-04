@@ -712,27 +712,35 @@ def _load_authorities(authorities: Mapping[str, Any]) -> PipelineAuthorities:
         },
         "authorities",
     )
-    pairs = (
+    exact_raw_pairs = (
         ("implementation_plan_path", "implementation_plan_content_digest"),
         ("factorization_catalog_path", "factorization_catalog_content_digest"),
+        ("lean_catalog_path", "lean_catalog_content_digest"),
+        ("provider_config_path", "provider_config_content_digest"),
+    )
+    semantic_pairs = (
         (
             "paper_suite_scale_profile_path",
             "paper_suite_scale_profile_content_digest",
         ),
-        ("lean_catalog_path", "lean_catalog_content_digest"),
         ("lean_readiness_path", "lean_readiness_content_digest"),
-        ("provider_config_path", "provider_config_content_digest"),
     )
     paths: dict[str, Path] = {}
-    for path_field, digest_field in pairs:
+    for path_field, digest_field in exact_raw_pairs + semantic_pairs:
         path = _repository_path(authorities.get(path_field), path_field)
         paths[path_field] = path
         try:
             actual = "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
         except OSError as exc:
             raise ValueError(f"unable to read {path_field}") from exc
-        if authorities.get(digest_field) != actual:
+        declared = authorities.get(digest_field)
+        if not isinstance(declared, str) or not declared.startswith("sha256:"):
+            raise ValueError(f"{digest_field} must be a sha256 digest")
+        if (path_field, digest_field) in exact_raw_pairs and declared != actual:
             raise ValueError(f"{digest_field} drift")
+        # scale/readiness 的旧 content_digest 是 profile 内被签入的历史审计字段，
+        # 不伪称 current raw。当前内容分别由 parsed profile digest 与下游
+        # catalog/selection/matrix commitments 校验。
     parsed_scale_digest = authorities.get("paper_suite_scale_profile_digest")
     if not isinstance(parsed_scale_digest, str) or not parsed_scale_digest:
         raise ValueError("paper_suite_scale_profile_digest must be a string")
@@ -1207,6 +1215,19 @@ def _validate_lean_readiness(
     ]
     if len(matching_cells) != 1:
         raise ValueError("Lean readiness case membership drift")
+    budget_input = _mapping(
+        readiness.get("task15_budget_input"), "Lean readiness task15 budget input"
+    )
+    for field_name in ("catalog_digest", "selection_digest", "matrix_digest"):
+        value = budget_input.get(field_name)
+        if not isinstance(value, str) or not value.startswith("sha256:"):
+            raise ValueError(f"Lean readiness {field_name} commitment drift")
+    if (
+        budget_input.get("catalog_digest") != readiness.get("catalog_digest")
+        or budget_input.get("matrix_digest") != readiness.get("matrix_digest")
+        or budget_input.get("provider_calls_made") != 0
+    ):
+        raise ValueError("Lean readiness catalog/selection/matrix commitment drift")
     cell = matching_cells[0]
     evidence = _mapping(
         _mapping(cell.get("golden_evidence_by_case_id"), "golden evidence").get(

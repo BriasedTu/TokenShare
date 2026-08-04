@@ -19,6 +19,9 @@ from tokenshare.plugins.lean_proof.models import (
     LeanTheoremPayload,
     canonical_json_digest,
 )
+from tokenshare.plugins.lean_proof.semantic_authority import (
+    load_lean_semantic_authority,
+)
 
 
 LEAN_CATALOG_PREFLIGHT_MANIFEST_SCHEMA_VERSION = (
@@ -604,10 +607,10 @@ def _run_default_catalog_audit(
     for case in graph_cases:
         paper_catalog._validate_lean_lemma_graph_case(case)
 
-    static_environment = (
-        paper_catalog._current_lean_environment_manifest_without_preflight()
+    semantic_authority = load_lean_semantic_authority(
+        repository_root=_REPOSITORY_ROOT
     )
-    environment_digest = str(static_environment.environment_digest)
+    environment_digest = semantic_authority.authority_environment_digest
     paper_catalog._validate_lean_environment_digest(
         lean_cases,
         expected_digest=environment_digest,
@@ -620,6 +623,9 @@ def _run_default_catalog_audit(
         lean_cases=lean_cases,
         lean_lemma_graph_cases=graph_cases,
         environment_digest=environment_digest,
+        checker_implementation_digest=(
+            semantic_authority.authority_checker_implementation_digest
+        ),
     )
     source_digests = {
         "lean_catalog": paper_catalog._file_digest(DEFAULT_LEAN_CATALOG_PATH),
@@ -640,11 +646,21 @@ def _run_default_catalog_audit(
 
         def checker(candidate: LeanCatalogAuditCandidate) -> LeanCatalogPreflightEntry:
             if not real_environment:
-                environment_manifest = paper_catalog._default_lean_environment_manifest()
-                if environment_manifest.environment_digest != environment_digest:
+                current_authority = load_lean_semantic_authority(
+                    repository_root=_REPOSITORY_ROOT
+                )
+                if (
+                    current_authority.sidecar_digest
+                    != semantic_authority.sidecar_digest
+                    or current_authority.semantic_environment_digest
+                    != semantic_authority.semantic_environment_digest
+                    or current_authority.semantic_checker_digest
+                    != semantic_authority.semantic_checker_digest
+                ):
                     raise LeanCatalogAuditError(
-                        "Lean environment changed between static digest and preflight"
+                        "Lean semantic authority changed between audit and preflight"
                     )
+                environment_manifest = paper_catalog._default_lean_environment_manifest()
                 real_environment.append(environment_manifest)
             environment_manifest = real_environment[0]
 

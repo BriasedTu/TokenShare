@@ -7,7 +7,11 @@ from dataclasses import dataclass
 from typing import Any
 
 from tokenshare.core.models import ArtifactRef, JsonObject
-from tokenshare.plugins.lean_proof.environment import LeanEnvironmentManifest
+from tokenshare.plugins.lean_proof.environment import (
+    LEAN_ENVIRONMENT_AUTHORITY_BRIDGE_SCHEMA_VERSION,
+    LeanEnvironmentManifest,
+    build_lean_environment_ref,
+)
 from tokenshare.plugins.lean_proof.models import (
     LEAN_LEMMA_GRAPH_STRUCTURED_BLOCKED_SHAPE,
     LeanLemmaGraphCertificate,
@@ -17,6 +21,9 @@ from tokenshare.plugins.lean_proof.models import (
 from tokenshare.plugins.lean_proof.schemas import (
     DETERMINISTIC_TACTIC_SPLIT_STRATEGY_ID,
     PROOF_ARTIFACT_OUTPUT_NAME,
+)
+from tokenshare.plugins.lean_proof.semantic_authority import (
+    LEAN_SEMANTIC_AUTHORITY_SCHEMA_VERSION,
 )
 
 
@@ -235,8 +242,18 @@ def build_fixed_plan_certificate(
 ) -> LeanLemmaGraphCertificate:
     """由插件校验后的固定 plan 生成既有 v2 lemma-DAG certificate。"""
 
-    if plan.environment_digest != environment_manifest.environment_digest:
-        raise ValueError("fixed plan environment_digest does not match environment")
+    certificate_environment_digest = str(environment_manifest.environment_digest)
+    environment_authority_bridge: JsonObject | None = None
+    if plan.environment_digest != certificate_environment_digest:
+        environment_ref = build_lean_environment_ref(
+            environment_manifest,
+            expected_authority_environment_digest=plan.environment_digest,
+        )
+        environment_authority_bridge = _environment_authority_bridge(
+            plan=plan,
+            runtime_environment_digest=certificate_environment_digest,
+            tool_versions=environment_ref.tool_versions,
+        )
     nodes: list[JsonObject] = []
     for node in plan.lemma_nodes:
         node_id = str(node["node_id"])
@@ -286,7 +303,7 @@ def build_fixed_plan_certificate(
             "lemma_nodes": nodes,
             "dependency_edges": copy.deepcopy(plan.dependency_edges),
             "merge_nodes": _merge_nodes(plan),
-            "environment_digest": plan.environment_digest,
+            "environment_digest": certificate_environment_digest,
             "oracle_proof_package_ref": oracle_ref,
             "oracle_proof_package_digest": oracle_digest,
             "diagnostics": {
@@ -294,11 +311,51 @@ def build_fixed_plan_certificate(
                 "plan_id": plan.plan_id,
                 "plan_digest": plan.plan_digest,
                 "preflight_status": plan.preflight_status,
+                **(
+                    {}
+                    if environment_authority_bridge is None
+                    else {
+                        "environment_authority_bridge": environment_authority_bridge
+                    }
+                ),
             },
         },
-        expected_environment_digest=environment_manifest.environment_digest,
+        expected_environment_digest=certificate_environment_digest,
     )
     return certificate
+
+
+def _environment_authority_bridge(
+    *,
+    plan: LeanFixedDecompositionPlan,
+    runtime_environment_digest: str,
+    tool_versions: JsonObject,
+) -> JsonObject:
+    semantic_authority_schema_version = tool_versions.get(
+        "semantic_authority_schema_version"
+    )
+    if semantic_authority_schema_version != LEAN_SEMANTIC_AUTHORITY_SCHEMA_VERSION:
+        raise ValueError("Lean environment authority bridge schema version mismatch")
+    digests = {
+        field_name: tool_versions.get(field_name)
+        for field_name in (
+            "authority_environment_digest",
+            "runtime_environment_digest",
+            "semantic_environment_digest",
+            "sidecar_digest",
+        )
+    }
+    for field_name, digest in digests.items():
+        _require_digest(field_name, digest)
+    if digests["authority_environment_digest"] != plan.environment_digest:
+        raise ValueError("Lean environment authority bridge does not match fixed plan")
+    if digests["runtime_environment_digest"] != runtime_environment_digest:
+        raise ValueError("Lean environment authority bridge runtime digest mismatch")
+    return {
+        "schema_version": LEAN_ENVIRONMENT_AUTHORITY_BRIDGE_SCHEMA_VERSION,
+        "semantic_authority_schema_version": semantic_authority_schema_version,
+        **digests,
+    }
 
 
 def _validate_graph(plan: LeanFixedDecompositionPlan) -> None:

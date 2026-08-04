@@ -37,6 +37,9 @@ from tokenshare.experiments.paper_models import (
     UNSUPPORTED_PAPER_TRANSPORTS,
     digest_json,
 )
+from tokenshare.plugins.lean_proof.semantic_authority import (
+    load_lean_semantic_authority,
+)
 
 
 EXP5_EXPERIMENT_ID = "exp5_real_ai_model_endpoint_comparison"
@@ -1689,13 +1692,22 @@ def _validate_v3_selection_source_files(parent: Mapping[str, Any]) -> None:
     ) != expected_paths:
         raise ValueError("Experiment 5 v3 parent source catalog identity drift")
     repository_root = Path(__file__).resolve().parents[3]
+    semantic_authority = load_lean_semantic_authority(
+        repository_root=repository_root
+    )
     for item, relative_path in zip(source_files, expected_paths, strict=True):
         content_digest = item.get("content_digest")
         _require_complete_digest("content_digest", content_digest)
         source_path = repository_root / relative_path
         observed = f"sha256:{sha256(source_path.read_bytes()).hexdigest()}"
-        if observed != content_digest:
+        if relative_path == expected_paths[0] and observed != content_digest:
             raise ValueError("Experiment 5 v3 parent source catalog drift")
+        if relative_path != expected_paths[0] and observed != (
+            semantic_authority.raw_authority_digests[relative_path]
+        ):
+            raise ValueError("Experiment 5 v3 current Lean source authority drift")
+        # v3 content_digest 是由 selection_digest 覆盖的历史 provenance；
+        # current Lean raw bytes 只由 versioned semantic-authority sidecar 绑定。
     readiness = parent.get("lean_readiness")
     expected_readiness_path = (
         "benchmarks/paper/lean_task14_3x3_readiness.v1.json"
@@ -1711,12 +1723,30 @@ def _validate_v3_selection_source_files(parent: Mapping[str, Any]) -> None:
         "selection_digest",
     ):
         _require_complete_digest(field_name, readiness.get(field_name))
-    observed_readiness = (
-        "sha256:"
-        + sha256((repository_root / expected_readiness_path).read_bytes()).hexdigest()
-    )
-    if observed_readiness != readiness.get("content_digest"):
-        raise ValueError("Experiment 5 v3 Lean readiness source drift")
+    try:
+        current_readiness = json.loads(
+            (repository_root / expected_readiness_path).read_text(encoding="utf-8")
+        )
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError("Experiment 5 v3 Lean readiness is unreadable") from exc
+    if not isinstance(current_readiness, Mapping):
+        raise ValueError("Experiment 5 v3 Lean readiness must be an object")
+    budget_input = current_readiness.get("task15_budget_input")
+    if not isinstance(budget_input, Mapping):
+        raise ValueError("Experiment 5 v3 Lean readiness commitments are missing")
+    for field_name in ("catalog_digest", "selection_digest", "matrix_digest"):
+        _require_complete_digest(field_name, budget_input.get(field_name))
+    if (
+        current_readiness.get("provider_calls_made") != 0
+        or budget_input.get("provider_calls_made") != 0
+        or current_readiness.get("catalog_digest") != readiness.get("catalog_digest")
+        or budget_input.get("catalog_digest") != readiness.get("catalog_digest")
+        or budget_input.get("selection_digest") != readiness.get("selection_digest")
+        or budget_input.get("matrix_digest") != current_readiness.get("matrix_digest")
+    ):
+        raise ValueError(
+            "Experiment 5 v3 Lean readiness catalog/selection/matrix drift"
+        )
 
 
 def _validate_v3_selection_against_catalog(

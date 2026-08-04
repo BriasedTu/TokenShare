@@ -11,6 +11,15 @@ from tokenshare.core.models import JsonObject
 from tokenshare.executors.contracts import EnvironmentRef
 from tokenshare.plugins.lean_proof.models import canonical_json_digest
 from tokenshare.plugins.lean_proof.schemas import LEAN_ENVIRONMENT_MANIFEST_SCHEMA_VERSION
+from tokenshare.plugins.lean_proof.semantic_authority import (
+    DEFAULT_LEAN_SEMANTIC_AUTHORITY_PATH,
+    load_lean_semantic_authority,
+)
+
+
+LEAN_ENVIRONMENT_AUTHORITY_BRIDGE_SCHEMA_VERSION = (
+    "tokenshare.lean_environment_authority_bridge.v1"
+)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -140,29 +149,77 @@ class LeanEnvironmentManifest:
         }
 
 
-def build_lean_environment_ref(manifest: LeanEnvironmentManifest) -> EnvironmentRef:
+def build_lean_environment_ref(
+    manifest: LeanEnvironmentManifest,
+    *,
+    expected_authority_environment_digest: str | None = None,
+) -> EnvironmentRef:
     digest_component = (manifest.environment_digest or "sha256:missing").replace("sha256:", "")
+    tool_versions = {
+        "lean_version": manifest.lean_version,
+        "lake_version": manifest.lake_version,
+        "lean_executable": manifest.lean_executable,
+        "lake_executable": manifest.lake_executable,
+        "toolchain_file_digest": manifest.toolchain_file_digest,
+        "lakefile_digest": manifest.lakefile_digest,
+        "import_set_digest": manifest.import_set_digest,
+        "helper_sources_digest": manifest.helper_sources_digest,
+        "lake_project_root": manifest.project_root,
+    }
+    project_root = Path(manifest.project_root).resolve()
+    repository_root = project_root.parents[1]
+    sidecar_path = repository_root / DEFAULT_LEAN_SEMANTIC_AUTHORITY_PATH.name
+    sidecar_path = repository_root / "benchmarks/paper" / sidecar_path.name
+    if sidecar_path.is_file():
+        authority = load_lean_semantic_authority(repository_root=repository_root)
+        if (
+            expected_authority_environment_digest is not None
+            and authority.authority_environment_digest
+            != expected_authority_environment_digest
+        ):
+            raise ValueError(
+                "Lean runtime authority_environment_digest does not match plan"
+            )
+        _validate_manifest_matches_current_project(manifest)
+        tool_versions.update(
+            {
+                "semantic_authority_schema_version": authority.schema_version,
+                "authority_environment_digest": authority.authority_environment_digest,
+                "runtime_environment_digest": manifest.environment_digest or "",
+                "semantic_environment_digest": authority.semantic_environment_digest,
+                "semantic_checker_digest": authority.semantic_checker_digest,
+                "sidecar_digest": authority.sidecar_digest,
+            }
+        )
+    elif expected_authority_environment_digest is not None:
+        raise ValueError("Lean semantic authority sidecar is required for runtime bridge")
     return EnvironmentRef(
         environment_id=f"lean_environment:{digest_component[:16]}",
         environment_digest=manifest.environment_digest or "",
         runtime="lean",
-        tool_versions={
-            "lean_version": manifest.lean_version,
-            "lake_version": manifest.lake_version,
-            "lean_executable": manifest.lean_executable,
-            "lake_executable": manifest.lake_executable,
-            "toolchain_file_digest": manifest.toolchain_file_digest,
-            "lakefile_digest": manifest.lakefile_digest,
-            "import_set_digest": manifest.import_set_digest,
-            "helper_sources_digest": manifest.helper_sources_digest,
-            "lake_project_root": manifest.project_root,
-        },
+        tool_versions=tool_versions,
         resource_limits=dict(manifest.resource_limits),
         fixture_profile_digest=manifest.fixture_profile_digest,
         seed=None,
         clock_policy="fixed",
         created_at=manifest.created_at,
     )
+
+
+def _validate_manifest_matches_current_project(
+    manifest: LeanEnvironmentManifest,
+) -> None:
+    current = LeanEnvironmentManifest.from_project(
+        project_root=Path(manifest.project_root),
+        lean_executable=Path(manifest.lean_executable),
+        lake_executable=Path(manifest.lake_executable),
+        lean_version=manifest.lean_version,
+        lake_version=manifest.lake_version,
+        resource_limits=dict(manifest.resource_limits),
+        created_at=manifest.created_at,
+    )
+    if current.environment_digest != manifest.environment_digest:
+        raise ValueError("Lean environment manifest does not match current project")
 
 
 def _helper_source_digests(project_root: Path) -> dict[str, str]:

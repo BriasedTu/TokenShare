@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+import shutil
 
 import pytest
 
@@ -588,6 +589,41 @@ def test_lean_catalog_rejects_environment_digest_drift(tmp_path: Path) -> None:
         )
 
 
+@pytest.mark.parametrize(
+    "relative_path",
+    (
+        "benchmarks/paper/lean_catalog.v1.jsonl",
+        "benchmarks/paper/lean_lemma_graph_catalog.v1.jsonl",
+        "benchmarks/paper/lean_checker_preflight.v1.json",
+    ),
+)
+def test_catalog_loader_rejects_any_v1_raw_authority_byte_drift(
+    tmp_path: Path,
+    relative_path: str,
+) -> None:
+    repository_root = tmp_path / "authority_checkout"
+    _copy_lean_authority_repository(repository_root)
+    with (repository_root / relative_path).open("ab") as stream:
+        stream.write(b" ")
+
+    with pytest.raises(ValueError, match="v1 authority byte drift"):
+        load_paper_catalogs(
+            factorization_path=Path(
+                "benchmarks/paper/factorization_catalog.v1.jsonl"
+            ),
+            lean_path=repository_root / "benchmarks/paper/lean_catalog.v1.jsonl",
+            lean_lemma_graph_path=(
+                repository_root
+                / "benchmarks/paper/lean_lemma_graph_catalog.v1.jsonl"
+            ),
+            lean_preflight_manifest_path=(
+                repository_root
+                / "benchmarks/paper/lean_checker_preflight.v1.json"
+            ),
+            lean_repository_root=repository_root,
+        )
+
+
 def test_catalog_case_lookup_rejects_unknown_domain_or_difficulty() -> None:
     manifest = load_paper_catalogs(
         factorization_path=Path("benchmarks/paper/factorization_catalog.v1.jsonl"),
@@ -608,6 +644,25 @@ def _write_lemma_graph_catalog(tmp_path: Path, *cases: dict) -> Path:
         encoding="utf-8",
     )
     return path
+
+
+def _copy_lean_authority_repository(destination: Path) -> None:
+    repository_root = Path(__file__).resolve().parents[2]
+    relative_files = (
+        "benchmarks/paper/lean_catalog.v1.jsonl",
+        "benchmarks/paper/lean_lemma_graph_catalog.v1.jsonl",
+        "benchmarks/paper/lean_checker_preflight.v1.json",
+        "benchmarks/paper/lean_environment_semantic_authority.v1.json",
+        "src/tokenshare/plugins/lean_proof/checker.py",
+    )
+    for relative_path in relative_files:
+        target = destination / relative_path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(repository_root / relative_path, target)
+    shutil.copytree(
+        repository_root / "fixtures/lean_proof_project",
+        destination / "fixtures/lean_proof_project",
+    )
 
 
 def _valid_medium_lemma_dag_case() -> dict:

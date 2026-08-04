@@ -2,10 +2,12 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import replace
+import json
 from pathlib import Path
 
 import pytest
 
+import tokenshare.experiments.lean_catalog_audit as audit_module
 from tokenshare.experiments.lean_catalog_audit import (
     LeanCatalogAuditCandidate,
     LeanCatalogAuditError,
@@ -182,6 +184,39 @@ def test_incremental_audit_preserves_manifest_identity_when_all_evidence_is_reus
     assert result.reused_entry_count == 3
     assert result.manifest.generated_at == previous.generated_at
     assert result.manifest.manifest_digest == previous.manifest_digest
+
+
+def test_default_audit_reuses_tracked_v1_evidence_under_semantic_authority(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        audit_module,
+        "DEFAULT_LOCAL_CACHE_MANIFEST_PATH",
+        tmp_path / "manifest.v1.json",
+    )
+    monkeypatch.setattr(
+        audit_module,
+        "_run_real_candidate_checker",
+        lambda *args, **kwargs: pytest.fail("matching v1 authority must not rerun Lean"),
+    )
+    tracked = json.loads(
+        audit_module.DEFAULT_TRACKED_MANIFEST_PATH.read_text(encoding="utf-8")
+    )
+
+    result = audit_module._run_default_catalog_audit(
+        refresh=False,
+        force_all=False,
+    )
+
+    assert result.manifest.total_entry_count == 600
+    assert result.reused_entry_count == 600
+    assert result.rechecked_entry_count == 0
+    assert result.provider_calls_made == 0
+    assert result.manifest.environment_digest == tracked["environment_digest"]
+    assert result.manifest.checker_implementation_digest == (
+        tracked["checker_implementation_digest"]
+    )
 
 
 def test_incremental_audit_rechecks_only_changed_entry() -> None:

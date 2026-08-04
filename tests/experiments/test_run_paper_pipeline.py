@@ -1946,3 +1946,57 @@ def test_default_builder_normal_path_binds_validated_receipt_before_formal_servi
     assert body["stage"] == "paper_publication_gate"
     assert body["status"] == "blocked"
     assert exit_code == 3
+    if command == "run-exp1-online":
+        monkeypatch.undo()
+        _assert_native_formal_authority_reaches_missing_receipt(
+            tmp_path=tmp_path,
+            capsys=capsys,
+        )
+
+
+def _assert_native_formal_authority_reaches_missing_receipt(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from tokenshare.experiments.paper_pipeline_profile import (
+        load_paper_pipeline_profile,
+    )
+
+    profile = load_paper_pipeline_profile()
+    output_root = tmp_path / "native-formal"
+    authority = pipeline._FORMAL_AUTHORITY_BUILDER(
+        command="run-exp1-online",
+        profile=profile,
+        output_root=output_root,
+        resume=False,
+        plan_bundle_root=None,
+        external_bank_resolver=None,
+    )
+    missing_receipt = tmp_path / "missing-paid-receipt.json"
+
+    exit_code = pipeline.main(
+        [
+            "run-exp1-online",
+            "--profile",
+            "benchmarks/paper/epd027_pipeline_profile.v1.json",
+            "--receipt",
+            str(missing_receipt),
+            "--allow-provider-calls",
+            "--new-run",
+            "--output-root",
+            str(output_root),
+            "--plan-digest",
+            authority.plan_digest,
+            "--inventory-digest",
+            authority.inventory_digest,
+            "--budget-mode",
+            "bounded",
+        ]
+    )
+
+    body = json.loads(capsys.readouterr().out)
+    assert exit_code == 3
+    assert body["status"] == "blocked"
+    assert body["provider_calls"] == 0
+    assert body["failure_kind"] == "pipeline_boundary_rejected"
+    assert missing_receipt.name in body["message"]

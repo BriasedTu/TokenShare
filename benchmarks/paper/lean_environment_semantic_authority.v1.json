@@ -1,0 +1,45 @@
+{
+  "schema_version": "tokenshare.lean_environment_semantic_authority.v1",
+  "authority": {
+    "schema_version": "tokenshare.lean_v1_authority_binding.v1",
+    "environment_digest": "sha256:cdc9de4cb0a8407f17ddd7cf423a3fb5640a4560c3b55bd6a70116f5a14de731",
+    "checker_implementation_digest": "sha256:59a3ca34d1c845d777b48bc7ee10f43e6c0c65f08d04cdd5e8fb6f3a318e95c1",
+    "raw_files": {
+      "benchmarks/paper/lean_catalog.v1.jsonl": "sha256:1b2b709ce459d1c72966c708bf6fabfd6a747842fdbd853f2b0d42b74a3052c3",
+      "benchmarks/paper/lean_lemma_graph_catalog.v1.jsonl": "sha256:5a134f246d45ad302ead57ef6eb9559b0b040ed85fac50dc6af49974756f2cdc",
+      "benchmarks/paper/lean_checker_preflight.v1.json": "sha256:3b8f0597466e4ed1836719f133a1698c75c9b063c6f60658720d9e6358c323c7"
+    }
+  },
+  "semantic_projection": {
+    "schema_version": "tokenshare.lean_environment_semantic_projection.v1",
+    "normalization": "utf8_lf.v1",
+    "environment": {
+      "schema_version": "tokenshare.lean_environment_semantic_projection.v1",
+      "normalization": "utf8_lf.v1",
+      "files": {
+        "fixtures/lean_proof_project/lean-toolchain": "sha256:61561b06f5587e027815fac8f59bf6ca160dfbf3f7372fc6297664acfd85b8c0",
+        "fixtures/lean_proof_project/lakefile.lean": "sha256:288f5b67bd53c82742d276e5ed67714279bdce920c54a6986c1b4a7ef5032d39",
+        "fixtures/lean_proof_project/TokenShare.lean": "sha256:53d806bed7bb0b3629f6f6ababa929db48a9e68139abd985ca01ae613395726e",
+        "fixtures/lean_proof_project/TokenShare/Fixtures/Decomposition.lean": "sha256:c974b8649b3eadf4738d39e3d852e8a958a5e75e2d751da01759e82cb2f919e0",
+        "fixtures/lean_proof_project/TokenShare/Fixtures/Direct.lean": "sha256:06378524b81f22aa3ec652e96cc970be076aa390ab2ed6ada7f66f91013d8653",
+        "fixtures/lean_proof_project/TokenShare/Fixtures/Invalid.lean": "sha256:45393c97a1a61a4dd5607da8bbfb73690657b9f1ba61e07d39180a581cfcde85",
+        "fixtures/lean_proof_project/TokenShare/Fixtures/Unsupported.lean": "sha256:a6e79e5563ef4dccf0d7985e941c247d70e6e418ba0ba0bbc65785b33ac0619b",
+        "fixtures/lean_proof_project/TokenShare/Helper.lean": "sha256:9e98398cb779e5fc5b55cd0a8e521a56f58475285ef6fcd977d73fc62238b02c",
+        "fixtures/lean_proof_project/TokenShare/LemmaGraphCases.lean": "sha256:f015a29cd0eb90854a5b247a52c420a4885287c20c397f11f2490f1a5c857784",
+        "fixtures/lean_proof_project/TokenShare/LemmaGraphOracle.lean": "sha256:4af791228bd24f4ea6d92fed511be8eee4f29d1ba8db5c6102968e743a8047ca",
+        "fixtures/lean_proof_project/TokenShare/Merge.lean": "sha256:f149dc0171a55156891ecd415fc3889e9030e2b81ce53697b1e1c54a51252fc7",
+        "fixtures/lean_proof_project/TokenShare/SplitRules.lean": "sha256:6716f703905abe0b230215ac20886eb96b8e929aec27fb9c78265a7450aee5c1"
+      },
+      "digest": "sha256:dd480188a9181130b61fd9da3e09789264d8776e715087a811a4f942d699b682"
+    },
+    "checker": {
+      "schema_version": "tokenshare.lean_checker_semantic_projection.v1",
+      "normalization": "utf8_lf.v1",
+      "files": {
+        "src/tokenshare/plugins/lean_proof/checker.py": "sha256:af205269ff56dbe88c9561f0f8663d89941a1830e9f3de10aa51a61f79b3bcf4"
+      },
+      "digest": "sha256:96740890ea19c77430391698296719c3fc3408e4ebbd81043d46650fb099884d"
+    }
+  },
+  "sidecar_digest": "sha256:6a60bb31465c535a9fcfcbe9a60f0e53af9e063cd05eeb2e151cf05817c0e24f"
+}

@@ -47,6 +47,10 @@ from tokenshare.plugins.lean_proof.environment import (
 from tokenshare.plugins.lean_proof.fixtures import default_lean_fixture_project_path
 from tokenshare.plugins.lean_proof.models import LeanTheoremPayload
 from tokenshare.plugins.lean_proof.preflight import run_lean_preflight
+from tokenshare.plugins.lean_proof.semantic_authority import (
+    load_lean_semantic_authority,
+    normalized_text_digest,
+)
 from tokenshare.plugins.factorization.split_strategy import partition_candidate_ranges
 from tokenshare.storage.artifacts import ArtifactStore
 
@@ -172,7 +176,11 @@ def load_paper_catalogs(
     lean_preflight_manifest_path: str | Path = (
         DEFAULT_LEAN_CATALOG_PREFLIGHT_MANIFEST_PATH
     ),
+    lean_repository_root: str | Path | None = None,
 ) -> PaperInputCatalogManifest:
+    semantic_authority = load_lean_semantic_authority(
+        repository_root=lean_repository_root or _REPOSITORY_ROOT
+    )
     factor_path = Path(factorization_path)
     lean_catalog_path = Path(lean_path)
     factorization_cases = tuple(
@@ -207,8 +215,9 @@ def load_paper_catalogs(
         lean_cases,
         expected_counts={difficulty: 10 for difficulty in DIFFICULTIES},
     )
-    environment_manifest = _current_lean_environment_manifest_without_preflight()
-    expected_lean_environment_digest = str(environment_manifest.environment_digest)
+    expected_lean_environment_digest = (
+        semantic_authority.authority_environment_digest
+    )
     _validate_lean_environment_digest(
         lean_cases,
         expected_digest=expected_lean_environment_digest,
@@ -222,6 +231,9 @@ def load_paper_catalogs(
         lean_lemma_graph_cases=lean_lemma_graph_cases,
         manifest_path=Path(lean_preflight_manifest_path),
         environment_digest=expected_lean_environment_digest,
+        checker_implementation_digest=(
+            semantic_authority.authority_checker_implementation_digest
+        ),
     )
     lean_preflight_summary = _direct_preflight_summary_from_entries(
         matched_entries,
@@ -1006,6 +1018,7 @@ def _load_matching_lean_preflight_evidence(
     lean_lemma_graph_cases: tuple[JsonObject, ...],
     manifest_path: Path,
     environment_digest: str,
+    checker_implementation_digest: str,
 ) -> tuple[LeanCatalogPreflightManifest, tuple[LeanCatalogPreflightEntry, ...]]:
     try:
         body = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -1025,6 +1038,7 @@ def _load_matching_lean_preflight_evidence(
         lean_cases=lean_cases,
         lean_lemma_graph_cases=lean_lemma_graph_cases,
         environment_digest=environment_digest,
+        checker_implementation_digest=checker_implementation_digest,
     )
     matched = validate_manifest_against_candidates(
         manifest,
@@ -1038,8 +1052,11 @@ def _lean_catalog_audit_candidates(
     lean_cases: tuple[JsonObject, ...],
     lean_lemma_graph_cases: tuple[JsonObject, ...],
     environment_digest: str,
+    checker_implementation_digest: str | None = None,
 ) -> tuple[LeanCatalogAuditCandidate, ...]:
-    checker_digest = lean_checker_implementation_digest()
+    checker_digest = (
+        checker_implementation_digest or lean_checker_implementation_digest()
+    )
     candidates: list[LeanCatalogAuditCandidate] = []
     for case in lean_cases:
         case_id = str(case["case_id"])
@@ -1197,8 +1214,8 @@ def audit_lean_catalog_preflight_manifest(
     for case in graph_cases:
         _validate_lean_lemma_graph_case(case)
 
-    environment_manifest = _default_lean_environment_manifest()
-    environment_digest = str(environment_manifest.environment_digest)
+    semantic_authority = load_lean_semantic_authority(repository_root=_REPOSITORY_ROOT)
+    environment_digest = semantic_authority.authority_environment_digest
     _validate_lean_environment_digest(lean_cases, expected_digest=environment_digest)
     _validate_lean_lemma_graph_environment_digest(
         graph_cases,
@@ -1208,6 +1225,9 @@ def audit_lean_catalog_preflight_manifest(
         lean_cases=lean_cases,
         lean_lemma_graph_cases=graph_cases,
         environment_digest=environment_digest,
+        checker_implementation_digest=(
+            semantic_authority.authority_checker_implementation_digest
+        ),
     )
 
     # 只有这条显式审计路径可以运行批量真实 checker；普通 loader 不会调用它。
@@ -1219,7 +1239,7 @@ def audit_lean_catalog_preflight_manifest(
     source_digests = {"lean_catalog": _file_digest(lean_catalog_path)}
     if graph_catalog_path is not None:
         source_digests["lean_lemma_graph_catalog"] = _file_digest(graph_catalog_path)
-    checker_digest = lean_checker_implementation_digest()
+    checker_digest = semantic_authority.authority_checker_implementation_digest
     return build_lean_catalog_preflight_manifest(
         entries=(candidate.accepted_entry() for candidate in candidates),
         source_digests=source_digests,
@@ -1372,7 +1392,7 @@ def _validate_lean_lemma_graph_oracle_ref(case: JsonObject) -> JsonObject:
     source_path = Path(str(oracle_ref["source_path"]))
     if not source_path.is_file():
         raise ValueError("oracle proof package source_path does not exist")
-    actual_hash = _file_digest(source_path)
+    actual_hash = normalized_text_digest(source_path)
     if oracle_ref["content_hash"] != actual_hash:
         raise ValueError("oracle proof package content_hash mismatch")
     node_ids = {str(node["node_id"]) for node in case["lemma_graph"]["nodes"]}
