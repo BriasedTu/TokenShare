@@ -5,7 +5,7 @@
   "active_feature": "feat-011",
   "active_focus": {
     "id": "paper-metric-contract-trace-bank-and-traceability-plan",
-    "summary": "EPD-027 为 33/35 accepted：Task 0–32 已 accepted；Task 32 为 runtime-only L2 evidence，无 source/test commit，授权 runtime 保持未跟踪；仍无经校验的真实 paid receipt。",
+    "summary": "EPD-027 为 34/35 accepted：Task 0–33 已 accepted；Task 33 已以 versioned semantic-authority sidecar 修复 v1 checkout/EOL 绑定，Task 34 为唯一剩余 focus；仍无经校验的真实 paid receipt。",
     "status": "accepted_handoff",
     "scope": [
       "Experiment 1–5 论文指标、固定分母与 missingness 口径",
@@ -17,12 +17,12 @@
       "完整实施顺序、测试、离线重放与真实 smoke/正式矩阵门禁"
     ],
     "out_of_scope": [
-      "未经监督者只读冻结 Task 33 单段即进入 Task 33",
+      "超出 Task 34 已冻结范围修改 production/test 或生成 L4 PASS",
       "重新运行真实付费 API 实验",
       "修改由其他工作调整中的 Experiment 3 正式规模",
       "人为注入攻击与安全工程"
     ],
-    "next_action": "Task 32 已 accepted；runtime-only、无 source/test commit，授权 local/verification/ 保持未跟踪。active writer=0；下一动作仅由监督者只读 Task 33 单段并冻结，Task 33 尚未实施；不得调用真实 API。"
+    "next_action": "Task 33 accepted（owning fix `a10e988ddfc923cca28423dfd83af60a96863a4f`）；active/current focus=Task 34，为唯一剩余 1/35。Task34 只做 blocked L4 traceability/gate/docs 验证，不得调用真实 API。"
   },
   "authorities": {
     "agent_start": "AGENTS.md",
@@ -153,16 +153,9 @@
         "历史设计/验证摘要：旧真实 Exp3/4 smoke 为11 roots/36 HTTP 200/839054 tokens，真实性 PASS 但 canonical paper-evidence FAIL，只读且不得升级；Exp5 缺 artifact-backed bundle 时结构化 blocked、provider0，capturing/scripted 永远 paper-ineligible。",
         "EPD-025/026 冻结 Exp5 zero-retry/two-table、active scale paper_suite_scale_300_50_54.v1 与 Exp5 v4；正式 Exp1–5=6384 roots/40520 units/81272 attempt upper，token ceiling23503151360、cost ceiling7346.259328；全量仍 NO-GO。",
         "EPD-027 冻结两阶段真实回答库、Exp2六档在线检查、Exp3小型在线恢复；Task0–2 accepted commits ed0b056a/78fbddaa/d2b16f89，ledger-binding860b7c48、typed-hook4ea293b1；完整旧 Fast/逐轮证据见 progress、minimal handoff 与 git history。",
-        "Task 3 accepted commit f9773944：canonical direct-results 四文件，focused 101 passed、独立 review PASS、provider calls=0；正式路径无影子 TokenShare，ProtocolEngine disabled 时不能铸造 paper-eligible success",
-        "2026-08-01 Task 3 accepted 后 Fast：.\\init.ps1 exit 0，468 passed/1 skipped in 20.19s；JSON/SQLite、harness、compileall 通过，provider calls=0；Full intentionally not run per user instruction，LeanAudit/API 未运行",
-        "状态同步时 verification/run_verification.py 被误判为无 pytest harness，实际重复执行 Fast：468 passed/1 skipped in 18.78s；不计新增覆盖，后续不得重复",
-        "用户新增门禁：每个 Task reviewer PASS 后由子智能体执行最多15分钟 post-accept 测试最小化；不安排第二轮完整独立审查，监督者只验收结构化证据并精确提交",
-        "Task 3 post-task 测试压缩 commit 66643084：仅 5 个测试文件，production 零修改；test defs/估算 cases 77/153→66/118；canonical 118 passed in 5.55s，review PASS 且 Critical/Important/Minor=0/0/0，provider calls=0；本次未重复 Fast/Full/LeanAudit",
-        "Task 4 accepted commit 0cbda1df：focused 125 passed；canonical 初次 323 passed/39 failed 后 fixture 逐步收敛；最终正式 E2E nodeid exit 0，1 passed in 6.68s（total 7.635s），log=%TEMP%\\tokenshare_task4_canonical_single_selection_nodeid.log；provider calls=0，network tripwire loaded",
-        "Task 4 final review PASS，Critical/Important=0/0；post-accept test minimization 3min NO_CHANGE（5 distinct tests）；py_compile/diff-check/name-only 均 exit 0；Fast/Full/LeanAudit 未运行",
-        "用户批准唯一计划外 production src/tokenshare/experiments/paper_formal_evidence.py：immutable protocol_task_id 修正为 case task-id closure mapping，mapping conflict fail closed；review 确认无 shadow protocol path",
-        "Task 5 accepted commit 58cda71f：严格五文件；canonical combined exit 0，17 passed/0 failed/0 skipped in 0.81s；provider/network calls=0；3 个 production 文件 py_compile 与 diff-check exit 0；综合 review PASS，Critical/Important/Minor=0/0/0；test minimization <5min NO_CHANGE（17 distinct cases）；Fast/Full/LeanAudit 未运行",
-        "Task 6 accepted commit 5f97034c：严格五文件（计划四文件 + 用户授权 epd027 pipeline profile）；canonical combined exit 0，44 passed in 25.14s；network tripwire/provider calls=0；2 个 production 文件 py_compile 与 diff-check exit 0；comprehensive final review PASS，C1 terminal conflict 与 C2 repeat-sample 跨 replacement closure 已闭合，Critical/Important=0/0；test minimization <5min NO_CHANGE；profile 仅同步 plan authority/profile 派生 digest，budget digest 保持不变且无实验参数漂移；Fast/Full/LeanAudit 未运行",
+        "Task3 accepted commits f9773944/66643084：canonical direct-results无shadow，focused101、post-min118 passed，review0C/0I/0M，provider0；Task级review后minimizer门禁沿用。",
+        "Task4 accepted 0cbda1df：focused125、正式E2E1 passed/6.68s，review0C/0I、minimizer NO_CHANGE；获批paper_formal_evidence mapping closure修复，无shadow。",
+        "Task5/6 accepted 58cda71f/5f97034c：分别17 passed/0.81s与44 passed/25.14s，review PASS、provider/network0；Task6仅获批profile identity同步，无实验参数漂移。",
         "Task 7 accepted commit aadbd483：严格四文件；post-min final test exit 0，12 passed in 2.18s；two-process race 覆盖；comprehensive review PASS，Critical/Important/Minor=0/0/0；test compaction 仅删除 1 个冗余 assert；provider/network/secret=0；3 个 production 文件 py_compile exit 0；Fast/Full/LeanAudit 未运行",
         "Task 8 accepted commit 6802918d：严格六个实际变更文件；最终 exact 5-file command exit 0，77 passed in 15.20s；manifest 专项3 passed/cross-check4 passed；fake-only，真实 provider/network/secret=0；4 个 production 文件 py_compile、diff-check、allowlist、secret scan exit 0；final review PASS，Critical/Important/Minor=0/0/0；test minimization 3min NO_CHANGE，collect-only=19（行为18）；无 paid receipt，Fast/Full/LeanAudit 未运行",
         "Task 9 accepted commit 1109e852：严格12文件（计划11文件 + 用户授权 src/tokenshare/storage/artifacts.py）；final canonical exit 0，42 passed in 36.58s；final review PASS，Critical/Important/Minor=0/0/0；C1 typed in-process checkpoint/resume、C2六类queue闭合；test minimization NO_CHANGE；7个production文件py_compile与diff-check exit 0；artifact变更仅Windows normal-path映射且logical identity不变；provider/network calls=0；Fast/Full/LeanAudit未运行",
@@ -200,9 +193,10 @@
         "Task 29 accepted：implementation 555d9f3d、acceptance ae865dc0；严格21个实现文件+10项批准plan-out；canonical49、pipeline9、CLI3、core204、official closure3、runner158、observation17，review0C/0I，minimizer零修改；provider/network0/0。prestart baseline修复/状态压缩 commits为2d7240f4/012fcc32。",
         "Task 30 accepted commit 9ec806b4f261a3c1b27968891eaa07cf274a2466：原8文件+唯一批准第9文件tests/experiments/test_paper_full_resource_trace.py，无第10文件/production扩张；RED10/15，canonical最终25；profiles L1/L2/L3/L4=441/8/2/2、total453 selectors/892 items；L1首次32、expanded855 pass、final composite full-run877 pass+2 precise repaired pass；Task19新增2、Task23新增6、Task24新增1 GREEN；L2 relative-root2 pass；L3 missing-root blocked exit3、outside-root exit1、PS/Bash exit3；overlap1 pass/9.08s；500-root1 pass/1846.39s；review0C/0I；minimizer零修改且<3m；provider/network0/0，无receipt/secret，formal matrix NO-GO。90分钟checkpoint commit 23a21146。新增deferred Minor：artifact audit先于pytest tripwire激活，但当前stored replay无provider。",
         "Task 31 accepted：无source/test/runtime evidence commit，planned exact empty directory被git忽略，仅state acceptance commit。初始artifact目录缺失fail-closed且0 tests；创建planned exact dir后profile实际仅运行一次：L1 exit0，882 passed/0 failed/0 errors，441 exact selectors，2155.58s，digest sha256:d3dd21ed9fa0c15452019c70c8a90e1fa8a7d45564951043b54aed01f399018c，status passed。coverage Tasks0–29含25–29、Task24 pure=2/artifact-audit=0及two-stage gate；Lean root1/checker1<=2。唯一Fast exit0，525 passed/1 skipped in38.84s。review0C/0I/0M并确认真实production chain/no shadow；minimizer N/A、零修改。provider/network0/0，无receipt/secret；L3/L4 unset，formal matrix NO-GO。",
-        "Task 32 accepted：runtime-only、无source/test commit；保留未跟踪local/verification/epd027-l2/{replay-a,replay-b,negative-exp34,l2-runtime-summary.json}。profile exit0，8 passed/8.41s，status passed，digest sha256:145059c...cef2a。positive source=heiyucode_gpt56_smoke_20260716，number4733749 predicate passed/true/true，factors1013×4673；case/batch/tree/raw/provenance digests已在summary记录。真实链terminal SETTLEMENT_RECORDED、无shadow，classification=regression_only/paper=false/not formal。negative expected-fail hash before=after sha256:7f2a...1c60。双replay独立root，observations sha256:4b125...4192、table sha256:c4f4...5ae9、lineage sha256:9af8...a9a0与ledger相等，113 files inventory/content相同。review0C/0I；minimizer N/A零修改；provider/network0/0（历史source attempt不计本次调用）；无receipt/secret，formal matrix NO-GO，L2不替代L4。新增Minor：runtime未ignore housekeeping deferred。"
+        "Task 32 accepted：runtime-only、无source/test commit；保留未跟踪local/verification/epd027-l2/{replay-a,replay-b,negative-exp34,l2-runtime-summary.json}。profile exit0，8 passed/8.41s，status passed，digest sha256:145059c...cef2a。positive source=heiyucode_gpt56_smoke_20260716，number4733749 predicate passed/true/true，factors1013×4673；case/batch/tree/raw/provenance digests已在summary记录。真实链terminal SETTLEMENT_RECORDED、无shadow，classification=regression_only/paper=false/not formal。negative expected-fail hash before=after sha256:7f2a...1c60。双replay独立root，observations sha256:4b125...4192、table sha256:c4f4...5ae9、lineage sha256:9af8...a9a0与ledger相等，113 files inventory/content相同。review0C/0I；minimizer N/A零修改；provider/network0/0（历史source attempt不计本次调用）；无receipt/secret，formal matrix NO-GO，L2不替代L4。新增Minor：runtime未ignore housekeeping deferred。",
+        "Task33 accepted owning fix a10e988ddfc923cca28423dfd83af60a96863a4f：exact12（sidecar+semantic authority+environment+fixed_plan+catalog/audit/profile/Exp5+4 tests），PLAN_OUT仅profile/Exp5/fixed_plan 3 production，无未批准文件。RED module-missing exit2；targeted140/140 30.10s、contracts12/12、native-receipt1/1 6.07s、L1 Lean1/1 3.12s；唯一Fast exit1=524p/1f/1s 83.83s，因L1函数40!=39，最小合并后失败node1/1 0.25s及既有2/2 19.78s，reviewer明确不需重跑Fast；bridge RED0/1 0.68s→GREEN1/1 0.62s，fixedplan1/1 0.72s，diffcheck0。public CLI仅一次exit3/83.67s BLOCKED receipt absent，budget516/171708288/979.524864/CNY1000，blocked digest sha256:47598f070d41715b99a58034b223c3c18664fa9a9a970af059f0750acaf5b8f5，provider/network0/0，3 roots/marker/ledger absent，launcher/audit skipped。review0C/0I、minimizer NO_CHANGE。rejected cascade：600 checker success516.23s但方案弃用；Full exit1=2752p/86f/1s/3826.97s，未进入LeanAudit且不重跑。formal NO-GO、receipt absent。"
       ],
-      "next_action": "Task 0–32 accepted count=33/35；Task 32 accepted，active writer=0。下一动作仅由监督者只读 Task 33 单段并冻结；Task 33 尚未实施，不得增加范围或调用真实 API。"
+      "next_action": "Task 0–33 accepted count=34/35；Task 33 accepted，active/current focus=Task34，唯一剩余1/35。仅执行Task34计划的blocked L4/runtime gate/tracked docs/focused profiles+Fast，不得修改production/test或调用真实API。"
     }
   ]
 }

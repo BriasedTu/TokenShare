@@ -7,14 +7,14 @@
 ## 当前权威状态（EPD-027）
 
 - Active feature：`feat-011`（Paper Real AI Experiments），仍为 `in-progress`。
-- EPD-027 共 35 个 Task；Task 0–32 已 accepted，计 `33/35`。Task32 为 runtime-only，无 source/test commit；授权 runtime 保留为 `?? local/verification/`。
+- EPD-027 共 35 个 Task；Task 0–33 已 accepted，计 `34/35`。active/current focus=`Task34`，为唯一剩余 `1/35`。
 - Task 29 实现范围严格为 `21` 个 approved implementation 文件，另有 `10` 个已批准 `PLAN_OUT` 文件；无未批准文件。未扩大到协议核心、模型/指标 contract、Lean adapter 或 renderer。
 - Task 29 已审定证据（验收时未复跑）：review=`0 Critical / 0 Important`；canonical=`49 passed`；pipeline affected=`9`；CLI affected=`3`；core=`204`；official closure=`3`（CNY complete ready，USD/missing usage blocked）；runner=`158`；observation=`17`；complete-CNY 正例=`1`；PowerShell parse=`9/9`。post-accept minimization=`0` 修改、`0` 删除、`0` 合并。
 - provider/network calls=`0/0`，无经 Task 26 验证的 paid receipt；正式论文矩阵始终为 **NO-GO**，不得调用真实 API 或把离线/trace 结果描述为当次 `real_transport`。
 - 正式矩阵 NO-GO 原因未变：没有 `Task 26 verified paid receipt`，且 provider/network=`0/0`。receipt、offline、mode、admission、budget、secret 等门禁仍须 fail closed。
 - 恰有 5 项 deferred Minor：既有 Task28 facility predicate、`offline_gate_parser_only`、Task29 receipt digests、Task30 artifact-audit/tripwire，加 Task32 runtime 未 ignore 的 housekeeping；code-map milestone follow-up 保留。
 
-## Task 30–32 accepted / Task 33 in_progress
+## Task 30–33 accepted / Task 34 handoff
 
 - prestart commits=`2d7240f4`/`012fcc32`，90-minute checkpoint=`23a21146`；Task30 implementation=`9ec806b4`。范围严格为原 `8` 文件加唯一批准的第 `9` 文件 `tests/experiments/test_paper_full_resource_trace.py`，无第 `10` 文件或 production 扩张。
 - RED=`10/15`，canonical 最终=`25 passed`。profiles final：L1=`441`、L2=`8`、L3=`2`、L4=`2`，总计 `453 selectors / 892 items`；L1 首次=`32`，expanded=`855 passed`，final composite full-run=`877 passed` + `2` precise repaired passes。
@@ -27,11 +27,13 @@
 - positive source=`heiyucode_gpt56_smoke_20260716`；number=`4733749`，predicate=`passed/true/true`，factors=`1013×4673`；case/batch/tree/raw/provenance digests 已在 runtime summary 记录。真实链 terminal=`SETTLEMENT_RECORDED`、无 shadow；classification=`regression_only`、`paper=false`、not formal。
 - negative expected-fail hash before=after=`sha256:7f2a...1c60`。双 replay 使用独立 root；observations=`sha256:4b125...4192`、table=`sha256:c4f4...5ae9`、lineage=`sha256:9af8...a9a0` 与 ledger 相等，`113` files inventory/content 相同。
 - review=`0C/0I`；minimizer=`N/A`、零修改。provider/network=`0/0`（历史 source attempt 独立，不等于本次调用）；无 receipt/secret，formal matrix **NO-GO**，L2 不替代 L4。
-- Task33 >90 分钟 checkpoint：Task0–32 accepted=`33/35`，Task33=`in_progress`。receipt=`ABSENT/unread`；initial preflight exit=`3`、provider=`0`，但错误 blocker 为 Lean digest。根因是 v1 digest 绑定 absolute checkout/EOL。
-- 已批准 cascade scope 曾扩至 `24` 文件：targeted=`140 GREEN`、native receipt GREEN、600-entry force-all checker 成功（`516.23s`）。cascade 后 Full exit=`1`：`2752 passed / 86 failed / 1 skipped in 3826.97s`，证明与历史 v1 immutability 冲突，该方案已停止。
-- 当前保留 `24` 个 approved files diff、全部 unstaged，implementation writer 已暂停且无命令；scope_expansion=`approved 24`，无未批准第 `25` 文件。授权 `local/verification/` runtime 继续 untracked。
-- architecture decision：restore v1 bytes，改用 versioned semantic-authority sidecar；planned=`restore+hybrid`，最终目标 `9` files。ArtifactStore long-leaf 问题为无关 deferred，不纳入本修复。
-- ETA=`60–90m`。provider/network=`0/0`，formal matrix **NO-GO**；最新 handoff anchor：2026-08-04 Task33 authority-repair checkpoint。
+- Task33 owning fix=`a10e988ddfc923cca28423dfd83af60a96863a4f`，exact `12` 文件：sidecar/semantic-authority/environment/fixed_plan/catalog/audit/profile/Exp5 + `4` tests；PLAN_OUT 仅 `profile`、`Exp5`、`fixed_plan` 三个 production 文件，无未批准文件。
+- RED module-missing exit=`2`；targeted=`140/140 in 30.10s`，contracts=`12/12`，native receipt=`1/1 in 6.07s`，L1 Lean=`1/1 in 3.12s`。bridge RED=`0/1 in 0.68s`→GREEN=`1/1 in 0.62s`，fixedplan=`1/1 in 0.72s`，diffcheck=`0`。
+- 唯一 Fast exit=`1`：`524 passed / 1 failed / 1 skipped in 83.83s`，因 L1 function count `40!=39`；最小合并后失败 node=`1/1 in 0.25s`、既有 tests=`2/2 in 19.78s`，reviewer 明确无需重跑 Fast。final review=`0C/0I`，minimizer=`NO_CHANGE`。
+- public CLI 仅一次 exit=`3 in 83.67s`，因 receipt absent 正确 BLOCKED；budget=`516/171708288/979.524864/CNY1000`，blocked digest=`sha256:47598f070d41715b99a58034b223c3c18664fa9a9a970af059f0750acaf5b8f5`；provider/network=`0/0`，3 roots/marker/ledger absent，launcher/audit skipped；runtime `local/verification/` 保留。
+- rejected cascade：official 600 checker 曾 success=`516.23s`，但架构已弃用；Full 一次 exit=`1`：`2752p/86f/1s in 3826.97s`，未进入 LeanAudit、不重跑。formal matrix **NO-GO**，receipt absent。
+- deferred：此前5项保留；新增 `8` 个 EOL/stat-only housekeeping，以及仅 broad Full 触发、未阻塞 Task33 正常路径的 ArtifactStore Windows long-marker `OSError 22`；code-map milestone follow-up 保留。
+- Task34 handoff：仅 `local/verification/epd027-l4` runtime；因 L3 已 blocked，只能写 `l4_cell_traceability_blocked`，不得 L4 PASS；验证 execution/publication gate provider=`0`/no dispatch；tracked docs 按 Task34 计划，禁止 production/test；仅四个 focused profiles + Fast、no broad，并检查 `24` 项 review。Task34 是唯一剩余 `1/35`。
 
 ## 已接受历史摘要（Task 0–28）
 

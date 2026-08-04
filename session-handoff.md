@@ -10,9 +10,9 @@
 2. 运行 `git status --short --branch`、`git log -3 --oneline`，只读确认唯一工作树与当前分支；不得 reset/clean/checkout 或覆盖用户改动。
 3. 先运行默认 `powershell -NoProfile -ExecutionPolicy Bypass -File .\init.ps1`。feature 完成/合并前按 AGENTS 运行 Full；Lean 相关变更按分层配置追加 LeanAudit。
 
-## 当前权威交接：Task 32 accepted / Task 33 freeze-only
+## 当前权威交接：Task 33 accepted / Task 34 current
 
-- Active feature=`feat-011`，状态=`in-progress`；EPD-027 Task 0–32 已 accepted，计 `33/35`。active writer=`0`。
+- Active feature=`feat-011`，状态=`in-progress`；EPD-027 Task 0–33 已 accepted，计 `34/35`。active/current focus=`Task34`，唯一剩余 `1/35`；active writer=`0`。
 - Task 29 implementation commit=`555d9f3d0cb808b419ecbecfc59e37b2d1ace62d`（`feat(experiments): replace legacy smoke launchers`）；验收状态 commit=`ae865dc0`。
 - Task 29 严格范围为 `21` 个 approved implementation 文件与 `10` 个已批准 `PLAN_OUT` 文件；无未批准文件。不得扩大到协议核心、模型/指标 contract、Lean adapter 或 renderer。
 - 已审定、未在本交接复跑的 GREEN：canonical=`49 passed`；pipeline affected=`9`；CLI affected=`3`；core runner/observation/gate=`204`；official closure=`3`（complete CNY ready，USD/missing usage blocked）；runner=`158`；observation=`17`；complete-CNY 正例=`1`；PowerShell parse=`9/9`。review=`0 Critical / 0 Important`；历史 `3C/2I`、false-switch、Exp5 zero-role 已关闭；post-accept minimization=`0` 修改、`0` 删除、`0` 合并。
@@ -27,7 +27,12 @@
 - positive=`heiyucode_gpt56_smoke_20260716` / number4733749 / predicate passed,true,true / factors1013×4673；case/batch/tree/raw/provenance digests 在 summary 可查。terminal=`SETTLEMENT_RECORDED`、无 shadow；`regression_only`/paper=false/not formal。negative hash before=after=`sha256:7f2a...1c60`。
 - 双 replay 独立 root，obs/table/lineage=`sha256:4b125...4192`/`sha256:c4f4...5ae9`/`sha256:9af8...a9a0` 与 ledger 相等；113 files inventory/content 相同。review=`0C/0I`；minimizer N/A零修改；provider/network=`0/0`（历史 source attempt 不计本次调用）。
 - 无 receipt/secret，formal matrix **NO-GO**，L2 不替代 L4。deferred Minor 共5项：既有4项加 runtime 未 ignore housekeeping；code-map milestone follow-up 保留。
-- Task33 仅 freeze-only、尚未实施；下一动作仅由监督者只读冻结 Task33。最新 handoff anchor：2026-08-04 Task32 accepted / Task33 freeze-only；完整旧交接见归档及 git history。
+- Task33 owning fix=`a10e988ddfc923cca28423dfd83af60a96863a4f`，exact12：sidecar/semantic-authority/environment/fixed_plan/catalog/audit/profile/Exp5+4 tests；PLAN_OUT 仅 profile/Exp5/fixed_plan 三个 production，无未批准文件。review=`0C/0I`，minimizer=`NO_CHANGE`。
+- GREEN/验收：module-missing RED exit2；targeted140/140 30.10s、contracts12/12、native receipt1/1 6.07s、L1 Lean1/1 3.12s；bridge0/1→1/1、fixedplan1/1、diffcheck0。唯一 Fast=`524p/1f/1s in 83.83s`，计数40!=39；最小修复 node1/1 0.25s + existing2/2 19.78s，reviewer确认无需重跑。
+- 唯一 public CLI exit3/83.67s：receipt absent BLOCKED；budget516/171708288/979.524864/CNY1000，digest=`sha256:47598f070d41715b99a58034b223c3c18664fa9a9a970af059f0750acaf5b8f5`；provider/network0/0，3 roots/marker/ledger absent，launcher/audit skipped；runtime保留。
+- rejected cascade：600 checker success516.23s但方案弃用；Full exit1=`2752p/86f/1s in 3826.97s`，未进入LeanAudit且不重跑。formal matrix **NO-GO**、receipt absent。
+- deferred：此前5项保留；新增8个EOL/stat-only housekeeping与 broad Full 才触发的 ArtifactStore Windows long-marker `OSError22`（不阻塞Task33正常路径）；code-map milestone follow-up保留。
+- Task34 scope：runtime=`local/verification/epd027-l4`；L3 已 blocked，仅写 `l4_cell_traceability_blocked`、禁止 L4 PASS；验证 execution/publication gate provider0/no dispatch；tracked docs 按 Task34 计划，禁止 production/test；只跑四 focused profiles + Fast、no broad；完成24项 review。
 
 ## 已接受实现摘要（Task 0–28）
 
