@@ -1622,6 +1622,7 @@ def test_gate_c_case_dispatcher_routes_protocol_request_through_coordinator(
             "post_raw_output_hook": None,
             "ablation_mode": None,
             "worker_termination_policy": None,
+            "trace_context": None,
             "protocol_run_dispatcher": paper_dispatcher.execute_protocol_request,
         }
     ]
@@ -1925,12 +1926,9 @@ def _budget_for_plan(
     endpoint_identity: dict,
     request_limits: dict,
 ):
-    request_limits = {
-        **request_limits,
-        "token_upper_bound_per_provider_attempt": int(
-            request_limits.get("max_tokens", 2048)
-        ) + 4096,
-    }
+    token_upper_bound_per_provider_attempt = int(
+        request_limits.get("max_tokens", 2048)
+    ) + 4096
     frozen = [
         {
             **selection.to_dict(),
@@ -1947,9 +1945,7 @@ def _budget_for_plan(
         catalog_manifest=catalog,
         conditions=plan.conditions,
         max_provider_attempts_per_ai_unit=1,
-        token_upper_bound_per_provider_attempt=request_limits[
-            "token_upper_bound_per_provider_attempt"
-        ],
+        token_upper_bound_per_provider_attempt=token_upper_bound_per_provider_attempt,
         cost_upper_bound_per_provider_attempt=0.01,
         plan_only=True,
         lean_3x3_matrix=readiness,

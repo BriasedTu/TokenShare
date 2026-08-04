@@ -26,9 +26,16 @@ from tokenshare.experiments.paper_model_identity import (
     validate_fixed_entry_config_identity,
 )
 from tokenshare.experiments.paper_exp1 import Exp1FormalModule
+from tokenshare.experiments.paper_suite_scale import (
+    build_paper_suite_scale_policy,
+    load_paper_suite_scale_profile,
+)
 
 
-CATALOG_DIGEST = "sha256:" + "1" * 64
+SUITE_SCALE_PROFILE = load_paper_suite_scale_profile(
+    Path("benchmarks/paper/paper_suite_scale_profile.v1.json")
+)
+CATALOG_DIGEST = SUITE_SCALE_PROFILE.catalog_digest
 SOURCE_CONFIG_DIGEST = "sha256:" + "2" * 64
 ENDPOINT_DIGEST = "sha256:" + "3" * 64
 LEAN_ENVIRONMENT_DIGEST = "sha256:" + "6" * 64
@@ -117,7 +124,7 @@ def test_exp1_formal_accepts_normal_validated_endpoint_binding() -> None:
     }
 
 
-def test_exp1_formal_freezes_165_unique_roots_once_without_resampling() -> None:
+def test_exp1_formal_freezes_435_unique_roots_once_without_resampling() -> None:
     module = Exp1FormalModule()
     context = _context()
     conditions = module.expand_conditions(context)
@@ -127,13 +134,13 @@ def test_exp1_formal_freezes_165_unique_roots_once_without_resampling() -> None:
     assert len(selections) == len(conditions)
     assert all(isinstance(selection, FrozenCaseSelection) for selection in selections)
     assert all(selection.is_executable for selection in selections)
-    assert sum(len(selection.ordered_case_ids) for selection in selections) == 165
-    assert len({case_id for selection in selections for case_id in selection.ordered_case_ids}) == 165
+    assert sum(len(selection.ordered_case_ids) for selection in selections) == 435
+    assert len({case_id for selection in selections for case_id in selection.ordered_case_ids}) == 435
     assert sum(
         len(selection.ordered_case_ids)
         for selection in selections
         if selection.domain == "factorization"
-    ) == 30
+    ) == 300
     assert sum(
         len(selection.ordered_case_ids)
         for selection in selections
@@ -151,7 +158,7 @@ def test_exp1_formal_freezes_165_unique_roots_once_without_resampling() -> None:
         ].append(tuple(selection.ordered_case_ids))
     assert len(grouped) == 12
     for key, repeated_ids in grouped.items():
-        expected_count = 10 if key[0] == "factorization" else 15
+        expected_count = 100 if key[0] == "factorization" else 15
         assert repeated_ids == [repeated_ids[0]]
         assert len(repeated_ids[0]) == expected_count
 
@@ -164,8 +171,8 @@ def test_exp1_formal_consumes_task14_selected_lean_ids_instead_of_catalog_pools(
     selections = module.freeze_case_selections(context, conditions)
 
     assert all(selection.is_executable for selection in selections)
-    assert sum(len(selection.ordered_case_ids) for selection in selections) == 165
-    assert len({case_id for selection in selections for case_id in selection.ordered_case_ids}) == 165
+    assert sum(len(selection.ordered_case_ids) for selection in selections) == 435
+    assert len({case_id for selection in selections for case_id in selection.ordered_case_ids}) == 435
     simple_pure = next(
         selection
         for selection in selections
@@ -202,7 +209,7 @@ def test_exp1_formal_consumes_task14_selected_lean_ids_instead_of_catalog_pools(
     )) == 25
 
 
-def test_exp1_formal_real_catalog_probe_generates_165_root_runs() -> None:
+def test_exp1_formal_real_catalog_probe_generates_435_root_runs() -> None:
     module = Exp1FormalModule()
     context = _context(catalog=_RealCatalogProbe())
     conditions = module.expand_conditions(context)
@@ -210,8 +217,8 @@ def test_exp1_formal_real_catalog_probe_generates_165_root_runs() -> None:
     selections = module.freeze_case_selections(context, conditions)
 
     assert all(selection.is_executable for selection in selections)
-    assert sum(len(selection.ordered_case_ids) for selection in selections) == 165
-    assert len({case_id for selection in selections for case_id in selection.ordered_case_ids}) == 165
+    assert sum(len(selection.ordered_case_ids) for selection in selections) == 435
+    assert len({case_id for selection in selections for case_id in selection.ordered_case_ids}) == 435
     assert len(context.catalog.cases_for(
         domain="lean_proof",
         paper_difficulty="simple",
@@ -274,7 +281,7 @@ def test_exp1_formal_blocks_incomplete_task14_readiness_before_provider() -> Non
     assert {selection.blocked_reason for selection in lean_selections} == {
         "lean_semantic_readiness_not_passed"
     }
-    assert sum(len(selection.ordered_case_ids) for selection in selections) == 30
+    assert sum(len(selection.ordered_case_ids) for selection in selections) == 300
 
 
 def test_exp1_formal_rejects_task14_selection_order_tamper_with_stale_digest() -> None:
@@ -419,7 +426,7 @@ def test_exp1_formal_run_condition_consumes_the_matching_frozen_selection() -> N
     result = module.run_condition(context, condition, selection)
 
     assert result.condition_id == condition.condition_id
-    assert result.task_count == 10
+    assert result.task_count == 100
     assert calls == [(condition.condition_id, selection.selection_id)]
     with pytest.raises(ValueError, match="selection does not match condition"):
         module.run_condition(context, conditions[1], selection)
@@ -562,18 +569,18 @@ def test_exp1_formal_summary_requires_complete_canonical_formal_inventory() -> N
     )
     evidence["task_metrics"] = evidence["task_metrics"][:-1]
 
-    with pytest.raises(ValueError, match="165 root-runs"):
+    with pytest.raises(ValueError, match="435 root-runs"):
         Exp1FormalModule().summarize(evidence)
 
 
-def test_exp1_formal_summary_accepts_exact_165_by_1_real_evidence_matrix() -> None:
+def test_exp1_formal_summary_accepts_exact_435_by_1_real_evidence_matrix() -> None:
     summary = Exp1FormalModule().summarize(
         _integration_summary_evidence(_context(binding=_shared_baseline_identity()))
     )
 
     assert len(summary.rows) == 12
-    assert sum(int(row["case_count"]) for row in summary.rows) == 165
-    assert sum(int(row["root_run_count"]) for row in summary.rows) == 165
+    assert sum(int(row["case_count"]) for row in summary.rows) == 435
+    assert sum(int(row["root_run_count"]) for row in summary.rows) == 435
     assert {int(row["repeat_count"]) for row in summary.rows} == {1}
     assert all(row["paper_eligible"] is True for row in summary.rows)
 
@@ -584,8 +591,8 @@ def test_exp1_formal_summary_accepts_integration_prepared_task_metrics() -> None
     )
 
     assert len(summary.rows) == 12
-    assert sum(int(row["case_count"]) for row in summary.rows) == 165
-    assert sum(int(row["root_run_count"]) for row in summary.rows) == 165
+    assert sum(int(row["case_count"]) for row in summary.rows) == 435
+    assert sum(int(row["root_run_count"]) for row in summary.rows) == 435
     assert {int(row["repeat_count"]) for row in summary.rows} == {1}
     assert all(row["transport_kind"] == "ai_api" for row in summary.rows)
     assert all(row["paper_eligible"] is True for row in summary.rows)
@@ -846,7 +853,7 @@ def _integration_summary_evidence(
         "pilot_only": False,
         "paper_eligible": True,
         "catalog_digest": CATALOG_DIGEST,
-        "catalog_version": "v1",
+        "catalog_version": SUITE_SCALE_PROFILE.catalog_version,
         "suite_version": "paper_v1",
         "conditions": [condition.to_dict() for condition in conditions],
         "selections": [selection.to_dict() for selection in selections],
@@ -856,7 +863,8 @@ def _integration_summary_evidence(
 
 class _FakeCatalog:
     catalog_digest = CATALOG_DIGEST
-    catalog_version = "v1"
+    catalog_id = SUITE_SCALE_PROFILE.catalog_id
+    catalog_version = SUITE_SCALE_PROFILE.catalog_version
     lean_semantic_readiness_passed: bool
     task15_budget_input: dict[str, Any]
 
@@ -872,19 +880,14 @@ class _FakeCatalog:
     ) -> None:
         self.lean_semantic_readiness_passed = lean_semantic_ready
         self._cases: list[dict[str, Any]] = []
-        for difficulty, ai_units in (("easy", 1), ("medium", 2), ("hard", 3)):
-            for index in range(1, 11):
-                case_id = f"factor_{difficulty}_{index:02d}"
-                self._cases.append(
-                    {
-                        "case_id": case_id,
-                        "domain": "factorization",
-                        "difficulty": difficulty,
-                        "paper_difficulty": difficulty,
-                        "topic_family": None,
-                        "expected_ai_unit_count": ai_units,
-                    }
-                )
+        for raw_line in Path(SUITE_SCALE_PROFILE.factorization_catalog_path).read_text(
+            encoding="utf-8"
+        ).splitlines():
+            if raw_line.strip():
+                case = json.loads(raw_line)
+                case["domain"] = "factorization"
+                case["topic_family"] = None
+                self._cases.append(case)
         lean_difficulty = {
             "simple": "easy",
             "medium_lemma_dag": "medium",
@@ -967,6 +970,28 @@ class _FakeCatalog:
             self.task15_budget_input["selected_case_ids_by_cell"] = tampered_by_cell
         if incomplete_task15_budget_input:
             self.task15_budget_input["case_counts_by_cell"] = {}
+        factor_candidates = {
+            difficulty: tuple(
+                case
+                for case in self._cases
+                if case["domain"] == "factorization"
+                and case["paper_difficulty"] == difficulty
+            )
+            for difficulty in ("easy", "medium", "hard")
+        }
+        self.paper_suite_scale_policy, selected_by_difficulty = build_paper_suite_scale_policy(
+            profile=SUITE_SCALE_PROFILE,
+            catalog_id=self.catalog_id,
+            catalog_version=self.catalog_version,
+            catalog_digest=self.catalog_digest,
+            candidates_by_difficulty=factor_candidates,
+        )
+        exp1_selected = selected_by_difficulty["exp1_real_ai_feasibility"]
+        self._cases = [
+            case
+            for difficulty in SUITE_SCALE_PROFILE.difficulty_order
+            for case in exp1_selected[difficulty]
+        ] + [case for case in self._cases if case["domain"] != "factorization"]
 
     def cases_for(
         self,
@@ -1228,20 +1253,29 @@ def _fake_task14_golden_evidence_digest_body(evidence: dict[str, Any]) -> dict[s
 
 
 class _RealCatalogProbe:
-    catalog_version = "v1"
+    catalog_id = SUITE_SCALE_PROFILE.catalog_id
+    catalog_version = SUITE_SCALE_PROFILE.catalog_version
 
     def __init__(self) -> None:
-        readiness = json.loads(
+        tracked_readiness = json.loads(
             Path("benchmarks/paper/lean_task14_3x3_readiness.v1.json").read_text(
                 encoding="utf-8"
             )
         )
+        readiness = _fake_task14_matrix_plan(
+            {
+                cell_key: list(case_ids)
+                for cell_key, case_ids in tracked_readiness["task15_budget_input"][
+                    "selected_case_ids_by_cell"
+                ].items()
+            }
+        )
         self.task14_matrix_plan = readiness
-        self.catalog_digest = readiness["task15_budget_input"]["catalog_digest"]
+        self.catalog_digest = CATALOG_DIGEST
         self.task15_budget_input = readiness["task15_budget_input"]
         self._cases: list[dict[str, Any]] = []
         for path in (
-            Path("benchmarks/paper/factorization_catalog.v1.jsonl"),
+            Path(SUITE_SCALE_PROFILE.factorization_catalog_path),
             Path("benchmarks/paper/lean_catalog.v1.jsonl"),
             Path("benchmarks/paper/lean_lemma_graph_catalog.v1.jsonl"),
         ):
@@ -1249,7 +1283,7 @@ class _RealCatalogProbe:
                 if not line.strip():
                     continue
                 case = json.loads(line)
-                if path.name == "factorization_catalog.v1.jsonl":
+                if path.name == "factorization_catalog.v2.jsonl":
                     case["domain"] = "factorization"
                     case.setdefault("paper_difficulty", case["difficulty"])
                 else:
@@ -1258,6 +1292,28 @@ class _RealCatalogProbe:
                         case["paper_difficulty"] = "simple"
                         case["topic_family"] = "pure_logic"
                 self._cases.append(case)
+        factor_candidates = {
+            difficulty: tuple(
+                case
+                for case in self._cases
+                if case["domain"] == "factorization"
+                and case["paper_difficulty"] == difficulty
+            )
+            for difficulty in ("easy", "medium", "hard")
+        }
+        self.paper_suite_scale_policy, selected_by_difficulty = build_paper_suite_scale_policy(
+            profile=SUITE_SCALE_PROFILE,
+            catalog_id=self.catalog_id,
+            catalog_version=self.catalog_version,
+            catalog_digest=self.catalog_digest,
+            candidates_by_difficulty=factor_candidates,
+        )
+        exp1_selected = selected_by_difficulty["exp1_real_ai_feasibility"]
+        self._cases = [
+            case
+            for difficulty in SUITE_SCALE_PROFILE.difficulty_order
+            for case in exp1_selected[difficulty]
+        ] + [case for case in self._cases if case["domain"] != "factorization"]
 
     def cases_for(
         self,

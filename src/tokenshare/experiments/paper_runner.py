@@ -2436,12 +2436,18 @@ def build_lean_3x3_matrix_plan(
         },
         "provider_calls_made": 0,
     }
-    body["matrix_digest"] = digest_json(_lean_matrix_digest_body(body))
+    body["matrix_digest"] = digest_json(
+        _lean_matrix_digest_body(body, require_authority_metadata=True)
+    )
     body["task15_budget_input"]["matrix_digest"] = body["matrix_digest"]
     return body
 
 
-def _lean_matrix_digest_body(body: JsonObject) -> JsonObject:
+def _lean_matrix_digest_body(
+    body: JsonObject,
+    *,
+    require_authority_metadata: bool = False,
+) -> JsonObject:
     ignored_wrapper_fields = {
         "blocked_cell_map",
         "catalog_path",
@@ -2463,19 +2469,32 @@ def _lean_matrix_digest_body(body: JsonObject) -> JsonObject:
             if key != "matrix_digest"
         }
     digest_body["cells"] = [
-        _lean_cell_digest_projection(cell) for cell in body["cells"]
+        _lean_cell_digest_projection(
+            cell,
+            require_authority_metadata=require_authority_metadata,
+        )
+        for cell in body["cells"]
     ]
     return digest_body
 
 
-def _lean_cell_digest_projection(cell: JsonObject) -> JsonObject:
+def _lean_cell_digest_projection(
+    cell: JsonObject,
+    *,
+    require_authority_metadata: bool = False,
+) -> JsonObject:
     projected = {
         key: value
         for key, value in cell.items()
         if key != "golden_evidence_by_case_id"
     }
     projected["golden_evidence_digest_by_case_id"] = {
-        case_id: digest_json(_lean_golden_evidence_digest_body(evidence))
+        case_id: digest_json(
+            _lean_golden_evidence_digest_body(
+                evidence,
+                require_authority_metadata=require_authority_metadata,
+            )
+        )
         for case_id, evidence in sorted(
             dict(cell.get("golden_evidence_by_case_id", {})).items()
         )
@@ -2483,14 +2502,70 @@ def _lean_cell_digest_projection(cell: JsonObject) -> JsonObject:
     return projected
 
 
-def _lean_golden_evidence_digest_body(evidence: JsonObject) -> JsonObject:
+def _lean_golden_evidence_digest_body(
+    evidence: JsonObject,
+    *,
+    require_authority_metadata: bool = False,
+) -> JsonObject:
+    certificate_ref = evidence.get("split_certificate_ref")
+    if not isinstance(certificate_ref, Mapping):
+        raise ValueError("Lean golden evidence split_certificate_ref is missing")
+    certificate_metadata = certificate_ref.get("metadata")
+    if not isinstance(certificate_metadata, Mapping):
+        raise ValueError("Lean golden evidence certificate metadata is missing")
+    authority_environment_digest = certificate_metadata.get(
+        "authority_environment_digest"
+    )
+    authority_normalized_certificate_digest = certificate_metadata.get(
+        "authority_normalized_certificate_digest"
+    )
+    for field_name, digest in (
+        ("runtime environment_digest", evidence.get("environment_digest")),
+        ("runtime split_certificate_digest", evidence.get("split_certificate_digest")),
+    ):
+        if not isinstance(digest, str) or not digest.startswith("sha256:"):
+            raise ValueError(f"Lean golden evidence {field_name} is incomplete")
+    has_authority_metadata = (
+        authority_environment_digest is not None
+        or authority_normalized_certificate_digest is not None
+    )
+    if require_authority_metadata or has_authority_metadata:
+        for field_name, digest in (
+            ("authority_environment_digest", authority_environment_digest),
+            (
+                "authority_normalized_certificate_digest",
+                authority_normalized_certificate_digest,
+            ),
+        ):
+            if not isinstance(digest, str) or not digest.startswith("sha256:"):
+                raise ValueError(f"Lean golden evidence {field_name} is incomplete")
+    else:
+        # 历史 readiness / regression fixture 只保留原有 typed runtime 身份；
+        # 它不会被提升为 authority-normalized、可发布的 Lean 证据。
+        return {
+            "schema_version": evidence.get("schema_version"),
+            "evidence_source": evidence.get("evidence_source"),
+            "case_id": evidence.get("case_id"),
+            "environment_digest": evidence.get("environment_digest"),
+            "oracle_package_digest": evidence.get("oracle_package_digest"),
+            "split_certificate_digest": evidence.get("split_certificate_digest"),
+            "deterministic_split": evidence.get("deterministic_split"),
+            "child_proof_file_construction": evidence.get(
+                "child_proof_file_construction"
+            ),
+            "checker_preflight": evidence.get("checker_preflight"),
+            "dependency_aware_merge": evidence.get("dependency_aware_merge"),
+            "root_recheck": evidence.get("root_recheck"),
+            "provider_calls_made": evidence.get("provider_calls_made"),
+            "node_ids": sorted(dict(evidence.get("node_checker_report_refs", {}))),
+        }
     return {
         "schema_version": evidence.get("schema_version"),
         "evidence_source": evidence.get("evidence_source"),
         "case_id": evidence.get("case_id"),
-        "environment_digest": evidence.get("environment_digest"),
+        "environment_digest": authority_environment_digest,
         "oracle_package_digest": evidence.get("oracle_package_digest"),
-        "split_certificate_digest": evidence.get("split_certificate_digest"),
+        "split_certificate_digest": authority_normalized_certificate_digest,
         "deterministic_split": evidence.get("deterministic_split"),
         "child_proof_file_construction": evidence.get(
             "child_proof_file_construction"
@@ -3034,9 +3109,15 @@ def _observed_profile_violation(
         task["provider_attempt_upper_bound"]
     ):
         return "observed_provider_attempts_exceeded_approved_profile"
-    if int(task_result["total_tokens"]) > int(task["token_upper_bound"]):
+    total_tokens = task_result["total_tokens"]
+    if total_tokens is None:
+        return "observed_token_usage_missing"
+    if int(total_tokens) > int(task["token_upper_bound"]):
         return "observed_tokens_exceeded_approved_profile"
-    if float(task_result["cost_estimate"]) > float(task["cost_upper_bound"]) + 1e-12:
+    cost_estimate = task_result["cost_estimate"]
+    if cost_estimate is None:
+        return "observed_cost_usage_missing"
+    if float(cost_estimate) > float(task["cost_upper_bound"]) + 1e-12:
         return "observed_cost_exceeded_approved_profile"
     return None
 

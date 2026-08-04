@@ -9,6 +9,9 @@ from tokenshare.experiments.paper_catalog import (
     lean_case_semantic_fingerprint as production_lean_case_semantic_fingerprint,
     load_paper_catalogs,
 )
+from tokenshare.plugins.lean_proof.semantic_authority import (
+    load_lean_semantic_authority,
+)
 
 
 FACTOR_CATALOG = Path("benchmarks/paper/factorization_catalog.v1.jsonl")
@@ -65,7 +68,7 @@ def test_medium_lemma_dag_catalog_has_real_graph_and_checker_preflight() -> None
     assert oracle_ref["content_hash"] == _sha256_file(package_path)
     assert set(oracle_ref["node_proof_sources"]) == node_ids
     assert case["environment_digest"] == (
-        default_lean_paper_environment_manifest().environment_digest
+        load_lean_semantic_authority().authority_environment_digest
     )
     assert case["preflight_status"] == "passed"
 

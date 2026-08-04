@@ -231,8 +231,11 @@ class ArtifactStore:
             self._cleanup_stale_temps(target)
             return
 
+        # 临时目录项使用目标文件名的摘要，避免长 logical id 加随机后缀后
+        # 突破 Windows 单个路径组件上限；最终文件名与原子替换语义不变。
+        target_identity = sha256(target.name.encode("utf-8")).hexdigest()[:16]
         temp_path = target.parent / (
-            f".{target.name}.tmp.{os.getpid()}.{uuid4().hex}"
+            f".data-{target_identity}.tmp.{os.getpid()}.{uuid4().hex}"
         )
         with temp_path.open("xb") as stream:
             stream.write(data)
@@ -267,8 +270,11 @@ class ArtifactStore:
             if marker_path.read_bytes() != encoded:
                 raise ValueError(f"durable commit marker mismatch: {marker_path.name}")
             return
+        # Windows 的单个路径组件上限会被长 logical id 加临时后缀突破；
+        # 临时名只绑定 marker 身份，最终 marker 名和提交语义保持不变。
+        marker_identity = sha256(marker_path.name.encode("utf-8")).hexdigest()[:16]
         temp_marker = marker_path.parent / (
-            f".{marker_path.name}.tmp.{os.getpid()}.{uuid4().hex}"
+            f".commit-{marker_identity}.tmp.{os.getpid()}.{uuid4().hex}"
         )
         with temp_marker.open("xb") as stream:
             stream.write(encoded)
@@ -292,12 +298,18 @@ class ArtifactStore:
 
     @staticmethod
     def _cleanup_stale_temps(target: Path) -> None:
-        for candidate in target.parent.glob(f".{target.name}.tmp.*"):
-            try:
-                candidate.unlink()
-            except OSError:
-                # 并发 writer 仍持有的 temp 不能作为已提交对象读取。
-                continue
+        target_identity = sha256(target.name.encode("utf-8")).hexdigest()[:16]
+        patterns = [f".data-{target_identity}.tmp.*"]
+        legacy_pattern = f".{target.name}.tmp.*"
+        if len(legacy_pattern) <= 255:
+            patterns.append(legacy_pattern)
+        for pattern in patterns:
+            for candidate in target.parent.glob(pattern):
+                try:
+                    candidate.unlink()
+                except OSError:
+                    # 并发 writer 仍持有的 temp 不能作为已提交对象读取。
+                    continue
 
     def _resolve_uri(self, uri: str) -> Path:
         """Resolve a stored URI without allowing path traversal.

@@ -464,14 +464,7 @@ def test_exp1_default_execution_writes_audit_report_when_ineligible(
     adapter = _recording_adapter([])
     report_calls: list[Path] = []
     monkeypatch.setenv("TOKENSHARE_EXP1_BASELINE_API_KEY", "test-key-for-gated-adapter")
-    monkeypatch.setattr(
-        "tokenshare.experiments.factorization_paper_adapter.run_factorization_paper_case",
-        adapter,
-    )
-    monkeypatch.setattr(
-        "tokenshare.experiments.lean_paper_adapter.run_lean_paper_case",
-        adapter,
-    )
+    monkeypatch.setattr(paper_runner, "dispatch_paper_case", adapter)
 
     class IneligibleReportResult:
         paper_eligible = False
@@ -1075,6 +1068,7 @@ def test_exp1_runner_scripted_simple_lean_evidence_is_strict_but_ineligible(
             entry_id=kwargs["entry_id"],
             max_tokens=kwargs["max_tokens"],
             timeout_seconds=kwargs["timeout_seconds"],
+            selected_ai_unit_id=kwargs["selected_ai_unit_id"],
         )
 
     def scripted_lean_adapter(**kwargs):
@@ -1088,6 +1082,7 @@ def test_exp1_runner_scripted_simple_lean_evidence_is_strict_but_ineligible(
             entry_id=kwargs["entry_id"],
             max_tokens=kwargs["max_tokens"],
             timeout_seconds=kwargs["timeout_seconds"],
+            selected_ai_unit_id=kwargs["selected_ai_unit_id"],
         )
 
     result = execute_exp1_pilot(

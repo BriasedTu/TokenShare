@@ -12,7 +12,6 @@ import sqlite3
 import tempfile
 from typing import Any, Callable, Iterator, Literal, Mapping, Sequence
 
-
 V3_GENERATION_SCHEMA = "tokenshare.paper_checkpoint_generation.v3"
 V3_RUN_FILES = (
     "run_manifest.json",
@@ -445,6 +444,15 @@ def _task20_publication_inventory(
     root: Path,
     output_refs: Sequence[Mapping[str, Any]],
 ) -> tuple[tuple[tuple[str, str], ...], str]:
+    # formal_evidence 在模块初始化时导入 checkpoint；延迟导入避免形成循环，
+    # 实际 publication closure 仍使用唯一 typed canonicalizer。
+    from tokenshare.experiments.paper_metric_observations import (
+        PaperMetricObservation,
+    )
+    from tokenshare.experiments.paper_traceability import (
+        canonicalize_metric_observations,
+    )
+
     root = Path(root).resolve(strict=False)
     refs_by_path: dict[str, Mapping[str, Any]] = {}
     payloads: dict[str, Any] = {}
@@ -522,9 +530,9 @@ def _task20_publication_inventory(
         or source_index.get("index_digest") != index_digest
     ):
         raise ValueError("Task20 source index digest closure mismatch")
-    observations_digest = _digest_json(observations)
+    persisted_observations_digest = _digest_json(observations)
     if (
-        observation_manifest.get("observations_digest") != observations_digest
+        observation_manifest.get("observations_digest") != persisted_observations_digest
         or observation_manifest.get("observation_count") != len(observations)
         or any(
             observation.get("source_index_id") != index_id
@@ -533,7 +541,13 @@ def _task20_publication_inventory(
         )
     ):
         raise ValueError("Task20 observation collection closure mismatch")
-    return tuple(sorted(inventory)), observations_digest
+    typed_observations = tuple(
+        PaperMetricObservation(**observation) for observation in observations
+    )
+    _, renderer_observations_digest = canonicalize_metric_observations(
+        typed_observations
+    )
+    return tuple(sorted(inventory)), renderer_observations_digest
 
 
 def _task21_publication_inventory(

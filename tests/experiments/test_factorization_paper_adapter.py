@@ -9,7 +9,6 @@ import pytest
 
 import tokenshare.experiments.factorization_paper_adapter as factorization_paper_adapter_module
 import tokenshare.experiments.paper_catalog as paper_catalog_module
-import tokenshare.experiments.paper_formal_metrics as paper_formal_metrics
 from tokenshare.core.models import ArtifactRef
 from tokenshare.executors.ai_api import build_ai_api_executor_descriptor
 from tokenshare.executors.ai_api_config import load_ai_api_config
@@ -62,6 +61,7 @@ from tokenshare.local_runtime import (
     WorkerTerminationPolicy,
     build_experiment_ablation_gate_applied_observation,
 )
+from tokenshare.experiments.paper_formal_callbacks import run_scheduled_cases
 from tokenshare.storage.events import EventLedger, EventType
 
 
@@ -592,8 +592,9 @@ def test_factorization_paper_adapter_runs_range_children_through_ai_api_executor
     assert result.eligibility_report.paper_eligible is False
     assert "real_transport_required" in result.eligibility_report.ineligibility_reasons
     assert "unsupported_transport:scripted" in result.eligibility_report.ineligibility_reasons
-    assert "secret_scan_failed" in result.eligibility_report.ineligibility_reasons
-    assert result.run_evidence["secret_scan_report"]["status"] == "pending"
+    assert "secret_scan_failed" not in result.eligibility_report.ineligibility_reasons
+    assert result.run_evidence["secret_scan_report"]["status"] == "passed"
+    assert result.run_evidence["secret_scan_report"]["leak_count"] == 0
 
     assert result.final_prime_factors == case["oracle_prime_factors"]
     assert result.merge_summary["result_kind"] == "prime_factorization_result"
@@ -1026,7 +1027,7 @@ def test_factorization_paper_adapter_accepts_openai_real_transport_through_execu
         assert _registry_provider_matches(request) == ["openai"]
 
 
-def test_factorization_real_transport_uses_attempt_clock_domain_and_numeric_critical_path(
+def test_factorization_real_transport_uses_attempt_clock_domain_and_explicit_critical_path_null(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1063,16 +1064,14 @@ def test_factorization_real_transport_uses_attempt_clock_domain_and_numeric_crit
         == "utc_wall_clock"
         for attempt in result.attempt_results
     )
-    protocol_runtime = result.run_evidence["protocol_runtime"]
-    task = {
-        **result.task_result.to_dict(),
-        "runtime_generation_identity": protocol_runtime["generation_identity"],
-    }
-    critical_path = paper_formal_metrics._protocol_critical_path(
-        task=task,
-        attempts=attempts,
-        events=result.event_records,
+    scheduled = run_scheduled_cases(
+        ordered_case_ids=(case["case_id"],),
+        worker_count=condition.worker_count,
+        execute_case=lambda _case_id, _worker_count: SimpleNamespace(
+            adapter_result=result
+        ),
     )
+    critical_path = scheduled.metrics
     observed_times = [
         datetime.fromisoformat(value.replace("Z", "+00:00"))
         for value in (
@@ -1092,10 +1091,12 @@ def test_factorization_real_transport_uses_attempt_clock_domain_and_numeric_crit
     assert abs(
         (datetime.now(timezone.utc) - max(observed_times)).total_seconds()
     ) < 60
-    assert critical_path["critical_path_ms"] is not None, critical_path
-    assert critical_path["critical_path_ms"] >= 0
-    assert critical_path["critical_path_source"] == "protocol_dependency_graph"
-    assert critical_path["paper_ineligibility_reasons"] == []
+    assert critical_path["critical_path_ms"] is None
+    assert critical_path["critical_path_evidence_status"] == "unavailable"
+    assert (
+        critical_path["critical_path_unavailable_reason"]
+        == "missing_protocol_dependency_evidence"
+    )
     event_seqs = [event["event_seq"] for event in result.event_records]
     # event_seq 只证明 ledger commit order；并发 occurred_at 不要求随其全局单调。
     assert event_seqs == sorted(event_seqs)

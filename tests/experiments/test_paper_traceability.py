@@ -140,7 +140,9 @@ def _genuine_l4_inputs(
             direct_result=direct,
             actual_provider_attempts=(
                 Exp1ActualProviderAttemptFacts(
-                    attempt_id="task20-execution",
+                    # 以 persisted Attempt identity 进入 execution binding；
+                    # provider artifacts 仍由 direct ref 绑定到 task20-execution。
+                    attempt_id="task20-attempt",
                     provider_latency_ms=10,
                     total_tokens=20,
                     cost_estimate_cny=1,

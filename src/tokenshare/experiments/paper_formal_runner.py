@@ -2558,10 +2558,7 @@ def _validated_formal_disk_estimate(
     )
     frozen_max_tokens = None
     if isinstance(request_limits, Mapping):
-        frozen_max_tokens = request_limits.get(
-            "token_upper_bound_per_provider_attempt",
-            request_limits.get("max_tokens"),
-        )
+        frozen_max_tokens = request_limits.get("token_upper_bound_per_provider_attempt")
     if frozen_max_tokens is None:
         provider_attempts = budget.max_provider_attempts
         if (
@@ -2569,6 +2566,8 @@ def _validated_formal_disk_estimate(
             and budget.token_upper_bound % provider_attempts == 0
         ):
             frozen_max_tokens = budget.token_upper_bound // provider_attempts
+    if frozen_max_tokens is None and isinstance(request_limits, Mapping):
+        frozen_max_tokens = request_limits.get("max_tokens")
     if inputs.get("max_tokens") != frozen_max_tokens:
         raise ValueError("disk estimate token ceiling drift")
     recomputed = _paper_disk_estimate(

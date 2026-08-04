@@ -34,6 +34,7 @@ from tokenshare.experiments.paper_metric_observations import (
     materialize_metric_observations,
 )
 from tokenshare.experiments.paper_metric_registry import load_paper_metric_registry
+from tokenshare.experiments.paper_models import LedgerEventIdentitySnapshot, digest_json
 
 from test_paper_metric_renderer_contract import (
     _DIGEST,
@@ -173,12 +174,33 @@ def test_exp3_online_recovery_table_comes_from_task14_registry_observations(
         _provider_ref(role, "attempt-replacement", index)
         for index, role in enumerate(ONLINE_CURRENT_PROVIDER_ROLES)
     )
+    attempt_event = LedgerEventIdentitySnapshot(
+        event_seq=1,
+        event_id="event-attempt-replacement",
+        event_type="ATTEMPT_STATE_CHANGED",
+        event_hash=digest_json({"event": "attempt-replacement"}),
+        prev_event_hash=None,
+        task_id="task-1",
+        object_type="Attempt",
+        object_id="attempt-replacement",
+    )
+    direct_ref = {
+        "preregistered_root_run_id": "task14-root",
+        "execution_binding": {
+            "execution_id": "attempt-replacement",
+            "task_id": "task-1",
+            "root_unit_id": "task14-root-unit",
+        },
+        "attempt_refs": [attempt_event.to_dict()],
+    }
     source_index = LineageSourceIndex.create(
         input_identity_digest=_DIGEST,
         records=(
             LineageSourceRecord.create(
                 member_id="attempt-replacement",
                 evidence_class="online_real_provider",
+                direct_result_refs=(direct_ref,),
+                current_task_attempt_event_refs=(attempt_event,),
                 current_provider_object_refs=provider_refs,
             ),
         ),

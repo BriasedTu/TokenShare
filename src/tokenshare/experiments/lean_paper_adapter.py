@@ -2268,6 +2268,18 @@ def _build_lean_lemma_graph_oracle_evidence(
     run_root = output_root / _safe_id(case_id)
     store = ArtifactStore(run_root)
     environment_manifest = default_lean_paper_environment_manifest()
+    authority_environment_digest = str(case["environment_digest"])
+    environment_ref = build_lean_environment_ref(
+        environment_manifest,
+        expected_authority_environment_digest=authority_environment_digest,
+    )
+    if (
+        environment_ref.tool_versions.get("authority_environment_digest")
+        != authority_environment_digest
+        or environment_ref.tool_versions.get("runtime_environment_digest")
+        != environment_manifest.environment_digest
+    ):
+        raise ValueError("Task 14 environment authority bridge is incomplete")
     root_node_id = str(case["merge_plan_shape"]["root_node_id"])
     parent_payload = _lean_lemma_graph_payload_from_body(
         case["root_theorem_payload"],
@@ -2284,10 +2296,20 @@ def _build_lean_lemma_graph_oracle_evidence(
         parent_theorem_payload_ref=parent_payload_ref,
         environment_manifest=environment_manifest,
     )
+    authority_normalized_certificate_digest = (
+        _authority_normalized_lemma_graph_certificate_digest(
+            certificate=certificate,
+            authority_environment_digest=authority_environment_digest,
+        )
+    )
     certificate_ref = _save_lemma_graph_certificate(
         store=store,
         case=case,
         certificate=certificate,
+        authority_environment_digest=authority_environment_digest,
+        authority_normalized_certificate_digest=(
+            authority_normalized_certificate_digest
+        ),
     )
     split_report = LeanSplitHelperReport(
         report_id=f"lean_split_helper_report:{case_id}:task14_golden",
@@ -2301,7 +2323,7 @@ def _build_lean_lemma_graph_oracle_evidence(
         report_ref=None,
         certificate=certificate,
         diagnostics={"source": "task14_local_oracle_evidence"},
-        environment_ref=build_lean_environment_ref(environment_manifest),
+        environment_ref=environment_ref,
         command_summary={"kind": "catalog_deterministic_certificate"},
         duration_ms=0,
         helper_stdout_excerpt="",
@@ -2371,7 +2393,7 @@ def _build_lean_lemma_graph_oracle_evidence(
                 request_id=f"task14_golden_checker_{case_id}_{_safe_id(node_id)}",
                 theorem_payload_ref=node_payload_ref,
                 proof_candidate_ref=proof_candidate_ref,
-                environment_ref=build_lean_environment_ref(environment_manifest),
+                environment_ref=environment_ref,
                 checker_mode=LeanCheckerMode.CHILD_PROOF,
                 timeout_seconds=int(node_payload.resource_limits["timeout_seconds"]),
                 max_output_bytes=int(node_payload.resource_limits["max_output_bytes"]),
@@ -3772,7 +3794,25 @@ def _save_lemma_graph_certificate(
     store: ArtifactStore,
     case: JsonObject,
     certificate: LeanLemmaGraphCertificate,
+    authority_environment_digest: str | None = None,
+    authority_normalized_certificate_digest: str | None = None,
 ) -> ArtifactRef:
+    if (authority_environment_digest is None) != (
+        authority_normalized_certificate_digest is None
+    ):
+        raise ValueError("Lean certificate authority metadata must be complete")
+    authority_metadata: JsonObject = {}
+    if authority_environment_digest is not None:
+        for field_name, digest in (
+            ("authority_environment_digest", authority_environment_digest),
+            (
+                "authority_normalized_certificate_digest",
+                authority_normalized_certificate_digest,
+            ),
+        ):
+            if not isinstance(digest, str) or not digest.startswith("sha256:"):
+                raise ValueError(f"{field_name} must be a sha256 digest")
+            authority_metadata[field_name] = digest
     return store.save_json(
         certificate.to_dict(),
         artifact_id=f"paper_lean_lemma_graph_certificate_{_safe_id(str(case['case_id']))}",
@@ -3785,9 +3825,41 @@ def _save_lemma_graph_certificate(
             "root_node_id": certificate.root_node_id,
             "paper_difficulty": case["paper_difficulty"],
             "topic_family": case["topic_family"],
+            **authority_metadata,
         },
         created_at=NOW,
     )
+
+
+def _authority_normalized_lemma_graph_certificate_digest(
+    *,
+    certificate: LeanLemmaGraphCertificate,
+    authority_environment_digest: str,
+) -> str:
+    body = copy.deepcopy(certificate.to_dict())
+    runtime_environment_digest = str(body["environment_digest"])
+    diagnostics = dict(body.get("diagnostics", {}))
+    bridge = diagnostics.pop("environment_authority_bridge", None)
+    if runtime_environment_digest != authority_environment_digest:
+        if not isinstance(bridge, Mapping):
+            raise ValueError("Lean certificate authority bridge is missing")
+        if (
+            bridge.get("authority_environment_digest")
+            != authority_environment_digest
+            or bridge.get("runtime_environment_digest")
+            != runtime_environment_digest
+        ):
+            raise ValueError("Lean certificate authority bridge digest mismatch")
+    body["environment_digest"] = authority_environment_digest
+    body["diagnostics"] = diagnostics
+    body.pop("certificate_digest", None)
+    normalized = LeanLemmaGraphCertificate.from_dict(
+        body,
+        expected_environment_digest=authority_environment_digest,
+    )
+    if normalized.certificate_digest is None:
+        raise ValueError("Lean authority-normalized certificate digest is missing")
+    return normalized.certificate_digest
 
 
 def _lemma_graph_split_summary(

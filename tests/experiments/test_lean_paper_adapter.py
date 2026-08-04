@@ -209,8 +209,9 @@ def test_lean_paper_adapter_runs_split_children_through_ai_api_checker_and_merge
     assert result.eligibility_report.paper_eligible is False
     assert "real_transport_required" in result.eligibility_report.ineligibility_reasons
     assert "unsupported_transport:scripted" in result.eligibility_report.ineligibility_reasons
-    assert "secret_scan_failed" in result.eligibility_report.ineligibility_reasons
-    assert result.run_evidence["secret_scan_report"]["status"] == "pending"
+    assert "secret_scan_failed" not in result.eligibility_report.ineligibility_reasons
+    assert result.run_evidence["secret_scan_report"]["status"] == "passed"
+    assert result.run_evidence["secret_scan_report"]["leak_count"] == 0
 
     assert result.merge_summary["status"] == "completed"
     assert result.merge_summary["root_checker_accepted"] is True

@@ -25,6 +25,10 @@ from tokenshare.experiments.paper_models import (
 from tokenshare.experiments.paper_model_identity import build_model_endpoint_identity
 from tokenshare.experiments.paper_formal_callbacks import run_scheduled_cases
 from tokenshare.experiments.paper_runner import normalize_experiment_ids
+from tokenshare.experiments.paper_suite_scale import (
+    build_paper_suite_scale_policy,
+    load_paper_suite_scale_profile,
+)
 
 
 MODULE_NAME = "tokenshare.experiments.paper_exp2_scalability"
@@ -119,7 +123,7 @@ def _runtime_record(
     }
 
 
-def test_exp2_module_implements_hard_only_1992_root_run_contract() -> None:
+def test_exp2_module_implements_hard_only_600_root_run_contract() -> None:
     module = _load_module()
     exp2 = module.Experiment2ScalabilityModule()
     catalog, _readiness = _formal_catalog_from_json_files()
@@ -131,18 +135,18 @@ def test_exp2_module_implements_hard_only_1992_root_run_contract() -> None:
     assert isinstance(exp2, PaperExperimentModule)
     assert len(conditions) == 12
     assert len(selections) == len(conditions)
-    assert module.count_exp2_root_runs(conditions, selections) == 1_992
+    assert module.count_exp2_root_runs(conditions, selections) == 600
     assert {condition.worker_count for condition in conditions} == {1, 3, 7, 10, 30, 50}
     assert {condition.repeat_id for condition in conditions} == {0, 1}
     assert {condition.domain for condition in conditions} == {"factorization"}
     assert {condition.paper_difficulty for condition in conditions} == {"hard"}
-    assert all(len(selection.ordered_case_ids) == 166 for selection in selections)
+    assert all(len(selection.ordered_case_ids) == 50 for selection in selections)
     assert all(
         selection.to_dict()["split_profile_id"]
         == "factorization.exp2_contiguous_20way.v1"
         for selection in selections
     )
-    assert sum(selection.expected_ai_unit_count for selection in selections) == 39_840
+    assert sum(selection.expected_ai_unit_count for selection in selections) == 12_000
     assert all(condition.experiment_id == module.EXP2_EXPERIMENT_ID for condition in conditions)
     assert all(condition.model_policy == "fixed_entry" for condition in conditions)
     assert all(
@@ -212,7 +216,7 @@ def test_exp2_accepts_shared_baseline_identity_and_full_request_controls() -> No
     assert len(callback_calls) == 1
 
 
-def test_formal_json_catalog_freezes_all_166_hard_roots_for_each_condition() -> None:
+def test_formal_json_catalog_freezes_canonical_50_hard_roots_for_each_condition() -> None:
     module = _load_module()
     exp2 = module.Experiment2ScalabilityModule()
     catalog, readiness = _formal_catalog_from_json_files()
@@ -223,21 +227,19 @@ def test_formal_json_catalog_freezes_all_166_hard_roots_for_each_condition() -> 
 
     assert len(conditions) == 12
     assert len(selections) == 12
-    assert module.count_exp2_root_runs(conditions, selections) == 1_992
-    factor_cases = catalog["factorization_cases"]
+    assert module.count_exp2_root_runs(conditions, selections) == 600
+    expected_ids = tuple(
+        catalog["paper_suite_scale_policy"]["ordered_case_ids_by_scope"]
+        ["exp2_real_ai_scalability"]["hard"]
+    )
     for condition, selection in zip(conditions, selections, strict=True):
         body = selection.to_dict()
         assert body["catalog_source_kind"] == "formal_paper_catalog"
         assert body["slice_digest"].startswith("sha256:")
         assert body["split_metadata_digest"].startswith("sha256:")
-        assert len(body["case_expected_ai_unit_counts"]) == 166
+        assert len(body["case_expected_ai_unit_counts"]) == 50
         assert set(body["case_expected_ai_unit_counts"].values()) == {20}
         assert body["split_profile_id"] == module.EXP2_SPLIT_PROFILE_ID
-        expected_ids = tuple(
-            case["case_id"]
-            for case in factor_cases
-            if case["paper_difficulty"] == "hard"
-        )
         assert selection.ordered_case_ids == expected_ids
 
     tampered = json.loads(json.dumps(catalog))
@@ -1217,7 +1219,7 @@ def test_summary_keeps_no_429_sensitivity_stats_for_complete_repeat_groups() -> 
     assert rows[3]["rate_limit_excluded_speedup_median"] == 2.0
 
 
-def test_formal_matrix_audit_accepts_exact_six_group_1992_root_run_matrix() -> None:
+def test_formal_matrix_audit_accepts_exact_six_group_600_root_run_matrix() -> None:
     module = _load_module()
     rows = []
     for worker_count in module.MANDATORY_WORKER_LEVELS:
@@ -1232,7 +1234,7 @@ def test_formal_matrix_audit_accepts_exact_six_group_1992_root_run_matrix() -> N
                     for repeat_id in range(2)
                 ),
                 "repeat_set_status": "complete",
-                "root_run_count": 332,
+                "root_run_count": 100,
                 "paper_eligible": True,
             }
         )
@@ -1242,7 +1244,7 @@ def test_formal_matrix_audit_accepts_exact_six_group_1992_root_run_matrix() -> N
     assert len(audited) == 6
     assert all(row["formal_matrix_status"] == "complete" for row in audited)
     assert all(row["formal_matrix_condition_count"] == 12 for row in audited)
-    assert all(row["formal_matrix_root_run_count"] == 1992 for row in audited)
+    assert all(row["formal_matrix_root_run_count"] == 600 for row in audited)
     assert all(row["paper_eligible"] is True for row in audited)
 
 
@@ -1499,11 +1501,31 @@ def _formal_catalog_from_json_files() -> tuple[dict[str, Any], dict[str, Any]]:
         "lean_cases": lean_cases,
         "lean_lemma_graph_cases": lean_lemma_graph_cases,
     }
+    profile = load_paper_suite_scale_profile(
+        Path("benchmarks/paper/paper_suite_scale_profile.v1.json")
+    )
+    catalog_digest = digest_json(digest_body)
+    candidates_by_difficulty = {
+        difficulty: tuple(
+            case
+            for case in factorization_cases
+            if case["paper_difficulty"] == difficulty
+        )
+        for difficulty in ("easy", "medium", "hard")
+    }
+    suite_policy, _ = build_paper_suite_scale_policy(
+        profile=profile,
+        catalog_id=profile.catalog_id,
+        catalog_version=profile.catalog_version,
+        catalog_digest=catalog_digest,
+        candidates_by_difficulty=candidates_by_difficulty,
+    )
     return (
         {
             **digest_body,
             "suite_version": "paper_v1",
-            "catalog_digest": digest_json(digest_body),
+            "catalog_digest": catalog_digest,
+            "paper_suite_scale_policy": suite_policy,
             "task15_budget_input": readiness["task15_budget_input"],
             "lean_task14_readiness": readiness,
             "optional_worker_preflight": {

@@ -453,12 +453,13 @@ def _run_pytest(mode: str, *, only_lean_canary: bool) -> None:
     if not (ROOT / "tests").is_dir():
         print("No tests/ directory; pytest skipped", flush=True)
         return
+    plugin_args = ["-p", "verification.pytest_network_tripwire"]
     if only_lean_canary:
-        args = ["-q", *_manifest_entries(LEAN_CANARY_MANIFEST)]
+        args = ["-q", *plugin_args, *_manifest_entries(LEAN_CANARY_MANIFEST)]
     elif mode == "full":
-        args = ["tests"]
+        args = [*plugin_args, "tests"]
     else:
-        args = ["-q", *_manifest_entries(FAST_TEST_MANIFEST)]
+        args = ["-q", *plugin_args, *_manifest_entries(FAST_TEST_MANIFEST)]
     exit_code = pytest.main(args)
     if exit_code != pytest.ExitCode.OK:
         raise SystemExit(int(exit_code))

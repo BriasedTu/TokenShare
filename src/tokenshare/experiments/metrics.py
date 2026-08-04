@@ -212,13 +212,18 @@ def _artifact_manifest_count(artifact_root: Path | None) -> int:
 def _artifact_link_success(artifact_root: Path | None) -> bool:
     if artifact_root is None or not artifact_root.exists():
         return False
+    store_root = artifact_root.parent.resolve()
     manifest_paths = list(artifact_root.glob("*.manifest.json"))
     if not manifest_paths:
         return False
     for manifest_path in manifest_paths:
         try:
             ref = ArtifactRef.from_dict(json.loads(manifest_path.read_text(encoding="utf-8")))
-            artifact_path = artifact_root / ref.artifact_id
+            # ArtifactStore 的物理文件名可能与 logical artifact_id 不同；
+            # manifest 中的 uri 才是权威定位，同时必须仍落在同一 store root。
+            artifact_path = (store_root / ref.uri).resolve()
+            if store_root != artifact_path and store_root not in artifact_path.parents:
+                return False
             data = artifact_path.read_bytes()
         except (FileNotFoundError, json.JSONDecodeError, KeyError, ValueError):
             return False

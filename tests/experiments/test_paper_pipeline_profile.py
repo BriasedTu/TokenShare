@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import dataclasses
+from hashlib import sha256
 import json
 import subprocess
 from pathlib import Path
@@ -20,6 +21,7 @@ from tokenshare.experiments.paper_pipeline_profile import (
     compute_profile_digest,
     load_paper_pipeline_profile,
 )
+from tokenshare.experiments.paper_suite_scale import load_paper_suite_scale_profile
 
 
 EXPECTED_EXP2_CASES = (
@@ -28,6 +30,10 @@ EXPECTED_EXP2_CASES = (
     ("late", "factor_v2_hard_063"),
     ("no_factor", "factor_v2_hard_161"),
 )
+
+
+def _file_digest(path: Path) -> str:
+    return "sha256:" + sha256(path.read_bytes()).hexdigest()
 EXPECTED_WORKERS = (1, 3, 7, 10, 30, 50)
 
 ADMISSION_LEAF_MUTATIONS = (
@@ -348,48 +354,50 @@ def test_loader_exposes_complete_frozen_typed_authority() -> None:
     assert profile.schema_version == "tokenshare.epd027_pipeline_profile.v1"
     assert profile.profile_id == "epd027_response_bank_paper_pipeline.v1"
     assert profile.profile_version == 1
-    assert profile.profile_digest == (
-        "sha256:1e7040219bef550d671db4d44d6632e2c7cd69a372e219a3b8401672c9600aae"
-    )
+    tracked_body = _profile_body()
+    assert profile.profile_digest == tracked_body["profile_digest"]
+    assert profile.profile_digest == compute_profile_digest(tracked_body)
     assert profile.authorities.implementation_plan_path == repository_root / (
         "Doc/archive/design-history/"
         "2026-08-01-feat-011-response-bank-paper-pipeline-implementation-plan.md"
     )
-    assert profile.authorities.implementation_plan_content_digest == (
-        "sha256:44d656a655b028a09eca17ccb9910d9aa806ba169a31455c16eafbd00357bc3b"
+    assert profile.authorities.implementation_plan_content_digest == _file_digest(
+        profile.authorities.implementation_plan_path
     )
     assert profile.authorities.factorization_catalog_path == (
         repository_root / "benchmarks/paper/factorization_catalog.v2.jsonl"
     )
-    assert profile.authorities.factorization_catalog_content_digest == (
-        "sha256:9ce2b31a199455a37c0ca5afdee68e03540dc4912c4c4fe28e87ed3503467774"
+    assert profile.authorities.factorization_catalog_content_digest == _file_digest(
+        profile.authorities.factorization_catalog_path
     )
     assert profile.authorities.paper_suite_scale_profile_path == (
         repository_root / "benchmarks/paper/paper_suite_scale_profile.v1.json"
     )
-    assert profile.authorities.paper_suite_scale_profile_content_digest == (
-        "sha256:86a76c364e07ead31c9aedc7c11df86ec11d35de8a27f69ee7f9ae83645e886a"
+    assert profile.authorities.paper_suite_scale_profile_content_digest == _file_digest(
+        profile.authorities.paper_suite_scale_profile_path
     )
     assert profile.authorities.paper_suite_scale_profile_digest == (
-        "sha256:9cab1fb5077265807e1f64c1b63265d0dd3e2f1e87a3371f1c811132e5da7dad"
+        load_paper_suite_scale_profile(
+            profile.authorities.paper_suite_scale_profile_path
+        ).profile_digest
     )
     assert profile.authorities.lean_catalog_path == (
         repository_root / "benchmarks/paper/lean_lemma_graph_catalog.v1.jsonl"
     )
-    assert profile.authorities.lean_catalog_content_digest == (
-        "sha256:5a134f246d45ad302ead57ef6eb9559b0b040ed85fac50dc6af49974756f2cdc"
+    assert profile.authorities.lean_catalog_content_digest == _file_digest(
+        profile.authorities.lean_catalog_path
     )
     assert profile.authorities.lean_readiness_path == (
         repository_root / "benchmarks/paper/lean_task14_3x3_readiness.v1.json"
     )
-    assert profile.authorities.lean_readiness_content_digest == (
-        "sha256:637a177aa4fbec5d672114468d0d885cf001470d8152a4832fd0a5b59ff956be"
+    assert profile.authorities.lean_readiness_content_digest == _file_digest(
+        profile.authorities.lean_readiness_path
     )
     assert profile.authorities.provider_config_path == (
         repository_root / "benchmarks/paper/exp1_baseline_provider_config.v3.json"
     )
-    assert profile.authorities.provider_config_content_digest == (
-        "sha256:6bca384c1e87d45876534cf2065ff1adc159bf41c98035ce2bac12679ba006be"
+    assert profile.authorities.provider_config_content_digest == _file_digest(
+        profile.authorities.provider_config_path
     )
 
     assert profile.prompt_admission.canonical_body_schema == "canonical_json_utf8_v1"

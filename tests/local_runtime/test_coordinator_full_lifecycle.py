@@ -60,11 +60,6 @@ from tests.test_phase4_expand_flow import (
 
 
 @dataclass(frozen=True)
-class _Submission:
-    submission_id: str
-
-
-@dataclass(frozen=True)
 class _RequestIdentity:
     request_id: str
     attempt_id: str
@@ -76,7 +71,29 @@ class _Executor:
 
     def execute(self, request, *, submission_id: str, submitted_at: str):
         self.calls.append((request, submission_id, submitted_at))
-        return _Submission(submission_id=submission_id)
+        return ExecutionSubmission(
+            submission_id=submission_id,
+            request_id=getattr(request, "request_id", "request_test"),
+            task_id=getattr(request, "task_id", "task_test"),
+            unit_id=getattr(request, "unit_id", "unit_test"),
+            attempt_id=getattr(request, "attempt_id", "attempt_test"),
+            lease_id=getattr(request, "lease_id", "lease_test"),
+            fencing_token=getattr(request, "fencing_token", "fencing_test"),
+            executor_id="executor_test",
+            executor_version="0.1.0",
+            result_kind="succeeded",
+            raw_output_ref=None,
+            parsed_output_ref=None,
+            candidate_output_refs={},
+            parse_failure_ref=None,
+            log_ref=None,
+            environment_ref=make_environment_ref(),
+            environment_summary={"runtime": "pytest"},
+            provenance_ref=None,
+            usage_summary={"calls": 0},
+            error=None,
+            submitted_at=submitted_at,
+        )
 
 
 def test_sequential_backend_has_one_worker_and_only_reports_execution_fact() -> None:

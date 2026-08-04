@@ -499,19 +499,27 @@ def _factorization_selection(
             experiment_id=EXP2_EXPERIMENT_ID,
         )
         expected_ids = selected_by_difficulty["hard"]
-        if tuple(_case_id(case) for case in available_cases) != expected_ids:
+        available_by_id: dict[str, Mapping[str, Any]] = {}
+        for case in available_cases:
+            case_id = _case_id(case)
+            if case_id in available_by_id:
+                raise ValueError(
+                    "Experiment 2 Factorization cases drift from suite scale profile"
+                )
+            available_by_id[case_id] = case
+        if len(expected_ids) != len(set(expected_ids)) or any(
+            case_id not in available_by_id for case_id in expected_ids
+        ):
             raise ValueError(
                 "Experiment 2 Factorization cases drift from suite scale profile"
             )
+        cases = tuple(available_by_id[case_id] for case_id in expected_ids)
     expected_case_count = _factor_case_count(
         catalog_version,
         str(condition.paper_difficulty),
     )
-    cases = (
-        available_cases[:expected_case_count]
-        if catalog_version == "v1"
-        else available_cases
-    )
+    if catalog_version == "v1":
+        cases = available_cases[:expected_case_count]
     if len(cases) != expected_case_count:
         raise ValueError(
             "Experiment 2 factorization selection count drift for frozen catalog"
@@ -1983,7 +1991,20 @@ def _catalog_cases(
 def _catalog_digest(context: PaperExecutionContext) -> str:
     catalog = _catalog(context)
     digest = _require_complete_digest("catalog_digest", catalog.get("catalog_digest"))
-    if catalog.get("paper_suite_scale_policy") is None and all(
+    manifest = getattr(context.catalog, "manifest", None)
+    if manifest is not None:
+        # manifest-backed execution view 可以只暴露冻结选择；catalog digest
+        # 仍然绑定完整 manifest，不能拿投影后的 case 列表重新计算。
+        digest_body = {
+            "catalog_id": manifest.catalog_id,
+            "catalog_version": manifest.catalog_version,
+            "factorization_cases": list(manifest.factorization_cases),
+            "lean_cases": list(manifest.lean_cases),
+            "lean_lemma_graph_cases": list(manifest.lean_lemma_graph_cases),
+        }
+        if digest_json(digest_body) != digest:
+            raise ValueError("formal paper catalog digest mismatch")
+    elif all(
         field_name in catalog
         for field_name in (
             "factorization_cases",

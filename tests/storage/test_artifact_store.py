@@ -47,6 +47,18 @@ def test_artifact_store_saves_reads_and_verifies_content_hash(tmp_path) -> None:
     assert not store.verify(artifact_ref)
 
 
+def test_artifact_store_commits_long_logical_id_with_bounded_temp_names(tmp_path) -> None:
+    artifact_id = "artifact_" + ("long_identity_" * 15) + "tail"
+    store = ArtifactStore(tmp_path)
+
+    _save_test_artifact(store, artifact_id=artifact_id)
+
+    artifact_ref = ArtifactStore(tmp_path).load_artifact_ref(artifact_id)
+    assert artifact_ref.artifact_id == artifact_id
+    assert store.read_bytes(artifact_ref) == b'{"n": 91}'
+    assert store.verify(artifact_ref)
+
+
 def test_load_artifact_ref_rejects_missing_manifest_commit_marker(tmp_path) -> None:
     artifact_id = "artifact_missing_manifest_marker"
     store = ArtifactStore(tmp_path)

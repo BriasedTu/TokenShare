@@ -432,6 +432,7 @@ def _lean_simple_case_bindings(
                     request_id=f"paper_lean_request_{case_id}_{_safe_id(child_key)}",
                     task_id=f"paper_lean_{case_id}",
                     unit_id=unit_id,
+                    planned_ai_unit_id=planned_ai_unit_id,
                     payload_key="child_theorem_payload",
                     payload_ref=payload_ref.to_dict(),
                     payload_body=payload_body,
@@ -503,6 +504,7 @@ def _lean_lemma_graph_case_bindings(
                     request_id=f"paper_lean_request_{case_id}_{_safe_id(node_id)}",
                     task_id=f"paper_lean_{case_id}",
                     unit_id=unit_id,
+                    planned_ai_unit_id=node_id,
                     payload_key="lemma_theorem_payload",
                     payload_ref=payload_ref.to_dict(),
                     payload_body=payload_body,
@@ -598,6 +600,7 @@ def _lean_request_artifact_commitment(
     request_id: str,
     task_id: str,
     unit_id: str,
+    planned_ai_unit_id: str,
     payload_key: str,
     payload_ref: JsonObject,
     payload_body: JsonObject,
@@ -612,6 +615,7 @@ def _lean_request_artifact_commitment(
         theorem_payload=LeanTheoremPayload.from_dict(payload_body),
         created_at=NOW,
         seed=seed,
+        planned_ai_unit_id=planned_ai_unit_id,
     ).to_dict()
     prompt_ref = _artifact_ref_for_json(
         prompt_body,
