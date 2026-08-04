@@ -50,6 +50,13 @@ _DIGEST_B = "sha256:" + "b" * 64
 _DIGEST_C = "sha256:" + "c" * 64
 
 
+class _ForbiddenOfflineCapturingTransport:
+    tokenshare_offline_capturing_transport = True
+
+    def post_chat_completion(self, *_args, **_kwargs):
+        raise AssertionError("current provider transport must remain forbidden")
+
+
 def _validated_runtime(
     *,
     entry_count: int,
@@ -654,6 +661,7 @@ def test_two_worker_trace_roots_overlap_on_deterministic_condition_lanes(
                 planned_ai_units=3,
             ),
             "trace_context": trace_context,
+            "transport": _ForbiddenOfflineCapturingTransport(),
         }
     )
 
@@ -869,13 +877,7 @@ def test_500_distinct_factor_roots_stream_through_formal_trace_and_checkpoint(
             },
             "budget": pressure_budget,
             "trace_context": trace_context,
-            "transport": type(
-                "ForbiddenProviderTransport",
-                (),
-                {"post_chat_completion": lambda *_args, **_kwargs: (_ for _ in ()).throw(
-                    AssertionError("current provider transport must remain forbidden")
-                )},
-            )(),
+            "transport": _ForbiddenOfflineCapturingTransport(),
         }
     )
 

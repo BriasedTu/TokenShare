@@ -1,0 +1,2 @@
+tests/experiments/test_paper_online_checks.py::test_exp3_plan_is_two_roots_12_upper
+tests/experiments/test_paper_formal_gate.py::test_blocked_l3_or_l4_never_passes_publication[L3]

@@ -4,18 +4,37 @@ from __future__ import annotations
 
 import argparse
 import compileall
+from hashlib import sha256
 import json
 from pathlib import Path
 import re
 import sqlite3
+import subprocess
 import sys
+import tempfile
 from typing import Sequence
+
+import pytest
 
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
 FAST_TEST_MANIFEST = ROOT / "verification/fast-tests.txt"
 LEAN_CANARY_MANIFEST = ROOT / "verification/lean-canary-tests.txt"
+PROFILE_DIR = ROOT / "verification/profiles"
+PROFILE_NAMES = (
+    "paper-l1-components",
+    "paper-l2-historical-real",
+    "paper-l3-new-real-smoke-audit",
+    "paper-l4-cell-lineage",
+)
+PROFILE_MANIFESTS = {
+    name: PROFILE_DIR / f"{name}.txt" for name in PROFILE_NAMES
+}
+ARTIFACT_PROFILES = frozenset(PROFILE_NAMES[2:])
+_EXACT_NODEID = re.compile(
+    r"^tests/[A-Za-z0-9_./-]+\.py::test_[^\s:]+(?:\[[^\]\r\n]+\])?$"
+)
 TIER1_CONTEXT_BUDGET_BYTES = {
     "AGENTS.md": 16 * 1024,
     "feature_list.json": 32 * 1024,
@@ -57,6 +76,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--lean-audit", action="store_true")
     parser.add_argument("--force-all-lean-audit", action="store_true")
     parser.add_argument("--only-lean-canary", action="store_true")
+    parser.add_argument("--profile")
+    parser.add_argument("--artifact-root", type=Path)
     args = parser.parse_args(argv)
     if args.force_all_lean_audit:
         args.lean_audit = True
@@ -64,6 +85,42 @@ def main(argv: Sequence[str] | None = None) -> int:
     sys.path.insert(0, str(ROOT))
     sys.path.insert(0, str(SRC))
     print("=== TokenShare Startup Verification ===", flush=True)
+    if args.profile is not None:
+        if args.mode != "fast" or args.lean_audit or args.only_lean_canary:
+            raise SystemExit("Focused profiles cannot be combined with Full/LeanAudit")
+        entries, manifest_digest = _load_profile_manifest(args.profile)
+        artifact_root = (
+            None
+            if args.artifact_root is None
+            else _validate_artifact_root(args.artifact_root)
+        )
+        audit = _audit_profile_artifacts(args.profile, artifact_root)
+        summary = {
+            "profile": args.profile,
+            "manifest_digest": manifest_digest,
+            "nodeid_count": len(entries),
+            **audit,
+        }
+        if audit["status"] != "passed":
+            print(
+                "verification-profile="
+                + json.dumps(summary, ensure_ascii=False, sort_keys=True),
+                flush=True,
+            )
+            return 3
+        _verify_python_runtime()
+        _verify_harness_files()
+        _compile_repository()
+        _run_profile_tests(entries)
+        print(
+            "verification-profile="
+            + json.dumps(summary, ensure_ascii=False, sort_keys=True),
+            flush=True,
+        )
+        print("=== Verification Complete ===", flush=True)
+        return 0
+    if args.artifact_root is not None:
+        raise SystemExit("--artifact-root requires --profile")
     print(f"Verification mode: {args.mode}", flush=True)
     _verify_python_runtime()
     _verify_harness_files()
@@ -191,6 +248,187 @@ def _manifest_entries(path: Path) -> list[str]:
     return entries
 
 
+def _profile_manifest_path(name: str) -> Path:
+    path = PROFILE_MANIFESTS.get(name)
+    if path is None:
+        raise SystemExit(f"Unknown verification profile: {name}")
+    resolved = path.resolve(strict=False)
+    if PROFILE_DIR.resolve(strict=False) not in resolved.parents:
+        raise SystemExit("Verification profile resolves outside profile directory")
+    return resolved
+
+
+def _load_profile_manifest(name: str) -> tuple[list[str], str]:
+    path = _profile_manifest_path(name)
+    if not path.is_file():
+        raise SystemExit(f"Verification manifest not found: {path.relative_to(ROOT)}")
+    raw = path.read_bytes()
+    try:
+        lines = raw.decode("utf-8").splitlines()
+    except UnicodeDecodeError as error:
+        raise SystemExit("Verification profile manifest must be UTF-8") from error
+    entries = [line.strip() for line in lines if line.strip()]
+    if not entries:
+        raise SystemExit(f"Verification manifest is empty: {path.relative_to(ROOT)}")
+    if any(line != line.strip() or not _EXACT_NODEID.fullmatch(line) for line in lines if line):
+        raise SystemExit("Verification profile must contain exact pytest nodeids only")
+    duplicates = sorted({entry for entry in entries if entries.count(entry) > 1})
+    if duplicates:
+        raise SystemExit(f"Verification manifest contains duplicates: {duplicates}")
+    tracked = _tracked_test_paths()
+    for entry in entries:
+        test_path = entry.split("::", 1)[0]
+        if test_path not in tracked or not (ROOT / test_path).is_file():
+            raise SystemExit(
+                f"Verification profile references an untracked test: {test_path}"
+            )
+    canonical = ("\n".join(entries) + "\n").encode("utf-8")
+    return entries, "sha256:" + sha256(canonical).hexdigest()
+
+
+def _tracked_test_paths() -> frozenset[str]:
+    result = subprocess.run(
+        ["git", "-C", str(ROOT), "ls-files", "--", "tests"],
+        check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+    if result.returncode != 0:
+        raise SystemExit("Unable to verify tracked profile tests")
+    return frozenset(line.strip().replace("\\", "/") for line in result.stdout.splitlines())
+
+
+def _validate_artifact_root(value: Path) -> Path:
+    repository = ROOT.resolve(strict=False)
+    resolved = (
+        value if value.is_absolute() else repository / value
+    ).resolve(strict=False)
+    if repository not in resolved.parents:
+        raise SystemExit("Artifact root is outside the repository")
+    allowed_roots = (
+        repository / "local" / "verification",
+        repository / "outputs",
+    )
+    if not any(resolved == root or root in resolved.parents for root in allowed_roots):
+        raise SystemExit("Artifact root is outside allowed repository runtime roots")
+    if not resolved.is_dir():
+        raise SystemExit(f"Artifact root is not an existing directory: {resolved}")
+    return resolved
+
+
+def _audit_profile_artifacts(name: str, artifact_root: Path | None) -> dict[str, object]:
+    if name not in ARTIFACT_PROFILES:
+        return {
+            "status": "passed",
+            "audit_mode": "offline_components",
+            "artifact_root_supplied": artifact_root is not None,
+        }
+    if artifact_root is None:
+        return {"status": "blocked", "reason": "artifact_root_required"}
+    l3 = _audit_terminal_real_output(artifact_root)
+    if l3.get("status") != "passed" or name == "paper-l3-new-real-smoke-audit":
+        return l3
+    try:
+        first, second = _recompute_l4_digests(artifact_root)
+    except (OSError, RuntimeError, TypeError, ValueError) as error:
+        return {
+            "status": "blocked",
+            "reason": "l4_recomputation_failed",
+            "detail": str(error),
+        }
+    if first != second:
+        return {
+            "status": "blocked",
+            "reason": "l4_recomputations_differ",
+            "recomputation_digests": [first, second],
+        }
+    return {
+        "status": "passed",
+        "terminal_status": l3["terminal_status"],
+        "recomputation_digests": [first, second],
+    }
+
+
+def _audit_terminal_real_output(artifact_root: Path) -> dict[str, object]:
+    from tokenshare.experiments.paper_formal_runner import replay_paper_formal_suite
+
+    try:
+        result = replay_paper_formal_suite(output_root=artifact_root)
+    except (OSError, TypeError, ValueError, KeyError, json.JSONDecodeError) as error:
+        return {
+            "status": "blocked",
+            "reason": "terminal_real_output_invalid",
+            "detail": str(error),
+        }
+    try:
+        suite_manifest = json.loads(
+            (artifact_root / "suite_manifest.json").read_text(encoding="utf-8")
+        )
+    except (OSError, TypeError, ValueError, json.JSONDecodeError) as error:
+        return {
+            "status": "blocked",
+            "reason": "terminal_real_output_invalid",
+            "detail": str(error),
+        }
+    terminal_status = str(getattr(result.status, "value", result.status))
+    if (
+        not isinstance(suite_manifest, dict)
+        or suite_manifest.get("capturing") is not False
+        or terminal_status in {"planned", "running", "incomplete"}
+        or not result.ended_at
+        or result.provider_attempt_count <= 0
+    ):
+        return {
+            "status": "blocked",
+            "reason": "terminal_real_output_required",
+            "terminal_status": terminal_status,
+        }
+    return {
+        "status": "passed",
+        "terminal_status": terminal_status,
+        "provider_attempt_count": result.provider_attempt_count,
+        "audit_mode": "stored_evidence_only",
+    }
+
+
+def _recompute_l4_digests(artifact_root: Path) -> tuple[str, str]:
+    from tokenshare.experiments.paper_formal_runner import (
+        load_paper_traceability_replay_input_root,
+        recompute_paper_traceability_replay,
+    )
+
+    digests: list[str] = []
+    for label in ("first", "second"):
+        protected = load_paper_traceability_replay_input_root(artifact_root)
+        with tempfile.TemporaryDirectory(prefix=f"tokenshare-l4-{label}-") as directory:
+            result = recompute_paper_traceability_replay(
+                output_root=Path(directory) / "audit",
+                replay_input_root=protected,
+            )
+            if result.provider_calls != 0 or result.source_write_count != 0:
+                raise RuntimeError("L4 replay violated read-only provider/source boundary")
+            body = [
+                result.observations_digest,
+                result.tables_digest,
+                result.cell_lineage_digest,
+            ]
+            digests.append(
+                "sha256:"
+                + sha256(
+                    json.dumps(body, separators=(",", ":")).encode("utf-8")
+                ).hexdigest()
+            )
+    return digests[0], digests[1]
+
+
+def _run_profile_tests(entries: Sequence[str]) -> None:
+    args = ["-q", "-p", "verification.pytest_network_tripwire", *entries]
+    exit_code = pytest.main(args)
+    if exit_code != pytest.ExitCode.OK:
+        raise SystemExit(int(exit_code))
+
+
 def _verify_test_manifest(path: Path, *, nodeids: bool = False) -> None:
     entries = _manifest_entries(path)
     missing: list[str] = []
@@ -212,8 +450,6 @@ def _compile_repository() -> None:
 
 
 def _run_pytest(mode: str, *, only_lean_canary: bool) -> None:
-    import pytest
-
     if not (ROOT / "tests").is_dir():
         print("No tests/ directory; pytest skipped", flush=True)
         return

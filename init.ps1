@@ -1,7 +1,9 @@
 param(
     [switch] $Full,
     [switch] $LeanAudit,
-    [switch] $ForceAllLeanAudit
+    [switch] $ForceAllLeanAudit,
+    [string] $Profile,
+    [string] $ArtifactRoot
 )
 
 $ErrorActionPreference = "Stop"
@@ -16,6 +18,12 @@ if ($LeanAudit -or $ForceAllLeanAudit) {
 }
 if ($ForceAllLeanAudit) {
     $VerificationArgs += "--force-all-lean-audit"
+}
+if ($Profile) {
+    $VerificationArgs += @("--profile", $Profile)
+}
+if ($ArtifactRoot) {
+    $VerificationArgs += @("--artifact-root", $ArtifactRoot)
 }
 
 Write-Host "Using conda environment: $CondaEnv"
