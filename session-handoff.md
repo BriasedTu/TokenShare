@@ -13,6 +13,7 @@
 ## 当前权威交接：Task 34 accepted / EPD-027 implementation complete
 
 - Active feature=`feat-011` 的 EPD-027 实施状态=`accepted`；Task 0–34 已全部 accepted，计 `35/35`。无 active/current Task、无下一实施 Task；active writer=`0`。
+- Feature-level 状态保持 `in-progress`；上述 `accepted` 仅指 EPD-027 实施 focus，正式采集与论文矩阵仍等待经 Task 26 校验的 paid receipt。
 - Task 29 implementation commit=`555d9f3d0cb808b419ecbecfc59e37b2d1ace62d`（`feat(experiments): replace legacy smoke launchers`）；验收状态 commit=`ae865dc0`。
 - Task 29 严格范围为 `21` 个 approved implementation 文件与 `10` 个已批准 `PLAN_OUT` 文件；无未批准文件。不得扩大到协议核心、模型/指标 contract、Lean adapter 或 renderer。
 - 已审定、未在本交接复跑的 GREEN：canonical=`49 passed`；pipeline affected=`9`；CLI affected=`3`；core runner/observation/gate=`204`；official closure=`3`（complete CNY ready，USD/missing usage blocked）；runner=`158`；observation=`17`；complete-CNY 正例=`1`；PowerShell parse=`9/9`。review=`0 Critical / 0 Important`；历史 `3C/2I`、false-switch、Exp5 zero-role 已关闭；post-accept minimization=`0` 修改、`0` 删除、`0` 合并。

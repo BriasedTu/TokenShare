@@ -140,7 +140,7 @@
     {
       "id": "feat-011",
       "name": "Paper Real AI Experiments",
-      "status": "accepted",
+      "status": "in-progress",
       "dependencies": ["feat-009"],
       "summary": "EPD-027 论文实验 pipeline 实施 Task 0–34 全部 accepted；真实 provider 采集与正式论文矩阵仍因 verified paid receipt 缺失而 NO-GO，不构成正式实验已完成。",
       "acceptance": [

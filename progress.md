@@ -7,6 +7,7 @@
 ## 当前权威状态（EPD-027）
 
 - Active feature：`feat-011`（Paper Real AI Experiments）的 EPD-027 实施已 `accepted`。
+- Feature-level 状态保持 `in-progress`；`accepted` 仅指 EPD-027 实施 focus 的 Task 0–34，正式采集与论文矩阵仍等待经校验的 paid receipt。
 - EPD-027 共 35 个 Task；Task 0–34 全部 accepted，计 `35/35`。无 active/current Task，也无下一实施 Task。
 - Task 29 实现范围严格为 `21` 个 approved implementation 文件，另有 `10` 个已批准 `PLAN_OUT` 文件；无未批准文件。未扩大到协议核心、模型/指标 contract、Lean adapter 或 renderer。
 - Task 29 已审定证据（验收时未复跑）：review=`0 Critical / 0 Important`；canonical=`49 passed`；pipeline affected=`9`；CLI affected=`3`；core=`204`；official closure=`3`（CNY complete ready，USD/missing usage blocked）；runner=`158`；observation=`17`；complete-CNY 正例=`1`；PowerShell parse=`9/9`。post-accept minimization=`0` 修改、`0` 删除、`0` 合并。
