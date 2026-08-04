@@ -180,17 +180,24 @@ def build_lean_environment_ref(
             raise ValueError(
                 "Lean runtime authority_environment_digest does not match plan"
             )
-        _validate_manifest_matches_current_project(manifest)
-        tool_versions.update(
-            {
-                "semantic_authority_schema_version": authority.schema_version,
-                "authority_environment_digest": authority.authority_environment_digest,
-                "runtime_environment_digest": manifest.environment_digest or "",
-                "semantic_environment_digest": authority.semantic_environment_digest,
-                "semantic_checker_digest": authority.semantic_checker_digest,
-                "sidecar_digest": authority.sidecar_digest,
-            }
-        )
+        try:
+            _validate_manifest_matches_current_project(manifest)
+        except ValueError:
+            # 普通 EnvironmentRef 保留历史兼容，但不能把不匹配的 manifest
+            # 标记为 semantic authority；显式 bridge 仍必须 fail closed。
+            if expected_authority_environment_digest is not None:
+                raise
+        else:
+            tool_versions.update(
+                {
+                    "semantic_authority_schema_version": authority.schema_version,
+                    "authority_environment_digest": authority.authority_environment_digest,
+                    "runtime_environment_digest": manifest.environment_digest or "",
+                    "semantic_environment_digest": authority.semantic_environment_digest,
+                    "semantic_checker_digest": authority.semantic_checker_digest,
+                    "sidecar_digest": authority.sidecar_digest,
+                }
+            )
     elif expected_authority_environment_digest is not None:
         raise ValueError("Lean semantic authority sidecar is required for runtime bridge")
     return EnvironmentRef(

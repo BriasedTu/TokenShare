@@ -230,6 +230,16 @@ def test_environment_ref_records_legacy_and_semantic_authority_digests(
         resource_limits=dict(manifest.resource_limits),
         created_at=manifest.created_at,
     )
+    ordinary_forged_ref = build_lean_environment_ref(forged_manifest)
+    assert ordinary_forged_ref.environment_digest == forged_manifest.environment_digest
+    assert {
+        "semantic_authority_schema_version",
+        "authority_environment_digest",
+        "runtime_environment_digest",
+        "semantic_environment_digest",
+        "semantic_checker_digest",
+        "sidecar_digest",
+    }.isdisjoint(ordinary_forged_ref.tool_versions)
     with pytest.raises(ValueError, match="current project"):
         build_fixed_plan_certificate(
             plan=plan,
