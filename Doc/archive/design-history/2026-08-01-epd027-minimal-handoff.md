@@ -225,14 +225,18 @@ positive source=`heiyucode_gpt56_smoke_20260716`；number=`4733749`，predicate=
 
 当前/下一步仅为 Task33 freeze-only，尚未实施 Task33；不得读取其计划正文或调用真实 API。
 
-## Task 33 accepted / Task 34 handoff
+## Task 33–34 accepted / EPD-027 implementation complete
 
-EPD-027 Task 0–33 已 accepted（`34/35`）。Task33 owning fix=`a10e988ddfc923cca28423dfd83af60a96863a4f`，exact12：sidecar/semantic authority/environment/fixed_plan/catalog/audit/profile/Exp5 + 4 tests；PLAN_OUT 共3个 production（profile、Exp5、fixed_plan），无未批准文件。final review=`0C/0I`，minimizer=`NO_CHANGE`。
+EPD-027 Task 0–34 已全部 accepted（`35/35`）。Task33 owning fix=`a10e988ddfc923cca28423dfd83af60a96863a4f`，follow-up fix=`7c9dff7c`；主实现 exact12：sidecar/semantic authority/environment/fixed_plan/catalog/audit/profile/Exp5 + 4 tests；PLAN_OUT 共3个 production（profile、Exp5、fixed_plan），无未批准文件。final review=`0C/0I`，minimizer=`NO_CHANGE`。
 
 测试精要：module-missing RED exit2；targeted=`140/140 in 30.10s`，contracts=`12/12`，native receipt=`1/1 in 6.07s`，L1 Lean=`1/1 in 3.12s`；bridge RED0/1→GREEN1/1，fixedplan1/1，diffcheck0。唯一 Fast exit1=`524p/1f/1s in 83.83s`，L1 function count40!=39；最小合并后失败node1/1 0.25s、existing2/2 19.78s，reviewer明确无需重跑。
 
 Task33 public CLI 仅一次 exit3/83.67s，因 receipt absent 正确 BLOCKED；budget=`516/171708288/979.524864/CNY1000`，blocked digest=`sha256:47598f070d41715b99a58034b223c3c18664fa9a9a970af059f0750acaf5b8f5`；provider/network=`0/0`，3 roots/marker/ledger absent，launcher/audit skipped；`local/verification/` runtime 保留。formal matrix 继续 **NO-GO**。
 
-rejected cascade：official600 checker 曾 success516.23s，但方案弃用；Full 唯一一次 exit1=`2752p/86f/1s in 3826.97s`，未进入 LeanAudit、不重跑。此前5项 deferred 保留；新增8个EOL/stat-only housekeeping与仅 broad Full 触发的 ArtifactStore Windows long-marker `OSError22`，不阻塞 Task33 正常路径；code-map milestone follow-up 保留。
+rejected cascade：official600 checker 曾 success516.23s，但方案弃用；Full 唯一一次 exit1=`2752p/86f/1s in 3826.97s`，未进入 LeanAudit、不重跑。Task34 也未运行 Full、LeanAudit 或 600-entry checker。
 
-Task34 是唯一剩余 `1/35`。scope：runtime `local/verification/epd027-l4`；L3 已 blocked，只能写 `l4_cell_traceability_blocked`、不得 L4 PASS；验证 execution/publication gate provider0/no dispatch；tracked docs 按 Task34 计划，禁止 production/test；仅四 focused profiles + Fast、no broad；完成24项 review。
+Task34 runtime=`local/verification/epd027-l4`。L3 已因 verified paid receipt missing 而 blocked，因此仅写 `l4_cell_traceability_blocked`；diagnostic root 非 formal/canonical L3 terminal output，不得 L4 PASS。blocked digest=`sha256:17ccfc2fc72184a9ee6151b910d462b5ba8014c8d55e9f9597931b3d6bbfa268`。execution/publication gates 均 `BLOCKED`、DAG 无环、无 dispatch/receipt；digests=`sha256:b1dfa6edf77b3a0982dc72ce09fde74f1fe1300d7f055520c95cfe7cc721de3c` / `sha256:7b49f79a7a22f63eb7bf9e3ba7056fd61c918b12deeed5070433a03113273d0c`。provider/network=`0/0`，provider attempts 为空。
+
+profiles：L2=`8 passed`，L3/L4 均 exit3/blocked；首次 L1=`880 passed / 2 failed in 2834.24s` 暴露 Task33 bug，`7c9dff7c` 修复后 L1=`882 passed in 2807.21s`；Fast=`525 passed / 1 skipped in 75.85s`。Task34 review=`0C/0I`，Minor 仅既有 `offline_gate_parser_only` deferred；minimizer=`N/A`。计划内 tracked 修改仅 code map、experiment parameter decision log、latest real-plugin experiment design，无 production/test 修改。
+
+deferred 保留 7 类：Task28 facility predicate detail；Task29 offline label 与 top-level receipt digests；Task30 artifact-audit/tripwire order；Task32 runtime gitignore；Task33 8个 EOL/stat-only housekeeping；ArtifactStore Windows long-marker `OSError22`。EPD-027 实施已 accepted，但 receipt 仍 absent，formal matrix 仍 **NO-GO**，不表示正式论文实验已完成。无下一 Task；未来只能在用户提供并通过 Task26 校验的 paid receipt 后进入 formal acquisition，不得自动调用 provider。

@@ -1,6 +1,6 @@
 # TokenShare V1 当前 Code Map
 
-更新时间：2026-08-02
+更新时间：2026-08-04
 
 状态：当前总体代码归属权威。本文回答“改动应该放哪里、哪些边界不能跨”，不记录逐次修复历史。协议语义看 `tokenshare_v1_complete_spec.md`，论文实验参数看 `tokenshare_latest_real_plugin_experiment_design.md`。
 
@@ -87,8 +87,9 @@ worker backend 只报告执行和死亡事实；是否 retry/requeue 由协议�
 
 | 文件组 | 职责 |
 |---|---|
-| `environment.py`、`checker.py`、`preflight.py` | 固定 Lean/lake/toolchain/library 环境与真实 checker。 |
-| `fixed_plan.py`、`split_strategy.py` | 校验预注册 fixed lemma-DAG；不从任意 theorem 自动发现完整引理图。 |
+| `environment.py`、`checker.py`、`preflight.py` | 固定 Lean/lake/toolchain/library 环境与真实 checker。Task 33 的 environment ref 明确分开历史 authority、当前 runtime 与跨 checkout semantic digest，并在需要 authority bridge 时校验当前 fixture project。 |
+| `semantic_authority.py` | Task 33 的版本化跨 checkout/EOL authority：先逐字节验证既有 v1 direct/graph/preflight authority，再按 `utf8_lf.v1` 验证当前 Lean fixture/checker 语义投影；真实内容漂移仍 fail closed。tracked sidecar 是 `benchmarks/paper/lean_environment_semantic_authority.v1.json`。 |
+| `fixed_plan.py`、`split_strategy.py` | 校验预注册 fixed lemma-DAG；不从任意 theorem 自动发现完整引理图。Task 33 只在历史 plan authority 与当前 runtime digest 不同时写显式 `environment_authority_bridge` certificate，不改写旧 v1 authority。 |
 | `child_proof.py`、`prompt_builder.py`、`validator.py` | proof unit request、候选 proof 与 checker-backed 验证。 |
 | `merge_policy.py`、`runtime_adapter.py` | dependency-aware proof assembly、root recheck 与 runtime bridge。 |
 | `replay_evidence.py` | Lean evidence 重放检查。 |
@@ -130,7 +131,7 @@ Secret 只能进入当前进程环境和脱敏后的 transport；event/artifact/
 | 文件 | 职责 |
 |---|---|
 | `paper_models.py` | paper condition/result/budget/fault schema；Task 18 新增版本化 evidence classification/eligibility facts 与 evaluator：online 逐 executed unit 绑定 current real provider attempt/lifecycle，trace 逐 unit/replacement/entry 绑定 canonical manifest、source provenance、receipt creator且 current calls=0；Factor/Lean success 与 provider failure 按 canonical domain/terminal kind 使用不同 lifecycle truth table，旧 schema 不得升级。 |
-| `paper_catalog.py`、`paper_factorization_catalog.py` | catalog 加载、manifest、selection 与 oracle/preflight。 |
+| `paper_catalog.py`、`paper_factorization_catalog.py` | catalog 加载、manifest、selection 与 oracle/preflight；Lean 路径先验证 Task 33 semantic authority，再复用既有 v1 environment/checker authority。 |
 | `paper_factorization_sampling.py` | Factorization 分层稳定评分、采样 profile 校验与 immutable catalog slice；不拥有全 suite 各实验题量。 |
 | `paper_catalog_execution_view.py` | 冻结规划时 catalog view，供 execute/resume/replay 使用同一 body/digest。 |
 | `paper_experiment_contracts.py` | 冻结 selection、execution context 和 contract digest。 |
@@ -138,6 +139,7 @@ Secret 只能进入当前进程环境和脱敏后的 transport；event/artifact/
 | `paper_model_identity.py` | experiment-layer endpoint/reasoning identity 与 pre/post-call audit。 |
 | `paper_model_policy.py` | Exp5 cohort/entry map/preflight；当前为四模型 v3。 |
 | `paper_unit_commitments.py` | plan/condition/request/attempt 的 AI unit binding。 |
+| `paper_pipeline_profile.py`、`lean_catalog_audit.py` | EPD-027 tracked profile 与 Lean catalog audit authority；Task 33 保留历史 raw/content provenance，同时用 semantic sidecar、catalog/selection/matrix commitments 验证当前 checkout。 |
 
 ### 执行、故障与终态
 
@@ -179,8 +181,9 @@ Secret 只能进入当前进程环境和脱敏后的 transport；event/artifact/
 | `paper_traceability.py` | Task 24 deterministic traceability replay：仅接受 runner 生成的 protected persisted L4 descriptor，fresh reload并独立重算三类 digest；Task 27 闭合历史 `artifacts/<file>.bin` 与当前 `artifacts/<task>/<content-name>` 两种权威 generation，hash 必验且存在的 size 严格校验；zero-dispatch 只接受至少一个 exact `PaperDirectRootResult` 且全部 `not_started`。 |
 | `paper_online_checks.py` | Task 25 capability/Exp2/Exp3 online-check pure plan 与 typed evidence producer：冻结4/24-480/2-12 scope，消费官方 verifier/checker/requeue 与 callback persisted objects，资源输入仅来自 current provider payload；缺 role blocked/null，不计算指标公式、不创建receipt、不dispatch。 |
 | `paper_paid_authorization.py` | Task 26 纯离线 external receipt validator：验证 canonical digest 与scope/plan/profile/budget/inventory/admission/selection/path/expiry/approval binding，派生new-run/resume marker并要求独立allow flag；无mint/approve/secret/reserve/dispatch API，synthetic tests不构成真实授权。 |
+| `paper_formal_gate.py` | Task 28 typed execution/publication gate。execution 只消费运行前 authority/receipt/bank prerequisites，不循环依赖未来 L4/table/post-bank；publication 只在 terminal evidence 后检查。缺 receipt/L1–L4/bank/terminal 时稳定 BLOCKED，facility/capability 永远不能升级 formal PASS。 |
 | `paper_report.py`、`paper_formal_report.py`、`paper_smoke_report.py` | 通用/正式/smoke 输出；Task 21 正式 report 只接受持久化 Task20 lineage/source-index/observation/manifest/digest 闭包，验证 exact 8 table completeness 后发布 renderer/result/eligibility/secret-audit refs；smoke 永远 paper-ineligible。 |
-| `paper_exp5_artifacts.py`、`paper_exp5_model_comparison.py`、`paper_exp5_statistics.py` | Task 21 contract-only CSV/TEX renderer 位于 `paper_exp5_artifacts.py`：从 typed observations 生成 exact 8 CSV 与同 stem TEX、audit JSONL/manifest，保留 null/denominator/reason，整批 stage/promote/rollback；旧 pairwise/ranking/recovery/Markdown/PDF 输出已退役。其余为历史 Exp5 比较/统计 helper。 |
+| `paper_exp5_artifacts.py`、`paper_exp5_model_comparison.py`、`paper_exp5_statistics.py` | Task 21 contract-only CSV/TEX renderer 位于 `paper_exp5_artifacts.py`：从 typed observations 生成 exact 8 CSV 与同 stem TEX、audit JSONL/manifest，保留 null/denominator/reason，整批 stage/promote/rollback；旧 pairwise/ranking/recovery/Markdown/PDF 输出已退役。Task 33 让历史 Exp5 v3 parent 继续保留原 provenance，同时由 semantic sidecar 与 readiness commitments 校验当前 Lean source；其余为历史比较/统计 helper。 |
 | `paper_budget.py` | plan-only roots/units/attempt/token/cost/time/space 预算与门禁；Task 6 把完整 bank inventory 写入预算投影，Task 7 增加 provider-writing 硬预算 limits 与禁止 unlimited mode 的入口门禁。 |
 | `paper_response_bank.py` | Task 6 complete semantic-slot inventory/zero-engine preflight；Task 8 acquisition orchestrator；Task 19 terminal completeness/case binding；Task 27 增加 pure prepared-request acquisition plan、versioned terminal bank identity、全 inventory cross-binding 与 `acquire_all/reconcile`，fresh child 只初始化一次、resume 只重开验证，并保留历史 `PaidAcquisitionContext` API 兼容。 |
 | `paper_budget_ledger.py` | Task 7 SQLite WAL atomic budget authority；Task 8 接入 acquisition/reconcile；Task 27 委托 shared canonical inventory digest，并增加 opt-in 持久 category policy：primary reservations≤496、ambiguous reacquisitions≤20、合计≤516，reopen drift fail closed，所有检查/写入在 `BEGIN IMMEDIATE` 内完成；无 policy 的 full-bank 行为兼容。 |
@@ -190,17 +193,11 @@ Secret 只能进入当前进程环境和脱敏后的 transport；event/artifact/
 
 ### EPD-027 实施进度与后续实验设施改造
 
-2026-08-01 已冻结 Experiment 2–4 两阶段真实回答库设计。当前 35 个实施 Task 中 Task 0–26 已 accepted。Task 26 paid-receipt validator commit=`e9ab3d9c`；最终 `14 passed in 0.31s`，final reviewer PASS=`0/0/0`，provider/network calls=`0`。这个 `27/35` 状态不代表获得真实授权：Task 27 queued/next，当前仍无 user-provided/validated paid receipt，真实 dispatch 不存在；正式矩阵保持 **NO-GO**。Task 26 验收未运行 Fast/Full/LeanAudit/network/provider。
+截至 2026-08-04，EPD-027 的离线设施状态是 `facility_offline_implemented`：request identity、不可变 response bank、SQLite budget/acquisition、trace-backed executor、双 provenance/evidence class、正式 projectors/renderer/replay、online-check plan、paid receipt validator、统一 pipeline、typed gates 和四级验证 profile 均已接入原 TokenShare 生命周期，没有复制影子状态机。`online_real_provider` 与 `real_model_trace_protocol_run` 的 schema/producer 已实现，不表示已经产生任何正式论文结果。
 
-后续完整实施计划必须同时覆盖：
+Task 33 的 owning fix commit=`a10e988d`（后续 ordinary-ref 修复=`7c9dff7c`）共覆盖 12 个 semantic-authority/certificate-bridge source/sidecar/test 文件：既有 v1 raw authority 保持不变，当前 checkout 通过 semantic projection 验证。Task 34 复核结果为 L1=`441 selectors / 882 passed`、L2=`8 passed`；因 `local/epd027_l3_paid_receipt.local.json` 不存在，L3=`l3_new_real_smoke_blocked`，L4=`l4_cell_traceability_blocked`。L4 的 public profile 只用既有 L3 diagnostic directory 证明缺 `suite_manifest.json` 时 fail closed；该目录不是 immutable L3 formal output，也不是 L4 replay input。
 
-- Task 27 及后续 unified CLI/gates，保持 Task21 outputs、Task22 resume ABI、Task23 source hashes、Task24 replay digests、Task25 plan与Task26 receipt schema稳定；
-- `online_real_provider` 与 `real_model_trace_protocol_run` 两类 paper eligibility，禁止把 trace consumption 冒充当前 provider call；
-- acquisition actual spend 与 per-condition trace attribution 两套资源账，以及 calls/tokens/CNY/in-flight 人民币 1,000 硬门；
-- Experiment 2 缩小题集六 worker 档在线并发检查、Experiment 3 小型在线恢复检查；
-- metrics/report/renderer/replay/audit 与 smoke/canary 身份迁移。
-
-这是一项跨 `tokenshare.executors`、`tokenshare.experiments`、两插件 runtime adapter 和输出 schema 的全面设施修改，不得在 `paper_formal_runner.py` 内临时塞入读取文件的旁路，也不得复制一套协议生命周期。Task 0–27 已接受；Task 27 的 paid-readiness/统一 CLI、bank acquisition、online checks 与 protected replay 接线仍不改变 `ProtocolEngine` 状态机。Task 28 起继续先建 characterization/RED tests，并以唯一权威实验设计 EPD-027 为准；没有经 Task 26 校验且 scope-matched 的真实 paid receipt 时，任何 provider-writing 命令仍 fail closed。
+当前没有 user-provided、Task 26-validated 且 scope-matched 的 paid receipt；Task 34 execution/publication gate 都以 typed authority 返回 BLOCKED、没有 dispatch，provider/network=`0/0`。因此正式矩阵保持 **NO-GO**。`facility_offline_implemented`、L3/L4 BLOCKED 与 `formal_matrix_no_go` 是四个独立状态，任何 capability/facility/历史 evidence 都不能升级 formal publication PASS。
 
 指标不得使用固定协议时间、自填成功字段或丢失失败/未开始分母；所有汇总必须能回到逐 task/attempt/event/artifact。
 
@@ -208,7 +205,7 @@ Secret 只能进入当前进程环境和脱敏后的 transport；event/artifact/
 
 | 文件 | 默认输出类别 |
 |---|---|
-| `run_paper_pipeline.py` | Task 27 统一 14 个正式命令的 parser/delegation/门禁入口；unknown/missing 为 exit 2，正式资源阻塞为单行 JSON/exit 3；offline/provider、receipt/mode/secret/budget 顺序 fail closed |
+| `run_paper_pipeline.py` | Task 27 统一 14 个正式命令的 parser/delegation/门禁入口；Task 28 接入 process-local typed execution/publication gate，Task 29 修正 selected-experiment receipt scope/terminal binding；unknown/missing 为 exit 2，正式资源阻塞为 JSON/exit 3；offline/provider、receipt/mode/secret/budget 顺序 fail closed。 |
 | `run_paper_experiments.py` | legacy CLI 委托 Task 27 同一 authority/service map；必须显式指定全新 `--output-root`，历史默认目录只作 smoke 隔离边界与容器 |
 | `run_all.py` | `<data-root>/outputs/experiments/` |
 | `run_ai_profile.py` | `<data-root>/outputs/experiments/ai_profile` |
@@ -221,10 +218,10 @@ Secret 只能进入当前进程环境和脱敏后的 transport；event/artifact/
 
 | 位置 | 内容 |
 |---|---|
-| `benchmarks/paper/` | tracked catalogs、selection、safe provider config、cohort、smoke profiles；active 规模为 `paper_suite_scale_profile.v1.json`，Exp5 active selection/smoke 为 v4，历史 v1/v3 文件只供 replay/provenance。 |
+| `benchmarks/paper/` | tracked catalogs、selection、safe provider config、cohort、smoke/profile authority；active 规模为 `paper_suite_scale_profile.v1.json`，EPD-027 为 `epd027_pipeline_profile.v1.json`，Lean 跨 checkout authority sidecar 为 `lean_environment_semantic_authority.v1.json`。Exp5 active selection/smoke 为 v4，历史 v1/v3 文件只供 replay/provenance。 |
 | `local/*.local.json` | gitignored secret/local config；不得归档或迁入 tracked 文档。 |
 | `local/run_*_smoke.ps1` | 真实 smoke launcher；输出和 supervision 可使用外部绝对路径。 |
-| `verification/` | Fast/Full runner、Fast manifest、Lean canary manifest。 |
+| `verification/` | Fast/Full runner、Fast/Lean canary manifest、provider/network tripwire，以及 EPD-027 L1/L2/L3/L4 四个 exact-node focused profile；L3/L4 prerequisite 不满足时必须显式 BLOCKED，不能静默跳过或写 PASS。 |
 | `TokenShareData/`（仓库同级） | 运行 outputs、diagnostics、supervision、迁移清单和备份。 |
 
 ## 修改检查表

@@ -2,6 +2,8 @@
 
 日期：2026-07-24
 
+最近更新：2026-08-04
+
 状态：持续维护。用于记录用户在实验运行前确认的参数修改、修改理由、影响规模和同步状态。
 
 ## 1. 文档定位
@@ -674,7 +676,7 @@ condition、selection、profile、execution-plan 和 budget identity 均随本�
 |:---|:---|
 | 决定日期 | 2026-07-31 |
 | 用户决定 | 指标在精不在多；`recovery_latency` 相对总运行时间及故障 overhead 没有足够独立的论文解释价值，从论文指标集合删除。 |
-| 论文时间指标 | Experiment 3 使用真实 wall-clock，以及相对 shared Exp1 无故障 evidence 的 wall-clock overhead，回答故障使整道题总共增加多少时间。 |
+| 论文时间指标 | Experiment 3 使用真实 wall-clock，以及相对 shared Exp1 无故障 evidence 的 wall-clock overhead，回答故障使整道题总共增加多少时间。此处是 EPD-021 决策当日的历史口径，已由 EPD-027 的同 sample slot paired trace reference 取代。 |
 | 仍保留的时间 evidence | fault 发生/确认、replacement/requeue 启动/结束及 provider latency 原始时间必须继续持久化，用于审计、诊断和重放，不进入论文主表。 |
 | 禁止替代 | 不把“故障确认到替代任务开始”的局部派发时间重新包装成另一项论文指标。 |
 | 状态 | `design_synced`：用户已确认，唯一权威实验设计已同步；现有 `recovery_latency_ms` 报表字段的移除/审计降级和测试留待完整指标追溯实施计划。 |
@@ -815,7 +817,7 @@ Experiment 2 必须证明的是“相同任务正确完成时是否更快，以�
 |:---|:---|
 | 决定日期 | 2026-07-31 |
 | 用户决定 | 论文正文为了易于理解，使用“相对正常运行多出来的 tokens”解释额外 token 消耗，并在方法中进一步说明。 |
-| 对应机器指标 | 该说法对应 `token_overhead = fault-condition total actual tokens - shared Exp1 reference total actual tokens`，同时遵守 EPD-021 的 shared-reference 非配对披露。 |
+| 对应机器指标 | 该说法对应 `token_overhead = fault-condition total actual tokens - shared Exp1 reference total actual tokens`，同时遵守 EPD-021 的 shared-reference 非配对披露。此处是 EPD-023 的历史口径；EPD-027 已改为 paired trace reference，不能继续解释为当前 actual bill。 |
 | `wasted_actual_tokens` | 仍表示已经生成、后来因 rejection/abandonment 等未进入有效 canonical 的 attempt actual tokens；它不是相对 reference 的净增量。 |
 | 真实重跑证明 | `wasted_actual_tokens` 单独只能证明已有 AI 工作被作废；AI 确实重新运行必须由新 `attempt_id`、独立 provider response/provenance 与 actual usage 证明。 |
 | replacement tokens | 成功 replacement 的 tokens 进入 total tokens/overhead，但不算 wasted；replacement 自身也失败并被作废时，才按其独立 evidence 进入 wasted。 |
@@ -959,9 +961,9 @@ Exp1–5 的精确 token ceiling=`23,503,151,360`，冻结价格快照下 cost c
 | Experiment 3 在线检查 | 保留小型真实 API 恢复检查，至少覆盖 verifier/checker 拒绝后 replacement 与 worker death 后重新分派。必须证明 fault/death 之后才建立新 attempt、发起新 provider call，并保存独立 raw/provenance/usage。 |
 | 指标边界 | Experiment 2–4 的正确率、完成率与机制指标继续从完整状态机产生；主矩阵时间/资源改为 trace-replay/trace-attributed 口径。Experiment 3 主矩阵用 `discarded_trace_tokens`；`wasted_actual_tokens` 只用于在线恢复检查的 actual 重跑样本。Experiment 1/5 指标原义不变。 |
 | 论文主张 | Experiment 2–4 必须称为“基于不可变真实模型 trace 的协议扩展性/恢复/消融”，不得声称每个条件都重新在线调用 provider。Experiment 2 在线检查和 Experiment 3 在线检查单独标为 `online_real_provider`。 |
-| 调用量与预算 | EPD-026 的 76,280 保留为旧全在线上界/最大 trace-slot capacity，不再代表预计在线调用量。当前审计量级约为 6,904 次 DeepSeek acquisition 加在线检查，正式数字必须由完整 outbound-body bank inventory 给出；Experiment 5 SiliconFlow 预算单列。人民币 1,000 为 DeepSeek acquisition/在线检查目标硬停止线，须同时约束 calls/tokens/CNY 并为 in-flight 悲观预留。 |
+| 调用量与预算 | EPD-026 的 76,280 保留为旧全在线上界/最大 trace-slot capacity，不再代表预计在线调用量。2026-08-01 当时的静态审计量级约为 6,904 次 DeepSeek acquisition 加在线检查；该数字是历史估计，不是当前 inventory/budget authority、实际账单或 approval digest。Experiment 5 SiliconFlow 预算单列。人民币 1,000 为 DeepSeek acquisition/在线检查目标硬停止线，须同时约束 calls/tokens/CNY 并为 in-flight 悲观预留。 |
 | 设施影响 | 必须跨 request identity、executor/transport、artifact schema、paper eligibility、budget、runner、metrics/report/renderer、smoke/canary、replay/audit 全面改造；现有 stored-evidence replay 不能替代 trace-backed state-machine run。 |
-| 状态 | `design_synced`：用户已确认方法和两类在线检查，唯一权威设计及 harness 状态已同步；未实现、未写完整实施计划、未运行真实 API。 |
+| 状态 | `design_synced`（2026-08-01 决策当日历史状态）：当时用户已确认方法和两类在线检查，但尚未实施、未运行真实 API；2026-08-04 的实现状态见本条目末尾新增证据，不能用本行的历史时点覆盖当前状态。 |
 
 #### 修改理由
 
@@ -984,6 +986,23 @@ Exp1–5 的精确 token ceiling=`23,503,151,360`，冻结价格快照下 cost c
 - [ ] acquisition actual spend、trace attribution、人民币 1,000 calls/tokens/CNY/in-flight 硬门。
 - [ ] Experiment 2 六档在线检查与 Experiment 3 在线恢复检查的题集、重复、阈值、预算和 profile identity。
 - [ ] metrics/report/renderer/replay/audit、smoke/canary、plan-only、Fast/Full 与真实 API 验证。
+
+#### 2026-08-04 离线设施实施与正式运行阻塞证据
+
+本小节只追加实现证据，不改写 2026-08-01 的参数决定。当前四个状态必须分开读取：
+
+| 项目 | 当前证据 |
+|:---|:---|
+| 离线设施 | `facility_offline_implemented`。获批实施计划的 request identity、bank/inventory、预算账本、acquisition/reconcile、trace-backed executor、dual provenance/evidence class、projector/renderer/replay、online-check plan、receipt validator、统一 pipeline 与 typed gates 已接入 production TokenShare 生命周期；没有另造协议状态机。 |
+| Task 33 Lean authority | commit=`a10e988d`，后续 ordinary environment-ref 修复=`7c9dff7c`。12-file semantic-authority/certificate bridge 先验证既有 v1 raw authority，再验证 `utf8_lf.v1` semantic projection；历史 authority bytes/digest 不改写，真实 Lean fixture/checker 内容漂移继续 fail closed。 |
+| L1/L2 | Task 34 最终 L1=`441 exact selectors / 882 passed in 2807.21s`，L2=`8 passed in 10.74s`。修复前 L1 暴露的两个 ordinary-ref 回归已返回 Task 33 owning fix，并在修复后完整 profile GREEN；没有把 Task 34 扩成 production 修复。 |
+| L3 | `l3_new_real_smoke_blocked`。`local/epd027_l3_paid_receipt.local.json` 不存在；public pipeline 在 receipt 边界 exit 3，calls/tokens/CNY hard envelope=`516 / 171708288 / 979.524864`，绝对停止线=`CNY1000`；未创建三个正式 output root、marker 或 ledger。 |
+| L4 | `l4_cell_traceability_blocked`。L3 未验证，因此没有运行真实 L4、没有 observation/table/lineage PASS。public L4 profile 对既有 L3 diagnostic directory 返回 `terminal_real_output_invalid`（缺 `suite_manifest.json`）；该 directory 只证明 fail closed，不是 immutable L3 formal output 或 L4 replay input。 |
+| Formal gates | future Exp1 diagnostic scope 的 execution gate BLOCKED：`missing_paid_authority_commitment`、`missing_paid_authorization:exp1_full_online`；publication gate 另报告 terminal、L3、L4 缺失。execution reasons 不含 future L3/L4/cell/post-bank/severe，DAG 无循环；两个 gate 都没有 dispatch。 |
+| 正式论文状态 | `formal_matrix_no_go`。没有 Task 26-validated、scope-matched paid receipt，没有完整真实 bank/L3/L4/terminal evidence，也没有正式表；facility/capability/历史 fixture 永远不能升级 formal publication PASS。 |
+| 本轮调用与验证 | provider/network=`0/0`；Task 34 Fast=`525 passed, 1 skipped in 75.85s`。没有运行 Task 34 Full、LeanAudit、force-all、600 checker 或真实 API。 |
+
+原“待同步清单”中的离线设施项现已由实现和 focused/Fast 证据覆盖；仍未完成的是需要用户提供有效 paid receipt 的 acquisition/online/formal execution，以及由其产生的正式论文结果。这里的预算上界、profile 和 gate 通过离线校验，不是实际账单、实际 token 消费或 provider 授权。
 
 ## 4. 后续新增决定模板
 

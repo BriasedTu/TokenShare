@@ -2,7 +2,7 @@
 
 状态：唯一权威实验设计
 
-当前版本：2026-08-01
+当前版本：2026-08-04（同步 EPD-027 离线设施状态；实验参数未变）
 
 适用范围：Experiment 1–5、paper runner、预算、真实 API 执行、指标、表图和结果审计。
 
@@ -27,12 +27,12 @@ Experiment 1 与 Experiment 5 继续逐 unit 在线调用真实 API。Experiment
 - 回答库键不得使用包含 `attempt_id`、lease、fencing、时间或 condition 的完整 `ExecutionRequest` digest；必须对 provider 实际收到的稳定正文、endpoint/model、有效请求控制、prompt/plugin version、独立 sample/repeat slot 与 replacement slot 建立 `inference_request_digest`。同一 repeat 内的配对条件共享回答；不同 repeat 使用独立 sample slot。
 - 每个 bank entry 至少保存不可变 request body/digest、raw output 或真实 provider failure、provider/model/config provenance、usage、实测 latency、acquisition attempt identity、sample slot 与 replacement slot。回答库 acquisition 的真实消费只记一次；消费运行创建当前 task/unit/attempt/lease 所属的新 submission，并显式引用 source bank entry，不得复制 source 身份冒充新的 provider call。
 - Experiment 3 的 replacement slot 按冻结最大恢复深度准备；只准备一个 replacement 不足以覆盖当前 rate-fault 与 worker-death 规则。缺少任一必需 entry 时必须在该正式运行前 `blocked`，不得临时退回 scripted 结果或偷偷缩短 retry。
-- Experiment 2 另在缩小且预注册的题集上，使用真实 API 覆盖全部六个 worker 档位 `1,3,7,10,30,50` 做在线并发检查。它用于检查真实 API 的排队、限流、超时和变化趋势是否与回答库主实验严重背离；它不把主矩阵改写成全量在线结果。缩小题集、重复数、通过阈值和预算须在实施计划中冻结后再实现。
-- Experiment 3 另保留小型真实 API 在线恢复检查，至少覆盖 verifier/checker 拒绝后 replacement 与真实 worker death 后重新分派两条恢复来源。证据链必须证明 fault/death 之后才建立新 attempt 并发起新的 provider call，随后保存独立 raw/provenance/usage；它只为小型检查提供 `actual` 重跑证据，不把回答库主矩阵的 trace token 冒充为逐条件实际在线消费。
+- Experiment 2 另在缩小且预注册的题集上，使用真实 API 覆盖全部六个 worker 档位 `1,3,7,10,30,50` 做在线并发检查。tracked EPD-027 profile 已冻结 `6 × 4=24` 个 condition（early/middle/late/no-factor、repeat 0、每个 condition 20 个 first AI units），provider calls upper=`480`。它用于检查真实 API 的排队、限流、超时和变化趋势是否与回答库主实验严重背离；它不把主矩阵改写成全量在线结果。
+- Experiment 3 另保留 2-case 小型真实 API 在线恢复检查，冻结覆盖 `false_positive` 与 `worker_death`，provider calls upper=`12`。证据链必须证明 fault/death 之后才建立新 attempt 并发起新的 provider call，随后保存独立 raw/provenance/usage；它只为小型检查提供 `actual` 重跑证据，不把回答库主矩阵的 trace token 冒充为逐条件实际在线消费。
 - Experiment 2–4 的主结果统一声明为“基于不可变真实模型 trace 的协议扩展性/恢复/消融”。正确率、完成率和机制指标继续由完整状态机 evidence 产生；主矩阵的时间、token、cost 和调用量使用 `trace_replay_*`、`trace_attributed_*` 或 bank-slot consumption 口径。Experiment 3 主矩阵使用 `discarded_trace_tokens`；`wasted_actual_tokens` 仅适用于在线恢复检查中具备故障后新 provider call 证据的样本。
-- EPD-026 的 `76,280` 仍保留为 Exp1–4 原全在线方案的 provider-attempt 上界和当前协议 attempt/trace-slot 容量参考，不再代表两阶段方案预计会在线发出的请求数。当前静态审计得到的 DeepSeek acquisition 量级约为 `6,904` 次加在线检查，但这不是冻结预算；必须先生成完整 outbound-body bank inventory 才能确定。Experiment 5 的 SiliconFlow 调用和预算单列。
-- 人民币 `1,000` 作为 DeepSeek bank acquisition 与在线检查的目标硬停止线；实现时必须按冻结价格、per-request token ceiling 和 in-flight reservation 同时约束 calls/tokens/CNY。当前每 attempt 固定 `0.05` 的预留不能作为可靠硬门。预算耗尽时停止新 provider dispatch、正常收口已有 evidence；bank 不完整则所有依赖它的正式结果保持 blocked。
-- 该决定是一次跨 request identity、executor/transport、artifact schema、paper eligibility、budget、runner、metrics/report/renderer、smoke/canary 与 replay/audit 的实验设施全面改造，不是对现有 replay 或 runner 的局部修复。当前状态仅为 `design_synced`，尚未实现；在完整实施计划获确认并通过新设施验证前，不得启动旧 P0-core/P0-full 或把旧 paper eligibility 规则套到回答库结果上。
+- EPD-026 的 `76,280` 仍保留为 Exp1–4 原全在线方案的 provider-attempt 上界和当前协议 attempt/trace-slot 容量参考，不再代表两阶段方案预计会在线发出的请求数。完整 bank acquisition 使用 exact prepared-request inventory 派生的独立 plan/budget；不得拿 L3 online-check envelope 代替。Experiment 5 的 SiliconFlow 调用和预算继续单列。
+- tracked L3 capability/online-check envelope 已冻结 capability=`4`、Exp2=`480`、Exp3=`12`，planned upper=`496`，仅为已写 dispatch-intent 且终态未知的同 slot reacquisition 预留 `20`，combined hard=`516`；tokens hard=`171,708,288`，CNY reservation hard=`979.524864`，absolute stop=`1,000`。预算耗尽时停止新 provider dispatch、正常收口已有 evidence；bank 不完整则所有依赖它的正式结果保持 blocked。这些都是上界，不是实际账单或已获授权的调用。
+- 该决定是一项跨 request identity、executor/transport、artifact schema、paper eligibility、budget、runner、metrics/report/renderer、smoke/canary 与 replay/audit 的实验设施全面改造，不是对既有 replay 或 runner 的局部修复。2026-08-04 离线设施状态已达到 `facility_offline_implemented`；但没有有效 paid receipt，L3/L4 均 BLOCKED，正式矩阵仍是 **NO-GO**。离线设施完成不得解释为已有 response bank、在线结果或 formal publication PASS。
 
 ## 1. 论文主张与证据边界
 
@@ -263,11 +263,11 @@ FULL 与四个消融 mode 在相同 `case_id × repeat_id` 内消费相同 sampl
 | Experiment 4 | 975 | 4,410 | 7,938 |
 | Experiment 5 | 648 | 4,992 | 4,992 |
 
-Root-run、trace-slot consumption 和 provider call 是三种不同数量。上表第三列继续保存 EPD-026 原全在线方案的最坏 provider-attempt 上界，并作为两阶段方案的最大 trace-slot 容量参考；采用 EPD-027 后不得把 `76,280` 解释为预计在线调用量。当前按语义请求去重和最大 replacement 深度审计得到约 `6,904` 次 DeepSeek acquisition 加在线检查的量级，但稳定 outbound-body digest、完整 bank inventory、Exp2 缩小题集和 Exp3 在线检查规模尚未冻结，因此该数不能写入正式预算或 approval digest。Exp5 的 4,992 次 SiliconFlow 上界继续单列。
+Root-run、trace-slot consumption 和 provider call 是三种不同数量。上表第三列继续保存 EPD-026 原全在线方案的最坏 provider-attempt 上界，并作为两阶段方案的最大 trace-slot 容量参考；采用 EPD-027 后不得把 `76,280` 解释为预计在线调用量。当前 production facility 已实现 stable outbound-body digest、complete semantic bank inventory/preflight、独立 full-acquisition budget，以及冻结的 Exp2/Exp3 online-check profile；它们只有在匹配的 paid receipt、plan、inventory、budget 与 output binding 同时通过后才能 dispatch。Exp5 的 4,992 次 SiliconFlow 上界继续单列。
 
-Runner 必须先生成 `run_budget.json`；两阶段设计还必须生成独立的 `response_bank_inventory.json` 与 acquisition budget，至少包含 roots、AI units、trace slots、unique outbound-body digests、sample/replacement slots、online canary calls、tokens/cost/time/space estimate、quota/rate-limit preflight、模型与并发。人民币 `1,000` DeepSeek 目标硬停止线必须把已发生与 in-flight 悲观预留同时计入 calls/tokens/CNY；usage 缺失或预算不足时停止新 provider dispatch、正常收口已有 evidence。bank 不完整时依赖条件 `blocked`，不得静默删实验、mode、difficulty、topic、roots、repeat 或 retry slot。
+Runner 在 dispatch 前必须消费 `run_budget.json`、独立 `response_bank_inventory.json` 与 acquisition budget，核对 roots、AI units、trace slots、unique outbound-body digests、sample/replacement slots、online canary calls、tokens/cost/time/space estimate、quota/rate-limit preflight、模型与并发。人民币 `1,000` DeepSeek 硬停止线必须把已发生与 in-flight 悲观预留同时计入 calls/tokens/CNY；usage 缺失或预算不足时停止新 provider dispatch、正常收口已有 evidence。bank 不完整时依赖条件 `blocked`，不得静默删实验、mode、difficulty、topic、roots、repeat 或 retry slot。
 
-`--unlimited-budget` 不得用于 response-bank acquisition 或在线检查绕过人民币 `1,000` 用户硬停止线；若未来仍保留该参数，它只适用于不产生 provider 调用的 trace-backed protocol run，并仍保留 trace-slot、请求控制、preflight 与全部 identity。
+`--unlimited-budget` 不得用于 response-bank acquisition 或在线检查绕过人民币 `1,000` 用户硬停止线；它只适用于不产生 provider 调用的 trace-backed protocol run，并仍保留 trace-slot、请求控制、preflight 与全部 identity。
 
 ## 6. 状态、输出与可追溯性
 
@@ -315,7 +315,7 @@ audit/replay_report.json
 - `paper_smoke_profile.v3.json`：29-root 综合兼容 profile；它不是正式矩阵，任何 v2-derived 兼容字段不得覆盖本规格。
 - Exp1–4 v3 launcher 与历史 smoke 只作回归/诊断；所有结果固定 paper-ineligible。
 
-EPD-027 生效后，现有 smoke/launcher 不能充当 response-bank、六档 Exp2 在线并发检查或 Exp3 在线恢复检查的正式身份。新的 bank acquisition、trace-backed 主矩阵和两类在线检查必须在实施计划中各自冻结 profile、预算、output identity 与 paper eligibility；在此之前不得启动旧的“下一次 smoke”流程。
+EPD-027 生效后，现有 smoke/launcher 不能充当 response-bank、六档 Exp2 在线并发检查或 Exp3 在线恢复检查的正式身份。bank acquisition、trace-backed 主矩阵和两类在线检查现已各自拥有冻结的 profile/plan、预算、output identity 与 paper eligibility；任何真实启动仍必须使用对应 scope 的有效 paid receipt 并通过 execution gate。旧“下一次 smoke”说法只属于 EPD-026 历史流程，不能作为当前运行指令。
 
 普通实验 CLI 的新运行默认写入仓库同级 `TokenShareData/outputs/experiments/`；paper runner 必须显式指定全新 `--output-root`。execution-plan 与 budget digest 绑定实际绝对 output root，新 root 必须重新生成 identity。历史 output 迁移后内容和 digest 不改写、不得 resume；读取旧仓库绝对、`outputs/...` 仓库相对或 `runs/...` suite 相对 artifact root 时，只允许通过 `runtime_paths.resolve_persisted_data_path()` 做只读解析。
 
@@ -326,28 +326,28 @@ Smoke/resume/replay 不得改写已闭合历史 evidence。任何 replay 测试�
 当前已实现：
 
 - Factorization/Lean FULL 路径进入 system coordinator/`ProtocolEngine`；插件拥有领域 split/parser/verifier/checker/merge。
-- Exp2 20-way、真实 worker timing/concurrency/早停投影；Exp3 五类 fault、shared Exp1 reference、真实 process death；Exp4 五模式 runtime hooks；Exp5 cohort v3 + selection/smoke v4 identity/sequence/budget、artifact-backed 8-root smoke evidence validator 和 production execute/replay renderer。
+- Exp2 20-way、真实 worker timing/concurrency/早停投影；Exp3 五类 fault、同 sample slot paired trace reference、真实 process death（旧 `shared Exp1` 只作历史 provenance）；Exp4 五模式 runtime hooks；Exp5 cohort v3 + selection/smoke v4 identity/sequence/budget、artifact-backed 8-root smoke evidence validator 和 production execute/replay renderer。
 - 正式 metrics 从持久化 condition/task/attempt/event/artifact/runtime facts 复算；capturing/scripted 路径保持 paper-ineligible。
-- 2026-07-31 用户启动的真实 Exp3/4 smoke 已完成 11 roots/36 DeepSeek HTTP 200 attempts/839,054 tokens，得到 8 completed 与 3 evidence-complete experimental failures；真实性与 TokenShare lifecycle 审计通过，但该历史输出的 canonical ledger/provenance/timing/model inventory/replay 审计失败，保持只读且不得用于论文。
-- 同日修复已使 no-return artifact 链、LedgerEvent 原文/hash、真实 timing/critical-path/provider latency、model inventory、独立 replay、smoke missingness 与基础设施退出码 fail closed；修复本身只运行离线/定向验证，没有再次调用 provider。Exp5 condition-local identity fail-stop、固定 648-root 分母/missingness、真实 transport taxonomy、6 audit + 8 paper artifacts 和固定参数 smoke launcher 继续有效。
-
-尚未实现 EPD-027：当前 `ai_api_replay`/formal replay 只恢复或复算既有 evidence，不会以回答库输入重新驱动完整状态机；当前 `ExecutionRequest`/prompt identity 也没有可跨 condition 稳定复用的 outbound-body digest。trace-backed executor、bank schema/inventory、双重 provenance、两类 paper eligibility、acquisition/attribution 分账、六档 Exp2 在线检查和 Exp3 在线恢复检查均是待实施范围。因此此前“代码门禁已闭合”的表述只适用于 EPD-026 的旧全在线设施，不表示新的两阶段设施已完成。
+- 历史记录：2026-07-31 用户启动的 EPD-026 Exp3/4 smoke 完成 11 roots/36 DeepSeek HTTP 200 attempts/839,054 tokens，得到 8 completed 与 3 evidence-complete experimental failures；真实性与 TokenShare lifecycle 审计通过，但其 canonical ledger/provenance/timing/model inventory/replay 审计失败，保持只读且不得用于论文，也不能复用为 EPD-027 bank/online evidence。
+- 历史修复：同日修复使 no-return artifact 链、LedgerEvent 原文/hash、真实 timing/critical-path/provider latency、model inventory、独立 replay、smoke missingness 与基础设施退出码 fail closed；修复本身只运行离线/定向验证，没有再次调用 provider。Exp5 condition-local identity fail-stop、固定 648-root 分母/missingness、真实 transport taxonomy、6 audit + 8 paper artifacts 和固定参数 smoke launcher 继续有效，但不解除 EPD-027 formal gate。
+- EPD-027 offline facility 已实现 stable outbound body/request identity、immutable bank schema/inventory、transactional budget/acquisition/reconcile、trace-backed executor、dual provenance/evidence eligibility、全部五实验 projectors、formal renderer/replay/cell lineage、online-check plans、receipt validator、统一 pipeline 与 execution/publication gates；这些设施复用真实 coordinator/`ProtocolEngine`/plugin lifecycle，不生成影子 event/merge/settlement。
+- Task 33 用 versioned Lean semantic-authority sidecar 保留既有 v1 raw authority，并把当前 checkout/runtime digest 通过显式 certificate bridge 接到正式 Lean path；Task 34 L1/L2 已通过，L3 因 paid receipt 缺失为 `l3_new_real_smoke_blocked`，L4 因前置 L3 未验证为 `l4_cell_traceability_blocked`。
 
 当前 readiness：
 
-- P0-core 尚未产生可发布结果；上述 Exp3/4 smoke 虽是真实调用，但 canonical 论文证据无效，而且不能作为 EPD-027 回答库 acquisition 或在线恢复检查复用。
-- P0-full 仍为 **NO-GO**：EPD-027 是尚未实现的全面实验设施改造，旧 P0-core/P0-full plan 与 smoke 顺序暂停；新的完整实施计划确认、trace 设施验证和两类在线检查身份冻结之前不得启动 provider dispatch。Experiment 5 的四 member real-transport v4 8-root smoke 要求继续有效，但执行顺序须由新计划统一安排。
+- P0-core 尚未产生可发布结果；上述历史 Exp3/4 smoke 虽有真实调用，但 canonical 论文证据无效，而且不能作为 EPD-027 回答库 acquisition 或在线恢复检查复用。
+- P0-full 仍为 **NO-GO**：offline facility 完成不等于取得 paid authority。当前缺 scope-matched Task 26 receipt、完整真实 bank/L3/L4/terminal evidence 与正式表；任何 provider dispatch 必须先通过对应 execution gate。Experiment 5 的四 member real-transport v4 8-root smoke 要求继续有效，但也必须使用其独立 receipt scope，不能借用 L3/full authority。
 - transport timeout/connection/rate/provider/auth/client taxonomy、canonical v3 blocked 诊断、失败分母与 nullable usage 已修复；TTFT 因没有持久化来源继续保持 unavailable，不得填 0。
 - 五次最小 endpoint/key 诊断不是 artifact-backed capability/smoke evidence，不能解除门禁。
 
-因此当前文档不提供可直接复制执行的正式 Exp1–5 命令。先使用：
+因此当前文档不提供可直接复制执行的付费 Exp1–5 命令。只读查看统一 pipeline contract 使用：
 
 ```powershell
 $env:PYTHONPATH='src'
-conda run -n tokenshare python -m tokenshare.experiments.run_paper_experiments --help
+conda run -n tokenshare python -m tokenshare.experiments.run_paper_pipeline --help
 ```
 
-实现者必须先完成相应 RED→GREEN、plan-only、identity/budget/output-contract preflight；真实 API 会产生费用，未获用户明确授权不得启动 smoke、pilot 或 formal matrix。
+离线 RED→GREEN、plan-only、identity/budget/output-contract facility 已完成；真实 API 会产生费用，只有 user-provided paid receipt 经 Task 26 validator 与 selected execution gate 同时通过后，才可启动 receipt scope 内的 acquisition/online/formal run。receipt 缺失或失配时必须保持 BLOCKED/provider calls 0。
 
 ## 9. 验收标准
 
@@ -359,5 +359,5 @@ conda run -n tokenshare python -m tokenshare.experiments.run_paper_experiments -
 4. Stored-evidence replay 不调用 provider；trace-backed protocol run 只消费冻结 bank；历史 evidence 不改写；secret scan 无命中。
 5. 每个表图可追溯到逐 task/attempt/event/artifact，失败和 missingness 保留在分母中。
 6. 相关定向测试、`.\init.ps1` 和交付前 `.\init.ps1 -Full` 通过；Lean 共享输入变化时按 verification profile 增量审计。
-7. EPD-027 的 response-bank inventory、trace-backed executor、在线检查、预算硬门与 paper eligibility 已按获批实施计划实现并验证；在此之前正式矩阵保持 NO-GO。
+7. EPD-027 的 response-bank inventory、trace-backed executor、在线检查、预算硬门与 paper eligibility 离线设施已按获批实施计划实现并验证；正式矩阵只有在 paid receipt、真实 bank/L3/L4/terminal evidence 与 publication gate 全部通过后才能由 NO-GO 转为可发布。
 8. `progress.md`、`feature_list.json`、`session-handoff.md` 与当前 code map 已同步，旧实施计划只在 archive 中作为 provenance。
