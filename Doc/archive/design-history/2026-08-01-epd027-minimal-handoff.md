@@ -202,3 +202,13 @@ GREEN 精要：RED=`10/15`，canonical 最终=`25 passed`；profiles L1/L2/L3/L4
 provider/network=`0/0`，无 verified paid receipt/secret，formal matrix 继续 **NO-GO**。deferred Minor 共4项：既有 Task28 facility predicate、`offline_gate_parser_only`、Task29 receipt digest 暴露，加 Task30 artifact audit 先于 pytest tripwire 激活但当前 stored replay 无 provider。code-map milestone follow-up 保留。
 
 当前/下一步仅为 Task31 freeze-only，尚未实施 Task31；不得读取其计划正文或调用真实 API。
+
+## Task 31 accepted
+
+EPD-027 的 Task 0–31 已 accepted（`32/35`）。Task31 无 source/test/runtime evidence commit：planned exact empty directory 被 git 忽略，仅产生本次 state acceptance commit。初始 precondition 在 artifact directory 缺失时 fail closed、收集 `0 tests`；创建 planned exact directory 后权威 profile 仅真实运行一次。
+
+L1 最终 exit=`0`，`882 passed / 0 failed / 0 errors`，`441` exact selectors，`2155.58s`，digest=`sha256:d3dd21ed9fa0c15452019c70c8a90e1fa8a7d45564951043b54aed01f399018c`，status=`passed`。coverage 覆盖 Tasks0–29（含25–29）、Task24 pure=`2` / artifact audit=`0` 与 two-stage gate；Lean root=`1` / checker=`1<=2`。唯一 Fast exit=`0`：`525 passed, 1 skipped in 38.84s`。
+
+review=`0C/0I/0M`，确认链证据来自真实 production、无 shadow；minimizer=`N/A`、零修改。provider/network=`0/0`，无 verified paid receipt/secret；L3/L4 unset，formal matrix 继续 **NO-GO**。既有4项 deferred Minor 与 code-map milestone follow-up 不变。
+
+当前/下一步仅为 Task32 freeze-only，尚未实施 Task32；不得读取其计划正文或调用真实 API。

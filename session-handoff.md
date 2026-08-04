@@ -10,9 +10,9 @@
 2. 运行 `git status --short --branch`、`git log -3 --oneline`，只读确认唯一工作树与当前分支；不得 reset/clean/checkout 或覆盖用户改动。
 3. 先运行默认 `powershell -NoProfile -ExecutionPolicy Bypass -File .\init.ps1`。feature 完成/合并前按 AGENTS 运行 Full；Lean 相关变更按分层配置追加 LeanAudit。
 
-## 当前权威交接：Task 30 accepted / Task 31 freeze-only
+## 当前权威交接：Task 31 accepted / Task 32 freeze-only
 
-- Active feature=`feat-011`，状态=`in-progress`；EPD-027 Task 0–30 已 accepted，计 `31/35`。active writer=`0`。
+- Active feature=`feat-011`，状态=`in-progress`；EPD-027 Task 0–31 已 accepted，计 `32/35`。active writer=`0`。
 - Task 29 implementation commit=`555d9f3d0cb808b419ecbecfc59e37b2d1ace62d`（`feat(experiments): replace legacy smoke launchers`）；验收状态 commit=`ae865dc0`。
 - Task 29 严格范围为 `21` 个 approved implementation 文件与 `10` 个已批准 `PLAN_OUT` 文件；无未批准文件。不得扩大到协议核心、模型/指标 contract、Lean adapter 或 renderer。
 - 已审定、未在本交接复跑的 GREEN：canonical=`49 passed`；pipeline affected=`9`；CLI affected=`3`；core runner/observation/gate=`204`；official closure=`3`（complete CNY ready，USD/missing usage blocked）；runner=`158`；observation=`17`；complete-CNY 正例=`1`；PowerShell parse=`9/9`。review=`0 Critical / 0 Important`；历史 `3C/2I`、false-switch、Exp5 zero-role 已关闭；post-accept minimization=`0` 修改、`0` 删除、`0` 合并。
@@ -20,7 +20,10 @@
 - Task30 prestart=`2d7240f4`/`012fcc32`，90-minute checkpoint=`23a21146`，implementation=`9ec806b4`；严格原 `8` 文件加唯一批准第 `9` 文件 `tests/experiments/test_paper_full_resource_trace.py`，无第 `10` 文件/production 扩张。
 - GREEN：RED=`10/15`、canonical=`25 passed`；profiles L1/L2/L3/L4=`441/8/2/2`，total=`453 selectors/892 items`；L1 首次32、expanded855、final composite877+2 precise repaired；Task19/23/24新增=`2/6/1`；L2 relative-root2；L3 missing-root exit3、outside-root exit1、PS/Bash exit3；overlap1/9.08s；500-root1/1846.39s。final review=`0C/0I`，minimizer零修改 `<3m`。
 - provider/network=`0/0`，无 receipt/secret，formal matrix **NO-GO**。4项 deferred Minor：既有3项（Task28 facility predicate、`offline_gate_parser_only`、Task29 receipt digests）加 Task30 artifact audit 早于 pytest tripwire、但当前 stored replay 无 provider；code-map milestone follow-up 保留。
-- Task31 当前仅 freeze-only、尚未实施；下一动作仅由监督者只读冻结 Task31。最新 handoff anchor：2026-08-04 Task30 accepted / Task31 freeze-only；完整旧交接见上方归档及 git history。
+- Task31 无 source/test/runtime evidence commit（planned empty directory 被 git 忽略），仅本次 state acceptance commit。初始 artifact directory 缺失时 fail closed/`0 tests`；创建 planned exact directory 后 profile 仅真实运行一次：L1 exit0，`882/0/0`，441 exact selectors，2155.58s，digest=`sha256:d3dd21ed9fa0c15452019c70c8a90e1fa8a7d45564951043b54aed01f399018c`，status passed。
+- coverage=Tasks0–29（含25–29）、Task24 pure2/artifact-audit0、two-stage gate；Lean root1/checker1<=2。唯一 Fast exit0=`525 passed, 1 skipped in 38.84s`；review=`0C/0I/0M` 且 production chain/no shadow；minimizer N/A、零修改。
+- provider/network=`0/0`，无 receipt/secret；L3/L4 unset，formal matrix **NO-GO**。既有4项 deferred Minor 与 code-map milestone follow-up 不变。
+- Task32 仅 freeze-only、尚未实施；下一动作仅由监督者只读冻结 Task32。最新 handoff anchor：2026-08-04 Task31 accepted / Task32 freeze-only；完整旧交接见归档及 git history。
 
 ## 已接受实现摘要（Task 0–28）
 

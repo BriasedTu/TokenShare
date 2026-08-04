@@ -5,7 +5,7 @@
   "active_feature": "feat-011",
   "active_focus": {
     "id": "paper-metric-contract-trace-bank-and-traceability-plan",
-    "summary": "EPD-027 为 31/35 accepted：Task 0–30 已 accepted；Task 30 verification profiles 已按原 8 文件与唯一批准的第 9 个测试文件完成并验收；仍无经校验的真实 paid receipt。",
+    "summary": "EPD-027 为 32/35 accepted：Task 0–31 已 accepted；Task 31 仅完成权威 L1/唯一 Fast 的 acceptance，无 source/test/runtime evidence commit；仍无经校验的真实 paid receipt。",
     "status": "accepted_handoff",
     "scope": [
       "Experiment 1–5 论文指标、固定分母与 missingness 口径",
@@ -17,12 +17,12 @@
       "完整实施顺序、测试、离线重放与真实 smoke/正式矩阵门禁"
     ],
     "out_of_scope": [
-      "未经监督者只读冻结 Task 31 单段即进入 Task 31",
+      "未经监督者只读冻结 Task 32 单段即进入 Task 32",
       "重新运行真实付费 API 实验",
       "修改由其他工作调整中的 Experiment 3 正式规模",
       "人为注入攻击与安全工程"
     ],
-    "next_action": "Task 30 已 accepted（implementation `9ec806b4f261a3c1b27968891eaa07cf274a2466`）；active writer=0。下一动作仅由监督者只读 Task 31 单段并冻结，Task 31 尚未实施；不得调用真实 API。"
+    "next_action": "Task 31 已 accepted；无 source/test/runtime evidence commit，planned empty directory 被 git 忽略，仅有本次 state acceptance commit。active writer=0；下一动作仅由监督者只读 Task 32 单段并冻结，Task 32 尚未实施；不得调用真实 API。"
   },
   "authorities": {
     "agent_start": "AGENTS.md",
@@ -150,20 +150,9 @@
         "论文指标可追溯到逐 task/attempt evidence"
       ],
       "evidence": [
-        "维护通过最终 47 项迁移接线回归、真实 suite 708 文件只读快照和独立 code/doc review；完整证据见 progress.md；用户要求不继续本轮 Full",
-        "历史失败 smoke 保持只读，不升级为论文证据",
-        "2026-07-31 exp34-smoke-20260731-041442：11 roots/36 DeepSeek HTTP 200 attempts/839054 tokens，8 completed + 3 experimental failures；真实性 PASS、历史 canonical 论文证据 FAIL",
-        "canonical no-return/ledger/timing/model inventory/replay/smoke missingness 与基础设施退出码已 fail-closed 修复；统一核心 356 passed，launcher 9 passed，最终 Fast 457 passed/1 skipped，独立结果完整性复审 Ready",
-        "2026-07-31 根集成定向集 442 passed，Fast 456 passed/1 skipped；Exp3/4 独立 87+5+11+13+2 项通过；Exp5 identity-only 8 roots/60 units/60 attempts",
-        "Exp5 formal 无 artifact-backed bundle 时 0 provider call、canonical 四 member 结构化 blocked；capturing/scripted 不能生成 formal bundle 或论文结果",
-        "EPD-025 已冻结 Exp5 零 retry、两张按模型汇总表、删除 pairwise/recovery/旧正确率名；权威设计已同步，代码迁移与验证待完整指标追溯实施计划",
-        "EPD-025 文档与 harness 状态同步后 Fast 457 passed/1 skipped；未运行 Full、LeanAudit 或真实 API",
-        "EPD-026 已冻结 active scale profile paper_suite_scale_300_50_54.v1 与 Exp5 selection/smoke v4；正式 exact plan 为 Exp1–5 6384 roots/40520 units/81272 attempt upper，token ceiling 23503151360，cost ceiling 7346.259328",
-        "EPD-026 离线验证：scale/Exp3/4 reviewer 50、Exp3 26、Exp4 39、Exp5 model 90、Exp5 smoke/evidence/supervision 48、authoritative CLI exact plan-only 1 项通过；provider calls=0，未运行 Full/LeanAudit/真实 API/全量",
-        "2026-07-31 用户暂停点：checkpoint/evidence 142 项与 shared dispatch/fail-close/resume 3 项离线通过；收尾 Fast 458 passed/1 skipped；shared terminal-snapshot-only index、500-root live-outcome 压力证据和最新 formal runner 整体回归尚未闭合，正式全量维持 NO-GO",
-        "EPD-027 已冻结 Experiment 2–4 两阶段真实回答库、Exp2 缩小题集全六 worker 档真实在线检查、Exp3 小型真实在线恢复检查，并明确其为跨 identity/executor/artifact/eligibility/budget/runner/metrics/replay 的全面设施改造；design_synced/未实现是实施前历史快照",
-        "EPD-027 文档/harness 历史同步 Fast：458 passed/1 skipped；JSON/SQLite、harness、compileall 通过，未联网、未调用真实 API",
-        "EPD-027 实施进度 21/35：Task 0–2 accepted 原提交 ed0b056a、78fbddaa、d2b16f89 不变；通用 ledger-binding 860b7c48 focused 40 passed/review PASS，typed-hook 4ea293b1 final 69+286 passed/review PASS",
+        "历史设计/验证摘要：旧真实 Exp3/4 smoke 为11 roots/36 HTTP 200/839054 tokens，真实性 PASS 但 canonical paper-evidence FAIL，只读且不得升级；Exp5 缺 artifact-backed bundle 时结构化 blocked、provider0，capturing/scripted 永远 paper-ineligible。",
+        "EPD-025/026 冻结 Exp5 zero-retry/two-table、active scale paper_suite_scale_300_50_54.v1 与 Exp5 v4；正式 Exp1–5=6384 roots/40520 units/81272 attempt upper，token ceiling23503151360、cost ceiling7346.259328；全量仍 NO-GO。",
+        "EPD-027 冻结两阶段真实回答库、Exp2六档在线检查、Exp3小型在线恢复；Task0–2 accepted commits ed0b056a/78fbddaa/d2b16f89，ledger-binding860b7c48、typed-hook4ea293b1；完整旧 Fast/逐轮证据见 progress、minimal handoff 与 git history。",
         "Task 3 accepted commit f9773944：canonical direct-results 四文件，focused 101 passed、独立 review PASS、provider calls=0；正式路径无影子 TokenShare，ProtocolEngine disabled 时不能铸造 paper-eligible success",
         "2026-08-01 Task 3 accepted 后 Fast：.\\init.ps1 exit 0，468 passed/1 skipped in 20.19s；JSON/SQLite、harness、compileall 通过，provider calls=0；Full intentionally not run per user instruction，LeanAudit/API 未运行",
         "状态同步时 verification/run_verification.py 被误判为无 pytest harness，实际重复执行 Fast：468 passed/1 skipped in 18.78s；不计新增覆盖，后续不得重复",
@@ -209,9 +198,10 @@
         "Task 27 accepted commit b5f340f5：27个批准code/test文件+同步code map；最终fresh canonical+network tripwire 358 passed/470.24s，pipeline focused 67 passed，reviewer先CHANGES_REQUIRED 0C/1I（PaperInfrastructureBlockedError CLI边界）后follow-up PASS 0/0/0；14命令正式service binding、native双域runner/protected replay、multi-entry/failure固定分母、response-bank acquisition、496+20<=516 ledger、online callback/crash-reconcile、secret lifecycle与provider failure refs闭合；post-accept子智能体未删测试，仅移除2个未引用脚手架，online-checks 6 passed/35.97s；provider/network0，无paid receipt，Fast/Full/LeanAudit未运行",
         "Task 28 accepted commit 7338f177：严格4个实现/测试文件；fresh canonical 87 passed/0 failed/error/0.71s，py_compile/import-cycle/diff/trailing-whitespace/allowlist exit 0（4.97s）；综合 follow-up review PASS，Critical/Important=0/0，I1/I2/I3 均关闭；post-accept 测试最小化为0删除/0合并/0 unused helper且零修改、无需复跑；provider/network=0/0，无经 Task26 校验的真实 paid receipt，正式矩阵维持 NO-GO。既有 Minor deferred：facility execution predicate 细节；run_paper_pipeline gate stage 仍为 offline_gate_parser_only。",
         "Task 29 accepted：implementation 555d9f3d、acceptance ae865dc0；严格21个实现文件+10项批准plan-out；canonical49、pipeline9、CLI3、core204、official closure3、runner158、observation17，review0C/0I，minimizer零修改；provider/network0/0。prestart baseline修复/状态压缩 commits为2d7240f4/012fcc32。",
-        "Task 30 accepted commit 9ec806b4f261a3c1b27968891eaa07cf274a2466：原8文件+唯一批准第9文件tests/experiments/test_paper_full_resource_trace.py，无第10文件/production扩张；RED10/15，canonical最终25；profiles L1/L2/L3/L4=441/8/2/2、total453 selectors/892 items；L1首次32、expanded855 pass、final composite full-run877 pass+2 precise repaired pass；Task19新增2、Task23新增6、Task24新增1 GREEN；L2 relative-root2 pass；L3 missing-root blocked exit3、outside-root exit1、PS/Bash exit3；overlap1 pass/9.08s；500-root1 pass/1846.39s；review0C/0I；minimizer零修改且<3m；provider/network0/0，无receipt/secret，formal matrix NO-GO。90分钟checkpoint commit 23a21146。新增deferred Minor：artifact audit先于pytest tripwire激活，但当前stored replay无provider。"
+        "Task 30 accepted commit 9ec806b4f261a3c1b27968891eaa07cf274a2466：原8文件+唯一批准第9文件tests/experiments/test_paper_full_resource_trace.py，无第10文件/production扩张；RED10/15，canonical最终25；profiles L1/L2/L3/L4=441/8/2/2、total453 selectors/892 items；L1首次32、expanded855 pass、final composite full-run877 pass+2 precise repaired pass；Task19新增2、Task23新增6、Task24新增1 GREEN；L2 relative-root2 pass；L3 missing-root blocked exit3、outside-root exit1、PS/Bash exit3；overlap1 pass/9.08s；500-root1 pass/1846.39s；review0C/0I；minimizer零修改且<3m；provider/network0/0，无receipt/secret，formal matrix NO-GO。90分钟checkpoint commit 23a21146。新增deferred Minor：artifact audit先于pytest tripwire激活，但当前stored replay无provider。",
+        "Task 31 accepted：无source/test/runtime evidence commit，planned exact empty directory被git忽略，仅state acceptance commit。初始artifact目录缺失fail-closed且0 tests；创建planned exact dir后profile实际仅运行一次：L1 exit0，882 passed/0 failed/0 errors，441 exact selectors，2155.58s，digest sha256:d3dd21ed9fa0c15452019c70c8a90e1fa8a7d45564951043b54aed01f399018c，status passed。coverage Tasks0–29含25–29、Task24 pure=2/artifact-audit=0及two-stage gate；Lean root1/checker1<=2。唯一Fast exit0，525 passed/1 skipped in38.84s。review0C/0I/0M并确认真实production chain/no shadow；minimizer N/A、零修改。provider/network0/0，无receipt/secret；L3/L4 unset，formal matrix NO-GO。"
       ],
-      "next_action": "Task 0–30 accepted count=31/35；Task 30 accepted，active writer=0。下一动作仅由监督者只读 Task 31 单段并冻结；Task 31 尚未实施，不得增加范围或调用真实 API。"
+      "next_action": "Task 0–31 accepted count=32/35；Task 31 accepted，active writer=0。下一动作仅由监督者只读 Task 32 单段并冻结；Task 32 尚未实施，不得增加范围或调用真实 API。"
     }
   ]
 }
