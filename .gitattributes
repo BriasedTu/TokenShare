@@ -2,6 +2,7 @@ outputs/** -text -diff
 benchmarks/paper/exp5_parent_quarter_selection.v4.json text eol=lf
 benchmarks/paper/paper_smoke_exp5_profile.v4.json text eol=lf
 benchmarks/paper/factorization_catalog.v2.jsonl text eol=lf
+benchmarks/paper/lean_catalog.v1.jsonl text eol=lf
 Doc/archive/design-history/2026-08-01-feat-011-response-bank-paper-pipeline-implementation-plan.md text eol=crlf
 benchmarks/paper/paper_suite_scale_profile.v1.json text eol=crlf
 benchmarks/paper/lean_lemma_graph_catalog.v1.jsonl text eol=crlf
