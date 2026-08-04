@@ -5,7 +5,7 @@
   "active_feature": "feat-011",
   "active_focus": {
     "id": "paper-metric-contract-trace-bank-and-traceability-plan",
-    "summary": "EPD-027 为 32/35 accepted：Task 0–31 已 accepted；Task 31 仅完成权威 L1/唯一 Fast 的 acceptance，无 source/test/runtime evidence commit；仍无经校验的真实 paid receipt。",
+    "summary": "EPD-027 为 33/35 accepted：Task 0–32 已 accepted；Task 32 为 runtime-only L2 evidence，无 source/test commit，授权 runtime 保持未跟踪；仍无经校验的真实 paid receipt。",
     "status": "accepted_handoff",
     "scope": [
       "Experiment 1–5 论文指标、固定分母与 missingness 口径",
@@ -17,12 +17,12 @@
       "完整实施顺序、测试、离线重放与真实 smoke/正式矩阵门禁"
     ],
     "out_of_scope": [
-      "未经监督者只读冻结 Task 32 单段即进入 Task 32",
+      "未经监督者只读冻结 Task 33 单段即进入 Task 33",
       "重新运行真实付费 API 实验",
       "修改由其他工作调整中的 Experiment 3 正式规模",
       "人为注入攻击与安全工程"
     ],
-    "next_action": "Task 31 已 accepted；无 source/test/runtime evidence commit，planned empty directory 被 git 忽略，仅有本次 state acceptance commit。active writer=0；下一动作仅由监督者只读 Task 32 单段并冻结，Task 32 尚未实施；不得调用真实 API。"
+    "next_action": "Task 32 已 accepted；runtime-only、无 source/test commit，授权 local/verification/ 保持未跟踪。active writer=0；下一动作仅由监督者只读 Task 33 单段并冻结，Task 33 尚未实施；不得调用真实 API。"
   },
   "authorities": {
     "agent_start": "AGENTS.md",
@@ -199,9 +199,10 @@
         "Task 28 accepted commit 7338f177：严格4个实现/测试文件；fresh canonical 87 passed/0 failed/error/0.71s，py_compile/import-cycle/diff/trailing-whitespace/allowlist exit 0（4.97s）；综合 follow-up review PASS，Critical/Important=0/0，I1/I2/I3 均关闭；post-accept 测试最小化为0删除/0合并/0 unused helper且零修改、无需复跑；provider/network=0/0，无经 Task26 校验的真实 paid receipt，正式矩阵维持 NO-GO。既有 Minor deferred：facility execution predicate 细节；run_paper_pipeline gate stage 仍为 offline_gate_parser_only。",
         "Task 29 accepted：implementation 555d9f3d、acceptance ae865dc0；严格21个实现文件+10项批准plan-out；canonical49、pipeline9、CLI3、core204、official closure3、runner158、observation17，review0C/0I，minimizer零修改；provider/network0/0。prestart baseline修复/状态压缩 commits为2d7240f4/012fcc32。",
         "Task 30 accepted commit 9ec806b4f261a3c1b27968891eaa07cf274a2466：原8文件+唯一批准第9文件tests/experiments/test_paper_full_resource_trace.py，无第10文件/production扩张；RED10/15，canonical最终25；profiles L1/L2/L3/L4=441/8/2/2、total453 selectors/892 items；L1首次32、expanded855 pass、final composite full-run877 pass+2 precise repaired pass；Task19新增2、Task23新增6、Task24新增1 GREEN；L2 relative-root2 pass；L3 missing-root blocked exit3、outside-root exit1、PS/Bash exit3；overlap1 pass/9.08s；500-root1 pass/1846.39s；review0C/0I；minimizer零修改且<3m；provider/network0/0，无receipt/secret，formal matrix NO-GO。90分钟checkpoint commit 23a21146。新增deferred Minor：artifact audit先于pytest tripwire激活，但当前stored replay无provider。",
-        "Task 31 accepted：无source/test/runtime evidence commit，planned exact empty directory被git忽略，仅state acceptance commit。初始artifact目录缺失fail-closed且0 tests；创建planned exact dir后profile实际仅运行一次：L1 exit0，882 passed/0 failed/0 errors，441 exact selectors，2155.58s，digest sha256:d3dd21ed9fa0c15452019c70c8a90e1fa8a7d45564951043b54aed01f399018c，status passed。coverage Tasks0–29含25–29、Task24 pure=2/artifact-audit=0及two-stage gate；Lean root1/checker1<=2。唯一Fast exit0，525 passed/1 skipped in38.84s。review0C/0I/0M并确认真实production chain/no shadow；minimizer N/A、零修改。provider/network0/0，无receipt/secret；L3/L4 unset，formal matrix NO-GO。"
+        "Task 31 accepted：无source/test/runtime evidence commit，planned exact empty directory被git忽略，仅state acceptance commit。初始artifact目录缺失fail-closed且0 tests；创建planned exact dir后profile实际仅运行一次：L1 exit0，882 passed/0 failed/0 errors，441 exact selectors，2155.58s，digest sha256:d3dd21ed9fa0c15452019c70c8a90e1fa8a7d45564951043b54aed01f399018c，status passed。coverage Tasks0–29含25–29、Task24 pure=2/artifact-audit=0及two-stage gate；Lean root1/checker1<=2。唯一Fast exit0，525 passed/1 skipped in38.84s。review0C/0I/0M并确认真实production chain/no shadow；minimizer N/A、零修改。provider/network0/0，无receipt/secret；L3/L4 unset，formal matrix NO-GO。",
+        "Task 32 accepted：runtime-only、无source/test commit；保留未跟踪local/verification/epd027-l2/{replay-a,replay-b,negative-exp34,l2-runtime-summary.json}。profile exit0，8 passed/8.41s，status passed，digest sha256:145059c...cef2a。positive source=heiyucode_gpt56_smoke_20260716，number4733749 predicate passed/true/true，factors1013×4673；case/batch/tree/raw/provenance digests已在summary记录。真实链terminal SETTLEMENT_RECORDED、无shadow，classification=regression_only/paper=false/not formal。negative expected-fail hash before=after sha256:7f2a...1c60。双replay独立root，observations sha256:4b125...4192、table sha256:c4f4...5ae9、lineage sha256:9af8...a9a0与ledger相等，113 files inventory/content相同。review0C/0I；minimizer N/A零修改；provider/network0/0（历史source attempt不计本次调用）；无receipt/secret，formal matrix NO-GO，L2不替代L4。新增Minor：runtime未ignore housekeeping deferred。"
       ],
-      "next_action": "Task 0–31 accepted count=32/35；Task 31 accepted，active writer=0。下一动作仅由监督者只读 Task 32 单段并冻结；Task 32 尚未实施，不得增加范围或调用真实 API。"
+      "next_action": "Task 0–32 accepted count=33/35；Task 32 accepted，active writer=0。下一动作仅由监督者只读 Task 33 单段并冻结；Task 33 尚未实施，不得增加范围或调用真实 API。"
     }
   ]
 }

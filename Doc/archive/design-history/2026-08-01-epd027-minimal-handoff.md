@@ -212,3 +212,15 @@ L1 最终 exit=`0`，`882 passed / 0 failed / 0 errors`，`441` exact selectors�
 review=`0C/0I/0M`，确认链证据来自真实 production、无 shadow；minimizer=`N/A`、零修改。provider/network=`0/0`，无 verified paid receipt/secret；L3/L4 unset，formal matrix 继续 **NO-GO**。既有4项 deferred Minor 与 code-map milestone follow-up 不变。
 
 当前/下一步仅为 Task32 freeze-only，尚未实施 Task32；不得读取其计划正文或调用真实 API。
+
+## Task 32 accepted
+
+EPD-027 的 Task 0–32 已 accepted（`33/35`）。Task32 为 runtime-only，无 source/test commit；授权 runtime 保留在 `local/verification/epd027-l2/{replay-a,replay-b,negative-exp34,l2-runtime-summary.json}`，工作树显示 `?? local/verification/`。profile exit=`0`：`8 passed in 8.41s`，status=`passed`，digest=`sha256:145059c...cef2a`。
+
+positive source=`heiyucode_gpt56_smoke_20260716`；number=`4733749`，predicate=`passed/true/true`，factors=`1013×4673`；case/batch/tree/raw/provenance digests 已在 runtime summary 记录。真实链 terminal=`SETTLEMENT_RECORDED`、无 shadow，classification=`regression_only`/`paper=false`/not formal。negative expected-fail hash before=after=`sha256:7f2a...1c60`。
+
+双 replay 使用独立 root；observations=`sha256:4b125...4192`、table=`sha256:c4f4...5ae9`、lineage=`sha256:9af8...a9a0` 与 ledger 相等，113 files inventory/content 相同。review=`0C/0I`；minimizer=`N/A`、零修改。provider/network=`0/0`（历史 source attempt 独立，不等于本次调用）。
+
+无 verified paid receipt/secret，formal matrix 继续 **NO-GO**，L2 不替代 L4。deferred Minor 共5项：既有4项加 Task32 runtime 未 ignore housekeeping；code-map milestone follow-up 保留。
+
+当前/下一步仅为 Task33 freeze-only，尚未实施 Task33；不得读取其计划正文或调用真实 API。

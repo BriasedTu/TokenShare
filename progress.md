@@ -7,14 +7,14 @@
 ## 当前权威状态（EPD-027）
 
 - Active feature：`feat-011`（Paper Real AI Experiments），仍为 `in-progress`。
-- EPD-027 共 35 个 Task；Task 0–31 已 accepted，计 `32/35`。Task31 无 source/test/runtime evidence commit（planned empty directory 被 git 忽略），仅有本次 state acceptance commit。
+- EPD-027 共 35 个 Task；Task 0–32 已 accepted，计 `33/35`。Task32 为 runtime-only，无 source/test commit；授权 runtime 保留为 `?? local/verification/`。
 - Task 29 实现范围严格为 `21` 个 approved implementation 文件，另有 `10` 个已批准 `PLAN_OUT` 文件；无未批准文件。未扩大到协议核心、模型/指标 contract、Lean adapter 或 renderer。
 - Task 29 已审定证据（验收时未复跑）：review=`0 Critical / 0 Important`；canonical=`49 passed`；pipeline affected=`9`；CLI affected=`3`；core=`204`；official closure=`3`（CNY complete ready，USD/missing usage blocked）；runner=`158`；observation=`17`；complete-CNY 正例=`1`；PowerShell parse=`9/9`。post-accept minimization=`0` 修改、`0` 删除、`0` 合并。
 - provider/network calls=`0/0`，无经 Task 26 验证的 paid receipt；正式论文矩阵始终为 **NO-GO**，不得调用真实 API 或把离线/trace 结果描述为当次 `real_transport`。
 - 正式矩阵 NO-GO 原因未变：没有 `Task 26 verified paid receipt`，且 provider/network=`0/0`。receipt、offline、mode、admission、budget、secret 等门禁仍须 fail closed。
-- 恰有 4 项 deferred Minor：Task28 facility execution predicate 细节；`run_paper_pipeline` 的 `offline_gate_parser_only` stage；Task29 trace 顶层 result/wrapper 不暴露两份 receipt digest；Task30 artifact audit 先于 pytest tripwire 激活，但当前 stored replay 无 provider。code-map 仍保留 milestone follow-up。
+- 恰有 5 项 deferred Minor：既有 Task28 facility predicate、`offline_gate_parser_only`、Task29 receipt digests、Task30 artifact-audit/tripwire，加 Task32 runtime 未 ignore 的 housekeeping；code-map milestone follow-up 保留。
 
-## Task 30–31 accepted / Task 32 freeze-only
+## Task 30–32 accepted / Task 33 freeze-only
 
 - prestart commits=`2d7240f4`/`012fcc32`，90-minute checkpoint=`23a21146`；Task30 implementation=`9ec806b4`。范围严格为原 `8` 文件加唯一批准的第 `9` 文件 `tests/experiments/test_paper_full_resource_trace.py`，无第 `10` 文件或 production 扩张。
 - RED=`10/15`，canonical 最终=`25 passed`。profiles final：L1=`441`、L2=`8`、L3=`2`、L4=`2`，总计 `453 selectors / 892 items`；L1 首次=`32`，expanded=`855 passed`，final composite full-run=`877 passed` + `2` precise repaired passes。
@@ -23,7 +23,11 @@
 - Task31 初始 precondition 在 artifact directory 缺失时 fail closed、收集 `0 tests`；创建 planned exact directory 后，权威 profile 仅实际运行一次：L1 exit=`0`，`882 passed / 0 failed / 0 errors`，`441` exact selectors，`2155.58s`，digest=`sha256:d3dd21ed9fa0c15452019c70c8a90e1fa8a7d45564951043b54aed01f399018c`，status=`passed`。
 - coverage 覆盖 Task0–29（含25–29）、Task24 pure=`2` / artifact audit=`0` 和 two-stage gate；Lean root=`1` / checker=`1<=2`。唯一 Fast exit=`0`：`525 passed, 1 skipped in 38.84s`。
 - review=`0C/0I/0M`，证据链为真实 production、无 shadow；minimizer=`N/A`、零修改。provider/network=`0/0`，无 receipt/secret；L3/L4 unset，formal matrix **NO-GO**。既有4项 deferred Minor 与 code-map milestone follow-up 不变。
-- Task32 当前仅 freeze-only、尚未实施；下一动作仅由监督者只读冻结 Task32。最新 handoff anchor：2026-08-04 Task31 accepted / Task32 freeze-only。
+- Task32 runtime-only：无 source/test commit；保留 `local/verification/epd027-l2/{replay-a,replay-b,negative-exp34,l2-runtime-summary.json}`，工作树显示 `?? local/verification/`。profile exit=`0`：`8 passed in 8.41s`，status=`passed`，digest=`sha256:145059c...cef2a`。
+- positive source=`heiyucode_gpt56_smoke_20260716`；number=`4733749`，predicate=`passed/true/true`，factors=`1013×4673`；case/batch/tree/raw/provenance digests 已在 runtime summary 记录。真实链 terminal=`SETTLEMENT_RECORDED`、无 shadow；classification=`regression_only`、`paper=false`、not formal。
+- negative expected-fail hash before=after=`sha256:7f2a...1c60`。双 replay 使用独立 root；observations=`sha256:4b125...4192`、table=`sha256:c4f4...5ae9`、lineage=`sha256:9af8...a9a0` 与 ledger 相等，`113` files inventory/content 相同。
+- review=`0C/0I`；minimizer=`N/A`、零修改。provider/network=`0/0`（历史 source attempt 独立，不等于本次调用）；无 receipt/secret，formal matrix **NO-GO**，L2 不替代 L4。
+- Task33 当前仅 freeze-only、尚未实施；下一动作仅由监督者只读冻结 Task33。最新 handoff anchor：2026-08-04 Task32 accepted / Task33 freeze-only。
 
 ## 已接受历史摘要（Task 0–28）
 

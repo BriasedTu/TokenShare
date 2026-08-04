@@ -10,9 +10,9 @@
 2. 运行 `git status --short --branch`、`git log -3 --oneline`，只读确认唯一工作树与当前分支；不得 reset/clean/checkout 或覆盖用户改动。
 3. 先运行默认 `powershell -NoProfile -ExecutionPolicy Bypass -File .\init.ps1`。feature 完成/合并前按 AGENTS 运行 Full；Lean 相关变更按分层配置追加 LeanAudit。
 
-## 当前权威交接：Task 31 accepted / Task 32 freeze-only
+## 当前权威交接：Task 32 accepted / Task 33 freeze-only
 
-- Active feature=`feat-011`，状态=`in-progress`；EPD-027 Task 0–31 已 accepted，计 `32/35`。active writer=`0`。
+- Active feature=`feat-011`，状态=`in-progress`；EPD-027 Task 0–32 已 accepted，计 `33/35`。active writer=`0`。
 - Task 29 implementation commit=`555d9f3d0cb808b419ecbecfc59e37b2d1ace62d`（`feat(experiments): replace legacy smoke launchers`）；验收状态 commit=`ae865dc0`。
 - Task 29 严格范围为 `21` 个 approved implementation 文件与 `10` 个已批准 `PLAN_OUT` 文件；无未批准文件。不得扩大到协议核心、模型/指标 contract、Lean adapter 或 renderer。
 - 已审定、未在本交接复跑的 GREEN：canonical=`49 passed`；pipeline affected=`9`；CLI affected=`3`；core runner/observation/gate=`204`；official closure=`3`（complete CNY ready，USD/missing usage blocked）；runner=`158`；observation=`17`；complete-CNY 正例=`1`；PowerShell parse=`9/9`。review=`0 Critical / 0 Important`；历史 `3C/2I`、false-switch、Exp5 zero-role 已关闭；post-accept minimization=`0` 修改、`0` 删除、`0` 合并。
@@ -23,7 +23,11 @@
 - Task31 无 source/test/runtime evidence commit（planned empty directory 被 git 忽略），仅本次 state acceptance commit。初始 artifact directory 缺失时 fail closed/`0 tests`；创建 planned exact directory 后 profile 仅真实运行一次：L1 exit0，`882/0/0`，441 exact selectors，2155.58s，digest=`sha256:d3dd21ed9fa0c15452019c70c8a90e1fa8a7d45564951043b54aed01f399018c`，status passed。
 - coverage=Tasks0–29（含25–29）、Task24 pure2/artifact-audit0、two-stage gate；Lean root1/checker1<=2。唯一 Fast exit0=`525 passed, 1 skipped in 38.84s`；review=`0C/0I/0M` 且 production chain/no shadow；minimizer N/A、零修改。
 - provider/network=`0/0`，无 receipt/secret；L3/L4 unset，formal matrix **NO-GO**。既有4项 deferred Minor 与 code-map milestone follow-up 不变。
-- Task32 仅 freeze-only、尚未实施；下一动作仅由监督者只读冻结 Task32。最新 handoff anchor：2026-08-04 Task31 accepted / Task32 freeze-only；完整旧交接见归档及 git history。
+- Task32 runtime-only、无 source/test commit；授权 runtime 保留 `local/verification/epd027-l2/{replay-a,replay-b,negative-exp34,l2-runtime-summary.json}`，状态为 `?? local/verification/`。profile exit0=`8 passed in 8.41s`，status passed，digest=`sha256:145059c...cef2a`。
+- positive=`heiyucode_gpt56_smoke_20260716` / number4733749 / predicate passed,true,true / factors1013×4673；case/batch/tree/raw/provenance digests 在 summary 可查。terminal=`SETTLEMENT_RECORDED`、无 shadow；`regression_only`/paper=false/not formal。negative hash before=after=`sha256:7f2a...1c60`。
+- 双 replay 独立 root，obs/table/lineage=`sha256:4b125...4192`/`sha256:c4f4...5ae9`/`sha256:9af8...a9a0` 与 ledger 相等；113 files inventory/content 相同。review=`0C/0I`；minimizer N/A零修改；provider/network=`0/0`（历史 source attempt 不计本次调用）。
+- 无 receipt/secret，formal matrix **NO-GO**，L2 不替代 L4。deferred Minor 共5项：既有4项加 runtime 未 ignore housekeeping；code-map milestone follow-up 保留。
+- Task33 仅 freeze-only、尚未实施；下一动作仅由监督者只读冻结 Task33。最新 handoff anchor：2026-08-04 Task32 accepted / Task33 freeze-only；完整旧交接见归档及 git history。
 
 ## 已接受实现摘要（Task 0–28）
 
