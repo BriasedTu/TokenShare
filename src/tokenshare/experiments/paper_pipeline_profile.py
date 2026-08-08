@@ -713,10 +713,12 @@ def _load_authorities(authorities: Mapping[str, Any]) -> PipelineAuthorities:
         "authorities",
     )
     exact_raw_pairs = (
-        ("implementation_plan_path", "implementation_plan_content_digest"),
         ("factorization_catalog_path", "factorization_catalog_content_digest"),
         ("lean_catalog_path", "lean_catalog_content_digest"),
         ("provider_config_path", "provider_config_content_digest"),
+    )
+    provenance_pairs = (
+        ("implementation_plan_path", "implementation_plan_content_digest"),
     )
     semantic_pairs = (
         (
@@ -726,7 +728,7 @@ def _load_authorities(authorities: Mapping[str, Any]) -> PipelineAuthorities:
         ("lean_readiness_path", "lean_readiness_content_digest"),
     )
     paths: dict[str, Path] = {}
-    for path_field, digest_field in exact_raw_pairs + semantic_pairs:
+    for path_field, digest_field in exact_raw_pairs + semantic_pairs + provenance_pairs:
         path = _repository_path(authorities.get(path_field), path_field)
         paths[path_field] = path
         try:
@@ -738,9 +740,9 @@ def _load_authorities(authorities: Mapping[str, Any]) -> PipelineAuthorities:
             raise ValueError(f"{digest_field} must be a sha256 digest")
         if (path_field, digest_field) in exact_raw_pairs and declared != actual:
             raise ValueError(f"{digest_field} drift")
-        # scale/readiness 的旧 content_digest 是 profile 内被签入的历史审计字段，
-        # 不伪称 current raw。当前内容分别由 parsed profile digest 与下游
-        # catalog/selection/matrix commitments 校验。
+        # 归档实施计划与 scale/readiness 的旧 content_digest 是 profile 内被签入的
+        # 历史 provenance，不伪称 current raw。当前实验输入仍由 catalog/provider
+        # raw digest、parsed profile digest 与下游 selection/matrix commitments 校验。
     parsed_scale_digest = authorities.get("paper_suite_scale_profile_digest")
     if not isinstance(parsed_scale_digest, str) or not parsed_scale_digest:
         raise ValueError("paper_suite_scale_profile_digest must be a string")

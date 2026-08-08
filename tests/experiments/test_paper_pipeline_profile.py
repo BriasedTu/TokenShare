@@ -234,6 +234,22 @@ def test_profile_freezes_four_plus_492_and_516_hard_calls() -> None:
     assert str(profile.cny_absolute_hard_stop) == "1000.0"
 
 
+def test_archived_implementation_plan_digest_is_nonblocking_provenance() -> None:
+    body = _profile_body()
+    repository_root = DEFAULT_EPD027_PIPELINE_PROFILE_PATH.parents[2]
+    plan_path = repository_root / body["authorities"]["implementation_plan_path"]
+    declared_digest = body["authorities"]["implementation_plan_content_digest"]
+
+    assert plan_path.is_file()
+    assert declared_digest.startswith("sha256:")
+    assert declared_digest != _file_digest(plan_path)
+
+    profile = load_paper_pipeline_profile()
+
+    assert profile.authorities.implementation_plan_path == plan_path
+    assert profile.authorities.implementation_plan_content_digest == declared_digest
+
+
 def test_profile_freezes_logical_source_latency_1x() -> None:
     profile = load_paper_pipeline_profile()
 
@@ -361,8 +377,9 @@ def test_loader_exposes_complete_frozen_typed_authority() -> None:
         "Doc/archive/design-history/"
         "2026-08-01-feat-011-response-bank-paper-pipeline-implementation-plan.md"
     )
-    assert profile.authorities.implementation_plan_content_digest == _file_digest(
-        profile.authorities.implementation_plan_path
+    assert profile.authorities.implementation_plan_path.is_file()
+    assert profile.authorities.implementation_plan_content_digest == (
+        tracked_body["authorities"]["implementation_plan_content_digest"]
     )
     assert profile.authorities.factorization_catalog_path == (
         repository_root / "benchmarks/paper/factorization_catalog.v2.jsonl"
