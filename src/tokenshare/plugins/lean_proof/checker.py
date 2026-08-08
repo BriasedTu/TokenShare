@@ -61,6 +61,9 @@ _LEAN_ENVIRONMENT_ALLOWLIST = (
     "LEAN_SYSROOT",
     "PATH",
 )
+_STALE_LAKE_CONFIGURATION_ERROR = (
+    "compiled configuration is invalid; run with '-R' to reconfigure"
+)
 _PREPARED_LEAN_ENVIRONMENT_CACHE: dict[tuple[str, str, str, str], dict[str, str]] = {}
 
 
@@ -377,18 +380,27 @@ def prepared_lean_environment(
         f"keys={list(_LEAN_ENVIRONMENT_ALLOWLIST)!r}; "
         "print(json.dumps({key: os.environ[key] for key in keys if key in os.environ}))"
     )
+    command = [manifest.lake_executable, "env", sys.executable, "-c", script]
+    run_kwargs = {
+        "cwd": manifest.project_root,
+        "text": True,
+        "encoding": "utf-8",
+        "errors": "replace",
+        "capture_output": True,
+        "timeout": int(manifest.resource_limits.get("timeout_seconds", 30)),
+        "env": _subprocess_env(manifest),
+        "check": False,
+    }
     try:
-        completed = subprocess.run(
-            [manifest.lake_executable, "env", sys.executable, "-c", script],
-            cwd=manifest.project_root,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            capture_output=True,
-            timeout=int(manifest.resource_limits.get("timeout_seconds", 30)),
-            env=_subprocess_env(manifest),
-            check=False,
-        )
+        completed = subprocess.run(command, **run_kwargs)
+        if (
+            completed.returncode != 0
+            and _STALE_LAKE_CONFIGURATION_ERROR in completed.stderr
+        ):
+            completed = subprocess.run(
+                [manifest.lake_executable, "-R", *command[1:]],
+                **run_kwargs,
+            )
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise LeanEnvironmentBootstrapError(
             f"Lake environment bootstrap failed: {exc}"

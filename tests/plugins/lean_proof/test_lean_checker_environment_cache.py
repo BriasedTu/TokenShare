@@ -106,6 +106,95 @@ def test_bootstrap_cache_retains_only_allowlisted_environment(
     assert "TOKENSHARE_TEST_SECRET" not in environment
 
 
+def test_bootstrap_reconfigures_stale_lake_environment_once_and_caches_success(
+    monkeypatch,
+) -> None:
+    manifest = _environment_manifest()
+    calls: list[tuple[list[str], dict[str, object]]] = []
+
+    def fake_run(command, **kwargs):
+        calls.append((list(command), dict(kwargs)))
+        if len(calls) == 1:
+            return SimpleNamespace(
+                returncode=1,
+                stdout="",
+                stderr=(
+                    "error: compiled configuration is invalid; "
+                    "run with '-R' to reconfigure\n"
+                ),
+            )
+        assert len(calls) == 2
+        return SimpleNamespace(
+            returncode=0,
+            stdout=json.dumps(
+                {"LEAN_PATH": "C:/lean/reconfigured", "PATH": "C:/lean/bin"}
+            ),
+            stderr="",
+        )
+
+    monkeypatch.setattr(checker_module.subprocess, "run", fake_run)
+
+    first = prepared_lean_environment(manifest)
+    second = prepared_lean_environment(manifest)
+
+    bootstrap_tail = [
+        "env",
+        checker_module.sys.executable,
+        "-c",
+        calls[0][0][-1],
+    ]
+    assert calls[0][0] == [manifest.lake_executable, *bootstrap_tail]
+    assert calls[1][0] == [manifest.lake_executable, "-R", *bootstrap_tail]
+    assert calls[1][1] == calls[0][1]
+    assert calls[0][1] == {
+        "cwd": manifest.project_root,
+        "text": True,
+        "encoding": "utf-8",
+        "errors": "replace",
+        "capture_output": True,
+        "timeout": int(manifest.resource_limits["timeout_seconds"]),
+        "env": checker_module._subprocess_env(manifest),
+        "check": False,
+    }
+    assert first == second == {
+        "LEAN_PATH": "C:/lean/reconfigured",
+        "PATH": "C:/lean/bin",
+    }
+    assert len(calls) == 2
+
+
+def test_bootstrap_does_not_retry_unrelated_lake_error(monkeypatch) -> None:
+    manifest = _environment_manifest()
+    calls: list[list[str]] = []
+
+    def fake_run(command, **kwargs):
+        del kwargs
+        calls.append(list(command))
+        return SimpleNamespace(
+            returncode=1,
+            stdout="",
+            stderr="error: unrelated Lake bootstrap failure\n",
+        )
+
+    monkeypatch.setattr(checker_module.subprocess, "run", fake_run)
+
+    with pytest.raises(
+        checker_module.LeanEnvironmentBootstrapError,
+        match="unrelated Lake bootstrap failure",
+    ):
+        prepared_lean_environment(manifest)
+
+    assert calls == [
+        [
+            manifest.lake_executable,
+            "env",
+            checker_module.sys.executable,
+            "-c",
+            calls[0][-1],
+        ]
+    ]
+
+
 def test_direct_checker_timeout_is_persisted_without_proof_artifact(
     tmp_path: Path,
     monkeypatch,

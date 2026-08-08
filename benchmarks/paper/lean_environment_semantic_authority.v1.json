@@ -36,10 +36,10 @@
       "schema_version": "tokenshare.lean_checker_semantic_projection.v1",
       "normalization": "utf8_lf.v1",
       "files": {
-        "src/tokenshare/plugins/lean_proof/checker.py": "sha256:af205269ff56dbe88c9561f0f8663d89941a1830e9f3de10aa51a61f79b3bcf4"
+        "src/tokenshare/plugins/lean_proof/checker.py": "sha256:8052026cc807ffb898c9bd01086a4db47b5b65695774083eb3d47f37ec519025"
       },
-      "digest": "sha256:96740890ea19c77430391698296719c3fc3408e4ebbd81043d46650fb099884d"
+      "digest": "sha256:fa9dce12b2aa1b2caad06cdace91947cc82a44196c6b5c6cadb086f8bfb0e27f"
     }
   },
-  "sidecar_digest": "sha256:6a60bb31465c535a9fcfcbe9a60f0e53af9e063cd05eeb2e151cf05817c0e24f"
+  "sidecar_digest": "sha256:54228c245d59ec750261d105d494e973e97713e44db92fd7f5df052b1f2dc404"
 }
