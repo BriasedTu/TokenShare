@@ -2507,6 +2507,34 @@ def _lean_golden_evidence_digest_body(
     *,
     require_authority_metadata: bool = False,
 ) -> JsonObject:
+    blocked_stages = (
+        "deterministic_split",
+        "child_proof_file_construction",
+        "checker_preflight",
+        "dependency_aware_merge",
+        "root_recheck",
+    )
+    is_structured_blocked = (
+        evidence.get("schema_version")
+        == "tokenshare.lean_task14_golden_evidence.v1"
+        and evidence.get("evidence_source") == "local_oracle_lemma_graph"
+        and isinstance(evidence.get("case_id"), str)
+        and bool(evidence["case_id"])
+        and evidence.get("provider_calls_made") == 0
+        and isinstance(evidence.get("error"), str)
+        and bool(evidence["error"])
+        and all(evidence.get(stage) == "blocked" for stage in blocked_stages)
+    )
+    if is_structured_blocked:
+        # checker/组装失败是可审计结果，不具备成功证书；摘要只冻结稳定失败字段。
+        return {
+            "schema_version": evidence["schema_version"],
+            "evidence_source": evidence["evidence_source"],
+            "case_id": evidence["case_id"],
+            **{stage: evidence[stage] for stage in blocked_stages},
+            "provider_calls_made": evidence["provider_calls_made"],
+            "error": evidence["error"],
+        }
     certificate_ref = evidence.get("split_certificate_ref")
     if not isinstance(certificate_ref, Mapping):
         raise ValueError("Lean golden evidence split_certificate_ref is missing")

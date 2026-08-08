@@ -18,6 +18,7 @@ from tokenshare.experiments.paper_models import (
 )
 from tokenshare.experiments.paper_runner import (
     _lean_cell_readiness,
+    _lean_golden_evidence_digest_body,
     build_lean_3x3_matrix_plan,
 )
 from tokenshare.experiments.run_paper_experiments import main
@@ -192,6 +193,38 @@ def test_task14_matrix_golden_cases_have_end_to_end_evidence() -> None:
             assert evidence["root_proof_artifact_ref"]["content_hash"].startswith("sha256:")
             assert evidence["node_checker_report_refs"]
             assert evidence["node_proof_artifact_refs"]
+
+
+def test_task14_structured_blocked_golden_evidence_has_digest_projection() -> None:
+    evidence = {
+        "schema_version": "tokenshare.lean_task14_golden_evidence.v1",
+        "evidence_source": "local_oracle_lemma_graph",
+        "case_id": "lean_v2_medium_lemma_dag_pure_logic_checker_01",
+        "deterministic_split": "blocked",
+        "child_proof_file_construction": "blocked",
+        "checker_preflight": "blocked",
+        "dependency_aware_merge": "blocked",
+        "root_recheck": "blocked",
+        "provider_calls_made": 0,
+        "error": "fixed checker preflight failed",
+        "transient_detail": "must not enter the stable digest projection",
+    }
+
+    assert _lean_golden_evidence_digest_body(
+        evidence,
+        require_authority_metadata=True,
+    ) == {
+        "schema_version": "tokenshare.lean_task14_golden_evidence.v1",
+        "evidence_source": "local_oracle_lemma_graph",
+        "case_id": "lean_v2_medium_lemma_dag_pure_logic_checker_01",
+        "deterministic_split": "blocked",
+        "child_proof_file_construction": "blocked",
+        "checker_preflight": "blocked",
+        "dependency_aware_merge": "blocked",
+        "root_recheck": "blocked",
+        "provider_calls_made": 0,
+        "error": "fixed checker preflight failed",
+    }
 
 
 def test_task14_local_oracle_golden_evidence_runs_without_provider(
