@@ -290,6 +290,29 @@ class PaperSmokeExecutionPlan:
         for plan in self.dispatch_plans:
             for condition, selection in plan.bound_items():
                 resolved_items = resolved_by_condition[condition.condition_id]
+                exact_case_unit_counts = getattr(
+                    selection,
+                    "case_expected_ai_unit_counts",
+                    None,
+                )
+                if exact_case_unit_counts is None:
+                    selected_expected_ai_unit_count = sum(
+                        int(expected_ai_units_by_case[item.case_id])
+                        for item in resolved_items
+                    )
+                else:
+                    if not isinstance(exact_case_unit_counts, Mapping):
+                        raise ValueError(
+                            "selection case AI-unit commitments must be a mapping"
+                        )
+                    selected_expected_ai_unit_count = 0
+                    for item in resolved_items:
+                        count = exact_case_unit_counts.get(item.case_id)
+                        if type(count) is not int or count < 1:
+                            raise ValueError(
+                                "selection case AI-unit commitment count is invalid"
+                            )
+                        selected_expected_ai_unit_count += count
                 commitments.append(
                     {
                         **selection.to_dict(),
@@ -301,10 +324,7 @@ class PaperSmokeExecutionPlan:
                         "ordered_case_ids": [
                             item.case_id for item in resolved_items
                         ],
-                        "expected_ai_unit_count": sum(
-                            int(expected_ai_units_by_case[item.case_id])
-                            for item in resolved_items
-                        ),
+                        "expected_ai_unit_count": selected_expected_ai_unit_count,
                         "smoke_root_filter": True,
                     }
                 )

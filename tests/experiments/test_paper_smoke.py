@@ -7,6 +7,9 @@ import pytest
 
 import tokenshare.experiments.paper_smoke_report as smoke_report_module
 from tokenshare.experiments.paper_dispatcher import PaperExperimentDispatchPlan
+from tokenshare.experiments.paper_exp2_scalability import (
+    Exp2FactorizationCaseSelection,
+)
 from tokenshare.experiments.paper_experiment_contracts import (
     FrozenCaseSelection,
     FrozenConditionSelectionBinding,
@@ -768,6 +771,91 @@ def test_smoke_resolution_groups_distinct_cases_under_one_canonical_condition(
             "smoke_root_filter": True,
         }
     ]
+
+
+def test_smoke_budget_prefers_frozen_per_case_ai_unit_commitments(
+    tmp_path: Path,
+) -> None:
+    case_ids = tuple(f"factor_v2_hard_{index:03d}" for index in range(1, 5))
+    body = _profile_body()
+    body["experiment_ids"] = ["exp2_real_ai_scalability"]
+    body["expected_root_runs"] = len(case_ids)
+    body["items"] = [
+        {
+            **body["items"][0],
+            "item_id": f"exp2_factor_hard_{index:03d}",
+            "experiment_id": "exp2_real_ai_scalability",
+            "case_id": case_id,
+            "condition_selector": {
+                **body["items"][0]["condition_selector"],
+                "difficulty": "hard",
+                "worker_count": 1,
+            },
+        }
+        for index, case_id in enumerate(case_ids, start=1)
+    ]
+    profile_path = tmp_path / "smoke.json"
+    profile_path.write_text(json.dumps(body), encoding="utf-8")
+    profile = load_paper_smoke_profile(profile_path)
+    condition = replace(
+        _condition(),
+        experiment_id="exp2_real_ai_scalability",
+        condition_id="exp2_factorization_hard_w1_r0",
+        difficulty="hard",
+        paper_difficulty="hard",
+        worker_count=1,
+    )
+    case_expected_ai_unit_counts = {case_id: 20 for case_id in case_ids}
+    selection = Exp2FactorizationCaseSelection(
+        selection_id="exp2-hard-20way",
+        experiment_id=condition.experiment_id,
+        suite_version="paper_v1",
+        catalog_version="v2",
+        domain="factorization",
+        paper_difficulty="hard",
+        topic_family=None,
+        ordered_case_ids=case_ids,
+        catalog_digest=CATALOG_DIGEST,
+        expected_ai_unit_count=80,
+        paper_eligible_required=True,
+    )
+    object.__setattr__(
+        selection,
+        "case_expected_ai_unit_counts",
+        case_expected_ai_unit_counts,
+    )
+    canonical_plan = PaperExperimentDispatchPlan(
+        experiment_id=condition.experiment_id,
+        output_root=(tmp_path / "formal" / condition.experiment_id).as_posix(),
+        conditions=(condition,),
+        condition_selection_bindings=(
+            FrozenConditionSelectionBinding.from_condition(condition, selection),
+        ),
+    )
+    execution = resolve_paper_smoke_execution_plan(
+        profile=profile,
+        dispatch_plans=(canonical_plan,),
+        catalog_id="tokenshare.paper.catalog",
+        catalog_version="v2",
+        catalog_digest=CATALOG_DIGEST,
+        output_root=tmp_path / "smoke",
+    )
+
+    commitments = execution.budget_selection_commitments(
+        expected_ai_units_by_case={case_id: 8 for case_id in case_ids}
+    )
+
+    assert len(commitments) == 1
+    commitment = commitments[0]
+    assert commitment["ordered_case_ids"] == list(case_ids)
+    assert commitment["case_expected_ai_unit_counts"] == (
+        case_expected_ai_unit_counts
+    )
+    assert commitment["expected_ai_unit_count"] == 80
+    assert commitment["expected_ai_unit_count"] == sum(
+        commitment["case_expected_ai_unit_counts"][case_id]
+        for case_id in commitment["ordered_case_ids"]
+    )
 
 
 def test_smoke_resolution_rejects_duplicate_condition_case_items(
