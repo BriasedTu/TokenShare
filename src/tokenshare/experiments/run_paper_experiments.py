@@ -70,6 +70,9 @@ from tokenshare.experiments.paper_formal_runner import (
     write_paper_formal_replay_report,
 )
 from tokenshare.experiments.paper_exp1 import EXP1_FORMAL_REQUEST_CONTROLS
+from tokenshare.experiments.paper_exp2_scalability import (
+    build_exp2_regression_smoke_lean_bindings,
+)
 from tokenshare.experiments.paper_formal_evidence import FormalEvidenceStore
 from tokenshare.experiments.paper_formal_gate import (
     CompleteFullBankPrerequisite,
@@ -3226,6 +3229,69 @@ def _write_exp5_v3_execution_schedule(
     return evidence
 
 
+def _with_exp2_regression_smoke_lean_plan(
+    *,
+    dispatch_plans: Sequence[object],
+    profile: object,
+    catalog_manifest: PaperInputCatalogManifest,
+) -> tuple[object, ...]:
+    """仅在明确的非论文 regression smoke 中追加 Exp2 Lean planning。"""
+
+    lean_items = tuple(
+        item
+        for item in getattr(profile, "items", ())
+        if item.experiment_id == "exp2_real_ai_scalability"
+        and item.condition_selector.get("domain") == "lean_proof"
+    )
+    if not lean_items:
+        return tuple(dispatch_plans)
+    if not (
+        getattr(profile, "formal", None) is False
+        and getattr(profile, "pilot_only", None) is True
+        and getattr(profile, "regression_only", None) is True
+        and getattr(profile, "paper_eligible", None) is False
+    ):
+        raise ValueError("Exp2 Lean planning is restricted to regression smoke")
+    matches = tuple(
+        plan
+        for plan in dispatch_plans
+        if plan.experiment_id == "exp2_real_ai_scalability"
+    )
+    if len(matches) != 1:
+        raise ValueError("Exp2 regression smoke requires one canonical Exp2 plan")
+    exp2_plan = matches[0]
+    if not exp2_plan.conditions or exp2_plan.catalog_execution_view is None:
+        raise ValueError("Exp2 regression smoke canonical plan is incomplete")
+    catalog_view = restore_catalog_execution_view(
+        exp2_plan.catalog_execution_view,
+        catalog_manifest=catalog_manifest,
+    )
+    requests = tuple(
+        {
+            **dict(item.condition_selector),
+            "repeat_id": item.repeat_id,
+        }
+        for item in lean_items
+    )
+    derived = build_exp2_regression_smoke_lean_bindings(
+        catalog=catalog_view,
+        baseline_condition=exp2_plan.conditions[0],
+        requests=requests,
+    )
+    augmented = replace(
+        exp2_plan,
+        conditions=exp2_plan.conditions + tuple(item[0] for item in derived),
+        condition_selection_bindings=(
+            exp2_plan.condition_selection_bindings
+            + tuple(item[1] for item in derived)
+        ),
+        paper_eligible_possible=False,
+    )
+    return tuple(
+        augmented if plan is exp2_plan else plan for plan in dispatch_plans
+    )
+
+
 def _run_smoke_cli(
     *,
     args: argparse.Namespace,
@@ -3396,6 +3462,11 @@ def _run_smoke_cli(
             model_endpoint_cohort_preflight=model_endpoint_cohort_preflight,
             paper_suite_scale_profile=suite_scale_profile,
             output_root=output_root,
+        )
+        canonical_plans = _with_exp2_regression_smoke_lean_plan(
+            dispatch_plans=canonical_plans,
+            profile=profile,
+            catalog_manifest=catalog_manifest,
         )
         execution_plan = resolve_paper_smoke_execution_plan(
             profile=profile,

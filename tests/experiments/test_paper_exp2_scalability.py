@@ -264,6 +264,59 @@ def test_exp2_has_no_lean_conditions() -> None:
     assert all(selection.domain == "factorization" for selection in selections)
 
 
+def test_exp2_regression_lean_seam_does_not_change_formal_factor_only_matrix() -> None:
+    module = _load_module()
+    catalog, _readiness = _formal_catalog_from_json_files()
+    context = _context(catalog=catalog)
+    exp2 = module.Experiment2ScalabilityModule()
+    formal_conditions = exp2.expand_conditions(context)
+    formal_selections = exp2.freeze_case_selections(context, formal_conditions)
+    smoke_catalog = _catalog()
+    smoke_context = _context(catalog=smoke_catalog)
+    smoke_baseline_condition = exp2.expand_conditions(smoke_context)[0]
+
+    derived = module.build_exp2_regression_smoke_lean_bindings(
+        catalog=smoke_catalog,
+        baseline_condition=smoke_baseline_condition,
+        requests=(
+            {
+                "domain": "lean_proof",
+                "difficulty": "easy",
+                "paper_difficulty": "simple",
+                "topic_family": None,
+                "worker_count": 10,
+                "repeat_id": 0,
+            },
+        ),
+    )
+
+    assert len(formal_conditions) == 12
+    assert module.count_exp2_root_runs(
+        formal_conditions,
+        formal_selections,
+    ) == 600
+    assert {condition.domain for condition in formal_conditions} == {
+        "factorization"
+    }
+    assert all(
+        condition.paper_eligible_required is True
+        for condition in formal_conditions
+    )
+    assert len(derived) == 1
+    lean_condition, lean_binding = derived[0]
+    assert lean_condition.domain == "lean_proof"
+    assert lean_condition.worker_count == 10
+    assert lean_condition.repeat_id == 0
+    assert lean_condition.paper_eligible_required is False
+    assert lean_binding.selection.paper_eligible_required is False
+    assert lean_binding.selection.ordered_case_ids
+    with pytest.raises(
+        ValueError,
+        match="formal matrix is factorization hard-only",
+    ):
+        module.validate_exp2_condition(smoke_context, lean_condition)
+
+
 def test_factorization_batches_are_stable_and_require_within_root_parallelism() -> None:
     module = _load_module()
     exp2 = module.Experiment2ScalabilityModule()

@@ -4135,6 +4135,172 @@ class _DualDomainCLICapturingTransport:
         return response
 
 
+def _write_exp2_lean_regression_smoke_profile(tmp_path: Path) -> Path:
+    catalog = paper_cli._load_default_paper_catalogs()
+    profile = paper_smoke.PaperSmokeProfile(
+        suite_id="paper_smoke_exp2_lean_regression_test",
+        profile_version="test-v1",
+        catalog_id=catalog.catalog_id,
+        catalog_version=catalog.catalog_version,
+        catalog_digest=catalog.catalog_digest,
+        experiment_ids=("exp2_real_ai_scalability",),
+        expected_root_runs=1,
+        output_mode="fresh_output_required",
+        items=(
+            paper_smoke.PaperSmokeItem(
+                item_id="exp2_lean_w10",
+                experiment_id="exp2_real_ai_scalability",
+                case_id="lean_easy_01",
+                repeat_id=0,
+                condition_selector={
+                    "domain": "lean_proof",
+                    "difficulty": "easy",
+                    "paper_difficulty": "simple",
+                    "topic_family": None,
+                    "worker_count": 10,
+                    "fault_type": "none",
+                    "fault_rate": 0.0,
+                    "ablation_mode": "FULL",
+                    "model_entry_id": "deepseek_v4_pro_exp1_baseline",
+                },
+            ),
+        ),
+        ineligibility_reasons=(
+            *paper_smoke.SMOKE_INELIGIBILITY_REASONS,
+            "smoke_baseline_not_requested",
+        ),
+        baseline_policy="omitted_for_smoke_regression",
+    )
+    profile_path = tmp_path / "exp2-lean-smoke.json"
+    profile_path.write_text(
+        json.dumps(profile.to_dict(), ensure_ascii=False, indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
+    return profile_path
+
+
+def test_exp2_regression_smoke_resolves_checker_backed_lean_condition(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    output_root = tmp_path / "identity"
+
+    exit_code = main(
+        [
+            "--output-root",
+            str(output_root),
+            "--smoke-profile",
+            str(_write_exp2_lean_regression_smoke_profile(tmp_path)),
+            "--ai-api-config",
+            "benchmarks/paper/exp1_baseline_provider_config.v3.json",
+            "--unlimited-budget",
+            "--smoke-identity-only",
+        ]
+    )
+
+    stdout = capsys.readouterr().out
+    assert exit_code == 0, stdout
+    assert not output_root.exists()
+    identity = json.loads(stdout)
+    semantics = identity["preregistered_semantics"]
+    assert semantics["direct_root_runs"] == 1
+    assert semantics["actual_scheduled_root_runs"] == 1
+    assert semantics["worker_counts"] == [10]
+    assert semantics["paper_eligible"] is False
+
+
+def test_exp2_regression_smoke_runs_original_lean_adapter_and_checker(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    profile = load_exp1_pilot_profile(
+        "benchmarks/paper/exp1_minimal_pilot_profile.v3.json"
+    )
+    entry = profile.source_provider_config.entries[0]
+    monkeypatch.setenv(entry.api_key_env, "exp2-lean-smoke-capture-key")
+    transport = _DualDomainCLICapturingTransport()
+    worker_capacities: list[int] = []
+    original_run_root = lean_paper_adapter.ProtocolRunCoordinator.run_root
+
+    def recording_run_root(self, request):
+        worker_capacities.append(request.worker_backend.capacity)
+        return original_run_root(self, request)
+
+    monkeypatch.setattr(
+        lean_paper_adapter.ProtocolRunCoordinator,
+        "run_root",
+        recording_run_root,
+    )
+    checker_calls: list[tuple[object, object, dict[str, object]]] = []
+    original_checker = lean_paper_adapter.check_lean_proof
+
+    def recording_checker(request, *, artifact_store, environment_manifest):
+        result = original_checker(
+            request,
+            artifact_store=artifact_store,
+            environment_manifest=environment_manifest,
+        )
+        theorem_payload = json.loads(
+            artifact_store.read_bytes(request.theorem_payload_ref).decode("utf-8")
+        )
+        checker_calls.append((request, result, theorem_payload))
+        return result
+
+    monkeypatch.setattr(
+        lean_paper_adapter,
+        "check_lean_proof",
+        recording_checker,
+    )
+
+    output_root = tmp_path / "exp2-lean-capturing"
+    exit_code = main(
+        [
+            "--output-root",
+            str(output_root),
+            "--smoke-profile",
+            str(_write_exp2_lean_regression_smoke_profile(tmp_path)),
+            "--ai-api-config",
+            "benchmarks/paper/exp1_baseline_provider_config.v3.json",
+            "--real-transport",
+            "--unlimited-budget",
+        ],
+        gate_c_transport=transport,
+        gate_c_ai_api_configs={
+            profile.model_endpoint_identity.provider_config_id: (
+                profile.source_provider_config
+            )
+        },
+    )
+
+    assert exit_code == 0
+    assert {call["domain"] for call in transport.calls} == {"lean_proof"}
+    assert worker_capacities == [10]
+    smoke_checker_calls = [
+        call
+        for call in checker_calls
+        if (
+            call[2]["theorem_id"] == "lean_theorem:lean_easy_01"
+            or str(call[2]["theorem_id"]).startswith(
+                "lean_theorem:lean_easy_01:"
+            )
+        )
+        and not call[0].request_id.startswith("task14_golden_checker_")
+    ]
+    assert len(smoke_checker_calls) == 3
+    assert [
+        call[0].checker_mode.value for call in smoke_checker_calls
+    ].count("child_proof") == 2
+    assert [
+        call[0].checker_mode.value for call in smoke_checker_calls
+    ].count("merge_proof") == 1
+    assert all(
+        report.status.value == "accepted"
+        for _request, report, _payload in smoke_checker_calls
+    )
+
+
 def test_dual_domain_smoke_identity_and_plan_freeze_two_canonical_roots(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

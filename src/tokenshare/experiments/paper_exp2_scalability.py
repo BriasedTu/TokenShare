@@ -198,8 +198,30 @@ class Experiment2ScalabilityModule:
         condition: PaperExperimentCondition,
         selection: FrozenCaseSelection,
     ) -> PaperConditionResult:
-        canonical_condition = _canonical_condition_for(context, condition)
-        _validate_canonical_selection(context, canonical_condition, selection)
+        if (
+            condition.domain == "lean_proof"
+            and condition.paper_eligible_required is False
+            and selection.paper_eligible_required is False
+        ):
+            canonical_condition = validate_exp2_regression_smoke_lean_condition(
+                context,
+                condition,
+            )
+            _validate_selection_condition_shape(selection, canonical_condition)
+            canonical_selection = _lean_selection(
+                context,
+                canonical_condition,
+                paper_eligible_required=False,
+            )
+            if _selection_contract_body(selection) != _selection_contract_body(
+                canonical_selection
+            ):
+                raise ValueError(
+                    "selection does not match canonical frozen selection"
+                )
+        else:
+            canonical_condition = _canonical_condition_for(context, condition)
+            _validate_canonical_selection(context, canonical_condition, selection)
         return context.execution_callback(
             context=context,
             condition=canonical_condition,
@@ -246,6 +268,97 @@ def freeze_exp2_case_selections(
             FrozenConditionSelectionBinding.from_condition(condition, selection)
         )
     return FrozenCaseSelectionBatch(bindings)
+
+
+def build_exp2_regression_smoke_lean_bindings(
+    *,
+    catalog: Any,
+    baseline_condition: PaperExperimentCondition,
+    requests: Sequence[Mapping[str, Any]],
+) -> tuple[
+    tuple[PaperExperimentCondition, FrozenConditionSelectionBinding], ...
+]:
+    """仅为 paper-ineligible regression smoke 派生 checker-backed Lean work。"""
+
+    if (
+        baseline_condition.experiment_id != EXP2_EXPERIMENT_ID
+        or baseline_condition.domain != "factorization"
+    ):
+        raise ValueError("Exp2 regression smoke requires a formal baseline condition")
+    endpoint_binding = {
+        "provider_config_id": baseline_condition.provider_config_id,
+        "selected_entry_id": baseline_condition.model_entry_id,
+        "provider_family": baseline_condition.provider_family,
+        "provider_model_id": baseline_condition.provider_model_id,
+        "reasoning_profile_id": baseline_condition.reasoning_profile_id,
+        "source_provider_config_digest": (
+            baseline_condition.source_provider_config_digest
+        ),
+        "model_endpoint_identity_digest": (
+            baseline_condition.model_endpoint_identity_digest
+        ),
+        "model_cohort_id": baseline_condition.model_cohort_id,
+        "model_cohort_digest": baseline_condition.model_cohort_digest,
+        "cohort_member_id": baseline_condition.cohort_member_id,
+    }
+    context = PaperExecutionContext(
+        context_id="exp2_regression_smoke_lean_planning",
+        catalog=catalog,
+        approved_endpoint_binding=endpoint_binding,
+        request_limits=dict(BASELINE_REQUEST_LIMIT_POLICY),
+        hard_limits={"max_total_provider_attempts": 0},
+        output_root="exp2-regression-smoke-plan-only",
+        artifact_store=object(),
+        event_store=object(),
+        execution_callback=lambda **_kwargs: None,
+    )
+    derived: list[
+        tuple[PaperExperimentCondition, FrozenConditionSelectionBinding]
+    ] = []
+    seen_condition_ids: set[str] = set()
+    for request in requests:
+        if request.get("domain") != "lean_proof":
+            raise ValueError("Exp2 regression smoke seam accepts only Lean requests")
+        paper_difficulty = str(request.get("paper_difficulty") or "")
+        if paper_difficulty not in LEAN_PAPER_DIFFICULTIES:
+            raise ValueError("Exp2 regression smoke Lean difficulty is invalid")
+        if request.get("topic_family") is not None:
+            raise ValueError("Exp2 regression smoke Lean selection must be mixed-topic")
+        worker_count = request.get("worker_count")
+        repeat_id = request.get("repeat_id")
+        if type(worker_count) is not int or worker_count not in MANDATORY_WORKER_LEVELS:
+            raise ValueError("Exp2 regression smoke worker_count is invalid")
+        if type(repeat_id) is not int or repeat_id not in range(EXP2_REPEATS):
+            raise ValueError("Exp2 regression smoke repeat_id is invalid")
+        condition = _condition(
+            domain="lean_proof",
+            difficulty=LEAN_CONDITION_DIFFICULTY[paper_difficulty],
+            paper_difficulty=paper_difficulty,
+            topic_family=None,
+            worker_count=worker_count,
+            repeat_id=repeat_id,
+            catalog_digest=_catalog_digest(context),
+            endpoint_binding=endpoint_binding,
+            paper_eligible_required=False,
+        )
+        if condition.condition_id in seen_condition_ids:
+            continue
+        seen_condition_ids.add(condition.condition_id)
+        selection = _lean_selection(
+            context,
+            condition,
+            paper_eligible_required=False,
+        )
+        derived.append(
+            (
+                condition,
+                FrozenConditionSelectionBinding.from_condition(
+                    condition,
+                    selection,
+                ),
+            )
+        )
+    return tuple(derived)
 
 
 def count_exp2_root_runs(
@@ -339,6 +452,54 @@ def validate_exp2_condition(
         endpoint_binding=endpoint_binding,
         validate_fields=False,
     )
+
+
+def validate_exp2_regression_smoke_lean_condition(
+    context: PaperExecutionContext,
+    condition: PaperExperimentCondition,
+) -> PaperExperimentCondition:
+    """校验非论文 smoke Lean condition，不放宽正式 Exp2 validator。"""
+
+    endpoint_binding = _validate_approved_endpoint_binding(context)
+    if (
+        condition.experiment_id != EXP2_EXPERIMENT_ID
+        or condition.domain != "lean_proof"
+        or condition.paper_eligible_required is not False
+        or condition.paper_difficulty not in LEAN_PAPER_DIFFICULTIES
+        or condition.difficulty
+        != LEAN_CONDITION_DIFFICULTY[str(condition.paper_difficulty)]
+        or condition.topic_family is not None
+        or condition.worker_count not in MANDATORY_WORKER_LEVELS
+        or condition.repeat_id not in range(EXP2_REPEATS)
+        or condition.fault_type != "none"
+        or float(condition.fault_rate) != 0.0
+        or condition.ablation_mode != "FULL"
+        or condition.model_policy != "fixed_entry"
+        or condition.model_entry_id != BASELINE_MODEL_ENTRY_ID
+        or condition.provider_config_id != BASELINE_PROVIDER_CONFIG_ID
+        or condition.provider_family != BASELINE_PROVIDER_FAMILY
+        or condition.provider_model_id != BASELINE_PROVIDER_MODEL_ID
+        or condition.reasoning_profile_id != BASELINE_REASONING_PROFILE_ID
+        or condition.source_provider_config_digest
+        != endpoint_binding["source_provider_config_digest"]
+        or condition.model_endpoint_identity_digest
+        != endpoint_binding["model_endpoint_identity_digest"]
+    ):
+        raise ValueError("invalid Experiment 2 regression smoke Lean condition")
+    canonical = _condition(
+        domain="lean_proof",
+        difficulty=LEAN_CONDITION_DIFFICULTY[str(condition.paper_difficulty)],
+        paper_difficulty=str(condition.paper_difficulty),
+        topic_family=None,
+        worker_count=condition.worker_count,
+        repeat_id=condition.repeat_id,
+        catalog_digest=_catalog_digest(context),
+        endpoint_binding=endpoint_binding,
+        paper_eligible_required=False,
+    )
+    if condition.condition_digest != canonical.condition_digest:
+        raise ValueError("invalid Experiment 2 regression smoke Lean condition")
+    return canonical
 
 
 def _canonical_condition_for(
@@ -440,6 +601,7 @@ def _condition(
     repeat_id: int,
     catalog_digest: str,
     endpoint_binding: Mapping[str, Any],
+    paper_eligible_required: bool = True,
 ) -> PaperExperimentCondition:
     topic_part = f"_{topic_family}" if topic_family else ""
     condition_id = (
@@ -475,6 +637,7 @@ def _condition(
         repeat_id=repeat_id,
         seed=EXP2_SEED_BASE + repeat_id,
         catalog_digest=catalog_digest,
+        paper_eligible_required=paper_eligible_required,
     )
 
 
@@ -554,6 +717,8 @@ def _factorization_selection(
 def _lean_selection(
     context: PaperExecutionContext,
     condition: PaperExperimentCondition,
+    *,
+    paper_eligible_required: bool = True,
 ) -> FrozenCaseSelection:
     readiness = _validated_readiness_selection(context)
     cases_by_id = {
@@ -600,6 +765,7 @@ def _lean_selection(
             str(condition.paper_difficulty)
         ],
         readiness_selection_digest=str(readiness["selection_digest"]),
+        paper_eligible_required=paper_eligible_required,
     )
 
 
@@ -615,6 +781,7 @@ def _selection(
     mixed_topic_family_counts: Mapping[str, int] | None = None,
     readiness_selection_digest: str | None = None,
     split_profile_id: str | None = None,
+    paper_eligible_required: bool = True,
 ) -> FrozenCaseSelection:
     catalog = _catalog(context)
     selection_type = (
@@ -638,7 +805,7 @@ def _selection(
         ordered_case_ids=tuple(ordered_case_ids),
         catalog_digest=_catalog_digest(context),
         expected_ai_unit_count=expected_ai_unit_count,
-        paper_eligible_required=True,
+        paper_eligible_required=paper_eligible_required,
         **selection_kwargs,
     )
     case_unit_counts = {
