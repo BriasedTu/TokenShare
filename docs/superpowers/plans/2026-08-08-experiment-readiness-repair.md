@@ -138,9 +138,9 @@ Load the new path and assert exactly two ordered items: factor_v2_easy_109 and c
 
 Derive catalog identity fields from paper_smoke_exp1_exp4_profile.v2.json, set suite_id=paper_smoke_dual_domain_v1 and expected_root_runs=2, and include:
 
-    {"item_id":"factorization_easy","experiment_id":"exp1_real_ai_feasibility","case_id":"factor_v2_easy_109","repeat_id":0,"condition_selector":{"domain":"factorization","difficulty":"easy","worker_count":10,"fault_type":"none","fault_rate":0.0,"ablation_mode":"FULL","model_entry_id":"deepseek_v4_pro_exp1_baseline"}}
+    {"item_id":"exp1_factor_easy","experiment_id":"exp1_real_ai_feasibility","case_id":"factor_v2_easy_109","repeat_id":0,"condition_selector":{"domain":"factorization","difficulty":"easy","worker_count":10,"fault_type":"none","fault_rate":0.0,"ablation_mode":"FULL","model_entry_id":"deepseek_v4_pro_exp1_baseline"}}
 
-    {"item_id":"lean_simple","experiment_id":"exp1_real_ai_feasibility","case_id":"lean_easy_01","repeat_id":0,"condition_selector":{"domain":"lean_proof","paper_difficulty":"simple","topic_family":"pure_logic","worker_count":10,"fault_type":"none","fault_rate":0.0,"ablation_mode":"FULL","model_entry_id":"deepseek_v4_pro_exp1_baseline"}}
+    {"item_id":"exp1_lean_simple","experiment_id":"exp1_real_ai_feasibility","case_id":"lean_easy_01","repeat_id":0,"condition_selector":{"domain":"lean_proof","paper_difficulty":"simple","topic_family":"pure_logic","worker_count":10,"fault_type":"none","fault_rate":0.0,"ablation_mode":"FULL","model_entry_id":"deepseek_v4_pro_exp1_baseline"}}
 
 - [ ] **Step 3: Verify identity-only and capturing execution**
 
@@ -177,7 +177,7 @@ Expected: both exit 0. Any new Full failure cluster requires a fresh failing tes
 - [ ] **Step 3: Run the authorized real API smoke**
 
     $env:PYTHONPATH='src'
-    conda run --no-capture-output -n tokenshare python -m tokenshare.experiments.run_paper_experiments --output-root E:\TokenShareData\outputs\experiments\dual-domain-smoke-20260808 --smoke-profile benchmarks/paper/paper_smoke_dual_domain_profile.v1.json --real-transport --ai-api-config benchmarks/paper/exp1_baseline_provider_config.v3.json
+    conda run --no-capture-output -n tokenshare python -m tokenshare.experiments.run_paper_experiments --output-root E:\TokenShareData\outputs\experiments\dual-domain-smoke-20260808 --smoke-profile benchmarks/paper/paper_smoke_dual_domain_profile.v1.json --real-transport --ai-api-config benchmarks/paper/exp1_baseline_provider_config.v3.json --unlimited-budget
 
 Expected: exit 0; two planned roots; real provider usage for both domains; Factorization verifier and Lean checker invoked; output contains event/artifact/attempt data plus token, latency, completion, and correctness metrics.
 

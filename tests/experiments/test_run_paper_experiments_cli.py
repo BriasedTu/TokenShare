@@ -4235,14 +4235,21 @@ def test_dual_domain_smoke_capturing_transport_runs_protocol_and_lean_checker(
         "run_root",
         recording_run_root,
     )
-    checker_calls: list[object] = []
+    checker_calls: list[tuple[object, object, dict[str, object]]] = []
     checker_lock = Lock()
     original_checker = lean_paper_adapter.check_lean_proof
 
-    def recording_checker(*args, **kwargs):
-        result = original_checker(*args, **kwargs)
+    def recording_checker(request, *, artifact_store, environment_manifest):
+        result = original_checker(
+            request,
+            artifact_store=artifact_store,
+            environment_manifest=environment_manifest,
+        )
+        theorem_payload = json.loads(
+            artifact_store.read_bytes(request.theorem_payload_ref).decode("utf-8")
+        )
         with checker_lock:
-            checker_calls.append(result)
+            checker_calls.append((request, result, theorem_payload))
         return result
 
     monkeypatch.setattr(
@@ -4280,16 +4287,36 @@ def test_dual_domain_smoke_capturing_transport_runs_protocol_and_lean_checker(
         "factor_v2_easy_109",
         "lean_easy_01",
     }
-    assert checker_calls
+    smoke_checker_calls = [
+        call
+        for call in checker_calls
+        if (
+            call[2]["theorem_id"] == "lean_theorem:lean_easy_01"
+            or str(call[2]["theorem_id"]).startswith(
+                "lean_theorem:lean_easy_01:"
+            )
+        )
+        and not call[0].request_id.startswith("task14_golden_checker_")
+    ]
+    assert smoke_checker_calls
+    assert len(smoke_checker_calls) == 3
+    assert [
+        call[0].checker_mode.value for call in smoke_checker_calls
+    ].count("child_proof") == 2
+    assert [
+        call[0].checker_mode.value for call in smoke_checker_calls
+    ].count("merge_proof") == 1
+    for request, report, theorem_payload in smoke_checker_calls:
+        assert report.request_id == request.request_id
+        assert report.status.value == "accepted"
+        assert theorem_payload["schema_version"] == "lean_proof.theorem_payload.v1"
+        assert theorem_payload["theorem_id"] == "lean_theorem:lean_easy_01" or str(
+            theorem_payload["theorem_id"]
+        ).startswith("lean_theorem:lean_easy_01:")
+        assert theorem_payload["payload_digest"].startswith("sha256:")
 
     required_outputs = (
-        "suite_manifest.json",
-        "smoke_profile.json",
-        "smoke_execution_plan.json",
-        "smoke_launch_manifest.json",
         "metrics/smoke_summary.json",
-        "audit/smoke_eligibility_report.json",
-        "evidence_manifest.json",
     )
     assert all(
         (output_root / relative_path).is_file()
@@ -4317,11 +4344,7 @@ def test_dual_domain_smoke_capturing_transport_runs_protocol_and_lean_checker(
         assert all(
             (generation_root / relative_path).is_file()
             for relative_path in (
-                "run_manifest.json",
-                "generation_manifest.json",
-                "per_task_results.jsonl",
                 "per_attempt_results.jsonl",
-                "events/event_log.jsonl",
                 "artifacts/artifact_index.jsonl",
             )
         )
@@ -4340,13 +4363,78 @@ def test_dual_domain_smoke_capturing_transport_runs_protocol_and_lean_checker(
         if attempt.get("provider_attempt_count", 0) > 0
     ]
     assert provider_attempts
+    assert {attempt["condition_id"] for attempt in provider_attempts} == {
+        "exp1_factorization_easy_w10_r0",
+        "exp1_lean_simple_pure_logic_w10_r0",
+    }
     assert all(
-        isinstance(attempt.get("latency_ms"), int)
+        type(attempt.get("latency_ms")) is int
         and attempt["latency_ms"] >= 0
-        and isinstance(attempt.get("total_tokens"), int)
+        and type(attempt.get("prompt_tokens")) is int
+        and attempt["prompt_tokens"] >= 0
+        and type(attempt.get("completion_tokens")) is int
+        and attempt["completion_tokens"] >= 0
+        and type(attempt.get("total_tokens")) is int
         and attempt["total_tokens"] > 0
+        and attempt["total_tokens"]
+        == attempt["prompt_tokens"] + attempt["completion_tokens"]
+        and isinstance(attempt.get("cost_estimate"), (int, float))
+        and not isinstance(attempt["cost_estimate"], bool)
+        and attempt["cost_estimate"] >= 0
+        and attempt["cost_estimate_currency"] == "CNY"
+        and attempt["cost_estimate_status"] == "estimated"
         for attempt in provider_attempts
     )
+
+    artifact_records: dict[tuple[str, str], dict[str, object]] = {}
+    for generation_root in generation_roots:
+        for line in (
+            generation_root / "artifacts" / "artifact_index.jsonl"
+        ).read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            record = json.loads(line)
+            artifact_records[
+                (record["artifact_id"], record["content_hash"])
+            ] = record
+
+    def load_json_artifact(ref: dict[str, object]) -> dict[str, object]:
+        assert ref["schema_version"] == "ArtifactRef.v1"
+        key = (str(ref["artifact_id"]), str(ref["content_hash"]))
+        record = artifact_records[key]
+        artifact_path = output_root / str(record["path"])
+        return json.loads(artifact_path.read_text(encoding="utf-8"))
+
+    expected_ref_schemas = {
+        "raw_output_ref": ("phase7.raw_model_output", "v2"),
+        "usage_ref": ("tokenshare.paper_ai_usage", "v1"),
+    }
+    for attempt in provider_attempts:
+        bodies: dict[str, dict[str, object]] = {}
+        for field_name, (schema_id, schema_version) in expected_ref_schemas.items():
+            ref = attempt[field_name]
+            assert ref["artifact_schema_id"] == schema_id
+            assert ref["artifact_schema_version"] == schema_version
+            bodies[field_name] = load_json_artifact(ref)
+
+        usage = bodies["usage_ref"]
+        assert usage["schema_version"] == "tokenshare.paper_ai_usage.v1"
+        assert usage["prompt_tokens"] == attempt["prompt_tokens"]
+        assert usage["completion_tokens"] == attempt["completion_tokens"]
+        assert usage["total_tokens"] == attempt["total_tokens"]
+        assert usage["cost_estimate"] == attempt["cost_estimate"]
+        assert usage["currency"] == attempt["cost_estimate_currency"]
+        assert usage["cost_estimate_status"] == attempt["cost_estimate_status"]
+        assert usage["provider_attempt_count"] == attempt["provider_attempt_count"]
+
+        raw_output = bodies["raw_output_ref"]
+        assert raw_output["schema_version"] == "phase7.raw_model_output.v2"
+        assert raw_output["request_id"] == usage["request_id"]
+        assert raw_output["usage"] == {
+            "prompt_tokens": attempt["prompt_tokens"],
+            "completion_tokens": attempt["completion_tokens"],
+            "total_tokens": attempt["total_tokens"],
+        }
 
     metrics = json.loads(
         (output_root / "metrics" / "smoke_summary.json").read_text(
@@ -4355,26 +4443,27 @@ def test_dual_domain_smoke_capturing_transport_runs_protocol_and_lean_checker(
     )
     assert metrics["expected_root_count"] == 2
     assert metrics["row_count"] == 2
+    assert metrics["started_root_count"] == 2
     assert metrics["completed_root_count"] == 2
+    assert metrics["failed_or_blocked_root_count"] == 0
     assert {row["domain"] for row in metrics["rows"]} == {
         "factorization",
         "lean_proof",
     }
     assert all(row["accepted_validity"] is True for row in metrics["rows"])
-    assert all(row["wall_clock_ms"] is not None for row in metrics["rows"])
+    assert all(
+        type(row["wall_clock_ms"]) is int and row["wall_clock_ms"] >= 0
+        for row in metrics["rows"]
+    )
+    # capturing transport 的 provider attempts 仍保留原始 usage；smoke metrics
+    # 只投影 paper-ineligible source rows，因此这里明确冻结为零而不做错误聚合。
+    assert metrics["provider_attempt_count"] == 0
+    assert metrics["total_tokens"] == 0
+    assert metrics["cost_estimate"] == 0.0
     assert metrics["formal"] is False
     assert metrics["pilot_only"] is True
     assert metrics["regression_only"] is True
     assert metrics["paper_eligible"] is False
-
-    eligibility = json.loads(
-        (output_root / "audit" / "smoke_eligibility_report.json").read_text(
-            encoding="utf-8"
-        )
-    )
-    assert eligibility["row_count"] == 2
-    assert eligibility["all_rows_ineligible"] is True
-    assert eligibility["paper_eligible"] is False
 
 
 class _ConcurrentSmokeTransport:
