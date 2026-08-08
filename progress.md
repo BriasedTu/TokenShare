@@ -1,10 +1,21 @@
 # TokenShare 当前进度
 
-更新时间：2026-08-04
+更新时间：2026-08-09
 
 本文件只保留当前权威状态、最近验收锚点和后续动作。逐轮命令、评审和旧测试细节由 git history、`Doc/archive/`、`session-handoff.md` 与仓库外 `TokenShareData` 保留完整记录。
 
-## 当前权威状态（EPD-027）
+## 当前权威状态（实验 readiness repair）
+
+- Active feature=`feat-011`，保持唯一 `in-progress`；readiness repair focus 已 `accepted`，未运行的全量真实矩阵仍是 feature 的下一阶段。
+- 修复提交：`4f2527df`、`67f8ab38`、`e9c0364d`、`c50cea20`、`8a85d160`、`c67657a5`、`a26f919c`、`937288a2`、`3e102836`、`cc0878d7`、`209722b0`、`bb04b4f4`。Factorization catalog=`500`，Lean lemma catalog=`165`，均完整。
+- 系统本体未绕过：真实任务仍经 `ProtocolEngine`、正式 adapter/coordinator、领域 parser/verifier/checker、artifact/event/metrics 链执行。results-first 默认只跳过非指标设施的 publication closure；历史 strict publication 路径保留显式 opt-in。
+- 真实双域 smoke 输出为 `E:\TokenShareData\outputs\experiments\dual-domain-smoke-real-fixed-20260808-184048`：exit=`0`，status=`completed_with_failures`，roots=`2`，blocked=`0`；4 次 provider attempt 均 HTTP `200` 且 DeepSeek model identity matched；tokens=`93859`，cost=`0.527757 CNY`，provider latency=`920236ms`，correctness=`1/2=0.5`。
+- Factorization 的 `false` 是真实答案失败，未被刷成成功；Lean 为 `true`，2 个 child 与 1 个 merge 均由真实 Lean checker accepted，exit=`0`。本轮验收允许正确率为 50%，不要求双题都 accepted。
+- smoke summary v2 已向后兼容增加 correctness/completion/provider latency 的 numerator/denominator/rate/sample/missing 语义，并保留 token/cost；历史 JSON fixture digest 仅做确定性 CRLF→LF 规范化，内容篡改与非法换行仍失败。
+- 最终 Fast=`526 passed / 1 skipped`。曾有一次 Full=`2847 passed / 10 failed / 1 skipped`，10 项设施失败之后均已定向修复；最后一轮 Full 按用户要求终止且不采信，因此不得宣称 Full PASS，也不得继续以 Full 作为本轮验收标准。
+- 用户最终验收标准是上述真实双题 smoke。下一步仅在用户另行授权全量预算后，以 results-first 路径运行全量真实矩阵；不要求 receipt、L1–L4 或 publication evidence closure，但系统本体、accepted 与指标不得绕过。本状态文档收口不运行 Full、LeanAudit 或 API。
+
+## 前序权威状态（EPD-027）
 
 - Active feature：`feat-011`（Paper Real AI Experiments）的 EPD-027 实施已 `accepted`。
 - Feature-level 状态保持 `in-progress`；`accepted` 仅指 EPD-027 实施 focus 的 Task 0–34，正式采集与论文矩阵仍等待经校验的 paid receipt。

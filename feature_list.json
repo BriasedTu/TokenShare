@@ -4,25 +4,22 @@
   "stage": "paper-real-ai-experiments",
   "active_feature": "feat-011",
   "active_focus": {
-    "id": "paper-metric-contract-trace-bank-and-traceability-plan",
-    "summary": "EPD-027 全部 35 个 Task 已 accepted；Task 34 以 fail-closed L4/gate/runtime 证据和三份计划内文档完成实施收尾。仍无经 Task 26 校验的真实 paid receipt，正式论文矩阵仍为 NO-GO。",
+    "id": "full-experiment-readiness-repair",
+    "summary": "题库、系统本体与 results-first 实验设施修复已验收：Factorization 500 题与 Lean lemma 165 题完整，真实双域 smoke 已经原 ProtocolEngine/plugin/checker/metrics 链运行；全量真实矩阵尚未执行。",
     "status": "accepted",
     "scope": [
-      "Experiment 1–5 论文指标、固定分母与 missingness 口径",
-      "指标到直接实验结果、attempt/event/artifact evidence 的逐层追溯",
-      "machine-readable metric contract、paper table 与 renderer/replay 迁移范围",
-      "Experiment 2–4 两阶段真实回答库、稳定请求摘要、独立 sample/replacement slots 与双 provenance",
-      "Experiment 2 缩小题集六档在线并发检查、Experiment 3 小型在线恢复检查",
-      "acquisition actual spend、trace attribution、人民币 1000 calls/tokens/CNY/in-flight 预算硬门",
-      "完整实施顺序、测试、离线重放与真实 smoke/正式矩阵门禁"
+      "Factorization 500 与 Lean lemma 165 catalog、selection、provider config 和运行 readiness",
+      "results-first 路径默认跳过 publication closure，但保持 ProtocolEngine、adapter、parser/verifier/checker、accepted 与 metrics 语义",
+      "真实双域 smoke 与 Experiment 2–4 条件执行设施",
+      "correctness、completion、provider latency、token 与 cost 的持久化汇总"
     ],
     "out_of_scope": [
-      "在无 verified paid receipt 时生成 L3/L4/formal PASS",
-      "重新运行真实付费 API 实验",
-      "修改由其他工作调整中的 Experiment 3 正式规模",
-      "人为注入攻击与安全工程"
+      "宣称 Full 验证已经通过",
+      "把 publication、receipt 或 L1–L4 evidence closure 作为本轮 readiness 验收条件",
+      "未经用户另行预算授权自动运行全量真实矩阵",
+      "绕过系统本体、checker 或伪造 accepted/正确率"
     ],
-    "next_action": "无下一个 EPD-027 Task。未来只能在用户提供并通过 Task 26 校验的 paid receipt 后，再从 NO-GO 进入正式 acquisition；不得自动调用 provider。"
+    "next_action": "feat-011 保持 in-progress；用户另行授权全量预算后，使用 results-first 路径运行全量真实矩阵，无需 receipt、L1–L4 或 publication evidence closure，但不得绕过系统本体与指标。"
   },
   "authorities": {
     "agent_start": "AGENTS.md",
@@ -142,7 +139,7 @@
       "name": "Paper Real AI Experiments",
       "status": "in-progress",
       "dependencies": ["feat-009"],
-      "summary": "EPD-027 论文实验 pipeline 实施 Task 0–34 全部 accepted；真实 provider 采集与正式论文矩阵仍因 verified paid receipt 缺失而 NO-GO，不构成正式实验已完成。",
+      "summary": "题库、系统本体与 results-first 实验设施 readiness repair 已 accepted，真实双域 smoke 已完成；全量真实矩阵尚未运行，因此 feature 继续 in-progress。",
       "acceptance": [
         "online evidence 当次调用批准的真实 API；trace-backed evidence 的每个 slot 可追溯到批准的真实 API acquisition，且当次完整运行协议状态机",
         "协议生命周期与 artifact/event evidence 完整",
@@ -195,9 +192,11 @@
         "Task 31 accepted：无source/test/runtime evidence commit，planned exact empty directory被git忽略，仅state acceptance commit。初始artifact目录缺失fail-closed且0 tests；创建planned exact dir后profile实际仅运行一次：L1 exit0，882 passed/0 failed/0 errors，441 exact selectors，2155.58s，digest sha256:d3dd21ed9fa0c15452019c70c8a90e1fa8a7d45564951043b54aed01f399018c，status passed。coverage Tasks0–29含25–29、Task24 pure=2/artifact-audit=0及two-stage gate；Lean root1/checker1<=2。唯一Fast exit0，525 passed/1 skipped in38.84s。review0C/0I/0M并确认真实production chain/no shadow；minimizer N/A、零修改。provider/network0/0，无receipt/secret；L3/L4 unset，formal matrix NO-GO。",
         "Task 32 accepted：runtime-only、无source/test commit；保留未跟踪local/verification/epd027-l2/{replay-a,replay-b,negative-exp34,l2-runtime-summary.json}。profile exit0，8 passed/8.41s，status passed，digest sha256:145059c...cef2a。positive source=heiyucode_gpt56_smoke_20260716，number4733749 predicate passed/true/true，factors1013×4673；case/batch/tree/raw/provenance digests已在summary记录。真实链terminal SETTLEMENT_RECORDED、无shadow，classification=regression_only/paper=false/not formal。negative expected-fail hash before=after sha256:7f2a...1c60。双replay独立root，observations sha256:4b125...4192、table sha256:c4f4...5ae9、lineage sha256:9af8...a9a0与ledger相等，113 files inventory/content相同。review0C/0I；minimizer N/A零修改；provider/network0/0（历史source attempt不计本次调用）；无receipt/secret，formal matrix NO-GO，L2不替代L4。新增Minor：runtime未ignore housekeeping deferred。",
         "Task33 accepted owning fix a10e988ddfc923cca28423dfd83af60a96863a4f：exact12（sidecar+semantic authority+environment+fixed_plan+catalog/audit/profile/Exp5+4 tests），PLAN_OUT仅profile/Exp5/fixed_plan 3 production，无未批准文件。RED module-missing exit2；targeted140/140 30.10s、contracts12/12、native-receipt1/1 6.07s、L1 Lean1/1 3.12s；唯一Fast exit1=524p/1f/1s 83.83s，因L1函数40!=39，最小合并后失败node1/1 0.25s及既有2/2 19.78s，reviewer明确不需重跑Fast；bridge RED0/1 0.68s→GREEN1/1 0.62s，fixedplan1/1 0.72s，diffcheck0。public CLI仅一次exit3/83.67s BLOCKED receipt absent，budget516/171708288/979.524864/CNY1000，blocked digest sha256:47598f070d41715b99a58034b223c3c18664fa9a9a970af059f0750acaf5b8f5，provider/network0/0，3 roots/marker/ledger absent，launcher/audit skipped。review0C/0I、minimizer NO_CHANGE。rejected cascade：600 checker success516.23s但方案弃用；Full exit1=2752p/86f/1s/3826.97s，未进入LeanAudit且不重跑。formal NO-GO、receipt absent。",
-        "Task34 accepted：Task0–34=35/35。L3 blocked 后仅产生 l4_cell_traceability_blocked（sha256:17ccfc2fc72184a9ee6151b910d462b5ba8014c8d55e9f9597931b3d6bbfa268），L4 diagnostic root 非 formal/canonical；execution/publication gates 均 BLOCKED 且无环、无 dispatch/receipt，记录 digests 为 sha256:b1dfa6edf77b3a0982dc72ce09fde74f1fe1300d7f055520c95cfe7cc721de3c / sha256:7b49f79a7a22f63eb7bf9e3ba7056fd61c918b12deeed5070433a03113273d0c。L2=8 passed，L3/L4 exit3 blocked；Task34 review0C/0I，minimizer N/A。首次 L1=880p/2f in 2834.24s 暴露 Task33 bug，follow-up fix commit 7c9dff7c 后 L1=882p in 2807.21s；Fast=525p/1s in 75.85s。未运行 Full/LeanAudit/600，provider/network=0/0，receipt absent，formal matrix NO-GO。"
+        "Task34 accepted：Task0–34=35/35。L3 blocked 后仅产生 l4_cell_traceability_blocked（sha256:17ccfc2fc72184a9ee6151b910d462b5ba8014c8d55e9f9597931b3d6bbfa268），L4 diagnostic root 非 formal/canonical；execution/publication gates 均 BLOCKED 且无环、无 dispatch/receipt，记录 digests 为 sha256:b1dfa6edf77b3a0982dc72ce09fde74f1fe1300d7f055520c95cfe7cc721de3c / sha256:7b49f79a7a22f63eb7bf9e3ba7056fd61c918b12deeed5070433a03113273d0c。L2=8 passed，L3/L4 exit3 blocked；Task34 review0C/0I，minimizer N/A。首次 L1=880p/2f in 2834.24s 暴露 Task33 bug，follow-up fix commit 7c9dff7c 后 L1=882p in 2807.21s；Fast=525p/1s in 75.85s。未运行 Full/LeanAudit/600，provider/network=0/0，receipt absent，formal matrix NO-GO。",
+        "2026-08-09 readiness repair accepted：commits 4f2527df/67f8ab38/e9c0364d/c50cea20/8a85d160/c67657a5/a26f919c/937288a2/3e102836/cc0878d7/209722b0/bb04b4f4；Factorization 500 与 Lean lemma 165 catalog 完整。results-first 默认只跳过设施 publication closure，历史 strict 路径显式 opt-in；ProtocolEngine、adapter、parser/verifier/checker、accepted 与 metrics 未绕过。summary 增加 correctness/completion/provider latency，历史 JSON fixture digest 仅规范化 CRLF→LF。Fast 最终 526 passed/1 skipped。",
+        "真实双域 smoke output=E:\\TokenShareData\\outputs\\experiments\\dual-domain-smoke-real-fixed-20260808-184048，exit0/status=completed_with_failures，roots=2/blocked=0，4 次 provider attempt 均 HTTP 200 且 DeepSeek model identity matched；tokens=93859、cost=0.527757 CNY、provider latency=920236ms、correctness=1/2=0.5。Factorization false 是真实失败；Lean true，2 child + 1 merge 均经 checker accepted exit0。历史 Full 曾为 2847p/10f/1s，10 项设施失败已逐项定向修复；最后一轮 Full 依用户要求终止且不采信，绝不宣称 Full PASS。"
       ],
-      "next_action": "EPD-027 实施已 accepted，Task 0–34=35/35，无下一 Task。未来如需进入正式 acquisition，必须先由用户提供并通过 Task26 校验的 paid receipt；不得自动调用 provider。"
+      "next_action": "readiness repair 已验收。仅在用户另行授权全量真实 API 预算后，使用 results-first 路径运行全量矩阵；不要求 receipt、L1–L4 或 publication evidence closure，但系统本体与指标不得绕过。"
     }
   ]
 }

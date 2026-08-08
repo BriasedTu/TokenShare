@@ -1,6 +1,6 @@
 # Session Handoff
 
-更新时间：2026-08-04
+更新时间：2026-08-09
 
 本文件是下一任的紧凑权威交接。Task 的逐轮 RED/GREEN、完整 review、命令输出与旧状态快照已保留在 git history、`Doc/archive/design-history/2026-08-01-epd027-minimal-handoff.md`、归档 handoff、`progress.md` 和仓库外 `TokenShareData`，不得由本摘要反推或覆盖。
 
@@ -8,9 +8,20 @@
 
 1. 完整阅读 `AGENTS.md`、`feature_list.json`、`progress.md` 与本文件；实验/runner/论文工作另读 `Doc/TechnicalDocument/tokenshare_latest_real_plugin_experiment_design.md`。
 2. 运行 `git status --short --branch`、`git log -3 --oneline`，只读确认唯一工作树与当前分支；不得 reset/clean/checkout 或覆盖用户改动。
-3. 先运行默认 `powershell -NoProfile -ExecutionPolicy Bypass -File .\init.ps1`。feature 完成/合并前按 AGENTS 运行 Full；Lean 相关变更按分层配置追加 LeanAudit。
+3. 新的代码修改前先运行默认 `powershell -NoProfile -ExecutionPolicy Bypass -File .\init.ps1`。当前 readiness 已按真实双题 smoke 验收，不得仅因交接重跑 Full、LeanAudit 或 API；全量真实矩阵须等待用户另行预算授权。
 
-## 当前权威交接：Task 34 accepted / EPD-027 implementation complete
+## 当前权威交接：readiness repair accepted / full matrix pending
+
+- 唯一 active feature=`feat-011`，状态保持 `in-progress`；readiness repair focus 已 `accepted`，全量真实矩阵未运行。
+- 修复链=`4f2527df/67f8ab38/e9c0364d/c50cea20/8a85d160/c67657a5/a26f919c/937288a2/3e102836/cc0878d7/209722b0/bb04b4f4`。Factorization catalog=`500`、Lean lemma catalog=`165`，均完整；Fast 最终=`526 passed / 1 skipped`。
+- 系统本体未绕过：真实任务使用原 `ProtocolEngine`、adapter/coordinator、parser/verifier/checker 与 artifact/event/metrics。results-first 默认仅绕过设施 publication closure；需要历史严格 publication closure 时显式 opt-in。
+- 已验收真实 smoke：`E:\TokenShareData\outputs\experiments\dual-domain-smoke-real-fixed-20260808-184048`，exit=`0`、status=`completed_with_failures`、roots=`2`、blocked=`0`；4 次 attempt 全部 HTTP `200`、DeepSeek identity matched；tokens=`93859`、cost=`0.527757 CNY`、provider latency=`920236ms`、correctness=`1/2=0.5`。
+- Factorization `false` 为真实失败；Lean `true`，2 child + 1 merge 均经 checker accepted exit=`0`。不得因验收而把 Factor false 改为 true，也不得增加 both-accepted gate。
+- smoke summary 已增加 correctness/completion/provider latency，且 missing latency 不补零；历史 JSON fixture 仅做文本 CRLF→LF digest 规范化，不放宽内容差异。
+- Full 历史观测=`2847p/10f/1s`；10 项设施失败已定向修复。最后一轮 Full 按用户要求终止、不采信，不宣称 Full PASS，也不要再运行 Full 作为本轮标准。
+- 下一动作：等待用户另行授权全量 API 预算后，用 results-first 路径运行全量真实矩阵；不要求 receipt、L1–L4 或 publication evidence，但 ProtocolEngine/checker/accepted/metrics 仍是硬边界。未经授权不得自动调用 provider。
+
+## 前序交接：Task 34 accepted / EPD-027 implementation complete
 
 - Active feature=`feat-011` 的 EPD-027 实施状态=`accepted`；Task 0–34 已全部 accepted，计 `35/35`。无 active/current Task、无下一实施 Task；active writer=`0`。
 - Feature-level 状态保持 `in-progress`；上述 `accepted` 仅指 EPD-027 实施 focus，正式采集与论文矩阵仍等待经 Task 26 校验的 paid receipt。
