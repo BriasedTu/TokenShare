@@ -1124,6 +1124,7 @@ def execute_paper_formal_suite(
     recovery_documents: Mapping[str, Any] | None = None,
     trace_context: PaperFormalTraceContext | None = None,
     online_root_callback_factory: Callable[..., Any] | None = None,
+    enforce_publication_closure: bool = False,
 ) -> PaperSuiteResult:
     """校验冻结计划并通过注册 dispatcher 顺序执行 planned conditions。"""
 
@@ -1284,7 +1285,9 @@ def execute_paper_formal_suite(
             normalized_root_filter=normalized_root_filter,
             evidence_class=direct_evidence_class,
         )
-        if classification is None
+        if enforce_publication_closure
+        and (real_transport or trace_context is not None)
+        and classification is None
         and direct_evidence_class != "regression_only"
         and any(bound_items for _plan, bound_items in bound_plans)
         else None

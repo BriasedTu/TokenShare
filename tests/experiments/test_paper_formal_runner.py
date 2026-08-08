@@ -3102,6 +3102,7 @@ def test_zero_dispatch_hard_limit_closes_full_not_started_direct_inventory(
             planned_ai_units=2,
         ),
         "real_transport": True,
+        "enforce_publication_closure": True,
         "hard_limits": {"max_total_provider_attempts": 0},
     }
 
@@ -5589,6 +5590,7 @@ def test_formal_real_transport_still_requires_publication_direct_closure(
     )
     kwargs = _formal_execution_kwargs(tmp_path=tmp_path, config=config, plan=plan)
     kwargs["real_transport"] = True
+    kwargs["enforce_publication_closure"] = True
 
     suite = formal_runner.execute_paper_formal_suite(**kwargs)
 
@@ -5597,6 +5599,151 @@ def test_formal_real_transport_still_requires_publication_direct_closure(
     assert suite.error_summary[0]["failure_stage"] == "runner_internal"
     assert suite.error_summary[0]["resource_diagnostics"]["message"] == (
         "formal publication closure blocked"
+    )
+
+
+def test_formal_default_skips_publication_closure_after_real_lean_full_metrics(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import tokenshare.experiments.lean_paper_adapter as lean_adapter_module
+    import tokenshare.experiments.paper_catalog as paper_catalog_module
+    from tests.experiments.test_lean_paper_adapter import _condition_for_case
+    from tests.support.lean_checker import RecordingLeanChecker
+    from tokenshare.experiments.lean_paper_adapter import (
+        ScriptedLeanPaperProofTransport,
+    )
+    from tokenshare.executors.ai_api_transport import UrlLibSiliconFlowTransport
+
+    config = _ai_config()
+    monkeypatch.setenv("TOKENSHARE_FORMAL_RUNNER_TEST_KEY", "offline-lean-key")
+    case = paper_catalog_module._with_lean_v1_paper_difficulty(
+        json.loads(
+            Path("benchmarks/paper/lean_catalog.v1.jsonl")
+            .read_text(encoding="utf-8")
+            .splitlines()[0]
+        )
+    )
+    environment = lean_adapter_module.default_lean_paper_environment_manifest()
+    object.__setattr__(environment, "environment_digest", case["environment_digest"])
+    monkeypatch.setattr(
+        lean_adapter_module,
+        "default_lean_paper_environment_manifest",
+        lambda: environment,
+    )
+    condition = replace(
+        _condition_for_case(CATALOG_DIGEST, case),
+        provider_config_id=PROVIDER_CONFIG_ID,
+        model_entry_id=MODEL_ENTRY_ID,
+        provider_family="siliconflow",
+        provider_model_id=PROVIDER_MODEL_ID,
+        reasoning_profile_id="default",
+        source_provider_config_digest=config.config_digest,
+        model_endpoint_identity_digest=ENDPOINT_DIGEST,
+    )
+    expected_ai_unit_count = int(case["expected_child_count"])
+    selection = FrozenCaseSelection(
+        selection_id="selection-real-lean-full",
+        experiment_id=EXPERIMENT_ID,
+        suite_version="paper_v1",
+        catalog_version="catalog-v1",
+        domain="lean_proof",
+        paper_difficulty=str(condition.paper_difficulty),
+        topic_family=condition.topic_family,
+        ordered_case_ids=(str(case["case_id"]),),
+        catalog_digest=CATALOG_DIGEST,
+        expected_ai_unit_count=expected_ai_unit_count,
+        paper_eligible_required=True,
+    )
+    plan = _dispatch_plan_type()(
+        experiment_id=EXPERIMENT_ID,
+        output_root=(tmp_path / EXPERIMENT_ID).as_posix(),
+        conditions=(condition,),
+        condition_selection_bindings=(
+            FrozenConditionSelectionBinding.from_condition(condition, selection),
+        ),
+    )
+    checker = RecordingLeanChecker()
+    adapter_results: list[object] = []
+    real_dispatch = formal_runner.dispatch_paper_case
+
+    def dispatch_with_recording_checker(**kwargs):
+        result = real_dispatch(**kwargs, checker=checker)
+        adapter_results.append(result)
+        return result
+
+    _install_single_case_execution(
+        monkeypatch=monkeypatch,
+        dispatch=dispatch_with_recording_checker,
+    )
+
+    transport = UrlLibSiliconFlowTransport()
+    scripted_transport = ScriptedLeanPaperProofTransport()
+
+    def local_chat_completion(**call_kwargs):
+        response = scripted_transport.post_chat_completion(**call_kwargs)
+        response.body["model"] = json.loads(
+            call_kwargs["body_bytes"].decode("utf-8")
+        )["model"]
+        response.text = json.dumps(response.body, ensure_ascii=False)
+        return response
+
+    transport.post_chat_completion = local_chat_completion
+
+    def forbid_publication_capture(**_kwargs):
+        raise AssertionError("default formal execution must skip publication closure")
+
+    monkeypatch.setattr(
+        formal_runner,
+        "_capture_canonical_direct_evidence",
+        forbid_publication_capture,
+    )
+    kwargs = _formal_execution_kwargs(tmp_path=tmp_path, config=config, plan=plan)
+    kwargs.update(
+        {
+            "catalog_manifest": {
+                "catalog_digest": CATALOG_DIGEST,
+                "factorization_cases": (),
+                "lean_cases": (case,),
+                "lean_lemma_graph_cases": (),
+            },
+            "budget": _budget(
+                planned_conditions=1,
+                planned_root_runs=1,
+                planned_ai_units=expected_ai_unit_count,
+            ),
+            "transport": transport,
+            "real_transport": True,
+        }
+    )
+
+    suite = formal_runner.execute_paper_formal_suite(**kwargs)
+
+    assert suite.status is PaperStatus.COMPLETED
+    assert len(adapter_results) == 1
+    adapter_result = adapter_results[0]
+    assert adapter_result.task_result.root_status is PaperTaskStatus.COMPLETED
+    assert adapter_result.task_result.accepted_validity is True
+    assert len(checker.requests) == expected_ai_unit_count + 1
+    attempts = _generation_records(
+        tmp_path,
+        EXPERIMENT_ID,
+        condition.condition_id,
+        "per_attempt_results.jsonl",
+    )
+    assert len(attempts) == expected_ai_unit_count
+    assert suite.provider_attempt_count == expected_ai_unit_count
+    assert suite.total_tokens == sum(int(row["total_tokens"]) for row in attempts)
+    assert suite.total_cost_estimate == pytest.approx(
+        sum(float(row["cost_estimate"]) for row in attempts)
+    )
+    assert all(float(row["latency_ms"]) >= 0 for row in attempts)
+    assert all(int(row["prompt_tokens"]) > 0 for row in attempts)
+    assert all(int(row["completion_tokens"]) > 0 for row in attempts)
+    assert all(
+        int(row["total_tokens"])
+        == int(row["prompt_tokens"]) + int(row["completion_tokens"])
+        for row in attempts
     )
 
 
@@ -8129,6 +8276,7 @@ def _run_normal_exp3_trace_condition(
             ),
             "transport": ForbiddenProviderTransport(),
             "trace_context": trace_context,
+            "enforce_publication_closure": True,
         }
     )
     suite = formal_runner.execute_paper_formal_suite(**kwargs)
