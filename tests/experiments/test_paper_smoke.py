@@ -28,6 +28,9 @@ from tokenshare.experiments.paper_smoke_report import (
 
 CATALOG_DIGEST = "sha256:" + "1" * 64
 REPO_ROOT = Path(__file__).resolve().parents[2]
+DUAL_DOMAIN_SMOKE_PROFILE = (
+    REPO_ROOT / "benchmarks/paper/paper_smoke_dual_domain_profile.v1.json"
+)
 
 
 def _epd027_launcher_source(name: str) -> str:
@@ -217,6 +220,30 @@ def test_default_smoke_profile_freezes_27_non_paper_root_runs() -> None:
     assert profile.pilot_only is True
     assert profile.regression_only is True
     assert profile.paper_eligible is False
+
+
+def test_dual_domain_smoke_profile_freezes_only_factorization_and_lean_roots() -> None:
+    profile = load_paper_smoke_profile(DUAL_DOMAIN_SMOKE_PROFILE)
+
+    assert profile.schema_version == PAPER_SMOKE_PROFILE_SCHEMA_VERSION
+    assert profile.suite_id == "paper_smoke_dual_domain_v1"
+    assert profile.profile_version == "v1"
+    assert profile.experiment_ids == ("exp1_real_ai_feasibility",)
+    assert profile.expected_root_runs == 2
+    assert tuple(item.case_id for item in profile.items) == (
+        "factor_v2_easy_109",
+        "lean_easy_01",
+    )
+    assert {
+        item.condition_selector["domain"] for item in profile.items
+    } == {"factorization", "lean_proof"}
+    assert profile.formal is False
+    assert profile.pilot_only is True
+    assert profile.regression_only is True
+    assert profile.paper_eligible is False
+    assert {"smoke_suite", "pilot_only"}.issubset(
+        profile.ineligibility_reasons
+    )
 
 
 def test_smoke_profile_v2_switches_current_baseline_and_exp5_cohort() -> None:

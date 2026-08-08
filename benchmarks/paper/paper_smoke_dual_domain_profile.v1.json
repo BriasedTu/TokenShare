@@ -1,0 +1,57 @@
+{
+  "schema_version": "tokenshare.paper_smoke_profile.v1",
+  "suite_id": "paper_smoke_dual_domain_v1",
+  "profile_version": "v1",
+  "catalog": {
+    "catalog_id": "tokenshare.paper.catalog",
+    "catalog_version": "v2",
+    "catalog_digest": "sha256:9293070c526d2912aebf38c85712a5572cc912c9e65f5a02754a3375957704fb"
+  },
+  "experiment_ids": [
+    "exp1_real_ai_feasibility"
+  ],
+  "expected_root_runs": 2,
+  "output_mode": "isolated_smoke_root",
+  "baseline_policy": "required_by_formal_plan",
+  "formal": false,
+  "pilot_only": true,
+  "regression_only": true,
+  "paper_eligible": false,
+  "ineligibility_reasons": [
+    "smoke_suite",
+    "pilot_only"
+  ],
+  "items": [
+    {
+      "item_id": "exp1_factor_easy",
+      "experiment_id": "exp1_real_ai_feasibility",
+      "case_id": "factor_v2_easy_109",
+      "repeat_id": 0,
+      "condition_selector": {
+        "domain": "factorization",
+        "difficulty": "easy",
+        "worker_count": 10,
+        "fault_type": "none",
+        "fault_rate": 0.0,
+        "ablation_mode": "FULL",
+        "model_entry_id": "deepseek_v4_pro_exp1_baseline"
+      }
+    },
+    {
+      "item_id": "exp1_lean_simple",
+      "experiment_id": "exp1_real_ai_feasibility",
+      "case_id": "lean_easy_01",
+      "repeat_id": 0,
+      "condition_selector": {
+        "domain": "lean_proof",
+        "paper_difficulty": "simple",
+        "topic_family": "pure_logic",
+        "worker_count": 10,
+        "fault_type": "none",
+        "fault_rate": 0.0,
+        "ablation_mode": "FULL",
+        "model_entry_id": "deepseek_v4_pro_exp1_baseline"
+      }
+    }
+  ]
+}

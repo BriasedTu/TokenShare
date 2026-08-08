@@ -125,15 +125,20 @@ Run the new test, test_task14_lean_3x3_matrix_freezes_readiness_and_digests, and
 - Modify: tests/experiments/test_paper_smoke.py
 - Modify: tests/experiments/test_run_paper_experiments_cli.py
 
+Canonical root note: `factor_v2_easy_109` belongs to the current frozen
+Experiment 1 easy selection. The earlier draft's `factor_v2_easy_001` is
+excluded by the active stable-hash suite-scale selection and cannot resolve
+through the official smoke runner.
+
 - [ ] **Step 1: Add a RED profile test**
 
-Load the new path and assert exactly two ordered items: factor_v2_easy_001 and checker-backed lean_easy_01, both under exp1_real_ai_feasibility, repeat 0, FULL, DeepSeek baseline, regression_only=true, paper_eligible=false. Run it before creating the profile and confirm file-not-found RED.
+Load the new path and assert exactly two ordered items: factor_v2_easy_109 and checker-backed lean_easy_01, both under exp1_real_ai_feasibility, repeat 0, FULL, DeepSeek baseline, regression_only=true, paper_eligible=false. Run it before creating the profile and confirm file-not-found RED.
 
 - [ ] **Step 2: Create the minimal profile**
 
 Derive catalog identity fields from paper_smoke_exp1_exp4_profile.v2.json, set suite_id=paper_smoke_dual_domain_v1 and expected_root_runs=2, and include:
 
-    {"item_id":"factorization_easy","experiment_id":"exp1_real_ai_feasibility","case_id":"factor_v2_easy_001","repeat_id":0,"condition_selector":{"domain":"factorization","difficulty":"easy","worker_count":10,"fault_type":"none","fault_rate":0.0,"ablation_mode":"FULL","model_entry_id":"deepseek_v4_pro_exp1_baseline"}}
+    {"item_id":"factorization_easy","experiment_id":"exp1_real_ai_feasibility","case_id":"factor_v2_easy_109","repeat_id":0,"condition_selector":{"domain":"factorization","difficulty":"easy","worker_count":10,"fault_type":"none","fault_rate":0.0,"ablation_mode":"FULL","model_entry_id":"deepseek_v4_pro_exp1_baseline"}}
 
     {"item_id":"lean_simple","experiment_id":"exp1_real_ai_feasibility","case_id":"lean_easy_01","repeat_id":0,"condition_selector":{"domain":"lean_proof","paper_difficulty":"simple","topic_family":"pure_logic","worker_count":10,"fault_type":"none","fault_rate":0.0,"ablation_mode":"FULL","model_entry_id":"deepseek_v4_pro_exp1_baseline"}}
 

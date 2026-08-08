@@ -143,16 +143,27 @@ def _use_tracked_lean_environment(
         kwargs.setdefault("paper_suite_scale_profile", scale_profile)
         return execute_pilot_case(**kwargs)
 
-    monkeypatch.setattr(
-        paper_cli,
-        "build_gate_c_dispatch_plans",
-        build_test_dispatch_plans,
-    )
-    monkeypatch.setattr(
-        paper_cli,
-        "execute_gate_c_pilot_case",
-        execute_test_pilot_case,
-    )
+    # 双域 smoke 回归必须验证 profile 指定的真实 canonical case_id；通用
+    # 测试缩容夹具会在 selection 漂移时替换 profile case，因此这两个定向测试
+    # 保留 production full-plan resolver，直接证明冻结 root identity。
+    use_full_canonical_smoke_plan = request.node.name in {
+        "test_dual_domain_smoke_identity_and_plan_freeze_two_canonical_roots",
+        (
+            "test_dual_domain_smoke_capturing_transport_runs_protocol_"
+            "and_lean_checker"
+        ),
+    }
+    if not use_full_canonical_smoke_plan:
+        monkeypatch.setattr(
+            paper_cli,
+            "build_gate_c_dispatch_plans",
+            build_test_dispatch_plans,
+        )
+        monkeypatch.setattr(
+            paper_cli,
+            "execute_gate_c_pilot_case",
+            execute_test_pilot_case,
+        )
     resolve_smoke_plan = paper_cli.resolve_paper_smoke_execution_plan
 
     def resolve_test_smoke_plan(**kwargs):
@@ -185,11 +196,12 @@ def _use_tracked_lean_environment(
         result = resolve_smoke_plan(**{**kwargs, "profile": adapted_profile})
         return replace(result, profile_digest=profile.profile_digest)
 
-    monkeypatch.setattr(
-        paper_cli,
-        "resolve_paper_smoke_execution_plan",
-        resolve_test_smoke_plan,
-    )
+    if not use_full_canonical_smoke_plan:
+        monkeypatch.setattr(
+            paper_cli,
+            "resolve_paper_smoke_execution_plan",
+            resolve_test_smoke_plan,
+        )
     validate_disk_estimate = formal_runner._validated_formal_disk_estimate
 
     def validate_test_disk_estimate(budget):
@@ -4076,6 +4088,281 @@ class _CLICapturingTransport:
         )["model"]
         self.calls.append(kwargs["body_bytes"])
         return response
+
+
+class _DualDomainCLICapturingTransport:
+    """按 canonical prompt 路由两个既有 scripted provider adapter。"""
+
+    tokenshare_offline_capturing_transport = True
+
+    def __init__(self) -> None:
+        self.factorization_delegate = ScriptedFactorizationRangeTransport()
+        self.lean_delegate = lean_paper_adapter.ScriptedLeanPaperProofTransport()
+        self.calls: list[dict] = []
+
+    def post_chat_completion(self, **kwargs):
+        body = json.loads(kwargs["body_bytes"].decode("utf-8"))
+        prompt = "\n".join(
+            str(message.get("content", ""))
+            for message in body.get("messages", ())
+            if isinstance(message, dict)
+        )
+        domain = (
+            "lean_proof"
+            if "Theorem payload digest:" in prompt
+            else "factorization"
+        )
+        delegate = (
+            self.lean_delegate
+            if domain == "lean_proof"
+            else self.factorization_delegate
+        )
+        response = delegate.post_chat_completion(**kwargs)
+        response.body["model"] = body["model"]
+        self.calls.append({"domain": domain, "body": body})
+        return response
+
+
+def test_dual_domain_smoke_identity_and_plan_freeze_two_canonical_roots(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    profile_path = (
+        "benchmarks/paper/paper_smoke_dual_domain_profile.v1.json"
+    )
+    provider_path = "benchmarks/paper/exp1_baseline_provider_config.v3.json"
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+
+    identity_root = tmp_path / "identity"
+    assert main(
+        [
+            "--output-root",
+            str(identity_root),
+            "--smoke-profile",
+            profile_path,
+            "--ai-api-config",
+            provider_path,
+            "--unlimited-budget",
+            "--smoke-identity-only",
+        ]
+    ) == 0
+    assert not identity_root.exists()
+    identity = json.loads(capsys.readouterr().out)
+    semantics = identity["preregistered_semantics"]
+    assert semantics["suite_id"] == "paper_smoke_dual_domain_v1"
+    assert semantics["experiment_ids"] == ["exp1_real_ai_feasibility"]
+    assert semantics["direct_root_runs"] == 2
+    assert semantics["actual_scheduled_root_runs"] == 2
+    assert semantics["worker_counts"] == [10]
+    assert semantics["paper_eligible"] is False
+
+    plan_root = tmp_path / "plan"
+    assert main(
+        [
+            "--output-root",
+            str(plan_root),
+            "--smoke-profile",
+            profile_path,
+            "--ai-api-config",
+            provider_path,
+            "--unlimited-budget",
+            "--plan-only",
+        ]
+    ) == 0
+    capsys.readouterr()
+    plan = json.loads(
+        (plan_root / "smoke_execution_plan.json").read_text(encoding="utf-8")
+    )
+    assert plan["direct_root_run_count"] == 2
+    assert len(plan["items"]) == 2
+    assert {item["case_id"] for item in plan["items"]} == {
+        "factor_v2_easy_109",
+        "lean_easy_01",
+    }
+    assert {
+        item["condition_selector"]["domain"] for item in plan["items"]
+    } == {"factorization", "lean_proof"}
+    assert {
+        case_id
+        for case_ids in plan["root_case_filter"].values()
+        for case_id in case_ids
+    } == {"factor_v2_easy_109", "lean_easy_01"}
+    planned_suite = json.loads(
+        (plan_root / "suite_manifest.json").read_text(encoding="utf-8")
+    )
+    assert planned_suite["run_count"] == 2
+    assert planned_suite["formal"] is False
+    assert planned_suite["pilot_only"] is True
+    assert planned_suite["regression_only"] is True
+    assert planned_suite["paper_eligible"] is False
+
+
+def test_dual_domain_smoke_capturing_transport_runs_protocol_and_lean_checker(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    profile = load_exp1_pilot_profile(
+        "benchmarks/paper/exp1_minimal_pilot_profile.v3.json"
+    )
+    entry = profile.source_provider_config.entries[0]
+    monkeypatch.setenv(entry.api_key_env, "dual-domain-smoke-capture-key")
+    transport = _DualDomainCLICapturingTransport()
+
+    coordinator_case_ids: list[str] = []
+    coordinator_lock = Lock()
+    original_run_root = lean_paper_adapter.ProtocolRunCoordinator.run_root
+
+    def recording_run_root(self, request):
+        with coordinator_lock:
+            coordinator_case_ids.append(str(request.root_input["case_id"]))
+        return original_run_root(self, request)
+
+    monkeypatch.setattr(
+        lean_paper_adapter.ProtocolRunCoordinator,
+        "run_root",
+        recording_run_root,
+    )
+    checker_calls: list[object] = []
+    checker_lock = Lock()
+    original_checker = lean_paper_adapter.check_lean_proof
+
+    def recording_checker(*args, **kwargs):
+        result = original_checker(*args, **kwargs)
+        with checker_lock:
+            checker_calls.append(result)
+        return result
+
+    monkeypatch.setattr(
+        lean_paper_adapter,
+        "check_lean_proof",
+        recording_checker,
+    )
+
+    output_root = tmp_path / "dual-domain-smoke"
+    exit_code = main(
+        [
+            "--output-root",
+            str(output_root),
+            "--smoke-profile",
+            "benchmarks/paper/paper_smoke_dual_domain_profile.v1.json",
+            "--ai-api-config",
+            "benchmarks/paper/exp1_baseline_provider_config.v3.json",
+            "--real-transport",
+            "--unlimited-budget",
+        ],
+        gate_c_transport=transport,
+        gate_c_ai_api_configs={
+            profile.model_endpoint_identity.provider_config_id: (
+                profile.source_provider_config
+            )
+        },
+    )
+
+    assert exit_code == 0
+    assert {call["domain"] for call in transport.calls} == {
+        "factorization",
+        "lean_proof",
+    }
+    assert set(coordinator_case_ids) == {
+        "factor_v2_easy_109",
+        "lean_easy_01",
+    }
+    assert checker_calls
+
+    required_outputs = (
+        "suite_manifest.json",
+        "smoke_profile.json",
+        "smoke_execution_plan.json",
+        "smoke_launch_manifest.json",
+        "metrics/smoke_summary.json",
+        "audit/smoke_eligibility_report.json",
+        "evidence_manifest.json",
+    )
+    assert all(
+        (output_root / relative_path).is_file()
+        for relative_path in required_outputs
+    )
+
+    current_paths = sorted(
+        (
+            output_root
+            / "experiments"
+            / "exp1_real_ai_feasibility"
+            / "runs"
+        ).glob("*/0/CURRENT.json")
+    )
+    assert len(current_paths) == 2
+    generation_roots = []
+    for current_path in current_paths:
+        current = json.loads(current_path.read_text(encoding="utf-8"))
+        generation_root = (
+            current_path.parent
+            / ".generations"
+            / current["generation_id"]
+        )
+        generation_roots.append(generation_root)
+        assert all(
+            (generation_root / relative_path).is_file()
+            for relative_path in (
+                "run_manifest.json",
+                "generation_manifest.json",
+                "per_task_results.jsonl",
+                "per_attempt_results.jsonl",
+                "events/event_log.jsonl",
+                "artifacts/artifact_index.jsonl",
+            )
+        )
+
+    attempts = [
+        json.loads(line)
+        for generation_root in generation_roots
+        for line in (generation_root / "per_attempt_results.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+        if line.strip()
+    ]
+    provider_attempts = [
+        attempt
+        for attempt in attempts
+        if attempt.get("provider_attempt_count", 0) > 0
+    ]
+    assert provider_attempts
+    assert all(
+        isinstance(attempt.get("latency_ms"), int)
+        and attempt["latency_ms"] >= 0
+        and isinstance(attempt.get("total_tokens"), int)
+        and attempt["total_tokens"] > 0
+        for attempt in provider_attempts
+    )
+
+    metrics = json.loads(
+        (output_root / "metrics" / "smoke_summary.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert metrics["expected_root_count"] == 2
+    assert metrics["row_count"] == 2
+    assert metrics["completed_root_count"] == 2
+    assert {row["domain"] for row in metrics["rows"]} == {
+        "factorization",
+        "lean_proof",
+    }
+    assert all(row["accepted_validity"] is True for row in metrics["rows"])
+    assert all(row["wall_clock_ms"] is not None for row in metrics["rows"])
+    assert metrics["formal"] is False
+    assert metrics["pilot_only"] is True
+    assert metrics["regression_only"] is True
+    assert metrics["paper_eligible"] is False
+
+    eligibility = json.loads(
+        (output_root / "audit" / "smoke_eligibility_report.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert eligibility["row_count"] == 2
+    assert eligibility["all_rows_ineligible"] is True
+    assert eligibility["paper_eligible"] is False
 
 
 class _ConcurrentSmokeTransport:
