@@ -1,6 +1,6 @@
 # TokenShare V1 当前 Code Map
 
-更新时间：2026-08-04
+更新时间：2026-08-08
 
 状态：当前总体代码归属权威。本文回答“改动应该放哪里、哪些边界不能跨”，不记录逐次修复历史。协议语义看 `tokenshare_v1_complete_spec.md`，论文实验参数看 `tokenshare_latest_real_plugin_experiment_design.md`。
 
@@ -153,7 +153,7 @@ Secret 只能进入当前进程环境和脱敏后的 transport；event/artifact/
 | `paper_formal_evidence.py` | 正式 evidence store、manifest、checkpoint 和完整性校验；Task 18 接入版本化 eligibility；Task 20 构造 protected `CanonicalLineageInput`/`LineageSourceIndex`；Task 22 保持 external source acquisition/current execution typed binding 分离；Task 27 把 authoritative lineage rows 与 metric projection rows 分离，并在 comparison boundary 严格处理冻结 alias/identity。 |
 | `paper_formal_checkpoint.py` | generation v3 root-delta checkpoint、resume 与 terminal streaming SQLite compaction；Task 22 逐 root 释放 full outcome，并从真实 terminal、Task20 source-index/observations/manifest/output refs 与 Task21 renderer manifest/artifacts 重算 resume digest closure，mutation fail closed。 |
 | `paper_faults.py`、`paper_workers.py` | 五类 rate-fault 与 worker-death 的预注册 hook/投影。 |
-| `paper_exp1.py`、`paper_exp2_scalability.py`、`paper_exp3_fault_recovery.py`、`paper_exp4_ablation_runner.py` | 各实验的独立行为/指标 helper。 |
+| `paper_exp1.py`、`paper_exp2_scalability.py`、`paper_exp3_fault_recovery.py`、`paper_exp4_ablation_runner.py` | 各实验的独立行为/指标 helper；`paper_exp1.py` 的 Task14 matrix validator 与 `paper_runner.py` 共用 authority-normalized golden evidence digest 语义，authority metadata 部分缺失时 fail closed，历史无 metadata 证据保留 runtime digest。 |
 | `paper_ablation.py` | `FULL + 4` protocol mechanism policy。 |
 | `paper_terminal_outcomes.py` | succeeded/failed/blocked/incomplete 终态语义。 |
 | `paper_smoke.py` | smoke profile、identity 与非论文执行；Task 27 抽出无副作用 Exp5 capability authority builder，legacy CLI 与统一 pipeline 共用同一权威身份，仍保持 smoke/pilot/regression-only。 |

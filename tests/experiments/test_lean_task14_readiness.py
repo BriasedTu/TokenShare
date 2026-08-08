@@ -12,6 +12,9 @@ from tokenshare.experiments.paper_catalog import (
     lean_case_semantic_fingerprint,
     load_paper_catalogs,
 )
+from tokenshare.experiments.paper_exp1 import (
+    _task14_golden_evidence_digest_body as _exp1_golden_evidence_digest_body,
+)
 from tokenshare.experiments.paper_models import (
     PaperExperimentCondition,
     PaperTaskStatus,
@@ -117,6 +120,29 @@ def test_task14_lean_3x3_matrix_freezes_readiness_and_digests() -> None:
     ]
 
 
+def test_exp1_validator_uses_task14_authority_normalized_golden_digest() -> None:
+    evidence = _authority_normalized_golden_evidence()
+
+    actual = _exp1_golden_evidence_digest_body(evidence)
+
+    assert actual == _lean_golden_evidence_digest_body(evidence)
+    assert actual["environment_digest"] == "sha256:" + "c" * 64
+    assert actual["split_certificate_digest"] == "sha256:" + "d" * 64
+
+
+def test_exp1_validator_rejects_partial_task14_authority_metadata() -> None:
+    evidence = _authority_normalized_golden_evidence()
+    del evidence["split_certificate_ref"]["metadata"][
+        "authority_normalized_certificate_digest"
+    ]
+
+    with pytest.raises(
+        ValueError,
+        match="authority_normalized_certificate_digest is incomplete",
+    ):
+        _exp1_golden_evidence_digest_body(evidence)
+
+
 def test_task14_matrix_selected_ids_have_distinct_semantic_fingerprints() -> None:
     catalog = _catalog_with_lemma_graph()
     matrix = build_lean_3x3_matrix_plan(catalog_manifest=catalog)
@@ -210,10 +236,7 @@ def test_task14_structured_blocked_golden_evidence_has_digest_projection() -> No
         "transient_detail": "must not enter the stable digest projection",
     }
 
-    assert _lean_golden_evidence_digest_body(
-        evidence,
-        require_authority_metadata=True,
-    ) == {
+    expected = {
         "schema_version": "tokenshare.lean_task14_golden_evidence.v1",
         "evidence_source": "local_oracle_lemma_graph",
         "case_id": "lean_v2_medium_lemma_dag_pure_logic_checker_01",
@@ -225,6 +248,11 @@ def test_task14_structured_blocked_golden_evidence_has_digest_projection() -> No
         "provider_calls_made": 0,
         "error": "fixed checker preflight failed",
     }
+    assert _lean_golden_evidence_digest_body(
+        evidence,
+        require_authority_metadata=True,
+    ) == expected
+    assert _exp1_golden_evidence_digest_body(evidence) == expected
 
 
 def test_task14_local_oracle_golden_evidence_runs_without_provider(
@@ -533,6 +561,32 @@ def _passed_golden_evidence(case_id: str) -> dict:
         "dependency_aware_merge": "passed",
         "root_recheck": "passed",
         "provider_calls_made": 0,
+    }
+
+
+def _authority_normalized_golden_evidence() -> dict:
+    return {
+        "schema_version": "tokenshare.lean_task14_golden_evidence.v1",
+        "evidence_source": "local_oracle_lemma_graph",
+        "case_id": "lean_v2_simple_pure_logic_direct_prop_01",
+        "environment_digest": "sha256:" + "a" * 64,
+        "oracle_package_digest": "sha256:" + "b" * 64,
+        "split_certificate_digest": "sha256:" + "e" * 64,
+        "deterministic_split": "passed",
+        "child_proof_file_construction": "passed",
+        "checker_preflight": "passed",
+        "dependency_aware_merge": "passed",
+        "root_recheck": "passed",
+        "provider_calls_made": 0,
+        "node_checker_report_refs": {"root": {"artifact_id": "checker"}},
+        "split_certificate_ref": {
+            "metadata": {
+                "authority_environment_digest": "sha256:" + "c" * 64,
+                "authority_normalized_certificate_digest": (
+                    "sha256:" + "d" * 64
+                ),
+            }
+        },
     }
 
 

@@ -67,6 +67,18 @@ def _use_tracked_lean_environment(
 ) -> None:
     """CLI fixtures bind the tracked checker identity without running Lean."""
 
+    production_dual_domain_tests = {
+        "test_dual_domain_smoke_identity_and_plan_freeze_two_canonical_roots",
+        (
+            "test_dual_domain_smoke_capturing_transport_runs_protocol_"
+            "and_lean_checker"
+        ),
+    }
+    if request.node.name in production_dual_domain_tests:
+        # 这两个回归必须使用 production catalog/Lean authority/selection；任何
+        # autouse 替换都会把 frozen selection 漂移伪装成 smoke 通过。
+        return
+
     repo_root = Path(__file__).resolve().parents[2]
     tracked = json.loads(
         (repo_root / "benchmarks/paper/lean_checker_preflight.v1.json").read_text(

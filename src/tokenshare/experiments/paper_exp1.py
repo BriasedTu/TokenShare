@@ -1014,13 +1014,50 @@ def _task14_cell_digest_projection(cell: Any) -> JsonObject:
 def _task14_golden_evidence_digest_body(evidence: Any) -> JsonObject:
     if not isinstance(evidence, Mapping):
         raise ValueError("Task14 golden evidence must be a JSON object")
-    return {
+    blocked_stages = (
+        "deterministic_split",
+        "child_proof_file_construction",
+        "checker_preflight",
+        "dependency_aware_merge",
+        "root_recheck",
+    )
+    is_structured_blocked = (
+        evidence.get("schema_version")
+        == "tokenshare.lean_task14_golden_evidence.v1"
+        and evidence.get("evidence_source") == "local_oracle_lemma_graph"
+        and isinstance(evidence.get("case_id"), str)
+        and bool(evidence["case_id"])
+        and evidence.get("provider_calls_made") == 0
+        and isinstance(evidence.get("error"), str)
+        and bool(evidence["error"])
+        and all(evidence.get(stage) == "blocked" for stage in blocked_stages)
+    )
+    if is_structured_blocked:
+        return {
+            "schema_version": evidence["schema_version"],
+            "evidence_source": evidence["evidence_source"],
+            "case_id": evidence["case_id"],
+            **{stage: evidence[stage] for stage in blocked_stages},
+            "provider_calls_made": evidence["provider_calls_made"],
+            "error": evidence["error"],
+        }
+
+    runtime_environment_digest = evidence.get("environment_digest")
+    runtime_certificate_digest = evidence.get("split_certificate_digest")
+    for field_name, digest in (
+        ("runtime environment_digest", runtime_environment_digest),
+        ("runtime split_certificate_digest", runtime_certificate_digest),
+    ):
+        if not isinstance(digest, str) or not digest.startswith("sha256:"):
+            raise ValueError(f"Lean golden evidence {field_name} is incomplete")
+
+    digest_body = {
         "schema_version": evidence.get("schema_version"),
         "evidence_source": evidence.get("evidence_source"),
         "case_id": evidence.get("case_id"),
-        "environment_digest": evidence.get("environment_digest"),
+        "environment_digest": runtime_environment_digest,
         "oracle_package_digest": evidence.get("oracle_package_digest"),
-        "split_certificate_digest": evidence.get("split_certificate_digest"),
+        "split_certificate_digest": runtime_certificate_digest,
         "deterministic_split": evidence.get("deterministic_split"),
         "child_proof_file_construction": evidence.get(
             "child_proof_file_construction"
@@ -1031,6 +1068,42 @@ def _task14_golden_evidence_digest_body(evidence: Any) -> JsonObject:
         "provider_calls_made": evidence.get("provider_calls_made"),
         "node_ids": sorted(dict(evidence.get("node_checker_report_refs", {}))),
     }
+    certificate_ref = evidence.get("split_certificate_ref")
+    if certificate_ref is None:
+        return digest_body
+    if not isinstance(certificate_ref, Mapping):
+        raise ValueError("Lean golden evidence split_certificate_ref is invalid")
+    certificate_metadata = certificate_ref.get("metadata")
+    if certificate_metadata is None:
+        return digest_body
+    if not isinstance(certificate_metadata, Mapping):
+        raise ValueError("Lean golden evidence certificate metadata is invalid")
+    authority_environment_digest = certificate_metadata.get(
+        "authority_environment_digest"
+    )
+    authority_normalized_certificate_digest = certificate_metadata.get(
+        "authority_normalized_certificate_digest"
+    )
+    has_authority_metadata = (
+        authority_environment_digest is not None
+        or authority_normalized_certificate_digest is not None
+    )
+    if not has_authority_metadata:
+        return digest_body
+    for field_name, digest in (
+        ("authority_environment_digest", authority_environment_digest),
+        (
+            "authority_normalized_certificate_digest",
+            authority_normalized_certificate_digest,
+        ),
+    ):
+        if not isinstance(digest, str) or not digest.startswith("sha256:"):
+            raise ValueError(f"Lean golden evidence {field_name} is incomplete")
+    digest_body["environment_digest"] = authority_environment_digest
+    digest_body["split_certificate_digest"] = (
+        authority_normalized_certificate_digest
+    )
+    return digest_body
 
 
 def _cases_by_id(cases: tuple[JsonObject, ...]) -> dict[str, JsonObject]:
