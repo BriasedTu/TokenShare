@@ -702,6 +702,113 @@ def test_smoke_resolution_keeps_canonical_condition_and_selection_identity(
     assert execution.dispatch_plans[0].paper_eligible_possible is False
 
 
+def test_smoke_resolution_groups_distinct_cases_under_one_canonical_condition(
+    tmp_path: Path,
+) -> None:
+    body = _profile_body()
+    second_item = {
+        **body["items"][0],
+        "item_id": "exp1_factor_easy_second",
+        "case_id": "factor_v2_easy_002",
+    }
+    body["items"].append(second_item)
+    body["expected_root_runs"] = 2
+    profile_path = tmp_path / "smoke.json"
+    profile_path.write_text(json.dumps(body), encoding="utf-8")
+    profile = load_paper_smoke_profile(profile_path)
+    condition = _condition()
+    selection = _selection()
+    canonical_plan = PaperExperimentDispatchPlan(
+        experiment_id=condition.experiment_id,
+        output_root=(tmp_path / "formal" / condition.experiment_id).as_posix(),
+        conditions=(condition,),
+        condition_selection_bindings=(
+            FrozenConditionSelectionBinding.from_condition(condition, selection),
+        ),
+    )
+
+    execution = resolve_paper_smoke_execution_plan(
+        profile=profile,
+        dispatch_plans=(canonical_plan,),
+        catalog_id="tokenshare.paper.catalog",
+        catalog_version="v2",
+        catalog_digest=CATALOG_DIGEST,
+        output_root=tmp_path / "smoke",
+    )
+
+    assert execution.direct_root_run_count == 2
+    assert execution.root_case_filter == {
+        condition.condition_id: (
+            "factor_v2_easy_001",
+            "factor_v2_easy_002",
+        )
+    }
+    assert [item.case_id for item in execution.items] == [
+        "factor_v2_easy_001",
+        "factor_v2_easy_002",
+    ]
+    assert len(execution.dispatch_plans[0].conditions) == 1
+    assert len(execution.dispatch_plans[0].condition_selection_bindings) == 1
+    assert execution.budget_selection_commitments(
+        expected_ai_units_by_case={
+            "factor_v2_easy_001": 1,
+            "factor_v2_easy_002": 3,
+        }
+    ) == [
+        {
+            **selection.to_dict(),
+            "condition_id": condition.condition_id,
+            "condition_digest": condition.condition_digest,
+            "canonical_ordered_case_ids": list(selection.ordered_case_ids),
+            "ordered_case_ids": [
+                "factor_v2_easy_001",
+                "factor_v2_easy_002",
+            ],
+            "expected_ai_unit_count": 4,
+            "smoke_root_filter": True,
+        }
+    ]
+
+
+def test_smoke_resolution_rejects_duplicate_condition_case_items(
+    tmp_path: Path,
+) -> None:
+    body = _profile_body()
+    body["items"].append(
+        {
+            **body["items"][0],
+            "item_id": "exp1_factor_easy_duplicate",
+        }
+    )
+    body["expected_root_runs"] = 2
+    profile_path = tmp_path / "smoke.json"
+    profile_path.write_text(json.dumps(body), encoding="utf-8")
+    profile = load_paper_smoke_profile(profile_path)
+    condition = _condition()
+    selection = _selection()
+    canonical_plan = PaperExperimentDispatchPlan(
+        experiment_id=condition.experiment_id,
+        output_root=(tmp_path / "formal" / condition.experiment_id).as_posix(),
+        conditions=(condition,),
+        condition_selection_bindings=(
+            FrozenConditionSelectionBinding.from_condition(condition, selection),
+        ),
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="paper smoke condition/case selections must be unique",
+    ):
+        resolve_paper_smoke_execution_plan(
+            profile=profile,
+            dispatch_plans=(canonical_plan,),
+            catalog_id="tokenshare.paper.catalog",
+            catalog_version="v2",
+            catalog_digest=CATALOG_DIGEST,
+            output_root=tmp_path / "smoke",
+        )
+
+
 def test_smoke_resolution_rejects_ambiguous_selector_before_execution(
     tmp_path: Path,
 ) -> None:

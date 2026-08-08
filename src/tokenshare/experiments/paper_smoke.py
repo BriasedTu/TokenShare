@@ -283,11 +283,13 @@ class PaperSmokeExecutionPlan:
     ) -> list[dict[str, Any]]:
         """把 canonical selection identity 与 smoke root filter 一起冻结进预算。"""
 
-        resolved_by_condition = {item.condition_id: item for item in self.items}
+        resolved_by_condition: dict[str, list[ResolvedPaperSmokeItem]] = {}
+        for item in self.items:
+            resolved_by_condition.setdefault(item.condition_id, []).append(item)
         commitments: list[dict[str, Any]] = []
         for plan in self.dispatch_plans:
             for condition, selection in plan.bound_items():
-                resolved = resolved_by_condition[condition.condition_id]
+                resolved_items = resolved_by_condition[condition.condition_id]
                 commitments.append(
                     {
                         **selection.to_dict(),
@@ -296,9 +298,12 @@ class PaperSmokeExecutionPlan:
                         "canonical_ordered_case_ids": list(
                             selection.ordered_case_ids
                         ),
-                        "ordered_case_ids": [resolved.case_id],
-                        "expected_ai_unit_count": int(
-                            expected_ai_units_by_case[resolved.case_id]
+                        "ordered_case_ids": [
+                            item.case_id for item in resolved_items
+                        ],
+                        "expected_ai_unit_count": sum(
+                            int(expected_ai_units_by_case[item.case_id])
+                            for item in resolved_items
                         ),
                         "smoke_root_filter": True,
                     }
@@ -698,10 +703,19 @@ def resolve_paper_smoke_execution_plan(
                 f"{item.item_id} matched {len(matches)}"
             )
         condition, selection = matches[0]
-        if condition.condition_id in root_case_filter:
-            raise ValueError("paper smoke conditions must be unique")
-        root_case_filter[condition.condition_id] = (item.case_id,)
-        selected_by_experiment[item.experiment_id].append((condition, selection))
+        selected_case_ids = root_case_filter.get(condition.condition_id, ())
+        if item.case_id in selected_case_ids:
+            raise ValueError(
+                "paper smoke condition/case selections must be unique"
+            )
+        root_case_filter[condition.condition_id] = (
+            *selected_case_ids,
+            item.case_id,
+        )
+        if not selected_case_ids:
+            selected_by_experiment[item.experiment_id].append(
+                (condition, selection)
+            )
         resolved.append(
             ResolvedPaperSmokeItem(
                 item_id=item.item_id,
