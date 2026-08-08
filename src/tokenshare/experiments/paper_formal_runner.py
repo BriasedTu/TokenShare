@@ -1284,7 +1284,8 @@ def execute_paper_formal_suite(
             normalized_root_filter=normalized_root_filter,
             evidence_class=direct_evidence_class,
         )
-        if direct_evidence_class != "regression_only"
+        if classification is None
+        and direct_evidence_class != "regression_only"
         and any(bound_items for _plan, bound_items in bound_plans)
         else None
     )

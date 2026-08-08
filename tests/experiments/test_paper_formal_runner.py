@@ -5445,6 +5445,161 @@ def _formal_execution_kwargs(
     }
 
 
+def _install_single_case_execution(
+    *,
+    monkeypatch: pytest.MonkeyPatch,
+    dispatch,
+) -> None:
+    class CallbackModule:
+        def expand_conditions(self, context):
+            raise AssertionError("execution consumes the frozen plan")
+
+        def freeze_case_selections(self, context, conditions):
+            return FrozenCaseSelectionBatch(())
+
+        def run_condition(self, context, condition, selection):
+            return context.execution_callback(
+                context=context,
+                condition=condition,
+                selection=selection,
+            )
+
+        def summarize(self, evidence):
+            return ExperimentSummaryRows(experiment_id=EXPERIMENT_ID, rows=())
+
+    monkeypatch.setitem(
+        formal_runner.dispatch_paper_condition.__globals__,
+        "_MODULES",
+        ((EXPERIMENT_ID, CallbackModule()),),
+    )
+    monkeypatch.setattr(formal_runner, "dispatch_paper_case", dispatch)
+
+
+def test_real_transport_smoke_skips_publication_direct_closure_and_keeps_metrics(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = _ai_config()
+    plan = _planned_dispatch_plan(tmp_path, config=config)
+
+    def rejected_case_dispatch(**kwargs):
+        result = _complete_adapter_result(
+            output_root=Path(kwargs["output_root"]),
+            condition=kwargs["condition"],
+            case_id=kwargs["case"]["case_id"],
+        )
+        return SimpleNamespace(
+            **{
+                **vars(result),
+                "task_result": SimpleNamespace(
+                    **{
+                        **vars(result.task_result),
+                        "root_status": PaperTaskStatus.FAILED,
+                        "accepted_validity": False,
+                    }
+                ),
+                "attempt_results": [
+                    replace(
+                        result.attempt_results[0],
+                        attempt_status=PaperAttemptStatus.VERIFICATION_REJECTED,
+                        error_kind="verifier_rejected",
+                    )
+                ],
+            }
+        )
+
+    _install_single_case_execution(
+        monkeypatch=monkeypatch,
+        dispatch=rejected_case_dispatch,
+    )
+
+    def forbid_publication_closure(**_kwargs):
+        raise AssertionError("smoke must not enter publication direct closure")
+
+    monkeypatch.setattr(
+        formal_runner,
+        "_capture_canonical_direct_evidence",
+        forbid_publication_closure,
+    )
+    kwargs = _formal_execution_kwargs(tmp_path=tmp_path, config=config, plan=plan)
+    kwargs.update(
+        {
+            "real_transport": True,
+            "execution_classification": _smoke_execution_classification(),
+        }
+    )
+
+    suite = formal_runner.execute_paper_formal_suite(**kwargs)
+
+    assert suite.status is PaperStatus.COMPLETED_WITH_FAILURES
+    assert suite.provider_attempt_count == 1
+    assert suite.total_tokens == 11
+    assert suite.total_cost_estimate == pytest.approx(0.125)
+    task = _generation_records(
+        tmp_path,
+        EXPERIMENT_ID,
+        "condition-1",
+        "per_task_results.jsonl",
+    )[0]
+    attempt = _generation_records(
+        tmp_path,
+        EXPERIMENT_ID,
+        "condition-1",
+        "per_attempt_results.jsonl",
+    )[0]
+    assert task["root_status"] == "failed"
+    assert task["accepted_validity"] is False
+    assert task["runtime_observation"]["runtime_wall_clock_ms"] == 1000
+    assert attempt["attempt_status"] == "verification_rejected"
+    assert attempt["latency_ms"] == 1000
+    assert attempt["prompt_tokens"] == 5
+    assert attempt["completion_tokens"] == 6
+    assert attempt["total_tokens"] == 11
+    assert attempt["cost_estimate"] == pytest.approx(0.125)
+
+
+def test_formal_real_transport_still_requires_publication_direct_closure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = _ai_config()
+    plan = _planned_dispatch_plan(tmp_path, config=config)
+
+    def complete_case_dispatch(**kwargs):
+        return _complete_adapter_result(
+            output_root=Path(kwargs["output_root"]),
+            condition=kwargs["condition"],
+            case_id=kwargs["case"]["case_id"],
+        )
+
+    _install_single_case_execution(
+        monkeypatch=monkeypatch,
+        dispatch=complete_case_dispatch,
+    )
+    capture_calls: list[str] = []
+
+    def block_publication_closure(**kwargs):
+        capture_calls.append(str(kwargs["case_id"]))
+        raise ValueError("formal publication closure blocked")
+
+    monkeypatch.setattr(
+        formal_runner,
+        "_capture_canonical_direct_evidence",
+        block_publication_closure,
+    )
+    kwargs = _formal_execution_kwargs(tmp_path=tmp_path, config=config, plan=plan)
+    kwargs["real_transport"] = True
+
+    suite = formal_runner.execute_paper_formal_suite(**kwargs)
+
+    assert capture_calls == ["case-1"]
+    assert suite.status is PaperStatus.BLOCKED
+    assert suite.error_summary[0]["failure_stage"] == "runner_internal"
+    assert suite.error_summary[0]["resource_diagnostics"]["message"] == (
+        "formal publication closure blocked"
+    )
+
+
 def test_offline_capturing_is_regression_only_and_direct_capture_is_native_only() -> None:
     import inspect
 
