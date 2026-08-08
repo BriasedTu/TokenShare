@@ -3966,7 +3966,9 @@ def _write_smoke_plan_only(
             "suite_id": profile.suite_id,
             "status": "planned",
             "experiment_ids": list(profile.experiment_ids),
-            "condition_count": len(execution_plan.items),
+            "condition_count": sum(
+                len(plan.conditions) for plan in execution_plan.dispatch_plans
+            ),
             "run_count": execution_plan.direct_root_run_count,
             "formal": False,
             "pilot_only": True,

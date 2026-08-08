@@ -4376,6 +4376,45 @@ def test_dual_domain_smoke_identity_and_plan_freeze_two_canonical_roots(
     assert planned_suite["paper_eligible"] is False
 
 
+def test_smoke_plan_only_counts_dispatch_conditions_not_root_items(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    written: dict[str, object] = {}
+    monkeypatch.setattr(
+        paper_cli,
+        "_write_smoke_documents_fail_closed",
+        lambda *, output_root, documents: written.update(documents),
+    )
+    profile = SimpleNamespace(
+        suite_id="two-roots-one-condition",
+        experiment_ids=("exp1_real_ai_feasibility",),
+        to_dict=lambda: {"suite_id": "two-roots-one-condition"},
+    )
+    execution_plan = SimpleNamespace(
+        items=(object(), object()),
+        dispatch_plans=(
+            SimpleNamespace(conditions=(object(),)),
+        ),
+        direct_root_run_count=2,
+        to_dict=lambda: {"direct_root_run_count": 2},
+    )
+
+    paper_cli._write_smoke_plan_only(
+        output_root=tmp_path,
+        profile=profile,
+        execution_plan=execution_plan,
+        budget={},
+        lean_3x3_matrix={},
+        model_endpoint_cohort_preflight=None,
+    )
+
+    suite = written["suite_manifest.json"]
+    assert isinstance(suite, dict)
+    assert suite["condition_count"] == 1
+    assert suite["run_count"] == 2
+
+
 def test_dual_domain_smoke_capturing_transport_runs_protocol_and_lean_checker(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
