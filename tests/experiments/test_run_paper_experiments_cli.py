@@ -11,6 +11,7 @@ from types import SimpleNamespace
 
 import pytest
 
+import tokenshare.experiments.factorization_paper_adapter as factorization_paper_adapter
 import tokenshare.experiments.lean_paper_adapter as lean_paper_adapter
 import tokenshare.experiments.paper_catalog as paper_catalog_module
 import tokenshare.experiments.paper_exp1 as paper_exp1
@@ -69,13 +70,16 @@ def _use_tracked_lean_environment(
 
     production_dual_domain_tests = {
         "test_dual_domain_smoke_identity_and_plan_freeze_two_canonical_roots",
+        "test_matrix8_smoke_identity_resolves_eight_provider_free_roots",
+        "test_exp3_matrix8_capturing_runs_eight_roots_through_protocol_and_checker",
         (
             "test_dual_domain_smoke_capturing_transport_runs_protocol_"
             "and_lean_checker"
         ),
     }
-    if request.node.name in production_dual_domain_tests:
-        # 这两个回归必须使用 production catalog/Lean authority/selection；任何
+    node_name = getattr(request.node, "originalname", None) or request.node.name
+    if node_name in production_dual_domain_tests:
+        # 这些回归必须使用 production catalog/Lean authority/selection；任何
         # autouse 替换都会把 frozen selection 漂移伪装成 smoke 通过。
         return
 
@@ -4135,6 +4139,73 @@ class _DualDomainCLICapturingTransport:
         return response
 
 
+def test_factorization_direct_sources_ignore_synthetic_fault_attempts_only() -> None:
+    def artifact_ref(name: str) -> dict[str, object]:
+        return {
+            "schema_version": "ArtifactRef.v1",
+            "artifact_id": name,
+            "artifact_type": "test",
+            "uri": f"artifact://{name}",
+            "content_hash": "sha256:" + "1" * 64,
+            "size_bytes": 1,
+            "media_type": "application/json",
+            "artifact_schema_id": "test.v1",
+            "artifact_schema_version": "v1",
+            "source": {},
+            "metadata": {},
+            "created_at": "2026-08-08T00:00:00Z",
+        }
+
+    actual = SimpleNamespace(
+        request_ref=artifact_ref("request"),
+        raw_output_ref=artifact_ref("raw"),
+        parse_failure_ref=None,
+        provenance_ref=artifact_ref("provenance"),
+        usage_ref=artifact_ref("usage"),
+        model_execution_record_ref=artifact_ref("model"),
+        fault_injection_ref=None,
+    )
+    synthetic_fault = SimpleNamespace(
+        request_ref=artifact_ref("fault-request"),
+        raw_output_ref=None,
+        parse_failure_ref=None,
+        provenance_ref=None,
+        usage_ref=artifact_ref("fault-usage"),
+        model_execution_record_ref=artifact_ref("fault-model"),
+        fault_injection_ref=artifact_ref("fault-record"),
+    )
+
+    sources = factorization_paper_adapter._native_online_provider_sources(
+        (actual, synthetic_fault)
+    )
+
+    assert all(len(refs) == 1 for refs in sources.values())
+    assert sources["request_body"][0].artifact_id == "request"
+    assert sources["provenance"][0].artifact_id == "provenance"
+    assert sources["model_record"][0].artifact_id == "model"
+
+    incomplete_actual = SimpleNamespace(
+        **{
+            **vars(actual),
+            "provenance_ref": None,
+        }
+    )
+    with pytest.raises(ValueError, match="actual provider evidence is incomplete"):
+        factorization_paper_adapter._native_online_provider_sources(
+            (incomplete_actual, synthetic_fault)
+        )
+    missing_model_actual = SimpleNamespace(
+        **{
+            **vars(actual),
+            "model_execution_record_ref": None,
+        }
+    )
+    with pytest.raises(ValueError, match="actual provider evidence is incomplete"):
+        factorization_paper_adapter._native_online_provider_sources(
+            (actual, missing_model_actual)
+        )
+
+
 def _write_exp2_lean_regression_smoke_profile(tmp_path: Path) -> Path:
     catalog = paper_cli._load_default_paper_catalogs()
     profile = paper_smoke.PaperSmokeProfile(
@@ -4374,6 +4445,226 @@ def test_dual_domain_smoke_identity_and_plan_freeze_two_canonical_roots(
     assert planned_suite["pilot_only"] is True
     assert planned_suite["regression_only"] is True
     assert planned_suite["paper_eligible"] is False
+
+
+@pytest.mark.parametrize("experiment_number", (1, 2, 3, 4))
+def test_matrix8_smoke_identity_resolves_eight_provider_free_roots(
+    experiment_number: int,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    provider_calls: list[dict[str, object]] = []
+
+    def forbidden_transport(**kwargs):
+        provider_calls.append(kwargs)
+        raise AssertionError("identity-only must not call the provider")
+
+    resolved_exp3_bindings: list[tuple[object, object]] = []
+    if experiment_number == 3:
+        original_resolve = paper_cli.resolve_paper_smoke_execution_plan
+
+        def recording_resolve(**kwargs):
+            execution_plan = original_resolve(**kwargs)
+            exp3_plan = next(
+                plan
+                for plan in execution_plan.dispatch_plans
+                if plan.experiment_id == "exp3_real_ai_fault_recovery"
+            )
+            resolved_exp3_bindings.append(
+                exp3_plan.bound_condition(
+                    "exp3_rate_fault_lean__all_topics__false_positive__r100__rep0"
+                )
+            )
+            return execution_plan
+
+        monkeypatch.setattr(
+            paper_cli,
+            "resolve_paper_smoke_execution_plan",
+            recording_resolve,
+        )
+
+    output_root = tmp_path / f"exp{experiment_number}-identity"
+    exit_code = main(
+        [
+            "--output-root",
+            str(output_root),
+            "--smoke-profile",
+            (
+                "benchmarks/paper/"
+                f"paper_smoke_exp{experiment_number}_matrix8_profile.v1.json"
+            ),
+            "--ai-api-config",
+            "benchmarks/paper/exp1_baseline_provider_config.v3.json",
+            "--unlimited-budget",
+            "--smoke-identity-only",
+        ],
+        gate_c_transport=forbidden_transport,
+    )
+
+    stdout = capsys.readouterr().out
+    assert exit_code == 0, stdout
+    assert provider_calls == []
+    assert not output_root.exists()
+    identity = json.loads(stdout)
+    semantics = identity["preregistered_semantics"]
+    assert semantics["suite_id"] == (
+        f"paper_smoke_exp{experiment_number}_matrix8_v1"
+    )
+    assert semantics["direct_root_runs"] == 8
+    assert semantics["actual_scheduled_root_runs"] == 8
+    assert semantics["paper_eligible"] is False
+    if experiment_number == 3:
+        assert len(resolved_exp3_bindings) == 1
+        condition, selection = resolved_exp3_bindings[0]
+        assert condition.paper_eligible_required is False
+        assert selection.paper_eligible_required is False
+        assert selection.ordered_case_ids == (
+            "lean_v2_medium_lemma_dag_02",
+        )
+        assert selection.expected_ai_unit_count == 5
+
+
+def test_exp3_matrix8_capturing_runs_eight_roots_through_protocol_and_checker(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    profile = load_exp1_pilot_profile(
+        "benchmarks/paper/exp1_minimal_pilot_profile.v3.json"
+    )
+    entry = profile.source_provider_config.entries[0]
+    monkeypatch.setenv(entry.api_key_env, "exp3-matrix8-capture-key")
+    transport = _DualDomainCLICapturingTransport()
+    coordinator_case_ids: list[str] = []
+    coordinator_lock = Lock()
+    original_run_root = lean_paper_adapter.ProtocolRunCoordinator.run_root
+
+    def recording_run_root(self, request):
+        with coordinator_lock:
+            coordinator_case_ids.append(str(request.root_input["case_id"]))
+        return original_run_root(self, request)
+
+    monkeypatch.setattr(
+        lean_paper_adapter.ProtocolRunCoordinator,
+        "run_root",
+        recording_run_root,
+    )
+    output_root = tmp_path / "exp3-matrix8-capturing"
+    exit_code = main(
+        [
+            "--output-root",
+            str(output_root),
+            "--smoke-profile",
+            "benchmarks/paper/paper_smoke_exp3_matrix8_profile.v1.json",
+            "--ai-api-config",
+            "benchmarks/paper/exp1_baseline_provider_config.v3.json",
+            "--real-transport",
+            "--unlimited-budget",
+        ],
+        gate_c_transport=transport,
+        gate_c_ai_api_configs={
+            profile.model_endpoint_identity.provider_config_id: (
+                profile.source_provider_config
+            )
+        },
+    )
+
+    expected_factor_cases = {
+        "factor_v2_medium_033",
+        "factor_v2_medium_142",
+        "factor_v2_medium_154",
+        "factor_v2_easy_109",
+    }
+    expected_lean_cases = {
+        "lean_v2_medium_lemma_dag_01",
+        "lean_v2_medium_function_set_dx_subset_chain_01",
+        "lean_v2_medium_induction_nat_predicate_chain_01",
+        "lean_v2_medium_lemma_dag_02",
+    }
+    assert exit_code == 0
+    assert len(coordinator_case_ids) == 8
+    assert set(coordinator_case_ids) == expected_factor_cases | expected_lean_cases
+    assert len(expected_factor_cases) == len(expected_lean_cases) == 4
+    assert {call["domain"] for call in transport.calls} == {
+        "factorization",
+        "lean_proof",
+    }
+    expected_lean_condition_cases = {
+        "exp3_rate_fault_lean__all_topics__false_negative__r100__rep0": (
+            "lean_v2_medium_lemma_dag_01"
+        ),
+        "exp3_rate_fault_lean__all_topics__late_submission__r100__rep0": (
+            "lean_v2_medium_function_set_dx_subset_chain_01"
+        ),
+        "exp3_rate_fault_lean__all_topics__executor_error__r100__rep0": (
+            "lean_v2_medium_induction_nat_predicate_chain_01"
+        ),
+        "exp3_rate_fault_lean__all_topics__false_positive__r100__rep0": (
+            "lean_v2_medium_lemma_dag_02"
+        ),
+    }
+    lean_results_by_case = {}
+    runs_root = (
+        output_root
+        / "experiments"
+        / "exp3_real_ai_fault_recovery"
+        / "runs"
+    )
+    for condition_id, case_id in expected_lean_condition_cases.items():
+        current_root = runs_root / condition_id / "0"
+        current = json.loads(
+            (current_root / "CURRENT.json").read_text(encoding="utf-8")
+        )
+        active_generation = (
+            current_root / ".generations" / current["generation_id"]
+        )
+        results = [
+            json.loads(line)
+            for line in (
+                active_generation / "per_task_results.jsonl"
+            ).read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        protocol_results = [
+            result
+            for result in results
+            if result.get("record_scope") == "protocol"
+            and result.get("condition_id") == condition_id
+            and result.get("task_id") == case_id
+        ]
+        assert len(protocol_results) == 1
+        lean_results_by_case[case_id] = protocol_results[0]
+
+    checker_backed_cases = {
+        "lean_v2_medium_lemma_dag_01",
+        "lean_v2_medium_lemma_dag_02",
+    }
+    for case_id, result in lean_results_by_case.items():
+        checker_refs = [
+            ref
+            for ref in result["artifact_refs"]
+            if ref.get("artifact_schema_id") == "lean_proof.checker_report"
+            and not str(ref.get("source", {}).get("request_id", "")).startswith(
+                "task14_golden_checker_"
+            )
+        ]
+        if case_id in checker_backed_cases:
+            assert checker_refs
+            assert {
+                ref["metadata"]["checker_mode"] for ref in checker_refs
+            } == {"child_proof"}
+            assert {
+                ref["metadata"]["status"] for ref in checker_refs
+            } == {"rejected"}
+            assert all(
+                ref["artifact_schema_version"] == "v1"
+                and str(ref["content_hash"]).startswith("sha256:")
+                and bool(str(ref["source"]["request_id"]))
+                for ref in checker_refs
+            )
+        else:
+            assert checker_refs == []
 
 
 def test_smoke_plan_only_counts_dispatch_conditions_not_root_items(

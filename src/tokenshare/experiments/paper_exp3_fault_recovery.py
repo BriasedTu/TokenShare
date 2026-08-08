@@ -15,6 +15,7 @@ from typing import Any
 from tokenshare.core.models import ArtifactRef
 from tokenshare.experiments.paper_experiment_contracts import (
     ExperimentSummaryRows,
+    FROZEN_CASE_SELECTION_SCHEMA_VERSION,
     FrozenCaseSelection,
     FrozenCaseSelectionBatch,
     FrozenConditionSelectionBinding,
@@ -108,6 +109,20 @@ _RATE_FACTOR_SELECTION_ID = "exp3_rate_fault_factorization_slice_v1"
 _RATE_FACTOR_PROFILE_SELECTION_ID = (
     "exp3_rate_fault_factorization_profile_slice_v2"
 )
+EXP3_REGRESSION_SMOKE_LEAN_CASE_ID = "lean_v2_medium_lemma_dag_02"
+EXP3_REGRESSION_SMOKE_LEAN_CONDITION_ID = (
+    "exp3_rate_fault_lean__all_topics__false_positive__r100__rep0"
+)
+EXP3_REGRESSION_SMOKE_LEAN_SELECTION_ID = (
+    "exp3_regression_smoke_rate_fault_lean_all_topics_slice_v1"
+)
+_EXP3_REGRESSION_SMOKE_LEAN_NODE_IDS = (
+    "pure_medium_leaf_a_02",
+    "pure_medium_leaf_ab_02",
+    "pure_medium_mid_b_02",
+    "pure_medium_leaf_bc_02",
+    "pure_medium_root_02",
+)
 
 
 class _MissingCatalogSlice(ValueError):
@@ -180,6 +195,36 @@ class Exp3MixedLeanCaseSelection(FrozenCaseSelection):
             raise ValueError("expected_ai_unit_count must be an integer >= 1")
 
 
+class Exp3RegressionSmokeLeanCaseSelection(FrozenCaseSelection):
+    """仅允许 ineligible regression seam 的单题 mixed-topic 绑定。"""
+
+    def __post_init__(self) -> None:
+        if (
+            self.schema_version != FROZEN_CASE_SELECTION_SCHEMA_VERSION
+            or self.selection_id != EXP3_REGRESSION_SMOKE_LEAN_SELECTION_ID
+            or self.experiment_id != EXP3_EXPERIMENT_ID
+            or self.domain != "lean_proof"
+            or self.paper_difficulty != "medium_lemma_dag"
+            or self.topic_family is not None
+            or tuple(self.ordered_case_ids)
+            != (EXP3_REGRESSION_SMOKE_LEAN_CASE_ID,)
+            or self.expected_ai_unit_count != 5
+            or self.paper_eligible_required is not False
+            or self.blocked_reason is not None
+        ):
+            raise ValueError("invalid Experiment 3 regression smoke Lean selection")
+        for field_name in ("suite_version", "catalog_version"):
+            value = getattr(self, field_name)
+            if not isinstance(value, str) or not value:
+                raise ValueError(f"{field_name} must be a non-empty string")
+        _validate_complete_digest("catalog_digest", self.catalog_digest)
+        object.__setattr__(
+            self,
+            "ordered_case_ids",
+            (EXP3_REGRESSION_SMOKE_LEAN_CASE_ID,),
+        )
+
+
 class Experiment3FaultRecoveryModule:
     """Gate B compatible wrapper for Prompt E."""
 
@@ -205,12 +250,23 @@ class Experiment3FaultRecoveryModule:
         condition: PaperExperimentCondition,
         selection: FrozenCaseSelection,
     ) -> PaperConditionResult:
-        canonical_condition = _canonical_condition_for(context, condition)
-        _validate_canonical_selection(
-            context=context,
-            condition=canonical_condition,
-            selection=selection,
-        )
+        if (
+            condition.domain == "lean_proof"
+            and condition.paper_eligible_required is False
+            and selection.paper_eligible_required is False
+        ):
+            canonical_condition = validate_exp3_regression_smoke_lean_condition(
+                context,
+                condition,
+                selection,
+            )
+        else:
+            canonical_condition = _canonical_condition_for(context, condition)
+            _validate_canonical_selection(
+                context=context,
+                condition=canonical_condition,
+                selection=selection,
+            )
         if selection.is_blocked:
             return PaperConditionResult(
                 condition_id=canonical_condition.condition_id,
@@ -243,6 +299,70 @@ class Experiment3FaultRecoveryModule:
 
     def summarize(self, evidence: Mapping[str, Any]) -> ExperimentSummaryRows:
         return summarize_exp3(evidence)
+
+
+def build_exp3_regression_smoke_lean_binding(
+    *,
+    catalog: Mapping[str, Any],
+    formal_condition: PaperExperimentCondition,
+    case: Mapping[str, Any],
+) -> tuple[
+    PaperExperimentCondition,
+    FrozenConditionSelectionBinding,
+    JsonObject,
+]:
+    """派生唯一的 paper-ineligible Exp3 checker-backed Lean smoke root。"""
+
+    _validate_exp3_regression_smoke_formal_condition(formal_condition)
+    case_projection = _exp3_regression_smoke_case_projection(case)
+    condition = replace(formal_condition, paper_eligible_required=False)
+    selection = _exp3_regression_smoke_lean_selection(
+        catalog=catalog,
+        condition=condition,
+        case_projection=case_projection,
+    )
+    return (
+        condition,
+        FrozenConditionSelectionBinding.from_condition(condition, selection),
+        case_projection,
+    )
+
+
+def validate_exp3_regression_smoke_lean_condition(
+    context: PaperExecutionContext,
+    condition: PaperExperimentCondition,
+    selection: FrozenCaseSelection,
+) -> PaperExperimentCondition:
+    """严格重建 smoke clone；正式 Exp3 condition/selection validator 不变。"""
+
+    expected_by_id = {
+        expected.condition_id: expected
+        for expected in expand_exp3_conditions(
+            catalog_digest=_catalog_digest(context.catalog),
+            endpoint_identity=_validate_approved_endpoint_binding(context),
+        )
+    }
+    formal_condition = expected_by_id.get(condition.condition_id)
+    if formal_condition is None:
+        raise ValueError("invalid Experiment 3 regression smoke Lean condition")
+    _validate_exp3_regression_smoke_formal_condition(formal_condition)
+    expected_condition = replace(
+        formal_condition,
+        paper_eligible_required=False,
+    )
+    if condition.condition_digest != expected_condition.condition_digest:
+        raise ValueError("invalid Experiment 3 regression smoke Lean condition")
+    expected_selection = _exp3_regression_smoke_lean_selection(
+        catalog=_catalog_mapping(context.catalog),
+        condition=expected_condition,
+    )
+    if _selection_contract_body(selection) != _selection_contract_body(
+        expected_selection
+    ):
+        raise ValueError(
+            "selection does not match Experiment 3 regression smoke Lean selection"
+        )
+    return expected_condition
 
 
 def inject_exp3_post_ai_fault(
@@ -924,6 +1044,126 @@ def _selection_contract_body(selection: FrozenCaseSelection) -> JsonObject:
         "blocked_reason": selection.blocked_reason,
         "selection_digest": selection.selection_digest,
     }
+
+
+def _validate_exp3_regression_smoke_formal_condition(
+    condition: PaperExperimentCondition,
+) -> None:
+    if (
+        condition.condition_id != EXP3_REGRESSION_SMOKE_LEAN_CONDITION_ID
+        or condition.experiment_id != EXP3_EXPERIMENT_ID
+        or condition.domain != "lean_proof"
+        or condition.difficulty != "medium"
+        or condition.paper_difficulty != "medium_lemma_dag"
+        or condition.topic_family is not None
+        or condition.worker_count != 10
+        or condition.fault_type != "false_positive"
+        or float(condition.fault_rate) != 1.0
+        or condition.ablation_mode != "FULL"
+        or condition.repeat_id != 0
+        or condition.model_policy != "fixed_entry"
+        or condition.model_entry_id != BASELINE_MODEL_ENTRY_ID
+        or condition.provider_config_id != BASELINE_PROVIDER_CONFIG_ID
+        or condition.provider_family != BASELINE_PROVIDER_FAMILY
+        or condition.provider_model_id != BASELINE_PROVIDER_MODEL_ID
+        or condition.reasoning_profile_id != BASELINE_REASONING_PROFILE_ID
+        or condition.paper_eligible_required is not True
+    ):
+        raise ValueError("invalid Experiment 3 regression smoke base condition")
+
+
+def _exp3_regression_smoke_case_projection(
+    case: Mapping[str, Any],
+) -> JsonObject:
+    merge_plan = case.get("merge_plan_shape")
+    dependency_order = (
+        tuple(str(node_id) for node_id in merge_plan.get("dependency_order", ()))
+        if isinstance(merge_plan, Mapping)
+        else ()
+    )
+    if (
+        case.get("case_id") != EXP3_REGRESSION_SMOKE_LEAN_CASE_ID
+        or case.get("domain") != "lean_proof"
+        or case.get("difficulty") != "medium"
+        or case.get("paper_difficulty") != "medium_lemma_dag"
+        or case.get("topic_family") != "pure_logic"
+        or case.get("preflight_status") != "passed"
+        or case.get("expected_ai_unit_count") != 5
+        or dependency_order != _EXP3_REGRESSION_SMOKE_LEAN_NODE_IDS
+    ):
+        raise ValueError("Exp3 regression smoke Lean case metadata drift")
+    return {
+        "case_id": EXP3_REGRESSION_SMOKE_LEAN_CASE_ID,
+        "difficulty": "medium",
+        "paper_difficulty": "medium_lemma_dag",
+        "topic_family": "pure_logic",
+        "preflight_status": "passed",
+        "expected_ai_unit_count": 5,
+        "planned_ai_unit_ids": list(_EXP3_REGRESSION_SMOKE_LEAN_NODE_IDS),
+    }
+
+
+def _exp3_regression_smoke_projection_from_catalog(
+    catalog: Mapping[str, Any],
+) -> JsonObject:
+    cases_by_id = catalog.get("exp3_regression_smoke_lean_cases_by_id")
+    if not isinstance(cases_by_id, Mapping):
+        raise ValueError("Exp3 regression smoke Lean catalog metadata is missing")
+    projection = cases_by_id.get(EXP3_REGRESSION_SMOKE_LEAN_CASE_ID)
+    if not isinstance(projection, Mapping):
+        raise ValueError("Exp3 regression smoke Lean case metadata is missing")
+    expected = {
+        "case_id": EXP3_REGRESSION_SMOKE_LEAN_CASE_ID,
+        "difficulty": "medium",
+        "paper_difficulty": "medium_lemma_dag",
+        "topic_family": "pure_logic",
+        "preflight_status": "passed",
+        "expected_ai_unit_count": 5,
+        "planned_ai_unit_ids": list(_EXP3_REGRESSION_SMOKE_LEAN_NODE_IDS),
+    }
+    if dict(projection) != expected:
+        raise ValueError("Exp3 regression smoke Lean case metadata drift")
+    return expected
+
+
+def _exp3_regression_smoke_lean_selection(
+    *,
+    catalog: Mapping[str, Any],
+    condition: PaperExperimentCondition,
+    case_projection: Mapping[str, Any] | None = None,
+) -> FrozenCaseSelection:
+    projection = (
+        dict(case_projection)
+        if case_projection is not None
+        else _exp3_regression_smoke_projection_from_catalog(catalog)
+    )
+    if projection.get("expected_ai_unit_count") != 5:
+        raise ValueError("Exp3 regression smoke Lean AI-unit count drift")
+    expected_ai_unit_ids = tuple(
+        f"{EXP3_REGRESSION_SMOKE_LEAN_CASE_ID}:{node_id}"
+        for node_id in _EXP3_REGRESSION_SMOKE_LEAN_NODE_IDS
+    )
+    if case_projection is None:
+        ai_units_by_case_id = catalog.get("ai_units_by_case_id")
+        if (
+            not isinstance(ai_units_by_case_id, Mapping)
+            or tuple(ai_units_by_case_id.get(EXP3_REGRESSION_SMOKE_LEAN_CASE_ID, ()))
+            != expected_ai_unit_ids
+        ):
+            raise ValueError("Exp3 regression smoke Lean AI-unit identity drift")
+    return Exp3RegressionSmokeLeanCaseSelection(
+        selection_id=EXP3_REGRESSION_SMOKE_LEAN_SELECTION_ID,
+        experiment_id=EXP3_EXPERIMENT_ID,
+        suite_version=str(catalog.get("suite_version") or "paper_v1"),
+        catalog_version=str(catalog.get("catalog_version") or "v1"),
+        domain="lean_proof",
+        paper_difficulty="medium_lemma_dag",
+        topic_family=None,
+        ordered_case_ids=(EXP3_REGRESSION_SMOKE_LEAN_CASE_ID,),
+        catalog_digest=_catalog_digest(catalog),
+        expected_ai_unit_count=5,
+        paper_eligible_required=False,
+    )
 
 
 def summarize_exp3(evidence: Mapping[str, Any]) -> ExperimentSummaryRows:

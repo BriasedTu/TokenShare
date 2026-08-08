@@ -1943,14 +1943,28 @@ def _native_online_provider_sources(
         )
     }
     for attempt in attempts:
-        request_ref = ArtifactRef.from_dict(attempt.request_ref)
-        provenance_ref = ArtifactRef.from_dict(attempt.provenance_ref)
-        usage_ref = ArtifactRef.from_dict(attempt.usage_ref)
         raw_value = (
             attempt.raw_output_ref
             or attempt.parse_failure_ref
             or attempt.provenance_ref
         )
+        evidence_incomplete = any(
+            value is None
+            for value in (
+                attempt.request_ref,
+                raw_value,
+                attempt.provenance_ref,
+                attempt.usage_ref,
+                attempt.model_execution_record_ref,
+            )
+        )
+        if evidence_incomplete and attempt.fault_injection_ref is not None:
+            continue
+        if evidence_incomplete:
+            raise ValueError("actual provider evidence is incomplete")
+        request_ref = ArtifactRef.from_dict(attempt.request_ref)
+        provenance_ref = ArtifactRef.from_dict(attempt.provenance_ref)
+        usage_ref = ArtifactRef.from_dict(attempt.usage_ref)
         values = {
             "request_body": request_ref,
             "raw_output_or_provider_failure": ArtifactRef.from_dict(raw_value),
@@ -1960,7 +1974,7 @@ def _native_online_provider_sources(
             "pricing": usage_ref,
             "provider_attempt": provenance_ref,
             "model_record": ArtifactRef.from_dict(
-                attempt.model_execution_record_ref or attempt.usage_ref
+                attempt.model_execution_record_ref
             ),
         }
         for role, ref in values.items():

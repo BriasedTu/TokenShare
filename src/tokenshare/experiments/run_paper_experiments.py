@@ -38,6 +38,8 @@ from tokenshare.experiments.paper_catalog import (
     load_paper_catalogs,
 )
 from tokenshare.experiments.paper_catalog_execution_view import (
+    EXP3_VIEW_KIND,
+    build_prepared_mapping_execution_view,
     restore_catalog_execution_view,
 )
 from tokenshare.experiments.paper_model_policy import (
@@ -72,6 +74,11 @@ from tokenshare.experiments.paper_formal_runner import (
 from tokenshare.experiments.paper_exp1 import EXP1_FORMAL_REQUEST_CONTROLS
 from tokenshare.experiments.paper_exp2_scalability import (
     build_exp2_regression_smoke_lean_bindings,
+)
+from tokenshare.experiments.paper_exp3_fault_recovery import (
+    EXP3_REGRESSION_SMOKE_LEAN_CASE_ID,
+    EXP3_REGRESSION_SMOKE_LEAN_CONDITION_ID,
+    build_exp3_regression_smoke_lean_binding,
 )
 from tokenshare.experiments.paper_formal_evidence import FormalEvidenceStore
 from tokenshare.experiments.paper_formal_gate import (
@@ -3292,6 +3299,101 @@ def _with_exp2_regression_smoke_lean_plan(
     )
 
 
+def _with_exp3_regression_smoke_lean_plan(
+    *,
+    dispatch_plans: Sequence[object],
+    profile: object,
+    catalog_manifest: PaperInputCatalogManifest,
+) -> tuple[object, ...]:
+    """仅替换 Exp3 regression smoke 的第 4 个 checker-backed Lean root。"""
+
+    seam_items = tuple(
+        item
+        for item in getattr(profile, "items", ())
+        if item.experiment_id == "exp3_real_ai_fault_recovery"
+        and item.case_id == EXP3_REGRESSION_SMOKE_LEAN_CASE_ID
+    )
+    if not seam_items:
+        return tuple(dispatch_plans)
+    if len(seam_items) != 1 or not (
+        getattr(profile, "formal", None) is False
+        and getattr(profile, "pilot_only", None) is True
+        and getattr(profile, "regression_only", None) is True
+        and getattr(profile, "paper_eligible", None) is False
+    ):
+        raise ValueError("Exp3 Lean planning is restricted to regression smoke")
+    plans = tuple(
+        plan
+        for plan in dispatch_plans
+        if plan.experiment_id == "exp3_real_ai_fault_recovery"
+    )
+    if len(plans) != 1:
+        raise ValueError("Exp3 regression smoke requires one canonical Exp3 plan")
+    exp3_plan = plans[0]
+    if exp3_plan.catalog_execution_view is None:
+        raise ValueError("Exp3 regression smoke canonical plan is incomplete")
+    formal_matches = tuple(
+        condition
+        for condition in exp3_plan.conditions
+        if condition.condition_id == EXP3_REGRESSION_SMOKE_LEAN_CONDITION_ID
+    )
+    if len(formal_matches) != 1:
+        raise ValueError("Exp3 regression smoke base condition is missing")
+    catalog_view = restore_catalog_execution_view(
+        exp3_plan.catalog_execution_view,
+        catalog_manifest=catalog_manifest,
+    )
+    if catalog_view.view_kind != EXP3_VIEW_KIND:
+        raise ValueError("Exp3 regression smoke catalog view kind drift")
+    cases = tuple(
+        case
+        for case in catalog_manifest.lean_lemma_graph_cases
+        if case.get("case_id") == EXP3_REGRESSION_SMOKE_LEAN_CASE_ID
+    )
+    if len(cases) != 1:
+        raise ValueError("Exp3 regression smoke Lean case is missing")
+    condition, binding, case_projection = build_exp3_regression_smoke_lean_binding(
+        catalog=catalog_view,
+        formal_condition=formal_matches[0],
+        case=cases[0],
+    )
+    view_body = json.loads(json.dumps(catalog_view.view_body))
+    ai_units_by_case_id = dict(view_body.get("ai_units_by_case_id", {}))
+    ai_units_by_case_id[EXP3_REGRESSION_SMOKE_LEAN_CASE_ID] = [
+        f"{EXP3_REGRESSION_SMOKE_LEAN_CASE_ID}:{node_id}"
+        for node_id in case_projection["planned_ai_unit_ids"]
+    ]
+    view_body["ai_units_by_case_id"] = ai_units_by_case_id
+    view_body["exp3_regression_smoke_lean_cases_by_id"] = {
+        EXP3_REGRESSION_SMOKE_LEAN_CASE_ID: case_projection
+    }
+    augmented_view = build_prepared_mapping_execution_view(
+        view_kind=EXP3_VIEW_KIND,
+        catalog_manifest_digest=catalog_manifest.catalog_digest,
+        view_body=view_body,
+    )
+    augmented = replace(
+        exp3_plan,
+        conditions=tuple(
+            condition
+            if current.condition_id == EXP3_REGRESSION_SMOKE_LEAN_CONDITION_ID
+            else current
+            for current in exp3_plan.conditions
+        ),
+        condition_selection_bindings=tuple(
+            binding
+            if current.condition_id == EXP3_REGRESSION_SMOKE_LEAN_CONDITION_ID
+            else current
+            for current in exp3_plan.condition_selection_bindings
+        ),
+        catalog_execution_view=augmented_view.to_dict(),
+        paper_eligible_possible=False,
+    )
+    return tuple(
+        augmented if plan is exp3_plan else plan for plan in dispatch_plans
+    )
+
+
 def _run_smoke_cli(
     *,
     args: argparse.Namespace,
@@ -3464,6 +3566,11 @@ def _run_smoke_cli(
             output_root=output_root,
         )
         canonical_plans = _with_exp2_regression_smoke_lean_plan(
+            dispatch_plans=canonical_plans,
+            profile=profile,
+            catalog_manifest=catalog_manifest,
+        )
+        canonical_plans = _with_exp3_regression_smoke_lean_plan(
             dispatch_plans=canonical_plans,
             profile=profile,
             catalog_manifest=catalog_manifest,

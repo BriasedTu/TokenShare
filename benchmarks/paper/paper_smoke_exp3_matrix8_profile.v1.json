@@ -1,0 +1,29 @@
+{
+  "schema_version": "tokenshare.paper_smoke_profile.v1",
+  "suite_id": "paper_smoke_exp3_matrix8_v1",
+  "profile_version": "v1",
+  "catalog": {
+    "catalog_id": "tokenshare.paper.catalog",
+    "catalog_version": "v2",
+    "catalog_digest": "sha256:9293070c526d2912aebf38c85712a5572cc912c9e65f5a02754a3375957704fb"
+  },
+  "experiment_ids": ["exp3_real_ai_fault_recovery"],
+  "expected_root_runs": 8,
+  "output_mode": "isolated_smoke_root",
+  "baseline_policy": "omitted_for_smoke_regression",
+  "formal": false,
+  "pilot_only": true,
+  "regression_only": true,
+  "paper_eligible": false,
+  "ineligibility_reasons": ["smoke_suite", "pilot_only", "smoke_baseline_not_requested"],
+  "items": [
+    {"item_id":"exp3_factor_false_positive","experiment_id":"exp3_real_ai_fault_recovery","case_id":"factor_v2_medium_033","repeat_id":0,"condition_selector":{"matrix_kind":"rate_fault","domain":"factorization","difficulty":"medium","fault_type":"false_positive","fault_rate":1.0,"worker_count":10,"model_entry_id":"deepseek_v4_pro_exp1_baseline"}},
+    {"item_id":"exp3_factor_no_return","experiment_id":"exp3_real_ai_fault_recovery","case_id":"factor_v2_medium_142","repeat_id":0,"condition_selector":{"matrix_kind":"rate_fault","domain":"factorization","difficulty":"medium","fault_type":"no_return","fault_rate":1.0,"worker_count":10,"model_entry_id":"deepseek_v4_pro_exp1_baseline"}},
+    {"item_id":"exp3_factor_executor_error","experiment_id":"exp3_real_ai_fault_recovery","case_id":"factor_v2_medium_154","repeat_id":0,"condition_selector":{"matrix_kind":"rate_fault","domain":"factorization","difficulty":"medium","fault_type":"executor_error","fault_rate":1.0,"worker_count":10,"model_entry_id":"deepseek_v4_pro_exp1_baseline"}},
+    {"item_id":"exp3_factor_worker_death","experiment_id":"exp3_real_ai_fault_recovery","case_id":"factor_v2_easy_109","repeat_id":0,"condition_selector":{"matrix_kind":"worker_death","domain":"factorization","difficulty":"easy","fault_type":"worker_death","worker_count":10,"dead_worker_count":1,"kill_progress_percent":50,"model_entry_id":"deepseek_v4_pro_exp1_baseline"}},
+    {"item_id":"exp3_lean_false_negative","experiment_id":"exp3_real_ai_fault_recovery","case_id":"lean_v2_medium_lemma_dag_01","repeat_id":0,"condition_selector":{"matrix_kind":"rate_fault","domain":"lean_proof","difficulty":"medium","paper_difficulty":"medium_lemma_dag","topic_family":null,"fault_type":"false_negative","fault_rate":1.0,"worker_count":10,"model_entry_id":"deepseek_v4_pro_exp1_baseline"}},
+    {"item_id":"exp3_lean_late_submission","experiment_id":"exp3_real_ai_fault_recovery","case_id":"lean_v2_medium_function_set_dx_subset_chain_01","repeat_id":0,"condition_selector":{"matrix_kind":"rate_fault","domain":"lean_proof","difficulty":"medium","paper_difficulty":"medium_lemma_dag","topic_family":null,"fault_type":"late_submission","fault_rate":1.0,"worker_count":10,"model_entry_id":"deepseek_v4_pro_exp1_baseline"}},
+    {"item_id":"exp3_lean_executor_error","experiment_id":"exp3_real_ai_fault_recovery","case_id":"lean_v2_medium_induction_nat_predicate_chain_01","repeat_id":0,"condition_selector":{"matrix_kind":"rate_fault","domain":"lean_proof","difficulty":"medium","paper_difficulty":"medium_lemma_dag","topic_family":null,"fault_type":"executor_error","fault_rate":1.0,"worker_count":10,"model_entry_id":"deepseek_v4_pro_exp1_baseline"}},
+    {"item_id":"exp3_lean_false_positive","experiment_id":"exp3_real_ai_fault_recovery","case_id":"lean_v2_medium_lemma_dag_02","repeat_id":0,"condition_selector":{"matrix_kind":"rate_fault","domain":"lean_proof","difficulty":"medium","paper_difficulty":"medium_lemma_dag","topic_family":null,"fault_type":"false_positive","fault_rate":1.0,"worker_count":10,"model_entry_id":"deepseek_v4_pro_exp1_baseline"}}
+  ]
+}

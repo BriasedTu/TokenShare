@@ -35,6 +35,13 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 DUAL_DOMAIN_SMOKE_PROFILE = (
     REPO_ROOT / "benchmarks/paper/paper_smoke_dual_domain_profile.v1.json"
 )
+MATRIX8_SMOKE_PROFILES = tuple(
+    REPO_ROOT / f"benchmarks/paper/paper_smoke_exp{experiment}_matrix8_profile.v1.json"
+    for experiment in range(1, 5)
+)
+EXP5_V4_SMOKE_PROFILE = (
+    REPO_ROOT / "benchmarks/paper/paper_smoke_exp5_profile.v4.json"
+)
 
 
 def _epd027_launcher_source(name: str) -> str:
@@ -248,6 +255,85 @@ def test_dual_domain_smoke_profile_freezes_only_factorization_and_lean_roots() -
     assert {"smoke_suite", "pilot_only"}.issubset(
         profile.ineligibility_reasons
     )
+
+
+def test_exp1_to_exp4_matrix8_profiles_freeze_four_distinct_roots_per_domain() -> None:
+    profiles = tuple(load_paper_smoke_profile(path) for path in MATRIX8_SMOKE_PROFILES)
+
+    experiment_ids = {
+        1: "exp1_real_ai_feasibility",
+        2: "exp2_real_ai_scalability",
+        3: "exp3_real_ai_fault_recovery",
+        4: "exp4_real_ai_protocol_ablation",
+    }
+    for experiment_number, profile in enumerate(profiles, start=1):
+        assert profile.suite_id == f"paper_smoke_exp{experiment_number}_matrix8_v1"
+        assert profile.profile_version == "v1"
+        assert profile.experiment_ids == (experiment_ids[experiment_number],)
+        assert profile.expected_root_runs == len(profile.items) == 8
+        assert profile.formal is False
+        assert profile.pilot_only is True
+        assert profile.regression_only is True
+        assert profile.paper_eligible is False
+        for domain in ("factorization", "lean_proof"):
+            domain_items = tuple(
+                item
+                for item in profile.items
+                if item.condition_selector["domain"] == domain
+            )
+            assert len(domain_items) == 4
+            assert len({item.case_id for item in domain_items}) == 4
+
+    exp2 = profiles[1]
+    for domain in ("factorization", "lean_proof"):
+        domain_items = tuple(
+            item
+            for item in exp2.items
+            if item.condition_selector["domain"] == domain
+        )
+        assert {
+            item.condition_selector["worker_count"] for item in domain_items
+        } == {1, 7, 30, 50}
+    assert all(
+        item.condition_selector.get("topic_family") is None
+        for item in exp2.items
+        if item.condition_selector["domain"] == "lean_proof"
+    )
+
+    exp3 = profiles[2]
+    assert exp3.baseline_policy == "omitted_for_smoke_regression"
+    assert "smoke_baseline_not_requested" in exp3.ineligibility_reasons
+    assert {item.condition_selector["matrix_kind"] for item in exp3.items} == {
+        "rate_fault",
+        "worker_death",
+    }
+
+    exp4 = profiles[3]
+    for domain in ("factorization", "lean_proof"):
+        assert len(
+            {
+                item.condition_selector["ablation_mode"]
+                for item in exp4.items
+                if item.condition_selector["domain"] == domain
+            }
+        ) == 4
+
+
+def test_exp1_to_exp5_matrix_smoke_inventory_contains_exactly_forty_roots() -> None:
+    profiles = tuple(
+        load_paper_smoke_profile(path)
+        for path in (*MATRIX8_SMOKE_PROFILES, EXP5_V4_SMOKE_PROFILE)
+    )
+
+    assert sum(profile.expected_root_runs for profile in profiles) == 40
+    assert sum(len(profile.items) for profile in profiles) == 40
+    assert len(
+        {
+            (profile.suite_id, item.item_id)
+            for profile in profiles
+            for item in profile.items
+        }
+    ) == 40
 
 
 def test_smoke_profile_v2_switches_current_baseline_and_exp5_cohort() -> None:
