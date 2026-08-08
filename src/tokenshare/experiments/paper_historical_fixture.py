@@ -161,7 +161,14 @@ def load_historical_real_fixture(root: str | Path) -> HistoricalRealFixture:
     if actual_files != _FIXTURE_FILES:
         raise ValueError("historical fixture must contain the exact seven tracked objects")
 
-    objects = {name: _read_json_object(fixture_root / name) for name in _FIXTURE_FILES}
+    fixture_bytes = {
+        name: _read_canonical_fixture_json_bytes(fixture_root / name)
+        for name in _FIXTURE_FILES
+    }
+    objects = {
+        name: _parse_json_object(fixture_bytes[name], object_name=name)
+        for name in _FIXTURE_FILES
+    }
     manifest = objects["fixture_manifest.json"]
     if manifest.get("schema_version") != FIXTURE_SCHEMA_VERSION:
         raise ValueError("unsupported historical fixture schema")
@@ -190,7 +197,7 @@ def load_historical_real_fixture(root: str | Path) -> HistoricalRealFixture:
     if set(fixture_objects) != expected_fixture_names:
         raise ValueError("fixture object digest inventory mismatch")
     for name in sorted(expected_fixture_names):
-        if fixture_objects[name] != _digest_bytes((fixture_root / name).read_bytes()):
+        if fixture_objects[name] != _digest_bytes(fixture_bytes[name]):
             raise ValueError(f"tracked fixture object digest mismatch: {name}")
         if set(objects[name]) != _MINIMAL_KEYS[name]:
             raise ValueError(f"tracked fixture object is not the frozen minimal shape: {name}")
@@ -321,9 +328,23 @@ def source_tree_digest(root: str | Path) -> str:
 def _read_json_object(path: Path) -> dict[str, Any]:
     if not path.is_file():
         raise FileNotFoundError(f"required fixture object is missing: {path.name}")
-    value = json.loads(path.read_text(encoding="utf-8"))
+    return _parse_json_object(path.read_bytes(), object_name=path.name)
+
+
+def _read_canonical_fixture_json_bytes(path: Path) -> bytes:
+    if not path.is_file():
+        raise FileNotFoundError(f"required fixture object is missing: {path.name}")
+    data = path.read_bytes()
+    without_crlf = data.replace(b"\r\n", b"")
+    if b"\r" in without_crlf:
+        raise ValueError(f"historical fixture has invalid line ending: {path.name}")
+    return data.replace(b"\r\n", b"\n")
+
+
+def _parse_json_object(data: bytes, *, object_name: str) -> dict[str, Any]:
+    value = json.loads(data.decode("utf-8"))
     if not isinstance(value, dict):
-        raise TypeError(f"fixture object must be a JSON object: {path.name}")
+        raise TypeError(f"fixture object must be a JSON object: {object_name}")
     return value
 
 

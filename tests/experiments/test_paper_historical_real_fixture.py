@@ -48,6 +48,17 @@ def _bytes_digest(path: Path) -> str:
     return f"sha256:{sha256(path.read_bytes()).hexdigest()}"
 
 
+def _canonical_fixture_json_bytes(path: Path) -> bytes:
+    data = path.read_bytes()
+    without_crlf = data.replace(b"\r\n", b"")
+    assert b"\r" not in without_crlf
+    return data.replace(b"\r\n", b"\n")
+
+
+def _fixture_bytes_digest(path: Path) -> str:
+    return f"sha256:{sha256(_canonical_fixture_json_bytes(path)).hexdigest()}"
+
+
 def _tree_digest(root: Path) -> str:
     digest = sha256()
     paths = sorted(
@@ -60,6 +71,33 @@ def _tree_digest(root: Path) -> str:
         content_digest = sha256(data).hexdigest()
         digest.update(f"{relative}\0{len(data)}\0{content_digest}\n".encode("utf-8"))
     return f"sha256:{digest.hexdigest()}"
+
+
+def _fixture_tree_digest(root: Path) -> str:
+    digest = sha256()
+    paths = sorted(
+        (path for path in root.rglob("*") if path.is_file()),
+        key=lambda path: path.relative_to(root).as_posix(),
+    )
+    for path in paths:
+        relative = path.relative_to(root).as_posix()
+        data = _canonical_fixture_json_bytes(path)
+        content_digest = sha256(data).hexdigest()
+        digest.update(f"{relative}\0{len(data)}\0{content_digest}\n".encode("utf-8"))
+    return f"sha256:{digest.hexdigest()}"
+
+
+def _copy_fixture_with_line_ending(
+    destination: Path,
+    *,
+    line_ending: bytes,
+) -> Path:
+    destination.mkdir()
+    for source in FIXTURE_ROOT.glob("*.json"):
+        canonical = _canonical_fixture_json_bytes(source)
+        data = canonical if line_ending == b"\n" else canonical.replace(b"\n", line_ending)
+        (destination / source.name).write_bytes(data)
+    return destination
 
 
 def _read_ref(store: ArtifactStore, value: object) -> dict[str, object]:
@@ -94,6 +132,38 @@ def test_real_success_predicate_uses_per_number_passed_correct_oracle_not_missin
     assert "passed" not in fixture.batch_report
 
 
+def _assert_manifest_declared_json_fixture_eol_boundaries(tmp_path: Path) -> None:
+    for name, line_ending in (("lf", b"\n"), ("crlf", b"\r\n")):
+        fixture_root = _copy_fixture_with_line_ending(
+            tmp_path / name,
+            line_ending=line_ending,
+        )
+        fixture = load_historical_real_fixture(fixture_root)
+        assert fixture.success is True
+        assert fixture.per_number_result["target_n"] == "4733749"
+
+    tampered_root = _copy_fixture_with_line_ending(
+        tmp_path / "tampered",
+        line_ending=b"\n",
+    )
+    batch_path = tampered_root / "batch_report.json"
+    original = batch_path.read_bytes()
+    tampered = original.replace(b'"attempted_count": 1', b'"attempted_count": 2')
+    assert tampered != original
+    batch_path.write_bytes(tampered)
+    with pytest.raises(ValueError, match="tracked fixture object digest mismatch"):
+        load_historical_real_fixture(tampered_root)
+
+    invalid_eol_root = _copy_fixture_with_line_ending(
+        tmp_path / "invalid-eol",
+        line_ending=b"\n",
+    )
+    manifest_path = invalid_eol_root / "fixture_manifest.json"
+    manifest_path.write_bytes(manifest_path.read_bytes().replace(b"\n", b"\r", 1))
+    with pytest.raises(ValueError, match="invalid line ending"):
+        load_historical_real_fixture(invalid_eol_root)
+
+
 def test_case_row_batch_raw_provenance_and_full_tree_digests_are_exact() -> None:
     fixture = load_historical_real_fixture(FIXTURE_ROOT)
 
@@ -104,12 +174,12 @@ def test_case_row_batch_raw_provenance_and_full_tree_digests_are_exact() -> None
         "provenance": EXPECTED_PROVENANCE_DIGEST,
         "full_tree": EXPECTED_POSITIVE_SOURCE_TREE_DIGEST,
     }
-    assert _tree_digest(FIXTURE_ROOT) == EXPECTED_TRACKED_FIXTURE_TREE_DIGEST
+    assert _fixture_tree_digest(FIXTURE_ROOT) == EXPECTED_TRACKED_FIXTURE_TREE_DIGEST
     manifest = _json(FIXTURE_ROOT / "fixture_manifest.json")
     fixture_objects = manifest["fixture_objects"]
     assert isinstance(fixture_objects, dict)
     for name, expected in fixture_objects.items():
-        assert _bytes_digest(FIXTURE_ROOT / name) == expected
+        assert _fixture_bytes_digest(FIXTURE_ROOT / name) == expected
     if POSITIVE_SOURCE_ROOT.is_dir():
         source_paths = {
             "case_row": POSITIVE_SOURCE_ROOT / "per_number_results.jsonl",
@@ -130,7 +200,9 @@ def test_case_row_batch_raw_provenance_and_full_tree_digests_are_exact() -> None
         assert before == after == EXPECTED_POSITIVE_SOURCE_TREE_DIGEST
 
 
-def test_tracked_fixture_contains_minimal_sanitized_unmodified_payload_and_source_hashes() -> None:
+def test_tracked_fixture_contains_minimal_sanitized_unmodified_payload_and_source_hashes(
+    tmp_path: Path,
+) -> None:
     fixture = load_historical_real_fixture(FIXTURE_ROOT)
     fixture_files = {path.name for path in FIXTURE_ROOT.iterdir() if path.is_file()}
 
@@ -149,6 +221,7 @@ def test_tracked_fixture_contains_minimal_sanitized_unmodified_payload_and_sourc
         [_json(path) for path in sorted(FIXTURE_ROOT.glob("*.json"))]
     )
     assert fixture.manifest["source"]["file_count"] == 24
+    _assert_manifest_declared_json_fixture_eol_boundaries(tmp_path)
 
 
 def test_dedicated_single_leaf_adapter_runs_normal_coordinator_parser_verifier_canonical_merge_ledger_to_table(
