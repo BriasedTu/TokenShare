@@ -5300,6 +5300,7 @@ def test_publication_factory_uses_typed_terminal_and_official_evidence_closure(
             },
             "transport": ScriptedRealTransport(),
             "real_transport": True,
+            "enforce_publication_closure": True,
         }
     )
     terminal = formal_runner.execute_paper_formal_suite(**kwargs)
