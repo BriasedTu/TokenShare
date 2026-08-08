@@ -50,6 +50,14 @@ _CSV_FIELDS = (
     "provider_latency_sample_size",
     "provider_latency_missing_count",
     "provider_latency_unavailable_reason",
+    "prompt_tokens",
+    "prompt_tokens_sample_size",
+    "prompt_tokens_missing_count",
+    "prompt_tokens_unavailable_reason",
+    "completion_tokens",
+    "completion_tokens_sample_size",
+    "completion_tokens_missing_count",
+    "completion_tokens_unavailable_reason",
     "total_tokens",
     "total_tokens_sample_size",
     "total_tokens_missing_count",
@@ -155,6 +163,30 @@ def generate_paper_smoke_report(
                 if provider_latency_sample_size == 0
                 else None
             )
+        ),
+        "prompt_tokens": _complete_sum(rows, "prompt_tokens"),
+        "prompt_tokens_sample_size": sum(
+            int(row["prompt_tokens_sample_size"]) for row in rows
+        ),
+        "prompt_tokens_missing_count": sum(
+            int(row["prompt_tokens_missing_count"]) for row in rows
+        ),
+        "prompt_tokens_unavailable_reason": _summary_missing_reason(
+            rows,
+            "prompt_tokens",
+            "incomplete_prompt_tokens_evidence",
+        ),
+        "completion_tokens": _complete_sum(rows, "completion_tokens"),
+        "completion_tokens_sample_size": sum(
+            int(row["completion_tokens_sample_size"]) for row in rows
+        ),
+        "completion_tokens_missing_count": sum(
+            int(row["completion_tokens_missing_count"]) for row in rows
+        ),
+        "completion_tokens_unavailable_reason": _summary_missing_reason(
+            rows,
+            "completion_tokens",
+            "incomplete_completion_tokens_evidence",
         ),
         "total_tokens": _complete_sum(rows, "total_tokens"),
         "total_tokens_sample_size": sum(
@@ -530,6 +562,22 @@ def _row_from_persisted_evidence(
         "provider_latency_unavailable_reason": usage[
             "provider_latency_unavailable_reason"
         ],
+        "prompt_tokens": usage["prompt_tokens"],
+        "prompt_tokens_sample_size": usage["prompt_tokens_sample_size"],
+        "prompt_tokens_missing_count": usage["prompt_tokens_missing_count"],
+        "prompt_tokens_unavailable_reason": usage[
+            "prompt_tokens_unavailable_reason"
+        ],
+        "completion_tokens": usage["completion_tokens"],
+        "completion_tokens_sample_size": usage[
+            "completion_tokens_sample_size"
+        ],
+        "completion_tokens_missing_count": usage[
+            "completion_tokens_missing_count"
+        ],
+        "completion_tokens_unavailable_reason": usage[
+            "completion_tokens_unavailable_reason"
+        ],
         "total_tokens": usage["total_tokens"],
         "total_tokens_sample_size": usage["total_tokens_sample_size"],
         "total_tokens_missing_count": usage["total_tokens_missing_count"],
@@ -647,6 +695,22 @@ def _blocked_row(
         "provider_latency_unavailable_reason": usage[
             "provider_latency_unavailable_reason"
         ],
+        "prompt_tokens": usage["prompt_tokens"],
+        "prompt_tokens_sample_size": usage["prompt_tokens_sample_size"],
+        "prompt_tokens_missing_count": usage["prompt_tokens_missing_count"],
+        "prompt_tokens_unavailable_reason": usage[
+            "prompt_tokens_unavailable_reason"
+        ],
+        "completion_tokens": usage["completion_tokens"],
+        "completion_tokens_sample_size": usage[
+            "completion_tokens_sample_size"
+        ],
+        "completion_tokens_missing_count": usage[
+            "completion_tokens_missing_count"
+        ],
+        "completion_tokens_unavailable_reason": usage[
+            "completion_tokens_unavailable_reason"
+        ],
         "total_tokens": usage["total_tokens"],
         "total_tokens_sample_size": usage["total_tokens_sample_size"],
         "total_tokens_missing_count": usage["total_tokens_missing_count"],
@@ -751,6 +815,14 @@ def _actual_usage(
             "provider_latency_sample_size": 0,
             "provider_latency_missing_count": 0,
             "provider_latency_unavailable_reason": "no_provider_attempts",
+            "prompt_tokens": 0,
+            "prompt_tokens_sample_size": 0,
+            "prompt_tokens_missing_count": 0,
+            "prompt_tokens_unavailable_reason": None,
+            "completion_tokens": 0,
+            "completion_tokens_sample_size": 0,
+            "completion_tokens_missing_count": 0,
+            "completion_tokens_unavailable_reason": None,
             "total_tokens": 0,
             "total_tokens_sample_size": 0,
             "total_tokens_missing_count": 0,
@@ -767,9 +839,14 @@ def _actual_usage(
     provider_attempts = 0
     latency_values: list[float] = []
     latency_missing = 0
+    prompt_token_values: list[int] = []
+    completion_token_values: list[int] = []
     token_values: list[int] = []
     cost_values: list[float] = []
+    prompt_token_missing = 0
+    completion_token_missing = 0
     token_missing = 0
+    inconsistent_token_usage = 0
     cost_missing = 0
     dispatched_attempt_count = 0
     for attempt in attempts:
@@ -799,13 +876,50 @@ def _actual_usage(
         usage = attempt.get("usage_summary")
         if not isinstance(usage, Mapping):
             usage = {}
+        prompt = attempt.get("prompt_tokens")
+        if not isinstance(prompt, int) or isinstance(prompt, bool):
+            prompt = usage.get("prompt_tokens")
+        completion = attempt.get("completion_tokens")
+        if not isinstance(completion, int) or isinstance(completion, bool):
+            completion = usage.get("completion_tokens")
         total = attempt.get("total_tokens")
         if not isinstance(total, int) or isinstance(total, bool):
             total = usage.get("total_tokens")
-        if isinstance(total, int) and not isinstance(total, bool) and total >= 0:
-            token_values.append(total)
-        else:
+
+        prompt_valid = (
+            isinstance(prompt, int) and not isinstance(prompt, bool) and prompt >= 0
+        )
+        completion_valid = (
+            isinstance(completion, int)
+            and not isinstance(completion, bool)
+            and completion >= 0
+        )
+        total_valid = (
+            isinstance(total, int) and not isinstance(total, bool) and total >= 0
+        )
+        if (
+            prompt_valid
+            and completion_valid
+            and total_valid
+            and total != prompt + completion
+        ):
+            prompt_token_missing += 1
+            completion_token_missing += 1
             token_missing += 1
+            inconsistent_token_usage += 1
+        else:
+            if prompt_valid:
+                prompt_token_values.append(prompt)
+            else:
+                prompt_token_missing += 1
+            if completion_valid:
+                completion_token_values.append(completion)
+            else:
+                completion_token_missing += 1
+            if total_valid:
+                token_values.append(total)
+            else:
+                token_missing += 1
 
         cost_value = attempt.get("cost_estimate")
         if not isinstance(cost_value, (int, float)) or isinstance(cost_value, bool):
@@ -827,6 +941,14 @@ def _actual_usage(
             "provider_latency_sample_size": 0,
             "provider_latency_missing_count": 0,
             "provider_latency_unavailable_reason": "no_provider_attempts",
+            "prompt_tokens": 0,
+            "prompt_tokens_sample_size": 0,
+            "prompt_tokens_missing_count": 0,
+            "prompt_tokens_unavailable_reason": None,
+            "completion_tokens": 0,
+            "completion_tokens_sample_size": 0,
+            "completion_tokens_missing_count": 0,
+            "completion_tokens_unavailable_reason": None,
             "total_tokens": 0,
             "total_tokens_sample_size": 0,
             "total_tokens_missing_count": 0,
@@ -848,11 +970,41 @@ def _actual_usage(
         "provider_latency_unavailable_reason": (
             "missing_provider_latency_evidence" if latency_missing else None
         ),
+        "prompt_tokens": (
+            sum(prompt_token_values) if prompt_token_missing == 0 else None
+        ),
+        "prompt_tokens_sample_size": len(prompt_token_values),
+        "prompt_tokens_missing_count": prompt_token_missing,
+        "prompt_tokens_unavailable_reason": (
+            "inconsistent_token_usage_evidence"
+            if inconsistent_token_usage
+            else "missing_prompt_tokens_evidence"
+            if prompt_token_missing
+            else None
+        ),
+        "completion_tokens": (
+            sum(completion_token_values)
+            if completion_token_missing == 0
+            else None
+        ),
+        "completion_tokens_sample_size": len(completion_token_values),
+        "completion_tokens_missing_count": completion_token_missing,
+        "completion_tokens_unavailable_reason": (
+            "inconsistent_token_usage_evidence"
+            if inconsistent_token_usage
+            else "missing_completion_tokens_evidence"
+            if completion_token_missing
+            else None
+        ),
         "total_tokens": sum(token_values) if token_missing == 0 else None,
         "total_tokens_sample_size": len(token_values),
         "total_tokens_missing_count": token_missing,
         "total_tokens_unavailable_reason": (
-            "missing_total_tokens_evidence" if token_missing else None
+            "inconsistent_token_usage_evidence"
+            if inconsistent_token_usage
+            else "missing_total_tokens_evidence"
+            if token_missing
+            else None
         ),
         "cost_estimate": sum(cost_values) if cost_missing == 0 else None,
         "cost_estimate_sample_size": len(cost_values),
@@ -862,7 +1014,7 @@ def _actual_usage(
         ),
         "evidence_issue": (
             "missing_usage_evidence"
-            if token_missing or cost_missing
+            if cost_missing or (token_missing and not inconsistent_token_usage)
             else None
         ),
     }
@@ -876,6 +1028,14 @@ def _missing_usage(reason: str) -> dict[str, Any]:
         "provider_latency_sample_size": 0,
         "provider_latency_missing_count": 1,
         "provider_latency_unavailable_reason": reason,
+        "prompt_tokens": None,
+        "prompt_tokens_sample_size": 0,
+        "prompt_tokens_missing_count": 1,
+        "prompt_tokens_unavailable_reason": reason,
+        "completion_tokens": None,
+        "completion_tokens_sample_size": 0,
+        "completion_tokens_missing_count": 1,
+        "completion_tokens_unavailable_reason": reason,
         "total_tokens": None,
         "total_tokens_sample_size": 0,
         "total_tokens_missing_count": 1,

@@ -1125,7 +1125,16 @@ def test_smoke_report_recomputes_usage_and_refs_from_persisted_evidence(
     assert row["provider_latency_sample_size"] == 2
     assert row["provider_latency_missing_count"] == 0
     assert row["provider_latency_unavailable_reason"] is None
+    assert row["prompt_tokens"] == 9
+    assert row["prompt_tokens_sample_size"] == 2
+    assert row["prompt_tokens_missing_count"] == 0
+    assert row["prompt_tokens_unavailable_reason"] is None
+    assert row["completion_tokens"] == 6
+    assert row["completion_tokens_sample_size"] == 2
+    assert row["completion_tokens_missing_count"] == 0
+    assert row["completion_tokens_unavailable_reason"] is None
     assert row["total_tokens"] == 15
+    assert row["total_tokens"] == row["prompt_tokens"] + row["completion_tokens"]
     assert row["total_tokens_sample_size"] == 2
     assert row["total_tokens_missing_count"] == 0
     assert row["cost_estimate"] == pytest.approx(0.15)
@@ -1164,6 +1173,14 @@ def test_smoke_report_recomputes_usage_and_refs_from_persisted_evidence(
         "provider_latency_sample_size",
         "provider_latency_missing_count",
         "provider_latency_unavailable_reason",
+        "prompt_tokens",
+        "prompt_tokens_sample_size",
+        "prompt_tokens_missing_count",
+        "prompt_tokens_unavailable_reason",
+        "completion_tokens",
+        "completion_tokens_sample_size",
+        "completion_tokens_missing_count",
+        "completion_tokens_unavailable_reason",
     }.issubset(csv_header)
     assert (tmp_path / "metrics" / "smoke_failures.json").is_file()
     assert (tmp_path / "audit" / "smoke_eligibility_report.json").is_file()
@@ -1187,6 +1204,17 @@ def test_smoke_report_recomputes_usage_and_refs_from_persisted_evidence(
     assert report["provider_latency_sample_size"] == 2
     assert report["provider_latency_missing_count"] == 0
     assert report["provider_latency_unavailable_reason"] is None
+    assert report["prompt_tokens"] == 9
+    assert report["prompt_tokens_sample_size"] == 2
+    assert report["prompt_tokens_missing_count"] == 0
+    assert report["prompt_tokens_unavailable_reason"] is None
+    assert report["completion_tokens"] == 6
+    assert report["completion_tokens_sample_size"] == 2
+    assert report["completion_tokens_missing_count"] == 0
+    assert report["completion_tokens_unavailable_reason"] is None
+    assert report["total_tokens"] == (
+        report["prompt_tokens"] + report["completion_tokens"]
+    )
 
 
 def test_smoke_report_fault_refs_use_traceable_fallbacks_without_none(
@@ -1485,6 +1513,12 @@ def test_smoke_summary_keeps_false_distinct_from_missing_with_fixed_denominator(
             "outcome_status": "succeeded",
             "evidence_integrity": "complete",
             "provider_attempt_count": 0,
+            "prompt_tokens": 0,
+            "prompt_tokens_sample_size": 0,
+            "prompt_tokens_missing_count": 0,
+            "completion_tokens": 0,
+            "completion_tokens_sample_size": 0,
+            "completion_tokens_missing_count": 0,
             "total_tokens": 0,
             "total_tokens_sample_size": 0,
             "total_tokens_missing_count": 0,
@@ -1507,6 +1541,12 @@ def test_smoke_summary_keeps_false_distinct_from_missing_with_fixed_denominator(
             "outcome_status": "blocked_dependency",
             "evidence_integrity": "missing",
             "provider_attempt_count": 0,
+            "prompt_tokens": 0,
+            "prompt_tokens_sample_size": 0,
+            "prompt_tokens_missing_count": 0,
+            "completion_tokens": 0,
+            "completion_tokens_sample_size": 0,
+            "completion_tokens_missing_count": 0,
             "total_tokens": 0,
             "total_tokens_sample_size": 0,
             "total_tokens_missing_count": 0,
@@ -1615,6 +1655,18 @@ def test_smoke_usage_is_complete_or_null_for_verified_provider_calls(
     assert observation["provider_latency_unavailable_reason"] == (
         "missing_provider_latency_evidence"
     )
+    assert observation["prompt_tokens"] is None
+    assert observation["prompt_tokens_sample_size"] == 0
+    assert observation["prompt_tokens_missing_count"] == 1
+    assert observation["prompt_tokens_unavailable_reason"] == (
+        "missing_prompt_tokens_evidence"
+    )
+    assert observation["completion_tokens"] is None
+    assert observation["completion_tokens_sample_size"] == 0
+    assert observation["completion_tokens_missing_count"] == 1
+    assert observation["completion_tokens_unavailable_reason"] == (
+        "missing_completion_tokens_evidence"
+    )
     assert observation["total_tokens"] is None
     assert observation["total_tokens_sample_size"] == 0
     assert observation["total_tokens_missing_count"] == 1
@@ -1641,10 +1693,159 @@ def test_smoke_usage_is_complete_or_null_for_verified_provider_calls(
     assert capturing["provider_latency_unavailable_reason"] == (
         "no_provider_attempts"
     )
+    assert capturing["prompt_tokens"] == 0
+    assert capturing["prompt_tokens_sample_size"] == 0
+    assert capturing["prompt_tokens_missing_count"] == 0
+    assert capturing["completion_tokens"] == 0
+    assert capturing["completion_tokens_sample_size"] == 0
+    assert capturing["completion_tokens_missing_count"] == 0
     assert capturing["total_tokens"] == 0
     assert capturing["total_tokens_missing_count"] == 0
     assert capturing["cost_estimate"] == 0.0
     assert capturing["cost_estimate_missing_count"] == 0
+
+
+def test_smoke_usage_projects_prompt_completion_and_total_from_validated_attempts(
+    tmp_path: Path,
+) -> None:
+    generation = tmp_path / "generation"
+    (generation / "artifacts").mkdir(parents=True)
+    first_ref, first_index = _persist_model_execution_record(
+        suite_root=tmp_path,
+        generation=generation,
+        task_id="case-1",
+        attempt_id="attempt-1",
+        provider_attempt_count=1,
+    )
+    second_ref, second_index = _persist_model_execution_record(
+        suite_root=tmp_path,
+        generation=generation,
+        task_id="case-1",
+        attempt_id="attempt-2",
+        provider_attempt_count=1,
+    )
+
+    observation = _actual_usage(
+        (
+            {
+                "attempt_id": "attempt-1",
+                "task_id": "case-1",
+                "provider_attempt_count": 1,
+                "model_execution_record_ref": first_ref,
+                "prompt_tokens": 7,
+                "completion_tokens": 5,
+                "total_tokens": 12,
+                "cost_estimate": 0.125,
+            },
+            {
+                "attempt_id": "attempt-2",
+                "task_id": "case-1",
+                "provider_attempt_count": 1,
+                "model_execution_record_ref": second_ref,
+                "prompt_tokens": 2,
+                "completion_tokens": 1,
+                "total_tokens": 3,
+                "cost_estimate": 0.025,
+            },
+        ),
+        root=tmp_path,
+        artifacts=(first_index, second_index),
+        capturing=False,
+    )
+
+    assert observation["prompt_tokens"] == 9
+    assert observation["prompt_tokens_sample_size"] == 2
+    assert observation["prompt_tokens_missing_count"] == 0
+    assert observation["prompt_tokens_unavailable_reason"] is None
+    assert observation["completion_tokens"] == 6
+    assert observation["completion_tokens_sample_size"] == 2
+    assert observation["completion_tokens_missing_count"] == 0
+    assert observation["completion_tokens_unavailable_reason"] is None
+    assert observation["total_tokens"] == 15
+    assert observation["total_tokens"] == (
+        observation["prompt_tokens"] + observation["completion_tokens"]
+    )
+
+
+def test_smoke_usage_marks_inconsistent_token_components_unavailable(
+    tmp_path: Path,
+) -> None:
+    generation = tmp_path / "generation"
+    (generation / "artifacts").mkdir(parents=True)
+    record_ref, record_index = _persist_model_execution_record(
+        suite_root=tmp_path,
+        generation=generation,
+        task_id="case-1",
+        attempt_id="attempt-1",
+        provider_attempt_count=1,
+    )
+
+    observation = _actual_usage(
+        (
+            {
+                "attempt_id": "attempt-1",
+                "task_id": "case-1",
+                "provider_attempt_count": 1,
+                "model_execution_record_ref": record_ref,
+                "prompt_tokens": 7,
+                "completion_tokens": 5,
+                "total_tokens": 13,
+                "cost_estimate": 0.125,
+            },
+        ),
+        root=tmp_path,
+        artifacts=(record_index,),
+        capturing=False,
+    )
+
+    for field_name in ("prompt_tokens", "completion_tokens", "total_tokens"):
+        assert observation[field_name] is None
+        assert observation[f"{field_name}_sample_size"] == 0
+        assert observation[f"{field_name}_missing_count"] == 1
+        assert observation[f"{field_name}_unavailable_reason"] == (
+            "inconsistent_token_usage_evidence"
+        )
+    assert observation["evidence_issue"] is None
+
+
+def test_smoke_usage_missing_component_is_nonblocking_metric_unavailability(
+    tmp_path: Path,
+) -> None:
+    generation = tmp_path / "generation"
+    (generation / "artifacts").mkdir(parents=True)
+    record_ref, record_index = _persist_model_execution_record(
+        suite_root=tmp_path,
+        generation=generation,
+        task_id="case-1",
+        attempt_id="attempt-1",
+        provider_attempt_count=1,
+    )
+
+    observation = _actual_usage(
+        (
+            {
+                "attempt_id": "attempt-1",
+                "task_id": "case-1",
+                "provider_attempt_count": 1,
+                "model_execution_record_ref": record_ref,
+                "prompt_tokens": 7,
+                "total_tokens": 12,
+                "cost_estimate": 0.125,
+            },
+        ),
+        root=tmp_path,
+        artifacts=(record_index,),
+        capturing=False,
+    )
+
+    assert observation["prompt_tokens"] == 7
+    assert observation["completion_tokens"] is None
+    assert observation["completion_tokens_missing_count"] == 1
+    assert observation["completion_tokens_unavailable_reason"] == (
+        "missing_completion_tokens_evidence"
+    )
+    assert observation["total_tokens"] == 12
+    assert observation["evidence_issue"] is None
 
 
 def test_smoke_usage_joins_model_record_on_protocol_task_id(
