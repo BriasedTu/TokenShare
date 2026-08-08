@@ -4446,6 +4446,13 @@ def test_dual_domain_smoke_capturing_transport_runs_protocol_and_lean_checker(
     assert metrics["started_root_count"] == 2
     assert metrics["completed_root_count"] == 2
     assert metrics["failed_or_blocked_root_count"] == 0
+    assert metrics["correctness_numerator"] == 2
+    assert metrics["correctness_denominator"] == 2
+    assert metrics["correctness_rate"] == pytest.approx(1.0)
+    assert metrics["correctness_missing_count"] == 0
+    assert metrics["completion_numerator"] == 2
+    assert metrics["completion_denominator"] == 2
+    assert metrics["completion_rate"] == pytest.approx(1.0)
     assert {row["domain"] for row in metrics["rows"]} == {
         "factorization",
         "lean_proof",
@@ -4458,6 +4465,12 @@ def test_dual_domain_smoke_capturing_transport_runs_protocol_and_lean_checker(
     # capturing transport 的 provider attempts 仍保留原始 usage；smoke metrics
     # 只投影 paper-ineligible source rows，因此这里明确冻结为零而不做错误聚合。
     assert metrics["provider_attempt_count"] == 0
+    assert metrics["provider_latency_ms"] == 0.0
+    assert metrics["provider_latency_sample_size"] == 0
+    assert metrics["provider_latency_missing_count"] == 0
+    assert metrics["provider_latency_unavailable_reason"] == (
+        "no_provider_attempts"
+    )
     assert metrics["total_tokens"] == 0
     assert metrics["cost_estimate"] == 0.0
     assert metrics["formal"] is False

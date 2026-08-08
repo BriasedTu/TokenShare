@@ -36,8 +36,20 @@ _CSV_FIELDS = (
     "evidence_integrity_reasons",
     "accepted_validity",
     "accepted_validity_unavailable_reason",
+    "correctness_numerator",
+    "correctness_denominator",
+    "correctness_rate",
+    "correctness_missing_count",
+    "correctness_unavailable_reason",
+    "completion_numerator",
+    "completion_denominator",
+    "completion_rate",
     "provider_attempt_count",
     "provider_attempt_count_unavailable_reason",
+    "provider_latency_ms",
+    "provider_latency_sample_size",
+    "provider_latency_missing_count",
+    "provider_latency_unavailable_reason",
     "total_tokens",
     "total_tokens_sample_size",
     "total_tokens_missing_count",
@@ -80,24 +92,40 @@ def generate_paper_smoke_report(
         raise ValueError("smoke execution plan requires resolved items")
     capturing = suite.get("capturing") is True
     rows = [
-        _row_from_persisted_evidence(
-            root=root,
-            item=item,
-            capturing=capturing,
-            baseline_policy=str(
-                plan.get("baseline_policy", "required_by_formal_plan")
-            ),
+        _with_row_metric_fields(
+            _row_from_persisted_evidence(
+                root=root,
+                item=item,
+                capturing=capturing,
+                baseline_policy=str(
+                    plan.get("baseline_policy", "required_by_formal_plan")
+                ),
+            )
         )
         for item in items
     ]
+    completed_root_count = sum(
+        row["smoke_execution_status"] == "completed" for row in rows
+    )
+    correctness_numerator = sum(
+        int(row["correctness_numerator"]) for row in rows
+    )
+    correctness_missing_count = sum(
+        int(row["correctness_missing_count"]) for row in rows
+    )
+    provider_latency_ms = _complete_sum(rows, "provider_latency_ms")
+    provider_latency_sample_size = sum(
+        int(row["provider_latency_sample_size"]) for row in rows
+    )
+    provider_latency_missing_count = sum(
+        int(row["provider_latency_missing_count"]) for row in rows
+    )
     summary = {
         "schema_version": SMOKE_SUMMARY_SCHEMA_VERSION,
         "suite_id": suite.get("suite_id"),
         "suite_status": suite.get("status"),
         "row_count": len(rows),
-        "completed_root_count": sum(
-            row["smoke_execution_status"] == "completed" for row in rows
-        ),
+        "completed_root_count": completed_root_count,
         "failed_or_blocked_root_count": sum(
             row["smoke_execution_status"] != "completed" for row in rows
         ),
@@ -115,6 +143,18 @@ def generate_paper_smoke_report(
             rows,
             "provider_attempt_count",
             "incomplete_provider_attempt_evidence",
+        ),
+        "provider_latency_ms": provider_latency_ms,
+        "provider_latency_sample_size": provider_latency_sample_size,
+        "provider_latency_missing_count": provider_latency_missing_count,
+        "provider_latency_unavailable_reason": (
+            "incomplete_provider_latency_evidence"
+            if provider_latency_ms is None
+            else (
+                "no_provider_attempts"
+                if provider_latency_sample_size == 0
+                else None
+            )
         ),
         "total_tokens": _complete_sum(rows, "total_tokens"),
         "total_tokens_sample_size": sum(
@@ -143,6 +183,22 @@ def generate_paper_smoke_report(
         "provider_actual_billing": None,
         "provider_actual_billing_available": False,
         "expected_root_count": len(rows),
+        "correctness_numerator": correctness_numerator,
+        "correctness_denominator": len(rows),
+        "correctness_rate": (
+            None
+            if correctness_missing_count
+            else correctness_numerator / len(rows)
+        ),
+        "correctness_missing_count": correctness_missing_count,
+        "correctness_unavailable_reason": (
+            "incomplete_correctness_evidence"
+            if correctness_missing_count
+            else None
+        ),
+        "completion_numerator": completed_root_count,
+        "completion_denominator": len(rows),
+        "completion_rate": completed_root_count / len(rows),
         "started_root_count": sum(
             row["root_status"] != "not_started" for row in rows
         ),
@@ -464,6 +520,16 @@ def _row_from_persisted_evidence(
         "provider_attempt_count_unavailable_reason": usage[
             "provider_attempt_count_unavailable_reason"
         ],
+        "provider_latency_ms": usage["provider_latency_ms"],
+        "provider_latency_sample_size": usage[
+            "provider_latency_sample_size"
+        ],
+        "provider_latency_missing_count": usage[
+            "provider_latency_missing_count"
+        ],
+        "provider_latency_unavailable_reason": usage[
+            "provider_latency_unavailable_reason"
+        ],
         "total_tokens": usage["total_tokens"],
         "total_tokens_sample_size": usage["total_tokens_sample_size"],
         "total_tokens_missing_count": usage["total_tokens_missing_count"],
@@ -571,6 +637,16 @@ def _blocked_row(
         "provider_attempt_count_unavailable_reason": usage[
             "provider_attempt_count_unavailable_reason"
         ],
+        "provider_latency_ms": usage["provider_latency_ms"],
+        "provider_latency_sample_size": usage[
+            "provider_latency_sample_size"
+        ],
+        "provider_latency_missing_count": usage[
+            "provider_latency_missing_count"
+        ],
+        "provider_latency_unavailable_reason": usage[
+            "provider_latency_unavailable_reason"
+        ],
         "total_tokens": usage["total_tokens"],
         "total_tokens_sample_size": usage["total_tokens_sample_size"],
         "total_tokens_missing_count": usage["total_tokens_missing_count"],
@@ -633,6 +709,33 @@ def _traceable_fault_ref(fault: Mapping[str, Any]) -> str | None:
     )
 
 
+def _with_row_metric_fields(row: Mapping[str, Any]) -> dict[str, Any]:
+    accepted_validity = row.get("accepted_validity")
+    correctness_missing = accepted_validity is None
+    correctness_numerator = int(accepted_validity is True)
+    completed = row.get("smoke_execution_status") == "completed"
+    return {
+        **row,
+        "correctness_numerator": correctness_numerator,
+        "correctness_denominator": 1,
+        "correctness_rate": (
+            None if correctness_missing else float(correctness_numerator)
+        ),
+        "correctness_missing_count": int(correctness_missing),
+        "correctness_unavailable_reason": (
+            (
+                row.get("accepted_validity_unavailable_reason")
+                or "missing_accepted_validity_evidence"
+            )
+            if correctness_missing
+            else None
+        ),
+        "completion_numerator": int(completed),
+        "completion_denominator": 1,
+        "completion_rate": float(completed),
+    }
+
+
 def _actual_usage(
     attempts: Sequence[Mapping[str, Any]],
     *,
@@ -644,6 +747,10 @@ def _actual_usage(
         return {
             "provider_attempt_count": 0,
             "provider_attempt_count_unavailable_reason": None,
+            "provider_latency_ms": 0.0,
+            "provider_latency_sample_size": 0,
+            "provider_latency_missing_count": 0,
+            "provider_latency_unavailable_reason": "no_provider_attempts",
             "total_tokens": 0,
             "total_tokens_sample_size": 0,
             "total_tokens_missing_count": 0,
@@ -658,6 +765,8 @@ def _actual_usage(
         return _missing_usage("missing_provider_attempt_evidence")
 
     provider_attempts = 0
+    latency_values: list[float] = []
+    latency_missing = 0
     token_values: list[int] = []
     cost_values: list[float] = []
     token_missing = 0
@@ -677,6 +786,15 @@ def _actual_usage(
             return _missing_usage("invalid_model_execution_record_ref")
         actual_provider_attempts = record["actual_provider_attempts"]
         provider_attempts += len(actual_provider_attempts)
+        latency_ms = attempt.get("latency_ms")
+        if (
+            isinstance(latency_ms, (int, float))
+            and not isinstance(latency_ms, bool)
+            and latency_ms >= 0
+        ):
+            latency_values.append(float(latency_ms))
+        else:
+            latency_missing += 1
 
         usage = attempt.get("usage_summary")
         if not isinstance(usage, Mapping):
@@ -705,6 +823,10 @@ def _actual_usage(
         return {
             "provider_attempt_count": 0,
             "provider_attempt_count_unavailable_reason": None,
+            "provider_latency_ms": 0.0,
+            "provider_latency_sample_size": 0,
+            "provider_latency_missing_count": 0,
+            "provider_latency_unavailable_reason": "no_provider_attempts",
             "total_tokens": 0,
             "total_tokens_sample_size": 0,
             "total_tokens_missing_count": 0,
@@ -718,6 +840,14 @@ def _actual_usage(
     return {
         "provider_attempt_count": provider_attempts,
         "provider_attempt_count_unavailable_reason": None,
+        "provider_latency_ms": (
+            sum(latency_values) if latency_missing == 0 else None
+        ),
+        "provider_latency_sample_size": len(latency_values),
+        "provider_latency_missing_count": latency_missing,
+        "provider_latency_unavailable_reason": (
+            "missing_provider_latency_evidence" if latency_missing else None
+        ),
         "total_tokens": sum(token_values) if token_missing == 0 else None,
         "total_tokens_sample_size": len(token_values),
         "total_tokens_missing_count": token_missing,
@@ -742,6 +872,10 @@ def _missing_usage(reason: str) -> dict[str, Any]:
     return {
         "provider_attempt_count": None,
         "provider_attempt_count_unavailable_reason": reason,
+        "provider_latency_ms": None,
+        "provider_latency_sample_size": 0,
+        "provider_latency_missing_count": 1,
+        "provider_latency_unavailable_reason": reason,
         "total_tokens": None,
         "total_tokens_sample_size": 0,
         "total_tokens_missing_count": 1,

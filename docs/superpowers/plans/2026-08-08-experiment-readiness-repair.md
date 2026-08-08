@@ -177,13 +177,28 @@ Expected: both exit 0. Any new Full failure cluster requires a fresh failing tes
 - [ ] **Step 3: Run the authorized real API smoke**
 
     $env:PYTHONPATH='src'
-    conda run --no-capture-output -n tokenshare python -m tokenshare.experiments.run_paper_experiments --output-root E:\TokenShareData\outputs\experiments\dual-domain-smoke-20260808 --smoke-profile benchmarks/paper/paper_smoke_dual_domain_profile.v1.json --real-transport --ai-api-config benchmarks/paper/exp1_baseline_provider_config.v3.json --unlimited-budget
+    $smokeRoot = 'E:\TokenShareData\outputs\experiments\dual-domain-smoke-<fresh-id>'
+    $common = @(
+      '--output-root', $smokeRoot,
+      '--smoke-profile', 'benchmarks/paper/paper_smoke_dual_domain_profile.v1.json',
+      '--ai-api-config', 'benchmarks/paper/exp1_baseline_provider_config.v3.json',
+      '--max-total-provider-attempts', '4',
+      '--max-total-tokens', '1331072',
+      '--max-cost-estimate', '7.593216',
+      '--require-budget-approval'
+    )
+    $identityText = (& conda run --no-capture-output -n tokenshare python -m tokenshare.experiments.run_paper_experiments @common --plan-only --smoke-identity-only) -join "`n"
+    $identity = $identityText | ConvertFrom-Json
+    $budgetDigest = $identity.run_instance_identity.budget_digest
+    conda run --no-capture-output -n tokenshare python -m tokenshare.experiments.run_paper_experiments @common --real-transport --approve-budget-digest $budgetDigest
 
-Expected: exit 0; two planned roots; real provider usage for both domains; Factorization verifier and Lean checker invoked; output contains event/artifact/attempt data plus token, latency, completion, and correctness metrics.
+The first command is provider-free and writes no smoke output. The caps authorize at most four calls, 1,331,072 total tokens, and CNY 7.593216 using the existing digest-approval path; they do not add a receipt or L1–L4 publication gate.
+
+Expected: exit 0; two planned roots; real provider usage for both domains; Factorization verifier and Lean checker invoked; output contains event/artifact/attempt data plus token, latency, completion, and correctness metrics. A verifier/checker rejection remains an observed experimental result and does not by itself invalidate the facility smoke.
 
 - [ ] **Step 4: Independently audit smoke outputs**
 
-Verify a fresh output root, no secret text, configured DeepSeek provider/model identity, usage totals equal per-attempt sums, metric denominator equals 2, and every successful root has protocol terminal evidence. Do not require L1–L4 or publication lineage for this regression-only smoke.
+Verify a fresh output root, no secret text, configured DeepSeek provider/model identity, usage totals equal per-attempt sums, correctness/completion denominators equal 2, `False` remains observed incorrect, missing correctness yields a null rate, and provider latency equals the complete sum of verified persisted attempts or remains explicit null with a nonzero missing count. Every successful root must have protocol terminal evidence. Do not require L1–L4 or publication lineage for this regression-only smoke.
 
 - [ ] **Step 5: Update state and commit**
 

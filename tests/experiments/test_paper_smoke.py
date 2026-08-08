@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+import tokenshare.experiments.paper_smoke_report as smoke_report_module
 from tokenshare.experiments.paper_dispatcher import PaperExperimentDispatchPlan
 from tokenshare.experiments.paper_experiment_contracts import (
     FrozenCaseSelection,
@@ -953,6 +954,7 @@ def test_smoke_report_recomputes_usage_and_refs_from_persisted_evidence(
                 "provider_attempt_index": 0,
                 "provider_attempt_count": 0,
                 "model_execution_record_ref": record_ref_1,
+                "latency_ms": 120,
                 "prompt_tokens": 7,
                 "completion_tokens": 5,
                 "total_tokens": 12,
@@ -967,6 +969,7 @@ def test_smoke_report_recomputes_usage_and_refs_from_persisted_evidence(
                 "provider_attempt_index": 0,
                 "provider_attempt_count": 2,
                 "model_execution_record_ref": record_ref_2,
+                "latency_ms": 280,
                 "prompt_tokens": 2,
                 "completion_tokens": 1,
                 "total_tokens": 3,
@@ -1011,6 +1014,10 @@ def test_smoke_report_recomputes_usage_and_refs_from_persisted_evidence(
 
     row = report["rows"][0]
     assert row["provider_attempt_count"] == 3
+    assert row["provider_latency_ms"] == pytest.approx(400.0)
+    assert row["provider_latency_sample_size"] == 2
+    assert row["provider_latency_missing_count"] == 0
+    assert row["provider_latency_unavailable_reason"] is None
     assert row["total_tokens"] == 15
     assert row["total_tokens_sample_size"] == 2
     assert row["total_tokens_missing_count"] == 0
@@ -1034,10 +1041,45 @@ def test_smoke_report_recomputes_usage_and_refs_from_persisted_evidence(
         row["ineligibility_reasons"]
     )
     assert (tmp_path / "metrics" / "smoke_summary.csv").is_file()
+    csv_header = (
+        tmp_path / "metrics" / "smoke_summary.csv"
+    ).read_text(encoding="utf-8").splitlines()[0].split(",")
+    assert {
+        "correctness_numerator",
+        "correctness_denominator",
+        "correctness_rate",
+        "correctness_missing_count",
+        "correctness_unavailable_reason",
+        "completion_numerator",
+        "completion_denominator",
+        "completion_rate",
+        "provider_latency_ms",
+        "provider_latency_sample_size",
+        "provider_latency_missing_count",
+        "provider_latency_unavailable_reason",
+    }.issubset(csv_header)
     assert (tmp_path / "metrics" / "smoke_failures.json").is_file()
     assert (tmp_path / "audit" / "smoke_eligibility_report.json").is_file()
     assert (tmp_path / "audit" / "smoke_evidence_manifest.json").is_file()
     assert (tmp_path / "audit" / "secret_scan_report.json").is_file()
+    assert row["correctness_numerator"] == 1
+    assert row["correctness_denominator"] == 1
+    assert row["correctness_rate"] == pytest.approx(1.0)
+    assert row["correctness_missing_count"] == 0
+    assert row["completion_numerator"] == 1
+    assert row["completion_denominator"] == 1
+    assert row["completion_rate"] == pytest.approx(1.0)
+    assert report["correctness_numerator"] == 1
+    assert report["correctness_denominator"] == 1
+    assert report["correctness_rate"] == pytest.approx(1.0)
+    assert report["correctness_missing_count"] == 0
+    assert report["completion_numerator"] == 1
+    assert report["completion_denominator"] == 1
+    assert report["completion_rate"] == pytest.approx(1.0)
+    assert report["provider_latency_ms"] == pytest.approx(400.0)
+    assert report["provider_latency_sample_size"] == 2
+    assert report["provider_latency_missing_count"] == 0
+    assert report["provider_latency_unavailable_reason"] is None
 
 
 def test_smoke_report_fault_refs_use_traceable_fallbacks_without_none(
@@ -1281,6 +1323,122 @@ def test_smoke_report_fault_refs_use_traceable_fallbacks_without_none(
     assert report["total_tokens_missing_count"] == 1
     assert report["cost_estimate"] is None
     assert report["cost_estimate_missing_count"] == 1
+    assert row["provider_latency_ms"] is None
+    assert row["provider_latency_sample_size"] == 0
+    assert row["provider_latency_missing_count"] == 1
+    assert row["provider_latency_unavailable_reason"] == (
+        "invalid_model_execution_record_ref"
+    )
+    assert report["provider_latency_ms"] is None
+    assert report["provider_latency_sample_size"] == 0
+    assert report["provider_latency_missing_count"] == 1
+    assert report["correctness_numerator"] == 0
+    assert report["correctness_denominator"] == 1
+    assert report["correctness_rate"] is None
+    assert report["correctness_missing_count"] == 1
+
+
+def test_smoke_summary_keeps_false_distinct_from_missing_with_fixed_denominator(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    (tmp_path / "suite_manifest.json").write_text(
+        json.dumps(
+            {
+                "suite_id": "test_smoke",
+                "status": "completed_with_failures",
+                "formal": False,
+                "pilot_only": True,
+                "regression_only": True,
+                "paper_eligible": False,
+                "execution_scope": "smoke_suite",
+                "ineligibility_reasons": ["smoke_suite", "pilot_only"],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "smoke_execution_plan.json").write_text(
+        json.dumps(
+            {
+                "items": [
+                    {"case_id": "observed-false"},
+                    {"case_id": "missing-correctness"},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    rows = {
+        "observed-false": {
+            "case_id": "observed-false",
+            "accepted_validity": False,
+            "accepted_validity_unavailable_reason": None,
+            "smoke_execution_status": "completed",
+            "root_status": "completed",
+            "outcome_status": "succeeded",
+            "evidence_integrity": "complete",
+            "provider_attempt_count": 0,
+            "total_tokens": 0,
+            "total_tokens_sample_size": 0,
+            "total_tokens_missing_count": 0,
+            "cost_estimate": 0.0,
+            "cost_estimate_sample_size": 0,
+            "cost_estimate_missing_count": 0,
+            "provider_latency_ms": 0.0,
+            "provider_latency_sample_size": 0,
+            "provider_latency_missing_count": 0,
+            "paper_eligible": False,
+        },
+        "missing-correctness": {
+            "case_id": "missing-correctness",
+            "accepted_validity": None,
+            "accepted_validity_unavailable_reason": (
+                "missing_accepted_validity_evidence"
+            ),
+            "smoke_execution_status": "blocked",
+            "root_status": "blocked",
+            "outcome_status": "blocked_dependency",
+            "evidence_integrity": "missing",
+            "provider_attempt_count": 0,
+            "total_tokens": 0,
+            "total_tokens_sample_size": 0,
+            "total_tokens_missing_count": 0,
+            "cost_estimate": 0.0,
+            "cost_estimate_sample_size": 0,
+            "cost_estimate_missing_count": 0,
+            "provider_latency_ms": 0.0,
+            "provider_latency_sample_size": 0,
+            "provider_latency_missing_count": 0,
+            "paper_eligible": False,
+        },
+    }
+    monkeypatch.setattr(
+        smoke_report_module,
+        "_row_from_persisted_evidence",
+        lambda **kwargs: dict(rows[kwargs["item"]["case_id"]]),
+    )
+
+    report = generate_paper_smoke_report(output_root=tmp_path)
+
+    assert report["correctness_numerator"] == 0
+    assert report["correctness_denominator"] == 2
+    assert report["correctness_rate"] is None
+    assert report["correctness_missing_count"] == 1
+    assert report["correctness_unavailable_reason"] == (
+        "incomplete_correctness_evidence"
+    )
+    assert report["completion_numerator"] == 1
+    assert report["completion_denominator"] == 2
+    assert report["completion_rate"] == pytest.approx(0.5)
+    false_row, missing_row = report["rows"]
+    assert false_row["correctness_numerator"] == 0
+    assert false_row["correctness_rate"] == pytest.approx(0.0)
+    assert false_row["correctness_missing_count"] == 0
+    assert missing_row["correctness_numerator"] == 0
+    assert missing_row["correctness_rate"] is None
+    assert missing_row["correctness_missing_count"] == 1
+    assert false_row["completion_rate"] == pytest.approx(1.0)
+    assert missing_row["completion_rate"] == pytest.approx(0.0)
 
 
 def test_smoke_usage_does_not_infer_provider_call_from_ref_shape(
@@ -1344,6 +1502,12 @@ def test_smoke_usage_is_complete_or_null_for_verified_provider_calls(
     )
 
     assert observation["provider_attempt_count"] == 1
+    assert observation["provider_latency_ms"] is None
+    assert observation["provider_latency_sample_size"] == 0
+    assert observation["provider_latency_missing_count"] == 1
+    assert observation["provider_latency_unavailable_reason"] == (
+        "missing_provider_latency_evidence"
+    )
     assert observation["total_tokens"] is None
     assert observation["total_tokens_sample_size"] == 0
     assert observation["total_tokens_missing_count"] == 1
@@ -1364,6 +1528,12 @@ def test_smoke_usage_is_complete_or_null_for_verified_provider_calls(
         capturing=True,
     )
     assert capturing["provider_attempt_count"] == 0
+    assert capturing["provider_latency_ms"] == 0.0
+    assert capturing["provider_latency_sample_size"] == 0
+    assert capturing["provider_latency_missing_count"] == 0
+    assert capturing["provider_latency_unavailable_reason"] == (
+        "no_provider_attempts"
+    )
     assert capturing["total_tokens"] == 0
     assert capturing["total_tokens_missing_count"] == 0
     assert capturing["cost_estimate"] == 0.0

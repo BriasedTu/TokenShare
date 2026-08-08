@@ -55,13 +55,15 @@ passed evidence 继续强制 `split_certificate_ref`、environment/certificate d
 
 ### 5. 指标与实验条件
 
-smoke 至少验证：planned roots=2、两个 domain 均实际调用 provider、usage/token 与 provider latency 可读取、共同分母为 2、completion 与端到端正确率由真实结果计算。Experiment 2 worker levels、Experiment 3 fault/worker-death、Experiment 4 ablation 继续使用原 runtime hooks；以 capturing/离线回归证明条件可执行，不因本轮放宽证据设施而修改协议语义。
+smoke 至少验证：planned roots=2、两个 domain 均实际调用 provider、usage/token 与 provider latency 可读取、共同分母为 2、completion 与端到端正确率由真实结果计算。`correctness_denominator` 固定为全部计划 root；`False` 是已观测错误并保留在分母中，`None` 是显式 missing，必须令 `correctness_rate=null`，不得补成 0。`completion_numerator/denominator/rate` 复用既有 smoke terminal 口径。provider latency 只从通过 `model_execution_record_ref`、artifact hash、record digest 与 attempt identity 验证的 persisted attempt 的 `latency_ms` 聚合；任何应有 provider 调用的 attempt 缺失 latency 时，聚合总量必须为 `null` 并记录 sample/missing count，zero-call 才可报告 `0.0/0/0`。
+
+上述字段以 additive 方式加入现有 `tokenshare.paper_smoke_summary.v2` JSON/CSV，保留旧字段和 schema version。它们只报告指标，不新增 evidence、publication、receipt 或 L1–L4 门禁。Experiment 2 worker levels、Experiment 3 fault/worker-death、Experiment 4 ablation 继续使用原 runtime hooks；以 capturing/离线回归证明条件可执行，不因本轮放宽证据设施而修改协议语义。
 
 ## 错误处理
 
 - provider/auth/timeout/rate-limit/parse/checker failure 必须形成原有结构化失败和指标，不得补零或改写为成功。
 - `DEEPSEEK_API_KEY` 只从环境读取，不写入 config、artifact、日志或摘要。
-- 双题 smoke 的任一 provider 调用或 Lean checker 失败都使验收失败；保留输出用于诊断，不覆盖历史 evidence。
+- 双题 smoke 若缺少任一 domain 的真实 provider attempt，或 Lean 请求没有经过固定 checker，属于设施验收失败；Factorization verifier 或 Lean checker 给出的真实 rejection/错误结果必须保留在共同正确率分母中，不要求两个 root 都 accepted，也不得刷答案或改写为成功。
 - 若方案 A 在真实 smoke 前仍被 EPD-027-only gate 阻断，才实施方案 B 的显式 facility-only bypass；不得修改协议核心。
 
 ## 验证
