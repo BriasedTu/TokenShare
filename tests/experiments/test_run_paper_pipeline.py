@@ -741,6 +741,87 @@ def test_results_first_matrix8_plan_bank_accepts_fresh_bundle_root(
     assert json.loads(capsys.readouterr().out)["provider_calls"] == 0
 
 
+@pytest.mark.parametrize(
+    "argv",
+    (
+        (
+            "plan-bank",
+            "--profile",
+            "tracked-profile.json",
+            "--results-first-matrix8",
+            "--plan-bundle-root",
+            "retired-plan",
+        ),
+        (
+            "acquire-bank",
+            "--profile",
+            "tracked-profile.json",
+            "--results-first-matrix8",
+            "--allow-provider-calls",
+            "--new-run",
+            "--output-root",
+            "retired-acquisition",
+            "--plan-digest",
+            DIGESTS["plan"],
+            "--inventory-digest",
+            DIGESTS["inventory"],
+        ),
+        (
+            "run-trace",
+            "--profile",
+            "tracked-profile.json",
+            "--external-bank-root",
+            "retired-bank",
+            "--output-root",
+            "retired-trace",
+            "--plan-bundle-root",
+            "retired-plan",
+            "--plan-digest",
+            DIGESTS["plan"],
+            "--inventory-digest",
+            DIGESTS["inventory"],
+            "--results-first-matrix8",
+        ),
+    ),
+)
+def test_results_first_matrix8_pipeline_entry_is_explicitly_retired(
+    argv: tuple[str, ...],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys,
+) -> None:
+    monkeypatch.setattr(
+        pipeline,
+        "_PROFILE_LOADER",
+        lambda _path: pytest.fail("retired matrix8 must stop before profile load"),
+    )
+
+    assert pipeline.main(argv) == 3
+
+    body = json.loads(capsys.readouterr().out)
+    assert body["status"] == "blocked"
+    assert body["provider_calls"] == 0
+    assert body["failure_kind"] == "pipeline_boundary_rejected"
+    assert "retired" in body["message"]
+
+
+def test_pipeline_request_rejects_retired_matrix8_authority() -> None:
+    with pytest.raises(ValueError, match="retired"):
+        pipeline.PipelineCommandRequest(
+            command="run-trace",
+            scope="run-trace",
+            evidence_class="real_model_trace_protocol_run",
+            profile=PROFILE,
+            provider_authorization=None,
+            output_root=Path("trace"),
+            replay_input_root=None,
+            external_bank_resolver=None,
+            plan_digest=DIGESTS["plan"],
+            inventory_digest=DIGESTS["inventory"],
+            budget_mode="bounded",
+            serialized_arguments={"results_first_matrix8": True},
+        )
+
+
 def test_results_first_matrix8_plan_adapter_persists_exact_bundle_summary(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

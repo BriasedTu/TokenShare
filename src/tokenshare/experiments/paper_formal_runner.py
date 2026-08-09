@@ -5978,6 +5978,14 @@ class _FormalConditionExecutionCallback:
             for target in frozen_targets
         )
         expected_count = int(worker_manifest["dead_worker_count_target"])
+        termination_counts = _required_mapping(
+            worker_manifest.get("termination_count_target_by_case"),
+            "termination_count_target_by_case",
+        )
+        if int(termination_counts.get(case_id, 0)) != expected_count:
+            raise ValueError(
+                "worker death per-case termination target does not match condition"
+            )
         if not planned_targets or len(planned_targets) > expected_count:
             raise ValueError(
                 "worker death planned targets do not fit manifest condition"

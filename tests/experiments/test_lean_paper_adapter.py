@@ -34,6 +34,7 @@ from tokenshare.experiments.paper_models import (
     PaperFailureStage,
     PaperTaskStatus,
 )
+from tokenshare.experiments.paper_runner import _planned_ai_unit_ids
 from tokenshare.local_runtime import (
     ParsedCandidateContext,
     ParsedCandidateDirective,
@@ -861,6 +862,68 @@ def test_lean_lemma_dag_worker_death_uses_protocol_lease_recovery(
         == selected_node_id
     )
     assert result.fault_records[0]["lease_expiry"]["trigger"] == "lease_expired"
+
+
+@pytest.mark.parametrize(
+    ("case_id", "topic_family"),
+    (
+        ("lean_v2_medium_lemma_dag_01", "pure_logic"),
+        ("lean_v2_medium_function_set_dx_subset_chain_01", "function_set"),
+        ("lean_v2_medium_induction_nat_predicate_chain_01", "induction"),
+    ),
+)
+def test_lean_medium_dead3_p75_records_three_real_process_deaths(
+    tmp_path,
+    case_id: str,
+    topic_family: str,
+) -> None:
+    catalog = _catalog_with_lemma_graph()
+    case = _v2_case(catalog, case_id)
+    base_condition = _condition_for_case(catalog.catalog_digest, case)
+    condition = PaperExperimentCondition(
+        **{
+            **base_condition.__dict__,
+            "experiment_id": "exp3_real_ai_fault_recovery",
+            "condition_id": (
+                f"exp3_worker_death_lean__{topic_family}__dead3__p75__rep0"
+            ),
+            "fault_type": "worker_death",
+        }
+    )
+    planned = tuple(_planned_ai_unit_ids(case))
+    anchor = (len(planned) * 75 + 99) // 100 - 1
+    formal_targets = planned[anchor:]
+
+    result = run_lean_paper_case(
+        case=case,
+        condition=condition,
+        output_root=tmp_path,
+        transport=ScriptedLeanPaperProofTransport(
+            proof_sources_by_statement=_oracle_sources_by_statement(case)
+        ),
+        real_transport=False,
+        entry_id="lean_paper_scripted",
+        worker_termination_policy=WorkerTerminationPolicy(
+            target_planned_ai_unit_ids=formal_targets,
+            termination_count_target=3,
+            kill_point="progress_75",
+            total_planned_ai_unit_count=len(planned),
+        ),
+    )
+
+    dead_attempts = tuple(
+        attempt
+        for attempt in result.attempt_results
+        if attempt.attempt_status == PaperAttemptStatus.WORKER_DIED
+    )
+    assert result.task_result.root_status == PaperTaskStatus.COMPLETED
+    assert len(dead_attempts) == 3
+    assert len(result.fault_records) == 3
+    assert len({record["worker_pid"] for record in result.fault_records}) == 3
+    assert all(
+        record["lease_expiry"]["trigger"] == "lease_expired"
+        for record in result.fault_records
+    )
 
 
 @pytest.mark.parametrize(

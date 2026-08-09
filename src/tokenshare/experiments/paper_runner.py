@@ -1619,10 +1619,60 @@ def _planned_ai_unit_ids(case: JsonObject) -> list[str]:
         return [f"range_{index}" for index in range(min(requested, domain_size))]
     if schema_version == "tokenshare.paper_lean_case.v1":
         return [f"child_{index}" for index in range(int(case["expected_child_count"]))]
+    if case.get("domain") == "lean_proof" and isinstance(
+        case.get("lemma_graph", {}).get("nodes"),
+        list,
+    ):
+        return _stable_lean_dispatch_order(case)
     declared = case.get("merge_plan_shape", {}).get("dependency_order")
     if isinstance(declared, list):
         return [str(node_id) for node_id in declared]
     return [str(node["node_id"]) for node in case["lemma_graph"]["nodes"]]
+
+
+def _stable_lean_dispatch_order(case: JsonObject) -> list[str]:
+    """按 ProtocolEngine ready-frontier 的稳定 Kahn 顺序冻结 Lean units。"""
+
+    node_ids = [str(node["node_id"]) for node in case["lemma_graph"]["nodes"]]
+    if not node_ids or len(set(node_ids)) != len(node_ids):
+        raise ValueError("Lean lemma graph node identity is invalid")
+    node_index = {node_id: index for index, node_id in enumerate(node_ids)}
+    incoming_count = {node_id: 0 for node_id in node_ids}
+    outgoing = {node_id: [] for node_id in node_ids}
+    seen_edges: set[tuple[str, str]] = set()
+    for raw_edge in case.get("dependency_edges", ()):
+        source = str(raw_edge["source_node_id"])
+        target = str(raw_edge["target_node_id"])
+        edge = (source, target)
+        if source not in incoming_count or target not in incoming_count:
+            raise ValueError("Lean dependency edge references an unknown node")
+        if edge in seen_edges:
+            raise ValueError("Lean dependency graph contains a duplicate edge")
+        seen_edges.add(edge)
+        incoming_count[target] += 1
+        outgoing[source].append(target)
+    for targets in outgoing.values():
+        targets.sort(key=node_index.__getitem__)
+
+    ordered: list[str] = []
+    ready = [node_id for node_id in node_ids if incoming_count[node_id] == 0]
+    while ready:
+        frontier = tuple(ready)
+        ready = []
+        ordered.extend(frontier)
+        for source in frontier:
+            for target in outgoing[source]:
+                incoming_count[target] -= 1
+        ready.extend(
+            node_id
+            for node_id in node_ids
+            if incoming_count[node_id] == 0
+            and node_id not in ordered
+            and node_id not in ready
+        )
+    if len(ordered) != len(node_ids):
+        raise ValueError("Lean dependency graph must be acyclic")
+    return ordered
 
 
 def _validate_gate_c_budget_commitment(

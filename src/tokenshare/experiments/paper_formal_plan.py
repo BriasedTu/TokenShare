@@ -190,6 +190,7 @@ class FormalRepresentativeCoverage:
     bindings: tuple[FrozenConditionSelectionBinding, ...]
     roots: tuple[FormalRootSnapshot, ...]
     root_case_filter: Mapping[str, tuple[str, ...]]
+    source_snapshot: FormalPlanSnapshot
     source_snapshot_digest: str
     condition_count: int
     root_run_count: int
@@ -206,12 +207,68 @@ class FormalRepresentativeCoverage:
         }
         if not conditions or len(conditions) != len(bindings):
             raise ValueError("representative coverage condition/binding mismatch")
+        if type(self.source_snapshot) is not FormalPlanSnapshot:
+            raise TypeError("source_snapshot must be a FormalPlanSnapshot")
+        if self.source_snapshot.snapshot_digest != self.source_snapshot_digest:
+            raise ValueError("representative coverage source snapshot digest mismatch")
         if self.condition_count != len(conditions):
             raise ValueError("representative coverage condition count mismatch")
         if self.root_run_count != len(roots):
             raise ValueError("representative coverage root count mismatch")
         if set(root_filter) != {condition.condition_id for condition in conditions}:
             raise ValueError("representative coverage root filter mismatch")
+        source_conditions = {
+            item.condition.condition_id: item
+            for item in self.source_snapshot.conditions
+        }
+        for condition, binding in zip(conditions, bindings, strict=True):
+            source = source_conditions.get(condition.condition_id)
+            if (
+                source is None
+                or condition is not source.condition
+                or binding is not source.binding
+                or binding.condition_id != condition.condition_id
+                or binding.condition_digest != condition.condition_digest
+            ):
+                raise ValueError(
+                    "representative coverage condition/binding authority mismatch"
+                )
+            selected_case_ids = root_filter[condition.condition_id]
+            if (
+                not selected_case_ids
+                or len(set(selected_case_ids)) != len(selected_case_ids)
+                or tuple(
+                    case_id
+                    for case_id in binding.selection.ordered_case_ids
+                    if case_id in set(selected_case_ids)
+                )
+                != selected_case_ids
+            ):
+                raise ValueError("representative coverage root filter order mismatch")
+        source_root_ids = {id(root) for root in self.source_snapshot.roots}
+        expected_root_authority = tuple(
+            (condition, binding, case_id)
+            for condition, binding in zip(conditions, bindings, strict=True)
+            for case_id in root_filter[condition.condition_id]
+        )
+        if len(roots) != len(expected_root_authority):
+            raise ValueError("representative coverage root filter count mismatch")
+        for root, (condition, binding, case_id) in zip(
+            roots,
+            expected_root_authority,
+            strict=True,
+        ):
+            if (
+                id(root) not in source_root_ids
+                or root.condition is not condition
+                or root.binding is not binding
+                or root.case_id != case_id
+                or root.condition_digest != condition.condition_digest
+                or root.selection_digest != binding.selection.selection_digest
+                or root.seed != condition.seed
+                or root.repeat_id != condition.repeat_id
+            ):
+                raise ValueError("representative coverage root order/authority mismatch")
         if self.provider_calls_made != 0:
             raise ValueError("representative coverage must not call providers")
         _required_digest(self.source_snapshot_digest, "source_snapshot_digest")
@@ -1726,6 +1783,7 @@ def derive_paper_formal_representative_coverage(
         bindings=tuple(item.binding for item in selected_condition_rows),
         roots=tuple(selected_roots),
         root_case_filter=normalized_filter,
+        source_snapshot=snapshot,
         source_snapshot_digest=snapshot.snapshot_digest,
         condition_count=len(selected_condition_rows),
         root_run_count=len(selected_roots),

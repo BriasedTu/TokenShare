@@ -712,6 +712,10 @@ def _condition_execution_manifest(
             "ordered_case_ids": list(selection.ordered_case_ids),
             "worker_count": WORKER_DEATH_WORKER_COUNT,
             "dead_worker_count_target": key.dead_worker_count,
+            "termination_count_target_by_case": {
+                str(case_id): key.dead_worker_count
+                for case_id in selection.ordered_case_ids
+            },
             "kill_progress_target_percent": key.kill_progress_percent,
             "selected_target_ai_unit_ids_by_case": {
                 str(case_id): list(

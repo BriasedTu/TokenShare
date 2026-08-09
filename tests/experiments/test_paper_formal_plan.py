@@ -362,6 +362,37 @@ def test_representative_worker_death_root_maximizes_formal_scheduled_targets(
         )
 
 
+def test_representative_coverage_rejects_coherent_binding_and_root_tamper(
+    formal_inputs,
+    formal_snapshot,
+) -> None:
+    plans, _catalog, _budget, _ai_api_configs, _output_root = formal_inputs
+    coverage = derive_paper_formal_representative_coverage(
+        snapshot=formal_snapshot,
+        dispatch_plans=plans,
+        repeat_ids=(0,),
+    )
+
+    with pytest.raises(ValueError, match="condition/binding"):
+        replace(
+            coverage,
+            bindings=(coverage.bindings[1], coverage.bindings[0], *coverage.bindings[2:]),
+        )
+
+    first_condition = coverage.conditions[0]
+    selected_case_ids = set(coverage.root_case_filter[first_condition.condition_id])
+    rogue_root = next(
+        root
+        for root in formal_snapshot.roots
+        if root.condition is first_condition and root.case_id not in selected_case_ids
+    )
+    with pytest.raises(ValueError, match="root"):
+        replace(coverage, roots=(rogue_root, *coverage.roots[1:]))
+
+    with pytest.raises(ValueError, match="root order"):
+        replace(coverage, roots=tuple(reversed(coverage.roots)))
+
+
 def test_formal_root_case_filter_validator_accepts_only_exact_formal_subset(
     formal_inputs,
 ) -> None:

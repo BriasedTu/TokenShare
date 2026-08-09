@@ -1203,6 +1203,31 @@ def test_exp3_worker_death_manifest_can_target_three_processes_on_two_units() ->
         ].values()
     )
 
+    lean_p75_index = next(
+        index
+        for index, condition in enumerate(conditions)
+        if condition.condition_id
+        == "exp3_worker_death_lean__pure_logic__dead3__p75__rep0"
+    )
+    module.run_condition(
+        context,
+        conditions[lean_p75_index],
+        selections[lean_p75_index],
+    )
+    lean_p75_manifest = callback_calls[2]["execution_manifest"][
+        "worker_death_manifest"
+    ]
+    assert lean_p75_manifest["dead_worker_count_target"] == 3
+    assert lean_p75_manifest["termination_count_target_by_case"] == {
+        case_id: 3 for case_id in lean_p75_manifest["ordered_case_ids"]
+    }
+    assert all(
+        1 <= len(targets) <= 3
+        for targets in lean_p75_manifest[
+            "selected_target_ai_unit_ids_by_case"
+        ].values()
+    )
+
 
 def test_exp3_plan_freezes_shared_exp1_references_without_supporting_execution() -> None:
     module = Experiment3FaultRecoveryModule()
