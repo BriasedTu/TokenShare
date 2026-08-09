@@ -7,28 +7,31 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from tokenshare.experiments.paper_budget import build_paper_budget_split_profile
 from tokenshare.experiments.paper_catalog import PaperInputCatalogManifest
 from tokenshare.experiments.paper_catalog_execution_view import (
     restore_catalog_execution_view,
 )
-from tokenshare.experiments.paper_budget import build_paper_budget_split_profile
-from tokenshare.experiments.paper_dispatcher import PaperExperimentDispatchPlan
-from tokenshare.experiments.paper_exp3_fault_recovery import (
-    EXP3_EXPERIMENT_ID,
-    validate_exp3_condition_matrix,
+from tokenshare.experiments.paper_dispatcher import (
+    PaperExperimentDispatchPlan,
+    plan_paper_experiment,
+    registered_paper_experiment_ids,
 )
-from tokenshare.experiments.paper_exp4_ablation_runner import (
-    EXP4_EXPERIMENT_ID,
-    validate_exp4_condition_matrix,
-)
+from tokenshare.experiments.paper_exp3_fault_recovery import EXP3_EXPERIMENT_ID
 from tokenshare.experiments.paper_experiment_contracts import (
     FrozenConditionSelectionBinding,
     PaperExecutionContext,
 )
 from tokenshare.experiments.paper_formal_runner import (
+    APPROVED_ENDPOINT_BINDINGS_KEY,
     validate_paper_formal_suite_plan,
 )
+from tokenshare.experiments.paper_model_identity import (
+    PaperModelEndpointIdentity,
+    validate_fixed_entry_config_identity,
+)
 from tokenshare.experiments.paper_models import (
+    FORMAL_MODEL_ENDPOINT_EXPERIMENT_ID,
     PaperBudgetResult,
     PaperExperimentCondition,
     digest_json,
@@ -221,16 +224,17 @@ def validate_paper_formal_budget_commitments(
     )
     if tuple(frozen_selections) != expected_frozen:
         raise ValueError("formal budget frozen selection mismatch")
+    frozen_by_condition_id = {
+        str(selection["condition_id"]): selection
+        for selection in expected_frozen
+    }
 
     commitments = _budget_ai_unit_commitments(budget)
     expected_keys: set[tuple[str, str]] = set()
     split_profiles: dict[tuple[str, str | None, str | None], Mapping[str, Any]] = {}
     for plan in plans:
         for condition, binding in _ordered_condition_bindings(plan):
-            exact_selection = _expected_frozen_selection(
-                expected_frozen,
-                condition_id=condition.condition_id,
-            )
+            exact_selection = frozen_by_condition_id[condition.condition_id]
             selection_ai_units = 0
             for case_id in binding.selection.ordered_case_ids:
                 key = (condition.condition_id, case_id)
@@ -294,6 +298,12 @@ def freeze_paper_formal_plan_snapshot(
     """冻结完整正式计划；只读运行，不构造 smoke authority 或调用 provider。"""
 
     plans = tuple(dispatch_plans)
+    _validate_canonical_formal_plans(
+        plans=plans,
+        catalog_manifest=catalog_manifest,
+        budget=budget,
+        ai_api_configs=ai_api_configs,
+    )
     validate_paper_formal_suite_plan(
         dispatch_plans=plans,
         catalog_manifest=catalog_manifest,
@@ -324,12 +334,6 @@ def freeze_paper_formal_plan_snapshot(
         catalog_manifest=catalog_manifest,
         budget=budget,
     )
-    _validate_complete_experiment_matrices(
-        plans=plans,
-        catalog_manifest=catalog_manifest,
-        ai_api_configs=ai_api_configs,
-    )
-
     commitments = _budget_ai_unit_commitments(budget)
     cases_by_id = _unique_catalog_cases(catalog_manifest)
     condition_rows: list[FormalConditionSnapshot] = []
@@ -425,85 +429,124 @@ def freeze_paper_formal_plan_snapshot(
     )
 
 
-def _validate_complete_experiment_matrices(
+def _validate_canonical_formal_plans(
     *,
     plans: Sequence[PaperExperimentDispatchPlan],
     catalog_manifest: PaperInputCatalogManifest,
+    budget: PaperBudgetResult,
     ai_api_configs: Mapping[str, Any],
 ) -> None:
-    for plan in plans:
-        if plan.experiment_id == EXP3_EXPERIMENT_ID:
-            if plan.catalog_execution_view is None:
-                raise ValueError("Experiment 3 formal plan requires catalog execution view")
-            catalog_view = restore_catalog_execution_view(
-                plan.catalog_execution_view,
-                catalog_manifest=catalog_manifest,
-            )
-            validate_exp3_condition_matrix(
-                plan.conditions,
-                plan.selections,
-                catalog=catalog_view,
-            )
-        elif plan.experiment_id == EXP4_EXPERIMENT_ID:
-            if plan.catalog_execution_view is None:
-                raise ValueError("Experiment 4 formal plan requires catalog execution view")
-            catalog_view = restore_catalog_execution_view(
-                plan.catalog_execution_view,
-                catalog_manifest=catalog_manifest,
-            )
-            validate_exp4_condition_matrix(
-                plan.conditions,
-                plan.selections,
-                context=_exp4_validation_context(
-                    plan=plan,
-                    catalog_view=catalog_view,
-                    ai_api_configs=ai_api_configs,
-                ),
-            )
-
-
-def _exp4_validation_context(
-    *,
-    plan: PaperExperimentDispatchPlan,
-    catalog_view: Any,
-    ai_api_configs: Mapping[str, Any],
-) -> PaperExecutionContext:
-    if not plan.conditions:
-        raise ValueError("Experiment 4 formal plan has no conditions")
-    condition = plan.conditions[0]
-    _config, _entry, request_controls = _resolved_request_controls(
-        condition=condition,
+    expected_experiment_ids = registered_paper_experiment_ids()
+    if tuple(plan.experiment_id for plan in plans) != expected_experiment_ids:
+        raise ValueError("canonical formal experiment order mismatch")
+    baseline_binding, exp5_binding, request_limits = _formal_endpoint_authorities(
+        budget=budget,
         ai_api_configs=ai_api_configs,
     )
-    endpoint_binding = {
-        "provider_config_id": condition.provider_config_id,
-        "selected_entry_id": condition.model_entry_id,
-        "model_entry_id": condition.model_entry_id,
-        "provider_family": condition.provider_family,
-        "provider_model_id": condition.provider_model_id,
-        "reasoning_profile_id": condition.reasoning_profile_id,
-        "model_cohort_id": condition.model_cohort_id,
-        "model_cohort_digest": condition.model_cohort_digest,
-        "cohort_member_id": condition.cohort_member_id,
-        "source_provider_config_digest": condition.source_provider_config_digest,
-        "model_endpoint_identity_digest": condition.model_endpoint_identity_digest,
+    for plan in plans:
+        if plan.catalog_execution_view is None:
+            raise ValueError("formal plan requires catalog execution view")
+        catalog_view = restore_catalog_execution_view(
+            plan.catalog_execution_view,
+            catalog_manifest=catalog_manifest,
+        )
+        endpoint_binding = (
+            exp5_binding
+            if plan.experiment_id == FORMAL_MODEL_ENDPOINT_EXPERIMENT_ID
+            else baseline_binding
+        )
+        expected = plan_paper_experiment(
+            context=PaperExecutionContext(
+                context_id=f"formal_canonical_{plan.experiment_id}",
+                catalog=catalog_view,
+                approved_endpoint_binding=endpoint_binding,
+                request_limits=request_limits,
+                hard_limits={"max_total_provider_attempts": 0},
+                output_root=plan.output_root,
+                artifact_store=object(),
+                event_store=object(),
+                execution_callback=_forbidden_plan_execution,
+            ),
+            experiment_id=plan.experiment_id,
+        )
+        if plan.to_dict() != expected.to_dict():
+            raise ValueError(
+                f"canonical formal plan mismatch: {plan.experiment_id}"
+            )
+
+
+def _formal_endpoint_authorities(
+    *,
+    budget: PaperBudgetResult,
+    ai_api_configs: Mapping[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+    commitments = _budget_commitments_body(budget)
+    endpoint_identity = commitments.get("endpoint_identity")
+    if not isinstance(endpoint_identity, Mapping):
+        raise ValueError("formal budget endpoint identity is missing")
+    baseline = endpoint_identity.get("baseline")
+    exp5_budget = endpoint_identity.get("model_endpoint_cohort_preflight")
+    if not isinstance(baseline, Mapping) or not isinstance(exp5_budget, Mapping):
+        raise ValueError("formal endpoint authority is incomplete")
+
+    scoped_bindings = ai_api_configs.get(APPROVED_ENDPOINT_BINDINGS_KEY)
+    exp5_config = (
+        scoped_bindings.get(FORMAL_MODEL_ENDPOINT_EXPERIMENT_ID)
+        if isinstance(scoped_bindings, Mapping)
+        else None
+    )
+    if not isinstance(exp5_config, Mapping) or dict(exp5_budget) != dict(exp5_config):
+        raise ValueError("formal Exp5 endpoint authority mismatch")
+
+    baseline_body = dict(baseline)
+    selected_entry_id = str(baseline_body.get("selected_entry_id") or "")
+    identity = PaperModelEndpointIdentity(
+        schema_version=str(baseline_body.get("schema_version") or ""),
+        model_cohort_id=str(baseline_body.get("model_cohort_id") or ""),
+        model_cohort_digest=str(baseline_body.get("model_cohort_digest") or ""),
+        cohort_member_id=str(baseline_body.get("cohort_member_id") or ""),
+        provider_config_id=str(baseline_body.get("provider_config_id") or ""),
+        selected_entry_id=selected_entry_id,
+        provider_family=str(baseline_body.get("provider_family") or ""),
+        provider_model_id=str(baseline_body.get("provider_model_id") or ""),
+        reasoning_profile_id=str(baseline_body.get("reasoning_profile_id") or ""),
+        effective_reasoning_controls=dict(
+            baseline_body.get("effective_reasoning_controls") or {}
+        ),
+        source_provider_config_digest=str(
+            baseline_body.get("source_provider_config_digest") or ""
+        ),
+    )
+    config = ai_api_configs.get(identity.provider_config_id)
+    if config is None:
+        raise ValueError("formal baseline provider config is missing")
+    validated = validate_fixed_entry_config_identity(
+        expected_identity=identity,
+        provider_config_id=identity.provider_config_id,
+        source_config=config,
+    )
+    request_controls = {
+        **dict(validated.source_config.defaults),
+        **dict(validated.selected_entry.request_overrides),
+    }
+    expected_baseline = {
+        **identity.to_dict(),
+        "model_entry_id": selected_entry_id,
         "request_controls": request_controls,
     }
-    return PaperExecutionContext(
-        context_id="formal_exp4_plan_validation",
-        catalog=catalog_view,
-        approved_endpoint_binding=endpoint_binding,
-        request_limits=request_controls,
-        hard_limits={"max_total_provider_attempts": 0},
-        output_root=plan.output_root,
-        artifact_store=object(),
-        event_store=object(),
-        execution_callback=_forbidden_plan_execution,
-    )
+    if baseline_body != expected_baseline:
+        raise ValueError("formal baseline endpoint authority mismatch")
+
+    frozen_request_limits = commitments.get("request_limits")
+    if not isinstance(frozen_request_limits, Mapping):
+        raise ValueError("formal budget request limits are missing")
+    if dict(frozen_request_limits) != request_controls:
+        raise ValueError("formal budget request limits mismatch")
+    return baseline_body, dict(exp5_budget), dict(frozen_request_limits)
 
 
-def _forbidden_plan_execution(**_kwargs: Any) -> Any:
-    raise AssertionError("formal Exp4 plan validation must not execute")
+def _forbidden_plan_execution(**_kwargs: Any) -> None:
+    raise AssertionError("formal canonical plan validation must not execute")
 
 
 def _budget_ai_unit_commitments(
@@ -545,21 +588,6 @@ def _ordered_condition_bindings(
         (condition, bindings_by_id[condition.condition_id])
         for condition in plan.conditions
     )
-
-
-def _expected_frozen_selection(
-    frozen_selections: Sequence[Mapping[str, Any]],
-    *,
-    condition_id: str,
-) -> Mapping[str, Any]:
-    matches = tuple(
-        selection
-        for selection in frozen_selections
-        if selection.get("condition_id") == condition_id
-    )
-    if len(matches) != 1:
-        raise ValueError("formal budget frozen selection binding mismatch")
-    return matches[0]
 
 
 def _freeze_endpoint_controls(

@@ -1113,13 +1113,7 @@ def validate_paper_formal_suite_plan(
     ai_api_configs: Mapping[str, Any],
     hard_limits: Mapping[str, Any],
     root_case_filter: Mapping[str, Sequence[str]] | None = None,
-) -> tuple[
-    tuple[
-        PaperExperimentDispatchPlan,
-        tuple[tuple[Any, Any], ...],
-    ],
-    ...,
-]:
+) -> None:
     """只读验证正式计划可被 runner 调度，不创建 evidence 或 provider 调用。"""
 
     plans = tuple(dispatch_plans)
@@ -1127,7 +1121,7 @@ def validate_paper_formal_suite_plan(
         plans=plans,
         root_case_filter=root_case_filter,
     )
-    return _validate_suite_inputs(
+    _validate_suite_inputs(
         dispatch_plans=plans,
         catalog_manifest=catalog_manifest,
         budget=budget,

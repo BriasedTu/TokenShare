@@ -22,7 +22,11 @@ from tokenshare.experiments.paper_formal_plan import (
     validate_paper_formal_budget_commitments,
     validate_paper_formal_plan_bindings,
 )
-from tokenshare.experiments.paper_formal_runner import APPROVED_ENDPOINT_BINDINGS_KEY
+from tokenshare.experiments.paper_formal_runner import (
+    APPROVED_ENDPOINT_BINDINGS_KEY,
+    validate_paper_formal_suite_plan,
+)
+from tokenshare.experiments.paper_models import digest_json
 from tokenshare.experiments.paper_model_policy import (
     build_model_endpoint_cohort_preflight,
     load_model_endpoint_cohort,
@@ -74,13 +78,9 @@ def test_formal_snapshot_freezes_every_current_full_plan_root_without_provider_c
     assert snapshot.first_attempt_ai_unit_count == 40_520
     assert snapshot.provider_calls_made == 0
     assert snapshot.snapshot_digest.startswith("sha256:")
-    assert snapshot.snapshot_digest == freeze_paper_formal_plan_snapshot(
-        dispatch_plans=plans,
-        catalog_manifest=catalog,
-        budget=budget,
-        ai_api_configs=ai_api_configs,
-        output_root=output_root,
-    ).snapshot_digest
+    snapshot_body = snapshot.to_dict()
+    persisted_digest = snapshot_body.pop("snapshot_digest")
+    assert persisted_digest == digest_json(snapshot_body)
     assert len(snapshot.conditions) == snapshot.condition_count
     assert len(snapshot.roots) == snapshot.root_run_count
     assert snapshot.conditions[0].condition is plans[0].conditions[0]
@@ -106,6 +106,189 @@ def test_formal_snapshot_freezes_every_current_full_plan_root_without_provider_c
     assert exp5_root.endpoint_controls.max_provider_attempts == 1
     assert exp5_root.endpoint_controls.max_tokens == 32_768
     assert exp5_root.endpoint_controls.timeout_seconds == 600
+
+
+def test_formal_suite_plan_public_validator_returns_no_internal_bound_plan(
+    formal_inputs,
+) -> None:
+    plans, catalog, budget, ai_api_configs, output_root = formal_inputs
+
+    assert validate_paper_formal_suite_plan(
+        dispatch_plans=plans,
+        catalog_manifest=catalog,
+        budget=budget,
+        output_root=output_root,
+        ai_api_configs=ai_api_configs,
+        hard_limits={
+            "max_total_provider_attempts": budget.max_provider_attempts,
+            "max_total_tokens": budget.token_upper_bound,
+            "max_cost_estimate": budget.cost_upper_bound,
+        },
+    ) is None
+
+
+@pytest.mark.parametrize(
+    ("experiment_index", "omitted_axis"),
+    (
+        (0, "first_condition"),
+        (1, "worker_slice"),
+        (4, "endpoint_condition_slice"),
+    ),
+)
+def test_formal_snapshot_rejects_self_consistent_partial_formal_plan(
+    formal_inputs,
+    experiment_index: int,
+    omitted_axis: str,
+) -> None:
+    plans, catalog, budget, ai_api_configs, output_root = formal_inputs
+    target = plans[experiment_index]
+    if omitted_axis == "first_condition":
+        omitted_ids = {target.conditions[0].condition_id}
+    elif omitted_axis == "worker_slice":
+        omitted_worker_count = target.conditions[0].worker_count
+        omitted_ids = {
+            condition.condition_id
+            for condition in target.conditions
+            if condition.worker_count == omitted_worker_count
+        }
+    else:
+        omitted_ids = {target.conditions[0].condition_id}
+    partial_target = replace(
+        target,
+        conditions=tuple(
+            condition
+            for condition in target.conditions
+            if condition.condition_id not in omitted_ids
+        ),
+        condition_selection_bindings=tuple(
+            binding
+            for binding in target.condition_selection_bindings
+            if binding.condition_id not in omitted_ids
+        ),
+    )
+    partial_plans = (
+        *plans[:experiment_index],
+        partial_target,
+        *plans[experiment_index + 1 :],
+    )
+    partial_budget = _replan_budget(
+        plans=partial_plans,
+        catalog=catalog,
+        source_budget=budget,
+    )
+
+    with pytest.raises(ValueError, match="canonical formal plan mismatch"):
+        freeze_paper_formal_plan_snapshot(
+            dispatch_plans=partial_plans,
+            catalog_manifest=catalog,
+            budget=partial_budget,
+            ai_api_configs=ai_api_configs,
+            output_root=output_root,
+        )
+
+
+def test_formal_budget_planner_rejects_missing_exp5_endpoint_member(
+    formal_inputs,
+) -> None:
+    plans, catalog, budget, _configs, _root = formal_inputs
+    exp5 = plans[4]
+    omitted_member_id = exp5.conditions[0].cohort_member_id
+    omitted_ids = {
+        condition.condition_id
+        for condition in exp5.conditions
+        if condition.cohort_member_id == omitted_member_id
+    }
+    partial_exp5 = replace(
+        exp5,
+        conditions=tuple(
+            condition
+            for condition in exp5.conditions
+            if condition.condition_id not in omitted_ids
+        ),
+        condition_selection_bindings=tuple(
+            binding
+            for binding in exp5.condition_selection_bindings
+            if binding.condition_id not in omitted_ids
+        ),
+    )
+
+    with pytest.raises(ValueError, match="exact four-member cohort"):
+        _replan_budget(
+            plans=(*plans[:4], partial_exp5),
+            catalog=catalog,
+            source_budget=budget,
+        )
+
+
+@pytest.mark.parametrize("mutation", ("missing", "reordered", "duplicate"))
+def test_formal_snapshot_rejects_noncanonical_experiment_collection(
+    formal_inputs,
+    mutation: str,
+) -> None:
+    plans, catalog, budget, ai_api_configs, output_root = formal_inputs
+    if mutation == "missing":
+        drifted = plans[:-1]
+    elif mutation == "reordered":
+        drifted = (plans[1], plans[0], *plans[2:])
+    else:
+        drifted = (*plans, plans[-1])
+
+    with pytest.raises(ValueError, match="canonical formal experiment order mismatch"):
+        freeze_paper_formal_plan_snapshot(
+            dispatch_plans=drifted,
+            catalog_manifest=catalog,
+            budget=budget,
+            ai_api_configs=ai_api_configs,
+            output_root=output_root,
+        )
+
+
+def test_formal_snapshot_rejects_exp4_identity_derived_from_drifted_conditions(
+    formal_inputs,
+) -> None:
+    plans, catalog, budget, ai_api_configs, output_root = formal_inputs
+    exp4 = plans[3]
+    drifted_conditions = tuple(
+        replace(
+            condition,
+            reasoning_profile_id="drifted_profile",
+            model_cohort_id="tokenshare.paper.drifted_baseline.v1",
+            model_cohort_digest="sha256:" + "e" * 64,
+            cohort_member_id="drifted_baseline_member",
+            model_endpoint_identity_digest="sha256:" + "d" * 64,
+        )
+        for condition in exp4.conditions
+    )
+    selections_by_id = {
+        binding.condition_id: binding.selection
+        for binding in exp4.condition_selection_bindings
+    }
+    drifted_exp4 = replace(
+        exp4,
+        conditions=drifted_conditions,
+        condition_selection_bindings=tuple(
+            FrozenConditionSelectionBinding.from_condition(
+                condition,
+                selections_by_id[condition.condition_id],
+            )
+            for condition in drifted_conditions
+        ),
+    )
+    drifted_plans = (*plans[:3], drifted_exp4, plans[4])
+    drifted_budget = _replan_budget(
+        plans=drifted_plans,
+        catalog=catalog,
+        source_budget=budget,
+    )
+
+    with pytest.raises(ValueError, match="canonical formal plan mismatch"):
+        freeze_paper_formal_plan_snapshot(
+            dispatch_plans=drifted_plans,
+            catalog_manifest=catalog,
+            budget=drifted_budget,
+            ai_api_configs=ai_api_configs,
+            output_root=output_root,
+        )
 
 
 def test_formal_binding_validator_rejects_condition_digest_mismatch(
@@ -385,3 +568,39 @@ def _catalog_with_case_changes(catalog, case_id: str, changes: dict):
         updates[field_name] = tuple(changed)
     assert found
     return replace(catalog, **updates)
+
+
+def _replan_budget(*, plans, catalog, source_budget):
+    commitments = source_budget.quota_preflight["budget_commitments"]
+    endpoint_identity = commitments["endpoint_identity"]
+    exp5_preflight = endpoint_identity["model_endpoint_cohort_preflight"]
+    conditions = tuple(
+        condition
+        for plan in plans
+        for condition in plan.conditions
+    )
+    frozen_selections = tuple(
+        {
+            **binding.selection.to_dict(),
+            "condition_id": binding.condition_id,
+            "condition_digest": binding.condition_digest,
+        }
+        for plan in plans
+        for binding in plan.condition_selection_bindings
+    )
+    return plan_paper_suite(
+        catalog_manifest=catalog,
+        conditions=conditions,
+        max_provider_attempts_per_ai_unit=1,
+        token_upper_bound_per_provider_attempt=304_096,
+        token_upper_bound_by_endpoint_identity_digest=(
+            build_exp5_v3_token_ceiling_mapping(exp5_preflight)
+        ),
+        cost_upper_bound_per_provider_attempt=0.05,
+        plan_only=True,
+        lean_3x3_matrix=build_lean_3x3_matrix_plan(catalog_manifest=catalog),
+        model_endpoint_cohort_preflight=exp5_preflight,
+        frozen_selections=frozen_selections,
+        endpoint_identity=endpoint_identity,
+        request_limits=dict(commitments["request_limits"]),
+    )
