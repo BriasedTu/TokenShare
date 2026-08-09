@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+from decimal import Decimal
 import hashlib
 import json
 from pathlib import Path
@@ -395,6 +396,7 @@ def _row_from_persisted_evidence(
         root=root,
         artifacts=artifacts,
         capturing=capturing,
+        task=task,
     )
     reasons = list(
         dict.fromkeys(
@@ -806,7 +808,16 @@ def _actual_usage(
     root: Path,
     artifacts: Sequence[Mapping[str, Any]],
     capturing: bool,
+    task: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
+    trace_source_usage = (
+        task.get("trace_source_usage") if isinstance(task, Mapping) else None
+    )
+    if trace_source_usage is not None:
+        try:
+            return _trace_source_actual_usage(trace_source_usage)
+        except (ArithmeticError, TypeError, ValueError):
+            return _missing_usage("invalid_trace_source_usage_evidence")
     if capturing:
         return {
             "provider_attempt_count": 0,
@@ -1026,6 +1037,175 @@ def _actual_usage(
             if cost_missing or (token_missing and not inconsistent_token_usage)
             else None
         ),
+    }
+
+
+def _trace_source_actual_usage(summary: Any) -> dict[str, Any]:
+    if not isinstance(summary, Mapping):
+        raise ValueError("trace source usage summary must be a mapping")
+    if (
+        summary.get("schema_version") != "tokenshare.paper_trace_source_usage.v1"
+        or summary.get("attribution_kind") != "immutable_response_bank"
+        or summary.get("current_provider_call_count") != 0
+    ):
+        raise ValueError("trace source usage summary header is invalid")
+    current_spend = Decimal(str(summary.get("current_provider_spend_cny")))
+    if not current_spend.is_finite() or current_spend != 0:
+        raise ValueError("trace source usage current provider spend is not zero")
+    raw_consumptions = summary.get("consumptions")
+    if not isinstance(raw_consumptions, Sequence) or isinstance(
+        raw_consumptions, (str, bytes, bytearray)
+    ):
+        raise ValueError("trace source consumptions must be a sequence")
+    consumptions = tuple(raw_consumptions)
+    if (
+        summary.get("committed_consumption_count") != len(consumptions)
+        or any(not isinstance(value, Mapping) for value in consumptions)
+    ):
+        raise ValueError("trace source consumption count is invalid")
+    consumption_ids = tuple(
+        consumption.get("consumption_id") for consumption in consumptions
+    )
+    if (
+        any(
+            not isinstance(consumption_id, str) or not consumption_id
+            for consumption_id in consumption_ids
+        )
+        or len(set(consumption_ids)) != len(consumption_ids)
+    ):
+        raise ValueError("trace source consumption identity is invalid")
+
+    for consumption in consumptions:
+        prompt = consumption.get("prompt_tokens")
+        completion = consumption.get("completion_tokens")
+        total = consumption.get("total_tokens")
+        if (
+            prompt is not None
+            and completion is not None
+            and total is not None
+            and (
+                type(prompt) is not int
+                or type(completion) is not int
+                or type(total) is not int
+                or prompt < 0
+                or completion < 0
+                or total < 0
+                or total != prompt + completion
+            )
+        ):
+            raise ValueError("trace source token usage is inconsistent")
+
+    latency = _trace_source_metric(
+        consumptions,
+        field_name="latency_ms",
+        metric_kind="number",
+        unavailable_reason="missing_trace_source_latency_evidence",
+    )
+    prompt = _trace_source_metric(
+        consumptions,
+        field_name="prompt_tokens",
+        metric_kind="integer",
+        unavailable_reason="missing_trace_source_prompt_tokens_evidence",
+    )
+    completion = _trace_source_metric(
+        consumptions,
+        field_name="completion_tokens",
+        metric_kind="integer",
+        unavailable_reason="missing_trace_source_completion_tokens_evidence",
+    )
+    total = _trace_source_metric(
+        consumptions,
+        field_name="total_tokens",
+        metric_kind="integer",
+        unavailable_reason="missing_trace_source_total_tokens_evidence",
+    )
+    cost = _trace_source_metric(
+        consumptions,
+        field_name="cost_estimate_cny",
+        metric_kind="decimal",
+        unavailable_reason="missing_trace_source_cost_estimate_evidence",
+    )
+    any_missing = any(
+        metric["missing_count"] > 0
+        for metric in (latency, prompt, completion, total, cost)
+    )
+    return {
+        "provider_attempt_count": 0,
+        "provider_attempt_count_unavailable_reason": None,
+        "provider_latency_ms": latency["value"],
+        "provider_latency_sample_size": latency["sample_size"],
+        "provider_latency_missing_count": latency["missing_count"],
+        "provider_latency_unavailable_reason": latency["unavailable_reason"],
+        "prompt_tokens": prompt["value"],
+        "prompt_tokens_sample_size": prompt["sample_size"],
+        "prompt_tokens_missing_count": prompt["missing_count"],
+        "prompt_tokens_unavailable_reason": prompt["unavailable_reason"],
+        "completion_tokens": completion["value"],
+        "completion_tokens_sample_size": completion["sample_size"],
+        "completion_tokens_missing_count": completion["missing_count"],
+        "completion_tokens_unavailable_reason": completion["unavailable_reason"],
+        "total_tokens": total["value"],
+        "total_tokens_sample_size": total["sample_size"],
+        "total_tokens_missing_count": total["missing_count"],
+        "total_tokens_unavailable_reason": total["unavailable_reason"],
+        "cost_estimate": cost["value"],
+        "cost_estimate_sample_size": cost["sample_size"],
+        "cost_estimate_missing_count": cost["missing_count"],
+        "cost_estimate_unavailable_reason": cost["unavailable_reason"],
+        "evidence_issue": (
+            "missing_trace_source_usage_evidence" if any_missing else None
+        ),
+    }
+
+
+def _trace_source_metric(
+    consumptions: Sequence[Mapping[str, Any]],
+    *,
+    field_name: str,
+    metric_kind: str,
+    unavailable_reason: str,
+) -> dict[str, Any]:
+    values: list[int | float | Decimal] = []
+    missing_count = 0
+    for consumption in consumptions:
+        value = consumption.get(field_name)
+        if value is None:
+            missing_count += 1
+            continue
+        if metric_kind == "integer":
+            if type(value) is not int or value < 0:
+                raise ValueError(f"trace source {field_name} is invalid")
+            values.append(value)
+        elif metric_kind == "number":
+            if (
+                not isinstance(value, (int, float))
+                or isinstance(value, bool)
+                or value < 0
+            ):
+                raise ValueError(f"trace source {field_name} is invalid")
+            values.append(float(value))
+        elif metric_kind == "decimal":
+            normalized = Decimal(str(value))
+            if not normalized.is_finite() or normalized < 0:
+                raise ValueError(f"trace source {field_name} is invalid")
+            values.append(normalized)
+        else:
+            raise ValueError("trace source metric kind is unsupported")
+    if not consumptions:
+        missing_count = 1
+    complete = missing_count == 0
+    if metric_kind == "decimal":
+        total: int | float | Decimal = sum(values, Decimal(0))
+        value = float(total) if complete else None
+    elif metric_kind == "number":
+        value = float(sum(values)) if complete else None
+    else:
+        value = int(sum(values)) if complete else None
+    return {
+        "value": value,
+        "sample_size": len(values),
+        "missing_count": missing_count,
+        "unavailable_reason": None if complete else unavailable_reason,
     }
 
 
