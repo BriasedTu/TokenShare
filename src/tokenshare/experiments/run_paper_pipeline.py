@@ -455,7 +455,14 @@ def _acquire_bank_adapter(request: PipelineCommandRequest) -> Mapping[str, objec
     if not acquisition_requests:
         raise ValueError("acquisition service requests are empty")
     orchestrator = ResponseBankAcquisitionOrchestrator(**arguments)
-    batch = orchestrator.acquire_all(acquisition_requests)
+    batch = orchestrator.acquire_all(
+        acquisition_requests,
+        max_in_flight=(
+            10
+            if request.serialized_arguments.get("results_first_matrix8") is True
+            else 1
+        ),
+    )
     results = tuple(batch.results)
     provider_calls = sum(
         1 for result in results if bool(getattr(result, "transport_invoked", False))

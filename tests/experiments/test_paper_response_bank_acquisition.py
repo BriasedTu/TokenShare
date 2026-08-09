@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import multiprocessing
+from threading import Event, Lock
 from dataclasses import replace
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -68,6 +69,50 @@ class ScriptedExactTransport:
         if isinstance(outcome, BaseException):
             raise outcome
         return outcome
+
+
+class BoundedParallelProbeTransport:
+    def __init__(self) -> None:
+        self.calls: list[bytes] = []
+        self.active = 0
+        self.max_active = 0
+        self._lock = Lock()
+        self._release = Event()
+
+    def post_chat_completion(self, **kwargs: Any) -> FakeProviderResponse:
+        with self._lock:
+            self.calls.append(kwargs["body_bytes"])
+            self.active += 1
+            self.max_active = max(self.max_active, self.active)
+            if self.active >= 2:
+                self._release.set()
+        self._release.wait(timeout=0.5)
+        try:
+            return _success_response("parallel")
+        finally:
+            with self._lock:
+                self.active -= 1
+
+
+class FailureStopsNewSubmissionsTransport(BoundedParallelProbeTransport):
+    def post_chat_completion(self, **kwargs: Any) -> FakeProviderResponse:
+        with self._lock:
+            self.calls.append(kwargs["body_bytes"])
+            call_index = len(self.calls) - 1
+            self.active += 1
+            self.max_active = max(self.max_active, self.active)
+            if self.active >= 2:
+                self._release.set()
+        self._release.wait(timeout=0.5)
+        try:
+            if call_index == 0:
+                return FakeProviderResponse(
+                    status_code=503, body={"message": "provider failure"}
+                )
+            return _success_response("in-flight")
+        finally:
+            with self._lock:
+                self.active -= 1
 
 
 def _success_response(marker: str = "ok") -> FakeProviderResponse:
@@ -852,10 +897,73 @@ def test_budget_exhaustion_closes_inflight_and_leaves_exact_missing_inventory(
         tmp_path / "bank", rows, transport, limits=_limits(calls=1)
     )
     report = orchestrator.acquire_all(
-        tuple(_request(row, value) for row, value in zip(rows, prepared, strict=True))
+        tuple(_request(row, value) for row, value in zip(rows, prepared, strict=True)),
+        max_in_flight=2,
     )
     assert report.status == "blocked"
     assert report.blocked_reason == "provider call hard limit exceeded"
-    assert report.missing_inventory_entry_ids == (rows[1].inventory_entry_id,)
+    assert len(report.missing_inventory_entry_ids) == 1
+    assert set(report.missing_inventory_entry_ids) < {
+        row.inventory_entry_id for row in rows
+    }
     assert len(transport.calls) == 1
+    assert len(report.results) == 1
+    assert report.results[0].entry.inventory_entry_id not in set(
+        report.missing_inventory_entry_ids
+    )
     assert all(record.state == "settled" for record in ledger.list_reservations())
+
+
+def test_acquire_all_uses_bounded_parallelism_and_preserves_request_order(
+    tmp_path: Path,
+) -> None:
+    prepared = tuple(
+        _prepared(unit=f"parallel-{index}", marker=str(index))
+        for index in range(4)
+    )
+    rows = tuple(_row(value) for value in prepared)
+    transport = BoundedParallelProbeTransport()
+    orchestrator, _ = _orchestrator(
+        tmp_path / "bank", rows, transport, limits=_limits(calls=4)
+    )
+    requests = tuple(
+        _request(row, value) for row, value in zip(rows, prepared, strict=True)
+    )
+
+    report = orchestrator.acquire_all(requests, max_in_flight=3)
+
+    assert report.status == "complete"
+    assert 1 < transport.max_active <= 3
+    assert len(transport.calls) == 4
+    assert tuple(result.entry.inventory_entry_id for result in report.results) == tuple(
+        row.inventory_entry_id for row in rows
+    )
+
+
+def test_provider_failure_drains_inflight_and_stops_new_submissions(
+    tmp_path: Path,
+) -> None:
+    prepared = tuple(
+        _prepared(unit=f"failure-stop-{index}", marker=str(index))
+        for index in range(5)
+    )
+    rows = tuple(_row(value) for value in prepared)
+    transport = FailureStopsNewSubmissionsTransport()
+    orchestrator, _ = _orchestrator(
+        tmp_path / "bank", rows, transport, limits=_limits(calls=5)
+    )
+    requests = tuple(
+        _request(row, value) for row, value in zip(rows, prepared, strict=True)
+    )
+
+    report = orchestrator.acquire_all(requests, max_in_flight=2)
+
+    assert report.status == "incomplete"
+    assert transport.max_active == 2
+    assert len(transport.calls) == 2
+    assert report.missing_inventory_entry_ids == tuple(
+        row.inventory_entry_id for row in rows[2:]
+    )
+    assert tuple(result.entry.inventory_entry_id for result in report.results) == tuple(
+        row.inventory_entry_id for row in rows[:2]
+    )

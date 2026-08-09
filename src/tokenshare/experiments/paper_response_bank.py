@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import base64
+from concurrent.futures import ThreadPoolExecutor, wait
 import json
 from dataclasses import asdict, dataclass, field, is_dataclass, replace
 from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
+from threading import Lock
 from typing import Any, Callable, ClassVar, Mapping, Sequence
 
 from tokenshare.executors.ai_api import (
@@ -1305,6 +1307,8 @@ class ResponseBankAcquisitionOrchestrator:
         self._entry_store = ArtifactStore(
             self.output_root, artifact_dir_name="entries"
         )
+        # Provider dispatch 可并发；Windows 上同内容 role 的 durable marker commit 需串行。
+        self._artifact_write_lock = Lock()
 
     def _validate_authorization_context(self) -> None:
         context = self.paid_authorization
@@ -1419,17 +1423,18 @@ class ResponseBankAcquisitionOrchestrator:
         lifecycle.append("prepared")
         lifecycle.append("consistency_validated")
         lifecycle.append("admitted")
-        request_ref = self._object_store.save_content_addressed_bytes(
-            prepared.body_bytes,
-            artifact_type="PreparedOutboundRequest",
-            media_type="application/json",
-            artifact_schema_id="tokenshare.prepared_outbound_request",
-            artifact_schema_version="v1",
-            source={"kind": "response_bank_acquisition"},
-            metadata={"object_role": "request_body"},
-            created_at="content-addressed",
-            durability_hook=self.durability_hook,
-        )
+        with self._artifact_write_lock:
+            request_ref = self._object_store.save_content_addressed_bytes(
+                prepared.body_bytes,
+                artifact_type="PreparedOutboundRequest",
+                media_type="application/json",
+                artifact_schema_id="tokenshare.prepared_outbound_request",
+                artifact_schema_version="v1",
+                source={"kind": "response_bank_acquisition"},
+                metadata={"object_role": "request_body"},
+                created_at="content-addressed",
+                durability_hook=self.durability_hook,
+            )
         lifecycle.append("prepared_artifact_committed")
         reservation_request = self._reservation_request(request)
         decision = self.budget_ledger.reserve(reservation_request)
@@ -1718,16 +1723,17 @@ class ResponseBankAcquisitionOrchestrator:
             object_locators=locators,
             acquisition_state_ref=attempt_id,
         )
-        entry_ref = self._entry_store.save_json(
-            entry.to_dict(),
-            artifact_id=self._entry_artifact_id(row.inventory_entry_id),
-            artifact_type="ResponseBankEntry",
-            artifact_schema_id="tokenshare.response_bank_entry",
-            artifact_schema_version="v1",
-            source={"kind": "response_bank_acquisition"},
-            metadata={"inventory_entry_id": row.inventory_entry_id},
-            created_at=request.requested_at,
-        )
+        with self._artifact_write_lock:
+            entry_ref = self._entry_store.save_json(
+                entry.to_dict(),
+                artifact_id=self._entry_artifact_id(row.inventory_entry_id),
+                artifact_type="ResponseBankEntry",
+                artifact_schema_id="tokenshare.response_bank_entry",
+                artifact_schema_version="v1",
+                source={"kind": "response_bank_acquisition"},
+                metadata={"inventory_entry_id": row.inventory_entry_id},
+                created_at=request.requested_at,
+            )
         lifecycle.append("terminal_entry_committed")
         self._crash("terminal_entry_committed")
         if reacquisition_id is None:
@@ -1766,24 +1772,82 @@ class ResponseBankAcquisitionOrchestrator:
         )
 
     def acquire_all(
-        self, requests: Sequence[AcquisitionRequest]
+        self,
+        requests: Sequence[AcquisitionRequest],
+        *,
+        max_in_flight: int = 1,
     ) -> AcquisitionBatchResult:
+        if (
+            isinstance(max_in_flight, bool)
+            or not isinstance(max_in_flight, int)
+            or not 1 <= max_in_flight <= 10
+        ):
+            raise ValueError("max_in_flight must be an integer between 1 and 10")
         initial_reconcile = self.reconcile()
         # 本次 resume 只关闭 pre-dispatch crash；不能在同一 invocation 立刻重发。
         skip_after_safe_release = set(initial_reconcile.reconciled_pre_dispatch)
-        results: list[AcquisitionResult] = []
+        pending = tuple(
+            (index, request)
+            for index, request in enumerate(requests)
+            if request.inventory_row.inventory_entry_id
+            not in skip_after_safe_release
+        )
         blocked_reason: str | None = None
-        for request in requests:
-            if request.inventory_row.inventory_entry_id in skip_after_safe_release:
-                continue
-            try:
-                results.append(self.acquire(request))
-            except BudgetExceededError as exc:
-                blocked_reason = str(exc)
-                break
-            except AcquisitionAuthorizationError as exc:
-                blocked_reason = str(exc)
-                break
+        if max_in_flight == 1:
+            # paid/default 路径保持原有同线程、逐请求行为。
+            serial_results: list[AcquisitionResult] = []
+            for _, request in pending:
+                try:
+                    serial_results.append(self.acquire(request))
+                except (BudgetExceededError, AcquisitionAuthorizationError) as exc:
+                    blocked_reason = str(exc)
+                    break
+            results = tuple(serial_results)
+        else:
+            results_by_index: dict[int, AcquisitionResult] = {}
+            unexpected_error: BaseException | None = None
+            offset = 0
+            with ThreadPoolExecutor(max_workers=max_in_flight) as executor:
+                while offset < len(pending):
+                    wave = pending[offset : offset + max_in_flight]
+                    futures = {
+                        executor.submit(self.acquire, request): index
+                        for index, request in wave
+                    }
+                    # 一个 wave 全部归档后才补新请求，确保 provider failure 能阻止新提交。
+                    wait(tuple(futures))
+                    stop_submitting = False
+                    for future, index in sorted(
+                        futures.items(), key=lambda item: item[1]
+                    ):
+                        try:
+                            result = future.result()
+                        except (
+                            BudgetExceededError,
+                            AcquisitionAuthorizationError,
+                        ) as exc:
+                            if blocked_reason is None:
+                                blocked_reason = str(exc)
+                            stop_submitting = True
+                        except BaseException as exc:
+                            if unexpected_error is None:
+                                unexpected_error = exc
+                            stop_submitting = True
+                        else:
+                            results_by_index[index] = result
+                            if result.failure_kind is not None or (
+                                result.entry is not None
+                                and result.entry.terminal_kind == "provider_failure"
+                            ):
+                                stop_submitting = True
+                    offset += len(wave)
+                    if stop_submitting:
+                        break
+            if unexpected_error is not None:
+                raise unexpected_error
+            results = tuple(
+                results_by_index[index] for index in sorted(results_by_index)
+            )
         report = self.reconcile()
         status = "complete"
         if blocked_reason is not None:
@@ -1795,7 +1859,7 @@ class ResponseBankAcquisitionOrchestrator:
             status = "incomplete"
         return AcquisitionBatchResult(
             status=status,
-            results=tuple(results),
+            results=results,
             missing_inventory_entry_ids=report.missing_inventory_entry_ids,
             ambiguous_inventory_entry_ids=report.ambiguous_inventory_entry_ids,
             blocked_reason=blocked_reason,
@@ -1955,16 +2019,17 @@ class ResponseBankAcquisitionOrchestrator:
         encoded = json.dumps(
             dict(body), ensure_ascii=False, sort_keys=True, separators=(",", ":")
         ).encode("utf-8")
-        return self._object_store.save_content_addressed_bytes(
-            encoded,
-            artifact_type=f"ResponseBank{role.title().replace('_', '')}",
-            media_type="application/json",
-            artifact_schema_id=f"tokenshare.response_bank_{role}",
-            artifact_schema_version="v1",
-            source={"kind": "response_bank_acquisition"},
-            metadata={"object_role": role},
-            created_at="content-addressed",
-        )
+        with self._artifact_write_lock:
+            return self._object_store.save_content_addressed_bytes(
+                encoded,
+                artifact_type=f"ResponseBank{role.title().replace('_', '')}",
+                media_type="application/json",
+                artifact_schema_id=f"tokenshare.response_bank_{role}",
+                artifact_schema_version="v1",
+                source={"kind": "response_bank_acquisition"},
+                metadata={"object_role": role},
+                created_at="content-addressed",
+            )
 
     def _load_entry(self, inventory_entry_id: str) -> ResponseBankEntry | None:
         artifact_id = self._entry_artifact_id(inventory_entry_id)

@@ -435,8 +435,8 @@ def test_previously_unbound_commands_reach_named_official_service_by_default(
             def __init__(self, **kwargs):
                 calls.append(("ResponseBankAcquisitionOrchestrator", kwargs))
 
-            def acquire_all(self, requests):
-                calls.append(("acquire_all", tuple(requests)))
+            def acquire_all(self, requests, **kwargs):
+                calls.append(("acquire_all", (tuple(requests), kwargs)))
                 return SimpleNamespace(
                     status="complete",
                     results=(
@@ -600,6 +600,9 @@ def test_previously_unbound_commands_reach_named_official_service_by_default(
     assert body["status"] == "completed"
     assert body["scope"] == PROVIDER_COMMANDS.get(command, command)
     assert calls
+    if command == "acquire-bank":
+        assert calls[1][0] == "acquire_all"
+        assert calls[1][1][1] == {"max_in_flight": 1}
 
 
 def test_default_formal_proof_adapter_serializes_infrastructure_block_without_traceback(
@@ -913,6 +916,59 @@ def test_results_first_matrix8_acquire_still_requires_allow_provider_calls(
             str(tmp_path / "plan"),
         ]
     ) == 2
+
+
+def test_results_first_acquisition_adapter_uses_ten_inflight_without_changing_paid_default(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tokenshare.experiments import paper_response_bank
+
+    seen: list[int] = []
+
+    class CapturingOrchestrator:
+        def __init__(self, **_kwargs: object) -> None:
+            pass
+
+        def acquire_all(
+            self, _requests: object, *, max_in_flight: int
+        ) -> object:
+            seen.append(max_in_flight)
+            return SimpleNamespace(status="complete", results=())
+
+    monkeypatch.setattr(
+        paper_response_bank,
+        "ResponseBankAcquisitionOrchestrator",
+        CapturingOrchestrator,
+    )
+    service = pipeline.AcquisitionServiceInput(
+        scope="results_first_matrix8_acquisition",
+        orchestrator_arguments={
+            "output_root": tmp_path,
+            "inventory_digest": DIGESTS["inventory"],
+        },
+        acquisition_requests=(object(),),
+    )
+    request = pipeline.PipelineCommandRequest(
+        command="acquire-bank",
+        scope=service.scope,
+        evidence_class="results_first_real_provider_acquisition",
+        profile=PROFILE,
+        provider_authorization=None,
+        output_root=tmp_path,
+        replay_input_root=None,
+        external_bank_resolver=None,
+        plan_digest=DIGESTS["plan"],
+        inventory_digest=DIGESTS["inventory"],
+        budget_mode="bounded",
+        serialized_arguments={"results_first_matrix8": True},
+        _service_input=service,
+    )
+
+    result = pipeline._acquire_bank_adapter(request)
+
+    assert result["status"] == "completed"
+    assert seen == [10]
 
 
 def test_acquire_bank_validates_bundle_full_budget_before_service_factory(
