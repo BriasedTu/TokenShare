@@ -33,8 +33,9 @@ from tokenshare.experiments.paper_formal_plan import (
     validate_paper_formal_plan_bindings,
 )
 from tokenshare.experiments.paper_response_bank import (
+    RepresentativeAcquisitionAuthority,
     build_representative_unified_acquisition_plan,
-    create_representative_acquisition_plan_bundle,
+    prepare_representative_acquisition_authority,
 )
 from tokenshare.experiments.paper_resource_accounting import FrozenPricing
 from decimal import Decimal
@@ -706,143 +707,6 @@ def test_formal_replacement_requests_match_direct_runtime_for_factor_and_lean(
         assert len({item.inference_request_digest for item in values}) == len(values)
 
 
-def test_representative_acquisition_uses_formal_replacement_slots_and_bundle_budget(
-    formal_inputs,
-    formal_snapshot,
-    tmp_path: Path,
-) -> None:
-    _plans, catalog, _budget, ai_api_configs, _output_root = formal_inputs
-    root = next(
-        item
-        for item in formal_snapshot.roots
-        if item.condition.experiment_id == "exp3_real_ai_fault_recovery"
-        and item.condition.domain == "factorization"
-        and item.condition.repeat_id == 0
-    )
-    records = freeze_formal_root_prepared_requests(
-        root=root,
-        catalog_manifest=catalog,
-        ai_api_configs=ai_api_configs,
-        planning_artifact_root=tmp_path / "representative-base",
-    )
-    snapshot, inventory, coverage = _compact_formal_authority(
-        formal_snapshot,
-        roots=(root,),
-        records=records,
-    )
-
-    plan = response_bank_module._build_representative_unified_acquisition_plan_from_validated_authority(
-        snapshot=snapshot,
-        prepared_inventory=inventory,
-        coverage=coverage,
-        catalog_manifest=catalog,
-        ai_api_configs=ai_api_configs,
-        planning_artifact_root=tmp_path / "representative-acquisition",
-        api_key_env_by_provider_family={"deepseek": "DEEPSEEK_API_KEY"},
-        frozen_pricing_by_provider_family={
-            "deepseek": FrozenPricing(
-                currency="CNY",
-                    input_per_million_tokens=Decimal("3.0"),
-                    output_per_million_tokens=Decimal("6.0"),
-            )
-        },
-        requested_at="2026-08-09T00:00:00Z",
-        max_acquisition_concurrency=10,
-    )
-
-    assert plan.provider_call_count == 0
-    assert plan.max_acquisition_concurrency == 10
-    assert plan.condition_candidate_count == sum(
-        len(record.replacement_slot_ids) for record in records
-    )
-    assert {
-        row.replacement_slot for row in plan.semantic_inventory_plan.rows
-    } == set(records[0].replacement_slot_ids)
-    condition_ref = plan.semantic_inventory_plan.condition_refs[0]
-    assert condition_ref["selection_id"] == root.binding.selection.selection_id
-    assert condition_ref["selection_digest"] == root.selection_digest
-    assert condition_ref["seed"] == root.seed
-    assert condition_ref["split_profile_digest"] == root.split_profile_digest
-    bundle = create_representative_acquisition_plan_bundle(
-        tmp_path / "representative-bundle",
-        plan=plan,
-    )
-    assert bundle.max_acquisition_concurrency == 10
-    assert bundle.full_budget.calls == len(plan.acquisition_requests)
-    assert bundle.full_budget.tokens == sum(
-        item.token_upper_bound for item in plan.acquisition_requests
-    )
-    assert bundle.full_budget.cny == sum(
-        (item.cost_upper_bound for item in plan.acquisition_requests),
-        Decimal("0"),
-    )
-    assert bundle.source_snapshot_digest == plan.source_snapshot_digest
-    assert bundle.source_prepared_inventory_digest == plan.source_prepared_inventory_digest
-    assert bundle.coverage_digest == plan.coverage_digest
-    assert bundle.representative_plan_digest == plan.plan_digest
-
-
-def test_representative_acquisition_deduplicates_only_naturally_identical_requests(
-    formal_inputs,
-    formal_snapshot,
-    tmp_path: Path,
-) -> None:
-    _plans, catalog, _budget, ai_api_configs, _output_root = formal_inputs
-    groups: dict[tuple[object, ...], list[object]] = {}
-    for root in formal_snapshot.roots:
-        if (
-            root.condition.experiment_id == "exp2_real_ai_scalability"
-            and root.repeat_id == 0
-        ):
-            key = (
-                root.case_id,
-                root.seed,
-                root.split_profile_digest,
-                root.planned_ai_unit_ids,
-                root.endpoint_controls.request_controls_digest,
-            )
-            groups.setdefault(key, []).append(root)
-    roots = next(tuple(values[:2]) for values in groups.values() if len(values) >= 2)
-    records = tuple(
-        record
-        for index, root in enumerate(roots)
-        for record in freeze_formal_root_prepared_requests(
-            root=root,
-            catalog_manifest=catalog,
-            ai_api_configs=ai_api_configs,
-            planning_artifact_root=tmp_path / f"exp2-base-{index}",
-        )
-    )
-    snapshot, inventory, coverage = _compact_formal_authority(
-        formal_snapshot,
-        roots=roots,
-        records=records,
-    )
-
-    plan = response_bank_module._build_representative_unified_acquisition_plan_from_validated_authority(
-        snapshot=snapshot,
-        prepared_inventory=inventory,
-        coverage=coverage,
-        catalog_manifest=catalog,
-        ai_api_configs=ai_api_configs,
-        planning_artifact_root=tmp_path / "exp2-acquisition",
-        api_key_env_by_provider_family={"deepseek": "DEEPSEEK_API_KEY"},
-        frozen_pricing_by_provider_family={
-            "deepseek": FrozenPricing(
-                currency="CNY",
-                    input_per_million_tokens=Decimal("3.0"),
-                    output_per_million_tokens=Decimal("6.0"),
-            )
-        },
-        requested_at="2026-08-09T00:00:00Z",
-    )
-
-    assert plan.condition_candidate_count == len(records)
-    assert plan.unique_acquisition_request_count < plan.condition_candidate_count
-    assert len(plan.semantic_inventory_plan.condition_refs) == 2
-    assert len(plan.acquisition_requests) == plan.unique_acquisition_request_count
-
-
 def test_public_representative_acquisition_rejects_compact_noncanonical_snapshot(
     formal_inputs,
     formal_snapshot,
@@ -917,6 +781,7 @@ def test_public_representative_acquisition_rebuilds_and_audits_full_authority(
     )
     calls: dict[str, object] = {}
     sentinel = object()
+    validated_token = object()
 
     def _freeze(**kwargs):
         calls["freeze"] = kwargs
@@ -929,6 +794,10 @@ def test_public_representative_acquisition_rebuilds_and_audits_full_authority(
         calls["build"] = kwargs
         return sentinel
 
+    def _mint(**kwargs):
+        calls["mint"] = kwargs
+        return validated_token
+
     monkeypatch.setattr(formal_plan_module, "freeze_paper_formal_plan_snapshot", _freeze)
     monkeypatch.setattr(
         formal_plan_module,
@@ -939,6 +808,11 @@ def test_public_representative_acquisition_rebuilds_and_audits_full_authority(
         response_bank_module,
         "_build_representative_unified_acquisition_plan_from_validated_authority",
         _build,
+    )
+    monkeypatch.setattr(
+        response_bank_module,
+        "_mint_validated_representative_authority",
+        _mint,
     )
 
     result = build_representative_unified_acquisition_plan(
@@ -960,8 +834,118 @@ def test_public_representative_acquisition_rebuilds_and_audits_full_authority(
     assert calls["freeze"]["budget"] is budget
     assert calls["inventory"]["inventory"] is inventory
     assert calls["inventory"]["snapshot"] is canonical_snapshot
-    assert calls["build"]["snapshot"] is canonical_snapshot
-    assert calls["build"]["coverage"].source_snapshot is canonical_snapshot
+    assert calls["mint"]["snapshot"] is canonical_snapshot
+    assert calls["mint"]["prepared_inventory"] is inventory
+    assert calls["mint"]["coverage"].source_snapshot is canonical_snapshot
+    assert calls["build"]["validated_authority"] is validated_token
+
+
+def test_atomic_representative_authority_freezes_full_inventory_once(
+    formal_inputs,
+    formal_snapshot,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plans, catalog, budget, ai_api_configs, _output_root = formal_inputs
+    root = next(
+        item
+        for item in formal_snapshot.roots
+        if item.condition.experiment_id == "exp3_real_ai_fault_recovery"
+        and item.condition.domain == "factorization"
+        and item.repeat_id == 0
+    )
+    records = freeze_formal_root_prepared_requests(
+        root=root,
+        catalog_manifest=catalog,
+        ai_api_configs=ai_api_configs,
+        planning_artifact_root=tmp_path / "atomic-base",
+    )
+    snapshot, inventory, coverage = _compact_formal_authority(
+        formal_snapshot,
+        roots=(root,),
+        records=records,
+    )
+    calls = {"freeze_inventory": 0, "independent_validate": 0}
+    monkeypatch.setattr(
+        formal_plan_module,
+        "freeze_paper_formal_plan_snapshot",
+        lambda **_kwargs: snapshot,
+    )
+
+    def _freeze_inventory(**_kwargs):
+        calls["freeze_inventory"] += 1
+        return inventory
+
+    def _reject_independent_validate(**_kwargs):
+        calls["independent_validate"] += 1
+        raise AssertionError("atomic factory must not rebuild full inventory")
+
+    monkeypatch.setattr(
+        formal_plan_module,
+        "freeze_paper_formal_prepared_request_inventory",
+        _freeze_inventory,
+    )
+    monkeypatch.setattr(
+        formal_plan_module,
+        "derive_paper_formal_representative_coverage",
+        lambda **_kwargs: coverage,
+    )
+    monkeypatch.setattr(
+        formal_plan_module,
+        "validate_formal_prepared_request_inventory",
+        _reject_independent_validate,
+    )
+
+    authority = prepare_representative_acquisition_authority(
+        dispatch_plans=plans,
+        catalog_manifest=catalog,
+        budget=budget,
+        ai_api_configs=ai_api_configs,
+        planning_artifact_root=tmp_path / "atomic-authority",
+        api_key_env_by_provider_family={"deepseek": "DEEPSEEK_API_KEY"},
+        frozen_pricing_by_provider_family={
+            "deepseek": FrozenPricing(
+                currency="CNY",
+                input_per_million_tokens=Decimal("3.0"),
+                output_per_million_tokens=Decimal("6.0"),
+            )
+        },
+        requested_at="2026-08-09T00:00:00Z",
+    )
+
+    assert type(authority) is RepresentativeAcquisitionAuthority
+    assert authority.snapshot is snapshot
+    assert authority.prepared_inventory is inventory
+    assert authority.coverage is coverage
+    assert authority.coverage.source_snapshot is authority.snapshot
+    assert authority.plan.source_snapshot_digest == snapshot.snapshot_digest
+    assert authority.plan.source_prepared_inventory_digest == inventory.inventory_digest
+    assert authority.plan.coverage_digest == coverage.coverage_digest
+    assert authority.provider_calls_made == 0
+    assert authority.validation_digest.startswith("sha256:")
+    assert calls == {"freeze_inventory": 1, "independent_validate": 0}
+    with pytest.raises(ValueError, match="authority digest mismatch"):
+        replace(authority, validation_digest="")
+    with pytest.raises(TypeError, match="validated authority token is forged"):
+        response_bank_module._ValidatedRepresentativeAuthority(
+            snapshot=snapshot,
+            prepared_inventory=inventory,
+            coverage=coverage,
+            seal=object(),
+        )
+
+
+def test_semantic_builder_rejects_forged_validated_authority_token(tmp_path: Path) -> None:
+    with pytest.raises(TypeError, match="validated authority token"):
+        response_bank_module._build_representative_unified_acquisition_plan_from_validated_authority(
+            validated_authority=object(),
+            catalog_manifest=object(),
+            ai_api_configs={},
+            planning_artifact_root=tmp_path,
+            api_key_env_by_provider_family={},
+            frozen_pricing_by_provider_family={},
+            requested_at="2026-08-09T00:00:00Z",
+        )
 
 
 @pytest.mark.parametrize("root_scope", ("selected", "unselected"))

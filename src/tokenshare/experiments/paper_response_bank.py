@@ -997,6 +997,117 @@ class RepresentativeUnifiedAcquisitionPlan:
             raise ValueError("representative acquisition candidate mapping drift")
 
 
+@dataclass(frozen=True, kw_only=True)
+class RepresentativeAcquisitionAuthority:
+    """一次 canonical freeze 产生的四对象、零 provider 调用 authority。"""
+
+    snapshot: Any
+    prepared_inventory: Any
+    coverage: Any
+    plan: RepresentativeUnifiedAcquisitionPlan
+    validation_digest: str
+    provider_calls_made: int = 0
+    schema_version: str = "tokenshare.representative_acquisition_authority.v1"
+
+    @classmethod
+    def create(
+        cls,
+        *,
+        snapshot: Any,
+        prepared_inventory: Any,
+        coverage: Any,
+        plan: RepresentativeUnifiedAcquisitionPlan,
+    ) -> "RepresentativeAcquisitionAuthority":
+        validation_digest = canonical_digest(
+            {
+                "schema_version": (
+                    "tokenshare.representative_acquisition_authority.v1"
+                ),
+                "source_snapshot_digest": snapshot.snapshot_digest,
+                "source_prepared_inventory_digest": (
+                    prepared_inventory.inventory_digest
+                ),
+                "coverage_digest": coverage.coverage_digest,
+                "representative_plan_digest": plan.plan_digest,
+                "provider_calls_made": 0,
+            }
+        )
+        return cls(
+            snapshot=snapshot,
+            prepared_inventory=prepared_inventory,
+            coverage=coverage,
+            plan=plan,
+            validation_digest=validation_digest,
+        )
+
+    def validation_preimage(self) -> dict[str, object]:
+        return {
+            "schema_version": self.schema_version,
+            "source_snapshot_digest": self.snapshot.snapshot_digest,
+            "source_prepared_inventory_digest": (
+                self.prepared_inventory.inventory_digest
+            ),
+            "coverage_digest": self.coverage.coverage_digest,
+            "representative_plan_digest": self.plan.plan_digest,
+            "provider_calls_made": self.provider_calls_made,
+        }
+
+    def __post_init__(self) -> None:
+        from tokenshare.experiments.paper_formal_plan import (
+            FormalPlanSnapshot,
+            FormalPreparedRequestInventory,
+            FormalRepresentativeCoverage,
+        )
+
+        if (
+            type(self.snapshot) is not FormalPlanSnapshot
+            or type(self.prepared_inventory) is not FormalPreparedRequestInventory
+            or type(self.coverage) is not FormalRepresentativeCoverage
+            or type(self.plan) is not RepresentativeUnifiedAcquisitionPlan
+        ):
+            raise TypeError("representative acquisition authority object type drift")
+        if (
+            self.schema_version
+            != "tokenshare.representative_acquisition_authority.v1"
+            or self.provider_calls_made != 0
+            or self.snapshot.provider_calls_made != 0
+            or self.prepared_inventory.provider_calls_made != 0
+            or self.coverage.provider_calls_made != 0
+            or self.plan.provider_call_count != 0
+            or self.coverage.source_snapshot is not self.snapshot
+            or self.prepared_inventory.source_snapshot_digest
+            != self.snapshot.snapshot_digest
+            or self.coverage.source_snapshot_digest != self.snapshot.snapshot_digest
+            or self.plan.source_snapshot_digest != self.snapshot.snapshot_digest
+            or self.plan.source_prepared_inventory_digest
+            != self.prepared_inventory.inventory_digest
+            or self.plan.coverage_digest != self.coverage.coverage_digest
+        ):
+            raise ValueError("representative acquisition authority lineage drift")
+        if self.validation_digest != canonical_digest(self.validation_preimage()):
+            raise ValueError("representative acquisition authority digest mismatch")
+
+
+_VALIDATED_REPRESENTATIVE_AUTHORITY_SEAL = object()
+
+
+@dataclass(frozen=True, kw_only=True)
+class _ValidatedRepresentativeAuthority:
+    snapshot: Any
+    prepared_inventory: Any
+    coverage: Any
+    seal: object = field(repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        if self.seal is not _VALIDATED_REPRESENTATIVE_AUTHORITY_SEAL:
+            raise TypeError("validated authority token is forged")
+        _validate_bound_representative_authority_objects(
+            snapshot=self.snapshot,
+            prepared_inventory=self.prepared_inventory,
+            coverage=self.coverage,
+        )
+
+
 def create_acquisition_plan_bundle(
     bundle_root: str | Path,
     *,
@@ -2490,6 +2601,70 @@ def build_semantic_inventory(
     )
 
 
+def prepare_representative_acquisition_authority(
+    *,
+    dispatch_plans: Sequence[Any],
+    catalog_manifest: PaperInputCatalogManifest,
+    budget: Any,
+    ai_api_configs: Mapping[str, Any],
+    planning_artifact_root: str | Path,
+    api_key_env_by_provider_family: Mapping[str, str],
+    frozen_pricing_by_provider_family: Mapping[str, FrozenPricing],
+    requested_at: str,
+    repeat_ids: Sequence[int] = (0,),
+    max_acquisition_concurrency: int = 10,
+) -> RepresentativeAcquisitionAuthority:
+    """一次 full freeze 生成 canonical snapshot/inventory/coverage/plan。"""
+
+    from tokenshare.experiments.paper_formal_plan import (
+        derive_paper_formal_representative_coverage,
+        freeze_paper_formal_plan_snapshot,
+        freeze_paper_formal_prepared_request_inventory,
+    )
+
+    artifact_root = Path(planning_artifact_root)
+    plans = tuple(dispatch_plans)
+    snapshot = freeze_paper_formal_plan_snapshot(
+        dispatch_plans=plans,
+        catalog_manifest=catalog_manifest,
+        budget=budget,
+        ai_api_configs=ai_api_configs,
+        output_root=artifact_root / "canonical-full-plan",
+    )
+    prepared_inventory = freeze_paper_formal_prepared_request_inventory(
+        snapshot=snapshot,
+        catalog_manifest=catalog_manifest,
+        ai_api_configs=ai_api_configs,
+        planning_artifact_root=artifact_root / "full-prepared-inventory-freeze",
+    )
+    coverage = derive_paper_formal_representative_coverage(
+        snapshot=snapshot,
+        dispatch_plans=plans,
+        repeat_ids=repeat_ids,
+    )
+    validated_authority = _mint_validated_representative_authority(
+        snapshot=snapshot,
+        prepared_inventory=prepared_inventory,
+        coverage=coverage,
+    )
+    plan = _build_representative_unified_acquisition_plan_from_validated_authority(
+        validated_authority=validated_authority,
+        catalog_manifest=catalog_manifest,
+        ai_api_configs=ai_api_configs,
+        planning_artifact_root=artifact_root / "representative-slots",
+        api_key_env_by_provider_family=api_key_env_by_provider_family,
+        frozen_pricing_by_provider_family=frozen_pricing_by_provider_family,
+        requested_at=requested_at,
+        max_acquisition_concurrency=max_acquisition_concurrency,
+    )
+    return RepresentativeAcquisitionAuthority.create(
+        snapshot=snapshot,
+        prepared_inventory=prepared_inventory,
+        coverage=coverage,
+        plan=plan,
+    )
+
+
 def build_representative_unified_acquisition_plan(
     *,
     snapshot: Any,
@@ -2556,10 +2731,13 @@ def build_representative_unified_acquisition_plan(
         ai_api_configs=ai_api_configs,
         planning_artifact_root=artifact_root / "full-prepared-inventory-validation",
     )
-    return _build_representative_unified_acquisition_plan_from_validated_authority(
+    validated_authority = _mint_validated_representative_authority(
         snapshot=canonical_snapshot,
         prepared_inventory=prepared_inventory,
         coverage=canonical_coverage,
+    )
+    return _build_representative_unified_acquisition_plan_from_validated_authority(
+        validated_authority=validated_authority,
         catalog_manifest=catalog_manifest,
         ai_api_configs=ai_api_configs,
         planning_artifact_root=artifact_root / "representative-slots",
@@ -2568,6 +2746,65 @@ def build_representative_unified_acquisition_plan(
         requested_at=requested_at,
         max_acquisition_concurrency=max_acquisition_concurrency,
     )
+
+
+def _mint_validated_representative_authority(
+    *,
+    snapshot: Any,
+    prepared_inventory: Any,
+    coverage: Any,
+) -> _ValidatedRepresentativeAuthority:
+    return _ValidatedRepresentativeAuthority(
+        snapshot=snapshot,
+        prepared_inventory=prepared_inventory,
+        coverage=coverage,
+        seal=_VALIDATED_REPRESENTATIVE_AUTHORITY_SEAL,
+    )
+
+
+def _validate_bound_representative_authority_objects(
+    *,
+    snapshot: Any,
+    prepared_inventory: Any,
+    coverage: Any,
+) -> None:
+    from tokenshare.experiments.paper_formal_plan import (
+        FormalPlanSnapshot,
+        FormalPreparedRequestInventory,
+        FormalRepresentativeCoverage,
+    )
+
+    if (
+        type(snapshot) is not FormalPlanSnapshot
+        or type(prepared_inventory) is not FormalPreparedRequestInventory
+        or type(coverage) is not FormalRepresentativeCoverage
+    ):
+        raise TypeError("validated authority token object type drift")
+    expected_keys = {
+        (root.condition.condition_id, root.case_id, planned_ai_unit_id)
+        for root in snapshot.roots
+        for planned_ai_unit_id in root.planned_ai_unit_ids
+    }
+    actual_keys = {
+        (
+            record.condition.condition_id,
+            record.case_id,
+            record.planned_ai_unit_id,
+        )
+        for record in prepared_inventory.records
+    }
+    if (
+        snapshot.provider_calls_made != 0
+        or prepared_inventory.provider_calls_made != 0
+        or coverage.provider_calls_made != 0
+        or coverage.source_snapshot is not snapshot
+        or prepared_inventory.source_snapshot_digest != snapshot.snapshot_digest
+        or coverage.source_snapshot_digest != snapshot.snapshot_digest
+        or prepared_inventory.record_count != len(prepared_inventory.records)
+        or prepared_inventory.record_count != len(expected_keys)
+        or actual_keys != expected_keys
+    ):
+        raise ValueError("validated authority token lineage drift")
 
 
 def _validate_exact_formal_snapshot_authority(*, supplied: Any, canonical: Any) -> None:
@@ -2627,9 +2864,7 @@ def _validate_exact_formal_coverage_authority(
 
 def _build_representative_unified_acquisition_plan_from_validated_authority(
     *,
-    snapshot: Any,
-    prepared_inventory: Any,
-    coverage: Any,
+    validated_authority: _ValidatedRepresentativeAuthority,
     catalog_manifest: PaperInputCatalogManifest,
     ai_api_configs: Mapping[str, Any],
     planning_artifact_root: str | Path,
@@ -2641,30 +2876,17 @@ def _build_representative_unified_acquisition_plan_from_validated_authority(
     """已验证 canonical authority 的 compact semantic/dedupe 实现。"""
 
     from tokenshare.experiments.paper_formal_plan import (
-        FormalPlanSnapshot,
-        FormalPreparedRequestInventory,
-        FormalRepresentativeCoverage,
         freeze_formal_root_prepared_replacement_requests,
     )
 
-    if type(snapshot) is not FormalPlanSnapshot:
-        raise TypeError("snapshot must be a FormalPlanSnapshot")
-    if type(prepared_inventory) is not FormalPreparedRequestInventory:
-        raise TypeError("prepared_inventory must be a FormalPreparedRequestInventory")
-    if type(coverage) is not FormalRepresentativeCoverage:
-        raise TypeError("coverage must be a FormalRepresentativeCoverage")
-    if coverage.source_snapshot is not snapshot:
-        raise ValueError("representative acquisition coverage snapshot authority drift")
     if (
-        snapshot.provider_calls_made != 0
-        or prepared_inventory.provider_calls_made != 0
-        or coverage.provider_calls_made != 0
-        or prepared_inventory.source_snapshot_digest != snapshot.snapshot_digest
-        or coverage.source_snapshot_digest != snapshot.snapshot_digest
-        or prepared_inventory.record_count != len(prepared_inventory.records)
-        or prepared_inventory.record_count != snapshot.first_attempt_ai_unit_count
+        type(validated_authority) is not _ValidatedRepresentativeAuthority
+        or validated_authority.seal is not _VALIDATED_REPRESENTATIVE_AUTHORITY_SEAL
     ):
-        raise ValueError("representative acquisition full authority metadata drift")
+        raise TypeError("validated authority token is required")
+    snapshot = validated_authority.snapshot
+    prepared_inventory = validated_authority.prepared_inventory
+    coverage = validated_authority.coverage
     if type(max_acquisition_concurrency) is not int or not (
         1 <= max_acquisition_concurrency <= 10
     ):
@@ -3473,6 +3695,7 @@ __all__ = [
     "InventoryPreflightResult",
     "FormalTraceInventoryPreflightResult",
     "RepresentativeUnifiedAcquisitionPlan",
+    "RepresentativeAcquisitionAuthority",
     "PaperTraceRuntimeContext",
     "PaperTraceCaseBinding",
     "PaperFormalTraceContext",
@@ -3494,6 +3717,7 @@ __all__ = [
     "output_root_path_digest",
     "preflight_inventory_before_coordinator",
     "preflight_formal_trace_inventory",
+    "prepare_representative_acquisition_authority",
     "replacement_slots_for",
     "response_bank_manifest_for_bundle",
     "results_first_response_bank_manifest_for_bundle",
