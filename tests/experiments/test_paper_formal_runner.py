@@ -7452,6 +7452,180 @@ def test_formal_runner_smoke_filter_executes_one_canonical_root_and_freezes_flag
     } == tree_before
 
 
+def test_representative_runner_validates_full_budget_then_dispatches_selected_conditions(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = _ai_config()
+    base = _planned_dispatch_plan(tmp_path, config=config)
+    first_condition, first_selection = base.bound_items()[0]
+    second_condition = replace(
+        first_condition,
+        condition_id="condition-2",
+        repeat_id=1,
+        seed=2,
+    )
+    second_selection = replace(first_selection, selection_id="selection-2")
+    plan = replace(
+        base,
+        conditions=(first_condition, second_condition),
+        condition_selection_bindings=(
+            FrozenConditionSelectionBinding.from_condition(
+                first_condition,
+                first_selection,
+            ),
+            FrozenConditionSelectionBinding.from_condition(
+                second_condition,
+                second_selection,
+            ),
+        ),
+    )
+    dispatched: list[str] = []
+
+    class CallbackModule:
+        def expand_conditions(self, context):
+            raise AssertionError("representative execution consumes full formal plan")
+
+        def freeze_case_selections(self, context, conditions):
+            return FrozenCaseSelectionBatch(())
+
+        def run_condition(self, context, condition, selection):
+            return context.execution_callback(
+                context=context,
+                condition=condition,
+                selection=selection,
+            )
+
+        def summarize(self, evidence):
+            return ExperimentSummaryRows(experiment_id=EXPERIMENT_ID, rows=())
+
+    def fake_case_dispatch(**kwargs):
+        dispatched.append(kwargs["condition"].condition_id)
+        return _complete_adapter_result(
+            output_root=Path(kwargs["output_root"]),
+            condition=kwargs["condition"],
+            case_id=kwargs["case"]["case_id"],
+        )
+
+    monkeypatch.setitem(
+        formal_runner.dispatch_paper_condition.__globals__,
+        "_MODULES",
+        ((EXPERIMENT_ID, CallbackModule()),),
+    )
+    monkeypatch.setattr(formal_runner, "dispatch_paper_case", fake_case_dispatch)
+    suite = formal_runner.execute_paper_formal_suite(
+        **{
+            **_formal_execution_kwargs(tmp_path=tmp_path, config=config, plan=plan),
+            "budget": _budget(
+                planned_conditions=2,
+                planned_root_runs=2,
+                planned_ai_units=2,
+            ),
+            "selected_condition_ids": (first_condition.condition_id,),
+            "root_case_filter": {
+                first_condition.condition_id: first_selection.ordered_case_ids,
+            },
+            "bypass_nonmetric_facility_gates": True,
+            "suite_id": "representative-full-plan-smoke-exp1-exp4",
+        }
+    )
+
+    assert dispatched == [first_condition.condition_id]
+    assert suite.condition_count == 1
+    assert suite.task_count == 1
+    assert suite.experiment_ids == (EXPERIMENT_ID,)
+    assert suite.status is PaperStatus.COMPLETED
+
+
+def test_representative_runner_maps_all_adapter_artifacts_to_execution_suite_root(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = _ai_config()
+    authority_root = tmp_path / "formal-authority"
+    execution_root = tmp_path / "execution"
+    plan = _planned_dispatch_plan(authority_root, config=config)
+    condition, selection = plan.bound_items()[0]
+    adapter_roots: list[Path] = []
+
+    def fake_case_dispatch(**kwargs):
+        adapter_roots.append(Path(kwargs["output_root"]))
+        return _complete_adapter_result(
+            output_root=Path(kwargs["output_root"]),
+            condition=kwargs["condition"],
+            case_id=kwargs["case"]["case_id"],
+        )
+
+    _install_single_case_execution(monkeypatch=monkeypatch, dispatch=fake_case_dispatch)
+    suite = formal_runner.execute_paper_formal_suite(
+        **{
+            **_formal_execution_kwargs(
+                tmp_path=execution_root,
+                config=config,
+                plan=plan,
+            ),
+            "selected_condition_ids": (condition.condition_id,),
+            "root_case_filter": {
+                condition.condition_id: selection.ordered_case_ids,
+            },
+            "execution_output_root_by_experiment": {
+                EXPERIMENT_ID: execution_root / EXPERIMENT_ID,
+            },
+            "bypass_nonmetric_facility_gates": True,
+        }
+    )
+
+    assert suite.status is PaperStatus.COMPLETED, json.dumps(
+        suite.error_summary, ensure_ascii=False, sort_keys=True
+    )
+    assert adapter_roots == [
+        execution_root / EXPERIMENT_ID / "runs" / condition.condition_id / "case-1"
+    ]
+    assert not (authority_root / EXPERIMENT_ID / "runs").exists()
+
+
+@pytest.mark.parametrize(
+    "execution_roots",
+    (
+        {},
+        {
+            EXPERIMENT_ID: Path("execution") / EXPERIMENT_ID,
+            "extra": Path("execution") / "extra",
+        },
+        {EXPERIMENT_ID: Path("outside") / EXPERIMENT_ID},
+    ),
+)
+def test_representative_runner_rejects_missing_extra_or_escaped_execution_roots(
+    tmp_path: Path,
+    execution_roots: dict[str, Path],
+) -> None:
+    config = _ai_config()
+    plan = _planned_dispatch_plan(tmp_path / "formal-authority", config=config)
+    condition, selection = plan.bound_items()[0]
+    suite_root = tmp_path / "execution"
+    resolved = {
+        key: (tmp_path / value if not value.is_absolute() else value)
+        for key, value in execution_roots.items()
+    }
+
+    with pytest.raises(ValueError, match="execution output root"):
+        formal_runner.execute_paper_formal_suite(
+            **{
+                **_formal_execution_kwargs(
+                    tmp_path=suite_root,
+                    config=config,
+                    plan=plan,
+                ),
+                "selected_condition_ids": (condition.condition_id,),
+                "root_case_filter": {
+                    condition.condition_id: selection.ordered_case_ids,
+                },
+                "execution_output_root_by_experiment": resolved,
+                "bypass_nonmetric_facility_gates": True,
+            }
+        )
+
+
 def test_missing_bank_preflight_records_block_without_engine_task_lease_request_provider_events(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

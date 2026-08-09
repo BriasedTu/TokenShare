@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
+from decimal import Decimal
 from hashlib import sha256
 import json
 import os
@@ -168,6 +169,7 @@ DEFAULT_EXP5_MODEL_ENTRY_MAP = Path(
 DEFAULT_EXP5_PROVIDER_CONFIG = Path(
     "benchmarks/paper/exp5_siliconflow_provider_config.v3.json"
 )
+REPRESENTATIVE_ACQUISITION_REQUESTED_AT = "2026-08-09T00:00:00Z"
 @dataclass(frozen=True, kw_only=True)
 class EPD027FormalServiceAuthority:
     """pipeline 与 legacy 可共同消费的无 secret、无 provider side effect authority。"""
@@ -1096,6 +1098,254 @@ def _select_online_checks_dispatch(
         )
     )
     return tuple(selected_plans), root_filter
+
+
+def build_representative_full_plan_smoke_authority(
+    *,
+    output_root: str | Path,
+    planning_artifact_root: str | Path,
+    plan_bundle_root: str | Path,
+    resume: bool = False,
+):
+    """一次冻结正式 Exp1--5 authority，再派生 representative 执行服务。"""
+
+    from tokenshare.experiments.paper_resource_accounting import FrozenPricing
+    from tokenshare.experiments.paper_response_bank import (
+        prepare_representative_acquisition_authority,
+    )
+    from tokenshare.experiments.run_paper_pipeline import (
+        build_representative_full_plan_smoke_service_authority,
+    )
+
+    execution_root = Path(output_root).resolve(strict=False)
+    formal_plan_root = execution_root / "formal-plan-authority"
+    catalog_manifest = load_paper_catalogs(
+        factorization_path=DEFAULT_FACTOR_CATALOG,
+        lean_path=DEFAULT_LEAN_CATALOG,
+        lean_lemma_graph_path=DEFAULT_LEAN_LEMMA_GRAPH_CATALOG,
+    )
+    planning_profile = load_exp1_pilot_profile(DEFAULT_EXP1_PILOT_PROFILE)
+    _validate_exp1_exp4_v3_execution_config(
+        planning_profile.source_provider_config
+    )
+    suite_scale_profile = load_paper_suite_scale_profile(
+        DEFAULT_PAPER_SUITE_SCALE_PROFILE
+    )
+
+    cohort = load_model_endpoint_cohort(DEFAULT_EXP5_MODEL_COHORT)
+    entry_map = load_model_entry_map(DEFAULT_EXP5_MODEL_ENTRY_MAP)
+    provider_configs = load_provider_config_map(
+        {"siliconflow": DEFAULT_EXP5_PROVIDER_CONFIG}
+    )
+    if {
+        entry.api_key_env
+        for config in provider_configs.values()
+        for entry in config.entries
+        if entry.enabled
+    } != {"SILICONFLOW_API_KEY"}:
+        raise ValueError("Exp5 v3 API key env authority drift")
+    shadow_configs = {
+        config_id: replace(
+            config,
+            entries=tuple(
+                replace(
+                    entry,
+                    api_key_env="TOKENSHARE_PRESECRET_AUTHORITY_UNSET",
+                )
+                for entry in config.entries
+            ),
+        )
+        for config_id, config in provider_configs.items()
+    }
+    model_endpoint_cohort_preflight = build_model_endpoint_cohort_preflight(
+        cohort=cohort,
+        entry_map=entry_map,
+        provider_configs=shadow_configs,
+        require_smoke_evidence=False,
+        smoke_evidence_bundle=None,
+    )
+    member_plans = model_endpoint_cohort_preflight.get("member_plans")
+    ineligible = model_endpoint_cohort_preflight.get("ineligible_members")
+    expected_presecret_reasons = {
+        "api_key_env_mismatch",
+        "missing_api_key_env",
+    }
+    if not isinstance(member_plans, Mapping) or not isinstance(ineligible, list):
+        raise ValueError("Exp5 v3 structural preflight is malformed")
+    if len(ineligible) != len(member_plans) or any(
+        not isinstance(item, Mapping)
+        or set(item.get("blocked_reasons", ())) != expected_presecret_reasons
+        for item in ineligible
+    ):
+        raise ValueError("Exp5 v3 structural preflight has non-secret failures")
+    for member_plan in member_plans.values():
+        if not isinstance(member_plan, dict) or set(
+            member_plan.get("blocked_reasons", ())
+        ) != expected_presecret_reasons:
+            raise ValueError("Exp5 v3 member structural preflight failed")
+        member_plan["api_key_env"] = "SILICONFLOW_API_KEY"
+        member_plan["status"] = "planned"
+        member_plan["blocked_reasons"] = []
+    model_endpoint_cohort_preflight.update(
+        {
+            "status": "planned",
+            "paper_eligible_possible": True,
+            "blocked_reason": None,
+            "ineligibility_reasons": [],
+            "ineligible_members": [],
+        }
+    )
+
+    execution_configs: dict[str, object] = {
+        planning_profile.model_endpoint_identity.provider_config_id: (
+            planning_profile.source_provider_config
+        ),
+        **provider_configs,
+        APPROVED_ENDPOINT_BINDINGS_KEY: {
+            "exp5_real_ai_model_endpoint_comparison": (
+                model_endpoint_cohort_preflight
+            )
+        },
+    }
+    experiment_ids = (
+        *EXP1_EXP4_ONLY_EXPERIMENT_IDS,
+        "exp5_real_ai_model_endpoint_comparison",
+    )
+    lean_3x3_matrix = build_lean_3x3_matrix_plan(
+        catalog_manifest=catalog_manifest
+    )
+    dispatch_plans = build_gate_c_dispatch_plans(
+        catalog_manifest=catalog_manifest,
+        lean_3x3_matrix=lean_3x3_matrix,
+        experiment_ids=experiment_ids,
+        baseline_endpoint_binding=_baseline_endpoint_binding(planning_profile),
+        model_endpoint_cohort_preflight=model_endpoint_cohort_preflight,
+        paper_suite_scale_profile=suite_scale_profile,
+        output_root=formal_plan_root,
+    )
+    conditions = tuple(
+        condition
+        for dispatch_plan in dispatch_plans
+        for condition in dispatch_plan.conditions
+    )
+    frozen_selection_commitments = [
+        {
+            **selection.to_dict(),
+            "condition_id": condition.condition_id,
+            "condition_digest": condition.condition_digest,
+        }
+        for dispatch_plan in dispatch_plans
+        for condition, selection in dispatch_plan.bound_items()
+    ]
+    budget = plan_paper_suite(
+        catalog_manifest=catalog_manifest,
+        conditions=conditions,
+        max_provider_attempts_per_ai_unit=1,
+        token_upper_bound_per_provider_attempt=(
+            FORMAL_TOKEN_UPPER_BOUND_PER_PROVIDER_ATTEMPT
+        ),
+        token_upper_bound_by_endpoint_identity_digest=(
+            build_exp5_v3_token_ceiling_mapping(
+                model_endpoint_cohort_preflight
+            )
+        ),
+        cost_upper_bound_per_provider_attempt=(
+            FORMAL_COST_UPPER_BOUND_PER_PROVIDER_ATTEMPT
+        ),
+        plan_only=True,
+        lean_3x3_matrix=lean_3x3_matrix,
+        model_endpoint_cohort_preflight=model_endpoint_cohort_preflight,
+        frozen_selections=frozen_selection_commitments,
+        endpoint_identity={
+            "baseline": _baseline_endpoint_binding(planning_profile),
+            "model_endpoint_cohort_preflight": (
+                model_endpoint_cohort_preflight
+            ),
+        },
+        request_limits=dict(EXP1_FORMAL_REQUEST_CONTROLS),
+        suite_identity={
+            "suite_version": "paper_v1",
+            "execution_scope": "formal_matrix",
+            "experiment_ids": list(experiment_ids),
+            "paper_suite_scale_profile_source_path": (
+                suite_scale_profile.source_path
+            ),
+            "paper_suite_scale_profile_digest": (
+                suite_scale_profile.profile_digest
+            ),
+            "exp5_selection_path": (
+                suite_scale_profile.exp5_source_selection_path
+            ),
+            "exp5_selection_digest": (
+                suite_scale_profile.exp5_source_selection_digest
+            ),
+        },
+        output_identity={
+            "output_root": formal_plan_root.as_posix(),
+            "per_experiment_roots": [
+                (formal_plan_root / experiment_id).as_posix()
+                for experiment_id in experiment_ids
+            ],
+            **_shared_exp1_reference_output_identity(experiment_ids),
+        },
+        budget_approval_required=True,
+    )
+    baseline_entry = tuple(
+        entry
+        for entry in planning_profile.source_provider_config.entries
+        if entry.enabled
+        and entry.entry_id == EXP1_EXP4_REQUIRED_ENTRY_ID
+    )
+    if len(baseline_entry) != 1:
+        raise ValueError("representative baseline pricing authority is missing")
+    pricing_body = baseline_entry[0].pricing
+    atomic_authority = prepare_representative_acquisition_authority(
+        dispatch_plans=dispatch_plans,
+        catalog_manifest=catalog_manifest,
+        budget=budget,
+        ai_api_configs=execution_configs,
+        planning_artifact_root=Path(planning_artifact_root),
+        api_key_env_by_provider_family={
+            "deepseek": "DEEPSEEK_API_KEY",
+        },
+        frozen_pricing_by_provider_family={
+            "deepseek": FrozenPricing(
+                currency=str(pricing_body["currency"]),
+                input_per_million_tokens=Decimal(
+                    str(
+                        pricing_body.get(
+                            "input_per_million_tokens",
+                            pricing_body.get(
+                                "uncached_input_per_million_tokens"
+                            ),
+                        )
+                    )
+                ),
+                output_per_million_tokens=Decimal(
+                    str(pricing_body["output_per_million_tokens"])
+                ),
+            )
+        },
+        requested_at=REPRESENTATIVE_ACQUISITION_REQUESTED_AT,
+        repeat_ids=(0,),
+        max_acquisition_concurrency=10,
+    )
+    hard_limits = {
+        "max_total_provider_attempts": budget.max_provider_attempts,
+        "max_total_tokens": budget.token_upper_bound,
+        "max_cost_estimate": budget.cost_upper_bound,
+    }
+    return build_representative_full_plan_smoke_service_authority(
+        atomic_authority=atomic_authority,
+        full_dispatch_plans=dispatch_plans,
+        catalog_manifest=catalog_manifest,
+        full_budget=budget,
+        ai_api_configs=execution_configs,
+        bundle_root=Path(plan_bundle_root),
+        output_root=execution_root,
+        resume=bool(resume),
+        hard_limits=hard_limits,
+    )
 
 
 def build_epd027_formal_service_authority(

@@ -101,6 +101,7 @@ DEFAULT_ADAPTER_NAMES = {
     "audit-cell-lineage": "_audit_cell_lineage_adapter",
     "validate-formal-execution-gate": "_validate_formal_execution_gate_adapter",
     "validate-paper-publication-gate": "_validate_paper_publication_gate_adapter",
+    "representative-full-plan-smoke": "_representative_full_plan_smoke_adapter",
 }
 
 
@@ -2011,3 +2012,266 @@ def _assert_native_formal_authority_reaches_missing_receipt(
     assert body["provider_calls"] == 0
     assert body["failure_kind"] == "pipeline_boundary_rejected"
     assert missing_receipt.name in body["message"]
+
+
+def _representative_pipeline_authority(tmp_path: Path):
+    experiment_ids = (
+        "exp1_real_ai_feasibility",
+        "exp2_real_ai_scalability",
+        "exp3_real_ai_fault_recovery",
+        "exp4_real_ai_protocol_ablation",
+    )
+    trace_conditions = tuple(
+        SimpleNamespace(
+            experiment_id=experiment_id,
+            condition_id=f"{experiment_id}-c0",
+            model_endpoint_identity_digest="sha256:" + str(index + 1) * 64,
+        )
+        for index, experiment_id in enumerate(experiment_ids)
+    )
+    exp5_conditions = tuple(
+        SimpleNamespace(
+            experiment_id="exp5_real_ai_model_endpoint_comparison",
+            condition_id=f"exp5-c{index}",
+            model_endpoint_identity_digest="sha256:" + str(index + 5) * 64,
+        )
+        for index in range(4)
+    )
+    conditions = (*trace_conditions, *exp5_conditions)
+    root_filter = {
+        condition.condition_id: (f"case-{index}",)
+        for index, condition in enumerate(conditions)
+    }
+    coverage = SimpleNamespace(
+        conditions=conditions,
+        roots=tuple(SimpleNamespace(condition=condition) for condition in conditions),
+        root_case_filter=root_filter,
+        condition_count=len(conditions),
+        root_run_count=len(conditions),
+        coverage_digest="sha256:" + "a" * 64,
+        source_snapshot_digest="sha256:" + "b" * 64,
+        provider_calls_made=0,
+    )
+    return pipeline.RepresentativeFullPlanSmokeServiceAuthority(
+        source_validation_digest="sha256:" + "c" * 64,
+        full_dispatch_plans=tuple(
+            SimpleNamespace(experiment_id=experiment_id)
+            for experiment_id in (*experiment_ids, "exp5_real_ai_model_endpoint_comparison")
+        ),
+        catalog_manifest=object(),
+        full_budget=SimpleNamespace(budget_digest="sha256:" + "d" * 64),
+        ai_api_configs={"baseline": object(), "siliconflow": object()},
+        coverage=coverage,
+        bundle=SimpleNamespace(
+            source_snapshot_digest=coverage.source_snapshot_digest,
+            coverage_digest=coverage.coverage_digest,
+            semantic_inventory_plan=object(),
+        ),
+        output_root=tmp_path,
+        resume=False,
+        hard_limits={"max_total_provider_attempts": 99},
+    )
+
+
+def test_representative_formal_bundle_uses_typed_create_or_fresh_plan_load_only(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tests.experiments.test_paper_response_bank import _representative_plan
+
+    plan = _representative_plan()
+    bundle = SimpleNamespace(
+        source_snapshot_digest=plan.source_snapshot_digest,
+        source_prepared_inventory_digest=plan.source_prepared_inventory_digest,
+        coverage_digest=plan.coverage_digest,
+        representative_plan_digest=plan.plan_digest,
+    )
+    calls: list[str] = []
+    monkeypatch.setattr(
+        pipeline,
+        "_CREATE_REPRESENTATIVE_BUNDLE",
+        lambda root, *, plan: calls.append(f"create:{Path(root).name}") or bundle,
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "_LOAD_REPRESENTATIVE_BUNDLE",
+        lambda root, *, plan: calls.append(f"load:{Path(root).name}") or bundle,
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "_ACQUISITION_BUNDLE_LOADER",
+        lambda *_args, **_kwargs: pytest.fail("generic loader must reject formal bundles"),
+    )
+
+    assert pipeline.prepare_representative_formal_bundle(
+        bundle_root=tmp_path / "new-bundle", plan=plan, resume=False
+    ) is bundle
+    assert pipeline.prepare_representative_formal_bundle(
+        bundle_root=tmp_path / "resume-bundle", plan=plan, resume=True
+    ) is bundle
+    assert calls == ["create:new-bundle", "load:resume-bundle"]
+
+
+def test_representative_service_routes_full_authority_to_trace_and_all_exp5_endpoints(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    authority = _representative_pipeline_authority(tmp_path)
+    conditions = authority.coverage.conditions
+    root_filter = authority.coverage.root_case_filter
+    captured: list[dict[str, object]] = []
+
+    def fake_execute(**kwargs):
+        captured.append(kwargs)
+        selected = tuple(kwargs["selected_condition_ids"])
+        active = tuple(
+            dict.fromkeys(
+                condition.experiment_id
+                for condition in conditions
+                if condition.condition_id in selected
+            )
+        )
+        return replace(
+            _paper_suite_result(
+                Path(kwargs["output_root"]),
+                status=(
+                    "completed_with_failures" if len(captured) == 2 else "completed"
+                ),
+            ),
+            experiment_ids=active,
+            condition_count=len(selected),
+            task_count=sum(len(root_filter[item]) for item in selected),
+            provider_attempt_count=0 if len(captured) == 1 else 4,
+        )
+
+    monkeypatch.setattr(pipeline, "_FORMAL_SUITE_EXECUTOR", fake_execute)
+    monkeypatch.setattr(
+        pipeline,
+        "_TRACE_CONTEXT_BUILDER",
+        lambda **kwargs: SimpleNamespace(inventory_plan=kwargs["inventory_plan"]),
+    )
+    result = pipeline.execute_representative_full_plan_smoke(
+        authority=authority,
+        response_bank_resolver=object(),
+        exp5_transport=object(),
+    )
+
+    assert result.status == "completed_with_failures"
+    assert result.expected_condition_count == authority.coverage.condition_count
+    assert result.expected_root_count == authority.coverage.root_run_count
+    assert len(captured) == 2
+    trace, online = captured
+    assert trace["dispatch_plans"] is authority.full_dispatch_plans
+    assert trace["budget"] is authority.full_budget
+    assert trace["real_transport"] is False
+    assert trace["trace_context"] is not None
+    assert online["dispatch_plans"] is authority.full_dispatch_plans
+    assert online["budget"] is authority.full_budget
+    assert online["real_transport"] is True
+    assert online["trace_context"] is None
+    exp5_conditions = tuple(
+        condition
+        for condition in conditions
+        if condition.experiment_id == "exp5_real_ai_model_endpoint_comparison"
+    )
+    assert set(online["selected_condition_ids"]) == {
+        condition.condition_id for condition in exp5_conditions
+    }
+    assert len({item.model_endpoint_identity_digest for item in exp5_conditions}) == 4
+
+
+@pytest.mark.parametrize("status", ("blocked", "incomplete", "failed"))
+def test_representative_service_rejects_partial_or_fake_terminal(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    status: str,
+) -> None:
+    authority = _representative_pipeline_authority(tmp_path)
+    monkeypatch.setattr(
+        pipeline,
+        "_FORMAL_SUITE_EXECUTOR",
+        lambda **kwargs: replace(
+            _paper_suite_result(Path(kwargs["output_root"]), status=status),
+            experiment_ids=tuple(
+                plan.experiment_id for plan in authority.full_dispatch_plans
+            ),
+        ),
+    )
+    monkeypatch.setattr(pipeline, "_TRACE_CONTEXT_BUILDER", lambda **_kwargs: object())
+
+    with pytest.raises(ValueError, match="terminal|denominator"):
+        pipeline.execute_representative_full_plan_smoke(
+            authority=authority,
+            response_bank_resolver=object(),
+            exp5_transport=object(),
+        )
+
+
+def test_representative_service_rejects_completed_terminal_with_partial_denominator(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    authority = _representative_pipeline_authority(tmp_path)
+    monkeypatch.setattr(
+        pipeline,
+        "_FORMAL_SUITE_EXECUTOR",
+        lambda **kwargs: replace(
+            _paper_suite_result(Path(kwargs["output_root"]), status="completed"),
+            experiment_ids=("exp1_real_ai_feasibility",),
+            condition_count=1,
+            task_count=0,
+            provider_attempt_count=0,
+        ),
+    )
+    monkeypatch.setattr(pipeline, "_TRACE_CONTEXT_BUILDER", lambda **_kwargs: object())
+
+    with pytest.raises(ValueError, match="denominator"):
+        pipeline.execute_representative_full_plan_smoke(
+            authority=authority,
+            response_bank_resolver=object(),
+            exp5_transport=object(),
+        )
+
+
+def test_representative_cli_builds_full_atomic_authority_before_any_provider(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys,
+) -> None:
+    calls: list[str] = []
+
+    def blocked_builder(**_kwargs):
+        calls.append("full-preflight")
+        raise ValueError("representative coverage misses formal condition")
+
+    monkeypatch.setattr(
+        pipeline,
+        "_REPRESENTATIVE_SERVICE_AUTHORITY_BUILDER",
+        blocked_builder,
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "_REPRESENTATIVE_SMOKE_EXECUTOR",
+        lambda **_kwargs: pytest.fail("provider/execution must follow full preflight"),
+    )
+
+    exit_code = pipeline.main(
+        [
+            "representative-full-plan-smoke",
+            "--output-root",
+            str(tmp_path / "output"),
+            "--planning-artifact-root",
+            str(tmp_path / "planning"),
+            "--plan-bundle-root",
+            str(tmp_path / "bundle"),
+            "--new-run",
+            "--plan-only",
+        ]
+    )
+
+    body = json.loads(capsys.readouterr().out)
+    assert exit_code == 3
+    assert calls == ["full-preflight"]
+    assert body["status"] == "blocked"
+    assert body["provider_calls"] == 0
+    assert "coverage" in body["message"]

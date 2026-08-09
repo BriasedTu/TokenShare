@@ -1113,13 +1113,19 @@ def validate_paper_formal_suite_plan(
     ai_api_configs: Mapping[str, Any],
     hard_limits: Mapping[str, Any],
     root_case_filter: Mapping[str, Sequence[str]] | None = None,
+    selected_condition_ids: Sequence[str] | None = None,
 ) -> None:
     """只读验证正式计划可被 runner 调度，不创建 evidence 或 provider 调用。"""
 
     plans = tuple(dispatch_plans)
+    selected = _normalize_selected_condition_ids(
+        plans=plans,
+        selected_condition_ids=selected_condition_ids,
+    )
     normalized_root_filter = _normalize_root_case_filter(
         plans=plans,
         root_case_filter=root_case_filter,
+        selected_condition_ids=selected,
     )
     _validate_suite_inputs(
         dispatch_plans=plans,
@@ -1134,7 +1140,7 @@ def validate_paper_formal_suite_plan(
         hard_limits=hard_limits,
         resume=False,
         replay_only=False,
-        root_case_filter=normalized_root_filter,
+        root_case_filter={} if selected is not None else normalized_root_filter,
     )
 
 
@@ -1167,6 +1173,8 @@ def execute_paper_formal_suite(
     resume: bool = False,
     replay_only: bool = False,
     root_case_filter: Mapping[str, Sequence[str]] | None = None,
+    selected_condition_ids: Sequence[str] | None = None,
+    execution_output_root_by_experiment: Mapping[str, str | Path] | None = None,
     execution_classification: Mapping[str, Any] | None = None,
     suite_id: str = "paper_formal_suite",
     pre_execution_documents: Mapping[str, Any] | None = None,
@@ -1174,6 +1182,7 @@ def execute_paper_formal_suite(
     trace_context: PaperFormalTraceContext | None = None,
     online_root_callback_factory: Callable[..., Any] | None = None,
     enforce_publication_closure: bool = False,
+    bypass_nonmetric_facility_gates: bool = False,
 ) -> PaperSuiteResult:
     """校验冻结计划并通过注册 dispatcher 顺序执行 planned conditions。"""
 
@@ -1182,9 +1191,22 @@ def execute_paper_formal_suite(
         raise ValueError("resume and replay_only are mutually exclusive")
     if replay_only:
         return replay_paper_formal_suite(output_root=output_root)
+    selected = _normalize_selected_condition_ids(
+        plans=plans,
+        selected_condition_ids=selected_condition_ids,
+    )
     normalized_root_filter = _normalize_root_case_filter(
         plans=plans,
         root_case_filter=root_case_filter,
+        selected_condition_ids=selected,
+    )
+    execution_roots = _normalize_execution_output_roots(
+        plans=plans,
+        suite_root=output_root,
+        selected_condition_ids=selected,
+        execution_output_root_by_experiment=(
+            execution_output_root_by_experiment
+        ),
     )
     classification = _normalize_execution_classification(
         execution_classification
@@ -1197,7 +1219,7 @@ def execute_paper_formal_suite(
     )
     if frozen_recovery_documents and not resume:
         raise ValueError("recovery documents require resume mode")
-    bound_plans = _validate_suite_inputs(
+    full_bound_plans = _validate_suite_inputs(
         dispatch_plans=plans,
         catalog_manifest=catalog_manifest,
         budget=budget,
@@ -1207,8 +1229,14 @@ def execute_paper_formal_suite(
         hard_limits=hard_limits,
         resume=resume,
         replay_only=replay_only,
-        root_case_filter=normalized_root_filter,
+        root_case_filter={} if selected is not None else normalized_root_filter,
+        execution_output_root_by_experiment=execution_roots,
     )
+    bound_plans = _selected_bound_plans(
+        bound_plans=full_bound_plans,
+        selected_condition_ids=selected,
+    )
+    active_plans = tuple(plan for plan, _items in bound_plans)
     if trace_context is not None:
         if real_transport:
             raise ValueError("formal trace runtime cannot use current real transport")
@@ -1232,7 +1260,7 @@ def execute_paper_formal_suite(
                 output_root=Path(output_root).as_posix(),
                 started_at=ended_at,
                 ended_at=ended_at,
-                experiment_ids=tuple(plan.experiment_id for plan in plans),
+                experiment_ids=tuple(plan.experiment_id for plan in active_plans),
                 condition_count=sum(len(items) for _plan, items in bound_plans),
                 run_count=0,
                 task_count=0,
@@ -1248,15 +1276,20 @@ def execute_paper_formal_suite(
                 audit_refs=(),
                 error_summary=("response_bank_incomplete",),
             )
-    disk_preflight = _preflight_formal_disk_capacity(
-        output_root=output_root,
-        budget=budget,
-        resume=resume,
+    disk_preflight = (
+        {"condition_compaction_bytes": 0}
+        if bypass_nonmetric_facility_gates
+        else _preflight_formal_disk_capacity(
+            output_root=output_root,
+            budget=budget,
+            resume=resume,
+        )
     )
     suite_root = Path(output_root)
     started_at = _utc_now()
     bodies = _evidence_bodies(
         plans=plans,
+        active_experiment_ids=tuple(plan.experiment_id for plan in active_plans),
         catalog_manifest=catalog_manifest,
         budget=budget,
         hard_limits=hard_limits,
@@ -1278,6 +1311,7 @@ def execute_paper_formal_suite(
             bound_plans=bound_plans,
             normalized_root_filter=normalized_root_filter,
             terminal_task_keys=set(loaded.completed_task_keys),
+            execution_output_root_by_experiment=execution_roots,
         )
         _persist_pre_execution_documents(
             suite_root=suite_root,
@@ -1367,6 +1401,9 @@ def execute_paper_formal_suite(
             trace_context=trace_context,
             direct_collector=direct_collector,
             online_root_callback_factory=online_root_callback_factory,
+            selected_condition_ids=selected,
+            bypass_nonmetric_facility_gates=bypass_nonmetric_facility_gates,
+            execution_output_root_by_experiment=execution_roots,
         )
     except Exception as error:
         blocked_error = (
@@ -1384,7 +1421,7 @@ def execute_paper_formal_suite(
             suite_root=suite_root,
             suite_id=suite_id,
             started_at=started_at,
-            plans=plans,
+            plans=active_plans,
             bound_plans=bound_plans,
             condition_results=results,
             blocked_error=blocked_error,
@@ -1395,18 +1432,20 @@ def execute_paper_formal_suite(
             budget_approval=budget_approval,
             execution_classification=classification,
             completed_task_keys=completed_task_keys,
+            selected_condition_ids=selected,
+            bypass_nonmetric_facility_gates=bypass_nonmetric_facility_gates,
         )
 
     suite_result = PaperSuiteResult(
         suite_id=suite_id,
         status=_classified_suite_status(
-            _suite_status(plans=plans, results=results),
+            _suite_status(plans=active_plans, results=results),
             classification=classification,
         ),
         output_root=suite_root.as_posix(),
         started_at=started_at,
         ended_at=_utc_now(),
-        experiment_ids=tuple(plan.experiment_id for plan in plans),
+        experiment_ids=tuple(plan.experiment_id for plan in active_plans),
         condition_count=sum(len(items) for _plan, items in bound_plans),
         run_count=sum(result.repeat_count for result in results),
         task_count=sum(result.task_count for result in results),
@@ -1423,7 +1462,7 @@ def execute_paper_formal_suite(
         ),
         total_cost_estimate_status=usage.cost_estimate_status(),
         paper_eligible=_suite_paper_eligible(
-            plans=plans,
+            plans=active_plans,
             results=results,
             transport=transport,
             real_transport=real_transport,
@@ -1447,9 +1486,10 @@ def execute_paper_formal_suite(
     _finalize_formal_manifests(
         suite_root=suite_root,
         suite_result=suite_result,
-        plans=plans,
+        plans=active_plans,
         condition_results=results,
         execution_classification=classification,
+        selected_condition_ids=selected,
     )
     # runner 结果同样属于可 replay 的 suite evidence，写入后刷新索引。
     FormalEvidenceStore(suite_root)._refresh_evidence_manifest()
@@ -1502,6 +1542,9 @@ def _dispatch_formal_conditions(
     trace_context: PaperFormalTraceContext | None,
     direct_collector: _CanonicalDirectCollector | None,
     online_root_callback_factory: Callable[..., Any] | None,
+    selected_condition_ids: tuple[str, ...] | None,
+    bypass_nonmetric_facility_gates: bool,
+    execution_output_root_by_experiment: Mapping[str, Path],
 ) -> None:
     for plan, bound_items in bound_plans:
         if plan.status == "blocked":
@@ -1512,7 +1555,12 @@ def _dispatch_formal_conditions(
                 execution_classification=classification,
             )
             continue
-        plan_root = Path(plan.output_root)
+        plan_root = Path(
+            execution_output_root_by_experiment.get(
+                plan.experiment_id,
+                plan.output_root,
+            )
+        )
         plan_root.mkdir(parents=True, exist_ok=True)
         plan_results: list[PaperConditionResult] = []
         for condition, _selection in bound_items:
@@ -1545,6 +1593,9 @@ def _dispatch_formal_conditions(
                 direct_collector=direct_collector,
                 trace_context=trace_context,
                 online_root_callback_factory=online_root_callback_factory,
+                bypass_nonmetric_facility_gates=(
+                    bypass_nonmetric_facility_gates
+                ),
             )
             context = PaperExecutionContext(
                 context_id=(
@@ -1554,7 +1605,9 @@ def _dispatch_formal_conditions(
                 approved_endpoint_binding=endpoint_binding,
                 request_limits=request_limits,
                 hard_limits=dict(hard_limits),
-                output_root=plan_root.as_posix(),
+                # dispatcher 校验原 full-plan authority；实际 adapter/evidence
+                # artifact root 由 callback 中已验证的 execution map 隔离。
+                output_root=plan.output_root,
                 artifact_store=object(),
                 event_store=object(),
                 execution_callback=callback,
@@ -1575,6 +1628,7 @@ def _dispatch_formal_conditions(
             plan=plan,
             condition_results=plan_results,
             execution_classification=classification,
+            selected_condition_ids=selected_condition_ids,
         )
 
 
@@ -1692,12 +1746,18 @@ def _cleanup_checkpointed_adapter_trees(
     ],
     normalized_root_filter: Mapping[str, tuple[str, ...]],
     terminal_task_keys: set[tuple[str, str, str, str]],
+    execution_output_root_by_experiment: Mapping[str, Path] | None = None,
 ) -> int:
     """resume 前仅删除已有 canonical task 对应的 exact adapter case。"""
 
     removed = 0
     for plan, bound_items in bound_plans:
-        plan_root = Path(plan.output_root)
+        plan_root = Path(
+            (execution_output_root_by_experiment or {}).get(
+                plan.experiment_id,
+                plan.output_root,
+            )
+        )
         for condition, selection in bound_items:
             task_ids = normalized_root_filter.get(
                 condition.condition_id,
@@ -1846,6 +1906,8 @@ def _close_blocked_formal_suite(
     budget_approval: Mapping[str, Any],
     execution_classification: Mapping[str, Any] | None,
     completed_task_keys: set[tuple[str, str, str, str]],
+    selected_condition_ids: tuple[str, ...] | None = None,
+    bypass_nonmetric_facility_gates: bool = False,
 ) -> PaperSuiteResult:
     summary = blocked_error.to_summary()
     if blocked_error.terminal_outcome.failure_kind in {
@@ -1920,6 +1982,9 @@ def _close_blocked_formal_suite(
                     evidence_store=evidence_store,
                     condition=condition,
                     selected_case_ids=case_ids,
+                    bypass_nonmetric_facility_gates=(
+                        bypass_nonmetric_facility_gates
+                    ),
                 )
             except Exception as persistence_error:
                 persistence_failures.append(
@@ -1993,6 +2058,7 @@ def _close_blocked_formal_suite(
         plans=plans,
         condition_results=closed_results,
         execution_classification=execution_classification,
+        selected_condition_ids=selected_condition_ids,
     )
     try:
         FormalEvidenceStore(suite_root)._refresh_evidence_manifest()
@@ -2017,6 +2083,7 @@ def _close_blocked_formal_suite(
             plans=plans,
             condition_results=closed_results,
             execution_classification=execution_classification,
+            selected_condition_ids=selected_condition_ids,
         )
     return suite_result
 
@@ -2352,6 +2419,7 @@ def _validate_suite_inputs(
     resume: bool,
     replay_only: bool,
     root_case_filter: Mapping[str, tuple[str, ...]],
+    execution_output_root_by_experiment: Mapping[str, Path] | None = None,
 ) -> tuple[
     tuple[
         PaperExperimentDispatchPlan,
@@ -2402,9 +2470,10 @@ def _validate_suite_inputs(
         if plan.experiment_id in seen_experiments:
             raise ValueError("duplicate dispatch plan experiment_id")
         seen_experiments.add(plan.experiment_id)
-        expected_root = (suite_root / plan.experiment_id).resolve(strict=False)
-        if Path(plan.output_root).resolve(strict=False) != expected_root:
-            raise ValueError("dispatch plan output_root is not experiment isolated")
+        if not execution_output_root_by_experiment:
+            expected_root = (suite_root / plan.experiment_id).resolve(strict=False)
+            if Path(plan.output_root).resolve(strict=False) != expected_root:
+                raise ValueError("dispatch plan output_root is not experiment isolated")
         bound_items = plan.bound_items()
         for condition, selection in bound_items:
             if condition.experiment_id != plan.experiment_id:
@@ -2834,6 +2903,7 @@ def _finalize_formal_condition_snapshot(
     condition: Any,
     selected_case_ids: Sequence[str],
     condition_events: Sequence[Mapping[str, Any]] | None = None,
+    bypass_nonmetric_facility_gates: bool = False,
 ) -> None:
     """把冻结分母已齐的 condition 统一收口为唯一 tail 与 standalone snapshot。"""
 
@@ -2874,13 +2944,14 @@ def _finalize_formal_condition_snapshot(
         run_root / "condition_manifest.json",
         "condition manifest",
     )
-    _preflight_formal_condition_compaction_capacity(
-        output_root=evidence_store.output_root,
-        condition_id=condition.condition_id,
-        current_condition_reachable_bytes=int(
-            condition_manifest["reachable_size_bytes"]
-        ),
-    )
+    if not bypass_nonmetric_facility_gates:
+        _preflight_formal_condition_compaction_capacity(
+            output_root=evidence_store.output_root,
+            condition_id=condition.condition_id,
+            current_condition_reachable_bytes=int(
+                condition_manifest["reachable_size_bytes"]
+            ),
+        )
     evidence_store.compact_condition_snapshot(
         experiment_id=condition.experiment_id,
         condition=_as_json(condition),
@@ -3157,6 +3228,126 @@ def _classified_suite_status(
     """execution classification 不得覆盖 runner 已判定的 suite 终态。"""
 
     return status
+
+
+def _normalize_selected_condition_ids(
+    *,
+    plans: Sequence[PaperExperimentDispatchPlan],
+    selected_condition_ids: Sequence[str] | None,
+) -> tuple[str, ...] | None:
+    """验证执行子集仅引用完整正式 plan 中的原 condition identity。"""
+
+    if selected_condition_ids is None:
+        return None
+    if isinstance(selected_condition_ids, (str, bytes, bytearray)) or not isinstance(
+        selected_condition_ids,
+        Sequence,
+    ):
+        raise ValueError("selected condition ids must be a sequence")
+    selected = tuple(str(condition_id) for condition_id in selected_condition_ids)
+    if not selected or len(set(selected)) != len(selected):
+        raise ValueError("selected condition ids must be non-empty and unique")
+    formal_order = tuple(
+        condition.condition_id
+        for plan in plans
+        if plan.status == "planned"
+        for condition in plan.conditions
+    )
+    selected_set = set(selected)
+    if tuple(
+        condition_id for condition_id in formal_order if condition_id in selected_set
+    ) != selected:
+        raise ValueError(
+            "selected condition ids must preserve canonical formal plan order"
+        )
+    if any(condition_id not in set(formal_order) for condition_id in selected):
+        raise ValueError("selected condition is absent from formal plan")
+    return selected
+
+
+def _normalize_execution_output_roots(
+    *,
+    plans: Sequence[PaperExperimentDispatchPlan],
+    suite_root: str | Path,
+    selected_condition_ids: tuple[str, ...] | None,
+    execution_output_root_by_experiment: Mapping[str, str | Path] | None,
+) -> dict[str, Path]:
+    if execution_output_root_by_experiment is None:
+        return {}
+    if selected_condition_ids is None or not isinstance(
+        execution_output_root_by_experiment,
+        Mapping,
+    ):
+        raise ValueError(
+            "execution output root mapping requires selected formal conditions"
+        )
+    condition_experiments = {
+        condition.condition_id: plan.experiment_id
+        for plan in plans
+        if plan.status == "planned"
+        for condition in plan.conditions
+    }
+    active_experiment_ids = tuple(
+        dict.fromkeys(
+            condition_experiments[condition_id]
+            for condition_id in selected_condition_ids
+        )
+    )
+    if set(execution_output_root_by_experiment) != set(active_experiment_ids):
+        raise ValueError("execution output root experiment coverage mismatch")
+    resolved_suite_root = Path(suite_root).resolve(strict=False)
+    normalized: dict[str, Path] = {}
+    for experiment_id in active_experiment_ids:
+        expected = (resolved_suite_root / experiment_id).resolve(strict=False)
+        supplied = Path(
+            execution_output_root_by_experiment[experiment_id]
+        ).resolve(strict=False)
+        if supplied != expected or supplied.parent != resolved_suite_root:
+            raise ValueError("execution output root must be canonical and isolated")
+        normalized[experiment_id] = supplied
+
+    source_parents: set[Path] = set()
+    for plan in plans:
+        if plan.status != "planned":
+            continue
+        plan_root = Path(plan.output_root).resolve(strict=False)
+        source_parent = plan_root.parent
+        if plan_root != (source_parent / plan.experiment_id).resolve(strict=False):
+            raise ValueError("formal plan output root authority is not canonical")
+        source_parents.add(source_parent)
+    if len(source_parents) != 1:
+        raise ValueError("formal plan output root authority is not shared")
+    return normalized
+
+
+def _selected_bound_plans(
+    *,
+    bound_plans: Sequence[
+        tuple[PaperExperimentDispatchPlan, Sequence[tuple[Any, Any]]]
+    ],
+    selected_condition_ids: tuple[str, ...] | None,
+) -> tuple[
+    tuple[PaperExperimentDispatchPlan, tuple[tuple[Any, Any], ...]],
+    ...,
+]:
+    if selected_condition_ids is None:
+        return tuple((plan, tuple(items)) for plan, items in bound_plans)
+    selected = set(selected_condition_ids)
+    result = tuple(
+        (
+            plan,
+            tuple(
+                (condition, selection)
+                for condition, selection in items
+                if condition.condition_id in selected
+            ),
+        )
+        for plan, items in bound_plans
+    )
+    active = tuple((plan, items) for plan, items in result if items)
+    if sum(len(items) for _plan, items in active) != len(selected_condition_ids):
+        raise ValueError("selected formal condition binding coverage mismatch")
+    return active
 
 
 def _normalize_execution_classification(
@@ -5393,6 +5584,7 @@ class _FormalConditionExecutionCallback:
     direct_collector: _CanonicalDirectCollector | None = None
     trace_context: PaperFormalTraceContext | None = None
     online_root_callback_factory: Callable[..., Any] | None = None
+    bypass_nonmetric_facility_gates: bool = False
     usage_lock: Lock = field(default_factory=Lock, compare=False, repr=False)
     def __call__(self, **kwargs: Any) -> PaperConditionResult:
         condition = kwargs["condition"]
@@ -5449,13 +5641,17 @@ class _FormalConditionExecutionCallback:
             if case is None:
                 raise ValueError("frozen selection case is absent from catalog")
             frozen_case = _case_with_selection_split_profile(case, selection)
-            rolling_reservation = _preflight_formal_root_capacity(
-                output_root=self.output_root,
-                condition=condition,
-                task_id=case_id,
-                case=frozen_case,
-                request_limits=self.request_limits,
-                rolling_forecast=self.rolling_disk_forecast,
+            rolling_reservation = (
+                None
+                if self.bypass_nonmetric_facility_gates
+                else _preflight_formal_root_capacity(
+                    output_root=self.output_root,
+                    condition=condition,
+                    task_id=case_id,
+                    case=frozen_case,
+                    request_limits=self.request_limits,
+                    rolling_forecast=self.rolling_disk_forecast,
+                )
             )
             try:
                 outcome = self._dispatch_root_case(
@@ -5467,11 +5663,12 @@ class _FormalConditionExecutionCallback:
                     callback_kwargs=kwargs,
                 )
             finally:
-                self.rolling_disk_forecast.consume_root_forecast(
-                    root_reservation_bytes=int(
-                        rolling_reservation["root_reservation_bytes"]
+                if rolling_reservation is not None:
+                    self.rolling_disk_forecast.consume_root_forecast(
+                        root_reservation_bytes=int(
+                            rolling_reservation["root_reservation_bytes"]
+                        )
                     )
-                )
             outcome = self._apply_experiment_runtime(
                 condition=condition,
                 case_id=case_id,
@@ -5553,6 +5750,9 @@ class _FormalConditionExecutionCallback:
             selected_case_ids=selected_case_ids,
             condition_events=(
                 merge_gate_events if strategy.ordered_case_ids else None
+            ),
+            bypass_nonmetric_facility_gates=(
+                self.bypass_nonmetric_facility_gates
             ),
         )
 
@@ -7177,6 +7377,7 @@ class _RootBudgetReservation:
 def _evidence_bodies(
     *,
     plans: Sequence[PaperExperimentDispatchPlan],
+    active_experiment_ids: Sequence[str] | None = None,
     catalog_manifest: Any,
     budget: PaperBudgetResult,
     hard_limits: Mapping[str, Any],
@@ -7216,7 +7417,11 @@ def _evidence_bodies(
         "suite": {
             "schema_version": "tokenshare.paper_formal_runner.v1",
             "suite_id": suite_id,
-            "experiment_ids": [plan.experiment_id for plan in plans],
+            "experiment_ids": list(
+                active_experiment_ids
+                if active_experiment_ids is not None
+                else (plan.experiment_id for plan in plans)
+            ),
             "root_case_filter": {
                 condition_id: list(case_ids)
                 for condition_id, case_ids in sorted(root_case_filter.items())
@@ -10571,10 +10776,12 @@ def _finalize_formal_manifests(
     plans: Sequence[PaperExperimentDispatchPlan],
     condition_results: Sequence[PaperConditionResult],
     execution_classification: Mapping[str, Any] | None,
+    selected_condition_ids: tuple[str, ...] | None = None,
 ) -> None:
     results_by_plan = _partition_condition_results(
         plans=plans,
         condition_results=condition_results,
+        selected_condition_ids=selected_condition_ids,
     )
     for plan in plans:
         _finalize_formal_experiment(
@@ -10583,6 +10790,7 @@ def _finalize_formal_manifests(
             condition_results=results_by_plan[plan.experiment_id],
             execution_classification=execution_classification,
             suite_status=_status_value(suite_result.status),
+            selected_condition_ids=selected_condition_ids,
         )
     suite_path = suite_root / "suite_manifest.json"
     suite_manifest = json.loads(suite_path.read_text(encoding="utf-8"))
@@ -10643,14 +10851,18 @@ def _partition_condition_results(
     *,
     plans: Sequence[PaperExperimentDispatchPlan],
     condition_results: Sequence[PaperConditionResult],
+    selected_condition_ids: tuple[str, ...] | None = None,
 ) -> dict[str, list[PaperConditionResult]]:
     """按冻结 plan 顺序消费结果；不假设 condition_id 在实验间全局唯一。"""
 
     remaining = list(condition_results)
+    selected = None if selected_condition_ids is None else set(selected_condition_ids)
     result: dict[str, list[PaperConditionResult]] = {}
     for plan in plans:
         plan_results: list[PaperConditionResult] = []
         for condition in plan.conditions:
+            if selected is not None and condition.condition_id not in selected:
+                continue
             if not remaining:
                 continue
             if remaining[0].condition_id != condition.condition_id:
@@ -10671,11 +10883,13 @@ def _finalize_formal_experiment(
     condition_results: Sequence[PaperConditionResult],
     execution_classification: Mapping[str, Any] | None,
     suite_status: str | None = None,
+    selected_condition_ids: tuple[str, ...] | None = None,
 ) -> None:
     _repair_interrupted_formal_finalization(suite_root)
     bindings = _condition_result_bindings(
         plan=plan,
         condition_results=condition_results,
+        selected_condition_ids=selected_condition_ids,
     )
     rows_path = suite_root / "condition_results.jsonl"
     indexed_rows: dict[tuple[str, str, str], dict[str, Any]] = {}
@@ -10708,9 +10922,11 @@ def _finalize_formal_experiment(
         and result.metrics_ref.get("infrastructure_blocked") is True
         for _condition, result in bindings
     )
+    selected = None if selected_condition_ids is None else set(selected_condition_ids)
     expected_keys = {
         (condition.condition_id, str(condition.repeat_id))
         for condition in plan.conditions
+        if selected is None or condition.condition_id in selected
     }
     actual_keys = {
         (condition.condition_id, str(condition.repeat_id))
@@ -10805,10 +11021,17 @@ def _condition_result_bindings(
     *,
     plan: PaperExperimentDispatchPlan,
     condition_results: Sequence[PaperConditionResult],
+    selected_condition_ids: tuple[str, ...] | None = None,
 ) -> list[tuple[Any, PaperConditionResult]]:
-    if len(condition_results) > len(plan.conditions):
+    selected = None if selected_condition_ids is None else set(selected_condition_ids)
+    conditions = tuple(
+        condition
+        for condition in plan.conditions
+        if selected is None or condition.condition_id in selected
+    )
+    if len(condition_results) > len(conditions):
         raise ValueError("experiment condition results do not match frozen plan")
-    bindings = list(zip(plan.conditions, condition_results, strict=False))
+    bindings = list(zip(conditions, condition_results, strict=False))
     if any(
         result.condition_id != condition.condition_id
         for condition, result in bindings

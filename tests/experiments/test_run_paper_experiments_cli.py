@@ -52,6 +52,101 @@ def test_legacy_cli_routes_pipeline_subcommands_without_parsing_them(monkeypatch
     assert observed == [("validate-profile", "--profile", "tracked.json")]
 
 
+def test_legacy_cli_routes_representative_full_plan_smoke_without_legacy_gates(
+    monkeypatch,
+) -> None:
+    observed: list[tuple[str, ...]] = []
+    monkeypatch.setattr(
+        paper_cli,
+        "run_paper_pipeline_main",
+        lambda argv: observed.append(tuple(argv)) or 19,
+    )
+    argv = (
+        "representative-full-plan-smoke",
+        "--output-root",
+        "fresh-output",
+        "--planning-artifact-root",
+        "planning",
+        "--plan-bundle-root",
+        "bundle",
+        "--new-run",
+        "--plan-only",
+    )
+
+    assert main(argv) == 19
+    assert observed == [argv]
+
+
+def test_representative_builder_freezes_one_full_exp1_to_exp5_authority(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tokenshare.experiments import paper_response_bank
+    from tokenshare.experiments import run_paper_pipeline
+
+    atomic = object()
+    terminal = object()
+    calls: dict[str, object] = {}
+
+    def fake_atomic(**kwargs):
+        assert "SILICONFLOW_API_KEY" not in kwargs[
+            "api_key_env_by_provider_family"
+        ].values()
+        calls["atomic"] = kwargs
+        return atomic
+
+    def fake_service(**kwargs):
+        calls["service"] = kwargs
+        return terminal
+
+    monkeypatch.setattr(
+        paper_response_bank,
+        "prepare_representative_acquisition_authority",
+        fake_atomic,
+    )
+    monkeypatch.setattr(
+        run_paper_pipeline,
+        "build_representative_full_plan_smoke_service_authority",
+        fake_service,
+    )
+
+    result = paper_cli.build_representative_full_plan_smoke_authority(
+        output_root=tmp_path / "execution",
+        planning_artifact_root=tmp_path / "planning",
+        plan_bundle_root=tmp_path / "bundle",
+        resume=False,
+    )
+
+    assert result is terminal
+    atomic_call = calls["atomic"]
+    assert [plan.experiment_id for plan in atomic_call["dispatch_plans"]] == [
+        "exp1_real_ai_feasibility",
+        "exp2_real_ai_scalability",
+        "exp3_real_ai_fault_recovery",
+        "exp4_real_ai_protocol_ablation",
+        "exp5_real_ai_model_endpoint_comparison",
+    ]
+    assert atomic_call["max_acquisition_concurrency"] == 10
+    assert atomic_call["repeat_ids"] == (0,)
+    assert atomic_call["budget"].budget_digest.startswith("sha256:")
+    assert calls["service"]["atomic_authority"] is atomic
+    assert calls["service"]["full_budget"] is atomic_call["budget"]
+    approved = calls["service"]["ai_api_configs"][
+        paper_cli.APPROVED_ENDPOINT_BINDINGS_KEY
+    ]["exp5_real_ai_model_endpoint_comparison"]
+    assert set(approved["member_plans"]) == {
+        "glm_5_2_siliconflow",
+        "qwen3_14b_siliconflow",
+        "minimax_m2_5_siliconflow",
+        "deepseek_v3_pro_siliconflow",
+    }
+    assert set(calls["service"]["hard_limits"]) == {
+        "max_total_provider_attempts",
+        "max_total_tokens",
+        "max_cost_estimate",
+    }
+
+
 APPROVED_EXP1_PILOT_DIGEST = (
     # Current schema digest for mock-approved CLI routing tests. The historical
     # real pilot approval digest remains immutable in existing evidence.

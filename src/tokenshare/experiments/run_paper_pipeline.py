@@ -45,6 +45,7 @@ PAPER_PIPELINE_COMMANDS = frozenset(
         "audit-cell-lineage",
         "validate-formal-execution-gate",
         "validate-paper-publication-gate",
+        "representative-full-plan-smoke",
     }
 )
 
@@ -65,6 +66,7 @@ _EVIDENCE_CLASSES = {
     "audit-cell-lineage": "offline_cell_lineage",
     "validate-formal-execution-gate": "offline_gate_parser_only",
     "validate-paper-publication-gate": "offline_gate_parser_only",
+    "representative-full-plan-smoke": "representative_full_plan_smoke",
 }
 _FORMAL_GATED_COMMANDS = frozenset(
     {"run-trace", "run-exp1-online", "run-exp5-online"}
@@ -172,6 +174,99 @@ class FormalRunGateServiceInput:
     publication_gate_factory: Callable[[object], object]
 
 
+_REPRESENTATIVE_EXPERIMENT_IDS = (
+    "exp1_real_ai_feasibility",
+    "exp2_real_ai_scalability",
+    "exp3_real_ai_fault_recovery",
+    "exp4_real_ai_protocol_ablation",
+    "exp5_real_ai_model_endpoint_comparison",
+)
+_REPRESENTATIVE_TRACE_EXPERIMENT_IDS = _REPRESENTATIVE_EXPERIMENT_IDS[:4]
+_REPRESENTATIVE_EXP5_EXPERIMENT_ID = _REPRESENTATIVE_EXPERIMENT_IDS[-1]
+
+
+@dataclass(frozen=True, kw_only=True)
+class RepresentativeFullPlanSmokeServiceAuthority:
+    """同一进程持有 full formal authority 与 representative 执行子集。"""
+
+    source_validation_digest: str
+    full_dispatch_plans: tuple[object, ...]
+    catalog_manifest: object
+    full_budget: object
+    ai_api_configs: Mapping[str, object]
+    coverage: object
+    bundle: object
+    output_root: Path
+    resume: bool
+    hard_limits: Mapping[str, object]
+    provider_calls_made: int = 0
+
+    def __post_init__(self) -> None:
+        plans = tuple(self.full_dispatch_plans)
+        conditions = tuple(getattr(self.coverage, "conditions", ()))
+        roots = tuple(getattr(self.coverage, "roots", ()))
+        root_filter = dict(getattr(self.coverage, "root_case_filter", {}))
+        condition_ids = tuple(
+            str(getattr(condition, "condition_id", "")) for condition in conditions
+        )
+        if tuple(getattr(plan, "experiment_id", None) for plan in plans) != (
+            _REPRESENTATIVE_EXPERIMENT_IDS
+        ):
+            raise ValueError("representative service requires all formal experiments")
+        if {
+            getattr(condition, "experiment_id", None) for condition in conditions
+        } != set(_REPRESENTATIVE_EXPERIMENT_IDS):
+            raise ValueError("representative coverage misses a formal experiment")
+        if (
+            not conditions
+            or not roots
+            or len(set(condition_ids)) != len(condition_ids)
+            or set(root_filter) != set(condition_ids)
+            or int(getattr(self.coverage, "condition_count", -1)) != len(conditions)
+            or int(getattr(self.coverage, "root_run_count", -1)) != len(roots)
+            or sum(len(case_ids) for case_ids in root_filter.values()) != len(roots)
+            or int(getattr(self.coverage, "provider_calls_made", -1)) != 0
+        ):
+            raise ValueError("representative coverage authority is incomplete")
+        for value, label in (
+            (self.source_validation_digest, "validation"),
+            (getattr(self.coverage, "source_snapshot_digest", None), "snapshot"),
+            (getattr(self.coverage, "coverage_digest", None), "coverage"),
+            (getattr(self.full_budget, "budget_digest", None), "budget"),
+        ):
+            if not isinstance(value, str) or not value.startswith("sha256:"):
+                raise ValueError(f"representative {label} digest is invalid")
+        if (
+            getattr(self.bundle, "source_snapshot_digest", None)
+            != self.coverage.source_snapshot_digest
+            or getattr(self.bundle, "coverage_digest", None)
+            != self.coverage.coverage_digest
+            or getattr(self.bundle, "semantic_inventory_plan", None) is None
+        ):
+            raise ValueError("representative bundle/coverage lineage mismatch")
+        if not isinstance(self.ai_api_configs, Mapping) or not self.ai_api_configs:
+            raise ValueError("representative AI API configs are missing")
+        if not isinstance(self.hard_limits, Mapping):
+            raise ValueError("representative hard limits must be a mapping")
+        if self.provider_calls_made != 0:
+            raise ValueError("representative service planning called a provider")
+        object.__setattr__(self, "full_dispatch_plans", plans)
+        object.__setattr__(self, "output_root", Path(self.output_root))
+        object.__setattr__(self, "ai_api_configs", MappingProxyType(dict(self.ai_api_configs)))
+        object.__setattr__(self, "hard_limits", MappingProxyType(dict(self.hard_limits)))
+
+
+@dataclass(frozen=True, kw_only=True)
+class RepresentativeFullPlanSmokeServiceResult:
+    status: str
+    trace_terminal: object
+    exp5_terminal: object
+    expected_condition_count: int
+    expected_root_count: int
+    current_trace_provider_calls: int
+    current_trace_spend: float
+
+
 Delegate = Callable[[PipelineCommandRequest], Mapping[str, object] | Any]
 ServiceInputFactory = Callable[[PipelineCommandRequest], object | None]
 
@@ -250,6 +345,17 @@ def _build_argument_parser() -> argparse.ArgumentParser:
     ):
         gate = common(name)
         gate.add_argument("--output-root", required=True)
+
+    representative = subparsers.add_parser("representative-full-plan-smoke")
+    representative.add_argument("--output-root", required=True)
+    representative.add_argument("--planning-artifact-root", required=True)
+    representative.add_argument("--plan-bundle-root", required=True)
+    representative.add_argument("--external-bank-root")
+    mode = representative.add_mutually_exclusive_group(required=True)
+    mode.add_argument("--new-run", action="store_true")
+    mode.add_argument("--resume", action="store_true")
+    representative.add_argument("--plan-only", action="store_true")
+    representative.add_argument("--allow-provider-calls", action="store_true")
     return parser
 
 
@@ -275,6 +381,46 @@ def _load_acquisition_bundle(path: str | Path):
 
 
 _ACQUISITION_BUNDLE_LOADER = _load_acquisition_bundle
+
+
+def _create_representative_bundle(path: str | Path, *, plan: object):
+    from tokenshare.experiments.paper_response_bank import (
+        create_representative_acquisition_plan_bundle,
+    )
+
+    return create_representative_acquisition_plan_bundle(path, plan=plan)
+
+
+def _load_representative_bundle(path: str | Path, *, plan: object):
+    from tokenshare.experiments.paper_response_bank import (
+        load_representative_acquisition_plan_bundle,
+    )
+
+    return load_representative_acquisition_plan_bundle(path, plan=plan)
+
+
+_CREATE_REPRESENTATIVE_BUNDLE = _create_representative_bundle
+_LOAD_REPRESENTATIVE_BUNDLE = _load_representative_bundle
+
+
+def prepare_representative_formal_bundle(
+    *,
+    bundle_root: str | Path,
+    plan: object,
+    resume: bool,
+) -> object:
+    """formal bundle 只允许 typed create/load，并始终绑定 fresh plan。"""
+
+    from tokenshare.experiments.paper_response_bank import (
+        RepresentativeUnifiedAcquisitionPlan,
+    )
+
+    if type(plan) is not RepresentativeUnifiedAcquisitionPlan:
+        raise TypeError("representative formal bundle requires a typed fresh plan")
+    loader = (
+        _LOAD_REPRESENTATIVE_BUNDLE if resume else _CREATE_REPRESENTATIVE_BUNDLE
+    )
+    return loader(bundle_root, plan=plan)
 
 
 def _build_formal_authority(**kwargs: object):
@@ -598,6 +744,14 @@ def _validate_paper_publication_gate_adapter(
     ).to_dict()
 
 
+def _representative_full_plan_smoke_adapter(
+    _request: PipelineCommandRequest,
+) -> Mapping[str, object]:
+    raise ValueError(
+        "representative full-plan smoke requires its pre-profile typed entrypoint"
+    )
+
+
 _AUTHORITATIVE_SERVICE_ADAPTERS: dict[str, Delegate] = {
     "validate-profile": _validate_profile_adapter,
     "plan-bank": _plan_bank_adapter,
@@ -613,6 +767,7 @@ _AUTHORITATIVE_SERVICE_ADAPTERS: dict[str, Delegate] = {
     "audit-cell-lineage": _audit_cell_lineage_adapter,
     "validate-formal-execution-gate": _validate_formal_execution_gate_adapter,
     "validate-paper-publication-gate": _validate_paper_publication_gate_adapter,
+    "representative-full-plan-smoke": _representative_full_plan_smoke_adapter,
 }
 
 
@@ -633,6 +788,356 @@ def _acquisition_service_input_from_persisted_authorities(
         raise ValueError("acquire-bank requires --plan-bundle-root")
     if request.output_root is None:
         raise ValueError("acquire-bank requires an output root")
+    return _finish_acquisition_service_input_from_persisted_authorities(request)
+
+
+def _execute_formal_suite(**kwargs: object):
+    from tokenshare.experiments.paper_formal_runner import (
+        execute_paper_formal_suite,
+    )
+
+    return execute_paper_formal_suite(**kwargs)
+
+
+def _build_trace_context(**kwargs: object):
+    from tokenshare.experiments.paper_response_bank import (
+        build_paper_formal_trace_context,
+    )
+
+    return build_paper_formal_trace_context(**kwargs)
+
+
+_FORMAL_SUITE_EXECUTOR = _execute_formal_suite
+_TRACE_CONTEXT_BUILDER = _build_trace_context
+
+
+def build_representative_full_plan_smoke_service_authority(
+    *,
+    atomic_authority: object,
+    full_dispatch_plans: Sequence[object],
+    catalog_manifest: object,
+    full_budget: object,
+    ai_api_configs: Mapping[str, object],
+    bundle_root: str | Path,
+    output_root: str | Path,
+    resume: bool,
+    hard_limits: Mapping[str, object],
+) -> RepresentativeFullPlanSmokeServiceAuthority:
+    """从一次 atomic full-plan freeze 建立中性 representative service。"""
+
+    from tokenshare.experiments.paper_response_bank import (
+        RepresentativeAcquisitionAuthority,
+    )
+    from tokenshare.experiments.paper_formal_runner import (
+        validate_paper_formal_suite_plan,
+    )
+
+    if type(atomic_authority) is not RepresentativeAcquisitionAuthority:
+        raise TypeError("representative service requires typed atomic authority")
+    atomic_authority.__post_init__()
+    plans = tuple(full_dispatch_plans)
+    coverage = atomic_authority.coverage
+    if (
+        coverage.source_snapshot is not atomic_authority.snapshot
+        or getattr(full_budget, "budget_digest", None)
+        != atomic_authority.snapshot.budget_digest
+    ):
+        raise ValueError("representative full-plan budget/snapshot lineage mismatch")
+    source_conditions = tuple(
+        item.condition for item in atomic_authority.snapshot.conditions
+    )
+    plan_conditions = tuple(
+        condition for plan in plans for condition in plan.conditions
+    )
+    if len(source_conditions) != len(plan_conditions) or any(
+        source is not planned
+        for source, planned in zip(source_conditions, plan_conditions, strict=True)
+    ):
+        raise ValueError("representative service dispatch authority drift")
+    bundle = prepare_representative_formal_bundle(
+        bundle_root=bundle_root,
+        plan=atomic_authority.plan,
+        resume=resume,
+    )
+    plan_roots = {Path(plan.output_root).resolve(strict=False).parent for plan in plans}
+    if len(plan_roots) != 1:
+        raise ValueError("formal dispatch plans do not share one authority root")
+    full_plan_root = next(iter(plan_roots))
+    condition_ids_by_experiment = {
+        experiment_id: tuple(
+            condition.condition_id
+            for condition in coverage.conditions
+            if condition.experiment_id == experiment_id
+        )
+        for experiment_id in _REPRESENTATIVE_EXPERIMENT_IDS
+    }
+    for experiment_ids in (
+        _REPRESENTATIVE_TRACE_EXPERIMENT_IDS,
+        (_REPRESENTATIVE_EXP5_EXPERIMENT_ID,),
+    ):
+        selected = tuple(
+            condition_id
+            for experiment_id in experiment_ids
+            for condition_id in condition_ids_by_experiment[experiment_id]
+        )
+        root_filter = {
+            condition_id: coverage.root_case_filter[condition_id]
+            for condition_id in selected
+        }
+        validate_paper_formal_suite_plan(
+            dispatch_plans=plans,
+            catalog_manifest=catalog_manifest,
+            budget=full_budget,
+            output_root=full_plan_root,
+            ai_api_configs=ai_api_configs,
+            hard_limits=hard_limits,
+            selected_condition_ids=selected,
+            root_case_filter=root_filter,
+        )
+    return RepresentativeFullPlanSmokeServiceAuthority(
+        source_validation_digest=atomic_authority.validation_digest,
+        full_dispatch_plans=plans,
+        catalog_manifest=catalog_manifest,
+        full_budget=full_budget,
+        ai_api_configs=ai_api_configs,
+        coverage=coverage,
+        bundle=bundle,
+        output_root=Path(output_root),
+        resume=bool(resume),
+        hard_limits=hard_limits,
+    )
+
+
+def execute_representative_full_plan_smoke(
+    *,
+    authority: RepresentativeFullPlanSmokeServiceAuthority,
+    response_bank_resolver: object,
+    exp5_transport: object,
+) -> RepresentativeFullPlanSmokeServiceResult:
+    """用同一 full plans/budget 分别执行 Exp1--4 trace 与 Exp5 online。"""
+
+    if type(authority) is not RepresentativeFullPlanSmokeServiceAuthority:
+        raise TypeError("typed representative smoke authority is required")
+    coverage = authority.coverage
+    conditions_by_experiment = {
+        experiment_id: tuple(
+            condition
+            for condition in coverage.conditions
+            if condition.experiment_id == experiment_id
+        )
+        for experiment_id in _REPRESENTATIVE_EXPERIMENT_IDS
+    }
+    trace_conditions = tuple(
+        condition
+        for experiment_id in _REPRESENTATIVE_TRACE_EXPERIMENT_IDS
+        for condition in conditions_by_experiment[experiment_id]
+    )
+    exp5_conditions = conditions_by_experiment[_REPRESENTATIVE_EXP5_EXPERIMENT_ID]
+    trace_context = _TRACE_CONTEXT_BUILDER(
+        inventory_plan=authority.bundle.semantic_inventory_plan,
+        resolver=response_bank_resolver,
+    )
+    trace_terminal = _run_representative_formal_subset(
+        authority=authority,
+        conditions=trace_conditions,
+        output_root=authority.output_root / "exp1-exp4-trace",
+        transport=object(),
+        real_transport=False,
+        trace_context=trace_context,
+        suite_id="representative_full_plan_smoke_exp1_exp4_trace",
+    )
+    _validate_representative_terminal(
+        terminal=trace_terminal,
+        conditions=trace_conditions,
+        root_case_filter=coverage.root_case_filter,
+        expected_experiment_ids=_REPRESENTATIVE_TRACE_EXPERIMENT_IDS,
+        require_zero_current_provider_calls=True,
+    )
+    exp5_terminal = _run_representative_formal_subset(
+        authority=authority,
+        conditions=exp5_conditions,
+        output_root=authority.output_root / "exp5-online",
+        transport=exp5_transport,
+        real_transport=True,
+        trace_context=None,
+        suite_id="representative_full_plan_smoke_exp5_online",
+    )
+    _validate_representative_terminal(
+        terminal=exp5_terminal,
+        conditions=exp5_conditions,
+        root_case_filter=coverage.root_case_filter,
+        expected_experiment_ids=(_REPRESENTATIVE_EXP5_EXPERIMENT_ID,),
+        require_zero_current_provider_calls=False,
+    )
+    statuses = {
+        str(getattr(getattr(item, "status", None), "value", getattr(item, "status", None)))
+        for item in (trace_terminal, exp5_terminal)
+    }
+    aggregate_status = (
+        "completed_with_failures"
+        if "completed_with_failures" in statuses
+        else "completed"
+    )
+    return RepresentativeFullPlanSmokeServiceResult(
+        status=aggregate_status,
+        trace_terminal=trace_terminal,
+        exp5_terminal=exp5_terminal,
+        expected_condition_count=int(coverage.condition_count),
+        expected_root_count=int(coverage.root_run_count),
+        current_trace_provider_calls=0,
+        current_trace_spend=0.0,
+    )
+
+
+def _run_representative_formal_subset(
+    *,
+    authority: RepresentativeFullPlanSmokeServiceAuthority,
+    conditions: Sequence[object],
+    output_root: Path,
+    transport: object,
+    real_transport: bool,
+    trace_context: object | None,
+    suite_id: str,
+) -> object:
+    selected = tuple(condition.condition_id for condition in conditions)
+    root_filter = {
+        condition_id: authority.coverage.root_case_filter[condition_id]
+        for condition_id in selected
+    }
+    active_experiment_ids = tuple(
+        dict.fromkeys(condition.experiment_id for condition in conditions)
+    )
+    execution_roots = {
+        experiment_id: output_root / experiment_id
+        for experiment_id in active_experiment_ids
+    }
+    return _FORMAL_SUITE_EXECUTOR(
+        dispatch_plans=authority.full_dispatch_plans,
+        catalog_manifest=authority.catalog_manifest,
+        budget=authority.full_budget,
+        budget_approval={
+            "approval_mode": "representative_full_plan_smoke",
+            "budget_digest": authority.full_budget.budget_digest,
+        },
+        output_root=output_root,
+        ai_api_configs=authority.ai_api_configs,
+        transport=transport,
+        real_transport=real_transport,
+        hard_limits=authority.hard_limits,
+        resume=authority.resume,
+        replay_only=False,
+        root_case_filter=root_filter,
+        selected_condition_ids=selected,
+        execution_output_root_by_experiment=execution_roots,
+        trace_context=trace_context,
+        enforce_publication_closure=False,
+        bypass_nonmetric_facility_gates=True,
+        suite_id=suite_id,
+    )
+
+
+def _validate_representative_terminal(
+    *,
+    terminal: object,
+    conditions: Sequence[object],
+    root_case_filter: Mapping[str, Sequence[str]],
+    expected_experiment_ids: Sequence[str],
+    require_zero_current_provider_calls: bool,
+) -> None:
+    status = str(
+        getattr(
+            getattr(terminal, "status", None),
+            "value",
+            getattr(terminal, "status", None),
+        )
+    )
+    if status not in {"completed", "completed_with_failures"}:
+        raise ValueError("representative runner terminal is not acceptable")
+    selected_ids = tuple(condition.condition_id for condition in conditions)
+    expected_roots = sum(len(root_case_filter[item]) for item in selected_ids)
+    if (
+        int(getattr(terminal, "condition_count", -1)) != len(selected_ids)
+        or int(getattr(terminal, "task_count", -1)) != expected_roots
+        or tuple(getattr(terminal, "experiment_ids", ()))
+        != tuple(expected_experiment_ids)
+    ):
+        raise ValueError("representative runner denominator is incomplete")
+    if require_zero_current_provider_calls and int(
+        getattr(terminal, "provider_attempt_count", -1)
+    ) != 0:
+        raise ValueError("trace runner made current provider calls")
+
+
+def _build_representative_service_authority(**kwargs: object):
+    from tokenshare.experiments.run_paper_experiments import (
+        build_representative_full_plan_smoke_authority,
+    )
+
+    return build_representative_full_plan_smoke_authority(**kwargs)
+
+
+def _create_representative_exp5_transport() -> object:
+    from tokenshare.executors.ai_api_transport import UrlLibSiliconFlowTransport
+
+    return UrlLibSiliconFlowTransport()
+
+
+_REPRESENTATIVE_SERVICE_AUTHORITY_BUILDER = (
+    _build_representative_service_authority
+)
+_REPRESENTATIVE_SMOKE_EXECUTOR = execute_representative_full_plan_smoke
+_REPRESENTATIVE_EXP5_TRANSPORT_FACTORY = _create_representative_exp5_transport
+
+
+def _run_representative_cli(args: argparse.Namespace) -> dict[str, object]:
+    """中性入口：full authority/coverage 成功后才允许构造 provider transport。"""
+
+    authority = _REPRESENTATIVE_SERVICE_AUTHORITY_BUILDER(
+        output_root=Path(args.output_root),
+        planning_artifact_root=Path(args.planning_artifact_root),
+        plan_bundle_root=Path(args.plan_bundle_root),
+        resume=bool(args.resume),
+    )
+    coverage = authority.coverage
+    common = {
+        "schema_version": RESULT_SCHEMA_VERSION,
+        "scope": "representative-full-plan-smoke",
+        "evidence_class": "representative_full_plan_smoke",
+        "provider_calls": 0,
+        "source_validation_digest": authority.source_validation_digest,
+        "source_snapshot_digest": coverage.source_snapshot_digest,
+        "coverage_digest": coverage.coverage_digest,
+        "budget_digest": authority.full_budget.budget_digest,
+        "condition_count": int(coverage.condition_count),
+        "root_run_count": int(coverage.root_run_count),
+    }
+    if bool(args.plan_only):
+        return {**common, "status": "ready"}
+    if not bool(args.allow_provider_calls):
+        raise ValueError("representative execution requires --allow-provider-calls")
+    if args.external_bank_root is None:
+        raise ValueError("representative execution requires --external-bank-root")
+    resolver = ExternalBankResolverBinding(
+        root=Path(args.external_bank_root).resolve(strict=False)
+    ).open()
+    terminal = _REPRESENTATIVE_SMOKE_EXECUTOR(
+        authority=authority,
+        response_bank_resolver=resolver,
+        exp5_transport=_REPRESENTATIVE_EXP5_TRANSPORT_FACTORY(),
+    )
+    return {
+        **common,
+        "status": terminal.status,
+        "condition_count": int(terminal.expected_condition_count),
+        "root_run_count": int(terminal.expected_root_count),
+        "trace_provider_calls": int(terminal.current_trace_provider_calls),
+        "trace_current_spend": float(terminal.current_trace_spend),
+    }
+
+
+def _finish_acquisition_service_input_from_persisted_authorities(
+    request: PipelineCommandRequest,
+) -> AcquisitionServiceInput:
     from tokenshare.executors.ai_api_transport import (
         UrlLibDeepSeekTransport,
         UrlLibOpenAITransport,
@@ -913,6 +1418,7 @@ _PRODUCTION_SERVICE_INPUT_FACTORIES: Mapping[str, ServiceInputFactory] = Mapping
         "audit-cell-lineage": _lineage_service_input_from_persisted_authorities,
         "validate-formal-execution-gate": _provided_gate_service_input,
         "validate-paper-publication-gate": _provided_gate_service_input,
+        "representative-full-plan-smoke": _no_service_input,
     }
 )
 
@@ -1179,6 +1685,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         return int(exc.code)
 
     try:
+        if args.command == "representative-full-plan-smoke":
+            result = _run_representative_cli(args)
+            print(json.dumps(result, sort_keys=True))
+            return (
+                0
+                if result["status"]
+                in {"completed", "completed_with_failures", "ready"}
+                else 3
+            )
         profile = _PROFILE_LOADER(args.profile)
         provider = args.command in _PROVIDER_SCOPES
         authorization = None
@@ -1506,7 +2021,12 @@ __all__ = [
     "PAPER_PIPELINE_COMMANDS",
     "PipelineCommandRequest",
     "PaperPublicationGateServiceInput",
+    "RepresentativeFullPlanSmokeServiceAuthority",
+    "RepresentativeFullPlanSmokeServiceResult",
     "ReportRenderServiceInput",
+    "build_representative_full_plan_smoke_service_authority",
+    "execute_representative_full_plan_smoke",
     "execute_typed_gate_command",
     "main",
+    "prepare_representative_formal_bundle",
 ]
