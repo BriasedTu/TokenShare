@@ -1476,9 +1476,15 @@ def test_results_first_matrix8_trace_adapter_runs_exactly_four_eight_root_smokes
             status="completed",
             provider_attempt_count=0,
             experiment_ids=kwargs["execution_plan"].experiment_ids,
-            run_count=8,
+            task_count=8,
+            run_count=(
+                6
+                if kwargs["execution_plan"].experiment_ids
+                == ("exp1_real_ai_feasibility",)
+                else 8
+            ),
             condition_count=(
-                7
+                6
                 if kwargs["execution_plan"].experiment_ids
                 == ("exp1_real_ai_feasibility",)
                 else 8
@@ -1514,12 +1520,13 @@ def test_results_first_matrix8_trace_adapter_runs_exactly_four_eight_root_smokes
 
 
 @pytest.mark.parametrize(
-    ("override", "message"),
-    (
-        ({"status": "blocked"}, "terminal status"),
-        ({"experiment_ids": ("exp1_real_ai_feasibility",)}, "experiment identity"),
-        ({"run_count": 7}, "root run count"),
-        ({"condition_count": 7}, "condition count"),
+        ("override", "message"),
+        (
+            ({"status": "blocked"}, "terminal status"),
+            ({"experiment_ids": ("exp1_real_ai_feasibility",)}, "experiment identity"),
+            ({"task_count": 7}, "root task count"),
+        ({"run_count": 7}, "suite run count"),
+            ({"condition_count": 7}, "condition count"),
         ({"provider_attempt_count": 1}, "current provider call"),
     ),
 )
@@ -1553,9 +1560,15 @@ def test_results_first_matrix8_trace_rejects_nonterminal_or_partial_suite_result
             "status": "completed",
             "provider_attempt_count": 0,
             "experiment_ids": kwargs["execution_plan"].experiment_ids,
-            "run_count": 8,
+            "task_count": 8,
+            "run_count": (
+                6
+                if kwargs["execution_plan"].experiment_ids
+                == ("exp1_real_ai_feasibility",)
+                else 8
+            ),
             "condition_count": (
-                7
+                6
                 if kwargs["execution_plan"].experiment_ids
                 == ("exp1_real_ai_feasibility",)
                 else 8

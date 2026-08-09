@@ -564,20 +564,23 @@ def _run_trace_adapter(request: PipelineCommandRequest) -> Mapping[str, object]:
                 expected_experiment_id,
             ):
                 raise ValueError("results-first trace suite experiment identity mismatch")
-            run_count = getattr(result, "run_count", None)
-            if type(run_count) is not int or run_count != 8:
-                raise ValueError("results-first trace suite root run count mismatch")
-            condition_count = getattr(result, "condition_count", None)
-            expected_condition_count = (
-                7 if expected_experiment_id == "exp1_real_ai_feasibility" else 8
+            task_count = getattr(result, "task_count", None)
+            if type(task_count) is not int or task_count != 8:
+                raise ValueError("results-first trace suite root task count mismatch")
+            expected_group_count = (
+                6 if expected_experiment_id == "exp1_real_ai_feasibility" else 8
             )
+            run_count = getattr(result, "run_count", None)
+            if type(run_count) is not int or run_count != expected_group_count:
+                raise ValueError("results-first trace suite run count mismatch")
+            condition_count = getattr(result, "condition_count", None)
             if (
                 type(condition_count) is not int
-                or condition_count != expected_condition_count
+                or condition_count != expected_group_count
             ):
                 raise ValueError("results-first trace suite condition count mismatch")
             statuses.append(status)
-            root_run_count += run_count
+            root_run_count += task_count
             completed_experiment_count += 1
         if any(status == "completed_with_failures" for status in statuses):
             status = "completed_with_failures"
