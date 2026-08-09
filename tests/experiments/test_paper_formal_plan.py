@@ -22,6 +22,7 @@ from tokenshare.experiments.paper_experiment_contracts import (
 )
 from tokenshare.experiments.paper_formal_plan import (
     FormalPreparedRequestInventory,
+    derive_paper_formal_representative_coverage,
     freeze_formal_root_prepared_requests,
     freeze_paper_formal_prepared_request_inventory,
     freeze_paper_formal_plan_snapshot,
@@ -31,8 +32,14 @@ from tokenshare.experiments.paper_formal_plan import (
 import tokenshare.experiments.paper_formal_plan as formal_plan_module
 from tokenshare.experiments.paper_formal_runner import (
     APPROVED_ENDPOINT_BINDINGS_KEY,
+    validate_paper_formal_root_case_filter,
     validate_paper_formal_suite_plan,
 )
+from tokenshare.experiments.paper_exp3_fault_recovery import (
+    RATE_FAULT_TARGET_SEED,
+    formal_exp3_scheduled_target_unit_ids_by_case,
+)
+from tokenshare.experiments.paper_faults import select_fault_targets
 from tokenshare.experiments.paper_models import digest_json
 from tokenshare.experiments.paper_model_policy import (
     build_model_endpoint_cohort_preflight,
@@ -78,6 +85,342 @@ def formal_snapshot(formal_inputs):
         ai_api_configs=ai_api_configs,
         output_root=output_root,
     )
+
+
+def test_representative_coverage_reuses_formal_objects_and_covers_all_axes(
+    formal_inputs,
+    formal_snapshot,
+) -> None:
+    plans, _catalog, _budget, _ai_api_configs, _output_root = formal_inputs
+
+    coverage = derive_paper_formal_representative_coverage(
+        snapshot=formal_snapshot,
+        dispatch_plans=plans,
+        repeat_ids=(0,),
+    )
+
+    expected_condition_counts = {
+        "exp1_real_ai_feasibility": 12,
+        "exp2_real_ai_scalability": 6,
+        "exp3_real_ai_fault_recovery": 81,
+        "exp4_real_ai_protocol_ablation": 30,
+        "exp5_real_ai_model_endpoint_comparison": 16,
+    }
+    assert coverage.condition_count == sum(expected_condition_counts.values())
+    assert coverage.root_run_count == coverage.condition_count == 145
+    assert coverage.provider_calls_made == 0
+    assert coverage.source_snapshot_digest == formal_snapshot.snapshot_digest
+    assert coverage.coverage_digest.startswith("sha256:")
+    assert coverage.to_dict()["coverage_digest"] == coverage.coverage_digest
+
+    formal_conditions_by_id = {
+        item.condition.condition_id: item for item in formal_snapshot.conditions
+    }
+    for condition, binding in zip(
+        coverage.conditions,
+        coverage.bindings,
+        strict=True,
+    ):
+        formal = formal_conditions_by_id[condition.condition_id]
+        assert condition is formal.condition
+        assert binding is formal.binding
+        assert condition.condition_digest == binding.condition_digest
+        assert binding.selection.selection_digest == formal.binding.selection.selection_digest
+        assert condition.seed == formal.condition.seed
+        assert condition.repeat_id == formal.condition.repeat_id == 0
+        selected_case_ids = coverage.root_case_filter[condition.condition_id]
+        assert selected_case_ids
+        assert tuple(
+            case_id
+            for case_id in binding.selection.ordered_case_ids
+            if case_id in selected_case_ids
+        ) == selected_case_ids
+
+    by_experiment = {
+        experiment_id: tuple(
+            condition
+            for condition in coverage.conditions
+            if condition.experiment_id == experiment_id
+        )
+        for experiment_id in expected_condition_counts
+    }
+    assert {
+        experiment_id: len(conditions)
+        for experiment_id, conditions in by_experiment.items()
+    } == expected_condition_counts
+    assert {condition.domain for condition in by_experiment["exp1_real_ai_feasibility"]} == {
+        "factorization",
+        "lean_proof",
+    }
+    exp1 = by_experiment["exp1_real_ai_feasibility"]
+    assert {
+        (condition.domain, condition.paper_difficulty, condition.topic_family)
+        for condition in exp1
+    } == {
+        *(('factorization', difficulty, None) for difficulty in ('easy', 'medium', 'hard')),
+        *(
+            ('lean_proof', difficulty, topic)
+            for difficulty in ('simple', 'medium_lemma_dag', 'hard_frontier')
+            for topic in ('pure_logic', 'function_set', 'induction')
+        ),
+    }
+    exp2 = by_experiment["exp2_real_ai_scalability"]
+    assert {condition.domain for condition in exp2} == {"factorization"}
+    assert {condition.worker_count for condition in exp2} == {1, 3, 7, 10, 30, 50}
+    exp3 = by_experiment["exp3_real_ai_fault_recovery"]
+    assert {condition.fault_type for condition in exp3} == {
+        "false_positive",
+        "false_negative",
+        "no_return",
+        "late_submission",
+        "executor_error",
+        "worker_death",
+    }
+    rate_faults = tuple(
+        condition for condition in exp3 if condition.fault_type != "worker_death"
+    )
+    assert {
+        (condition.domain, int(round(float(condition.fault_rate) * 100)))
+        for condition in rate_faults
+    } == {
+        *(('factorization', rate) for rate in (1, 5, 10, 25, 50, 100)),
+        *(('lean_proof', rate) for rate in (10, 50, 100)),
+    }
+    assert {
+        (condition.domain, condition.fault_type)
+        for condition in rate_faults
+    } == {
+        (domain, fault_type)
+        for domain in ("factorization", "lean_proof")
+        for fault_type in (
+            "false_positive",
+            "false_negative",
+            "no_return",
+            "late_submission",
+            "executor_error",
+        )
+    }
+    worker_deaths = tuple(
+        condition for condition in exp3 if condition.fault_type == "worker_death"
+    )
+    death_axes = {
+        (
+            condition.domain,
+            condition.paper_difficulty,
+            condition.topic_family,
+            int(condition.condition_id.split("__dead", 1)[1].split("__", 1)[0]),
+            int(
+                condition.condition_id.split("__dead", 1)[1]
+                .split("__", 2)[1]
+                .removeprefix("p")
+            ),
+        )
+        for condition in worker_deaths
+    }
+    assert death_axes == {
+        *(
+            ("factorization", difficulty, None, dead, progress)
+            for difficulty in ("easy", "medium", "hard")
+            for dead in (1, 3)
+            for progress in (25, 50, 75)
+        ),
+        *(
+            ("lean_proof", "medium_lemma_dag", topic, dead, progress)
+            for topic in ("pure_logic", "function_set", "induction")
+            for dead in (1, 3)
+            for progress in (25, 50, 75)
+        ),
+    }
+    exp4 = by_experiment["exp4_real_ai_protocol_ablation"]
+    assert {condition.ablation_mode for condition in exp4} == {
+        "FULL",
+        "NO_VERIFICATION",
+        "NO_PARSER_POLICY",
+        "NO_REQUEUE",
+        "NO_MERGE_GATE",
+    }
+    assert {
+        (condition.domain, condition.paper_difficulty, condition.ablation_mode)
+        for condition in exp4
+    } == {
+        *(
+            ("factorization", difficulty, mode)
+            for difficulty in ("easy", "medium", "hard")
+            for mode in (
+                "FULL",
+                "NO_VERIFICATION",
+                "NO_PARSER_POLICY",
+                "NO_REQUEUE",
+                "NO_MERGE_GATE",
+            )
+        ),
+        *(
+            ("lean_proof", difficulty, mode)
+            for difficulty in ("simple", "medium_lemma_dag", "hard_frontier")
+            for mode in (
+                "FULL",
+                "NO_VERIFICATION",
+                "NO_PARSER_POLICY",
+                "NO_REQUEUE",
+                "NO_MERGE_GATE",
+            )
+        ),
+    }
+    exp5 = by_experiment["exp5_real_ai_model_endpoint_comparison"]
+    assert len({condition.model_endpoint_identity_digest for condition in exp5}) == 4
+    assert {condition.domain for condition in exp5} == {"factorization", "lean_proof"}
+    for endpoint_digest in {
+        condition.model_endpoint_identity_digest for condition in exp5
+    }:
+        assert {
+            (condition.domain, condition.paper_difficulty, condition.topic_family)
+            for condition in exp5
+            if condition.model_endpoint_identity_digest == endpoint_digest
+        } == {
+            ("factorization", "hard", None),
+            ("lean_proof", "hard_frontier", "pure_logic"),
+            ("lean_proof", "hard_frontier", "function_set"),
+            ("lean_proof", "hard_frontier", "induction"),
+        }
+
+
+def test_representative_exp3_rate_fault_roots_contain_a_formal_target(
+    formal_inputs,
+    formal_snapshot,
+) -> None:
+    plans, _catalog, _budget, _ai_api_configs, _output_root = formal_inputs
+    coverage = derive_paper_formal_representative_coverage(
+        snapshot=formal_snapshot,
+        dispatch_plans=plans,
+        repeat_ids=(0,),
+    )
+    roots_by_condition: dict[str, list] = {}
+    for root in formal_snapshot.roots:
+        roots_by_condition.setdefault(root.condition.condition_id, []).append(root)
+
+    for condition in coverage.conditions:
+        if (
+            condition.experiment_id != "exp3_real_ai_fault_recovery"
+            or condition.fault_type == "worker_death"
+        ):
+            continue
+        roots = roots_by_condition[condition.condition_id]
+        all_unit_ids = tuple(
+            f"{root.case_id}:{unit_id}"
+            for root in roots
+            for unit_id in root.planned_ai_unit_ids
+        )
+        targets = set(
+            select_fault_targets(
+                all_unit_ids,
+                fault_rate=float(condition.fault_rate),
+                seed=RATE_FAULT_TARGET_SEED,
+            )
+        )
+        selected_unit_ids = {
+            f"{root.case_id}:{unit_id}"
+            for root in roots
+            if root.case_id in coverage.root_case_filter[condition.condition_id]
+            for unit_id in root.planned_ai_unit_ids
+        }
+        assert selected_unit_ids & targets, condition.condition_id
+
+
+def test_representative_worker_death_root_maximizes_formal_scheduled_targets(
+    formal_inputs,
+    formal_snapshot,
+) -> None:
+    plans, _catalog, _budget, _ai_api_configs, _output_root = formal_inputs
+    coverage = derive_paper_formal_representative_coverage(
+        snapshot=formal_snapshot,
+        dispatch_plans=plans,
+        repeat_ids=(0,),
+    )
+    roots_by_condition: dict[str, list] = {}
+    for root in formal_snapshot.roots:
+        roots_by_condition.setdefault(root.condition.condition_id, []).append(root)
+
+    for condition in coverage.conditions:
+        if (
+            condition.experiment_id != "exp3_real_ai_fault_recovery"
+            or condition.fault_type != "worker_death"
+        ):
+            continue
+        roots = roots_by_condition[condition.condition_id]
+        targets_by_case = formal_exp3_scheduled_target_unit_ids_by_case(
+            condition=condition,
+            ordered_case_ids=tuple(root.case_id for root in roots),
+            planned_ai_unit_ids_by_case={
+                root.case_id: root.planned_ai_unit_ids for root in roots
+            },
+        )
+        selected_case_id = coverage.root_case_filter[condition.condition_id][0]
+        selected_target_count = len(targets_by_case[selected_case_id])
+        assert selected_target_count > 0
+        assert selected_target_count == max(
+            len(targets) for targets in targets_by_case.values()
+        )
+
+
+def test_formal_root_case_filter_validator_accepts_only_exact_formal_subset(
+    formal_inputs,
+) -> None:
+    plans, _catalog, _budget, _ai_api_configs, _output_root = formal_inputs
+    selected = tuple(
+        condition.condition_id
+        for plan in plans
+        for condition in plan.conditions
+        if condition.repeat_id == 0
+    )
+    selections = {
+        binding.condition_id: binding.selection
+        for plan in plans
+        for binding in plan.condition_selection_bindings
+    }
+    root_filter = {
+        condition_id: (selections[condition_id].ordered_case_ids[0],)
+        for condition_id in selected
+    }
+
+    assert validate_paper_formal_root_case_filter(
+        dispatch_plans=plans,
+        selected_condition_ids=selected,
+        root_case_filter=root_filter,
+    ) == root_filter
+    with pytest.raises(ValueError, match="selected condition"):
+        validate_paper_formal_root_case_filter(
+            dispatch_plans=plans,
+            selected_condition_ids=(*selected, "not-formal"),
+            root_case_filter=root_filter,
+        )
+    with pytest.raises(ValueError, match="selected condition"):
+        validate_paper_formal_root_case_filter(
+            dispatch_plans=plans,
+            selected_condition_ids=(*selected, selected[0]),
+            root_case_filter=root_filter,
+        )
+    with pytest.raises(ValueError, match="condition coverage"):
+        validate_paper_formal_root_case_filter(
+            dispatch_plans=plans,
+            selected_condition_ids=selected,
+            root_case_filter={key: value for key, value in root_filter.items() if key != selected[0]},
+        )
+    first_id = selected[0]
+    with pytest.raises(ValueError, match="non-canonical case"):
+        validate_paper_formal_root_case_filter(
+            dispatch_plans=plans,
+            selected_condition_ids=selected,
+            root_case_filter={**root_filter, first_id: ("not-a-formal-case",)},
+        )
+    with pytest.raises(ValueError, match="canonical case order"):
+        validate_paper_formal_root_case_filter(
+            dispatch_plans=plans,
+            selected_condition_ids=selected,
+            root_case_filter={
+                **root_filter,
+                first_id: tuple(reversed(selections[first_id].ordered_case_ids[:2])),
+            },
+        )
 
 
 @pytest.fixture(scope="module")

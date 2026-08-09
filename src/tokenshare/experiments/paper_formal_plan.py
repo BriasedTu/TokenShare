@@ -6,6 +6,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 import json
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any
 
 from tokenshare.core.models import (
@@ -33,13 +34,17 @@ from tokenshare.experiments.paper_dispatcher import (
     plan_paper_experiment,
     registered_paper_experiment_ids,
 )
-from tokenshare.experiments.paper_exp3_fault_recovery import EXP3_EXPERIMENT_ID
+from tokenshare.experiments.paper_exp3_fault_recovery import (
+    EXP3_EXPERIMENT_ID,
+    formal_exp3_scheduled_target_unit_ids_by_case,
+)
 from tokenshare.experiments.paper_experiment_contracts import (
     FrozenConditionSelectionBinding,
     PaperExecutionContext,
 )
 from tokenshare.experiments.paper_formal_runner import (
     APPROVED_ENDPOINT_BINDINGS_KEY,
+    validate_paper_formal_root_case_filter,
     validate_paper_formal_suite_plan,
 )
 from tokenshare.experiments.paper_model_identity import (
@@ -173,6 +178,107 @@ class FormalPlanSnapshot:
                     ),
                 }
                 for item in self.roots
+            ],
+        }
+
+
+@dataclass(frozen=True, kw_only=True)
+class FormalRepresentativeCoverage:
+    """只引用 full snapshot authority 的 repeat/root 执行子集。"""
+
+    conditions: tuple[PaperExperimentCondition, ...]
+    bindings: tuple[FrozenConditionSelectionBinding, ...]
+    roots: tuple[FormalRootSnapshot, ...]
+    root_case_filter: Mapping[str, tuple[str, ...]]
+    source_snapshot_digest: str
+    condition_count: int
+    root_run_count: int
+    provider_calls_made: int = 0
+    schema_version: str = "tokenshare.paper_formal_representative_coverage.v1"
+
+    def __post_init__(self) -> None:
+        conditions = tuple(self.conditions)
+        bindings = tuple(self.bindings)
+        roots = tuple(self.roots)
+        root_filter = {
+            str(condition_id): tuple(case_ids)
+            for condition_id, case_ids in self.root_case_filter.items()
+        }
+        if not conditions or len(conditions) != len(bindings):
+            raise ValueError("representative coverage condition/binding mismatch")
+        if self.condition_count != len(conditions):
+            raise ValueError("representative coverage condition count mismatch")
+        if self.root_run_count != len(roots):
+            raise ValueError("representative coverage root count mismatch")
+        if set(root_filter) != {condition.condition_id for condition in conditions}:
+            raise ValueError("representative coverage root filter mismatch")
+        if self.provider_calls_made != 0:
+            raise ValueError("representative coverage must not call providers")
+        _required_digest(self.source_snapshot_digest, "source_snapshot_digest")
+        object.__setattr__(self, "conditions", conditions)
+        object.__setattr__(self, "bindings", bindings)
+        object.__setattr__(self, "roots", roots)
+        object.__setattr__(self, "root_case_filter", MappingProxyType(root_filter))
+
+    @property
+    def coverage_digest(self) -> str:
+        return digest_json(self._body())
+
+    def to_dict(self) -> dict[str, Any]:
+        return {**self._body(), "coverage_digest": self.coverage_digest}
+
+    def _body(self) -> dict[str, Any]:
+        roots_by_condition: dict[str, list[FormalRootSnapshot]] = {}
+        for root in self.roots:
+            roots_by_condition.setdefault(root.condition.condition_id, []).append(root)
+        return {
+            "schema_version": self.schema_version,
+            "source_snapshot_digest": self.source_snapshot_digest,
+            "condition_count": self.condition_count,
+            "root_run_count": self.root_run_count,
+            "provider_calls_made": self.provider_calls_made,
+            "conditions": [
+                {
+                    "experiment_id": condition.experiment_id,
+                    "condition_id": condition.condition_id,
+                    "condition_digest": condition.condition_digest,
+                    "selection_id": binding.selection.selection_id,
+                    "selection_digest": binding.selection.selection_digest,
+                    "seed": condition.seed,
+                    "repeat_id": condition.repeat_id,
+                    "split_profile_id": getattr(
+                        binding.selection,
+                        "split_profile_id",
+                        None,
+                    ),
+                    "root_case_ids": list(
+                        self.root_case_filter[condition.condition_id]
+                    ),
+                }
+                for condition, binding in zip(
+                    self.conditions,
+                    self.bindings,
+                    strict=True,
+                )
+            ],
+            "roots": [
+                {
+                    "condition_id": root.condition.condition_id,
+                    "condition_digest": root.condition_digest,
+                    "selection_digest": root.selection_digest,
+                    "case_id": root.case_id,
+                    "seed": root.seed,
+                    "repeat_id": root.repeat_id,
+                    "split_profile_id": root.split_profile_id,
+                    "split_profile_digest": root.split_profile_digest,
+                    "plugin_id": root.plugin_id,
+                    "plugin_version": root.plugin_version,
+                    "endpoint_controls_digest": (
+                        root.endpoint_controls.request_controls_digest
+                    ),
+                }
+                for condition in self.conditions
+                for root in roots_by_condition[condition.condition_id]
             ],
         }
 
@@ -1510,6 +1616,174 @@ def freeze_paper_formal_plan_snapshot(
         provider_calls_made=0,
         budget_digest=budget.budget_digest,
     )
+
+
+def derive_paper_formal_representative_coverage(
+    *,
+    snapshot: FormalPlanSnapshot,
+    dispatch_plans: Sequence[PaperExperimentDispatchPlan],
+    repeat_ids: Sequence[int] = (0,),
+) -> FormalRepresentativeCoverage:
+    """从已验证 full snapshot 派生正式 repeat 子集与独立 root filter。"""
+
+    if type(snapshot) is not FormalPlanSnapshot:
+        raise TypeError("snapshot must be a FormalPlanSnapshot")
+    repeats = _representative_repeat_ids(repeat_ids)
+    if snapshot.provider_calls_made != 0:
+        raise ValueError("formal snapshot made provider calls")
+    if (
+        snapshot.condition_count != len(snapshot.conditions)
+        or snapshot.root_run_count != len(snapshot.roots)
+        or snapshot.first_attempt_ai_unit_count
+        != sum(len(root.planned_ai_unit_ids) for root in snapshot.roots)
+    ):
+        raise ValueError("formal snapshot totals drift")
+
+    plans = tuple(dispatch_plans)
+    planned_conditions: dict[str, PaperExperimentCondition] = {}
+    planned_bindings: dict[str, FrozenConditionSelectionBinding] = {}
+    for plan in plans:
+        if plan.status != "planned":
+            continue
+        bindings_by_id = {
+            binding.condition_id: binding
+            for binding in plan.condition_selection_bindings
+        }
+        for condition in plan.conditions:
+            if condition.condition_id in planned_conditions:
+                raise ValueError("duplicate formal condition authority")
+            planned_conditions[condition.condition_id] = condition
+            planned_bindings[condition.condition_id] = bindings_by_id[
+                condition.condition_id
+            ]
+    if set(planned_conditions) != {
+        item.condition.condition_id for item in snapshot.conditions
+    }:
+        raise ValueError("formal snapshot/dispatch condition coverage drift")
+    for item in snapshot.conditions:
+        condition_id = item.condition.condition_id
+        if (
+            item.condition is not planned_conditions[condition_id]
+            or item.binding is not planned_bindings[condition_id]
+        ):
+            raise ValueError("formal snapshot must retain dispatch object references")
+
+    selected_condition_rows = tuple(
+        item for item in snapshot.conditions if item.condition.repeat_id in repeats
+    )
+    if not selected_condition_rows:
+        raise ValueError("representative repeat subset selected no formal conditions")
+    formal_experiment_ids = tuple(registered_paper_experiment_ids())
+    selected_experiment_ids = {
+        item.condition.experiment_id for item in selected_condition_rows
+    }
+    if selected_experiment_ids != set(formal_experiment_ids):
+        raise ValueError("representative repeat subset misses a formal experiment")
+
+    roots_by_condition: dict[str, list[FormalRootSnapshot]] = {}
+    for root in snapshot.roots:
+        condition_id = root.condition.condition_id
+        formal_condition = planned_conditions.get(condition_id)
+        formal_binding = planned_bindings.get(condition_id)
+        if root.condition is not formal_condition or root.binding is not formal_binding:
+            raise ValueError("formal root must retain condition/binding references")
+        if (
+            root.condition_digest != root.condition.condition_digest
+            or root.selection_digest != root.binding.selection.selection_digest
+            or root.seed != root.condition.seed
+            or root.repeat_id != root.condition.repeat_id
+        ):
+            raise ValueError("formal root identity drift")
+        roots_by_condition.setdefault(condition_id, []).append(root)
+
+    root_filter: dict[str, tuple[str, ...]] = {}
+    selected_roots: list[FormalRootSnapshot] = []
+    for item in selected_condition_rows:
+        condition = item.condition
+        roots = tuple(roots_by_condition.get(condition.condition_id, ()))
+        expected_case_ids = tuple(item.binding.selection.ordered_case_ids)
+        if tuple(root.case_id for root in roots) != expected_case_ids:
+            raise ValueError("formal snapshot root order/selection drift")
+        selected_case_ids = _representative_case_ids_for_condition(
+            condition=condition,
+            roots=roots,
+        )
+        root_filter[condition.condition_id] = selected_case_ids
+        selected_set = set(selected_case_ids)
+        selected_roots.extend(
+            root for root in roots if root.case_id in selected_set
+        )
+
+    normalized_filter = validate_paper_formal_root_case_filter(
+        dispatch_plans=plans,
+        selected_condition_ids=tuple(
+            item.condition.condition_id for item in selected_condition_rows
+        ),
+        root_case_filter=root_filter,
+    )
+    return FormalRepresentativeCoverage(
+        conditions=tuple(item.condition for item in selected_condition_rows),
+        bindings=tuple(item.binding for item in selected_condition_rows),
+        roots=tuple(selected_roots),
+        root_case_filter=normalized_filter,
+        source_snapshot_digest=snapshot.snapshot_digest,
+        condition_count=len(selected_condition_rows),
+        root_run_count=len(selected_roots),
+        provider_calls_made=0,
+    )
+
+
+def _representative_repeat_ids(value: Sequence[int]) -> tuple[int, ...]:
+    if isinstance(value, (str, bytes, bytearray)) or not isinstance(value, Sequence):
+        raise ValueError("representative repeat ids must be a sequence")
+    repeats = tuple(value)
+    if (
+        not repeats
+        or any(
+            isinstance(repeat, bool)
+            or not isinstance(repeat, int)
+            or repeat < 0
+            for repeat in repeats
+        )
+        or len(set(repeats)) != len(repeats)
+    ):
+        raise ValueError(
+            "representative repeat ids must be unique non-negative integers"
+        )
+    return repeats
+
+
+def _representative_case_ids_for_condition(
+    *,
+    condition: PaperExperimentCondition,
+    roots: Sequence[FormalRootSnapshot],
+) -> tuple[str, ...]:
+    if not roots:
+        raise ValueError("representative condition has no formal roots")
+    if condition.experiment_id != EXP3_EXPERIMENT_ID:
+        return (roots[0].case_id,)
+    targets_by_case = formal_exp3_scheduled_target_unit_ids_by_case(
+        condition=condition,
+        ordered_case_ids=tuple(root.case_id for root in roots),
+        planned_ai_unit_ids_by_case={
+            root.case_id: root.planned_ai_unit_ids for root in roots
+        },
+    )
+    if condition.fault_type == "worker_death":
+        max_target_count = max(len(targets) for targets in targets_by_case.values())
+        if max_target_count < 1:
+            raise ValueError("representative worker-death root cannot schedule a target")
+        return (
+            next(
+                root.case_id
+                for root in roots
+                if len(targets_by_case[root.case_id]) == max_target_count
+            ),
+        )
+    for root in roots:
+        if targets_by_case[root.case_id]:
+            return (root.case_id,)
+    raise ValueError("representative rate-fault root cannot schedule a target")
 
 
 def _validate_canonical_formal_plans(

@@ -1138,6 +1138,21 @@ def validate_paper_formal_suite_plan(
     )
 
 
+def validate_paper_formal_root_case_filter(
+    *,
+    dispatch_plans: Sequence[PaperExperimentDispatchPlan],
+    selected_condition_ids: Sequence[str],
+    root_case_filter: Mapping[str, Sequence[str]],
+) -> dict[str, tuple[str, ...]]:
+    """按完整正式 plan authority 校验 condition 子集及其 root filter。"""
+
+    return _normalize_root_case_filter(
+        plans=tuple(dispatch_plans),
+        root_case_filter=root_case_filter,
+        selected_condition_ids=selected_condition_ids,
+    )
+
+
 def execute_paper_formal_suite(
     *,
     dispatch_plans: Sequence[PaperExperimentDispatchPlan],
@@ -3189,17 +3204,39 @@ def _normalize_root_case_filter(
     *,
     plans: Sequence[PaperExperimentDispatchPlan],
     root_case_filter: Mapping[str, Sequence[str]] | None,
+    selected_condition_ids: Sequence[str] | None = None,
 ) -> dict[str, tuple[str, ...]]:
     if root_case_filter is None:
+        if selected_condition_ids is not None:
+            raise ValueError("selected condition root_case_filter is required")
         return {}
     if not isinstance(root_case_filter, Mapping):
         raise ValueError("root_case_filter must be a mapping")
-    expected: dict[str, tuple[str, ...]] = {
+    full_expected: dict[str, tuple[str, ...]] = {
         condition.condition_id: tuple(selection.ordered_case_ids)
         for plan in plans
         if plan.status == "planned"
         for condition, selection in plan.bound_items()
     }
+    expected = full_expected
+    if selected_condition_ids is not None:
+        if isinstance(selected_condition_ids, (str, bytes, bytearray)) or not isinstance(
+            selected_condition_ids,
+            Sequence,
+        ):
+            raise ValueError("selected condition ids must be a sequence")
+        selected = tuple(str(condition_id) for condition_id in selected_condition_ids)
+        if not selected or len(set(selected)) != len(selected):
+            raise ValueError("selected condition ids must be non-empty and unique")
+        if any(
+            not condition_id or condition_id not in full_expected
+            for condition_id in selected
+        ):
+            raise ValueError("selected condition is absent from formal plan")
+        expected = {
+            condition_id: full_expected[condition_id]
+            for condition_id in selected
+        }
     if set(root_case_filter) != set(expected):
         raise ValueError("root_case_filter condition coverage mismatch")
     normalized: dict[str, tuple[str, ...]] = {}
@@ -3213,6 +3250,13 @@ def _normalize_root_case_filter(
             raise ValueError("root_case_filter values must be non-empty and unique")
         if any(not case_id or case_id not in expected[condition_id] for case_id in case_ids):
             raise ValueError("root_case_filter references a non-canonical case")
+        selected_set = set(case_ids)
+        if tuple(
+            case_id
+            for case_id in expected[condition_id]
+            if case_id in selected_set
+        ) != case_ids:
+            raise ValueError("root_case_filter must preserve canonical case order")
         normalized[str(condition_id)] = case_ids
     return normalized
 

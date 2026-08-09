@@ -419,9 +419,14 @@ def build_paper_smoke_service_authority(
 
 
 def load_paper_smoke_profile(path: str | Path) -> PaperSmokeProfile:
-    body = json.loads(Path(path).read_text(encoding="utf-8"))
+    profile_path = Path(path)
+    if "matrix8" in profile_path.name.lower():
+        raise ValueError("legacy matrix8 profile is not an execution authority")
+    body = json.loads(profile_path.read_text(encoding="utf-8"))
     if not isinstance(body, dict):
         raise ValueError("paper smoke profile must be a JSON object")
+    if "matrix8" in str(body.get("suite_id") or "").lower():
+        raise ValueError("legacy matrix8 profile is not an execution authority")
     schema_version = body.get("schema_version")
     if schema_version not in {
         PAPER_SMOKE_PROFILE_SCHEMA_VERSION,

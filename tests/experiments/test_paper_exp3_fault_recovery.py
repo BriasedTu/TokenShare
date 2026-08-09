@@ -8,6 +8,8 @@ from typing import Any
 
 import pytest
 
+import tokenshare.experiments.paper_exp3_fault_recovery as exp3_module
+
 from tokenshare.experiments.paper_experiment_contracts import (
     PaperConditionResult,
     PaperExecutionContext,
@@ -57,6 +59,19 @@ def test_task7_formal_exp3_does_not_launch_manual_replacement_adapter() -> None:
     assert "execute_replacement" not in source
     assert "replacement_root" not in source
     assert "dispatch_paper_case" not in source
+
+
+def test_exp3_exposes_no_regression_smoke_condition_or_selection_seam() -> None:
+    forbidden = {
+        "Exp3RegressionSmokeLeanCaseSelection",
+        "Exp3MatrixSmokeCaseSelection",
+        "build_exp3_regression_smoke_lean_binding",
+        "build_exp3_regression_smoke_binding",
+        "validate_exp3_regression_smoke_condition",
+        "validate_exp3_regression_smoke_lean_condition",
+    }
+
+    assert forbidden.isdisjoint(vars(exp3_module))
 
 
 def test_exp3_expands_rate_fault_and_worker_death_root_run_counts() -> None:

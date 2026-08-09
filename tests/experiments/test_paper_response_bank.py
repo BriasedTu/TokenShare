@@ -8,7 +8,6 @@ import pytest
 from tokenshare.executors.ai_api_request_identity import (
     PreparedOutboundRequestFactory,
 )
-from tokenshare.executors.ai_api_config import load_ai_api_config
 from tokenshare.executors.response_bank import (
     ResponseBankInventoryRow,
     canonical_digest,
@@ -26,7 +25,6 @@ from tokenshare.experiments.paper_response_bank import (
     AcquisitionRequest,
     FullAcquisitionBudget,
     SemanticSlotCandidate,
-    build_matrix8_unified_acquisition_plan,
     build_semantic_inventory,
     create_acquisition_plan_bundle,
     load_acquisition_plan_bundle,
@@ -35,18 +33,7 @@ from tokenshare.experiments.paper_response_bank import (
     replacement_slots_for,
 )
 from tokenshare.experiments.paper_resource_accounting import FrozenPricing
-from tokenshare.experiments.paper_budget import load_exp1_pilot_profile
-from tokenshare.experiments.paper_runner import (
-    build_gate_c_dispatch_plans,
-    build_lean_3x3_matrix_plan,
-)
-from tokenshare.experiments.paper_smoke import (
-    load_paper_smoke_profile,
-    resolve_paper_smoke_execution_plan,
-)
-from tokenshare.experiments.paper_suite_scale import load_paper_suite_scale_profile
 from tokenshare.experiments import paper_response_bank as response_bank
-from tokenshare.experiments import run_paper_experiments as paper_cli
 
 
 def _prepared(
@@ -722,214 +709,6 @@ def test_sparse_inventory_requires_exact_deterministic_target_slots() -> None:
         build_semantic_inventory(
             tuple(candidate for candidate in candidates if candidate != missing_target_slot)
         )
-
-
-def test_matrix8_unified_planner_freezes_166_exact_requests_without_provider(
-    tmp_path: Path,
-) -> None:
-    catalog = paper_cli._load_default_paper_catalogs()
-    lean_matrix = build_lean_3x3_matrix_plan(catalog_manifest=catalog)
-    planning_profile = load_exp1_pilot_profile(
-        paper_cli.DEFAULT_EXP1_PILOT_PROFILE
-    )
-    scale_profile = load_paper_suite_scale_profile(
-        paper_cli.DEFAULT_PAPER_SUITE_SCALE_PROFILE
-    )
-    executions = []
-    for experiment_number in range(1, 5):
-        profile = load_paper_smoke_profile(
-            Path(
-                f"benchmarks/paper/paper_smoke_exp{experiment_number}_matrix8_profile.v1.json"
-            )
-        )
-        dispatch = build_gate_c_dispatch_plans(
-            catalog_manifest=catalog,
-            lean_3x3_matrix=lean_matrix,
-            experiment_ids=profile.experiment_ids,
-            baseline_endpoint_binding=paper_cli._baseline_endpoint_binding(
-                planning_profile
-            ),
-            model_endpoint_cohort_preflight=None,
-            paper_suite_scale_profile=scale_profile,
-            output_root=tmp_path / f"canonical-exp{experiment_number}",
-        )
-        dispatch = paper_cli._with_exp2_regression_smoke_lean_plan(
-            dispatch_plans=dispatch,
-            profile=profile,
-            catalog_manifest=catalog,
-        )
-        dispatch = paper_cli._with_exp3_regression_smoke_lean_plan(
-            dispatch_plans=dispatch,
-            profile=profile,
-            catalog_manifest=catalog,
-        )
-        execution = resolve_paper_smoke_execution_plan(
-            profile=profile,
-            dispatch_plans=dispatch,
-            catalog_id=catalog.catalog_id,
-            catalog_version=catalog.catalog_version,
-            catalog_digest=catalog.catalog_digest,
-            output_root=tmp_path / f"smoke-exp{experiment_number}",
-        )
-        planned_execution = (
-            paper_cli._with_matrix8_unified_factor_seed_execution_plan(
-                execution_plan=execution, profile=profile
-            )
-        )
-        if experiment_number == 1:
-            assert planned_execution is execution
-            factor_conditions = tuple(
-                condition
-                for condition, selection in execution.dispatch_plans[0].bound_items()
-                if selection.domain == "factorization"
-            )
-            assert {condition.seed for condition in factor_conditions} == {1}
-            assert all(
-                "__matrix8_" not in condition.condition_id
-                for condition in factor_conditions
-            )
-        executions.append(planned_execution)
-    config = load_ai_api_config(
-        json.loads(
-            Path("benchmarks/paper/exp1_baseline_provider_config.v3.json")
-            .read_text(encoding="utf-8")
-        )
-    )
-
-    result = build_matrix8_unified_acquisition_plan(
-        execution_plans=tuple(executions),
-        catalog_manifest=catalog,
-        ai_api_config=config,
-        entry_id="deepseek_v4_pro_exp1_baseline",
-        planning_artifact_root=tmp_path / "planning-artifacts",
-        requested_at="2026-08-09T00:00:00Z",
-        token_upper_bound=304_096,
-        cost_upper_bound=Decimal("0.05"),
-        frozen_pricing=FrozenPricing(
-            currency="CNY",
-            input_per_million_tokens=Decimal("3.0"),
-            output_per_million_tokens=Decimal("6.0"),
-        ),
-    )
-    assert result.provider_call_count == 0
-    assert result.condition_candidate_count == 280
-    assert result.semantic_inventory_plan.expected_slot_count == 166
-    assert len(result.acquisition_requests) == 166
-    assert len(result.case_identity_mappings) == 8
-    assert {item["root_case_id"] for item in result.case_identity_mappings} == {
-        item.case_id for item in executions[0].items
-    }
-    exp2_factor = tuple(
-        candidate
-        for candidate in result.candidates
-        if candidate.experiment_id == "exp2_real_ai_scalability"
-        and candidate.prepared_request.plugin_id == "factorization"
-        and candidate.replacement_slot == 0
-    )
-    assert len(exp2_factor) == 80
-    replacement_identity_by_experiment = {
-        experiment_id: {
-            (
-                candidate.case_record_digest,
-                candidate.planned_ai_unit_id,
-                candidate.sample_slot_index,
-                candidate.replacement_slot,
-                candidate.prepared_request.provider_config_digest,
-                candidate.prompt_profile_digest,
-                candidate.prepared_request.prompt_admission_profile_digest,
-                candidate.prepared_request.plugin_version,
-                candidate.prepared_request.body_digest,
-                candidate.prepared_request.inference_request_digest,
-            )
-            for candidate in result.candidates
-            if candidate.experiment_id == experiment_id
-            and candidate.replacement_slot > 0
-        }
-        for experiment_id in (
-            "exp3_real_ai_fault_recovery",
-            "exp4_real_ai_protocol_ablation",
-        )
-    }
-    shared_replacement_identities = (
-        replacement_identity_by_experiment["exp3_real_ai_fault_recovery"]
-        & replacement_identity_by_experiment["exp4_real_ai_protocol_ablation"]
-    )
-    shared_replacement_rows = {
-        identity: (candidate.case_id, candidate.planned_ai_unit_id)
-        for candidate in result.candidates
-        if candidate.experiment_id == "exp3_real_ai_fault_recovery"
-        and candidate.replacement_slot > 0
-        and (
-            candidate.case_record_digest,
-            candidate.planned_ai_unit_id,
-            candidate.sample_slot_index,
-            candidate.replacement_slot,
-            candidate.prepared_request.provider_config_digest,
-            candidate.prompt_profile_digest,
-            candidate.prepared_request.prompt_admission_profile_digest,
-            candidate.prepared_request.plugin_version,
-            candidate.prepared_request.body_digest,
-            candidate.prepared_request.inference_request_digest,
-        )
-        in shared_replacement_identities
-        for identity in (
-            (
-                candidate.case_record_digest,
-                candidate.planned_ai_unit_id,
-                candidate.sample_slot_index,
-                candidate.replacement_slot,
-                candidate.prepared_request.provider_config_digest,
-                candidate.prompt_profile_digest,
-                candidate.prepared_request.prompt_admission_profile_digest,
-                candidate.prepared_request.plugin_version,
-                candidate.prepared_request.body_digest,
-                candidate.prepared_request.inference_request_digest,
-            ),
-        )
-    }
-    assert len(shared_replacement_identities) == 7
-    assert set(shared_replacement_rows.values()) == {
-        ("factor_v2_easy_109", "range_0"),
-        ("factor_v2_hard_063", "range_3"),
-        ("factor_v2_hard_063", "range_4"),
-        ("factor_v2_medium_033", "range_3"),
-        ("lean_easy_01", "child_1"),
-        (
-            "lean_v2_hard_frontier_pure_logic_checker_02",
-            "pure_hard_mid_b_02",
-        ),
-        ("lean_v2_medium_lemma_dag_01", "pure_medium_leaf_bc_01"),
-    }
-    for case_id in (
-        "factor_v2_easy_109",
-        "factor_v2_medium_033",
-        "factor_v2_hard_034",
-        "factor_v2_hard_063",
-    ):
-        shared_bodies = {
-            candidate.prepared_request.body_digest
-            for candidate in result.candidates
-            if candidate.case_id == case_id
-            and candidate.replacement_slot == 0
-            and candidate.experiment_id
-            in {
-                "exp1_real_ai_feasibility",
-                "exp3_real_ai_fault_recovery",
-                "exp4_real_ai_protocol_ablation",
-            }
-        }
-        ordinary_unit_count = sum(
-            candidate.experiment_id == "exp1_real_ai_feasibility"
-            and candidate.case_id == case_id
-            and candidate.replacement_slot == 0
-            for candidate in result.candidates
-        )
-        assert len(shared_bodies) == ordinary_unit_count
-    assert all(
-        request.prepared_request.body_digest
-        == request.inventory_row.body_digest
-        for request in result.acquisition_requests
-    )
 
 
 def test_exp4_full_and_ablations_share_zero_to_one() -> None:
