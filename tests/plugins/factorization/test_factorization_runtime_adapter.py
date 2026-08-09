@@ -424,6 +424,79 @@ def test_false_negative_verification_binds_recorded_submission_and_request_artif
     )
 
 
+def test_retry_rebuilds_request_with_attempt_scoped_range_input_artifact(
+    tmp_path: Path,
+) -> None:
+    store = ArtifactStore(tmp_path)
+    ledger = EventLedger(tmp_path / "events" / "factor_runtime_retry.jsonl")
+    config = replace(
+        ProtocolConfig.default(
+            config_id="factor_runtime_retry_config",
+            artifact_store_uri="file://artifacts",
+            event_log_uri="file://events/factor_runtime_retry.jsonl",
+        ),
+        max_retries=1,
+    )
+    clock = _Clock()
+    adapter = FactorizationRuntimeAdapter(
+        provider_family="siliconflow",
+        seed=7,
+        protocol_config=config,
+        lifecycle_clock=clock,
+    )
+    coordinator = ProtocolRunCoordinator(
+        engine=ProtocolEngine(
+            event_ledger=ledger,
+            protocol_config=config,
+            artifact_store=store,
+        ),
+        artifact_store=store,
+        event_ledger=ledger,
+        now=clock,
+    )
+
+    with pytest.raises(RuntimeError, match="child unit failed after retry limit"):
+        coordinator.run_root(
+            ProtocolRunRequest(
+                run_id="factor_runtime_retry",
+                root_input=_case(),
+                plugin_runtime=adapter,
+                worker_backend=SequentialWorkerBackend(
+                    executor=FactorizationExecutionBridge(
+                        plugin_runtime=adapter,
+                        range_executor=_RangeExecutor(store, force_no_factor=True),
+                    ),
+                    submitted_at=clock,
+                ),
+            )
+        )
+
+    request_refs_by_unit: dict[str, list[ArtifactRef]] = {}
+    for event in ledger.read_all():
+        if event.event_type != EventType.EXECUTION_REQUEST_RECORDED:
+            continue
+        request_body = json.loads(
+            store.read_bytes(
+                ArtifactRef.from_dict(event.payload["request_ref"])
+            ).decode("utf-8")
+        )
+        if "range_input" not in request_body["input_artifact_refs"]:
+            continue
+        range_ref = ArtifactRef.from_dict(
+            request_body["input_artifact_refs"]["range_input"]
+        )
+        request_refs_by_unit.setdefault(str(event.payload["unit_id"]), []).append(
+            range_ref
+        )
+
+    retried_refs = next(
+        refs for refs in request_refs_by_unit.values() if len(refs) == 2
+    )
+    assert retried_refs[0].artifact_id != retried_refs[1].artifact_id
+    assert retried_refs[0].content_hash == retried_refs[1].content_hash
+    assert store.read_bytes(retried_refs[0]) == store.read_bytes(retried_refs[1])
+
+
 def test_runtime_executor_identity_matches_scheduled_unit_kind(tmp_path: Path) -> None:
     store = ArtifactStore(tmp_path)
     ledger = EventLedger(tmp_path / "events" / "factor_runtime_identity.jsonl")

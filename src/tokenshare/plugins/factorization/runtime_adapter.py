@@ -382,7 +382,7 @@ class FactorizationRuntimeAdapter:
             range_input = self._ranges_by_unit_id[unit.unit_id]
             range_ref = store.save_json(
                 range_input.to_dict(),
-                artifact_id=f"range_input_{_safe(unit.unit_id)}",
+                artifact_id=f"range_input_{_safe(request_id)}",
                 artifact_type="FactorSearchRangeInput",
                 artifact_schema_id="factorization.factor_search_range_input",
                 artifact_schema_version="v1",
