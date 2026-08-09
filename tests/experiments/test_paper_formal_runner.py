@@ -2950,10 +2950,15 @@ def test_formal_runner_hard_limit_blocks_second_root_and_resume_keeps_first_root
 
     exhausted = formal_runner.execute_paper_formal_suite(**kwargs)
     assert exhausted.status == PaperStatus.BUDGET_EXHAUSTED
+    assert len(exhausted.condition_results) == 1
+    assert exhausted.condition_results[0]["condition_id"] == (
+        plan.bound_items()[0][0].condition_id
+    )
     assert adapter_calls == ["case-1"]
 
     resumed = formal_runner.execute_paper_formal_suite(**kwargs, resume=True)
     assert resumed.status == PaperStatus.BUDGET_EXHAUSTED
+    assert resumed.condition_results == exhausted.condition_results
     assert adapter_calls == ["case-1"]
 
 
@@ -7534,6 +7539,9 @@ def test_representative_runner_validates_full_budget_then_dispatches_selected_co
     assert suite.task_count == 1
     assert suite.experiment_ids == (EXPERIMENT_ID,)
     assert suite.status is PaperStatus.COMPLETED
+    assert tuple(
+        item["condition_id"] for item in suite.condition_results
+    ) == (first_condition.condition_id,)
 
     monkeypatch.setattr(
         formal_runner,
@@ -7546,6 +7554,7 @@ def test_representative_runner_validates_full_budget_then_dispatches_selected_co
         **{**representative_kwargs, "resume": True}
     )
     assert resumed == suite
+    assert resumed.condition_results == suite.condition_results
 
 
 def test_representative_runner_maps_all_adapter_artifacts_to_execution_suite_root(

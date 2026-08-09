@@ -2033,9 +2033,15 @@ def _representative_pipeline_authority(tmp_path: Path):
         SimpleNamespace(
             experiment_id="exp5_real_ai_model_endpoint_comparison",
             condition_id=f"exp5-c{index}",
-            model_endpoint_identity_digest="sha256:" + str(index + 5) * 64,
+            model_endpoint_identity_digest=(
+                "sha256:" + str((index % 4) + 5) * 64
+            ),
+            provider_config_id="siliconflow",
+            model_entry_id=f"entry-{index % 4}",
+            provider_family="siliconflow",
+            provider_model_id=f"model-{index % 4}",
         )
-        for index in range(4)
+        for index in range(16)
     )
     conditions = (*trace_conditions, *exp5_conditions)
     root_filter = {
@@ -2060,7 +2066,21 @@ def _representative_pipeline_authority(tmp_path: Path):
         ),
         catalog_manifest=object(),
         full_budget=SimpleNamespace(budget_digest="sha256:" + "d" * 64),
-        ai_api_configs={"baseline": object(), "siliconflow": object()},
+        ai_api_configs={
+            "baseline": object(),
+            "siliconflow": SimpleNamespace(
+                entries=tuple(
+                    SimpleNamespace(
+                        entry_id=f"entry-{index}",
+                        enabled=True,
+                        base_url="https://api.example.test/v1",
+                        endpoint="/chat/completions",
+                        model=f"model-{index}",
+                    )
+                    for index in range(4)
+                )
+            ),
+        },
         coverage=coverage,
         bundle=SimpleNamespace(
             source_snapshot_digest=coverage.source_snapshot_digest,
@@ -2071,6 +2091,123 @@ def _representative_pipeline_authority(tmp_path: Path):
         resume=False,
         hard_limits={"max_total_provider_attempts": 99},
     )
+
+
+class _NoopExp5Transport:
+    def post_chat_completion(self, **_kwargs):
+        return object()
+
+
+def _invoke_fake_exp5_transport(
+    *,
+    transport,
+    conditions,
+    call_count: int,
+    omit_endpoint: bool,
+) -> None:
+    endpoint_conditions = tuple(
+        dict.fromkeys(
+            condition.model_endpoint_identity_digest for condition in conditions
+        )
+    )
+    allowed = endpoint_conditions[:-1] if omit_endpoint else endpoint_conditions
+    condition_by_digest = {
+        condition.model_endpoint_identity_digest: condition
+        for condition in conditions
+    }
+    for index in range(call_count):
+        condition = condition_by_digest[allowed[index % len(allowed)]]
+        transport.post_chat_completion(
+            body_bytes=json.dumps(
+                {"model": condition.provider_model_id}
+            ).encode("utf-8"),
+            normalized_absolute_endpoint=(
+                "https://api.example.test/v1/chat/completions"
+            ),
+        )
+
+
+@pytest.mark.parametrize(
+    ("condition_attempts", "transport_calls", "omit_endpoint", "accepted"),
+    (
+        (0, 0, False, False),
+        (1, 15, False, False),
+        (1, 16, True, False),
+        (1, 16, False, True),
+    ),
+)
+def test_representative_exp5_requires_all_condition_calls_and_four_endpoints(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    condition_attempts: int,
+    transport_calls: int,
+    omit_endpoint: bool,
+    accepted: bool,
+) -> None:
+    authority = _representative_pipeline_authority(tmp_path)
+    conditions = authority.coverage.conditions
+    roots = authority.coverage.root_case_filter
+    invocations = 0
+
+    def fake_execute(**kwargs):
+        nonlocal invocations
+        invocations += 1
+        selected = tuple(kwargs["selected_condition_ids"])
+        active_conditions = tuple(
+            condition
+            for condition in conditions
+            if condition.condition_id in selected
+        )
+        active_experiments = tuple(
+            dict.fromkeys(
+                condition.experiment_id for condition in active_conditions
+            )
+        )
+        if invocations == 2:
+            _invoke_fake_exp5_transport(
+                transport=kwargs["transport"],
+                conditions=active_conditions,
+                call_count=transport_calls,
+                omit_endpoint=omit_endpoint,
+            )
+        attempts = 0 if invocations == 1 else condition_attempts
+        return replace(
+            _paper_suite_result(Path(kwargs["output_root"]), status="completed"),
+            experiment_ids=active_experiments,
+            condition_count=len(selected),
+            task_count=sum(len(roots[item]) for item in selected),
+            provider_attempt_count=(
+                0 if invocations == 1 else attempts * len(selected)
+            ),
+            total_cost_estimate=0.0 if invocations == 1 else 1.0,
+            total_cost_estimate_status=(
+                "not_applicable"
+                if invocations == 1
+                else "single_currency_estimate"
+            ),
+            condition_results=tuple(
+                {
+                    "condition_id": condition.condition_id,
+                    "provider_attempt_count": attempts,
+                }
+                for condition in active_conditions
+            ),
+        )
+
+    monkeypatch.setattr(pipeline, "_FORMAL_SUITE_EXECUTOR", fake_execute)
+    monkeypatch.setattr(pipeline, "_TRACE_CONTEXT_BUILDER", lambda **_kwargs: object())
+
+    invoke = lambda: pipeline.execute_representative_full_plan_smoke(
+        authority=authority,
+        response_bank_resolver=object(),
+        exp5_transport=_NoopExp5Transport(),
+    )
+    if accepted:
+        result = invoke()
+        assert result.exp5_current_provider_calls == 16
+    else:
+        with pytest.raises(pipeline.RepresentativeSmokeExecutionError):
+            invoke()
 
 
 def test_representative_formal_bundle_uses_typed_create_or_fresh_plan_load_only(
@@ -2124,13 +2261,23 @@ def test_representative_service_routes_full_authority_to_trace_and_all_exp5_endp
     def fake_execute(**kwargs):
         captured.append(kwargs)
         selected = tuple(kwargs["selected_condition_ids"])
+        active_conditions = tuple(
+            condition
+            for condition in conditions
+            if condition.condition_id in selected
+        )
         active = tuple(
             dict.fromkeys(
-                condition.experiment_id
-                for condition in conditions
-                if condition.condition_id in selected
+                condition.experiment_id for condition in active_conditions
             )
         )
+        if len(captured) == 2:
+            _invoke_fake_exp5_transport(
+                transport=kwargs["transport"],
+                conditions=active_conditions,
+                call_count=16,
+                omit_endpoint=False,
+            )
         return replace(
             _paper_suite_result(
                 Path(kwargs["output_root"]),
@@ -2141,12 +2288,19 @@ def test_representative_service_routes_full_authority_to_trace_and_all_exp5_endp
             experiment_ids=active,
             condition_count=len(selected),
             task_count=sum(len(root_filter[item]) for item in selected),
-            provider_attempt_count=0 if len(captured) == 1 else 4,
+            provider_attempt_count=0 if len(captured) == 1 else 16,
             total_cost_estimate=0.0 if len(captured) == 1 else 1.25,
             total_cost_estimate_status=(
                 "not_applicable"
                 if len(captured) == 1
                 else "single_currency_estimate"
+            ),
+            condition_results=tuple(
+                {
+                    "condition_id": condition.condition_id,
+                    "provider_attempt_count": 1,
+                }
+                for condition in active_conditions
             ),
         )
 
@@ -2159,7 +2313,7 @@ def test_representative_service_routes_full_authority_to_trace_and_all_exp5_endp
     result = pipeline.execute_representative_full_plan_smoke(
         authority=authority,
         response_bank_resolver=object(),
-        exp5_transport=object(),
+        exp5_transport=_NoopExp5Transport(),
     )
 
     assert result.status == "completed_with_failures"
@@ -2167,8 +2321,8 @@ def test_representative_service_routes_full_authority_to_trace_and_all_exp5_endp
     assert result.expected_root_count == authority.coverage.root_run_count
     assert result.acquisition_current_provider_calls == 0
     assert result.trace_current_provider_calls == 0
-    assert result.exp5_current_provider_calls == 4
-    assert result.total_current_provider_calls == 4
+    assert result.exp5_current_provider_calls == 16
+    assert result.total_current_provider_calls == 16
     assert result.acquisition_current_spend == 0.0
     assert result.trace_current_spend == 0.0
     assert result.exp5_current_spend == 1.25
@@ -2214,6 +2368,18 @@ def test_representative_invalid_exp5_terminal_preserves_current_provider_usage(
                 if condition.condition_id in selected
             )
         )
+        if calls == 2:
+            active_conditions = tuple(
+                condition
+                for condition in conditions
+                if condition.condition_id in selected
+            )
+            _invoke_fake_exp5_transport(
+                transport=kwargs["transport"],
+                conditions=active_conditions,
+                call_count=4,
+                omit_endpoint=False,
+            )
         return replace(
             _paper_suite_result(Path(kwargs["output_root"]), status="completed"),
             experiment_ids=active,
@@ -2235,7 +2401,7 @@ def test_representative_invalid_exp5_terminal_preserves_current_provider_usage(
         pipeline.execute_representative_full_plan_smoke(
             authority=authority,
             response_bank_resolver=object(),
-            exp5_transport=object(),
+            exp5_transport=_NoopExp5Transport(),
         )
 
     summary = caught.value.to_summary()
@@ -2698,3 +2864,181 @@ def test_representative_post_dispatch_fallback_keeps_missing_spend_explicit(
     assert usage.provider_calls == 1
     assert usage.spend is None
     assert usage.spend_missing_reason == reason
+
+
+def test_representative_cli_preserves_acquisition_calls_when_exp5_factory_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys,
+) -> None:
+    authority = _representative_pipeline_authority(tmp_path / "execution")
+    acquisition_usage = pipeline.RepresentativeCurrentProviderUsage(
+        provider_calls=3,
+        spend=0.75,
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "_REPRESENTATIVE_SERVICE_AUTHORITY_BUILDER",
+        lambda **_kwargs: authority,
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "_acquire_representative_response_bank",
+        lambda **_kwargs: pipeline.RepresentativeAcquisitionStageResult(
+            resolver=object(),
+            usage=acquisition_usage,
+            max_in_flight=10,
+        ),
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "_REPRESENTATIVE_EXP5_TRANSPORT_FACTORY",
+        lambda: (_ for _ in ()).throw(OSError("factory unavailable")),
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "_REPRESENTATIVE_SMOKE_EXECUTOR",
+        lambda **_kwargs: pytest.fail("executor must not run without Exp5 transport"),
+    )
+
+    exit_code = pipeline.main(
+        [
+            "representative-full-plan-smoke",
+            "--output-root",
+            str(authority.output_root),
+            "--planning-artifact-root",
+            str(tmp_path / "planning"),
+            "--plan-bundle-root",
+            str(tmp_path / "bundle"),
+            "--new-run",
+            "--allow-provider-calls",
+        ]
+    )
+
+    body = json.loads(capsys.readouterr().out)
+    assert exit_code == 3
+    assert body["failure_stage"] == "exp5_transport_factory"
+    assert body["provider_calls"] == 3
+    assert body["acquisition_current_provider_calls"] == 3
+    assert body["acquisition_current_spend"] == 0.75
+    assert body["exp5_current_provider_calls"] == 0
+
+
+def test_representative_cli_preserves_acquisition_calls_when_executor_raises_raw(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys,
+) -> None:
+    authority = _representative_pipeline_authority(tmp_path / "execution")
+    acquisition_usage = pipeline.RepresentativeCurrentProviderUsage(
+        provider_calls=3,
+        spend=0.75,
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "_REPRESENTATIVE_SERVICE_AUTHORITY_BUILDER",
+        lambda **_kwargs: authority,
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "_acquire_representative_response_bank",
+        lambda **_kwargs: pipeline.RepresentativeAcquisitionStageResult(
+            resolver=object(),
+            usage=acquisition_usage,
+            max_in_flight=10,
+        ),
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "_REPRESENTATIVE_EXP5_TRANSPORT_FACTORY",
+        _NoopExp5Transport,
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "_REPRESENTATIVE_SMOKE_EXECUTOR",
+        lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("executor failed")),
+    )
+
+    exit_code = pipeline.main(
+        [
+            "representative-full-plan-smoke",
+            "--output-root",
+            str(authority.output_root),
+            "--planning-artifact-root",
+            str(tmp_path / "planning"),
+            "--plan-bundle-root",
+            str(tmp_path / "bundle"),
+            "--new-run",
+            "--allow-provider-calls",
+        ]
+    )
+
+    body = json.loads(capsys.readouterr().out)
+    assert exit_code == 3
+    assert body["failure_stage"] == "representative_smoke_executor"
+    assert body["provider_calls"] == 3
+    assert body["acquisition_current_provider_calls"] == 3
+    assert body["acquisition_current_spend"] == 0.75
+    assert body["exp5_current_provider_calls"] == 0
+
+
+def test_representative_exp5_raw_runner_failure_preserves_actual_dispatches(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    authority = _representative_pipeline_authority(tmp_path)
+    conditions = authority.coverage.conditions
+    roots = authority.coverage.root_case_filter
+    invocations = 0
+
+    def fake_execute(**kwargs):
+        nonlocal invocations
+        invocations += 1
+        selected = tuple(kwargs["selected_condition_ids"])
+        active_conditions = tuple(
+            condition
+            for condition in conditions
+            if condition.condition_id in selected
+        )
+        if invocations == 2:
+            _invoke_fake_exp5_transport(
+                transport=kwargs["transport"],
+                conditions=active_conditions,
+                call_count=2,
+                omit_endpoint=False,
+            )
+            raise RuntimeError("runner stopped after dispatch")
+        return replace(
+            _paper_suite_result(Path(kwargs["output_root"]), status="completed"),
+            experiment_ids=tuple(
+                dict.fromkeys(
+                    condition.experiment_id for condition in active_conditions
+                )
+            ),
+            condition_count=len(selected),
+            task_count=sum(len(roots[item]) for item in selected),
+            provider_attempt_count=0,
+        )
+
+    monkeypatch.setattr(pipeline, "_FORMAL_SUITE_EXECUTOR", fake_execute)
+    monkeypatch.setattr(pipeline, "_TRACE_CONTEXT_BUILDER", lambda **_kwargs: object())
+
+    with pytest.raises(pipeline.RepresentativeSmokeExecutionError) as caught:
+        pipeline.execute_representative_full_plan_smoke(
+            authority=authority,
+            response_bank_resolver=object(),
+            exp5_transport=_NoopExp5Transport(),
+            acquisition_usage=pipeline.RepresentativeCurrentProviderUsage(
+                provider_calls=3,
+                spend=0.75,
+            ),
+        )
+
+    summary = caught.value.to_summary()
+    assert summary["failure_stage"] == "exp5_runner"
+    assert summary["provider_calls"] == 5
+    assert summary["acquisition_current_provider_calls"] == 3
+    assert summary["exp5_current_provider_calls"] == 2
+    assert summary["exp5_current_spend"] is None
+    assert summary["exp5_spend_missing_reason"] == "exp5_usage_missing"
+    assert summary["total_current_spend"] is None

@@ -1478,6 +1478,7 @@ def execute_paper_formal_suite(
         metrics_refs=(),
         audit_refs=(),
         error_summary=(),
+        condition_results=tuple(result.to_dict() for result in results),
     )
     if direct_collector is not None:
         _finalize_canonical_direct_closure(
@@ -1888,6 +1889,7 @@ def _close_disk_resource_blocked_suite(
         metrics_refs=(),
         audit_refs=(),
         error_summary=error_summary,
+        condition_results=tuple(result.to_dict() for result in condition_results),
     )
 
 
@@ -2052,6 +2054,7 @@ def _close_blocked_formal_suite(
         metrics_refs=(),
         audit_refs=(),
         error_summary=error_summary,
+        condition_results=tuple(result.to_dict() for result in closed_results),
     )
     _finalize_formal_manifests(
         suite_root=suite_root,
@@ -8225,6 +8228,9 @@ def _suite_result_from_evidence(suite_root: Path) -> PaperSuiteResult:
         ),
         total_cost_estimate_status=str(
             body.get("total_cost_estimate_status", "single_currency_or_legacy")
+        ),
+        condition_results=tuple(
+            _as_json(item) for item in body.get("condition_results", ())
         ),
         schema_version=str(body.get("schema_version", "tokenshare.paper_suite_result.v1")),
     )

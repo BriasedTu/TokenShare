@@ -906,6 +906,7 @@ class PaperSuiteResult:
     model_endpoint_cohort_preflight: JsonObject | None = None
     cost_estimate_by_currency: JsonObject | None = None
     total_cost_estimate_status: str = "single_currency_or_legacy"
+    condition_results: list[JsonObject] | tuple[JsonObject, ...] = ()
     schema_version: str = "tokenshare.paper_suite_result.v1"
 
     def to_dict(self) -> JsonObject:
@@ -939,6 +940,8 @@ class PaperSuiteResult:
                 self.cost_estimate_by_currency
             )
             body["total_cost_estimate_status"] = self.total_cost_estimate_status
+        if self.condition_results:
+            body["condition_results"] = _json_value(list(self.condition_results))
         return body
 
 

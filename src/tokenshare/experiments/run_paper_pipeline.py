@@ -1037,23 +1037,43 @@ def execute_representative_full_plan_smoke(
         for condition in conditions_by_experiment[experiment_id]
     )
     exp5_conditions = conditions_by_experiment[_REPRESENTATIVE_EXP5_EXPERIMENT_ID]
-    trace_context = _TRACE_CONTEXT_BUILDER(
-        inventory_plan=authority.bundle.semantic_inventory_plan,
-        resolver=response_bank_resolver,
-    )
-    trace_terminal = _run_representative_formal_subset(
-        authority=authority,
-        conditions=trace_conditions,
-        output_root=authority.output_root / "exp1-exp4-trace",
-        transport=object(),
-        real_transport=False,
-        trace_context=trace_context,
-        suite_id="representative_full_plan_smoke_exp1_exp4_trace",
-    )
-    trace_usage = _current_provider_usage_from_terminal(
-        terminal=trace_terminal,
-        force_zero_spend_when_no_calls=True,
-    )
+    try:
+        trace_context = _TRACE_CONTEXT_BUILDER(
+            inventory_plan=authority.bundle.semantic_inventory_plan,
+            resolver=response_bank_resolver,
+        )
+        trace_terminal = _run_representative_formal_subset(
+            authority=authority,
+            conditions=trace_conditions,
+            output_root=authority.output_root / "exp1-exp4-trace",
+            transport=object(),
+            real_transport=False,
+            trace_context=trace_context,
+            suite_id="representative_full_plan_smoke_exp1_exp4_trace",
+        )
+    except RepresentativeSmokeExecutionError:
+        raise
+    except Exception as exc:
+        raise RepresentativeSmokeExecutionError(
+            str(exc),
+            failure_stage="trace_runner",
+            acquisition_usage=acquisition_current,
+            trace_usage=zero_usage,
+            exp5_usage=zero_usage,
+        ) from exc
+    try:
+        trace_usage = _current_provider_usage_from_terminal(
+            terminal=trace_terminal,
+            force_zero_spend_when_no_calls=True,
+        )
+    except Exception as exc:
+        raise RepresentativeSmokeExecutionError(
+            str(exc),
+            failure_stage="trace_usage",
+            acquisition_usage=acquisition_current,
+            trace_usage=zero_usage,
+            exp5_usage=zero_usage,
+        ) from exc
     try:
         _validate_representative_terminal(
             terminal=trace_terminal,
@@ -1062,7 +1082,7 @@ def execute_representative_full_plan_smoke(
             expected_experiment_ids=_REPRESENTATIVE_TRACE_EXPERIMENT_IDS,
             require_zero_current_provider_calls=True,
         )
-    except ValueError as exc:
+    except Exception as exc:
         raise RepresentativeSmokeExecutionError(
             str(exc),
             failure_stage="trace_terminal",
@@ -1070,18 +1090,34 @@ def execute_representative_full_plan_smoke(
             trace_usage=trace_usage,
             exp5_usage=zero_usage,
         ) from exc
-    exp5_terminal = _run_representative_formal_subset(
-        authority=authority,
-        conditions=exp5_conditions,
-        output_root=authority.output_root / "exp5-online",
-        transport=exp5_transport,
-        real_transport=True,
-        trace_context=None,
-        suite_id="representative_full_plan_smoke_exp5_online",
-    )
-    exp5_usage = _current_provider_usage_from_terminal(
+    counting_exp5_transport = _CountingRepresentativeTransport(exp5_transport)
+    try:
+        exp5_terminal = _run_representative_formal_subset(
+            authority=authority,
+            conditions=exp5_conditions,
+            output_root=authority.output_root / "exp5-online",
+            transport=counting_exp5_transport,
+            real_transport=True,
+            trace_context=None,
+            suite_id="representative_full_plan_smoke_exp5_online",
+        )
+    except RepresentativeSmokeExecutionError:
+        raise
+    except Exception as exc:
+        exp5_usage = _exp5_usage_from_dispatch_boundary(
+            transport=counting_exp5_transport,
+            terminal=None,
+        )
+        raise RepresentativeSmokeExecutionError(
+            str(exc),
+            failure_stage="exp5_runner",
+            acquisition_usage=acquisition_current,
+            trace_usage=trace_usage,
+            exp5_usage=exp5_usage,
+        ) from exc
+    exp5_usage = _exp5_usage_from_dispatch_boundary(
+        transport=counting_exp5_transport,
         terminal=exp5_terminal,
-        force_zero_spend_when_no_calls=True,
     )
     try:
         _validate_representative_terminal(
@@ -1091,7 +1127,13 @@ def execute_representative_full_plan_smoke(
             expected_experiment_ids=(_REPRESENTATIVE_EXP5_EXPERIMENT_ID,),
             require_zero_current_provider_calls=False,
         )
-    except ValueError as exc:
+        _validate_representative_exp5_terminal(
+            terminal=exp5_terminal,
+            conditions=exp5_conditions,
+            ai_api_configs=authority.ai_api_configs,
+            transport=counting_exp5_transport,
+        )
+    except Exception as exc:
         raise RepresentativeSmokeExecutionError(
             str(exc),
             failure_stage="exp5_terminal",
@@ -1176,6 +1218,42 @@ def _current_provider_usage_from_terminal(
     )
 
 
+def _exp5_usage_from_dispatch_boundary(
+    *,
+    transport: _CountingRepresentativeTransport,
+    terminal: object | None,
+) -> RepresentativeCurrentProviderUsage:
+    """用实际 dispatch 计数覆盖 terminal headline，缺失花费绝不补零。"""
+
+    calls = transport.provider_calls
+    if terminal is None:
+        if calls == 0:
+            return RepresentativeCurrentProviderUsage(provider_calls=0, spend=0.0)
+        return RepresentativeCurrentProviderUsage(
+            provider_calls=calls,
+            spend=None,
+            spend_missing_reason="exp5_usage_missing",
+        )
+    try:
+        terminal_usage = _current_provider_usage_from_terminal(
+            terminal=terminal,
+            force_zero_spend_when_no_calls=False,
+        )
+    except Exception:
+        if calls == 0:
+            return RepresentativeCurrentProviderUsage(provider_calls=0, spend=0.0)
+        return RepresentativeCurrentProviderUsage(
+            provider_calls=calls,
+            spend=None,
+            spend_missing_reason="exp5_usage_missing",
+        )
+    return RepresentativeCurrentProviderUsage(
+        provider_calls=calls,
+        spend=terminal_usage.spend,
+        spend_missing_reason=terminal_usage.spend_missing_reason,
+    )
+
+
 def _run_representative_formal_subset(
     *,
     authority: RepresentativeFullPlanSmokeServiceAuthority,
@@ -1255,6 +1333,102 @@ def _validate_representative_terminal(
         raise ValueError("trace runner made current provider calls")
 
 
+def _validate_representative_exp5_terminal(
+    *,
+    terminal: object,
+    conditions: Sequence[object],
+    ai_api_configs: Mapping[str, object],
+    transport: _CountingRepresentativeTransport,
+) -> None:
+    selected_ids = tuple(str(condition.condition_id) for condition in conditions)
+    summaries = getattr(terminal, "condition_results", ())
+    if not isinstance(summaries, Sequence) or isinstance(summaries, (str, bytes)):
+        raise ValueError("Exp5 per-condition terminal summaries are missing")
+    attempts_by_condition: dict[str, int] = {}
+    for summary in summaries:
+        if not isinstance(summary, Mapping):
+            raise ValueError("Exp5 per-condition terminal summary is invalid")
+        condition_id = summary.get("condition_id")
+        attempts = summary.get("provider_attempt_count")
+        if (
+            not isinstance(condition_id, str)
+            or not condition_id
+            or isinstance(attempts, bool)
+            or not isinstance(attempts, int)
+            or attempts < 1
+            or condition_id in attempts_by_condition
+        ):
+            raise ValueError("Exp5 per-condition provider attempts are incomplete")
+        attempts_by_condition[condition_id] = attempts
+    if set(attempts_by_condition) != set(selected_ids):
+        raise ValueError("Exp5 per-condition terminal coverage is incomplete")
+    attempt_sum = sum(attempts_by_condition.values())
+    if (
+        attempt_sum != transport.provider_calls
+        or int(getattr(terminal, "provider_attempt_count", -1)) != attempt_sum
+    ):
+        raise ValueError("Exp5 terminal provider attempts do not match dispatches")
+    expected = _expected_exp5_endpoint_observations(
+        conditions=conditions,
+        ai_api_configs=ai_api_configs,
+    )
+    observed = set(transport.observations)
+    if len(set(expected.values())) != 4 or observed != set(expected):
+        raise ValueError("Exp5 endpoint/model execution coverage is incomplete")
+
+
+def _expected_exp5_endpoint_observations(
+    *,
+    conditions: Sequence[object],
+    ai_api_configs: Mapping[str, object],
+) -> dict[tuple[str, str], str]:
+    from tokenshare.executors.ai_api_request_identity import (
+        _normalized_absolute_endpoint,
+    )
+
+    expected: dict[tuple[str, str], str] = {}
+    for condition in conditions:
+        config_id = getattr(condition, "provider_config_id", None)
+        entry_id = getattr(condition, "model_entry_id", None)
+        model_id = getattr(condition, "provider_model_id", None)
+        digest = getattr(condition, "model_endpoint_identity_digest", None)
+        config = ai_api_configs.get(config_id) if isinstance(config_id, str) else None
+        entries = getattr(config, "entries", None)
+        if (
+            not isinstance(entry_id, str)
+            or not isinstance(model_id, str)
+            or not isinstance(digest, str)
+            or not isinstance(entries, Sequence)
+            or isinstance(entries, (str, bytes))
+        ):
+            raise ValueError("Exp5 endpoint authority is incomplete")
+        matches = tuple(
+            entry
+            for entry in entries
+            if getattr(entry, "entry_id", None) == entry_id
+            and getattr(entry, "enabled", None) is True
+        )
+        if len(matches) != 1:
+            raise ValueError("Exp5 endpoint authority is not unique")
+        entry = matches[0]
+        base_url = getattr(entry, "base_url", None)
+        endpoint = getattr(entry, "endpoint", None)
+        model = getattr(entry, "model", None)
+        if (
+            not isinstance(base_url, str)
+            or not isinstance(endpoint, str)
+            or not isinstance(model, str)
+            or model != model_id
+        ):
+            raise ValueError("Exp5 endpoint/model authority drifted")
+        observation = (_normalized_absolute_endpoint(base_url, endpoint), model)
+        previous = expected.get(observation)
+        if previous is not None and previous != digest:
+            raise ValueError("Exp5 endpoint identity digest is ambiguous")
+        expected[observation] = digest
+    return expected
+
+
 def _build_representative_service_authority(**kwargs: object):
     from tokenshare.experiments.run_paper_experiments import (
         build_representative_full_plan_smoke_authority,
@@ -1297,12 +1471,30 @@ class _CountingRepresentativeTransport:
     def __init__(self, transport: object) -> None:
         self.transport = transport
         self.provider_calls = 0
+        self._observations: list[tuple[str, str]] = []
         self._lock = Lock()
 
     def post_chat_completion(self, **kwargs: object) -> object:
+        endpoint = kwargs.get("normalized_absolute_endpoint")
+        body_bytes = kwargs.get("body_bytes")
+        model: object = None
+        if isinstance(body_bytes, bytes):
+            try:
+                body = json.loads(body_bytes.decode("utf-8"))
+                if isinstance(body, Mapping):
+                    model = body.get("model")
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                pass
         with self._lock:
             self.provider_calls += 1
+            if isinstance(endpoint, str) and isinstance(model, str):
+                self._observations.append((endpoint, model))
         return self.transport.post_chat_completion(**kwargs)
+
+    @property
+    def observations(self) -> tuple[tuple[str, str], ...]:
+        with self._lock:
+            return tuple(self._observations)
 
 
 def _acquire_representative_response_bank(
@@ -1569,12 +1761,36 @@ def _run_representative_cli(args: argparse.Namespace) -> dict[str, object]:
             provider_calls=0,
             spend=0.0,
         )
-    terminal = _REPRESENTATIVE_SMOKE_EXECUTOR(
-        authority=authority,
-        response_bank_resolver=resolver,
-        exp5_transport=_REPRESENTATIVE_EXP5_TRANSPORT_FACTORY(),
-        acquisition_usage=acquisition_usage,
-    )
+    zero_usage = RepresentativeCurrentProviderUsage(provider_calls=0, spend=0.0)
+    try:
+        exp5_transport = _REPRESENTATIVE_EXP5_TRANSPORT_FACTORY()
+    except RepresentativeSmokeExecutionError:
+        raise
+    except Exception as exc:
+        raise RepresentativeSmokeExecutionError(
+            str(exc),
+            failure_stage="exp5_transport_factory",
+            acquisition_usage=acquisition_usage,
+            trace_usage=zero_usage,
+            exp5_usage=zero_usage,
+        ) from exc
+    try:
+        terminal = _REPRESENTATIVE_SMOKE_EXECUTOR(
+            authority=authority,
+            response_bank_resolver=resolver,
+            exp5_transport=exp5_transport,
+            acquisition_usage=acquisition_usage,
+        )
+    except RepresentativeSmokeExecutionError:
+        raise
+    except Exception as exc:
+        raise RepresentativeSmokeExecutionError(
+            str(exc),
+            failure_stage="representative_smoke_executor",
+            acquisition_usage=acquisition_usage,
+            trace_usage=zero_usage,
+            exp5_usage=zero_usage,
+        ) from exc
     return {
         **common,
         "status": terminal.status,
