@@ -7,6 +7,7 @@ import pytest
 
 import tokenshare.experiments.lean_paper_adapter as lean_paper_adapter
 import tokenshare.experiments.paper_catalog as paper_catalog_module
+import tokenshare.experiments.paper_formal_runner as paper_formal_runner
 import tokenshare.plugins.lean_proof.runtime_adapter as lean_runtime_adapter
 from tokenshare.executors.ai_api import build_ai_api_executor_descriptor
 from tokenshare.executors.ai_api_config import load_ai_api_config
@@ -14,6 +15,7 @@ from tokenshare.executors.ai_api_transport import (
     UrlLibOpenAITransport,
     UrlLibSiliconFlowTransport,
 )
+from tokenshare.executors.contracts import EnvironmentRef, ExecutionSubmission
 from tokenshare.executors.registry import ExecutorRegistry
 from tokenshare.experiments.lean_paper_adapter import (
     ScriptedLeanPaperProofTransport,
@@ -32,11 +34,14 @@ from tokenshare.experiments.paper_models import (
     PaperTaskStatus,
 )
 from tokenshare.local_runtime import (
+    ParsedCandidateContext,
+    ParsedCandidateDirective,
     ProtocolRunCoordinator,
     RuntimeHookObservationV1,
     WorkerTerminationPolicy,
     build_experiment_ablation_gate_applied_observation,
 )
+from tokenshare.storage.artifacts import ArtifactStore
 from tests.support.lean_checker import RecordingLeanChecker
 from tokenshare.plugins.lean_proof.checker import (
     LeanCheckerMode,
@@ -132,6 +137,340 @@ def test_lean_adapter_officially_parses_runtime_hook_observations() -> None:
     tampered["payload"]["disabled_mechanism"] = "requeue"
     with pytest.raises(ValueError, match="observation_digest mismatch"):
         lean_paper_adapter._parse_runtime_hook_observations((tampered,))
+
+
+def test_lean_fault_candidate_is_replaced_before_fixed_checker(
+    tmp_path: Path,
+) -> None:
+    store = ArtifactStore(tmp_path)
+    parsed_ref = store.save_json(
+        {"proof_candidate_id": "candidate-1", "proof_source": "by exact h"},
+        artifact_id="parsed_candidate",
+        artifact_type="LeanProofCandidate",
+        artifact_schema_id="lean_proof.proof_candidate",
+        artifact_schema_version="v1",
+        source={"kind": "test"},
+        metadata={},
+        created_at="2026-08-09T00:00:00Z",
+    )
+    mutated_ref = store.save_json(
+        {
+            "proof_candidate_id": "candidate-1:false_negative",
+            "proof_source": "",
+            "proof_suppressed": True,
+        },
+        artifact_id="fault_mutated_candidate",
+        artifact_type="FaultMutatedCandidate",
+        artifact_schema_id="tokenshare.paper_fault_mutated_candidate",
+        artifact_schema_version="v1",
+        source={"kind": "test"},
+        metadata={},
+        created_at="2026-08-09T00:00:00Z",
+    )
+    environment_ref = EnvironmentRef(
+        environment_id="lean-test",
+        environment_digest="sha256:" + "1" * 64,
+        runtime="lean",
+        tool_versions={},
+        resource_limits={},
+        fixture_profile_digest="sha256:" + "2" * 64,
+        seed=1,
+        clock_policy="fixed",
+        created_at="2026-08-09T00:00:00Z",
+    )
+    submission = ExecutionSubmission(
+        submission_id="submission-1",
+        request_id="request-1",
+        task_id="task-1",
+        unit_id="unit-1",
+        attempt_id="attempt-1",
+        lease_id="lease-1",
+        fencing_token="token-1",
+        executor_id="ai_api",
+        executor_version="1",
+        result_kind="succeeded",
+        raw_output_ref=parsed_ref,
+        parsed_output_ref=parsed_ref,
+        candidate_output_refs={"proof_artifact": parsed_ref},
+        parse_failure_ref=None,
+        log_ref=None,
+        environment_ref=environment_ref,
+        environment_summary={},
+        provenance_ref=None,
+        usage_summary={"provider_attempt_count": 1},
+        error=None,
+        submitted_at="2026-08-09T00:00:00Z",
+    )
+    observed = []
+
+    class _ParsedFaultHook:
+        def after_parsed_candidate_persisted(self, context):
+            observed.append(context)
+            return ParsedCandidateDirective(
+                replacement_candidate_output_refs={"proof_artifact": mutated_ref}
+            )
+
+    request = SimpleNamespace(
+        task_id="task-1",
+        unit_id="unit-1",
+        attempt_id="attempt-1",
+        lease_id="lease-1",
+        allocation_decision={"worker_id": "worker-1"},
+        soft_hints={"planned_ai_unit_id": "lemma-node-1"},
+    )
+
+    checker_input = lean_paper_adapter._apply_pre_checker_parsed_candidate_hook(
+        post_raw_output_hook=_ParsedFaultHook(),
+        condition=SimpleNamespace(condition_id="exp3-false-negative"),
+        case_id="lean-case-1",
+        request=request,
+        submission=submission,
+    )
+
+    assert len(observed) == 1
+    assert observed[0].original_parsed_output_ref == parsed_ref
+    assert observed[0].candidate_output_refs == {"proof_artifact": parsed_ref}
+    assert observed[0].experiment_unit_id == "lemma-node-1"
+    assert checker_input.parsed_output_ref == parsed_ref
+    assert checker_input.candidate_output_refs == {"proof_artifact": mutated_ref}
+    checker_candidate = json.loads(
+        store.read_bytes(checker_input.candidate_output_refs["proof_artifact"]).decode(
+            "utf-8"
+        )
+    )
+    assert checker_candidate["proof_source"] == ""
+
+
+def test_exp3_lean_fault_hook_is_typed_noop_after_prechecker_mutation(
+    tmp_path: Path,
+) -> None:
+    store = ArtifactStore(tmp_path)
+    raw_ref = store.save_json(
+        {"content": "provider response"},
+        artifact_id="raw_output",
+        artifact_type="RawOutput",
+        artifact_schema_id="test.raw_output",
+        artifact_schema_version="v1",
+        source={"kind": "test"},
+        metadata={},
+        created_at="2026-08-09T00:00:00Z",
+    )
+    provenance_ref = store.save_json(
+        {"attempts": [{"latency_ms": 5}]},
+        artifact_id="provenance",
+        artifact_type="Provenance",
+        artifact_schema_id="test.provenance",
+        artifact_schema_version="v1",
+        source={"kind": "test"},
+        metadata={},
+        created_at="2026-08-09T00:00:00Z",
+    )
+    usage_ref = store.save_json(
+        {"prompt_tokens": 2, "completion_tokens": 3, "total_tokens": 5},
+        artifact_id="usage",
+        artifact_type="Usage",
+        artifact_schema_id="test.usage",
+        artifact_schema_version="v1",
+        source={"kind": "test"},
+        metadata={},
+        created_at="2026-08-09T00:00:00Z",
+    )
+    parsed_ref = store.save_json(
+        {"proof_candidate_id": "candidate-1", "proof_source": "by exact h"},
+        artifact_id="parsed_candidate",
+        artifact_type="LeanProofCandidate",
+        artifact_schema_id="lean_proof.proof_candidate",
+        artifact_schema_version="v1",
+        source={"kind": "test"},
+        metadata={},
+        created_at="2026-08-09T00:00:00Z",
+    )
+    request = SimpleNamespace(
+        task_id="task-1",
+        unit_id="unit-1",
+        attempt_id="attempt-1",
+        lease_id="lease-1",
+        allocation_decision={"worker_id": "worker-1"},
+        soft_hints={"planned_ai_unit_id": "lemma-node-1"},
+    )
+    records = []
+    bridge = paper_formal_runner._Exp3RuntimeHookBridge(
+        condition=SimpleNamespace(
+            condition_id="exp3-false-negative",
+            repeat_id=0,
+            seed=7,
+        ),
+        case_id="lean-case-1",
+        fault_type="false_negative",
+        selected_unit_ids=("lean-case-1:lemma-node-1",),
+        reserve_unit_ids=(),
+        runtime_records=records,
+    )
+    bridge(
+        artifact_store=store,
+        request=request,
+        submission_id="submission-1",
+        raw_output_ref=raw_ref,
+        provenance_ref=provenance_ref,
+        usage_ref=usage_ref,
+        provider_family="deepseek",
+        model="deepseek-v4-pro",
+        entry_id="deepseek-v4-pro",
+        content_text="provider response",
+        usage_summary={
+            "prompt_tokens": 2,
+            "completion_tokens": 3,
+            "total_tokens": 5,
+        },
+        submitted_at="2026-08-09T00:00:00Z",
+    )
+    submission = SimpleNamespace(
+        task_id="task-1",
+        unit_id="unit-1",
+        attempt_id="attempt-1",
+        lease_id="lease-1",
+        raw_output_ref=raw_ref,
+        parsed_output_ref=parsed_ref,
+        candidate_output_refs={"proof_artifact": parsed_ref},
+        submitted_at="2026-08-09T00:00:00Z",
+    )
+
+    directive = bridge.after_parsed_candidate_persisted(
+        ParsedCandidateContext(
+            run_id="exp3-false-negative_lean-case-1",
+            task_id=submission.task_id,
+            unit_id=submission.unit_id,
+            attempt_id=submission.attempt_id,
+            lease_id=submission.lease_id,
+            worker_id="worker-1",
+            raw_output_ref=submission.raw_output_ref,
+            original_parsed_output_ref=submission.parsed_output_ref,
+            candidate_output_refs=dict(submission.candidate_output_refs),
+            submitted_at=submission.submitted_at,
+            experiment_unit_id="lemma-node-1",
+        )
+    )
+    assert directive is not None
+    assert records and records[0]["fault_type"] == "false_negative"
+
+    coordinator_repeat = bridge.after_parsed_candidate_persisted(
+        ParsedCandidateContext(
+            run_id="exp3-false-negative_lean-case-1",
+            task_id=submission.task_id,
+            unit_id=submission.unit_id,
+            attempt_id=submission.attempt_id,
+            lease_id=submission.lease_id,
+            worker_id="worker-1",
+            raw_output_ref=submission.raw_output_ref,
+            original_parsed_output_ref=submission.parsed_output_ref,
+            candidate_output_refs=dict(directive.replacement_candidate_output_refs),
+            submitted_at=submission.submitted_at,
+            experiment_unit_id="lemma-node-1",
+        )
+    )
+    assert coordinator_repeat is None
+    assert len(records) == 1
+
+
+def test_lean_native_provider_sources_exclude_only_incomplete_fault_attempts(
+    tmp_path: Path,
+) -> None:
+    store = ArtifactStore(tmp_path)
+    ref = store.save_json(
+        {"kind": "provider-evidence"},
+        artifact_id="provider_evidence",
+        artifact_type="ProviderEvidence",
+        artifact_schema_id="test.provider_evidence",
+        artifact_schema_version="v1",
+        source={"kind": "test"},
+        metadata={},
+        created_at="2026-08-09T00:00:00Z",
+    ).to_dict()
+    complete_actual = SimpleNamespace(
+        provider_attempt_count=1,
+        request_ref=ref,
+        raw_output_ref=ref,
+        parse_failure_ref=None,
+        provenance_ref=ref,
+        usage_ref=ref,
+        model_execution_record_ref=ref,
+        fault_injection_ref=None,
+    )
+    incomplete_fault = SimpleNamespace(
+        provider_attempt_count=1,
+        request_ref=ref,
+        raw_output_ref=None,
+        parse_failure_ref=None,
+        provenance_ref=None,
+        usage_ref=None,
+        model_execution_record_ref=None,
+        fault_injection_ref=ref,
+    )
+
+    sources = lean_paper_adapter._native_online_provider_sources(
+        (complete_actual, incomplete_fault)
+    )
+
+    assert set(sources) == {
+        "request_body",
+        "raw_output_or_provider_failure",
+        "provenance",
+        "usage_status",
+        "latency",
+        "pricing",
+        "provider_attempt",
+        "model_record",
+    }
+    assert all(len(refs) == 1 for refs in sources.values())
+    incomplete_nonfault = SimpleNamespace(
+        **{**vars(incomplete_fault), "fault_injection_ref": None}
+    )
+    with pytest.raises(ValueError, match="actual provider evidence is incomplete"):
+        lean_paper_adapter._native_online_provider_sources(
+            (complete_actual, incomplete_nonfault)
+        )
+
+
+def test_lean_native_provider_sources_ignore_zero_call_protocol_attempt(
+    tmp_path: Path,
+) -> None:
+    store = ArtifactStore(tmp_path)
+    ref = store.save_json(
+        {"kind": "provider-evidence"},
+        artifact_id="provider_evidence",
+        artifact_type="ProviderEvidence",
+        artifact_schema_id="test.provider_evidence",
+        artifact_schema_version="v1",
+        source={"kind": "test"},
+        metadata={},
+        created_at="2026-08-09T00:00:00Z",
+    ).to_dict()
+    complete_actual = SimpleNamespace(
+        provider_attempt_count=1,
+        request_ref=ref,
+        raw_output_ref=ref,
+        parse_failure_ref=None,
+        provenance_ref=ref,
+        usage_ref=ref,
+        model_execution_record_ref=ref,
+        fault_injection_ref=None,
+    )
+    zero_call = SimpleNamespace(
+        provider_attempt_count=0,
+        request_ref=ref,
+        raw_output_ref=None,
+        parse_failure_ref=None,
+        provenance_ref=None,
+        usage_ref=None,
+        model_execution_record_ref=None,
+        fault_injection_ref=None,
+    )
+
+    sources = lean_paper_adapter._native_online_provider_sources(
+        (complete_actual, zero_call)
+    )
+
+    assert all(len(refs) == 1 for refs in sources.values())
 
 
 @pytest.mark.parametrize(

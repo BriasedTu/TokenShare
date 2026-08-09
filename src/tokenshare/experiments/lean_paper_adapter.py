@@ -27,6 +27,7 @@ from tokenshare.core.models import (
 )
 from tokenshare.local_runtime import (
     ExperimentPrematureMergeAttemptedPayloadV1,
+    ParsedCandidateContext,
     ProcessWorkerBackend,
     ProtocolExecutionScope,
     ProtocolRunCoordinator,
@@ -1142,6 +1143,13 @@ class _FixedIdentityLeanExecutor:
                     "reasons": list(model_record.mismatch_reasons),
                 },
             )
+        submission = _apply_pre_checker_parsed_candidate_hook(
+            post_raw_output_hook=self.post_raw_output_hook,
+            condition=self.condition,
+            case_id=self.case_id,
+            request=request,
+            submission=submission,
+        )
         with self._calls_lock:
             self.calls.append(
                 _CapturedLeanCall(
@@ -1155,6 +1163,60 @@ class _FixedIdentityLeanExecutor:
                 )
             )
         return submission
+
+
+def _apply_pre_checker_parsed_candidate_hook(
+    *,
+    post_raw_output_hook: Any | None,
+    condition: PaperExperimentCondition,
+    case_id: str,
+    request: ExecutionRequest,
+    submission: ExecutionSubmission,
+) -> ExecutionSubmission:
+    """让 Exp3 candidate fault 在 Lean checker 读取 candidate 前生效。"""
+
+    parsed_hook = getattr(
+        post_raw_output_hook,
+        "after_parsed_candidate_persisted",
+        None,
+    )
+    if (
+        not callable(parsed_hook)
+        or submission.parsed_output_ref is None
+        or not submission.candidate_output_refs
+    ):
+        return submission
+    planned_ai_unit_id = (request.soft_hints or {}).get("planned_ai_unit_id")
+    directive = parsed_hook(
+        ParsedCandidateContext(
+            run_id=f"{condition.condition_id}_{case_id}",
+            task_id=submission.task_id,
+            unit_id=submission.unit_id,
+            attempt_id=submission.attempt_id,
+            lease_id=submission.lease_id,
+            worker_id=str(
+                request.allocation_decision.get(
+                    "worker_id",
+                    request.allocation_decision.get("client_id", "formal-worker"),
+                )
+            ),
+            raw_output_ref=submission.raw_output_ref,
+            original_parsed_output_ref=submission.parsed_output_ref,
+            candidate_output_refs=dict(submission.candidate_output_refs),
+            submitted_at=submission.submitted_at,
+            experiment_unit_id=(
+                planned_ai_unit_id
+                if isinstance(planned_ai_unit_id, str) and planned_ai_unit_id
+                else None
+            ),
+        )
+    )
+    if directive is None:
+        return submission
+    return replace(
+        submission,
+        candidate_output_refs=dict(directive.replacement_candidate_output_refs),
+    )
 
 
 def _trace_lean_calls_from_events(
@@ -1888,14 +1950,29 @@ def _native_online_provider_sources(
         )
     }
     for attempt in attempts:
-        request_ref = ArtifactRef.from_dict(attempt.request_ref)
-        provenance_ref = ArtifactRef.from_dict(attempt.provenance_ref)
-        usage_ref = ArtifactRef.from_dict(attempt.usage_ref)
+        if attempt.provider_attempt_count == 0:
+            continue
         raw_value = (
             attempt.raw_output_ref
             or attempt.parse_failure_ref
             or attempt.provenance_ref
         )
+        evidence_incomplete = any(
+            value is None
+            for value in (
+                attempt.request_ref,
+                raw_value,
+                attempt.provenance_ref,
+                attempt.usage_ref,
+            )
+        )
+        if evidence_incomplete and attempt.fault_injection_ref is not None:
+            continue
+        if evidence_incomplete:
+            raise ValueError("actual provider evidence is incomplete")
+        request_ref = ArtifactRef.from_dict(attempt.request_ref)
+        provenance_ref = ArtifactRef.from_dict(attempt.provenance_ref)
+        usage_ref = ArtifactRef.from_dict(attempt.usage_ref)
         values = {
             "request_body": request_ref,
             "raw_output_or_provider_failure": ArtifactRef.from_dict(raw_value),
