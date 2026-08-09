@@ -302,6 +302,10 @@ def test_create_only_bundle_round_trips_exact_prepared_bytes_and_full_budget(
     assert reopened.full_budget.tokens == 600_000
     assert reopened.full_budget.cny == Decimal("2.50")
     assert reopened.full_budget.budget_digest != "sha256:" + "0" * 64
+    assert reopened.source_snapshot_digest is None
+    assert reopened.source_prepared_inventory_digest is None
+    assert reopened.coverage_digest is None
+    assert reopened.representative_plan_digest is None
     with pytest.raises(FileExistsError):
         create_acquisition_plan_bundle(
             root,
@@ -396,6 +400,8 @@ def test_representative_bundle_round_trips_exact_plan_lineage(tmp_path: Path) ->
     )
     assert reopened.coverage_digest == plan.coverage_digest
     assert reopened.representative_plan_digest == plan.plan_digest
+    with pytest.raises(ValueError, match="requires fresh-plan validation"):
+        load_acquisition_plan_bundle(root)
 
 
 def test_representative_bundle_rejects_resigned_lineage_and_fresh_plan_mismatch(

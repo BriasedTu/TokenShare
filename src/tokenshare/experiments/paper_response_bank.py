@@ -1129,12 +1129,35 @@ def _create_acquisition_plan_bundle(
             path.unlink()
         root.rmdir()
         raise
-    return load_acquisition_plan_bundle(root)
+    return _load_acquisition_plan_bundle_raw(root)
 
 
 def load_acquisition_plan_bundle(
     bundle_root: str | Path,
 ) -> AcquisitionPlanBundle:
+    """加载 generic bundle；formal lineage 必须经 fresh-plan loader。"""
+
+    bundle = _load_acquisition_plan_bundle_raw(bundle_root)
+    if any(
+        value is not None
+        for value in (
+            bundle.source_snapshot_digest,
+            bundle.source_prepared_inventory_digest,
+            bundle.coverage_digest,
+            bundle.representative_plan_digest,
+        )
+    ):
+        raise ValueError(
+            "formal acquisition bundle requires fresh-plan validation"
+        )
+    return bundle
+
+
+def _load_acquisition_plan_bundle_raw(
+    bundle_root: str | Path,
+) -> AcquisitionPlanBundle:
+    """只反序列化并验证 bundle 内部自洽性，不授予 dispatch authority。"""
+
     path = Path(bundle_root).resolve() / ACQUISITION_PLAN_BUNDLE_FILENAME
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
@@ -1213,7 +1236,7 @@ def load_representative_acquisition_plan_bundle(
 ) -> AcquisitionPlanBundle:
     """加载 bundle 并与 fresh representative plan 做 exact lineage 对账。"""
 
-    bundle = load_acquisition_plan_bundle(bundle_root)
+    bundle = _load_acquisition_plan_bundle_raw(bundle_root)
     validate_representative_acquisition_plan_bundle(bundle=bundle, plan=plan)
     return bundle
 
