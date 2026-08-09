@@ -1381,38 +1381,61 @@ def _acquire_representative_response_bank(
             trace_usage=zero_usage,
             exp5_usage=zero_usage,
         ) from exc
-    usage = _acquisition_current_usage(
-        batch=batch,
-        ledger=ledger,
-        inventory_digest=bundle.inventory_digest,
-        current_provider_calls=transport.provider_calls,
-    )
-    if (
-        batch.status != "complete"
-        or batch.missing_inventory_entry_ids
-        or batch.ambiguous_inventory_entry_ids
-    ):
+    usage: RepresentativeCurrentProviderUsage | None = None
+    post_failure_stage = "acquisition_accounting"
+    missing_spend_reason = "post_acquisition_usage_missing"
+    try:
+        usage = _acquisition_current_usage(
+            batch=batch,
+            ledger=ledger,
+            inventory_digest=bundle.inventory_digest,
+            current_provider_calls=transport.provider_calls,
+        )
+        if (
+            batch.status != "complete"
+            or batch.missing_inventory_entry_ids
+            or batch.ambiguous_inventory_entry_ids
+        ):
+            raise RepresentativeSmokeExecutionError(
+                batch.blocked_reason or "representative acquisition is incomplete",
+                failure_stage="acquisition_terminal",
+                acquisition_usage=usage,
+                trace_usage=zero_usage,
+                exp5_usage=zero_usage,
+            )
+        post_failure_stage = "acquisition_finalize"
+        missing_spend_reason = "child_bank_finalize_failed"
+        resolver = finalize_acquisition_child_bank(
+            orchestrator=orchestrator,
+            bundle=bundle,
+            manifest=manifest,
+            batch_result=batch,
+        )
+        if resolver is None:
+            raise RepresentativeSmokeExecutionError(
+                "representative immutable child bank was not finalized",
+                failure_stage="acquisition_finalize",
+                acquisition_usage=usage,
+                trace_usage=zero_usage,
+                exp5_usage=zero_usage,
+            )
+    except RepresentativeSmokeExecutionError:
+        raise
+    except Exception as exc:
+        recovered_usage = usage or _recover_acquisition_current_usage(
+            batch=batch,
+            ledger=ledger,
+            inventory_digest=bundle.inventory_digest,
+            current_provider_calls=transport.provider_calls,
+            missing_spend_reason=missing_spend_reason,
+        )
         raise RepresentativeSmokeExecutionError(
-            batch.blocked_reason or "representative acquisition is incomplete",
-            failure_stage="acquisition_terminal",
-            acquisition_usage=usage,
+            str(exc),
+            failure_stage=post_failure_stage,
+            acquisition_usage=recovered_usage,
             trace_usage=zero_usage,
             exp5_usage=zero_usage,
-        )
-    resolver = finalize_acquisition_child_bank(
-        orchestrator=orchestrator,
-        bundle=bundle,
-        manifest=manifest,
-        batch_result=batch,
-    )
-    if resolver is None:
-        raise RepresentativeSmokeExecutionError(
-            "representative immutable child bank was not finalized",
-            failure_stage="acquisition_finalize",
-            acquisition_usage=usage,
-            trace_usage=zero_usage,
-            exp5_usage=zero_usage,
-        )
+        ) from exc
     return RepresentativeAcquisitionStageResult(
         resolver=resolver,
         usage=usage,
@@ -1421,6 +1444,46 @@ def _acquire_representative_response_bank(
 
 
 def _acquisition_current_usage(
+    *,
+    batch: object,
+    ledger: object,
+    inventory_digest: str,
+    current_provider_calls: int,
+) -> RepresentativeCurrentProviderUsage:
+    return _acquisition_current_usage_from_ledger(
+        batch=batch,
+        ledger=ledger,
+        inventory_digest=inventory_digest,
+        current_provider_calls=current_provider_calls,
+    )
+
+
+def _recover_acquisition_current_usage(
+    *,
+    batch: object,
+    ledger: object,
+    inventory_digest: str,
+    current_provider_calls: int,
+    missing_spend_reason: str,
+) -> RepresentativeCurrentProviderUsage:
+    try:
+        return _acquisition_current_usage_from_ledger(
+            batch=batch,
+            ledger=ledger,
+            inventory_digest=inventory_digest,
+            current_provider_calls=current_provider_calls,
+        )
+    except Exception:
+        return RepresentativeCurrentProviderUsage(
+            provider_calls=current_provider_calls,
+            spend=(0.0 if current_provider_calls == 0 else None),
+            spend_missing_reason=(
+                None if current_provider_calls == 0 else missing_spend_reason
+            ),
+        )
+
+
+def _acquisition_current_usage_from_ledger(
     *,
     batch: object,
     ledger: object,

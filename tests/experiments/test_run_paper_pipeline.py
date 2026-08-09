@@ -2595,3 +2595,106 @@ def test_representative_cli_reports_exp5_calls_on_success_and_terminal_rejection
     assert body["total_current_provider_calls"] == 4
     assert body["exp5_current_provider_calls"] == 4
     assert body["exp5_current_spend"] == 1.25
+
+
+@pytest.mark.parametrize("failure_point", ("usage", "finalize"))
+def test_representative_cli_preserves_calls_after_post_acquisition_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys,
+    failure_point: str,
+) -> None:
+    from tests.experiments.test_paper_response_bank_acquisition import (
+        ScriptedExactTransport,
+        _success_response,
+    )
+    from tokenshare.experiments import paper_response_bank
+
+    authority = _representative_authority_with_typed_bundle(tmp_path)
+    transport = ScriptedExactTransport([_success_response(failure_point)])
+    monkeypatch.setattr(
+        pipeline,
+        "_REPRESENTATIVE_SERVICE_AUTHORITY_BUILDER",
+        lambda **_kwargs: authority,
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "_REPRESENTATIVE_ACQUISITION_TRANSPORT_FACTORY",
+        lambda: transport,
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "_REPRESENTATIVE_SECRET_RESOLVER",
+        lambda _name: "fake-secret",
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "_REPRESENTATIVE_SMOKE_EXECUTOR",
+        lambda **_kwargs: pytest.fail("trace/Exp5 must follow child-bank terminal"),
+    )
+    if failure_point == "usage":
+        monkeypatch.setattr(
+            pipeline,
+            "_acquisition_current_usage",
+            lambda **_kwargs: (_ for _ in ()).throw(
+                ValueError("simulated post-acquisition usage failure")
+            ),
+        )
+    else:
+        monkeypatch.setattr(
+            paper_response_bank,
+            "finalize_acquisition_child_bank",
+            lambda **_kwargs: (_ for _ in ()).throw(
+                OSError("simulated child-bank finalize failure")
+            ),
+        )
+
+    exit_code = pipeline.main(
+        [
+            "representative-full-plan-smoke",
+            "--output-root",
+            str(authority.output_root),
+            "--planning-artifact-root",
+            str(tmp_path / "planning"),
+            "--plan-bundle-root",
+            str(tmp_path / "typed-bundle"),
+            "--new-run",
+            "--allow-provider-calls",
+        ]
+    )
+
+    body = json.loads(capsys.readouterr().out)
+    assert exit_code == 3
+    assert len(transport.calls) == 1
+    assert body["provider_calls"] == 1
+    assert body["total_current_provider_calls"] == 1
+    assert body["acquisition_current_provider_calls"] == 1
+    assert body["acquisition_current_spend"] == pytest.approx(0.0000125)
+    assert body["exp5_current_provider_calls"] == 0
+
+
+@pytest.mark.parametrize(
+    "reason",
+    ("post_acquisition_usage_missing", "child_bank_finalize_failed"),
+)
+def test_representative_post_dispatch_fallback_keeps_missing_spend_explicit(
+    monkeypatch: pytest.MonkeyPatch,
+    reason: str,
+) -> None:
+    monkeypatch.setattr(
+        pipeline,
+        "_acquisition_current_usage_from_ledger",
+        lambda **_kwargs: (_ for _ in ()).throw(OSError("ledger unreadable")),
+    )
+
+    usage = pipeline._recover_acquisition_current_usage(
+        batch=object(),
+        ledger=object(),
+        inventory_digest="sha256:" + "a" * 64,
+        current_provider_calls=1,
+        missing_spend_reason=reason,
+    )
+
+    assert usage.provider_calls == 1
+    assert usage.spend is None
+    assert usage.spend_missing_reason == reason
