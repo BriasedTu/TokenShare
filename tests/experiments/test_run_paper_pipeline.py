@@ -1389,10 +1389,17 @@ def test_results_first_matrix8_trace_adapter_runs_exactly_three_eight_root_smoke
 
     calls: list[dict[str, object]] = []
     trace_context = object()
+    experiment_ids = (
+        "exp2_real_ai_scalability",
+        "exp3_real_ai_fault_recovery",
+        "exp4_real_ai_protocol_ablation",
+    )
     batches = tuple(
         {
             "profile": object(),
-            "execution_plan": SimpleNamespace(items=tuple(range(8))),
+            "execution_plan": SimpleNamespace(
+                items=tuple(range(8)), experiment_ids=(experiment_id,)
+            ),
             "catalog_manifest": object(),
             "budget": object(),
             "ai_api_configs": {},
@@ -1402,13 +1409,19 @@ def test_results_first_matrix8_trace_adapter_runs_exactly_three_eight_root_smoke
             "launch_manifest": {},
             "trace_context": trace_context,
         }
-        for _ in range(3)
+        for experiment_id in experiment_ids
     )
     monkeypatch.setattr(
         paper_smoke,
         "execute_paper_smoke_suite",
         lambda **kwargs: calls.append(kwargs)
-        or SimpleNamespace(status="completed", provider_attempt_count=0),
+        or SimpleNamespace(
+            status="completed",
+            provider_attempt_count=0,
+            experiment_ids=kwargs["execution_plan"].experiment_ids,
+            run_count=8,
+            condition_count=8,
+        ),
     )
     request = pipeline.PipelineCommandRequest(
         command="run-trace",
@@ -1436,6 +1449,75 @@ def test_results_first_matrix8_trace_adapter_runs_exactly_three_eight_root_smoke
     assert result["provider_calls"] == 0
     assert result["completed_experiment_count"] == 3
     assert result["root_run_count"] == 24
+
+
+@pytest.mark.parametrize(
+    ("override", "message"),
+    (
+        ({"status": "blocked"}, "terminal status"),
+        ({"experiment_ids": ("exp1_real_ai_feasibility",)}, "experiment identity"),
+        ({"run_count": 7}, "root run count"),
+        ({"condition_count": 7}, "condition count"),
+        ({"provider_attempt_count": 1}, "current provider call"),
+    ),
+)
+def test_results_first_matrix8_trace_rejects_nonterminal_or_partial_suite_result(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    override: dict[str, object],
+    message: str,
+) -> None:
+    from tokenshare.experiments import paper_smoke
+
+    experiment_ids = (
+        "exp2_real_ai_scalability",
+        "exp3_real_ai_fault_recovery",
+        "exp4_real_ai_protocol_ablation",
+    )
+    batches = tuple(
+        {
+            "execution_plan": SimpleNamespace(
+                items=tuple(range(8)), experiment_ids=(experiment_id,)
+            ),
+            "real_transport": False,
+            "trace_context": object(),
+        }
+        for experiment_id in experiment_ids
+    )
+
+    def terminal(**kwargs: object) -> object:
+        body = {
+            "status": "completed",
+            "provider_attempt_count": 0,
+            "experiment_ids": kwargs["execution_plan"].experiment_ids,
+            "run_count": 8,
+            "condition_count": 8,
+        }
+        body.update(override)
+        return SimpleNamespace(**body)
+
+    monkeypatch.setattr(paper_smoke, "execute_paper_smoke_suite", terminal)
+    request = pipeline.PipelineCommandRequest(
+        command="run-trace",
+        scope="run-trace",
+        evidence_class="real_model_trace_protocol_run",
+        profile=PROFILE,
+        provider_authorization=None,
+        output_root=tmp_path,
+        replay_input_root=None,
+        external_bank_resolver=None,
+        plan_digest=DIGESTS["plan"],
+        inventory_digest=DIGESTS["inventory"],
+        budget_mode="bounded",
+        serialized_arguments={"results_first_matrix8": True},
+        _service_input=pipeline.Matrix8TraceServiceInput(
+            scope="run-trace",
+            batches=batches,
+        ),
+    )
+
+    with pytest.raises(ValueError, match=message):
+        pipeline._run_trace_adapter(request)
 
 
 def test_run_online_checks_delegates_exact_service(tmp_path: Path, capsys) -> None:

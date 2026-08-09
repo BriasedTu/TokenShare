@@ -522,28 +522,50 @@ def _run_trace_adapter(request: PipelineCommandRequest) -> Mapping[str, object]:
 
         if value.scope != request.scope or len(value.batches) != 3:
             raise ValueError("results-first trace requires three matrix8 batches")
+        expected_experiment_ids = (
+            "exp2_real_ai_scalability",
+            "exp3_real_ai_fault_recovery",
+            "exp4_real_ai_protocol_ablation",
+        )
         statuses: list[str] = []
         root_run_count = 0
-        for batch in value.batches:
+        completed_experiment_count = 0
+        for expected_experiment_id, batch in zip(
+            expected_experiment_ids, value.batches, strict=True
+        ):
             execution_plan = batch.get("execution_plan")
             if (
                 batch.get("real_transport") is not False
                 or batch.get("trace_context") is None
                 or len(tuple(getattr(execution_plan, "items", ()))) != 8
+                or tuple(getattr(execution_plan, "experiment_ids", ()))
+                != (expected_experiment_id,)
             ):
                 raise ValueError(
                     "results-first trace batch identity/transport mismatch"
                 )
             result = execute_paper_smoke_suite(**dict(batch))
-            if int(getattr(result, "provider_attempt_count", 0)) != 0:
+            provider_attempt_count = getattr(result, "provider_attempt_count", None)
+            if type(provider_attempt_count) is not int or provider_attempt_count != 0:
                 raise ValueError("results-first trace made a current provider call")
-            status = getattr(result, "status", "completed")
-            statuses.append(str(getattr(status, "value", status)))
-            root_run_count += len(tuple(execution_plan.items))
-        completed = {"completed", "completed_with_failures"}
-        if any(status not in completed for status in statuses):
-            status = "failed"
-        elif any(status == "completed_with_failures" for status in statuses):
+            status_value = getattr(result, "status", None)
+            status = str(getattr(status_value, "value", status_value))
+            if status not in {"completed", "completed_with_failures"}:
+                raise ValueError("results-first trace suite terminal status is incomplete")
+            if tuple(getattr(result, "experiment_ids", ())) != (
+                expected_experiment_id,
+            ):
+                raise ValueError("results-first trace suite experiment identity mismatch")
+            run_count = getattr(result, "run_count", None)
+            if type(run_count) is not int or run_count != 8:
+                raise ValueError("results-first trace suite root run count mismatch")
+            condition_count = getattr(result, "condition_count", None)
+            if type(condition_count) is not int or condition_count != 8:
+                raise ValueError("results-first trace suite condition count mismatch")
+            statuses.append(status)
+            root_run_count += run_count
+            completed_experiment_count += 1
+        if any(status == "completed_with_failures" for status in statuses):
             status = "completed_with_failures"
         else:
             status = "completed"
@@ -551,7 +573,7 @@ def _run_trace_adapter(request: PipelineCommandRequest) -> Mapping[str, object]:
             request,
             status=status,
             provider_calls=0,
-            completed_experiment_count=3,
+            completed_experiment_count=completed_experiment_count,
             root_run_count=root_run_count,
             paper_eligible=False,
             facility_gate_verified=False,
