@@ -280,6 +280,10 @@ def _pressure_trace_context(
     condition_id: str | None = None,
     condition_ids: tuple[str, ...] | None = None,
     cases: tuple[dict[str, Any], ...],
+    provider_config_digest: str,
+    model_entry_id: str,
+    provider_family: str,
+    provider_model_id: str,
     max_concurrent_roots: int = 1,
 ) -> PaperFormalTraceContext:
     from tokenshare.experiments import factorization_paper_adapter as adapter
@@ -312,7 +316,11 @@ def _pressure_trace_context(
         case_digest = canonical_digest(case)
         entry_id = f"entry-{case['case_id']}"
         request_body = json.dumps(
-            {"entry_id": entry_id, "planned_ai_unit_id": "range_0"},
+            {
+                "entry_id": entry_id,
+                "model": provider_model_id,
+                "planned_ai_unit_id": "range_0",
+            },
             sort_keys=True,
         ).encode("utf-8")
         values: dict[str, Any] = {
@@ -322,7 +330,7 @@ def _pressure_trace_context(
                 planned_ai_unit_id="range_0",
                 sample_slot_index=0,
                 replacement_slot=0,
-                provider_config_digest=_DIGEST_B,
+                provider_config_digest=provider_config_digest,
                 prompt_profile_digest=_DIGEST_C,
                 prompt_admission_profile_digest=_DIGEST_A,
                 plugin_version="2.0.0",
@@ -331,7 +339,7 @@ def _pressure_trace_context(
             "planned_ai_unit_id": "range_0",
             "sample_slot_index": 0,
             "replacement_slot": 0,
-            "provider_config_digest": _DIGEST_B,
+            "provider_config_digest": provider_config_digest,
             "prompt_profile_digest": _DIGEST_C,
             "prompt_admission_profile_digest": _DIGEST_A,
             "plugin_version": "2.0.0",
@@ -351,7 +359,7 @@ def _pressure_trace_context(
         profile_digest=_DIGEST_A,
         budget_digest=_DIGEST_B,
         inventory_digest=inventory_digest,
-        provider_config_digest=_DIGEST_B,
+        provider_config_digest=provider_config_digest,
         entry_ids=tuple(row.entry_id for row in rows),
         object_role_schema=OBJECT_ROLES,
         terminal_entry_count=len(rows),
@@ -362,13 +370,20 @@ def _pressure_trace_context(
     for row in rows:
         raw_objects = {
             "request_body": json.dumps(
-                {"entry_id": row.entry_id, "planned_ai_unit_id": "range_0"},
+                {
+                    "entry_id": row.entry_id,
+                    "model": provider_model_id,
+                    "planned_ai_unit_id": "range_0",
+                },
                 sort_keys=True,
             ).encode("utf-8"),
             "raw_output": json.dumps(
                 {
                     "schema_version": "tokenshare.response_bank_raw_output.v1",
-                    "raw_response_json": {"id": row.entry_id},
+                    "raw_response_json": {
+                        "id": row.entry_id,
+                        "model": provider_model_id,
+                    },
                     "content_text": candidates[row.entry_id].decode("utf-8"),
                     "reasoning_content": None,
                     "provider_response_id": row.entry_id,
@@ -376,12 +391,36 @@ def _pressure_trace_context(
                 },
                 sort_keys=True,
             ).encode("utf-8"),
-            "provenance": b'{"source_transport":"approved_real_api_acquisition"}',
+            "provenance": json.dumps(
+                {
+                    "schema_version": "tokenshare.response_bank_provenance.v1",
+                    "provider_family": provider_family,
+                    "entry_id": model_entry_id,
+                    "provider_config_digest": provider_config_digest,
+                    "inference_request_digest": row.inference_request_digest,
+                    "normalized_absolute_endpoint": (
+                        "https://example.invalid/v1/chat/completions"
+                    ),
+                    "transport_call_count": 1,
+                    "secret_persisted": False,
+                    "receipt_digest": _DIGEST_C,
+                },
+                sort_keys=True,
+            ).encode("utf-8"),
             "usage": b'{"usage_status":"reported","usage":{"total_tokens":7}}',
             "latency": b'{"latency_ms":1}',
             "pricing": b'{"cost_usd":"0.01"}',
             "acquisition_attempt": b'{"attempt":"approved"}',
-            "model_record": b'{"model":"frozen-model"}',
+            "model_record": json.dumps(
+                {
+                    "schema_version": "tokenshare.response_bank_model_record.v1",
+                    "configured_model": provider_model_id,
+                    "requested_model": provider_model_id,
+                    "resolved_model": provider_model_id,
+                    "response_model_status": "present",
+                },
+                sort_keys=True,
+            ).encode("utf-8"),
         }
         locators = tuple(
             ExternalBankObjectLocator(
@@ -561,6 +600,10 @@ def test_two_worker_trace_roots_overlap_on_deterministic_condition_lanes(
         bank_root=tmp_path / "external-bank",
         condition_id=condition_id,
         cases=cases,
+        provider_config_digest=condition.source_provider_config_digest,
+        model_entry_id=condition.model_entry_id,
+        provider_family=condition.provider_family,
+        provider_model_id=condition.provider_model_id,
         max_concurrent_roots=2,
     )
 
@@ -778,6 +821,10 @@ def test_500_distinct_factor_roots_stream_through_formal_trace_and_checkpoint(
         bank_root=bank_root,
         condition_ids=condition_ids,
         cases=cases,
+        provider_config_digest=conditions[0].source_provider_config_digest,
+        model_entry_id=conditions[0].model_entry_id,
+        provider_family=conditions[0].provider_family,
+        provider_model_id=conditions[0].provider_model_id,
     )
     frozen_replacements = tuple(
         replacement

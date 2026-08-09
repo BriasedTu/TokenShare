@@ -8181,6 +8181,10 @@ def _run_normal_exp3_trace_condition(
         bank_root=bank_root,
         condition_id=condition.condition_id,
         cases=cases,
+        provider_config_digest=condition.source_provider_config_digest,
+        model_entry_id=condition.model_entry_id,
+        provider_family=condition.provider_family,
+        provider_model_id=condition.provider_model_id,
     )
     first_runtime = trace_context.runtime_for(
         condition_id=condition.condition_id,

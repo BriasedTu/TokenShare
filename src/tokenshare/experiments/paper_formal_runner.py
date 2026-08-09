@@ -3899,7 +3899,7 @@ def _project_committed_trace_source_usage(
         if (
             model_body.get("schema_version")
             != "tokenshare.response_bank_model_record.v1"
-            or model_body.get("response_model_status") != "matched"
+            or model_body.get("response_model_status") != "present"
             or not isinstance(request_model, str)
             or not request_model
             or not isinstance(configured_model, str)

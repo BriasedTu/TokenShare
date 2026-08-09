@@ -66,7 +66,7 @@ def _source_bank(
     configured_model: str = "deepseek-v4-pro",
     requested_model: str = "deepseek-v4-pro",
     resolved_model: str = "deepseek-v4-pro",
-    response_model_status: str = "matched",
+    response_model_status: str = "present",
     provenance_entry_id: str = "deepseek_v4_pro_exp1_baseline",
     provenance_provider_config_digest: str = "sha256:provider",
     provenance_inference_request_digest: str | None = None,
@@ -390,7 +390,7 @@ def test_missing_source_usage_remains_null_without_zero_fill(tmp_path: Path) -> 
 @pytest.mark.parametrize(
     "bank_kwargs",
     (
-        {"response_model_status": "mismatched"},
+        {"response_model_status": "missing"},
         {"configured_model": "wrong-model"},
         {"requested_model": "wrong-model"},
         {"resolved_model": "wrong-model"},
