@@ -396,6 +396,10 @@ class FactorizationRuntimeAdapter:
                 request_id=request_id,
                 unit_id=unit.unit_id,
                 range_input=range_input,
+                instruction_id=(
+                    "factor_search_instruction:"
+                    f"{case['case_id']}:range_{range_input.child_index}"
+                ),
             )
             instruction_ref = store.save_json(
                 instruction.to_dict(),

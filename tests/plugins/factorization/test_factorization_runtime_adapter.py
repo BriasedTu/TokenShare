@@ -7,7 +7,16 @@ from pathlib import Path
 
 import pytest
 
-from tokenshare.core.models import ArtifactRef, ProtocolConfig
+from tokenshare.core.models import (
+    ArtifactRef,
+    Attempt,
+    AttemptState,
+    Lease,
+    LeaseState,
+    ProtocolConfig,
+)
+from tokenshare.executors.ai_api import prepare_ai_api_outbound_request
+from tokenshare.executors.ai_api_config import load_ai_api_config
 from tokenshare.executors.contracts import ExecutionSubmission
 from tokenshare.local_runtime import (
     ProtocolRunCoordinator,
@@ -76,6 +85,99 @@ def test_plan_units_are_real_factorization_child_snapshots(tmp_path: Path) -> No
     assert all(unit.parent_unit_id == "paper_factor_root_factor_runtime_91" for unit in units)
     assert all(unit.required_capabilities["executor"] == "mock_ai" for unit in units)
     assert [unit.plugin_payload["summary"]["child_index"] for unit in units] == [0, 1, 2]
+
+
+def test_formal_planning_and_runner_attempt_ids_prepare_the_same_factor_wire(
+    tmp_path: Path,
+) -> None:
+    store = ArtifactStore(tmp_path / "artifacts")
+    adapter = FactorizationRuntimeAdapter(
+        provider_family="deepseek",
+        seed=7,
+        created_at="2026-07-14T00:00:00Z",
+        max_tokens=300000,
+        timeout_seconds=600,
+    )
+    unit = adapter.plan_units(_case(), artifact_store=store)[0]
+
+    def request_for(attempt_id: str, lease_id: str):
+        request = adapter.build_execution_request(
+            unit,
+            attempt=Attempt(
+                attempt_id=attempt_id,
+                task_id=unit.task_id,
+                unit_id=unit.unit_id,
+                lease_id=lease_id,
+                client_id="worker_factor_ai",
+                state=AttemptState.RUNNING,
+                attempt_kind="primary",
+                created_at="2026-07-14T00:00:00Z",
+                started_at="2026-07-14T00:00:00Z",
+            ),
+            lease=Lease(
+                lease_id=lease_id,
+                task_id=unit.task_id,
+                unit_id=unit.unit_id,
+                attempt_id=attempt_id,
+                client_id="worker_factor_ai",
+                state=LeaseState.ACTIVE,
+                fencing_token=f"fence_{lease_id}",
+                issued_at="2026-07-14T00:00:00Z",
+                expires_at="2026-07-14T00:05:00Z",
+                last_heartbeat_at=None,
+                heartbeat_count=0,
+                lease_kind="execution",
+                terminated_at=None,
+                terminated_reason=None,
+                metadata={},
+            ),
+        )
+        return replace(
+            request,
+            soft_hints={
+                **dict(request.soft_hints or {}),
+                "planned_ai_unit_id": "range_0",
+                "sample_slot_index": 0,
+                "replacement_slot": 0,
+            },
+        )
+
+    planning_request = request_for(
+        "formal_request_plan_factor_runtime_91_range_0_0",
+        "formal_request_lease_factor_runtime_91_range_0_0",
+    )
+    runtime_request = request_for(
+        "attempt_7d18bcb2d17f4b3ca5acdd83c0a00001",
+        "lease_b4f610927b694df5a0f877aff0800001",
+    )
+    config = load_ai_api_config(
+        json.loads(
+            Path("benchmarks/paper/exp1_baseline_provider_config.v3.json").read_text(
+                encoding="utf-8"
+            )
+        )
+    )
+
+    def prepare(request):
+        prompt = json.loads(store.read_bytes(request.prompt_package_ref))
+        return prepare_ai_api_outbound_request(
+            config=config,
+            request=request,
+            prompt=prompt,
+            entry=config.entries[0],
+        )
+
+    planned = prepare(planning_request)
+    runtime = prepare(runtime_request)
+
+    assert planned.prepared_request.body_bytes == runtime.prepared_request.body_bytes
+    assert planned.prepared_request.body_digest == runtime.prepared_request.body_digest
+    assert (
+        planned.prepared_request.inference_request_digest
+        == runtime.prepared_request.inference_request_digest
+    )
+    assert planned.provider_request_identity == runtime.provider_request_identity
+    assert planning_request.request_id != runtime_request.request_id
 
 
 class _Clock:

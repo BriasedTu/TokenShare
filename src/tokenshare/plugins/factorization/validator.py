@@ -140,11 +140,16 @@ def build_factor_search_instruction(
     request_id: str,
     unit_id: str,
     range_input: FactorSearchRangeInput,
+    instruction_id: str | None = None,
 ) -> FactorSearchInstruction:
     """构造只包含 bounded range 和输出 schema 的 executor instruction。"""
 
     return FactorSearchInstruction(
-        instruction_id=f"factor_search_instruction:{request_id}",
+        instruction_id=(
+            instruction_id
+            if instruction_id is not None
+            else f"factor_search_instruction:{request_id}"
+        ),
         request_id=request_id,
         unit_id=unit_id,
         target_n=range_input.target_n,

@@ -18,12 +18,14 @@ from tokenshare.experiments.paper_experiment_contracts import (
     FrozenConditionSelectionBinding,
 )
 from tokenshare.experiments.paper_formal_plan import (
+    FormalPreparedRequestInventory,
     freeze_formal_root_prepared_requests,
     freeze_paper_formal_prepared_request_inventory,
     freeze_paper_formal_plan_snapshot,
     validate_paper_formal_budget_commitments,
     validate_paper_formal_plan_bindings,
 )
+import tokenshare.experiments.paper_formal_plan as formal_plan_module
 from tokenshare.experiments.paper_formal_runner import (
     APPROVED_ENDPOINT_BINDINGS_KEY,
     validate_paper_formal_suite_plan,
@@ -73,6 +75,45 @@ def formal_snapshot(formal_inputs):
         ai_api_configs=ai_api_configs,
         output_root=output_root,
     )
+
+
+@pytest.fixture(scope="module")
+def single_root_prepared_inventory(
+    formal_inputs,
+    formal_snapshot,
+    tmp_path_factory: pytest.TempPathFactory,
+):
+    _plans, catalog, _budget, ai_api_configs, _output_root = formal_inputs
+    root = formal_snapshot.roots[0]
+    records = freeze_formal_root_prepared_requests(
+        root=root,
+        catalog_manifest=catalog,
+        ai_api_configs=ai_api_configs,
+        planning_artifact_root=tmp_path_factory.mktemp("single-root-validated"),
+    )
+    condition = next(
+        item
+        for item in formal_snapshot.conditions
+        if item.condition is root.condition and item.binding is root.binding
+    )
+    snapshot = replace(
+        formal_snapshot,
+        conditions=(condition,),
+        roots=(root,),
+        condition_count=1,
+        root_run_count=1,
+        first_attempt_ai_unit_count=len(root.planned_ai_unit_ids),
+    )
+    inventory = FormalPreparedRequestInventory(
+        records=records,
+        record_count=len(records),
+        unique_inference_request_count=len(
+            {record.inference_request_digest for record in records}
+        ),
+        provider_calls_made=0,
+        source_snapshot_digest=snapshot.snapshot_digest,
+    )
+    return root, records, snapshot, inventory, ai_api_configs
 
 
 def test_formal_snapshot_freezes_every_current_full_plan_root_without_provider_calls(
@@ -260,6 +301,71 @@ def test_formal_prepared_record_digest_revalidates_nested_request_body(
 
     with pytest.raises(ValueError, match="prepared request body bytes mismatch"):
         _ = drifted.request_identity_digest
+
+
+def test_formal_prepared_record_validator_rejects_top_level_provider_model_tamper(
+    single_root_prepared_inventory,
+) -> None:
+    root, records, _snapshot, _inventory, ai_api_configs = (
+        single_root_prepared_inventory
+    )
+
+    with pytest.raises(ValueError, match="provider_model_id"):
+        formal_plan_module.validate_formal_prepared_request_record(
+            record=replace(records[0], provider_model_id="drifted-model"),
+            root=root,
+            ai_api_configs=ai_api_configs,
+        )
+
+
+def test_formal_prepared_record_validator_rejects_in_place_identity_mapping_tamper(
+    single_root_prepared_inventory,
+) -> None:
+    root, records, _snapshot, _inventory, ai_api_configs = (
+        single_root_prepared_inventory
+    )
+    drifted_identity = dict(records[0].provider_request_identity)
+    drifted = replace(records[0], provider_request_identity=drifted_identity)
+    drifted_identity["configured_model"] = "drifted-model"
+
+    with pytest.raises(ValueError, match="provider request identity"):
+        formal_plan_module.validate_formal_prepared_request_record(
+            record=drifted,
+            root=root,
+            ai_api_configs=ai_api_configs,
+        )
+
+
+@pytest.mark.parametrize("mutation", ("count", "record", "source_digest"))
+def test_formal_prepared_inventory_validator_rejects_internal_tamper(
+    single_root_prepared_inventory,
+    mutation: str,
+) -> None:
+    _root, records, snapshot, inventory, ai_api_configs = (
+        single_root_prepared_inventory
+    )
+    if mutation == "count":
+        drifted = replace(inventory, record_count=inventory.record_count + 1)
+    elif mutation == "record":
+        drifted = replace(
+            inventory,
+            records=(
+                replace(records[0], provider_family="drifted-provider"),
+                *records[1:],
+            ),
+        )
+    else:
+        drifted = replace(
+            inventory,
+            source_snapshot_digest="sha256:" + "f" * 64,
+        )
+
+    with pytest.raises(ValueError, match="formal prepared inventory"):
+        formal_plan_module.validate_formal_prepared_request_inventory(
+            inventory=drifted,
+            snapshot=snapshot,
+            ai_api_configs=ai_api_configs,
+        )
 
 
 def test_full_prepared_inventory_covers_every_first_attempt_without_provider_calls(

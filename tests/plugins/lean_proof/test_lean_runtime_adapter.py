@@ -182,10 +182,38 @@ def test_lemma_graph_planning_request_freezes_the_exact_runtime_outbound_body(
                 "canonical_proof_ref": canonical_ref,
             }
         )
+    runtime_attempt = Attempt(
+        attempt_id="attempt_7d18bcb2d17f4b3ca5acdd83c0a00002",
+        task_id=unit.task_id,
+        unit_id=unit.unit_id,
+        lease_id="lease_b4f610927b694df5a0f877aff0800002",
+        client_id="worker_lean_ai",
+        state=AttemptState.RUNNING,
+        attempt_kind="primary",
+        created_at=NOW,
+        started_at=NOW,
+    )
+    runtime_lease = Lease(
+        lease_id="lease_b4f610927b694df5a0f877aff0800002",
+        task_id=unit.task_id,
+        unit_id=unit.unit_id,
+        attempt_id=runtime_attempt.attempt_id,
+        client_id="worker_lean_ai",
+        state=LeaseState.ACTIVE,
+        fencing_token="fence_runtime_equivalence",
+        issued_at=NOW,
+        expires_at="2026-07-14T00:05:00Z",
+        last_heartbeat_at=None,
+        heartbeat_count=0,
+        lease_kind="execution",
+        terminated_at=None,
+        terminated_reason=None,
+        metadata={},
+    )
     runtime_request = adapter.build_execution_request(
         unit,
-        attempt=attempt,
-        lease=lease,
+        attempt=runtime_attempt,
+        lease=runtime_lease,
     )
     config = load_ai_api_config(
         json.loads(
@@ -202,13 +230,19 @@ def test_lemma_graph_planning_request_freezes_the_exact_runtime_outbound_body(
             request=request,
             prompt=prompt,
             entry=config.entries[0],
-        ).prepared_request
+        )
 
     planned = prepare(planning_request)
     runtime = prepare(runtime_request)
 
-    assert planned.body_digest == runtime.body_digest
-    assert planned.inference_request_digest == runtime.inference_request_digest
+    assert planned.prepared_request.body_bytes == runtime.prepared_request.body_bytes
+    assert planned.prepared_request.body_digest == runtime.prepared_request.body_digest
+    assert (
+        planned.prepared_request.inference_request_digest
+        == runtime.prepared_request.inference_request_digest
+    )
+    assert planned.provider_request_identity == runtime.provider_request_identity
+    assert planning_request.request_id != runtime_request.request_id
     assert planning_request.input_artifact_refs.keys() < (
         runtime_request.input_artifact_refs.keys()
     )

@@ -18,6 +18,7 @@ from tokenshare.core.models import (
 from tokenshare.executors.ai_api import prepare_ai_api_outbound_request
 from tokenshare.executors.ai_api_request_identity import (
     PreparedOutboundRequest,
+    PreparedOutboundRequestFactory,
     validate_prepared_request,
 )
 from tokenshare.experiments.paper_budget import build_paper_budget_split_profile
@@ -59,6 +60,9 @@ from tokenshare.experiments.paper_response_bank import replacement_slots_for
 from tokenshare.plugins.factorization.runtime_adapter import (
     FactorizationRuntimeAdapter,
 )
+from tokenshare.plugins.factorization.prompt_builder import (
+    FACTOR_SEARCH_PROMPT_PROFILE,
+)
 from tokenshare.plugins.factorization.schemas import (
     PLUGIN_ID as FACTORIZATION_PLUGIN_ID,
     PLUGIN_VERSION as FACTORIZATION_PLUGIN_VERSION,
@@ -68,6 +72,9 @@ from tokenshare.plugins.lean_proof.schemas import (
     PLUGIN_VERSION as LEAN_PLUGIN_VERSION,
 )
 from tokenshare.plugins.lean_proof.runtime_adapter import LeanRuntimeAdapter
+from tokenshare.plugins.lean_proof.prompt_builder import (
+    LEAN_PROOF_CANDIDATE_PROMPT_PROFILE,
+)
 from tokenshare.storage.artifacts import ArtifactStore
 
 
@@ -224,6 +231,11 @@ class FormalPreparedRequestRecord:
 
     def _body(self) -> dict[str, Any]:
         prepared = validate_prepared_request(self.prepared_request)
+        _validate_provider_request_identity_against_prepared(
+            provider_request_identity=self.provider_request_identity,
+            prepared=prepared,
+            provider_family=self.provider_family,
+        )
         return {
             "condition_id": self.condition.condition_id,
             "condition_digest": self.condition.condition_digest,
@@ -291,6 +303,131 @@ class _PreparedRuntimeTemplate:
     prepared_request: PreparedOutboundRequest
 
 
+@dataclass(frozen=True, kw_only=True)
+class _FormalPreparedRecordAuthority:
+    source_config: Any
+    source_entry: Any
+    prepared_config: Any
+
+
+def validate_formal_prepared_request_record(
+    *,
+    record: FormalPreparedRequestRecord,
+    root: FormalRootSnapshot,
+    ai_api_configs: Mapping[str, Any],
+) -> None:
+    """把一条 prepared record 交叉核对回其正式 root 与 endpoint authority。"""
+
+    if type(record) is not FormalPreparedRequestRecord:
+        raise TypeError("record must be a FormalPreparedRequestRecord")
+    if type(root) is not FormalRootSnapshot:
+        raise TypeError("root must be a FormalRootSnapshot")
+    authority = _resolve_formal_prepared_record_authority(
+        root=root,
+        ai_api_configs=ai_api_configs,
+    )
+    _validate_formal_prepared_record_fields(
+        record=record,
+        root=root,
+        source_config=authority.source_config,
+        source_entry=authority.source_entry,
+        prepared_config=authority.prepared_config,
+    )
+
+
+def validate_formal_prepared_request_inventory(
+    *,
+    inventory: FormalPreparedRequestInventory,
+    snapshot: FormalPlanSnapshot,
+    ai_api_configs: Mapping[str, Any],
+) -> None:
+    """Fail closed 地验证 inventory 对 full/裁剪 snapshot 的逐 unit 精确覆盖。"""
+
+    if type(inventory) is not FormalPreparedRequestInventory:
+        raise TypeError("inventory must be a FormalPreparedRequestInventory")
+    if type(snapshot) is not FormalPlanSnapshot:
+        raise TypeError("snapshot must be a FormalPlanSnapshot")
+    expected_count = sum(len(root.planned_ai_unit_ids) for root in snapshot.roots)
+    if (
+        inventory.schema_version
+        != "tokenshare.paper_formal_prepared_request_inventory.v1"
+        or snapshot.provider_calls_made != 0
+        or inventory.provider_calls_made != 0
+        or len(snapshot.roots) != snapshot.root_run_count
+        or len(snapshot.conditions) != snapshot.condition_count
+        or expected_count != snapshot.first_attempt_ai_unit_count
+        or inventory.record_count != len(inventory.records)
+        or inventory.record_count != expected_count
+        or inventory.source_snapshot_digest != snapshot.snapshot_digest
+    ):
+        raise ValueError("formal prepared inventory metadata drift")
+
+    roots_by_key: dict[tuple[str, str, str], FormalRootSnapshot] = {}
+    authority_by_root_key: dict[
+        tuple[str, str], _FormalPreparedRecordAuthority
+    ] = {}
+    expected_keys: set[tuple[str, str, str]] = set()
+    conditions_by_id = {
+        item.condition.condition_id: item for item in snapshot.conditions
+    }
+    if len(conditions_by_id) != len(snapshot.conditions):
+        raise ValueError("formal prepared inventory condition coverage drift")
+    for root in snapshot.roots:
+        condition_authority = conditions_by_id.get(root.condition.condition_id)
+        if (
+            condition_authority is None
+            or condition_authority.condition is not root.condition
+            or condition_authority.binding is not root.binding
+            or condition_authority.endpoint_controls != root.endpoint_controls
+        ):
+            raise ValueError("formal prepared inventory condition authority drift")
+        root_key = (root.condition.condition_id, root.case_id)
+        authority_by_root_key[root_key] = _resolve_formal_prepared_record_authority(
+            root=root,
+            ai_api_configs=ai_api_configs,
+        )
+        for planned_ai_unit_id in root.planned_ai_unit_ids:
+            key = (*root_key, planned_ai_unit_id)
+            if key in expected_keys:
+                raise ValueError("formal prepared inventory snapshot has duplicate unit")
+            expected_keys.add(key)
+            roots_by_key[key] = root
+
+    actual_keys: set[tuple[str, str, str]] = set()
+    for record in inventory.records:
+        key = (
+            record.condition.condition_id,
+            record.case_id,
+            record.planned_ai_unit_id,
+        )
+        if key in actual_keys or key not in roots_by_key:
+            raise ValueError("formal prepared inventory record coverage drift")
+        actual_keys.add(key)
+        try:
+            root = roots_by_key[key]
+            authority = authority_by_root_key[
+                (root.condition.condition_id, root.case_id)
+            ]
+            _validate_formal_prepared_record_fields(
+                record=record,
+                root=root,
+                source_config=authority.source_config,
+                source_entry=authority.source_entry,
+                prepared_config=authority.prepared_config,
+            )
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"formal prepared inventory record drift: {exc}"
+            ) from exc
+    if actual_keys != expected_keys:
+        raise ValueError("formal prepared inventory unit coverage drift")
+    unique_count = len(
+        {record.inference_request_digest for record in inventory.records}
+    )
+    if unique_count != inventory.unique_inference_request_count:
+        raise ValueError("formal prepared inventory unique request count drift")
+
+
 def freeze_formal_root_prepared_requests(
     *,
     root: FormalRootSnapshot,
@@ -313,7 +450,14 @@ def freeze_formal_root_prepared_requests(
         ai_api_configs=ai_api_configs,
         artifact_root=Path(planning_artifact_root),
     )
-    return _records_from_templates(root=root, templates=templates)
+    records = _records_from_templates(root=root, templates=templates)
+    for record in records:
+        validate_formal_prepared_request_record(
+            record=record,
+            root=root,
+            ai_api_configs=ai_api_configs,
+        )
+    return records
 
 
 def freeze_paper_formal_prepared_request_inventory(
@@ -365,13 +509,19 @@ def freeze_paper_formal_prepared_request_inventory(
     for record in records:
         if unique_inference[record.inference_request_digest] != record.prepared_request:
             raise ValueError("one inference digest maps to multiple prepared requests")
-    return FormalPreparedRequestInventory(
+    inventory = FormalPreparedRequestInventory(
         records=tuple(records),
         record_count=len(records),
         unique_inference_request_count=len(unique_inference),
         provider_calls_made=0,
         source_snapshot_digest=snapshot.snapshot_digest,
     )
+    validate_formal_prepared_request_inventory(
+        inventory=inventory,
+        snapshot=snapshot,
+        ai_api_configs=ai_api_configs,
+    )
+    return inventory
 
 
 def _prepare_formal_root_templates(
@@ -558,6 +708,209 @@ def _validate_root_endpoint_controls(
     actual = _endpoint_controls_body(endpoint)
     if actual != expected:
         raise ValueError("formal root endpoint controls drift")
+
+
+def _resolve_formal_prepared_record_authority(
+    *,
+    root: FormalRootSnapshot,
+    ai_api_configs: Mapping[str, Any],
+) -> _FormalPreparedRecordAuthority:
+    source_config, source_entry, controls = _resolved_request_controls(
+        condition=root.condition,
+        ai_api_configs=ai_api_configs,
+    )
+    _validate_root_endpoint_controls(
+        root=root,
+        source_config=source_config,
+        source_entry=source_entry,
+        controls=controls,
+    )
+    validated_binding = validate_condition_fixed_entry_identity(
+        condition=root.condition,
+        source_config=source_config,
+    )
+    if validated_binding is None:
+        raise ValueError("formal prepared record endpoint binding is incomplete")
+    prepared_config = prepare_fixed_entry_execution_config(
+        source_config=source_config,
+        binding=validated_binding,
+        max_tokens=root.endpoint_controls.max_tokens,
+        timeout_seconds=root.endpoint_controls.timeout_seconds,
+        adapter_metadata_key=(
+            "factorization_paper_adapter"
+            if root.condition.domain == "factorization"
+            else "lean_paper_adapter"
+        ),
+    )
+    return _FormalPreparedRecordAuthority(
+        source_config=source_config,
+        source_entry=source_entry,
+        prepared_config=prepared_config,
+    )
+
+
+def _validate_formal_prepared_record_fields(
+    *,
+    record: FormalPreparedRequestRecord,
+    root: FormalRootSnapshot,
+    source_config: Any,
+    source_entry: Any,
+    prepared_config: Any,
+) -> None:
+    if record.condition is not root.condition:
+        raise ValueError("condition authority identity drift")
+    if record.binding is not root.binding:
+        raise ValueError("selection binding authority identity drift")
+    if (
+        root.condition_digest != root.condition.condition_digest
+        or root.binding.condition_id != root.condition.condition_id
+        or root.binding.condition_digest != root.condition.condition_digest
+        or root.selection_digest != root.binding.selection.selection_digest
+        or root.seed != root.condition.seed
+        or root.repeat_id != root.condition.repeat_id
+        or root.case_id not in root.binding.selection.ordered_case_ids
+    ):
+        raise ValueError("formal prepared record root identity drift")
+    expected_replacement_slots = replacement_slots_for(
+        experiment_id=root.condition.experiment_id,
+        fault_type=str(root.condition.fault_type),
+        ablation_mode=str(root.condition.ablation_mode),
+    )
+    expected_fields = {
+        "case_id": root.case_id,
+        "case_record_digest": root.case_record_digest,
+        "sample_slot_index": root.repeat_id,
+        "base_replacement_slot": 0,
+        "replacement_slot_ids": expected_replacement_slots,
+        "replacement_policy_id": "formal_attempt_budget.v1",
+        "source_provider_config_digest": source_config.config_digest,
+        "prepared_execution_config_digest": prepared_config.config_digest,
+        "provider_family": root.endpoint_controls.provider_family,
+        "provider_config_id": root.endpoint_controls.provider_config_id,
+        "model_entry_id": root.endpoint_controls.model_entry_id,
+        "provider_model_id": root.endpoint_controls.provider_model_id,
+        "reasoning_profile_id": root.endpoint_controls.reasoning_profile_id,
+        "model_endpoint_identity_digest": (
+            root.endpoint_controls.model_endpoint_identity_digest
+        ),
+        "request_max_tokens": root.endpoint_controls.max_tokens,
+        "request_timeout_seconds": root.endpoint_controls.timeout_seconds,
+        "request_max_provider_attempts": (
+            root.endpoint_controls.max_provider_attempts
+        ),
+        "request_controls_digest": root.endpoint_controls.request_controls_digest,
+        "provider_calls_made": 0,
+    }
+    for field_name, expected in expected_fields.items():
+        if getattr(record, field_name) != expected:
+            raise ValueError(f"formal prepared record {field_name} drift")
+    if record.planned_ai_unit_id not in root.planned_ai_unit_ids:
+        raise ValueError("formal prepared record planned_ai_unit_id drift")
+
+    prepared = validate_prepared_request(record.prepared_request)
+    expected_identity = _validate_provider_request_identity_against_prepared(
+        provider_request_identity=record.provider_request_identity,
+        prepared=prepared,
+        provider_family=record.provider_family,
+    )
+    if (
+        expected_identity["entry_id"] != source_entry.entry_id
+        or expected_identity["configured_model"] != source_entry.model
+        or expected_identity["requested_model"] != source_entry.model
+    ):
+        raise ValueError("formal prepared record provider request identity drift")
+    prompt_profile_id = (
+        FACTOR_SEARCH_PROMPT_PROFILE
+        if root.condition.domain == "factorization"
+        else LEAN_PROOF_CANDIDATE_PROMPT_PROFILE
+    )
+    expected_prepared = PreparedOutboundRequestFactory.prepare(
+        body_obj=prepared.body_obj,
+        base_url=source_entry.base_url,
+        endpoint=source_entry.endpoint,
+        provider_config_digest=prepared_config.config_digest,
+        entry_id=source_entry.entry_id,
+        configured_model=source_entry.model,
+        effective_controls_digest=str(
+            expected_identity["effective_request_controls_digest"]
+        ),
+        plugin_id=root.plugin_id,
+        plugin_version=root.plugin_version,
+        prompt_profile_id=prompt_profile_id,
+        prompt_serialization_schema="phase3.prompt_package.v1",
+        body_serialization_schema=f"{record.provider_family}.chat_completions.v1",
+        case_id=(
+            f"paper_factorization_{root.case_id}"
+            if root.condition.domain == "factorization"
+            else f"paper_lean_{root.case_id}"
+        ),
+        planned_ai_unit_id=record.planned_ai_unit_id,
+        sample_slot_index=root.repeat_id,
+        replacement_slot=0,
+    )
+    if prepared != expected_prepared:
+        raise ValueError("formal prepared record PreparedOutboundRequest drift")
+    expected_prompt_digest = digest_json(
+        {
+            "body_digest": prepared.body_digest,
+            "prompt_profile_id": prompt_profile_id,
+            "prompt_serialization_schema": "phase3.prompt_package.v1",
+        }
+    )
+    if record.prompt_profile_digest != expected_prompt_digest:
+        raise ValueError("formal prepared record prompt_profile_digest drift")
+
+
+def _validate_provider_request_identity_against_prepared(
+    *,
+    provider_request_identity: Mapping[str, Any],
+    prepared: PreparedOutboundRequest,
+    provider_family: str,
+) -> dict[str, Any]:
+    if not isinstance(provider_request_identity, Mapping):
+        raise ValueError("provider request identity must be a mapping")
+    control_keys = (
+        "stream",
+        "temperature",
+        "top_p",
+        "max_tokens",
+        "response_format",
+        "reasoning_effort",
+        "enable_thinking",
+        "thinking_budget",
+        "thinking",
+    )
+    effective_controls = {
+        key: prepared.body_obj[key]
+        for key in control_keys
+        if key in prepared.body_obj
+    }
+    reasoning_controls = {
+        key: effective_controls[key]
+        for key in (
+            "reasoning_effort",
+            "enable_thinking",
+            "thinking_budget",
+            "thinking",
+        )
+        if key in effective_controls
+    }
+    expected = {
+        "schema_version": "phase7.provider_request_identity.v2",
+        "provider_family": provider_family,
+        "entry_id": prepared.entry_id,
+        "configured_model": prepared.configured_model,
+        "requested_model": prepared.body_obj.get("model"),
+        "reasoning_controls": reasoning_controls,
+        "effective_request_controls_digest": digest_json(effective_controls),
+    }
+    if dict(provider_request_identity) != expected:
+        raise ValueError("provider request identity does not match prepared request")
+    if prepared.effective_controls_digest != expected[
+        "effective_request_controls_digest"
+    ]:
+        raise ValueError("prepared request effective controls identity drift")
+    return expected
 
 
 def _records_from_templates(
