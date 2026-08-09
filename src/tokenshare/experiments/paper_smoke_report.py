@@ -871,7 +871,16 @@ def _actual_usage(
         ):
             latency_values.append(float(latency_ms))
         else:
-            latency_missing += 1
+            try:
+                latency_values.extend(
+                    _verified_provider_latency_values(
+                        record=record,
+                        root=root,
+                        artifacts=artifacts,
+                    )
+                )
+            except ValueError:
+                latency_missing += len(actual_provider_attempts)
 
         usage = attempt.get("usage_summary")
         if not isinstance(usage, Mapping):
@@ -1125,6 +1134,80 @@ def _verified_model_execution_record(
     ):
         raise ValueError("model execution record provider attempts are invalid")
     return record
+
+
+def _verified_provider_latency_values(
+    *,
+    record: Mapping[str, Any],
+    root: Path,
+    artifacts: Sequence[Mapping[str, Any]],
+) -> tuple[float, ...]:
+    provenance_ref = record.get("provenance_ref")
+    if not isinstance(provenance_ref, Mapping):
+        raise ValueError("provider provenance ref is missing")
+    artifact_id = provenance_ref.get("artifact_id")
+    content_hash = provenance_ref.get("content_hash")
+    if (
+        not isinstance(artifact_id, str)
+        or not artifact_id
+        or not isinstance(content_hash, str)
+        or not content_hash.startswith("sha256:")
+    ):
+        raise ValueError("provider provenance ref is incomplete")
+    matches = [
+        artifact
+        for artifact in artifacts
+        if artifact.get("artifact_id") == artifact_id
+        and artifact.get("content_hash") == content_hash
+        and isinstance(artifact.get("path"), str)
+    ]
+    if len(matches) != 1:
+        raise ValueError("provider provenance ref is unresolved")
+    path = root / str(matches[0]["path"])
+    if (
+        not path.is_file()
+        or "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest() != content_hash
+    ):
+        raise ValueError("provider provenance artifact verification failed")
+    provenance = _read_object(path)
+    provenance_attempts = provenance.get("attempts")
+    provider_attempts = record.get("actual_provider_attempts")
+    if (
+        provenance.get("schema_version")
+        != "phase7.ai_provider_call_provenance.v2"
+        or not isinstance(provenance_attempts, list)
+        or not isinstance(provider_attempts, list)
+        or len(provenance_attempts) != len(provider_attempts)
+        or not provenance_attempts
+    ):
+        raise ValueError("provider provenance attempts are invalid")
+    latency_values: list[float] = []
+    for provenance_attempt, provider_attempt in zip(
+        provenance_attempts,
+        provider_attempts,
+        strict=True,
+    ):
+        if not isinstance(provenance_attempt, Mapping) or not isinstance(
+            provider_attempt, Mapping
+        ):
+            raise ValueError("provider provenance attempt is invalid")
+        for field_name in (
+            "provider_family",
+            "configured_model",
+            "entry_id",
+            "result_kind",
+        ):
+            if provenance_attempt.get(field_name) != provider_attempt.get(field_name):
+                raise ValueError("provider provenance attempt identity mismatch")
+        latency_ms = provenance_attempt.get("latency_ms")
+        if (
+            isinstance(latency_ms, bool)
+            or not isinstance(latency_ms, (int, float))
+            or latency_ms < 0
+        ):
+            raise ValueError("provider provenance latency is invalid")
+        latency_values.append(float(latency_ms))
+    return tuple(latency_values)
 
 
 def _complete_sum(

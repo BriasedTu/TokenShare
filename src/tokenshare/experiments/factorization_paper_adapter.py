@@ -1943,6 +1943,8 @@ def _native_online_provider_sources(
         )
     }
     for attempt in attempts:
+        if attempt.provider_attempt_count == 0:
+            continue
         raw_value = (
             attempt.raw_output_ref
             or attempt.parse_failure_ref

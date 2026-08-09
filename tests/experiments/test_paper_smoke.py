@@ -1879,6 +1879,45 @@ def test_smoke_usage_is_complete_or_null_for_verified_provider_calls(
     assert capturing["cost_estimate_missing_count"] == 0
 
 
+def test_smoke_usage_recovers_fault_hidden_latency_from_verified_provenance(
+    tmp_path: Path,
+) -> None:
+    generation = tmp_path / "generation"
+    (generation / "artifacts").mkdir(parents=True)
+    record_ref, artifact_indices = _persist_model_execution_record_with_latency(
+        suite_root=tmp_path,
+        generation=generation,
+        task_id="case-1",
+        attempt_id="attempt-1",
+        latency_values=(11, 13),
+    )
+
+    observation = _actual_usage(
+        (
+            {
+                "attempt_id": "attempt-1",
+                "task_id": "case-1",
+                "provider_attempt_count": 2,
+                "model_execution_record_ref": record_ref,
+                "latency_ms": None,
+                "prompt_tokens": 7,
+                "completion_tokens": 5,
+                "total_tokens": 12,
+                "cost_estimate": 0.125,
+            },
+        ),
+        root=tmp_path,
+        artifacts=artifact_indices,
+        capturing=False,
+    )
+
+    assert observation["provider_attempt_count"] == 2
+    assert observation["provider_latency_ms"] == pytest.approx(24.0)
+    assert observation["provider_latency_sample_size"] == 2
+    assert observation["provider_latency_missing_count"] == 0
+    assert observation["provider_latency_unavailable_reason"] is None
+
+
 def test_smoke_usage_projects_prompt_completion_and_total_from_validated_attempts(
     tmp_path: Path,
 ) -> None:
@@ -2122,6 +2161,85 @@ def _persist_model_execution_record(
             }
         )
     return ref, index
+
+
+def _persist_model_execution_record_with_latency(
+    *,
+    suite_root: Path,
+    generation: Path,
+    task_id: str,
+    attempt_id: str,
+    latency_values: tuple[int, ...],
+) -> tuple[dict, tuple[dict, dict]]:
+    artifact_root = (
+        generation.parents[1]
+        if generation.parent.name == ".generations"
+        else generation
+    )
+    provenance_path = artifact_root / "artifacts" / f"{attempt_id}-provenance.json"
+    provenance = {
+        "schema_version": "phase7.ai_provider_call_provenance.v2",
+        "attempts": [
+            {
+                "provider_family": "test",
+                "configured_model": "test-model",
+                "entry_id": "test-entry",
+                "result_kind": "succeeded",
+                "latency_ms": latency,
+            }
+            for latency in latency_values
+        ],
+    }
+    provenance_path.write_text(
+        json.dumps(provenance, ensure_ascii=False, sort_keys=True),
+        encoding="utf-8",
+    )
+    provenance_hash = "sha256:" + sha256(provenance_path.read_bytes()).hexdigest()
+    provenance_ref = {
+        "artifact_id": f"provenance-{attempt_id}",
+        "content_hash": provenance_hash,
+    }
+    provenance_index = {
+        **provenance_ref,
+        "path": provenance_path.relative_to(suite_root).as_posix(),
+        "task_id": task_id,
+    }
+    record = {
+        "schema_version": "tokenshare.paper_model_execution_record.v2",
+        "task_id": task_id,
+        "attempt_id": attempt_id,
+        "provenance_ref": provenance_ref,
+        "actual_provider_attempts": [
+            {
+                "provider_family": "test",
+                "configured_model": "test-model",
+                "entry_id": "test-entry",
+                "result_kind": "succeeded",
+            }
+            for _ in latency_values
+        ],
+        "actual_request_identities": [
+            {"provider_attempt_index": index}
+            for index, _ in enumerate(latency_values)
+        ],
+    }
+    record["record_digest"] = digest_json(record)
+    record_path = artifact_root / "artifacts" / f"{attempt_id}-model-record.json"
+    record_path.write_text(
+        json.dumps(record, ensure_ascii=False, sort_keys=True),
+        encoding="utf-8",
+    )
+    record_hash = "sha256:" + sha256(record_path.read_bytes()).hexdigest()
+    record_ref = {
+        "artifact_id": f"model-record-{attempt_id}",
+        "content_hash": record_hash,
+    }
+    record_index = {
+        **record_ref,
+        "path": record_path.relative_to(suite_root).as_posix(),
+        "task_id": task_id,
+    }
+    return record_ref, (record_index, provenance_index)
 
 
 def _profile_body() -> dict:

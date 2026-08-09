@@ -4157,6 +4157,7 @@ def test_factorization_direct_sources_ignore_synthetic_fault_attempts_only() -> 
         }
 
     actual = SimpleNamespace(
+        provider_attempt_count=1,
         request_ref=artifact_ref("request"),
         raw_output_ref=artifact_ref("raw"),
         parse_failure_ref=None,
@@ -4166,6 +4167,7 @@ def test_factorization_direct_sources_ignore_synthetic_fault_attempts_only() -> 
         fault_injection_ref=None,
     )
     synthetic_fault = SimpleNamespace(
+        provider_attempt_count=1,
         request_ref=artifact_ref("fault-request"),
         raw_output_ref=None,
         parse_failure_ref=None,
@@ -4174,9 +4176,19 @@ def test_factorization_direct_sources_ignore_synthetic_fault_attempts_only() -> 
         model_execution_record_ref=artifact_ref("fault-model"),
         fault_injection_ref=artifact_ref("fault-record"),
     )
+    zero_provider_terminal = SimpleNamespace(
+        provider_attempt_count=0,
+        request_ref=None,
+        raw_output_ref=None,
+        parse_failure_ref=None,
+        provenance_ref=None,
+        usage_ref=None,
+        model_execution_record_ref=None,
+        fault_injection_ref=None,
+    )
 
     sources = factorization_paper_adapter._native_online_provider_sources(
-        (actual, synthetic_fault)
+        (actual, synthetic_fault, zero_provider_terminal)
     )
 
     assert all(len(refs) == 1 for refs in sources.values())
