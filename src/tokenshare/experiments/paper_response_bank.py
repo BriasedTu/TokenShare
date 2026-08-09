@@ -47,10 +47,7 @@ from tokenshare.experiments.paper_budget_ledger import (
     PaperBudgetLedger,
     ReservationRequest,
 )
-from tokenshare.experiments.paper_budget import (
-    L3_SMALL_PAID_BUDGET_LIMITS,
-    PaperBudgetLimits,
-)
+from tokenshare.experiments.paper_budget import PaperBudgetLimits
 from tokenshare.experiments.paper_paid_authorization import (
     PAID_OUTPUT_BINDING_FILENAME,
     PaidAuthorizationValidation,
@@ -763,13 +760,6 @@ class FullAcquisitionBudget:
         expected = canonical_digest(self.digest_preimage())
         if self.budget_digest != expected:
             raise ValueError("full acquisition budget digest mismatch")
-        l3 = L3_SMALL_PAID_BUDGET_LIMITS
-        if (
-            self.calls == l3.calls
-            and self.tokens == l3.tokens
-            and self.cny == l3.cny
-        ):
-            raise ValueError("L3 516-call budget cannot authorize full bank acquisition")
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -780,6 +770,10 @@ class AcquisitionPlanBundle:
     bundle_digest: str
     authorized_plan_digest: str
     profile_digest: str
+    source_snapshot_digest: str | None
+    source_prepared_inventory_digest: str | None
+    coverage_digest: str | None
+    representative_plan_digest: str | None
     inventory_digest: str
     prompt_admission_profile_digest: str
     provider_config_digest: str
@@ -800,6 +794,12 @@ class AcquisitionPlanBundle:
             "schema_version": self.schema_version,
             "authorized_plan_digest": self.authorized_plan_digest,
             "profile_digest": self.profile_digest,
+            "source_snapshot_digest": self.source_snapshot_digest,
+            "source_prepared_inventory_digest": (
+                self.source_prepared_inventory_digest
+            ),
+            "coverage_digest": self.coverage_digest,
+            "representative_plan_digest": self.representative_plan_digest,
             "inventory_digest": self.inventory_digest,
             "prompt_admission_profile_digest": self.prompt_admission_profile_digest,
             "provider_config_digest": self.provider_config_digest,
@@ -820,6 +820,27 @@ class AcquisitionPlanBundle:
             raise ValueError("acquisition plan bundle schema version drift")
         if self.bundle_digest != canonical_digest(self.digest_preimage()):
             raise ValueError("acquisition plan bundle digest mismatch")
+        lineage = (
+            self.source_snapshot_digest,
+            self.source_prepared_inventory_digest,
+            self.coverage_digest,
+            self.representative_plan_digest,
+        )
+        if any(value is None for value in lineage) and not all(
+            value is None for value in lineage
+        ):
+            raise ValueError("acquisition plan bundle lineage is partial")
+        if all(value is not None for value in lineage):
+            if any(
+                not isinstance(value, str) or not value.startswith("sha256:")
+                for value in lineage
+            ):
+                raise ValueError("acquisition plan bundle lineage digest is invalid")
+            if (
+                self.authorized_plan_digest != self.source_snapshot_digest
+                or self.profile_digest != self.coverage_digest
+            ):
+                raise ValueError("acquisition plan bundle formal lineage authority drift")
         rows = canonical_inventory_rows(self.inventory_rows)
         if rows != self.inventory_rows:
             raise ValueError("acquisition plan bundle inventory is not canonical")
@@ -916,6 +937,32 @@ class RepresentativeUnifiedAcquisitionPlan:
     def profile_digest(self) -> str:
         return self.coverage_digest
 
+    @property
+    def plan_digest(self) -> str:
+        return canonical_digest(
+            {
+                "schema_version": self.schema_version,
+                "source_snapshot_digest": self.source_snapshot_digest,
+                "source_prepared_inventory_digest": (
+                    self.source_prepared_inventory_digest
+                ),
+                "coverage_digest": self.coverage_digest,
+                "condition_candidate_count": self.condition_candidate_count,
+                "unique_acquisition_request_count": (
+                    self.unique_acquisition_request_count
+                ),
+                "semantic_inventory_plan": _semantic_inventory_plan_to_dict(
+                    self.semantic_inventory_plan
+                ),
+                "acquisition_requests": [
+                    _acquisition_request_to_dict(item)
+                    for item in self.acquisition_requests
+                ],
+                "max_acquisition_concurrency": self.max_acquisition_concurrency,
+                "provider_call_count": self.provider_call_count,
+            }
+        )
+
     def __post_init__(self) -> None:
         if self.schema_version != "tokenshare.representative_unified_acquisition_plan.v1":
             raise ValueError("representative acquisition plan schema drift")
@@ -939,6 +986,15 @@ class RepresentativeUnifiedAcquisitionPlan:
         request_rows = tuple(item.inventory_row for item in self.acquisition_requests)
         if request_rows != self.semantic_inventory_plan.rows:
             raise ValueError("representative acquisition request order mismatch")
+        if not self.candidates or any(
+            not candidate.formal_authority
+            or candidate.source_snapshot_digest != self.source_snapshot_digest
+            or candidate.coverage_digest != self.coverage_digest
+            for candidate in self.candidates
+        ):
+            raise ValueError("representative acquisition candidates lack formal authority")
+        if build_semantic_inventory(self.candidates) != self.semantic_inventory_plan:
+            raise ValueError("representative acquisition candidate mapping drift")
 
 
 def create_acquisition_plan_bundle(
@@ -950,7 +1006,61 @@ def create_acquisition_plan_bundle(
     acquisition_requests: Sequence[AcquisitionRequest],
     max_acquisition_concurrency: int = 1,
 ) -> AcquisitionPlanBundle:
-    """以 create-new 方式持久化完整 acquisition authority。"""
+    """持久化非 formal fixture/generic acquisition authority。"""
+
+    return _create_acquisition_plan_bundle(
+        bundle_root,
+        authorized_plan_digest=authorized_plan_digest,
+        profile_digest=profile_digest,
+        semantic_inventory_plan=semantic_inventory_plan,
+        acquisition_requests=acquisition_requests,
+        max_acquisition_concurrency=max_acquisition_concurrency,
+        source_snapshot_digest=None,
+        source_prepared_inventory_digest=None,
+        coverage_digest=None,
+        representative_plan_digest=None,
+    )
+
+
+def create_representative_acquisition_plan_bundle(
+    bundle_root: str | Path,
+    *,
+    plan: RepresentativeUnifiedAcquisitionPlan,
+) -> AcquisitionPlanBundle:
+    """仅从完整 representative plan 对象持久化 formal lineage。"""
+
+    if type(plan) is not RepresentativeUnifiedAcquisitionPlan:
+        raise TypeError("plan must be a RepresentativeUnifiedAcquisitionPlan")
+    bundle = _create_acquisition_plan_bundle(
+        bundle_root,
+        authorized_plan_digest=plan.source_snapshot_digest,
+        profile_digest=plan.coverage_digest,
+        semantic_inventory_plan=plan.semantic_inventory_plan,
+        acquisition_requests=plan.acquisition_requests,
+        max_acquisition_concurrency=plan.max_acquisition_concurrency,
+        source_snapshot_digest=plan.source_snapshot_digest,
+        source_prepared_inventory_digest=plan.source_prepared_inventory_digest,
+        coverage_digest=plan.coverage_digest,
+        representative_plan_digest=plan.plan_digest,
+    )
+    validate_representative_acquisition_plan_bundle(bundle=bundle, plan=plan)
+    return bundle
+
+
+def _create_acquisition_plan_bundle(
+    bundle_root: str | Path,
+    *,
+    authorized_plan_digest: str,
+    profile_digest: str,
+    semantic_inventory_plan: SemanticInventoryPlan,
+    acquisition_requests: Sequence[AcquisitionRequest],
+    max_acquisition_concurrency: int,
+    source_snapshot_digest: str | None,
+    source_prepared_inventory_digest: str | None,
+    coverage_digest: str | None,
+    representative_plan_digest: str | None,
+) -> AcquisitionPlanBundle:
+    """以 create-new 方式持久化 exact prepared requests。"""
 
     _validate_semantic_inventory_plan(semantic_inventory_plan)
     rows = canonical_inventory_rows(semantic_inventory_plan.rows)
@@ -983,6 +1093,10 @@ def create_acquisition_plan_bundle(
         bundle_digest="",
         authorized_plan_digest=authorized_plan_digest,
         profile_digest=profile_digest,
+        source_snapshot_digest=source_snapshot_digest,
+        source_prepared_inventory_digest=source_prepared_inventory_digest,
+        coverage_digest=coverage_digest,
+        representative_plan_digest=representative_plan_digest,
         inventory_digest=response_bank_inventory_digest(rows),
         prompt_admission_profile_digest=next(iter(admission_digests)),
         provider_config_digest=provider_config_digest,
@@ -1033,6 +1147,10 @@ def load_acquisition_plan_bundle(
         "bundle_digest",
         "authorized_plan_digest",
         "profile_digest",
+        "source_snapshot_digest",
+        "source_prepared_inventory_digest",
+        "coverage_digest",
+        "representative_plan_digest",
         "inventory_digest",
         "prompt_admission_profile_digest",
         "provider_config_digest",
@@ -1053,6 +1171,22 @@ def load_acquisition_plan_bundle(
         bundle_digest=str(value["bundle_digest"]),
         authorized_plan_digest=str(value["authorized_plan_digest"]),
         profile_digest=str(value["profile_digest"]),
+        source_snapshot_digest=_optional_digest_value(
+            value["source_snapshot_digest"],
+            "source_snapshot_digest",
+        ),
+        source_prepared_inventory_digest=_optional_digest_value(
+            value["source_prepared_inventory_digest"],
+            "source_prepared_inventory_digest",
+        ),
+        coverage_digest=_optional_digest_value(
+            value["coverage_digest"],
+            "coverage_digest",
+        ),
+        representative_plan_digest=_optional_digest_value(
+            value["representative_plan_digest"],
+            "representative_plan_digest",
+        ),
         inventory_digest=str(value["inventory_digest"]),
         prompt_admission_profile_digest=str(
             value["prompt_admission_profile_digest"]
@@ -1070,6 +1204,59 @@ def load_acquisition_plan_bundle(
     )
     bundle.validate()
     return bundle
+
+
+def load_representative_acquisition_plan_bundle(
+    bundle_root: str | Path,
+    *,
+    plan: RepresentativeUnifiedAcquisitionPlan,
+) -> AcquisitionPlanBundle:
+    """加载 bundle 并与 fresh representative plan 做 exact lineage 对账。"""
+
+    bundle = load_acquisition_plan_bundle(bundle_root)
+    validate_representative_acquisition_plan_bundle(bundle=bundle, plan=plan)
+    return bundle
+
+
+def validate_representative_acquisition_plan_bundle(
+    *,
+    bundle: AcquisitionPlanBundle,
+    plan: RepresentativeUnifiedAcquisitionPlan,
+) -> None:
+    if type(bundle) is not AcquisitionPlanBundle:
+        raise TypeError("bundle must be an AcquisitionPlanBundle")
+    if type(plan) is not RepresentativeUnifiedAcquisitionPlan:
+        raise TypeError("plan must be a RepresentativeUnifiedAcquisitionPlan")
+    bundle.validate()
+    expected_lineage = (
+        plan.source_snapshot_digest,
+        plan.source_prepared_inventory_digest,
+        plan.coverage_digest,
+        plan.plan_digest,
+    )
+    if (
+        (
+            bundle.source_snapshot_digest,
+            bundle.source_prepared_inventory_digest,
+            bundle.coverage_digest,
+            bundle.representative_plan_digest,
+        )
+        != expected_lineage
+        or bundle.authorized_plan_digest != plan.source_snapshot_digest
+        or bundle.profile_digest != plan.coverage_digest
+        or bundle.semantic_inventory_plan != plan.semantic_inventory_plan
+        or bundle.acquisition_requests != plan.acquisition_requests
+        or bundle.max_acquisition_concurrency != plan.max_acquisition_concurrency
+    ):
+        raise ValueError("representative acquisition lineage does not match fresh plan")
+
+
+def _optional_digest_value(value: Any, field_name: str) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str) or not value.startswith("sha256:"):
+        raise ValueError(f"acquisition plan bundle {field_name} is invalid")
+    return value
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -2285,6 +2472,141 @@ def build_representative_unified_acquisition_plan(
     snapshot: Any,
     prepared_inventory: Any,
     coverage: Any,
+    dispatch_plans: Sequence[Any],
+    catalog_manifest: PaperInputCatalogManifest,
+    budget: Any,
+    ai_api_configs: Mapping[str, Any],
+    planning_artifact_root: str | Path,
+    api_key_env_by_provider_family: Mapping[str, str],
+    frozen_pricing_by_provider_family: Mapping[str, FrozenPricing],
+    requested_at: str,
+    max_acquisition_concurrency: int = 10,
+) -> RepresentativeUnifiedAcquisitionPlan:
+    """重建并验证 canonical full authority 后抽取 representative slots。"""
+
+    from tokenshare.experiments.paper_formal_plan import (
+        FormalPlanSnapshot,
+        FormalPreparedRequestInventory,
+        FormalRepresentativeCoverage,
+        derive_paper_formal_representative_coverage,
+        freeze_paper_formal_plan_snapshot,
+        validate_formal_prepared_request_inventory,
+    )
+
+    if type(snapshot) is not FormalPlanSnapshot:
+        raise TypeError("snapshot must be a FormalPlanSnapshot")
+    if type(prepared_inventory) is not FormalPreparedRequestInventory:
+        raise TypeError("prepared_inventory must be a FormalPreparedRequestInventory")
+    if type(coverage) is not FormalRepresentativeCoverage:
+        raise TypeError("coverage must be a FormalRepresentativeCoverage")
+    plans = tuple(dispatch_plans)
+    artifact_root = Path(planning_artifact_root)
+    canonical_snapshot = freeze_paper_formal_plan_snapshot(
+        dispatch_plans=plans,
+        catalog_manifest=catalog_manifest,
+        budget=budget,
+        ai_api_configs=ai_api_configs,
+        output_root=artifact_root / "canonical-full-plan",
+    )
+    _validate_exact_formal_snapshot_authority(
+        supplied=snapshot,
+        canonical=canonical_snapshot,
+    )
+    repeat_ids = tuple(
+        dict.fromkeys(condition.repeat_id for condition in coverage.conditions)
+    )
+    canonical_coverage = derive_paper_formal_representative_coverage(
+        snapshot=canonical_snapshot,
+        dispatch_plans=plans,
+        repeat_ids=repeat_ids,
+    )
+    _validate_exact_formal_coverage_authority(
+        supplied=coverage,
+        supplied_snapshot=snapshot,
+        canonical=canonical_coverage,
+        canonical_snapshot=canonical_snapshot,
+    )
+    validate_formal_prepared_request_inventory(
+        inventory=prepared_inventory,
+        snapshot=canonical_snapshot,
+        catalog_manifest=catalog_manifest,
+        ai_api_configs=ai_api_configs,
+        planning_artifact_root=artifact_root / "full-prepared-inventory-validation",
+    )
+    return _build_representative_unified_acquisition_plan_from_validated_authority(
+        snapshot=canonical_snapshot,
+        prepared_inventory=prepared_inventory,
+        coverage=canonical_coverage,
+        catalog_manifest=catalog_manifest,
+        ai_api_configs=ai_api_configs,
+        planning_artifact_root=artifact_root / "representative-slots",
+        api_key_env_by_provider_family=api_key_env_by_provider_family,
+        frozen_pricing_by_provider_family=frozen_pricing_by_provider_family,
+        requested_at=requested_at,
+        max_acquisition_concurrency=max_acquisition_concurrency,
+    )
+
+
+def _validate_exact_formal_snapshot_authority(*, supplied: Any, canonical: Any) -> None:
+    if supplied.to_dict() != canonical.to_dict():
+        raise ValueError("representative acquisition canonical full snapshot drift")
+    for supplied_condition, canonical_condition in zip(
+        supplied.conditions,
+        canonical.conditions,
+        strict=True,
+    ):
+        if (
+            supplied_condition != canonical_condition
+            or supplied_condition.condition is not canonical_condition.condition
+            or supplied_condition.binding is not canonical_condition.binding
+        ):
+            raise ValueError("representative acquisition canonical condition authority drift")
+    for supplied_root, canonical_root in zip(
+        supplied.roots,
+        canonical.roots,
+        strict=True,
+    ):
+        if (
+            supplied_root != canonical_root
+            or supplied_root.condition is not canonical_root.condition
+            or supplied_root.binding is not canonical_root.binding
+        ):
+            raise ValueError("representative acquisition canonical root authority drift")
+
+
+def _validate_exact_formal_coverage_authority(
+    *,
+    supplied: Any,
+    supplied_snapshot: Any,
+    canonical: Any,
+    canonical_snapshot: Any,
+) -> None:
+    if supplied.source_snapshot is not supplied_snapshot:
+        raise ValueError("representative acquisition supplied coverage snapshot drift")
+    if supplied.to_dict() != canonical.to_dict():
+        raise ValueError("representative acquisition canonical coverage drift")
+    supplied_root_ids = {id(root) for root in supplied_snapshot.roots}
+    canonical_root_ids = {id(root) for root in canonical_snapshot.roots}
+    for supplied_root, canonical_root in zip(
+        supplied.roots,
+        canonical.roots,
+        strict=True,
+    ):
+        if (
+            id(supplied_root) not in supplied_root_ids
+            or id(canonical_root) not in canonical_root_ids
+            or supplied_root != canonical_root
+            or supplied_root.condition is not canonical_root.condition
+            or supplied_root.binding is not canonical_root.binding
+        ):
+            raise ValueError("representative acquisition canonical coverage root drift")
+
+
+def _build_representative_unified_acquisition_plan_from_validated_authority(
+    *,
+    snapshot: Any,
+    prepared_inventory: Any,
+    coverage: Any,
     catalog_manifest: PaperInputCatalogManifest,
     ai_api_configs: Mapping[str, Any],
     planning_artifact_root: str | Path,
@@ -2293,7 +2615,7 @@ def build_representative_unified_acquisition_plan(
     requested_at: str,
     max_acquisition_concurrency: int = 10,
 ) -> RepresentativeUnifiedAcquisitionPlan:
-    """从 full prepared inventory 抽取 representative Exp1--4 exact slots。"""
+    """已验证 canonical authority 的 compact semantic/dedupe 实现。"""
 
     from tokenshare.experiments.paper_formal_plan import (
         FormalPlanSnapshot,
@@ -3141,13 +3463,16 @@ __all__ = [
     "build_semantic_inventory",
     "build_representative_unified_acquisition_plan",
     "create_acquisition_plan_bundle",
+    "create_representative_acquisition_plan_bundle",
     "establish_results_first_acquisition_authorization",
     "finalize_acquisition_child_bank",
     "load_acquisition_plan_bundle",
+    "load_representative_acquisition_plan_bundle",
     "output_root_path_digest",
     "preflight_inventory_before_coordinator",
     "preflight_formal_trace_inventory",
     "replacement_slots_for",
     "response_bank_manifest_for_bundle",
     "results_first_response_bank_manifest_for_bundle",
+    "validate_representative_acquisition_plan_bundle",
 ]

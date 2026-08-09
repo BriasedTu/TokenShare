@@ -34,11 +34,12 @@ from tokenshare.experiments.paper_formal_plan import (
 )
 from tokenshare.experiments.paper_response_bank import (
     build_representative_unified_acquisition_plan,
-    create_acquisition_plan_bundle,
+    create_representative_acquisition_plan_bundle,
 )
 from tokenshare.experiments.paper_resource_accounting import FrozenPricing
 from decimal import Decimal
 import tokenshare.experiments.paper_formal_plan as formal_plan_module
+import tokenshare.experiments.paper_response_bank as response_bank_module
 from tokenshare.experiments.paper_formal_runner import (
     APPROVED_ENDPOINT_BINDINGS_KEY,
     validate_paper_formal_root_case_filter,
@@ -730,7 +731,7 @@ def test_representative_acquisition_uses_formal_replacement_slots_and_bundle_bud
         records=records,
     )
 
-    plan = build_representative_unified_acquisition_plan(
+    plan = response_bank_module._build_representative_unified_acquisition_plan_from_validated_authority(
         snapshot=snapshot,
         prepared_inventory=inventory,
         coverage=coverage,
@@ -762,13 +763,9 @@ def test_representative_acquisition_uses_formal_replacement_slots_and_bundle_bud
     assert condition_ref["selection_digest"] == root.selection_digest
     assert condition_ref["seed"] == root.seed
     assert condition_ref["split_profile_digest"] == root.split_profile_digest
-    bundle = create_acquisition_plan_bundle(
+    bundle = create_representative_acquisition_plan_bundle(
         tmp_path / "representative-bundle",
-        authorized_plan_digest=snapshot.snapshot_digest,
-        profile_digest=coverage.coverage_digest,
-        semantic_inventory_plan=plan.semantic_inventory_plan,
-        acquisition_requests=plan.acquisition_requests,
-        max_acquisition_concurrency=plan.max_acquisition_concurrency,
+        plan=plan,
     )
     assert bundle.max_acquisition_concurrency == 10
     assert bundle.full_budget.calls == len(plan.acquisition_requests)
@@ -779,6 +776,10 @@ def test_representative_acquisition_uses_formal_replacement_slots_and_bundle_bud
         (item.cost_upper_bound for item in plan.acquisition_requests),
         Decimal("0"),
     )
+    assert bundle.source_snapshot_digest == plan.source_snapshot_digest
+    assert bundle.source_prepared_inventory_digest == plan.source_prepared_inventory_digest
+    assert bundle.coverage_digest == plan.coverage_digest
+    assert bundle.representative_plan_digest == plan.plan_digest
 
 
 def test_representative_acquisition_deduplicates_only_naturally_identical_requests(
@@ -818,7 +819,7 @@ def test_representative_acquisition_deduplicates_only_naturally_identical_reques
         records=records,
     )
 
-    plan = build_representative_unified_acquisition_plan(
+    plan = response_bank_module._build_representative_unified_acquisition_plan_from_validated_authority(
         snapshot=snapshot,
         prepared_inventory=inventory,
         coverage=coverage,
@@ -840,6 +841,192 @@ def test_representative_acquisition_deduplicates_only_naturally_identical_reques
     assert plan.unique_acquisition_request_count < plan.condition_candidate_count
     assert len(plan.semantic_inventory_plan.condition_refs) == 2
     assert len(plan.acquisition_requests) == plan.unique_acquisition_request_count
+
+
+def test_public_representative_acquisition_rejects_compact_noncanonical_snapshot(
+    formal_inputs,
+    formal_snapshot,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plans, catalog, budget, ai_api_configs, _output_root = formal_inputs
+    root = next(
+        item
+        for item in formal_snapshot.roots
+        if item.condition.experiment_id == "exp2_real_ai_scalability"
+        and item.repeat_id == 0
+    )
+    records = freeze_formal_root_prepared_requests(
+        root=root,
+        catalog_manifest=catalog,
+        ai_api_configs=ai_api_configs,
+        planning_artifact_root=tmp_path / "compact-public-base",
+    )
+    compact_snapshot, compact_inventory, compact_coverage = _compact_formal_authority(
+        formal_snapshot,
+        roots=(root,),
+        records=records,
+    )
+    monkeypatch.setattr(
+        formal_plan_module,
+        "freeze_paper_formal_plan_snapshot",
+        lambda **_kwargs: formal_snapshot,
+    )
+
+    with pytest.raises(ValueError, match="canonical full snapshot"):
+        build_representative_unified_acquisition_plan(
+            snapshot=compact_snapshot,
+            prepared_inventory=compact_inventory,
+            coverage=compact_coverage,
+            dispatch_plans=plans,
+            catalog_manifest=catalog,
+            budget=budget,
+            ai_api_configs=ai_api_configs,
+            planning_artifact_root=tmp_path / "compact-public-acquisition",
+            api_key_env_by_provider_family={"deepseek": "DEEPSEEK_API_KEY"},
+            frozen_pricing_by_provider_family={
+                "deepseek": FrozenPricing(
+                    currency="CNY",
+                    input_per_million_tokens=Decimal("3.0"),
+                    output_per_million_tokens=Decimal("6.0"),
+                )
+            },
+            requested_at="2026-08-09T00:00:00Z",
+        )
+
+
+def test_public_representative_acquisition_rebuilds_and_audits_full_authority(
+    formal_inputs,
+    formal_snapshot,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plans, catalog, budget, ai_api_configs, _output_root = formal_inputs
+    supplied_coverage = derive_paper_formal_representative_coverage(
+        snapshot=formal_snapshot,
+        dispatch_plans=plans,
+        repeat_ids=(0,),
+    )
+    canonical_snapshot = _clone_formal_snapshot(formal_snapshot)
+    inventory = FormalPreparedRequestInventory(
+        records=(),
+        record_count=formal_snapshot.first_attempt_ai_unit_count,
+        unique_inference_request_count=0,
+        provider_calls_made=0,
+        source_snapshot_digest=formal_snapshot.snapshot_digest,
+    )
+    calls: dict[str, object] = {}
+    sentinel = object()
+
+    def _freeze(**kwargs):
+        calls["freeze"] = kwargs
+        return canonical_snapshot
+
+    def _validate_inventory(**kwargs):
+        calls["inventory"] = kwargs
+
+    def _build(**kwargs):
+        calls["build"] = kwargs
+        return sentinel
+
+    monkeypatch.setattr(formal_plan_module, "freeze_paper_formal_plan_snapshot", _freeze)
+    monkeypatch.setattr(
+        formal_plan_module,
+        "validate_formal_prepared_request_inventory",
+        _validate_inventory,
+    )
+    monkeypatch.setattr(
+        response_bank_module,
+        "_build_representative_unified_acquisition_plan_from_validated_authority",
+        _build,
+    )
+
+    result = build_representative_unified_acquisition_plan(
+        snapshot=formal_snapshot,
+        prepared_inventory=inventory,
+        coverage=supplied_coverage,
+        dispatch_plans=plans,
+        catalog_manifest=catalog,
+        budget=budget,
+        ai_api_configs=ai_api_configs,
+        planning_artifact_root=tmp_path / "public-full-authority",
+        api_key_env_by_provider_family={},
+        frozen_pricing_by_provider_family={},
+        requested_at="2026-08-09T00:00:00Z",
+    )
+
+    assert result is sentinel
+    assert calls["freeze"]["dispatch_plans"] == plans
+    assert calls["freeze"]["budget"] is budget
+    assert calls["inventory"]["inventory"] is inventory
+    assert calls["inventory"]["snapshot"] is canonical_snapshot
+    assert calls["build"]["snapshot"] is canonical_snapshot
+    assert calls["build"]["coverage"].source_snapshot is canonical_snapshot
+
+
+@pytest.mark.parametrize("root_scope", ("selected", "unselected"))
+def test_public_representative_acquisition_rejects_full_snapshot_control_tamper(
+    root_scope: str,
+    formal_inputs,
+    formal_snapshot,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plans, catalog, budget, ai_api_configs, _output_root = formal_inputs
+    canonical_coverage = derive_paper_formal_representative_coverage(
+        snapshot=formal_snapshot,
+        dispatch_plans=plans,
+        repeat_ids=(0,),
+    )
+    selected_ids = {id(root) for root in canonical_coverage.roots}
+    root_index = next(
+        index
+        for index, root in enumerate(formal_snapshot.roots)
+        if (id(root) in selected_ids) == (root_scope == "selected")
+    )
+    root = formal_snapshot.roots[root_index]
+    drifted_root = replace(
+        root,
+        endpoint_controls=replace(
+            root.endpoint_controls,
+            request_controls_digest="sha256:" + "f" * 64,
+        ),
+    )
+    drifted_roots = list(formal_snapshot.roots)
+    drifted_roots[root_index] = drifted_root
+    drifted_snapshot = replace(formal_snapshot, roots=tuple(drifted_roots))
+    drifted_coverage = derive_paper_formal_representative_coverage(
+        snapshot=drifted_snapshot,
+        dispatch_plans=plans,
+        repeat_ids=(0,),
+    )
+    inventory = FormalPreparedRequestInventory(
+        records=(),
+        record_count=drifted_snapshot.first_attempt_ai_unit_count,
+        unique_inference_request_count=0,
+        provider_calls_made=0,
+        source_snapshot_digest=drifted_snapshot.snapshot_digest,
+    )
+    monkeypatch.setattr(
+        formal_plan_module,
+        "freeze_paper_formal_plan_snapshot",
+        lambda **_kwargs: formal_snapshot,
+    )
+
+    with pytest.raises(ValueError, match="canonical full snapshot"):
+        build_representative_unified_acquisition_plan(
+            snapshot=drifted_snapshot,
+            prepared_inventory=inventory,
+            coverage=drifted_coverage,
+            dispatch_plans=plans,
+            catalog_manifest=catalog,
+            budget=budget,
+            ai_api_configs=ai_api_configs,
+            planning_artifact_root=tmp_path / f"public-{root_scope}-tamper",
+            api_key_env_by_provider_family={},
+            frozen_pricing_by_provider_family={},
+            requested_at="2026-08-09T00:00:00Z",
+        )
 
 
 def _compact_formal_authority(full_snapshot, *, roots, records):
@@ -906,6 +1093,14 @@ def _compact_formal_authority(full_snapshot, *, roots, records):
         root_run_count=len(ordered_roots),
     )
     return snapshot, inventory, coverage
+
+
+def _clone_formal_snapshot(snapshot):
+    return replace(
+        snapshot,
+        conditions=tuple(replace(item) for item in snapshot.conditions),
+        roots=tuple(replace(root) for root in snapshot.roots),
+    )
 
 
 def test_formal_root_preparation_rejects_snapshot_endpoint_control_tamper(

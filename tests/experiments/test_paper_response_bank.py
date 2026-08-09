@@ -24,10 +24,13 @@ from tokenshare.experiments.paper_models import PaperBudgetResult, PaperStatus, 
 from tokenshare.experiments.paper_response_bank import (
     AcquisitionRequest,
     FullAcquisitionBudget,
+    RepresentativeUnifiedAcquisitionPlan,
     SemanticSlotCandidate,
     build_semantic_inventory,
     create_acquisition_plan_bundle,
+    create_representative_acquisition_plan_bundle,
     load_acquisition_plan_bundle,
+    load_representative_acquisition_plan_bundle,
     preflight_inventory_before_coordinator,
     replacement_slots_for,
 )
@@ -112,6 +115,52 @@ def _candidate(
         ),
         terminal_kind=terminal_kind,
         replacement_policy_id=replacement_policy_id,
+    )
+
+
+def _representative_plan() -> RepresentativeUnifiedAcquisitionPlan:
+    source_snapshot_digest = "sha256:" + "5" * 64
+    coverage_digest = "sha256:" + "6" * 64
+    candidate = replace(
+        _candidate(),
+        formal_authority=True,
+        selection_id="formal-selection-v1",
+        selection_digest="sha256:" + "7" * 64,
+        seed=271828,
+        split_profile_id="factorization.exp2_contiguous_20way.v1",
+        split_profile_digest="sha256:" + "8" * 64,
+        source_snapshot_digest=source_snapshot_digest,
+        coverage_digest=coverage_digest,
+        model_endpoint_identity_digest="sha256:" + "9" * 64,
+        request_controls_digest="sha256:" + "a" * 64,
+    )
+    semantic_plan = build_semantic_inventory((candidate,))
+    row = semantic_plan.rows[0]
+    request = AcquisitionRequest(
+        inventory_row=row,
+        prepared_request=candidate.prepared_request,
+        provider_family="deepseek",
+        api_key_env="DEEPSEEK_API_KEY",
+        timeout_seconds=600,
+        token_upper_bound=300_000,
+        cost_upper_bound=Decimal("1.25"),
+        frozen_pricing=FrozenPricing(
+            currency="CNY",
+            input_per_million_tokens=Decimal("0.5"),
+            output_per_million_tokens=Decimal("1.5"),
+        ),
+        requested_at="2026-08-03T00:00:00Z",
+    )
+    return RepresentativeUnifiedAcquisitionPlan(
+        source_snapshot_digest=source_snapshot_digest,
+        source_prepared_inventory_digest="sha256:" + "b" * 64,
+        coverage_digest=coverage_digest,
+        condition_candidate_count=1,
+        unique_acquisition_request_count=1,
+        candidates=(candidate,),
+        semantic_inventory_plan=semantic_plan,
+        acquisition_requests=(request,),
+        max_acquisition_concurrency=10,
     )
 
 
@@ -332,7 +381,55 @@ def test_acquisition_bundle_rejects_semantic_plan_row_cross_binding_tamper(
         load_acquisition_plan_bundle(root)
 
 
-def test_full_acquisition_budget_rejects_l3_516_budget_identity() -> None:
+def test_representative_bundle_round_trips_exact_plan_lineage(tmp_path: Path) -> None:
+    plan = _representative_plan()
+    root = tmp_path / "representative-bundle"
+
+    created = create_representative_acquisition_plan_bundle(root, plan=plan)
+    reopened = load_representative_acquisition_plan_bundle(root, plan=plan)
+
+    assert reopened == created
+    assert reopened.source_snapshot_digest == plan.source_snapshot_digest
+    assert (
+        reopened.source_prepared_inventory_digest
+        == plan.source_prepared_inventory_digest
+    )
+    assert reopened.coverage_digest == plan.coverage_digest
+    assert reopened.representative_plan_digest == plan.plan_digest
+
+
+def test_representative_bundle_rejects_resigned_lineage_and_fresh_plan_mismatch(
+    tmp_path: Path,
+) -> None:
+    plan = _representative_plan()
+    root = tmp_path / "representative-bundle-tamper"
+    create_representative_acquisition_plan_bundle(root, plan=plan)
+    path = root / "acquisition_plan_bundle.v2.json"
+    body = json.loads(path.read_text(encoding="utf-8"))
+    body["source_snapshot_digest"] = "sha256:" + "f" * 64
+    body["authorized_plan_digest"] = body["source_snapshot_digest"]
+    body["bundle_digest"] = canonical_digest(
+        {key: value for key, value in body.items() if key != "bundle_digest"}
+    )
+    path.write_text(json.dumps(body), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="representative acquisition lineage"):
+        load_representative_acquisition_plan_bundle(root, plan=plan)
+
+    fresh_root = tmp_path / "representative-bundle-mismatch"
+    create_representative_acquisition_plan_bundle(fresh_root, plan=plan)
+    mismatched_plan = replace(
+        plan,
+        source_prepared_inventory_digest="sha256:" + "e" * 64,
+    )
+    with pytest.raises(ValueError, match="representative acquisition lineage"):
+        load_representative_acquisition_plan_bundle(
+            fresh_root,
+            plan=mismatched_plan,
+        )
+
+
+def test_full_acquisition_budget_accepts_l3_values_as_ordinary_hard_ceilings() -> None:
     limits = L3_SMALL_PAID_BUDGET_LIMITS
     preimage = {
         "schema_version": "tokenshare.paper_full_acquisition_budget.v1",
@@ -349,8 +446,7 @@ def test_full_acquisition_budget_rejects_l3_516_budget_identity() -> None:
         deepseek_cumulative_cny=limits.deepseek_cumulative_cny,
         budget_digest=canonical_digest(preimage),
     )
-    with pytest.raises(ValueError, match="L3 516-call budget"):
-        budget.validate()
+    budget.validate()
 
 
 def test_planner_is_stable_for_identical_rows_and_rejects_tampered_precomputed_id() -> None:
