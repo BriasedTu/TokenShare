@@ -221,8 +221,7 @@ def test_lean_fault_candidate_is_replaced_before_fixed_checker(
 
     checker_input = lean_paper_adapter._apply_pre_checker_parsed_candidate_hook(
         post_raw_output_hook=_ParsedFaultHook(),
-        condition=SimpleNamespace(condition_id="exp3-false-negative"),
-        case_id="lean-case-1",
+        run_id="exp3-false-negative_lean-case-1",
         request=request,
         submission=submission,
     )
@@ -2294,6 +2293,23 @@ def test_resume_restores_entry_ordinal_roles_and_delivery_timing(
     formal_delivery = formal_delivery.with_child_completion(
         child_worker_id="worker-1", child_completion_sequence=1
     )
+    runtime_records = []
+    fault_hook = paper_formal_runner._Exp3RuntimeHookBridge(
+        condition=SimpleNamespace(
+            condition_id="exp3-trace-false-negative",
+            repeat_id=0,
+            seed=7,
+        ),
+        case_id=str(case["case_id"]),
+        fault_type="false_negative",
+        selected_unit_ids=(f'{case["case_id"]}:{planned_ai_unit_id}',),
+        reserve_unit_ids=(),
+        runtime_records=runtime_records,
+    )
+    trace_domain_stage = lean_paper_adapter.LeanTraceDomainStage(
+        runtime,
+        post_raw_output_hook=fault_hook,
+    )
     record = commit_prepared_delivery(
         delivery=formal_delivery,
         worker_completion=SimpleNamespace(
@@ -2310,7 +2326,7 @@ def test_resume_restores_entry_ordinal_roles_and_delivery_timing(
             trace_delivery_stager=TraceBackedParentStager(
                 resolver=formal_resolver,
                 bindings=(formal_binding,),
-                domain_stage=lean_paper_adapter.LeanTraceDomainStage(runtime),
+                domain_stage=trace_domain_stage,
             ),
         ),
     )
@@ -2321,3 +2337,48 @@ def test_resume_restores_entry_ordinal_roles_and_delivery_timing(
     assert record.core.canonical_ref is not None
     assert record.core.canonical_ref.artifact_type == "canonical_output"
     assert len(record.core.verifier_checker_refs) == 1
+    assert len(runtime_records) == 1
+    assert runtime_records[0]["fault_type"] == "false_negative"
+    mutated_ref = runtime_records[0]["mutated_output_ref"]
+    checker_ref = _use_recording_checker_for_adapter_regressions.requests[
+        -1
+    ].proof_candidate_ref
+    assert checker_ref.to_dict() == mutated_ref
+    assert checker_ref.content_hash != record.core.parser_result_ref.content_hash
+    checker_candidate = json.loads(
+        stores.artifact_store.read_bytes(checker_ref).decode("utf-8")
+    )
+    assert checker_candidate["proof_source"] == ""
+    provenance = json.loads(
+        stores.artifact_store.read_bytes(record.core.current_provenance_ref).decode(
+            "utf-8"
+        )
+    )
+    attribution = json.loads(
+        stores.artifact_store.read_bytes(record.core.trace_attribution_refs[0]).decode(
+            "utf-8"
+        )
+    )
+    assert provenance["current_provider_call_count"] == 0
+    assert attribution["current_provider_call_count"] == 0
+    assert attribution["source_usage"]
+
+    staged_submission = trace_domain_stage.submissions_by_attempt[
+        formal_request.attempt_id
+    ]
+    assert fault_hook.after_parsed_candidate_persisted(
+        ParsedCandidateContext(
+            run_id="run_trace",
+            task_id=staged_submission.task_id,
+            unit_id=staged_submission.unit_id,
+            attempt_id=staged_submission.attempt_id,
+            lease_id=staged_submission.lease_id,
+            worker_id="worker-1",
+            raw_output_ref=staged_submission.raw_output_ref,
+            original_parsed_output_ref=staged_submission.parsed_output_ref,
+            candidate_output_refs=dict(staged_submission.candidate_output_refs),
+            submitted_at=staged_submission.submitted_at,
+            experiment_unit_id=planned_ai_unit_id,
+        )
+    ) is None
+    assert len(runtime_records) == 1

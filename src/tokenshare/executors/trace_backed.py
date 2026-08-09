@@ -365,6 +365,8 @@ class TraceDomainStageContext:
     request: ExecutionRequest
     artifact_store: ArtifactStore
     current_wrapper_ref: ArtifactRef
+    current_provenance_ref: ArtifactRef
+    trace_attribution_ref: ArtifactRef
     parser_input_ref: ArtifactRef
     parser_input_text: str
     source_objects: Mapping[str, JsonObject]
@@ -543,6 +545,8 @@ class TraceBackedParentStager:
                     request=context.request,
                     artifact_store=context.artifact_store,
                     current_wrapper_ref=context.current_wrapper_ref,
+                    current_provenance_ref=provenance_ref,
+                    trace_attribution_ref=attribution_ref,
                     parser_input_ref=context.parser_input_ref,
                     parser_input_text=content_text,
                     source_objects=parsed_objects,

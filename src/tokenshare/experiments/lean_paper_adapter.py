@@ -731,8 +731,14 @@ class _TraceLeanExecutorRecorder:
 class LeanTraceDomainStage:
     """在 parent 内运行正式 Lean parser、checker 与 canonical promotion。"""
 
-    def __init__(self, plugin_runtime: LeanRuntimeAdapter) -> None:
+    def __init__(
+        self,
+        plugin_runtime: LeanRuntimeAdapter,
+        *,
+        post_raw_output_hook: Any | None = None,
+    ) -> None:
         self._plugin_runtime = plugin_runtime
+        self._post_raw_output_hook = post_raw_output_hook
         self.requests_by_attempt: dict[str, ExecutionRequest] = {}
         self.deliveries_by_attempt: dict[str, PreparedTraceDelivery] = {}
         self.submissions_by_attempt: dict[str, ExecutionSubmission] = {}
@@ -750,8 +756,12 @@ class LeanTraceDomainStage:
         theorem_payload = LeanTheoremPayload.from_dict(
             json.loads(context.artifact_store.read_bytes(payload_ref).decode("utf-8"))
         )
+        parser_input_text = _observe_trace_raw_output_hook(
+            context=context,
+            post_raw_output_hook=self._post_raw_output_hook,
+        )
         parsed = parse_lean_proof_candidate_ai_output(
-            context.parser_input_text,
+            parser_input_text,
             theorem_payload=theorem_payload,
             raw_output_ref_summary=context.current_wrapper_ref.to_dict(),
             created_at=context.created_at,
@@ -813,6 +823,12 @@ class LeanTraceDomainStage:
             error=None,
             submitted_at=context.created_at,
         )
+        staged_submission = _apply_pre_checker_parsed_candidate_hook(
+            post_raw_output_hook=self._post_raw_output_hook,
+            run_id=context.delivery.current_run_id,
+            request=request,
+            submission=staged_submission,
+        )
         normalized = self._plugin_runtime.normalize_proof_submission(
             staged_submission,
             request=request,
@@ -832,6 +848,79 @@ class LeanTraceDomainStage:
             verifier_checker_refs=checker_refs,
             canonical_ref=canonical_ref,
         )
+
+
+def _observe_trace_raw_output_hook(
+    *,
+    context: TraceDomainStageContext,
+    post_raw_output_hook: Any | None,
+) -> str:
+    """用 parent 已落盘的 trace source refs 建立 parser 前 raw observation。"""
+
+    if not callable(post_raw_output_hook):
+        return context.parser_input_text
+    source_usage = context.source_objects.get("usage", {})
+    nested_usage = (
+        source_usage.get("usage") if isinstance(source_usage, Mapping) else None
+    )
+    usage_summary = dict(nested_usage) if isinstance(nested_usage, Mapping) else {}
+    usage_summary.update(
+        {
+            "provider_attempt_count": 0,
+            "current_provider_call_count": 0,
+            "source_usage_class": "trace_attribution",
+        }
+    )
+    provenance = context.source_objects.get("provenance", {})
+    model_record = context.source_objects.get("model_record", {})
+    provider_family = (
+        provenance.get("provider_family")
+        if isinstance(provenance, Mapping)
+        else None
+    ) or context.request.hard_requirements.get("provider_family") or "trace_source"
+    model = None
+    if isinstance(model_record, Mapping):
+        model = (
+            model_record.get("resolved_model")
+            or model_record.get("configured_model")
+            or model_record.get("model")
+        )
+    model = model or context.request.hard_requirements.get("model") or "trace_source"
+    entry_id = (
+        provenance.get("entry_id") if isinstance(provenance, Mapping) else None
+    ) or context.delivery.entry_id
+    hook_result = post_raw_output_hook(
+        artifact_store=context.artifact_store,
+        request=context.request,
+        submission_id=(
+            "trace_parser_submission_"
+            f"{context.delivery.delivery_digest.removeprefix('sha256:')}"
+        ),
+        raw_output_ref=context.current_wrapper_ref,
+        provenance_ref=context.current_provenance_ref,
+        usage_ref=context.trace_attribution_ref,
+        provider_family=str(provider_family),
+        model=str(model),
+        entry_id=str(entry_id),
+        content_text=context.parser_input_text,
+        usage_summary=usage_summary,
+        submitted_at=context.created_at,
+    )
+    if hook_result is None:
+        return context.parser_input_text
+    if not isinstance(hook_result, Mapping):
+        raise ValueError("trace post_raw_output_hook must return a mapping or None")
+    result_kind = hook_result.get("result_kind")
+    if result_kind is not None:
+        raise ValueError(
+            "Lean trace domain stage does not accept terminal raw hook directives"
+        )
+    replacement_text = hook_result.get("content_text")
+    if replacement_text is None:
+        return context.parser_input_text
+    if not isinstance(replacement_text, str):
+        raise ValueError("trace post_raw_output_hook content_text must be a string")
+    return replacement_text
 
 
 def bind_lean_trace_request(
@@ -1145,8 +1234,7 @@ class _FixedIdentityLeanExecutor:
             )
         submission = _apply_pre_checker_parsed_candidate_hook(
             post_raw_output_hook=self.post_raw_output_hook,
-            condition=self.condition,
-            case_id=self.case_id,
+            run_id=f"{self.condition.condition_id}_{self.case_id}",
             request=request,
             submission=submission,
         )
@@ -1168,8 +1256,7 @@ class _FixedIdentityLeanExecutor:
 def _apply_pre_checker_parsed_candidate_hook(
     *,
     post_raw_output_hook: Any | None,
-    condition: PaperExperimentCondition,
-    case_id: str,
+    run_id: str,
     request: ExecutionRequest,
     submission: ExecutionSubmission,
 ) -> ExecutionSubmission:
@@ -1189,7 +1276,7 @@ def _apply_pre_checker_parsed_candidate_hook(
     planned_ai_unit_id = (request.soft_hints or {}).get("planned_ai_unit_id")
     directive = parsed_hook(
         ParsedCandidateContext(
-            run_id=f"{condition.condition_id}_{case_id}",
+            run_id=run_id,
             task_id=submission.task_id,
             unit_id=submission.unit_id,
             attempt_id=submission.attempt_id,
@@ -1385,7 +1472,10 @@ def _run_lean_full_via_coordinator(
             plugin_runtime=plugin_runtime,
             trace_executor=trace_executor,
         )
-        trace_domain_stage = LeanTraceDomainStage(plugin_runtime)
+        trace_domain_stage = LeanTraceDomainStage(
+            plugin_runtime,
+            post_raw_output_hook=post_raw_output_hook,
+        )
         trace_delivery_stager = TraceBackedParentStager(
             resolver=trace_context.resolver,
             bindings=trace_context.bindings,
