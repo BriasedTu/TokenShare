@@ -151,12 +151,55 @@ def test_exp4_plan_time_validator_accepts_only_the_complete_v2_matrix() -> None:
     validate_exp4_condition_matrix(
         conditions,
         selections,
+        context=context,
     )
 
     with pytest.raises(ValueError, match="condition matrix drift"):
         validate_exp4_condition_matrix(
             conditions[:-1],
             selections[:-1],
+            context=context,
+        )
+
+
+def test_exp4_plan_time_validator_rejects_globally_reversed_selections() -> None:
+    context = _context(catalog=_prepared_catalog_v2())
+    conditions = expand_exp4_conditions(context)
+    selections = freeze_exp4_case_selections(context, conditions)
+    reversed_selections = tuple(
+        replace(selection, ordered_case_ids=tuple(reversed(selection.ordered_case_ids)))
+        for selection in selections
+    )
+
+    with pytest.raises(ValueError, match="canonical selection"):
+        validate_exp4_condition_matrix(
+            conditions,
+            reversed_selections,
+            context=context,
+        )
+
+
+def test_exp4_plan_time_validator_rejects_consistently_shorter_factor_slice() -> None:
+    context = _context(catalog=_prepared_catalog_v2())
+    conditions = expand_exp4_conditions(context)
+    selections = freeze_exp4_case_selections(context, conditions)
+    shortened = tuple(
+        replace(
+            selection,
+            ordered_case_ids=selection.ordered_case_ids[:-1],
+            expected_ai_unit_count=selection.expected_ai_unit_count - 1,
+        )
+        if condition.domain == "factorization"
+        and condition.paper_difficulty == "easy"
+        else selection
+        for condition, selection in zip(conditions, selections, strict=True)
+    )
+
+    with pytest.raises(ValueError, match="canonical selection"):
+        validate_exp4_condition_matrix(
+            conditions,
+            shortened,
+            context=context,
         )
 
 

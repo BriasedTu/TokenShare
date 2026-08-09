@@ -311,85 +311,29 @@ def count_exp4_root_runs(
 def validate_exp4_condition_matrix(
     conditions: Sequence[PaperExperimentCondition],
     selections: Sequence[FrozenCaseSelection],
+    *,
+    context: PaperExecutionContext,
 ) -> None:
     """在执行前验证 Exp4 正式 axes、顺序、repeat 与 selection 完整性。"""
 
     if len(conditions) != len(selections):
         raise ValueError("conditions and selections must have matching length")
-    if not conditions:
-        raise ValueError("Experiment 4 condition matrix must be non-empty")
-    first = conditions[0]
-    endpoint_binding = {
-        "reasoning_profile_id": first.reasoning_profile_id,
-        "model_cohort_id": first.model_cohort_id,
-        "model_cohort_digest": first.model_cohort_digest,
-        "cohort_member_id": first.cohort_member_id,
-        "source_provider_config_digest": first.source_provider_config_digest,
-        "model_endpoint_identity_digest": first.model_endpoint_identity_digest,
-    }
-    expected_conditions = tuple(
-        _condition(
-            domain=domain,
-            difficulty=(
-                paper_difficulty
-                if domain == "factorization"
-                else LEAN_CONDITION_DIFFICULTY[paper_difficulty]
-            ),
-            paper_difficulty=paper_difficulty,
-            mode=mode,
-            repeat_id=repeat_id,
-            catalog_digest=first.catalog_digest,
-            endpoint_binding=endpoint_binding,
-        )
-        for domain, paper_difficulties in (
-            ("factorization", FACTOR_PAPER_DIFFICULTIES),
-            ("lean_proof", LEAN_PAPER_DIFFICULTIES),
-        )
-        for paper_difficulty in paper_difficulties
-        for mode in EXP4_MODES
-        for repeat_id in range(EXP4_REPEATS)
-    )
+    expected_conditions = expand_exp4_conditions(context)
     if tuple(condition.condition_digest for condition in conditions) != tuple(
         condition.condition_digest for condition in expected_conditions
     ):
         raise ValueError("Experiment 4 condition matrix drift")
-
-    signatures: dict[
-        tuple[str, str],
-        tuple[str, tuple[str, ...], int],
-    ] = {}
-    factor_counts: dict[str, int] = {}
-    catalog_versions: set[str] = set()
-    for condition, selection in zip(conditions, selections, strict=True):
-        _validate_selection_condition_shape(selection, condition)
-        if selection.is_blocked:
-            raise ValueError("Experiment 4 complete matrix cannot contain blocked selections")
-        catalog_versions.add(selection.catalog_version)
-        key = (condition.domain, str(condition.paper_difficulty))
-        signature = (
-            selection.selection_digest,
-            tuple(selection.ordered_case_ids),
-            selection.expected_ai_unit_count,
-        )
-        previous = signatures.setdefault(key, signature)
-        if previous != signature:
-            raise ValueError("Experiment 4 selection matrix drift")
-        if condition.domain == "factorization":
-            factor_counts[str(condition.paper_difficulty)] = len(
-                selection.ordered_case_ids
-            )
-        elif len(selection.ordered_case_ids) != EXP4_TASKS_PER_DIFFICULTY:
-            raise ValueError("Experiment 4 Lean selection count drift")
-    if len(catalog_versions) != 1:
-        raise ValueError("Experiment 4 catalog version drift")
-    catalog_version = next(iter(catalog_versions))
-    expected_root_runs = _expected_root_runs(
-        catalog_version,
-        factor_counts_by_difficulty=(
-            factor_counts if catalog_version == "v2" else None
-        ),
+    expected_selections = freeze_exp4_case_selections(
+        context,
+        expected_conditions,
     )
-    if count_exp4_root_runs(conditions, selections) != expected_root_runs:
+    for selection, expected in zip(selections, expected_selections, strict=True):
+        if selection.to_dict() != expected.to_dict():
+            raise ValueError("Experiment 4 canonical selection mismatch")
+    if count_exp4_root_runs(conditions, selections) != count_exp4_root_runs(
+        expected_conditions,
+        expected_selections,
+    ):
         raise ValueError("Experiment 4 root-run total drift")
 
 

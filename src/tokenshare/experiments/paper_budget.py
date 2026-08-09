@@ -2049,6 +2049,21 @@ def _case_request_profile(
     }
 
 
+def build_paper_budget_split_profile(
+    *,
+    case: JsonObject,
+    condition: PaperExperimentCondition,
+    frozen_selection: JsonObject | None,
+) -> JsonObject:
+    """复算正式 budget 使用的 canonical per-root split profile。"""
+
+    return _budget_split_profile(
+        case=case,
+        condition=condition,
+        exact_selection=frozen_selection,
+    )
+
+
 def _budget_split_profile(
     *,
     case: JsonObject,

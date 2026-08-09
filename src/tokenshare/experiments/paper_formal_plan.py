@@ -11,6 +11,7 @@ from tokenshare.experiments.paper_catalog import PaperInputCatalogManifest
 from tokenshare.experiments.paper_catalog_execution_view import (
     restore_catalog_execution_view,
 )
+from tokenshare.experiments.paper_budget import build_paper_budget_split_profile
 from tokenshare.experiments.paper_dispatcher import PaperExperimentDispatchPlan
 from tokenshare.experiments.paper_exp3_fault_recovery import (
     EXP3_EXPERIMENT_ID,
@@ -22,6 +23,7 @@ from tokenshare.experiments.paper_exp4_ablation_runner import (
 )
 from tokenshare.experiments.paper_experiment_contracts import (
     FrozenConditionSelectionBinding,
+    PaperExecutionContext,
 )
 from tokenshare.experiments.paper_formal_runner import (
     validate_paper_formal_suite_plan,
@@ -191,6 +193,96 @@ def validate_paper_formal_plan_bindings(
         raise ValueError("missing condition binding")
 
 
+def validate_paper_formal_budget_commitments(
+    *,
+    dispatch_plans: Sequence[PaperExperimentDispatchPlan],
+    catalog_manifest: PaperInputCatalogManifest,
+    budget: PaperBudgetResult,
+) -> None:
+    """把 budget selection/unit commitments 逐项绑定回正式 plan authority。"""
+
+    plans = tuple(dispatch_plans)
+    cases_by_id = _unique_catalog_cases(catalog_manifest)
+    budget_commitments = _budget_commitments_body(budget)
+    frozen_selections = budget_commitments.get("frozen_selections")
+    if isinstance(frozen_selections, (str, bytes, bytearray)) or not isinstance(
+        frozen_selections,
+        Sequence,
+    ):
+        raise ValueError("formal budget frozen selections are missing")
+    expected_frozen = tuple(
+        {
+            **binding.selection.to_dict(),
+            "condition_id": condition.condition_id,
+            "condition_digest": condition.condition_digest,
+        }
+        for plan in plans
+        for condition, binding in _ordered_condition_bindings(plan)
+    )
+    if tuple(frozen_selections) != expected_frozen:
+        raise ValueError("formal budget frozen selection mismatch")
+
+    commitments = _budget_ai_unit_commitments(budget)
+    expected_keys: set[tuple[str, str]] = set()
+    split_profiles: dict[tuple[str, str | None, str | None], Mapping[str, Any]] = {}
+    for plan in plans:
+        for condition, binding in _ordered_condition_bindings(plan):
+            exact_selection = _expected_frozen_selection(
+                expected_frozen,
+                condition_id=condition.condition_id,
+            )
+            selection_ai_units = 0
+            for case_id in binding.selection.ordered_case_ids:
+                key = (condition.condition_id, case_id)
+                commitment = commitments.get(key)
+                if commitment is None:
+                    raise ValueError("formal budget is missing AI-unit commitment")
+                case = cases_by_id[case_id]
+                split_key = (
+                    case_id,
+                    (
+                        condition.experiment_id
+                        if condition.experiment_id
+                        == "exp2_real_ai_scalability"
+                        else None
+                    ),
+                    getattr(binding.selection, "split_profile_id", None),
+                )
+                split_profile = split_profiles.get(split_key)
+                if split_profile is None:
+                    split_profile = build_paper_budget_split_profile(
+                        case=dict(case),
+                        condition=condition,
+                        frozen_selection=dict(exact_selection),
+                    )
+                    split_profiles[split_key] = split_profile
+                expected = {
+                    "condition_id": condition.condition_id,
+                    "condition_digest": condition.condition_digest,
+                    "case_id": case_id,
+                    "planned_ai_unit_ids": [
+                        str(unit_id) for unit_id in split_profile["ai_unit_order"]
+                    ],
+                    "case_digest": digest_json(case),
+                    "split_profile_digest": digest_json(split_profile),
+                    "commitment_digest": digest_json(
+                        {
+                            "case": case,
+                            "split_profile": split_profile,
+                            "seed": condition.seed,
+                        }
+                    ),
+                }
+                if dict(commitment) != expected:
+                    raise ValueError("formal budget AI-unit commitment mismatch")
+                selection_ai_units += len(expected["planned_ai_unit_ids"])
+                expected_keys.add(key)
+            if selection_ai_units != binding.selection.expected_ai_unit_count:
+                raise ValueError("formal selection AI-unit commitment total mismatch")
+    if set(commitments) != expected_keys:
+        raise ValueError("formal budget contains extra AI-unit commitment")
+
+
 def freeze_paper_formal_plan_snapshot(
     *,
     dispatch_plans: Sequence[PaperExperimentDispatchPlan],
@@ -227,9 +319,15 @@ def freeze_paper_formal_plan_snapshot(
         bindings=all_bindings,
         catalog_manifest=catalog_manifest,
     )
+    validate_paper_formal_budget_commitments(
+        dispatch_plans=plans,
+        catalog_manifest=catalog_manifest,
+        budget=budget,
+    )
     _validate_complete_experiment_matrices(
         plans=plans,
         catalog_manifest=catalog_manifest,
+        ai_api_configs=ai_api_configs,
     )
 
     commitments = _budget_ai_unit_commitments(budget)
@@ -331,6 +429,7 @@ def _validate_complete_experiment_matrices(
     *,
     plans: Sequence[PaperExperimentDispatchPlan],
     catalog_manifest: PaperInputCatalogManifest,
+    ai_api_configs: Mapping[str, Any],
 ) -> None:
     for plan in plans:
         if plan.experiment_id == EXP3_EXPERIMENT_ID:
@@ -346,16 +445,71 @@ def _validate_complete_experiment_matrices(
                 catalog=catalog_view,
             )
         elif plan.experiment_id == EXP4_EXPERIMENT_ID:
-            validate_exp4_condition_matrix(plan.conditions, plan.selections)
+            if plan.catalog_execution_view is None:
+                raise ValueError("Experiment 4 formal plan requires catalog execution view")
+            catalog_view = restore_catalog_execution_view(
+                plan.catalog_execution_view,
+                catalog_manifest=catalog_manifest,
+            )
+            validate_exp4_condition_matrix(
+                plan.conditions,
+                plan.selections,
+                context=_exp4_validation_context(
+                    plan=plan,
+                    catalog_view=catalog_view,
+                    ai_api_configs=ai_api_configs,
+                ),
+            )
+
+
+def _exp4_validation_context(
+    *,
+    plan: PaperExperimentDispatchPlan,
+    catalog_view: Any,
+    ai_api_configs: Mapping[str, Any],
+) -> PaperExecutionContext:
+    if not plan.conditions:
+        raise ValueError("Experiment 4 formal plan has no conditions")
+    condition = plan.conditions[0]
+    _config, _entry, request_controls = _resolved_request_controls(
+        condition=condition,
+        ai_api_configs=ai_api_configs,
+    )
+    endpoint_binding = {
+        "provider_config_id": condition.provider_config_id,
+        "selected_entry_id": condition.model_entry_id,
+        "model_entry_id": condition.model_entry_id,
+        "provider_family": condition.provider_family,
+        "provider_model_id": condition.provider_model_id,
+        "reasoning_profile_id": condition.reasoning_profile_id,
+        "model_cohort_id": condition.model_cohort_id,
+        "model_cohort_digest": condition.model_cohort_digest,
+        "cohort_member_id": condition.cohort_member_id,
+        "source_provider_config_digest": condition.source_provider_config_digest,
+        "model_endpoint_identity_digest": condition.model_endpoint_identity_digest,
+        "request_controls": request_controls,
+    }
+    return PaperExecutionContext(
+        context_id="formal_exp4_plan_validation",
+        catalog=catalog_view,
+        approved_endpoint_binding=endpoint_binding,
+        request_limits=request_controls,
+        hard_limits={"max_total_provider_attempts": 0},
+        output_root=plan.output_root,
+        artifact_store=object(),
+        event_store=object(),
+        execution_callback=_forbidden_plan_execution,
+    )
+
+
+def _forbidden_plan_execution(**_kwargs: Any) -> Any:
+    raise AssertionError("formal Exp4 plan validation must not execute")
 
 
 def _budget_ai_unit_commitments(
     budget: PaperBudgetResult,
 ) -> dict[tuple[str, str], Mapping[str, Any]]:
-    preflight = budget.quota_preflight
-    budget_commitments = preflight.get("budget_commitments")
-    if not isinstance(budget_commitments, Mapping):
-        raise ValueError("formal budget commitments are missing")
+    budget_commitments = _budget_commitments_body(budget)
     values = budget_commitments.get("ai_unit_commitments")
     if isinstance(values, (str, bytes, bytearray)) or not isinstance(
         values,
@@ -373,11 +527,77 @@ def _budget_ai_unit_commitments(
     return commitments
 
 
+def _budget_commitments_body(budget: PaperBudgetResult) -> Mapping[str, Any]:
+    budget_commitments = budget.quota_preflight.get("budget_commitments")
+    if not isinstance(budget_commitments, Mapping):
+        raise ValueError("formal budget commitments are missing")
+    return budget_commitments
+
+
+def _ordered_condition_bindings(
+    plan: PaperExperimentDispatchPlan,
+) -> tuple[tuple[PaperExperimentCondition, FrozenConditionSelectionBinding], ...]:
+    bindings_by_id = {
+        binding.condition_id: binding
+        for binding in plan.condition_selection_bindings
+    }
+    return tuple(
+        (condition, bindings_by_id[condition.condition_id])
+        for condition in plan.conditions
+    )
+
+
+def _expected_frozen_selection(
+    frozen_selections: Sequence[Mapping[str, Any]],
+    *,
+    condition_id: str,
+) -> Mapping[str, Any]:
+    matches = tuple(
+        selection
+        for selection in frozen_selections
+        if selection.get("condition_id") == condition_id
+    )
+    if len(matches) != 1:
+        raise ValueError("formal budget frozen selection binding mismatch")
+    return matches[0]
+
+
 def _freeze_endpoint_controls(
     *,
     condition: PaperExperimentCondition,
     ai_api_configs: Mapping[str, Any],
 ) -> FormalEndpointControls:
+    _config, _entry, controls = _resolved_request_controls(
+        condition=condition,
+        ai_api_configs=ai_api_configs,
+    )
+    return FormalEndpointControls(
+        provider_config_id=str(condition.provider_config_id),
+        model_entry_id=str(condition.model_entry_id),
+        provider_family=str(condition.provider_family),
+        provider_model_id=str(condition.provider_model_id),
+        source_provider_config_digest=str(condition.source_provider_config_digest),
+        model_endpoint_identity_digest=str(condition.model_endpoint_identity_digest),
+        reasoning_profile_id=str(condition.reasoning_profile_id),
+        max_tokens=_positive_int(controls.get("max_tokens"), "max_tokens"),
+        timeout_seconds=_positive_int(
+            controls.get("timeout_seconds"),
+            "timeout_seconds",
+        ),
+        max_provider_attempts=_positive_int(
+            controls.get("max_provider_attempts"),
+            "max_provider_attempts",
+        ),
+        stream=_required_bool(controls.get("stream"), "stream"),
+        request_controls_digest=digest_json(controls),
+    )
+
+
+def _resolved_request_controls(
+    *,
+    condition: PaperExperimentCondition,
+    ai_api_configs: Mapping[str, Any],
+) -> tuple[Any, Any, dict[str, Any]]:
     config = ai_api_configs.get(condition.provider_config_id)
     if config is None:
         raise ValueError("condition provider config is missing")
@@ -399,26 +619,7 @@ def _freeze_endpoint_controls(
         raise ValueError("condition provider model does not match config")
     if getattr(config, "config_digest", None) != condition.source_provider_config_digest:
         raise ValueError("condition provider config digest mismatch")
-    return FormalEndpointControls(
-        provider_config_id=str(condition.provider_config_id),
-        model_entry_id=str(condition.model_entry_id),
-        provider_family=str(condition.provider_family),
-        provider_model_id=str(condition.provider_model_id),
-        source_provider_config_digest=str(condition.source_provider_config_digest),
-        model_endpoint_identity_digest=str(condition.model_endpoint_identity_digest),
-        reasoning_profile_id=str(condition.reasoning_profile_id),
-        max_tokens=_positive_int(controls.get("max_tokens"), "max_tokens"),
-        timeout_seconds=_positive_int(
-            controls.get("timeout_seconds"),
-            "timeout_seconds",
-        ),
-        max_provider_attempts=_positive_int(
-            controls.get("max_provider_attempts"),
-            "max_provider_attempts",
-        ),
-        stream=_required_bool(controls.get("stream"), "stream"),
-        request_controls_digest=digest_json(controls),
-    )
+    return config, entry, controls
 
 
 def _endpoint_controls_body(value: FormalEndpointControls) -> dict[str, Any]:
@@ -464,13 +665,51 @@ def _validate_case_selection_shape(
 ) -> None:
     selection = binding.selection
     schema_version = case.get("schema_version")
-    case_domain = (
-        "factorization"
-        if schema_version == "tokenshare.paper_factorization_case.v1"
-        else "lean_proof"
-    )
+    if schema_version == "tokenshare.paper_factorization_case.v1":
+        case_domain = "factorization"
+        difficulty = str(case.get("difficulty") or "")
+        if difficulty not in {"easy", "medium", "hard"} or case.get(
+            "paper_difficulty"
+        ) != difficulty:
+            raise ValueError("formal Factorization case difficulty mismatch")
+    elif schema_version == "tokenshare.paper_lean_case.v1":
+        case_domain = "lean_proof"
+        if (
+            case.get("difficulty") not in {"easy", "medium", "hard"}
+            or case.get("paper_difficulty") != "simple"
+            or case.get("topic_family") != "pure_logic"
+        ):
+            raise ValueError("formal Lean simple case difficulty mismatch")
+    elif schema_version == "tokenshare.paper_lean_lemma_graph_case.v1":
+        case_domain = "lean_proof"
+        expected_difficulty = {
+            "simple": "easy",
+            "medium_lemma_dag": "medium",
+            "hard_frontier": "hard",
+        }.get(str(case.get("paper_difficulty") or ""))
+        if expected_difficulty is None or case.get("difficulty") != expected_difficulty:
+            raise ValueError("formal Lean lemma graph case difficulty mismatch")
+    else:
+        raise ValueError("unsupported formal catalog case schema")
     if case_domain != condition.domain or selection.domain != condition.domain:
         raise ValueError("selection case domain mismatch")
+    exp3_mixed_factor_rate = (
+        condition.experiment_id == EXP3_EXPERIMENT_ID
+        and condition.domain == "factorization"
+        and condition.fault_type != "worker_death"
+    )
+    difficulty_mismatch = (
+        schema_version != "tokenshare.paper_lean_case.v1"
+        and case.get("difficulty") != condition.difficulty
+    )
+    if not exp3_mixed_factor_rate and (
+        case.get("paper_difficulty") != selection.paper_difficulty
+        or difficulty_mismatch
+    ):
+        raise ValueError(
+            "selection case difficulty mismatch: "
+            f"{condition.condition_id}:{case.get('case_id')}"
+        )
     if (
         selection.topic_family is not None
         and case.get("topic_family") != selection.topic_family

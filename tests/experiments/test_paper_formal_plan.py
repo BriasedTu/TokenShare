@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import replace
 import os
 from pathlib import Path
@@ -18,6 +19,7 @@ from tokenshare.experiments.paper_experiment_contracts import (
 )
 from tokenshare.experiments.paper_formal_plan import (
     freeze_paper_formal_plan_snapshot,
+    validate_paper_formal_budget_commitments,
     validate_paper_formal_plan_bindings,
 )
 from tokenshare.experiments.paper_formal_runner import APPROVED_ENDPOINT_BINDINGS_KEY
@@ -166,6 +168,99 @@ def test_formal_binding_validator_rejects_duplicate_condition_binding(
         )
 
 
+def test_formal_binding_validator_rejects_unknown_lean_catalog_schema(
+    formal_inputs,
+) -> None:
+    plan = formal_inputs[0][0]
+    condition = next(item for item in plan.conditions if item.domain == "lean_proof")
+    binding = next(
+        item
+        for item in plan.condition_selection_bindings
+        if item.condition_id == condition.condition_id
+    )
+    catalog = _catalog_with_case_changes(
+        formal_inputs[1],
+        binding.selection.ordered_case_ids[0],
+        {"schema_version": "tokenshare.paper_unknown_case.v1"},
+    )
+
+    with pytest.raises(ValueError, match="unsupported formal catalog case schema"):
+        validate_paper_formal_plan_bindings(
+            conditions=(condition,),
+            bindings=(binding,),
+            catalog_manifest=catalog,
+        )
+
+
+def test_formal_binding_validator_rejects_wrong_case_difficulty(
+    formal_inputs,
+) -> None:
+    plan = formal_inputs[0][0]
+    condition = next(
+        item
+        for item in plan.conditions
+        if item.domain == "factorization" and item.paper_difficulty == "easy"
+    )
+    binding = next(
+        item
+        for item in plan.condition_selection_bindings
+        if item.condition_id == condition.condition_id
+    )
+    catalog = _catalog_with_case_changes(
+        formal_inputs[1],
+        binding.selection.ordered_case_ids[0],
+        {"difficulty": "hard", "paper_difficulty": "hard"},
+    )
+
+    with pytest.raises(ValueError, match="difficulty mismatch"):
+        validate_paper_formal_plan_bindings(
+            conditions=(condition,),
+            bindings=(binding,),
+            catalog_manifest=catalog,
+        )
+
+
+def test_formal_budget_commitments_reject_frozen_selection_order_tamper(
+    formal_inputs,
+) -> None:
+    plans, catalog, budget, _configs, _root = formal_inputs
+    quota = deepcopy(budget.quota_preflight)
+    frozen = quota["budget_commitments"]["frozen_selections"][0]
+    frozen["ordered_case_ids"] = list(reversed(frozen["ordered_case_ids"]))
+
+    with pytest.raises(ValueError, match="frozen selection mismatch"):
+        validate_paper_formal_budget_commitments(
+            dispatch_plans=plans,
+            catalog_manifest=catalog,
+            budget=replace(budget, quota_preflight=quota),
+        )
+
+
+@pytest.mark.parametrize(
+    "tamper",
+    ("planned_ai_unit_ids", "split_profile_digest", "commitment_digest"),
+)
+def test_formal_budget_commitments_reject_ai_unit_commitment_tamper(
+    formal_inputs,
+    tamper: str,
+) -> None:
+    plans, catalog, budget, _configs, _root = formal_inputs
+    quota = deepcopy(budget.quota_preflight)
+    commitments = quota["budget_commitments"]["ai_unit_commitments"]
+    target = next(item for item in commitments if len(item["planned_ai_unit_ids"]) > 1)
+    if tamper == "planned_ai_unit_ids":
+        target[tamper] = list(reversed(target[tamper]))
+    else:
+        target[tamper] = "sha256:" + "f" * 64
+
+    with pytest.raises(ValueError, match="AI-unit commitment"):
+        validate_paper_formal_budget_commitments(
+            dispatch_plans=plans,
+            catalog_manifest=catalog,
+            budget=replace(budget, quota_preflight=quota),
+        )
+
+
 def _build_formal_inputs(tmp_path: Path):
     catalog = load_paper_catalogs(
         factorization_path="benchmarks/paper/factorization_catalog.v2.jsonl",
@@ -268,3 +363,25 @@ def _build_formal_inputs(tmp_path: Path):
     }
 
     return plans, catalog, budget, ai_api_configs, tmp_path
+
+
+def _catalog_with_case_changes(catalog, case_id: str, changes: dict):
+    fields = (
+        "factorization_cases",
+        "lean_cases",
+        "lean_lemma_graph_cases",
+    )
+    updates = {}
+    found = False
+    for field_name in fields:
+        values = getattr(catalog, field_name)
+        changed = []
+        for case in values:
+            if case["case_id"] == case_id:
+                changed.append({**case, **changes})
+                found = True
+            else:
+                changed.append(case)
+        updates[field_name] = tuple(changed)
+    assert found
+    return replace(catalog, **updates)
