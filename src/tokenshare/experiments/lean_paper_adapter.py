@@ -114,6 +114,7 @@ from tokenshare.plugins.lean_proof.child_proof import (
 from tokenshare.plugins.lean_proof.checker import (
     LeanChecker,
     LeanCheckerMode,
+    LeanCheckerReport,
     LeanCheckerRequest,
     LeanCheckerStatus,
     check_lean_proof,
@@ -1788,18 +1789,14 @@ def _run_lean_full_via_coordinator(
                 checker_report=checker_report,
             )
         else:
-            proof_input = plugin_runtime.proof_input_for_logical_key(logical_key)
             record = _child_record(
                 child_key=logical_key,
                 child_payload=payload,
                 child_payload_ref=payload_ref,
                 submission=protocol_submission,
                 proof_candidate_ref=proof_candidate_ref,
-                proof_result=(
-                    proof_input
-                    if isinstance(proof_input, LeanChildProofResult)
-                    else None
-                ),
+                proof_result=None,
+                checker_report=checker_report,
             )
         independent_validity_by_attempt[request.attempt_id] = bool(
             record["checker"]["accepted"]
@@ -4710,8 +4707,26 @@ def _child_record(
     submission,
     proof_candidate_ref: ArtifactRef | None,
     proof_result: LeanChildProofResult | None,
+    checker_report: LeanCheckerReport | None = None,
 ) -> JsonObject:
-    checker_report = proof_result.checker_report if proof_result is not None else None
+    if checker_report is None and proof_result is not None:
+        checker_report = proof_result.checker_report
+    accepted = (
+        checker_report.status == LeanCheckerStatus.ACCEPTED
+        if checker_report is not None
+        else proof_result.accepted
+        if proof_result is not None
+        else False
+    )
+    failure_kind = (
+        None
+        if accepted
+        else "lean_checker_rejected"
+        if checker_report is not None
+        else proof_result.failure_kind
+        if proof_result is not None
+        else None
+    )
     return {
         "child_logical_key": child_key,
         "statement_source": child_payload.statement_source,
@@ -4729,8 +4744,8 @@ def _child_record(
         if submission.parse_failure_ref is not None
         else None,
         "checker": {
-            "accepted": proof_result.accepted if proof_result is not None else False,
-            "failure_kind": proof_result.failure_kind if proof_result is not None else None,
+            "accepted": accepted,
+            "failure_kind": failure_kind,
             "environment_digest": (
                 checker_report.environment_ref.environment_digest
                 if checker_report is not None

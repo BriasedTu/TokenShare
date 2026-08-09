@@ -112,7 +112,12 @@ def project_paper_protocol_run(
         usage_ref, usage = _artifact_for_execution(
             inventory,
             artifact_store,
-            artifact_types={"AIUsageSummary", "UsageSummary", "AIUsage"},
+            artifact_types={
+                "AIUsageSummary",
+                "UsageSummary",
+                "AIUsage",
+                "TraceCurrentUsage",
+            },
             request_id=str(request.get("request_id") or ""),
             submission_id=str(submission.get("submission_id") or ""),
         )

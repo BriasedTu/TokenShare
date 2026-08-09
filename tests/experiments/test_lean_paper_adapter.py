@@ -2500,3 +2500,24 @@ def test_exp3_lean_trace_terminal_fault_recovers_with_fresh_checker(
     }
     assert slot_candidate_ids[0] not in checker_candidate_ids
     assert slot_candidate_ids[1] in checker_candidate_ids
+    records_by_logical_key: dict[str, list[dict]] = {}
+    for record in result.child_results:
+        records_by_logical_key.setdefault(
+            str(record["child_logical_key"]), []
+        ).append(record)
+    recovered_records = next(
+        records
+        for records in records_by_logical_key.values()
+        if len(records) == 2
+    )
+    assert recovered_records[0]["candidate_output_ref"] is None
+    assert recovered_records[0]["checker"] == {
+        "accepted": False,
+        "failure_kind": None,
+        "environment_digest": None,
+        "report_ref": None,
+        "proof_artifact_ref": None,
+    }
+    assert recovered_records[1]["candidate_output_ref"] is not None
+    assert recovered_records[1]["checker"]["accepted"] is True
+    assert recovered_records[1]["checker"]["report_ref"] is not None

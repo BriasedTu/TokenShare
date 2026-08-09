@@ -147,16 +147,54 @@ def test_projection_keeps_pre_provider_executor_error_out_of_provider_taxonomy()
 
 
 @pytest.mark.parametrize(
-    ("provider_latency", "expected_attempt_schema"),
     (
-        (17, "tokenshare.paper_attempt_result.v1"),
-        (None, "tokenshare.paper_attempt_result.v3"),
+        "provider_latency",
+        "expected_attempt_schema",
+        "usage_artifact_type",
+        "expected_provider_attempt_count",
+        "expected_total_tokens",
+        "expected_task_schema",
+        "expected_cost_status",
+    ),
+    (
+        (
+            17,
+            "tokenshare.paper_attempt_result.v1",
+            "AIUsageSummary",
+            1,
+            11,
+            "tokenshare.paper_task_result.v1",
+            "estimated",
+        ),
+        (
+            None,
+            "tokenshare.paper_attempt_result.v3",
+            "AIUsageSummary",
+            1,
+            11,
+            "tokenshare.paper_task_result.v1",
+            "estimated",
+        ),
+        (
+            None,
+            "tokenshare.paper_attempt_result.v3",
+            "TraceCurrentUsage",
+            0,
+            None,
+            "tokenshare.paper_task_result.v2",
+            "usage_missing",
+        ),
     ),
 )
 def test_projection_derives_paper_results_from_protocol_events_and_artifacts(
     tmp_path,
     provider_latency,
     expected_attempt_schema,
+    usage_artifact_type,
+    expected_provider_attempt_count,
+    expected_total_tokens,
+    expected_task_schema,
+    expected_cost_status,
 ) -> None:
     store = ArtifactStore(tmp_path)
     task_id = "paper_factorization_case_1"
@@ -196,20 +234,30 @@ def test_projection_derives_paper_results_from_protocol_events_and_artifacts(
     usage_ref = _save(
         store,
         "usage",
-        "AIUsageSummary",
-        {
-            "submission_id": "submission_case_1_0",
-            "request_id": "request_case_1_0",
-            "provider_family": "siliconflow",
-            "entry_id": "glm_5_2_exp1_baseline",
-            "model": "zai-org/GLM-5.2",
-            "provider_attempt_count": 1,
-            "prompt_tokens": 5,
-            "completion_tokens": 6,
-            "total_tokens": 11,
-            "cost_estimate": 0.125,
-            "cost_estimate_status": "estimated",
-        },
+        usage_artifact_type,
+        (
+            {
+                "submission_id": "submission_case_1_0",
+                "request_id": "request_case_1_0",
+                "provider_attempt_count": 0,
+                "current_provider_call_count": 0,
+                "source_usage_class": "trace_attribution",
+            }
+            if usage_artifact_type == "TraceCurrentUsage"
+            else {
+                "submission_id": "submission_case_1_0",
+                "request_id": "request_case_1_0",
+                "provider_family": "siliconflow",
+                "entry_id": "glm_5_2_exp1_baseline",
+                "model": "zai-org/GLM-5.2",
+                "provider_attempt_count": 1,
+                "prompt_tokens": 5,
+                "completion_tokens": 6,
+                "total_tokens": 11,
+                "cost_estimate": 0.125,
+                "cost_estimate_status": "estimated",
+            }
+        ),
     )
     model_record_ref = _save(
         store,
@@ -246,7 +294,12 @@ def test_projection_derives_paper_results_from_protocol_events_and_artifacts(
             "parsed_output_ref": parsed_ref.to_dict(),
             "parse_failure_ref": None,
             "provenance_ref": provenance_ref.to_dict(),
-            "usage_summary": {"provider_attempt_count": 1},
+            "usage_summary": {
+                "provider_attempt_count": expected_provider_attempt_count,
+                "current_provider_call_count": (
+                    0 if usage_artifact_type == "TraceCurrentUsage" else 1
+                ),
+            },
             "error": None,
             "submitted_at": "2026-07-23T00:00:00.017000Z",
         },
@@ -320,9 +373,12 @@ def test_projection_derives_paper_results_from_protocol_events_and_artifacts(
     assert projection.task_result.accepted_validity is True
     assert projection.task_result.paper_eligible is True
     assert projection.task_result.attempt_count == 1
-    assert projection.task_result.provider_attempt_count == 1
+    assert (
+        projection.task_result.provider_attempt_count
+        == expected_provider_attempt_count
+    )
     assert projection.task_result.wall_clock_ms == 1234
-    assert projection.task_result.total_tokens == 11
+    assert projection.task_result.total_tokens == expected_total_tokens
     assert projection.attempt_results[0].attempt_id == attempt_id
     assert projection.attempt_results[0].worker_id == "runtime-worker-7"
     assert projection.attempt_results[0].started_at == (
@@ -335,9 +391,18 @@ def test_projection_derives_paper_results_from_protocol_events_and_artifacts(
     assert projection.attempt_results[0].attempt_status.value == "succeeded"
     assert projection.attempt_results[0].latency_ms == provider_latency
     assert projection.attempt_results[0].schema_version == expected_attempt_schema
-    assert projection.attempt_results[0].cost_estimate_status == "estimated"
-    assert projection.task_result.schema_version == "tokenshare.paper_task_result.v1"
+    assert (
+        projection.attempt_results[0].cost_estimate_status
+        == expected_cost_status
+    )
+    assert projection.task_result.schema_version == expected_task_schema
     assert projection.attempt_results[0].usage_ref == usage_ref.to_dict()
+    if usage_artifact_type == "TraceCurrentUsage":
+        assert projection.attempt_results[0].provider_attempt_count == 0
+        assert projection.attempt_results[0].prompt_tokens is None
+        assert projection.attempt_results[0].completion_tokens is None
+        assert projection.attempt_results[0].total_tokens is None
+        assert projection.attempt_results[0].cost_estimate is None
     assert (
         projection.attempt_results[0].model_execution_record_ref
         == model_record_ref.to_dict()
