@@ -1,0 +1,270 @@
+from __future__ import annotations
+
+from dataclasses import replace
+import os
+from pathlib import Path
+
+import pytest
+
+from tokenshare.experiments.paper_budget import (
+    build_exp5_v3_token_ceiling_mapping,
+    load_exp1_pilot_profile,
+    plan_paper_suite,
+)
+from tokenshare.experiments.paper_catalog import load_paper_catalogs
+from tokenshare.experiments.paper_exp1 import EXP1_FORMAL_REQUEST_CONTROLS
+from tokenshare.experiments.paper_experiment_contracts import (
+    FrozenConditionSelectionBinding,
+)
+from tokenshare.experiments.paper_formal_plan import (
+    freeze_paper_formal_plan_snapshot,
+    validate_paper_formal_plan_bindings,
+)
+from tokenshare.experiments.paper_formal_runner import APPROVED_ENDPOINT_BINDINGS_KEY
+from tokenshare.experiments.paper_model_policy import (
+    build_model_endpoint_cohort_preflight,
+    load_model_endpoint_cohort,
+    load_model_entry_map,
+    load_provider_config_map,
+)
+from tokenshare.experiments.paper_runner import (
+    build_gate_c_dispatch_plans,
+    build_lean_3x3_matrix_plan,
+)
+from tokenshare.experiments.paper_suite_scale import load_paper_suite_scale_profile
+
+
+EXPERIMENT_IDS = (
+    "exp1_real_ai_feasibility",
+    "exp2_real_ai_scalability",
+    "exp3_real_ai_fault_recovery",
+    "exp4_real_ai_protocol_ablation",
+    "exp5_real_ai_model_endpoint_comparison",
+)
+
+
+@pytest.fixture(scope="module")
+def formal_inputs(tmp_path_factory: pytest.TempPathFactory):
+    tmp_path = tmp_path_factory.mktemp("formal-plan")
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+        monkeypatch.delenv("SILICONFLOW_API_KEY", raising=False)
+        assert os.environ.get("DEEPSEEK_API_KEY") is None
+        assert os.environ.get("SILICONFLOW_API_KEY") is None
+        inputs = _build_formal_inputs(tmp_path)
+    return inputs
+
+
+def test_formal_snapshot_freezes_every_current_full_plan_root_without_provider_calls(
+    formal_inputs,
+) -> None:
+    plans, catalog, budget, ai_api_configs, output_root = formal_inputs
+    snapshot = freeze_paper_formal_plan_snapshot(
+        dispatch_plans=plans,
+        catalog_manifest=catalog,
+        budget=budget,
+        ai_api_configs=ai_api_configs,
+        output_root=output_root,
+    )
+
+    assert snapshot.condition_count == 324
+    assert snapshot.root_run_count == 6_384
+    assert snapshot.first_attempt_ai_unit_count == 40_520
+    assert snapshot.provider_calls_made == 0
+    assert snapshot.snapshot_digest.startswith("sha256:")
+    assert snapshot.snapshot_digest == freeze_paper_formal_plan_snapshot(
+        dispatch_plans=plans,
+        catalog_manifest=catalog,
+        budget=budget,
+        ai_api_configs=ai_api_configs,
+        output_root=output_root,
+    ).snapshot_digest
+    assert len(snapshot.conditions) == snapshot.condition_count
+    assert len(snapshot.roots) == snapshot.root_run_count
+    assert snapshot.conditions[0].condition is plans[0].conditions[0]
+    assert (
+        snapshot.conditions[0].binding
+        is plans[0].condition_selection_bindings[0]
+    )
+    assert all(root.planned_ai_unit_ids for root in snapshot.roots)
+    assert all(root.split_profile_digest.startswith("sha256:") for root in snapshot.roots)
+    assert all(root.plugin_id in {"factorization", "lean_proof"} for root in snapshot.roots)
+    assert all(root.seed == root.condition.seed for root in snapshot.roots)
+    assert all(root.repeat_id == root.condition.repeat_id for root in snapshot.roots)
+    assert all(root.condition_digest == root.condition.condition_digest for root in snapshot.roots)
+    assert all(root.selection_digest == root.binding.selection.selection_digest for root in snapshot.roots)
+    exp5_root = next(
+        root
+        for root in snapshot.roots
+        if root.condition.experiment_id == "exp5_real_ai_model_endpoint_comparison"
+    )
+    assert exp5_root.endpoint_controls.provider_config_id == "siliconflow"
+    assert exp5_root.endpoint_controls.model_entry_id == exp5_root.condition.model_entry_id
+    assert exp5_root.endpoint_controls.provider_model_id == exp5_root.condition.provider_model_id
+    assert exp5_root.endpoint_controls.max_provider_attempts == 1
+    assert exp5_root.endpoint_controls.max_tokens == 32_768
+    assert exp5_root.endpoint_controls.timeout_seconds == 600
+
+
+def test_formal_binding_validator_rejects_condition_digest_mismatch(
+    formal_inputs,
+) -> None:
+    plan = formal_inputs[0][0]
+    condition = plan.conditions[0]
+    binding = plan.condition_selection_bindings[0]
+    drifted = FrozenConditionSelectionBinding(
+        condition_id=binding.condition_id,
+        condition_digest="sha256:" + "f" * 64,
+        selection=binding.selection,
+    )
+
+    with pytest.raises(ValueError, match="condition digest mismatch"):
+        validate_paper_formal_plan_bindings(
+            conditions=(condition,),
+            bindings=(drifted,),
+            catalog_manifest=formal_inputs[1],
+        )
+
+
+def test_formal_binding_validator_rejects_selection_case_absent_from_catalog(
+    formal_inputs,
+) -> None:
+    plan = formal_inputs[0][0]
+    condition = plan.conditions[0]
+    binding = plan.condition_selection_bindings[0]
+    drifted_selection = replace(
+        binding.selection,
+        ordered_case_ids=("missing_formal_case",),
+        expected_ai_unit_count=1,
+    )
+    drifted = FrozenConditionSelectionBinding.from_condition(
+        condition,
+        drifted_selection,
+    )
+
+    with pytest.raises(ValueError, match="absent from formal catalog"):
+        validate_paper_formal_plan_bindings(
+            conditions=(condition,),
+            bindings=(drifted,),
+            catalog_manifest=formal_inputs[1],
+        )
+
+
+def test_formal_binding_validator_rejects_duplicate_condition_binding(
+    formal_inputs,
+) -> None:
+    plan = formal_inputs[0][0]
+
+    with pytest.raises(ValueError, match="duplicate condition binding"):
+        validate_paper_formal_plan_bindings(
+            conditions=(plan.conditions[0],),
+            bindings=(
+                plan.condition_selection_bindings[0],
+                plan.condition_selection_bindings[0],
+            ),
+            catalog_manifest=formal_inputs[1],
+        )
+
+
+def _build_formal_inputs(tmp_path: Path):
+    catalog = load_paper_catalogs(
+        factorization_path="benchmarks/paper/factorization_catalog.v2.jsonl",
+        lean_path="benchmarks/paper/lean_catalog.v1.jsonl",
+        lean_lemma_graph_path="benchmarks/paper/lean_lemma_graph_catalog.v1.jsonl",
+    )
+    baseline_profile = load_exp1_pilot_profile(
+        "benchmarks/paper/exp1_minimal_pilot_profile.v3.json"
+    )
+    baseline_identity = baseline_profile.model_endpoint_identity.to_dict()
+    baseline_binding = {
+        **baseline_identity,
+        "model_entry_id": baseline_identity["selected_entry_id"],
+        "request_controls": dict(EXP1_FORMAL_REQUEST_CONTROLS),
+    }
+    exp5_configs = load_provider_config_map(
+        {"siliconflow": "benchmarks/paper/exp5_siliconflow_provider_config.v3.json"}
+    )
+    exp5_preflight = build_model_endpoint_cohort_preflight(
+        cohort=load_model_endpoint_cohort(
+            "benchmarks/paper/model_comparison_cohort.v3.json"
+        ),
+        entry_map=load_model_entry_map(
+            "benchmarks/paper/model_comparison_entry_map.v3.json"
+        ),
+        provider_configs=exp5_configs,
+        require_smoke_evidence=False,
+        smoke_evidence_bundle=None,
+    )
+    member_plans = exp5_preflight["member_plans"]
+    expected_secret_reasons = {"missing_api_key_env"}
+    assert exp5_preflight["ineligible_members"]
+    assert all(
+        set(item["blocked_reasons"]) == expected_secret_reasons
+        for item in exp5_preflight["ineligible_members"]
+    )
+    for member_plan in member_plans.values():
+        assert set(member_plan["blocked_reasons"]) == expected_secret_reasons
+        member_plan["api_key_env"] = "SILICONFLOW_API_KEY"
+        member_plan["status"] = "planned"
+        member_plan["blocked_reasons"] = []
+    exp5_preflight.update(
+        {
+            "status": "planned",
+            "paper_eligible_possible": True,
+            "blocked_reason": None,
+            "ineligibility_reasons": [],
+            "ineligible_members": [],
+        }
+    )
+    readiness = build_lean_3x3_matrix_plan(catalog_manifest=catalog)
+    plans = build_gate_c_dispatch_plans(
+        catalog_manifest=catalog,
+        lean_3x3_matrix=readiness,
+        experiment_ids=EXPERIMENT_IDS,
+        baseline_endpoint_binding=baseline_binding,
+        model_endpoint_cohort_preflight=exp5_preflight,
+        paper_suite_scale_profile=load_paper_suite_scale_profile(
+            "benchmarks/paper/paper_suite_scale_profile.v1.json"
+        ),
+        output_root=tmp_path,
+    )
+    conditions = tuple(
+        condition for plan in plans for condition in plan.conditions
+    )
+    frozen_selections = tuple(
+        {
+            **binding.selection.to_dict(),
+            "condition_id": binding.condition_id,
+            "condition_digest": binding.condition_digest,
+        }
+        for plan in plans
+        for binding in plan.condition_selection_bindings
+    )
+    budget = plan_paper_suite(
+        catalog_manifest=catalog,
+        conditions=conditions,
+        max_provider_attempts_per_ai_unit=1,
+        token_upper_bound_per_provider_attempt=304_096,
+        token_upper_bound_by_endpoint_identity_digest=(
+            build_exp5_v3_token_ceiling_mapping(exp5_preflight)
+        ),
+        cost_upper_bound_per_provider_attempt=0.05,
+        plan_only=True,
+        lean_3x3_matrix=readiness,
+        model_endpoint_cohort_preflight=exp5_preflight,
+        frozen_selections=frozen_selections,
+        endpoint_identity={
+            "baseline": baseline_binding,
+            "model_endpoint_cohort_preflight": exp5_preflight,
+        },
+        request_limits=dict(EXP1_FORMAL_REQUEST_CONTROLS),
+    )
+    ai_api_configs = {
+        baseline_identity["provider_config_id"]: baseline_profile.source_provider_config,
+        **exp5_configs,
+        APPROVED_ENDPOINT_BINDINGS_KEY: {
+            "exp5_real_ai_model_endpoint_comparison": exp5_preflight
+        },
+    }
+
+    return plans, catalog, budget, ai_api_configs, tmp_path

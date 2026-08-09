@@ -34,6 +34,7 @@ from tokenshare.experiments.paper_exp4_ablation_runner import (
     run_exp4_condition,
     summarize_exp4_ablation,
     validate_exp4_condition,
+    validate_exp4_condition_matrix,
 )
 from tokenshare.experiments.paper_models import PaperConditionResult, PaperStatus
 from tokenshare.experiments.paper_formal_callbacks import run_exp4_ablation_strategy
@@ -140,6 +141,23 @@ def test_exp4_v2_suite_scale_keeps_all_modes_repeats_and_lean_slices() -> None:
         mode.value for mode in EXP4_MODES
     }
     assert {condition.repeat_id for condition in conditions} == {0, 1, 2}
+
+
+def test_exp4_plan_time_validator_accepts_only_the_complete_v2_matrix() -> None:
+    context = _context(catalog=_prepared_catalog_v2())
+    conditions = expand_exp4_conditions(context)
+    selections = freeze_exp4_case_selections(context, conditions)
+
+    validate_exp4_condition_matrix(
+        conditions,
+        selections,
+    )
+
+    with pytest.raises(ValueError, match="condition matrix drift"):
+        validate_exp4_condition_matrix(
+            conditions[:-1],
+            selections[:-1],
+        )
 
 
 def test_exp4_accepts_complete_baseline_request_policy_and_normal_profile() -> None:

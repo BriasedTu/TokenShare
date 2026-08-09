@@ -1104,6 +1104,46 @@ def _build_canonical_direct_collector(
     )
 
 
+def validate_paper_formal_suite_plan(
+    *,
+    dispatch_plans: Sequence[PaperExperimentDispatchPlan],
+    catalog_manifest: Any,
+    budget: PaperBudgetResult,
+    output_root: str | Path,
+    ai_api_configs: Mapping[str, Any],
+    hard_limits: Mapping[str, Any],
+    root_case_filter: Mapping[str, Sequence[str]] | None = None,
+) -> tuple[
+    tuple[
+        PaperExperimentDispatchPlan,
+        tuple[tuple[Any, Any], ...],
+    ],
+    ...,
+]:
+    """只读验证正式计划可被 runner 调度，不创建 evidence 或 provider 调用。"""
+
+    plans = tuple(dispatch_plans)
+    normalized_root_filter = _normalize_root_case_filter(
+        plans=plans,
+        root_case_filter=root_case_filter,
+    )
+    return _validate_suite_inputs(
+        dispatch_plans=plans,
+        catalog_manifest=catalog_manifest,
+        budget=budget,
+        budget_approval={
+            "approval_mode": "formal_plan_validation",
+            "budget_digest": budget.budget_digest,
+        },
+        output_root=output_root,
+        ai_api_configs=ai_api_configs,
+        hard_limits=hard_limits,
+        resume=False,
+        replay_only=False,
+        root_case_filter=normalized_root_filter,
+    )
+
+
 def execute_paper_formal_suite(
     *,
     dispatch_plans: Sequence[PaperExperimentDispatchPlan],
