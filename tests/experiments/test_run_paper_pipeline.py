@@ -1477,7 +1477,12 @@ def test_results_first_matrix8_trace_adapter_runs_exactly_four_eight_root_smokes
             provider_attempt_count=0,
             experiment_ids=kwargs["execution_plan"].experiment_ids,
             run_count=8,
-            condition_count=8,
+            condition_count=(
+                7
+                if kwargs["execution_plan"].experiment_ids
+                == ("exp1_real_ai_feasibility",)
+                else 8
+            ),
         ),
     )
     request = pipeline.PipelineCommandRequest(
@@ -1549,7 +1554,12 @@ def test_results_first_matrix8_trace_rejects_nonterminal_or_partial_suite_result
             "provider_attempt_count": 0,
             "experiment_ids": kwargs["execution_plan"].experiment_ids,
             "run_count": 8,
-            "condition_count": 8,
+            "condition_count": (
+                7
+                if kwargs["execution_plan"].experiment_ids
+                == ("exp1_real_ai_feasibility",)
+                else 8
+            ),
         }
         body.update(override)
         return SimpleNamespace(**body)

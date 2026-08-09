@@ -568,7 +568,13 @@ def _run_trace_adapter(request: PipelineCommandRequest) -> Mapping[str, object]:
             if type(run_count) is not int or run_count != 8:
                 raise ValueError("results-first trace suite root run count mismatch")
             condition_count = getattr(result, "condition_count", None)
-            if type(condition_count) is not int or condition_count != 8:
+            expected_condition_count = (
+                7 if expected_experiment_id == "exp1_real_ai_feasibility" else 8
+            )
+            if (
+                type(condition_count) is not int
+                or condition_count != expected_condition_count
+            ):
                 raise ValueError("results-first trace suite condition count mismatch")
             statuses.append(status)
             root_run_count += run_count
