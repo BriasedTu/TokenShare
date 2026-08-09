@@ -192,13 +192,24 @@ def _build_argument_parser() -> argparse.ArgumentParser:
         return command_parser
 
     common("validate-profile")
-    common("plan-bank")
+    plan_bank = common("plan-bank")
+    plan_bank.add_argument("--results-first-matrix8", action="store_true")
+    plan_bank.add_argument("--plan-bundle-root")
 
     provider_parsers: dict[str, argparse.ArgumentParser] = {}
     for name in _PROVIDER_SCOPES:
         command_parser = common(name)
         provider_parsers[name] = command_parser
-        command_parser.add_argument("--receipt", required=True)
+        if name == "acquire-bank":
+            authorization = command_parser.add_mutually_exclusive_group(
+                required=True
+            )
+            authorization.add_argument("--receipt")
+            authorization.add_argument(
+                "--results-first-matrix8", action="store_true"
+            )
+        else:
+            command_parser.add_argument("--receipt", required=True)
         command_parser.add_argument(
             "--allow-provider-calls",
             action="store_true",
@@ -271,6 +282,17 @@ def _load_acquisition_bundle(path: str | Path):
 
 
 _ACQUISITION_BUNDLE_LOADER = _load_acquisition_bundle
+
+
+def _build_results_first_authorization(**kwargs: object):
+    from tokenshare.experiments.paper_response_bank import (
+        establish_results_first_acquisition_authorization,
+    )
+
+    return establish_results_first_acquisition_authorization(**kwargs)
+
+
+_RESULTS_FIRST_AUTHORITY_BUILDER = _build_results_first_authorization
 
 
 def _build_formal_authority(**kwargs: object):
@@ -356,6 +378,28 @@ def _validate_profile_adapter(
 
 
 def _plan_bank_adapter(request: PipelineCommandRequest) -> Mapping[str, object]:
+    if request.serialized_arguments.get("results_first_matrix8") is True:
+        if request.plan_bundle_root is None:
+            raise ValueError(
+                "results-first plan-bank requires --plan-bundle-root"
+            )
+        from tokenshare.experiments.run_paper_experiments import (
+            create_results_first_matrix8_acquisition_bundle,
+        )
+
+        bundle = create_results_first_matrix8_acquisition_bundle(
+            pipeline_profile_digest=request.profile.profile_digest,
+            bundle_root=request.plan_bundle_root,
+        )
+        return _service_result(
+            request,
+            plan_digest=bundle.authorized_plan_digest,
+            inventory_digest=bundle.inventory_digest,
+            bundle_digest=bundle.bundle_digest,
+            inventory_entry_count=len(bundle.inventory_rows),
+            paper_eligible=False,
+            facility_gate_verified=False,
+        )
     from tokenshare.experiments.paper_online_checks import (
         freeze_paper_online_checks_plan,
     )
@@ -626,8 +670,6 @@ def _acquisition_service_input_from_persisted_authorities(
         raise ValueError("acquire-bank requires --plan-bundle-root")
     if request.output_root is None:
         raise ValueError("acquire-bank requires an output root")
-    if type(request.provider_authorization) is not PaidAuthorizationValidation:
-        raise ValueError("acquire-bank requires Task26 paid authorization")
     from tokenshare.executors.ai_api_transport import (
         UrlLibDeepSeekTransport,
         UrlLibOpenAITransport,
@@ -635,7 +677,9 @@ def _acquisition_service_input_from_persisted_authorities(
     )
     from tokenshare.experiments.paper_budget_ledger import PaperBudgetLedger
     from tokenshare.experiments.paper_response_bank import (
+        ResultsFirstAcquisitionAuthorization,
         load_acquisition_plan_bundle,
+        results_first_response_bank_manifest_for_bundle,
         response_bank_manifest_for_bundle,
     )
 
@@ -646,8 +690,22 @@ def _acquisition_service_input_from_persisted_authorities(
         raise ValueError("acquisition bundle inventory digest mismatch")
     if bundle.profile_digest != request.profile.profile_digest:
         raise ValueError("acquisition bundle profile digest mismatch")
-    manifest = response_bank_manifest_for_bundle(
-        bundle, request.provider_authorization
+    paid_authorization = request.provider_authorization
+    facility_authorization = None
+    if type(paid_authorization) is PaidAuthorizationValidation:
+        manifest = response_bank_manifest_for_bundle(bundle, paid_authorization)
+    elif type(paid_authorization) is ResultsFirstAcquisitionAuthorization:
+        facility_authorization = paid_authorization
+        paid_authorization = None
+        manifest = results_first_response_bank_manifest_for_bundle(
+            bundle, facility_authorization
+        )
+    else:
+        raise ValueError("acquire-bank requires an explicit acquisition authority")
+    authorization_arguments = (
+        {"paid_authorization": paid_authorization}
+        if paid_authorization is not None
+        else {"facility_authorization": facility_authorization}
     )
     ledger = PaperBudgetLedger(
         request.output_root / "acquisition_budget.v1.sqlite3",
@@ -685,7 +743,7 @@ def _acquisition_service_input_from_persisted_authorities(
             "inventory_digest": bundle.inventory_digest,
             "inventory_rows": bundle.inventory_rows,
             "budget_ledger": ledger,
-            "paid_authorization": request.provider_authorization,
+            **authorization_arguments,
             "invocation_mode": request.provider_authorization.output_mode,
             "transport": OfficialTransportSet(),
             "secret_resolver": resolve_secret,
@@ -1028,10 +1086,15 @@ def _json_result(
     else:
         raise TypeError("pipeline delegate must return a mapping or to_dict result")
     authorization = request.provider_authorization
+    paid_authorization = (
+        authorization
+        if type(authorization) is PaidAuthorizationValidation
+        else None
+    )
     receipt_digest = (
         None
-        if authorization is None
-        else authorization.receipt.receipt_digest
+        if paid_authorization is None
+        else paid_authorization.receipt.receipt_digest
     )
     marker_digest = (
         None
@@ -1061,7 +1124,7 @@ def _json_result(
             request.profile.budget_digest
             if authorization is None
             else getattr(
-                authorization.receipt,
+                getattr(authorization, "receipt", authorization),
                 "budget_digest",
                 request.profile.budget_digest,
             )
@@ -1073,12 +1136,25 @@ def _json_result(
         "evidence_class": str(body.get("evidence_class", request.evidence_class)),
         "provider_calls": int(body.get("provider_calls", 0)),
     }
+    if authorization is not None and paid_authorization is None:
+        result.update(
+            {
+                "facility_authorization_schema": getattr(
+                    authorization, "schema_version", None
+                ),
+                "facility_authorization_digest": getattr(
+                    authorization, "authorization_digest", None
+                ),
+            }
+        )
     for name in (
         "stage",
         "classification",
         "blocked_reasons",
         "facility_gate_verified",
         "paper_eligible",
+        "bundle_digest",
+        "inventory_entry_count",
     ):
         if name in body:
             result[name] = body[name]
@@ -1139,25 +1215,38 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         profile = _PROFILE_LOADER(args.profile)
         provider = args.command in _PROVIDER_SCOPES
+        results_first_matrix8 = bool(
+            getattr(args, "results_first_matrix8", False)
+        )
+        if args.command == "plan-bank" and (
+            results_first_matrix8
+            != (getattr(args, "plan_bundle_root", None) is not None)
+        ):
+            raise ValueError(
+                "results-first plan-bank requires both flag and bundle root"
+            )
         authorization = None
         formal_authority = None
         if provider:
             output_mode = "new_run" if args.new_run else "resume"
             authorization_budget_digest = profile.budget_digest
             plan_bundle_root = getattr(args, "plan_bundle_root", None)
+            acquisition_bundle = None
             if args.command == "acquire-bank" and plan_bundle_root is not None:
-                bundle = _ACQUISITION_BUNDLE_LOADER(plan_bundle_root)
-                if bundle.authorized_plan_digest != args.plan_digest:
+                acquisition_bundle = _ACQUISITION_BUNDLE_LOADER(plan_bundle_root)
+                if acquisition_bundle.authorized_plan_digest != args.plan_digest:
                     raise ValueError("acquisition bundle plan digest mismatch")
-                if bundle.inventory_digest != args.inventory_digest:
+                if acquisition_bundle.inventory_digest != args.inventory_digest:
                     raise ValueError("acquisition bundle inventory digest mismatch")
-                if bundle.profile_digest != profile.profile_digest:
+                if acquisition_bundle.profile_digest != profile.profile_digest:
                     raise ValueError("acquisition bundle profile digest mismatch")
-                if bundle.prompt_admission_profile_digest != (
+                if acquisition_bundle.prompt_admission_profile_digest != (
                     profile.prompt_admission_profile_digest
                 ):
                     raise ValueError("acquisition bundle admission digest mismatch")
-                authorization_budget_digest = bundle.full_budget.budget_digest
+                authorization_budget_digest = (
+                    acquisition_bundle.full_budget.budget_digest
+                )
             if args.command in {
                 "run-online-checks",
                 "run-exp1-online",
@@ -1176,30 +1265,46 @@ def main(argv: Sequence[str] | None = None) -> int:
                 if formal_authority.inventory_digest != args.inventory_digest:
                     raise ValueError("formal authority inventory digest mismatch")
                 authorization_budget_digest = formal_authority.budget_digest
-            receipt = _RECEIPT_LOADER(args.receipt)
-            from tokenshare.experiments.paper_formal_gate import (
-                selected_experiments_for_provider_scope,
-            )
+            if results_first_matrix8:
+                if args.command != "acquire-bank":
+                    raise ValueError(
+                        "results-first provider authorization is acquisition-only"
+                    )
+                if acquisition_bundle is None:
+                    raise ValueError(
+                        "results-first acquisition requires --plan-bundle-root"
+                    )
+                authorization = _RESULTS_FIRST_AUTHORITY_BUILDER(
+                    bundle=acquisition_bundle,
+                    output_root=args.output_root,
+                    output_mode=output_mode,
+                    allow_provider_calls=args.allow_provider_calls,
+                )
+            else:
+                receipt = _RECEIPT_LOADER(args.receipt)
+                from tokenshare.experiments.paper_formal_gate import (
+                    selected_experiments_for_provider_scope,
+                )
 
-            authorization = _RECEIPT_VALIDATOR(
-                receipt=receipt,
-                requested_scope=_PROVIDER_SCOPES[args.command],
-                authorized_plan_digest=args.plan_digest,
-                profile_digest=profile.profile_digest,
-                budget_digest=authorization_budget_digest,
-                inventory_digest=args.inventory_digest,
-                prompt_admission_profile_digest=(
-                    profile.prompt_admission_profile_digest
-                ),
-                selected_experiments=selected_experiments_for_provider_scope(
-                    _PROVIDER_SCOPES[args.command]
-                ),
-                output_root=args.output_root,
-                output_mode=output_mode,
-                action="dispatch",
-                allow_provider_calls=args.allow_provider_calls,
-                now=_UTC_NOW(),
-            )
+                authorization = _RECEIPT_VALIDATOR(
+                    receipt=receipt,
+                    requested_scope=_PROVIDER_SCOPES[args.command],
+                    authorized_plan_digest=args.plan_digest,
+                    profile_digest=profile.profile_digest,
+                    budget_digest=authorization_budget_digest,
+                    inventory_digest=args.inventory_digest,
+                    prompt_admission_profile_digest=(
+                        profile.prompt_admission_profile_digest
+                    ),
+                    selected_experiments=selected_experiments_for_provider_scope(
+                        _PROVIDER_SCOPES[args.command]
+                    ),
+                    output_root=args.output_root,
+                    output_mode=output_mode,
+                    action="dispatch",
+                    allow_provider_calls=args.allow_provider_calls,
+                    now=_UTC_NOW(),
+                )
             if args.command in _FORMAL_GATED_COMMANDS:
                 binding = _paid_scope_binding(
                     validation=authorization,
@@ -1348,7 +1453,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             if formal_authority.inventory_digest != args.inventory_digest:
                 raise ValueError("formal authority inventory digest mismatch")
         evidence_class = (
-            "online_real_provider"
+            "results_first_real_provider_acquisition"
+            if provider and results_first_matrix8
+            else "online_real_provider"
             if provider
             else _EVIDENCE_CLASSES[args.command]
         )
@@ -1365,10 +1472,15 @@ def main(argv: Sequence[str] | None = None) -> int:
                 else ("new_run" if args.new_run else "resume")
             ),
             "resume": bool(getattr(args, "resume", False)),
+            "results_first_matrix8": results_first_matrix8,
         }
         request = PipelineCommandRequest(
             command=args.command,
-            scope=_PROVIDER_SCOPES.get(args.command, args.command),
+            scope=(
+                "results_first_matrix8_acquisition"
+                if provider and results_first_matrix8
+                else _PROVIDER_SCOPES.get(args.command, args.command)
+            ),
             evidence_class=evidence_class,
             profile=profile,
             provider_authorization=authorization,

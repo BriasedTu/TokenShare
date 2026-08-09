@@ -21,6 +21,9 @@ ObjectRole = Literal[
     "model_record",
 ]
 TerminalKind = Literal["success", "provider_failure"]
+RESULTS_FIRST_RESPONSE_BANK_MANIFEST_SCHEMA_VERSION = (
+    "tokenshare.results_first_response_bank_manifest.v1"
+)
 
 OBJECT_ROLES = (
     "request_body",
@@ -189,11 +192,88 @@ class ResponseBankManifest:
 
     @classmethod
     def from_dict(cls, value: Mapping[str, Any]) -> "ResponseBankManifest":
+        if value.get("schema_version") == (
+            RESULTS_FIRST_RESPONSE_BANK_MANIFEST_SCHEMA_VERSION
+        ):
+            return ResultsFirstResponseBankManifest.from_dict(value)
         _require_exact_fields(value, cls)
         converted = dict(value)
         converted["entry_ids"] = tuple(converted["entry_ids"])
         converted["object_role_schema"] = tuple(converted["object_role_schema"])
         manifest = cls(**converted)
+        if manifest.manifest_digest != _manifest_digest(manifest):
+            raise ValueError("manifest digest mismatch")
+        return manifest
+
+
+@dataclass(frozen=True, kw_only=True)
+class ResultsFirstResponseBankManifest:
+    """用户授权 smoke facility 的 bank manifest；绝不冒充 paid receipt。"""
+
+    schema_version: str
+    authorization_kind: str
+    bank_root_id: str
+    manifest_digest: str
+    profile_digest: str
+    budget_digest: str
+    inventory_digest: str
+    provider_config_digest: str
+    entry_ids: tuple[str, ...]
+    object_role_schema: tuple[str, ...]
+    terminal_entry_count: int
+    created_by_results_first_authorization_digest: str
+    root_binding_marker_digest: str
+
+    @classmethod
+    def create(
+        cls,
+        *,
+        bank_root_id: str,
+        profile_digest: str,
+        budget_digest: str,
+        inventory_digest: str,
+        provider_config_digest: str,
+        entry_ids: Sequence[str],
+        object_role_schema: Sequence[str],
+        terminal_entry_count: int,
+        authorization_digest: str,
+    ) -> "ResultsFirstResponseBankManifest":
+        canonical_entry_ids = tuple(sorted(entry_ids))
+        if len(set(canonical_entry_ids)) != len(canonical_entry_ids):
+            raise ValueError("manifest entry_ids must be unique")
+        value = cls(
+            schema_version=RESULTS_FIRST_RESPONSE_BANK_MANIFEST_SCHEMA_VERSION,
+            authorization_kind="user_authorized_smoke_facility",
+            bank_root_id=bank_root_id,
+            manifest_digest="",
+            profile_digest=profile_digest,
+            budget_digest=budget_digest,
+            inventory_digest=inventory_digest,
+            provider_config_digest=provider_config_digest,
+            entry_ids=canonical_entry_ids,
+            object_role_schema=tuple(object_role_schema),
+            terminal_entry_count=terminal_entry_count,
+            created_by_results_first_authorization_digest=authorization_digest,
+            root_binding_marker_digest="",
+        )
+        return replace(value, manifest_digest=_manifest_digest(value))
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(
+        cls, value: Mapping[str, Any]
+    ) -> "ResultsFirstResponseBankManifest":
+        _require_exact_fields(value, cls)
+        converted = dict(value)
+        converted["entry_ids"] = tuple(converted["entry_ids"])
+        converted["object_role_schema"] = tuple(converted["object_role_schema"])
+        manifest = cls(**converted)
+        if manifest.schema_version != RESULTS_FIRST_RESPONSE_BANK_MANIFEST_SCHEMA_VERSION:
+            raise ValueError("results-first manifest schema_version mismatch")
+        if manifest.authorization_kind != "user_authorized_smoke_facility":
+            raise ValueError("results-first manifest authorization kind mismatch")
         if manifest.manifest_digest != _manifest_digest(manifest):
             raise ValueError("manifest digest mismatch")
         return manifest

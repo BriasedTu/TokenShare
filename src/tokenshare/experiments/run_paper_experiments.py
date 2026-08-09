@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
+from decimal import Decimal
 from hashlib import sha256
 import json
 import os
@@ -42,6 +43,7 @@ from tokenshare.experiments.paper_catalog_execution_view import (
     build_prepared_mapping_execution_view,
     restore_catalog_execution_view,
 )
+from tokenshare.experiments.paper_resource_accounting import FrozenPricing
 from tokenshare.experiments.paper_model_policy import (
     PAPER_MODEL_ENDPOINT_COHORT_V3_MEMBER_IDS,
     build_model_endpoint_cohort_preflight,
@@ -180,6 +182,10 @@ DEFAULT_EXP5_MODEL_ENTRY_MAP = Path(
 DEFAULT_EXP5_PROVIDER_CONFIG = Path(
     "benchmarks/paper/exp5_siliconflow_provider_config.v3.json"
 )
+MATRIX8_SMOKE_PROFILE_PATHS = tuple(
+    Path(f"benchmarks/paper/paper_smoke_exp{number}_matrix8_profile.v1.json")
+    for number in range(1, 5)
+)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -194,6 +200,14 @@ class EPD027FormalServiceAuthority:
     gate_selection: PaperGateSelectionEnvelope | None = None
     gate_prerequisites: PaperGatePrerequisiteEnvelope | None = None
     publication_gate_factory: object | None = None
+
+
+@dataclass(frozen=True, kw_only=True)
+class Matrix8SmokePlanningContext:
+    catalog_manifest: PaperInputCatalogManifest
+    profiles: tuple[object, ...]
+    execution_plans: tuple[object, ...]
+    ai_api_config: object
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -3569,6 +3583,130 @@ def _matrix8_unified_factor_seed(case_id: str) -> int:
         }
     )
     return int(digest.removeprefix("sha256:")[:8], 16)
+
+
+def build_results_first_matrix8_planning_context(
+    *,
+    output_root: str | Path,
+) -> Matrix8SmokePlanningContext:
+    """复算四份 canonical matrix8 smoke plan；不读取 secret、不调用 provider。"""
+
+    root = Path(output_root).resolve(strict=False)
+    catalog = _load_default_paper_catalogs()
+    lean_matrix = build_lean_3x3_matrix_plan(catalog_manifest=catalog)
+    planning_profile = load_exp1_pilot_profile(DEFAULT_EXP1_PILOT_PROFILE)
+    scale_profile = load_paper_suite_scale_profile(
+        DEFAULT_PAPER_SUITE_SCALE_PROFILE
+    )
+    profiles: list[object] = []
+    execution_plans: list[object] = []
+    for number, profile_path in enumerate(MATRIX8_SMOKE_PROFILE_PATHS, start=1):
+        profile = load_paper_smoke_profile(profile_path)
+        dispatch = build_gate_c_dispatch_plans(
+            catalog_manifest=catalog,
+            lean_3x3_matrix=lean_matrix,
+            experiment_ids=profile.experiment_ids,
+            baseline_endpoint_binding=_baseline_endpoint_binding(planning_profile),
+            model_endpoint_cohort_preflight=None,
+            paper_suite_scale_profile=scale_profile,
+            output_root=root / f"canonical-exp{number}",
+        )
+        dispatch = _with_exp2_regression_smoke_lean_plan(
+            dispatch_plans=dispatch,
+            profile=profile,
+            catalog_manifest=catalog,
+        )
+        dispatch = _with_exp3_regression_smoke_lean_plan(
+            dispatch_plans=dispatch,
+            profile=profile,
+            catalog_manifest=catalog,
+        )
+        execution = resolve_paper_smoke_execution_plan(
+            profile=profile,
+            dispatch_plans=dispatch,
+            catalog_id=catalog.catalog_id,
+            catalog_version=catalog.catalog_version,
+            catalog_digest=catalog.catalog_digest,
+            output_root=root / f"exp{number}",
+        )
+        execution = _with_matrix8_unified_factor_seed_execution_plan(
+            execution_plan=execution,
+            profile=profile,
+        )
+        profiles.append(profile)
+        execution_plans.append(execution)
+    return Matrix8SmokePlanningContext(
+        catalog_manifest=catalog,
+        profiles=tuple(profiles),
+        execution_plans=tuple(execution_plans),
+        ai_api_config=planning_profile.source_provider_config,
+    )
+
+
+def create_results_first_matrix8_acquisition_bundle(
+    *,
+    pipeline_profile_digest: str,
+    bundle_root: str | Path,
+):
+    """从四份 matrix8 profile 写入 fresh 166-entry acquisition bundle。"""
+
+    from tokenshare.experiments.paper_response_bank import (
+        build_matrix8_unified_acquisition_plan,
+        create_acquisition_plan_bundle,
+    )
+
+    root = Path(bundle_root).resolve()
+    planning_root = root.with_name(f"{root.name}.planning_artifacts")
+    if planning_root.exists():
+        raise FileExistsError(
+            f"matrix8 planning artifact root already exists: {planning_root}"
+        )
+    context = build_results_first_matrix8_planning_context(
+        output_root=planning_root
+    )
+    entry = next(
+        item
+        for item in context.ai_api_config.entries
+        if item.entry_id == EXP1_EXP4_REQUIRED_ENTRY_ID and item.enabled
+    )
+    pricing = entry.pricing
+    plan = build_matrix8_unified_acquisition_plan(
+        execution_plans=context.execution_plans,
+        catalog_manifest=context.catalog_manifest,
+        ai_api_config=context.ai_api_config,
+        entry_id=EXP1_EXP4_REQUIRED_ENTRY_ID,
+        planning_artifact_root=planning_root / "prepared",
+        requested_at="2026-08-09T00:00:00Z",
+        token_upper_bound=FORMAL_TOKEN_UPPER_BOUND_PER_PROVIDER_ATTEMPT,
+        cost_upper_bound=Decimal(
+            str(FORMAL_COST_UPPER_BOUND_PER_PROVIDER_ATTEMPT)
+        ),
+        frozen_pricing=FrozenPricing(
+            currency=str(pricing["currency"]),
+            input_per_million_tokens=Decimal(
+                str(pricing["uncached_input_per_million_tokens"])
+            ),
+            output_per_million_tokens=Decimal(
+                str(pricing["output_per_million_tokens"])
+            ),
+        ),
+    )
+    authorized_plan_digest = digest_json(
+        {
+            "schema_version": "tokenshare.results_first_matrix8_acquisition_plan.v1",
+            "combined_profile_digest": plan.combined_profile_digest,
+            "inventory_digest": plan.semantic_inventory_plan.inventory_digest,
+            "condition_candidate_count": plan.condition_candidate_count,
+        }
+    )
+    bundle = create_acquisition_plan_bundle(
+        root,
+        authorized_plan_digest=authorized_plan_digest,
+        profile_digest=pipeline_profile_digest,
+        semantic_inventory_plan=plan.semantic_inventory_plan,
+        acquisition_requests=plan.acquisition_requests,
+    )
+    return bundle
 
 
 def _smoke_case_planned_ai_unit_ids(case: Mapping[str, object]) -> tuple[str, ...]:

@@ -26,6 +26,7 @@ from tokenshare.executors.ai_api_request_identity import (
 from tokenshare.executors.response_bank import (
     OBJECT_ROLES,
     ExternalBankObjectLocator,
+    ResultsFirstResponseBankManifest,
     ResponseBankEntry,
     ResponseBankInventoryRow,
     ResponseBankManifest,
@@ -501,6 +502,162 @@ class AcquisitionIdentityError(RuntimeError):
     pass
 
 
+RESULTS_FIRST_ACQUISITION_AUTHORIZATION_SCHEMA_VERSION = (
+    "tokenshare.results_first_smoke_acquisition_authorization.v1"
+)
+RESULTS_FIRST_ACQUISITION_MARKER_SCHEMA_VERSION = (
+    "tokenshare.results_first_smoke_facility_marker.v1"
+)
+RESULTS_FIRST_ACQUISITION_MARKER_FILENAME = (
+    "results_first_smoke_facility_marker.v1.json"
+)
+
+
+@dataclass(frozen=True, kw_only=True)
+class ResultsFirstAcquisitionMarker:
+    schema_version: str
+    authorization_kind: str
+    authorization_digest: str
+    authorized_plan_digest: str
+    profile_digest: str
+    budget_digest: str
+    inventory_digest: str
+    prompt_admission_profile_digest: str
+    provider_config_digest: str
+    output_root_path_digest: str
+    marker_digest: str
+
+    def to_dict(self) -> dict[str, str]:
+        return asdict(self)
+
+
+@dataclass(frozen=True, kw_only=True)
+class ResultsFirstAcquisitionAuthorization:
+    """用户显式授权的 smoke acquisition facility；不是 paid receipt。"""
+
+    schema_version: str
+    authorization_kind: str
+    authorization_digest: str
+    authorized_plan_digest: str
+    profile_digest: str
+    budget_digest: str
+    inventory_digest: str
+    prompt_admission_profile_digest: str
+    provider_config_digest: str
+    output_root_path_digest: str
+    selected_experiments: tuple[str, ...]
+    marker: ResultsFirstAcquisitionMarker
+    output_mode: str
+    authorization_state: str
+    provider_dispatch_allowed: bool
+
+
+def establish_results_first_acquisition_authorization(
+    *,
+    bundle: "AcquisitionPlanBundle",
+    output_root: str | Path,
+    output_mode: str,
+    allow_provider_calls: bool,
+) -> ResultsFirstAcquisitionAuthorization:
+    """以显式 results-first flag 建立 create-new/resume facility marker。"""
+
+    bundle.validate()
+    if output_mode not in {"new_run", "resume"}:
+        raise AcquisitionAuthorizationError("invalid acquisition invocation mode")
+    if allow_provider_calls is not True:
+        raise AcquisitionAuthorizationError(
+            "results-first acquisition requires explicit provider-call authorization"
+        )
+    root = Path(output_root).resolve()
+    selected_experiments = (
+        "exp1_real_ai_feasibility",
+        "exp2_real_ai_scalability",
+        "exp3_real_ai_fault_recovery",
+        "exp4_real_ai_protocol_ablation",
+    )
+    identity = {
+        "schema_version": RESULTS_FIRST_ACQUISITION_AUTHORIZATION_SCHEMA_VERSION,
+        "authorization_kind": "user_authorized_smoke_facility",
+        "authorized_plan_digest": bundle.authorized_plan_digest,
+        "profile_digest": bundle.profile_digest,
+        "budget_digest": bundle.full_budget.budget_digest,
+        "inventory_digest": bundle.inventory_digest,
+        "prompt_admission_profile_digest": (
+            bundle.prompt_admission_profile_digest
+        ),
+        "provider_config_digest": bundle.provider_config_digest,
+        "output_root_path_digest": output_root_path_digest(root),
+        "selected_experiments": list(selected_experiments),
+    }
+    authorization_digest = canonical_digest(identity)
+    marker_body = {
+        "schema_version": RESULTS_FIRST_ACQUISITION_MARKER_SCHEMA_VERSION,
+        "authorization_kind": "user_authorized_smoke_facility",
+        "authorization_digest": authorization_digest,
+        "authorized_plan_digest": bundle.authorized_plan_digest,
+        "profile_digest": bundle.profile_digest,
+        "budget_digest": bundle.full_budget.budget_digest,
+        "inventory_digest": bundle.inventory_digest,
+        "prompt_admission_profile_digest": (
+            bundle.prompt_admission_profile_digest
+        ),
+        "provider_config_digest": bundle.provider_config_digest,
+        "output_root_path_digest": output_root_path_digest(root),
+    }
+    marker = ResultsFirstAcquisitionMarker(
+        **marker_body,
+        marker_digest=canonical_digest(marker_body),
+    )
+    marker_path = root / RESULTS_FIRST_ACQUISITION_MARKER_FILENAME
+    if output_mode == "new_run":
+        root.mkdir(parents=True, exist_ok=False)
+        try:
+            with marker_path.open("x", encoding="utf-8", newline="\n") as handle:
+                json.dump(
+                    marker.to_dict(),
+                    handle,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
+                handle.write("\n")
+        except BaseException:
+            if marker_path.exists():
+                marker_path.unlink()
+            root.rmdir()
+            raise
+    else:
+        try:
+            persisted = json.loads(marker_path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+            raise AcquisitionAuthorizationError(
+                "results-first facility marker is missing or partial"
+            ) from exc
+        if persisted != marker.to_dict():
+            raise AcquisitionAuthorizationError(
+                "results-first facility marker identity mismatch"
+            )
+    return ResultsFirstAcquisitionAuthorization(
+        schema_version=RESULTS_FIRST_ACQUISITION_AUTHORIZATION_SCHEMA_VERSION,
+        authorization_kind="user_authorized_smoke_facility",
+        authorized_plan_digest=bundle.authorized_plan_digest,
+        profile_digest=bundle.profile_digest,
+        budget_digest=bundle.full_budget.budget_digest,
+        inventory_digest=bundle.inventory_digest,
+        prompt_admission_profile_digest=(
+            bundle.prompt_admission_profile_digest
+        ),
+        provider_config_digest=bundle.provider_config_digest,
+        output_root_path_digest=output_root_path_digest(root),
+        selected_experiments=selected_experiments,
+        authorization_digest=authorization_digest,
+        marker=marker,
+        output_mode=output_mode,
+        authorization_state="user_authorized_smoke_facility",
+        provider_dispatch_allowed=True,
+    )
+
+
 @dataclass(frozen=True, kw_only=True)
 class PaidAcquisitionContext:
     """历史 evidence fixture 使用的 Task 26 paid context 值对象。"""
@@ -959,11 +1116,57 @@ def response_bank_manifest_for_bundle(
     )
 
 
+def results_first_response_bank_manifest_for_bundle(
+    bundle: AcquisitionPlanBundle,
+    authorization: ResultsFirstAcquisitionAuthorization,
+) -> ResultsFirstResponseBankManifest:
+    """把 smoke bundle 绑定到显式 facility authorization，而非 paid receipt。"""
+
+    bundle.validate()
+    if type(authorization) is not ResultsFirstAcquisitionAuthorization:
+        raise AcquisitionAuthorizationError(
+            "results-first manifest requires facility authorization"
+        )
+    expected = {
+        "authorized_plan_digest": bundle.authorized_plan_digest,
+        "profile_digest": bundle.profile_digest,
+        "budget_digest": bundle.full_budget.budget_digest,
+        "inventory_digest": bundle.inventory_digest,
+        "prompt_admission_profile_digest": (
+            bundle.prompt_admission_profile_digest
+        ),
+        "provider_config_digest": bundle.provider_config_digest,
+    }
+    for name, value in expected.items():
+        if getattr(authorization, name) != value:
+            raise AcquisitionAuthorizationError(
+                f"facility authorization {name} does not match acquisition bundle"
+            )
+    bank_root_id = canonical_digest(
+        {
+            "schema_version": "tokenshare.results_first_response_bank_root_identity.v1",
+            "bundle_digest": bundle.bundle_digest,
+            "authorization_digest": authorization.authorization_digest,
+        }
+    )
+    return ResultsFirstResponseBankManifest.create(
+        bank_root_id=bank_root_id,
+        profile_digest=bundle.profile_digest,
+        budget_digest=bundle.full_budget.budget_digest,
+        inventory_digest=bundle.inventory_digest,
+        provider_config_digest=bundle.provider_config_digest,
+        entry_ids=tuple(row.entry_id for row in bundle.inventory_rows),
+        object_role_schema=OBJECT_ROLES,
+        terminal_entry_count=len(bundle.inventory_rows),
+        authorization_digest=authorization.authorization_digest,
+    )
+
+
 def finalize_acquisition_child_bank(
     *,
     orchestrator: "ResponseBankAcquisitionOrchestrator",
     bundle: AcquisitionPlanBundle,
-    manifest: ResponseBankManifest,
+    manifest: ResponseBankManifest | ResultsFirstResponseBankManifest,
     batch_result: AcquisitionBatchResult,
 ) -> ResponseBankResolver | None:
     """complete batch 仅初始化一次 child bank；resume 只重开并复验。"""
@@ -1025,7 +1228,8 @@ class ResponseBankAcquisitionOrchestrator:
         inventory_digest: str,
         inventory_rows: Sequence[ResponseBankInventoryRow],
         budget_ledger: PaperBudgetLedger,
-        paid_authorization: PaidAuthorizationValidation,
+        paid_authorization: PaidAuthorizationValidation | None = None,
+        facility_authorization: ResultsFirstAcquisitionAuthorization | None = None,
         invocation_mode: str,
         transport: Any,
         secret_resolver: Callable[[str], str],
@@ -1051,17 +1255,28 @@ class ResponseBankAcquisitionOrchestrator:
             raise AcquisitionIdentityError("inventory digest does not match rows")
         self.budget_ledger = budget_ledger
         self.paid_authorization = paid_authorization
-        if type(paid_authorization) is not PaidAuthorizationValidation:
+        self.facility_authorization = facility_authorization
+        if (type(paid_authorization) is PaidAuthorizationValidation) == (
+            type(facility_authorization) is ResultsFirstAcquisitionAuthorization
+        ):
             raise AcquisitionAuthorizationError(
-                "acquisition requires Task26 PaidAuthorizationValidation"
+                "acquisition requires exactly one explicit authorization"
             )
-        self.paid_scope_digest = canonical_digest(
-            {
-                "schema_version": "tokenshare.paid_acquisition_scope.v1",
-                "scope": paid_authorization.receipt.scope,
-                "receipt_digest": paid_authorization.receipt.receipt_digest,
-            }
-        )
+        if paid_authorization is not None:
+            self.authorization_kind = "paid_receipt"
+            self.authorization_digest = paid_authorization.receipt.receipt_digest
+            self.paid_scope_digest = canonical_digest(
+                {
+                    "schema_version": "tokenshare.paid_acquisition_scope.v1",
+                    "scope": paid_authorization.receipt.scope,
+                    "receipt_digest": paid_authorization.receipt.receipt_digest,
+                }
+            )
+        else:
+            assert facility_authorization is not None
+            self.authorization_kind = facility_authorization.authorization_kind
+            self.authorization_digest = facility_authorization.authorization_digest
+            self.paid_scope_digest = None
         self.invocation_mode = invocation_mode
         self.transport = transport
         self.secret_resolver = secret_resolver
@@ -1069,8 +1284,12 @@ class ResponseBankAcquisitionOrchestrator:
         self.crash_hook = crash_hook
         self.durability_hook = durability_hook
         self._base_lifecycle: list[str] = []
-        self._validate_paid_context()
-        self._base_lifecycle.append("paid_context_validated")
+        self._validate_authorization_context()
+        self._base_lifecycle.append(
+            "paid_context_validated"
+            if paid_authorization is not None
+            else "facility_context_validated"
+        )
         if invocation_mode not in {"new_run", "resume"}:
             raise AcquisitionAuthorizationError("invalid acquisition invocation mode")
         self._base_lifecycle.append("invocation_mode_validated")
@@ -1087,12 +1306,52 @@ class ResponseBankAcquisitionOrchestrator:
             self.output_root, artifact_dir_name="entries"
         )
 
-    def _validate_paid_context(self) -> None:
+    def _validate_authorization_context(self) -> None:
         context = self.paid_authorization
-        if type(context) is not PaidAuthorizationValidation:
+        if type(context) is PaidAuthorizationValidation:
+            self._validate_paid_context(context)
+            return
+        facility = self.facility_authorization
+        if type(facility) is not ResultsFirstAcquisitionAuthorization:
             raise AcquisitionAuthorizationError(
-                "acquisition requires Task26 PaidAuthorizationValidation"
+                "results-first facility authorization is missing"
             )
+        required = (
+            facility.authorization_digest,
+            facility.authorized_plan_digest,
+            facility.profile_digest,
+            facility.budget_digest,
+            facility.inventory_digest,
+            facility.prompt_admission_profile_digest,
+            facility.provider_config_digest,
+            facility.output_root_path_digest,
+            facility.marker.marker_digest,
+        )
+        if any(not isinstance(value, str) or not value for value in required):
+            raise AcquisitionAuthorizationError(
+                "results-first acquisition context is incomplete"
+            )
+        if facility.authorization_kind != "user_authorized_smoke_facility":
+            raise AcquisitionAuthorizationError(
+                "results-first acquisition authorization kind mismatch"
+            )
+        if facility.inventory_digest != self.inventory_digest:
+            raise AcquisitionAuthorizationError("facility inventory digest mismatch")
+        if (
+            facility.prompt_admission_profile_digest
+            != PROMPT_ADMISSION_PROFILE_DIGEST
+        ):
+            raise AcquisitionAuthorizationError(
+                "facility prompt admission digest mismatch"
+            )
+        if facility.output_root_path_digest != output_root_path_digest(self.output_root):
+            raise AcquisitionAuthorizationError("facility output root digest mismatch")
+        if facility.output_mode != self.invocation_mode:
+            raise AcquisitionAuthorizationError(
+                "facility authorization output mode mismatch"
+            )
+
+    def _validate_paid_context(self, context: PaidAuthorizationValidation) -> None:
         receipt = context.receipt
         required = (
             receipt.receipt_digest,
@@ -1116,17 +1375,31 @@ class ResponseBankAcquisitionOrchestrator:
             raise AcquisitionAuthorizationError("paid authorization output mode mismatch")
 
     def _open_output_binding(self) -> None:
+        paid = self.paid_authorization
+        if paid is not None:
+            marker_path = self.output_root / PAID_OUTPUT_BINDING_FILENAME
+            expected_marker = paid.marker.to_dict()
+            missing_message = "Task26 output binding marker is missing or partial"
+            mismatch_message = "Task26 output binding marker mismatch"
+        else:
+            facility = self.facility_authorization
+            assert facility is not None
+            marker_path = self.output_root / RESULTS_FIRST_ACQUISITION_MARKER_FILENAME
+            expected_marker = facility.marker.to_dict()
+            missing_message = "results-first facility marker is missing or partial"
+            mismatch_message = "results-first facility marker mismatch"
         if not self.output_root.is_dir():
-            raise AcquisitionAuthorizationError("Task26 paid output root is missing")
-        marker_path = self.output_root / PAID_OUTPUT_BINDING_FILENAME
+            raise AcquisitionAuthorizationError(
+                "Task26 paid output root is missing"
+                if paid is not None
+                else "results-first facility output root is missing"
+            )
         try:
             marker = json.loads(marker_path.read_text(encoding="utf-8"))
         except (OSError, UnicodeError, json.JSONDecodeError) as exc:
-            raise AcquisitionAuthorizationError(
-                "Task26 output binding marker is missing or partial"
-            ) from exc
-        if marker != self.paid_authorization.marker.to_dict():
-            raise AcquisitionAuthorizationError("Task26 output binding marker mismatch")
+            raise AcquisitionAuthorizationError(missing_message) from exc
+        if marker != expected_marker:
+            raise AcquisitionAuthorizationError(mismatch_message)
 
     def acquire(self, request: AcquisitionRequest) -> AcquisitionResult:
         existing = self._load_entry(request.inventory_row.inventory_entry_id)
@@ -1239,6 +1512,10 @@ class ResponseBankAcquisitionOrchestrator:
                 attempt_id=existing.acquisition_state_ref,
             )
         self._require_unexpired()
+        if self.paid_authorization is None:
+            raise AcquisitionAuthorizationError(
+                "results-first facility does not authorize ambiguous reacquisition"
+            )
         if (
             self.paid_authorization.receipt.scope
             != "epd027_full_bank_acquisition"
@@ -1355,8 +1632,7 @@ class ResponseBankAcquisitionOrchestrator:
                 request.requested_at,
             )
         usage_status = "reported" if evidence.usage is not None else "usage_missing"
-        role_bodies = {
-            "provenance": {
+        provenance = {
                 "schema_version": "tokenshare.response_bank_provenance.v1",
                 "provider_family": request.provider_family,
                 "entry_id": prepared.entry_id,
@@ -1365,10 +1641,20 @@ class ResponseBankAcquisitionOrchestrator:
                 "normalized_absolute_endpoint": prepared.normalized_absolute_endpoint,
                 "transport_call_count": 1,
                 "secret_persisted": False,
-                "receipt_digest": (
-                    self.paid_authorization.receipt.receipt_digest
-                ),
-            },
+        }
+        if self.paid_authorization is not None:
+            provenance["receipt_digest"] = (
+                self.paid_authorization.receipt.receipt_digest
+            )
+        else:
+            provenance.update(
+                {
+                    "authorization_kind": self.authorization_kind,
+                    "authorization_digest": self.authorization_digest,
+                }
+            )
+        role_bodies = {
+            "provenance": provenance,
             "usage": {
                 "schema_version": "tokenshare.response_bank_usage.v1",
                 "usage_status": usage_status,
@@ -1731,15 +2017,18 @@ class ResponseBankAcquisitionOrchestrator:
         )
 
     def _require_unexpired(self) -> None:
-        if (
-            self._is_expired()
-            or not self.paid_authorization.provider_dispatch_allowed
-        ):
+        authorization = self.paid_authorization or self.facility_authorization
+        assert authorization is not None
+        if self._is_expired() or not authorization.provider_dispatch_allowed:
             raise AcquisitionAuthorizationError(
                 "expired paid context cannot reserve or dispatch"
+                if self.paid_authorization is not None
+                else "results-first facility cannot reserve or dispatch"
             )
 
     def _is_expired(self) -> bool:
+        if self.paid_authorization is None:
+            return False
         expires_at = datetime.fromisoformat(
             self.paid_authorization.receipt.expires_at.replace("Z", "+00:00")
         )
@@ -2886,6 +3175,9 @@ __all__ = [
     "FULL_ACQUISITION_BUDGET_SCHEMA_VERSION",
     "IMMUTABLE_CHILD_BANK_DIRNAME",
     "PROVIDER_FAILURE_TAXONOMY",
+    "RESULTS_FIRST_ACQUISITION_AUTHORIZATION_SCHEMA_VERSION",
+    "RESULTS_FIRST_ACQUISITION_MARKER_FILENAME",
+    "RESULTS_FIRST_ACQUISITION_MARKER_SCHEMA_VERSION",
     "AcquisitionPlanBundle",
     "AcquisitionAuthorizationError",
     "AcquisitionBatchResult",
@@ -2903,11 +3195,14 @@ __all__ = [
     "PaidAcquisitionContext",
     "ResponseBankPreflightBlockedRecord",
     "ResponseBankAcquisitionOrchestrator",
+    "ResultsFirstAcquisitionAuthorization",
+    "ResultsFirstAcquisitionMarker",
     "SemanticInventoryPlan",
     "SemanticSlotCandidate",
     "build_semantic_inventory",
     "build_matrix8_unified_acquisition_plan",
     "create_acquisition_plan_bundle",
+    "establish_results_first_acquisition_authorization",
     "finalize_acquisition_child_bank",
     "load_acquisition_plan_bundle",
     "output_root_path_digest",
@@ -2916,4 +3211,5 @@ __all__ = [
     "regression_smoke_sparse_replacement_slots",
     "replacement_slots_for",
     "response_bank_manifest_for_bundle",
+    "results_first_response_bank_manifest_for_bundle",
 ]

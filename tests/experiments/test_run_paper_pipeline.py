@@ -712,6 +712,80 @@ def test_default_plan_bank_reports_plan_digest_without_fabricating_inventory(
     }
 
 
+def test_results_first_matrix8_plan_bank_accepts_fresh_bundle_root(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    seen: list[object] = []
+    bundle_root = tmp_path / "matrix8-plan"
+
+    assert _main(
+        [
+            "plan-bank",
+            "--profile",
+            "tracked-profile.json",
+            "--results-first-matrix8",
+            "--plan-bundle-root",
+            str(bundle_root),
+        ],
+        command="plan-bank",
+        seen=seen,
+    ) == 0
+
+    assert len(seen) == 1
+    assert seen[0].plan_bundle_root == bundle_root
+    assert seen[0].serialized_arguments["results_first_matrix8"] is True
+    assert json.loads(capsys.readouterr().out)["provider_calls"] == 0
+
+
+def test_results_first_matrix8_plan_adapter_persists_exact_bundle_summary(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tokenshare.experiments import run_paper_experiments
+
+    bundle = SimpleNamespace(
+        authorized_plan_digest=DIGESTS["plan"],
+        inventory_digest=DIGESTS["inventory"],
+        bundle_digest="sha256:" + "9" * 64,
+        inventory_rows=tuple(range(166)),
+    )
+    calls: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        run_paper_experiments,
+        "create_results_first_matrix8_acquisition_bundle",
+        lambda **kwargs: calls.append(kwargs) or bundle,
+    )
+    request = pipeline.PipelineCommandRequest(
+        command="plan-bank",
+        scope="plan-bank",
+        evidence_class="offline_bank_plan",
+        profile=PROFILE,
+        provider_authorization=None,
+        output_root=None,
+        replay_input_root=None,
+        external_bank_resolver=None,
+        plan_digest=None,
+        inventory_digest=None,
+        budget_mode="bounded",
+        serialized_arguments={"results_first_matrix8": True},
+        plan_bundle_root=tmp_path / "bundle",
+    )
+
+    result = pipeline._plan_bank_adapter(request)
+
+    assert calls == [
+        {
+            "pipeline_profile_digest": DIGESTS["profile"],
+            "bundle_root": tmp_path / "bundle",
+        }
+    ]
+    assert result["plan_digest"] == DIGESTS["plan"]
+    assert result["inventory_digest"] == DIGESTS["inventory"]
+    assert result["inventory_entry_count"] == 166
+    assert result["provider_calls"] == 0
+
+
 @pytest.mark.parametrize(
     ("field", "message"),
     (
@@ -749,6 +823,88 @@ def test_service_result_validates_plan_and_inventory_digests_independently(
 
 def test_acquire_bank_delegates_exact_service(tmp_path: Path, capsys) -> None:
     _assert_provider_command(tmp_path, capsys, "acquire-bank")
+
+
+def test_results_first_matrix8_acquire_requires_no_paid_receipt_but_keeps_dispatch_flag(
+    tmp_path: Path,
+    capsys,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen: list[object] = []
+    authorization = SimpleNamespace(
+        schema_version="tokenshare.results_first_smoke_acquisition_authorization.v1",
+        authorization_digest="sha256:" + "8" * 64,
+        budget_digest=DIGESTS["budget"],
+        marker=SimpleNamespace(marker_digest=DIGESTS["marker"]),
+        output_mode="new_run",
+        provider_dispatch_allowed=True,
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "_RESULTS_FIRST_AUTHORITY_BUILDER",
+        lambda **_kwargs: authorization,
+        raising=False,
+    )
+    args = [
+        "acquire-bank",
+        "--profile",
+        "tracked-profile.json",
+        "--results-first-matrix8",
+        "--allow-provider-calls",
+        "--new-run",
+        "--output-root",
+        str(tmp_path / "acquire"),
+        "--plan-digest",
+        DIGESTS["plan"],
+        "--inventory-digest",
+        DIGESTS["inventory"],
+        "--plan-bundle-root",
+        str(tmp_path / "plan"),
+    ]
+    bundle = SimpleNamespace(
+        authorized_plan_digest=DIGESTS["plan"],
+        inventory_digest=DIGESTS["inventory"],
+        profile_digest=DIGESTS["profile"],
+        prompt_admission_profile_digest=DIGESTS["admission"],
+        full_budget=SimpleNamespace(budget_digest=DIGESTS["budget"]),
+    )
+
+    assert _main(
+        args,
+        command="acquire-bank",
+        seen=seen,
+        _ACQUISITION_BUNDLE_LOADER=lambda _path: bundle,
+        service_input=object(),
+    ) == 0
+
+    assert len(seen) == 1
+    assert seen[0].provider_authorization is authorization
+    body = json.loads(capsys.readouterr().out)
+    assert body["receipt_digest"] is None
+    assert body["facility_authorization_schema"] == authorization.schema_version
+    assert body["facility_authorization_digest"] == authorization.authorization_digest
+
+
+def test_results_first_matrix8_acquire_still_requires_allow_provider_calls(
+    tmp_path: Path,
+) -> None:
+    assert pipeline.main(
+        [
+            "acquire-bank",
+            "--profile",
+            "tracked-profile.json",
+            "--results-first-matrix8",
+            "--new-run",
+            "--output-root",
+            str(tmp_path / "acquire"),
+            "--plan-digest",
+            DIGESTS["plan"],
+            "--inventory-digest",
+            DIGESTS["inventory"],
+            "--plan-bundle-root",
+            str(tmp_path / "plan"),
+        ]
+    ) == 2
 
 
 def test_acquire_bank_validates_bundle_full_budget_before_service_factory(
@@ -825,6 +981,7 @@ def test_production_acquisition_factory_loads_exact_bundle_and_task26_marker(
         AcquisitionRequest,
         SemanticInventoryPlan,
         create_acquisition_plan_bundle,
+        establish_results_first_acquisition_authorization,
     )
 
     prepared = PreparedOutboundRequestFactory.prepare(
@@ -996,6 +1153,33 @@ def test_production_acquisition_factory_loads_exact_bundle_and_task26_marker(
     )
     assert [path.name for path in output_root.glob("*paid_output_binding*")] == [
         "paid_output_binding.v1.json"
+    ]
+
+    facility_root = tmp_path / "facility-acquisition"
+    facility = establish_results_first_acquisition_authorization(
+        bundle=bundle,
+        output_root=facility_root,
+        output_mode="new_run",
+        allow_provider_calls=True,
+    )
+    facility_service = pipeline._acquisition_service_input_from_persisted_authorities(
+        replace(
+            request,
+            scope="results_first_matrix8_acquisition",
+            evidence_class="results_first_real_provider_acquisition",
+            provider_authorization=facility,
+            output_root=facility_root,
+            serialized_arguments={"results_first_matrix8": True},
+        )
+    )
+    facility_manifest = facility_service.manifest
+
+    assert facility_service.orchestrator_arguments["facility_authorization"] is facility
+    assert "paid_authorization" not in facility_service.orchestrator_arguments
+    assert facility_manifest.authorization_kind == "user_authorized_smoke_facility"
+    assert not hasattr(facility_manifest, "created_by_paid_receipt_digest")
+    assert [path.name for path in facility_root.glob("*facility_marker*")] == [
+        "results_first_smoke_facility_marker.v1.json"
     ]
 
 

@@ -14,10 +14,12 @@ from tokenshare.executors.ai_api_request_identity import PreparedOutboundRequest
 from tokenshare.executors.response_bank import (
     CurrentTraceWrapper,
     ExternalBankObjectLocator,
+    OBJECT_ROLES,
     ResponseBankBlockedError,
     ResponseBankEntry,
     ResponseBankInventoryRow,
     ResponseBankManifest,
+    ResultsFirstResponseBankManifest,
     ResponseBankResolver,
     ValidatedResponseBankIndex,
     canonical_inventory_rows,
@@ -28,6 +30,50 @@ from tokenshare.executors.response_bank import (
     semantic_slot_key,
     terminal_bank_entry_id,
 )
+
+
+def test_results_first_manifest_is_explicit_and_legacy_paid_bytes_do_not_change() -> None:
+    legacy = ResponseBankManifest.create(
+        bank_root_id="legacy",
+        profile_digest="sha256:profile",
+        budget_digest="sha256:budget",
+        inventory_digest="sha256:inventory",
+        provider_config_digest="sha256:provider",
+        entry_ids=(),
+        object_role_schema=OBJECT_ROLES,
+        terminal_entry_count=0,
+        created_by_paid_receipt_digest="sha256:receipt",
+    )
+    assert set(legacy.to_dict()) == {
+        "bank_root_id",
+        "manifest_digest",
+        "profile_digest",
+        "budget_digest",
+        "inventory_digest",
+        "provider_config_digest",
+        "entry_ids",
+        "object_role_schema",
+        "terminal_entry_count",
+        "created_by_paid_receipt_digest",
+        "root_binding_marker_digest",
+    }
+    facility = ResultsFirstResponseBankManifest.create(
+        bank_root_id="facility",
+        profile_digest="sha256:profile",
+        budget_digest="sha256:budget",
+        inventory_digest="sha256:inventory",
+        provider_config_digest="sha256:provider",
+        entry_ids=(),
+        object_role_schema=OBJECT_ROLES,
+        terminal_entry_count=0,
+        authorization_digest="sha256:authorization",
+    )
+
+    parsed = ResponseBankManifest.from_dict(facility.to_dict())
+
+    assert isinstance(parsed, ResultsFirstResponseBankManifest)
+    assert parsed.authorization_kind == "user_authorized_smoke_facility"
+    assert "created_by_paid_receipt_digest" not in parsed.to_dict()
 from tokenshare.storage.artifacts import ArtifactStore
 
 
