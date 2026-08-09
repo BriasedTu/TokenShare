@@ -6,6 +6,8 @@ from hashlib import sha256
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from tokenshare.executors.response_bank import (
     OBJECT_ROLES,
     ExternalBankObjectLocator,
@@ -60,12 +62,22 @@ def _source_bank(
         {"prompt_tokens": 11, "completion_tokens": 7, "total_tokens": 18},
         {"prompt_tokens": 13, "completion_tokens": 5, "total_tokens": 18},
     ),
+    request_model: str = "deepseek-v4-pro",
+    configured_model: str = "deepseek-v4-pro",
+    requested_model: str = "deepseek-v4-pro",
+    resolved_model: str = "deepseek-v4-pro",
+    response_model_status: str = "matched",
+    provenance_entry_id: str = "deepseek_v4_pro_exp1_baseline",
+    provenance_provider_config_digest: str = "sha256:provider",
+    provenance_inference_request_digest: str | None = None,
 ) -> ResponseBankResolver:
     rows: list[ResponseBankInventoryRow] = []
     objects_by_entry: list[dict[str, bytes]] = []
     for replacement_slot, usage in enumerate(usages):
         entry_id = f"entry-{replacement_slot}"
-        request_body = _encoded({"slot": replacement_slot})
+        request_body = _encoded(
+            {"model": request_model, "slot": replacement_slot}
+        )
         values = {
             "inventory_entry_id": "",
             "semantic_slot_key": semantic_slot_key(
@@ -109,11 +121,14 @@ def _source_bank(
                     {
                         "schema_version": "tokenshare.response_bank_provenance.v1",
                         "provider_family": "deepseek",
-                        "entry_id": entry_id,
-                        "provider_config_digest": "sha256:provider",
-                        "inference_request_digest": values[
-                            "inference_request_digest"
-                        ],
+                        "entry_id": provenance_entry_id,
+                        "provider_config_digest": (
+                            provenance_provider_config_digest
+                        ),
+                        "inference_request_digest": (
+                            provenance_inference_request_digest
+                            or values["inference_request_digest"]
+                        ),
                         "normalized_absolute_endpoint": "https://api.deepseek.com/chat/completions",
                         "transport_call_count": 1,
                         "secret_persisted": False,
@@ -161,10 +176,10 @@ def _source_bank(
                 "model_record": _encoded(
                     {
                         "schema_version": "tokenshare.response_bank_model_record.v1",
-                        "configured_model": "deepseek-v4-pro",
-                        "requested_model": "deepseek-v4-pro",
-                        "resolved_model": "deepseek-v4-pro",
-                        "response_model_status": "matched",
+                        "configured_model": configured_model,
+                        "requested_model": requested_model,
+                        "resolved_model": resolved_model,
+                        "response_model_status": response_model_status,
                     }
                 ),
             }
@@ -293,6 +308,11 @@ def _projected_summary(
         adapter_result=adapter_result,
         adapter_root=Path(adapter_result.output_root),
         trace_runtime=trace_runtime,
+        condition=SimpleNamespace(
+            provider_model_id="deepseek-v4-pro",
+            model_entry_id="deepseek_v4_pro_exp1_baseline",
+            source_provider_config_digest="sha256:provider",
+        ),
     )
 
 
@@ -365,6 +385,29 @@ def test_missing_source_usage_remains_null_without_zero_fill(tmp_path: Path) -> 
     assert consumption["total_tokens"] is None
     assert consumption["cost_estimate_cny"] is None
     assert consumption["latency_ms"] == 100
+
+
+@pytest.mark.parametrize(
+    "bank_kwargs",
+    (
+        {"response_model_status": "mismatched"},
+        {"configured_model": "wrong-model"},
+        {"requested_model": "wrong-model"},
+        {"resolved_model": "wrong-model"},
+        {"request_model": "wrong-model"},
+        {"provenance_entry_id": "wrong-entry"},
+        {"provenance_provider_config_digest": "sha256:wrong-provider"},
+        {"provenance_inference_request_digest": "sha256:wrong-request"},
+    ),
+)
+def test_rejects_source_metrics_when_committed_model_identity_is_not_matched(
+    tmp_path: Path,
+    bank_kwargs: dict[str, str],
+) -> None:
+    resolver = _source_bank(tmp_path / "bank", **bank_kwargs)
+
+    with pytest.raises(ValueError, match="trace source .*identity"):
+        _projected_summary(tmp_path, resolver, ordinals=(0,))
 
 
 def test_exp2_trace_hydration_uses_source_tokens_cost_and_latency(

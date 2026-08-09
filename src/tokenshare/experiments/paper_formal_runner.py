@@ -3785,6 +3785,7 @@ def _project_committed_trace_source_usage(
     adapter_result: Any,
     adapter_root: Path,
     trace_runtime: Any,
+    condition: Any,
 ) -> dict[str, Any]:
     """只从 current ledger 已提交 delivery 投影不可变 source-bank 用量。"""
 
@@ -3860,6 +3861,12 @@ def _project_committed_trace_source_usage(
         if inventory_row is None or inventory_row.entry_id != entry.entry_id:
             raise ValueError("trace committed entry inventory identity mismatch")
 
+        request_body = _trace_bank_role_json(
+            resolver=resolver, entry=entry, role="request_body"
+        )
+        provenance_body = _trace_bank_role_json(
+            resolver=resolver, entry=entry, role="provenance"
+        )
         usage_body = _trace_bank_role_json(
             resolver=resolver, entry=entry, role="usage"
         )
@@ -3875,6 +3882,49 @@ def _project_committed_trace_source_usage(
         model_body = _trace_bank_role_json(
             resolver=resolver, entry=entry, role="model_record"
         )
+        request_body_locator = next(
+            locator
+            for locator in entry.object_locators
+            if locator.object_role == "request_body"
+        )
+        request_model = request_body.get("model")
+        configured_model = model_body.get("configured_model")
+        requested_model = model_body.get("requested_model")
+        resolved_model = model_body.get("resolved_model")
+        expected_model = _required_field(condition, "provider_model_id")
+        expected_model_entry_id = _required_field(condition, "model_entry_id")
+        expected_provider_config_digest = _required_field(
+            condition, "source_provider_config_digest"
+        )
+        if (
+            model_body.get("schema_version")
+            != "tokenshare.response_bank_model_record.v1"
+            or model_body.get("response_model_status") != "matched"
+            or not isinstance(request_model, str)
+            or not request_model
+            or not isinstance(configured_model, str)
+            or not configured_model
+            or not isinstance(requested_model, str)
+            or not requested_model
+            or not isinstance(resolved_model, str)
+            or not resolved_model
+            or configured_model != expected_model
+            or requested_model != expected_model
+            or resolved_model != expected_model
+            or request_model != expected_model
+            or request_body_locator.object_digest != inventory_row.body_digest
+            or provenance_body.get("schema_version")
+            != "tokenshare.response_bank_provenance.v1"
+            or provenance_body.get("entry_id") != expected_model_entry_id
+            or provenance_body.get("provider_config_digest")
+            != expected_provider_config_digest
+            or inventory_row.provider_config_digest
+            != expected_provider_config_digest
+            or provenance_body.get("inference_request_digest")
+            != entry.inference_request_digest
+        ):
+            # source 指标只有在 acquisition model 与冻结 wire identity 完整一致时可用。
+            raise ValueError("trace source model identity mismatch")
         usage_schema = usage_body.get("schema_version")
         if usage_schema not in {None, "tokenshare.response_bank_usage.v1"}:
             raise ValueError("trace source usage schema is unsupported")
@@ -3947,24 +3997,6 @@ def _project_committed_trace_source_usage(
             source_acquisition_attempt_id = entry.acquisition_state_ref
         else:
             raise ValueError("trace source acquisition schema is unsupported")
-
-        model_schema = model_body.get("schema_version")
-        if model_schema not in {None, "tokenshare.response_bank_model_record.v1"}:
-            raise ValueError("trace source model record schema is unsupported")
-        if model_schema == "tokenshare.response_bank_model_record.v1":
-            for field_name in (
-                "configured_model",
-                "requested_model",
-                "response_model_status",
-            ):
-                if not isinstance(
-                    model_body.get(field_name), str
-                ) or not model_body.get(field_name):
-                    raise ValueError(f"trace source model record lacks {field_name}")
-            if model_body.get("resolved_model") is not None and not isinstance(
-                model_body.get("resolved_model"), str
-            ):
-                raise ValueError("trace source resolved_model is invalid")
 
         available_roles = {
             _paper_trace_object_role(locator.object_role)
@@ -5642,6 +5674,13 @@ class _FormalConditionExecutionCallback:
         eligibility = _optional_field(adapter_result, "eligibility_report")
         attempts = _sequence_field(adapter_result, "attempt_results", "attempts")
         if trace_runtime is not None:
+            # model/source identity 必须先通过；否则不能先生成 identity_consistent=True evidence。
+            trace_source_usage = _project_committed_trace_source_usage(
+                adapter_result=adapter_result,
+                adapter_root=adapter_root,
+                trace_runtime=trace_runtime,
+                condition=condition,
+            )
             eligibility = _evaluate_trace_root_evidence(
                 adapter_result=adapter_result,
                 adapter_root=adapter_root,
@@ -5649,11 +5688,6 @@ class _FormalConditionExecutionCallback:
                 direct_collector=self.direct_collector,
                 condition=condition,
                 case_id=case_id,
-            )
-            trace_source_usage = _project_committed_trace_source_usage(
-                adapter_result=adapter_result,
-                adapter_root=adapter_root,
-                trace_runtime=trace_runtime,
             )
             task = _as_json(task)
             task["paper_eligible"] = eligibility.paper_eligible
