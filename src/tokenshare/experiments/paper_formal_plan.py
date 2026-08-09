@@ -21,6 +21,11 @@ from tokenshare.executors.ai_api_request_identity import (
     PreparedOutboundRequest,
     validate_prepared_request,
 )
+from tokenshare.executors.trace_backed import (
+    TraceReplacementBinding,
+    TraceSourceBinding,
+    bind_trace_execution_request,
+)
 from tokenshare.experiments.paper_budget import build_paper_budget_split_profile
 from tokenshare.experiments.paper_catalog import (
     PaperInputCatalogManifest,
@@ -667,6 +672,89 @@ def freeze_formal_root_prepared_requests(
     return records
 
 
+def freeze_formal_root_prepared_replacement_requests(
+    *,
+    root: FormalRootSnapshot,
+    base_records: Sequence[FormalPreparedRequestRecord],
+    catalog_manifest: PaperInputCatalogManifest,
+    ai_api_configs: Mapping[str, Any],
+    planning_artifact_root: str | Path,
+) -> tuple[PreparedOutboundRequest, ...]:
+    """经正式 runtime/trace binding 重建 root 的全部 attempt ordinals。"""
+
+    if type(root) is not FormalRootSnapshot:
+        raise TypeError("root must be a FormalRootSnapshot")
+    records = tuple(base_records)
+    if (
+        not records
+        or tuple(record.planned_ai_unit_id for record in records)
+        != root.planned_ai_unit_ids
+    ):
+        raise ValueError("formal replacement base-record coverage drift")
+    cases_by_id = _unique_catalog_cases(catalog_manifest)
+    try:
+        case = cases_by_id[root.case_id]
+    except KeyError as exc:
+        raise ValueError("formal replacement root is absent from catalog") from exc
+    slot_ids = replacement_slots_for(
+        experiment_id=root.condition.experiment_id,
+        fault_type=str(root.condition.fault_type),
+        ablation_mode=str(root.condition.ablation_mode),
+    )
+    if any(
+        record.condition is not root.condition
+        or record.binding is not root.binding
+        or record.case_id != root.case_id
+        or record.case_record_digest != root.case_record_digest
+        or record.sample_slot_index != root.repeat_id
+        or record.base_replacement_slot != 0
+        or record.replacement_slot_ids != slot_ids
+        or record.replacement_policy_id != "formal_attempt_budget.v1"
+        or record.provider_calls_made != 0
+        for record in records
+    ):
+        raise ValueError("formal replacement base-record identity drift")
+    templates = _prepare_formal_root_slot_templates(
+        root=root,
+        case=case,
+        ai_api_configs=ai_api_configs,
+        artifact_root=Path(planning_artifact_root),
+        replacement_slot_ids=slot_ids,
+        bind_as_trace=True,
+    )
+    expected_order = tuple(
+        (unit_id, slot)
+        for unit_id in root.planned_ai_unit_ids
+        for slot in slot_ids
+    )
+    actual_order = tuple(
+        (template.planned_ai_unit_id, template.prepared_request.replacement_slot)
+        for template in templates
+    )
+    if actual_order != expected_order:
+        raise ValueError("formal replacement prepared-request order drift")
+    base_by_unit = {record.planned_ai_unit_id: record for record in records}
+    for template in templates:
+        prepared = validate_prepared_request(template.prepared_request)
+        base = base_by_unit[template.planned_ai_unit_id]
+        if (
+            prepared.provider_config_digest
+            != base.prepared_execution_config_digest
+            or template.source_provider_config_digest
+            != base.source_provider_config_digest
+            or prepared.entry_id != base.model_entry_id
+            or prepared.configured_model != base.provider_model_id
+        ):
+            raise ValueError("formal replacement runtime request identity drift")
+        if prepared.replacement_slot == 0 and (
+            prepared != base.prepared_request
+            or template.provider_request_identity
+            != dict(base.provider_request_identity)
+        ):
+            raise ValueError("formal replacement runtime slot zero drift")
+    return tuple(template.prepared_request for template in templates)
+
+
 def freeze_paper_formal_prepared_request_inventory(
     *,
     snapshot: FormalPlanSnapshot,
@@ -743,6 +831,32 @@ def _prepare_formal_root_templates(
     ai_api_configs: Mapping[str, Any],
     artifact_root: Path,
 ) -> tuple[_PreparedRuntimeTemplate, ...]:
+    return _prepare_formal_root_slot_templates(
+        root=root,
+        case=case,
+        ai_api_configs=ai_api_configs,
+        artifact_root=artifact_root,
+        replacement_slot_ids=(0,),
+        bind_as_trace=False,
+    )
+
+
+def _prepare_formal_root_slot_templates(
+    *,
+    root: FormalRootSnapshot,
+    case: Mapping[str, Any],
+    ai_api_configs: Mapping[str, Any],
+    artifact_root: Path,
+    replacement_slot_ids: Sequence[int],
+    bind_as_trace: bool,
+) -> tuple[_PreparedRuntimeTemplate, ...]:
+    slots = tuple(replacement_slot_ids)
+    if (
+        not slots
+        or tuple(sorted(set(slots))) != slots
+        or any(type(slot) is not int or slot < 0 for slot in slots)
+    ):
+        raise ValueError("formal prepared replacement slots are invalid")
     source_config, source_entry, controls = _resolved_request_controls(
         condition=root.condition,
         ai_api_configs=ai_api_configs,
@@ -833,57 +947,72 @@ def _prepare_formal_root_templates(
         raise ValueError("runtime planned AI-unit ids do not match formal commitment")
     templates: list[_PreparedRuntimeTemplate] = []
     for unit, planned_ai_unit_id in ai_units:
-        attempt, lease = _formal_planning_attempt_and_lease(
-            case_id=root.case_id,
-            unit_id=unit.unit_id,
-            task_id=unit.task_id,
-        )
-        if isinstance(adapter, LeanRuntimeAdapter):
-            request = adapter.build_planning_execution_request(
-                unit,
-                attempt=attempt,
-                lease=lease,
-            )
-        else:
-            request = adapter.build_execution_request(
-                unit,
-                attempt=attempt,
-                lease=lease,
-            )
-        request = _bind_pre_acquisition_slot(
-            request=request,
+        trace_binding = _planning_trace_source_binding(
+            root=root,
             planned_ai_unit_id=planned_ai_unit_id,
-            sample_slot_index=root.repeat_id,
-            replacement_slot=0,
+            replacement_slot_ids=slots,
         )
-        if request.prompt_package_ref is None:
-            raise ValueError("formal planned AI request is missing prompt package")
-        prompt = json.loads(
-            store.read_bytes(request.prompt_package_ref).decode("utf-8")
-        )
-        outbound = prepare_ai_api_outbound_request(
-            config=prepared_config,
-            request=request,
-            prompt=prompt,
-            entry=prepared_entries[0],
-        )
-        prepared = outbound.prepared_request
-        if (
-            prepared.planned_ai_unit_id != planned_ai_unit_id
-            or prepared.sample_slot_index != root.repeat_id
-            or prepared.replacement_slot != 0
-            or prepared.configured_model != root.endpoint_controls.provider_model_id
-        ):
-            raise ValueError("formal prepared request identity drift")
-        templates.append(
-            _PreparedRuntimeTemplate(
-                planned_ai_unit_id=planned_ai_unit_id,
-                source_provider_config_digest=source_config.config_digest,
-                prepared_execution_config_digest=prepared_config.config_digest,
-                provider_request_identity=dict(outbound.provider_request_identity),
-                prepared_request=prepared,
+        for replacement_slot in slots:
+            attempt, lease = _formal_planning_attempt_and_lease(
+                case_id=root.case_id,
+                unit_id=unit.unit_id,
+                task_id=unit.task_id,
+                attempt_ordinal=replacement_slot,
             )
-        )
+            if isinstance(adapter, LeanRuntimeAdapter):
+                request = adapter.build_planning_execution_request(
+                    unit,
+                    attempt=attempt,
+                    lease=lease,
+                )
+            else:
+                request = adapter.build_execution_request(
+                    unit,
+                    attempt=attempt,
+                    lease=lease,
+                )
+            request = _bind_pre_acquisition_slot(
+                request=request,
+                planned_ai_unit_id=planned_ai_unit_id,
+                sample_slot_index=root.repeat_id,
+                replacement_slot=replacement_slot,
+            )
+            if bind_as_trace:
+                # 正式 Factor/Lean trace runtime 都先把 persisted ordinal 写回
+                # ExecutionRequest，再绑定 immutable source slot。
+                request = bind_trace_execution_request(
+                    replace(request, attempt_ordinal=attempt.attempt_ordinal),
+                    trace_binding,
+                )
+            if request.prompt_package_ref is None:
+                raise ValueError("formal planned AI request is missing prompt package")
+            prompt = json.loads(
+                store.read_bytes(request.prompt_package_ref).decode("utf-8")
+            )
+            outbound = prepare_ai_api_outbound_request(
+                config=prepared_config,
+                request=request,
+                prompt=prompt,
+                entry=prepared_entries[0],
+            )
+            prepared = outbound.prepared_request
+            if (
+                prepared.planned_ai_unit_id != planned_ai_unit_id
+                or prepared.sample_slot_index != root.repeat_id
+                or prepared.replacement_slot != replacement_slot
+                or prepared.configured_model
+                != root.endpoint_controls.provider_model_id
+            ):
+                raise ValueError("formal prepared request identity drift")
+            templates.append(
+                _PreparedRuntimeTemplate(
+                    planned_ai_unit_id=planned_ai_unit_id,
+                    source_provider_config_digest=source_config.config_digest,
+                    prepared_execution_config_digest=prepared_config.config_digest,
+                    provider_request_identity=dict(outbound.provider_request_identity),
+                    prepared_request=prepared,
+                )
+            )
     return tuple(templates)
 
 
@@ -1337,6 +1466,40 @@ def _bind_pre_acquisition_slot(
     return replace(request, soft_hints=hints)
 
 
+def _planning_trace_source_binding(
+    *,
+    root: FormalRootSnapshot,
+    planned_ai_unit_id: str,
+    replacement_slot_ids: Sequence[int],
+) -> TraceSourceBinding:
+    """构造仅用于冻结 wire identity 的 trace binding；不冒充 bank terminal。"""
+
+    identity = {
+        "schema_version": "tokenshare.formal_acquisition_trace_binding.v1",
+        "condition_id": root.condition.condition_id,
+        "case_id": root.case_id,
+        "planned_ai_unit_id": planned_ai_unit_id,
+        "sample_slot_index": root.repeat_id,
+    }
+    return TraceSourceBinding.create(
+        planned_ai_unit_id=planned_ai_unit_id,
+        sample_slot_index=root.repeat_id,
+        bank_root_id=f"formal-acquisition-plan:{digest_json(identity)}",
+        manifest_digest=digest_json({**identity, "kind": "planning-manifest"}),
+        replacements=tuple(
+            TraceReplacementBinding(
+                replacement_slot=slot,
+                entry_id=f"formal-acquisition-slot:{slot}",
+                inference_request_digest=digest_json(
+                    {**identity, "replacement_slot": slot}
+                ),
+            )
+            for slot in replacement_slot_ids
+        ),
+        source_evidence_class="synthetic_regression",
+    )
+
+
 def _case_with_formal_split_profile(
     case: Mapping[str, Any],
     *,
@@ -1362,9 +1525,16 @@ def _formal_planning_attempt_and_lease(
     case_id: str,
     unit_id: str,
     task_id: str,
+    attempt_ordinal: int = 0,
 ) -> tuple[Attempt, Lease]:
+    if type(attempt_ordinal) is not int or attempt_ordinal < 0:
+        raise ValueError("formal planning attempt ordinal must be non-negative")
     identity = digest_json(
-        {"case_id": case_id, "unit_id": unit_id, "attempt_ordinal": 0}
+        {
+            "case_id": case_id,
+            "unit_id": unit_id,
+            "attempt_ordinal": attempt_ordinal,
+        }
     ).removeprefix("sha256:")
     attempt_id = f"formal_request_plan_{identity}"
     lease_id = f"lease_{identity}"
@@ -1378,6 +1548,7 @@ def _formal_planning_attempt_and_lease(
         attempt_kind="primary",
         created_at="2026-07-14T00:00:00Z",
         started_at="2026-07-14T00:00:00Z",
+        attempt_ordinal=attempt_ordinal,
     )
     return attempt, Lease(
         lease_id=lease_id,

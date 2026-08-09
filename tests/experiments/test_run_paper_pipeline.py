@@ -5,6 +5,7 @@ from dataclasses import replace
 from hashlib import sha256
 import inspect
 import json
+import inspect
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -461,6 +462,7 @@ def test_previously_unbound_commands_reach_named_official_service_by_default(
                 "inventory_digest": DIGESTS["inventory"],
             },
             acquisition_requests=(object(),),
+            max_in_flight=7,
         )
     elif command in {
         "run-trace",
@@ -602,7 +604,7 @@ def test_previously_unbound_commands_reach_named_official_service_by_default(
     assert calls
     if command == "acquire-bank":
         assert calls[1][0] == "acquire_all"
-        assert calls[1][1][1] == {"max_in_flight": 1}
+        assert calls[1][1][1] == {"max_in_flight": 7}
 
 
 def test_default_formal_proof_adapter_serializes_infrastructure_block_without_traceback(
@@ -715,85 +717,11 @@ def test_default_plan_bank_reports_plan_digest_without_fabricating_inventory(
     }
 
 
-@pytest.mark.parametrize(
-    "argv",
-    (
-        (
-            "plan-bank",
-            "--profile",
-            "tracked-profile.json",
-            "--results-first-matrix8",
-            "--plan-bundle-root",
-            "retired-plan",
-        ),
-        (
-            "acquire-bank",
-            "--profile",
-            "tracked-profile.json",
-            "--results-first-matrix8",
-            "--allow-provider-calls",
-            "--new-run",
-            "--output-root",
-            "retired-acquisition",
-            "--plan-digest",
-            DIGESTS["plan"],
-            "--inventory-digest",
-            DIGESTS["inventory"],
-        ),
-        (
-            "run-trace",
-            "--profile",
-            "tracked-profile.json",
-            "--external-bank-root",
-            "retired-bank",
-            "--output-root",
-            "retired-trace",
-            "--plan-bundle-root",
-            "retired-plan",
-            "--plan-digest",
-            DIGESTS["plan"],
-            "--inventory-digest",
-            DIGESTS["inventory"],
-            "--results-first-matrix8",
-        ),
-    ),
-)
-def test_results_first_matrix8_pipeline_entry_is_explicitly_retired(
-    argv: tuple[str, ...],
-    monkeypatch: pytest.MonkeyPatch,
-    capsys,
-) -> None:
-    monkeypatch.setattr(
-        pipeline,
-        "_PROFILE_LOADER",
-        lambda _path: pytest.fail("retired matrix8 must stop before profile load"),
-    )
+def test_pipeline_source_has_no_matrix8_authority_or_flags() -> None:
+    source = inspect.getsource(pipeline)
 
-    assert pipeline.main(argv) == 3
-
-    body = json.loads(capsys.readouterr().out)
-    assert body["status"] == "blocked"
-    assert body["provider_calls"] == 0
-    assert body["failure_kind"] == "pipeline_boundary_rejected"
-    assert "retired" in body["message"]
-
-
-def test_pipeline_request_rejects_retired_matrix8_authority() -> None:
-    with pytest.raises(ValueError, match="retired"):
-        pipeline.PipelineCommandRequest(
-            command="run-trace",
-            scope="run-trace",
-            evidence_class="real_model_trace_protocol_run",
-            profile=PROFILE,
-            provider_authorization=None,
-            output_root=Path("trace"),
-            replay_input_root=None,
-            external_bank_resolver=None,
-            plan_digest=DIGESTS["plan"],
-            inventory_digest=DIGESTS["inventory"],
-            budget_mode="bounded",
-            serialized_arguments={"results_first_matrix8": True},
-        )
+    assert "results_first_matrix8" not in source
+    assert "--results-first-matrix8" not in source
 
 
 @pytest.mark.parametrize(

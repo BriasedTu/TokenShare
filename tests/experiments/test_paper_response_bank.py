@@ -29,7 +29,6 @@ from tokenshare.experiments.paper_response_bank import (
     create_acquisition_plan_bundle,
     load_acquisition_plan_bundle,
     preflight_inventory_before_coordinator,
-    regression_smoke_sparse_replacement_slots,
     replacement_slots_for,
 )
 from tokenshare.experiments.paper_resource_accounting import FrozenPricing
@@ -88,9 +87,6 @@ def _candidate(
     plugin_version: str = "factorization.v1",
     terminal_kind: str | None = None,
     replacement_policy_id: str = "formal_complete",
-    fault_rate: float = 0.0,
-    dead_worker_count: int | None = None,
-    kill_progress_percent: int | None = None,
 ) -> SemanticSlotCandidate:
     return SemanticSlotCandidate(
         experiment_id=experiment_id,
@@ -116,9 +112,6 @@ def _candidate(
         ),
         terminal_kind=terminal_kind,
         replacement_policy_id=replacement_policy_id,
-        fault_rate=fault_rate,
-        dead_worker_count=dead_worker_count,
-        kill_progress_percent=kill_progress_percent,
     )
 
 
@@ -246,6 +239,8 @@ def test_create_only_bundle_round_trips_exact_prepared_bytes_and_full_budget(
     reopened = load_acquisition_plan_bundle(root)
 
     assert reopened == created
+    assert reopened.schema_version == "tokenshare.paper_acquisition_plan_bundle.v2"
+    assert (root / "acquisition_plan_bundle.v2.json").is_file()
     assert reopened.semantic_inventory_plan == plan
     assert reopened.inventory_rows == plan.rows
     assert tuple(
@@ -266,7 +261,7 @@ def test_create_only_bundle_round_trips_exact_prepared_bytes_and_full_budget(
             semantic_inventory_plan=plan,
             acquisition_requests=reopened.acquisition_requests,
         )
-    path = root / "acquisition_plan_bundle.v1.json"
+    path = root / "acquisition_plan_bundle.v2.json"
     body = json.loads(path.read_text(encoding="utf-8"))
     body["acquisition_requests"][0]["prepared_request"][
         "body_bytes_base64"
@@ -323,7 +318,7 @@ def test_acquisition_bundle_rejects_semantic_plan_row_cross_binding_tamper(
         semantic_inventory_plan=plan,
         acquisition_requests=requests,
     )
-    path = root / "acquisition_plan_bundle.v1.json"
+    path = root / "acquisition_plan_bundle.v2.json"
     body = json.loads(path.read_text(encoding="utf-8"))
     body["semantic_inventory_plan"]["condition_refs"][0][
         "semantic_slot_keys"
@@ -610,105 +605,8 @@ def test_exp3_rate_slots_zero_to_two_and_death_slots_zero_to_four() -> None:
         )
 
 
-def test_regression_smoke_sparse_replacements_keep_one_real_target_per_fault_root() -> None:
-    rate_cases = (
-        (4, 0.25, 1),
-        (8, 0.25, 2),
-        (8, 0.25, 2),
-        (5, 0.1, 1),
-        (2, 0.1, 1),
-        (7, 0.1, 1),
-        (7, 0.1, 1),
-    )
-    replacement_extra_count = 0
-    for index, (count, rate, expected_target_count) in enumerate(rate_cases):
-        unit_ids = tuple(f"case-{index}:unit-{unit}" for unit in range(count))
-        slots = regression_smoke_sparse_replacement_slots(
-            experiment_id="exp3_real_ai_fault_recovery",
-            fault_type="false_positive",
-            fault_rate=rate,
-            ablation_mode="FULL",
-            planned_ai_unit_ids=unit_ids,
-        )
-        targeted = tuple(
-            unit_id for unit_id, unit_slots in slots.items() if unit_slots != (0,)
-        )
-        assert len(targeted) == expected_target_count
-        assert all(slots[unit_id] == (0, 1, 2) for unit_id in targeted)
-        replacement_extra_count += sum(len(value) - 1 for value in slots.values())
-
-    worker_units = ("range_0", "range_1")
-    worker_slots = regression_smoke_sparse_replacement_slots(
-        experiment_id="exp3_real_ai_fault_recovery",
-        fault_type="worker_death",
-        fault_rate=0.0,
-        ablation_mode="FULL",
-        planned_ai_unit_ids=worker_units,
-        dead_worker_count=1,
-        kill_progress_percent=50,
-    )
-    assert sum(value == (0, 1, 2, 3, 4) for value in worker_slots.values()) == 1
-    replacement_extra_count += sum(
-        len(value) - 1 for value in worker_slots.values()
-    )
-
-    assert replacement_extra_count == 22
-
-
-def test_sparse_inventory_requires_exact_deterministic_target_slots() -> None:
-    unit_ids = tuple(f"unit-{index}" for index in range(4))
-    slots = regression_smoke_sparse_replacement_slots(
-        experiment_id="exp3_real_ai_fault_recovery",
-        fault_type="no_return",
-        fault_rate=0.25,
-        ablation_mode="FULL",
-        planned_ai_unit_ids=unit_ids,
-    )
-    candidates = tuple(
-        _candidate(
-            experiment_id="exp3_real_ai_fault_recovery",
-            condition_id="exp3-sparse-rate",
-            fault_type="no_return",
-            fault_rate=0.25,
-            unit_id=unit_id,
-            replacement_slot=replacement_slot,
-            body_marker=f"{unit_id}:{replacement_slot}",
-            replacement_policy_id="regression_smoke_sparse_replacements.v1",
-        )
-        for unit_id in unit_ids
-        for replacement_slot in slots[unit_id]
-    )
-
-    plan = build_semantic_inventory(candidates)
-
-    assert plan.expected_slot_count == 6
-    response_bank._validate_semantic_inventory_plan(plan)
-    sparse_fields = {
-        "replacement_policy_id",
-        "fault_rate",
-        "dead_worker_count",
-        "kill_progress_percent",
-    }
-    unmarked_ref = {
-        key: value
-        for key, value in plan.condition_refs[0].items()
-        if key not in sparse_fields
-    }
-    with pytest.raises(
-        ValueError, match="semantic inventory replacement policy is incomplete"
-    ):
-        response_bank._validate_semantic_inventory_plan(
-            replace(plan, condition_refs=(unmarked_ref,))
-        )
-    missing_target_slot = next(
-        candidate
-        for candidate in candidates
-        if candidate.replacement_slot == 2
-    )
-    with pytest.raises(ValueError, match="incomplete replacement slots"):
-        build_semantic_inventory(
-            tuple(candidate for candidate in candidates if candidate != missing_target_slot)
-        )
+def test_regression_sparse_replacement_authority_is_removed() -> None:
+    assert not hasattr(response_bank, "regression_smoke_sparse_replacement_slots")
 
 
 def test_exp4_full_and_ablations_share_zero_to_one() -> None:

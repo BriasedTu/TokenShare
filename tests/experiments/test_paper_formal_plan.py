@@ -21,14 +21,23 @@ from tokenshare.experiments.paper_experiment_contracts import (
     FrozenConditionSelectionBinding,
 )
 from tokenshare.experiments.paper_formal_plan import (
+    FormalPlanSnapshot,
     FormalPreparedRequestInventory,
+    FormalRepresentativeCoverage,
     derive_paper_formal_representative_coverage,
+    freeze_formal_root_prepared_replacement_requests,
     freeze_formal_root_prepared_requests,
     freeze_paper_formal_prepared_request_inventory,
     freeze_paper_formal_plan_snapshot,
     validate_paper_formal_budget_commitments,
     validate_paper_formal_plan_bindings,
 )
+from tokenshare.experiments.paper_response_bank import (
+    build_representative_unified_acquisition_plan,
+    create_acquisition_plan_bundle,
+)
+from tokenshare.experiments.paper_resource_accounting import FrozenPricing
+from decimal import Decimal
 import tokenshare.experiments.paper_formal_plan as formal_plan_module
 from tokenshare.experiments.paper_formal_runner import (
     APPROVED_ENDPOINT_BINDINGS_KEY,
@@ -628,6 +637,275 @@ def test_formal_root_preparation_is_deterministic_across_planning_roots(
     assert tuple(item.prepared_request for item in first) == tuple(
         item.prepared_request for item in second
     )
+
+
+@pytest.mark.parametrize("domain", ("factorization", "lean_proof"))
+def test_formal_replacement_requests_match_direct_runtime_for_factor_and_lean(
+    domain: str,
+    formal_inputs,
+    formal_snapshot,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _plans, catalog, _budget, ai_api_configs, _output_root = formal_inputs
+    root = next(
+        item
+        for item in formal_snapshot.roots
+        if item.condition.experiment_id == "exp3_real_ai_fault_recovery"
+        and item.condition.domain == domain
+        and item.condition.repeat_id == 0
+    )
+    records = freeze_formal_root_prepared_requests(
+        root=root,
+        catalog_manifest=catalog,
+        ai_api_configs=ai_api_configs,
+        planning_artifact_root=tmp_path / f"{domain}-base",
+    )
+    bound_plugins: list[str] = []
+    real_bind = formal_plan_module.bind_trace_execution_request
+
+    def _capture_bind(request, binding):
+        bound_plugins.append(str(request.plugin["plugin_id"]))
+        return real_bind(request, binding)
+
+    monkeypatch.setattr(
+        formal_plan_module,
+        "bind_trace_execution_request",
+        _capture_bind,
+    )
+    prepared = freeze_formal_root_prepared_replacement_requests(
+        root=root,
+        base_records=records,
+        catalog_manifest=catalog,
+        ai_api_configs=ai_api_configs,
+        planning_artifact_root=tmp_path / f"{domain}-replacement",
+    )
+
+    by_unit = {
+        record.planned_ai_unit_id: tuple(
+            item
+            for item in prepared
+            if item.planned_ai_unit_id == record.planned_ai_unit_id
+        )
+        for record in records
+    }
+    assert set(bound_plugins) == {root.plugin_id}
+    for record in records:
+        values = by_unit[record.planned_ai_unit_id]
+        assert tuple(item.replacement_slot for item in values) == (
+            record.replacement_slot_ids
+        )
+        assert values[0] == record.prepared_request
+        assert all(item.body_bytes == values[0].body_bytes for item in values)
+        assert all(item.body_digest == values[0].body_digest for item in values)
+        assert all(
+            item.provider_config_digest == values[0].provider_config_digest
+            for item in values
+        )
+        assert len({item.inference_request_digest for item in values}) == len(values)
+
+
+def test_representative_acquisition_uses_formal_replacement_slots_and_bundle_budget(
+    formal_inputs,
+    formal_snapshot,
+    tmp_path: Path,
+) -> None:
+    _plans, catalog, _budget, ai_api_configs, _output_root = formal_inputs
+    root = next(
+        item
+        for item in formal_snapshot.roots
+        if item.condition.experiment_id == "exp3_real_ai_fault_recovery"
+        and item.condition.domain == "factorization"
+        and item.condition.repeat_id == 0
+    )
+    records = freeze_formal_root_prepared_requests(
+        root=root,
+        catalog_manifest=catalog,
+        ai_api_configs=ai_api_configs,
+        planning_artifact_root=tmp_path / "representative-base",
+    )
+    snapshot, inventory, coverage = _compact_formal_authority(
+        formal_snapshot,
+        roots=(root,),
+        records=records,
+    )
+
+    plan = build_representative_unified_acquisition_plan(
+        snapshot=snapshot,
+        prepared_inventory=inventory,
+        coverage=coverage,
+        catalog_manifest=catalog,
+        ai_api_configs=ai_api_configs,
+        planning_artifact_root=tmp_path / "representative-acquisition",
+        api_key_env_by_provider_family={"deepseek": "DEEPSEEK_API_KEY"},
+        frozen_pricing_by_provider_family={
+            "deepseek": FrozenPricing(
+                currency="CNY",
+                    input_per_million_tokens=Decimal("3.0"),
+                    output_per_million_tokens=Decimal("6.0"),
+            )
+        },
+        requested_at="2026-08-09T00:00:00Z",
+        max_acquisition_concurrency=10,
+    )
+
+    assert plan.provider_call_count == 0
+    assert plan.max_acquisition_concurrency == 10
+    assert plan.condition_candidate_count == sum(
+        len(record.replacement_slot_ids) for record in records
+    )
+    assert {
+        row.replacement_slot for row in plan.semantic_inventory_plan.rows
+    } == set(records[0].replacement_slot_ids)
+    condition_ref = plan.semantic_inventory_plan.condition_refs[0]
+    assert condition_ref["selection_id"] == root.binding.selection.selection_id
+    assert condition_ref["selection_digest"] == root.selection_digest
+    assert condition_ref["seed"] == root.seed
+    assert condition_ref["split_profile_digest"] == root.split_profile_digest
+    bundle = create_acquisition_plan_bundle(
+        tmp_path / "representative-bundle",
+        authorized_plan_digest=snapshot.snapshot_digest,
+        profile_digest=coverage.coverage_digest,
+        semantic_inventory_plan=plan.semantic_inventory_plan,
+        acquisition_requests=plan.acquisition_requests,
+        max_acquisition_concurrency=plan.max_acquisition_concurrency,
+    )
+    assert bundle.max_acquisition_concurrency == 10
+    assert bundle.full_budget.calls == len(plan.acquisition_requests)
+    assert bundle.full_budget.tokens == sum(
+        item.token_upper_bound for item in plan.acquisition_requests
+    )
+    assert bundle.full_budget.cny == sum(
+        (item.cost_upper_bound for item in plan.acquisition_requests),
+        Decimal("0"),
+    )
+
+
+def test_representative_acquisition_deduplicates_only_naturally_identical_requests(
+    formal_inputs,
+    formal_snapshot,
+    tmp_path: Path,
+) -> None:
+    _plans, catalog, _budget, ai_api_configs, _output_root = formal_inputs
+    groups: dict[tuple[object, ...], list[object]] = {}
+    for root in formal_snapshot.roots:
+        if (
+            root.condition.experiment_id == "exp2_real_ai_scalability"
+            and root.repeat_id == 0
+        ):
+            key = (
+                root.case_id,
+                root.seed,
+                root.split_profile_digest,
+                root.planned_ai_unit_ids,
+                root.endpoint_controls.request_controls_digest,
+            )
+            groups.setdefault(key, []).append(root)
+    roots = next(tuple(values[:2]) for values in groups.values() if len(values) >= 2)
+    records = tuple(
+        record
+        for index, root in enumerate(roots)
+        for record in freeze_formal_root_prepared_requests(
+            root=root,
+            catalog_manifest=catalog,
+            ai_api_configs=ai_api_configs,
+            planning_artifact_root=tmp_path / f"exp2-base-{index}",
+        )
+    )
+    snapshot, inventory, coverage = _compact_formal_authority(
+        formal_snapshot,
+        roots=roots,
+        records=records,
+    )
+
+    plan = build_representative_unified_acquisition_plan(
+        snapshot=snapshot,
+        prepared_inventory=inventory,
+        coverage=coverage,
+        catalog_manifest=catalog,
+        ai_api_configs=ai_api_configs,
+        planning_artifact_root=tmp_path / "exp2-acquisition",
+        api_key_env_by_provider_family={"deepseek": "DEEPSEEK_API_KEY"},
+        frozen_pricing_by_provider_family={
+            "deepseek": FrozenPricing(
+                currency="CNY",
+                    input_per_million_tokens=Decimal("3.0"),
+                    output_per_million_tokens=Decimal("6.0"),
+            )
+        },
+        requested_at="2026-08-09T00:00:00Z",
+    )
+
+    assert plan.condition_candidate_count == len(records)
+    assert plan.unique_acquisition_request_count < plan.condition_candidate_count
+    assert len(plan.semantic_inventory_plan.condition_refs) == 2
+    assert len(plan.acquisition_requests) == plan.unique_acquisition_request_count
+
+
+def _compact_formal_authority(full_snapshot, *, roots, records):
+    condition_ids = tuple(dict.fromkeys(root.condition.condition_id for root in roots))
+    condition_by_id = {
+        item.condition.condition_id: item for item in full_snapshot.conditions
+    }
+    conditions = tuple(condition_by_id[condition_id] for condition_id in condition_ids)
+    ordered_roots = tuple(
+        root
+        for condition_id in condition_ids
+        for root in roots
+        if root.condition.condition_id == condition_id
+    )
+    snapshot = FormalPlanSnapshot(
+        conditions=conditions,
+        roots=ordered_roots,
+        condition_count=len(conditions),
+        root_run_count=len(ordered_roots),
+        first_attempt_ai_unit_count=sum(
+            len(root.planned_ai_unit_ids) for root in ordered_roots
+        ),
+        provider_calls_made=0,
+        budget_digest=full_snapshot.budget_digest,
+    )
+    by_key = {
+        (
+            record.condition.condition_id,
+            record.case_id,
+            record.planned_ai_unit_id,
+        ): record
+        for record in records
+    }
+    ordered_records = tuple(
+        by_key[(root.condition.condition_id, root.case_id, planned_ai_unit_id)]
+        for root in ordered_roots
+        for planned_ai_unit_id in root.planned_ai_unit_ids
+    )
+    inventory = FormalPreparedRequestInventory(
+        records=ordered_records,
+        record_count=len(ordered_records),
+        unique_inference_request_count=len(
+            {record.inference_request_digest for record in ordered_records}
+        ),
+        provider_calls_made=0,
+        source_snapshot_digest=snapshot.snapshot_digest,
+    )
+    root_filter = {
+        condition_id: tuple(
+            root.case_id
+            for root in ordered_roots
+            if root.condition.condition_id == condition_id
+        )
+        for condition_id in condition_ids
+    }
+    coverage = FormalRepresentativeCoverage(
+        conditions=tuple(item.condition for item in conditions),
+        bindings=tuple(item.binding for item in conditions),
+        roots=ordered_roots,
+        root_case_filter=root_filter,
+        source_snapshot=snapshot,
+        source_snapshot_digest=snapshot.snapshot_digest,
+        condition_count=len(conditions),
+        root_run_count=len(ordered_roots),
+    )
+    return snapshot, inventory, coverage
 
 
 def test_formal_root_preparation_rejects_snapshot_endpoint_control_tamper(

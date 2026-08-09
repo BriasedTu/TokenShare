@@ -101,13 +101,6 @@ class PipelineCommandRequest:
     _formal_authority: object | None = None
     _service_input: object | None = None
 
-    def __post_init__(self) -> None:
-        if self.serialized_arguments.get("results_first_matrix8") is True:
-            raise ValueError(
-                "results-first matrix8 pipeline authority is retired"
-            )
-
-
 @dataclass(frozen=True, kw_only=True)
 class AcquisitionServiceInput:
     """acquisition adapter 的进程内 typed 构造输入；不会进入 CLI 输出。"""
@@ -115,6 +108,7 @@ class AcquisitionServiceInput:
     scope: str
     orchestrator_arguments: Mapping[str, object]
     acquisition_requests: Sequence[object]
+    max_in_flight: int = 1
     bundle: object | None = None
     manifest: object | None = None
 
@@ -199,7 +193,6 @@ def _build_argument_parser() -> argparse.ArgumentParser:
 
     common("validate-profile")
     plan_bank = common("plan-bank")
-    plan_bank.add_argument("--results-first-matrix8", action="store_true")
     plan_bank.add_argument("--plan-bundle-root")
 
     provider_parsers: dict[str, argparse.ArgumentParser] = {}
@@ -207,13 +200,7 @@ def _build_argument_parser() -> argparse.ArgumentParser:
         command_parser = common(name)
         provider_parsers[name] = command_parser
         if name == "acquire-bank":
-            authorization = command_parser.add_mutually_exclusive_group(
-                required=True
-            )
-            authorization.add_argument("--receipt")
-            authorization.add_argument(
-                "--results-first-matrix8", action="store_true"
-            )
+            command_parser.add_argument("--receipt", required=True)
         else:
             command_parser.add_argument("--receipt", required=True)
         command_parser.add_argument(
@@ -246,7 +233,6 @@ def _build_argument_parser() -> argparse.ArgumentParser:
     trace.add_argument("--full-bank-acquisition-receipt")
     trace.add_argument("--l3-online-check-receipt")
     trace.add_argument("--l3-online-check-root")
-    trace.add_argument("--results-first-matrix8", action="store_true")
 
     render = common("render")
     render.add_argument("--output-root", required=True)
@@ -408,7 +394,7 @@ def _acquire_bank_adapter(request: PipelineCommandRequest) -> Mapping[str, objec
     orchestrator = ResponseBankAcquisitionOrchestrator(**arguments)
     batch = orchestrator.acquire_all(
         acquisition_requests,
-        max_in_flight=1,
+        max_in_flight=value.max_in_flight,
     )
     results = tuple(batch.results)
     provider_calls = sum(
@@ -727,6 +713,7 @@ def _acquisition_service_input_from_persisted_authorities(
             "now_epoch": int(_UTC_NOW().timestamp()),
         },
         acquisition_requests=bundle.acquisition_requests,
+        max_in_flight=bundle.max_acquisition_concurrency,
         bundle=bundle,
         manifest=manifest,
     )
@@ -1192,10 +1179,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         return int(exc.code)
 
     try:
-        if getattr(args, "results_first_matrix8", False) is True:
-            raise ValueError(
-                "results-first matrix8 pipeline authority is retired"
-            )
         profile = _PROFILE_LOADER(args.profile)
         provider = args.command in _PROVIDER_SCOPES
         authorization = None
