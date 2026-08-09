@@ -20,6 +20,7 @@ from tokenshare.local_runtime.contracts import (
     ParentStagedTraceDelivery,
     ParentTraceDeliveryStageContext,
     PreparedTraceDelivery,
+    TRACE_TERMINAL_EXECUTION_RESULT_KINDS,
 )
 from tokenshare.storage.artifacts import ArtifactStore
 
@@ -378,6 +379,20 @@ class TraceDomainStageResult:
     parser_result_ref: ArtifactRef
     verifier_checker_refs: tuple[ArtifactRef, ...] = ()
     canonical_ref: ArtifactRef | None = None
+    execution_result_kind: str | None = None
+
+    def __post_init__(self) -> None:
+        if (
+            self.execution_result_kind is not None
+            and self.execution_result_kind not in TRACE_TERMINAL_EXECUTION_RESULT_KINDS
+        ):
+            raise ValueError("unsupported trace execution result kind")
+        if self.execution_result_kind is not None and (
+            self.verifier_checker_refs or self.canonical_ref is not None
+        ):
+            raise ValueError(
+                "terminal trace execution result cannot include checker or canonical refs"
+            )
 
 
 class TraceDomainStage(Protocol):
@@ -561,6 +576,7 @@ class TraceBackedParentStager:
             verifier_checker_refs=domain_result.verifier_checker_refs,
             canonical_ref=domain_result.canonical_ref,
             trace_attribution_refs=(attribution_ref,),
+            execution_result_kind=domain_result.execution_result_kind,
         )
 
 

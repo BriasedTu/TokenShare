@@ -9,6 +9,7 @@ import tokenshare.experiments.lean_paper_adapter as lean_paper_adapter
 import tokenshare.experiments.paper_catalog as paper_catalog_module
 import tokenshare.experiments.paper_formal_runner as paper_formal_runner
 import tokenshare.plugins.lean_proof.runtime_adapter as lean_runtime_adapter
+from tokenshare.core.models import ArtifactRef
 from tokenshare.executors.ai_api import build_ai_api_executor_descriptor
 from tokenshare.executors.ai_api_config import load_ai_api_config
 from tokenshare.executors.ai_api_transport import (
@@ -2336,6 +2337,7 @@ def test_resume_restores_entry_ordinal_roles_and_delivery_timing(
     ]
     assert record.core.canonical_ref is not None
     assert record.core.canonical_ref.artifact_type == "canonical_output"
+    assert record.core.execution_result_kind is None
     assert len(record.core.verifier_checker_refs) == 1
     assert len(runtime_records) == 1
     assert runtime_records[0]["fault_type"] == "false_negative"
@@ -2382,3 +2384,119 @@ def test_resume_restores_entry_ordinal_roles_and_delivery_timing(
         )
     ) is None
     assert len(runtime_records) == 1
+
+
+@pytest.mark.parametrize(
+    "terminal_result_kind",
+    ("no_return", "late_submission", "executor_error"),
+)
+def test_exp3_lean_trace_terminal_fault_recovers_with_fresh_checker(
+    tmp_path: Path,
+    terminal_result_kind: str,
+    _use_recording_checker_for_adapter_regressions: RecordingLeanChecker,
+) -> None:
+    from dataclasses import replace
+
+    from tests.experiments.test_paper_formal_runner import (
+        _trace_context_from_adapter_result,
+    )
+    from tokenshare.experiments.paper_response_bank import PaperTraceRuntimeContext
+    from tokenshare.local_runtime.contracts import PreparedTraceDelivery
+
+    catalog = load_paper_catalogs(
+        factorization_path=FACTOR_CATALOG,
+        lean_path=LEAN_CATALOG,
+    )
+    case = catalog.cases_for(domain="lean_proof", difficulty="easy")[0]
+    base_condition = _condition_for_case(catalog.catalog_digest, case)
+    source = run_lean_paper_case(
+        case=case,
+        condition=base_condition,
+        output_root=tmp_path / f"source-{terminal_result_kind}",
+        transport=ScriptedLeanPaperProofTransport(),
+        real_transport=False,
+        checker=RecordingLeanChecker(),
+    )
+    trace_context = _trace_context_from_adapter_result(
+        bank_root=tmp_path / f"bank-{terminal_result_kind}",
+        adapter_result=source,
+        replacement_count=2,
+    )
+    target_ai_unit_id = next(
+        str(attempt.planned_ai_unit_id)
+        for attempt in source.attempt_results
+        if attempt.planned_ai_unit_id is not None
+    )
+    target_binding = next(
+        binding
+        for binding in trace_context.bindings
+        if binding.planned_ai_unit_id == target_ai_unit_id
+    )
+    runtime_records: list[dict] = []
+    condition = replace(
+        base_condition,
+        experiment_id="exp3_real_ai_fault_recovery",
+        condition_id=f"exp3-trace-{terminal_result_kind}",
+        fault_type=terminal_result_kind,
+        fault_rate=1.0,
+    )
+    fault_hook = paper_formal_runner._Exp3RuntimeHookBridge(
+        condition=condition,
+        case_id=str(case["case_id"]),
+        fault_type=terminal_result_kind,
+        selected_unit_ids=(f'{case["case_id"]}:{target_ai_unit_id}',),
+        reserve_unit_ids=(),
+        runtime_records=runtime_records,
+    )
+    transport = ScriptedLeanPaperProofTransport()
+
+    result = run_lean_paper_case(
+        case=case,
+        condition=condition,
+        output_root=tmp_path / f"trace-{terminal_result_kind}",
+        transport=transport,
+        real_transport=False,
+        checker=_use_recording_checker_for_adapter_regressions,
+        post_raw_output_hook=fault_hook,
+        trace_context=trace_context,
+    )
+
+    assert PaperTraceRuntimeContext.current_provider_call_count == 0
+    assert transport.calls == []
+    assert result.task_result.provider_attempt_count == 0
+    assert result.task_result.root_status is PaperTaskStatus.COMPLETED
+    assert len(runtime_records) == 1
+    assert runtime_records[0]["fault_type"] == terminal_result_kind
+    store = ArtifactStore(Path(result.output_root))
+    target_events = [
+        event
+        for event in result.event_records
+        if event["event_type"] == "TRACE_DELIVERY_COMMITTED.v1"
+        and event["payload"]["binding_digest"] == target_binding.binding_digest
+    ]
+    assert target_events[0]["payload"]["execution_result_kind"] == (
+        terminal_result_kind
+    )
+    assert "execution_result_kind" not in target_events[1]["payload"]
+    target_deliveries = [
+        PreparedTraceDelivery.from_dict(
+            json.loads(
+                store.read_bytes(
+                    ArtifactRef.from_dict(event["payload"]["current_wrapper_ref"])
+                ).decode("utf-8")
+            )
+        )
+        for event in target_events
+    ]
+    assert [delivery.attempt_ordinal for delivery in target_deliveries] == [0, 1]
+    slot_candidate_ids = [
+        "lean_trace_candidate_"
+        f"{delivery.delivery_digest.removeprefix('sha256:')}"
+        for delivery in target_deliveries
+    ]
+    checker_candidate_ids = {
+        request.proof_candidate_ref.artifact_id
+        for request in _use_recording_checker_for_adapter_regressions.requests
+    }
+    assert slot_candidate_ids[0] not in checker_candidate_ids
+    assert slot_candidate_ids[1] in checker_candidate_ids

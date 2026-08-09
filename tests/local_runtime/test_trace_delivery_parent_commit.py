@@ -386,7 +386,13 @@ def test_commit_event_payload_is_exact_trace_consumption_core_without_event_ref_
     event = stores.event_ledger.read_all()[0]
 
     assert event.payload == record.core.to_dict()
-    assert set(event.payload) == {item.name for item in fields(TraceConsumptionCore)}
+    assert record.core.execution_result_kind is None
+    assert "execution_result_kind" not in event.payload
+    assert set(event.payload) == {
+        item.name
+        for item in fields(TraceConsumptionCore)
+        if item.name != "execution_result_kind"
+    }
     assert not {"committed_event_ref", "event_seq", "event_hash"} & set(event.payload)
     assert record.committed_event_ref == {
         "event_id": event.event_id,

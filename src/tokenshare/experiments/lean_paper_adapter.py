@@ -99,6 +99,7 @@ from tokenshare.local_runtime.logical_scheduler import (
 )
 from tokenshare.local_runtime.contracts import (
     PreparedTraceDelivery,
+    TRACE_TERMINAL_EXECUTION_RESULT_KINDS,
     WorkerCompletionSchedule,
 )
 from tokenshare.experiments.paper_workers import (
@@ -756,10 +757,66 @@ class LeanTraceDomainStage:
         theorem_payload = LeanTheoremPayload.from_dict(
             json.loads(context.artifact_store.read_bytes(payload_ref).decode("utf-8"))
         )
-        parser_input_text = _observe_trace_raw_output_hook(
+        parser_input_text, execution_result_kind = _observe_trace_raw_output_hook(
             context=context,
             post_raw_output_hook=self._post_raw_output_hook,
         )
+        if execution_result_kind is not None:
+            digest_key = context.delivery.delivery_digest.removeprefix("sha256:")
+            terminal_ref = context.artifact_store.save_json(
+                {
+                    "schema_version": "tokenshare.trace_terminal_execution_result.v1",
+                    "result_kind": execution_result_kind,
+                    "raw_output_ref": context.current_wrapper_ref.to_dict(),
+                    "provenance_ref": context.current_provenance_ref.to_dict(),
+                    "usage_ref": context.trace_attribution_ref.to_dict(),
+                    "current_provider_call_count": 0,
+                },
+                artifact_id=f"lean_trace_terminal_result_{digest_key}",
+                artifact_type="TraceTerminalExecutionResult",
+                artifact_schema_id="tokenshare.trace_terminal_execution_result",
+                artifact_schema_version="v1",
+                source={
+                    "kind": "lean_trace_parent_raw_hook",
+                    "delivery_digest": context.delivery.delivery_digest,
+                },
+                metadata={"attempt_id": context.delivery.attempt_id},
+                created_at=context.created_at,
+            )
+            self.submissions_by_attempt[request.attempt_id] = ExecutionSubmission(
+                submission_id=f"trace_terminal_submission_{digest_key}",
+                request_id=request.request_id,
+                task_id=request.task_id,
+                unit_id=request.unit_id,
+                attempt_id=request.attempt_id,
+                lease_id=request.lease_id,
+                fencing_token=request.fencing_token,
+                executor_id=str(request.executor["executor_id"]),
+                executor_version=str(request.executor["executor_version"]),
+                result_kind=execution_result_kind,
+                raw_output_ref=context.current_wrapper_ref,
+                parsed_output_ref=None,
+                candidate_output_refs={},
+                parse_failure_ref=None,
+                log_ref=None,
+                environment_ref=request.environment_ref,
+                environment_summary={"runtime": "trace_backed_parent_raw_hook"},
+                provenance_ref=context.current_provenance_ref,
+                usage_summary={
+                    "provider_attempt_count": 0,
+                    "current_provider_call_count": 0,
+                    "source_usage_class": "trace_attribution",
+                },
+                error={
+                    "kind": execution_result_kind,
+                    "source": "post_raw_output_hook",
+                },
+                submitted_at=context.created_at,
+            )
+            return TraceDomainStageResult(
+                parser_result_ref=terminal_ref,
+                execution_result_kind=execution_result_kind,
+            )
         parsed = parse_lean_proof_candidate_ai_output(
             parser_input_text,
             theorem_payload=theorem_payload,
@@ -854,11 +911,11 @@ def _observe_trace_raw_output_hook(
     *,
     context: TraceDomainStageContext,
     post_raw_output_hook: Any | None,
-) -> str:
+) -> tuple[str, str | None]:
     """用 parent 已落盘的 trace source refs 建立 parser 前 raw observation。"""
 
     if not callable(post_raw_output_hook):
-        return context.parser_input_text
+        return context.parser_input_text, None
     source_usage = context.source_objects.get("usage", {})
     nested_usage = (
         source_usage.get("usage") if isinstance(source_usage, Mapping) else None
@@ -907,20 +964,21 @@ def _observe_trace_raw_output_hook(
         submitted_at=context.created_at,
     )
     if hook_result is None:
-        return context.parser_input_text
+        return context.parser_input_text, None
     if not isinstance(hook_result, Mapping):
         raise ValueError("trace post_raw_output_hook must return a mapping or None")
     result_kind = hook_result.get("result_kind")
     if result_kind is not None:
-        raise ValueError(
-            "Lean trace domain stage does not accept terminal raw hook directives"
-        )
+        normalized_result_kind = str(result_kind)
+        if normalized_result_kind not in TRACE_TERMINAL_EXECUTION_RESULT_KINDS:
+            raise ValueError("unsupported trace execution result kind")
+        return context.parser_input_text, normalized_result_kind
     replacement_text = hook_result.get("content_text")
     if replacement_text is None:
-        return context.parser_input_text
+        return context.parser_input_text, None
     if not isinstance(replacement_text, str):
         raise ValueError("trace post_raw_output_hook content_text must be a string")
-    return replacement_text
+    return replacement_text, None
 
 
 def bind_lean_trace_request(

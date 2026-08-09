@@ -297,6 +297,7 @@ def commit_prepared_delivery(
         verifier_checker_refs=staged.verifier_checker_refs,
         canonical_ref=staged.canonical_ref,
         trace_attribution_refs=staged.trace_attribution_refs,
+        execution_result_kind=staged.execution_result_kind,
     )
     event = current_stores.event_ledger.append(
         event_type=EventType.TRACE_DELIVERY_COMMITTED,
@@ -491,11 +492,20 @@ def _trace_consumption_submission(
         raise ValueError("trace execution request has no executor_id")
     if not isinstance(executor_version, str) or not executor_version:
         raise ValueError("trace execution request has no executor_version")
-    succeeded = delivery.source_terminal_kind == "success"
+    execution_result_kind = consumption.core.execution_result_kind
+    succeeded = (
+        delivery.source_terminal_kind == "success"
+        and execution_result_kind is None
+    )
     parser_result_ref = consumption.core.parser_result_ref
     candidate_ref = consumption.core.canonical_ref or parser_result_ref
     failure_error = None
-    if not succeeded:
+    if execution_result_kind is not None:
+        failure_error = {
+            "kind": execution_result_kind,
+            "source": "trace_domain_stage",
+        }
+    elif not succeeded:
         failure_body = json.loads(
             artifact_store.read_bytes(parser_result_ref).decode("utf-8")
         )
@@ -523,9 +533,17 @@ def _trace_consumption_submission(
         fencing_token=request.fencing_token,
         executor_id=executor_id,
         executor_version=executor_version,
-        result_kind="succeeded" if succeeded else "failed",
+        result_kind=(
+            execution_result_kind
+            if execution_result_kind is not None
+            else "succeeded"
+            if succeeded
+            else "failed"
+        ),
         raw_output_ref=consumption.core.current_wrapper_ref,
-        parsed_output_ref=parser_result_ref,
+        parsed_output_ref=(
+            None if execution_result_kind is not None else parser_result_ref
+        ),
         candidate_output_refs=(
             {
                 output_name: candidate_ref
@@ -1170,7 +1188,10 @@ class ProtocolRunCoordinator:
                                 raise TypeError("invalid deferred recovery context")
                             retry_event = logical_scheduler.schedule_event(
                                 event_kind="retry",
-                                logical_time_ms=logical_scheduler.clock_ms,
+                                logical_time_ms=_deferred_recovery_logical_time_ms(
+                                    scheduler=logical_scheduler,
+                                    deferred=deferred,
+                                ),
                                 event_priority=EVENT_PRIORITY_BY_KIND["retry"],
                                 task_id=scheduled.task_unit.task_id,
                                 unit_id=scheduled.task_unit.unit_id,
@@ -1921,11 +1942,7 @@ class ProtocolRunCoordinator:
                 retry_counts=retry_counts,
                 trigger="lease_expired",
                 causation_event_id=request_flow.event.event_id,
-                recovery_now=(
-                    self._protocol_now(request)
-                    if request.logical_scheduler is not None
-                    else scheduled.lease.expires_at
-                ),
+                recovery_now=scheduled.lease.expires_at,
                 runtime_observations=runtime_observations,
             )
         if submission.result_kind == "late_submission":
@@ -2490,6 +2507,28 @@ def _elapsed_utc_ms(start: str, end: str) -> int:
     if elapsed_ms < 0:
         raise ValueError("lease deadline precedes lease issue time")
     return elapsed_ms
+
+
+def _deferred_recovery_logical_time_ms(
+    *,
+    scheduler: LogicalSourceLatencyScheduler,
+    deferred: _DeferredRecovery,
+) -> int:
+    """把未来的协议恢复时间映射回当前 logical scheduler 时钟。"""
+
+    if deferred.recovery_now is None:
+        return scheduler.clock_ms
+    logical_now = scheduler.now_timestamp()
+    logical_now_value = datetime.fromisoformat(logical_now.replace("Z", "+00:00"))
+    recovery_now_value = datetime.fromisoformat(
+        deferred.recovery_now.replace("Z", "+00:00")
+    )
+    if recovery_now_value <= logical_now_value:
+        return scheduler.clock_ms
+    return scheduler.clock_ms + _elapsed_utc_ms(
+        logical_now,
+        deferred.recovery_now,
+    )
 
 
 def _execution_request_identity(request) -> tuple[object, ...]:

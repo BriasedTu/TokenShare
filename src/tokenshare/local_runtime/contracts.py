@@ -43,6 +43,9 @@ from tokenshare.storage.events import LedgerEvent, VerifiedLedgerSnapshot
 
 
 LOGICAL_DISPATCH_START_MS_HINT = "logical_dispatch_start_ms"
+TRACE_TERMINAL_EXECUTION_RESULT_KINDS = frozenset(
+    {"no_return", "late_submission", "executor_error"}
+)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -1284,9 +1287,23 @@ class TraceConsumptionCore:
     verifier_checker_refs: tuple[ArtifactRef, ...]
     canonical_ref: ArtifactRef | None
     trace_attribution_refs: tuple[ArtifactRef, ...]
+    execution_result_kind: str | None = None
+
+    def __post_init__(self) -> None:
+        if (
+            self.execution_result_kind is not None
+            and self.execution_result_kind not in TRACE_TERMINAL_EXECUTION_RESULT_KINDS
+        ):
+            raise ValueError("unsupported trace execution result kind")
+        if self.execution_result_kind is not None and (
+            self.verifier_checker_refs or self.canonical_ref is not None
+        ):
+            raise ValueError(
+                "terminal trace execution result cannot include checker or canonical refs"
+            )
 
     def to_dict(self) -> JsonObject:
-        return {
+        body: JsonObject = {
             "attempt_id": self.attempt_id,
             "binding_digest": self.binding_digest,
             "current_fencing_token": self.current_fencing_token,
@@ -1305,6 +1322,9 @@ class TraceConsumptionCore:
                 ref.to_dict() for ref in self.trace_attribution_refs
             ],
         }
+        if self.execution_result_kind is not None:
+            body["execution_result_kind"] = self.execution_result_kind
+        return body
 
     @classmethod
     def from_dict(cls, value: Mapping[str, object]) -> "TraceConsumptionCore":
@@ -1321,7 +1341,12 @@ class TraceConsumptionCore:
             "canonical_ref",
             "trace_attribution_refs",
         }
-        _require_exact_keys(value, expected, "trace consumption core")
+        accepted_key_sets = {
+            frozenset(expected),
+            frozenset(expected | {"execution_result_kind"}),
+        }
+        if frozenset(value) not in accepted_key_sets:
+            raise ValueError("trace consumption core must have exact keys")
         canonical = value["canonical_ref"]
         return cls(
             attempt_id=value["attempt_id"],
@@ -1345,6 +1370,7 @@ class TraceConsumptionCore:
                 ArtifactRef.from_dict(dict(item))
                 for item in value["trace_attribution_refs"]
             ),
+            execution_result_kind=value.get("execution_result_kind"),
         )
 
 
@@ -1375,6 +1401,7 @@ class ParentStagedTraceDelivery:
     verifier_checker_refs: tuple[ArtifactRef, ...]
     canonical_ref: ArtifactRef | None
     trace_attribution_refs: tuple[ArtifactRef, ...]
+    execution_result_kind: str | None = None
 
     def __post_init__(self) -> None:
         for field_name in ("parser_result_ref", "current_provenance_ref"):
@@ -1392,6 +1419,17 @@ class ParentStagedTraceDelivery:
                 raise TypeError(f"{field_name} must be a tuple of ArtifactRef")
         if not self.trace_attribution_refs:
             raise ValueError("trace_attribution_refs must be non-empty")
+        if (
+            self.execution_result_kind is not None
+            and self.execution_result_kind not in TRACE_TERMINAL_EXECUTION_RESULT_KINDS
+        ):
+            raise ValueError("unsupported trace execution result kind")
+        if self.execution_result_kind is not None and (
+            self.verifier_checker_refs or self.canonical_ref is not None
+        ):
+            raise ValueError(
+                "terminal trace execution result cannot include checker or canonical refs"
+            )
 
 
 class ParentTraceDeliveryStager(Protocol):
