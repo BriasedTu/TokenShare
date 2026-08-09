@@ -52,10 +52,11 @@
 - Test: `tests/experiments/test_paper_smoke.py` and trace metrics tests.
 
 1. Add RED fixtures with an incorrect Exp1 Factor answer and rejected Lean answer.
-2. Prove both are consumed without reacquisition and count as `False`, not `None`.
-3. Assert per-root and summary correctness/completion denominators remain 8.
-4. Assert source prompt/completion/total tokens, latency and cost are projected from validated bank entries; missing source usage remains `None` with reason, never 0.
-5. Assert actual acquisition spend is counted once and Exp2–4 current provider calls stay 0.
+2. Prove both are consumed without acquisition-stage corrective reacquisition and remain in the fixed denominator.
+3. Prove a no-recovery condition remains `False`, while a legitimately triggered replacement may become `True` only after the original verifier/checker accepts it; preserve the base failure/recovery trace in both cases.
+4. Assert per-root and summary correctness/completion denominators remain 8.
+5. Assert source prompt/completion/total tokens, latency and cost are projected from validated bank entries; missing source usage remains `None` with reason, never 0.
+6. Assert actual acquisition spend is counted once and Exp2–4 current provider calls stay 0.
 
 ### Task 5: Offline 4F+4L integration smoke
 

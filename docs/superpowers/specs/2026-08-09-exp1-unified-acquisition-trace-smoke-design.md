@@ -22,7 +22,7 @@ Experiment 5 保持独立 endpoint comparison，不消费 DeepSeek Exp1 bank。
 2. 对基础 sample slots 与 Exp3 replacement slots 各采集一次；已存在对象只有在 request body、endpoint、model、reasoning controls、case、AI unit、sample/replacement slot 与 object digests 全部精确匹配时才能导入。
 3. 将 raw response、provider provenance、usage、latency、pricing 和 terminal status 写入 immutable response bank。
 4. Exp2–4 通过 `PaperTraceRuntimeContext` / `TraceSourceBinding` 消费 bank，重新进入原 adapter、coordinator、`ProtocolEngine` 与领域验证链。
-5. Exp3 的 replacement slot 只有在故障条件真实触发 replacement 时消费；它不能用于替换普通错误回答。
+5. replacement slot 只能由冻结的协议 retry/requeue/fault recovery 机制真实触发；acquisition 阶段不能因为基础回答错误而挑选性重采或预先替换。合法 recovery 的 replacement 仍必须经过原 verifier/checker，其最终系统正确率可据此变化。
 6. Exp4 的 FULL 仍是 Exp4 自己执行的协议基线，四个 ablation 与 FULL 使用相同 Exp1-acquired sample/replacement slots；不能把 Exp1 的 root 终态直接当作 Exp4 FULL 终态。
 
 ## 错误回答与分母
@@ -34,7 +34,7 @@ Exp1 acquisition 返回的真实错误、parse failure、checker/verifier reject
 - 用 replacement slot “洗白”基础错误；
 - 从 Exp2–4 的正确率或完成率分母删除错误 root。
 
-统计语义固定为：实验性错误为 `False` 并保留在固定 root 分母；真正缺失/不可判定为 `None` 并带 reason。`False` 与 `None` 不得合并。
+统计语义固定为：基础错误响应仍进入对应实验和固定 root 分母；无合法 recovery 时最终错误为 `False`。若该实验的原协议真实触发 replacement/recovery 且新候选通过原 verifier/checker，则该实验最终结果可以为 `True`，同时保留基础错误与 recovery 轨迹。真正缺失/不可判定为 `None` 并带 reason；`False` 与 `None` 不得合并。
 
 ## Lean Exp3 fault hook
 
