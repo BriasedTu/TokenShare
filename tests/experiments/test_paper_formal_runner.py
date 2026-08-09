@@ -7513,28 +7513,39 @@ def test_representative_runner_validates_full_budget_then_dispatches_selected_co
         ((EXPERIMENT_ID, CallbackModule()),),
     )
     monkeypatch.setattr(formal_runner, "dispatch_paper_case", fake_case_dispatch)
-    suite = formal_runner.execute_paper_formal_suite(
-        **{
-            **_formal_execution_kwargs(tmp_path=tmp_path, config=config, plan=plan),
-            "budget": _budget(
-                planned_conditions=2,
-                planned_root_runs=2,
-                planned_ai_units=2,
-            ),
-            "selected_condition_ids": (first_condition.condition_id,),
-            "root_case_filter": {
-                first_condition.condition_id: first_selection.ordered_case_ids,
-            },
-            "bypass_nonmetric_facility_gates": True,
-            "suite_id": "representative-full-plan-smoke-exp1-exp4",
-        }
-    )
+    representative_kwargs = {
+        **_formal_execution_kwargs(tmp_path=tmp_path, config=config, plan=plan),
+        "budget": _budget(
+            planned_conditions=2,
+            planned_root_runs=2,
+            planned_ai_units=2,
+        ),
+        "selected_condition_ids": (first_condition.condition_id,),
+        "root_case_filter": {
+            first_condition.condition_id: first_selection.ordered_case_ids,
+        },
+        "bypass_nonmetric_facility_gates": True,
+        "suite_id": "representative-full-plan-smoke-exp1-exp4",
+    }
+    suite = formal_runner.execute_paper_formal_suite(**representative_kwargs)
 
     assert dispatched == [first_condition.condition_id]
     assert suite.condition_count == 1
     assert suite.task_count == 1
     assert suite.experiment_ids == (EXPERIMENT_ID,)
     assert suite.status is PaperStatus.COMPLETED
+
+    monkeypatch.setattr(
+        formal_runner,
+        "_dispatch_formal_conditions",
+        lambda **_kwargs: pytest.fail(
+            "completed representative resume must return from selected closure"
+        ),
+    )
+    resumed = formal_runner.execute_paper_formal_suite(
+        **{**representative_kwargs, "resume": True}
+    )
+    assert resumed == suite
 
 
 def test_representative_runner_maps_all_adapter_artifacts_to_execution_suite_root(

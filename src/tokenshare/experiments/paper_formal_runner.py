@@ -1329,7 +1329,8 @@ def execute_paper_formal_suite(
             all_selected_roots_terminal or _hard_limit_reached(usage, hard_limits)
         ) and _formal_suite_closure_complete(
             suite_root=suite_root,
-            plans=plans,
+            plans=active_plans,
+            selected_condition_ids=selected,
         ):
             return _suite_result_from_evidence(suite_root)
     else:
@@ -8233,6 +8234,7 @@ def _formal_suite_closure_complete(
     *,
     suite_root: Path,
     plans: Sequence[PaperExperimentDispatchPlan],
+    selected_condition_ids: Sequence[str] | None = None,
 ) -> bool:
     """确认三层终态都已提交；缺任何一层时必须由 checkpoint 重建。"""
 
@@ -8257,6 +8259,11 @@ def _formal_suite_closure_complete(
         }
         if len(row_keys) != len(rows):
             return False
+        selected = (
+            None
+            if selected_condition_ids is None
+            else set(selected_condition_ids)
+        )
         expected_keys = {
             (
                 plan.experiment_id,
@@ -8266,6 +8273,7 @@ def _formal_suite_closure_complete(
             for plan in plans
             if plan.status == "planned"
             for condition in plan.conditions
+            if selected is None or condition.condition_id in selected
         }
         if not expected_keys.issubset(row_keys):
             return False

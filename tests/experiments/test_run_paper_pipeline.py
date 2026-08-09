@@ -2142,6 +2142,12 @@ def test_representative_service_routes_full_authority_to_trace_and_all_exp5_endp
             condition_count=len(selected),
             task_count=sum(len(root_filter[item]) for item in selected),
             provider_attempt_count=0 if len(captured) == 1 else 4,
+            total_cost_estimate=0.0 if len(captured) == 1 else 1.25,
+            total_cost_estimate_status=(
+                "not_applicable"
+                if len(captured) == 1
+                else "single_currency_estimate"
+            ),
         )
 
     monkeypatch.setattr(pipeline, "_FORMAL_SUITE_EXECUTOR", fake_execute)
@@ -2159,6 +2165,14 @@ def test_representative_service_routes_full_authority_to_trace_and_all_exp5_endp
     assert result.status == "completed_with_failures"
     assert result.expected_condition_count == authority.coverage.condition_count
     assert result.expected_root_count == authority.coverage.root_run_count
+    assert result.acquisition_current_provider_calls == 0
+    assert result.trace_current_provider_calls == 0
+    assert result.exp5_current_provider_calls == 4
+    assert result.total_current_provider_calls == 4
+    assert result.acquisition_current_spend == 0.0
+    assert result.trace_current_spend == 0.0
+    assert result.exp5_current_spend == 1.25
+    assert result.total_current_spend == 1.25
     assert len(captured) == 2
     trace, online = captured
     assert trace["dispatch_plans"] is authority.full_dispatch_plans
@@ -2178,6 +2192,76 @@ def test_representative_service_routes_full_authority_to_trace_and_all_exp5_endp
         condition.condition_id for condition in exp5_conditions
     }
     assert len({item.model_endpoint_identity_digest for item in exp5_conditions}) == 4
+
+
+def test_representative_invalid_exp5_terminal_preserves_current_provider_usage(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    authority = _representative_pipeline_authority(tmp_path)
+    conditions = authority.coverage.conditions
+    roots = authority.coverage.root_case_filter
+    calls = 0
+
+    def fake_execute(**kwargs):
+        nonlocal calls
+        calls += 1
+        selected = tuple(kwargs["selected_condition_ids"])
+        active = tuple(
+            dict.fromkeys(
+                condition.experiment_id
+                for condition in conditions
+                if condition.condition_id in selected
+            )
+        )
+        return replace(
+            _paper_suite_result(Path(kwargs["output_root"]), status="completed"),
+            experiment_ids=active,
+            condition_count=len(selected),
+            task_count=(
+                sum(len(roots[item]) for item in selected) if calls == 1 else 0
+            ),
+            provider_attempt_count=0 if calls == 1 else 4,
+            total_cost_estimate=0.0 if calls == 1 else 1.25,
+            total_cost_estimate_status=(
+                "not_applicable" if calls == 1 else "single_currency_estimate"
+            ),
+        )
+
+    monkeypatch.setattr(pipeline, "_FORMAL_SUITE_EXECUTOR", fake_execute)
+    monkeypatch.setattr(pipeline, "_TRACE_CONTEXT_BUILDER", lambda **_kwargs: object())
+
+    with pytest.raises(pipeline.RepresentativeSmokeExecutionError) as caught:
+        pipeline.execute_representative_full_plan_smoke(
+            authority=authority,
+            response_bank_resolver=object(),
+            exp5_transport=object(),
+        )
+
+    summary = caught.value.to_summary()
+    assert summary["exp5_current_provider_calls"] == 4
+    assert summary["exp5_current_spend"] == 1.25
+    assert summary["provider_calls"] == 4
+
+
+def test_representative_terminal_usage_never_converts_missing_spend_to_zero(
+    tmp_path: Path,
+) -> None:
+    terminal = replace(
+        _paper_suite_result(tmp_path, status="completed"),
+        provider_attempt_count=4,
+        total_cost_estimate=0.0,
+        total_cost_estimate_status="usage_missing",
+    )
+
+    usage = pipeline._current_provider_usage_from_terminal(
+        terminal=terminal,
+        force_zero_spend_when_no_calls=True,
+    )
+
+    assert usage.provider_calls == 4
+    assert usage.spend is None
+    assert usage.spend_missing_reason == "usage_missing"
 
 
 @pytest.mark.parametrize("status", ("blocked", "incomplete", "failed"))
@@ -2275,3 +2359,239 @@ def test_representative_cli_builds_full_atomic_authority_before_any_provider(
     assert body["status"] == "blocked"
     assert body["provider_calls"] == 0
     assert "coverage" in body["message"]
+
+
+def _representative_authority_with_typed_bundle(tmp_path: Path):
+    from tests.experiments.test_paper_response_bank import _representative_plan
+    from tokenshare.experiments.paper_response_bank import (
+        create_representative_acquisition_plan_bundle,
+    )
+
+    plan = _representative_plan()
+    bundle = create_representative_acquisition_plan_bundle(
+        tmp_path / "typed-bundle",
+        plan=plan,
+    )
+    base = _representative_pipeline_authority(tmp_path / "execution")
+    coverage = SimpleNamespace(
+        **{
+            **vars(base.coverage),
+            "source_snapshot_digest": plan.source_snapshot_digest,
+            "coverage_digest": plan.coverage_digest,
+        }
+    )
+    return replace(base, coverage=coverage, bundle=bundle)
+
+
+def test_representative_typed_acquisition_finalizes_child_bank_and_resumes_without_calls(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tests.experiments.test_paper_response_bank_acquisition import (
+        ScriptedExactTransport,
+        _success_response,
+    )
+
+    authority = _representative_authority_with_typed_bundle(tmp_path)
+    first_transport = ScriptedExactTransport([_success_response("representative")])
+    monkeypatch.setattr(
+        pipeline,
+        "_REPRESENTATIVE_ACQUISITION_TRANSPORT_FACTORY",
+        lambda: first_transport,
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "_REPRESENTATIVE_SECRET_RESOLVER",
+        lambda _name: "fake-secret",
+    )
+
+    acquired = pipeline._acquire_representative_response_bank(
+        authority=authority,
+        resume=False,
+    )
+
+    assert acquired.max_in_flight == 10
+    assert acquired.usage.provider_calls == 1
+    assert acquired.usage.spend == pytest.approx(0.0000125)
+    assert len(first_transport.calls) == 1
+    assert acquired.resolver.index.manifest.inventory_digest == (
+        authority.bundle.inventory_digest
+    )
+    ledger_path = (
+        authority.output_root
+        / "acquisition"
+        / "acquisition_budget.v1.sqlite3"
+    )
+    assert ledger_path.is_file()
+
+    resume_transport = ScriptedExactTransport([])
+    monkeypatch.setattr(
+        pipeline,
+        "_REPRESENTATIVE_ACQUISITION_TRANSPORT_FACTORY",
+        lambda: resume_transport,
+    )
+    resumed = pipeline._acquire_representative_response_bank(
+        authority=authority,
+        resume=True,
+    )
+    assert resumed.usage.provider_calls == 0
+    assert resumed.usage.spend == 0.0
+    assert resume_transport.calls == []
+    assert resumed.resolver.index.manifest.manifest_digest == (
+        acquired.resolver.index.manifest.manifest_digest
+    )
+
+
+def test_representative_resume_reconciles_ambiguous_without_blind_retry(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tests.experiments.test_paper_response_bank_acquisition import (
+        ScriptedExactTransport,
+        _success_response,
+    )
+
+    authority = _representative_authority_with_typed_bundle(tmp_path)
+    first_transport = ScriptedExactTransport([_success_response("ambiguous")])
+    monkeypatch.setattr(
+        pipeline,
+        "_REPRESENTATIVE_ACQUISITION_TRANSPORT_FACTORY",
+        lambda: first_transport,
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "_REPRESENTATIVE_SECRET_RESOLVER",
+        lambda _name: "fake-secret",
+    )
+
+    def crash_after_transport(stage: str) -> None:
+        if stage == "transport_sent":
+            raise RuntimeError("simulated ambiguous dispatch")
+
+    monkeypatch.setattr(
+        pipeline,
+        "_REPRESENTATIVE_ACQUISITION_CRASH_HOOK",
+        crash_after_transport,
+    )
+    with pytest.raises(pipeline.RepresentativeSmokeExecutionError) as first:
+        pipeline._acquire_representative_response_bank(
+            authority=authority,
+            resume=False,
+        )
+    assert first.value.to_summary()["provider_calls"] == 1
+    assert first.value.to_summary()["acquisition_current_spend"] is None
+
+    resume_transport = ScriptedExactTransport([])
+    monkeypatch.setattr(
+        pipeline,
+        "_REPRESENTATIVE_ACQUISITION_TRANSPORT_FACTORY",
+        lambda: resume_transport,
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "_REPRESENTATIVE_ACQUISITION_CRASH_HOOK",
+        None,
+    )
+    with pytest.raises(pipeline.RepresentativeSmokeExecutionError) as resumed:
+        pipeline._acquire_representative_response_bank(
+            authority=authority,
+            resume=True,
+        )
+    summary = resumed.value.to_summary()
+    assert summary["failure_stage"] == "acquisition_terminal"
+    assert summary["provider_calls"] == 0
+    assert summary["acquisition_current_spend"] == 0.0
+    assert resume_transport.calls == []
+
+
+@pytest.mark.parametrize("terminal_ok", (True, False))
+def test_representative_cli_reports_exp5_calls_on_success_and_terminal_rejection(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys,
+    terminal_ok: bool,
+) -> None:
+    authority = _representative_pipeline_authority(tmp_path / "execution")
+    zero = pipeline.RepresentativeCurrentProviderUsage(
+        provider_calls=0,
+        spend=0.0,
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "_REPRESENTATIVE_SERVICE_AUTHORITY_BUILDER",
+        lambda **_kwargs: authority,
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "_acquire_representative_response_bank",
+        lambda **_kwargs: pipeline.RepresentativeAcquisitionStageResult(
+            resolver=object(),
+            usage=zero,
+            max_in_flight=10,
+        ),
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "_REPRESENTATIVE_EXP5_TRANSPORT_FACTORY",
+        object,
+    )
+    if terminal_ok:
+        terminal = SimpleNamespace(
+            status="completed",
+            expected_condition_count=authority.coverage.condition_count,
+            expected_root_count=authority.coverage.root_run_count,
+            acquisition_current_provider_calls=0,
+            acquisition_current_spend=0.0,
+            acquisition_spend_missing_reason=None,
+            trace_current_provider_calls=0,
+            trace_current_spend=0.0,
+            trace_spend_missing_reason=None,
+            exp5_current_provider_calls=4,
+            exp5_current_spend=1.25,
+            exp5_spend_missing_reason=None,
+            total_current_provider_calls=4,
+            total_current_spend=1.25,
+            total_spend_missing_reason=None,
+        )
+        monkeypatch.setattr(
+            pipeline,
+            "_REPRESENTATIVE_SMOKE_EXECUTOR",
+            lambda **_kwargs: terminal,
+        )
+    else:
+        failure = pipeline.RepresentativeSmokeExecutionError(
+            "invalid Exp5 terminal denominator",
+            failure_stage="exp5_terminal",
+            acquisition_usage=zero,
+            trace_usage=zero,
+            exp5_usage=pipeline.RepresentativeCurrentProviderUsage(
+                provider_calls=4,
+                spend=1.25,
+            ),
+        )
+
+        def fail(**_kwargs):
+            raise failure
+
+        monkeypatch.setattr(pipeline, "_REPRESENTATIVE_SMOKE_EXECUTOR", fail)
+
+    exit_code = pipeline.main(
+        [
+            "representative-full-plan-smoke",
+            "--output-root",
+            str(tmp_path / "execution"),
+            "--planning-artifact-root",
+            str(tmp_path / "planning"),
+            "--plan-bundle-root",
+            str(tmp_path / "bundle"),
+            "--new-run",
+            "--allow-provider-calls",
+        ]
+    )
+
+    body = json.loads(capsys.readouterr().out)
+    assert exit_code == (0 if terminal_ok else 3)
+    assert body["provider_calls"] == 4
+    assert body["total_current_provider_calls"] == 4
+    assert body["exp5_current_provider_calls"] == 4
+    assert body["exp5_current_spend"] == 1.25

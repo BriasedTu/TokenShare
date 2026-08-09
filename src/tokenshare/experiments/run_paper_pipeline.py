@@ -1,7 +1,7 @@
 """EPD-027 bounded paper-pipeline CLI 的薄路由层。
 
-本模块只解析、校验调用边界并委派既有实验服务。它不读取 provider secret、
-不构造 transport，也不实现协议状态机或 publication gate policy。
+本模块主要解析、校验调用边界并委派既有实验服务。中性 representative 命令
+只在 full-plan authority 成功后构造正式 transport；本模块不实现协议状态机。
 """
 
 from __future__ import annotations
@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 import json
 from pathlib import Path
 import sys
+from threading import Lock
 from types import MappingProxyType
 from typing import Any
 
@@ -263,8 +264,103 @@ class RepresentativeFullPlanSmokeServiceResult:
     exp5_terminal: object
     expected_condition_count: int
     expected_root_count: int
-    current_trace_provider_calls: int
-    current_trace_spend: float
+    acquisition_current_provider_calls: int
+    acquisition_current_spend: float | None
+    acquisition_spend_missing_reason: str | None
+    trace_current_provider_calls: int
+    trace_current_spend: float | None
+    trace_spend_missing_reason: str | None
+    exp5_current_provider_calls: int
+    exp5_current_spend: float | None
+    exp5_spend_missing_reason: str | None
+    total_current_provider_calls: int
+    total_current_spend: float | None
+    total_spend_missing_reason: str | None
+
+
+@dataclass(frozen=True, kw_only=True)
+class RepresentativeCurrentProviderUsage:
+    provider_calls: int
+    spend: float | None
+    spend_missing_reason: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.provider_calls < 0:
+            raise ValueError("current provider calls must be non-negative")
+        if self.spend is None:
+            if not self.spend_missing_reason:
+                raise ValueError("missing current spend requires a reason")
+        elif self.spend < 0 or self.spend_missing_reason is not None:
+            raise ValueError("current provider spend is inconsistent")
+
+
+class RepresentativeSmokeExecutionError(ValueError):
+    """执行中止时仍携带已经发生的 current provider accounting。"""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        failure_stage: str,
+        acquisition_usage: RepresentativeCurrentProviderUsage,
+        trace_usage: RepresentativeCurrentProviderUsage,
+        exp5_usage: RepresentativeCurrentProviderUsage,
+    ) -> None:
+        super().__init__(message)
+        self.failure_stage = failure_stage
+        self.acquisition_usage = acquisition_usage
+        self.trace_usage = trace_usage
+        self.exp5_usage = exp5_usage
+
+    def to_summary(self) -> dict[str, object]:
+        usages = (
+            self.acquisition_usage,
+            self.trace_usage,
+            self.exp5_usage,
+        )
+        missing_reasons = tuple(
+            usage.spend_missing_reason
+            for usage in usages
+            if usage.spend_missing_reason is not None
+        )
+        total_provider_calls = sum(usage.provider_calls for usage in usages)
+        total_spend = (
+            None
+            if missing_reasons
+            else sum(
+                float(usage.spend)
+                for usage in usages
+                if usage.spend is not None
+            )
+        )
+        return {
+            "failure_kind": "representative_smoke_execution_rejected",
+            "failure_stage": self.failure_stage,
+            "provider_calls": total_provider_calls,
+            "total_current_provider_calls": total_provider_calls,
+            "acquisition_current_provider_calls": self.acquisition_usage.provider_calls,
+            "acquisition_current_spend": self.acquisition_usage.spend,
+            "acquisition_spend_missing_reason": (
+                self.acquisition_usage.spend_missing_reason
+            ),
+            "trace_current_provider_calls": self.trace_usage.provider_calls,
+            "trace_current_spend": self.trace_usage.spend,
+            "trace_spend_missing_reason": self.trace_usage.spend_missing_reason,
+            "exp5_current_provider_calls": self.exp5_usage.provider_calls,
+            "exp5_current_spend": self.exp5_usage.spend,
+            "exp5_spend_missing_reason": self.exp5_usage.spend_missing_reason,
+            "total_current_spend": total_spend,
+            "total_spend_missing_reason": (
+                None if not missing_reasons else ";".join(missing_reasons)
+            ),
+        }
+
+
+@dataclass(frozen=True, kw_only=True)
+class RepresentativeAcquisitionStageResult:
+    resolver: object
+    usage: RepresentativeCurrentProviderUsage
+    max_in_flight: int
 
 
 Delegate = Callable[[PipelineCommandRequest], Mapping[str, object] | Any]
@@ -913,11 +1009,19 @@ def execute_representative_full_plan_smoke(
     authority: RepresentativeFullPlanSmokeServiceAuthority,
     response_bank_resolver: object,
     exp5_transport: object,
+    acquisition_usage: RepresentativeCurrentProviderUsage | None = None,
 ) -> RepresentativeFullPlanSmokeServiceResult:
     """用同一 full plans/budget 分别执行 Exp1--4 trace 与 Exp5 online。"""
 
     if type(authority) is not RepresentativeFullPlanSmokeServiceAuthority:
         raise TypeError("typed representative smoke authority is required")
+    acquisition_current = acquisition_usage or RepresentativeCurrentProviderUsage(
+        provider_calls=0,
+        spend=0.0,
+    )
+    if type(acquisition_current) is not RepresentativeCurrentProviderUsage:
+        raise TypeError("typed representative acquisition usage is required")
+    zero_usage = RepresentativeCurrentProviderUsage(provider_calls=0, spend=0.0)
     coverage = authority.coverage
     conditions_by_experiment = {
         experiment_id: tuple(
@@ -946,13 +1050,26 @@ def execute_representative_full_plan_smoke(
         trace_context=trace_context,
         suite_id="representative_full_plan_smoke_exp1_exp4_trace",
     )
-    _validate_representative_terminal(
+    trace_usage = _current_provider_usage_from_terminal(
         terminal=trace_terminal,
-        conditions=trace_conditions,
-        root_case_filter=coverage.root_case_filter,
-        expected_experiment_ids=_REPRESENTATIVE_TRACE_EXPERIMENT_IDS,
-        require_zero_current_provider_calls=True,
+        force_zero_spend_when_no_calls=True,
     )
+    try:
+        _validate_representative_terminal(
+            terminal=trace_terminal,
+            conditions=trace_conditions,
+            root_case_filter=coverage.root_case_filter,
+            expected_experiment_ids=_REPRESENTATIVE_TRACE_EXPERIMENT_IDS,
+            require_zero_current_provider_calls=True,
+        )
+    except ValueError as exc:
+        raise RepresentativeSmokeExecutionError(
+            str(exc),
+            failure_stage="trace_terminal",
+            acquisition_usage=acquisition_current,
+            trace_usage=trace_usage,
+            exp5_usage=zero_usage,
+        ) from exc
     exp5_terminal = _run_representative_formal_subset(
         authority=authority,
         conditions=exp5_conditions,
@@ -962,13 +1079,26 @@ def execute_representative_full_plan_smoke(
         trace_context=None,
         suite_id="representative_full_plan_smoke_exp5_online",
     )
-    _validate_representative_terminal(
+    exp5_usage = _current_provider_usage_from_terminal(
         terminal=exp5_terminal,
-        conditions=exp5_conditions,
-        root_case_filter=coverage.root_case_filter,
-        expected_experiment_ids=(_REPRESENTATIVE_EXP5_EXPERIMENT_ID,),
-        require_zero_current_provider_calls=False,
+        force_zero_spend_when_no_calls=True,
     )
+    try:
+        _validate_representative_terminal(
+            terminal=exp5_terminal,
+            conditions=exp5_conditions,
+            root_case_filter=coverage.root_case_filter,
+            expected_experiment_ids=(_REPRESENTATIVE_EXP5_EXPERIMENT_ID,),
+            require_zero_current_provider_calls=False,
+        )
+    except ValueError as exc:
+        raise RepresentativeSmokeExecutionError(
+            str(exc),
+            failure_stage="exp5_terminal",
+            acquisition_usage=acquisition_current,
+            trace_usage=trace_usage,
+            exp5_usage=exp5_usage,
+        ) from exc
     statuses = {
         str(getattr(getattr(item, "status", None), "value", getattr(item, "status", None)))
         for item in (trace_terminal, exp5_terminal)
@@ -978,14 +1108,71 @@ def execute_representative_full_plan_smoke(
         if "completed_with_failures" in statuses
         else "completed"
     )
+    usages = (acquisition_current, trace_usage, exp5_usage)
+    missing_reasons = tuple(
+        usage.spend_missing_reason
+        for usage in usages
+        if usage.spend_missing_reason is not None
+    )
+    total_spend = (
+        None
+        if missing_reasons
+        else sum(float(usage.spend) for usage in usages if usage.spend is not None)
+    )
     return RepresentativeFullPlanSmokeServiceResult(
         status=aggregate_status,
         trace_terminal=trace_terminal,
         exp5_terminal=exp5_terminal,
         expected_condition_count=int(coverage.condition_count),
         expected_root_count=int(coverage.root_run_count),
-        current_trace_provider_calls=0,
-        current_trace_spend=0.0,
+        acquisition_current_provider_calls=acquisition_current.provider_calls,
+        acquisition_current_spend=acquisition_current.spend,
+        acquisition_spend_missing_reason=(
+            acquisition_current.spend_missing_reason
+        ),
+        trace_current_provider_calls=trace_usage.provider_calls,
+        trace_current_spend=trace_usage.spend,
+        trace_spend_missing_reason=trace_usage.spend_missing_reason,
+        exp5_current_provider_calls=exp5_usage.provider_calls,
+        exp5_current_spend=exp5_usage.spend,
+        exp5_spend_missing_reason=exp5_usage.spend_missing_reason,
+        total_current_provider_calls=sum(
+            usage.provider_calls for usage in usages
+        ),
+        total_current_spend=total_spend,
+        total_spend_missing_reason=(
+            None if not missing_reasons else ";".join(missing_reasons)
+        ),
+    )
+
+
+def _current_provider_usage_from_terminal(
+    *,
+    terminal: object,
+    force_zero_spend_when_no_calls: bool,
+) -> RepresentativeCurrentProviderUsage:
+    calls = int(getattr(terminal, "provider_attempt_count", 0))
+    if calls < 0:
+        raise ValueError("terminal current provider calls are invalid")
+    if calls == 0 and force_zero_spend_when_no_calls:
+        return RepresentativeCurrentProviderUsage(provider_calls=0, spend=0.0)
+    status = str(getattr(terminal, "total_cost_estimate_status", ""))
+    if status in {"single_currency_estimate", "single_currency_or_legacy"}:
+        value = getattr(terminal, "total_cost_estimate", None)
+        if (
+            isinstance(value, (int, float))
+            and not isinstance(value, bool)
+            and value >= 0
+        ):
+            return RepresentativeCurrentProviderUsage(
+                provider_calls=calls,
+                spend=float(value),
+            )
+    reason = status or "terminal_cost_estimate_missing"
+    return RepresentativeCurrentProviderUsage(
+        provider_calls=calls,
+        spend=None,
+        spend_missing_reason=reason,
     )
 
 
@@ -1082,11 +1269,200 @@ def _create_representative_exp5_transport() -> object:
     return UrlLibSiliconFlowTransport()
 
 
+def _create_representative_acquisition_transport() -> object:
+    from tokenshare.executors.ai_api_transport import UrlLibDeepSeekTransport
+
+    return UrlLibDeepSeekTransport()
+
+
+def _representative_secret_resolver(name: str) -> str:
+    import os
+
+    return os.environ.get(name, "")
+
+
 _REPRESENTATIVE_SERVICE_AUTHORITY_BUILDER = (
     _build_representative_service_authority
 )
 _REPRESENTATIVE_SMOKE_EXECUTOR = execute_representative_full_plan_smoke
 _REPRESENTATIVE_EXP5_TRANSPORT_FACTORY = _create_representative_exp5_transport
+_REPRESENTATIVE_ACQUISITION_TRANSPORT_FACTORY = (
+    _create_representative_acquisition_transport
+)
+_REPRESENTATIVE_SECRET_RESOLVER = _representative_secret_resolver
+_REPRESENTATIVE_ACQUISITION_CRASH_HOOK: Callable[[str], None] | None = None
+
+
+class _CountingRepresentativeTransport:
+    def __init__(self, transport: object) -> None:
+        self.transport = transport
+        self.provider_calls = 0
+        self._lock = Lock()
+
+    def post_chat_completion(self, **kwargs: object) -> object:
+        with self._lock:
+            self.provider_calls += 1
+        return self.transport.post_chat_completion(**kwargs)
+
+
+def _acquire_representative_response_bank(
+    *,
+    authority: RepresentativeFullPlanSmokeServiceAuthority,
+    resume: bool,
+) -> RepresentativeAcquisitionStageResult:
+    from tokenshare.experiments.paper_budget_ledger import PaperBudgetLedger
+    from tokenshare.experiments.paper_response_bank import (
+        ResponseBankAcquisitionOrchestrator,
+        establish_results_first_acquisition_authorization,
+        finalize_acquisition_child_bank,
+        results_first_response_bank_manifest_for_bundle,
+    )
+
+    bundle = authority.bundle
+    acquisition_root = authority.output_root / "acquisition"
+    authorization = establish_results_first_acquisition_authorization(
+        bundle=bundle,
+        output_root=acquisition_root,
+        output_mode="resume" if resume else "new_run",
+        allow_provider_calls=True,
+    )
+    manifest = results_first_response_bank_manifest_for_bundle(
+        bundle,
+        authorization,
+    )
+    ledger = PaperBudgetLedger(
+        acquisition_root / "acquisition_budget.v1.sqlite3",
+        limits=bundle.full_budget.to_limits(),
+    )
+    ledger.preregister_inventory(
+        inventory_digest=bundle.inventory_digest,
+        rows=bundle.inventory_rows,
+    )
+    max_in_flight = int(bundle.max_acquisition_concurrency)
+    if not 1 <= max_in_flight <= 10:
+        raise ValueError("representative acquisition concurrency exceeds 10")
+    transport = _CountingRepresentativeTransport(
+        _REPRESENTATIVE_ACQUISITION_TRANSPORT_FACTORY()
+    )
+    orchestrator = ResponseBankAcquisitionOrchestrator(
+        output_root=acquisition_root,
+        bank_root_id=manifest.bank_root_id,
+        manifest_digest=manifest.manifest_digest,
+        inventory_digest=bundle.inventory_digest,
+        inventory_rows=bundle.inventory_rows,
+        budget_ledger=ledger,
+        facility_authorization=authorization,
+        invocation_mode=authorization.output_mode,
+        transport=transport,
+        secret_resolver=_REPRESENTATIVE_SECRET_RESOLVER,
+        now_epoch=int(_UTC_NOW().timestamp()),
+        crash_hook=_REPRESENTATIVE_ACQUISITION_CRASH_HOOK,
+    )
+    zero_usage = RepresentativeCurrentProviderUsage(provider_calls=0, spend=0.0)
+    try:
+        batch = orchestrator.acquire_all(
+            bundle.acquisition_requests,
+            max_in_flight=max_in_flight,
+        )
+    except Exception as exc:
+        usage = RepresentativeCurrentProviderUsage(
+            provider_calls=transport.provider_calls,
+            spend=(0.0 if transport.provider_calls == 0 else None),
+            spend_missing_reason=(
+                None
+                if transport.provider_calls == 0
+                else "acquisition_terminal_accounting_unavailable"
+            ),
+        )
+        raise RepresentativeSmokeExecutionError(
+            str(exc),
+            failure_stage="acquisition_dispatch",
+            acquisition_usage=usage,
+            trace_usage=zero_usage,
+            exp5_usage=zero_usage,
+        ) from exc
+    usage = _acquisition_current_usage(
+        batch=batch,
+        ledger=ledger,
+        inventory_digest=bundle.inventory_digest,
+        current_provider_calls=transport.provider_calls,
+    )
+    if (
+        batch.status != "complete"
+        or batch.missing_inventory_entry_ids
+        or batch.ambiguous_inventory_entry_ids
+    ):
+        raise RepresentativeSmokeExecutionError(
+            batch.blocked_reason or "representative acquisition is incomplete",
+            failure_stage="acquisition_terminal",
+            acquisition_usage=usage,
+            trace_usage=zero_usage,
+            exp5_usage=zero_usage,
+        )
+    resolver = finalize_acquisition_child_bank(
+        orchestrator=orchestrator,
+        bundle=bundle,
+        manifest=manifest,
+        batch_result=batch,
+    )
+    if resolver is None:
+        raise RepresentativeSmokeExecutionError(
+            "representative immutable child bank was not finalized",
+            failure_stage="acquisition_finalize",
+            acquisition_usage=usage,
+            trace_usage=zero_usage,
+            exp5_usage=zero_usage,
+        )
+    return RepresentativeAcquisitionStageResult(
+        resolver=resolver,
+        usage=usage,
+        max_in_flight=max_in_flight,
+    )
+
+
+def _acquisition_current_usage(
+    *,
+    batch: object,
+    ledger: object,
+    inventory_digest: str,
+    current_provider_calls: int,
+) -> RepresentativeCurrentProviderUsage:
+    if current_provider_calls == 0:
+        return RepresentativeCurrentProviderUsage(provider_calls=0, spend=0.0)
+    costs: list[float] = []
+    missing = False
+    invoked_results = tuple(
+        result
+        for result in getattr(batch, "results", ())
+        if bool(getattr(result, "transport_invoked", False))
+    )
+    for result in invoked_results:
+        entry = getattr(result, "entry", None)
+        if entry is None:
+            missing = True
+            continue
+        record = ledger.get_reservation(
+            inventory_digest,
+            entry.inventory_entry_id,
+        )
+        if (
+            record is None
+            or record.cost_estimate is None
+            or bool(record.usage_missing)
+        ):
+            missing = True
+            continue
+        costs.append(float(record.cost_estimate))
+    if missing or len(invoked_results) != current_provider_calls:
+        return RepresentativeCurrentProviderUsage(
+            provider_calls=current_provider_calls,
+            spend=None,
+            spend_missing_reason="acquisition_usage_missing",
+        )
+    return RepresentativeCurrentProviderUsage(
+        provider_calls=current_provider_calls,
+        spend=sum(costs),
+    )
 
 
 def _run_representative_cli(args: argparse.Namespace) -> dict[str, object]:
@@ -1116,22 +1492,54 @@ def _run_representative_cli(args: argparse.Namespace) -> dict[str, object]:
     if not bool(args.allow_provider_calls):
         raise ValueError("representative execution requires --allow-provider-calls")
     if args.external_bank_root is None:
-        raise ValueError("representative execution requires --external-bank-root")
-    resolver = ExternalBankResolverBinding(
-        root=Path(args.external_bank_root).resolve(strict=False)
-    ).open()
+        acquisition = _acquire_representative_response_bank(
+            authority=authority,
+            resume=bool(args.resume),
+        )
+        resolver = acquisition.resolver
+        acquisition_usage = acquisition.usage
+    else:
+        resolver = ExternalBankResolverBinding(
+            root=Path(args.external_bank_root).resolve(strict=False)
+        ).open()
+        acquisition_usage = RepresentativeCurrentProviderUsage(
+            provider_calls=0,
+            spend=0.0,
+        )
     terminal = _REPRESENTATIVE_SMOKE_EXECUTOR(
         authority=authority,
         response_bank_resolver=resolver,
         exp5_transport=_REPRESENTATIVE_EXP5_TRANSPORT_FACTORY(),
+        acquisition_usage=acquisition_usage,
     )
     return {
         **common,
         "status": terminal.status,
+        "provider_calls": int(terminal.total_current_provider_calls),
+        "total_current_provider_calls": int(
+            terminal.total_current_provider_calls
+        ),
         "condition_count": int(terminal.expected_condition_count),
         "root_run_count": int(terminal.expected_root_count),
-        "trace_provider_calls": int(terminal.current_trace_provider_calls),
-        "trace_current_spend": float(terminal.current_trace_spend),
+        "acquisition_current_provider_calls": int(
+            terminal.acquisition_current_provider_calls
+        ),
+        "acquisition_current_spend": terminal.acquisition_current_spend,
+        "acquisition_spend_missing_reason": (
+            terminal.acquisition_spend_missing_reason
+        ),
+        "trace_current_provider_calls": int(
+            terminal.trace_current_provider_calls
+        ),
+        "trace_current_spend": terminal.trace_current_spend,
+        "trace_spend_missing_reason": terminal.trace_spend_missing_reason,
+        "exp5_current_provider_calls": int(
+            terminal.exp5_current_provider_calls
+        ),
+        "exp5_current_spend": terminal.exp5_current_spend,
+        "exp5_spend_missing_reason": terminal.exp5_spend_missing_reason,
+        "total_current_spend": terminal.total_current_spend,
+        "total_spend_missing_reason": terminal.total_spend_missing_reason,
     }
 
 
@@ -1958,6 +2366,21 @@ def main(argv: Sequence[str] | None = None) -> int:
             request=request,
             delegated=_default_delegate(request),
         )
+    except RepresentativeSmokeExecutionError as exc:
+        print(
+            json.dumps(
+                {
+                    "schema_version": RESULT_SCHEMA_VERSION,
+                    "status": "blocked",
+                    "scope": "representative-full-plan-smoke",
+                    "evidence_class": "representative_full_plan_smoke",
+                    "message": str(exc),
+                    **exc.to_summary(),
+                },
+                sort_keys=True,
+            )
+        )
+        return 3
     except PaperInfrastructureBlockedError as exc:
         print(
             json.dumps(
@@ -2021,8 +2444,11 @@ __all__ = [
     "PAPER_PIPELINE_COMMANDS",
     "PipelineCommandRequest",
     "PaperPublicationGateServiceInput",
+    "RepresentativeAcquisitionStageResult",
+    "RepresentativeCurrentProviderUsage",
     "RepresentativeFullPlanSmokeServiceAuthority",
     "RepresentativeFullPlanSmokeServiceResult",
+    "RepresentativeSmokeExecutionError",
     "ReportRenderServiceInput",
     "build_representative_full_plan_smoke_service_authority",
     "execute_representative_full_plan_smoke",
