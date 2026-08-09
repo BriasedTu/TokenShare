@@ -118,6 +118,7 @@ def project_paper_protocol_run(
                 "AIUsage",
                 "TraceCurrentUsage",
             },
+            attempt_id=attempt_id,
             request_id=str(request.get("request_id") or ""),
             submission_id=str(submission.get("submission_id") or ""),
         )

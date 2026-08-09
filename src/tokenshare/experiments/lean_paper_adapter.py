@@ -1393,7 +1393,12 @@ def _trace_lean_calls_from_events(
             },
         )
         usage_ref = store.save_json(
-            dict(submission.usage_summary or {}),
+            {
+                **dict(submission.usage_summary or {}),
+                "attempt_id": request.attempt_id,
+                "request_id": request.request_id,
+                "submission_id": submission.submission_id,
+            },
             artifact_id=f"trace_current_usage_{request.attempt_id}",
             artifact_type="TraceCurrentUsage",
             artifact_schema_id="tokenshare.trace_current_usage",

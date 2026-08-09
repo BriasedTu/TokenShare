@@ -237,8 +237,7 @@ def test_projection_derives_paper_results_from_protocol_events_and_artifacts(
         usage_artifact_type,
         (
             {
-                "submission_id": "submission_case_1_0",
-                "request_id": "request_case_1_0",
+                "attempt_id": attempt_id,
                 "provider_attempt_count": 0,
                 "current_provider_call_count": 0,
                 "source_usage_class": "trace_attribution",

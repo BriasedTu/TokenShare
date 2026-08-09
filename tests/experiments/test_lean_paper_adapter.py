@@ -2521,3 +2521,50 @@ def test_exp3_lean_trace_terminal_fault_recovers_with_fresh_checker(
     assert recovered_records[1]["candidate_output_ref"] is not None
     assert recovered_records[1]["checker"]["accepted"] is True
     assert recovered_records[1]["checker"]["report_ref"] is not None
+    assert source.task_result.provider_attempt_count > 0
+    assert source.task_result.total_tokens is not None
+    assert source.task_result.total_tokens > 0
+    staged_submission_ids_by_attempt: dict[str, str] = {}
+    for event in result.event_records:
+        if event["event_type"] != "TRACE_DELIVERY_COMMITTED.v1":
+            continue
+        delivery = PreparedTraceDelivery.from_dict(
+            json.loads(
+                store.read_bytes(
+                    ArtifactRef.from_dict(event["payload"]["current_wrapper_ref"])
+                ).decode("utf-8")
+            )
+        )
+        stage_kind = (
+            "terminal"
+            if "execution_result_kind" in event["payload"]
+            else "parser"
+        )
+        staged_submission_ids_by_attempt[delivery.attempt_id] = (
+            f"trace_{stage_kind}_submission_"
+            f"{delivery.delivery_digest.removeprefix('sha256:')}"
+        )
+    for attempt in result.attempt_results:
+        assert attempt.usage_ref is not None
+        usage_ref = ArtifactRef.from_dict(attempt.usage_ref)
+        assert usage_ref.artifact_type == "TraceCurrentUsage"
+        usage = json.loads(store.read_bytes(usage_ref).decode("utf-8"))
+        request = json.loads(
+            store.read_bytes(ArtifactRef.from_dict(attempt.request_ref)).decode(
+                "utf-8"
+            )
+        )
+        assert usage["attempt_id"] == attempt.attempt_id
+        assert usage["request_id"] == request["request_id"]
+        assert usage["submission_id"] == staged_submission_ids_by_attempt[
+            attempt.attempt_id
+        ]
+        assert usage["provider_attempt_count"] == 0
+        assert usage["current_provider_call_count"] == 0
+        assert not {
+            "prompt_tokens",
+            "completion_tokens",
+            "total_tokens",
+            "cost_estimate",
+        } & set(usage)
+    assert len(staged_submission_ids_by_attempt) == len(result.attempt_results)
