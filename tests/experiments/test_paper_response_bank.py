@@ -771,12 +771,24 @@ def test_matrix8_unified_planner_freezes_166_exact_requests_without_provider(
             catalog_digest=catalog.catalog_digest,
             output_root=tmp_path / f"smoke-exp{experiment_number}",
         )
-        executions.append(
+        planned_execution = (
             paper_cli._with_matrix8_unified_factor_seed_execution_plan(
-                execution_plan=execution,
-                profile=profile,
+                execution_plan=execution, profile=profile
             )
         )
+        if experiment_number == 1:
+            assert planned_execution is execution
+            factor_conditions = tuple(
+                condition
+                for condition, selection in execution.dispatch_plans[0].bound_items()
+                if selection.domain == "factorization"
+            )
+            assert {condition.seed for condition in factor_conditions} == {1}
+            assert all(
+                "__matrix8_" not in condition.condition_id
+                for condition in factor_conditions
+            )
+        executions.append(planned_execution)
     config = load_ai_api_config(
         json.loads(
             Path("benchmarks/paper/exp1_baseline_provider_config.v3.json")

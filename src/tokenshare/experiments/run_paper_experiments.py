@@ -3480,7 +3480,7 @@ def _with_matrix8_unified_factor_seed_execution_plan(
     execution_plan: object,
     profile: object,
 ) -> object:
-    """仅在 Exp1--4 matrix8 clone 中按 root 冻结共享 Factor split seed。"""
+    """仅在 Exp2--4 matrix8 clone 中按 root 冻结共享 Factor split seed。"""
 
     if not (
         getattr(profile, "formal", None) is False
@@ -3493,6 +3493,9 @@ def _with_matrix8_unified_factor_seed_execution_plan(
     experiment_ids = tuple(getattr(execution_plan, "experiment_ids", ()))
     if len(experiment_ids) != 1 or experiment_ids[0] not in EXP1_EXP4_ONLY_EXPERIMENT_IDS:
         raise ValueError("matrix8 unified seed requires one Exp1--4 experiment")
+    if experiment_ids == ("exp1_real_ai_feasibility",):
+        # Exp1 直接进入 protocol trace，其正式 condition identity/seed 不得改写。
+        return execution_plan
     profile_items = {
         item.item_id: item for item in tuple(getattr(profile, "items", ()))
     }
