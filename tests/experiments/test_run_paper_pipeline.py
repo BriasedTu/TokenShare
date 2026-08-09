@@ -831,6 +831,7 @@ def test_results_first_matrix8_acquire_requires_no_paid_receipt_but_keeps_dispat
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     seen: list[object] = []
+    validated: list[object] = []
     authorization = SimpleNamespace(
         schema_version="tokenshare.results_first_smoke_acquisition_authorization.v1",
         authorization_digest="sha256:" + "8" * 64,
@@ -843,6 +844,12 @@ def test_results_first_matrix8_acquire_requires_no_paid_receipt_but_keeps_dispat
         pipeline,
         "_RESULTS_FIRST_AUTHORITY_BUILDER",
         lambda **_kwargs: authorization,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "_RESULTS_FIRST_BUNDLE_VALIDATOR",
+        lambda candidate, **_kwargs: validated.append(candidate) or candidate,
         raising=False,
     )
     args = [
@@ -878,6 +885,7 @@ def test_results_first_matrix8_acquire_requires_no_paid_receipt_but_keeps_dispat
     ) == 0
 
     assert len(seen) == 1
+    assert validated == [bundle]
     assert seen[0].provider_authorization is authorization
     body = json.loads(capsys.readouterr().out)
     assert body["receipt_digest"] is None
@@ -957,6 +965,7 @@ def test_acquire_bank_validates_bundle_full_budget_before_service_factory(
 
 def test_production_acquisition_factory_loads_exact_bundle_and_task26_marker(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from dataclasses import replace
     from decimal import Decimal
@@ -1089,6 +1098,24 @@ def test_production_acquisition_factory_loads_exact_bundle_and_task26_marker(
         ),
         acquisition_requests=(acquisition_request,),
     )
+    from tokenshare.experiments import run_paper_experiments
+
+    self_consistent_but_nonofficial = SimpleNamespace(
+        combined_profile_digest="sha256:" + "f" * 64,
+        condition_candidate_count=1,
+        semantic_inventory_plan=bundle.semantic_inventory_plan,
+        acquisition_requests=(acquisition_request,) * 166,
+    )
+    monkeypatch.setattr(
+        run_paper_experiments,
+        "_build_results_first_matrix8_acquisition_plan",
+        lambda **_kwargs: self_consistent_but_nonofficial,
+    )
+    with pytest.raises(ValueError, match="official plan digest mismatch"):
+        run_paper_experiments.validate_results_first_matrix8_acquisition_bundle(
+            bundle=bundle,
+            bundle_root=tmp_path / "bundle",
+        )
     output_root = tmp_path / "acquisition"
     receipt = {
         "schema_version": "tokenshare.paid_execution_receipt.v1",

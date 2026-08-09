@@ -2680,20 +2680,34 @@ def _append_condition_ref(
     candidate: SemanticSlotCandidate,
     slot_key: str,
 ) -> None:
-    value = refs.setdefault(
-        candidate.condition_id,
-        {
-            "condition_id": candidate.condition_id,
-            "condition_digest": candidate.condition_digest,
-            "experiment_id": candidate.experiment_id,
-            "worker_count": candidate.worker_count,
-            "repeat_id": candidate.repeat_id,
-            "fault_type": candidate.fault_type,
-            "ablation_mode": candidate.ablation_mode,
-            "semantic_slot_keys": [],
-            "case_refs": [],
-        },
-    )
+    condition_ref: dict[str, Any] = {
+        "condition_id": candidate.condition_id,
+        "condition_digest": candidate.condition_digest,
+        "experiment_id": candidate.experiment_id,
+        "worker_count": candidate.worker_count,
+        "repeat_id": candidate.repeat_id,
+        "fault_type": candidate.fault_type,
+        "ablation_mode": candidate.ablation_mode,
+        "semantic_slot_keys": [],
+        "case_refs": [],
+    }
+    if candidate.replacement_policy_id == (
+        "regression_smoke_sparse_replacements.v1"
+    ):
+        condition_ref.update(
+            {
+                "replacement_policy_id": candidate.replacement_policy_id,
+                "fault_rate": candidate.fault_rate,
+                "dead_worker_count": candidate.dead_worker_count,
+                "kill_progress_percent": candidate.kill_progress_percent,
+            }
+        )
+    value = refs.setdefault(candidate.condition_id, condition_ref)
+    identity_fields = set(condition_ref) - {"semantic_slot_keys", "case_refs"}
+    if set(value) != set(condition_ref) or any(
+        value.get(name) != condition_ref[name] for name in identity_fields
+    ):
+        raise ValueError("condition replacement policy drift")
     if slot_key not in value["semantic_slot_keys"]:
         value["semantic_slot_keys"].append(slot_key)
     matching_case_refs = [
@@ -3012,9 +3026,29 @@ def _validate_semantic_inventory_plan(plan: SemanticInventoryPlan) -> None:
         "semantic_slot_keys",
         "case_refs",
     }
+    sparse_ref_fields = {
+        "replacement_policy_id",
+        "fault_rate",
+        "dead_worker_count",
+        "kill_progress_percent",
+    }
     for raw_ref in plan.condition_refs:
-        if not isinstance(raw_ref, Mapping) or set(raw_ref) != expected_ref_fields:
+        if not isinstance(raw_ref, Mapping):
             raise ValueError("semantic inventory condition ref schema drift")
+        raw_fields = set(raw_ref)
+        sparse_policy = raw_fields == expected_ref_fields | sparse_ref_fields
+        if raw_fields != expected_ref_fields and not sparse_policy:
+            raise ValueError("semantic inventory condition ref schema drift")
+        if sparse_policy and (
+            raw_ref["replacement_policy_id"]
+            != "regression_smoke_sparse_replacements.v1"
+            or raw_ref["experiment_id"]
+            not in {
+                "exp3_real_ai_fault_recovery",
+                "exp4_real_ai_protocol_ablation",
+            }
+        ):
+            raise ValueError("semantic inventory replacement policy marker is invalid")
         condition_id = raw_ref["condition_id"]
         if not isinstance(condition_id, str) or not condition_id:
             raise ValueError("semantic inventory condition id is invalid")
@@ -3041,11 +3075,14 @@ def _validate_semantic_inventory_plan(plan: SemanticInventoryPlan) -> None:
             ref_slots = case_ref["semantic_slot_keys"]
             if not isinstance(ref_slots, list) or not ref_slots:
                 raise ValueError("semantic inventory case slots are invalid")
+            case_unit_ids: list[str] = []
             for slot_key in ref_slots:
                 row = rows_by_slot.get(slot_key)
                 if row is None or row.case_record_digest != case_ref["case_record_digest"]:
                     raise ValueError("semantic inventory case row binding mismatch")
                 case_slots.add(slot_key)
+                if row.planned_ai_unit_id not in case_unit_ids:
+                    case_unit_ids.append(row.planned_ai_unit_id)
                 unit_slots.setdefault(
                     (
                         row.case_record_digest,
@@ -3054,17 +3091,47 @@ def _validate_semantic_inventory_plan(plan: SemanticInventoryPlan) -> None:
                     ),
                     set(),
                 ).add(row.replacement_slot)
+            if sparse_policy:
+                expected_by_unit = regression_smoke_sparse_replacement_slots(
+                    experiment_id=str(raw_ref["experiment_id"]),
+                    fault_type=str(raw_ref["fault_type"]),
+                    fault_rate=float(raw_ref["fault_rate"]),
+                    ablation_mode=str(raw_ref["ablation_mode"]),
+                    planned_ai_unit_ids=tuple(case_unit_ids),
+                    dead_worker_count=(
+                        None
+                        if raw_ref["dead_worker_count"] is None
+                        else int(raw_ref["dead_worker_count"])
+                    ),
+                    kill_progress_percent=(
+                        None
+                        if raw_ref["kill_progress_percent"] is None
+                        else int(raw_ref["kill_progress_percent"])
+                    ),
+                )
+                case_record_digest = str(case_ref["case_record_digest"])
+                for unit_id, expected_slots in expected_by_unit.items():
+                    key = (
+                        case_record_digest,
+                        unit_id,
+                        int(raw_ref["repeat_id"]),
+                    )
+                    if unit_slots.get(key) != set(expected_slots):
+                        raise ValueError(
+                            "semantic inventory replacement policy is incomplete"
+                        )
         if case_slots != set(slot_keys):
             raise ValueError("semantic inventory case refs do not cover condition")
-        expected_replacements = set(
-            replacement_slots_for(
-                experiment_id=str(raw_ref["experiment_id"]),
-                fault_type=str(raw_ref["fault_type"]),
-                ablation_mode=str(raw_ref["ablation_mode"]),
+        if not sparse_policy:
+            expected_replacements = set(
+                replacement_slots_for(
+                    experiment_id=str(raw_ref["experiment_id"]),
+                    fault_type=str(raw_ref["fault_type"]),
+                    ablation_mode=str(raw_ref["ablation_mode"]),
+                )
             )
-        )
-        if any(actual != expected_replacements for actual in unit_slots.values()):
-            raise ValueError("semantic inventory replacement policy is incomplete")
+            if any(actual != expected_replacements for actual in unit_slots.values()):
+                raise ValueError("semantic inventory replacement policy is incomplete")
         covered_slots.update(slot_keys)
     if covered_slots != set(rows_by_slot):
         raise ValueError("semantic inventory condition refs do not cover inventory")

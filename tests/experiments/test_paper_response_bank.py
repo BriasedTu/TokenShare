@@ -45,6 +45,7 @@ from tokenshare.experiments.paper_smoke import (
     resolve_paper_smoke_execution_plan,
 )
 from tokenshare.experiments.paper_suite_scale import load_paper_suite_scale_profile
+from tokenshare.experiments import paper_response_bank as response_bank
 from tokenshare.experiments import run_paper_experiments as paper_cli
 
 
@@ -694,6 +695,24 @@ def test_sparse_inventory_requires_exact_deterministic_target_slots() -> None:
     plan = build_semantic_inventory(candidates)
 
     assert plan.expected_slot_count == 6
+    response_bank._validate_semantic_inventory_plan(plan)
+    sparse_fields = {
+        "replacement_policy_id",
+        "fault_rate",
+        "dead_worker_count",
+        "kill_progress_percent",
+    }
+    unmarked_ref = {
+        key: value
+        for key, value in plan.condition_refs[0].items()
+        if key not in sparse_fields
+    }
+    with pytest.raises(
+        ValueError, match="semantic inventory replacement policy is incomplete"
+    ):
+        response_bank._validate_semantic_inventory_plan(
+            replace(plan, condition_refs=(unmarked_ref,))
+        )
     missing_target_slot = next(
         candidate
         for candidate in candidates

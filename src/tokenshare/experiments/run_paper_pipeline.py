@@ -304,6 +304,20 @@ def _build_results_first_authorization(**kwargs: object):
 _RESULTS_FIRST_AUTHORITY_BUILDER = _build_results_first_authorization
 
 
+def _validate_results_first_bundle(bundle: object, *, bundle_root: str | Path):
+    from tokenshare.experiments.run_paper_experiments import (
+        validate_results_first_matrix8_acquisition_bundle,
+    )
+
+    return validate_results_first_matrix8_acquisition_bundle(
+        bundle=bundle,
+        bundle_root=bundle_root,
+    )
+
+
+_RESULTS_FIRST_BUNDLE_VALIDATOR = _validate_results_first_bundle
+
+
 def _build_formal_authority(**kwargs: object):
     from tokenshare.experiments.run_paper_experiments import (
         build_epd027_formal_service_authority,
@@ -1363,6 +1377,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                     raise ValueError(
                         "results-first acquisition requires --plan-bundle-root"
                     )
+                acquisition_bundle = _RESULTS_FIRST_BUNDLE_VALIDATOR(
+                    acquisition_bundle,
+                    bundle_root=args.plan_bundle_root,
+                )
                 authorization = _RESULTS_FIRST_AUTHORITY_BUILDER(
                     bundle=acquisition_bundle,
                     output_root=args.output_root,

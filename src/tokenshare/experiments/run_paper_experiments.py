@@ -3643,24 +3643,14 @@ def build_results_first_matrix8_planning_context(
     )
 
 
-def create_results_first_matrix8_acquisition_bundle(
-    *,
-    pipeline_profile_digest: str,
-    bundle_root: str | Path,
+def _build_results_first_matrix8_acquisition_plan(
+    *, planning_root: str | Path
 ):
-    """从四份 matrix8 profile 写入 fresh 166-entry acquisition bundle。"""
-
     from tokenshare.experiments.paper_response_bank import (
         build_matrix8_unified_acquisition_plan,
-        create_acquisition_plan_bundle,
     )
 
-    root = Path(bundle_root).resolve()
-    planning_root = root.with_name(f"{root.name}.planning_artifacts")
-    if planning_root.exists():
-        raise FileExistsError(
-            f"matrix8 planning artifact root already exists: {planning_root}"
-        )
+    planning_root = Path(planning_root).resolve(strict=False)
     context = build_results_first_matrix8_planning_context(
         output_root=planning_root
     )
@@ -3670,7 +3660,7 @@ def create_results_first_matrix8_acquisition_bundle(
         if item.entry_id == EXP1_EXP4_REQUIRED_ENTRY_ID and item.enabled
     )
     pricing = entry.pricing
-    plan = build_matrix8_unified_acquisition_plan(
+    return build_matrix8_unified_acquisition_plan(
         execution_plans=context.execution_plans,
         catalog_manifest=context.catalog_manifest,
         ai_api_config=context.ai_api_config,
@@ -3691,7 +3681,10 @@ def create_results_first_matrix8_acquisition_bundle(
             ),
         ),
     )
-    authorized_plan_digest = digest_json(
+
+
+def _results_first_matrix8_authorized_plan_digest(plan: object) -> str:
+    return digest_json(
         {
             "schema_version": "tokenshare.results_first_matrix8_acquisition_plan.v1",
             "combined_profile_digest": plan.combined_profile_digest,
@@ -3699,13 +3692,91 @@ def create_results_first_matrix8_acquisition_bundle(
             "condition_candidate_count": plan.condition_candidate_count,
         }
     )
+
+
+def create_results_first_matrix8_acquisition_bundle(
+    *,
+    pipeline_profile_digest: str,
+    bundle_root: str | Path,
+):
+    """从四份 matrix8 profile 写入 fresh 166-entry acquisition bundle。"""
+
+    from tokenshare.experiments.paper_response_bank import (
+        create_acquisition_plan_bundle,
+    )
+
+    root = Path(bundle_root).resolve()
+    planning_root = root.with_name(f"{root.name}.planning_artifacts")
+    if planning_root.exists():
+        raise FileExistsError(
+            f"matrix8 planning artifact root already exists: {planning_root}"
+        )
+    plan = _build_results_first_matrix8_acquisition_plan(
+        planning_root=planning_root
+    )
     bundle = create_acquisition_plan_bundle(
         root,
-        authorized_plan_digest=authorized_plan_digest,
+        authorized_plan_digest=_results_first_matrix8_authorized_plan_digest(plan),
         profile_digest=pipeline_profile_digest,
         semantic_inventory_plan=plan.semantic_inventory_plan,
         acquisition_requests=plan.acquisition_requests,
     )
+    return bundle
+
+
+def validate_results_first_matrix8_acquisition_bundle(
+    *,
+    bundle: object,
+    bundle_root: str | Path,
+):
+    """重建 official matrix8 plan，拒绝仅内部自洽的替代 bundle。"""
+
+    from tokenshare.experiments.paper_response_bank import AcquisitionPlanBundle
+
+    if type(bundle) is not AcquisitionPlanBundle:
+        raise ValueError("results-first acquisition requires a v1 plan bundle")
+    bundle.validate()
+    if not Path(bundle_root).resolve().is_dir():
+        raise ValueError("results-first acquisition bundle root is missing")
+    with tempfile.TemporaryDirectory(
+        prefix="tokenshare-matrix8-official-validation-"
+    ) as raw:
+        expected = _build_results_first_matrix8_acquisition_plan(
+            planning_root=Path(raw)
+        )
+    if len(expected.acquisition_requests) != 166:
+        raise ValueError("official matrix8 acquisition plan must contain 166 entries")
+    expected_plan_digest = _results_first_matrix8_authorized_plan_digest(expected)
+    if bundle.authorized_plan_digest != expected_plan_digest:
+        raise ValueError("results-first bundle official plan digest mismatch")
+    if (
+        bundle.semantic_inventory_plan != expected.semantic_inventory_plan
+        or bundle.inventory_rows != expected.semantic_inventory_plan.rows
+        or bundle.inventory_digest
+        != expected.semantic_inventory_plan.inventory_digest
+    ):
+        raise ValueError("results-first bundle official inventory mismatch")
+    if bundle.acquisition_requests != expected.acquisition_requests:
+        raise ValueError("results-first bundle official acquisition requests mismatch")
+    if len(bundle.inventory_rows) != 166:
+        raise ValueError("results-first bundle must contain 166 inventory entries")
+    expected_provider_digests = {
+        row.provider_config_digest for row in expected.semantic_inventory_plan.rows
+    }
+    actual_provider_digests = {
+        row.provider_config_digest for row in bundle.inventory_rows
+    }
+    if (
+        expected_provider_digests != actual_provider_digests
+        or bundle.provider_config_digest not in expected_provider_digests
+        or any(
+            request.provider_family != "deepseek"
+            or request.prepared_request.entry_id != EXP1_EXP4_REQUIRED_ENTRY_ID
+            or request.prepared_request.configured_model != "deepseek-v4-pro"
+            for request in bundle.acquisition_requests
+        )
+    ):
+        raise ValueError("results-first bundle official provider identity mismatch")
     return bundle
 
 
