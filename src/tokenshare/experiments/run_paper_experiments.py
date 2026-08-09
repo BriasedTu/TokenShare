@@ -3709,6 +3709,136 @@ def create_results_first_matrix8_acquisition_bundle(
     return bundle
 
 
+class _ResultsFirstNoProviderTransport:
+    def send(self, *_args: object, **_kwargs: object) -> object:
+        raise RuntimeError("results-first trace attempted a current provider call")
+
+
+def build_results_first_matrix8_trace_batches(
+    *,
+    output_root: str | Path,
+    trace_context: object,
+) -> tuple[dict[str, object], ...]:
+    """构造 Exp2--4 三份 8-root trace smoke；不执行 provider。"""
+
+    root = Path(output_root).resolve(strict=False)
+    context = build_results_first_matrix8_planning_context(output_root=root)
+    lean_matrix = build_lean_3x3_matrix_plan(
+        catalog_manifest=context.catalog_manifest
+    )
+    planning_profile = load_exp1_pilot_profile(DEFAULT_EXP1_PILOT_PROFILE)
+    scale_profile = load_paper_suite_scale_profile(
+        DEFAULT_PAPER_SUITE_SCALE_PROFILE
+    )
+    cases_by_id = {
+        str(case["case_id"]): case
+        for case in (
+            context.catalog_manifest.factorization_cases
+            + context.catalog_manifest.lean_cases
+            + context.catalog_manifest.lean_lemma_graph_cases
+        )
+    }
+    execution_configs = {
+        planning_profile.model_endpoint_identity.provider_config_id: (
+            context.ai_api_config
+        )
+    }
+    batches: list[dict[str, object]] = []
+    for number, (profile, execution_plan) in enumerate(
+        zip(context.profiles[1:], context.execution_plans[1:]),
+        start=2,
+    ):
+        if (
+            profile.expected_root_runs != 8
+            or len(execution_plan.items) != 8
+            or execution_plan.experiment_ids != profile.experiment_ids
+        ):
+            raise ValueError("results-first trace requires exact matrix8 plans")
+        expected_ai_units_by_case = {
+            item.case_id: estimated_ai_units_for_case(cases_by_id[item.case_id])
+            for item in execution_plan.items
+        }
+        frozen_selections = execution_plan.budget_selection_commitments(
+            expected_ai_units_by_case=expected_ai_units_by_case
+        )
+        budget = plan_paper_suite(
+            catalog_manifest=context.catalog_manifest,
+            conditions=tuple(
+                condition
+                for plan in execution_plan.dispatch_plans
+                for condition in plan.conditions
+            ),
+            max_provider_attempts_per_ai_unit=1,
+            token_upper_bound_per_provider_attempt=(
+                FORMAL_TOKEN_UPPER_BOUND_PER_PROVIDER_ATTEMPT
+            ),
+            cost_upper_bound_per_provider_attempt=(
+                FORMAL_COST_UPPER_BOUND_PER_PROVIDER_ATTEMPT
+            ),
+            plan_only=True,
+            lean_3x3_matrix=lean_matrix,
+            model_endpoint_cohort_preflight=None,
+            frozen_selections=frozen_selections,
+            endpoint_identity={
+                "baseline": _baseline_endpoint_binding(planning_profile),
+                "model_endpoint_cohort_preflight": None,
+            },
+            request_limits=dict(EXP1_FORMAL_REQUEST_CONTROLS),
+            suite_identity={
+                "suite_version": "paper_matrix8_results_first_v1",
+                "execution_scope": "smoke_suite",
+                "profile_digest": profile.profile_digest,
+                "execution_plan_digest": execution_plan.execution_plan_digest,
+                "experiment_ids": list(profile.experiment_ids),
+                "paper_suite_scale_profile_source_path": scale_profile.source_path,
+                "paper_suite_scale_profile_digest": scale_profile.profile_digest,
+                "exp5_selection_path": scale_profile.exp5_source_selection_path,
+                "exp5_selection_digest": scale_profile.exp5_source_selection_digest,
+            },
+            output_identity={
+                "output_root": Path(execution_plan.output_root).as_posix(),
+                "formal_output_root_allowed": False,
+                **_shared_exp1_reference_output_identity(
+                    profile.experiment_ids,
+                    baseline_policy=profile.baseline_policy,
+                ),
+            },
+            budget_approval_required=False,
+        )
+        batches.append(
+            {
+                "profile": profile,
+                "execution_plan": execution_plan,
+                "catalog_manifest": context.catalog_manifest,
+                "budget": budget,
+                "ai_api_configs": execution_configs,
+                "transport": _ResultsFirstNoProviderTransport(),
+                "real_transport": False,
+                "hard_limits": {
+                    "max_total_provider_attempts": budget.max_provider_attempts,
+                    "max_total_tokens": budget.token_upper_bound,
+                    "max_cost_estimate": budget.cost_upper_bound,
+                },
+                "resume": False,
+                "secret_values": (),
+                "launch_manifest": {
+                    "schema_version": (
+                        "tokenshare.results_first_matrix8_trace_launch.v1"
+                    ),
+                    "authorization_kind": "user_authorized_smoke_facility",
+                    "experiment_number": number,
+                    "execution_plan_digest": (
+                        execution_plan.execution_plan_digest
+                    ),
+                    "real_transport": False,
+                },
+                "recovery_manifest": None,
+                "trace_context": trace_context,
+            }
+        )
+    return tuple(batches)
+
+
 def _smoke_case_planned_ai_unit_ids(case: Mapping[str, object]) -> tuple[str, ...]:
     schema_version = case.get("schema_version")
     if schema_version == "tokenshare.paper_factorization_case.v1":

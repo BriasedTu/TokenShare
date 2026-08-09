@@ -2,6 +2,7 @@ import json
 from dataclasses import replace
 from hashlib import sha256
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -35,6 +36,65 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 DUAL_DOMAIN_SMOKE_PROFILE = (
     REPO_ROOT / "benchmarks/paper/paper_smoke_dual_domain_profile.v1.json"
 )
+
+
+def test_smoke_suite_forwards_results_first_trace_context(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tokenshare.experiments import paper_formal_evidence, paper_formal_runner
+    from tokenshare.experiments import paper_smoke as smoke
+    from tokenshare.experiments import paper_smoke_report
+
+    trace_context = object()
+    captured: list[dict[str, object]] = []
+    terminal = SimpleNamespace(status="completed", provider_attempt_count=0)
+    monkeypatch.setattr(
+        paper_formal_runner,
+        "execute_paper_formal_suite",
+        lambda **kwargs: captured.append(kwargs) or terminal,
+    )
+    monkeypatch.setattr(
+        paper_smoke_report,
+        "generate_paper_smoke_report",
+        lambda **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        paper_formal_evidence.FormalEvidenceStore,
+        "_refresh_evidence_manifest",
+        lambda _self: None,
+    )
+    profile = SimpleNamespace(
+        profile_digest="sha256:" + "a" * 64,
+        baseline_policy="omitted_for_smoke_regression",
+        suite_id="matrix8-trace",
+        to_dict=lambda: {},
+    )
+    execution_plan = SimpleNamespace(
+        profile_digest=profile.profile_digest,
+        baseline_policy=profile.baseline_policy,
+        dispatch_plans=(),
+        output_root=tmp_path,
+        root_case_filter={},
+        to_dict=lambda: {},
+    )
+
+    assert smoke.execute_paper_smoke_suite(
+        profile=profile,
+        execution_plan=execution_plan,
+        catalog_manifest=object(),
+        budget=SimpleNamespace(
+            quota_preflight={"budget_approval": {"approval_mode": "plan_only"}}
+        ),
+        ai_api_configs={},
+        transport=object(),
+        real_transport=False,
+        hard_limits={},
+        launch_manifest={},
+        trace_context=trace_context,
+    ) is terminal
+    assert captured[0]["trace_context"] is trace_context
+    assert captured[0]["real_transport"] is False
 MATRIX8_SMOKE_PROFILES = tuple(
     REPO_ROOT / f"benchmarks/paper/paper_smoke_exp{experiment}_matrix8_profile.v1.json"
     for experiment in range(1, 5)

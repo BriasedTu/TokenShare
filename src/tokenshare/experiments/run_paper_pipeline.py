@@ -122,6 +122,14 @@ class FormalSuiteServiceInput:
 
 
 @dataclass(frozen=True, kw_only=True)
+class Matrix8TraceServiceInput:
+    """Exp2--4 三份 results-first matrix8 smoke 的进程内输入。"""
+
+    scope: str
+    batches: tuple[Mapping[str, object], ...]
+
+
+@dataclass(frozen=True, kw_only=True)
 class FormalSuiteServiceResult:
     """保留 official runner typed terminal，同时只序列化公开摘要。"""
 
@@ -240,6 +248,7 @@ def _build_argument_parser() -> argparse.ArgumentParser:
     trace.add_argument("--full-bank-acquisition-receipt")
     trace.add_argument("--l3-online-check-receipt")
     trace.add_argument("--l3-online-check-root")
+    trace.add_argument("--results-first-matrix8", action="store_true")
 
     render = common("render")
     render.add_argument("--output-root", required=True)
@@ -493,6 +502,46 @@ def _formal_suite_adapter(
 
 
 def _run_trace_adapter(request: PipelineCommandRequest) -> Mapping[str, object]:
+    value = request._service_input
+    if isinstance(value, Matrix8TraceServiceInput):
+        from tokenshare.experiments.paper_smoke import execute_paper_smoke_suite
+
+        if value.scope != request.scope or len(value.batches) != 3:
+            raise ValueError("results-first trace requires three matrix8 batches")
+        statuses: list[str] = []
+        root_run_count = 0
+        for batch in value.batches:
+            execution_plan = batch.get("execution_plan")
+            if (
+                batch.get("real_transport") is not False
+                or batch.get("trace_context") is None
+                or len(tuple(getattr(execution_plan, "items", ()))) != 8
+            ):
+                raise ValueError(
+                    "results-first trace batch identity/transport mismatch"
+                )
+            result = execute_paper_smoke_suite(**dict(batch))
+            if int(getattr(result, "provider_attempt_count", 0)) != 0:
+                raise ValueError("results-first trace made a current provider call")
+            status = getattr(result, "status", "completed")
+            statuses.append(str(getattr(status, "value", status)))
+            root_run_count += len(tuple(execution_plan.items))
+        completed = {"completed", "completed_with_failures"}
+        if any(status not in completed for status in statuses):
+            status = "failed"
+        elif any(status == "completed_with_failures" for status in statuses):
+            status = "completed_with_failures"
+        else:
+            status = "completed"
+        return _service_result(
+            request,
+            status=status,
+            provider_calls=0,
+            completed_experiment_count=3,
+            root_run_count=root_run_count,
+            paper_eligible=False,
+            facility_gate_verified=False,
+        )
     return _formal_suite_adapter(request, trace_required=True)
 
 
@@ -757,7 +806,7 @@ def _acquisition_service_input_from_persisted_authorities(
 
 def _formal_service_input_from_persisted_authorities(
     request: PipelineCommandRequest,
-) -> FormalSuiteServiceInput:
+) -> FormalSuiteServiceInput | Matrix8TraceServiceInput:
     if request.command not in {
         "run-trace",
         "run-online-checks",
@@ -767,6 +816,39 @@ def _formal_service_input_from_persisted_authorities(
         raise ValueError("unsupported formal service authority command")
     if request.output_root is None:
         raise ValueError(f"{request.command} requires an output root")
+    if (
+        request.command == "run-trace"
+        and request.serialized_arguments.get("results_first_matrix8") is True
+    ):
+        if request.plan_bundle_root is None or request.external_bank_resolver is None:
+            raise ValueError(
+                "results-first trace requires plan bundle and external bank"
+            )
+        from tokenshare.experiments.paper_response_bank import (
+            build_paper_formal_trace_context,
+            load_acquisition_plan_bundle,
+        )
+        from tokenshare.experiments.run_paper_experiments import (
+            build_results_first_matrix8_trace_batches,
+        )
+
+        bundle = load_acquisition_plan_bundle(request.plan_bundle_root)
+        if bundle.authorized_plan_digest != request.plan_digest:
+            raise ValueError("results-first trace plan digest mismatch")
+        if bundle.inventory_digest != request.inventory_digest:
+            raise ValueError("results-first trace inventory digest mismatch")
+        if bundle.profile_digest != request.profile.profile_digest:
+            raise ValueError("results-first trace profile digest mismatch")
+        resolver = request.external_bank_resolver.open()
+        trace_context = build_paper_formal_trace_context(
+            inventory_plan=bundle.semantic_inventory_plan,
+            resolver=resolver,
+        )
+        batches = build_results_first_matrix8_trace_batches(
+            output_root=request.output_root,
+            trace_context=trace_context,
+        )
+        return Matrix8TraceServiceInput(scope=request.scope, batches=batches)
     if request.command != "run-trace" and type(
         request.provider_authorization
     ) is not PaidAuthorizationValidation:
@@ -1053,7 +1135,12 @@ def _default_delegate(request: PipelineCommandRequest) -> Mapping[str, object]:
     """通过固定生产映射调用命令唯一的 official service adapter。"""
 
     factory = _PRODUCTION_SERVICE_INPUT_FACTORIES[request.command]
-    if request.command in _FORMAL_GATED_COMMANDS:
+    results_first_matrix8 = request.serialized_arguments.get(
+        "results_first_matrix8"
+    ) is True
+    if request.command in _FORMAL_GATED_COMMANDS and not (
+        request.command == "run-trace" and results_first_matrix8
+    ):
         gate_input = _formal_run_gate_input(request)
         return _execute_gated_formal_service(
             request,
@@ -1155,6 +1242,8 @@ def _json_result(
         "paper_eligible",
         "bundle_digest",
         "inventory_entry_count",
+        "completed_experiment_count",
+        "root_run_count",
     ):
         if name in body:
             result[name] = body[name]
@@ -1344,7 +1433,21 @@ def main(argv: Sequence[str] | None = None) -> int:
                 root=Path(external_root).resolve(strict=False)
             )
         )
-        if args.command == "run-trace":
+        if args.command == "run-trace" and results_first_matrix8:
+            acquisition_bundle = _ACQUISITION_BUNDLE_LOADER(
+                args.plan_bundle_root
+            )
+            if acquisition_bundle.authorized_plan_digest != args.plan_digest:
+                raise ValueError("trace acquisition bundle plan digest mismatch")
+            if acquisition_bundle.inventory_digest != args.inventory_digest:
+                raise ValueError("trace acquisition bundle inventory digest mismatch")
+            if acquisition_bundle.profile_digest != profile.profile_digest:
+                raise ValueError("trace acquisition bundle profile digest mismatch")
+            if acquisition_bundle.prompt_admission_profile_digest != (
+                profile.prompt_admission_profile_digest
+            ):
+                raise ValueError("trace acquisition bundle admission digest mismatch")
+        if args.command == "run-trace" and not results_first_matrix8:
             trace_bindings = []
             acquisition_bundle = _ACQUISITION_BUNDLE_LOADER(args.plan_bundle_root)
             if acquisition_bundle.authorized_plan_digest != args.plan_digest:

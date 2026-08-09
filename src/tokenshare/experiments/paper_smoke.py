@@ -820,6 +820,7 @@ def execute_paper_smoke_suite(
     secret_values: Sequence[str] = (),
     launch_manifest: Mapping[str, Any],
     recovery_manifest: Mapping[str, Any] | None = None,
+    trace_context: Any | None = None,
 ) -> Any:
     """复用 formal production callback 执行缩减后的 canonical roots。"""
 
@@ -865,6 +866,7 @@ def execute_paper_smoke_suite(
             "smoke_launch_manifest.json": dict(launch_manifest),
         },
         recovery_documents=recovery_documents,
+        trace_context=trace_context,
     )
     generate_paper_smoke_report(
         output_root=execution_plan.output_root,

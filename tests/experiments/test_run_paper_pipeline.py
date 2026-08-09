@@ -1302,6 +1302,115 @@ def test_trace_gate_phases_require_bank_before_dispatch_and_l3_only_for_publicat
     assert body["status"] == ("completed" if expected_exit == 0 else "blocked")
 
 
+def test_results_first_matrix8_trace_bypasses_only_facility_gates(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[str] = []
+    request = pipeline.PipelineCommandRequest(
+        command="run-trace",
+        scope="run-trace",
+        evidence_class="real_model_trace_protocol_run",
+        profile=PROFILE,
+        provider_authorization=None,
+        output_root=tmp_path / "trace",
+        replay_input_root=None,
+        external_bank_resolver=SimpleNamespace(),
+        plan_digest=DIGESTS["plan"],
+        inventory_digest=DIGESTS["inventory"],
+        budget_mode="bounded",
+        serialized_arguments={"results_first_matrix8": True},
+        plan_bundle_root=tmp_path / "plan",
+    )
+    factories = dict(pipeline._PRODUCTION_SERVICE_INPUT_FACTORIES)
+    factories["run-trace"] = lambda _request: object()
+    monkeypatch.setattr(pipeline, "_PRODUCTION_SERVICE_INPUT_FACTORIES", factories)
+    adapters = pipeline._AUTHORITATIVE_SERVICE_ADAPTERS
+    original = adapters["run-trace"]
+    adapters["run-trace"] = lambda resolved: calls.append("trace") or {
+        "status": "completed_with_failures",
+        "plan_digest": resolved.plan_digest,
+        "inventory_digest": resolved.inventory_digest,
+        "provider_calls": 0,
+        "paper_eligible": False,
+    }
+    monkeypatch.setattr(
+        pipeline,
+        "_validate_formal_execution_gate_adapter",
+        lambda _request: calls.append("execution_gate") or _ready_gate("execution"),
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "_validate_paper_publication_gate_adapter",
+        lambda _request: calls.append("publication_gate") or _ready_gate("publication"),
+    )
+    try:
+        result = pipeline._default_delegate(request)
+    finally:
+        adapters["run-trace"] = original
+
+    assert calls == ["trace"]
+    assert result["provider_calls"] == 0
+    assert result["paper_eligible"] is False
+
+
+def test_results_first_matrix8_trace_adapter_runs_exactly_three_eight_root_smokes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tokenshare.experiments import paper_smoke
+
+    calls: list[dict[str, object]] = []
+    trace_context = object()
+    batches = tuple(
+        {
+            "profile": object(),
+            "execution_plan": SimpleNamespace(items=tuple(range(8))),
+            "catalog_manifest": object(),
+            "budget": object(),
+            "ai_api_configs": {},
+            "transport": object(),
+            "real_transport": False,
+            "hard_limits": {},
+            "launch_manifest": {},
+            "trace_context": trace_context,
+        }
+        for _ in range(3)
+    )
+    monkeypatch.setattr(
+        paper_smoke,
+        "execute_paper_smoke_suite",
+        lambda **kwargs: calls.append(kwargs)
+        or SimpleNamespace(status="completed", provider_attempt_count=0),
+    )
+    request = pipeline.PipelineCommandRequest(
+        command="run-trace",
+        scope="run-trace",
+        evidence_class="real_model_trace_protocol_run",
+        profile=PROFILE,
+        provider_authorization=None,
+        output_root=tmp_path,
+        replay_input_root=None,
+        external_bank_resolver=None,
+        plan_digest=DIGESTS["plan"],
+        inventory_digest=DIGESTS["inventory"],
+        budget_mode="bounded",
+        serialized_arguments={"results_first_matrix8": True},
+        _service_input=pipeline.Matrix8TraceServiceInput(
+            scope="run-trace",
+            batches=batches,
+        ),
+    )
+
+    result = pipeline._run_trace_adapter(request)
+
+    assert len(calls) == 3
+    assert all(call["trace_context"] is trace_context for call in calls)
+    assert result["provider_calls"] == 0
+    assert result["completed_experiment_count"] == 3
+    assert result["root_run_count"] == 24
+
+
 def test_run_online_checks_delegates_exact_service(tmp_path: Path, capsys) -> None:
     _assert_provider_command(tmp_path, capsys, "run-online-checks")
 
