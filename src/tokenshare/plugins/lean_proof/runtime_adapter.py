@@ -347,6 +347,39 @@ class LeanRuntimeAdapter:
         return tuple(units)
 
     def build_execution_request(self, unit: TaskUnit, *, attempt, lease) -> ExecutionRequest:
+        return self._build_execution_request(
+            unit,
+            attempt=attempt,
+            lease=lease,
+            include_canonical_dependencies=True,
+        )
+
+    def build_planning_execution_request(
+        self,
+        unit: TaskUnit,
+        *,
+        attempt,
+        lease,
+    ) -> ExecutionRequest:
+        """冻结 exact AI request；dependency proof refs 仍只由执行期注入。"""
+
+        if self.planned_ai_unit_id(unit) is None:
+            raise ValueError("Lean planning request requires an AI proof unit")
+        return self._build_execution_request(
+            unit,
+            attempt=attempt,
+            lease=lease,
+            include_canonical_dependencies=False,
+        )
+
+    def _build_execution_request(
+        self,
+        unit: TaskUnit,
+        *,
+        attempt,
+        lease,
+        include_canonical_dependencies: bool,
+    ) -> ExecutionRequest:
         store = self._require_store()
         case = self._require_case()
         request_id = f"request_{_safe(attempt.attempt_id)}"
@@ -374,16 +407,17 @@ class LeanRuntimeAdapter:
             )
             payload_ref = input_refs[payload_name]
             payload = LeanTheoremPayload.from_dict(_read_json(store, payload_ref))
-            dependency_keys = self._dependency_sources(logical_key)
-            for source_key in dependency_keys:
-                try:
-                    input_refs[f"dependency:{source_key}"] = (
-                        self._canonical_proof_refs_by_logical_key[source_key]
-                    )
-                except KeyError as exc:
-                    raise RuntimeError(
-                        f"Lean dependency proof is not canonical: {source_key}"
-                    ) from exc
+            if include_canonical_dependencies:
+                dependency_keys = self._dependency_sources(logical_key)
+                for source_key in dependency_keys:
+                    try:
+                        input_refs[f"dependency:{source_key}"] = (
+                            self._canonical_proof_refs_by_logical_key[source_key]
+                        )
+                    except KeyError as exc:
+                        raise RuntimeError(
+                            f"Lean dependency proof is not canonical: {source_key}"
+                        ) from exc
             prompt = build_lean_proof_candidate_prompt_package(
                 request_id=request_id,
                 task_id=unit.task_id,

@@ -353,6 +353,27 @@ def test_exp2_to_exp4_matrix8_profiles_reuse_exact_exp1_case_set() -> None:
             } == exp1_cases[domain]
 
 
+def test_exp3_matrix8_uses_lowest_nonzero_preregistered_rate_faults() -> None:
+    profile = load_paper_smoke_profile(MATRIX8_SMOKE_PROFILES[2])
+    rate_items = tuple(
+        item
+        for item in profile.items
+        if item.condition_selector.get("matrix_kind") == "rate_fault"
+    )
+
+    assert len(rate_items) == 7
+    assert {
+        float(item.condition_selector["fault_rate"])
+        for item in rate_items
+        if item.condition_selector["domain"] == "factorization"
+    } == {0.25}
+    assert {
+        float(item.condition_selector["fault_rate"])
+        for item in rate_items
+        if item.condition_selector["domain"] == "lean_proof"
+    } == {0.1}
+
+
 def test_exp1_to_exp5_matrix_smoke_inventory_contains_exactly_forty_roots() -> None:
     profiles = tuple(
         load_paper_smoke_profile(path)

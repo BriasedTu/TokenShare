@@ -14,7 +14,10 @@ from tokenshare.executors.ai_api import (
     PROVIDER_FAILURE_TAXONOMY,
     PreparedDispatchEvidence,
     dispatch_prepared_request_once,
+    prepare_ai_api_outbound_request,
 )
+from tokenshare.executors.ai_api_config import AIAPIExecutorConfig
+from tokenshare.executors.contracts import ExecutionRequest
 from tokenshare.executors.ai_api_request_identity import (
     PreparedOutboundRequest,
     PROMPT_ADMISSION_PROFILE_DIGEST,
@@ -53,10 +56,30 @@ from tokenshare.experiments.paper_paid_authorization import (
     PaidAuthorizationValidation,
     output_root_path_digest as task26_output_root_path_digest,
 )
+from tokenshare.experiments.paper_faults import select_fault_targets
+from tokenshare.experiments.paper_exp3_fault_recovery import (
+    RATE_FAULT_TARGET_SEED,
+    _worker_death_targets,
+)
 from tokenshare.experiments.paper_resource_accounting import (
     FrozenPricing,
     ProviderUsage,
 )
+from tokenshare.core.models import (
+    Attempt,
+    AttemptState,
+    Lease,
+    LeaseState,
+    ProtocolConfig,
+)
+from tokenshare.experiments.paper_catalog import (
+    PaperInputCatalogManifest,
+    default_lean_paper_environment_manifest,
+)
+from tokenshare.plugins.factorization.runtime_adapter import (
+    FactorizationRuntimeAdapter,
+)
+from tokenshare.plugins.lean_proof.runtime_adapter import LeanRuntimeAdapter
 from tokenshare.storage.artifacts import ArtifactStore
 
 
@@ -105,6 +128,11 @@ class SemanticSlotCandidate:
     prepared_request: PreparedOutboundRequest
     terminal_kind: str | None = None
     precomputed_inventory_entry_id: str | None = None
+    prepared_stable_case_id: str | None = None
+    replacement_policy_id: str = "formal_complete"
+    fault_rate: float = 0.0
+    dead_worker_count: int | None = None
+    kill_progress_percent: int | None = None
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -714,6 +742,20 @@ class AcquisitionRequest:
             raise ValueError("acquisition transport controls are invalid")
         if self.token_upper_bound < 1 or self.cost_upper_bound <= 0:
             raise ValueError("acquisition reservation bounds must be positive")
+
+
+@dataclass(frozen=True, kw_only=True)
+class Matrix8UnifiedAcquisitionPlan:
+    """Exp1 统一采集 Exp1--4 regression matrix8 exact prompts 的纯计划。"""
+
+    combined_profile_digest: str
+    condition_candidate_count: int
+    candidates: tuple[SemanticSlotCandidate, ...]
+    semantic_inventory_plan: SemanticInventoryPlan
+    acquisition_requests: tuple[AcquisitionRequest, ...]
+    case_identity_mappings: tuple[dict[str, str], ...]
+    provider_call_count: int = 0
+    schema_version: str = "tokenshare.matrix8_unified_acquisition_plan.v1"
 
 
 def create_acquisition_plan_bundle(
@@ -1739,6 +1781,64 @@ def replacement_slots_for(
     return (0,)
 
 
+def regression_smoke_sparse_replacement_slots(
+    *,
+    experiment_id: str,
+    fault_type: str,
+    fault_rate: float,
+    ablation_mode: str,
+    planned_ai_unit_ids: Sequence[str],
+    dead_worker_count: int | None = None,
+    kill_progress_percent: int | None = None,
+) -> dict[str, tuple[int, ...]]:
+    """按正式 target policy 为 regression smoke 只冻结可能消费的 replacement。"""
+
+    unit_ids = tuple(str(unit_id) for unit_id in planned_ai_unit_ids)
+    if (
+        not unit_ids
+        or len(set(unit_ids)) != len(unit_ids)
+        or any(not unit_id for unit_id in unit_ids)
+    ):
+        raise ValueError("regression smoke planned AI units must be non-empty and unique")
+    slots = {unit_id: (0,) for unit_id in unit_ids}
+    if experiment_id == "exp3_real_ai_fault_recovery":
+        if fault_type == "worker_death":
+            if dead_worker_count is None or kill_progress_percent is None:
+                raise ValueError("worker death sparse policy requires frozen targets")
+            targets = _worker_death_targets(
+                unit_ids,
+                dead_worker_count=dead_worker_count,
+                kill_progress_percent=kill_progress_percent,
+            )
+        else:
+            targets = select_fault_targets(
+                unit_ids,
+                fault_rate=fault_rate,
+                seed=RATE_FAULT_TARGET_SEED,
+            )
+            if not targets:
+                raise ValueError("rate-fault smoke must freeze at least one target")
+        replacement_slots = replacement_slots_for(
+            experiment_id=experiment_id,
+            fault_type=fault_type,
+            ablation_mode=ablation_mode,
+        )
+        for unit_id in targets:
+            slots[unit_id] = replacement_slots
+        return slots
+    if experiment_id == "exp4_real_ai_protocol_ablation":
+        if ablation_mode not in _EXP4_MODES:
+            raise ValueError("Experiment 4 ablation mode drift")
+        if ablation_mode != "NO_REQUEUE":
+            replacement_slots = replacement_slots_for(
+                experiment_id=experiment_id,
+                fault_type=fault_type,
+                ablation_mode=ablation_mode,
+            )
+            return {unit_id: replacement_slots for unit_id in unit_ids}
+    return slots
+
+
 def build_semantic_inventory(
     candidates: Sequence[SemanticSlotCandidate],
     *,
@@ -1856,6 +1956,388 @@ def build_semantic_inventory(
     )
 
 
+def build_matrix8_unified_acquisition_plan(
+    *,
+    execution_plans: Sequence[Any],
+    catalog_manifest: PaperInputCatalogManifest,
+    ai_api_config: AIAPIExecutorConfig,
+    entry_id: str,
+    planning_artifact_root: str | Path,
+    requested_at: str,
+    token_upper_bound: int,
+    cost_upper_bound: Decimal,
+    frozen_pricing: FrozenPricing,
+) -> Matrix8UnifiedAcquisitionPlan:
+    """从四份 canonical matrix8 execution plan 冻结 Exp1 统一采集计划。"""
+
+    expected_experiments = (
+        "exp1_real_ai_feasibility",
+        "exp2_real_ai_scalability",
+        "exp3_real_ai_fault_recovery",
+        "exp4_real_ai_protocol_ablation",
+    )
+    plans = tuple(execution_plans)
+    if tuple(
+        tuple(getattr(plan, "experiment_ids", ())) for plan in plans
+    ) != tuple((experiment_id,) for experiment_id in expected_experiments):
+        raise ValueError("unified acquisition requires ordered Exp1--4 matrix8 plans")
+    if any(
+        getattr(plan, "schema_version", None)
+        != "tokenshare.paper_smoke_execution_plan.v1"
+        or len(tuple(getattr(plan, "items", ()))) != 8
+        or getattr(plan, "catalog_id", None) != catalog_manifest.catalog_id
+        or getattr(plan, "catalog_version", None) != catalog_manifest.catalog_version
+        or getattr(plan, "catalog_digest", None) != catalog_manifest.catalog_digest
+        for plan in plans
+    ):
+        raise ValueError("unified acquisition requires canonical matrix8 smoke plans")
+    root_case_ids = tuple(item.case_id for item in plans[0].items)
+    if len(set(root_case_ids)) != 8 or any(
+        {item.case_id for item in plan.items} != set(root_case_ids)
+        for plan in plans[1:]
+    ):
+        raise ValueError("unified acquisition matrix8 root case set drift")
+    if not isinstance(ai_api_config, AIAPIExecutorConfig):
+        raise TypeError("ai_api_config must be AIAPIExecutorConfig")
+    entries = tuple(
+        entry
+        for entry in ai_api_config.entries
+        if entry.entry_id == entry_id and entry.enabled
+    )
+    if (
+        ai_api_config.provider_family != "deepseek"
+        or entry_id != "deepseek_v4_pro_exp1_baseline"
+        or len(entries) != 1
+        or entries[0].model != "deepseek-v4-pro"
+        or int(ai_api_config.defaults.get("timeout_seconds", 0)) != 600
+        or int(ai_api_config.defaults.get("max_tokens", 0)) != 300000
+        or entries[0].request_overrides.get("reasoning_effort") != "high"
+        or entries[0].request_overrides.get("thinking") != {"type": "enabled"}
+    ):
+        raise ValueError("unified acquisition provider identity drift")
+    entry = entries[0]
+    cases_by_id = {
+        str(case["case_id"]): case
+        for case in (
+            catalog_manifest.factorization_cases
+            + catalog_manifest.lean_cases
+            + catalog_manifest.lean_lemma_graph_cases
+        )
+    }
+    try:
+        root_cases = {case_id: cases_by_id[case_id] for case_id in root_case_ids}
+    except KeyError as exc:
+        raise ValueError("unified acquisition root is absent from catalog") from exc
+    factor_case_ids = {
+        str(case["case_id"]) for case in catalog_manifest.factorization_cases
+    }
+    lean_case_ids = {
+        str(case["case_id"])
+        for case in (
+            catalog_manifest.lean_cases + catalog_manifest.lean_lemma_graph_cases
+        )
+    }
+    if len(set(root_case_ids) & factor_case_ids) != 4:
+        raise ValueError("unified acquisition requires four Factor roots")
+    if len(set(root_case_ids) & lean_case_ids) != 4:
+        raise ValueError("unified acquisition requires four Lean roots")
+
+    protocol_config = replace(
+        ProtocolConfig.default(
+            config_id="matrix8_unified_acquisition_planning",
+            artifact_store_uri="file://planning-artifacts",
+            event_log_uri="file://planning-events.jsonl",
+        ),
+        max_children_per_unit=64,
+    )
+    artifact_root = Path(planning_artifact_root).resolve()
+    candidates: list[SemanticSlotCandidate] = []
+    case_mappings: dict[tuple[str, str, str], dict[str, str]] = {}
+    for execution_plan in plans:
+        if len(tuple(execution_plan.dispatch_plans)) != 1:
+            raise ValueError("matrix8 execution plan must have one dispatch plan")
+        dispatch_plan = execution_plan.dispatch_plans[0]
+        if (
+            dispatch_plan.experiment_id != execution_plan.experiment_ids[0]
+            or dispatch_plan.paper_eligible_possible
+            or dispatch_plan.provider_calls_made != 0
+        ):
+            raise ValueError("matrix8 dispatch plan classification drift")
+        for item in execution_plan.items:
+            condition, selection = dispatch_plan.bound_condition(item.condition_id)
+            if (
+                condition.condition_digest != item.condition_digest
+                or selection.selection_id != item.selection_id
+                or selection.selection_digest != item.selection_digest
+                or item.case_id not in selection.ordered_case_ids
+            ):
+                raise ValueError("matrix8 condition/selection identity drift")
+            root_case = root_cases[item.case_id]
+            planned_case = _case_with_acquisition_split_profile(
+                root_case,
+                selection=selection,
+            )
+            store = ArtifactStore(
+                artifact_root
+                / _safe_planning_part(condition.condition_id)
+                / _safe_planning_part(item.case_id)
+            )
+            adapter: FactorizationRuntimeAdapter | LeanRuntimeAdapter
+            if item.case_id in factor_case_ids:
+                adapter = FactorizationRuntimeAdapter(
+                    provider_family=ai_api_config.provider_family,
+                    seed=condition.seed,
+                    protocol_config=protocol_config,
+                    max_tokens=int(ai_api_config.defaults["max_tokens"]),
+                    timeout_seconds=int(ai_api_config.defaults["timeout_seconds"]),
+                )
+            else:
+                adapter = LeanRuntimeAdapter(
+                    provider_family=ai_api_config.provider_family,
+                    environment_manifest=default_lean_paper_environment_manifest(),
+                    seed=condition.seed,
+                    protocol_config=protocol_config,
+                    max_tokens=int(ai_api_config.defaults["max_tokens"]),
+                    timeout_seconds=int(ai_api_config.defaults["timeout_seconds"]),
+                )
+            units = adapter.plan_units(planned_case, artifact_store=store)
+            ai_units = tuple(
+                (unit, planned_ai_unit_id)
+                for unit in units
+                if (
+                    planned_ai_unit_id := adapter.planned_ai_unit_id(unit)
+                ) is not None
+            )
+            if not ai_units:
+                raise ValueError("matrix8 root has no planned AI units")
+            selector = dict(item.condition_selector)
+            slot_policy_id = (
+                "regression_smoke_sparse_replacements.v1"
+                if item.experiment_id
+                in {
+                    "exp3_real_ai_fault_recovery",
+                    "exp4_real_ai_protocol_ablation",
+                }
+                else "formal_complete"
+            )
+            slots_by_unit = regression_smoke_sparse_replacement_slots(
+                experiment_id=item.experiment_id,
+                fault_type=str(condition.fault_type),
+                fault_rate=float(condition.fault_rate),
+                ablation_mode=str(condition.ablation_mode),
+                planned_ai_unit_ids=tuple(unit_id for _, unit_id in ai_units),
+                dead_worker_count=_optional_selector_int(
+                    selector, "dead_worker_count"
+                ),
+                kill_progress_percent=_optional_selector_int(
+                    selector, "kill_progress_percent"
+                ),
+            )
+            for unit, planned_ai_unit_id in ai_units:
+                attempt, lease = _planning_attempt_and_lease(
+                    case_id=item.case_id,
+                    unit_id=unit.unit_id,
+                    task_id=unit.task_id,
+                )
+                if isinstance(adapter, LeanRuntimeAdapter):
+                    base_request = adapter.build_planning_execution_request(
+                        unit,
+                        attempt=attempt,
+                        lease=lease,
+                    )
+                else:
+                    base_request = adapter.build_execution_request(
+                        unit,
+                        attempt=attempt,
+                        lease=lease,
+                    )
+                if base_request.prompt_package_ref is None:
+                    raise ValueError("planned AI request is missing prompt package")
+                prompt = json.loads(store.read_bytes(base_request.prompt_package_ref))
+                case_record_digest = canonical_digest(root_case)
+                for replacement_slot in slots_by_unit[planned_ai_unit_id]:
+                    request = replace(
+                        base_request,
+                        soft_hints={
+                            **dict(base_request.soft_hints or {}),
+                            "paper_condition_id": condition.condition_id,
+                            "sample_slot_index": item.repeat_id,
+                            "replacement_slot": replacement_slot,
+                        },
+                    )
+                    prepared = prepare_ai_api_outbound_request(
+                        config=ai_api_config,
+                        request=request,
+                        prompt=prompt,
+                        entry=entry,
+                    ).prepared_request
+                    if prepared.planned_ai_unit_id != planned_ai_unit_id:
+                        raise ValueError("planned AI unit identity drift")
+                    mapping_key = (
+                        item.case_id,
+                        prepared.case_id,
+                        prepared.plugin_id,
+                    )
+                    case_mappings[mapping_key] = {
+                        "root_case_id": item.case_id,
+                        "prepared_stable_case_id": prepared.case_id,
+                        "plugin_id": prepared.plugin_id,
+                    }
+                    candidates.append(
+                        SemanticSlotCandidate(
+                            experiment_id=item.experiment_id,
+                            condition_id=condition.condition_id,
+                            condition_digest=condition.condition_digest,
+                            worker_count=condition.worker_count,
+                            repeat_id=item.repeat_id,
+                            fault_type=str(condition.fault_type),
+                            ablation_mode=str(condition.ablation_mode),
+                            case_id=item.case_id,
+                            case_record_digest=case_record_digest,
+                            planned_ai_unit_id=planned_ai_unit_id,
+                            sample_slot_index=item.repeat_id,
+                            replacement_slot=replacement_slot,
+                            prompt_profile_digest=canonical_digest(
+                                {
+                                    "body_digest": prepared.body_digest,
+                                    "prompt_profile_id": prepared.prompt_profile_id,
+                                    "prompt_serialization_schema": (
+                                        prepared.prompt_serialization_schema
+                                    ),
+                                }
+                            ),
+                            prepared_request=prepared,
+                            prepared_stable_case_id=prepared.case_id,
+                            replacement_policy_id=slot_policy_id,
+                            fault_rate=float(condition.fault_rate),
+                            dead_worker_count=_optional_selector_int(
+                                selector, "dead_worker_count"
+                            ),
+                            kill_progress_percent=_optional_selector_int(
+                                selector, "kill_progress_percent"
+                            ),
+                        )
+                    )
+    semantic_plan = build_semantic_inventory(tuple(candidates))
+    prepared_by_inference: dict[str, PreparedOutboundRequest] = {}
+    for candidate in candidates:
+        prepared = candidate.prepared_request
+        previous = prepared_by_inference.setdefault(
+            prepared.inference_request_digest,
+            prepared,
+        )
+        if previous != prepared:
+            raise ValueError("one inference digest maps to multiple requests")
+    requests = tuple(
+        AcquisitionRequest(
+            inventory_row=row,
+            prepared_request=prepared_by_inference[row.inference_request_digest],
+            provider_family=ai_api_config.provider_family,
+            api_key_env=entry.api_key_env,
+            timeout_seconds=int(ai_api_config.defaults["timeout_seconds"]),
+            token_upper_bound=token_upper_bound,
+            cost_upper_bound=cost_upper_bound,
+            frozen_pricing=frozen_pricing,
+            requested_at=requested_at,
+        )
+        for row in semantic_plan.rows
+    )
+    return Matrix8UnifiedAcquisitionPlan(
+        combined_profile_digest=canonical_digest(
+            tuple(plan.profile_digest for plan in plans)
+        ),
+        condition_candidate_count=len(candidates),
+        candidates=tuple(candidates),
+        semantic_inventory_plan=semantic_plan,
+        acquisition_requests=requests,
+        case_identity_mappings=tuple(
+            case_mappings[key] for key in sorted(case_mappings)
+        ),
+    )
+
+
+def _case_with_acquisition_split_profile(
+    case: Mapping[str, Any],
+    *,
+    selection: Any,
+) -> dict[str, Any]:
+    profile_id = getattr(selection, "split_profile_id", None)
+    if profile_id is None:
+        return dict(case)
+    split_params = case.get("split_params")
+    if not isinstance(split_params, Mapping):
+        raise ValueError("split profile requires factorization split_params")
+    return {
+        **dict(case),
+        "split_params": {
+            "strategy_id": split_params.get("strategy_id"),
+            "range_policy": split_params.get("range_policy"),
+            "split_profile_id": profile_id,
+        },
+    }
+
+
+def _planning_attempt_and_lease(
+    *,
+    case_id: str,
+    unit_id: str,
+    task_id: str,
+) -> tuple[Attempt, Lease]:
+    identity = canonical_digest(
+        {
+            "case_id": case_id,
+            "unit_id": unit_id,
+            "attempt_ordinal": 0,
+        }
+    ).removeprefix("sha256:")
+    attempt_id = f"matrix8_acquisition_{identity}"
+    lease_id = f"lease_{identity}"
+    attempt = Attempt(
+        attempt_id=attempt_id,
+        task_id=task_id,
+        unit_id=unit_id,
+        lease_id=lease_id,
+        client_id="matrix8_acquisition_planner",
+        state=AttemptState.RUNNING,
+        attempt_kind="primary",
+        created_at="2026-07-14T00:00:00Z",
+        started_at="2026-07-14T00:00:00Z",
+    )
+    return attempt, Lease(
+        lease_id=lease_id,
+        task_id=task_id,
+        unit_id=unit_id,
+        attempt_id=attempt_id,
+        client_id=attempt.client_id,
+        state=LeaseState.ACTIVE,
+        fencing_token=f"fence_{identity}",
+        issued_at="2026-07-14T00:00:00Z",
+        expires_at="2026-07-14T00:10:00Z",
+        last_heartbeat_at=None,
+        heartbeat_count=0,
+        lease_kind="execution",
+        terminated_at=None,
+        terminated_reason=None,
+        metadata={},
+    )
+
+
+def _optional_selector_int(selector: Mapping[str, Any], field_name: str) -> int | None:
+    value = selector.get(field_name)
+    if value is None:
+        return None
+    if type(value) is not int:
+        raise ValueError(f"matrix8 selector {field_name} must be an integer")
+    return value
+
+
+def _safe_planning_part(value: str) -> str:
+    return "".join(
+        character if character.isalnum() or character in {"_", "-"} else "_"
+        for character in value
+    )
+
+
 def preflight_inventory_before_coordinator(
     *,
     plan: SemanticInventoryPlan,
@@ -1949,7 +2431,11 @@ def _validate_candidate_matches_prepared(
     candidate: SemanticSlotCandidate, prepared: PreparedOutboundRequest
 ) -> None:
     expected = (
-        ("case_id", candidate.case_id, prepared.case_id),
+        (
+            "case_id",
+            candidate.prepared_stable_case_id or candidate.case_id,
+            prepared.case_id,
+        ),
         ("planned_ai_unit_id", candidate.planned_ai_unit_id, prepared.planned_ai_unit_id),
         ("sample_slot_index", candidate.sample_slot_index, prepared.sample_slot_index),
         ("replacement_slot", candidate.replacement_slot, prepared.replacement_slot),
@@ -1979,8 +2465,10 @@ def _repeat_sample_context(
 def _validate_replacement_completeness(
     candidates: Sequence[SemanticSlotCandidate],
 ) -> None:
+    sparse_policy = "regression_smoke_sparse_replacements.v1"
     slots_by_unit: dict[tuple[str, str, str, int], set[int]] = {}
-    policy_by_unit: dict[tuple[str, str, str, int], tuple[str, str, str]] = {}
+    policy_by_unit: dict[tuple[str, str, str, int], tuple[object, ...]] = {}
+    sparse_groups: dict[tuple[str, str, int], list[SemanticSlotCandidate]] = {}
     for candidate in candidates:
         key = (
             candidate.condition_id,
@@ -1990,26 +2478,89 @@ def _validate_replacement_completeness(
         )
         slots_by_unit.setdefault(key, set()).add(candidate.replacement_slot)
         policy = (
+            candidate.replacement_policy_id,
             candidate.experiment_id,
             candidate.fault_type,
             candidate.ablation_mode,
+            candidate.fault_rate,
+            candidate.dead_worker_count,
+            candidate.kill_progress_percent,
         )
         previous = policy_by_unit.setdefault(key, policy)
         if previous != policy:
             raise ValueError("condition replacement policy drift")
+        if candidate.replacement_policy_id == sparse_policy:
+            group_key = (
+                candidate.condition_id,
+                candidate.case_record_digest,
+                candidate.sample_slot_index,
+            )
+            sparse_groups.setdefault(group_key, []).append(candidate)
+        elif candidate.replacement_policy_id != "formal_complete":
+            raise ValueError("unsupported replacement completeness policy")
     for key, actual_slots in slots_by_unit.items():
-        experiment_id, fault_type, ablation_mode = policy_by_unit[key]
+        (
+            replacement_policy_id,
+            experiment_id,
+            fault_type,
+            ablation_mode,
+            _fault_rate,
+            _dead_worker_count,
+            _kill_progress_percent,
+        ) = policy_by_unit[key]
+        if replacement_policy_id == sparse_policy:
+            continue
         expected_slots = set(
             replacement_slots_for(
-                experiment_id=experiment_id,
-                fault_type=fault_type,
-                ablation_mode=ablation_mode,
+                experiment_id=str(experiment_id),
+                fault_type=str(fault_type),
+                ablation_mode=str(ablation_mode),
             )
         )
         if actual_slots != expected_slots:
             raise ValueError(
                 "incomplete replacement slots for preregistered semantic unit"
             )
+    for group_candidates in sparse_groups.values():
+        representative = group_candidates[0]
+        policy_values = {
+            (
+                candidate.experiment_id,
+                candidate.fault_type,
+                candidate.fault_rate,
+                candidate.ablation_mode,
+                candidate.dead_worker_count,
+                candidate.kill_progress_percent,
+            )
+            for candidate in group_candidates
+        }
+        if len(policy_values) != 1:
+            raise ValueError("condition replacement policy drift")
+        unit_ids = tuple(
+            dict.fromkeys(
+                candidate.planned_ai_unit_id for candidate in group_candidates
+            )
+        )
+        expected_by_unit = regression_smoke_sparse_replacement_slots(
+            experiment_id=representative.experiment_id,
+            fault_type=representative.fault_type,
+            fault_rate=representative.fault_rate,
+            ablation_mode=representative.ablation_mode,
+            planned_ai_unit_ids=unit_ids,
+            dead_worker_count=representative.dead_worker_count,
+            kill_progress_percent=representative.kill_progress_percent,
+        )
+        for unit_id, expected_slots in expected_by_unit.items():
+            key = (
+                representative.condition_id,
+                representative.case_record_digest,
+                unit_id,
+                representative.sample_slot_index,
+            )
+            if slots_by_unit.get(key) != set(expected_slots):
+                raise ValueError(
+                    "incomplete replacement slots for preregistered semantic unit"
+                )
 
 
 def _exp2_online_refs(
@@ -2345,6 +2896,7 @@ __all__ = [
     "FullAcquisitionBudget",
     "InventoryPreflightResult",
     "FormalTraceInventoryPreflightResult",
+    "Matrix8UnifiedAcquisitionPlan",
     "PaperTraceRuntimeContext",
     "PaperTraceCaseBinding",
     "PaperFormalTraceContext",
@@ -2354,12 +2906,14 @@ __all__ = [
     "SemanticInventoryPlan",
     "SemanticSlotCandidate",
     "build_semantic_inventory",
+    "build_matrix8_unified_acquisition_plan",
     "create_acquisition_plan_bundle",
     "finalize_acquisition_child_bank",
     "load_acquisition_plan_bundle",
     "output_root_path_digest",
     "preflight_inventory_before_coordinator",
     "preflight_formal_trace_inventory",
+    "regression_smoke_sparse_replacement_slots",
     "replacement_slots_for",
     "response_bank_manifest_for_bundle",
 ]

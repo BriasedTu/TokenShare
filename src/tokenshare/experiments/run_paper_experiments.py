@@ -79,6 +79,9 @@ from tokenshare.experiments.paper_exp2_scalability import (
 from tokenshare.experiments.paper_exp3_fault_recovery import (
     build_exp3_regression_smoke_binding,
 )
+from tokenshare.experiments.paper_experiment_contracts import (
+    FrozenConditionSelectionBinding,
+)
 from tokenshare.experiments.paper_formal_evidence import FormalEvidenceStore
 from tokenshare.experiments.paper_formal_gate import (
     CompleteFullBankPrerequisite,
@@ -3458,6 +3461,116 @@ def _with_exp3_regression_smoke_lean_plan(
     )
 
 
+def _with_matrix8_unified_factor_seed_execution_plan(
+    *,
+    execution_plan: object,
+    profile: object,
+) -> object:
+    """仅在 Exp1--4 matrix8 clone 中按 root 冻结共享 Factor split seed。"""
+
+    if not (
+        getattr(profile, "formal", None) is False
+        and getattr(profile, "pilot_only", None) is True
+        and getattr(profile, "regression_only", None) is True
+        and getattr(profile, "paper_eligible", None) is False
+        and getattr(profile, "expected_root_runs", None) == 8
+    ):
+        raise ValueError("matrix8 unified seed is restricted to regression smoke")
+    experiment_ids = tuple(getattr(execution_plan, "experiment_ids", ()))
+    if len(experiment_ids) != 1 or experiment_ids[0] not in EXP1_EXP4_ONLY_EXPERIMENT_IDS:
+        raise ValueError("matrix8 unified seed requires one Exp1--4 experiment")
+    profile_items = {
+        item.item_id: item for item in tuple(getattr(profile, "items", ()))
+    }
+    resolved_items = tuple(getattr(execution_plan, "items", ()))
+    factor_items_by_condition: dict[str, list[object]] = {}
+    for resolved in resolved_items:
+        source = profile_items.get(resolved.item_id)
+        if source is None or source.case_id != resolved.case_id:
+            raise ValueError("matrix8 unified seed profile/execution item drift")
+        if source.condition_selector.get("domain") != "factorization":
+            continue
+        factor_items_by_condition.setdefault(resolved.condition_id, []).append(resolved)
+    dispatch_plans = tuple(getattr(execution_plan, "dispatch_plans", ()))
+    if len(dispatch_plans) != 1 or dispatch_plans[0].paper_eligible_possible:
+        raise ValueError("matrix8 unified seed dispatch classification drift")
+    dispatch_plan = dispatch_plans[0]
+    replacement_by_item_id: dict[str, object] = {}
+    conditions: list[object] = []
+    bindings: list[object] = []
+    for condition, selection in dispatch_plan.bound_items():
+        factor_items = tuple(
+            factor_items_by_condition.get(condition.condition_id, ())
+        )
+        if not factor_items:
+            conditions.append(condition)
+            bindings.append(
+                FrozenConditionSelectionBinding.from_condition(
+                    condition,
+                    selection,
+                )
+            )
+            continue
+        for item in factor_items:
+            condition_id = condition.condition_id
+            if len(factor_items) > 1:
+                suffix = digest_json(
+                    {
+                        "schema_version": "tokenshare.matrix8_factor_condition_clone.v1",
+                        "condition_id": condition.condition_id,
+                        "case_id": item.case_id,
+                    }
+                ).removeprefix("sha256:")[:12]
+                condition_id = f"{condition.condition_id}__matrix8_{suffix}"
+            cloned = replace(
+                condition,
+                condition_id=condition_id,
+                seed=_matrix8_unified_factor_seed(item.case_id),
+            )
+            conditions.append(cloned)
+            bindings.append(
+                FrozenConditionSelectionBinding.from_condition(cloned, selection)
+            )
+            replacement_by_item_id[item.item_id] = cloned
+    augmented_dispatch = replace(
+        dispatch_plan,
+        conditions=tuple(conditions),
+        condition_selection_bindings=tuple(bindings),
+    )
+    augmented_items = tuple(
+        replace(
+            item,
+            condition_id=replacement_by_item_id[item.item_id].condition_id,
+            condition_digest=replacement_by_item_id[item.item_id].condition_digest,
+        )
+        if item.item_id in replacement_by_item_id
+        else item
+        for item in resolved_items
+    )
+    root_case_filter: dict[str, tuple[str, ...]] = {}
+    for item in augmented_items:
+        root_case_filter[item.condition_id] = (
+            *root_case_filter.get(item.condition_id, ()),
+            item.case_id,
+        )
+    return replace(
+        execution_plan,
+        items=augmented_items,
+        dispatch_plans=(augmented_dispatch,),
+        root_case_filter=root_case_filter,
+    )
+
+
+def _matrix8_unified_factor_seed(case_id: str) -> int:
+    digest = digest_json(
+        {
+            "schema_version": "tokenshare.matrix8_unified_factor_seed.v1",
+            "case_id": case_id,
+        }
+    )
+    return int(digest.removeprefix("sha256:")[:8], 16)
+
+
 def _smoke_case_planned_ai_unit_ids(case: Mapping[str, object]) -> tuple[str, ...]:
     schema_version = case.get("schema_version")
     if schema_version == "tokenshare.paper_factorization_case.v1":
@@ -3671,6 +3784,15 @@ def _run_smoke_cli(
             catalog_digest=catalog_manifest.catalog_digest,
             output_root=output_root,
         )
+        if (
+            profile.expected_root_runs == 8
+            and len(profile.experiment_ids) == 1
+            and profile.experiment_ids[0] in EXP1_EXP4_ONLY_EXPERIMENT_IDS
+        ):
+            execution_plan = _with_matrix8_unified_factor_seed_execution_plan(
+                execution_plan=execution_plan,
+                profile=profile,
+            )
     except (OSError, ValueError) as exc:
         _write_smoke_blocked_suite(
             output_root=output_root,
