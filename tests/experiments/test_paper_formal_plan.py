@@ -7,6 +7,9 @@ from pathlib import Path
 
 import pytest
 
+from tokenshare.executors.ai_api_request_identity import (
+    PreparedOutboundRequestFactory,
+)
 from tokenshare.experiments.paper_budget import (
     build_exp5_v3_token_ceiling_mapping,
     load_exp1_pilot_profile,
@@ -305,6 +308,8 @@ def test_formal_prepared_record_digest_revalidates_nested_request_body(
 
 def test_formal_prepared_record_validator_rejects_top_level_provider_model_tamper(
     single_root_prepared_inventory,
+    formal_inputs,
+    tmp_path: Path,
 ) -> None:
     root, records, _snapshot, _inventory, ai_api_configs = (
         single_root_prepared_inventory
@@ -314,12 +319,16 @@ def test_formal_prepared_record_validator_rejects_top_level_provider_model_tampe
         formal_plan_module.validate_formal_prepared_request_record(
             record=replace(records[0], provider_model_id="drifted-model"),
             root=root,
+            catalog_manifest=formal_inputs[1],
             ai_api_configs=ai_api_configs,
+            planning_artifact_root=tmp_path / "audit-provider-model",
         )
 
 
 def test_formal_prepared_record_validator_rejects_in_place_identity_mapping_tamper(
     single_root_prepared_inventory,
+    formal_inputs,
+    tmp_path: Path,
 ) -> None:
     root, records, _snapshot, _inventory, ai_api_configs = (
         single_root_prepared_inventory
@@ -332,13 +341,69 @@ def test_formal_prepared_record_validator_rejects_in_place_identity_mapping_tamp
         formal_plan_module.validate_formal_prepared_request_record(
             record=drifted,
             root=root,
+            catalog_manifest=formal_inputs[1],
             ai_api_configs=ai_api_configs,
+            planning_artifact_root=tmp_path / "audit-provider-identity",
+        )
+
+
+def test_formal_prepared_record_validator_rejects_coherently_resigned_body_tamper(
+    single_root_prepared_inventory,
+    formal_inputs,
+    tmp_path: Path,
+) -> None:
+    root, records, _snapshot, _inventory, ai_api_configs = (
+        single_root_prepared_inventory
+    )
+    record = records[0]
+    original = record.prepared_request
+    drifted_body = deepcopy(original.body_obj)
+    drifted_body["messages"][0]["content"] += "\ncoherent-drift"
+    resigned = PreparedOutboundRequestFactory.prepare(
+        body_obj=drifted_body,
+        base_url=original.normalized_absolute_endpoint,
+        endpoint="",
+        provider_config_digest=original.provider_config_digest,
+        entry_id=original.entry_id,
+        configured_model=original.configured_model,
+        effective_controls_digest=original.effective_controls_digest,
+        plugin_id=original.plugin_id,
+        plugin_version=original.plugin_version,
+        prompt_profile_id=original.prompt_profile_id,
+        prompt_serialization_schema=original.prompt_serialization_schema,
+        body_serialization_schema=original.body_serialization_schema,
+        case_id=original.case_id,
+        planned_ai_unit_id=original.planned_ai_unit_id,
+        sample_slot_index=original.sample_slot_index,
+        replacement_slot=original.replacement_slot,
+    )
+    drifted = replace(
+        record,
+        prepared_request=resigned,
+        prompt_profile_digest=digest_json(
+            {
+                "body_digest": resigned.body_digest,
+                "prompt_profile_id": resigned.prompt_profile_id,
+                "prompt_serialization_schema": resigned.prompt_serialization_schema,
+            }
+        ),
+    )
+
+    with pytest.raises(ValueError, match="independent runtime template"):
+        formal_plan_module.validate_formal_prepared_request_record(
+            record=drifted,
+            root=root,
+            catalog_manifest=formal_inputs[1],
+            ai_api_configs=ai_api_configs,
+            planning_artifact_root=tmp_path / "audit-coherent-body",
         )
 
 
 @pytest.mark.parametrize("mutation", ("count", "record", "source_digest"))
 def test_formal_prepared_inventory_validator_rejects_internal_tamper(
     single_root_prepared_inventory,
+    formal_inputs,
+    tmp_path: Path,
     mutation: str,
 ) -> None:
     _root, records, snapshot, inventory, ai_api_configs = (
@@ -364,7 +429,9 @@ def test_formal_prepared_inventory_validator_rejects_internal_tamper(
         formal_plan_module.validate_formal_prepared_request_inventory(
             inventory=drifted,
             snapshot=snapshot,
+            catalog_manifest=formal_inputs[1],
             ai_api_configs=ai_api_configs,
+            planning_artifact_root=tmp_path / f"audit-inventory-{mutation}",
         )
 
 

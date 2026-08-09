@@ -169,6 +169,7 @@ def test_formal_planning_and_runner_attempt_ids_prepare_the_same_factor_wire(
 
     planned = prepare(planning_request)
     runtime = prepare(runtime_request)
+    planned_prompt = json.loads(store.read_bytes(planning_request.prompt_package_ref))
 
     assert planned.prepared_request.body_bytes == runtime.prepared_request.body_bytes
     assert planned.prepared_request.body_digest == runtime.prepared_request.body_digest
@@ -178,6 +179,10 @@ def test_formal_planning_and_runner_attempt_ids_prepare_the_same_factor_wire(
     )
     assert planned.provider_request_identity == runtime.provider_request_identity
     assert planning_request.request_id != runtime_request.request_id
+    assert planned_prompt["input_summary"]["instruction_id"] == (
+        "factor_search_instruction:factor_runtime_91:range_0:"
+        f"{planned_prompt['input_summary']['partition_params_digest']}"
+    )
 
 
 class _Clock:

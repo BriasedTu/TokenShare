@@ -18,7 +18,6 @@ from tokenshare.core.models import (
 from tokenshare.executors.ai_api import prepare_ai_api_outbound_request
 from tokenshare.executors.ai_api_request_identity import (
     PreparedOutboundRequest,
-    PreparedOutboundRequestFactory,
     validate_prepared_request,
 )
 from tokenshare.experiments.paper_budget import build_paper_budget_split_profile
@@ -60,9 +59,6 @@ from tokenshare.experiments.paper_response_bank import replacement_slots_for
 from tokenshare.plugins.factorization.runtime_adapter import (
     FactorizationRuntimeAdapter,
 )
-from tokenshare.plugins.factorization.prompt_builder import (
-    FACTOR_SEARCH_PROMPT_PROFILE,
-)
 from tokenshare.plugins.factorization.schemas import (
     PLUGIN_ID as FACTORIZATION_PLUGIN_ID,
     PLUGIN_VERSION as FACTORIZATION_PLUGIN_VERSION,
@@ -72,9 +68,6 @@ from tokenshare.plugins.lean_proof.schemas import (
     PLUGIN_VERSION as LEAN_PLUGIN_VERSION,
 )
 from tokenshare.plugins.lean_proof.runtime_adapter import LeanRuntimeAdapter
-from tokenshare.plugins.lean_proof.prompt_builder import (
-    LEAN_PROOF_CANDIDATE_PROMPT_PROFILE,
-)
 from tokenshare.storage.artifacts import ArtifactStore
 
 
@@ -314,24 +307,28 @@ def validate_formal_prepared_request_record(
     *,
     record: FormalPreparedRequestRecord,
     root: FormalRootSnapshot,
+    catalog_manifest: PaperInputCatalogManifest,
     ai_api_configs: Mapping[str, Any],
+    planning_artifact_root: str | Path,
 ) -> None:
-    """把一条 prepared record 交叉核对回其正式 root 与 endpoint authority。"""
+    """独立重建 runtime template，再审计一条持久化 prepared record。"""
 
     if type(record) is not FormalPreparedRequestRecord:
         raise TypeError("record must be a FormalPreparedRequestRecord")
     if type(root) is not FormalRootSnapshot:
         raise TypeError("root must be a FormalRootSnapshot")
-    authority = _resolve_formal_prepared_record_authority(
+    templates = _independently_prepare_formal_root_templates(
         root=root,
+        catalog_manifest=catalog_manifest,
         ai_api_configs=ai_api_configs,
+        artifact_root=Path(planning_artifact_root),
     )
-    _validate_formal_prepared_record_fields(
-        record=record,
+    _validate_formal_prepared_records_with_templates(
+        records=(record,),
         root=root,
-        source_config=authority.source_config,
-        source_entry=authority.source_entry,
-        prepared_config=authority.prepared_config,
+        templates=templates,
+        ai_api_configs=ai_api_configs,
+        require_complete_root=False,
     )
 
 
@@ -339,14 +336,39 @@ def validate_formal_prepared_request_inventory(
     *,
     inventory: FormalPreparedRequestInventory,
     snapshot: FormalPlanSnapshot,
+    catalog_manifest: PaperInputCatalogManifest,
     ai_api_configs: Mapping[str, Any],
+    planning_artifact_root: str | Path,
 ) -> None:
-    """Fail closed 地验证 inventory 对 full/裁剪 snapshot 的逐 unit 精确覆盖。"""
+    """从正式 catalog/runtime 独立重建 templates 后审计 persisted inventory。"""
 
     if type(inventory) is not FormalPreparedRequestInventory:
         raise TypeError("inventory must be a FormalPreparedRequestInventory")
     if type(snapshot) is not FormalPlanSnapshot:
         raise TypeError("snapshot must be a FormalPlanSnapshot")
+    _validate_formal_prepared_inventory_metadata(
+        inventory=inventory,
+        snapshot=snapshot,
+    )
+    templates_by_root_key = _independently_prepare_formal_snapshot_templates(
+        snapshot=snapshot,
+        catalog_manifest=catalog_manifest,
+        ai_api_configs=ai_api_configs,
+        artifact_root=Path(planning_artifact_root),
+    )
+    _validate_formal_prepared_inventory_with_templates(
+        inventory=inventory,
+        snapshot=snapshot,
+        ai_api_configs=ai_api_configs,
+        templates_by_root_key=templates_by_root_key,
+    )
+
+
+def _validate_formal_prepared_inventory_metadata(
+    *,
+    inventory: FormalPreparedRequestInventory,
+    snapshot: FormalPlanSnapshot,
+) -> None:
     expected_count = sum(len(root.planned_ai_unit_ids) for root in snapshot.roots)
     if (
         inventory.schema_version
@@ -361,6 +383,21 @@ def validate_formal_prepared_request_inventory(
         or inventory.source_snapshot_digest != snapshot.snapshot_digest
     ):
         raise ValueError("formal prepared inventory metadata drift")
+
+
+def _validate_formal_prepared_inventory_with_templates(
+    *,
+    inventory: FormalPreparedRequestInventory,
+    snapshot: FormalPlanSnapshot,
+    ai_api_configs: Mapping[str, Any],
+    templates_by_root_key: Mapping[
+        tuple[str, str], tuple[_PreparedRuntimeTemplate, ...]
+    ],
+) -> None:
+    _validate_formal_prepared_inventory_metadata(
+        inventory=inventory,
+        snapshot=snapshot,
+    )
 
     roots_by_key: dict[tuple[str, str, str], FormalRootSnapshot] = {}
     authority_by_root_key: dict[
@@ -411,6 +448,12 @@ def validate_formal_prepared_request_inventory(
             _validate_formal_prepared_record_fields(
                 record=record,
                 root=root,
+                expected_template=_template_for_planned_unit(
+                    templates_by_root_key[
+                        (root.condition.condition_id, root.case_id)
+                    ],
+                    record.planned_ai_unit_id,
+                ),
                 source_config=authority.source_config,
                 source_entry=authority.source_entry,
                 prepared_config=authority.prepared_config,
@@ -451,12 +494,13 @@ def freeze_formal_root_prepared_requests(
         artifact_root=Path(planning_artifact_root),
     )
     records = _records_from_templates(root=root, templates=templates)
-    for record in records:
-        validate_formal_prepared_request_record(
-            record=record,
-            root=root,
-            ai_api_configs=ai_api_configs,
-        )
+    _validate_formal_prepared_records_with_templates(
+        records=records,
+        root=root,
+        templates=templates,
+        ai_api_configs=ai_api_configs,
+        require_complete_root=True,
+    )
     return records
 
 
@@ -481,6 +525,9 @@ def freeze_paper_formal_prepared_request_inventory(
     cases_by_id = _unique_catalog_cases(catalog_manifest)
     artifact_root = Path(planning_artifact_root)
     template_cache: dict[str, tuple[_PreparedRuntimeTemplate, ...]] = {}
+    templates_by_root_key: dict[
+        tuple[str, str], tuple[_PreparedRuntimeTemplate, ...]
+    ] = {}
     records: list[FormalPreparedRequestRecord] = []
     for root in snapshot.roots:
         try:
@@ -499,6 +546,7 @@ def freeze_paper_formal_prepared_request_inventory(
             template_cache[cache_key] = templates
         if tuple(item.planned_ai_unit_id for item in templates) != root.planned_ai_unit_ids:
             raise ValueError("prepared runtime AI-unit ids do not match formal snapshot")
+        templates_by_root_key[(root.condition.condition_id, root.case_id)] = templates
         records.extend(_records_from_templates(root=root, templates=templates))
     if len(records) != snapshot.first_attempt_ai_unit_count:
         raise ValueError("prepared request inventory does not cover all first attempts")
@@ -516,10 +564,11 @@ def freeze_paper_formal_prepared_request_inventory(
         provider_calls_made=0,
         source_snapshot_digest=snapshot.snapshot_digest,
     )
-    validate_formal_prepared_request_inventory(
+    _validate_formal_prepared_inventory_with_templates(
         inventory=inventory,
         snapshot=snapshot,
         ai_api_configs=ai_api_configs,
+        templates_by_root_key=templates_by_root_key,
     )
     return inventory
 
@@ -675,6 +724,111 @@ def _prepare_formal_root_templates(
     return tuple(templates)
 
 
+def _independently_prepare_formal_root_templates(
+    *,
+    root: FormalRootSnapshot,
+    catalog_manifest: PaperInputCatalogManifest,
+    ai_api_configs: Mapping[str, Any],
+    artifact_root: Path,
+) -> tuple[_PreparedRuntimeTemplate, ...]:
+    cases_by_id = _unique_catalog_cases(catalog_manifest)
+    try:
+        case = cases_by_id[root.case_id]
+    except KeyError as exc:
+        raise ValueError("formal prepared root is absent from catalog") from exc
+    templates = _prepare_formal_root_templates(
+        root=root,
+        case=case,
+        ai_api_configs=ai_api_configs,
+        artifact_root=artifact_root,
+    )
+    if tuple(item.planned_ai_unit_id for item in templates) != root.planned_ai_unit_ids:
+        raise ValueError("independent runtime template AI-unit identity drift")
+    return templates
+
+
+def _independently_prepare_formal_snapshot_templates(
+    *,
+    snapshot: FormalPlanSnapshot,
+    catalog_manifest: PaperInputCatalogManifest,
+    ai_api_configs: Mapping[str, Any],
+    artifact_root: Path,
+) -> dict[tuple[str, str], tuple[_PreparedRuntimeTemplate, ...]]:
+    cases_by_id = _unique_catalog_cases(catalog_manifest)
+    template_cache: dict[str, tuple[_PreparedRuntimeTemplate, ...]] = {}
+    templates_by_root_key: dict[
+        tuple[str, str], tuple[_PreparedRuntimeTemplate, ...]
+    ] = {}
+    for root in snapshot.roots:
+        try:
+            case = cases_by_id[root.case_id]
+        except KeyError as exc:
+            raise ValueError("formal prepared root is absent from catalog") from exc
+        cache_key = _formal_prepared_template_cache_key(root)
+        templates = template_cache.get(cache_key)
+        if templates is None:
+            templates = _prepare_formal_root_templates(
+                root=root,
+                case=case,
+                ai_api_configs=ai_api_configs,
+                artifact_root=artifact_root / cache_key.removeprefix("sha256:"),
+            )
+            template_cache[cache_key] = templates
+        if tuple(item.planned_ai_unit_id for item in templates) != root.planned_ai_unit_ids:
+            raise ValueError("independent runtime template AI-unit identity drift")
+        root_key = (root.condition.condition_id, root.case_id)
+        if root_key in templates_by_root_key:
+            raise ValueError("independent runtime template root identity is duplicate")
+        templates_by_root_key[root_key] = templates
+    return templates_by_root_key
+
+
+def _template_for_planned_unit(
+    templates: Sequence[_PreparedRuntimeTemplate],
+    planned_ai_unit_id: str,
+) -> _PreparedRuntimeTemplate:
+    matches = tuple(
+        item for item in templates if item.planned_ai_unit_id == planned_ai_unit_id
+    )
+    if len(matches) != 1:
+        raise ValueError("independent runtime template unit identity drift")
+    return matches[0]
+
+
+def _validate_formal_prepared_records_with_templates(
+    *,
+    records: Sequence[FormalPreparedRequestRecord],
+    root: FormalRootSnapshot,
+    templates: Sequence[_PreparedRuntimeTemplate],
+    ai_api_configs: Mapping[str, Any],
+    require_complete_root: bool,
+) -> None:
+    if require_complete_root and len(records) != len(templates):
+        raise ValueError("formal prepared root record coverage drift")
+    authority = _resolve_formal_prepared_record_authority(
+        root=root,
+        ai_api_configs=ai_api_configs,
+    )
+    observed_units: set[str] = set()
+    for record in records:
+        if record.planned_ai_unit_id in observed_units:
+            raise ValueError("formal prepared root record unit is duplicate")
+        observed_units.add(record.planned_ai_unit_id)
+        _validate_formal_prepared_record_fields(
+            record=record,
+            root=root,
+            expected_template=_template_for_planned_unit(
+                templates,
+                record.planned_ai_unit_id,
+            ),
+            source_config=authority.source_config,
+            source_entry=authority.source_entry,
+            prepared_config=authority.prepared_config,
+        )
+    if require_complete_root and observed_units != set(root.planned_ai_unit_ids):
+        raise ValueError("formal prepared root AI-unit coverage drift")
+
+
 def _validate_root_endpoint_controls(
     *,
     root: FormalRootSnapshot,
@@ -753,6 +907,7 @@ def _validate_formal_prepared_record_fields(
     *,
     record: FormalPreparedRequestRecord,
     root: FormalRootSnapshot,
+    expected_template: _PreparedRuntimeTemplate,
     source_config: Any,
     source_entry: Any,
     prepared_config: Any,
@@ -776,6 +931,13 @@ def _validate_formal_prepared_record_fields(
         fault_type=str(root.condition.fault_type),
         ablation_mode=str(root.condition.ablation_mode),
     )
+    if (
+        expected_template.source_provider_config_digest
+        != source_config.config_digest
+        or expected_template.prepared_execution_config_digest
+        != prepared_config.config_digest
+    ):
+        raise ValueError("independent runtime template config identity drift")
     expected_fields = {
         "case_id": root.case_id,
         "case_record_digest": root.case_record_digest,
@@ -783,8 +945,12 @@ def _validate_formal_prepared_record_fields(
         "base_replacement_slot": 0,
         "replacement_slot_ids": expected_replacement_slots,
         "replacement_policy_id": "formal_attempt_budget.v1",
-        "source_provider_config_digest": source_config.config_digest,
-        "prepared_execution_config_digest": prepared_config.config_digest,
+        "source_provider_config_digest": (
+            expected_template.source_provider_config_digest
+        ),
+        "prepared_execution_config_digest": (
+            expected_template.prepared_execution_config_digest
+        ),
         "provider_family": root.endpoint_controls.provider_family,
         "provider_config_id": root.endpoint_controls.provider_config_id,
         "model_entry_id": root.endpoint_controls.model_entry_id,
@@ -808,53 +974,36 @@ def _validate_formal_prepared_record_fields(
         raise ValueError("formal prepared record planned_ai_unit_id drift")
 
     prepared = validate_prepared_request(record.prepared_request)
-    expected_identity = _validate_provider_request_identity_against_prepared(
+    _validate_provider_request_identity_against_prepared(
         provider_request_identity=record.provider_request_identity,
         prepared=prepared,
         provider_family=record.provider_family,
+    )
+    expected_prepared = validate_prepared_request(expected_template.prepared_request)
+    expected_identity = _validate_provider_request_identity_against_prepared(
+        provider_request_identity=expected_template.provider_request_identity,
+        prepared=expected_prepared,
+        provider_family=root.endpoint_controls.provider_family,
     )
     if (
         expected_identity["entry_id"] != source_entry.entry_id
         or expected_identity["configured_model"] != source_entry.model
         or expected_identity["requested_model"] != source_entry.model
     ):
-        raise ValueError("formal prepared record provider request identity drift")
-    prompt_profile_id = (
-        FACTOR_SEARCH_PROMPT_PROFILE
-        if root.condition.domain == "factorization"
-        else LEAN_PROOF_CANDIDATE_PROMPT_PROFILE
-    )
-    expected_prepared = PreparedOutboundRequestFactory.prepare(
-        body_obj=prepared.body_obj,
-        base_url=source_entry.base_url,
-        endpoint=source_entry.endpoint,
-        provider_config_digest=prepared_config.config_digest,
-        entry_id=source_entry.entry_id,
-        configured_model=source_entry.model,
-        effective_controls_digest=str(
-            expected_identity["effective_request_controls_digest"]
-        ),
-        plugin_id=root.plugin_id,
-        plugin_version=root.plugin_version,
-        prompt_profile_id=prompt_profile_id,
-        prompt_serialization_schema="phase3.prompt_package.v1",
-        body_serialization_schema=f"{record.provider_family}.chat_completions.v1",
-        case_id=(
-            f"paper_factorization_{root.case_id}"
-            if root.condition.domain == "factorization"
-            else f"paper_lean_{root.case_id}"
-        ),
-        planned_ai_unit_id=record.planned_ai_unit_id,
-        sample_slot_index=root.repeat_id,
-        replacement_slot=0,
-    )
+        raise ValueError("independent runtime template provider identity drift")
+    if dict(record.provider_request_identity) != dict(
+        expected_template.provider_request_identity
+    ):
+        raise ValueError("independent runtime template provider identity drift")
     if prepared != expected_prepared:
-        raise ValueError("formal prepared record PreparedOutboundRequest drift")
+        raise ValueError("independent runtime template PreparedOutboundRequest drift")
     expected_prompt_digest = digest_json(
         {
-            "body_digest": prepared.body_digest,
-            "prompt_profile_id": prompt_profile_id,
-            "prompt_serialization_schema": "phase3.prompt_package.v1",
+            "body_digest": expected_prepared.body_digest,
+            "prompt_profile_id": expected_prepared.prompt_profile_id,
+            "prompt_serialization_schema": (
+                expected_prepared.prompt_serialization_schema
+            ),
         }
     )
     if record.prompt_profile_digest != expected_prompt_digest:
