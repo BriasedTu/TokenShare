@@ -123,7 +123,7 @@ class FormalSuiteServiceInput:
 
 @dataclass(frozen=True, kw_only=True)
 class Matrix8TraceServiceInput:
-    """Exp2--4 三份 results-first matrix8 smoke 的进程内输入。"""
+    """Exp1--4 四份 results-first matrix8 smoke 的进程内输入。"""
 
     scope: str
     batches: tuple[Mapping[str, object], ...]
@@ -527,9 +527,10 @@ def _run_trace_adapter(request: PipelineCommandRequest) -> Mapping[str, object]:
     if isinstance(value, Matrix8TraceServiceInput):
         from tokenshare.experiments.paper_smoke import execute_paper_smoke_suite
 
-        if value.scope != request.scope or len(value.batches) != 3:
-            raise ValueError("results-first trace requires three matrix8 batches")
+        if value.scope != request.scope or len(value.batches) != 4:
+            raise ValueError("results-first trace requires four matrix8 batches")
         expected_experiment_ids = (
+            "exp1_real_ai_feasibility",
             "exp2_real_ai_scalability",
             "exp3_real_ai_fault_recovery",
             "exp4_real_ai_protocol_ablation",

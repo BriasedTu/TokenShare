@@ -1437,7 +1437,7 @@ def test_results_first_matrix8_trace_bypasses_only_facility_gates(
     assert result["paper_eligible"] is False
 
 
-def test_results_first_matrix8_trace_adapter_runs_exactly_three_eight_root_smokes(
+def test_results_first_matrix8_trace_adapter_runs_exactly_four_eight_root_smokes(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1446,6 +1446,7 @@ def test_results_first_matrix8_trace_adapter_runs_exactly_three_eight_root_smoke
     calls: list[dict[str, object]] = []
     trace_context = object()
     experiment_ids = (
+        "exp1_real_ai_feasibility",
         "exp2_real_ai_scalability",
         "exp3_real_ai_fault_recovery",
         "exp4_real_ai_protocol_ablation",
@@ -1500,11 +1501,11 @@ def test_results_first_matrix8_trace_adapter_runs_exactly_three_eight_root_smoke
 
     result = pipeline._run_trace_adapter(request)
 
-    assert len(calls) == 3
+    assert len(calls) == 4
     assert all(call["trace_context"] is trace_context for call in calls)
     assert result["provider_calls"] == 0
-    assert result["completed_experiment_count"] == 3
-    assert result["root_run_count"] == 24
+    assert result["completed_experiment_count"] == 4
+    assert result["root_run_count"] == 32
 
 
 @pytest.mark.parametrize(
@@ -1526,6 +1527,7 @@ def test_results_first_matrix8_trace_rejects_nonterminal_or_partial_suite_result
     from tokenshare.experiments import paper_smoke
 
     experiment_ids = (
+        "exp1_real_ai_feasibility",
         "exp2_real_ai_scalability",
         "exp3_real_ai_fault_recovery",
         "exp4_real_ai_protocol_ablation",

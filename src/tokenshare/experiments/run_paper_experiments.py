@@ -3790,7 +3790,7 @@ def build_results_first_matrix8_trace_batches(
     output_root: str | Path,
     trace_context: object,
 ) -> tuple[dict[str, object], ...]:
-    """构造 Exp2--4 三份 8-root trace smoke；不执行 provider。"""
+    """构造 Exp1--4 四份 8-root trace smoke；不执行 provider。"""
 
     root = Path(output_root).resolve(strict=False)
     context = build_results_first_matrix8_planning_context(output_root=root)
@@ -3816,8 +3816,8 @@ def build_results_first_matrix8_trace_batches(
     }
     batches: list[dict[str, object]] = []
     for number, (profile, execution_plan) in enumerate(
-        zip(context.profiles[1:], context.execution_plans[1:]),
-        start=2,
+        zip(context.profiles, context.execution_plans),
+        start=1,
     ):
         if (
             profile.expected_root_runs != 8
