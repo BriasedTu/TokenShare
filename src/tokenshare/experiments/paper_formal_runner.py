@@ -3755,6 +3755,257 @@ def _artifact_identity(value: Any) -> str | None:
     return None
 
 
+def _trace_bank_role_json(
+    *, resolver: Any, entry: Any, role: str
+) -> Mapping[str, Any]:
+    matches = tuple(
+        locator for locator in entry.object_locators if locator.object_role == role
+    )
+    if len(matches) != 1:
+        raise ValueError(f"trace source entry requires exactly one {role} object")
+    try:
+        value = json.loads(resolver.read_verified(matches[0]).decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError(f"trace source {role} object is not canonical JSON") from exc
+    if not isinstance(value, Mapping):
+        raise ValueError(f"trace source {role} object must be a mapping")
+    return value
+
+
+def _trace_usage_int(value: Any, field_name: str) -> int | None:
+    if value is None:
+        return None
+    if type(value) is not int or value < 0:
+        raise ValueError(f"trace source usage has invalid {field_name}")
+    return value
+
+
+def _project_committed_trace_source_usage(
+    *,
+    adapter_result: Any,
+    adapter_root: Path,
+    trace_runtime: Any,
+) -> dict[str, Any]:
+    """只从 current ledger 已提交 delivery 投影不可变 source-bank 用量。"""
+
+    result_root = Path(_required_field(adapter_result, "output_root"))
+    store = ArtifactStore(result_root if result_root.is_dir() else adapter_root)
+    provider_call_count = 0
+    for attempt in _sequence_field(adapter_result, "attempt_results", "attempts"):
+        count = _optional_field(attempt, "provider_attempt_count")
+        if type(count) is not int or count < 0:
+            raise ValueError("trace attempt provider_attempt_count is invalid")
+        provider_call_count += count
+    if provider_call_count != 0:
+        raise ValueError(
+            "trace-backed protocol run cannot dispatch current provider calls"
+        )
+
+    resolver = trace_runtime.resolver
+    manifest = resolver.index.manifest
+    rows_by_inventory_entry_id = {
+        row.inventory_entry_id: row for row in resolver.index.inventory_rows
+    }
+    consumptions: list[dict[str, Any]] = []
+    seen_consumption_ids: set[str] = set()
+    for event in _sequence_field(adapter_result, "event_records"):
+        if _optional_field(event, "event_type") != "TRACE_DELIVERY_COMMITTED.v1":
+            continue
+        consumption_id = _required_field(event, "event_id")
+        if not isinstance(consumption_id, str) or not consumption_id:
+            raise ValueError("trace commit event_id is invalid")
+        if consumption_id in seen_consumption_ids:
+            raise ValueError("duplicate trace source consumption identity")
+        seen_consumption_ids.add(consumption_id)
+        payload = _required_field(event, "payload")
+        if not isinstance(payload, Mapping):
+            raise ValueError("trace commit payload is malformed")
+        attempt_id = payload.get("attempt_id")
+        wrapper_ref = payload.get("current_wrapper_ref")
+        if not isinstance(attempt_id, str) or not attempt_id:
+            raise ValueError("trace commit attempt_id is invalid")
+        if not isinstance(wrapper_ref, Mapping):
+            raise ValueError("trace commit current_wrapper_ref is invalid")
+        delivery = PreparedTraceDelivery.from_dict(
+            json.loads(
+                store.read_bytes(ArtifactRef.from_dict(wrapper_ref)).decode("utf-8")
+            )
+        )
+        if delivery.attempt_id != attempt_id:
+            raise ValueError("trace commit attempt identity mismatch")
+        entry = resolver.entry(delivery.entry_id)
+        if (
+            delivery.bank_root_id != manifest.bank_root_id
+            or delivery.manifest_digest != manifest.manifest_digest
+            or delivery.inference_request_digest != entry.inference_request_digest
+            or delivery.source_terminal_kind != entry.terminal_kind
+            or delivery.attempt_ordinal != entry.replacement_slot
+        ):
+            raise ValueError("trace committed delivery source identity mismatch")
+        delivered_locators = tuple(
+            sorted(
+                (dict(locator) for locator in delivery.source_bank_object_locators),
+                key=lambda value: str(value["object_role"]),
+            )
+        )
+        entry_locators = tuple(
+            sorted(
+                (locator.to_dict() for locator in entry.object_locators),
+                key=lambda value: str(value["object_role"]),
+            )
+        )
+        if delivered_locators != entry_locators:
+            raise ValueError("trace committed delivery locator set mismatch")
+        inventory_row = rows_by_inventory_entry_id.get(entry.inventory_entry_id)
+        if inventory_row is None or inventory_row.entry_id != entry.entry_id:
+            raise ValueError("trace committed entry inventory identity mismatch")
+
+        usage_body = _trace_bank_role_json(
+            resolver=resolver, entry=entry, role="usage"
+        )
+        latency_body = _trace_bank_role_json(
+            resolver=resolver, entry=entry, role="latency"
+        )
+        pricing_body = _trace_bank_role_json(
+            resolver=resolver, entry=entry, role="pricing"
+        )
+        acquisition_body = _trace_bank_role_json(
+            resolver=resolver, entry=entry, role="acquisition_attempt"
+        )
+        model_body = _trace_bank_role_json(
+            resolver=resolver, entry=entry, role="model_record"
+        )
+        usage_schema = usage_body.get("schema_version")
+        if usage_schema not in {None, "tokenshare.response_bank_usage.v1"}:
+            raise ValueError("trace source usage schema is unsupported")
+        usage_status = usage_body.get("usage_status")
+        usage = usage_body.get("usage")
+        if usage_status == "usage_missing":
+            if usage is not None:
+                raise ValueError("usage_missing trace source must persist null usage")
+            prompt_tokens = completion_tokens = total_tokens = None
+        elif usage_status == "reported":
+            if not isinstance(usage, Mapping):
+                raise ValueError("reported trace source usage must be a mapping")
+            prompt_tokens = _trace_usage_int(
+                usage.get("prompt_tokens"), "prompt_tokens"
+            )
+            completion_tokens = _trace_usage_int(
+                usage.get("completion_tokens"), "completion_tokens"
+            )
+            total_tokens = _trace_usage_int(usage.get("total_tokens"), "total_tokens")
+            if (
+                prompt_tokens is not None
+                and completion_tokens is not None
+                and total_tokens is not None
+                and total_tokens != prompt_tokens + completion_tokens
+            ):
+                raise ValueError("trace source usage token total mismatch")
+        else:
+            raise ValueError("trace source usage status is unsupported")
+
+        latency_schema = latency_body.get("schema_version")
+        if latency_schema not in {None, "tokenshare.response_bank_latency.v1"}:
+            raise ValueError("trace source latency schema is unsupported")
+        latency_ms = _trace_usage_int(latency_body.get("latency_ms"), "latency_ms")
+        if latency_ms is None or latency_ms != delivery.source_latency_ms:
+            raise ValueError("trace source latency does not match committed delivery")
+        cost_estimate = None
+        pricing_schema = pricing_body.get("schema_version")
+        if pricing_schema == "tokenshare.response_bank_pricing.v1":
+            if pricing_body.get("currency") != "CNY":
+                raise ValueError("trace source pricing currency is unsupported")
+            try:
+                input_rate = Decimal(
+                    str(pricing_body["input_per_million_tokens"])
+                )
+                output_rate = Decimal(
+                    str(pricing_body["output_per_million_tokens"])
+                )
+            except (KeyError, ArithmeticError, ValueError) as exc:
+                raise ValueError("trace source pricing rates are invalid") from exc
+            if input_rate < 0 or output_rate < 0:
+                raise ValueError("trace source pricing rates must be non-negative")
+            if prompt_tokens is not None and completion_tokens is not None:
+                cost_estimate = (
+                    Decimal(prompt_tokens) * input_rate
+                    + Decimal(completion_tokens) * output_rate
+                ) / Decimal(1_000_000)
+        elif pricing_schema is not None:
+            raise ValueError("trace source pricing schema is unsupported")
+
+        acquisition_schema = acquisition_body.get("schema_version")
+        if acquisition_schema == "tokenshare.response_bank_acquisition_attempt.v1":
+            if (
+                acquisition_body.get("terminal_kind") != entry.terminal_kind
+                or not isinstance(acquisition_body.get("attempt_id"), str)
+                or not acquisition_body.get("attempt_id")
+            ):
+                raise ValueError("trace source acquisition attempt is invalid")
+            source_acquisition_attempt_id = acquisition_body["attempt_id"]
+        elif acquisition_schema is None:
+            source_acquisition_attempt_id = entry.acquisition_state_ref
+        else:
+            raise ValueError("trace source acquisition schema is unsupported")
+
+        model_schema = model_body.get("schema_version")
+        if model_schema not in {None, "tokenshare.response_bank_model_record.v1"}:
+            raise ValueError("trace source model record schema is unsupported")
+        if model_schema == "tokenshare.response_bank_model_record.v1":
+            for field_name in (
+                "configured_model",
+                "requested_model",
+                "response_model_status",
+            ):
+                if not isinstance(
+                    model_body.get(field_name), str
+                ) or not model_body.get(field_name):
+                    raise ValueError(f"trace source model record lacks {field_name}")
+            if model_body.get("resolved_model") is not None and not isinstance(
+                model_body.get("resolved_model"), str
+            ):
+                raise ValueError("trace source resolved_model is invalid")
+
+        available_roles = {
+            _paper_trace_object_role(locator.object_role)
+            for locator in entry.object_locators
+        }
+        source_roles = tuple(
+            role for role in _SOURCE_BANK_METRIC_ROLE_ORDER if role in available_roles
+        )
+        source_roles += tuple(sorted(available_roles.difference(source_roles)))
+        consumptions.append(
+            {
+                "consumption_id": consumption_id,
+                "current_attempt_id": delivery.attempt_id,
+                "unit_id": delivery.unit_id,
+                "planned_ai_unit_id": inventory_row.planned_ai_unit_id,
+                "entry_id": entry.entry_id,
+                "replacement_slot": entry.replacement_slot,
+                "source_terminal_kind": entry.terminal_kind,
+                "source_acquisition_attempt_id": source_acquisition_attempt_id,
+                "source_model_record": dict(model_body),
+                "prompt_tokens": prompt_tokens,
+                "completion_tokens": completion_tokens,
+                "total_tokens": total_tokens,
+                "latency_ms": latency_ms,
+                "cost_estimate_cny": (
+                    str(cost_estimate) if cost_estimate is not None else None
+                ),
+                "source_bank_roles": list(source_roles),
+            }
+        )
+
+    return {
+        "schema_version": "tokenshare.paper_trace_source_usage.v1",
+        "attribution_kind": "immutable_response_bank",
+        "current_provider_call_count": 0,
+        "current_provider_spend_cny": "0",
+        "committed_consumption_count": len(consumptions),
+        "consumptions": consumptions,
+    }
+
+
 def _evaluate_trace_root_evidence(
     *,
     adapter_result: Any,
@@ -5399,9 +5650,15 @@ class _FormalConditionExecutionCallback:
                 condition=condition,
                 case_id=case_id,
             )
+            trace_source_usage = _project_committed_trace_source_usage(
+                adapter_result=adapter_result,
+                adapter_root=adapter_root,
+                trace_runtime=trace_runtime,
+            )
             task = _as_json(task)
             task["paper_eligible"] = eligibility.paper_eligible
             task["versioned_paper_evidence_report"] = eligibility.to_dict()
+            task["trace_source_usage"] = trace_source_usage
         (
             provider_latency_ms,
             provider_latency_evidence_status,
@@ -9295,6 +9552,64 @@ def _source_roles(row: Any) -> tuple[str, ...] | None:
     return roles or None
 
 
+def _persisted_trace_source_consumptions(
+    task: Mapping[str, Any],
+) -> tuple[Mapping[str, Any], ...] | None:
+    summary = task.get("trace_source_usage")
+    if summary is None:
+        return None
+    if not isinstance(summary, Mapping):
+        raise ValueError("persisted trace source usage is malformed")
+    if (
+        summary.get("schema_version") != "tokenshare.paper_trace_source_usage.v1"
+        or summary.get("attribution_kind") != "immutable_response_bank"
+        or summary.get("current_provider_call_count") != 0
+        or str(summary.get("current_provider_spend_cny")) != "0"
+    ):
+        raise ValueError("persisted trace source usage header is invalid")
+    values = summary.get("consumptions")
+    if not isinstance(values, Sequence) or isinstance(
+        values, (str, bytes, bytearray)
+    ):
+        raise ValueError("persisted trace source consumptions are malformed")
+    consumptions = tuple(values)
+    if (
+        summary.get("committed_consumption_count") != len(consumptions)
+        or any(not isinstance(value, Mapping) for value in consumptions)
+    ):
+        raise ValueError("persisted trace source consumption count is invalid")
+    ids = tuple(value.get("consumption_id") for value in consumptions)
+    if any(not isinstance(value, str) or not value for value in ids):
+        raise ValueError("persisted trace source consumption identity is invalid")
+    if len(set(ids)) != len(ids):
+        raise ValueError("persisted trace source consumption identity is duplicated")
+    return consumptions
+
+
+def _complete_trace_source_sum(
+    consumptions: tuple[Mapping[str, Any], ...] | None,
+    field_name: str,
+    *,
+    decimal: bool = False,
+) -> int | Decimal | None:
+    if not consumptions:
+        return None
+    values = tuple(value.get(field_name) for value in consumptions)
+    if any(value is None for value in values):
+        return None
+    if decimal:
+        try:
+            normalized = tuple(Decimal(str(value)) for value in values)
+        except (ArithmeticError, ValueError) as exc:
+            raise ValueError(f"persisted trace source {field_name} is invalid") from exc
+        if any(value < 0 for value in normalized):
+            raise ValueError(f"persisted trace source {field_name} is negative")
+        return sum(normalized, Decimal(0))
+    if any(type(value) is not int or value < 0 for value in values):
+        raise ValueError(f"persisted trace source {field_name} is invalid")
+    return sum(values)
+
+
 def _hydrate_exp1_metric_row(
     row: Any,
     facts: Mapping[str, Any],
@@ -9332,36 +9647,53 @@ def _hydrate_exp2_trace_metric_row(
     row: Any,
     facts: Mapping[str, Any],
 ) -> _RunnerExp2TraceMetricInput:
-    _task, attempts, run_evidence = _producer_parts(facts)
+    task, _attempts, run_evidence = _producer_parts(facts)
     observation = _runtime_observation(run_evidence)
     planned = tuple(str(value) for value in observation.get("planned_ai_unit_ids", ()))
     dispatched = set(str(value) for value in observation.get("dispatched_ai_unit_ids", ()))
     completed = set(str(value) for value in observation.get("completed_ai_unit_ids", ()))
-    latency_by_unit = {
-        str(attempt.get("unit_id") or attempt.get("planned_ai_unit_id") or ""): (
-            attempt.get("latency_ms")
-        )
-        for attempt in attempts
-    }
-    source_roles = _source_roles(row)
-    entry_ids = tuple(
-        sorted({locator.entry_id for locator in row.source_bank_object_locators})
-    )
+    consumptions = _persisted_trace_source_consumptions(task)
+    latency_by_unit: dict[str, int] = {}
+    latency_complete = consumptions is not None
+    for consumption in consumptions or ():
+        latency = consumption.get("latency_ms")
+        if type(latency) is not int or latency < 0:
+            latency_complete = False
+            continue
+        identities = {
+            str(consumption.get("unit_id") or ""),
+            str(consumption.get("planned_ai_unit_id") or ""),
+        }
+        identities.discard("")
+        if not identities:
+            raise ValueError("persisted trace source consumption lacks unit identity")
+        for unit_id in identities:
+            latency_by_unit[unit_id] = latency_by_unit.get(unit_id, 0) + latency
+    if any(unit_id not in latency_by_unit for unit_id in completed):
+        latency_complete = False
     return _RunnerExp2TraceMetricInput(
         direct_result=row,
         persisted_logical_makespan_ms=observation.get("runtime_wall_clock_ms"),
         trace_consumptions=(
             tuple(
                 Exp2TraceConsumptionFacts(
-                    consumption_id=entry_id,
+                    consumption_id=str(consumption["consumption_id"]),
                     committed=True,
-                    source_total_tokens=None,
-                    source_cost_estimate_cny=None,
-                    source_bank_roles=source_roles,
+                    source_total_tokens=consumption.get("total_tokens"),
+                    source_cost_estimate_cny=(
+                        Decimal(str(consumption["cost_estimate_cny"]))
+                        if consumption.get("cost_estimate_cny") is not None
+                        else None
+                    ),
+                    source_bank_roles=(
+                        tuple(consumption["source_bank_roles"])
+                        if consumption.get("source_bank_roles") is not None
+                        else None
+                    ),
                 )
-                for entry_id in entry_ids
+                for consumption in consumptions
             )
-            if facts
+            if consumptions is not None
             else None
         ),
         ai_units=(
@@ -9372,14 +9704,14 @@ def _hydrate_exp2_trace_metric_row(
                     scheduled=unit_id in dispatched,
                     executed=unit_id in completed,
                     busy_worker_time_ms=(
-                        latency_by_unit.get(unit_id, 0)
+                        latency_by_unit[unit_id]
                         if unit_id in completed
                         else None
                     ),
                 )
                 for unit_id in planned
             )
-            if facts
+            if facts and latency_complete
             else None
         ),
         in_flight_at_witness=(
@@ -9479,16 +9811,16 @@ def _persisted_metric_observations(
 
 
 def _hydrate_exp4_root(row: Any, facts: Mapping[str, Any]) -> Exp4DirectRootFacts:
-    _task, attempts, run_evidence = _producer_parts(facts)
+    task, _attempts, run_evidence = _producer_parts(facts)
     observation = _runtime_observation(run_evidence)
+    consumptions = _persisted_trace_source_consumptions(task)
     replacements = tuple(
-        str(
-            attempt.get("replacement_slot")
-            if attempt.get("replacement_slot") is not None
-            else attempt.get("attempt_id")
+        dict.fromkeys(
+            str(consumption["entry_id"])
+            for consumption in consumptions or ()
+            if type(consumption.get("replacement_slot")) is int
+            and consumption["replacement_slot"] > 0
         )
-        for attempt in attempts
-        if int(attempt.get("provider_attempt_index") or 1) > 1
     )
     return Exp4DirectRootFacts(
         preregistered_root_run_id=row.preregistered_root_run_id,
@@ -9499,15 +9831,11 @@ def _hydrate_exp4_root(row: Any, facts: Mapping[str, Any]) -> Exp4DirectRootFact
         final_result_reference_complete=row.final_result_reference_complete,
         end_to_end_verified_success=row.end_to_end_verified_success,
         trace_replay_wall_clock_ms=observation.get("runtime_wall_clock_ms"),
-        trace_attributed_tokens=(
-            sum(int(attempt.get("total_tokens") or 0) for attempt in attempts)
-            if facts
-            else None
+        trace_attributed_tokens=_complete_trace_source_sum(
+            consumptions, "total_tokens"
         ),
-        trace_attributed_cost=(
-            sum(float(attempt.get("cost_estimate") or 0) for attempt in attempts)
-            if facts
-            else None
+        trace_attributed_cost=_complete_trace_source_sum(
+            consumptions, "cost_estimate_cny", decimal=True
         ),
         identity_consistent=row.identity_consistent,
         paper_evidence_complete=row.paper_evidence_complete,
