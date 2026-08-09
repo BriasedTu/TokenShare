@@ -715,32 +715,6 @@ def test_default_plan_bank_reports_plan_digest_without_fabricating_inventory(
     }
 
 
-def test_results_first_matrix8_plan_bank_accepts_fresh_bundle_root(
-    tmp_path: Path,
-    capsys,
-) -> None:
-    seen: list[object] = []
-    bundle_root = tmp_path / "matrix8-plan"
-
-    assert _main(
-        [
-            "plan-bank",
-            "--profile",
-            "tracked-profile.json",
-            "--results-first-matrix8",
-            "--plan-bundle-root",
-            str(bundle_root),
-        ],
-        command="plan-bank",
-        seen=seen,
-    ) == 0
-
-    assert len(seen) == 1
-    assert seen[0].plan_bundle_root == bundle_root
-    assert seen[0].serialized_arguments["results_first_matrix8"] is True
-    assert json.loads(capsys.readouterr().out)["provider_calls"] == 0
-
-
 @pytest.mark.parametrize(
     "argv",
     (
@@ -822,54 +796,6 @@ def test_pipeline_request_rejects_retired_matrix8_authority() -> None:
         )
 
 
-def test_results_first_matrix8_plan_adapter_persists_exact_bundle_summary(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from tokenshare.experiments import run_paper_experiments
-
-    bundle = SimpleNamespace(
-        authorized_plan_digest=DIGESTS["plan"],
-        inventory_digest=DIGESTS["inventory"],
-        bundle_digest="sha256:" + "9" * 64,
-        inventory_rows=tuple(range(166)),
-    )
-    calls: list[dict[str, object]] = []
-    monkeypatch.setattr(
-        run_paper_experiments,
-        "create_results_first_matrix8_acquisition_bundle",
-        lambda **kwargs: calls.append(kwargs) or bundle,
-    )
-    request = pipeline.PipelineCommandRequest(
-        command="plan-bank",
-        scope="plan-bank",
-        evidence_class="offline_bank_plan",
-        profile=PROFILE,
-        provider_authorization=None,
-        output_root=None,
-        replay_input_root=None,
-        external_bank_resolver=None,
-        plan_digest=None,
-        inventory_digest=None,
-        budget_mode="bounded",
-        serialized_arguments={"results_first_matrix8": True},
-        plan_bundle_root=tmp_path / "bundle",
-    )
-
-    result = pipeline._plan_bank_adapter(request)
-
-    assert calls == [
-        {
-            "pipeline_profile_digest": DIGESTS["profile"],
-            "bundle_root": tmp_path / "bundle",
-        }
-    ]
-    assert result["plan_digest"] == DIGESTS["plan"]
-    assert result["inventory_digest"] == DIGESTS["inventory"]
-    assert result["inventory_entry_count"] == 166
-    assert result["provider_calls"] == 0
-
-
 @pytest.mark.parametrize(
     ("field", "message"),
     (
@@ -907,149 +833,6 @@ def test_service_result_validates_plan_and_inventory_digests_independently(
 
 def test_acquire_bank_delegates_exact_service(tmp_path: Path, capsys) -> None:
     _assert_provider_command(tmp_path, capsys, "acquire-bank")
-
-
-def test_results_first_matrix8_acquire_requires_no_paid_receipt_but_keeps_dispatch_flag(
-    tmp_path: Path,
-    capsys,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    seen: list[object] = []
-    validated: list[object] = []
-    authorization = SimpleNamespace(
-        schema_version="tokenshare.results_first_smoke_acquisition_authorization.v1",
-        authorization_digest="sha256:" + "8" * 64,
-        budget_digest=DIGESTS["budget"],
-        marker=SimpleNamespace(marker_digest=DIGESTS["marker"]),
-        output_mode="new_run",
-        provider_dispatch_allowed=True,
-    )
-    monkeypatch.setattr(
-        pipeline,
-        "_RESULTS_FIRST_AUTHORITY_BUILDER",
-        lambda **_kwargs: authorization,
-        raising=False,
-    )
-    monkeypatch.setattr(
-        pipeline,
-        "_RESULTS_FIRST_BUNDLE_VALIDATOR",
-        lambda candidate, **_kwargs: validated.append(candidate) or candidate,
-        raising=False,
-    )
-    args = [
-        "acquire-bank",
-        "--profile",
-        "tracked-profile.json",
-        "--results-first-matrix8",
-        "--allow-provider-calls",
-        "--new-run",
-        "--output-root",
-        str(tmp_path / "acquire"),
-        "--plan-digest",
-        DIGESTS["plan"],
-        "--inventory-digest",
-        DIGESTS["inventory"],
-        "--plan-bundle-root",
-        str(tmp_path / "plan"),
-    ]
-    bundle = SimpleNamespace(
-        authorized_plan_digest=DIGESTS["plan"],
-        inventory_digest=DIGESTS["inventory"],
-        profile_digest=DIGESTS["profile"],
-        prompt_admission_profile_digest=DIGESTS["admission"],
-        full_budget=SimpleNamespace(budget_digest=DIGESTS["budget"]),
-    )
-
-    assert _main(
-        args,
-        command="acquire-bank",
-        seen=seen,
-        _ACQUISITION_BUNDLE_LOADER=lambda _path: bundle,
-        service_input=object(),
-    ) == 0
-
-    assert len(seen) == 1
-    assert validated == [bundle]
-    assert seen[0].provider_authorization is authorization
-    body = json.loads(capsys.readouterr().out)
-    assert body["receipt_digest"] is None
-    assert body["facility_authorization_schema"] == authorization.schema_version
-    assert body["facility_authorization_digest"] == authorization.authorization_digest
-
-
-def test_results_first_matrix8_acquire_still_requires_allow_provider_calls(
-    tmp_path: Path,
-) -> None:
-    assert pipeline.main(
-        [
-            "acquire-bank",
-            "--profile",
-            "tracked-profile.json",
-            "--results-first-matrix8",
-            "--new-run",
-            "--output-root",
-            str(tmp_path / "acquire"),
-            "--plan-digest",
-            DIGESTS["plan"],
-            "--inventory-digest",
-            DIGESTS["inventory"],
-            "--plan-bundle-root",
-            str(tmp_path / "plan"),
-        ]
-    ) == 2
-
-
-def test_results_first_acquisition_adapter_uses_ten_inflight_without_changing_paid_default(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from tokenshare.experiments import paper_response_bank
-
-    seen: list[int] = []
-
-    class CapturingOrchestrator:
-        def __init__(self, **_kwargs: object) -> None:
-            pass
-
-        def acquire_all(
-            self, _requests: object, *, max_in_flight: int
-        ) -> object:
-            seen.append(max_in_flight)
-            return SimpleNamespace(status="complete", results=())
-
-    monkeypatch.setattr(
-        paper_response_bank,
-        "ResponseBankAcquisitionOrchestrator",
-        CapturingOrchestrator,
-    )
-    service = pipeline.AcquisitionServiceInput(
-        scope="results_first_matrix8_acquisition",
-        orchestrator_arguments={
-            "output_root": tmp_path,
-            "inventory_digest": DIGESTS["inventory"],
-        },
-        acquisition_requests=(object(),),
-    )
-    request = pipeline.PipelineCommandRequest(
-        command="acquire-bank",
-        scope=service.scope,
-        evidence_class="results_first_real_provider_acquisition",
-        profile=PROFILE,
-        provider_authorization=None,
-        output_root=tmp_path,
-        replay_input_root=None,
-        external_bank_resolver=None,
-        plan_digest=DIGESTS["plan"],
-        inventory_digest=DIGESTS["inventory"],
-        budget_mode="bounded",
-        serialized_arguments={"results_first_matrix8": True},
-        _service_input=service,
-    )
-
-    result = pipeline._acquire_bank_adapter(request)
-
-    assert result["status"] == "completed"
-    assert seen == [10]
 
 
 def test_acquire_bank_validates_bundle_full_budget_before_service_factory(
@@ -1100,9 +883,8 @@ def test_acquire_bank_validates_bundle_full_budget_before_service_factory(
     assert json.loads(capsys.readouterr().out)["budget_digest"] == full_budget_digest
 
 
-def test_production_acquisition_factory_loads_exact_bundle_and_task26_marker(
+def test_production_acquisition_factory_loads_exact_bundle_and_paid_binding(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from dataclasses import replace
     from decimal import Decimal
@@ -1127,7 +909,6 @@ def test_production_acquisition_factory_loads_exact_bundle_and_task26_marker(
         AcquisitionRequest,
         SemanticInventoryPlan,
         create_acquisition_plan_bundle,
-        establish_results_first_acquisition_authorization,
     )
 
     prepared = PreparedOutboundRequestFactory.prepare(
@@ -1235,24 +1016,6 @@ def test_production_acquisition_factory_loads_exact_bundle_and_task26_marker(
         ),
         acquisition_requests=(acquisition_request,),
     )
-    from tokenshare.experiments import run_paper_experiments
-
-    self_consistent_but_nonofficial = SimpleNamespace(
-        combined_profile_digest="sha256:" + "f" * 64,
-        condition_candidate_count=1,
-        semantic_inventory_plan=bundle.semantic_inventory_plan,
-        acquisition_requests=(acquisition_request,) * 166,
-    )
-    monkeypatch.setattr(
-        run_paper_experiments,
-        "_build_results_first_matrix8_acquisition_plan",
-        lambda **_kwargs: self_consistent_but_nonofficial,
-    )
-    with pytest.raises(ValueError, match="official plan digest mismatch"):
-        run_paper_experiments.validate_results_first_matrix8_acquisition_bundle(
-            bundle=bundle,
-            bundle_root=tmp_path / "bundle",
-        )
     output_root = tmp_path / "acquisition"
     receipt = {
         "schema_version": "tokenshare.paid_execution_receipt.v1",
@@ -1318,34 +1081,6 @@ def test_production_acquisition_factory_loads_exact_bundle_and_task26_marker(
     assert [path.name for path in output_root.glob("*paid_output_binding*")] == [
         "paid_output_binding.v1.json"
     ]
-
-    facility_root = tmp_path / "facility-acquisition"
-    facility = establish_results_first_acquisition_authorization(
-        bundle=bundle,
-        output_root=facility_root,
-        output_mode="new_run",
-        allow_provider_calls=True,
-    )
-    facility_service = pipeline._acquisition_service_input_from_persisted_authorities(
-        replace(
-            request,
-            scope="results_first_matrix8_acquisition",
-            evidence_class="results_first_real_provider_acquisition",
-            provider_authorization=facility,
-            output_root=facility_root,
-            serialized_arguments={"results_first_matrix8": True},
-        )
-    )
-    facility_manifest = facility_service.manifest
-
-    assert facility_service.orchestrator_arguments["facility_authorization"] is facility
-    assert "paid_authorization" not in facility_service.orchestrator_arguments
-    assert facility_manifest.authorization_kind == "user_authorized_smoke_facility"
-    assert not hasattr(facility_manifest, "created_by_paid_receipt_digest")
-    assert [path.name for path in facility_root.glob("*facility_marker*")] == [
-        "results_first_smoke_facility_marker.v1.json"
-    ]
-
 
 def test_audit_bank_delegates_exact_service(tmp_path: Path, capsys) -> None:
     _assert_offline_command(tmp_path, capsys, *OFFLINE_COMMANDS[2])
@@ -1464,222 +1199,6 @@ def test_trace_gate_phases_require_bank_before_dispatch_and_l3_only_for_publicat
         ]
     body = json.loads(capsys.readouterr().out)
     assert body["status"] == ("completed" if expected_exit == 0 else "blocked")
-
-
-def test_results_first_matrix8_trace_bypasses_only_facility_gates(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    calls: list[str] = []
-    request = pipeline.PipelineCommandRequest(
-        command="run-trace",
-        scope="run-trace",
-        evidence_class="real_model_trace_protocol_run",
-        profile=PROFILE,
-        provider_authorization=None,
-        output_root=tmp_path / "trace",
-        replay_input_root=None,
-        external_bank_resolver=SimpleNamespace(),
-        plan_digest=DIGESTS["plan"],
-        inventory_digest=DIGESTS["inventory"],
-        budget_mode="bounded",
-        serialized_arguments={"results_first_matrix8": True},
-        plan_bundle_root=tmp_path / "plan",
-    )
-    factories = dict(pipeline._PRODUCTION_SERVICE_INPUT_FACTORIES)
-    factories["run-trace"] = lambda _request: object()
-    monkeypatch.setattr(pipeline, "_PRODUCTION_SERVICE_INPUT_FACTORIES", factories)
-    adapters = pipeline._AUTHORITATIVE_SERVICE_ADAPTERS
-    original = adapters["run-trace"]
-    adapters["run-trace"] = lambda resolved: calls.append("trace") or {
-        "status": "completed_with_failures",
-        "plan_digest": resolved.plan_digest,
-        "inventory_digest": resolved.inventory_digest,
-        "provider_calls": 0,
-        "paper_eligible": False,
-    }
-    monkeypatch.setattr(
-        pipeline,
-        "_validate_formal_execution_gate_adapter",
-        lambda _request: calls.append("execution_gate") or _ready_gate("execution"),
-    )
-    monkeypatch.setattr(
-        pipeline,
-        "_validate_paper_publication_gate_adapter",
-        lambda _request: calls.append("publication_gate") or _ready_gate("publication"),
-    )
-    try:
-        result = pipeline._default_delegate(request)
-    finally:
-        adapters["run-trace"] = original
-
-    assert calls == ["trace"]
-    assert result["provider_calls"] == 0
-    assert result["paper_eligible"] is False
-
-
-def test_results_first_matrix8_trace_adapter_runs_exactly_four_eight_root_smokes(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from tokenshare.experiments import paper_smoke
-
-    calls: list[dict[str, object]] = []
-    trace_context = object()
-    experiment_ids = (
-        "exp1_real_ai_feasibility",
-        "exp2_real_ai_scalability",
-        "exp3_real_ai_fault_recovery",
-        "exp4_real_ai_protocol_ablation",
-    )
-    batches = tuple(
-        {
-            "profile": object(),
-            "execution_plan": SimpleNamespace(
-                items=tuple(range(8)), experiment_ids=(experiment_id,)
-            ),
-            "catalog_manifest": object(),
-            "budget": object(),
-            "ai_api_configs": {},
-            "transport": object(),
-            "real_transport": False,
-            "hard_limits": {},
-            "launch_manifest": {},
-            "trace_context": trace_context,
-        }
-        for experiment_id in experiment_ids
-    )
-    monkeypatch.setattr(
-        paper_smoke,
-        "execute_paper_smoke_suite",
-        lambda **kwargs: calls.append(kwargs)
-        or SimpleNamespace(
-            status="completed",
-            provider_attempt_count=0,
-            experiment_ids=kwargs["execution_plan"].experiment_ids,
-            task_count=8,
-            run_count=(
-                6
-                if kwargs["execution_plan"].experiment_ids
-                == ("exp1_real_ai_feasibility",)
-                else 8
-            ),
-            condition_count=(
-                6
-                if kwargs["execution_plan"].experiment_ids
-                == ("exp1_real_ai_feasibility",)
-                else 8
-            ),
-        ),
-    )
-    request = pipeline.PipelineCommandRequest(
-        command="run-trace",
-        scope="run-trace",
-        evidence_class="real_model_trace_protocol_run",
-        profile=PROFILE,
-        provider_authorization=None,
-        output_root=tmp_path,
-        replay_input_root=None,
-        external_bank_resolver=None,
-        plan_digest=DIGESTS["plan"],
-        inventory_digest=DIGESTS["inventory"],
-        budget_mode="bounded",
-        serialized_arguments={"results_first_matrix8": True},
-        _service_input=pipeline.Matrix8TraceServiceInput(
-            scope="run-trace",
-            batches=batches,
-        ),
-    )
-
-    result = pipeline._run_trace_adapter(request)
-
-    assert len(calls) == 4
-    assert all(call["trace_context"] is trace_context for call in calls)
-    assert result["provider_calls"] == 0
-    assert result["completed_experiment_count"] == 4
-    assert result["root_run_count"] == 32
-
-
-@pytest.mark.parametrize(
-        ("override", "message"),
-        (
-            ({"status": "blocked"}, "terminal status"),
-            ({"experiment_ids": ("exp1_real_ai_feasibility",)}, "experiment identity"),
-            ({"task_count": 7}, "root task count"),
-        ({"run_count": 7}, "suite run count"),
-            ({"condition_count": 7}, "condition count"),
-        ({"provider_attempt_count": 1}, "current provider call"),
-    ),
-)
-def test_results_first_matrix8_trace_rejects_nonterminal_or_partial_suite_result(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    override: dict[str, object],
-    message: str,
-) -> None:
-    from tokenshare.experiments import paper_smoke
-
-    experiment_ids = (
-        "exp1_real_ai_feasibility",
-        "exp2_real_ai_scalability",
-        "exp3_real_ai_fault_recovery",
-        "exp4_real_ai_protocol_ablation",
-    )
-    batches = tuple(
-        {
-            "execution_plan": SimpleNamespace(
-                items=tuple(range(8)), experiment_ids=(experiment_id,)
-            ),
-            "real_transport": False,
-            "trace_context": object(),
-        }
-        for experiment_id in experiment_ids
-    )
-
-    def terminal(**kwargs: object) -> object:
-        body = {
-            "status": "completed",
-            "provider_attempt_count": 0,
-            "experiment_ids": kwargs["execution_plan"].experiment_ids,
-            "task_count": 8,
-            "run_count": (
-                6
-                if kwargs["execution_plan"].experiment_ids
-                == ("exp1_real_ai_feasibility",)
-                else 8
-            ),
-            "condition_count": (
-                6
-                if kwargs["execution_plan"].experiment_ids
-                == ("exp1_real_ai_feasibility",)
-                else 8
-            ),
-        }
-        body.update(override)
-        return SimpleNamespace(**body)
-
-    monkeypatch.setattr(paper_smoke, "execute_paper_smoke_suite", terminal)
-    request = pipeline.PipelineCommandRequest(
-        command="run-trace",
-        scope="run-trace",
-        evidence_class="real_model_trace_protocol_run",
-        profile=PROFILE,
-        provider_authorization=None,
-        output_root=tmp_path,
-        replay_input_root=None,
-        external_bank_resolver=None,
-        plan_digest=DIGESTS["plan"],
-        inventory_digest=DIGESTS["inventory"],
-        budget_mode="bounded",
-        serialized_arguments={"results_first_matrix8": True},
-        _service_input=pipeline.Matrix8TraceServiceInput(
-            scope="run-trace",
-            batches=batches,
-        ),
-    )
-
-    with pytest.raises(ValueError, match=message):
-        pipeline._run_trace_adapter(request)
 
 
 def test_run_online_checks_delegates_exact_service(tmp_path: Path, capsys) -> None:
