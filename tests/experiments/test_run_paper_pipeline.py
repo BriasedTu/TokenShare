@@ -2210,6 +2210,177 @@ def test_representative_exp5_requires_all_condition_calls_and_four_endpoints(
             invoke()
 
 
+@pytest.mark.parametrize(
+    ("prior_indices", "current_calls", "accepted", "expected_spend"),
+    (
+        (tuple(range(16)), 0, True, 0.0),
+        (tuple(range(8)), 8, True, 0.5),
+        (tuple(range(8)), 7, False, None),
+        (tuple(index for index in range(16) if index % 4 != 0), 4, True, 0.25),
+    ),
+)
+def test_representative_exp5_resume_uses_current_attempt_and_cost_delta(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    prior_indices: tuple[int, ...],
+    current_calls: int,
+    accepted: bool,
+    expected_spend: float | None,
+) -> None:
+    from tokenshare.experiments.paper_formal_runner import (
+        PaperFormalResumeBaseline,
+    )
+
+    authority = replace(_representative_pipeline_authority(tmp_path), resume=True)
+    conditions = authority.coverage.conditions
+    roots = authority.coverage.root_case_filter
+    exp5_conditions = tuple(
+        condition
+        for condition in conditions
+        if condition.experiment_id == "exp5_real_ai_model_endpoint_comparison"
+    )
+    prior_conditions = tuple(exp5_conditions[index] for index in prior_indices)
+    prior_ids = {condition.condition_id for condition in prior_conditions}
+    current_conditions = tuple(
+        condition
+        for condition in exp5_conditions
+        if condition.condition_id not in prior_ids
+    )
+    baseline_cost = len(prior_conditions) / len(exp5_conditions)
+    baseline = PaperFormalResumeBaseline(
+        provider_attempts_by_condition={
+            condition.condition_id: 1 for condition in prior_conditions
+        },
+        provider_attempt_count=len(prior_conditions),
+        total_cost_estimate=baseline_cost,
+        cost_estimate_by_currency={"CNY": baseline_cost},
+        total_cost_estimate_status="single_currency_estimate",
+    )
+    loaded_roots: list[Path] = []
+    monkeypatch.setattr(
+        pipeline,
+        "_REPRESENTATIVE_FORMAL_RESUME_BASELINE_LOADER",
+        lambda root: loaded_roots.append(Path(root)) or baseline,
+        raising=False,
+    )
+    invocations = 0
+
+    def fake_execute(**kwargs):
+        nonlocal invocations
+        invocations += 1
+        selected = tuple(kwargs["selected_condition_ids"])
+        active_conditions = tuple(
+            condition
+            for condition in conditions
+            if condition.condition_id in selected
+        )
+        active_experiments = tuple(
+            dict.fromkeys(
+                condition.experiment_id for condition in active_conditions
+            )
+        )
+        if invocations == 2 and current_calls:
+            _invoke_fake_exp5_transport(
+                transport=kwargs["transport"],
+                conditions=current_conditions,
+                call_count=current_calls,
+                omit_endpoint=False,
+            )
+        return replace(
+            _paper_suite_result(Path(kwargs["output_root"]), status="completed"),
+            experiment_ids=active_experiments,
+            condition_count=len(selected),
+            task_count=sum(len(roots[item]) for item in selected),
+            provider_attempt_count=0 if invocations == 1 else 16,
+            total_cost_estimate=0.0 if invocations == 1 else 1.0,
+            cost_estimate_by_currency=(
+                None if invocations == 1 else {"CNY": 1.0}
+            ),
+            total_cost_estimate_status=(
+                "not_applicable"
+                if invocations == 1
+                else "single_currency_estimate"
+            ),
+            condition_results=tuple(
+                {
+                    "condition_id": condition.condition_id,
+                    "provider_attempt_count": 1,
+                }
+                for condition in active_conditions
+            ),
+        )
+
+    monkeypatch.setattr(pipeline, "_FORMAL_SUITE_EXECUTOR", fake_execute)
+    monkeypatch.setattr(pipeline, "_TRACE_CONTEXT_BUILDER", lambda **_kwargs: object())
+
+    invoke = lambda: pipeline.execute_representative_full_plan_smoke(
+        authority=authority,
+        response_bank_resolver=object(),
+        exp5_transport=_NoopExp5Transport(),
+    )
+    if accepted:
+        result = invoke()
+        assert result.exp5_current_provider_calls == current_calls
+        assert result.exp5_current_spend == expected_spend
+        assert loaded_roots == [authority.output_root / "exp5-online"]
+    else:
+        with pytest.raises(pipeline.RepresentativeSmokeExecutionError):
+            invoke()
+
+
+def test_representative_resume_baseline_failure_stops_before_exp5_dispatch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    authority = replace(_representative_pipeline_authority(tmp_path), resume=True)
+    conditions = authority.coverage.conditions
+    roots = authority.coverage.root_case_filter
+    invocations = 0
+
+    def fake_execute(**kwargs):
+        nonlocal invocations
+        invocations += 1
+        selected = tuple(kwargs["selected_condition_ids"])
+        active_conditions = tuple(
+            condition
+            for condition in conditions
+            if condition.condition_id in selected
+        )
+        return replace(
+            _paper_suite_result(Path(kwargs["output_root"]), status="completed"),
+            experiment_ids=tuple(
+                dict.fromkeys(
+                    condition.experiment_id for condition in active_conditions
+                )
+            ),
+            condition_count=len(selected),
+            task_count=sum(len(roots[item]) for item in selected),
+            provider_attempt_count=0,
+        )
+
+    monkeypatch.setattr(pipeline, "_FORMAL_SUITE_EXECUTOR", fake_execute)
+    monkeypatch.setattr(pipeline, "_TRACE_CONTEXT_BUILDER", lambda **_kwargs: object())
+    monkeypatch.setattr(
+        pipeline,
+        "_REPRESENTATIVE_FORMAL_RESUME_BASELINE_LOADER",
+        lambda _root: (_ for _ in ()).throw(OSError("baseline unreadable")),
+    )
+
+    with pytest.raises(pipeline.RepresentativeSmokeExecutionError) as caught:
+        pipeline.execute_representative_full_plan_smoke(
+            authority=authority,
+            response_bank_resolver=object(),
+            exp5_transport=_NoopExp5Transport(),
+        )
+
+    summary = caught.value.to_summary()
+    assert invocations == 1
+    assert summary["failure_stage"] == "exp5_resume_baseline"
+    assert summary["provider_calls"] == 0
+    assert summary["exp5_current_provider_calls"] == 0
+    assert summary["exp5_current_spend"] == 0.0
+
+
 def test_representative_formal_bundle_uses_typed_create_or_fresh_plan_load_only(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

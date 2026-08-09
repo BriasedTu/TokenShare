@@ -903,8 +903,32 @@ def _build_trace_context(**kwargs: object):
     return build_paper_formal_trace_context(**kwargs)
 
 
+def _load_formal_resume_baseline(output_root: str | Path) -> object:
+    from tokenshare.experiments.paper_formal_runner import (
+        load_paper_formal_resume_baseline,
+    )
+
+    return load_paper_formal_resume_baseline(output_root)
+
+
+def _zero_formal_resume_baseline() -> object:
+    from tokenshare.experiments.paper_formal_runner import (
+        PaperFormalResumeBaseline,
+    )
+
+    return PaperFormalResumeBaseline(
+        provider_attempts_by_condition={},
+        provider_attempt_count=0,
+        total_cost_estimate=0.0,
+        cost_estimate_by_currency={},
+        total_cost_estimate_status="not_applicable",
+        evidence_exists=False,
+    )
+
+
 _FORMAL_SUITE_EXECUTOR = _execute_formal_suite
 _TRACE_CONTEXT_BUILDER = _build_trace_context
+_REPRESENTATIVE_FORMAL_RESUME_BASELINE_LOADER = _load_formal_resume_baseline
 
 
 def build_representative_full_plan_smoke_service_authority(
@@ -1090,6 +1114,28 @@ def execute_representative_full_plan_smoke(
             trace_usage=trace_usage,
             exp5_usage=zero_usage,
         ) from exc
+    try:
+        from tokenshare.experiments.paper_formal_runner import (
+            PaperFormalResumeBaseline,
+        )
+
+        exp5_baseline = (
+            _REPRESENTATIVE_FORMAL_RESUME_BASELINE_LOADER(
+                authority.output_root / "exp5-online"
+            )
+            if authority.resume
+            else _zero_formal_resume_baseline()
+        )
+        if type(exp5_baseline) is not PaperFormalResumeBaseline:
+            raise TypeError("typed formal resume baseline is required")
+    except Exception as exc:
+        raise RepresentativeSmokeExecutionError(
+            str(exc),
+            failure_stage="exp5_resume_baseline",
+            acquisition_usage=acquisition_current,
+            trace_usage=trace_usage,
+            exp5_usage=zero_usage,
+        ) from exc
     counting_exp5_transport = _CountingRepresentativeTransport(exp5_transport)
     try:
         exp5_terminal = _run_representative_formal_subset(
@@ -1107,6 +1153,7 @@ def execute_representative_full_plan_smoke(
         exp5_usage = _exp5_usage_from_dispatch_boundary(
             transport=counting_exp5_transport,
             terminal=None,
+            baseline=exp5_baseline,
         )
         raise RepresentativeSmokeExecutionError(
             str(exc),
@@ -1118,6 +1165,7 @@ def execute_representative_full_plan_smoke(
     exp5_usage = _exp5_usage_from_dispatch_boundary(
         transport=counting_exp5_transport,
         terminal=exp5_terminal,
+        baseline=exp5_baseline,
     )
     try:
         _validate_representative_terminal(
@@ -1132,6 +1180,7 @@ def execute_representative_full_plan_smoke(
             conditions=exp5_conditions,
             ai_api_configs=authority.ai_api_configs,
             transport=counting_exp5_transport,
+            baseline=exp5_baseline,
         )
     except Exception as exc:
         raise RepresentativeSmokeExecutionError(
@@ -1222,36 +1271,105 @@ def _exp5_usage_from_dispatch_boundary(
     *,
     transport: _CountingRepresentativeTransport,
     terminal: object | None,
+    baseline: object,
 ) -> RepresentativeCurrentProviderUsage:
-    """用实际 dispatch 计数覆盖 terminal headline，缺失花费绝不补零。"""
+    """用本次实际 dispatch 与 cumulative cost delta 报告 current usage。"""
 
     calls = transport.provider_calls
+    if calls == 0:
+        return RepresentativeCurrentProviderUsage(provider_calls=0, spend=0.0)
     if terminal is None:
-        if calls == 0:
-            return RepresentativeCurrentProviderUsage(provider_calls=0, spend=0.0)
         return RepresentativeCurrentProviderUsage(
             provider_calls=calls,
             spend=None,
             spend_missing_reason="exp5_usage_missing",
         )
-    try:
-        terminal_usage = _current_provider_usage_from_terminal(
-            terminal=terminal,
-            force_zero_spend_when_no_calls=False,
-        )
-    except Exception:
-        if calls == 0:
-            return RepresentativeCurrentProviderUsage(provider_calls=0, spend=0.0)
-        return RepresentativeCurrentProviderUsage(
-            provider_calls=calls,
-            spend=None,
-            spend_missing_reason="exp5_usage_missing",
-        )
+    spend, missing_reason = _exp5_current_spend_delta(
+        terminal=terminal,
+        baseline=baseline,
+    )
     return RepresentativeCurrentProviderUsage(
         provider_calls=calls,
-        spend=terminal_usage.spend,
-        spend_missing_reason=terminal_usage.spend_missing_reason,
+        spend=spend,
+        spend_missing_reason=missing_reason,
     )
+
+
+def _exp5_current_spend_delta(
+    *,
+    terminal: object,
+    baseline: object,
+) -> tuple[float | None, str | None]:
+    final_status = str(getattr(terminal, "total_cost_estimate_status", ""))
+    raw_final_costs = getattr(terminal, "cost_estimate_by_currency", None)
+    final_costs = (
+        {
+            str(currency): float(value)
+            for currency, value in raw_final_costs.items()
+            if isinstance(value, (int, float)) and not isinstance(value, bool)
+        }
+        if isinstance(raw_final_costs, Mapping)
+        else {}
+    )
+    baseline_costs = dict(getattr(baseline, "cost_estimate_by_currency", {}))
+    baseline_missing = getattr(baseline, "spend_missing_reason", None)
+    baseline_exists = getattr(baseline, "evidence_exists", True) is True
+    if baseline_exists and isinstance(baseline_missing, str) and baseline_missing:
+        return None, f"exp5_cost_delta_baseline_{baseline_missing}"
+    final_cost: float | None = None
+    baseline_cost: float | None = None
+    if final_status == "single_currency_estimate" and len(final_costs) == 1:
+        currency, final_cost = next(iter(final_costs.items()))
+        if not baseline_exists:
+            baseline_cost = 0.0
+        elif baseline_missing is None and set(baseline_costs) == {currency}:
+            baseline_cost = float(baseline_costs[currency])
+        elif (
+            baseline_missing is None
+            and int(getattr(baseline, "provider_attempt_count", -1)) == 0
+            and getattr(baseline, "total_cost_estimate", None) == 0.0
+        ):
+            baseline_cost = 0.0
+    elif final_status == "single_currency_estimate" and not baseline_exists:
+        raw_final_cost = getattr(terminal, "total_cost_estimate", None)
+        if (
+            isinstance(raw_final_cost, (int, float))
+            and not isinstance(raw_final_cost, bool)
+        ):
+            final_cost = float(raw_final_cost)
+            baseline_cost = 0.0
+    elif final_status == "single_currency_or_legacy" and not final_costs:
+        raw_final_cost = getattr(terminal, "total_cost_estimate", None)
+        if (
+            isinstance(raw_final_cost, (int, float))
+            and not isinstance(raw_final_cost, bool)
+        ):
+            final_cost = float(raw_final_cost)
+        if not baseline_exists:
+            baseline_cost = 0.0
+        elif (
+            baseline_missing is None
+            and not baseline_costs
+            and getattr(baseline, "total_cost_estimate_status", None)
+            == "single_currency_or_legacy"
+        ):
+            raw_baseline_cost = getattr(baseline, "total_cost_estimate", None)
+            if isinstance(raw_baseline_cost, (int, float)) and not isinstance(
+                raw_baseline_cost,
+                bool,
+            ):
+                baseline_cost = float(raw_baseline_cost)
+    if final_cost is None or baseline_cost is None:
+        reason = (
+            f"exp5_cost_delta_{final_status}"
+            if final_status
+            else "exp5_cost_delta_unavailable"
+        )
+        return None, reason
+    delta = final_cost - baseline_cost
+    if delta < -1e-12:
+        return None, "exp5_cost_delta_negative"
+    return max(0.0, delta), None
 
 
 def _run_representative_formal_subset(
@@ -1339,6 +1457,7 @@ def _validate_representative_exp5_terminal(
     conditions: Sequence[object],
     ai_api_configs: Mapping[str, object],
     transport: _CountingRepresentativeTransport,
+    baseline: object,
 ) -> None:
     selected_ids = tuple(str(condition.condition_id) for condition in conditions)
     summaries = getattr(terminal, "condition_results", ())
@@ -1363,17 +1482,42 @@ def _validate_representative_exp5_terminal(
     if set(attempts_by_condition) != set(selected_ids):
         raise ValueError("Exp5 per-condition terminal coverage is incomplete")
     attempt_sum = sum(attempts_by_condition.values())
-    if (
-        attempt_sum != transport.provider_calls
-        or int(getattr(terminal, "provider_attempt_count", -1)) != attempt_sum
-    ):
-        raise ValueError("Exp5 terminal provider attempts do not match dispatches")
+    if int(getattr(terminal, "provider_attempt_count", -1)) != attempt_sum:
+        raise ValueError("Exp5 terminal provider attempt total is inconsistent")
+    baseline_attempts = dict(
+        getattr(baseline, "provider_attempts_by_condition", {})
+    )
+    if not set(baseline_attempts).issubset(selected_ids):
+        raise ValueError("Exp5 resume baseline contains unselected conditions")
+    deltas: dict[str, int] = {}
+    for condition_id in selected_ids:
+        prior = baseline_attempts.get(condition_id, 0)
+        final = attempts_by_condition[condition_id]
+        if (
+            isinstance(prior, bool)
+            or not isinstance(prior, int)
+            or prior < 0
+            or final < prior
+        ):
+            raise ValueError("Exp5 resume provider attempt delta is invalid")
+        deltas[condition_id] = final - prior
+    if sum(deltas.values()) != transport.provider_calls:
+        raise ValueError("Exp5 current provider attempt delta does not match dispatches")
     expected = _expected_exp5_endpoint_observations(
         conditions=conditions,
         ai_api_configs=ai_api_configs,
     )
+    current_conditions = tuple(
+        condition
+        for condition in conditions
+        if deltas[str(condition.condition_id)] > 0
+    )
+    current_expected = _expected_exp5_endpoint_observations(
+        conditions=current_conditions,
+        ai_api_configs=ai_api_configs,
+    )
     observed = set(transport.observations)
-    if len(set(expected.values())) != 4 or observed != set(expected):
+    if len(set(expected.values())) != 4 or observed != set(current_expected):
         raise ValueError("Exp5 endpoint/model execution coverage is incomplete")
 
 

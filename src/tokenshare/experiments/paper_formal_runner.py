@@ -15,6 +15,7 @@ from pathlib import Path
 import shutil
 import tempfile
 from threading import Lock
+from types import MappingProxyType
 from typing import Any
 import uuid
 
@@ -181,6 +182,83 @@ class PaperInfrastructureBlockedError(Exception):
         if self.diagnostics is not None:
             body["resource_diagnostics"] = dict(self.diagnostics)
         return body
+
+
+@dataclass(frozen=True, kw_only=True)
+class PaperFormalResumeBaseline:
+    """provider dispatch 前只读冻结的 formal 累计 usage。"""
+
+    provider_attempts_by_condition: Mapping[str, int]
+    provider_attempt_count: int
+    total_cost_estimate: float | None
+    cost_estimate_by_currency: Mapping[str, float]
+    total_cost_estimate_status: str
+    spend_missing_reason: str | None = None
+    usage_missing_count: int = 0
+    evidence_exists: bool = True
+
+    def __post_init__(self) -> None:
+        attempts: dict[str, int] = {}
+        for condition_id, count in self.provider_attempts_by_condition.items():
+            if (
+                not isinstance(condition_id, str)
+                or not condition_id
+                or isinstance(count, bool)
+                or not isinstance(count, int)
+                or count < 0
+            ):
+                raise ValueError("formal resume provider attempt baseline is invalid")
+            attempts[condition_id] = count
+        if (
+            isinstance(self.provider_attempt_count, bool)
+            or not isinstance(self.provider_attempt_count, int)
+            or self.provider_attempt_count < 0
+            or sum(attempts.values()) != self.provider_attempt_count
+        ):
+            raise ValueError("formal resume provider attempt baseline is invalid")
+        costs: dict[str, float] = {}
+        for currency, value in self.cost_estimate_by_currency.items():
+            if (
+                not isinstance(currency, str)
+                or not currency
+                or isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or value < 0
+            ):
+                raise ValueError("formal resume cost baseline is invalid")
+            costs[currency] = float(value)
+        if (
+            not isinstance(self.total_cost_estimate_status, str)
+            or not self.total_cost_estimate_status
+            or isinstance(self.usage_missing_count, bool)
+            or not isinstance(self.usage_missing_count, int)
+            or self.usage_missing_count < 0
+            or type(self.evidence_exists) is not bool
+        ):
+            raise ValueError("formal resume cost baseline is invalid")
+        if self.total_cost_estimate is None:
+            if (
+                not isinstance(self.spend_missing_reason, str)
+                or not self.spend_missing_reason
+            ):
+                raise ValueError("missing formal resume spend requires a reason")
+        elif (
+            isinstance(self.total_cost_estimate, bool)
+            or not isinstance(self.total_cost_estimate, (int, float))
+            or self.total_cost_estimate < 0
+            or self.spend_missing_reason is not None
+        ):
+            raise ValueError("formal resume spend baseline is inconsistent")
+        object.__setattr__(
+            self,
+            "provider_attempts_by_condition",
+            MappingProxyType(attempts),
+        )
+        object.__setattr__(
+            self,
+            "cost_estimate_by_currency",
+            MappingProxyType(costs),
+        )
 
 
 @dataclass
@@ -8371,6 +8449,123 @@ def _usage_from_current_checkpoints(suite_root: Path) -> _UsageTotals:
             if attempt.get("cost_estimate_status") == "usage_missing":
                 usage.usage_missing_count += 1
     return usage
+
+
+def load_paper_formal_resume_baseline(
+    output_root: str | Path,
+) -> PaperFormalResumeBaseline:
+    """只读加载 durable cumulative usage；绝不创建 evidence 或调用 provider。"""
+
+    suite_root = Path(output_root).resolve(strict=False)
+    pointer_paths = tuple(
+        sorted(suite_root.glob("experiments/*/runs/*/*/CURRENT.json"))
+    )
+    result_path = suite_root / "formal_runner_result.json"
+    rows_path = suite_root / "condition_results.jsonl"
+    evidence_exists = result_path.is_file() or rows_path.is_file() or bool(
+        pointer_paths
+    )
+    if not evidence_exists:
+        return PaperFormalResumeBaseline(
+            provider_attempts_by_condition={},
+            provider_attempt_count=0,
+            total_cost_estimate=0.0,
+            cost_estimate_by_currency={},
+            total_cost_estimate_status="not_applicable",
+            evidence_exists=False,
+        )
+    usage = _usage_from_evidence(suite_root)
+    attempts_by_condition = _resume_provider_attempts_by_condition(
+        suite_root=suite_root,
+        pointer_paths=pointer_paths,
+    )
+    if sum(attempts_by_condition.values()) != usage.provider_attempt_count:
+        raise ValueError(
+            "formal resume per-condition attempts do not match cumulative usage"
+        )
+    status = usage.cost_estimate_status()
+    missing_reason: str | None = None
+    total_cost: float | None = usage.reportable_total_cost_estimate()
+    if status == "usage_missing":
+        total_cost = None
+        missing_reason = "usage_missing"
+    elif status == "mixed_currency_not_aggregated":
+        total_cost = None
+        missing_reason = "mixed_currency_not_aggregated"
+    return PaperFormalResumeBaseline(
+        provider_attempts_by_condition=attempts_by_condition,
+        provider_attempt_count=usage.provider_attempt_count,
+        total_cost_estimate=total_cost,
+        cost_estimate_by_currency=usage.cost_estimate_by_currency,
+        total_cost_estimate_status=status,
+        spend_missing_reason=missing_reason,
+        usage_missing_count=usage.usage_missing_count,
+        evidence_exists=True,
+    )
+
+
+def _resume_provider_attempts_by_condition(
+    *,
+    suite_root: Path,
+    pointer_paths: Sequence[Path],
+) -> dict[str, int]:
+    attempts_by_condition: dict[str, int] = {}
+    if pointer_paths:
+        for pointer_path in pointer_paths:
+            pointer = _required_json_object(
+                pointer_path,
+                "condition CURRENT pointer",
+            )
+            generation_root = (
+                pointer_path.parent
+                / ".generations"
+                / str(pointer["generation_id"])
+            )
+            condition_id = pointer_path.parent.parent.name
+            attempts_by_condition[condition_id] = (
+                attempts_by_condition.get(condition_id, 0)
+                + _persisted_provider_attempt_count(
+                    _read_jsonl_records(
+                        generation_root / "per_attempt_results.jsonl"
+                    )
+                )
+            )
+        return attempts_by_condition
+    summaries: Sequence[Mapping[str, Any]] = ()
+    result_path = suite_root / "formal_runner_result.json"
+    if result_path.is_file():
+        body = json.loads(result_path.read_text(encoding="utf-8"))
+        if not isinstance(body, Mapping):
+            raise ValueError("formal runner result must be a JSON object")
+        raw_summaries = body.get("condition_results", ())
+        if isinstance(raw_summaries, Sequence) and not isinstance(
+            raw_summaries,
+            (str, bytes),
+        ):
+            summaries = tuple(
+                item for item in raw_summaries if isinstance(item, Mapping)
+            )
+            if len(summaries) != len(raw_summaries):
+                raise ValueError("formal resume condition summaries are invalid")
+    if not summaries:
+        rows_path = suite_root / "condition_results.jsonl"
+        if rows_path.is_file():
+            summaries = tuple(_read_jsonl_records(rows_path))
+    for summary in summaries:
+        condition_id = summary.get("condition_id")
+        attempts = summary.get("provider_attempt_count")
+        if (
+            not isinstance(condition_id, str)
+            or not condition_id
+            or isinstance(attempts, bool)
+            or not isinstance(attempts, int)
+            or attempts < 0
+        ):
+            raise ValueError("formal resume condition summary is invalid")
+        attempts_by_condition[condition_id] = (
+            attempts_by_condition.get(condition_id, 0) + attempts
+        )
+    return attempts_by_condition
 
 
 def _all_selected_roots_completed(

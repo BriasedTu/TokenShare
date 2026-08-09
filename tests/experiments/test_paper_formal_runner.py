@@ -7557,6 +7557,103 @@ def test_representative_runner_validates_full_budget_then_dispatches_selected_co
     assert resumed.condition_results == suite.condition_results
 
 
+def test_formal_resume_baseline_loads_cumulative_condition_usage_read_only(
+    tmp_path: Path,
+) -> None:
+    result_path = tmp_path / "formal_runner_result.json"
+    result_path.write_text(
+        json.dumps(
+            {
+                "provider_attempt_count": 2,
+                "total_tokens": 20,
+                "total_cost_estimate": 1.5,
+                "cost_estimate_by_currency": {"CNY": 1.5},
+                "total_cost_estimate_status": "single_currency_estimate",
+                "condition_results": [
+                    {"condition_id": "condition-a", "provider_attempt_count": 1},
+                    {"condition_id": "condition-b", "provider_attempt_count": 1},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    before = result_path.read_bytes()
+    loader = getattr(formal_runner, "load_paper_formal_resume_baseline", None)
+
+    assert callable(loader), "formal runner must expose a typed resume baseline loader"
+    baseline = loader(tmp_path)
+
+    assert dict(baseline.provider_attempts_by_condition) == {
+        "condition-a": 1,
+        "condition-b": 1,
+    }
+    assert baseline.provider_attempt_count == 2
+    assert baseline.total_cost_estimate == 1.5
+    assert dict(baseline.cost_estimate_by_currency) == {"CNY": 1.5}
+    assert baseline.total_cost_estimate_status == "single_currency_estimate"
+    assert baseline.spend_missing_reason is None
+    assert result_path.read_bytes() == before
+
+
+def test_formal_resume_baseline_recovers_partial_current_checkpoint_usage(
+    tmp_path: Path,
+) -> None:
+    run_root = (
+        tmp_path
+        / "experiments"
+        / EXP5_EXPERIMENT_ID
+        / "runs"
+        / "condition-partial"
+        / "0"
+    )
+    generation = run_root / ".generations" / "generation-1"
+    generation.mkdir(parents=True)
+    (run_root / "CURRENT.json").write_text(
+        json.dumps({"generation_id": "generation-1"}),
+        encoding="utf-8",
+    )
+    (generation / "per_attempt_results.jsonl").write_text(
+        json.dumps(
+            {
+                "record_scope": "protocol",
+                "provider_attempt_count": 1,
+                "total_tokens": 10,
+                "cost_estimate": 0.5,
+                "cost_estimate_currency": "CNY",
+                "cost_estimate_status": "complete",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    baseline = formal_runner.load_paper_formal_resume_baseline(tmp_path)
+
+    assert dict(baseline.provider_attempts_by_condition) == {
+        "condition-partial": 1
+    }
+    assert baseline.provider_attempt_count == 1
+    assert baseline.total_cost_estimate == 0.5
+    assert dict(baseline.cost_estimate_by_currency) == {"CNY": 0.5}
+    assert baseline.total_cost_estimate_status == "single_currency_estimate"
+
+
+def test_formal_resume_baseline_is_zero_when_evidence_does_not_exist(
+    tmp_path: Path,
+) -> None:
+    baseline = formal_runner.load_paper_formal_resume_baseline(
+        tmp_path / "missing-suite"
+    )
+
+    assert baseline.evidence_exists is False
+    assert dict(baseline.provider_attempts_by_condition) == {}
+    assert baseline.provider_attempt_count == 0
+    assert baseline.total_cost_estimate == 0.0
+    assert dict(baseline.cost_estimate_by_currency) == {}
+    assert baseline.total_cost_estimate_status == "not_applicable"
+    assert baseline.spend_missing_reason is None
+
+
 def test_representative_runner_maps_all_adapter_artifacts_to_execution_suite_root(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
