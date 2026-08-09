@@ -225,6 +225,42 @@ class Exp3RegressionSmokeLeanCaseSelection(FrozenCaseSelection):
         )
 
 
+class Exp3MatrixSmokeCaseSelection(FrozenCaseSelection):
+    """允许 regression-only matrix8 保留 formal mixed-topic condition identity。"""
+
+    def __post_init__(self) -> None:
+        if self.domain != "lean_proof" or self.topic_family is not None:
+            super().__post_init__()
+            return
+        if (
+            self.schema_version != FROZEN_CASE_SELECTION_SCHEMA_VERSION
+            or self.experiment_id != EXP3_EXPERIMENT_ID
+            or self.paper_difficulty != "medium_lemma_dag"
+            or self.paper_eligible_required is not False
+            or self.blocked_reason is not None
+        ):
+            raise ValueError("invalid Experiment 3 matrix smoke selection")
+        for field_name in (
+            "selection_id",
+            "suite_version",
+            "catalog_version",
+        ):
+            value = getattr(self, field_name)
+            if not isinstance(value, str) or not value:
+                raise ValueError(f"{field_name} must be a non-empty string")
+        _validate_complete_digest("catalog_digest", self.catalog_digest)
+        case_ids = _case_tuple(self.ordered_case_ids)
+        if len(case_ids) != 1:
+            raise ValueError("Experiment 3 matrix smoke must select one case")
+        object.__setattr__(self, "ordered_case_ids", case_ids)
+        if (
+            isinstance(self.expected_ai_unit_count, bool)
+            or not isinstance(self.expected_ai_unit_count, int)
+            or self.expected_ai_unit_count < 1
+        ):
+            raise ValueError("expected_ai_unit_count must be an integer >= 1")
+
+
 class Experiment3FaultRecoveryModule:
     """Gate B compatible wrapper for Prompt E."""
 
@@ -251,11 +287,10 @@ class Experiment3FaultRecoveryModule:
         selection: FrozenCaseSelection,
     ) -> PaperConditionResult:
         if (
-            condition.domain == "lean_proof"
-            and condition.paper_eligible_required is False
+            condition.paper_eligible_required is False
             and selection.paper_eligible_required is False
         ):
-            canonical_condition = validate_exp3_regression_smoke_lean_condition(
+            canonical_condition = validate_exp3_regression_smoke_condition(
                 context,
                 condition,
                 selection,
@@ -326,6 +361,99 @@ def build_exp3_regression_smoke_lean_binding(
         FrozenConditionSelectionBinding.from_condition(condition, selection),
         case_projection,
     )
+
+
+def build_exp3_regression_smoke_binding(
+    *,
+    formal_condition: PaperExperimentCondition,
+    case_id: str,
+    expected_ai_unit_count: int,
+    catalog_version: str,
+    suite_version: str = "paper_v1",
+) -> tuple[PaperExperimentCondition, FrozenConditionSelectionBinding]:
+    """为 matrix8 派生任意单题的非论文 fault/recovery 绑定。"""
+
+    _validate_baseline_condition(formal_condition)
+    if (
+        formal_condition.paper_eligible_required is not True
+        or not case_id
+        or isinstance(expected_ai_unit_count, bool)
+        or expected_ai_unit_count < 1
+    ):
+        raise ValueError("invalid Experiment 3 regression smoke request")
+    condition = replace(formal_condition, paper_eligible_required=False)
+    selection_type = (
+        Exp3MatrixSmokeCaseSelection
+        if condition.domain == "lean_proof"
+        else FrozenCaseSelection
+    )
+    selection = selection_type(
+        selection_id=(
+            "exp3_regression_smoke_"
+            f"{condition.condition_id}_{case_id}_v1"
+        ),
+        experiment_id=EXP3_EXPERIMENT_ID,
+        suite_version=suite_version,
+        catalog_version=catalog_version,
+        domain=condition.domain,
+        paper_difficulty=str(condition.paper_difficulty),
+        topic_family=condition.topic_family,
+        ordered_case_ids=(case_id,),
+        catalog_digest=condition.catalog_digest,
+        expected_ai_unit_count=expected_ai_unit_count,
+        paper_eligible_required=False,
+    )
+    return condition, FrozenConditionSelectionBinding.from_condition(
+        condition,
+        selection,
+    )
+
+
+def validate_exp3_regression_smoke_condition(
+    context: PaperExecutionContext,
+    condition: PaperExperimentCondition,
+    selection: FrozenCaseSelection,
+) -> PaperExperimentCondition:
+    """严格重建 matrix8 clone；正式 Exp3 matrix validator 保持不变。"""
+
+    expected_by_id = {
+        expected.condition_id: expected
+        for expected in expand_exp3_conditions(
+            catalog_digest=_catalog_digest(context.catalog),
+            endpoint_identity=_validate_approved_endpoint_binding(context),
+        )
+    }
+    formal = expected_by_id.get(condition.condition_id)
+    expected_condition = (
+        replace(formal, paper_eligible_required=False)
+        if formal is not None
+        else None
+    )
+    ai_units_by_case_id = _ai_units_by_case_id(_catalog_mapping(context.catalog))
+    selected_case_id = (
+        selection.ordered_case_ids[0]
+        if len(selection.ordered_case_ids) == 1
+        else None
+    )
+    if (
+        expected_condition is None
+        or condition.condition_digest != expected_condition.condition_digest
+        or condition.paper_eligible_required is not False
+        or selection.paper_eligible_required is not False
+        or selection.experiment_id != EXP3_EXPERIMENT_ID
+        or selection.domain != condition.domain
+        or selection.paper_difficulty != condition.paper_difficulty
+        or selection.topic_family != condition.topic_family
+        or selection.catalog_digest != condition.catalog_digest
+        or len(selection.ordered_case_ids) != 1
+        or selection.expected_ai_unit_count < 1
+        or selected_case_id not in ai_units_by_case_id
+        or selection.expected_ai_unit_count
+        != len(ai_units_by_case_id.get(str(selected_case_id), ()))
+        or not selection.selection_id.startswith("exp3_regression_smoke_")
+    ):
+        raise ValueError("invalid Experiment 3 regression smoke condition")
+    return expected_condition
 
 
 def validate_exp3_regression_smoke_lean_condition(

@@ -4533,9 +4533,9 @@ def test_matrix8_smoke_identity_resolves_eight_provider_free_roots(
         assert condition.paper_eligible_required is False
         assert selection.paper_eligible_required is False
         assert selection.ordered_case_ids == (
-            "lean_v2_medium_lemma_dag_02",
+            "lean_v2_hard_frontier_pure_logic_checker_02",
         )
-        assert selection.expected_ai_unit_count == 5
+        assert selection.expected_ai_unit_count == 7
 
 
 def test_exp3_matrix8_capturing_runs_eight_roots_through_protocol_and_checker(

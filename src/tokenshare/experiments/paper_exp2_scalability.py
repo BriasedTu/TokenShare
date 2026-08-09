@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections import Counter, defaultdict
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from tokenshare.experiments.paper_experiment_contracts import (
@@ -199,25 +199,31 @@ class Experiment2ScalabilityModule:
         selection: FrozenCaseSelection,
     ) -> PaperConditionResult:
         if (
-            condition.domain == "lean_proof"
-            and condition.paper_eligible_required is False
+            condition.paper_eligible_required is False
             and selection.paper_eligible_required is False
         ):
-            canonical_condition = validate_exp2_regression_smoke_lean_condition(
-                context,
-                condition,
-            )
-            _validate_selection_condition_shape(selection, canonical_condition)
-            canonical_selection = _lean_selection(
-                context,
-                canonical_condition,
-                paper_eligible_required=False,
-            )
-            if _selection_contract_body(selection) != _selection_contract_body(
-                canonical_selection
-            ):
-                raise ValueError(
-                    "selection does not match canonical frozen selection"
+            if condition.domain == "lean_proof":
+                canonical_condition = validate_exp2_regression_smoke_lean_condition(
+                    context,
+                    condition,
+                )
+                _validate_selection_condition_shape(selection, canonical_condition)
+                canonical_selection = _lean_selection(
+                    context,
+                    canonical_condition,
+                    paper_eligible_required=False,
+                )
+                if _selection_contract_body(selection) != _selection_contract_body(
+                    canonical_selection
+                ):
+                    raise ValueError(
+                        "selection does not match canonical frozen selection"
+                    )
+            else:
+                canonical_condition = validate_exp2_regression_smoke_factor_condition(
+                    context,
+                    condition,
+                    selection,
                 )
         else:
             canonical_condition = _canonical_condition_for(context, condition)
@@ -359,6 +365,87 @@ def build_exp2_regression_smoke_lean_bindings(
             )
         )
     return tuple(derived)
+
+
+def build_exp2_regression_smoke_factor_binding(
+    *,
+    formal_condition: PaperExperimentCondition,
+    case_id: str,
+    catalog_version: str,
+    suite_version: str = EXP2_SUITE_VERSION,
+) -> tuple[PaperExperimentCondition, FrozenConditionSelectionBinding]:
+    """为 matrix8 派生单题、原 split 的非论文 Factor scalability 绑定。"""
+
+    if (
+        formal_condition.experiment_id != EXP2_EXPERIMENT_ID
+        or formal_condition.domain != "factorization"
+        or formal_condition.paper_eligible_required is not True
+        or not case_id
+    ):
+        raise ValueError("invalid Experiment 2 regression smoke Factor request")
+    condition = replace(formal_condition, paper_eligible_required=False)
+    selection = Exp2FactorizationCaseSelection(
+        selection_id=(
+            f"exp2_regression_smoke_factor_{condition.worker_count}_{case_id}_v1"
+        ),
+        experiment_id=EXP2_EXPERIMENT_ID,
+        suite_version=suite_version,
+        catalog_version=catalog_version,
+        domain="factorization",
+        paper_difficulty=str(condition.paper_difficulty),
+        topic_family=None,
+        ordered_case_ids=(case_id,),
+        catalog_digest=condition.catalog_digest,
+        expected_ai_unit_count=EXP2_SPLIT_PROFILE_REQUESTED_CHILD_COUNT,
+        paper_eligible_required=False,
+    )
+    object.__setattr__(
+        selection,
+        "case_expected_ai_unit_counts",
+        {case_id: EXP2_SPLIT_PROFILE_REQUESTED_CHILD_COUNT},
+    )
+    return condition, FrozenConditionSelectionBinding.from_condition(
+        condition,
+        selection,
+    )
+
+
+def validate_exp2_regression_smoke_factor_condition(
+    context: PaperExecutionContext,
+    condition: PaperExperimentCondition,
+    selection: FrozenCaseSelection,
+) -> PaperExperimentCondition:
+    """校验 matrix8 单题 Factor seam，不改变正式 hard-only validator。"""
+
+    if (
+        condition.experiment_id != EXP2_EXPERIMENT_ID
+        or condition.domain != "factorization"
+        or condition.paper_eligible_required is not False
+        or selection.paper_eligible_required is not False
+        or selection.domain != "factorization"
+        or selection.topic_family is not None
+        or selection.paper_difficulty != condition.paper_difficulty
+        or len(selection.ordered_case_ids) != 1
+        or selection.expected_ai_unit_count
+        != EXP2_SPLIT_PROFILE_REQUESTED_CHILD_COUNT
+        or getattr(selection, "split_profile_id", None) != EXP2_SPLIT_PROFILE_ID
+        or getattr(selection, "case_expected_ai_unit_counts", None)
+        != {
+            str(selection.ordered_case_ids[0]): (
+                EXP2_SPLIT_PROFILE_REQUESTED_CHILD_COUNT
+            )
+        }
+        or not selection.selection_id.startswith("exp2_regression_smoke_factor_")
+    ):
+        raise ValueError("invalid Experiment 2 regression smoke Factor condition")
+    formal = _canonical_condition_for(
+        context,
+        replace(condition, paper_eligible_required=True),
+    )
+    canonical = replace(formal, paper_eligible_required=False)
+    if canonical.condition_digest != condition.condition_digest:
+        raise ValueError("invalid Experiment 2 regression smoke Factor condition")
+    return canonical
 
 
 def count_exp2_root_runs(

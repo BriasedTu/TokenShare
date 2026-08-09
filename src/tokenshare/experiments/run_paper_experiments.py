@@ -73,12 +73,11 @@ from tokenshare.experiments.paper_formal_runner import (
 )
 from tokenshare.experiments.paper_exp1 import EXP1_FORMAL_REQUEST_CONTROLS
 from tokenshare.experiments.paper_exp2_scalability import (
+    build_exp2_regression_smoke_factor_binding,
     build_exp2_regression_smoke_lean_bindings,
 )
 from tokenshare.experiments.paper_exp3_fault_recovery import (
-    EXP3_REGRESSION_SMOKE_LEAN_CASE_ID,
-    EXP3_REGRESSION_SMOKE_LEAN_CONDITION_ID,
-    build_exp3_regression_smoke_lean_binding,
+    build_exp3_regression_smoke_binding,
 )
 from tokenshare.experiments.paper_formal_evidence import FormalEvidenceStore
 from tokenshare.experiments.paper_formal_gate import (
@@ -3242,15 +3241,14 @@ def _with_exp2_regression_smoke_lean_plan(
     profile: object,
     catalog_manifest: PaperInputCatalogManifest,
 ) -> tuple[object, ...]:
-    """仅在明确的非论文 regression smoke 中追加 Exp2 Lean planning。"""
+    """在明确的非论文 matrix8 smoke 中冻结 Exp1 同题集 planning。"""
 
-    lean_items = tuple(
+    smoke_items = tuple(
         item
         for item in getattr(profile, "items", ())
         if item.experiment_id == "exp2_real_ai_scalability"
-        and item.condition_selector.get("domain") == "lean_proof"
     )
-    if not lean_items:
+    if not smoke_items:
         return tuple(dispatch_plans)
     if not (
         getattr(profile, "formal", None) is False
@@ -3258,7 +3256,7 @@ def _with_exp2_regression_smoke_lean_plan(
         and getattr(profile, "regression_only", None) is True
         and getattr(profile, "paper_eligible", None) is False
     ):
-        raise ValueError("Exp2 Lean planning is restricted to regression smoke")
+        raise ValueError("Exp2 matrix8 planning is restricted to regression smoke")
     matches = tuple(
         plan
         for plan in dispatch_plans
@@ -3273,6 +3271,11 @@ def _with_exp2_regression_smoke_lean_plan(
         exp2_plan.catalog_execution_view,
         catalog_manifest=catalog_manifest,
     )
+    lean_items = tuple(
+        item
+        for item in smoke_items
+        if item.condition_selector.get("domain") == "lean_proof"
+    )
     requests = tuple(
         {
             **dict(item.condition_selector),
@@ -3285,11 +3288,54 @@ def _with_exp2_regression_smoke_lean_plan(
         baseline_condition=exp2_plan.conditions[0],
         requests=requests,
     )
+    cases_by_id = {
+        str(case["case_id"]): case
+        for case in catalog_manifest.factorization_cases
+    }
+    factor_replacements: dict[
+        str, tuple[object, object]
+    ] = {}
+    for item in smoke_items:
+        if item.condition_selector.get("domain") != "factorization":
+            continue
+        matches = tuple(
+            condition
+            for condition in exp2_plan.conditions
+            if condition.domain == "factorization"
+            and condition.worker_count == item.condition_selector.get("worker_count")
+            and condition.repeat_id == item.repeat_id
+        )
+        if len(matches) != 1:
+            raise ValueError("Exp2 regression smoke Factor condition is ambiguous")
+        case = cases_by_id.get(item.case_id)
+        if case is None:
+            raise ValueError("Exp2 regression smoke Factor case is missing")
+        factor_replacements[matches[0].condition_id] = (
+            build_exp2_regression_smoke_factor_binding(
+                formal_condition=matches[0],
+                case_id=item.case_id,
+                catalog_version=catalog_manifest.catalog_version,
+            )
+        )
+    replacement_conditions = {
+        condition_id: pair[0]
+        for condition_id, pair in factor_replacements.items()
+    }
+    replacement_bindings = {
+        condition_id: pair[1]
+        for condition_id, pair in factor_replacements.items()
+    }
     augmented = replace(
         exp2_plan,
-        conditions=exp2_plan.conditions + tuple(item[0] for item in derived),
+        conditions=tuple(
+            replacement_conditions.get(condition.condition_id, condition)
+            for condition in exp2_plan.conditions
+        ) + tuple(item[0] for item in derived),
         condition_selection_bindings=(
-            exp2_plan.condition_selection_bindings
+            tuple(
+                replacement_bindings.get(binding.condition_id, binding)
+                for binding in exp2_plan.condition_selection_bindings
+            )
             + tuple(item[1] for item in derived)
         ),
         paper_eligible_possible=False,
@@ -3305,23 +3351,22 @@ def _with_exp3_regression_smoke_lean_plan(
     profile: object,
     catalog_manifest: PaperInputCatalogManifest,
 ) -> tuple[object, ...]:
-    """仅替换 Exp3 regression smoke 的第 4 个 checker-backed Lean root。"""
+    """为 Exp3 matrix8 冻结 Exp1 同题集的单题 fault/recovery 绑定。"""
 
     seam_items = tuple(
         item
         for item in getattr(profile, "items", ())
         if item.experiment_id == "exp3_real_ai_fault_recovery"
-        and item.case_id == EXP3_REGRESSION_SMOKE_LEAN_CASE_ID
     )
     if not seam_items:
         return tuple(dispatch_plans)
-    if len(seam_items) != 1 or not (
+    if not (
         getattr(profile, "formal", None) is False
         and getattr(profile, "pilot_only", None) is True
         and getattr(profile, "regression_only", None) is True
         and getattr(profile, "paper_eligible", None) is False
     ):
-        raise ValueError("Exp3 Lean planning is restricted to regression smoke")
+        raise ValueError("Exp3 matrix8 planning is restricted to regression smoke")
     plans = tuple(
         plan
         for plan in dispatch_plans
@@ -3332,41 +3377,64 @@ def _with_exp3_regression_smoke_lean_plan(
     exp3_plan = plans[0]
     if exp3_plan.catalog_execution_view is None:
         raise ValueError("Exp3 regression smoke canonical plan is incomplete")
-    formal_matches = tuple(
-        condition
-        for condition in exp3_plan.conditions
-        if condition.condition_id == EXP3_REGRESSION_SMOKE_LEAN_CONDITION_ID
-    )
-    if len(formal_matches) != 1:
-        raise ValueError("Exp3 regression smoke base condition is missing")
     catalog_view = restore_catalog_execution_view(
         exp3_plan.catalog_execution_view,
         catalog_manifest=catalog_manifest,
     )
     if catalog_view.view_kind != EXP3_VIEW_KIND:
         raise ValueError("Exp3 regression smoke catalog view kind drift")
-    cases = tuple(
-        case
-        for case in catalog_manifest.lean_lemma_graph_cases
-        if case.get("case_id") == EXP3_REGRESSION_SMOKE_LEAN_CASE_ID
-    )
-    if len(cases) != 1:
-        raise ValueError("Exp3 regression smoke Lean case is missing")
-    condition, binding, case_projection = build_exp3_regression_smoke_lean_binding(
-        catalog=catalog_view,
-        formal_condition=formal_matches[0],
-        case=cases[0],
-    )
+    cases_by_id = {
+        str(case["case_id"]): case
+        for case in (
+            catalog_manifest.factorization_cases
+            + catalog_manifest.lean_cases
+            + catalog_manifest.lean_lemma_graph_cases
+        )
+    }
+    replacements: dict[str, tuple[object, object]] = {}
+    for item in seam_items:
+        selector = item.condition_selector
+        matches = tuple(
+            condition
+            for condition in exp3_plan.conditions
+            if all(
+                getattr(condition, field_name, None) == expected
+                for field_name, expected in selector.items()
+                if field_name
+                not in {"matrix_kind", "dead_worker_count", "kill_progress_percent"}
+            )
+            and condition.repeat_id == item.repeat_id
+            and (
+                selector.get("matrix_kind") != "worker_death"
+                or (
+                    f"__dead{selector.get('dead_worker_count')}__"
+                    f"p{selector.get('kill_progress_percent')}__"
+                )
+                in condition.condition_id
+            )
+        )
+        if len(matches) != 1:
+            raise ValueError(
+                "Exp3 regression smoke condition is ambiguous: "
+                f"{item.item_id} matched "
+                f"{tuple(condition.condition_id for condition in matches)!r}"
+            )
+        case = cases_by_id.get(item.case_id)
+        if case is None:
+            raise ValueError("Exp3 regression smoke case is missing")
+        replacements[matches[0].condition_id] = build_exp3_regression_smoke_binding(
+            formal_condition=matches[0],
+            case_id=item.case_id,
+            expected_ai_unit_count=estimated_ai_units_for_case(case),
+            catalog_version=catalog_manifest.catalog_version,
+        )
     view_body = json.loads(json.dumps(catalog_view.view_body))
     ai_units_by_case_id = dict(view_body.get("ai_units_by_case_id", {}))
-    ai_units_by_case_id[EXP3_REGRESSION_SMOKE_LEAN_CASE_ID] = [
-        f"{EXP3_REGRESSION_SMOKE_LEAN_CASE_ID}:{node_id}"
-        for node_id in case_projection["planned_ai_unit_ids"]
-    ]
+    for item in seam_items:
+        ai_units_by_case_id[item.case_id] = list(
+            _smoke_case_planned_ai_unit_ids(cases_by_id[item.case_id])
+        )
     view_body["ai_units_by_case_id"] = ai_units_by_case_id
-    view_body["exp3_regression_smoke_lean_cases_by_id"] = {
-        EXP3_REGRESSION_SMOKE_LEAN_CASE_ID: case_projection
-    }
     augmented_view = build_prepared_mapping_execution_view(
         view_kind=EXP3_VIEW_KIND,
         catalog_manifest_digest=catalog_manifest.catalog_digest,
@@ -3375,15 +3443,11 @@ def _with_exp3_regression_smoke_lean_plan(
     augmented = replace(
         exp3_plan,
         conditions=tuple(
-            condition
-            if current.condition_id == EXP3_REGRESSION_SMOKE_LEAN_CONDITION_ID
-            else current
+            replacements.get(current.condition_id, (current, None))[0]
             for current in exp3_plan.conditions
         ),
         condition_selection_bindings=tuple(
-            binding
-            if current.condition_id == EXP3_REGRESSION_SMOKE_LEAN_CONDITION_ID
-            else current
+            replacements.get(current.condition_id, (None, current))[1]
             for current in exp3_plan.condition_selection_bindings
         ),
         catalog_execution_view=augmented_view.to_dict(),
@@ -3392,6 +3456,30 @@ def _with_exp3_regression_smoke_lean_plan(
     return tuple(
         augmented if plan is exp3_plan else plan for plan in dispatch_plans
     )
+
+
+def _smoke_case_planned_ai_unit_ids(case: Mapping[str, object]) -> tuple[str, ...]:
+    schema_version = case.get("schema_version")
+    if schema_version == "tokenshare.paper_factorization_case.v1":
+        count = estimated_ai_units_for_case(dict(case))
+        return tuple(f"range_{index}" for index in range(count))
+    if schema_version == "tokenshare.paper_lean_case.v1":
+        count = estimated_ai_units_for_case(dict(case))
+        return tuple(f"child_{index}" for index in range(count))
+    if schema_version == "tokenshare.paper_lean_lemma_graph_case.v1":
+        graph = case.get("lemma_graph")
+        nodes = graph.get("nodes") if isinstance(graph, Mapping) else None
+        if not isinstance(nodes, list):
+            raise ValueError("Exp3 regression smoke Lean graph is invalid")
+        ids = tuple(
+            str(node.get("node_id"))
+            for node in nodes
+            if isinstance(node, Mapping) and node.get("node_id")
+        )
+        if len(ids) != estimated_ai_units_for_case(dict(case)):
+            raise ValueError("Exp3 regression smoke Lean unit count drift")
+        return ids
+    raise ValueError("Exp3 regression smoke case schema is unsupported")
 
 
 def _run_smoke_cli(

@@ -319,6 +319,40 @@ def test_exp1_to_exp4_matrix8_profiles_freeze_four_distinct_roots_per_domain() -
         ) == 4
 
 
+def test_exp2_to_exp4_matrix8_profiles_reuse_exact_exp1_case_set() -> None:
+    profiles = tuple(load_paper_smoke_profile(path) for path in MATRIX8_SMOKE_PROFILES)
+    exp1_cases = {
+        domain: {
+            item.case_id
+            for item in profiles[0].items
+            if item.condition_selector["domain"] == domain
+        }
+        for domain in ("factorization", "lean_proof")
+    }
+
+    assert exp1_cases == {
+        "factorization": {
+            "factor_v2_easy_109",
+            "factor_v2_medium_033",
+            "factor_v2_hard_034",
+            "factor_v2_hard_063",
+        },
+        "lean_proof": {
+            "lean_easy_01",
+            "lean_v2_medium_lemma_dag_01",
+            "lean_v2_hard_frontier_pure_logic_checker_01",
+            "lean_v2_hard_frontier_pure_logic_checker_02",
+        },
+    }
+    for profile in profiles[1:]:
+        for domain in ("factorization", "lean_proof"):
+            assert {
+                item.case_id
+                for item in profile.items
+                if item.condition_selector["domain"] == domain
+            } == exp1_cases[domain]
+
+
 def test_exp1_to_exp5_matrix_smoke_inventory_contains_exactly_forty_roots() -> None:
     profiles = tuple(
         load_paper_smoke_profile(path)
