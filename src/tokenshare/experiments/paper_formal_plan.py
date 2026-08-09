@@ -3,12 +3,28 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+import json
 from pathlib import Path
 from typing import Any
 
+from tokenshare.core.models import (
+    Attempt,
+    AttemptState,
+    Lease,
+    LeaseState,
+    ProtocolConfig,
+)
+from tokenshare.executors.ai_api import prepare_ai_api_outbound_request
+from tokenshare.executors.ai_api_request_identity import (
+    PreparedOutboundRequest,
+    validate_prepared_request,
+)
 from tokenshare.experiments.paper_budget import build_paper_budget_split_profile
-from tokenshare.experiments.paper_catalog import PaperInputCatalogManifest
+from tokenshare.experiments.paper_catalog import (
+    PaperInputCatalogManifest,
+    default_lean_paper_environment_manifest,
+)
 from tokenshare.experiments.paper_catalog_execution_view import (
     restore_catalog_execution_view,
 )
@@ -28,6 +44,9 @@ from tokenshare.experiments.paper_formal_runner import (
 )
 from tokenshare.experiments.paper_model_identity import (
     PaperModelEndpointIdentity,
+    build_fixed_entry_executor_requirements,
+    prepare_fixed_entry_execution_config,
+    validate_condition_fixed_entry_identity,
     validate_fixed_entry_config_identity,
 )
 from tokenshare.experiments.paper_models import (
@@ -35,6 +54,10 @@ from tokenshare.experiments.paper_models import (
     PaperBudgetResult,
     PaperExperimentCondition,
     digest_json,
+)
+from tokenshare.experiments.paper_response_bank import replacement_slots_for
+from tokenshare.plugins.factorization.runtime_adapter import (
+    FactorizationRuntimeAdapter,
 )
 from tokenshare.plugins.factorization.schemas import (
     PLUGIN_ID as FACTORIZATION_PLUGIN_ID,
@@ -44,6 +67,8 @@ from tokenshare.plugins.lean_proof.schemas import (
     PLUGIN_ID as LEAN_PLUGIN_ID,
     PLUGIN_VERSION as LEAN_PLUGIN_VERSION,
 )
+from tokenshare.plugins.lean_proof.runtime_adapter import LeanRuntimeAdapter
+from tokenshare.storage.artifacts import ArtifactStore
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -150,6 +175,562 @@ class FormalPlanSnapshot:
                 for item in self.roots
             ],
         }
+
+
+@dataclass(frozen=True, kw_only=True)
+class FormalPreparedRequestRecord:
+    """一条正式 first-attempt AI unit 的 exact prepared request。"""
+
+    condition: PaperExperimentCondition
+    binding: FrozenConditionSelectionBinding
+    case_id: str
+    case_record_digest: str
+    planned_ai_unit_id: str
+    sample_slot_index: int
+    base_replacement_slot: int
+    replacement_slot_ids: tuple[int, ...]
+    replacement_policy_id: str
+    source_provider_config_digest: str
+    prepared_execution_config_digest: str
+    provider_family: str
+    provider_config_id: str
+    model_entry_id: str
+    provider_model_id: str
+    reasoning_profile_id: str
+    model_endpoint_identity_digest: str
+    request_max_tokens: int
+    request_timeout_seconds: int
+    request_max_provider_attempts: int
+    request_controls_digest: str
+    prompt_profile_digest: str
+    provider_request_identity: Mapping[str, Any]
+    prepared_request: PreparedOutboundRequest
+    provider_calls_made: int = 0
+
+    @property
+    def body_digest(self) -> str:
+        return self.prepared_request.body_digest
+
+    @property
+    def inference_request_digest(self) -> str:
+        return self.prepared_request.inference_request_digest
+
+    @property
+    def request_identity_digest(self) -> str:
+        return digest_json(self._body())
+
+    def to_dict(self) -> dict[str, Any]:
+        return {**self._body(), "request_identity_digest": self.request_identity_digest}
+
+    def _body(self) -> dict[str, Any]:
+        prepared = validate_prepared_request(self.prepared_request)
+        return {
+            "condition_id": self.condition.condition_id,
+            "condition_digest": self.condition.condition_digest,
+            "selection_id": self.binding.selection.selection_id,
+            "selection_digest": self.binding.selection.selection_digest,
+            "case_id": self.case_id,
+            "case_record_digest": self.case_record_digest,
+            "planned_ai_unit_id": self.planned_ai_unit_id,
+            "sample_slot_index": self.sample_slot_index,
+            "base_replacement_slot": self.base_replacement_slot,
+            "replacement_slot_ids": list(self.replacement_slot_ids),
+            "replacement_policy_id": self.replacement_policy_id,
+            "source_provider_config_digest": self.source_provider_config_digest,
+            "prepared_execution_config_digest": self.prepared_execution_config_digest,
+            "provider_family": self.provider_family,
+            "provider_config_id": self.provider_config_id,
+            "model_entry_id": self.model_entry_id,
+            "provider_model_id": self.provider_model_id,
+            "reasoning_profile_id": self.reasoning_profile_id,
+            "model_endpoint_identity_digest": self.model_endpoint_identity_digest,
+            "request_max_tokens": self.request_max_tokens,
+            "request_timeout_seconds": self.request_timeout_seconds,
+            "request_max_provider_attempts": self.request_max_provider_attempts,
+            "request_controls_digest": self.request_controls_digest,
+            "prompt_profile_digest": self.prompt_profile_digest,
+            "provider_request_identity": dict(self.provider_request_identity),
+            "prepared_request": prepared.provenance_dict(),
+            "provider_calls_made": self.provider_calls_made,
+        }
+
+
+@dataclass(frozen=True, kw_only=True)
+class FormalPreparedRequestInventory:
+    """完整正式计划的 first-attempt prepared request inventory。"""
+
+    records: tuple[FormalPreparedRequestRecord, ...]
+    record_count: int
+    unique_inference_request_count: int
+    provider_calls_made: int
+    source_snapshot_digest: str
+    schema_version: str = "tokenshare.paper_formal_prepared_request_inventory.v1"
+
+    @property
+    def inventory_digest(self) -> str:
+        return digest_json(
+            {
+                "schema_version": self.schema_version,
+                "record_count": self.record_count,
+                "unique_inference_request_count": self.unique_inference_request_count,
+                "provider_calls_made": self.provider_calls_made,
+                "source_snapshot_digest": self.source_snapshot_digest,
+                "request_identity_digests": [
+                    record.request_identity_digest for record in self.records
+                ],
+            }
+        )
+
+
+@dataclass(frozen=True, kw_only=True)
+class _PreparedRuntimeTemplate:
+    planned_ai_unit_id: str
+    source_provider_config_digest: str
+    prepared_execution_config_digest: str
+    provider_request_identity: Mapping[str, Any]
+    prepared_request: PreparedOutboundRequest
+
+
+def freeze_formal_root_prepared_requests(
+    *,
+    root: FormalRootSnapshot,
+    catalog_manifest: PaperInputCatalogManifest,
+    ai_api_configs: Mapping[str, Any],
+    planning_artifact_root: str | Path,
+) -> tuple[FormalPreparedRequestRecord, ...]:
+    """经正式 runtime adapter 冻结单个 full-plan root 的 base requests。"""
+
+    if not isinstance(root, FormalRootSnapshot):
+        raise TypeError("root must be a FormalRootSnapshot")
+    cases_by_id = _unique_catalog_cases(catalog_manifest)
+    try:
+        case = cases_by_id[root.case_id]
+    except KeyError as exc:
+        raise ValueError("formal prepared root is absent from catalog") from exc
+    templates = _prepare_formal_root_templates(
+        root=root,
+        case=case,
+        ai_api_configs=ai_api_configs,
+        artifact_root=Path(planning_artifact_root),
+    )
+    return _records_from_templates(root=root, templates=templates)
+
+
+def freeze_paper_formal_prepared_request_inventory(
+    *,
+    snapshot: FormalPlanSnapshot,
+    catalog_manifest: PaperInputCatalogManifest,
+    ai_api_configs: Mapping[str, Any],
+    planning_artifact_root: str | Path,
+) -> FormalPreparedRequestInventory:
+    """冻结 full plan 全部 first-attempt request；不读取 secret 或调用 provider。"""
+
+    if not isinstance(snapshot, FormalPlanSnapshot):
+        raise TypeError("snapshot must be a FormalPlanSnapshot")
+    if (
+        snapshot.provider_calls_made != 0
+        or len(snapshot.roots) != snapshot.root_run_count
+        or sum(len(root.planned_ai_unit_ids) for root in snapshot.roots)
+        != snapshot.first_attempt_ai_unit_count
+    ):
+        raise ValueError("formal plan snapshot is not internally complete")
+    cases_by_id = _unique_catalog_cases(catalog_manifest)
+    artifact_root = Path(planning_artifact_root)
+    template_cache: dict[str, tuple[_PreparedRuntimeTemplate, ...]] = {}
+    records: list[FormalPreparedRequestRecord] = []
+    for root in snapshot.roots:
+        try:
+            case = cases_by_id[root.case_id]
+        except KeyError as exc:
+            raise ValueError("formal prepared root is absent from catalog") from exc
+        cache_key = _formal_prepared_template_cache_key(root)
+        templates = template_cache.get(cache_key)
+        if templates is None:
+            templates = _prepare_formal_root_templates(
+                root=root,
+                case=case,
+                ai_api_configs=ai_api_configs,
+                artifact_root=artifact_root / cache_key.removeprefix("sha256:"),
+            )
+            template_cache[cache_key] = templates
+        if tuple(item.planned_ai_unit_id for item in templates) != root.planned_ai_unit_ids:
+            raise ValueError("prepared runtime AI-unit ids do not match formal snapshot")
+        records.extend(_records_from_templates(root=root, templates=templates))
+    if len(records) != snapshot.first_attempt_ai_unit_count:
+        raise ValueError("prepared request inventory does not cover all first attempts")
+    unique_inference = {
+        record.inference_request_digest: record.prepared_request
+        for record in records
+    }
+    for record in records:
+        if unique_inference[record.inference_request_digest] != record.prepared_request:
+            raise ValueError("one inference digest maps to multiple prepared requests")
+    return FormalPreparedRequestInventory(
+        records=tuple(records),
+        record_count=len(records),
+        unique_inference_request_count=len(unique_inference),
+        provider_calls_made=0,
+        source_snapshot_digest=snapshot.snapshot_digest,
+    )
+
+
+def _prepare_formal_root_templates(
+    *,
+    root: FormalRootSnapshot,
+    case: Mapping[str, Any],
+    ai_api_configs: Mapping[str, Any],
+    artifact_root: Path,
+) -> tuple[_PreparedRuntimeTemplate, ...]:
+    source_config, source_entry, controls = _resolved_request_controls(
+        condition=root.condition,
+        ai_api_configs=ai_api_configs,
+    )
+    _validate_root_endpoint_controls(
+        root=root,
+        source_config=source_config,
+        source_entry=source_entry,
+        controls=controls,
+    )
+    validated_binding = validate_condition_fixed_entry_identity(
+        condition=root.condition,
+        source_config=source_config,
+    )
+    if validated_binding is None:
+        raise ValueError("formal condition requires complete model endpoint identity")
+    adapter_metadata_key = (
+        "factorization_paper_adapter"
+        if root.condition.domain == "factorization"
+        else "lean_paper_adapter"
+    )
+    prepared_config = prepare_fixed_entry_execution_config(
+        source_config=source_config,
+        binding=validated_binding,
+        max_tokens=root.endpoint_controls.max_tokens,
+        timeout_seconds=root.endpoint_controls.timeout_seconds,
+        adapter_metadata_key=adapter_metadata_key,
+    )
+    prepared_entries = tuple(
+        entry for entry in prepared_config.entries if entry.enabled
+    )
+    if len(prepared_entries) != 1 or prepared_entries[0].entry_id != source_entry.entry_id:
+        raise ValueError("formal prepared config must contain its one enabled entry")
+    if (
+        int(controls.get("max_tokens", 0)) != root.endpoint_controls.max_tokens
+        or int(controls.get("timeout_seconds", 0))
+        != root.endpoint_controls.timeout_seconds
+        or int(controls.get("max_provider_attempts", 0))
+        != root.endpoint_controls.max_provider_attempts
+    ):
+        raise ValueError("formal prepared request controls drift")
+    executor_requirements = build_fixed_entry_executor_requirements(
+        config=prepared_config,
+        binding=validated_binding,
+    )
+    planned_case = _case_with_formal_split_profile(
+        case,
+        split_profile_id=root.split_profile_id,
+    )
+    protocol_config = replace(
+        ProtocolConfig.default(
+            config_id=f"formal_request_plan_{root.condition.domain}_{root.case_id}",
+            artifact_store_uri="file://formal-request-plan",
+            event_log_uri="file://formal-request-plan/events.jsonl",
+        ),
+        max_children_per_unit=64,
+    )
+    store = ArtifactStore(artifact_root)
+    adapter: FactorizationRuntimeAdapter | LeanRuntimeAdapter
+    if root.condition.domain == "factorization":
+        adapter = FactorizationRuntimeAdapter(
+            provider_family=prepared_config.provider_family,
+            seed=root.seed,
+            protocol_config=protocol_config,
+            executor_requirements=executor_requirements,
+            max_tokens=root.endpoint_controls.max_tokens,
+            timeout_seconds=root.endpoint_controls.timeout_seconds,
+        )
+    elif root.condition.domain == "lean_proof":
+        adapter = LeanRuntimeAdapter(
+            provider_family=prepared_config.provider_family,
+            environment_manifest=default_lean_paper_environment_manifest(),
+            seed=root.seed,
+            protocol_config=protocol_config,
+            executor_requirements=executor_requirements,
+            max_tokens=root.endpoint_controls.max_tokens,
+            timeout_seconds=root.endpoint_controls.timeout_seconds,
+        )
+    else:
+        raise ValueError("unsupported formal prepared request domain")
+    units = adapter.plan_units(planned_case, artifact_store=store)
+    ai_units = tuple(
+        (unit, planned_ai_unit_id)
+        for unit in units
+        if (planned_ai_unit_id := adapter.planned_ai_unit_id(unit)) is not None
+    )
+    if tuple(unit_id for _unit, unit_id in ai_units) != root.planned_ai_unit_ids:
+        raise ValueError("runtime planned AI-unit ids do not match formal commitment")
+    templates: list[_PreparedRuntimeTemplate] = []
+    for unit, planned_ai_unit_id in ai_units:
+        attempt, lease = _formal_planning_attempt_and_lease(
+            case_id=root.case_id,
+            unit_id=unit.unit_id,
+            task_id=unit.task_id,
+        )
+        if isinstance(adapter, LeanRuntimeAdapter):
+            request = adapter.build_planning_execution_request(
+                unit,
+                attempt=attempt,
+                lease=lease,
+            )
+        else:
+            request = adapter.build_execution_request(
+                unit,
+                attempt=attempt,
+                lease=lease,
+            )
+        request = _bind_pre_acquisition_slot(
+            request=request,
+            planned_ai_unit_id=planned_ai_unit_id,
+            sample_slot_index=root.repeat_id,
+            replacement_slot=0,
+        )
+        if request.prompt_package_ref is None:
+            raise ValueError("formal planned AI request is missing prompt package")
+        prompt = json.loads(
+            store.read_bytes(request.prompt_package_ref).decode("utf-8")
+        )
+        outbound = prepare_ai_api_outbound_request(
+            config=prepared_config,
+            request=request,
+            prompt=prompt,
+            entry=prepared_entries[0],
+        )
+        prepared = outbound.prepared_request
+        if (
+            prepared.planned_ai_unit_id != planned_ai_unit_id
+            or prepared.sample_slot_index != root.repeat_id
+            or prepared.replacement_slot != 0
+            or prepared.configured_model != root.endpoint_controls.provider_model_id
+        ):
+            raise ValueError("formal prepared request identity drift")
+        templates.append(
+            _PreparedRuntimeTemplate(
+                planned_ai_unit_id=planned_ai_unit_id,
+                source_provider_config_digest=source_config.config_digest,
+                prepared_execution_config_digest=prepared_config.config_digest,
+                provider_request_identity=dict(outbound.provider_request_identity),
+                prepared_request=prepared,
+            )
+        )
+    return tuple(templates)
+
+
+def _validate_root_endpoint_controls(
+    *,
+    root: FormalRootSnapshot,
+    source_config: Any,
+    source_entry: Any,
+    controls: Mapping[str, Any],
+) -> None:
+    endpoint = root.endpoint_controls
+    expected = {
+        "provider_config_id": root.condition.provider_config_id,
+        "model_entry_id": root.condition.model_entry_id,
+        "provider_family": source_config.provider_family,
+        "provider_model_id": source_entry.model,
+        "source_provider_config_digest": source_config.config_digest,
+        "model_endpoint_identity_digest": (
+            root.condition.model_endpoint_identity_digest
+        ),
+        "reasoning_profile_id": root.condition.reasoning_profile_id,
+        "max_tokens": _positive_int(controls.get("max_tokens"), "max_tokens"),
+        "timeout_seconds": _positive_int(
+            controls.get("timeout_seconds"),
+            "timeout_seconds",
+        ),
+        "max_provider_attempts": _positive_int(
+            controls.get("max_provider_attempts"),
+            "max_provider_attempts",
+        ),
+        "stream": _required_bool(controls.get("stream"), "stream"),
+        "request_controls_digest": digest_json(controls),
+    }
+    actual = _endpoint_controls_body(endpoint)
+    if actual != expected:
+        raise ValueError("formal root endpoint controls drift")
+
+
+def _records_from_templates(
+    *,
+    root: FormalRootSnapshot,
+    templates: Sequence[_PreparedRuntimeTemplate],
+) -> tuple[FormalPreparedRequestRecord, ...]:
+    replacement_slot_ids = replacement_slots_for(
+        experiment_id=root.condition.experiment_id,
+        fault_type=str(root.condition.fault_type),
+        ablation_mode=str(root.condition.ablation_mode),
+    )
+    records: list[FormalPreparedRequestRecord] = []
+    for template in templates:
+        prepared = template.prepared_request
+        records.append(
+            FormalPreparedRequestRecord(
+                condition=root.condition,
+                binding=root.binding,
+                case_id=root.case_id,
+                case_record_digest=root.case_record_digest,
+                planned_ai_unit_id=template.planned_ai_unit_id,
+                sample_slot_index=root.repeat_id,
+                base_replacement_slot=0,
+                replacement_slot_ids=replacement_slot_ids,
+                replacement_policy_id="formal_attempt_budget.v1",
+                source_provider_config_digest=template.source_provider_config_digest,
+                prepared_execution_config_digest=(
+                    template.prepared_execution_config_digest
+                ),
+                provider_family=root.endpoint_controls.provider_family,
+                provider_config_id=root.endpoint_controls.provider_config_id,
+                model_entry_id=root.endpoint_controls.model_entry_id,
+                provider_model_id=root.endpoint_controls.provider_model_id,
+                reasoning_profile_id=root.endpoint_controls.reasoning_profile_id,
+                model_endpoint_identity_digest=(
+                    root.endpoint_controls.model_endpoint_identity_digest
+                ),
+                request_max_tokens=root.endpoint_controls.max_tokens,
+                request_timeout_seconds=root.endpoint_controls.timeout_seconds,
+                request_max_provider_attempts=(
+                    root.endpoint_controls.max_provider_attempts
+                ),
+                request_controls_digest=(
+                    root.endpoint_controls.request_controls_digest
+                ),
+                prompt_profile_digest=digest_json(
+                    {
+                        "body_digest": prepared.body_digest,
+                        "prompt_profile_id": prepared.prompt_profile_id,
+                        "prompt_serialization_schema": (
+                            prepared.prompt_serialization_schema
+                        ),
+                    }
+                ),
+                provider_request_identity=template.provider_request_identity,
+                prepared_request=prepared,
+                provider_calls_made=0,
+            )
+        )
+    return tuple(records)
+
+
+def _formal_prepared_template_cache_key(root: FormalRootSnapshot) -> str:
+    return digest_json(
+        {
+            "case_id": root.case_id,
+            "case_record_digest": root.case_record_digest,
+            "seed": root.seed,
+            "repeat_id": root.repeat_id,
+            "split_profile_id": root.split_profile_id,
+            "split_profile_digest": root.split_profile_digest,
+            "plugin_id": root.plugin_id,
+            "plugin_version": root.plugin_version,
+            "provider_family": root.endpoint_controls.provider_family,
+            "provider_config_id": root.endpoint_controls.provider_config_id,
+            "source_provider_config_digest": (
+                root.endpoint_controls.source_provider_config_digest
+            ),
+            "model_entry_id": root.endpoint_controls.model_entry_id,
+            "provider_model_id": root.endpoint_controls.provider_model_id,
+            "model_endpoint_identity_digest": (
+                root.endpoint_controls.model_endpoint_identity_digest
+            ),
+            "request_controls_digest": (
+                root.endpoint_controls.request_controls_digest
+            ),
+        }
+    )
+
+
+def _bind_pre_acquisition_slot(
+    *,
+    request: Any,
+    planned_ai_unit_id: str,
+    sample_slot_index: int,
+    replacement_slot: int,
+) -> Any:
+    """冻结尚未有 bank binding 时可知的正式 semantic-slot 身份。"""
+
+    hints = dict(request.soft_hints or {})
+    existing = hints.get("planned_ai_unit_id")
+    if existing is not None and existing != planned_ai_unit_id:
+        raise ValueError("runtime request planned AI-unit identity drift")
+    hints.update(
+        {
+            "planned_ai_unit_id": planned_ai_unit_id,
+            "sample_slot_index": sample_slot_index,
+            "replacement_slot": replacement_slot,
+        }
+    )
+    return replace(request, soft_hints=hints)
+
+
+def _case_with_formal_split_profile(
+    case: Mapping[str, Any],
+    *,
+    split_profile_id: str | None,
+) -> dict[str, Any]:
+    if split_profile_id is None:
+        return dict(case)
+    split_params = case.get("split_params")
+    if not isinstance(split_params, Mapping):
+        raise ValueError("formal split profile requires factorization split_params")
+    return {
+        **dict(case),
+        "split_params": {
+            "strategy_id": split_params.get("strategy_id"),
+            "range_policy": split_params.get("range_policy"),
+            "split_profile_id": split_profile_id,
+        },
+    }
+
+
+def _formal_planning_attempt_and_lease(
+    *,
+    case_id: str,
+    unit_id: str,
+    task_id: str,
+) -> tuple[Attempt, Lease]:
+    identity = digest_json(
+        {"case_id": case_id, "unit_id": unit_id, "attempt_ordinal": 0}
+    ).removeprefix("sha256:")
+    attempt_id = f"formal_request_plan_{identity}"
+    lease_id = f"lease_{identity}"
+    attempt = Attempt(
+        attempt_id=attempt_id,
+        task_id=task_id,
+        unit_id=unit_id,
+        lease_id=lease_id,
+        client_id="formal_request_planner",
+        state=AttemptState.RUNNING,
+        attempt_kind="primary",
+        created_at="2026-07-14T00:00:00Z",
+        started_at="2026-07-14T00:00:00Z",
+    )
+    return attempt, Lease(
+        lease_id=lease_id,
+        task_id=task_id,
+        unit_id=unit_id,
+        attempt_id=attempt_id,
+        client_id=attempt.client_id,
+        state=LeaseState.ACTIVE,
+        fencing_token=f"fence_{identity}",
+        issued_at="2026-07-14T00:00:00Z",
+        expires_at="2026-07-14T00:10:00Z",
+        last_heartbeat_at=None,
+        heartbeat_count=0,
+        lease_kind="execution",
+        terminated_at=None,
+        terminated_reason=None,
+        metadata={},
+    )
 
 
 def validate_paper_formal_plan_bindings(

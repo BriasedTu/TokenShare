@@ -18,6 +18,8 @@ from tokenshare.experiments.paper_experiment_contracts import (
     FrozenConditionSelectionBinding,
 )
 from tokenshare.experiments.paper_formal_plan import (
+    freeze_formal_root_prepared_requests,
+    freeze_paper_formal_prepared_request_inventory,
     freeze_paper_formal_plan_snapshot,
     validate_paper_formal_budget_commitments,
     validate_paper_formal_plan_bindings,
@@ -59,6 +61,18 @@ def formal_inputs(tmp_path_factory: pytest.TempPathFactory):
         assert os.environ.get("SILICONFLOW_API_KEY") is None
         inputs = _build_formal_inputs(tmp_path)
     return inputs
+
+
+@pytest.fixture(scope="module")
+def formal_snapshot(formal_inputs):
+    plans, catalog, budget, ai_api_configs, output_root = formal_inputs
+    return freeze_paper_formal_plan_snapshot(
+        dispatch_plans=plans,
+        catalog_manifest=catalog,
+        budget=budget,
+        ai_api_configs=ai_api_configs,
+        output_root=output_root,
+    )
 
 
 def test_formal_snapshot_freezes_every_current_full_plan_root_without_provider_calls(
@@ -106,6 +120,195 @@ def test_formal_snapshot_freezes_every_current_full_plan_root_without_provider_c
     assert exp5_root.endpoint_controls.max_provider_attempts == 1
     assert exp5_root.endpoint_controls.max_tokens == 32_768
     assert exp5_root.endpoint_controls.timeout_seconds == 600
+
+
+def test_formal_root_preparation_uses_runtime_adapter_and_freezes_exact_request(
+    formal_inputs,
+    formal_snapshot,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _plans, catalog, _budget, ai_api_configs, _output_root = formal_inputs
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    monkeypatch.delenv("SILICONFLOW_API_KEY", raising=False)
+    root = formal_snapshot.roots[0]
+
+    records = freeze_formal_root_prepared_requests(
+        root=root,
+        catalog_manifest=catalog,
+        ai_api_configs=ai_api_configs,
+        planning_artifact_root=tmp_path / "single-root-plan",
+    )
+
+    assert tuple(record.planned_ai_unit_id for record in records) == (
+        root.planned_ai_unit_ids
+    )
+    assert all(record.condition is root.condition for record in records)
+    assert all(record.binding is root.binding for record in records)
+    assert all(record.sample_slot_index == root.repeat_id for record in records)
+    assert all(record.base_replacement_slot == 0 for record in records)
+    assert all(record.replacement_slot_ids == (0,) for record in records)
+    assert all(
+        record.replacement_policy_id == "formal_attempt_budget.v1"
+        for record in records
+    )
+    assert all(record.prepared_request.body_bytes for record in records)
+    assert all(record.body_digest == record.prepared_request.body_digest for record in records)
+    assert all(
+        record.inference_request_digest
+        == record.prepared_request.inference_request_digest
+        for record in records
+    )
+    assert all(
+        record.source_provider_config_digest
+        == root.endpoint_controls.source_provider_config_digest
+        for record in records
+    )
+    assert all(
+        record.prepared_request.provider_config_digest
+        == record.prepared_execution_config_digest
+        for record in records
+    )
+    assert all(
+        record.prepared_request.entry_id == root.endpoint_controls.model_entry_id
+        for record in records
+    )
+    assert all(
+        record.request_max_tokens == root.endpoint_controls.max_tokens
+        for record in records
+    )
+    assert all(record.request_timeout_seconds == 600 for record in records)
+    assert all(record.provider_calls_made == 0 for record in records)
+    assert os.environ.get("DEEPSEEK_API_KEY") is None
+    assert os.environ.get("SILICONFLOW_API_KEY") is None
+
+
+def test_formal_root_preparation_is_deterministic_across_planning_roots(
+    formal_inputs,
+    formal_snapshot,
+    tmp_path: Path,
+) -> None:
+    _plans, catalog, _budget, ai_api_configs, _output_root = formal_inputs
+    root = formal_snapshot.roots[0]
+
+    first = freeze_formal_root_prepared_requests(
+        root=root,
+        catalog_manifest=catalog,
+        ai_api_configs=ai_api_configs,
+        planning_artifact_root=tmp_path / "deterministic-a",
+    )
+    second = freeze_formal_root_prepared_requests(
+        root=root,
+        catalog_manifest=catalog,
+        ai_api_configs=ai_api_configs,
+        planning_artifact_root=tmp_path / "deterministic-b",
+    )
+
+    assert tuple(item.request_identity_digest for item in first) == tuple(
+        item.request_identity_digest for item in second
+    )
+    assert tuple(item.prepared_request for item in first) == tuple(
+        item.prepared_request for item in second
+    )
+
+
+def test_formal_root_preparation_rejects_snapshot_endpoint_control_tamper(
+    formal_inputs,
+    formal_snapshot,
+    tmp_path: Path,
+) -> None:
+    _plans, catalog, _budget, ai_api_configs, _output_root = formal_inputs
+    root = formal_snapshot.roots[0]
+    drifted = replace(
+        root,
+        endpoint_controls=replace(
+            root.endpoint_controls,
+            source_provider_config_digest="sha256:" + "f" * 64,
+        ),
+    )
+
+    with pytest.raises(ValueError, match="formal root endpoint controls drift"):
+        freeze_formal_root_prepared_requests(
+            root=drifted,
+            catalog_manifest=catalog,
+            ai_api_configs=ai_api_configs,
+            planning_artifact_root=tmp_path / "tampered-endpoint",
+        )
+
+
+def test_formal_prepared_record_digest_revalidates_nested_request_body(
+    formal_inputs,
+    formal_snapshot,
+    tmp_path: Path,
+) -> None:
+    _plans, catalog, _budget, ai_api_configs, _output_root = formal_inputs
+    record = freeze_formal_root_prepared_requests(
+        root=formal_snapshot.roots[0],
+        catalog_manifest=catalog,
+        ai_api_configs=ai_api_configs,
+        planning_artifact_root=tmp_path / "nested-request-tamper",
+    )[0]
+    drifted_body = dict(record.prepared_request.body_obj)
+    drifted_body["model"] = "drifted-model"
+    drifted = replace(
+        record,
+        prepared_request=replace(
+            record.prepared_request,
+            body_obj=drifted_body,
+        ),
+    )
+
+    with pytest.raises(ValueError, match="prepared request body bytes mismatch"):
+        _ = drifted.request_identity_digest
+
+
+def test_full_prepared_inventory_covers_every_first_attempt_without_provider_calls(
+    formal_inputs,
+    formal_snapshot,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _plans, catalog, _budget, ai_api_configs, _output_root = formal_inputs
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    monkeypatch.delenv("SILICONFLOW_API_KEY", raising=False)
+    inventory = freeze_paper_formal_prepared_request_inventory(
+        snapshot=formal_snapshot,
+        catalog_manifest=catalog,
+        ai_api_configs=ai_api_configs,
+        planning_artifact_root=tmp_path / "full-inventory-plan",
+    )
+
+    assert inventory.record_count == formal_snapshot.first_attempt_ai_unit_count == 40_520
+    assert len(inventory.records) == inventory.record_count
+    assert inventory.provider_calls_made == 0
+    assert inventory.inventory_digest.startswith("sha256:")
+    assert inventory.unique_inference_request_count <= inventory.record_count
+    exp5_records = tuple(
+        record
+        for record in inventory.records
+        if record.condition.experiment_id
+        == "exp5_real_ai_model_endpoint_comparison"
+    )
+    assert len(exp5_records) == 4_992
+    assert {
+        record.prepared_request.configured_model for record in exp5_records
+    } == {
+        "zai-org/GLM-5.2",
+        "Qwen/Qwen3-14B",
+        "MiniMaxAI/MiniMax-M2.5",
+        "Pro/deepseek-ai/DeepSeek-V3",
+    }
+    exp3_worker_death = next(
+        record
+        for record in inventory.records
+        if record.condition.experiment_id == "exp3_real_ai_fault_recovery"
+        and record.condition.fault_type == "worker_death"
+    )
+    assert exp3_worker_death.replacement_slot_ids == (0, 1, 2, 3, 4)
+    assert exp3_worker_death.replacement_policy_id == "formal_attempt_budget.v1"
+    assert "smoke" not in exp3_worker_death.replacement_policy_id
+    assert os.environ.get("DEEPSEEK_API_KEY") is None
+    assert os.environ.get("SILICONFLOW_API_KEY") is None
 
 
 def test_formal_suite_plan_public_validator_returns_no_internal_bound_plan(
