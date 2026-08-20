@@ -31,6 +31,7 @@ Slim V2 Agent 不广泛读取 archive、旧 paper/formal pipeline、历史 Rxx �
 | Slim V2 获批设计或实现 | 上述三份权威 → `Doc/SlimV2/slim_v2_reuse_inventory.md` → 清单允许的当前公共源码或固定 SHA `git show` 位置 |
 | Slim V2 官方价格来源复核（仅价格维护任务，不是普通启动必读） | `Doc/SlimV2/slim_v2_official_pricing_sources_20260820.md`；实际计算口径仍以指标权威第 1.4 节为准 |
 | Slim V2 定位可复用代码（支持材料，不是权威） | `Doc/SlimV2/slim_v2_reuse_inventory.md`；必须先读完三份权威文档；legacy 仅允许固定 SHA + allowlist + `git show` 定点只读，禁止 runtime import |
+| Slim V2 串行新任务接力（仅在用户显式启动时） | `Doc/SlimV2/slim_v2_stage_relay_protocol.md`；只定义阶段 owner、子 Agent、checkpoint、委托审批和新任务接力，不覆盖实验/指标/接线权威，也不授权修改 shared code |
 | 仓库治理、上下文或数据位置 | `Doc/repository-governance.md` |
 | 协议对象、schema、状态机、replay 边界 | `Doc/TechnicalDocument/tokenshare_v1_complete_spec.md` |
 | 代码归属和模块路由 | `Doc/TechnicalDocument/tokenshare_v1_code_map.md` |

@@ -6,6 +6,7 @@
 
 ## Slim V2 前置权威文档：已获用户批准并冻结
 
+- 已新增 `Doc/SlimV2/slim_v2_stage_relay_protocol.md`，用于在设计、实施计划、代码实施监督和 representative 运行之间创建上下文隔离的全新 Codex 顶层任务；阶段内部只使用边界明确的子 Agent。该协议是用户授权的可选工作流，不覆盖三份冻结权威，未显式启动时不自动创建任务。接力文档 focused verification：6 份 Slim V2 Markdown 严格 UTF-8 读取、四阶段/双 `run_scope`/委托审批/单下一任务断言、Markdown 表格列数、尾随空白和 tracked diff check 全部 PASS；`tests/test_init_verification_profiles.py` 为 `25 passed`。
 - `Doc/SlimV2/README.md`、`slim_v2_experiment_metrics_authority.md`、`slim_v2_system_integration_contract.md` 均为 `status: user_approved`，已成为 Slim V2 范围内的当前权威；下一步是编写 Slim V2 设计规格，尚未授权代码实现。
 - Slim V2 现为默认开发主线：除非用户在当前任务中明确指定其他维护范围，所有后续 Agent 都从 `Doc/SlimV2/README.md` 进入，不再自行梳理旧 paper/formal pipeline、archive、历史 Rxx 输出或 `TokenShareData` 历史结果；legacy `feature_list/session-handoff` 和陈旧基线不能覆盖该默认路由。
 - 旧实验设施已固定为本地只读参考：archive branch=`archive/slim-v2-reference-20260820`，commit=`3489533e79cde05d6ae2a0c9f139785249f60f09`，annotated tag=`slim-v2-reference-20260820`。后续 legacy 参考只允许按 `slim_v2_reuse_inventory.md` 的 allowlist 使用完整 SHA + `git show` 定点读取；禁止 checkout/广泛阅读，Slim runtime 不得 import archive/legacy `paper_*`。本轮未 push。
@@ -21,7 +22,7 @@
 - 实际代码核对发现：现有 coordinator/plugin/executor 能覆盖主要生命周期，但需要 Slim-local coverage-tail acquisition、fixed-response executor、薄 provider caller、普通 pricing projector 与 metrics projector；细粒度字段从同一次 run 的 ledger/store 提取。两个 runtime adapter 的 k>1 接法仍需实施期测试证明，shared 系统代码保持只读。可直接复用/轻量适配/只借逻辑/禁止复用的精确源码位置已同步到 `Doc/SlimV2/slim_v2_reuse_inventory.md`，并按当前权威修正旧 split、fault、11-mode ablation、timing、pricing、reasoning 与 trace coverage 口径。
 - 下方 R54/representative/Full 段落描述旧 paper/formal 设施的既有状态，不是 Slim V2 的设计来源；Slim V2 Agent 不应继续阅读这些历史链路来决定实现。
 - 本轮仓库收口没有启动实验、调用 provider 或修改运行数据；创建了本地 archive commit/tag 和 Slim baseline branch，但没有 push/merge/PR。archive 纳入范围在 tag 前通过公开接口 `88 passed` 与稳定专项 `29 passed`；4 份未闭合新增 WIP 测试未进入 archive allowlist，原共享脏工作树副本保持不变。
-- 文档 focused verification 已通过：五份 `Doc/SlimV2/*.md` 均可按 UTF-8 读取；指标权威第 8 节与接线合同第 7 节原始叶字段集合 `168/168` 完全一致、missing/extra 均为 0；价格、reasoning、roots 串行、Exp1 两阶段 trace coverage/last-attempt fallback、Exp2 split、Exp3 seed、Exp4 11 modes、固定 archive SHA/tag 与 `git show` allowlist 断言全部 PASS；清单 85 个代码跨度无越界/歧义、36 个关键公开符号定位匹配；Markdown 表头列数一致，Slim harness 定向测试 `25 passed`，相关文件 `git diff --check` 无 whitespace error（仅既有 Windows LF/CRLF 提示）。
+- 文档 focused verification 已通过：原有五份 `Doc/SlimV2/*.md` 均可按 UTF-8 读取；指标权威第 8 节与接线合同第 7 节原始叶字段集合 `168/168` 完全一致、missing/extra 均为 0；价格、reasoning、roots 串行、Exp1 两阶段 trace coverage/last-attempt fallback、Exp2 split、Exp3 seed、Exp4 11 modes、固定 archive SHA/tag 与 `git show` allowlist 断言全部 PASS；清单 85 个代码跨度无越界/歧义、36 个关键公开符号定位匹配；Markdown 表头列数一致，Slim harness 定向测试 `25 passed`，相关文件 `git diff --check` 无 whitespace error（仅既有 Windows LF/CRLF 提示）。接力协议是随后新增的第六份文档，其独立验证记录见本段前文。
 
 ## 当前结论：representative 与 Full 均不可宣称完成
 

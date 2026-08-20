@@ -6,7 +6,7 @@ scope: Slim V2 agent routing and boundaries
 
 # TokenShare Slim V2 Agent 导引
 
-本目录是后续 Slim V2 设计与实现 Agent 的唯一入口。根据 2026-08-20 用户决定，除非当前任务明确指定其他维护范围，所有后续实验设施的设计、实现和运行都默认进入 Slim V2，不需要用户重复声明。三份前置文档已获得用户批准并冻结，是 Slim V2 范围内的当前权威；它们不改写 Slim V2 之外的 V1/legacy 状态，也不跳过后续设计规格和实施计划的审批门槛。
+本目录是后续 Slim V2 设计与实现 Agent 的唯一入口。根据 2026-08-20 用户决定，除非当前任务明确指定其他维护范围，所有后续实验设施的设计、实现和运行都默认进入 Slim V2，不需要用户重复声明。三份前置文档已获得用户批准并冻结，是 Slim V2 范围内的当前权威；它们不改写 Slim V2 之外的 V1/legacy 状态。常规流程仍由用户逐阶段批准设计规格和实施计划；用户显式启动 `slim_v2_stage_relay_protocol.md` 时，则由该协议规定的多 reviewer 审查、完成标准和 `approved_under_user_delegation` 状态履行这两次委托审批。两种流程都不能绕过 shared-code 修改所需的再次用户批准。
 
 ## 目标
 
@@ -97,6 +97,10 @@ TokenShareData/outputs/slim_v2/<run_id>/
 
 1. 本目录三份前置文档已经用户批准并冻结（已完成）。
 2. 编写 Slim V2 设计规格。
-3. 用户批准设计规格。
+3. 用户批准设计规格；若用户已显式启动串行接力，则由接力协议的 Stage 1 委托审批收口。
 4. 编写分 focus 的实施计划。
-5. 用户批准后才开始写代码。
+5. 用户批准实施计划后才开始写代码；若用户已显式启动串行接力，则由接力协议的 Stage 2 委托审批收口。
+
+## 可选的串行新任务接力
+
+若用户希望把设计、实施计划、代码监督和 representative 运行交给彼此上下文隔离的全新 Codex 任务串行执行，读取 `Doc/SlimV2/slim_v2_stage_relay_protocol.md`。该文档只定义阶段 owner、子 Agent、checkpoint、短交接胶囊、委托审批和下一任务创建流程；它不能覆盖本 README、指标权威或系统接线合同，也不能授权修改 shared code。未由用户显式选择接力流程时，不自动创建新任务。
