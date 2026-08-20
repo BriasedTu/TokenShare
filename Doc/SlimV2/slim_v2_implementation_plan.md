@@ -124,15 +124,15 @@ run_scope: representative_only
 
 **Allowed writes:** 仅上述四个文件。
 
-- [ ] **Step 1: 写字段集合失败测试。** fixture分别显式保存`metric_authority_leaf_paths`、`slim_operational_leaf_paths`、153个正式metric IDs和必填/可空规则。前者逐项来自指标权威第8节；后者只含设计规格额外冻结的运行字段，例如`trace_tail_success_unit_count/trace_tail_failure_unit_count`、`attempts[].raw_response_relative_path`与`attempts[].call_state`。测试要求root的metric projection与authority集合精确相等、完整schema与两集合冻结并集精确相等，不能用实现反向生成fixture或只比数量。
-- [ ] **Step 2: 运行先失败命令。**
+- [x] **Step 1: 写字段集合失败测试。** fixture分别显式保存`metric_authority_leaf_paths`、`slim_operational_leaf_paths`、153个正式metric IDs和必填/可空规则。前者逐项来自指标权威第8节；后者只含设计规格额外冻结的运行字段，例如`trace_tail_success_unit_count/trace_tail_failure_unit_count`、`attempts[].raw_response_relative_path`与`attempts[].call_state`。测试要求root的metric projection与authority集合精确相等、完整schema与两集合冻结并集精确相等，不能用实现反向生成fixture或只比数量。
+- [x] **Step 2: 运行先失败命令。**
 
   Run: `conda run -n tokenshare python -m pytest tests/experiments/slim_v2/test_schema.py -q`
 
   Expected: FAIL，首个失败为无法导入 `tokenshare.experiments.slim_v2.schema` 或缺少 `RootResultV1`；不得是fixture JSON/UTF-8错误。
 
-- [ ] **Step 3: 最小实现。** 在`schema.py`定义并验证`SlimRunConfigV1,RootInventoryV1,AttemptResultV1,UnitTraceV1,RootResultV1,ProviderEntryViewV1,ProviderRequestControlV1,ProviderCallResultV1`；字段名、嵌套数组、时间单位、null reason与`call_state`严格按设计规格第7–9节。`__init__.py`只暴露schema版本。
-- [ ] **Step 4: 运行通过命令。**
+- [x] **Step 3: 最小实现。** 在`schema.py`定义并验证`SlimRunConfigV1,RootInventoryV1,AttemptResultV1,UnitTraceV1,RootResultV1,ProviderEntryViewV1,ProviderRequestControlV1,ProviderCallResultV1`；字段名、嵌套数组、时间单位、null reason与`call_state`严格按设计规格第7–9节。`__init__.py`只暴露schema版本。
+- [x] **Step 4: 运行通过命令。**
 
   Run: `conda run -n tokenshare python -m pytest tests/experiments/slim_v2/test_schema.py -q`
 
@@ -1224,6 +1224,7 @@ Stage 3对每个task追加一行，不覆盖计划语义：
 
 | Task | failing command/result | passing command/result | spec review | quality review | commit |
 |---|---|---|---|---|---|
+| Task 1 | 原命令先被既有src-layout阻断：`No module named tokenshare`；仅设置进程内`PYTHONPATH=src`后得到计划允许RED：`No module named tokenshare.experiments.slim_v2`。修正轮另真实得到`6 failed`、`2 failed, 4 passed`、`1 failed, 5 passed`，分别覆盖nullable/递归/条件规则、资源族与verified/final、自然ordinal上限。 | owner fresh：`PYTHONPATH=src`、禁bytecode/cache运行Task 1命令，`6 passed in 0.17s`；authority leaves=`168/168`、metric records=`153/153`、operational leaves=`5/5`、规则=`173/173`；UTF-8、禁止import、尾随空白、cache、`git diff --check`均通过。 | 最终`0 Critical / 0 Important / 0 Minor / 0 out_of_scope_by_user`，`Spec compliant`。生命周期未启动字段冲突按relay §7.1三票一致选择A，固定reason细节按两票多数，状态=`approved_under_user_delegation_by_quorum`。 | 最终`0 Critical / 0 Important / 0 Minor`，`APPROVED`；首次唯一Important（Exp1自然attempt必须连续且最多3次）经第四轮RED/GREEN关闭。 | implementation `aaabca417f76c00db6011f8bf0bb04617fffa4f2` |
 
 Stage 3只在某task真实完成后追加该task的具体一行；不得预填空值、预计pass数或虚构SHA。
 
