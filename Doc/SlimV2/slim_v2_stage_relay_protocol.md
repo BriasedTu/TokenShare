@@ -30,7 +30,7 @@ Slim V2 跨越设计、实施计划、代码实现和真实运行。让一个 Ag
 - 当前 owner 创建下一任务后不得继续修改文件。允许短暂读取下一任务状态，确认其已进入运行或明确失败，然后当前 owner 结束。
 - 不 push、merge、创建 PR 或修改远端。阶段 checkpoint 只使用当前本地分支的小粒度 commit。
 
-如果无法创建指向上述 local checkout 的全新任务，不得用 full-history fork 冒充。当前 owner 应把已生成的下一阶段 prompt 写入最终报告并停止，等待用户手动创建任务。
+如果无法创建指向上述 local checkout 的全新任务，不得用 full-history fork 冒充。当前owner先按第7.1节执行代理授权法定人数；若裁决仍为`safe_no_action`或工具客观不可用，则把已生成的下一阶段prompt和证据写入最终报告并停止，不询问或等待用户手动创建。
 
 ## 3. 所有阶段共同遵守的启动顺序
 
@@ -152,7 +152,7 @@ Stage 4 默认是本协议的终点。如果启动时的用户授权明确包含
 8. 等待下一任务报告 `RECOVERY_HEARTBEAT_ACTIVE`；在此之前保留当前任务 heartbeat，但不得继续修改仓库。确认后禁用当前 heartbeat，避免两个阶段重复唤起。
 9. 将下一任务 ID和 heartbeat 交接状态写入当前任务最终报告。此后当前 owner 不再编辑仓库或继续阶段工作。
 
-若本阶段未完成或命中强制停止条件，禁止创建下一阶段任务。必须在 progress 顶部和最终报告记录 blocker。
+若本阶段未完成或命中强制停止条件，禁止创建下一阶段任务。原本需要用户授权/选择才能解除的 blocker 必须先执行第7.1节的代理授权法定人数流程；只有该流程裁决为安全不行动、客观条件仍缺失或问题仍不可闭合时，才在 progress 顶部和最终报告记录 blocker。
 
 ## 6. 下一阶段新任务初始 prompt 模板
 
@@ -229,6 +229,21 @@ run_scope：<representative_only 或 representative_then_full>
 
 模型答案错误、checker rejection、正确率低和权威实验定义内的单 root/fault失败不属于停止条件。
 
+### 7.1 用户睡眠期间的代理授权法定人数（Quorum Delegation）
+
+`2026-08-21`用户明确决定：本次Slim V2接力流程中，凡现有协议、AGENTS、设计、计划或实施发现原本要求“询问用户”“请求用户批准”“由用户选择”的事项，一律不等待或追问用户，改由独立子Agent法定人数作出代理授权。该决定在用户明确撤销前对后续所有Stage owner生效。
+
+执行步骤固定如下：
+
+1. owner先暂停争议动作，形成同一份最小证据包：待裁决问题、权威条款、事实证据、互斥方案、各方案是否改变实验/指标/数据集/provider/价格/fault/ablation/timing/shared接口、允许写入范围、回滚方式和验证命令；不得把偏好写成既定结论。
+2. 同时分派三名全新、互相独立、只读的子Agent。三者必须完整阅读并遵守`$pua:pua`、设计宪章第0节和与问题直接相关的权威条款；prompt与证据包相同，不得看到另外两名的输出，不得改文件、运行真实provider或扩大实验。
+3. 每名reviewer必须返回一个明确的`recommendation_id`、`authorize=yes|no`、精确授权动作/写入范围、理由、影响的冻结语义、风险与必需验证；不能只列选项或把决定退回用户。
+4. owner只按实质动作归一化建议，不按措辞拆票。三票中至少两票给出相同`recommendation_id + authorize`时，该多数结论立即成为`approved_under_user_delegation_by_quorum`，owner直接执行，不询问用户许可。
+5. 若三份建议实质上全部不同，立即分派第四名全新只读auditor。第四名读取相同证据包和三份原始意见，必须在三案中选择一案，或裁决`safe_no_action`；其结论为本轮绑定裁决。不得递归增加第五名，也不得把问题退回用户。
+6. owner把reviewer任务ID、三票（以及适用时第四审计）、多数/审计结论、授权范围和验证证据写入当前设计/计划与`progress.md`顶部。这只是接力治理记录，不得进入Slim runtime成为approval gate、receipt、digest、lineage或publication state。
+
+法定人数只能在用户已经授权的本地Slim V2任务边界内替代用户选择，不能覆盖system/developer指令、工具权限或法律/平台限制，也不能自行扩大`run_scope`、突破provider attempt上限、启用明确禁止的攻击/安全范围、push/merge/PR、删除/迁移用户数据或创建额外顶层接力链。对这些不可授权动作，reviewer只能选择现有范围内方案或`safe_no_action`，仍不得询问用户。
+
 ## 8. 上下文控制规则
 
 - 顶层阶段 owner 不继承上一任务历史；只读取仓库、progress 顶部和短交接胶囊。
@@ -255,7 +270,7 @@ run_scope：<representative_only 或 representative_then_full>
 2. 若长命令仍存活，继续监督现有 session/process；使用短的有界等待持续读取输出，不启动重复命令。
 3. 若 Agent turn、shell、provider transport 或网络连接中断，从最近已持久化 checkpoint/result key 恢复。重试真实 provider 前先检查进程、普通结果文件和 per-unit trace，避免把未知终态的既有调用盲目重复计费；任何重试仍受冻结 attempt 上限约束。
 4. 若发现设施 bug，立即做系统性诊断，分派边界明确的新鲜子 Agent，并在同一次自动唤起中继续修复、验证和推进。
-5. 不得只回复“仍在等待”“稍后再看”或只输出状态摘要。除非阶段已经完成或命中第 7 节强制停止条件，本次唤起必须持续推进到当前可执行工作耗尽；不能主动结束并等待下一次 30 分钟唤起。
+5. 不得只回复“仍在等待”“稍后再看”或只输出状态摘要。命中第7节且原本需要用户裁决时，必须在同一次唤起中启动或续完第7.1节法定人数流程；除非阶段已经完成、法定人数裁决`safe_no_action`或客观条件仍不可满足，本次唤起必须持续推进到当前可执行工作耗尽，不能主动结束并等待下一次30分钟唤起。
 6. 若当前 Stage owner 已有一个活跃 turn 正在推进，heartbeat 不得建立第二条写路径、重复实验或重复 provider 调用；只确认现有工作仍活跃并让唯一 owner 继续。
 
 heartbeat 的恢复 prompt 必须包含上述六项语义，并明确写出：`CONTINUE_THIS_WAKE; DO_NOT_WAIT_FOR_NEXT_HEARTBEAT`。这只是任务恢复机制，不是实验 budget、门禁、receipt 或 evidence 系统，也不得为此向 Slim runtime 增加代码。
@@ -263,7 +278,7 @@ heartbeat 的恢复 prompt 必须包含上述六项语义，并明确写出：`C
 可直接使用以下 heartbeat prompt；创建时把 `<N>` 和 `<阶段名称>` 替换为当前值：
 
 ```text
-这是 TokenShare Slim V2 Stage <N>（<阶段名称>）的 30 分钟恢复 heartbeat。检查当前任务、progress 顶部、本阶段产物、工作树、最近 terminal/进程和持久化结果。如果阶段未完成且没有命中接力协议强制停止条件，立即从当前 checkpoint 恢复，并在本次唤起中持续执行所有现有可推进工作；不得只报告状态、不得主动等待下一次 heartbeat。已有命令或 owner turn 仍活跃时只继续监督，不建立第二条写路径。重试 provider 前先核对进程、results 和 per-unit trace，禁止盲目重复调用。默认不运行 Lean 专项测试、LeanAudit、全量 catalog 或 lake/lean 回归。阶段完成时执行规定的 checkpoint/交棒或终点收口。
+这是 TokenShare Slim V2 Stage <N>（<阶段名称>）的 30 分钟恢复 heartbeat。检查当前任务、progress 顶部、本阶段产物、工作树、最近 terminal/进程和持久化结果。如果阶段未完成，立即从当前 checkpoint 恢复，并在本次唤起中持续执行所有现有可推进工作；命中原本需要用户裁决的强制停止条件时，立即执行第7.1节三名独立reviewer法定人数流程，三案全异再交第四auditor，不询问用户。不得只报告状态、不得主动等待下一次 heartbeat。已有命令或 owner turn 仍活跃时只继续监督，不建立第二条写路径。重试 provider 前先核对进程、results 和 per-unit trace，禁止盲目重复调用。默认不运行 Lean 专项测试、LeanAudit、全量 catalog 或 lake/lean 回归。阶段完成时执行规定的 checkpoint/交棒或终点收口。
 
 CONTINUE_THIS_WAKE; DO_NOT_WAIT_FOR_NEXT_HEARTBEAT
 ```

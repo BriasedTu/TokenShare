@@ -4,9 +4,17 @@
 
 本文件保留当前权威状态、最近验收锚点、资源边界和下一步；逐轮命令、评审及旧测试细节由 `session-handoff.md`、`Doc/archive/`、git history 与仓库外 `TokenShareData` 保留。
 
+## Slim V2 Stage 2：实施计划已获委托审批并完成本地checkpoint
+
+- **实施计划已收口**：`Doc/SlimV2/slim_v2_implementation_plan.md`状态为`approved_under_user_delegation`，按设计规格第17节拆为25个严格串行task；每个task均冻结目标文件、测试文件/测试名、先失败命令与预期、最小实现、通过命令与预期、依赖、允许写入、完成证据和progress更新点。Stage 3只按该计划实现与运行离线/focused verification，不启动真实representative provider。
+- **代表性inventory一致性勘误已获用户确认并闭合**：保持四个case IDs和当前catalog不变；`lean_v2_simple_induction_direct_nat_01`按公共fixed plan的1个planned AI unit执行，派生常量同步为Exp1 units `19`、Exp1 hard cap `57`、总hard cap `89`。设计规格的精确CLI `--output-root`及Slice 6派生常量也已同步；未改变数据集、实验变量、runner或shared接口。
+- **两路只读审查全部通过**：spec coverage与task/test decomposition reviewer初审发现经统一裁决、逐项修复并短复核后，最终均为`0 Critical / 0 Important / 0 Minor / 0 out_of_scope_by_user`，verdict=`PASS`，shared interface gap=`none`。计划不存在TODO/TBD/开放实施选择。
+- **用户睡眠期间代理授权规则已写入接力协议**：`slim_v2_stage_relay_protocol.md`第7.1节要求三名互相独立、只读且遵守`$pua:pua`的子Agent审议；至少两票一致即直接形成`approved_under_user_delegation_by_quorum`，三案全异则由第四名auditor绑定裁决，不询问用户。该规则不扩大系统权限、任务写入、实验范围、run_scope、provider上限、安全范围或远端/破坏性操作权限；超界只能选择`safe_no_action`。
+- **Stage 2 fresh非Lean验证通过**：11份启动/权威/本阶段文档严格UTF-8；正式metric追踪`153/153`且missing references `0`；implementation tasks与七类固定字段均`25/25`，失败/最小/通过测试分解逐task闭合；Markdown fences成对、table issues `0`、placeholders `0`、active stale representative constants `0`、`git diff --check` PASS；`conda run -n tokenshare python -m pytest tests/test_init_verification_profiles.py -q`为`25 passed in 0.78s`。本阶段没有写实现/shared代码，没有运行Lean专项suite、LeanAudit、catalog、`lake`/`lean`、representative/full，没有调用provider，没有push/merge/PR。Stage 2 checkpoint为本条所在本地commit；下一棒是Stage 3实施与离线focused验证。
+
 ## Slim V2 前置权威文档：已获用户批准并冻结
 
-- **Stage 1设计规格已完成并获委托审批**：唯一交付物`Doc/SlimV2/slim_v2_design_spec.md`状态为`approved_under_user_delegation`，`run_scope=representative_only`。本棒固定分支`codex/slim-v2-baseline`，启动checkpoint=`9f711cc2c58ae77c090ac30ac32141948cc833dd`；Stage 1最终checkpoint为本条所在的本地commit，实际SHA会写入Stage 2接力prompt。规格冻结最小架构、五实验控制/数据/失败语义、全部schema和指标追踪、普通恢复主键、精确representative清单（真实provider-call上限92）、full资源上界与实现顺序；shared interface gap=`none`，未批准也未修改shared code。
+- **Stage 1设计规格已完成并获委托审批**：唯一交付物`Doc/SlimV2/slim_v2_design_spec.md`状态为`approved_under_user_delegation`，`run_scope=representative_only`。本棒固定分支`codex/slim-v2-baseline`，启动checkpoint=`9f711cc2c58ae77c090ac30ac32141948cc833dd`；Stage 1最终checkpoint为本条所在的本地commit，实际SHA会写入Stage 2接力prompt。规格冻结最小架构、五实验控制/数据/失败语义、全部schema和指标追踪、普通恢复主键、full资源上界与实现顺序；其representative调用上限已在Stage 2按用户确认的catalog一致性勘误由92修正为89。shared interface gap=`none`，未批准也未修改shared code。
 - **Stage 1三路只读审查已闭合**：metrics初始`0 Critical/7 Important/2 Minor`，integration为`0/3/0`并有1条范围外攻击意见，slimness为`1/3/1`；全部范围内问题已修复，范围外意见标记`out_of_scope_by_user`并拒绝实施，最终未解决范围内Critical=`0`、Important=`0`。跨文档二审确认正式metric IDs `153/153`、权威raw/closure标识规范化`191/191`，禁止gate/authority未进入runtime依赖。
 - **Stage 1 focused验证通过**：8份权威/规格Markdown严格UTF-8；围栏22且成对、表格列问题0、实现语义占位符0、`git diff --check`通过；`conda run -n tokenshare python -m pytest tests/test_init_verification_profiles.py -q`为`25 passed in 0.86s`。本棒没有运行Lean专项suite、LeanAudit、catalog、`lake`/`lean`，没有启动representative/full、没有调用provider、没有push/merge/PR。下一棒是Stage 2，仅编写`Doc/SlimV2/slim_v2_implementation_plan.md`并继续`representative_only`接力。
 - 用户将强约束 prompt 中的顶层设计思想提升为独立权威文档 `Doc/SlimV2/slim_v2_design_charter.md`：冻结指标优先于旧代码、最小充分、薄适配层、普通数据、实验原子化、只为必要回答付费、representative/full 同管线、资源有界、失败保留，以及明确放弃 budget/receipt/digest/lineage/publication/response-bank authority/旧 runner 等设施。后续 prompt 仍保留硬约束，设计宪章作为第二道权威锁；设计规格必须提供 charter requirement追踪矩阵。

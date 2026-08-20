@@ -315,15 +315,15 @@ Reducer先流式枚举inventory与root JSON，按experiment/table/slice投影小
 所有命令使用同一入口：
 
 ```text
-python -m tokenshare.experiments.slim_v2.cli plan --profile <representative|full> --run-id <id>
-python -m tokenshare.experiments.slim_v2.cli run --experiment exp1 --profile <p> --run-id <id> [--resume]
-python -m tokenshare.experiments.slim_v2.cli run --experiment exp2 --profile <p> --run-id <id> --source-run-dir <dir> [--resume]
-python -m tokenshare.experiments.slim_v2.cli run --experiment exp3 --profile <p> --run-id <id> --source-run-dir <dir> [--resume]
-python -m tokenshare.experiments.slim_v2.cli run --experiment exp4 --profile <p> --run-id <id> --source-run-dir <dir> [--resume]
-python -m tokenshare.experiments.slim_v2.cli run --experiment exp5 --profile <p> --run-id <id> [--resume]
-python -m tokenshare.experiments.slim_v2.cli run-all --profile <p> --run-id <id> [--resume]
+python -m tokenshare.experiments.slim_v2.cli plan --profile <representative|full> --run-id <id> [--output-root <dir>]
+python -m tokenshare.experiments.slim_v2.cli run --experiment exp1 --profile <p> --run-id <id> [--output-root <dir>] [--resume]
+python -m tokenshare.experiments.slim_v2.cli run --experiment exp2 --profile <p> --run-id <id> --source-run-dir <dir> [--output-root <dir>] [--resume]
+python -m tokenshare.experiments.slim_v2.cli run --experiment exp3 --profile <p> --run-id <id> --source-run-dir <dir> [--output-root <dir>] [--resume]
+python -m tokenshare.experiments.slim_v2.cli run --experiment exp4 --profile <p> --run-id <id> --source-run-dir <dir> [--output-root <dir>] [--resume]
+python -m tokenshare.experiments.slim_v2.cli run --experiment exp5 --profile <p> --run-id <id> [--output-root <dir>] [--resume]
+python -m tokenshare.experiments.slim_v2.cli run-all --profile <p> --run-id <id> [--output-root <dir>] [--resume]
 python -m tokenshare.experiments.slim_v2.cli reduce --run-dir <dir>
-python -m tokenshare.experiments.slim_v2.cli representative --run-id <id> [--resume]
+python -m tokenshare.experiments.slim_v2.cli representative --run-id <id> [--output-root <dir>] [--resume]
 ```
 
 `representative`严格等价于`run-all --profile representative`。默认输出根为`TokenShareData/outputs/slim_v2/<run_id>/`；可用`--output-root`改变父目录，但run目录仍以run_id为末级。已有run目录时不带`--resume`立即退出，绝不覆盖。失败root不在同一run内自动重跑；要取得独立重复结果必须使用新run_id。
@@ -796,10 +796,10 @@ Exp1固定四个roots，均`repeat_id=0,worker_count=10,entry=deepseek_v4_pro_ex
 |---|---|---:|
 | `factor_v2_hard_138` | Factorization hard, late | 8 |
 | `factor_v2_hard_145` | Factorization hard, early | 8 |
-| `lean_v2_simple_induction_direct_nat_01` | Lean simple/induction | 2 |
+| `lean_v2_simple_induction_direct_nat_01` | Lean simple/induction | 1 |
 | `lean_v2_simple_pure_logic_direct_prop_01` | Lean simple/pure_logic | 2 |
 
-四题均属于冻结Exp1 inventory；两个Factorization同时属于Exp2 hard、Exp3/4 shared hard slice和Exp5 hard selection。Exp1 planned units共20，每unit最多3自然attempts，因此真实provider-call上限60；coverage tail仍必须闭合全部20个trace keys。
+四题均属于冻结Exp1 inventory；两个Factorization同时属于Exp2 hard、Exp3/4 shared hard slice和Exp5 hard selection。Exp1 planned units共19，每unit最多3自然attempts，因此真实provider-call上限57；coverage tail仍必须闭合全部19个trace keys。`2026-08-21`用户确认按当前catalog和公共fixed-plan事实执行本项一致性勘误；四个case IDs、数据集和实验语义均不改变。
 
 ### 13.2 Experiment 2
 
@@ -837,13 +837,13 @@ Representative challenge quota缩为每family一个，仍使用同一plan生成�
 
 Exp5只用`factor_v2_hard_145 × repeat0`，依次运行四个冻结entry，`worker_count=10`、SiliconFlow in-flight=3、每unit零重试。8 planned units×4 endpoints，真实provider-call上限32。
 
-整个representative的真实provider-call上限为`Exp1 60 + Exp5 32 = 92`；Exp2–4严格为0。自然首次accepted或协议早停可使实际值更低，不得用未发生调用填满上限。
+整个representative的真实provider-call上限为`Exp1 57 + Exp5 32 = 89`；Exp2–4严格为0。自然首次accepted或协议早停可使实际值更低，不得用未发生调用填满上限。
 
 ### 13.6 Representative设施通过标准
 
 - inventory精确为Exp1 4、Exp2 12、Exp3 8+2 auxiliary refs、Exp4 44、Exp5 4；
 - 所有论文root均有结果文件，两个reference均有文件；模型错误/checker rejection允许；
-- Exp1 20个planned source units各有唯一protocol/tail trace，tail不改变protocol runtime；
+- Exp1 19个planned source units各有唯一protocol/tail trace，tail不改变protocol runtime；
 - Exp2–4所有attempt`provider_call_made=false`，source三元键和领域语义匹配；
 - Exp3五fault、death两端和simulated字段完整；
 - Exp4 4 plans跨11 modes相同，0 missed opportunity（未到达边界按authority不算missed），pair/quadruple可构造；
@@ -936,7 +936,7 @@ Stage 3验证默认不运行Lean专项suite、LeanAudit、全量catalog、`lake`
 | 3 pricing | `pricing.py` | schema | authority全部价格边界与reasoning规则 |
 | 4 provider one-call | `provider.py` | body builder/envelope parser/config entry | Slim-local bounded urllib；fake Exp1/5成功失败、16MiB+1、intent journal、model identity、无内部retry |
 | 5 Factorization vertical root | `execution.py,runtime_adapter.py,projector.py` | 1–4 + public runtime | fake provider `case→run_root→result`、k>1 backend证据、bounded process/permit、字段集合闭合 |
-| 6 Exp1 trace+tail | `trace_source.py,coverage_tail.py` | 5 | protocol/tail唯一、20-unit rep plan、resume不重复 |
+| 6 Exp1 trace+tail | `trace_source.py,coverage_tail.py` | 5 | protocol/tail唯一、19-unit rep plan、resume不重复 |
 | 7 Exp2 fixed replay | `scenarios.py` | 6 + logical scheduler | exact/fallback、0 calls、1/10/50 makespan/pairs |
 | 8 Exp3 | `scenarios.py,projector.py` | 7 + recovery/process backend | reference、五fault、death、perturbation、core counts |
 | 9 Exp4 | `scenarios.py,projector.py` | 7 + mechanism hooks | 11真实modes、4challenge、validity、pairs/quadruples |
